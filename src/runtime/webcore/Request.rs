@@ -189,28 +189,17 @@ impl BodyMixin for Request {
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Request__fetchHeadersOrParsedRequest(
-    request: &Request,
-    parsed_request: &mut *mut core::ffi::c_void,
-) -> *mut FetchHeaders {
+pub(crate) extern "C" fn Request__fetchHeadersOrParsedRequest(request: &Request, parsed_request: &mut *mut core::ffi::c_void) -> *mut FetchHeaders {
     if let Some(headers) = request.headers.get().as_ref() {
         return headers.as_ptr();
     }
-    *parsed_request = request
-        .request_context
-        .get_request()
-        .map_or(core::ptr::null_mut(), |parsed| parsed.cast());
+    *parsed_request = request.request_context.get_request().map_or(core::ptr::null_mut(), |parsed| parsed.cast());
     core::ptr::null_mut()
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Request__ensureFetchHeaders(
-    request: &Request,
-    global_this: &JSGlobalObject,
-) -> *mut FetchHeaders {
-    request
-        .ensure_fetch_headers(global_this)
-        .map_or(core::ptr::null_mut(), |headers| headers.as_ptr())
+pub(crate) extern "C" fn Request__ensureFetchHeaders(request: &Request, global_this: &JSGlobalObject) -> *mut FetchHeaders {
+    request.ensure_fetch_headers(global_this).map_or(core::ptr::null_mut(), |headers| headers.as_ptr())
 }
 
 // ─── header accessors & simple getters ──────────────────────────────────────

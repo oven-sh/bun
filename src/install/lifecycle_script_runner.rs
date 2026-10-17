@@ -495,6 +495,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         self.maybe_finished();
     }
 
+    #[inline(never)]
     pub(crate) fn on_reader_error(&mut self, err: &bun_sys::Error) {
         debug_assert!(self.remaining_fds > 0);
         self.remaining_fds -= 1;
@@ -510,6 +511,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         self.maybe_finished();
     }
 
+    #[inline(never)]
     fn maybe_finished(&mut self) {
         if !self.has_called_process_exit || self.remaining_fds != 0 {
             return;

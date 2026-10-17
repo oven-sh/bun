@@ -165,6 +165,13 @@ Write the value with `=`. In `--compile-exec-argv="--disallow-code-generation-fr
 
 A compiled executable does not read its own command line as Bun flags. `./server --preload ./x.js` passes both arguments to the program in `process.argv`.
 
+### An executable that has `=strict` without the flag
+
+`bun build --compile --aot --compile-trim-runtime` gives the executable `=strict` by itself when the compiler finds nothing in the program that makes or loads code at run time. See [Parts your program does not use](/bundler/executables#parts-your-program-does-not-use). Two things differ from passing the flag:
+
+- The `EvalError` says that `--compile-trim-runtime` is the reason.
+- `process.execArgv` does not list the flag, so the check in [Checking that the flag is on](#checking-that-the-flag-is-on) fails. If your program depends on `=strict`, embed the flag as above.
+
 ### Files on disk are not part of the program
 
 A compiled executable is stored in itself. With `=strict`, what it loads from disk is not [static code](#how-strict-decides), so the engine refuses it.

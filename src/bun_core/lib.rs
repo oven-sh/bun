@@ -246,7 +246,8 @@ pub mod env_var;
 pub mod feature_flags;
 pub use code_generation::{
     CODE_GENERATION_FROM_STRINGS_DISALLOWED_BY_BUILD, CodeGenerationFromStrings,
-    code_generation_from_strings, disallow_code_generation_from_strings,
+    code_generation_from_strings, code_generation_from_strings_by_flags, disallow_code_generation_from_strings,
+    disallow_code_generation_in_trimmed_executable, is_code_generation_disallowed_by_trimming,
 };
 
 /// Tier-0 path-separator predicates. Sunk from `bun_paths` so `bun_core::util`

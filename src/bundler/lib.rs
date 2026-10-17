@@ -292,6 +292,8 @@ pub mod options {
         BytecodePayload,
         #[strum(serialize = "aot-image")]
         AotImage,
+        #[strum(serialize = "runtime-use")]
+        RuntimeUse,
         /// The string table every chunk's `ModuleInfo` body indexes (`ModuleInfoStringTable::serialize`).
         #[strum(serialize = "module-info-string-table")]
         ModuleInfoStringTable,
@@ -320,6 +322,7 @@ pub mod options {
                     | OutputKind::BytecodeStringTable
                     | OutputKind::BytecodePayload
                     | OutputKind::AotImage
+                    | OutputKind::RuntimeUse
                     | OutputKind::ModuleInfoStringTable
                     | OutputKind::PrelinkedModuleGraph
                     | OutputKind::MetafileJson
@@ -395,7 +398,6 @@ bun_dispatch::link_interface! {
         fn loaders() -> *const bun_collections::StringArrayHashMap<bun_ast::Loader>;
         fn eval_source() -> Option<*const bun_ast::Source>;
         fn main() -> &'static [u8];
-        fn read_dir_info_package_json(dir: &[u8]) -> Option<*const bun_resolver::PackageJSON>;
         fn is_blob_url(specifier: &[u8]) -> bool;
         fn resolve_blob(specifier: &[u8]) -> Option<options::OpaqueBlob>;
         fn blob_loader(blob: options::OpaqueBlob) -> Option<bun_ast::Loader>;

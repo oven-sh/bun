@@ -3054,17 +3054,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
                 }
-                js_ast::ExprData::ECall(mut e)
-                    if matches!(e.target.data, js_ast::ExprData::EMissing(..)) =>
-                {
+                js_ast::ExprData::ECall(mut e) if matches!(e.target.data, js_ast::ExprData::EMissing(..)) => {
                     return self
-                        .substitute_single_use_symbol_in_child(
-                            &mut e.args[0],
-                            expr,
-                            r#ref,
-                            replacement,
-                            replacement_can_be_removed,
-                        )
+                        .substitute_single_use_symbol_in_child(&mut e.args[0], expr, r#ref, replacement, replacement_can_be_removed)
                         .unwrap_or(Substitution::Continue);
                 }
                 js_ast::ExprData::ECall(mut e) => {
@@ -4423,10 +4415,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `ClauseItem.alias` is an arena-owned `StoreStr` valid for 'a.
             let alias: &'a [u8] = item.alias.slice();
             self.check_for_non_bmp_code_point(item.alias_loc, alias);
-            if alias == b"createRequire"
-                && matches!(path.text, b"module" | b"node:module")
-                && self.options.compiles_ahead_of_time
-            {
+            if alias == b"createRequire" && matches!(path.text, b"module" | b"node:module") && self.options.compiles_ahead_of_time {
                 self.create_require_refs.push(r#ref);
             }
 
@@ -5578,9 +5567,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.is_after_jump = was_after_jump
             || (self.options.compiles_ahead_of_time
                 && part_stmts.iter().any(|stmt| {
-                    crate::scan::scan_side_effects::SideEffects::always_throws_or_returns(
-                        self, *stmt,
-                    )
+                    crate::scan::scan_side_effects::SideEffects::always_throws_or_returns(self, *stmt)
                 }));
 
         // Insert any relocated variable statements now

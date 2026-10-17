@@ -25,4 +25,17 @@ function onDarwin(): number {
   }
 }
 
-console.log(process.platform === "darwin" ? onDarwin() : onLinux());
+function onWindows(): number {
+  const kernel32 = dlopen("kernel32.dll", { VirtualQuery: { args: [FFIType.u64, FFIType.ptr, FFIType.u64], returns: FFIType.u64 } });
+  const information = new BigUint64Array(6);
+  const words = new Uint32Array(information.buffer);
+  const isPrivate = 0x20000, anyExecute = 0xf0;
+  let found = 0;
+  for (let address = 0n; kernel32.symbols.VirtualQuery(address, ptr(information), information.byteLength); address = information[0] + information[3]) {
+    const [allocationProtection, type] = [words[4], words[10]];
+    if (type === isPrivate && allocationProtection & anyExecute && information[0] === information[1]) found++;
+  }
+  return found;
+}
+
+console.log(process.platform === "darwin" ? onDarwin() : process.platform === "win32" ? onWindows() : onLinux());

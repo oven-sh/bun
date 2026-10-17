@@ -310,18 +310,13 @@ impl<'a> TsNode<'a> {
                     _ => false,
                 }
         }
-        self.file.active_rule_overlaps().contains(pair)
-            && matches!(self.to_ast(), Some(Node::Expr(e)) if is_reported(e))
+        self.file.active_rule_overlaps().contains(pair) && matches!(self.to_ast(), Some(Node::Expr(e)) if is_reported(e))
     }
 
     /// Whether `no-unsafe-type-assertion` leaves this cast to `bun/aot-outside-data`, which reports it, or the last of `a as B as C`.
     pub fn is_deferred_to_aot_outside_data(self) -> bool {
         use crate::ast::{ExprTag, Node};
-        if !self
-            .file
-            .active_rule_overlaps()
-            .contains(crate::language::RuleOverlaps::NO_UNSAFE_TYPE_ASSERTION_LEAVES)
-        {
+        if !self.file.active_rule_overlaps().contains(crate::language::RuleOverlaps::NO_UNSAFE_TYPE_ASSERTION_LEAVES) {
             return false;
         }
         let Some(Node::Expr(mut cast)) = self.to_ast() else {
@@ -342,8 +337,7 @@ impl<'a> TsNode<'a> {
 
     /// For `x as T`, where `x` is `any` or `unknown` and does not come from typed code of the program.
     pub fn aot_check_external_data_inflow(self) -> Option<bun_sema::check::AotCheck> {
-        self.file
-            .query(|q| q.aot_check_external_data_inflow(self.raw))
+        self.file.query(|q| q.aot_check_external_data_inflow(self.raw))
     }
 
     /// `checker.getContextualTypeForArgumentAtIndex(node, index)`

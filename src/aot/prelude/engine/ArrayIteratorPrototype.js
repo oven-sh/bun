@@ -24,41 +24,47 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-export function next() {
-  "use strict";
+export function next()
+{
+    "use strict";
 
-  if (!$isArrayIterator(this))
-    throw new TypeError("%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance");
+    if (!$isArrayIterator(this))
+        throw new TypeError("%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance");
 
-  var index = $getArrayIteratorInternalField(this, $arrayIteratorFieldIndex);
-  if (index === -1) return { value: undefined, done: true };
+    var index = $getArrayIteratorInternalField(this, $arrayIteratorFieldIndex);
+    if (index === -1)
+        return { value: undefined, done: true };
 
-  var array = $getArrayIteratorInternalField(this, $arrayIteratorFieldIteratedObject);
-  if ($isTypedArrayView(array) && $isDetached(array))
-    throw new TypeError("Underlying ArrayBuffer has been detached from the view or out-of-bounds");
+    var array = $getArrayIteratorInternalField(this, $arrayIteratorFieldIteratedObject);
+    if ($isTypedArrayView(array) && $isDetached(array))
+        throw new TypeError("Underlying ArrayBuffer has been detached from the view or out-of-bounds");
 
-  var kind = $getArrayIteratorInternalField(this, $arrayIteratorFieldKind);
-  return $arrayIteratorNextHelper.$call(this, array, kind, index);
+    var kind = $getArrayIteratorInternalField(this, $arrayIteratorFieldKind);
+    return $arrayIteratorNextHelper.$call(this, array, kind, index);
 }
 
 // FIXME: We have to have this because we can't implement this all as one function and meet our inlining heuristics.
 // Collectively, next and this have ~130 bytes of bytecodes but our limit is 120.
 $linkTimeConstant;
-export function arrayIteratorNextHelper(array, kind, index) {
-  "use strict";
-  var done = true;
-  var value;
+export function arrayIteratorNextHelper(array, kind, index)
+{
+    "use strict";
+    var done = true;
+    var value;
 
-  var length = $isTypedArrayView(array) ? $typedArrayLength(array) : $toLength(array.length);
-  if (index < length) {
-    $putArrayIteratorInternalField(this, $arrayIteratorFieldIndex, index + 1);
-    done = false;
-    if (kind === $iterationKindKey) value = index;
-    else {
-      value = array[index];
-      if (kind === $iterationKindEntries) value = [index, value];
-    }
-  } else $putArrayIteratorInternalField(this, $arrayIteratorFieldIndex, -1);
+    var length = $isTypedArrayView(array) ? $typedArrayLength(array) : $toLength(array.length);
+    if (index < length) {
+        $putArrayIteratorInternalField(this, $arrayIteratorFieldIndex, index + 1);
+        done = false;
+        if (kind === $iterationKindKey)
+            value = index;
+        else {
+            value = array[index];
+            if (kind === $iterationKindEntries)
+                value = [index, value];
+        }
+    } else
+        $putArrayIteratorInternalField(this, $arrayIteratorFieldIndex, -1);
 
-  return { value, done };
+    return { value, done };
 }

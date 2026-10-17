@@ -11,7 +11,7 @@ import { availableParallelism } from "node:os";
 import { basename, dirname, extname, relative, resolve, sep } from "node:path";
 import type { Config } from "./config.ts";
 import { assert } from "./error.ts";
-import { linksWithLld } from "./flags.ts";
+import { islandsPlanPath, linksWithLld } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { BuildNode, Ninja, PoolName, Rule } from "./ninja.ts";
 import { quote } from "./shell.ts";
@@ -196,7 +196,7 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   if (cfg.islands) {
     assert(cfg.cxxfilt !== undefined, "islands need llvm-cxxfilt");
     n.rule("link_with_islands", {
-      command: `${cfg.jsRuntime} ${q(islandsScript(cfg))} ${q(islandsDoors(cfg))} ${q(cfg.cxxfilt)} $out.islands -- ${cxx} @$out.rsp $lazy $ldflags -o $out${machoPostlinkCommand(cfg)}`,
+      command: `${cfg.jsRuntime} ${q(islandsScript(cfg))} ${q(islandsDoors(cfg))} ${q(cfg.cxxfilt)} $out.islands ${q(islandsPlanPath(cfg))} $out.islands-plan -- ${cxx} @$out.rsp $lazy $ldflags -o $out${machoPostlinkCommand(cfg)}`,
       description: "link $out with islands",
       rspfile: "$out.rsp",
       rspfile_content: "$in_newline",
@@ -486,6 +486,7 @@ export interface LinkOpts {
 }
 
 const islandsScript = (cfg: Config) => resolve(cfg.cwd, "scripts", "build", "islands.ts");
+const islandsLayoutScript = (cfg: Config) => resolve(cfg.cwd, "scripts", "build", "islands-layout.ts");
 const islandsDoors = (cfg: Config) => resolve(cfg.cwd, "scripts", "build", "islands.doors");
 
 /**
@@ -497,6 +498,7 @@ export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts
 
   // Linker maps are implicit outputs (ninja tracks them but they're not in $out)
   const implicitOutputs = (opts.linkerMapOutputs ?? []).map(map => resolve(cfg.buildDir, map));
+  if (opts.islands && cfg.islands) implicitOutputs.push(absOut + ".islands-plan");
 
   const lazy = opts.lazyObjects ?? [];
   const lazyInputs: string[] = [];
@@ -529,7 +531,7 @@ export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts
     toolIdentityFile(cfg, "cxx"),
     ...(cfg.ld !== "" ? [toolIdentityFile(cfg, "ld")] : []),
     ...(opts.implicitInputs ?? []),
-    ...(opts.islands && cfg.islands ? [islandsScript(cfg), islandsDoors(cfg)] : []),
+    ...(opts.islands && cfg.islands ? [islandsScript(cfg), islandsLayoutScript(cfg), islandsDoors(cfg)] : []),
     ...lazyInputs,
   ];
   // lld-link writes the exe's import library under obj/ (flags.ts /IMPLIB)

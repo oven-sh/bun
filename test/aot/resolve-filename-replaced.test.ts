@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
 import { describe, test } from "./supported";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 // A replaced `Module._resolveFilename` is asked for every name that is required from then on, also for one that the build could resolve
 // itself. Packages that give paths an alias work this way.
@@ -50,13 +50,7 @@ describe.concurrent.each(Object.keys(programs))("%s", entry => {
     const written = `if (process.argv.length > 9) { require("./other.js"); require("./dep.js"); }\n`;
     using dir = tempDir("resolve-filename", { ...files, [entry]: programs[entry] + written });
     const run = async (flags: string[], env: Record<string, string | undefined>) => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "run", ...flags, entry],
-        cwd: String(dir),
-        env,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+      await using proc = Bun.spawn({ cmd: [bunExe(), "run", ...flags, entry], cwd: String(dir), env, stdout: "pipe", stderr: "pipe" });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       return { stdout, stderr, exitCode };
     };

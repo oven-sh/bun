@@ -5,16 +5,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 const sources = {
-  "tsconfig.json": JSON.stringify({
-    compilerOptions: {
-      strict: true,
-      module: "esnext",
-      moduleResolution: "bundler",
-      target: "esnext",
-      types: [],
-      lib: ["esnext"],
-    },
-  }),
+  "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, module: "esnext", moduleResolution: "bundler", target: "esnext", types: [], lib: ["esnext"] } }),
   "src/index.ts": `import { greet } from "./greet";
 import type { Options } from "./options";
 export interface Server {
@@ -86,14 +77,11 @@ async function build(cwd: string, ...args: string[]) {
 }
 
 const withoutMark = (declarations: string) => declarations.replace(/^\/\/ @sound \S+ [0-9a-f]{64}\n/, "");
-const leftOut = (why: string) =>
-  `warn: --dts: the typed JavaScript that --aot compiles a package from is left out: ${why}\n`;
+const leftOut = (why: string) => `warn: --dts: the typed JavaScript that --aot compiles a package from is left out: ${why}\n`;
 
 function written(folder: string) {
   const files = (readdirSync(folder, { recursive: true }) as string[]).filter(name => name.endsWith(".d.ts")).sort();
-  return Promise.all(
-    files.map(async name => [name.replaceAll("\\", "/"), withoutMark(await Bun.file(join(folder, name)).text())]),
-  ).then(Object.fromEntries);
+  return Promise.all(files.map(async name => [name.replaceAll("\\", "/"), withoutMark(await Bun.file(join(folder, name)).text())])).then(Object.fromEntries);
 }
 
 describe("bun build --dts", () => {
@@ -103,12 +91,8 @@ describe("bun build --dts", () => {
     expect(stderr).toBe("");
     expect(await written(join(String(dir), "dist"))).toEqual({ "index.d.ts": rolledUp });
     expect(readdirSync(join(String(dir), "dist")).sort()).toEqual(["index.d.ts", "index.js", "index.sound.ts"]);
-    const sha256 = createHash("sha256")
-      .update(await Bun.file(join(String(dir), "dist", "index.js")).bytes())
-      .digest("hex");
-    expect(await Bun.file(join(String(dir), "dist", "index.d.ts")).text()).toBe(
-      `// @sound index.sound.ts ${sha256}\n` + rolledUp,
-    );
+    const sha256 = createHash("sha256").update(await Bun.file(join(String(dir), "dist", "index.js")).bytes()).digest("hex");
+    expect(await Bun.file(join(String(dir), "dist", "index.d.ts")).text()).toBe(`// @sound index.sound.ts ${sha256}\n` + rolledUp);
     expect(stdout).toContain("index.d.ts");
     expect(stdout).toContain("(declaration)");
     expect(await Bun.file(join(String(dir), "dist", "index.js")).exists()).toBe(true);
@@ -118,23 +102,9 @@ describe("bun build --dts", () => {
   test("names no declaration map, which it does not write", async () => {
     using dir = tempDir("build-dts-no-map", {
       ...sources,
-      "tsconfig.json": JSON.stringify({
-        compilerOptions: {
-          strict: true,
-          module: "esnext",
-          moduleResolution: "bundler",
-          target: "esnext",
-          types: [],
-          lib: ["esnext"],
-          declaration: true,
-          declarationMap: true,
-        },
-      }),
+      "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, module: "esnext", moduleResolution: "bundler", target: "esnext", types: [], lib: ["esnext"], declaration: true, declarationMap: true } }),
     });
-    expect(await build(String(dir), "src/index.ts", "--outdir", "dist", "--root", "src", "--dts")).toMatchObject({
-      stderr: "",
-      exitCode: 0,
-    });
+    expect(await build(String(dir), "src/index.ts", "--outdir", "dist", "--root", "src", "--dts")).toMatchObject({ stderr: "", exitCode: 0 });
     expect(await written(join(String(dir), "dist"))).toEqual(declarations);
   });
 
@@ -142,16 +112,11 @@ describe("bun build --dts", () => {
     using dir = tempDir("build-dts-same", sources);
     expect((await build(String(dir), "src/index.ts", "--outdir", "with", "--dts")).exitCode).toBe(0);
     expect((await build(String(dir), "src/index.ts", "--outdir", "without")).exitCode).toBe(0);
-    expect(await Bun.file(join(String(dir), "with", "index.js")).text()).toBe(
-      await Bun.file(join(String(dir), "without", "index.js")).text(),
-    );
+    expect(await Bun.file(join(String(dir), "with", "index.js")).text()).toBe(await Bun.file(join(String(dir), "without", "index.js")).text());
   });
 
   test("a type error fails the build and nothing is written", async () => {
-    using dir = tempDir("build-dts-error", {
-      ...sources,
-      "src/greet.ts": `export function greet(options: { name: string }): number {\n  return options.name;\n}\n`,
-    });
+    using dir = tempDir("build-dts-error", { ...sources, "src/greet.ts": `export function greet(options: { name: string }): number {\n  return options.name;\n}\n` });
     const { stderr, exitCode } = await build(String(dir), "src/index.ts", "--outdir", "dist", "--dts");
     expect(stderr).toContain("TS2322");
     expect(await Bun.file(join(String(dir), "dist", "index.js")).exists()).toBe(false);
@@ -280,26 +245,14 @@ export declare namespace Geo {
     expect(stderr).toBe(leftOut("it does not support --minify yet"));
     expect(await written(join(String(dir), "dist"))).toEqual(declarations);
     expect(await Bun.file(join(String(dir), "dist", "index.d.ts")).text()).toBe(declarations["index.d.ts"]);
-    expect(readdirSync(join(String(dir), "dist")).sort()).toEqual([
-      "greet.d.ts",
-      "index.d.ts",
-      "index.js",
-      "options.d.ts",
-    ]);
+    expect(readdirSync(join(String(dir), "dist")).sort()).toEqual(["greet.d.ts", "index.d.ts", "index.js", "options.d.ts"]);
     expect(exitCode).toBe(0);
   });
 
   test("--sourcemap is written when it is asked for", async () => {
     using dir = tempDir("build-dts-sourcemap", sources);
-    expect(
-      (await build(String(dir), "src/index.ts", "--outdir", "dist", "--sourcemap=external", "--dts")).exitCode,
-    ).toBe(0);
-    expect(readdirSync(join(String(dir), "dist")).sort()).toEqual([
-      "index.d.ts",
-      "index.js",
-      "index.js.map",
-      "index.sound.ts",
-    ]);
+    expect((await build(String(dir), "src/index.ts", "--outdir", "dist", "--sourcemap=external", "--dts")).exitCode).toBe(0);
+    expect(readdirSync(join(String(dir), "dist")).sort()).toEqual(["index.d.ts", "index.js", "index.js.map", "index.sound.ts"]);
   });
 
   test("--root: a declaration file for every source file, where it is under the root", async () => {
@@ -310,21 +263,12 @@ export declare namespace Geo {
     expect(await Bun.file(join(String(dir), "flat", "greet.d.ts")).text()).toBe(declarations["greet.d.ts"]);
     const { stderr, exitCode } = await build(String(dir), "src/index.ts", "--outdir", "dist", "--root", ".", "--dts");
     expect(stderr).toBe("");
-    expect(Object.keys(await written(join(String(dir), "dist")))).toEqual([
-      "src/greet.d.ts",
-      "src/index.d.ts",
-      "src/options.d.ts",
-    ]);
+    expect(Object.keys(await written(join(String(dir), "dist")))).toEqual(["src/greet.d.ts", "src/index.d.ts", "src/options.d.ts"]);
     expect(exitCode).toBe(0);
   });
 
   test("a source file outside the root is an error", async () => {
-    using dir = tempDir("build-dts-outside", {
-      ...sources,
-      "shared.ts": `export const shared = 1;\n`,
-      "src/greet.ts": `export { shared as greet } from "../shared";\n`,
-      "src/index.ts": `export { greet } from "./greet";\n`,
-    });
+    using dir = tempDir("build-dts-outside", { ...sources, "shared.ts": `export const shared = 1;\n`, "src/greet.ts": `export { shared as greet } from "../shared";\n`, "src/index.ts": `export { greet } from "./greet";\n` });
     const { stderr, exitCode } = await build(String(dir), "src/index.ts", "--outdir", "dist", "--root", "src", "--dts");
     expect(stderr).toContain("outside the root directory");
     expect(exitCode).toBe(1);
@@ -332,43 +276,19 @@ export declare namespace Geo {
 
   test("--no-bundle writes one for each entry point", async () => {
     using dir = tempDir("build-dts-no-bundle", sources);
-    const { stderr, exitCode } = await build(
-      String(dir),
-      "src/index.ts",
-      "src/greet.ts",
-      "src/options.ts",
-      "--no-bundle",
-      "--outdir",
-      "dist",
-      "--dts",
-    );
+    const { stderr, exitCode } = await build(String(dir), "src/index.ts", "src/greet.ts", "src/options.ts", "--no-bundle", "--outdir", "dist", "--dts");
     expect(stderr).toBe("");
     expect(await written(join(String(dir), "dist"))).toEqual(declarations);
-    expect(readdirSync(join(String(dir), "dist")).sort()).toEqual(
-      ["greet", "index", "options"].flatMap(name => [`${name}.d.ts`, `${name}.js`, `${name}.sound.ts`]),
-    );
+    expect(readdirSync(join(String(dir), "dist")).sort()).toEqual(["greet", "index", "options"].flatMap(name => [`${name}.d.ts`, `${name}.js`, `${name}.sound.ts`]));
     expect(exitCode).toBe(0);
   });
 
   test("--no-bundle without a file that the entry points import types from", async () => {
     using dir = tempDir("build-dts-no-bundle-partly", sources);
-    const { stderr, exitCode } = await build(
-      String(dir),
-      "src/index.ts",
-      "src/greet.ts",
-      "--no-bundle",
-      "--outdir",
-      "dist",
-      "--dts",
-    );
-    expect(stderr).toStartWith(
-      leftOut("").trimEnd() + " with its types put back it has type errors, the first at greet.sound.ts:1:30: TS2307: ",
-    );
+    const { stderr, exitCode } = await build(String(dir), "src/index.ts", "src/greet.ts", "--no-bundle", "--outdir", "dist", "--dts");
+    expect(stderr).toStartWith(leftOut("").trimEnd() + " with its types put back it has type errors, the first at greet.sound.ts:1:30: TS2307: ");
     expect(stderr.trim().split("\n").length).toBe(1);
-    expect(await written(join(String(dir), "dist"))).toEqual({
-      "index.d.ts": declarations["index.d.ts"],
-      "greet.d.ts": declarations["greet.d.ts"],
-    });
+    expect(await written(join(String(dir), "dist"))).toEqual({ "index.d.ts": declarations["index.d.ts"], "greet.d.ts": declarations["greet.d.ts"] });
     expect(readdirSync(join(String(dir), "dist")).sort()).toEqual(["greet.d.ts", "greet.js", "index.d.ts", "index.js"]);
     expect(exitCode).toBe(0);
   });
@@ -382,31 +302,16 @@ export declare namespace Geo {
 
   test("Bun.build({ dts: true })", async () => {
     using dir = tempDir("build-dts-api", sources);
-    const { outputs, success } = await Bun.build({
-      entrypoints: [join(String(dir), "src/index.ts")],
-      dts: true,
-      tsconfig: join(String(dir), "tsconfig.json"),
-    });
+    const { outputs, success } = await Bun.build({ entrypoints: [join(String(dir), "src/index.ts")], dts: true, tsconfig: join(String(dir), "tsconfig.json") });
     expect(success).toBe(true);
     const files = outputs.filter(output => output.kind === "declaration");
-    expect(
-      Object.fromEntries(
-        await Promise.all(files.map(async file => [file.path.replace(/^\.\//, ""), withoutMark(await file.text())])),
-      ),
-    ).toEqual({ "index.d.ts": rolledUp });
-    expect(outputs.filter(output => output.kind === "sound").map(file => file.path.replace(/^\.\//, ""))).toEqual([
-      "index.sound.ts",
-    ]);
+    expect(Object.fromEntries(await Promise.all(files.map(async file => [file.path.replace(/^\.\//, ""), withoutMark(await file.text())])))).toEqual({ "index.d.ts": rolledUp });
+    expect(outputs.filter(output => output.kind === "sound").map(file => file.path.replace(/^\.\//, ""))).toEqual(["index.sound.ts"]);
   });
 
   test("Bun.build({ dts: true, outdir })", async () => {
     using dir = tempDir("build-dts-api-outdir", sources);
-    const { outputs, success } = await Bun.build({
-      entrypoints: [join(String(dir), "src/index.ts")],
-      dts: true,
-      outdir: join(String(dir), "dist"),
-      tsconfig: join(String(dir), "tsconfig.json"),
-    });
+    const { outputs, success } = await Bun.build({ entrypoints: [join(String(dir), "src/index.ts")], dts: true, outdir: join(String(dir), "dist"), tsconfig: join(String(dir), "tsconfig.json") });
     expect(success).toBe(true);
     expect(outputs.map(output => output.kind).sort()).toEqual(["declaration", "entry-point", "sound"]);
     expect(await written(join(String(dir), "dist"))).toEqual({ "index.d.ts": rolledUp });
@@ -415,13 +320,7 @@ export declare namespace Geo {
 
   test("Bun.build({ dts: true, root })", async () => {
     using dir = tempDir("build-dts-api-root", sources);
-    const { outputs, success } = await Bun.build({
-      entrypoints: [join(String(dir), "src/index.ts")],
-      dts: true,
-      root: join(String(dir), "src"),
-      outdir: join(String(dir), "dist"),
-      tsconfig: join(String(dir), "tsconfig.json"),
-    });
+    const { outputs, success } = await Bun.build({ entrypoints: [join(String(dir), "src/index.ts")], dts: true, root: join(String(dir), "src"), outdir: join(String(dir), "dist"), tsconfig: join(String(dir), "tsconfig.json") });
     expect(success).toBe(true);
     expect(outputs.filter(output => output.kind === "declaration").length).toBe(3);
     expect(await written(join(String(dir), "dist"))).toEqual(declarations);
@@ -429,20 +328,9 @@ export declare namespace Geo {
 
   test("Bun.build({ dts: true, minify: true }) warns and leaves the typed JavaScript out", async () => {
     using dir = tempDir("build-dts-api-minify", sources);
-    const { outputs, logs, success } = await Bun.build({
-      entrypoints: [join(String(dir), "src/index.ts")],
-      dts: true,
-      minify: true,
-      outdir: join(String(dir), "dist"),
-      tsconfig: join(String(dir), "tsconfig.json"),
-    });
+    const { outputs, logs, success } = await Bun.build({ entrypoints: [join(String(dir), "src/index.ts")], dts: true, minify: true, outdir: join(String(dir), "dist"), tsconfig: join(String(dir), "tsconfig.json") });
     expect(success).toBe(true);
     expect(logs.map(log => `${log.level}: ${log.message}\n`)).toEqual([leftOut("it does not support minify yet")]);
-    expect(outputs.map(output => output.kind).sort()).toEqual([
-      "declaration",
-      "declaration",
-      "declaration",
-      "entry-point",
-    ]);
+    expect(outputs.map(output => output.kind).sort()).toEqual(["declaration", "declaration", "declaration", "entry-point"]);
   });
 });

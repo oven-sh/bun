@@ -117,9 +117,9 @@ mod ty;
 pub mod tsutils;
 pub mod utils;
 
-pub use bun_sema::check::locked_builtins;
 pub use bun_sema::check::services::ReadLibrary;
 pub use bun_sema::check::{AotCheck, AotCheckKind};
+pub use bun_sema::check::locked_builtins;
 pub use flags::*;
 pub use id_set::{IdMap, IdSet, Indexed};
 pub use locate::{Locate, NameOf};

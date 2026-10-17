@@ -1,5 +1,19 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
+exports[`reads a name beyond the declared type from objects whose further keys differ; the receiver's type is declared and has an index signature 1`] = `
+"typed, function: 138.15 instructions (stub ColdOperationValue 59, stub FrontEndTypedGetByNameChecked 42, kernel 30.55, stub ColdOperationValue to operationAOTTypedGetByNameChecked with arguments 4, stub ColdOperationValue to operationAOTTypedGetByNameChecked 2, module 0.60), 199 bytes
+typed, module level: 136.55 instructions (stub ColdOperationValue 59, stub FrontEndTypedGetByNameChecked 42, module 29.55, stub ColdOperationValue to operationAOTTypedGetByNameChecked with arguments 4, stub ColdOperationValue to operationAOTTypedGetByNameChecked 2), 1958 bytes
+untyped, function: 60.35 instructions (kernel 49.40, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10.15, module 0.60, stub ReadOutOfLineByName 0.20), 516 bytes
+untyped, module level: 55.70 instructions (module 45.35, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10.15, stub ReadOutOfLineByName 0.20), 2195 bytes"
+`;
+
+exports[`makes a Set from a literal of eight constant strings 1`] = `
+"typed, function: 175.68 instructions (the runtime 153, kernel 15.38, stub PlainOperationWithInstance 5, stub PlainOperationWithInstance to operationAOTTypedNewSetInImage 2, module 0.30), 158 bytes
+typed, module level: 174.38 instructions (the runtime 153, module 14.38, stub PlainOperationWithInstance 5, stub PlainOperationWithInstance to operationAOTTypedNewSetInImage 2), 1176 bytes
+untyped, function: 190.68 instructions (the runtime 153, kernel 30.38, stub PlainOperationWithInstance 5, stub PlainOperationWithInstance to operationAOTTypedNewSetInImage 2, module 0.30), 289 bytes
+untyped, module level: 188.38 instructions (the runtime 153, module 28.38, stub PlainOperationWithInstance 5, stub PlainOperationWithInstance to operationAOTTypedNewSetInImage 2), 1211 bytes"
+`;
+
 exports[`reads a declared optional field that is absent from an instance that has an undeclared property; its class is extended by its value 1`] = `
 "typed, function: 35.27 instructions (kernel 20.15, stub GetByNameWithDirectColumnWithReceiverInRAX 13, stub ReadAbsentByName 2, module 0.12), 122 bytes
 typed, module level: 35.12 instructions (module 20.12, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub ReadAbsentByName 2), 1931 bytes

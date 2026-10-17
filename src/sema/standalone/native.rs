@@ -868,10 +868,7 @@ fn collate<T: Iterator<Item = u32> + Clone>(is_numeric_and_base: bool, a: T, b: 
     assert!(!is_numeric_and_base, "only the linter sorts by numbers");
     let primary = |c: u32| match u8::try_from(c) {
         Ok(c) if c.is_ascii_alphabetic() => 0x100 + u32::from(c.to_ascii_lowercase()),
-        Ok(c) if c.is_ascii() => BEFORE_LETTERS
-            .iter()
-            .position(|&it| it == c)
-            .map_or(0, |at| at as u32 + 1),
+        Ok(c) if c.is_ascii() => BEFORE_LETTERS.iter().position(|&it| it == c).map_or(0, |at| at as u32 + 1),
         _ => 0x200 + c,
     };
     let by_letters = a.clone().map(primary).cmp(b.clone().map(primary));
@@ -888,15 +885,8 @@ unsafe extern "C" fn Bun__collateUTF8(
 ) -> i32 {
     // SAFETY: the caller passes two slices, as pointers and lengths.
     let (a, b) = unsafe { (bytes(a, a_len), bytes(b, b_len)) };
-    let (a, b) = (
-        bstr::BStr::new(a).to_string(),
-        bstr::BStr::new(b).to_string(),
-    );
-    collate(
-        is_numeric_and_base,
-        a.chars().map(u32::from),
-        b.chars().map(u32::from),
-    )
+    let (a, b) = (bstr::BStr::new(a).to_string(), bstr::BStr::new(b).to_string());
+    collate(is_numeric_and_base, a.chars().map(u32::from), b.chars().map(u32::from))
 }
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__collateUTF16(

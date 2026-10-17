@@ -833,11 +833,7 @@ impl ExprsByKind {
 
     pub fn outside(file: &File, ranges: &[(u32, u32)]) -> ExprsByKind {
         let is_outside = |e: &Expr| {
-            let after = if ranges.is_empty() {
-                0
-            } else {
-                ranges.partition_point(|range| range.0 <= e.pos)
-            };
+            let after = if ranges.is_empty() { 0 } else { ranges.partition_point(|range| range.0 <= e.pos) };
             after == 0 || ranges[after - 1].1 <= e.pos
         };
         let mut starts = [0u32; ExprTag::COUNT + 1];
@@ -2552,9 +2548,7 @@ impl<S: Storage> FileIn<S> {
     }
 
     pub fn references_import_meta(&self) -> bool {
-        self.exprs
-            .iter()
-            .any(|e| matches!(e.kind, ExprKind::ImportMeta))
+        self.exprs.iter().any(|e| matches!(e.kind, ExprKind::ImportMeta))
     }
 
     pub fn constant_specifier(&self, e: ExprId) -> Option<Atom> {
@@ -2607,7 +2601,8 @@ impl<S: Storage> FileIn<S> {
 
     pub fn folded_specifier_choices(&self, e: ExprId) -> Vec<Atom> {
         let mut found = Vec::new();
-        if matches!(self[e].kind, ExprKind::String(_)) || !self.specifier_choices(e, &mut found) {
+        if matches!(self[e].kind, ExprKind::String(_)) || !self.specifier_choices(e, &mut found)
+        {
             found.clear();
         }
         found

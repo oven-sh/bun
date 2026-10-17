@@ -1788,11 +1788,8 @@ impl TestCommand {
         // outlives all observers.
         let mut env_loader: Box<DotEnv::Loader> = Box::new(DotEnv::Loader::init());
         let aot_graph = crate::cli::aot::graph(ctx)?;
-        let crash_if_interpreter_is_used = aot_graph
-            .as_ref()
-            .is_some_and(|graph| graph.runtime_options.crash_if_interpreter_is_used);
-        let aot_graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph> =
-            aot_graph.map(|graph| crate::cli::aot::as_dyn(graph));
+        let crash_if_interpreter_is_used = aot_graph.as_ref().is_some_and(|graph| graph.runtime_options.crash_if_interpreter_is_used);
+        let aot_graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph> = aot_graph.map(|graph| crate::cli::aot::as_dyn(graph));
         jsc::initialize(jsc::InitializeOptions {
             short_lived_globals: ctx.test_options.isolate,
             use_aot: aot_graph.is_some_and(|graph| !graph.aot_image().is_empty()),
@@ -2365,20 +2362,14 @@ impl TestCommand {
         if ctx.runtime_options.aot_audit && !has_type_errors {
             use crate::cli::check_command::{EntryPoint, watching};
             let preloads = crate::cli::aot_audit::preload_paths(vm);
-            let paths = test_files
-                .iter()
-                .map(|path| EntryPoint::file(path))
-                .chain(preloads.iter().map(|path| EntryPoint::file(path)));
+            let paths = test_files.iter().map(|path| EntryPoint::file(path)).chain(preloads.iter().map(|path| EntryPoint::file(path)));
             if !crate::cli::aot_audit::prepare(&paths.collect::<Vec<_>>(), watching(vm), true) {
                 // No test is run.
                 let vm_ptr: *mut VirtualMachine = vm;
                 // SAFETY: as where `--check` has found type errors, above.
                 vm.run_with_api_lock(|| Self::run_event_loop_for_watch(unsafe { &mut *vm_ptr }));
             }
-            if preloads
-                .iter()
-                .any(|path| crate::cli::aot_audit::is_skipped_for_type_errors(path))
-            {
+            if preloads.iter().any(|path| crate::cli::aot_audit::is_skipped_for_type_errors(path)) {
                 Global::exit(1);
             }
         }
@@ -2717,10 +2708,7 @@ impl TestCommand {
             let thrown = Bun__AOT__typeErrorsThrown();
             let thrown = thrown.to_utf8();
             let places = bun_core::strings::split(&thrown, b"\n").filter(|place| !place.is_empty());
-            let count = places
-                .clone()
-                .filter(|place| !place.starts_with(b"..."))
-                .count();
+            let count = places.clone().filter(|place| !place.starts_with(b"...")).count();
             if count > 0 {
                 pretty_error!(
                     "<yellow>{} --aot type error{}<r> thrown during this run, caught or not:\n",
@@ -3021,13 +3009,11 @@ impl TestCommand {
             let promise = if crate::cli::aot_audit::is_skipped_for_type_errors(file_name) {
                 None
             } else {
-                Some(
-                    vm.load_entry_point_for_test_runner(
-                        vm.standalone_module_graph
-                            .and_then(|graph| graph.find_by_source_path(file_path))
-                            .unwrap_or(file_path),
-                    )?,
-                )
+                Some(vm.load_entry_point_for_test_runner(
+                    vm.standalone_module_graph
+                        .and_then(|graph| graph.find_by_source_path(file_path))
+                        .unwrap_or(file_path),
+                )?)
             };
             // Only count the file once, not once per repeat
             if repeat_index == 0 {
@@ -3046,9 +3032,7 @@ impl TestCommand {
                         vm.unhandled_rejection(global, result, promise_js);
                     } else {
                         reporter.jest.current_file.print_if_needed();
-                        pretty_error!(
-                            "<r><red>error<r>: bun test --aot does not run this file: it has a type error, or it imports a file that has one (see above)\n"
-                        );
+                        pretty_error!("<r><red>error<r>: bun test --aot does not run this file: it has a type error, or it imports a file that has one (see above)\n");
                         Output::flush();
                     }
                     reporter.summary().fail += 1;

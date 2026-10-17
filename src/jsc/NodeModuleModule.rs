@@ -231,8 +231,8 @@ extern "C" fn NodeModuleModule__usesNonDefaultLoader(
         return true;
     };
     let basename = bun_paths::basename(path.slice());
-    let default_loader = strings::last_index_of_char(basename, b'.')
-        .and_then(|dot| DEFAULT_LOADERS.get(&basename[dot..]));
+    let default_loader =
+        strings::last_index_of_char(basename, b'.').and_then(|dot| DEFAULT_LOADERS.get(&basename[dot..]));
     !default_loader.is_some_and(|default_loader| {
         loader == default_loader
             || (loader.is_javascript_like()

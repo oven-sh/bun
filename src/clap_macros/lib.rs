@@ -229,10 +229,7 @@ fn parse_param_rest(line: &[u8]) -> Param {
         let takes_many_optional = after.starts_with(b"?...");
         let takes_many = after.starts_with(b"...");
         let takes_one_optional = after.starts_with(b"?");
-        let help_start = len
-            + 1
-            + 3 * ((takes_many || takes_many_optional) as usize)
-            + (takes_one_optional as usize);
+        let help_start = len + 1 + 3 * ((takes_many || takes_many_optional) as usize) + (takes_one_optional as usize);
         return Param {
             takes_value: if takes_many_optional {
                 Values::ManyOptional

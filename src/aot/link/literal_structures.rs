@@ -2,10 +2,7 @@ use super::nullish::{strip_casts, targets_of};
 use crate::id::{FuncId, StrId, V};
 use crate::ir::{Func, Op, Operation, Program, Term, func_flags};
 
-pub(super) fn find_single_structure_receivers(
-    program: &Program,
-    in_parallel: bun_sema::util::InParallel<'_>,
-) -> (Vec<(FuncId, V)>, Vec<String>) {
+pub(super) fn find_single_structure_receivers(program: &Program, in_parallel: bun_sema::util::InParallel<'_>) -> (Vec<(FuncId, V)>, Vec<String>) {
     struct Receiver {
         func: u32,
         accesses: Vec<(V, bool, StrId)>,
@@ -21,39 +18,16 @@ pub(super) fn find_single_structure_receivers(
         receivers: Vec<Receiver>,
         functions: usize,
     }
-    let mut tasks: Vec<(usize, &[Func], Found)> = program
-        .funcs
-        .chunks(FUNCTIONS_PER_TASK)
-        .enumerate()
-        .map(|(number, funcs)| (number * FUNCTIONS_PER_TASK, funcs, Found::default()))
-        .collect();
-    bun_sema::util::for_each_mut(&mut tasks, in_parallel, &|(
-        first_function,
-        funcs,
-        found,
-    )| {
-        let Found {
-            rows,
-            structure_ids,
-            receivers,
-            functions,
-        } = found;
+    let mut tasks: Vec<(usize, &[Func], Found)> = program.funcs.chunks(FUNCTIONS_PER_TASK).enumerate().map(|(number, funcs)| (number * FUNCTIONS_PER_TASK, funcs, Found::default())).collect();
+    bun_sema::util::for_each_mut(&mut tasks, in_parallel, &|(first_function, funcs, found)| {
+        let Found { rows, structure_ids, receivers, functions } = found;
         for (index, func) in funcs.iter().enumerate() {
-            if func.has(
-                func_flags::IS_TYPED | func_flags::IS_BUILTIN | func_flags::IS_IN_BUILTIN_MODULE,
-            ) {
+            if func.has(func_flags::IS_TYPED | func_flags::IS_BUILTIN | func_flags::IS_IN_BUILTIN_MODULE) {
                 continue;
             }
             *functions += 1;
             let this = match func.blocks.first() {
-                Some(entry)
-                    if func.has(func_flags::HAS_THIS) && entry.params.len() > func.params.len() =>
-                {
-                    entry.params[func
-                        .captures
-                        .len()
-                        .min(entry.params.len() - func.params.len() - 1)]
-                }
+                Some(entry) if func.has(func_flags::HAS_THIS) && entry.params.len() > func.params.len() => entry.params[func.captures.len().min(entry.params.len() - func.params.len() - 1)],
                 _ => V::NONE,
             };
             let mut literals: Vec<(V, Option<Vec<StrId>>)> = Vec::new();
@@ -69,28 +43,14 @@ pub(super) fn find_single_structure_receivers(
                             continue;
                         }
                         Some(Op::Operation { which, args }) => {
-                            let Some(&created) = args.first() else {
-                                continue;
-                            };
+                            let Some(&created) = args.first() else { continue };
                             let created = strip_casts(func, created);
                             let is_definition = *which == Operation::DefineField && args.len() == 3;
-                            if !is_definition
-                                && !matches!(
-                                    which,
-                                    Operation::CopyDataProperties
-                                        | Operation::CopyDataPropertiesExcluding
-                                )
-                            {
+                            if !is_definition && !matches!(which, Operation::CopyDataProperties | Operation::CopyDataPropertiesExcluding) {
                                 continue;
                             }
-                            if let Some(literal) = literal_positions
-                                .get(&created)
-                                .map(|&position| &mut literals[position])
-                            {
-                                let key = match is_definition
-                                    .then(|| func.op(strip_casts(func, args[1])))
-                                    .flatten()
-                                {
+                            if let Some(literal) = literal_positions.get(&created).map(|&position| &mut literals[position]) {
+                                let key = match is_definition.then(|| func.op(strip_casts(func, args[1]))).flatten() {
                                     Some(&Op::Str(key)) => Some(key),
                                     _ => None,
                                 };
@@ -112,11 +72,7 @@ pub(super) fn find_single_structure_receivers(
                         _ => continue,
                     };
                     let place = *place_of.entry(strip_casts(func, obj)).or_insert_with(|| {
-                        receivers.push(Receiver {
-                            func: (*first_function + index) as u32,
-                            accesses: Vec::new(),
-                            created: NO_STRUCTURE,
-                        });
+                        receivers.push(Receiver { func: (*first_function + index) as u32, accesses: Vec::new(), created: NO_STRUCTURE });
                         receivers.len() - 1
                     });
                     receivers[place].accesses.push((v, is_store, name));
@@ -162,14 +118,7 @@ pub(super) fn find_single_structure_receivers(
                 })
             })
             .collect();
-        receivers.extend(found.receivers.into_iter().map(|receiver| Receiver {
-            created: if receiver.created == NO_STRUCTURE {
-                NO_STRUCTURE
-            } else {
-                numbers[receiver.created as usize]
-            },
-            ..receiver
-        }));
+        receivers.extend(found.receivers.into_iter().map(|receiver| Receiver { created: if receiver.created == NO_STRUCTURE { NO_STRUCTURE } else { numbers[receiver.created as usize] }, ..receiver }));
         functions += found.functions;
     }
     let mut having: rustc_hash::FxHashMap<StrId, Vec<u32>> = Default::default();
@@ -188,23 +137,10 @@ pub(super) fn find_single_structure_receivers(
         names
     };
     let structures_with_all = |names: &[StrId]| -> Vec<u32> {
-        let Some(fewest) = names
-            .iter()
-            .map(|name| having.get(name).map_or(&[][..], |list| &list[..]))
-            .min_by_key(|list| list.len())
-        else {
-            return Vec::new();
-        };
-        fewest
-            .iter()
-            .copied()
-            .filter(|&row| names.iter().all(|name| rows[row as usize].contains(name)))
-            .collect()
+        let Some(fewest) = names.iter().map(|name| having.get(name).map_or(&[][..], |list| &list[..])).min_by_key(|list| list.len()) else { return Vec::new() };
+        fewest.iter().copied().filter(|&row| names.iter().all(|name| rows[row as usize].contains(name))).collect()
     };
-    let mut tasks: Vec<(&[Receiver], Vec<bool>)> = receivers
-        .chunks(RECEIVERS_PER_TASK)
-        .map(|receivers| (receivers, Vec::new()))
-        .collect();
+    let mut tasks: Vec<(&[Receiver], Vec<bool>)> = receivers.chunks(RECEIVERS_PER_TASK).map(|receivers| (receivers, Vec::new())).collect();
     bun_sema::util::for_each_mut(&mut tasks, in_parallel, &|(receivers, is_grown)| {
         is_grown.resize(rows.len(), false);
         for receiver in receivers.iter() {
@@ -221,23 +157,9 @@ pub(super) fn find_single_structure_receivers(
                         continue;
                     }
                     let structure_fields = &rows[row as usize];
-                    let is_extra = |name: StrId| {
-                        !structure_fields.contains(&name)
-                            && receiver
-                                .accesses
-                                .iter()
-                                .any(|access| access.1 && access.2 == name)
-                    };
-                    if names.iter().any(|&name| is_extra(name))
-                        && names
-                            .iter()
-                            .all(|&name| structure_fields.contains(&name) || is_extra(name))
-                    {
-                        let shared: Vec<StrId> = names
-                            .iter()
-                            .copied()
-                            .filter(|&name| structure_fields.contains(&name))
-                            .collect();
+                    let is_extra = |name: StrId| !structure_fields.contains(&name) && receiver.accesses.iter().any(|access| access.1 && access.2 == name);
+                    if names.iter().any(|&name| is_extra(name)) && names.iter().all(|&name| structure_fields.contains(&name) || is_extra(name)) {
+                        let shared: Vec<StrId> = names.iter().copied().filter(|&name| structure_fields.contains(&name)).collect();
                         if structures_with_all(&shared).len() <= 3 {
                             is_grown[row as usize] = true;
                         }
@@ -252,15 +174,8 @@ pub(super) fn find_single_structure_receivers(
             *all |= here;
         }
     }
-    let mut tasks: Vec<(&[Receiver], [[usize; 2]; 4], Vec<(FuncId, V)>)> = receivers
-        .chunks(RECEIVERS_PER_TASK)
-        .map(|receivers| (receivers, [[0usize; 2]; 4], Vec::new()))
-        .collect();
-    bun_sema::util::for_each_mut(&mut tasks, in_parallel, &|(
-        receivers,
-        counted,
-        labelled,
-    )| {
+    let mut tasks: Vec<(&[Receiver], [[usize; 2]; 4], Vec<(FuncId, V)>)> = receivers.chunks(RECEIVERS_PER_TASK).map(|receivers| (receivers, [[0usize; 2]; 4], Vec::new())).collect();
+    bun_sema::util::for_each_mut(&mut tasks, in_parallel, &|(receivers, counted, labelled)| {
         for receiver in receivers.iter() {
             let found = structures_with_all(&names_of(receiver));
             let class = match found[..] {
@@ -272,12 +187,7 @@ pub(super) fn find_single_structure_receivers(
             counted[class][0] += 1;
             counted[class][1] += receiver.accesses.len();
             if class == 0 {
-                labelled.extend(
-                    receiver
-                        .accesses
-                        .iter()
-                        .map(|access| (FuncId(receiver.func), access.0)),
-                );
+                labelled.extend(receiver.accesses.iter().map(|access| (FuncId(receiver.func), access.0)));
             }
         }
     });
@@ -291,25 +201,9 @@ pub(super) fn find_single_structure_receivers(
         labelled.append(&mut labeled_here);
     }
     labelled.sort_unstable();
-    let mut lines = vec![format!(
-        "rows: untyped functions {functions}; rows born in the text {} (grown by the text: {}); receivers {}",
-        rows.len(),
-        is_grown.iter().filter(|&&grown| grown).count(),
-        receivers.len()
-    )];
-    for (class, what) in [
-        "LABELLED: one row, not grown",
-        "one row, GROWN in the text",
-        "several rows have the names",
-        "no birth in the text has the names",
-    ]
-    .iter()
-    .enumerate()
-    {
-        lines.push(format!(
-            "rows: {:>7} receivers, {:>8} accesses: {what}",
-            counted[class][0], counted[class][1]
-        ));
+    let mut lines = vec![format!("rows: untyped functions {functions}; rows born in the text {} (grown by the text: {}); receivers {}", rows.len(), is_grown.iter().filter(|&&grown| grown).count(), receivers.len())];
+    for (class, what) in ["LABELLED: one row, not grown", "one row, GROWN in the text", "several rows have the names", "no birth in the text has the names"].iter().enumerate() {
+        lines.push(format!("rows: {:>7} receivers, {:>8} accesses: {what}", counted[class][0], counted[class][1]));
     }
     (labelled, lines)
 }
@@ -334,16 +228,7 @@ struct LiteralFlow<'a> {
 impl BlockOrder {
     fn new(func: &Func) -> BlockOrder {
         let count = func.blocks.len();
-        let successors: Vec<Vec<usize>> = func
-            .blocks
-            .iter()
-            .map(|block| {
-                targets_of(block.term.as_ref())
-                    .iter()
-                    .map(|target| target.block.idx())
-                    .collect()
-            })
-            .collect();
+        let successors: Vec<Vec<usize>> = func.blocks.iter().map(|block| targets_of(block.term.as_ref()).iter().map(|target| target.block.idx()).collect()).collect();
         let mut predecessors: Vec<Vec<usize>> = vec![Vec::new(); count];
         for (number, targets) in successors.iter().enumerate() {
             for &target in targets {
@@ -359,9 +244,7 @@ impl BlockOrder {
             let (block, next) = *top;
             top.1 += 1;
             match successors[block].get(next) {
-                Some(&target) if !std::mem::replace(&mut is_reached[target], true) => {
-                    calls.push((target, 0))
-                }
+                Some(&target) if !std::mem::replace(&mut is_reached[target], true) => calls.push((target, 0)),
                 Some(_) => {}
                 None => {
                     postorder.push(block);
@@ -380,12 +263,8 @@ impl BlockOrder {
             has_changed = false;
             for &block in postorder.iter().rev().skip(1) {
                 let mut found = NONE;
-                for &predecessor in predecessors[block]
-                    .iter()
-                    .filter(|&&predecessor| immediate[predecessor] != NONE)
-                {
-                    let (mut a, mut b) =
-                        (predecessor, if found == NONE { predecessor } else { found });
+                for &predecessor in predecessors[block].iter().filter(|&&predecessor| immediate[predecessor] != NONE) {
+                    let (mut a, mut b) = (predecessor, if found == NONE { predecessor } else { found });
                     while a != b {
                         while rank[a] < rank[b] {
                             a = immediate[a];
@@ -424,8 +303,7 @@ impl BlockOrder {
                 }
             }
         }
-        let (mut found_at, mut lowest, mut is_on_path) =
-            (vec![u32::MAX; count], vec![0u32; count], vec![false; count]);
+        let (mut found_at, mut lowest, mut is_on_path) = (vec![u32::MAX; count], vec![0u32; count], vec![false; count]);
         let (mut component, mut is_cyclic) = (vec![0u32; count], vec![false; count]);
         let (mut found, mut components) = (0u32, 0u32);
         let mut path: Vec<usize> = Vec::new();
@@ -457,8 +335,7 @@ impl BlockOrder {
                         }
                         if lowest[block] == found_at[block] {
                             let first = path.iter().rposition(|&other| other == block).unwrap_or(0);
-                            let is_a_cycle =
-                                path.len() - first > 1 || successors[block].contains(&block);
+                            let is_a_cycle = path.len() - first > 1 || successors[block].contains(&block);
                             for member in path.drain(first..) {
                                 is_on_path[member] = false;
                                 component[member] = components;
@@ -470,14 +347,7 @@ impl BlockOrder {
                 }
             }
         }
-        BlockOrder {
-            is_reached,
-            entered,
-            last_descendant,
-            component,
-            is_cyclic,
-            successors,
-        }
+        BlockOrder { is_reached, entered, last_descendant, component, is_cyclic, successors }
     }
 }
 
@@ -522,13 +392,7 @@ impl<'a> LiteralFlow<'a> {
                 }
             }
         }
-        LiteralFlow {
-            func,
-            order: std::cell::OnceCell::new(),
-            uses,
-            places,
-            halts,
-        }
+        LiteralFlow { func, order: std::cell::OnceCell::new(), uses, places, halts }
     }
 
     fn order(&self) -> &BlockOrder {
@@ -537,10 +401,7 @@ impl<'a> LiteralFlow<'a> {
 
     fn dominates(&self, above: usize, below: usize) -> bool {
         let order = self.order();
-        !order.is_reached[below]
-            || order.is_reached[above]
-                && order.entered[above] <= order.entered[below]
-                && order.entered[below] <= order.last_descendant[above]
+        !order.is_reached[below] || order.is_reached[above] && order.entered[above] <= order.entered[below] && order.entered[below] <= order.last_descendant[above]
     }
 
     fn is_in_cycle(&self, block: usize, but_through: usize) -> bool {
@@ -554,10 +415,7 @@ impl<'a> LiteralFlow<'a> {
             if next == block {
                 return true;
             }
-            if next != but_through
-                && order.component[next] == order.component[block]
-                && !std::mem::replace(&mut seen[next], true)
-            {
+            if next != but_through && order.component[next] == order.component[block] && !std::mem::replace(&mut seen[next], true) {
                 work.extend_from_slice(&order.successors[next]);
             }
         }
@@ -574,14 +432,7 @@ struct LiteralWindow {
     ends_at_spread: bool,
 }
 
-fn literal_window(
-    func: &Func,
-    flow: &LiteralFlow<'_>,
-    strs: &crate::ir::Strs,
-    it: V,
-    allocated_in: usize,
-    behind: usize,
-) -> LiteralWindow {
+fn literal_window(func: &Func, flow: &LiteralFlow<'_>, strs: &crate::ir::Strs, it: V, allocated_in: usize, behind: usize) -> LiteralWindow {
     let mut window = LiteralWindow::default();
     let is_it = |operand: V| operand.is_some() && strip_casts(func, operand) == it;
     let no_uses = Vec::new();
@@ -592,43 +443,23 @@ fn literal_window(
     let (mut present, mut from) = (allocated_in, behind);
     loop {
         let block = &func.blocks[present];
-        let halt = flow.halts[present]
-            .iter()
-            .copied()
-            .find(|&at| at as usize >= from);
+        let halt = flow.halts[present].iter().copied().find(|&at| at as usize >= from);
         let first = places.partition_point(|&place| place < (present as u32, from as u32));
-        for &(_, at) in places[first..]
-            .iter()
-            .take_while(|place| place.0 == present as u32)
-        {
+        for &(_, at) in places[first..].iter().take_while(|place| place.0 == present as u32) {
             if halt.is_some_and(|halt| halt < at) {
                 return window;
             }
             let v = block.ops[at as usize];
             let Some(op) = func.op(v) else { continue };
             let goes_on = match op {
-                &Op::Coerce { value, why, .. } => {
-                    !is_it(value) || why == crate::ir::CoerceReason::Upcast
-                }
+                &Op::Coerce { value, why, .. } => !is_it(value) || why == crate::ir::CoerceReason::Upcast,
                 Op::Await(_) | Op::Yield(_) => false,
-                Op::Operation {
-                    which: Operation::DefineField,
-                    args,
-                } if args.len() == 3 && is_it(args[0]) => match func.op(strip_casts(func, args[1]))
-                {
-                    Some(&Op::Str(key))
-                        if !is_it(args[2])
-                            && window.stores.is_empty()
-                            && strs.get(key) != b"__proto__" =>
-                    {
+                Op::Operation { which: Operation::DefineField, args } if args.len() == 3 && is_it(args[0]) => match func.op(strip_casts(func, args[1])) {
+                    Some(&Op::Str(key)) if !is_it(args[2]) && window.stores.is_empty() && strs.get(key) != b"__proto__" => {
                         if !window.row.contains(&key) {
                             window.row.push(key);
                         }
-                        if present == allocated_in
-                            && window.later_defines.is_empty()
-                            && !(block.ops.last() == Some(&v)
-                                && matches!(block.term, Some(Term::Invoke { .. })))
-                        {
+                        if present == allocated_in && window.later_defines.is_empty() && !(block.ops.last() == Some(&v) && matches!(block.term, Some(Term::Invoke { .. }))) {
                             window.defined_at_allocation = window.row.len();
                         } else {
                             window.later_defines.push((v, key));
@@ -648,10 +479,7 @@ fn literal_window(
                     goes_on
                 }
                 &Op::PropGet { obj, name } if is_it(obj) => window.row.contains(&name),
-                Op::Operation {
-                    which: Operation::CopyDataProperties,
-                    args,
-                } if args.len() == 2 && is_it(args[0]) && !is_it(args[1]) => {
+                Op::Operation { which: Operation::CopyDataProperties, args } if args.len() == 2 && is_it(args[0]) && !is_it(args[1]) => {
                     window.ends_at_spread = true;
                     false
                 }
@@ -671,25 +499,14 @@ fn literal_window(
         let mut is_seen = false;
         if let Some(term) = &block.term {
             term.for_each_operand(|operand| is_seen |= is_it(operand));
-            is_seen |= targets_of(Some(term))
-                .iter()
-                .any(|target| target.args.iter().any(|&argument| is_it(argument)));
+            is_seen |= targets_of(Some(term)).iter().any(|target| target.args.iter().any(|&argument| is_it(argument)));
         }
         if is_seen {
             return window;
         }
         done.push(present);
-        let later: Vec<usize> = uses
-            .iter()
-            .copied()
-            .filter(|number| !done.contains(number))
-            .collect();
-        let Some(&next) = later
-            .iter()
-            .find(|&&next| later.iter().all(|&other| flow.dominates(next, other)))
-        else {
-            return window;
-        };
+        let later: Vec<usize> = uses.iter().copied().filter(|number| !done.contains(number)).collect();
+        let Some(&next) = later.iter().find(|&&next| later.iter().all(|&other| flow.dominates(next, other))) else { return window };
         if !flow.dominates(present, next) || flow.is_in_cycle(next, allocated_in) {
             return window;
         }
@@ -697,50 +514,24 @@ fn literal_window(
     }
 }
 
-pub(super) fn find_first_stores(
-    program: &mut Program,
-    contents: &[u8],
-    in_parallel: bun_sema::util::InParallel<'_>,
-) {
+pub(super) fn find_first_stores(program: &mut Program, contents: &[u8], in_parallel: bun_sema::util::InParallel<'_>) {
     const FUNCTIONS_PER_TASK: usize = 256;
     let strs = &program.strs;
     type Found = Vec<(FuncId, V, u32)>;
-    let mut tasks: Vec<(usize, &mut [Func], Found)> = program
-        .funcs
-        .chunks_mut(FUNCTIONS_PER_TASK)
-        .enumerate()
-        .map(|(number, funcs)| (number * FUNCTIONS_PER_TASK, funcs, Found::default()))
-        .collect();
+    let mut tasks: Vec<(usize, &mut [Func], Found)> = program.funcs.chunks_mut(FUNCTIONS_PER_TASK).enumerate().map(|(number, funcs)| (number * FUNCTIONS_PER_TASK, funcs, Found::default())).collect();
     bun_sema::util::for_each_mut(&mut tasks, in_parallel, &|(first, funcs, found)| {
-        for (index, func) in funcs
-            .iter_mut()
-            .enumerate()
-            .filter(|function| contents[*first + function.0] & super::has::OBJECT_LITERALS != 0)
-        {
+        for (index, func) in funcs.iter_mut().enumerate().filter(|function| contents[*first + function.0] & super::has::OBJECT_LITERALS != 0) {
             let mut allocation_sites: Vec<(V, usize, usize)> = Vec::new();
             let mut has_late_store = false;
             for (number, block) in func.blocks.iter().enumerate() {
                 for (at, &v) in block.ops.iter().enumerate() {
                     match func.op(v) {
                         Some(Op::NewObject) => allocation_sites.push((v, number, at + 1)),
-                        Some(&Op::PropSet { obj, .. }) if !has_late_store => {
-                            has_late_store =
-                                matches!(func.op(strip_casts(func, obj)), Some(Op::NewObject))
-                        }
-                        Some(Op::Operation {
-                            which: Operation::DefineField,
-                            args,
-                        }) if !has_late_store && args.len() == 3 => {
+                        Some(&Op::PropSet { obj, .. }) if !has_late_store => has_late_store = matches!(func.op(strip_casts(func, obj)), Some(Op::NewObject)),
+                        Some(Op::Operation { which: Operation::DefineField, args }) if !has_late_store && args.len() == 3 => {
                             let literal = strip_casts(func, args[0]);
-                            let ends_in_invoke = block.ops.last() == Some(&v)
-                                && matches!(block.term, Some(Term::Invoke { .. }));
-                            has_late_store = matches!(func.op(literal), Some(Op::NewObject))
-                                && (ends_in_invoke
-                                    || allocation_sites
-                                        .iter()
-                                        .rev()
-                                        .find(|allocation_site| allocation_site.0 == literal)
-                                        .is_none_or(|allocation_site| allocation_site.1 != number));
+                            let ends_in_invoke = block.ops.last() == Some(&v) && matches!(block.term, Some(Term::Invoke { .. }));
+                            has_late_store = matches!(func.op(literal), Some(Op::NewObject)) && (ends_in_invoke || allocation_sites.iter().rev().find(|allocation_site| allocation_site.0 == literal).is_none_or(|allocation_site| allocation_site.1 != number));
                         }
                         _ => {}
                     }
@@ -753,11 +544,7 @@ pub(super) fn find_first_stores(
             let mut rewritten: Vec<(V, V, StrId, V)> = Vec::new();
             for (it, allocated_in, behind) in allocation_sites {
                 let window = literal_window(func, &flow, strs, it, allocated_in, behind);
-                if window.ends_at_spread
-                    || window.row.len() == window.defined_at_allocation
-                    || window.row.len() > 62
-                    || window.row.iter().any(|&name| is_index_name(strs.get(name)))
-                {
+                if window.ends_at_spread || window.row.len() == window.defined_at_allocation || window.row.len() > 62 || window.row.iter().any(|&name| is_index_name(strs.get(name))) {
                     continue;
                 }
                 for &(define, name) in &window.later_defines {
@@ -767,24 +554,14 @@ pub(super) fn find_first_stores(
                 }
                 let mut is_stored = vec![false; window.row.len()];
                 for (store, name) in window.later_defines.into_iter().chain(window.stores) {
-                    if let Some(place) = window
-                        .row
-                        .iter()
-                        .position(|&other| other == name)
-                        .filter(|&place| place >= window.defined_at_allocation)
-                    {
+                    if let Some(place) = window.row.iter().position(|&other| other == name).filter(|&place| place >= window.defined_at_allocation) {
                         let is_first = !std::mem::replace(&mut is_stored[place], true);
-                        found.push((
-                            FuncId::new(*first + index),
-                            store,
-                            1 << 30 | u32::from(is_first) << 9 | 1 << 8 | place as u32,
-                        ));
+                        found.push((FuncId::new(*first + index), store, 1 << 30 | u32::from(is_first) << 9 | 1 << 8 | place as u32));
                     }
                 }
             }
             for (define, obj, name, value) in rewritten {
-                func.values[define.idx()].def =
-                    crate::ir::Def::Op(Op::PropSet { obj, name, value });
+                func.values[define.idx()].def = crate::ir::Def::Op(Op::PropSet { obj, name, value });
             }
         }
         found.sort_unstable();
@@ -795,12 +572,5 @@ pub(super) fn find_first_stores(
 }
 
 fn is_index_name(name: &[u8]) -> bool {
-    !name.is_empty()
-        && name.len() <= 10
-        && name.iter().all(u8::is_ascii_digit)
-        && (name == b"0" || name[0] != b'0')
-        && std::str::from_utf8(name)
-            .ok()
-            .and_then(|text| text.parse::<u64>().ok())
-            .is_some_and(|number| number < u32::MAX as u64)
+    !name.is_empty() && name.len() <= 10 && name.iter().all(u8::is_ascii_digit) && (name == b"0" || name[0] != b'0') && std::str::from_utf8(name).ok().and_then(|text| text.parse::<u64>().ok()).is_some_and(|number| number < u32::MAX as u64)
 }

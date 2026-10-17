@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
+import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
-import { test } from "./supported";
 
 const programs = {
   "without a direct eval": `function f() { return 1; }
@@ -32,19 +32,8 @@ for (const [kind, program] of Object.entries(programs)) {
     test(`a file ${kind} that ends with ${ending} answers as under plain Bun`, async () => {
       using dir = tempDir("aot-words-of-the-compiler", { "main.js": program + last });
       const outfile = join(String(dir), "out" + (isWindows ? ".exe" : ""));
-      const built = await run(String(dir), [
-        bunExe(),
-        "build",
-        "--compile",
-        "--aot",
-        "./main.js",
-        "--outfile",
-        outfile,
-      ]);
-      expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
-        stderr: "",
-        exitCode: 0,
-      });
+      const built = await run(String(dir), [bunExe(), "build", "--compile", "--aot", "./main.js", "--outfile", outfile]);
+      expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
       const plain = await run(String(dir), [bunExe(), "run", "./main.js"]);
       expect(plain.stdout).toContain("return 1;");
       expect(await run(String(dir), [outfile])).toEqual(plain);

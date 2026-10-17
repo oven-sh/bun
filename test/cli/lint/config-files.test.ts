@@ -6408,12 +6408,7 @@ describe.skipIf(isWindows).concurrent("a symbolic link that leads nowhere, to it
   };
   const others = { "a.js": code, "sub/b.js": code };
   /** The files with problems, what is printed, and the exit code. `links`: where each is, and what it has. */
-  const linted = async (
-    flavor: string,
-    links: Record<string, string>,
-    args = ["."],
-    files: Record<string, string> = others,
-  ) => {
+  const linted = async (flavor: string, links: Record<string, string>, args = ["."], files: Record<string, string> = others) => {
     const inProject = Object.entries({ ...flavors[flavor], ...files }).map(([name, text]) => [`project/${name}`, text]);
     const before = (dir: string) =>
       Object.entries(links).forEach(([path, to]) => symlinkSync(to, join(dir, "project", path)));

@@ -7,21 +7,9 @@ const languages = [false, true];
 
 generated(
   "constant expressions",
-  seeds.flatMap(seed =>
-    languages.map(isTypeScript => ({
-      name: `seed ${seed}, ${isTypeScript ? "TypeScript" : "JavaScript"}`,
-      isAlwaysRun: seed <= 4,
-      make: () => expressions(seed, isTypeScript),
-    })),
-  ),
+  seeds.flatMap(seed => languages.map(isTypeScript => ({ name: `seed ${seed}, ${isTypeScript ? "TypeScript" : "JavaScript"}`, isAlwaysRun: seed <= 4, make: () => expressions(seed, isTypeScript) }))),
 );
 generated(
   "folded values",
-  seeds.slice(0, 24).flatMap(seed =>
-    languages.map(isTypeScript => ({
-      name: `seed ${seed}, ${isTypeScript ? "TypeScript" : "JavaScript"}`,
-      isAlwaysRun: seed <= 2,
-      make: () => places(seed, isTypeScript),
-    })),
-  ),
+  seeds.slice(0, 24).flatMap(seed => languages.map(isTypeScript => ({ name: `seed ${seed}, ${isTypeScript ? "TypeScript" : "JavaScript"}`, isAlwaysRun: seed <= 2, make: () => places(seed, isTypeScript) }))),
 );

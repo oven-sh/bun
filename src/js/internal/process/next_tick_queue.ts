@@ -3,17 +3,26 @@
 // The ring grows by a node when it is full, so nothing is allocated for a tick unless more are
 // waiting than ever before. A ring that a burst has made larger than kMaxSize is dropped when a
 // drain has used less than a quarter of it.
+// Up to four arguments of a tick lie in its node. More than four lie in an array in `first`.
 const kMaxSize = 1024;
 
 class Tick {
   callback: unknown;
-  args: unknown[] | undefined;
+  count: number;
+  first: unknown;
+  second: unknown;
+  third: unknown;
+  fourth: unknown;
   frame: unknown;
   next: Tick;
 
   constructor() {
     this.callback = undefined;
-    this.args = undefined;
+    this.count = 0;
+    this.first = undefined;
+    this.second = undefined;
+    this.third = undefined;
+    this.fourth = undefined;
     this.frame = undefined;
     this.next = this;
   }
@@ -29,14 +38,14 @@ class TickQueue {
     this.size = 1;
   }
 
-  push(callback: unknown, args: unknown[] | undefined, frame: unknown): void {
+  take(callback: unknown, frame: unknown): Tick {
     const tick = this.write;
     let next = tick.next;
     if (next === this.read) next = this.grow(tick);
     tick.callback = callback;
-    tick.args = args;
     tick.frame = frame;
     this.write = next;
+    return tick;
   }
 
   grow(after: Tick): Tick {
@@ -57,6 +66,10 @@ class TickQueue {
 
 function newTickObject(callback: unknown, args: unknown, frame: unknown): Record<string, unknown> {
   return { callback, args, frame };
+}
+
+function listOf(...list: unknown[]): unknown[] {
+  return list;
 }
 
 function callWithAnyArguments(callback, args) {
@@ -95,34 +108,39 @@ function initializeNextTickQueue(process: typeof globalThis.process, nextTickQue
           const tick = queue.read;
           if (tick === queue.write) break;
           const callback: any = tick.callback;
-          const args = tick.args;
+          const count = tick.count;
           const frame = tick.frame;
           tick.callback = undefined;
-          tick.args = undefined;
           tick.frame = undefined;
           queue.read = tick.next;
           ran = (ran + 1) | 0;
           var restore = $getInternalField($asyncContext, 0);
           $putInternalField($asyncContext, 0, frame as any);
-          if (args === undefined) {
+          if (count === 0) {
             callback();
           } else {
-            switch (args.length) {
-              case 1:
-                callback(args[0]);
-                break;
-              case 2:
-                callback(args[0], args[1]);
-                break;
-              case 3:
-                callback(args[0], args[1], args[2]);
-                break;
-              case 4:
-                callback(args[0], args[1], args[2], args[3]);
-                break;
-              default:
-                callback(...args);
-                break;
+            const first = tick.first;
+            tick.first = undefined;
+            if (count === 1) {
+              callback(first);
+            } else if (count > 4) {
+              callback(...(first as unknown[]));
+            } else {
+              const second = tick.second;
+              tick.second = undefined;
+              if (count === 2) {
+                callback(first, second);
+              } else {
+                const third = tick.third;
+                tick.third = undefined;
+                if (count === 3) {
+                  callback(first, second, third);
+                } else {
+                  const fourth = tick.fourth;
+                  tick.fourth = undefined;
+                  callback(first, second, third, fourth);
+                }
+              }
             }
           }
           $putInternalField($asyncContext, 0, restore);
@@ -149,14 +167,22 @@ function initializeNextTickQueue(process: typeof globalThis.process, nextTickQue
         hooks[i](asyncId, "TickObject", 0, tock);
       } catch (err) {
         try {
-          console.error(typeof (err as any)?.stack === "string" ? (err as Error).stack : err);
+          console.error(
+            typeof (err as any)?.stack === "string" ? (err as Error).stack : err,
+          );
         } catch {}
         process.exit(1);
       }
     }
     const list = tock.args;
-    if (list === undefined) queue.push(tock.callback, undefined, tock.frame);
-    else queue.push(callWithAnyArguments, [tock.callback, list], tock.frame);
+    if (list === undefined) {
+      queue.take(tock.callback, tock.frame).count = 0;
+    } else {
+      const tick = queue.take(callWithAnyArguments, tock.frame);
+      tick.first = tock.callback;
+      tick.second = list;
+      tick.count = 2;
+    }
   }
 
   function nextTick(cb: unknown, ...args: unknown[]) {
@@ -167,10 +193,28 @@ function initializeNextTickQueue(process: typeof globalThis.process, nextTickQue
     }
     if (process._exiting) return;
 
-    const list = args.length !== 0 ? args : undefined;
+    const count = args.length;
     const frame: unknown = $getInternalField($asyncContext, 0);
-    if (tickInitHooks.length !== 0) pushWithInitHooks(cb, list, frame);
-    else queue.push(cb, list, frame);
+    if (tickInitHooks.length !== 0) {
+      pushWithInitHooks(cb, count !== 0 ? listOf(...args) : undefined, frame);
+    } else {
+      const tick = queue.take(cb, frame);
+      tick.count = count;
+      if (count !== 0) {
+        if (count > 4) {
+          tick.first = listOf(...args);
+        } else {
+          tick.first = args[0];
+          if (count !== 1) {
+            tick.second = args[1];
+            if (count !== 2) {
+              tick.third = args[2];
+              if (count !== 3) tick.fourth = args[3];
+            }
+          }
+        }
+      }
+    }
     $putInternalField(nextTickQueue, 0, 1);
   }
 

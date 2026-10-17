@@ -959,14 +959,7 @@ impl Checker<'_, '_> {
                             it.key.name().map(|name| self.atoms().bytes(name)) == Some(b"type")
                                 && self
                                     .modules_string_literal_like(cx.file, it.value)
-                                    .is_some_and(|(value, _)| {
-                                        self.atoms().bytes(value) == b"json"
-                                            || files.options.uses_ecmascript_bindings
-                                                && matches!(
-                                                    self.atoms().bytes(value),
-                                                    b"text" | b"file"
-                                                )
-                                    })
+                                    .is_some_and(|(value, _)| self.atoms().bytes(value) == b"json" || files.options.uses_ecmascript_bindings && matches!(self.atoms().bytes(value), b"text" | b"file"))
                         })
                     })
             {

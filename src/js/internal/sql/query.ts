@@ -53,14 +53,7 @@ class QueryState<T, Handle extends BaseQueryHandle<any>> {
   }
 
   static attach(target: object, handle: any) {
-    const state = new QueryState<void, any>(
-      target as Query<void, any>,
-      "",
-      [],
-      SQLQueryFlags.none,
-      noop,
-      null as never,
-    );
+    const state = new QueryState<void, any>(target as Query<void, any>, "", [], SQLQueryFlags.none, noop, null as never);
     state.handle = handle;
     (target as { [_state]: QueryState<void, any> })[_state] = state;
   }

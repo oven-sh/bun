@@ -44,8 +44,7 @@
 "use strict";
 
 const Duplex = require("internal/streams/duplex");
-const { getHighWaterMark, internals } =
-  require("internal/streams/state") as typeof import("internal/streams/state").default;
+const { getHighWaterMark, internals } = require("internal/streams/state") as typeof import("internal/streams/state").default;
 type ReadableState = import("internal/streams/state").ReadableState;
 type WritableState = import("internal/streams/state").WritableState;
 

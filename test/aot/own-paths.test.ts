@@ -51,11 +51,7 @@ test("__filename and __dirname of an executable are the ones the bundle has", as
   const printed: string[] = [];
   for (const flags of [[], ["--aot"]]) {
     const executable = join(String(dir), (flags.length ? "compiled" : "bundled") + (isWindows ? ".exe" : ""));
-    const build = await spawned(
-      [bunExe(), "build", "--compile", ...flags, "own.cjs", "--outfile", executable],
-      String(dir),
-      bunEnv,
-    );
+    const build = await spawned([bunExe(), "build", "--compile", ...flags, "own.cjs", "--outfile", executable], String(dir), bunEnv);
     expect(build.exitCode).toBe(0);
     const run = await spawned([executable], String(dir), bunEnv);
     expect(run.exitCode).toBe(0);

@@ -26,59 +26,58 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-export function fromEntries(iterable) {
-  "use strict";
+export function fromEntries(iterable)
+{
+    "use strict";
 
-  var object = {};
+    var object = {};
 
-  for (var entry of iterable) {
-    if (!$isObject(entry))
-      throw new TypeError("Object.fromEntries requires the first iterable parameter yields objects");
-    var key = entry[0];
-    var value = entry[1];
-    $putByValDirect(object, key, value);
-  }
+    for (var entry of iterable) {
+        if (!$isObject(entry))
+            throw new TypeError("Object.fromEntries requires the first iterable parameter yields objects");
+        var key = entry[0];
+        var value = entry[1];
+        $putByValDirect(object, key, value);
+    }
 
-  return object;
+    return object;
 }
 
-export function groupBy(items, callback) {
-  "use strict";
+export function groupBy(items, callback)
+{
+    "use strict";
 
-  if ($isUndefinedOrNull(items))
-    throw new TypeError("Object.groupBy requires that the first argument not be null or undefined");
+    if ($isUndefinedOrNull(items))
+        throw new TypeError("Object.groupBy requires that the first argument not be null or undefined");
 
-  if (!$isCallable(callback))
-    throw new TypeError("Object.groupBy requires that the second argument must be a function");
+    if (!$isCallable(callback))
+        throw new TypeError("Object.groupBy requires that the second argument must be a function");
 
-  var iteratorMethod = items[Symbol.iterator];
-  if (!$isCallable(iteratorMethod))
-    throw new TypeError(
-      "Object.groupBy requires that the property of the first argument, items[Symbol.iterator] be a function",
-    );
+    var iteratorMethod = items[Symbol.iterator];
+    if (!$isCallable(iteratorMethod))
+        throw new TypeError("Object.groupBy requires that the property of the first argument, items[Symbol.iterator] be a function");
 
-  var groups = $Object.$create(null);
-  var k = 0;
+    var groups = $Object.$create(null);
+    var k = 0;
 
-  var iterator = iteratorMethod.$call(items);
-  // Since for-of loop once more looks up the @@iterator property of a given iterable,
-  // it could be observable if the user defines a getter for @@iterator.
-  // To avoid this situation, we define a wrapper object that @@iterator just returns a given iterator.
-  var wrapper = {
-    [Symbol.iterator]: function () {
-      return iterator;
-    },
-  };
-  for (var item of wrapper) {
-    if (k >= 9007199254740991) throw new TypeError("The number of iterations exceeds 2**53 - 1");
-    var key = $toPropertyKey(callback.$call(undefined, item, k));
-    var group = groups[key];
-    if (!group) {
-      group = [];
-      $putByValDirect(groups, key, group);
+    var iterator = iteratorMethod.$call(items);
+    // Since for-of loop once more looks up the @@iterator property of a given iterable,
+    // it could be observable if the user defines a getter for @@iterator.
+    // To avoid this situation, we define a wrapper object that @@iterator just returns a given iterator.
+    var wrapper = {
+        [Symbol.iterator]: function () { return iterator; }
+    };
+    for (var item of wrapper) {
+        if (k >= 9007199254740991)
+            throw new TypeError("The number of iterations exceeds 2**53 - 1");
+        var key = $toPropertyKey(callback.$call(undefined, item, k));
+        var group = groups[key];
+        if (!group) {
+            group = [];
+            $putByValDirect(groups, key, group);
+        }
+        $putByValDirect(group, group.length, item);
+        ++k;
     }
-    $putByValDirect(group, group.length, item);
-    ++k;
-  }
-  return groups;
+    return groups;
 }

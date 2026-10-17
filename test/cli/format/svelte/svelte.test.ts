@@ -543,10 +543,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     ],
   ])("what the plugin damages is printed right: %s", async (_, before, after, ofPlugin) => {
     expect(after).not.toBe(ofPlugin);
-    for (const config of [{}, { ".prettierrc": prettierrc }, { ".oxfmtrc.json": oxfmtrc }] as Record<
-      string,
-      string
-    >[]) {
+    for (const config of [{}, { ".prettierrc": prettierrc }, { ".oxfmtrc.json": oxfmtrc }] as Record<string, string>[]) {
       const result = await format({ ...config, "a.svelte": before, "b.svelte": after }, ["a.svelte", "b.svelte"]);
       expect(result).toMatchObject({ stderr: "", files: [after, after], exitCode: 0 });
       const checked = await format({ ...config, "a.svelte": before }, ["a.svelte"], ["--debug-check"]);
@@ -2253,10 +2250,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         warning("Expression expected.", [1, 30, '<script>let é = "é"; let b = ;</script>']),
       ],
     ])("%s", async (_, before, after, stderr) => {
-      for (const config of [{}, { ".prettierrc": prettierrc }, { ".oxfmtrc.json": oxfmtrc }] as Record<
-        string,
-        string
-      >[]) {
+      for (const config of [{}, { ".prettierrc": prettierrc }, { ".oxfmtrc.json": oxfmtrc }] as Record<string, string>[]) {
         expect(await format({ ...config, "a.svelte": before }, ["a.svelte"])).toMatchObject({
           stderr,
           files: [after],
@@ -2344,10 +2338,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     ],
   ])("a syntax error is shown where it is: %s", async (_, text, message, [line, column, shown]) => {
     const caret = Buffer.alloc(`${line} | `.length + column - 1, " ").toString() + "^";
-    for (const config of [{}, { ".prettierrc": prettierrc }, { ".oxfmtrc.json": oxfmtrc }] as Record<
-      string,
-      string
-    >[]) {
+    for (const config of [{}, { ".prettierrc": prettierrc }, { ".oxfmtrc.json": oxfmtrc }] as Record<string, string>[]) {
       const result = await format({ ...config, "a.svelte": text, "b.svelte": input }, ["a.svelte", "b.svelte"]);
       expect(result.stderr).toStartWith(
         `${line} | ${shown}\n${caret}\nerror: ${message}\n    at a.svelte:${line}:${column}\n\n`,
@@ -2571,10 +2562,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
   test("blocks of Svelte in Markdown are formatted where components are", async () => {
     const block = (text: string) => `# a\n\n\`\`\`svelte\n${text}\`\`\`\n`;
     const withOtherVersion = { ".prettierrc": prettierrc, ...plugin("4.1.0") };
-    for (const config of [{}, { ".prettierrc": prettierrc }, withOtherVersion, { ".oxfmtrc.json": oxfmtrc }] as Record<
-      string,
-      string
-    >[]) {
+    for (const config of [{}, { ".prettierrc": prettierrc }, withOtherVersion, { ".oxfmtrc.json": oxfmtrc }] as Record<string, string>[]) {
       expect(await format({ ...config, "a.md": block(input) }, ["a.md"])).toMatchObject({
         stderr: "",
         files: [block(output)],

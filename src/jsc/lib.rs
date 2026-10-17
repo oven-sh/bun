@@ -496,8 +496,7 @@ pub struct InitializeOptions {
     pub crash_if_interpreter_is_used: bool,
 }
 
-static COMPILES_WITH_WIDE_REFERENCES: core::sync::atomic::AtomicBool =
-    core::sync::atomic::AtomicBool::new(false);
+static COMPILES_WITH_WIDE_REFERENCES: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 pub fn compile_with_wide_references() {
     COMPILES_WITH_WIDE_REFERENCES.store(true, core::sync::atomic::Ordering::Relaxed);

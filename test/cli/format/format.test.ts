@@ -6807,11 +6807,7 @@ describe.concurrent("what an ignore file has is not written, however it is come 
     "%s, of which every file is ignored, is no error",
     async (...args) => {
       const files = { ".prettierignore": "src/a.js\nsrc/b.js\n", "src/a.js": ugly, "src/b.js": ugly };
-      const result = await format(
-        files,
-        ["--check", ...[...args].filter((arg): arg is string => typeof arg === "string")],
-        { reads: ["src/a.js"] },
-      );
+      const result = await format(files, ["--check", ...[...args].filter((arg): arg is string => typeof arg === "string")], { reads: ["src/a.js"] });
       expect(result.stderr).not.toMatch(anError);
       expect(result.files).toEqual({ "src/a.js": ugly });
       expect(result.exitCode).toBe(0);

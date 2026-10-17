@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
+import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
-import { test } from "./supported";
 
 // In a repository of several packages each has a tsconfig.json of its own, and often the same alias in it. Bun resolves the imports
 // of a file by the `paths` of the tsconfig.json nearest to that file. What is compiled is checked against the file that runs.
@@ -54,11 +54,10 @@ Object.assign(packages, {
     ...nested,
     "app/mods/tsconfig.json": `{ "compilerOptions": { ${options}, "paths": { "helpers/*": ["./helpers/*"] } } }`,
   },
-  "a type imported by a name that only the program's tsconfig.json knows: the nearest extends it and has paths of its own":
-    {
-      ...nested,
-      "app/mods/tsconfig.json": `{ "extends": "../tsconfig.json", "compilerOptions": { "paths": { "helpers/*": ["./helpers/*"] } } }`,
-    },
+  "a type imported by a name that only the program's tsconfig.json knows: the nearest extends it and has paths of its own": {
+    ...nested,
+    "app/mods/tsconfig.json": `{ "extends": "../tsconfig.json", "compilerOptions": { "paths": { "helpers/*": ["./helpers/*"] } } }`,
+  },
   "a type imported by a name that only the program's tsconfig.json knows: the nearest has a baseUrl": {
     ...nested,
     "app/mods/tsconfig.json": `{ "compilerOptions": { ${options}, "baseUrl": "." } }`,
@@ -78,25 +77,18 @@ async function run(cmd: string[], cwd: string) {
 }
 
 for (const [what, files] of Object.entries(packages)) {
-  test(
-    what,
-    async () => {
-      using dir = tempDir("another-tsconfig", files);
-      const app = join(String(dir), "app");
-      const plain = await run([bunExe(), "run", "main.ts"], app);
-      expect({ stderr: plain.stderr, exitCode: plain.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-      const build = await run([bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", "program"], app);
-      expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({
-        stderr: expect.not.stringContaining("error"),
-        exitCode: 0,
-      });
-      const compiled = await run([join(app, "program")], app);
-      expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
-      const mode = await run([bunExe(), "run", "--aot", "main.ts"], app);
-      expect({ stdout: mode.stdout, exitCode: mode.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
-    },
-    120_000,
-  );
+  test(what, async () => {
+    using dir = tempDir("another-tsconfig", files);
+    const app = join(String(dir), "app");
+    const plain = await run([bunExe(), "run", "main.ts"], app);
+    expect({ stderr: plain.stderr, exitCode: plain.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const build = await run([bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", "program"], app);
+    expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.not.stringContaining("error"), exitCode: 0 });
+    const compiled = await run([join(app, "program")], app);
+    expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
+    const mode = await run([bunExe(), "run", "--aot", "main.ts"], app);
+    expect({ stdout: mode.stdout, exitCode: mode.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
+  }, 120_000);
 }
 
 test("a type error against the file that the other package's alias names is an error", async () => {
@@ -104,10 +96,7 @@ test("a type error against the file that the other package's alias names is an e
     ...packages["the same alias in both packages"],
     "lib/index.ts": `import { twice, make } from "@/util";\nexport function four(): number { return twice("two"); }\nexport function shape() { return make(); }\n`,
   });
-  const build = await run(
-    [bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", "program"],
-    join(String(dir), "app"),
-  );
+  const build = await run([bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", "program"], join(String(dir), "app"));
   expect(build.stderr).toContain("TS2345");
   expect(build.exitCode).toBe(1);
 }, 120_000);

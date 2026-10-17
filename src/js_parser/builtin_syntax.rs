@@ -121,9 +121,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .iter()
             .position(|stmt| matches!(stmt.data, StmtData::SReturn(_)));
         let named_export = stmts.iter().find(|stmt| is_named_export(stmt));
-        if value.is_some()
-            && let Some(named_export) = named_export
-        {
+        if value.is_some() && let Some(named_export) = named_export {
             self.log().add_error_fmt(
                 Some(self.source),
                 named_export.loc,

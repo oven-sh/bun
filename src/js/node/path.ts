@@ -1,7 +1,6 @@
 // @ts-check
 // Hardcoded module "node:path"
-const validateString: (value: unknown, name: string) => asserts value is string =
-  require("internal/validators").validateString;
+const validateString: (value: unknown, name: string) => asserts value is string = require("internal/validators").validateString;
 
 const [bindingPosix, bindingWin32] = $cpp("Path.cpp", "createNodePathBinding");
 const toNamespacedPathPosix = bindingPosix.toNamespacedPath.bind(bindingPosix);
@@ -47,22 +46,12 @@ function isTidyDirectory(path: string): boolean {
 
 function isResolved(path: string): boolean {
   const length = path.length;
-  return (
-    length > 0 &&
-    path.charCodeAt(0) === 47 &&
-    (length === 1 || path.charCodeAt(length - 1) !== 47) &&
-    hasOnlyTidySegments(path)
-  );
+  return length > 0 && path.charCodeAt(0) === 47 && (length === 1 || path.charCodeAt(length - 1) !== 47) && hasOnlyTidySegments(path);
 }
 
 function isResolvedDirectory(path: string): boolean {
   const length = path.length;
-  return (
-    length > 0 &&
-    path.charCodeAt(0) === 47 &&
-    (length === 1 || path.charCodeAt(length - 1) !== 47) &&
-    isTidyDirectory(path)
-  );
+  return length > 0 && path.charCodeAt(0) === 47 && (length === 1 || path.charCodeAt(length - 1) !== 47) && isTidyDirectory(path);
 }
 
 function normalizeUntidy(path: string, keepsTrailingSeparator: boolean): string {
@@ -92,26 +81,16 @@ function normalizeUntidy(path: string, keepsTrailingSeparator: boolean): string 
       if (runEnd === -1) runEnd = end;
       runStart = start;
     } else if (runEnd !== -1) {
-      out =
-        out.length === 0
-          ? path.slice(runStart, hasTrailingSeparator ? runEnd + 1 : runEnd)
-          : path.slice(runStart, runEnd + 1) + out;
+      out = out.length === 0 ? path.slice(runStart, hasTrailingSeparator ? runEnd + 1 : runEnd) : path.slice(runStart, runEnd + 1) + out;
       runEnd = -1;
     }
     end = start - 1;
   }
   if (isAbsolute) {
-    if (runEnd !== -1)
-      return out.length === 0
-        ? path.slice(runStart - 1, hasTrailingSeparator ? runEnd + 1 : runEnd)
-        : path.slice(runStart - 1, runEnd + 1) + out;
+    if (runEnd !== -1) return out.length === 0 ? path.slice(runStart - 1, hasTrailingSeparator ? runEnd + 1 : runEnd) : path.slice(runStart - 1, runEnd + 1) + out;
     return "/" + out;
   }
-  if (runEnd !== -1)
-    out =
-      out.length === 0
-        ? path.slice(runStart, hasTrailingSeparator ? runEnd + 1 : runEnd)
-        : path.slice(runStart, runEnd + 1) + out;
+  if (runEnd !== -1) out = out.length === 0 ? path.slice(runStart, hasTrailingSeparator ? runEnd + 1 : runEnd) : path.slice(runStart, runEnd + 1) + out;
   if (above > 0) {
     if (out.length === 0 && hasTrailingSeparator) out = "/";
     else if (out.length !== 0) out = "/" + out;
@@ -148,8 +127,7 @@ function joinMany(paths: unknown[]): string {
     if (typeof path !== "string") return bindingPosix.join.$apply(bindingPosix, paths);
     if (path.length === 0) continue;
     if (isJoinedTidy) {
-      isJoinedTidy =
-        !endsWithSeparator && (joined.length === 0 ? isTidyDirectory(path) : isTidy(path) && path.charCodeAt(0) !== 47);
+      isJoinedTidy = !endsWithSeparator && (joined.length === 0 ? isTidyDirectory(path) : isTidy(path) && path.charCodeAt(0) !== 47);
       endsWithSeparator = path.charCodeAt(path.length - 1) === 47;
     }
     joined = joined.length === 0 ? path : joined + "/" + path;
@@ -163,8 +141,7 @@ function resolveTwo(first: string, second: string): string {
   if (second.charCodeAt(0) === 47) return resolveOne(second);
   if (first.length === 0) return resolveFromWorkingDirectory(second);
   if (first.charCodeAt(0) !== 47) return resolveFromWorkingDirectory(first + "/" + second);
-  if (isResolvedDirectory(first) && isTidy(second) && second.charCodeAt(second.length - 1) !== 47)
-    return first.length === 1 ? first + second : first + "/" + second;
+  if (isResolvedDirectory(first) && isTidy(second) && second.charCodeAt(second.length - 1) !== 47) return first.length === 1 ? first + second : first + "/" + second;
   return normalizeUntidy(first + "/" + second, false);
 }
 
@@ -191,17 +168,7 @@ function resolveMany(paths: unknown[]): string {
   return resolveOne(resolved);
 }
 
-const climbs = [
-  "",
-  "..",
-  "../..",
-  "../../..",
-  "../../../..",
-  "../../../../..",
-  "../../../../../..",
-  "../../../../../../..",
-  "../../../../../../../..",
-];
+const climbs = ["", "..", "../..", "../../..", "../../../..", "../../../../..", "../../../../../..", "../../../../../../..", "../../../../../../../.."];
 
 function climb(from: string, to: string, end: number, lastCommonSeparator: number): string {
   const fromLength = from.length;
@@ -242,13 +209,7 @@ function relativePosix(from: string, to: string): string {
   const fromLength = from.length;
   const toLength = to.length;
   const length = fromLength < toLength ? fromLength : toLength;
-  if (
-    length === 0 ||
-    from.charCodeAt(0) !== 47 ||
-    to.charCodeAt(0) !== 47 ||
-    (fromLength > 1 && from.charCodeAt(fromLength - 1) === 47) ||
-    (toLength > 1 && to.charCodeAt(toLength - 1) === 47)
-  ) {
+  if (length === 0 || from.charCodeAt(0) !== 47 || to.charCodeAt(0) !== 47 || (fromLength > 1 && from.charCodeAt(fromLength - 1) === 47) || (toLength > 1 && to.charCodeAt(toLength - 1) === 47)) {
     return relativeResolved(resolveOne(from), resolveOne(to));
   }
   let lastCommonSeparator = 0;
@@ -419,11 +380,7 @@ function parsePosix(path: string): Record<string, string> {
     if (end !== -1) {
       const start = startPart === 0 && isAbsolute ? 1 : startPart;
       base = path.slice(start, end);
-      if (
-        startDot === -1 ||
-        preDotState === 0 ||
-        (preDotState === 1 && startDot === end - 1 && startDot === startPart + 1)
-      ) {
+      if (startDot === -1 || preDotState === 0 || (preDotState === 1 && startDot === end - 1 && startDot === startPart + 1)) {
         name = base;
       } else {
         name = path.slice(start, startDot);
@@ -464,9 +421,7 @@ const posix: any = IS_BUN_AOT
         return joinMany(paths);
       },
       relative(from: unknown, to: unknown): string {
-        return typeof from === "string" && typeof to === "string"
-          ? relativePosix(from, to)
-          : bindingPosix.relative(from, to);
+        return typeof from === "string" && typeof to === "string" ? relativePosix(from, to) : bindingPosix.relative(from, to);
       },
       toNamespacedPath: toNamespacedPathPosix,
       dirname(path: unknown): string {

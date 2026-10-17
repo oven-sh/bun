@@ -1,4 +1,4 @@
-//! The `ModuleLoader` struct, `FetchFlags`, and the builtin-module lookup
+//! The `ModuleLoader` struct and the builtin-module lookup
 //! helpers. `transpile_source_code` / `fetch_builtin_module` and the
 //! `Bun__transpile*` / `Bun__resolve*` C++ entry points live in
 //! `bun_runtime::jsc_hooks` (they reach into `node::fs`, the transpiler, and
@@ -100,19 +100,6 @@ impl Drop for ArenaResetGuard {
     }
 }
 
-/// Dumps the module source to a file in /tmp/bun-debug-src/{filepath}
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum FetchFlags {
-    Transpile,
-    PrintSource,
-}
-
-impl FetchFlags {
-    pub const fn disable_transpiling(self) -> bool {
-        !matches!(self, FetchFlags::Transpile)
-    }
-}
-
 pub struct TranspileArgs<'a> {
     pub specifier: &'a [u8],
     pub referrer: &'a [u8],
@@ -120,7 +107,6 @@ pub struct TranspileArgs<'a> {
     pub log: *mut bun_ast::Log,
     pub virtual_source: Option<&'a bun_ast::Source>,
     pub global_object: &'a JSGlobalObject,
-    pub flags: FetchFlags,
     /// Raw so the `.wasm` re-entry can mutate `loader` and recurse.
     pub extra: *mut TranspileExtra,
 }
@@ -139,7 +125,7 @@ pub struct TranspileExtra {
 
 unsafe extern "Rust" {
     /// Defined in `bun_runtime::jsc_hooks`.
-    pub(crate) fn __bun_transpile_source_code(
+    pub(crate) fn __bun_read_source_code(
         jsc_vm: *mut VirtualMachine,
         args: &TranspileArgs<'_>,
     ) -> Result<ResolvedSource, crate::CrateError>;

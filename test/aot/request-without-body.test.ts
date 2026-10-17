@@ -199,15 +199,8 @@ test.skipIf(!!unsupported)(
     using dir = tempDir("aot-request-without-a-body", files);
     const executable = join(String(dir), "main" + (isWindows ? ".exe" : ""));
     const mapPath = join(String(dir), "main.map");
-    const built = await run(
-      [bunExe(), "build", "--compile", "--aot", "main.cjs", "--outfile", executable],
-      String(dir),
-      { ...bunEnv, BUN_JSC_aotMapFilePath: mapPath },
-    );
-    expect({
-      stderr: built.stderr.split("\n").filter(line => line.startsWith("error")),
-      exitCode: built.exitCode,
-    }).toEqual({ stderr: [], exitCode: 0 });
+    const built = await run([bunExe(), "build", "--compile", "--aot", "main.cjs", "--outfile", executable], String(dir), { ...bunEnv, BUN_JSC_aotMapFilePath: mapPath });
+    expect({ stderr: built.stderr.split("\n").filter(line => line.startsWith("error")), exitCode: built.exitCode }).toEqual({ stderr: [], exitCode: 0 });
     const compiledEnv = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
     const [general, plain, compiledGeneral, compiled] = await Promise.all([
       run([bunExe(), "run", "main.cjs", "general"], String(dir), bunEnv),
@@ -227,11 +220,7 @@ test.skipIf(!!unsupported)(
         .filter(fields => fields[0] === "F" && fields[10] === "node:_http_incoming")
         .map(fields => fields[7]),
     );
-    expect(
-      ["endsUnwatched", "resumeUnwatched", "endUnwatched", "destroyUnwatched", "destroyOnNextTick"].filter(
-        name => !functions.has(name),
-      ),
-    ).toEqual([]);
+    expect(["endsUnwatched", "resumeUnwatched", "endUnwatched", "destroyUnwatched", "destroyOnNextTick"].filter(name => !functions.has(name))).toEqual([]);
   },
   240_000,
 );
@@ -241,15 +230,8 @@ test.skipIf(!!unsupported)(
   async () => {
     using dir = tempDir("aot-request-without-a-body-heard", files);
     const executable = join(String(dir), "heard" + (isWindows ? ".exe" : ""));
-    const built = await run(
-      [bunExe(), "build", "--compile", "--aot", "heard.cjs", "--outfile", executable],
-      String(dir),
-      bunEnv,
-    );
-    expect({
-      stderr: built.stderr.split("\n").filter(line => line.startsWith("error")),
-      exitCode: built.exitCode,
-    }).toEqual({ stderr: [], exitCode: 0 });
+    const built = await run([bunExe(), "build", "--compile", "--aot", "heard.cjs", "--outfile", executable], String(dir), bunEnv);
+    expect({ stderr: built.stderr.split("\n").filter(line => line.startsWith("error")), exitCode: built.exitCode }).toEqual({ stderr: [], exitCode: 0 });
     const expected = "close true,true,true\nresumeUnwatched,endUnwatched,destroyUnwatched,closeUnwatched\n";
     const plain = await run([bunExe(), "run", "heard.cjs"], String(dir), bunEnv);
     const compiled = await run([executable], String(dir), { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });

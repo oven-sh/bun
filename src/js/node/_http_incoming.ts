@@ -780,7 +780,10 @@ function isUnheard(req, name) {
 }
 
 function endsUnwatched(req) {
-  if (!req[noBodySymbol] || req.resume !== resume) {
+  if (
+    !req[noBodySymbol] ||
+    req.resume !== resume
+  ) {
     return false;
   }
   const state = req._readableState;

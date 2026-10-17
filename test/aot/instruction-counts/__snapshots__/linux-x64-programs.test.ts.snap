@@ -221,3 +221,57 @@ exports[`Instances of classes that extend host classes: 4 a subclass of Array 1`
 exports[`Instances of classes that extend host classes: 4 a subclass of Array with six private fields 1`] = `"a turn: 1760.34 instructions (the runtime 878.40, stub PrivateFieldAdd 192, ArrayWithPrivateFields.get count 142, stub PrivateGet 138, ArrayWithPrivateFields 84, stub FrontEndTypedConstructSuper 75, elsewhere 58.72, a function without a name 42, stub ArrayLiteral0 29.22, stub GetByNameAsDoubleOrUndefined 27, stub ReadAccessorByNameWithinFrame 21, stub TypedClosureInRSI 16, stub OperationValueWithInstance 14, stub CallValue1 12, stub PrivateGetAtSite 12, stub BoxNumber 8, stub BoxOptionalNumber 8, stub OperationValueWithInstance to operationAOTTypedConstructSuper 2, stub CallValueWithoutThis1 1), 0 bytes"`;
 
 exports[`Instances of classes that extend host classes: 4 a subclass of Array with two fields 1`] = `"a turn: 1032.74 instructions (the runtime 692.68, stub FrontEndTypedConstructSuper 75, a function without a name 55, elsewhere 34.84, stub ArrayLiteral0 29.22, stub GetByNameAsStringOrNullish 28, stub DefineByNameWithDirectColumnPreservingTwo 22, stub DefineByNameThroughSlotsPreservingTwo 21, stub DefineByNameGeneric 15, stub OperationValueWithInstance 14, stub CallValue1 12, stub TypedClosureInRDX 8, stub TypedStringInRSI 8, stub AddOutOfLineByName 7, stub ReadOutOfLineByName 4, stub WriteBarrier 4, stub OperationValueWithInstance to operationAOTTypedConstructSuper 2, stub CallValueWithoutThis1 1), 0 bytes"`;
+
+exports[`Property reads across shapes in a loop: 0 empty loop 1`] = `"a turn: 28 instructions (built-in modules 28), 0 bytes"`;
+
+exports[`Property reads across shapes in a loop: 1 present, 1 shapes 1`] = `"a turn: 50 instructions (built-in modules 32, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, stub Add 8), 0 bytes"`;
+
+exports[`Property reads across shapes in a loop: 2 absent, 1 shapes 1`] = `"a turn: 46 instructions (built-in modules 31, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub ReadAbsentByName 2), 0 bytes"`;
+
+exports[`Property reads across shapes in a loop: 3 inherited, 1 shapes 1`] = `"a turn: 58 instructions (built-in modules 32, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub Add 8, stub ReadInheritedInlineByName 5), 0 bytes"`;
+
+exports[`Property reads across shapes in a loop: 1 present, 2 shapes 1`] = `"a turn: 50 instructions (built-in modules 32, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, stub Add 8), 0 bytes"`;
+
+exports[`Property reads across shapes in a loop: 2 absent, 2 shapes 1`] = `"a turn: 46 instructions (built-in modules 31, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub ReadAbsentByName 2), 0 bytes"`;
+
+exports[`Property reads across shapes in a loop: 3 inherited, 2 shapes 1`] = `"a turn: 58 instructions (built-in modules 32, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub Add 8, stub ReadInheritedInlineByName 5), 0 bytes"`;
+
+exports[`Property reads across shapes in a loop: 1 present, 4 shapes 1`] = `"a turn: 50 instructions (built-in modules 32, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, stub Add 8), 0 bytes"`;
+
+exports[`Property reads across shapes in a loop: 2 absent, 4 shapes 1`] = `"a turn: 46 instructions (built-in modules 31, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub ReadAbsentByName 2), 0 bytes"`;
+
+exports[`Property reads across shapes in a loop: 3 inherited, 4 shapes 1`] = `"a turn: 58 instructions (built-in modules 32, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub Add 8, stub ReadInheritedInlineByName 5), 0 bytes"`;
+
+exports[`Property reads across shapes in a loop: 1 present, 8 shapes 1`] = `"a turn: 50 instructions (built-in modules 32, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, stub Add 8), 0 bytes"`;
+
+exports[`Property reads across shapes in a loop: 2 absent, 8 shapes 1`] = `"a turn: 46 instructions (built-in modules 31, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub ReadAbsentByName 2), 0 bytes"`;
+
+exports[`Property reads across shapes in a loop: 3 inherited, 8 shapes 1`] = `"a turn: 58 instructions (built-in modules 32, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub Add 8, stub ReadInheritedInlineByName 5), 0 bytes"`;
+
+exports[`Property reads across shapes in a loop: 4 present, 8 shapes made 1000 shapes apart 1`] = `"a turn: 50 instructions (built-in modules 32, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10, stub Add 8), 0 bytes"`;
+
+exports[`Property reads across shapes in a loop: 4 absent, 8 shapes made 1000 shapes apart 1`] = `"a turn: 46 instructions (built-in modules 31, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub ReadAbsentByName 2), 0 bytes"`;
+
+exports[`Property reads across shapes in a loop: 4 inherited, 8 shapes made 1000 shapes apart 1`] = `"a turn: 58 instructions (built-in modules 32, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub Add 8, stub ReadInheritedInlineByName 5), 0 bytes"`;
+
+exports[`Property reads across shapes in a loop: 5 five names of each of six shapes 1`] = `"a turn: 757 instructions (stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 392, built-in modules 277, stub ReadInheritedOutOfLineByName 36, stub ReadInheritedInlineByName 30, stub ReadAbsentByName 22), 0 bytes"`;
+
+exports[`Property reads across shapes in a loop: 6 forty present names, 1 shapes 1`] = `"a turn: 898 instructions (stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 536, built-in modules 226, stub ReadOutOfLineByName 136), 0 bytes"`;
+
+exports[`Property reads across shapes in a loop: 6 forty absent names, 1 shapes 1`] = `"a turn: 866 instructions (stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 560, built-in modules 226, stub ReadAbsentByName 80), 0 bytes"`;
+
+exports[`Property reads across shapes in a loop: 6 forty present names, 2 shapes 1`] = `"a turn: 898 instructions (stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 536, built-in modules 226, stub ReadOutOfLineByName 136), 0 bytes"`;
+
+exports[`Property reads across shapes in a loop: 6 forty absent names, 2 shapes 1`] = `"a turn: 866 instructions (stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 560, built-in modules 226, stub ReadAbsentByName 80), 0 bytes"`;
+
+exports[`Property reads across shapes in a loop: 6 forty present names, 4 shapes 1`] = `"a turn: 898 instructions (stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 536, built-in modules 226, stub ReadOutOfLineByName 136), 0 bytes"`;
+
+exports[`Property reads across shapes in a loop: 6 forty absent names, 4 shapes 1`] = `"a turn: 866 instructions (stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 560, built-in modules 226, stub ReadAbsentByName 80), 0 bytes"`;
+
+exports[`Property reads across shapes in a loop: 7 the next 16 of 1024 shapes without a read 1`] = `"a turn: 608 instructions (built-in modules 608), 0 bytes"`;
+
+exports[`Property reads across shapes in a loop: 7 present, the next 16 of 1024 shapes 1`] = `"a turn: 960 instructions (built-in modules 672, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 160, stub Add 128), 0 bytes"`;
+
+exports[`Property reads across shapes in a loop: 7 absent, the next 16 of 1024 shapes 1`] = `"a turn: 912 instructions (built-in modules 672, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 208, stub ReadAbsentByName 32), 0 bytes"`;
+
+exports[`Property reads across shapes in a loop: 7 inherited, the next 16 of 1024 shapes 1`] = `"a turn: 1088 instructions (built-in modules 672, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 208, stub Add 128, stub ReadInheritedInlineByName 80), 0 bytes"`;

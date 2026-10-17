@@ -1,16 +1,13 @@
 use crate::atom::{Atom, Atoms};
-use crate::bind::{ScopeKind, SymFlags};
 use crate::check::Checker;
 use crate::check::task::Stored;
+use crate::program::{FileId, Sym};
+use crate::bind::{ScopeKind, SymFlags};
 use crate::hir::{Keyword, TypeNodeId, TypeNodeKind};
 use crate::local::MaybeLocal;
-use crate::program::{FileId, Sym};
-use crate::types::{
-    ComponentsId, Follow, Lanes, Literalness, MapperId, Origin, Prop, PropFlags, PropSource,
-    Provenance, Shape, SigId, TypeData, TypeId, Types, UnionOrigin, Visitor, tf,
-};
-use crate::util::memory::Cells;
+use crate::types::{ComponentsId, Follow, Lanes, Literalness, MapperId, Origin, Prop, PropFlags, PropSource, Provenance, Shape, SigId, TypeData, TypeId, Types, UnionOrigin, Visitor, tf};
 use crate::util::{FxHashMap, InParallel, for_each_mut};
+use crate::util::memory::Cells;
 use std::hash::Hash;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -37,12 +34,8 @@ impl Identities {
     }
 
     fn put(&self, number: u32, identity: Identity) -> bool {
-        self.0
-            .cell(2 * number + 1)
-            .store(identity[1], Ordering::Relaxed);
-        self.0
-            .cell(2 * number)
-            .store(identity[0], Ordering::Release);
+        self.0.cell(2 * number + 1).store(identity[1], Ordering::Relaxed);
+        self.0.cell(2 * number).store(identity[0], Ordering::Release);
         identity[0] != 0
     }
 }
@@ -58,44 +51,27 @@ pub(super) struct Shared {
 
 impl Shared {
     fn file_identity(&self, file: FileId) -> Identity {
-        match self
-            .file_identities
-            .get()
-            .and_then(|names| names.get(file.idx()))
-        {
+        match self.file_identities.get().and_then(|names| names.get(file.idx())) {
             Some(&name) => name,
             None => [u64::from(file.0), 0],
         }
     }
 }
 
-fn strip_directory_prefix<'a>(
-    name: &'a [u8],
-    directory: &[u8],
-    is_case_sensitive: bool,
-) -> Option<&'a [u8]> {
+fn strip_directory_prefix<'a>(name: &'a [u8], directory: &[u8], is_case_sensitive: bool) -> Option<&'a [u8]> {
     let directory = directory.strip_suffix(b"/").unwrap_or(directory);
     if directory.is_empty() || name.len() <= directory.len() || name[directory.len()] != b'/' {
         return None;
     }
     let (start, rest) = name.split_at(directory.len());
-    let is_same = if is_case_sensitive {
-        start == directory
-    } else {
-        start.eq_ignore_ascii_case(directory)
-    };
+    let is_same = if is_case_sensitive { start == directory } else { start.eq_ignore_ascii_case(directory) };
     is_same.then_some(&rest[1..])
 }
 
 trait Normalizer {
     fn intersection_members(&mut self, members: &[TypeId]) -> Vec<TypeId>;
 
-    fn relevant_mapper_pairs(
-        &mut self,
-        mapper: MapperId,
-        file: FileId,
-        node: TypeNodeId,
-    ) -> Vec<(TypeId, TypeId)>;
+    fn relevant_mapper_pairs(&mut self, mapper: MapperId, file: FileId, node: TypeNodeId) -> Vec<(TypeId, TypeId)>;
 
     fn literal_structure(&mut self, ty: TypeId) -> Option<Vec<(Atom, u8, TypeId)>>;
 }
@@ -143,11 +119,7 @@ impl<'a, 'k, 'p, 's> Identify<'a, 'k, 'p, 's> {
     fn new(records: Records<'p, 's>, known: &'a mut Known<'k>, of: IdentityKind) -> Self {
         let mut lanes = Lanes::START;
         lanes.add(of as u64);
-        Identify {
-            lanes,
-            records,
-            known,
-        }
+        Identify { lanes, records, known }
     }
 
     fn add(&mut self, identity: Identity) {
@@ -160,11 +132,7 @@ impl Identify<'_, '_, '_, '_> {
     fn each<T: Follow>(&mut self, items: &[T]) -> Vec<Identity> {
         let mut each = Vec::with_capacity(items.len());
         for item in items {
-            let mut one = Identify {
-                lanes: Lanes::START,
-                records: self.records,
-                known: &mut *self.known,
-            };
+            let mut one = Identify { lanes: Lanes::START, records: self.records, known: &mut *self.known };
             item.visit(&mut one);
             each.push(one.lanes.0);
         }
@@ -186,8 +154,7 @@ impl Walker for Identify<'_, '_, '_, '_> {
     fn distinct<T: Follow>(&mut self, items: &[T]) {
         let each = self.each(items);
         let is_first = |at: usize| !each[..at].contains(&each[at]);
-        self.lanes
-            .add((0..each.len()).filter(|&at| is_first(at)).count() as u64);
+        self.lanes.add((0..each.len()).filter(|&at| is_first(at)).count() as u64);
         for at in (0..each.len()).filter(|&at| is_first(at)) {
             self.add(each[at]);
         }
@@ -254,10 +221,7 @@ impl Records<'_, '_> {
                 it.plain(&std::mem::discriminant(data));
                 it.intersected(members);
             }
-            data @ &TypeData::Anon {
-                origin: origin @ (Origin::Mapped(file, node) | Origin::TypeLiteral(file, node)),
-                mapper,
-            } => {
+            data @ &TypeData::Anon { origin: origin @ (Origin::Mapped(file, node) | Origin::TypeLiteral(file, node)), mapper } => {
                 it.plain(&std::mem::discriminant(data));
                 origin.visit(it);
                 it.applied(mapper, file, node);
@@ -271,16 +235,7 @@ impl Records<'_, '_> {
         let provenance = self.types.provenance(ty);
         it.field("provenance");
         it.plain(&provenance.is_some());
-        if let Some(Provenance {
-            alias,
-            origin,
-            is_enum,
-            stored_under,
-            is_array_literal,
-            is_array_pattern,
-            has_other_instantiation,
-        }) = provenance
-        {
+        if let Some(Provenance { alias, origin, is_enum, stored_under, is_array_literal, is_array_pattern, has_other_instantiation }) = provenance {
             it.field("alias");
             alias.visit(it);
             it.field("origin");
@@ -335,14 +290,7 @@ impl Records<'_, '_> {
         symbol_declared_at.visit(it);
         symbol.visit(it);
         it.plain(&props.len());
-        for Prop {
-            name,
-            flags,
-            source,
-            mapper,
-            name_type,
-        } in props.iter()
-        {
+        for Prop { name, flags, source, mapper, name_type } in props.iter() {
             name.visit(it);
             name_type.visit(it);
             if let PropSource::Copy(ty, ..) = source
@@ -355,9 +303,7 @@ impl Records<'_, '_> {
             }
             flags.visit(it);
             match source {
-                PropSource::Intersected(of, constituents)
-                    if matches!(self.types.get(*of), TypeData::Union(_)) =>
-                {
+                PropSource::Intersected(of, constituents) if matches!(self.types.get(*of), TypeData::Union(_)) => {
                     it.plain(&std::mem::discriminant(source));
                     of.visit(it);
                     it.unordered(constituents);
@@ -397,14 +343,7 @@ impl Records<'_, '_> {
             return identity;
         }
         let asked_before = known.checker_query_count;
-        known.checker_query_count += u32::from(matches!(
-            self.types.get(ty),
-            TypeData::Intersection(_)
-                | TypeData::Anon {
-                    origin: Origin::ObjectLiteral(..),
-                    ..
-                }
-        ));
+        known.checker_query_count += u32::from(matches!(self.types.get(ty), TypeData::Intersection(_) | TypeData::Anon { origin: Origin::ObjectLiteral(..), .. }));
         let members = match self.types.get(ty) {
             TypeData::Union(members) => members.to_vec(),
             TypeData::Intersection(members) => known.checker.intersection_members(members),
@@ -412,14 +351,8 @@ impl Records<'_, '_> {
         };
         if let Some((&first, rest)) = members.split_first() {
             let only = self.of_type(known, first);
-            if rest
-                .iter()
-                .all(|&member| self.of_type(known, member) == only)
-            {
-                if ty.is_local()
-                    || known.checker_query_count != asked_before
-                    || !known.shared.types.put(ty.0, only)
-                {
+            if rest.iter().all(|&member| self.of_type(known, member) == only) {
+                if ty.is_local() || known.checker_query_count != asked_before || !known.shared.types.put(ty.0, only) {
                     known.state.types.insert(ty, only);
                 }
                 return only;
@@ -440,10 +373,7 @@ impl Records<'_, '_> {
             None => self.walk_type(ty, &mut it),
         }
         let identity = it.lanes.0;
-        if ty.is_local()
-            || known.checker_query_count != asked_before
-            || !known.shared.types.put(ty.0, identity)
-        {
+        if ty.is_local() || known.checker_query_count != asked_before || !known.shared.types.put(ty.0, identity) {
             known.state.types.insert(ty, identity);
         }
         identity
@@ -463,10 +393,7 @@ impl Records<'_, '_> {
         let mut it = Identify::new(self, known, IdentityKind::Sig);
         self.types.sig(sig).visit(&mut it);
         let identity = it.lanes.0;
-        if sig.is_local()
-            || known.checker_query_count != asked_before
-            || !known.shared.sigs.put(sig.0, identity)
-        {
+        if sig.is_local() || known.checker_query_count != asked_before || !known.shared.sigs.put(sig.0, identity) {
             known.state.sigs.insert(sig, identity);
         }
         identity
@@ -489,10 +416,7 @@ impl Records<'_, '_> {
         let mut it = Identify::new(self, known, IdentityKind::Mapper);
         it.unordered(self.types.mapping(mapper));
         let identity = it.lanes.0;
-        if mapper.is_local()
-            || known.checker_query_count != asked_before
-            || !known.shared.mappers.put(mapper.0, identity)
-        {
+        if mapper.is_local() || known.checker_query_count != asked_before || !known.shared.mappers.put(mapper.0, identity) {
             known.state.mappers.insert(mapper, identity);
         }
         identity
@@ -515,10 +439,7 @@ impl Records<'_, '_> {
         let mut it = Identify::new(self, known, IdentityKind::Components);
         self.types.components(components).visit(&mut it);
         let identity = it.lanes.0;
-        if components.is_local()
-            || known.checker_query_count != asked_before
-            || !known.shared.components.put(components.0, identity)
-        {
+        if components.is_local() || known.checker_query_count != asked_before || !known.shared.components.put(components.0, identity) {
             known.state.components.insert(components, identity);
         }
         identity
@@ -539,33 +460,17 @@ impl Checker<'_, '_> {
     }
 
     fn with_known<T>(&mut self, walk: impl FnOnce(Records<'_, '_>, &mut Known<'_>) -> T) -> T {
-        let records = Records {
-            types: self.types(),
-            atoms: self.atoms(),
-        };
+        let records = Records { types: self.types(), atoms: self.atoms() };
         let mut state = std::mem::take(&mut self.aot.identity);
-        self.aot.identity.referenced_type_parameters =
-            std::mem::take(&mut state.referenced_type_parameters);
+        self.aot.identity.referenced_type_parameters = std::mem::take(&mut state.referenced_type_parameters);
         let program = self.p;
         program.aot.identity.file_identities.get_or_init(|| {
             let files = &program.files;
-            let directories = [
-                &files.options.current_directory[..],
-                &files.options.lib_dir[..],
-            ];
+            let directories = [&files.options.current_directory[..], &files.options.lib_dir[..]];
             (0..files.modules.len() as u32)
                 .map(|number| {
                     let name = files.module(FileId(number)).file_name();
-                    let within = (0..directories.len()).find_map(|which| {
-                        Some((
-                            which,
-                            strip_directory_prefix(
-                                name,
-                                directories[which],
-                                files.is_case_sensitive,
-                            )?,
-                        ))
-                    });
+                    let within = (0..directories.len()).find_map(|which| Some((which, strip_directory_prefix(name, directories[which], files.is_case_sensitive)?)));
                     let (which, shown) = within.unwrap_or((directories.len(), name));
                     let mut lanes = Lanes::START;
                     lanes.add(which as u64);
@@ -574,140 +479,69 @@ impl Checker<'_, '_> {
                 })
                 .collect()
         });
-        let result = walk(
-            records,
-            &mut Known {
-                state: &mut state,
-                checker: self,
-                shared: &program.aot.identity,
-                checker_query_count: 0,
-            },
-        );
-        state.referenced_type_parameters =
-            std::mem::take(&mut self.aot.identity.referenced_type_parameters);
+        let result = walk(records, &mut Known { state: &mut state, checker: self, shared: &program.aot.identity, checker_query_count: 0 });
+        state.referenced_type_parameters = std::mem::take(&mut self.aot.identity.referenced_type_parameters);
         self.aot.identity = state;
         result
     }
 
     fn resolved_intersection_members(&mut self, members: &[TypeId]) -> Vec<TypeId> {
-        let is_empty: Vec<bool> = members
-            .iter()
-            .map(|&member| self.is_resolved_empty_object_type(member))
-            .collect();
-        let Some(first) = is_empty.iter().position(|&is_empty| is_empty) else {
-            return members.to_vec();
-        };
-        let is_non_nullable = (0..members.len())
-            .any(|at| !is_empty[at] && self.flags(members[at]) & tf::DEFINITELY_NON_NULLABLE != 0);
-        (0..members.len())
-            .filter(|&at| !is_empty[at] || at == first && !is_non_nullable)
-            .map(|at| members[at])
-            .collect()
+        let is_empty: Vec<bool> = members.iter().map(|&member| self.is_resolved_empty_object_type(member)).collect();
+        let Some(first) = is_empty.iter().position(|&is_empty| is_empty) else { return members.to_vec() };
+        let is_non_nullable = (0..members.len()).any(|at| !is_empty[at] && self.flags(members[at]) & tf::DEFINITELY_NON_NULLABLE != 0);
+        (0..members.len()).filter(|&at| !is_empty[at] || at == first && !is_non_nullable).map(|at| members[at]).collect()
     }
 
-    fn referenced_type_parameter_pairs(
-        &mut self,
-        mapper: MapperId,
-        file: FileId,
-        node: TypeNodeId,
-    ) -> Vec<(TypeId, TypeId)> {
+    fn referenced_type_parameter_pairs(&mut self, mapper: MapperId, file: FileId, node: TypeNodeId) -> Vec<(TypeId, TypeId)> {
         let pairs = self.types().mapping(mapper);
         if pairs.is_empty() {
             return Vec::new();
         }
-        let Some(named) = self.type_parameters_referenced_in(file, node) else {
-            return pairs.to_vec();
-        };
+        let Some(named) = self.type_parameters_referenced_in(file, node) else { return pairs.to_vec() };
         let matters = |source: TypeId| match *self.data(source) {
-            TypeData::TypeParam(of, param, _) => named.contains(
-                &self
-                    .files()
-                    .sym(of, self.bound(of).type_param_symbol[param.idx()]),
-            ),
+            TypeData::TypeParam(of, param, _) => named.contains(&self.files().sym(of, self.bound(of).type_param_symbol[param.idx()])),
             _ => true,
         };
-        pairs
-            .iter()
-            .copied()
-            .filter(|pair| matters(pair.0))
-            .collect()
+        pairs.iter().copied().filter(|pair| matters(pair.0)).collect()
     }
 
-    fn type_parameters_referenced_in(
-        &mut self,
-        file: FileId,
-        node: TypeNodeId,
-    ) -> Option<Vec<Sym>> {
-        if let Some(known) = self
-            .aot
-            .identity
-            .referenced_type_parameters
-            .get(&(file, node))
-        {
+    fn type_parameters_referenced_in(&mut self, file: FileId, node: TypeNodeId) -> Option<Vec<Sym>> {
+        if let Some(known) = self.aot.identity.referenced_type_parameters.get(&(file, node)) {
             return known.clone();
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
         let (start, end) = (hir[node].pos, hir[node].end);
         let mut named = (start < end && !hir.is_js).then(Vec::new);
-        for (index, inner) in hir
-            .types
-            .iter()
-            .enumerate()
-            .filter(|(_, inner)| start <= inner.pos && inner.end <= end)
-        {
+        for (index, inner) in hir.types.iter().enumerate().filter(|(_, inner)| start <= inner.pos && inner.end <= end) {
             let Some(so_far) = &mut named else { break };
             match inner.kind {
                 TypeNodeKind::Ref { name, .. } => {
-                    let meaning = if name.len() == 1 {
-                        SymFlags::TYPE
-                    } else {
-                        SymFlags::NAMESPACE
-                    };
-                    let Some(first) = hir.texts(name).next() else {
-                        continue;
-                    };
-                    let Some(found) =
-                        self.files()
-                            .resolve_name(file, bound.type_scope[index], first, meaning)
-                    else {
-                        continue;
-                    };
+                    let meaning = if name.len() == 1 { SymFlags::TYPE } else { SymFlags::NAMESPACE };
+                    let Some(first) = hir.texts(name).next() else { continue };
+                    let Some(found) = self.files().resolve_name(file, bound.type_scope[index], first, meaning) else { continue };
                     if self.files().flags(found).contains(SymFlags::TYPE_PARAMETER) {
                         if !so_far.contains(&found) {
                             so_far.push(found);
                         }
                         continue;
                     }
-                    let is_at_top_level =
-                        self.files().decls(found).into_iter().all(|(of, decl)| {
-                            let scopes = &self.bound(of).scopes;
-                            let mut scope = self.bound(of).scope_of_declaration(self.hir(of), decl);
-                            while scope.is_some()
-                                && matches!(
-                                    scopes[scope.idx()].kind,
-                                    ScopeKind::File | ScopeKind::Module(_)
-                                )
-                            {
-                                scope = scopes[scope.idx()].parent;
-                            }
-                            scope.is_none()
-                        });
+                    let is_at_top_level = self.files().decls(found).into_iter().all(|(of, decl)| {
+                        let scopes = &self.bound(of).scopes;
+                        let mut scope = self.bound(of).scope_of_declaration(self.hir(of), decl);
+                        while scope.is_some() && matches!(scopes[scope.idx()].kind, ScopeKind::File | ScopeKind::Module(_)) {
+                            scope = scopes[scope.idx()].parent;
+                        }
+                        scope.is_none()
+                    });
                     if !is_at_top_level {
                         named = None;
                     }
                 }
-                TypeNodeKind::Typeof { .. }
-                | TypeNodeKind::Keyword(Keyword::This)
-                | TypeNodeKind::Heritage { .. }
-                | TypeNodeKind::JSDoc { .. }
-                | TypeNodeKind::Error => named = None,
+                TypeNodeKind::Typeof { .. } | TypeNodeKind::Keyword(Keyword::This) | TypeNodeKind::Heritage { .. } | TypeNodeKind::JSDoc { .. } | TypeNodeKind::Error => named = None,
                 _ => {}
             }
         }
-        self.aot
-            .identity
-            .referenced_type_parameters
-            .insert((file, node), named.clone());
+        self.aot.identity.referenced_type_parameters.insert((file, node), named.clone());
         named
     }
 
@@ -717,18 +551,12 @@ impl Checker<'_, '_> {
         }
         match self.data(ty) {
             TypeData::Synth(shape) if shape.literal == Literalness::SyntheticDefault => true,
-            TypeData::Anon {
-                origin: Origin::Mapped(..),
-                ..
-            } => false,
+            TypeData::Anon { origin: Origin::Mapped(..), .. } => false,
             TypeData::Synth(_) | TypeData::Anon { .. } | TypeData::ReverseMapped { .. } => {
                 !self.is_any_function_type(ty)
                     && self.members(ty).is_some_and(|members| {
                         let shape = members.shape();
-                        shape.props.is_empty()
-                            && shape.call.is_empty()
-                            && shape.construct.is_empty()
-                            && shape.index.is_empty()
+                        shape.props.is_empty() && shape.call.is_empty() && shape.construct.is_empty() && shape.index.is_empty()
                     })
             }
             _ => false,
@@ -741,26 +569,17 @@ impl Checker<'_, '_> {
 
     pub fn kept_types(&self) -> Vec<TypeId> {
         let published = (0..self.p.types.type_count()).map(TypeId);
-        published
-            .filter(|ty| self.p.kept_types.get(&self.task, ty).is_some())
-            .collect()
+        published.filter(|ty| self.p.kept_types.get(&self.task, ty).is_some()).collect()
     }
 
     pub fn kept_types_on_pool(&self, in_parallel: InParallel<'_>) -> Vec<TypeId> {
         const TYPES_PER_CHUNK: u32 = 1 << 16;
         let count = self.p.types.type_count();
-        let mut chunks: Vec<(u32, Vec<TypeId>)> = (0..count)
-            .step_by(TYPES_PER_CHUNK as usize)
-            .map(|first| (first, Vec::new()))
-            .collect();
+        let mut chunks: Vec<(u32, Vec<TypeId>)> = (0..count).step_by(TYPES_PER_CHUNK as usize).map(|first| (first, Vec::new())).collect();
         let program = self.p;
         for_each_mut(&mut chunks, in_parallel, &|(first, retained)| {
             let c = program.checker();
-            retained.extend(
-                (*first..count.min(*first + TYPES_PER_CHUNK))
-                    .map(TypeId)
-                    .filter(|ty| program.kept_types.get(&c.task, ty).is_some()),
-            );
+            retained.extend((*first..count.min(*first + TYPES_PER_CHUNK)).map(TypeId).filter(|ty| program.kept_types.get(&c.task, ty).is_some()));
         });
         chunks.into_iter().flat_map(|chunk| chunk.1).collect()
     }
@@ -771,12 +590,7 @@ impl Normalizer for Checker<'_, '_> {
         self.resolved_intersection_members(members)
     }
 
-    fn relevant_mapper_pairs(
-        &mut self,
-        mapper: MapperId,
-        file: FileId,
-        node: TypeNodeId,
-    ) -> Vec<(TypeId, TypeId)> {
+    fn relevant_mapper_pairs(&mut self, mapper: MapperId, file: FileId, node: TypeNodeId) -> Vec<(TypeId, TypeId)> {
         self.referenced_type_parameter_pairs(mapper, file, node)
     }
 
@@ -803,12 +617,7 @@ mod tests {
             members.to_vec()
         }
 
-        fn relevant_mapper_pairs(
-            &mut self,
-            mapper: MapperId,
-            _: FileId,
-            _: TypeNodeId,
-        ) -> Vec<(TypeId, TypeId)> {
+        fn relevant_mapper_pairs(&mut self, mapper: MapperId, _: FileId, _: TypeNodeId) -> Vec<(TypeId, TypeId)> {
             self.0.mapping(mapper).to_vec()
         }
 
@@ -817,17 +626,8 @@ mod tests {
         }
     }
 
-    fn with<T>(
-        records: Records<'_, '_>,
-        state: &mut State,
-        walk: impl FnOnce(&mut Known<'_>) -> T,
-    ) -> T {
-        walk(&mut Known {
-            state,
-            checker: &mut Verbatim(records.types),
-            shared: &super::Shared::default(),
-            checker_query_count: 0,
-        })
+    fn with<T>(records: Records<'_, '_>, state: &mut State, walk: impl FnOnce(&mut Known<'_>) -> T) -> T {
+        walk(&mut Known { state, checker: &mut Verbatim(records.types), shared: &super::Shared::default(), checker_query_count: 0 })
     }
 
     fn forwards(count: usize, work: &(dyn Fn(usize) + Sync)) {
@@ -841,19 +641,14 @@ mod tests {
 
     impl<'s> Shared<'s> {
         fn records<'p>(&'p self, own: &OwnStore<'s>) -> Records<'p, 's> {
-            Records {
-                types: Types::new(&self.types, own),
-                atoms: Atoms::new(&self.atoms, own),
-            }
+            Records { types: Types::new(&self.types, own), atoms: Atoms::new(&self.atoms, own) }
         }
 
         fn publish(&self, own: &mut OwnStore<'s>, root: TypeId) -> Link {
             let mut marks = Marks::new(own);
             root.mark(&mut marks);
             let records = own.finish(marks);
-            let (mut links, _) = self
-                .types
-                .link(&self.atoms, vec![records], &forwards, &|_| {});
+            let (mut links, _) = self.types.link(&self.atoms, vec![records], &forwards, &|_| {});
             links.pop().unwrap()
         }
     }
@@ -864,155 +659,75 @@ mod tests {
         let order = if is_reversed { [1, 0] } else { [0, 1] };
         let (mut params, mut literals, mut keys) = ([TypeId::ANY; 2], [TypeId::ANY; 2], Vec::new());
         for index in order {
-            params[index] = types.intern(TypeData::TypeParam(
-                FILE,
-                TypeParamId(index as u32),
-                MapperId::IDENTITY,
-            ));
+            params[index] = types.intern(TypeData::TypeParam(FILE, TypeParamId(index as u32), MapperId::IDENTITY));
         }
         for index in order {
-            literals[index] = types.intern(TypeData::StringLit {
-                value: atoms.intern(texts[index]),
-                fresh: false,
-            });
+            literals[index] = types.intern(TypeData::StringLit { value: atoms.intern(texts[index]), fresh: false });
             keys.push(types.intern(TypeData::Keyof(literals[index])));
         }
         let union = types.intern(TypeData::Union(types.list(&keys)));
         let mapper = types.mapper(vec![(params[0], union), (params[1], literals[1])]);
-        types.intern(TypeData::Anon {
-            origin: Origin::TypeLiteral(FILE, TypeNodeId(5)),
-            mapper,
-        })
+        types.intern(TypeData::Anon { origin: Origin::TypeLiteral(FILE, TypeNodeId(5)), mapper })
     }
 
     #[test]
     #[cfg_attr(miri, ignore)]
     fn two_tasks_of_a_step_agree() {
         let session = Session::new();
-        let shared = Shared {
-            atoms: Interner::new_in(&session),
-            types: TypeStore::new_in(&session),
-        };
-        let (one, other) = (
-            OwnStore::new_in(session.arena()),
-            OwnStore::new_in(session.arena()),
-        );
-        let (a, b) = (
-            make(shared.records(&one), false),
-            make(shared.records(&other), true),
-        );
+        let shared = Shared { atoms: Interner::new_in(&session), types: TypeStore::new_in(&session) };
+        let (one, other) = (OwnStore::new_in(session.arena()), OwnStore::new_in(session.arena()));
+        let (a, b) = (make(shared.records(&one), false), make(shared.records(&other), true));
         assert!(a.is_local() && b.is_local());
-        let of_a = with(shared.records(&one), &mut State::default(), |known| {
-            shared.records(&one).of_type(known, a)
-        });
-        let of_b = with(shared.records(&other), &mut State::default(), |known| {
-            shared.records(&other).of_type(known, b)
-        });
+        let of_a = with(shared.records(&one), &mut State::default(), |known| shared.records(&one).of_type(known, a));
+        let of_b = with(shared.records(&other), &mut State::default(), |known| shared.records(&other).of_type(known, b));
         assert_eq!(of_a, of_b);
         let types = shared.records(&one).types;
-        let elsewhere = types.intern(TypeData::Anon {
-            origin: Origin::TypeLiteral(FILE, TypeNodeId(6)),
-            mapper: MapperId::IDENTITY,
-        });
-        assert_ne!(
-            with(shared.records(&one), &mut State::default(), |known| shared
-                .records(&one)
-                .of_type(known, elsewhere)),
-            of_a
-        );
+        let elsewhere = types.intern(TypeData::Anon { origin: Origin::TypeLiteral(FILE, TypeNodeId(6)), mapper: MapperId::IDENTITY });
+        assert_ne!(with(shared.records(&one), &mut State::default(), |known| shared.records(&one).of_type(known, elsewhere)), of_a);
     }
 
     fn literal_at(records: Records<'_, '_>, node: u32) -> TypeId {
-        records.types.intern(TypeData::Anon {
-            origin: Origin::TypeLiteral(FILE, TypeNodeId(node)),
-            mapper: MapperId::IDENTITY,
-        })
+        records.types.intern(TypeData::Anon { origin: Origin::TypeLiteral(FILE, TypeNodeId(node)), mapper: MapperId::IDENTITY })
     }
 
     #[test]
     #[cfg_attr(miri, ignore)]
     fn file_number_is_irrelevant() {
         let session = Session::new();
-        let shared = Shared {
-            atoms: Interner::new_in(&session),
-            types: TypeStore::new_in(&session),
-        };
+        let shared = Shared { atoms: Interner::new_in(&session), types: TypeStore::new_in(&session) };
         let own = OwnStore::new_in(session.arena());
         let records = shared.records(&own);
-        let literal_in = |file: u32| {
-            records.types.intern(TypeData::Anon {
-                origin: Origin::TypeLiteral(FileId(file), TypeNodeId(5)),
-                mapper: MapperId::IDENTITY,
-            })
-        };
+        let literal_in = |file: u32| records.types.intern(TypeData::Anon { origin: Origin::TypeLiteral(FileId(file), TypeNodeId(5)), mapper: MapperId::IDENTITY });
         let of = |names: Vec<Identity>, ty: TypeId| {
             let named = super::Shared::default();
             named.file_identities.set(names).unwrap();
-            records.of_type(
-                &mut Known {
-                    state: &mut State::default(),
-                    checker: &mut Verbatim(records.types),
-                    shared: &named,
-                    checker_query_count: 0,
-                },
-                ty,
-            )
+            records.of_type(&mut Known { state: &mut State::default(), checker: &mut Verbatim(records.types), shared: &named, checker_query_count: 0 }, ty)
         };
         let (name, other) = ([7, 8], [9, 10]);
-        assert_eq!(
-            of(vec![name, other], literal_in(0)),
-            of(vec![other, name], literal_in(1))
-        );
-        assert_ne!(
-            of(vec![name, other], literal_in(0)),
-            of(vec![name, other], literal_in(1))
-        );
+        assert_eq!(of(vec![name, other], literal_in(0)), of(vec![other, name], literal_in(1)));
+        assert_ne!(of(vec![name, other], literal_in(0)), of(vec![name, other], literal_in(1)));
     }
 
     #[test]
     #[cfg_attr(miri, ignore)]
     fn duplicate_members_count_once() {
         let session = Session::new();
-        let shared = Shared {
-            atoms: Interner::new_in(&session),
-            types: TypeStore::new_in(&session),
-        };
+        let shared = Shared { atoms: Interner::new_in(&session), types: TypeStore::new_in(&session) };
         let own = OwnStore::new_in(session.arena());
         let records = shared.records(&own);
         let types = records.types;
-        let (a, b, c) = (
-            literal_at(records, 1),
-            literal_at(records, 2),
-            literal_at(records, 3),
-        );
-        let (one, twin) = (
-            types.intern(TypeData::Union(types.list(&[a, b]))),
-            types.intern(TypeData::Union(types.list(&[b, a]))),
-        );
+        let (a, b, c) = (literal_at(records, 1), literal_at(records, 2), literal_at(records, 3));
+        let (one, twin) = (types.intern(TypeData::Union(types.list(&[a, b]))), types.intern(TypeData::Union(types.list(&[b, a]))));
         assert_ne!(one, twin);
         let mut known = State::default();
-        let mut of = |members: &[TypeId]| {
-            with(records, &mut known, |known| {
-                records.of_type(
-                    known,
-                    types.intern(TypeData::Intersection(types.list(members))),
-                )
-            })
-        };
+        let mut of = |members: &[TypeId]| with(records, &mut known, |known| records.of_type(known, types.intern(TypeData::Intersection(types.list(members)))));
         assert_eq!(of(&[one, c]), of(&[one, twin, c]));
         assert_eq!(of(&[one, c]), of(&[twin, c, one]));
         assert_ne!(of(&[one, c]), of(&[c, one]));
         assert_ne!(of(&[one, c]), of(&[one, a, c]));
         let alone = of(&[one, twin]);
-        assert_eq!(
-            alone,
-            with(records, &mut known, |known| records.of_type(known, one))
-        );
-        let mut of_union = |members: &[TypeId]| {
-            with(records, &mut known, |known| {
-                records.of_type(known, types.intern(TypeData::Union(types.list(members))))
-            })
-        };
+        assert_eq!(alone, with(records, &mut known, |known| records.of_type(known, one)));
+        let mut of_union = |members: &[TypeId]| with(records, &mut known, |known| records.of_type(known, types.intern(TypeData::Union(types.list(members)))));
         assert_eq!(of_union(&[one, c]), of_union(&[c, twin, one]));
     }
 
@@ -1020,22 +735,12 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn published_type_keeps_its_identity() {
         let session = Session::new();
-        let shared = Shared {
-            atoms: Interner::new_in(&session),
-            types: TypeStore::new_in(&session),
-        };
+        let shared = Shared { atoms: Interner::new_in(&session), types: TypeStore::new_in(&session) };
         let mut first = OwnStore::new_in(session.arena());
         let created = make(shared.records(&first), false);
-        let around = shared
-            .records(&first)
-            .types
-            .intern(TypeData::Keyof(created));
-        let before = with(shared.records(&first), &mut State::default(), |known| {
-            shared.records(&first).of_type(known, created)
-        });
-        let around_before = with(shared.records(&first), &mut State::default(), |known| {
-            shared.records(&first).of_type(known, around)
-        });
+        let around = shared.records(&first).types.intern(TypeData::Keyof(created));
+        let before = with(shared.records(&first), &mut State::default(), |known| shared.records(&first).of_type(known, created));
+        let around_before = with(shared.records(&first), &mut State::default(), |known| shared.records(&first).of_type(known, around));
         let link = shared.publish(&mut first, created);
         let mut published = created;
         published.follow(&link);
@@ -1044,22 +749,9 @@ mod tests {
         let later = OwnStore::new_in(session.arena());
         assert_eq!(make(shared.records(&later), false), published);
         let mut known = State::default();
-        assert_eq!(
-            with(shared.records(&later), &mut known, |known| shared
-                .records(&later)
-                .of_type(known, published)),
-            before
-        );
-        let around = shared
-            .records(&later)
-            .types
-            .intern(TypeData::Keyof(published));
+        assert_eq!(with(shared.records(&later), &mut known, |known| shared.records(&later).of_type(known, published)), before);
+        let around = shared.records(&later).types.intern(TypeData::Keyof(published));
         assert!(around.is_local());
-        assert_eq!(
-            with(shared.records(&later), &mut known, |known| shared
-                .records(&later)
-                .of_type(known, around)),
-            around_before
-        );
+        assert_eq!(with(shared.records(&later), &mut known, |known| shared.records(&later).of_type(known, around)), around_before);
     }
 }

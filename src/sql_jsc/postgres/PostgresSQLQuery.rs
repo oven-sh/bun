@@ -3,8 +3,8 @@ use core::mem;
 
 use crate::jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, VirtualMachineSqlExt as _};
 use crate::shared::cached_structure::Undescribed;
-use crate::shared::query_ctor_args::QueryCtorArgs;
 use crate::shared::row_decoder::RowDecoder;
+use crate::shared::query_ctor_args::QueryCtorArgs;
 use bun_core::String as BunString;
 use bun_jsc::JsCell;
 use bun_ptr::{AsCtxPtr, RefPtr};
@@ -471,8 +471,7 @@ impl PostgresSQLQuery {
         if !query.is_object() {
             return Err(global_object.throw_invalid_argument_type("run", "query", "Query"));
         }
-        this.row_type
-            .set(RowDecoder::expected_row_type(global_object, query));
+        this.row_type.set(RowDecoder::expected_row_type(global_object, query));
 
         let this_value = callframe.this();
         let binding_value = js::binding_get_cached(this_value).unwrap_or_default();

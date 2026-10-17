@@ -14,7 +14,7 @@ use bun_uws as uws;
 use crate::bun_string_jsc;
 use crate::counters::Counters;
 use crate::event_loop::EventLoop;
-use crate::module_loader::{self as ModuleLoader, FetchFlags};
+use crate::module_loader as ModuleLoader;
 use crate::rare_data::RareData;
 use crate::saved_source_map::SavedSourceMap;
 use crate::{
@@ -819,11 +819,7 @@ impl ExitHandler {
     pub(crate) extern "C" fn Bun__VM__entryRootKey(
         vm: &VirtualMachine,
     ) -> bun_core::StringView<'_> {
-        if !vm.transpiler.options.disable_transpilation
-            && !vm.main_is_html_entrypoint
-            && !vm.main_is_compiled
-            && !vm.starts_server_natively
-        {
+        if !vm.transpiler.options.disable_transpilation && !vm.main_is_html_entrypoint && !vm.main_is_compiled && !vm.starts_server_natively {
             bun_core::StringView::static_(MAIN_FILE_NAME)
         } else {
             bun_core::StringView::borrow_utf8(vm.main())
@@ -3349,10 +3345,7 @@ impl VirtualMachine {
                 let _ = STANDALONE_MODULE_GRAPH.set(graph);
             }
             addr_of_mut!((*vm).standalone_module_graph).write(opts.graph);
-            addr_of_mut!((*vm).finds_entry_points_by_path).write(
-                opts.graph
-                    .is_some_and(|graph| graph.has_entry_point_paths()),
-            );
+            addr_of_mut!((*vm).finds_entry_points_by_path).write(opts.graph.is_some_and(|graph| graph.has_entry_point_paths()));
             addr_of_mut!((*vm).initial_script_execution_context_identifier).write(context_id);
             // Mutex fields: zeroed atomics ARE valid-unlocked, but write the
             // canonical value so the invariant is explicit.
@@ -3580,10 +3573,7 @@ impl VirtualMachine {
         }
 
         let is_compiled = self.is_compiled_entry_point(entry_path);
-        self.has_loaded = is_compiled
-            && self
-                .standalone_module_graph
-                .is_some_and(|graph| graph.preserves_source_paths());
+        self.has_loaded = is_compiled && self.standalone_module_graph.is_some_and(|graph| graph.preserves_source_paths());
         self.main_is_compiled = is_compiled;
         self.starts_server_natively = !is_compiled
             && !self.main_is_html_entrypoint
@@ -3618,14 +3608,7 @@ impl VirtualMachine {
                     bun_core::hint::cold();
                     self.set_pending_internal_promise(None);
                     let global_ref = self.global();
-                    let argv1 = bun_string_jsc::create_utf8_for_js(
-                        global_ref,
-                        if self.main_is_compiled {
-                            self.main()
-                        } else {
-                            MAIN_FILE_NAME
-                        },
-                    )?;
+                    let argv1 = bun_string_jsc::create_utf8_for_js(global_ref, if self.main_is_compiled { self.main() } else { MAIN_FILE_NAME })?;
                     let promise: *mut JSInternalPromise =
                         match jsc::from_js_host_call_generic(global_ref, || {
                             NodeModuleModule__callOverriddenRunMain(global_ref, argv1)
@@ -3671,11 +3654,9 @@ impl VirtualMachine {
             let global_ref = self.global();
             let promise = if self.main_is_compiled || self.starts_server_natively {
                 let main_str = bun_core::String::from_bytes(self.main());
-                let promise = jsc::JSModuleLoader::resolve_and_load_and_evaluate_module_ptr(
-                    global, &main_str,
-                )
-                .map(NonNull::as_ptr)
-                .ok_or(crate::CrateError::JSError)?;
+                let promise = jsc::JSModuleLoader::resolve_and_load_and_evaluate_module_ptr(global, &main_str)
+                    .map(NonNull::as_ptr)
+                    .ok_or(crate::CrateError::JSError)?;
                 if self.starts_server_natively {
                     // SAFETY: `promise` is a live JSC heap cell.
                     unsafe { Bun__lookForServerAfterEvaluation(global_ref, promise) };
@@ -4239,9 +4220,7 @@ pub fn collect_macro_vm_garbage() {
 fn path_from_build_folder(frame_url: &bun_core::String) -> Option<bun_core::String> {
     let url = frame_url.to_utf8();
     let mut rest = url.slice().strip_prefix(b"/$bunfs/root/")?;
-    if standalone_module_graph()
-        .is_some_and(|graph| graph.find_assume_standalone_path(url.slice()).is_some())
-    {
+    if standalone_module_graph().is_some_and(|graph| graph.find_assume_standalone_path(url.slice()).is_some()) {
         return None;
     }
     let mut path = Vec::new();
@@ -4303,6 +4282,12 @@ impl VirtualMachine {
     #[unsafe(export_name = "Bun__codeGenerationFromStrings")]
     pub(crate) extern "C" fn code_generation_from_strings_for_cpp() -> u8 {
         bun_core::code_generation_from_strings() as u8
+    }
+
+    #[cfg(not(bun_disallow_code_generation_from_strings))]
+    #[unsafe(export_name = "Bun__isCodeGenerationDisallowedByTrimming")]
+    pub(crate) extern "C" fn is_code_generation_disallowed_by_trimming_for_cpp() -> bool {
+        bun_core::is_code_generation_disallowed_by_trimming()
     }
 
     /// Whether `bun:ffi` `cc()` is allowed (`--no-ffi-cc` and `--no-addons` disable it).
@@ -5106,17 +5091,11 @@ impl VirtualMachine {
         self.ref_counted_string_with_was_new::<DUPE>(&mut was_new, input_, hash_)
     }
 
-    // Note: `flags` is a runtime arg —
-    // `FetchFlags` would need `ConstParamTy` (unstable derive on the enum's
-    // owning module) to be a const generic; the only branches are cheap
-    // equality tests so the runtime form is fine.
-    pub(crate) fn fetch_without_on_load_plugins(
+    fn read_source_for_preview(
         jsc_vm: &mut VirtualMachine,
         global_object: &JSGlobalObject,
         specifier: &bun_core::String,
-        referrer: &bun_core::String,
         log: &mut bun_ast::Log,
-        flags: FetchFlags,
     ) -> crate::CrateResult<ResolvedSource> {
         debug_assert!(VirtualMachine::is_loaded());
 
@@ -5127,7 +5106,6 @@ impl VirtualMachine {
         }
 
         let specifier_clone = specifier.to_utf8();
-        let referrer_clone = referrer.to_utf8();
 
         let mut virtual_source_to_use: Option<bun_ast::Source> = None;
         // The blob crosses
@@ -5162,10 +5140,6 @@ impl VirtualMachine {
             Ok(lr) => lr,
             Err(_) => return Err(crate::CrateError::ModuleNotFound),
         };
-        let module_type = lr
-            .package_json
-            .map(|pkg| pkg.module_type)
-            .unwrap_or(bun_bundler::options::ModuleType::Unknown);
 
         // A drop-guard so both the normal and error paths reset the arena on
         // the right edge.
@@ -5179,7 +5153,7 @@ impl VirtualMachine {
                 }
             }
         }
-        let mut guard = ArenaReset(jsc_vm, flags != FetchFlags::PrintSource);
+        let mut guard = ArenaReset(jsc_vm, false);
 
         let printer = SOURCE_CODE_PRINTER
             .get()
@@ -5191,7 +5165,7 @@ impl VirtualMachine {
         let mut extra = ModuleLoader::TranspileExtra {
             // SAFETY: `lr.path` borrows from `specifier_clone` (and the VM's
             // resolver caches), both of which outlive the synchronous
-            // `transpile_source_code` call below; `TranspileExtra` declares
+            // `__bun_read_source_code` call below; `TranspileExtra` declares
             // `'static` only because it crosses the §Dispatch boundary as
             // `*mut c_void` — the hook never retains the borrow.
             path: unsafe { lr.path.into_static() },
@@ -5200,26 +5174,24 @@ impl VirtualMachine {
             } else {
                 bun_ast::Loader::File
             }),
-            module_type,
+            module_type: bun_bundler::options::ModuleType::Unknown,
             source_code_printer: printer.as_ptr(),
-            // `fetchWithoutOnLoadPlugins` forbids the async path.
             promise_ptr: core::ptr::null_mut(),
             function_sources: core::ptr::null_mut(),
         };
         let args = ModuleLoader::TranspileArgs {
             specifier: lr.specifier,
-            referrer: referrer_clone.slice(),
+            referrer: b"",
             input_specifier: specifier,
             log: std::ptr::from_mut::<bun_ast::Log>(log),
             virtual_source: lr.virtual_source,
             global_object,
-            flags,
             extra: &raw mut extra,
         };
         // SAFETY: `guard.0` is the live per-thread VM; `args.extra` points at
         // the live `extra` above.
-        let result = unsafe { ModuleLoader::__bun_transpile_source_code(guard.0, &args) };
-        if result.is_err() && flags == FetchFlags::PrintSource {
+        let result = unsafe { ModuleLoader::__bun_read_source_code(guard.0, &args) };
+        if result.is_err() {
             guard.1 = true; // errdefer
         }
         // `blob_to_deinit` drop guard fires here.
@@ -5351,17 +5323,14 @@ impl VirtualMachine {
                             .standalone_module_graph
                             .and_then(|graph| graph.source_path(source))
                         {
-                            source_to_use = bun_resolver::fs::PathName::init(source_path)
-                                .dir_with_trailing_slash();
+                            source_to_use =
+                                bun_resolver::fs::PathName::init(source_path).dir_with_trailing_slash();
                             retry_on_not_found = true;
                             continue;
                         }
                     }
                     if core::mem::take(&mut may_retry_from_root)
-                        && let Some(root) = self
-                            .standalone_module_graph
-                            .map(|graph| graph.base_public_path_with_default_suffix())
-                            .filter(|root| !source_to_use.starts_with(root))
+                        && let Some(root) = self.standalone_module_graph.map(|graph| graph.base_public_path_with_default_suffix()).filter(|root| !source_to_use.starts_with(root))
                     {
                         source_to_use = root;
                         retry_on_not_found = true;
@@ -5438,9 +5407,7 @@ impl VirtualMachine {
         // note).
         ret.path = unsafe { bun_ptr::detach_lifetime(result_path.text) };
         if self.finds_entry_points_by_path
-            && let Some(name) = self
-                .standalone_module_graph
-                .and_then(|graph| graph.find_by_source_path(ret.path))
+            && let Some(name) = self.standalone_module_graph.and_then(|graph| graph.find_by_source_path(ret.path))
         {
             ret.path = name;
         }
@@ -5842,10 +5809,7 @@ impl VirtualMachine {
         &mut self,
         entry_path: &[u8],
     ) -> crate::CrateResult<*mut JSInternalPromise> {
-        self.has_loaded = self.is_compiled_entry_point(entry_path)
-            && self
-                .standalone_module_graph
-                .is_some_and(|graph| graph.preserves_source_paths());
+        self.has_loaded = self.is_compiled_entry_point(entry_path) && self.standalone_module_graph.is_some_and(|graph| graph.preserves_source_paths());
         self.set_main(entry_path);
         self.main_resolved_path = bun_core::String::EMPTY;
         self.main_hash = bun_watcher::Watcher::get_hash(entry_path);
@@ -6840,13 +6804,11 @@ impl VirtualMachine {
                 }
                 let mut log = bun_ast::Log::default();
                 let on_disk = path_from_build_folder(&frames[top].source_url);
-                let Ok(original_source) = Self::fetch_without_on_load_plugins(
+                let Ok(original_source) = Self::read_source_for_preview(
                     self,
                     global,
                     on_disk.as_ref().unwrap_or(&frames[top].source_url),
-                    &bun_core::String::EMPTY,
                     &mut log,
-                    FetchFlags::PrintSource,
                 ) else {
                     // Source is gone; the frames still get remapped below.
                     break 'code bun_core::Utf8Bytes::EMPTY;
@@ -6977,7 +6939,7 @@ impl VirtualMachine {
         // carries the union of all
         // branches' locals (every `pretty_write!` expands to two `write!`s).
         // More importantly, `remap_zig_exception` below calls
-        // `fetch_without_on_load_plugins` → the transpiler for source-line
+        // `read_source_for_preview` for the source-line
         // preview, and on Windows that call tree stack-allocates `PathBuffer`s
         // (`MAX_PATH_BYTES = 98302` vs 4096 on Linux). One cycle can therefore
         // exceed the default 256 KB headroom `is_safe_to_recurse()` leaves, so
@@ -6988,7 +6950,7 @@ impl VirtualMachine {
         // the caller (`format2` / `Bun.inspect`).
         let extra_headroom: usize = if cfg!(windows) {
             // 3× PathBuffer ≈ 288 KB — empirically enough for the
-            // `remap_zig_exception` → `transpile_source_code` chain on the
+            // `remap_zig_exception` → `read_source_for_preview` chain on the
             // 16K-deep Error test (`bun-inspect.test.ts`).
             bun_paths::MAX_PATH_BYTES * 3
         } else {

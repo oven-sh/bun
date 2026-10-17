@@ -785,6 +785,7 @@ impl TagExt for Tag {
         (self as u8) < 3
     }
 
+    #[inline(never)]
     fn infer(dependency: &[u8]) -> Tag {
         // empty string means `latest`
         if dependency.is_empty() {
@@ -1217,6 +1218,7 @@ pub(crate) fn nameless_npm_alias(literal: &[u8]) -> Option<&[u8]> {
     is_scoped_package_name(name).is_err().then_some(name)
 }
 
+#[inline(never)]
 pub(crate) fn parse_with_tag(
     alias: String,
     alias_hash: Option<PackageNameHash>,

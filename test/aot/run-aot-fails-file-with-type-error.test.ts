@@ -13,13 +13,7 @@ const files = {
 };
 
 async function run(dir: string, ...args: string[]) {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "--aot", ...args],
-    cwd: dir,
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  await using proc = Bun.spawn({ cmd: [bunExe(), "test", "--aot", ...args], cwd: dir, env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { said: stdout + stderr, exitCode };
 }
@@ -67,8 +61,7 @@ test("an error in a preload stops the run", async () => {
 });
 
 const passed = (said: string) => [...said.matchAll(/^\(pass\) (.*?)(?: \[.*\])?$/gm)].map(match => match[1]).sort();
-const errors = (said: string) =>
-  [...said.matchAll(/^(\S+)\(\d+,\d+\): error (TS\d+)/gm)].map(match => `${match[1]} ${match[2]}`).sort();
+const errors = (said: string) => [...said.matchAll(/^(\S+)\(\d+,\d+\): error (TS\d+)/gm)].map(match => `${match[1]} ${match[2]}`).sort();
 
 test("what only a refused test file imports is still declared for the others", async () => {
   using dir = tempDir("run-aot-fails-file-with-type-error", {

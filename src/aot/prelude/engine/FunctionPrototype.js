@@ -23,18 +23,21 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-export function call(thisArgument) {
-  "use strict";
+export function call(thisArgument)
+{
+    "use strict";
 
-  var argumentValues = [];
-  // Start from 1 to ignore thisArgument
-  for (var i = 1; i < $argumentCount(); i++) $putByValDirect(argumentValues, i - 1, arguments[i]);
+    var argumentValues = [];
+    // Start from 1 to ignore thisArgument
+    for (var i = 1; i < $argumentCount(); i++)
+        $putByValDirect(argumentValues, i-1, arguments[i]);
 
-  return this.$apply(thisArgument, argumentValues);
+    return this.$apply(thisArgument, argumentValues);
 }
 
-export function apply(thisValue, argumentValues) {
-  "use strict";
+export function apply(thisValue, argumentValues)
+{
+    "use strict";
 
-  return this.$apply(thisValue, argumentValues);
+    return this.$apply(thisValue, argumentValues);
 }

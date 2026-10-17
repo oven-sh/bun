@@ -264,6 +264,7 @@ impl RuntimeTranspilerStore {
     // Note: takes `NonNull` rather than `&mut` for `event_loop`/`vm`
     // because `&mut self` already aliases `vm.transpiler_store` (this `Self` is
     // a field of `VirtualMachine`). Field-level derefs only.
+    #[inline(never)]
     pub fn run_from_js_thread(
         &mut self,
         event_loop: NonNull<EventLoop>,
@@ -584,19 +585,9 @@ impl TranspilerJob {
             }
             match audited {
                 // SAFETY: the two lists are valid for the call, and C++ copies them.
-                Some(it) => unsafe {
-                    Bun__AOTAudit__setPendingSites(
-                        it.written_len,
-                        it.expressions.as_ptr(),
-                        it.expressions.len(),
-                        it.parameters.as_ptr(),
-                        it.parameters.len(),
-                    )
-                },
+                Some(it) => unsafe { Bun__AOTAudit__setPendingSites(it.written_len, it.expressions.as_ptr(), it.expressions.len(), it.parameters.as_ptr(), it.parameters.len()) },
                 // SAFETY: C++ reads neither pointer when the counts are 0.
-                None => unsafe {
-                    Bun__AOTAudit__setPendingSites(0, core::ptr::null(), 0, core::ptr::null(), 0)
-                },
+                None => unsafe { Bun__AOTAudit__setPendingSites(0, core::ptr::null(), 0, core::ptr::null(), 0) },
             }
         }
 
@@ -868,9 +859,7 @@ impl TranspilerJob {
                 .unwrap_or(false)
                 && is_main
                 && set_break_point_on_first_line(),
-            runtime_transpiler_cache: if !JscRuntimeTranspilerCache::is_disabled()
-                && !bun_ast::audited::is_on()
-            {
+            runtime_transpiler_cache: if !JscRuntimeTranspilerCache::is_disabled() && !bun_ast::audited::is_on() {
                 // SAFETY: `cache` is a stack local declared above and outlives
                 // `parse_options`; `addr_of_mut!` avoids an intermediate `&mut`
                 // so the post-parse `cache.entry.take()` reborrow stays sound.

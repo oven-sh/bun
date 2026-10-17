@@ -2260,7 +2260,7 @@ void GlobalObject::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 
     if (Bun::codeGenerationFromStrings() != Bun::CodeGenerationFromStrings::Allowed) [[unlikely]]
-        setEvalEnabled(false, Bun::codeGenerationFromStringsDisallowedMessage);
+        setEvalEnabled(false, Bun::codeGenerationFromStringsDisallowedMessage());
 
     m_bindgenAdditions.initialize();
     m_markdownTagStrings.initialize();

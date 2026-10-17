@@ -2,26 +2,10 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { test } from "./supported";
 
-const tsconfig = (types: string[]) =>
-  JSON.stringify({
-    compilerOptions: {
-      strict: true,
-      target: "ESNext",
-      module: "Preserve",
-      moduleResolution: "bundler",
-      noEmit: true,
-      skipLibCheck: true,
-      types,
-    },
-  });
+const tsconfig = (types: string[]) => JSON.stringify({ compilerOptions: { strict: true, target: "ESNext", module: "Preserve", moduleResolution: "bundler", noEmit: true, skipLibCheck: true, types } });
 
 const vitest = {
-  "node_modules/vitest/package.json": JSON.stringify({
-    name: "vitest",
-    version: "9.9.9",
-    type: "module",
-    exports: { ".": { types: "./index.d.ts" }, "./globals": { types: "./globals.d.ts" } },
-  }),
+  "node_modules/vitest/package.json": JSON.stringify({ name: "vitest", version: "9.9.9", type: "module", exports: { ".": { types: "./index.d.ts" }, "./globals": { types: "./globals.d.ts" } } }),
   "node_modules/vitest/index.d.ts": `
     export declare const vi: { stubGlobal(name: string, value: unknown): void; fn(): () => void };
     export declare function test(name: string, run: () => void): void;
@@ -49,13 +33,7 @@ const usesWhatBunLacks = `
 `;
 
 async function run(dir: string, ...args: string[]) {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "--aot", ...args],
-    cwd: dir,
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  await using proc = Bun.spawn({ cmd: [bunExe(), "test", "--aot", ...args], cwd: dir, env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { said: stdout + stderr, exitCode };
 }
@@ -64,11 +42,7 @@ test.each([
   ["the tsconfig names vitest/globals", ["vitest/globals"]],
   ["nothing declares the globals, and vitest is installed", []],
 ])("%s: a member that bun test lacks fails its own test, not the file", async (_, types) => {
-  using dir = tempDir("aot-test-runner-globals", {
-    ...vitest,
-    "tsconfig.json": tsconfig(types),
-    "a.test.ts": usesWhatBunLacks,
-  });
+  using dir = tempDir("aot-test-runner-globals", { ...vitest, "tsconfig.json": tsconfig(types), "a.test.ts": usesWhatBunLacks });
   const { said, exitCode } = await run(String(dir));
   expect(said).not.toContain("error TS");
   expect(said).not.toContain("does not run this file");
@@ -80,11 +54,7 @@ test.each([
 });
 
 test("the installed runner's types are held to: a wrong argument is still a type error", async () => {
-  using dir = tempDir("aot-test-runner-globals", {
-    ...vitest,
-    "tsconfig.json": tsconfig([]),
-    "a.test.ts": `export {}; test("never run", () => { vi.stubGlobal(1, 1); });`,
-  });
+  using dir = tempDir("aot-test-runner-globals", { ...vitest, "tsconfig.json": tsconfig([]), "a.test.ts": `export {}; test("never run", () => { vi.stubGlobal(1, 1); });` });
   const { said, exitCode } = await run(String(dir));
   expect(said).toMatch(/a\.test\.ts\(1,\d+\): error TS2345/);
   expect(said).not.toContain("never run");

@@ -1360,6 +1360,7 @@ impl GitSubprocess {
     }
 
     /// May free `this`.
+    #[inline(never)]
     fn maybe_finished(this: ThisPtr<Self>) {
         if this.remaining_fds.get() != 0 {
             return;

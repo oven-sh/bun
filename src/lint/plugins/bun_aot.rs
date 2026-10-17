@@ -1,9 +1,7 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::types::locked_builtins::names;
-pub(crate) use bun_lint::types::locked_builtins::{
-    Builtin, Change, KnownValue, global_object, shown,
-};
+pub(crate) use bun_lint::types::locked_builtins::{Builtin, Change, KnownValue, global_object, shown};
 use bun_lint_oxlint::ast_util::is_global_reference;
 use smallvec::SmallVec;
 use std::borrow::Cow;
@@ -103,17 +101,9 @@ pub(crate) fn builtin_for_syntax<'a>(e: Expr<'a>, alias: Alias<'a>) -> Option<Wr
 fn object_from(first: &'static Builtin, e: Expr<'_>) -> Option<&'static Builtin> {
     match e.object() {
         Some(object) => {
-            let (object, name) = (
-                object_from(first, object.skip_type_wrappers())?,
-                property_name(e)?,
-            );
-            let is_itself =
-                object.is_global_object() && GLOBAL_OBJECT.iter().any(|it| it.as_bytes() == &*name);
-            if is_itself {
-                Some(object)
-            } else {
-                object.object_at(&name)
-            }
+            let (object, name) = (object_from(first, object.skip_type_wrappers())?, property_name(e)?);
+            let is_itself = object.is_global_object() && GLOBAL_OBJECT.iter().any(|it| it.as_bytes() == &*name);
+            if is_itself { Some(object) } else { object.object_at(&name) }
         }
         None => Some(first),
     }

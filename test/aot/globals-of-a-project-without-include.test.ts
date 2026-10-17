@@ -2,16 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { test } from "./supported";
 
-const tsconfig = JSON.stringify({
-  compilerOptions: {
-    target: "ESNext",
-    module: "Preserve",
-    moduleResolution: "bundler",
-    noEmit: true,
-    types: [],
-    strict: true,
-  },
-});
+const tsconfig = JSON.stringify({ compilerOptions: { target: "ESNext", module: "Preserve", moduleResolution: "bundler", noEmit: true, types: [], strict: true } });
 
 async function run(cwd: string, ...args: string[]) {
   await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
@@ -20,8 +11,7 @@ async function run(cwd: string, ...args: string[]) {
 }
 
 const passed = (said: string) => [...said.matchAll(/^\(pass\) (.*?)(?: \[.*\])?$/gm)].map(match => match[1]).sort();
-const errors = (said: string) =>
-  [...said.matchAll(/^(\S+)\((\d+),\d+\): error (TS\d+)/gm)].map(match => `${match[1]}:${match[2]} ${match[3]}`).sort();
+const errors = (said: string) => [...said.matchAll(/^(\S+)\((\d+),\d+\): error (TS\d+)/gm)].map(match => `${match[1]}:${match[2]} ${match[3]}`).sort();
 
 const project = {
   "tsconfig.json": tsconfig,
@@ -44,10 +34,7 @@ test("a tsconfig.json without `include` takes every file below it: what one of t
 }, 60_000);
 
 test("a file that `exclude` takes out declares nothing", async () => {
-  using dir = tempDir("globals-without-include", {
-    ...project,
-    "tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), exclude: ["src/global.ts"] }),
-  });
+  using dir = tempDir("globals-without-include", { ...project, "tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), exclude: ["src/global.ts"] }) });
   const { said, exitCode } = await run(String(dir), "test", "--aot", "./test/uses.test.ts");
   expect(errors(said)).toEqual(["src/uses.ts:2 TS7017"]);
   expect(exitCode).toBe(1);

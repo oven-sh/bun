@@ -2,10 +2,4 @@
 // from the general allocator, so nearly every object lies outside the reserved range, as in a program that has outgrown it.
 import { variant } from "./run-programs";
 
-variant(
-  "wide-references-outside-the-reserved-range",
-  { BUN_JSC_useAOTWideReferences: "1" },
-  { BUN_JSC_markedBlockCageSizeInMB: "1" },
-  3,
-  3,
-);
+variant("wide-references-outside-the-reserved-range", { BUN_JSC_useAOTWideReferences: "1" }, { BUN_JSC_markedBlockCageSizeInMB: "1" }, 3, 3);

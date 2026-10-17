@@ -3503,15 +3503,9 @@ where
 
     /// False: 416 has been sent.
     fn honor_embedded_file_range(&self) -> bool {
-        let AnyBlob::Blob(blob) = self.blob.get() else {
-            return true;
-        };
-        let Some(store) = blob.store() else {
-            return true;
-        };
-        let crate::webcore::blob::store::Data::Bytes(bytes) = &store.data else {
-            return true;
-        };
+        let AnyBlob::Blob(blob) = self.blob.get() else { return true };
+        let Some(store) = blob.store() else { return true };
+        let crate::webcore::blob::store::Data::Bytes(bytes) = &store.data else { return true };
         let total = bytes.len as BlobSizeType;
         if !bun_standalone_graph::is_bun_standalone_file_path(&bytes.stored_name)
             || blob.offset.get() != 0
@@ -3522,9 +3516,7 @@ where
         }
         let user_handles_range = self.response_mut().is_some_and(|response| {
             response.status_code() != 200
-                || response
-                    .get_init_headers_mut()
-                    .is_some_and(|headers| headers.fast_has(jsc::HTTPHeaderName::ContentRange))
+                || response.get_init_headers_mut().is_some_and(|headers| headers.fast_has(jsc::HTTPHeaderName::ContentRange))
         });
         if user_handles_range || !self.if_range_matches_response() {
             return true;
@@ -3535,34 +3527,18 @@ where
                 let (offset, remain) = (start as BlobSizeType, (end - start + 1) as BlobSizeType);
                 blob.offset.set(offset);
                 blob.size.set(remain);
-                self.sendfile.set(SendfileContext {
-                    remain,
-                    offset,
-                    total,
-                });
+                self.sendfile.set(SendfileContext { remain, offset, total });
                 self.flags.set_needs_content_range(true);
                 true
             }
             RangeRequest::Result::Unsatisfiable => {
-                let Some(resp) = self.resp.get() else {
-                    return true;
-                };
+                let Some(resp) = self.resp.get() else { return true };
                 self.do_write_status(416);
-                if let Some(mut headers) = self
-                    .response_mut()
-                    .and_then(|response| response.swap_init_headers())
-                {
+                if let Some(mut headers) = self.response_mut().and_then(|response| response.swap_init_headers()) {
                     self.do_write_headers(&mut headers);
                 }
                 let mut buffer = [0u8; RangeRequest::CONTENT_RANGE_BUF];
-                resp.write_header(
-                    b"content-range",
-                    RangeRequest::format_content_range(
-                        &mut buffer,
-                        RangeRequest::Result::Unsatisfiable,
-                        Some(total),
-                    ),
-                );
+                resp.write_header(b"content-range", RangeRequest::format_content_range(&mut buffer, RangeRequest::Result::Unsatisfiable, Some(total)));
                 resp.write_header(b"accept-ranges", b"bytes");
                 let close = resp.should_close_connection();
                 self.detach_response();

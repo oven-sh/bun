@@ -26,30 +26,36 @@
 // Note that the intrisic @typedArrayLength checks that the argument passed is a typed array
 // and throws if it is not.
 
-export function toLocaleString(/* locale, options */) {
-  "use strict";
+export function toLocaleString(/* locale, options */)
+{
+    "use strict";
 
-  var length = $typedArrayLength(this);
+    var length = $typedArrayLength(this);
 
-  if (length == 0) return "";
+    if (length == 0)
+        return "";
 
-  var string = "";
-  for (var i = 0; i < length; ++i) {
-    if (i > 0) string += ",";
-    var element = this[i];
-    if (!$isUndefinedOrNull(element)) string += `${element.toLocaleString($argument(0), $argument(1))}`;
-  }
+    var string = "";
+    for (var i = 0; i < length; ++i) {
+        if (i > 0)
+            string += ",";
+        var element = this[i];
+        if (!$isUndefinedOrNull(element))
+            string += `${element.toLocaleString($argument(0), $argument(1))}`;
+    }
 
-  return string;
+    return string;
 }
 
-export function at(index) {
-  "use strict";
+export function at(index)
+{
+    "use strict";
 
-  var length = $typedArrayLength(this);
+    var length = $typedArrayLength(this);
 
-  var k = $toIntegerOrInfinity(index);
-  if (k < 0) k += length;
+    var k = $toIntegerOrInfinity(index);
+    if (k < 0)
+        k += length;
 
-  return k >= 0 && k < length ? this[k] : undefined;
+    return (k >= 0 && k < length) ? this[k] : undefined;
 }

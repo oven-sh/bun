@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
+import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { test } from "./supported";
 
 // "Cannot find module 'x'" names the file that asked for it, in the message or in its "Require stack:". Under `bun run --aot` a
 // `require("package")` that the bundler could not resolve was asked for on behalf of the entry point: the wrong file in the
@@ -51,10 +51,7 @@ test("bun run --aot names the same file as bun run", async () => {
   using dir = tempDir("module-not-found", files);
   const plain = await spawned([bunExe(), "run", "main.mjs"], String(dir));
   const aot = await spawned([bunExe(), "run", "--debug-aot", "main.mjs"], String(dir));
-  expect(plain.stdout).toContain(
-    "require(literal package): ResolveMessage | MODULE_NOT_FOUND | Cannot find module 'no-such-package' ~ Require stack: ~ - " +
-      join("<cwd>", "lib", "deep", "asks.cjs"),
-  );
+  expect(plain.stdout).toContain("require(literal package): ResolveMessage | MODULE_NOT_FOUND | Cannot find module 'no-such-package' ~ Require stack: ~ - " + join("<cwd>", "lib", "deep", "asks.cjs"));
   expect(aot.stdout).toBe(plain.stdout);
   expect(aot.exitCode).toBe(0);
 });
@@ -63,10 +60,7 @@ test("bun build --compile --aot names the executable, as bun build --compile doe
   using dir = tempDir("module-not-found", files);
   const outputs: string[][] = [];
   for (const flags of [[], ["--aot"]]) {
-    const built = await spawned(
-      [bunExe(), "build", "--compile", ...flags, "main.mjs", "--outfile", "program"],
-      String(dir),
-    );
+    const built = await spawned([bunExe(), "build", "--compile", ...flags, "main.mjs", "--outfile", "program"], String(dir));
     expect(built.exitCode).toBe(0);
     const ran = await spawned([join(String(dir), "program")], String(dir));
     expect(ran.exitCode).toBe(0);
@@ -94,10 +88,7 @@ console.log(cjs.nearby());
   });
   const plain = await spawned([bunExe(), "run", "late.mjs"], String(dir));
   expect(plain.stdout).toBe("beside the file that requires it\n");
-  using again = tempDir("module-not-found", {
-    ...files,
-    "late.mjs": await Bun.file(join(String(dir), "late.mjs")).text(),
-  });
+  using again = tempDir("module-not-found", { ...files, "late.mjs": await Bun.file(join(String(dir), "late.mjs")).text() });
   const aot = await spawned([bunExe(), "run", "--debug-aot", "late.mjs"], String(again));
   expect(aot.stdout).toBe(plain.stdout);
 });

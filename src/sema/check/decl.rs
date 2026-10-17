@@ -372,22 +372,10 @@ fn jsc_pow(base: f64, exponent: f64) -> f64 {
         return f64::NAN;
     }
     if exponent == 0.5 {
-        return if base == 0.0 {
-            0.0
-        } else if base.is_infinite() {
-            f64::INFINITY
-        } else {
-            base.sqrt()
-        };
+        return if base == 0.0 { 0.0 } else if base.is_infinite() { f64::INFINITY } else { base.sqrt() };
     }
     if exponent == -0.5 {
-        return if base == 0.0 {
-            f64::INFINITY
-        } else if base.is_infinite() {
-            0.0
-        } else {
-            1.0 / base.sqrt()
-        };
+        return if base == 0.0 { f64::INFINITY } else if base.is_infinite() { 0.0 } else { 1.0 / base.sqrt() };
     }
     if (0.0..=1000.0).contains(&exponent) && exponent == exponent.trunc() {
         let (mut result, mut factor, mut left) = (1.0, base, exponent as u32);
@@ -653,13 +641,10 @@ impl<'p, 's> Checker<'p, 's> {
     /// The result for a `BinaryExpression`, from those for its operands.
     fn evaluate_binary(&self, op: Option<BinOp>, l: Evaluated, r: Evaluated) -> Evaluated {
         let value = match (l.value, r.value, op) {
-            (Some(EnumValue::Number(a)), Some(EnumValue::Number(b)), Some(op)) => number_operation(
-                op,
-                f64::from_bits(a),
-                f64::from_bits(b),
-                self.p.files.options.uses_engine_arithmetic,
-            )
-            .and_then(|n| Evaluated::number(n).value),
+            (Some(EnumValue::Number(a)), Some(EnumValue::Number(b)), Some(op)) => {
+                number_operation(op, f64::from_bits(a), f64::from_bits(b), self.p.files.options.uses_engine_arithmetic)
+                    .and_then(|n| Evaluated::number(n).value)
+            }
             (Some(a), Some(b), Some(BinOp::Add)) => {
                 let mut text = [self.constant_text(a), self.constant_text(b)].concat();
                 if self.p.files.options.uses_engine_arithmetic {

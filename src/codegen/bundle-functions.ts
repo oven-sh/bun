@@ -449,8 +449,16 @@ export async function bundleBuiltinFunctions({ requireTransformer, typesDir }: B
     // (see bundle-modules.ts / InternalModuleRegistryConstants.S).
     extern "C" const char bun_internal_modules_data[];
 
+    extern "C" NEVER_INLINE const char* Bun__textOfBuiltinFunctions()
+    {
+        const char* text = bun_internal_modules_data;
+    #if !OS(WINDOWS)
+        asm volatile("" : "+r"(text));
+    #endif
+        return text;
+    }
+
     namespace WebCore {
-        static const std::span<const Latin1Character> internalCombinedSource = { reinterpret_cast<const Latin1Character*>(bun_internal_modules_data), ${combinedSourceCodeLength} };
     `;
 
   for (const { basename, functions } of files) {
@@ -498,7 +506,7 @@ ${basename}BuiltinsWrapper::${basename}BuiltinsWrapper(JSC::VM& vm, RefPtr<JSC::
 static constexpr unsigned internalCombinedSourceStarts[] = { ${files.flatMap(({ functions }) => functions.map(fn => fn.sourceOffset)).join(", ")} };
 
 RefPtr<JSC::SourceProvider> createBuiltinsSourceProvider() {
-    return JSC::BuiltinsSourceProvider::create(StringImpl::createWithoutCopying(internalCombinedSource), internalCombinedSourceStarts);
+    return JSC::BuiltinsSourceProvider::create(StringImpl::createWithoutCopying(std::span { reinterpret_cast<const Latin1Character*>(Bun__textOfBuiltinFunctions()), ${combinedSourceCodeLength} }), internalCombinedSourceStarts);
 }
 `;
 

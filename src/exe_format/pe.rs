@@ -149,6 +149,7 @@ const OPTIONAL_HEADER_MAGIC_64: u16 = 0x020B;
 
 // Section characteristics
 const IMAGE_SCN_CNT_INITIALIZED_DATA: u32 = 0x0000_0040;
+const IMAGE_SCN_MEM_EXECUTE: u32 = 0x2000_0000;
 const IMAGE_SCN_MEM_READ: u32 = 0x4000_0000;
 
 // Directory indices and DLL characteristics
@@ -460,7 +461,7 @@ impl PEFile {
     }
 
     /// Add a new section to the PE file for storing Bun module data
-    pub fn add_bun_section(&mut self, data_to_embed: &[u8]) -> Result<(), Error> {
+    pub fn add_bun_section(&mut self, data_to_embed: &[u8], holds_code: bool) -> Result<(), Error> {
         // 1. Strip Authenticode (before any addition)
         self.strip_authenticode()?;
 
@@ -551,7 +552,7 @@ impl PEFile {
             pointer_to_line_numbers: 0,
             number_of_relocations: 0,
             number_of_line_numbers: 0,
-            characteristics: IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ,
+            characteristics: IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ | if holds_code { IMAGE_SCN_MEM_EXECUTE } else { 0 },
         };
 
         let new_sh_off =

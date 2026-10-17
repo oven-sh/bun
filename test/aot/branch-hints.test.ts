@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
+import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
-import { test } from "./supported";
 
 const root = join(import.meta.dir, "..", "..", "src");
 
@@ -10,13 +10,7 @@ function moduleOf(file: string) {
   const [folder, ...rest] = relative(join(root, "js"), file).split(sep);
   const name = rest.join("/").replace(/\.[jt]s$/, "");
   if (folder === "node" || folder === "internal" || folder === "bun") return `${folder}:${name}`;
-  if (file.startsWith(join(root, "aot", "prelude")))
-    return (
-      ".bun-aot-prelude/" +
-      relative(join(root, "aot", "prelude"), file)
-        .split(sep)
-        .join("/")
-    );
+  if (file.startsWith(join(root, "aot", "prelude"))) return ".bun-aot-prelude/" + relative(join(root, "aot", "prelude"), file).split(sep).join("/");
   throw new Error(`${file} has a $likely or $unlikely, and this test does not know the name of that module`);
 }
 
@@ -27,8 +21,7 @@ function marks() {
       if (!/\.[jt]s$/.test(name) || name.endsWith(".d.ts")) continue;
       const text = readFileSync(join(folder, name));
       for (const mark of ["$likely(", "$unlikely("]) {
-        for (let at = text.indexOf(mark); at >= 0; at = text.indexOf(mark, at + 1))
-          found.push(`${moduleOf(join(folder, name))}\t${at}`);
+        for (let at = text.indexOf(mark); at >= 0; at = text.indexOf(mark, at + 1)) found.push(`${moduleOf(join(folder, name))}\t${at}`);
       }
     }
   }
@@ -60,15 +53,8 @@ async function run(cmd: string[], cwd: string, env: Record<string, string | unde
 async function build(dir: string, entry: string, name: string, env: Record<string, string>) {
   const executable = join(dir, name + (isWindows ? ".exe" : ""));
   const map = join(dir, name + ".map");
-  const built = await run([bunExe(), "build", "--compile", "--aot", entry, "--outfile", executable], dir, {
-    ...bunEnv,
-    ...env,
-    BUN_JSC_aotMapFilePath: map,
-  });
-  expect({
-    stderr: built.stderr.split("\n").filter(line => line.startsWith("error")),
-    exitCode: built.exitCode,
-  }).toEqual({ stderr: [], exitCode: 0 });
+  const built = await run([bunExe(), "build", "--compile", "--aot", entry, "--outfile", executable], dir, { ...bunEnv, ...env, BUN_JSC_aotMapFilePath: map });
+  expect({ stderr: built.stderr.split("\n").filter(line => line.startsWith("error")), exitCode: built.exitCode }).toEqual({ stderr: [], exitCode: 0 });
   const used = new Set<string>();
   for (const line of readFileSync(map, "utf8").split("\n")) {
     if (line.startsWith("W\t")) used.add(line.slice(2));
@@ -94,9 +80,5 @@ test("a program cannot spell $likely or $unlikely", async () => {
   using dir = tempDir("aot-branch-hints-spelled", files);
   const { executable, used } = await build(String(dir), "spelled.js", "spelled", {});
   expect([...used].filter(mark => mark.includes("spelled"))).toEqual([]);
-  expect(await run([executable], String(dir), bunEnv)).toEqual({
-    stdout: "ReferenceError\nReferenceError\n",
-    stderr: "",
-    exitCode: 0,
-  });
+  expect(await run([executable], String(dir), bunEnv)).toEqual({ stdout: "ReferenceError\nReferenceError\n", stderr: "", exitCode: 0 });
 }, 240_000);

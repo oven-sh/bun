@@ -5,16 +5,8 @@ pub struct EarlyEngine {
 }
 
 impl EarlyEngine {
-    pub fn new(
-        thread: std::thread::JoinHandle<usize>,
-        strings: Option<std::sync::mpsc::Sender<Vec<u8>>>,
-        discard: fn(usize),
-    ) -> EarlyEngine {
-        EarlyEngine {
-            thread: Some(thread),
-            strings,
-            discard,
-        }
+    pub fn new(thread: std::thread::JoinHandle<usize>, strings: Option<std::sync::mpsc::Sender<Vec<u8>>>, discard: fn(usize)) -> EarlyEngine {
+        EarlyEngine { thread: Some(thread), strings, discard }
     }
 
     pub fn replace_strings(&mut self, pairs: &[u8]) {

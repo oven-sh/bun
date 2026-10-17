@@ -215,10 +215,7 @@ fn file_read_as(
         is_jsx: is_js || is_json || script_kind == Some(ScriptKind::Tsx),
         is_javascript: is_js || is_json,
         is_json,
-        is_typescript_with_js_extension: !is_js
-            && !by_name
-            && !path.starts_with(RUNTIME_MODULES)
-            && ScriptKind::from_file_name(path).is_some_and(ScriptKind::is_javascript),
+        is_typescript_with_js_extension: !is_js && !by_name && !path.starts_with(RUNTIME_MODULES) && ScriptKind::from_file_name(path).is_some_and(ScriptKind::is_javascript),
         // `flow-parser` reads it as a name outside an async function, in a module too.
         await_is_a_name: is_json
             || (is_ecmascript || dialect.oxc) && dialect.script

@@ -20,9 +20,7 @@ function* testFiles(folder: string): Generator<string> {
   }
 }
 
-const files = [...testFiles("")]
-  .filter(file => file.startsWith("aot/") || usesTheFlag.test(readFileSync(join(tests, file), "utf8")))
-  .sort();
+const files = [...testFiles("")].filter(file => file.startsWith("aot/") || usesTheFlag.test(readFileSync(join(tests, file), "utf8"))).sort();
 
 // These pass where `bun build --compile --aot` and `bun run --aot` are refused.
 const needNoCompiler = [

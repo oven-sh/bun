@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
 import { test } from "./supported";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 const listed = `.map(key => key.split("/").pop()).filter(name => /^(db|other|only-|index)/.test(name)).sort().join()`;
 const files = {

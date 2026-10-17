@@ -23,42 +23,41 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-export function groupBy(items, callback) {
-  "use strict";
+export function groupBy(items, callback)
+{
+    "use strict";
 
-  if ($isUndefinedOrNull(items))
-    throw new TypeError("Map.groupBy requires that the first argument not be null or undefined");
+    if ($isUndefinedOrNull(items))
+        throw new TypeError("Map.groupBy requires that the first argument not be null or undefined");
 
-  if (!$isCallable(callback)) throw new TypeError("Map.groupBy requires that the second argument must be a function");
+    if (!$isCallable(callback))
+        throw new TypeError("Map.groupBy requires that the second argument must be a function");
 
-  var iteratorMethod = items[Symbol.iterator];
-  if (!$isCallable(iteratorMethod))
-    throw new TypeError(
-      "Map.groupBy requires that the property of the first argument, items[Symbol.iterator] be a function",
-    );
+    var iteratorMethod = items[Symbol.iterator];
+    if (!$isCallable(iteratorMethod))
+        throw new TypeError("Map.groupBy requires that the property of the first argument, items[Symbol.iterator] be a function");
 
-  var groups = new $Map();
-  var k = 0;
+    var groups = new $Map;
+    var k = 0;
 
-  var iterator = iteratorMethod.$call(items);
-  // Since for-of loop once more looks up the @@iterator property of a given iterable,
-  // it could be observable if the user defines a getter for @@iterator.
-  // To avoid this situation, we define a wrapper object that @@iterator just returns a given iterator.
-  var wrapper = {
-    [Symbol.iterator]: function () {
-      return iterator;
-    },
-  };
-  for (var item of wrapper) {
-    if (k >= 9007199254740991) throw new TypeError("The number of iterations exceeds 2**53 - 1");
-    var key = callback.$call(undefined, item, k);
-    var group = groups.$get(key);
-    if (!group) {
-      group = [];
-      groups.$set(key, group);
+    var iterator = iteratorMethod.$call(items);
+    // Since for-of loop once more looks up the @@iterator property of a given iterable,
+    // it could be observable if the user defines a getter for @@iterator.
+    // To avoid this situation, we define a wrapper object that @@iterator just returns a given iterator.
+    var wrapper = {
+        [Symbol.iterator]: function () { return iterator; }
+    };
+    for (var item of wrapper) {
+        if (k >= 9007199254740991)
+            throw new TypeError("The number of iterations exceeds 2**53 - 1");
+        var key = callback.$call(undefined, item, k);
+        var group = groups.$get(key);
+        if (!group) {
+            group = [];
+            groups.$set(key, group);
+        }
+        $putByValDirect(group, group.length, item);
+        ++k;
     }
-    $putByValDirect(group, group.length, item);
-    ++k;
-  }
-  return groups;
+    return groups;
 }

@@ -377,9 +377,7 @@ pub trait DirectoryListingSource: Send + Sync {
     fn list(&self, path: &[u8]) -> Option<Vec<(Vec<u8>, bun_sys::FileKind)>>;
 }
 
-static DIRECTORY_LISTING_SOURCE: bun_threading::Guarded<
-    Option<std::sync::Arc<dyn DirectoryListingSource>>,
-> = bun_threading::Guarded::new(None);
+static DIRECTORY_LISTING_SOURCE: bun_threading::Guarded<Option<std::sync::Arc<dyn DirectoryListingSource>>> = bun_threading::Guarded::new(None);
 
 pub fn set_directory_listing_source(source: Option<std::sync::Arc<dyn DirectoryListingSource>>) {
     *DIRECTORY_LISTING_SOURCE.lock() = source;
@@ -424,13 +422,7 @@ impl DirEntry {
         // `entry.name.slice()` is OS-native (`&[u16]` on Windows); the
         // entry-store / hashmap key in `data` is UTF-8, so use the eagerly-
         // transcoded `slice_u8()`.
-        self.add_named_entry_with_store(
-            prev_map,
-            entry.name.slice_u8(),
-            entry.kind,
-            filename_store,
-            iterator,
-        )
+        self.add_named_entry_with_store(prev_map, entry.name.slice_u8(), entry.kind, filename_store, iterator)
     }
 
     pub(crate) fn add_named_entry_with_store<I: DirEntryIterator>(

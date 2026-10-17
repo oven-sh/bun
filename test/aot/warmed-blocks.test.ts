@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
+import { describe, test } from "./supported";
 import { bunEnv, bunExe, isASAN, isLinux, tempDir } from "harness";
 import { join } from "node:path";
-import { describe, test } from "./supported";
 
 // While a heap grows, a helper thread named JSCWarmUp touches the pages of fresh blocks so that the program's own thread does not take
 // the page faults. In an ahead-of-time compiled program each heap has an address range of its own, so each has a helper of its own.
@@ -118,19 +118,12 @@ async function run(cmd: string[], cwd: string, env: Record<string, string> = {})
 }
 
 async function build(cwd: string, ...more: string[]) {
-  const built = await run(
-    [bunExe(), "build", "--compile", "--aot", "program.ts", ...more, "--outfile", "program"],
-    cwd,
-  );
-  expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({
-    stderr: expect.not.stringMatching(/^error\b/m),
-    exitCode: 0,
-  });
+  const built = await run([bunExe(), "build", "--compile", "--aot", "program.ts", ...more, "--outfile", "program"], cwd);
+  expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
   return join(cwd, "program");
 }
 
-if (isASAN)
-  console.error("SKIPPED: warmed-blocks.test.ts: a Bun built with AddressSanitizer has no helper that warms blocks");
+if (isASAN) console.error("SKIPPED: warmed-blocks.test.ts: a Bun built with AddressSanitizer has no helper that warms blocks");
 
 describe.skipIf(!isLinux || isASAN).concurrent("blocks are warmed for a compiled program", () => {
   test("a heap that grows has a helper", async () => {
@@ -141,9 +134,7 @@ describe.skipIf(!isLinux || isASAN).concurrent("blocks are warmed for a compiled
 
   test("it has none when the option is off", async () => {
     using folder = tempDir("aot-warmed-blocks", growsOnTheMainThread);
-    const { stdout, exitCode } = await run([await build(String(folder))], String(folder), {
-      BUN_JSC_useWarmUpMarkedBlocks: "0",
-    });
+    const { stdout, exitCode } = await run([await build(String(folder))], String(folder), { BUN_JSC_useWarmUpMarkedBlocks: "0" });
     expect({ stdout, exitCode }).toEqual({ stdout: "0 399999\n", exitCode: 0 });
   }, 120_000);
 
@@ -155,9 +146,7 @@ describe.skipIf(!isLinux || isASAN).concurrent("blocks are warmed for a compiled
 
   test("a heap that has grown and asks for little gives its helper up", async () => {
     using folder = tempDir("aot-warmed-blocks", growsAndThenAsksForLittle);
-    const { stdout, exitCode } = await run([await build(String(folder))], String(folder), {
-      BUN_JSC_warmUpMarkedBlockIdleTimeout: "0.2",
-    });
+    const { stdout, exitCode } = await run([await build(String(folder))], String(folder), { BUN_JSC_warmUpMarkedBlockIdleTimeout: "0.2" });
     expect({ stdout, exitCode }).toEqual({ stdout: "1 0 101\n", exitCode: 0 });
   }, 120_000);
 

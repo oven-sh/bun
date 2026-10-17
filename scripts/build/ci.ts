@@ -11,6 +11,7 @@ import { spawn as nodeSpawn, spawnSync } from "node:child_process";
 import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { gunzipSync, gzipSync } from "node:zlib";
 import { isBuildkite, markBuildkiteStepReported, reportAnnotationToBuildkite } from "../buildkite.ts";
 import { formatAnnotationToHtml, parseAnnotations } from "./annotations.ts";
 import { bunExeName, shouldStrip, type BunOutput } from "./bun.ts";
@@ -18,7 +19,7 @@ import type { Config } from "./config.ts";
 import { webkitJSCPath, webkitTestFFIPath } from "./deps/webkit.ts";
 import { BuildError } from "./error.ts";
 import { crossFeaturesJson } from "./features-json.ts";
-import { linkerMapOutputs, orderFilePath, usesOrderFile } from "./flags.ts";
+import { freshIslandsPlanPath, islandsPlanPath, linkerMapOutputs, orderFilePath, usesOrderFile } from "./flags.ts";
 
 interface SpawnAnnotatedOptions {
   /** Working directory for the subprocess. */
@@ -353,7 +354,12 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   if (hasOrderFile) {
     files.push(basename(orderFilePath(cfg)));
   }
+  if (cfg.islands && isIslandsPlan(islandsPlanPath(cfg))) files.push(basename(islandsPlanPath(cfg)));
   zipPaths.push(makeZip(cfg, bunPath, files));
+  if (cfg.islands && isIslandsPlan(freshIslandsPlanPath(cfg))) {
+    writeFileSync(resolve(buildDir, islandsPlanArtifact(cfg)), gzipSync(readFileSync(freshIslandsPlanPath(cfg))));
+    zipPaths.push(islandsPlanArtifact(cfg));
+  }
 
   // ─── Stripped zip ───
   // Only for plain release (shouldStrip). Just the stripped `bun` binary.
@@ -472,6 +478,7 @@ export interface OrderFileContext {
   /** The branch whose builds publish order files: the pipeline's default branch. */
   mainBranch: string | undefined;
   buildNumber: number | undefined;
+  branch?: string | undefined;
 }
 
 /** Read the environment once, at the edge. */
@@ -481,6 +488,7 @@ export function orderFileContext(): OrderFileContext {
     buildUrl: process.env.BUILDKITE_BUILD_URL,
     mainBranch: process.env.BUILDKITE_PIPELINE_DEFAULT_BRANCH,
     buildNumber: Number(process.env.BUILDKITE_BUILD_NUMBER) || undefined,
+    branch: process.env.BUILDKITE_BRANCH,
   };
 }
 
@@ -578,6 +586,7 @@ const buildkiteLookups = (signal: AbortSignal): BuildLookups => ({
 export async function* candidateBuilds(
   ctx: OrderFileContext,
   lookups: BuildLookups,
+  alsoOfBranch?: string,
 ): AsyncGenerator<{ id: string; number: number | undefined }> {
   const { mainBranch: branch, buildUrl } = ctx;
   if (!branch || !buildUrl) return;
@@ -594,7 +603,7 @@ export async function* candidateBuilds(
   // one commit. A build can fail its tests, or be cancelled, and still have
   // linked and published.
   let number = ctx.buildNumber;
-  for (let probes = 0; number !== undefined && number > 1 && probes < NUMBER_PROBE_BUDGET;) {
+  for (let probes = 0; number !== undefined && number > 1 && probes < NUMBER_PROBE_BUDGET; ) {
     if (seen.size >= PREVIOUS_BUILDS_TO_TRY) break;
     const nearest: number = number - 1;
     const count = Math.min(PROBES_AT_ONCE, NUMBER_PROBE_BUDGET - probes, nearest);
@@ -605,7 +614,7 @@ export async function* candidateBuilds(
     number -= count;
     for (const body of bodies) {
       if (seen.size >= PREVIOUS_BUILDS_TO_TRY) break;
-      if (!body?.id || body.branch_name !== branch) continue;
+      if (!body?.id || (body.branch_name !== branch && body.branch_name !== alsoOfBranch)) continue;
       seen.add(body.id);
       yield { id: body.id, number: body.number };
     }
@@ -676,5 +685,41 @@ export async function inheritOrderFile(cfg: Config, ctx: OrderFileContext): Prom
       ? "found no earlier build to inherit from"
       : `none of the ${tried} builds tried published it`;
   console.log(`~ symbol order: ${what} (${since(start)})`);
+  return false;
+}
+
+export function islandsPlanEligible(cfg: Config, ctx: OrderFileContext): boolean {
+  return cfg.islands && ctx.buildkite && ctx.branch !== ctx.mainBranch;
+}
+
+function islandsPlanArtifact(cfg: Config): string {
+  return `${computeBunTriplet(cfg)}.islands-plan.gz`;
+}
+
+function isIslandsPlan(path: string): boolean {
+  return existsSync(path) && readFileSync(path, "latin1").startsWith("bun-islands-plan ");
+}
+
+export async function inheritIslandsPlan(cfg: Config, ctx: OrderFileContext): Promise<boolean> {
+  if (!islandsPlanEligible(cfg, ctx)) return false;
+  const start = Date.now();
+  const artifact = islandsPlanArtifact(cfg);
+  const downloaded = resolve(cfg.buildDir, artifact);
+  const outOfTime = AbortSignal.timeout(INHERIT_BUDGET_MS);
+  for await (const build of candidateBuilds(ctx, buildkiteLookups(outOfTime), ctx.branch)) {
+    if (outOfTime.aborted) break;
+    const result = spawnSync("buildkite-agent", ["artifact", "download", artifact, ".", "--build", build.id], {
+      cwd: cfg.buildDir,
+      stdio: "ignore",
+      timeout: ARTIFACT_DOWNLOAD_TIMEOUT_MS,
+    });
+    if (result.status !== 0 || !existsSync(downloaded)) continue;
+    writeFileSync(islandsPlanPath(cfg), gunzipSync(readFileSync(downloaded)));
+    rmSync(downloaded, { force: true });
+    if (!isIslandsPlan(islandsPlanPath(cfg))) continue;
+    console.log(`+ islands: inherited ${artifact} from #${build.number ?? "?"} in ${since(start)}: one link`);
+    return true;
+  }
+  console.log(`~ islands: no earlier build published ${artifact} (${since(start)}): this build links twice and publishes it`);
   return false;
 }

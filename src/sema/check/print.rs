@@ -3572,12 +3572,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             let mut first = 0;
             while first < types.len() {
                 let mut end = first + 1;
-                while end < types.len()
-                    && self
-                        .c
-                        .compare_types_without_ids(types[end - 1], types[end])
-                        .is_eq()
-                {
+                while end < types.len() && self.c.compare_types_without_ids(types[end - 1], types[end]).is_eq() {
                     end += 1;
                 }
                 if end - first > 1 {

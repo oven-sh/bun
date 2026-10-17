@@ -401,9 +401,7 @@ impl TSConfigJSON {
                         b"useDefineForClassFields" if use_define_for_class_fields_v.is_none() => {
                             use_define_for_class_fields_v = Some(value)
                         }
-                        b"rewriteRelativeImportExtensions"
-                            if rewrite_relative_import_extensions_v.is_none() =>
-                        {
+                        b"rewriteRelativeImportExtensions" if rewrite_relative_import_extensions_v.is_none() => {
                             rewrite_relative_import_extensions_v = Some(value)
                         }
                         b"jsxFactory" if jsx_factory_v.is_none() => {
@@ -455,8 +453,7 @@ impl TSConfigJSON {
                 result.use_define_for_class_fields = Some(val);
             }
 
-            if let Some(&bun_ast::E::JsonValue::Boolean(val)) = rewrite_relative_import_extensions_v
-            {
+            if let Some(&bun_ast::E::JsonValue::Boolean(val)) = rewrite_relative_import_extensions_v {
                 result.rewrite_relative_import_extensions = Some(val);
             }
 

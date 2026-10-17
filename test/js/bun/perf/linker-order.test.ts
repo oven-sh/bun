@@ -4,12 +4,14 @@ import { appendFileSync, chmodSync, copyFileSync, existsSync, readdirSync, readF
 import { join } from "node:path";
 import {
   candidateBuilds,
+  islandsPlanEligible,
   orderFileEligible,
   type BuildLookups,
   type OrderFileContext,
 } from "../../../../scripts/build/ci.ts";
 import type { Config } from "../../../../scripts/build/config.ts";
 import {
+  islandsPlanPath,
   linkDepends,
   linkerFlags,
   linkerMapOutputs,
@@ -281,6 +283,25 @@ describe("deciding whether a build links with an inherited order file", () => {
   });
 });
 
+describe("deciding whether a build links by an earlier build's islands plan", () => {
+  it("a build on Buildkite that links with islands does, unless it is of the main branch", () => {
+    const pullRequest = { branch: "mine" };
+    expect(islandsPlanEligible(cfg({ islands: true }), ctx(pullRequest))).toBe(true);
+    expect(islandsPlanEligible(cfg({ islands: true, abi: "musl" }), ctx(pullRequest))).toBe(true);
+    expect(islandsPlanEligible(cfg({ islands: false }), ctx(pullRequest))).toBe(false);
+    expect(islandsPlanEligible(cfg({ islands: true }), ctx({ ...pullRequest, buildkite: false }))).toBe(false);
+  });
+
+  it("a build of the main branch links twice: what ships leaves nothing outside its islands", () => {
+    expect(islandsPlanEligible(cfg({ islands: true }), ctx({ branch: "main" }))).toBe(false);
+  });
+
+  it("the plan is an input of the link, so a new one links again", () => {
+    expect(linkDepends(cfg({ islands: true }))).toContain(islandsPlanPath(cfg()));
+    expect(linkDepends(cfg({ islands: false }))).not.toContain(islandsPlanPath(cfg()));
+  });
+});
+
 describe("finding an earlier build to inherit from", () => {
   const pipeline = "https://buildkite.com/bun/bun";
 
@@ -289,12 +310,14 @@ describe("finding an earlier build to inherit from", () => {
     main,
     newestPassed,
     from = {},
+    own = [],
     // Buildkite repeats the request's query on the Location it answers with.
     location = (build: number) => `${pipeline}/builds/${build}?branch=main&state=passed`,
   }: {
     main: number[];
     newestPassed?: number;
     from?: Partial<OrderFileContext>;
+    own?: number[];
     location?: (build: number) => string;
   }) {
     const requested: string[] = [];
@@ -304,13 +327,13 @@ describe("finding an earlier build to inherit from", () => {
         const number = Number(/\/builds\/(\d+)\.json$/.exec(url)?.[1]);
         // Anything else is not a build's JSON: Buildkite answers with the HTML page.
         if (Number.isNaN(number)) return undefined;
-        return { id: `id-${number}`, number, branch_name: main.includes(number) ? "main" : "some-pr" };
+        return { id: `id-${number}`, number, branch_name: main.includes(number) ? "main" : own.includes(number) ? "mine" : "some-pr" };
       },
       redirect: async () => (newestPassed === undefined ? null : location(newestPassed)),
     };
     const found: (number | undefined)[] = [];
     const start = ctx({ buildUrl: `${pipeline}/builds/1000`, buildNumber: 1000, ...from });
-    for await (const build of candidateBuilds(start, lookups)) found.push(build.number);
+    for await (const build of candidateBuilds(start, lookups, start.branch)) found.push(build.number);
     return { found, requested };
   }
 
@@ -346,6 +369,11 @@ describe("finding an earlier build to inherit from", () => {
 
   it("finds nothing when the branch has no passed build either", async () => {
     expect((await walk({ main: [] })).found).toEqual([]);
+  });
+
+  it("offers the builds of a second branch among those of main, nearest first", async () => {
+    expect((await walk({ main: [990, 950], own: [995, 960], from: { branch: "mine" } })).found).toEqual([995, 990, 960, 950]);
+    expect((await walk({ main: [990, 950], own: [995, 960] })).found).toEqual([990, 950]);
   });
 });
 

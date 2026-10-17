@@ -4,16 +4,7 @@ import { mkdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "./supported";
 
-const options = {
-  target: "ESNext",
-  module: "Preserve",
-  moduleResolution: "bundler",
-  types: [] as string[],
-  strict: true,
-  composite: true,
-  outDir: "lib",
-  rootDir: "src",
-};
+const options = { target: "ESNext", module: "Preserve", moduleResolution: "bundler", types: [] as string[], strict: true, composite: true, outDir: "lib", rootDir: "src" };
 const config = JSON.stringify({ compilerOptions: options, include: ["src"] });
 
 async function run(cwd: string, ...args: string[]) {
@@ -23,19 +14,13 @@ async function run(cwd: string, ...args: string[]) {
 }
 
 const passed = (said: string) => [...said.matchAll(/^\(pass\) (.*?)(?: \[.*\])?$/gm)].map(match => match[1]).sort();
-const errors = (said: string) =>
-  [...said.matchAll(/^(\S+)\((\d+),\d+\): error (TS\d+)/gm)].map(match => `${match[1]}:${match[2]} ${match[3]}`).sort();
+const errors = (said: string) => [...said.matchAll(/^(\S+)\((\d+),\d+\): error (TS\d+)/gm)].map(match => `${match[1]}:${match[2]} ${match[3]}`).sort();
 
 function workspace(root: object) {
   const dir = tempDir("references-of-a-tsconfig-above", {
     "package.json": JSON.stringify({ name: "workspace", workspaces: ["packages/*"] }),
     "tsconfig.json": JSON.stringify(root),
-    "packages/types/package.json": JSON.stringify({
-      name: "@workspace/types",
-      version: "1.0.0",
-      main: "lib/index.js",
-      types: "lib/index.d.ts",
-    }),
+    "packages/types/package.json": JSON.stringify({ name: "@workspace/types", version: "1.0.0", main: "lib/index.js", types: "lib/index.d.ts" }),
     "packages/types/tsconfig.json": config,
     "packages/types/src/index.ts": `export interface Rule {\n  level: number;\n}\n`,
     "packages/types/src/types.test.ts": `import { expect, test } from "bun:test";\nimport type { Rule } from "./index";\nconst rule: Rule = { level: 2 };\ntest("its own", () => {\n  expect(rule.level).toBe(2);\n});\n`,

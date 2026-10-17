@@ -762,12 +762,7 @@ impl<'f, 's> Binder<'f, 's> {
                         self.b.symbols[existing.idx()].flags |= accessor;
                     }
                     let one_binding = SymFlags::FUNCTION_SCOPED_VARIABLE | SymFlags::FUNCTION;
-                    if self.options.uses_ecmascript_bindings
-                        && self.f.is_js
-                        && includes.intersects(one_binding)
-                        && there.intersects(one_binding)
-                        && !(there | includes).intersects(SymFlags::VALUE.difference(one_binding))
-                    {
+                    if self.options.uses_ecmascript_bindings && self.f.is_js && includes.intersects(one_binding) && there.intersects(one_binding) && !(there | includes).intersects(SymFlags::VALUE.difference(one_binding)) {
                         existing
                     } else {
                         self.new_symbol(SymFlags::empty(), name)
@@ -1436,15 +1431,9 @@ impl<'f, 's> Binder<'f, 's> {
 
     fn file(&mut self) {
         // `setCommonJSModuleIndicator`: not in a file that imports or exports. To the runtime TypeScript is CommonJS by the same signs.
-        let is_asked = self.f.is_js
-            || self.f.is_annotated_javascript()
-            || self.options.detects_commonjs_by_free_names
-                && self.f.kind != crate::hir::FileKind::Declaration;
+        let is_asked = self.f.is_js || self.f.is_annotated_javascript() || self.options.detects_commonjs_by_free_names && self.f.kind != crate::hir::FileKind::Declaration;
         let forced = self.options.is_forced_commonjs;
-        if is_asked
-            && forced != Some(false)
-            && (!self.f.has_module_syntax || self.f.is_module_by_decree)
-        {
+        if is_asked && forced != Some(false) && (!self.f.has_module_syntax || self.f.is_module_by_decree) {
             self.b.commonjs_indicator = (0..self.f.exprs.len() as u32).map(ExprId).find(|&e| {
                 require_argument(self.f, e).is_some()
                     || matches!(
@@ -1457,19 +1446,11 @@ impl<'f, 's> Binder<'f, 's> {
                         && match self.f[e].kind {
                             ExprKind::Ident(known::exports | known::module) => true,
                             // That of the file, for which the runtime's parser writes `exports`.
-                            ExprKind::This => {
-                                self.f
-                                    .kind(self.f.get_this_container(self.f.node(e), false, false))
-                                    == crate::node::Kind::SourceFile
-                                    && !self.f.references_import_meta()
-                            }
+                            ExprKind::This => self.f.kind(self.f.get_this_container(self.f.node(e), false, false)) == crate::node::Kind::SourceFile && !self.f.references_import_meta(),
                             _ => false,
                         }
             });
-            if forced == Some(true)
-                && self.b.commonjs_indicator.is_none()
-                && !self.f.exprs.is_empty()
-            {
+            if forced == Some(true) && self.b.commonjs_indicator.is_none() && !self.f.exprs.is_empty() {
                 self.b.commonjs_indicator = Some(ExprId(0));
             }
         }
@@ -1690,10 +1671,7 @@ impl<'f, 's> Binder<'f, 's> {
                 };
                 let decl = &self.f[d];
                 // `NodeFlagsConst`, a bit that `NodeFlagsAwaitUsing` has too.
-                if !matches!(decl.kind, VarKind::Const | VarKind::AwaitUsing)
-                    && !self.f.is_js
-                    && !(self.options.is_typed_bundle && decl.kind == VarKind::Var)
-                {
+                if !matches!(decl.kind, VarKind::Const | VarKind::AwaitUsing) && !self.f.is_js && !(self.options.is_typed_bundle && decl.kind == VarKind::Var) {
                     return None;
                 }
                 self.symbol_of_expando_initializer(decl.init, decl.ty.is_some())
@@ -2133,16 +2111,7 @@ impl<'f, 's> Binder<'f, 's> {
                     continue;
                 };
                 let symbol = &mut self.b.symbols[symbol.idx()];
-                if declaration.kind == VarKind::Var
-                    && declaration.init.is_some()
-                    && symbol
-                        .decls
-                        .iter()
-                        .filter(|declared| matches!(declared, Decl::Var(_)))
-                        .count()
-                        == 1
-                    && !symbol.flags.contains(SymFlags::ASSIGNED)
-                {
+                if declaration.kind == VarKind::Var && declaration.init.is_some() && symbol.decls.iter().filter(|declared| matches!(declared, Decl::Var(_))).count() == 1 && !symbol.flags.contains(SymFlags::ASSIGNED) {
                     symbol.flags |= SymFlags::CONST;
                 }
             }
@@ -3356,11 +3325,7 @@ impl<'f, 's> Binder<'f, 's> {
                     && flags.contains(SymFlags::BLOCK_SCOPED_VARIABLE)
                     && self.b.container_scope(self.scope) != self.scope;
                 if is_required_in_block {
-                    self.bind_block_scoped_declaration(
-                        Decl::Require(pat),
-                        SymFlags::ALIAS,
-                        SymFlags::ALIAS_EXCLUDES,
-                    );
+                    self.bind_block_scoped_declaration(Decl::Require(pat), SymFlags::ALIAS, SymFlags::ALIAS_EXCLUDES);
                     return;
                 }
                 let (decl, flags, excludes) = if is_required {
@@ -4710,9 +4675,7 @@ impl<'f, 's> Binder<'f, 's> {
             }
         }
         // `bind`, `KindCallExpression`: a call in an optional chain is a call expression too.
-        if (self.f.is_js || self.f.is_annotated_javascript())
-            && matches!(self.f[id].kind, ExprKind::Call(_))
-        {
+        if (self.f.is_js || self.f.is_annotated_javascript()) && matches!(self.f[id].kind, ExprKind::Call(_)) {
             match assignment_declaration_kind(self.f, id) {
                 JsDeclarationKind::ObjectDefinePropertyValue => {
                     self.expando_assignments.push((id, self.scope));
@@ -4794,8 +4757,7 @@ impl<'f, 's> Binder<'f, 's> {
             // `bindCallExpressionFlow`
             ExprKind::Call(c) => {
                 let call = &self.f[c];
-                if matches!(self.f[call.callee].kind, ExprKind::Ident(name) if self.atoms.bytes(name) == b"eval")
-                {
+                if matches!(self.f[call.callee].kind, ExprKind::Ident(name) if self.atoms.bytes(name) == b"eval") {
                     self.b.expr_scope.insert(id, self.scope);
                 }
 

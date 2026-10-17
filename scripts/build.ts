@@ -26,6 +26,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import {
+  inheritIslandsPlan,
   inheritOrderFile,
   orderFileContext,
   orderFileEligible,
@@ -177,7 +178,14 @@ async function main(): Promise<void> {
         env: ninjaEnv(result.cfg, result.env),
       });
 
-    const inherited = (await startGroup("Inherit symbol order file", runInherit)) as boolean;
+    const runInheritPlan = () =>
+      inheritIslandsPlan(result.cfg, orderCtx).catch(e => {
+        console.log(`~ islands: inherit failed (${(e as Error)?.message ?? e}); linking twice`);
+        return false;
+      });
+    const [inherited] = (await startGroup("Inherit symbol order file", () =>
+      Promise.all([runInherit(), runInheritPlan()]),
+    )) as [boolean, boolean];
 
     await startGroup("Build", () => runNinja());
 

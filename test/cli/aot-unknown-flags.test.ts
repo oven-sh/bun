@@ -11,49 +11,22 @@ const files = {
 
 async function bun(cwd: string | { cwd: string; BUN_OPTIONS: string }, ...args: string[]) {
   const { cwd: folder, ...env } = typeof cwd === "string" ? { cwd } : cwd;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), ...args],
-    cwd: folder,
-    env: { ...bunEnv, NO_COLOR: "1", ...env },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd: folder, env: { ...bunEnv, NO_COLOR: "1", ...env }, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
 
-const ofBuild =
-  "--aot, --aot-allow, --aot-baseline, --aot-deny, --aot-explain, --aot-huge-heap, --aot-type-errors, --aot-update-baseline, --aot-warn";
+const ofBuild = "--aot, --aot-allow, --aot-baseline, --aot-deny, --aot-explain, --aot-huge-heap, --aot-type-errors, --aot-update-baseline, --aot-warn";
 const ofRun = "--aot, --aot-audit, --aot-huge-heap, --aot-type-errors";
 
 describe.concurrent("an unknown flag that starts with --aot is an error", () => {
   test.each([
-    [
-      ["build", "--compile", "--aot", "--aot-type-error=log", "app.ts", "--outfile", "out"],
-      "--aot-type-error",
-      "--aot-type-errors",
-      ofBuild,
-    ],
-    [
-      ["build", "--compile", "--aot", "--aot-type-errors-log", "app.ts", "--outfile", "out"],
-      "--aot-type-errors-log",
-      "--aot-type-errors",
-      ofBuild,
-    ],
-    [
-      ["build", "--compile", "--aot", "--aot-explains=throws", "app.ts", "--outfile", "out"],
-      "--aot-explains",
-      "--aot-explain",
-      ofBuild,
-    ],
+    [["build", "--compile", "--aot", "--aot-type-error=log", "app.ts", "--outfile", "out"], "--aot-type-error", "--aot-type-errors", ofBuild],
+    [["build", "--compile", "--aot", "--aot-type-errors-log", "app.ts", "--outfile", "out"], "--aot-type-errors-log", "--aot-type-errors", ofBuild],
+    [["build", "--compile", "--aot", "--aot-explains=throws", "app.ts", "--outfile", "out"], "--aot-explains", "--aot-explain", ofBuild],
     [["build", "--compile", "--aott", "app.ts", "--outfile", "out"], "--aott", "--aot", ofBuild],
     [["build", "--compile", "app.ts", "--outfile", "out", "--aot-"], "--aot-", "--aot", ofBuild],
-    [
-      ["build", "--compile", "--aot-audit", "app.ts", "--outfile", "out"],
-      "--aot-audit",
-      "bun run and bun test",
-      ofBuild,
-    ],
+    [["build", "--compile", "--aot-audit", "app.ts", "--outfile", "out"], "--aot-audit", "bun run and bun test", ofBuild],
     [["--aot-audits", "app.ts"], "--aot-audits", "--aot-audit", ofRun],
     [["--aot-type-error=log", "--aot", "app.ts"], "--aot-type-error", "--aot-type-errors", ofRun],
     [["run", "--aott", "app.ts"], "--aott", "--aot", ofRun],
@@ -80,21 +53,13 @@ describe.concurrent("an unknown flag that starts with --aot is an error", () => 
   ])("what follows the script is the script's: bun %j", async args => {
     using dir = tempDir("aot-flags-of-the-script", files);
     const { stdout, exitCode } = await bun(String(dir), ...args);
-    expect({ passed: JSON.parse(stdout).filter((arg: string) => arg !== "--"), exitCode }).toEqual({
-      passed: ["--aot-mine", "--aott=1"],
-      exitCode: 0,
-    });
+    expect({ passed: JSON.parse(stdout).filter((arg: string) => arg !== "--"), exitCode }).toEqual({ passed: ["--aot-mine", "--aott=1"], exitCode: 0 });
   });
 
   test("a compiled executable's arguments belong to the program", async () => {
     using dir = tempDir("aot-flags-of-the-executable", files);
     expect((await bun(String(dir), "build", "--compile", "app.ts", "--outfile", "out")).exitCode).toBe(0);
-    await using proc = Bun.spawn({
-      cmd: [join(String(dir), isWindows ? "out.exe" : "out"), "--aot-mine", "--aott=1"],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    await using proc = Bun.spawn({ cmd: [join(String(dir), isWindows ? "out.exe" : "out"), "--aot-mine", "--aott=1"], env: bunEnv, stdout: "pipe", stderr: "pipe" });
     expect([await proc.stdout.text(), await proc.exited]).toEqual(['["--aot-mine","--aott=1"]\n', 0]);
   }, 60_000);
 
@@ -153,8 +118,6 @@ describe.concurrent("an unknown flag that starts with --aot is an error", () => 
 }
 `,
     });
-    expect((await bun(String(dir), "build.ts")).stdout).toBe(
-      `${key} is an option of compile. Write compile: { ${key}: .. }\n`,
-    );
+    expect((await bun(String(dir), "build.ts")).stdout).toBe(`${key} is an option of compile. Write compile: { ${key}: .. }\n`);
   });
 });

@@ -24,43 +24,53 @@
  */
 
 // https://tc39.github.io/ecma262/#sec-reflect.apply
-export function apply(target, thisArgument, argumentsList) {
-  "use strict";
+export function apply(target, thisArgument, argumentsList)
+{
+    "use strict";
 
-  if (!$isCallable(target)) throw new TypeError("Reflect.apply requires the first argument be a function");
+    if (!$isCallable(target))
+        throw new TypeError("Reflect.apply requires the first argument be a function");
 
-  if (!$isObject(argumentsList)) throw new TypeError("Reflect.apply requires the third argument be an object");
+    if (!$isObject(argumentsList))
+        throw new TypeError("Reflect.apply requires the third argument be an object");
 
-  return target.$apply(thisArgument, argumentsList);
+    return target.$apply(thisArgument, argumentsList);
 }
 
 // https://tc39.github.io/ecma262/#sec-reflect.deleteproperty
-export function deleteProperty(target, propertyKey) {
-  // Intentionally keep the code the sloppy mode to suppress the TypeError
-  // raised by the delete operator under the strict mode.
+export function deleteProperty(target, propertyKey)
+{
+    // Intentionally keep the code the sloppy mode to suppress the TypeError
+    // raised by the delete operator under the strict mode.
 
-  if (!$isObject(target)) throw new TypeError("Reflect.deleteProperty requires the first argument be an object");
+    if (!$isObject(target))
+        throw new TypeError("Reflect.deleteProperty requires the first argument be an object");
 
-  return $deleteByValSloppy(target, propertyKey);
+    return $deleteByValSloppy(target, propertyKey);
 }
 
 // https://tc39.es/ecma262/#sec-reflect.get
-export function get(target, propertyKey /*, receiver */) {
-  "use strict";
+export function get(target, propertyKey /*, receiver */)
+{
+    "use strict";
 
-  if (!$isObject(target)) throw new TypeError("Reflect.get requires the first argument be an object");
+    if (!$isObject(target))
+        throw new TypeError("Reflect.get requires the first argument be an object");
 
-  if ($argumentCount() < 3) return target[propertyKey];
+    if ($argumentCount() < 3)
+        return target[propertyKey];
 
-  var receiver = $argument(2);
-  return $getByValWithThis(target, receiver, propertyKey);
+    var receiver = $argument(2);
+    return $getByValWithThis(target, receiver, propertyKey);
 }
 
 // https://tc39.github.io/ecma262/#sec-reflect.has
-export function has(target, propertyKey) {
-  "use strict";
+export function has(target, propertyKey)
+{
+    "use strict";
 
-  if (!$isObject(target)) throw new TypeError("Reflect.has requires the first argument be an object");
+    if (!$isObject(target))
+        throw new TypeError("Reflect.has requires the first argument be an object");
 
-  return propertyKey in target;
+    return propertyKey in target;
 }

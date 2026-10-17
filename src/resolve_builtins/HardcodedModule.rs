@@ -899,27 +899,16 @@ fn build_alias_map(tables: &[&[AliasKv]]) -> AliasMap {
             }
         }
     }
-    AliasMap {
-        by_name,
-        longest_name,
-        begins_a_name,
-    }
+    AliasMap { by_name, longest_name, begins_a_name }
 }
 
-static NODE_ALIAS_MAP: std::sync::LazyLock<AliasMap> =
-    std::sync::LazyLock::new(|| build_alias_map(NODE_ALIASES));
-static BUN_ALIAS_MAP: std::sync::LazyLock<AliasMap> =
-    std::sync::LazyLock::new(|| build_alias_map(BUN_ALIASES));
-static BUN_TEST_ALIAS_MAP: std::sync::LazyLock<AliasMap> =
-    std::sync::LazyLock::new(|| build_alias_map(BUN_TEST_ALIASES));
+static NODE_ALIAS_MAP: std::sync::LazyLock<AliasMap> = std::sync::LazyLock::new(|| build_alias_map(NODE_ALIASES));
+static BUN_ALIAS_MAP: std::sync::LazyLock<AliasMap> = std::sync::LazyLock::new(|| build_alias_map(BUN_ALIASES));
+static BUN_TEST_ALIAS_MAP: std::sync::LazyLock<AliasMap> = std::sync::LazyLock::new(|| build_alias_map(BUN_TEST_ALIASES));
 
 #[inline]
 fn lookup(map: &std::sync::LazyLock<AliasMap>, name: &[u8]) -> Option<Alias> {
-    if name.len() > map.longest_name
-        || !name
-            .first()
-            .is_some_and(|&first| map.begins_a_name[first as usize])
-    {
+    if name.len() > map.longest_name || !name.first().is_some_and(|&first| map.begins_a_name[first as usize]) {
         return None;
     }
     map.by_name.get(name).copied()

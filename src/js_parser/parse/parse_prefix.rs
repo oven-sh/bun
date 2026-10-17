@@ -370,10 +370,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.unexpected()?;
             return Err(crate::Error::SyntaxError);
         }
-        if matches!(
-            bun_ast::audited::unmarked(value).data,
-            ExprData::EIdentifier(_)
-        ) {
+        if matches!(bun_ast::audited::unmarked(value).data, ExprData::EIdentifier(_)) {
             value = bun_ast::audited::unmarked(value);
         }
 

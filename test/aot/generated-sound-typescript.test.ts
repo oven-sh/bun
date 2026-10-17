@@ -9,9 +9,7 @@ generated("sound TypeScript", [
     make: () => ({
       file: "main.ts",
       text: readFileSync(join(import.meta.dir, "programs", "language", "sound-typescript-never-rejected.ts"), "utf8"),
-      files: {
-        "tsconfig.json": `{ "compilerOptions": { "strict": true, "target": "ESNext", "module": "Preserve", "noEmit": true, "lib": ["ESNext"] } }`,
-      },
+      files: { "tsconfig.json": `{ "compilerOptions": { "strict": true, "target": "ESNext", "module": "Preserve", "noEmit": true, "lib": ["ESNext"] } }` },
     }),
   },
 ]);

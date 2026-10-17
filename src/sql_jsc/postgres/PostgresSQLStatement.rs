@@ -121,31 +121,18 @@ impl PostgresSQLStatement {
             .fields
             .iter()
             .map(|field| {
-                let ColumnIdentifier::Name(name) = &field.name_or_index else {
-                    return None;
-                };
+                let ColumnIdentifier::Name(name) = &field.name_or_index else { return None };
                 let format = match field.type_tag() {
                     _ if (u16::MAX as u32) < field.type_oid => WireFormat::Text,
                     T::int4 => WireFormat::Int32,
-                    T::float4
-                        if field.binary
-                            || T::float4.is_binary_in(types::ResultFormats::Decodable) =>
-                    {
-                        WireFormat::Float32
-                    }
+                    T::float4 if field.binary || T::float4.is_binary_in(types::ResultFormats::Decodable) => WireFormat::Float32,
                     T::float8 => WireFormat::Float64,
                     T::bool => WireFormat::Boolean,
                     T::timestamp | T::timestamptz => WireFormat::TimestampMicroseconds,
-                    T::text | T::varchar | T::bpchar | T::name | T::uuid | T::int8 => {
-                        WireFormat::Text
-                    }
+                    T::text | T::varchar | T::bpchar | T::name | T::uuid | T::int8 => WireFormat::Text,
                     _ => return None,
                 };
-                Some(RowColumn {
-                    name: name.slice().as_ptr(),
-                    name_length: name.slice().len() as u32,
-                    format,
-                })
+                Some(RowColumn { name: name.slice().as_ptr(), name_length: name.slice().len() as u32, format })
             })
             .collect();
         self.row_decoder = RowDecoder::new(global_object, row_type, columns.as_deref());

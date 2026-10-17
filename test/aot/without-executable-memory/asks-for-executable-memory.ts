@@ -1,4 +1,10 @@
 import { dlopen, FFIType } from "bun:ffi";
+if (process.platform === "win32") {
+  const kernel32 = dlopen("kernel32.dll", { VirtualAlloc: { args: [FFIType.u64, FFIType.u64, FFIType.u32, FFIType.u32], returns: FFIType.u64 } });
+  const commitAndReserve = 0x3000, executeReadWrite = 0x40;
+  console.log(BigInt(kernel32.symbols.VirtualAlloc(0, 1 << 14, commitAndReserve, executeReadWrite)) === 0n ? "refused" : "granted");
+  process.exit(0);
+}
 const isDarwin = process.platform === "darwin";
 const library = dlopen(isDarwin ? "libSystem.B.dylib" : process.platform === "android" ? "libc.so" : "libc.so.6", {
   mmap: { args: [FFIType.u64, FFIType.u64, FFIType.i32, FFIType.i32, FFIType.i32, FFIType.i64], returns: FFIType.i64 },

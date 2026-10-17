@@ -8,16 +8,7 @@ import { test } from "./supported";
 const programs = join(import.meta.dir, "programs");
 
 test.concurrent.each(["type-rules/number-plus-equals-any", "type-rules/bit-flag-enums"])("%s", async name => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "run", "--aot", join(programs, name + ".ts")],
-    cwd: programs,
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  await using proc = Bun.spawn({ cmd: [bunExe(), "run", "--aot", join(programs, name + ".ts")], cwd: programs, env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect({ stdout, exitCode }).toEqual({
-    stdout: readFileSync(join(programs, name + ".expected.txt"), "utf8"),
-    exitCode: 0,
-  });
+  expect({ stdout, exitCode }).toEqual({ stdout: readFileSync(join(programs, name + ".expected.txt"), "utf8"), exitCode: 0 });
 });

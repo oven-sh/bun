@@ -16,7 +16,12 @@ interface PooledConnection {
   close(): void;
 }
 
-const { Query, SQLQueryFlags, onQuerySettled, stateOf } = require("internal/sql/query");
+const {
+  Query,
+  SQLQueryFlags,
+  onQuerySettled,
+  stateOf,
+} = require("internal/sql/query");
 const { PostgresAdapter } = require("internal/sql/postgres");
 const { MySQLAdapter } = require("internal/sql/mysql");
 const { SQLiteAdapter } = require("internal/sql/sqlite");

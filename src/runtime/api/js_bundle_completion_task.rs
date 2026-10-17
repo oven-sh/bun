@@ -482,6 +482,7 @@ impl JSBundleCompletionTask {
             RuntimeOptions {
                 jit_policy: compile_options.jit_policy,
                 crash_if_interpreter_is_used: compile_options.crash_if_interpreter_is_used,
+                ..Default::default()
             },
         ) {
             Ok(r) => r,
@@ -1048,20 +1049,15 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.output_format = config.format;
         transpiler.options.bytecode = config.bytecode;
         transpiler.options.aot = config.compile.as_ref().is_some_and(|compile| compile.aot);
-        transpiler.options.aot_explain =
-            (config.compile.as_ref()).map_or_else(Vec::new, |compile| compile.aot_explain.clone());
+        transpiler.options.aot_explain = (config.compile.as_ref()).map_or_else(Vec::new, |compile| compile.aot_explain.clone());
         transpiler.options.aot_explain_to_log = true;
-        transpiler.options.aot_logs_type_errors =
-            (config.compile.as_ref()).is_some_and(|compile| compile.logs_type_errors);
+        transpiler.options.aot_logs_type_errors = (config.compile.as_ref()).is_some_and(|compile| compile.logs_type_errors);
         transpiler.options.compile_function_source =
             (config.compile.as_ref()).is_none_or(|compile| compile.function_source);
         transpiler.options.analyze = Some(crate::cli::check_command::analyze_for_build);
         if let Some(compile) = &config.compile {
             let executable_path = &compile.executable_path.list;
-            start_copying_template(
-                &compile.compile_target,
-                (!executable_path.is_empty()).then_some(&executable_path[..]),
-            );
+            start_copying_template(&compile.compile_target, (!executable_path.is_empty()).then_some(&executable_path[..]));
         }
         transpiler.options.typed_package = Some(bun_sema_driver::typed_packages::typed_package);
         transpiler.options.bytecode_depth = config.bytecode_depth;
@@ -1120,34 +1116,19 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.type_check = config
             .check
             .then_some(crate::cli::check_command::check_for_bun_build as options::TypeCheck);
-        transpiler.options.emit_declarations = (config.dts && config.compile.is_none()).then_some(
-            crate::cli::check_command::declarations_for_bun_build as options::EmitDeclarations,
-        );
+        transpiler.options.emit_declarations = (config.dts && config.compile.is_none())
+            .then_some(crate::cli::check_command::declarations_for_bun_build as options::EmitDeclarations);
         let unsupported = [
-            (
-                config.minify.syntax || config.minify.whitespace || config.minify.identifiers,
-                "minify",
-            ),
+            (config.minify.syntax || config.minify.whitespace || config.minify.identifiers, "minify"),
             (config.code_splitting, "splitting"),
-            (
-                config.format != options::Format::Esm,
-                "a format other than esm",
-            ),
-            (
-                transpiler.options.source_map == options::SourceMapOption::Inline,
-                "an inline source map",
-            ),
+            (config.format != options::Format::Esm, "a format other than esm"),
+            (transpiler.options.source_map == options::SourceMapOption::Inline, "an inline source map"),
         ];
         let emits_declarations = config.dts && config.compile.is_none();
-        transpiler.options.skips_sound_files_for = unsupported
-            .iter()
-            .find(|(is_set, _)| *is_set && emits_declarations)
-            .map(|(_, option)| *option);
+        transpiler.options.skips_sound_files_for = unsupported.iter().find(|(is_set, _)| *is_set && emits_declarations).map(|(_, option)| *option);
         if emits_declarations && transpiler.options.skips_sound_files_for.is_none() {
-            transpiler.options.emit_declarations =
-                Some(crate::cli::check_command::sound_declarations_for_build);
-            transpiler.options.write_sound_files =
-                Some(crate::cli::check_command::sound_files_for_build);
+            transpiler.options.emit_declarations = Some(crate::cli::check_command::sound_declarations_for_build);
+            transpiler.options.write_sound_files = Some(crate::cli::check_command::sound_files_for_build);
             transpiler.options.rolls_up_declarations = !config.is_root_given;
             if transpiler.options.source_map == options::SourceMapOption::None {
                 transpiler.options.drops_source_maps = true;
@@ -1214,11 +1195,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.configure_linker();
         transpiler.configure_defines()?;
 
-        if let Some(compile) = config
-            .compile
-            .as_ref()
-            .filter(|_| transpiler.options.compiles_ahead_of_time())
-        {
+        if let Some(compile) = config.compile.as_ref().filter(|_| transpiler.options.compiles_ahead_of_time()) {
             if let Some(why) = crate::cli::aot::why_cannot_be_carried(
                 &compile.compile_target,
                 // SAFETY: `self.env` is the per-VM `DotEnv.Loader` stashed at construction; see `to_executable` below.

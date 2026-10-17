@@ -52,30 +52,20 @@ describe.skipIf(!!unsupported)("compile/aot/record-type-order", () => {
     const folder = String(tempDir("aot-order-of-record-types", sources));
     folders.push(folder);
     cpSync(join(import.meta.dir, "programs", "tsconfig.json"), join(folder, "tsconfig.json"));
-    const build = await spawned(
-      [bunExe(), "build", "--compile", "--aot", "--aot-explain=foreign", "--outfile", "app", program],
-      folder,
-      bunEnv,
-    );
+    const build = await spawned([bunExe(), "build", "--compile", "--aot", "--aot-explain=foreign", "--outfile", "app", program], folder, bunEnv);
     built(build);
     const compiled = await spawned([join(folder, "app")], folder, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
     expect(compiled.signal).toBeNull();
     const plain = await spawned([bunExe(), "run", program], folder, bunEnv);
     expect({ signal: plain.signal, exitCode: plain.exitCode }).toEqual({ signal: null, exitCode: 0 });
     expect(told(compiled)).toEqual(told(plain));
-    return (build.stdout + build.stderr)
-      .split("\n")
-      .flatMap(line => /^aot: foreign: ([A-Za-z]+):/.exec(line)?.[1] ?? []);
+    return (build.stdout + build.stderr).split("\n").flatMap(line => /^aot: foreign: ([A-Za-z]+):/.exec(line)?.[1] ?? []);
   }
 
-  test(
-    "a file that has nothing to do with a union does not change the order of its members",
-    () =>
-      slot(async () => {
-        const alone = await orderOfRecordTypes("alone.ts");
-        expect(alone.length).toBe(12);
-        expect(await orderOfRecordTypes("beside-an-unrelated-file.ts")).toEqual(alone);
-      }),
-    600_000,
-  );
+  test("a file that has nothing to do with a union does not change the order of its members", () =>
+    slot(async () => {
+      const alone = await orderOfRecordTypes("alone.ts");
+      expect(alone.length).toBe(12);
+      expect(await orderOfRecordTypes("beside-an-unrelated-file.ts")).toEqual(alone);
+    }), 600_000);
 });

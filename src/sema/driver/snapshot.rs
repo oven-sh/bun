@@ -79,15 +79,7 @@ impl<'a> Reader<'a> {
                 let name = self.bytes()?;
                 let (&kind, rest) = self.0.split_first()?;
                 self.0 = rest;
-                Some((
-                    name,
-                    [
-                        ScriptKind::Js,
-                        ScriptKind::Jsx,
-                        ScriptKind::Ts,
-                        ScriptKind::Tsx,
-                    ][usize::from(kind & 3)],
-                ))
+                Some((name, [ScriptKind::Js, ScriptKind::Jsx, ScriptKind::Ts, ScriptKind::Tsx][usize::from(kind & 3)]))
             })
             .collect()
     }
@@ -98,37 +90,16 @@ impl Snapshot {
         if self.deferred_entry_points == 0 && self.deferred_code == 0 {
             return None;
         }
-        let paths = self.entry_points.split_off(
-            self.entry_points
-                .len()
-                .saturating_sub(self.deferred_entry_points),
-        );
-        let code = self
-            .code
-            .split_off(self.code.len().saturating_sub(self.deferred_code));
+        let paths = self.entry_points.split_off(self.entry_points.len().saturating_sub(self.deferred_entry_points));
+        let code = self.code.split_off(self.code.len().saturating_sub(self.deferred_code));
         let is_deferred: FxHashSet<&[u8]> = paths.iter().chain(&code).map(Vec::as_slice).collect();
-        let is_deferred_file: FxHashSet<Vec<u8>> =
-            is_deferred.iter().map(|path| from_native(path)).collect();
-        let (script_kinds, early_script_kinds) = std::mem::take(&mut self.script_kinds)
-            .into_iter()
-            .partition(|it| is_deferred.contains(&it.0[..]));
-        let (code_kinds, early_code_kinds): (Vec<_>, Vec<_>) = std::mem::take(&mut self.code_kinds)
-            .into_iter()
-            .partition(|it| is_deferred.contains(&it.0[..]));
-        let (already_read, early_already_read) = std::mem::take(&mut self.already_read)
-            .into_iter()
-            .partition(|it| is_deferred_file.contains(&it.0));
-        (self.script_kinds, self.code_kinds, self.already_read) =
-            (early_script_kinds, early_code_kinds, early_already_read);
+        let is_deferred_file: FxHashSet<Vec<u8>> = is_deferred.iter().map(|path| from_native(path)).collect();
+        let (script_kinds, early_script_kinds) = std::mem::take(&mut self.script_kinds).into_iter().partition(|it| is_deferred.contains(&it.0[..]));
+        let (code_kinds, early_code_kinds): (Vec<_>, Vec<_>) = std::mem::take(&mut self.code_kinds).into_iter().partition(|it| is_deferred.contains(&it.0[..]));
+        let (already_read, early_already_read) = std::mem::take(&mut self.already_read).into_iter().partition(|it| is_deferred_file.contains(&it.0));
+        (self.script_kinds, self.code_kinds, self.already_read) = (early_script_kinds, early_code_kinds, early_already_read);
         drop(is_deferred);
-        Some(DeferredSources {
-            paths,
-            code,
-            script_kinds,
-            already_read,
-            code_kinds: code_kinds.into_iter().collect(),
-            ..Default::default()
-        })
+        Some(DeferredSources { paths, code, script_kinds, already_read, code_kinds: code_kinds.into_iter().collect(), ..Default::default() })
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {
@@ -244,62 +215,29 @@ impl Snapshot {
         let cwd = reader.bytes()?;
         let has_tsconfig = reader.count()? != 0;
         let tsconfig = reader.bytes()?;
-        let conditions = reader
-            .list()?
-            .into_iter()
-            .map(Vec::into_boxed_slice)
-            .collect();
+        let conditions = reader.list()?.into_iter().map(Vec::into_boxed_slice).collect();
         let entry_points = reader.list()?;
         let code = reader.list()?;
         let script_kinds = reader.kinds()?;
         let script_kinds_by_extension = reader.kinds()?;
-        let already_read = (0..reader.count()?)
-            .map(|_| Some((reader.bytes()?, reader.bytes()?.into())))
-            .collect::<Option<_>>()?;
-        let resolved = (0..reader.count()?)
-            .map(|_| Some(((reader.bytes()?, reader.bytes()?), reader.bytes()?)))
-            .collect::<Option<_>>()?;
-        let dropped_imports = (0..reader.count()?)
-            .map(|_| Some((reader.bytes()?, reader.bytes()?)))
-            .collect::<Option<_>>()?;
-        let texts = (0..reader.count()?)
-            .map(|_| Some((reader.bytes()?, reader.bytes()?)))
-            .collect::<Option<_>>()?;
-        let assets = (0..reader.count()?)
-            .map(|_| Some((reader.bytes()?, reader.bytes()?)))
-            .collect::<Option<_>>()?;
-        let defines = (0..reader.count()?)
-            .map(|_| Some((reader.bytes()?, reader.bytes()?)))
-            .collect::<Option<_>>()?;
+        let already_read = (0..reader.count()?).map(|_| Some((reader.bytes()?, reader.bytes()?.into()))).collect::<Option<_>>()?;
+        let resolved = (0..reader.count()?).map(|_| Some(((reader.bytes()?, reader.bytes()?), reader.bytes()?))).collect::<Option<_>>()?;
+        let dropped_imports = (0..reader.count()?).map(|_| Some((reader.bytes()?, reader.bytes()?))).collect::<Option<_>>()?;
+        let texts = (0..reader.count()?).map(|_| Some((reader.bytes()?, reader.bytes()?))).collect::<Option<_>>()?;
+        let assets = (0..reader.count()?).map(|_| Some((reader.bytes()?, reader.bytes()?))).collect::<Option<_>>()?;
+        let defines = (0..reader.count()?).map(|_| Some((reader.bytes()?, reader.bytes()?))).collect::<Option<_>>()?;
         let features = reader.list()?;
         let preserve_source_paths = reader.count().is_some_and(|it| it != 0);
-        let entry_functions = (0..reader.count().unwrap_or(0))
-            .map(|_| Some([reader.bytes()?, reader.bytes()?]))
-            .collect::<Option<_>>()?;
-        let statements = (0..reader.count().unwrap_or(0))
-            .map(|_| Some((reader.bytes()?, reader.count()?)))
-            .collect::<Option<Vec<_>>>()?;
-        let statements = statements
-            .into_iter()
-            .map(|(path, word)| (path, (word >> 1) as u32, word & 1 != 0))
-            .collect();
-        let side_effect_free_files = (0..reader.count().unwrap_or(0))
-            .map(|_| reader.bytes())
-            .collect::<Option<_>>()?;
-        let lifted_commonjs = (0..reader.count().unwrap_or(0))
-            .map(|_| reader.bytes())
-            .collect::<Option<_>>()?;
-        let code_kinds = (0..reader.count().unwrap_or(0))
-            .map(|_| Some((reader.bytes()?, reader.count()? != 0)))
-            .collect::<Option<_>>()?;
+        let entry_functions = (0..reader.count().unwrap_or(0)).map(|_| Some([reader.bytes()?, reader.bytes()?])).collect::<Option<_>>()?;
+        let statements = (0..reader.count().unwrap_or(0)).map(|_| Some((reader.bytes()?, reader.count()?))).collect::<Option<Vec<_>>>()?;
+        let statements = statements.into_iter().map(|(path, word)| (path, (word >> 1) as u32, word & 1 != 0)).collect();
+        let side_effect_free_files = (0..reader.count().unwrap_or(0)).map(|_| reader.bytes()).collect::<Option<_>>()?;
+        let lifted_commonjs = (0..reader.count().unwrap_or(0)).map(|_| reader.bytes()).collect::<Option<_>>()?;
+        let code_kinds = (0..reader.count().unwrap_or(0)).map(|_| Some((reader.bytes()?, reader.count()? != 0))).collect::<Option<_>>()?;
         let deferred_entry_points = reader.count().unwrap_or(0);
         let deferred_code = reader.count().unwrap_or(0);
-        let deferred_imports = (0..reader.count().unwrap_or(0))
-            .map(|_| Some((reader.bytes()?, reader.bytes()?)))
-            .collect::<Option<_>>()?;
-        let deferred_paths = (0..reader.count().unwrap_or(0))
-            .map(|_| reader.bytes())
-            .collect::<Option<_>>()?;
+        let deferred_imports = (0..reader.count().unwrap_or(0)).map(|_| Some((reader.bytes()?, reader.bytes()?))).collect::<Option<_>>()?;
+        let deferred_paths = (0..reader.count().unwrap_or(0)).map(|_| reader.bytes()).collect::<Option<_>>()?;
         Some(Snapshot {
             deferred_entry_points,
             deferred_code,

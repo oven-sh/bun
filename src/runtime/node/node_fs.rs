@@ -324,10 +324,7 @@ fn is_compiled_program_path(path: &[u8]) -> bool {
 
 fn compiled_program_stats(path: &[u8], big_int: bool) -> Option<StatOrNotFound> {
     let result = standalone_module_graph()?.compiled_program_stat(path)?;
-    Some(StatOrNotFound::Stats(Box::new(Stats::init(
-        &PosixStat::init(&result),
-        big_int,
-    ))))
+    Some(StatOrNotFound::Stats(Box::new(Stats::init(&PosixStat::init(&result), big_int))))
 }
 
 /// A file that the executable holds has no descriptor: its bytes are handed over in a file that has no name.
@@ -336,20 +333,12 @@ fn open_embedded_file(contents: &[u8], flags: i32, path: &[u8]) -> Maybe<FD> {
         return Err(sys::Error::from_code(E::EROFS, sys::Tag::open).with_path(path));
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    let fd = sys::memfd_create(c"file-of-the-executable", sys::MemfdFlags::NonExecutable)
-        .map_err(|err| err.with_path(path))?;
+    let fd = sys::memfd_create(c"file-of-the-executable", sys::MemfdFlags::NonExecutable).map_err(|err| err.with_path(path))?;
     #[cfg(windows)]
     let fd = {
-        let name = format!(
-            "\\.file-of-the-executable-{:x}-{:x}",
-            std::process::id(),
-            bun_core::fast_random()
-        );
-        let name = bun_core::ZBox::from_vec(
-            [bun_resolver::fs::RealFS::tmpdir_path(), name.as_bytes()].concat(),
-        );
-        let made = sys::open(&name, sys::O::RDWR | sys::O::CREAT | sys::O::EXCL, 0o600)
-            .map_err(|err| err.with_path(path))?;
+        let name = format!("\\.file-of-the-executable-{:x}-{:x}", std::process::id(), bun_core::fast_random());
+        let name = bun_core::ZBox::from_vec([bun_resolver::fs::RealFS::tmpdir_path(), name.as_bytes()].concat());
+        let made = sys::open(&name, sys::O::RDWR | sys::O::CREAT | sys::O::EXCL, 0o600).map_err(|err| err.with_path(path))?;
         let _ = sys::unlink(&name);
         made
     };
@@ -368,9 +357,7 @@ fn open_embedded_file(contents: &[u8], flags: i32, path: &[u8]) -> Maybe<FD> {
         }
         FD::from_native(made)
     };
-    let filled = sys::File::borrow(&fd)
-        .write_all(contents)
-        .and_then(|()| sys::lseek(fd, 0, libc::SEEK_SET));
+    let filled = sys::File::borrow(&fd).write_all(contents).and_then(|()| sys::lseek(fd, 0, libc::SEEK_SET));
     if let Err(err) = filled {
         fd.close();
         return Err(err.with_path(path));
@@ -782,18 +769,12 @@ mod _async_tasks {
                         args.path
                             .slice_z(unsafe { &mut binding.node_fs.get_mut().sync_error_buf })
                     };
-                    if let Some(file) =
-                        standalone_module_graph().and_then(|graph| graph.find_ref(path.as_bytes()))
-                    {
+                    if let Some(file) = standalone_module_graph().and_then(|graph| graph.find_ref(path.as_bytes())) {
                         // SAFETY: identity write — `R == ret::Open` for this `F`.
                         unsafe {
                             core::ptr::write(
                                 &mut task.result as *mut Maybe<R> as *mut Maybe<ret::Open>,
-                                open_embedded_file(
-                                    file.utf8_contents(),
-                                    args.flags.as_int(),
-                                    args.path.slice(),
-                                ),
+                                open_embedded_file(file.utf8_contents(), args.flags.as_int(), args.path.slice()),
                             )
                         };
                         let task_ptr: *mut Self = task;
@@ -4774,13 +4755,7 @@ impl NodeFS {
             args.path.slice_z(&mut self.sync_error_buf)
         };
         match Syscall::access(path, args.mode.as_int()) {
-            Err(err)
-                if err.get_errno() == E::ENOENT
-                    && (args.mode.as_int() & sys::posix::W_OK) == 0
-                    && is_compiled_program_path(args.path.slice()) =>
-            {
-                Ok(Null)
-            }
+            Err(err) if err.get_errno() == E::ENOENT && (args.mode.as_int() & sys::posix::W_OK) == 0 && is_compiled_program_path(args.path.slice()) => Ok(Null),
             Err(err) => Err(err.with_path(args.path.slice())),
             Ok(_) => Ok(Null),
         }
@@ -5019,20 +4994,10 @@ impl NodeFS {
     /// https://github.com/libuv/libuv/pull/2578
     /// https://github.com/nodejs/node/issues/34624
     fn copy_file_inner(&mut self, args: &args::CopyFile) -> Maybe<ret::CopyFile> {
-        if let Some(file) =
-            standalone_module_graph().and_then(|graph| graph.find_ref(args.src.slice()))
-        {
+        if let Some(file) = standalone_module_graph().and_then(|graph| graph.find_ref(args.src.slice())) {
             let mut dest_buf = bun_paths::path_buffer_pool::get();
-            let if_there = if args.mode.shouldnt_overwrite() {
-                sys::O::EXCL
-            } else {
-                sys::O::TRUNC
-            };
-            let fd = Syscall::open(
-                args.dest.slice_z(&mut dest_buf),
-                sys::O::WRONLY | sys::O::CREAT | if_there,
-                0o644,
-            )?;
+            let if_there = if args.mode.shouldnt_overwrite() { sys::O::EXCL } else { sys::O::TRUNC };
+            let fd = Syscall::open(args.dest.slice_z(&mut dest_buf), sys::O::WRONLY | sys::O::CREAT | if_there, 0o644)?;
             let written = sys::File::borrow(&fd).write_all(file.utf8_contents());
             fd.close();
             return written;
@@ -6117,11 +6082,7 @@ impl NodeFS {
         if let Some(graph) = standalone_module_graph()
             && let Some(file) = graph.find_ref(path.as_bytes())
         {
-            return open_embedded_file(
-                file.utf8_contents(),
-                args.flags.as_int(),
-                args.path.slice(),
-            );
+            return open_embedded_file(file.utf8_contents(), args.flags.as_int(), args.path.slice());
         }
         match Syscall::open(path, args.flags.as_int(), args.mode) {
             Err(err) => Err(err.with_path(args.path.slice())),
@@ -7781,10 +7742,7 @@ impl NodeFS {
             let flags = sys::O::RDONLY | sys::O::NONBLOCK | sys::O::NOCTTY;
 
             let fd = match sys::open(path, flags, 0) {
-                Err(err)
-                    if err.get_errno() == E::ENOENT
-                        && is_compiled_program_path(path.as_bytes()) =>
-                {
+                Err(err) if err.get_errno() == E::ENOENT && is_compiled_program_path(path.as_bytes()) => {
                     return Ok(encode_path_result(path.as_bytes(), args.encoding));
                 }
                 Err(err) => return Err(err.with_path(path)),

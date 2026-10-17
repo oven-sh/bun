@@ -1,5 +1,12 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
+exports[`asks a Set made from a literal of twelve constant strings for a string that it does not hold 1`] = `
+"typed, function: 92.38 instructions (stub SetHasWithStringKey 56.97, kernel 35.28, module 0.13), 357 bytes
+typed, module level: 78.20 instructions (stub SetHasWithStringKey 56.97, module 21.23), 1758 bytes
+untyped, function: 113.54 instructions (stub SetHas 58.97, kernel 54.45, module 0.13), 697 bytes
+untyped, module level: 113.39 instructions (stub SetHas 58.97, module 54.42), 2193 bytes"
+`;
+
 exports[`sets two headers of a fresh Response by constant names 1`] = `
 "typed, function: 1935.85 instructions (the runtime 1650.15, kernel 115.10, stub FrontEndTypedConstruct 49, stub OperationValueWithInstance 42, stub GetThroughKnownCustomGetterByName 31, elsewhere 15, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRBX 14, stub ReadKnownCustomGetterByNamePreservingTwo 13, stub OperationValueWithInstance to operationAOTTypedCallHeadersMethod 4, stub OperationValueWithInstance to operationAOTTypedConstruct 2, module 0.60), 972 bytes
 typed, module level: 1916.25 instructions (the runtime 1650.15, module 104.10, stub FrontEndTypedConstruct 49, stub OperationValueWithInstance 42, stub ReadKnownCustomGetterByName 36, elsewhere 15, stub GetByNameWithDirectColumnWithReceiverInRBX 14, stub OperationValueWithInstance to operationAOTTypedCallHeadersMethod 4, stub OperationValueWithInstance to operationAOTTypedConstruct 2), 1909 bytes

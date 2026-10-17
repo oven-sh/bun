@@ -488,8 +488,7 @@ test("a connection that is kept back for a cancelled text is given out again whe
   // The other connection of the pool. It asks nothing, so the mock does not count it.
   await using _ = await sql.reserve();
   const cancelled: any = sql.unsafe("select pg_sleep(60)").simple().execute();
-  const adapter =
-    cancelled[Object.getOwnPropertySymbols(cancelled).find(symbol => symbol.description === "state")!].adapter;
+  const adapter = cancelled[Object.getOwnPropertySymbols(cancelled).find(symbol => symbol.description === "state")!].adapter;
   const inTransaction = () => adapter.connections.map((pooled: any) => pooled.connection.inTransaction);
   await server.asleep;
   const behind = settled(sql.unsafe("select 2").simple().execute());
@@ -1093,8 +1092,7 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
       await using reserved = await sql.reserve();
       const query: any = reserved`select 1`;
       await query;
-      const adapter =
-        query[Object.getOwnPropertySymbols(query).find(symbol => symbol.description === "state")!].adapter;
+      const adapter = query[Object.getOwnPropertySymbols(query).find(symbol => symbol.description === "state")!].adapter;
       const connection: { inTransaction: boolean } = adapter.connections.find(Boolean).connection;
 
       const seen: [string, boolean][] = [["connected", connection.inTransaction]];

@@ -9,15 +9,7 @@ afterAll(endChildren);
 
 /** `«` and `»` are around what is reported. They are not part of the code. `ids`: the `messageId` of each report. */
 type Case = string | { code: string; ids?: string[]; file?: string };
-type Message = {
-  ruleId: string;
-  messageId: string;
-  severity: number;
-  line: number;
-  column: number;
-  endLine: number;
-  endColumn: number;
-};
+type Message = { ruleId: string; messageId: string; severity: number; line: number; column: number; endLine: number; endColumn: number };
 
 const user = `export {};\ninterface User { id: number; name: string }\ndeclare const body: any;\ndeclare function greet(user: User): string;\ndeclare function double(n: number): number;\n`;
 
@@ -66,10 +58,7 @@ const rules: Record<string, Case[]> = {
     user + `const it = { id: body.id };`,
     user + `Math.max(body.id);\n"a".padStart(body.id);`,
     user + `const id: number = 4;\ndouble(id);`,
-    {
-      code: `const body = JSON.parse("{}");\nfunction double(n) { return n * 2; }\ndouble(body.id);`,
-      file: "plain.js",
-    },
+    { code: `const body = JSON.parse("{}");\nfunction double(n) { return n * 2; }\ndouble(body.id);`, file: "plain.js" },
   ],
   "aot-outside-data": [
     user + `const it = «JSON.parse("{}") as User»;`,
@@ -79,10 +68,8 @@ const rules: Record<string, Case[]> = {
     user + `try { greet(body as any); } catch (error) { console.log((«error as Error»).message); }`,
     user + `declare function load(): Promise<any>;\nconst it = «(await load()) as User»;`,
     user + `const it = «body as unknown as User»;`,
-    user +
-      `interface Config { extra: any; make(): any; list: any[] }\nconst config = «JSON.parse("{}") as Config»;\nconst a = «config.extra as User»;\nconst b = «config.make() as User»;\nconst c = «config.list[0] as User»;\nfunction f(given: Config) { return «given.extra as User»; }\nf(config);`,
-    user +
-      `interface Config { extra: any }\nconst config = «JSON.parse("{}") as Config»;\nconst own: Config = { extra: 1 };\nconst a = «own.extra as User»;\nconst b = (own as any).other as User;\nconst c = (config as any).other as User;`,
+    user + `interface Config { extra: any; make(): any; list: any[] }\nconst config = «JSON.parse("{}") as Config»;\nconst a = «config.extra as User»;\nconst b = «config.make() as User»;\nconst c = «config.list[0] as User»;\nfunction f(given: Config) { return «given.extra as User»; }\nf(config);`,
+    user + `interface Config { extra: any }\nconst config = «JSON.parse("{}") as Config»;\nconst own: Config = { extra: 1 };\nconst a = «own.extra as User»;\nconst b = (own as any).other as User;\nconst c = (config as any).other as User;`,
     user + `const it = body as any;`,
     user + `const it = body as unknown;`,
     user + `interface Admin extends User { level: number }\nfunction f(it: User) { return it as Admin; }`,
@@ -140,8 +127,7 @@ const rules: Record<string, Case[]> = {
     missing + `const text = \`<\${«list[i]!»}>\`;`,
     // The compiler keeps these elements as integers.
     missing + `enum Kind { A, B }\ndeclare const kinds: (Kind | undefined)[];\nconst first = «kinds[i]!» < Kind.B;`,
-    missing +
-      `enum Kind { A, B }\ndeclare const kinds: (Kind | undefined)[];\nswitch («kinds[i]!») {\n  case Kind.A:\n    break;\n}`,
+    missing + `enum Kind { A, B }\ndeclare const kinds: (Kind | undefined)[];\nswitch («kinds[i]!») {\n  case Kind.A:\n    break;\n}`,
     missing + `declare const few: readonly (1 | 2 | undefined)[];\nconst small = «few[i]!» < 2;`,
     // `a[i]!` that travels.
     missing + `const first = «list[0]!»;`,
@@ -158,8 +144,7 @@ const rules: Record<string, Case[]> = {
     missing + `function f() { const box = «rows[i]!»; const kept = [box]; if (!box) return 0; return kept.length; }`,
     missing + `function f() { const box = «rows[i]!»; if (!box) return [box].length; return box.size; }`,
     missing + `function f() { const box = «rows[i]!»; if (!box) return 0; return () => box.size; }`,
-    missing +
-      `function f() { const box = «rows[i]!», other = rows[0]!; if (!other) return 0; return box.size + other.size; }`,
+    missing + `function f() { const box = «rows[i]!», other = rows[0]!; if (!other) return 0; return box.size + other.size; }`,
     missing + `function f() { const first = «list[i]!»; if (first === null) return 0; return double(first); }`,
     // `a?.b!` where `b` itself can be missing.
     missing + `const port = «options.proxy?.port!»;`,
@@ -221,8 +206,7 @@ const rules: Record<string, Case[]> = {
     missing + `const sorted = list[i]! < list[i + 1]!;`,
     missing + `const early = words[i]! < "b";`,
     missing + `const next = list[i]! + 1;`,
-    missing +
-      `const all = [list[i]! - 1, list[i]! * 2, list[i]! / 2, list[i]! % 2, list[i]! ** 2, -list[i]!, +list[i]!, ~list[i]!];`,
+    missing + `const all = [list[i]! - 1, list[i]! * 2, list[i]! / 2, list[i]! % 2, list[i]! ** 2, -list[i]!, +list[i]!, ~list[i]!];`,
     missing + `const all = [list[i]! | 0, list[i]! & 7, list[i]! ^ 1, list[i]! << 1, list[i]! >> 1, list[i]! >>> 1];`,
     missing + `let total = 0;\ntotal += list[i]!;\ntotal *= list[i]!;`,
     missing + `while (list[i]! <= 5) double(1);`,
@@ -236,10 +220,8 @@ const rules: Record<string, Case[]> = {
     missing + `switch (words[i]!) {\n  case "a":\n    break;\n}`,
     // A constant of a function that is only compared, computed with and tested.
     missing + `function f() { const first = list[i]!; return first < 5; }`,
-    missing +
-      `function f() { const first = list[i]!; return [first + 1, -first, first === 1, !first, typeof first, first ? 1 : 0, first || 0]; }`,
-    missing +
-      `function f() { const first = list[i]!; if (first && i) return 1; switch (first) { case 1: return 2; } return 0; }`,
+    missing + `function f() { const first = list[i]!; return [first + 1, -first, first === 1, !first, typeof first, first ? 1 : 0, first || 0]; }`,
+    missing + `function f() { const first = list[i]!; if (first && i) return 1; switch (first) { case 1: return 2; } return 0; }`,
     missing + `function f() { const first = list[i]!; return [1, 2].map(n => (first < 5 ? n : -n)); }`,
     // Or that is tested first.
     missing + `function f() { const box = rows[i]!; if (!box) return 0; return box.size; }`,
@@ -248,8 +230,7 @@ const rules: Record<string, Case[]> = {
     missing + `function f() { const first = list[i]!; if (first === undefined) return 0; return double(first); }`,
     missing + `function f() { const first = list[i]!; if (first !== undefined) return double(first); return 0; }`,
     missing + `function f() { const word = words[i]!; if (word == null) return 0; return word.length; }`,
-    missing +
-      `function f() { for (let n = 0; n < 3; n++) { const box = rows[n]!; if (!box) continue; double(box.size); } }`,
+    missing + `function f() { for (let n = 0; n < 3; n++) { const box = rows[n]!; if (!box) continue; double(box.size); } }`,
     missing + `function f() { const box = rows[i]!; if (!box) throw new RangeError("no box"); return box; }`,
     // Nothing is missing, or nothing is asserted.
     missing + `declare const size: number;\nconst copy = size!;`,
@@ -273,39 +254,13 @@ const rules: Record<string, Case[]> = {
     { code: entry + `const it = «{ path: "a" } as Readonly<Entry> & { path: string }»;`, ids: ["missing"] },
     { code: entry + `const it = «{ path: "a" } as Readonly<Entry>»;`, ids: ["missing"] },
     { code: entry + `const it = «{ path: "a" } as Pick<Entry, "path" | "hasMessages">»;`, ids: ["missing"] },
-    {
-      code: entry + `interface Cell<T> { value: T; size: number }\nconst it = «{ value: "a" } as Cell<string>»;`,
-      ids: ["missing"],
-    },
-    {
-      code:
-        entry +
-        `interface Sized { size: number }\ninterface Named extends Sized { name: string }\nconst it = «{ name: "a" } as Named»;`,
-      ids: ["missing"],
-    },
+    { code: entry + `interface Cell<T> { value: T; size: number }\nconst it = «{ value: "a" } as Cell<string>»;`, ids: ["missing"] },
+    { code: entry + `interface Sized { size: number }\ninterface Named extends Sized { name: string }\nconst it = «{ name: "a" } as Named»;`, ids: ["missing"] },
     { code: entry + `let partial = { path: "a" };\nconst it = «partial as unknown as Entry»;`, ids: ["missing"] },
-    {
-      code:
-        entry +
-        `enum Level { Low, High }\ninterface Alert { level: Level; text: string }\nconst it = «{ text: "a" } as Alert»;`,
-      ids: ["missing"],
-    },
-    {
-      code: entry + `interface Row { id: number | null; name: string }\nconst it = «{ name: "a" } as Row»;`,
-      ids: ["missing"],
-    },
-    {
-      code:
-        entry +
-        `interface Step { size: 1 | 2; done: true; name: string }\nconst it = «{ name: "a", done: true } as Step»;`,
-      ids: ["missing"],
-    },
-    {
-      code:
-        entry +
-        `type Shape = { kind: "circle"; radius: number } | { kind: "square"; side: number };\nconst it = «{ kind: "circle" } as Shape»;`,
-      ids: ["missing"],
-    },
+    { code: entry + `enum Level { Low, High }\ninterface Alert { level: Level; text: string }\nconst it = «{ text: "a" } as Alert»;`, ids: ["missing"] },
+    { code: entry + `interface Row { id: number | null; name: string }\nconst it = «{ name: "a" } as Row»;`, ids: ["missing"] },
+    { code: entry + `interface Step { size: 1 | 2; done: true; name: string }\nconst it = «{ name: "a", done: true } as Step»;`, ids: ["missing"] },
+    { code: entry + `type Shape = { kind: "circle"; radius: number } | { kind: "square"; side: number };\nconst it = «{ kind: "circle" } as Shape»;`, ids: ["missing"] },
     { code: entry + `const partial = { path: "a" };\nconst it = «partial as unknown as Entry»;`, ids: ["missing"] },
     // `as never` is held to what the place expects.
     { code: entry + `open(«{ path: "a" } as never»);`, ids: ["missing"] },
@@ -320,18 +275,9 @@ const rules: Record<string, Case[]> = {
     { code: entry + `const it = «{ path: "a", hasMessages: null } as unknown as Entry»;`, ids: ["wrongMember"] },
     { code: entry + `const it = «{ path: "a", hasMessages: undefined } as unknown as Entry»;`, ids: ["wrongMember"] },
     { code: entry + `interface Job { run: Run }\nconst it = «{ run: {} } as unknown as Job»;`, ids: ["wrongMember"] },
-    {
-      code: entry + `interface Page { rows: number[] }\nconst it = «{ rows: {} } as unknown as Page»;`,
-      ids: ["wrongMember"],
-    },
-    {
-      code: entry + `interface Page { out: Output }\nconst it = «{ out: [] } as unknown as Page»;`,
-      ids: ["wrongMember"],
-    },
-    {
-      code: entry + `interface Page { out: Output }\nconst it = «{ out: "a" } as unknown as Page»;`,
-      ids: ["wrongMember"],
-    },
+    { code: entry + `interface Page { rows: number[] }\nconst it = «{ rows: {} } as unknown as Page»;`, ids: ["wrongMember"] },
+    { code: entry + `interface Page { out: Output }\nconst it = «{ out: [] } as unknown as Page»;`, ids: ["wrongMember"] },
+    { code: entry + `interface Page { out: Output }\nconst it = «{ out: "a" } as unknown as Page»;`, ids: ["wrongMember"] },
     // A literal inside the literal has to match whole.
     { code: entry + `const it = «{ config: { depth: 1 }, mode: "a" } as unknown as Settings»;`, ids: ["wrongMember"] },
     { code: entry + `const it = «{ config: { name: "a" }, mode: "a" } as unknown as Settings»;`, ids: ["wrongMember"] },
@@ -358,27 +304,15 @@ const rules: Record<string, Case[]> = {
     { code: entry + `const text = «{ toString() { return "a"; } } as unknown as string»;`, ids: ["wrongValue"] },
     { code: entry + `const text = «{ toString: () => "a" } as string»;`, ids: ["wrongValue"] },
     { code: entry + `const n = «[1] as unknown as number»;`, ids: ["wrongValue"] },
-    {
-      code:
-        entry +
-        `class Box { constructor(public size: number) {} grow() { this.size++; } }\nconst box = «{ size: 1 } as Box»;`,
-      ids: ["wrongValue"],
-    },
-    {
-      code: entry + `class Box { name = "a"; size = 1; }\nconst box = «{ size: 1 } as Box | undefined»;`,
-      ids: ["wrongValue"],
-    },
-    {
-      code: entry + `abstract class Base { abstract size: number; grow() {} }\nconst it = «{ size: 1 } as Base»;`,
-      ids: ["wrongValue"],
-    },
+    { code: entry + `class Box { constructor(public size: number) {} grow() { this.size++; } }\nconst box = «{ size: 1 } as Box»;`, ids: ["wrongValue"] },
+    { code: entry + `class Box { name = "a"; size = 1; }\nconst box = «{ size: 1 } as Box | undefined»;`, ids: ["wrongValue"] },
+    { code: entry + `abstract class Base { abstract size: number; grow() {} }\nconst it = «{ size: 1 } as Base»;`, ids: ["wrongValue"] },
     // It matches.
     entry + `const it = { path: "a", hasMessages: true } as Entry;`,
     entry + `const it = { path: "a", hasMessages: true, more: 1 } as Entry;`,
     entry + `const it = { host: "a" } as { host: string; port?: number };`,
     entry + `const it = { path: "a" } as Partial<Entry>;`,
-    entry +
-      `type Shape = { kind: "circle"; radius: number } | { kind: "square"; side: number };\nconst it = { kind: "circle", radius: 1 } as Shape;`,
+    entry + `type Shape = { kind: "circle"; radius: number } | { kind: "square"; side: number };\nconst it = { kind: "circle", radius: 1 } as Shape;`,
     entry + `class Box { size = 1; }\nconst box = { size: 1 } as Box;`,
     entry + `const it = { a: 1 } as Record<string, number>;`,
     entry + `const it = { a: 1 } as { [key: string]: number };`,
@@ -389,13 +323,10 @@ const rules: Record<string, Case[]> = {
     entry + `const it = "a" as unknown as String;`,
     entry + `const it = "a" as unknown as Output | string;`,
     // What is missing is read as `undefined`, as in JavaScript.
-    entry +
-      `interface Response { servers: string[]; name: string; next: Output; run: Run; big: bigint }\nconst it = { name: "a" } as Response;`,
+    entry + `interface Response { servers: string[]; name: string; next: Output; run: Run; big: bigint }\nconst it = { name: "a" } as Response;`,
     entry + `interface Row { id: number | undefined; name: string }\nconst it = { name: "a" } as Row;`,
-    entry +
-      `interface Row { id: number | string; flag: number | boolean; name: string }\nconst it = { name: "a" } as Row;`,
-    entry +
-      `enum Color { Red = "red" }\ninterface Pen { color: Color; name: string }\nconst it = { name: "a" } as Pen;`,
+    entry + `interface Row { id: number | string; flag: number | boolean; name: string }\nconst it = { name: "a" } as Row;`,
+    entry + `enum Color { Red = "red" }\ninterface Pen { color: Color; name: string }\nconst it = { name: "a" } as Pen;`,
     entry + `interface Row { id: any; more: unknown; name: string }\nconst it = { name: "a" } as Row;`,
     entry + `const it = { text: null } as unknown as Output;`,
     entry + `const it = { text: undefined } as unknown as Output;`,
@@ -411,8 +342,7 @@ const rules: Record<string, Case[]> = {
     entry + `const big = "4" as unknown as bigint;`,
     entry + `const text = 4n as unknown as string;`,
     // The value is not written here.
-    entry +
-      `interface Node { kind: number }\ninterface Identifier extends Node { text: string }\nfunction f(node: Node) { return node as Identifier; }`,
+    entry + `interface Node { kind: number }\ninterface Identifier extends Node { text: string }\nfunction f(node: Node) { return node as Identifier; }`,
     entry + `declare const body: any;\nconst it = body as Entry;`,
     entry + `function f(value: unknown) { return value as Entry; }`,
     entry + `const it = JSON.parse("{}") as Entry;`,
@@ -946,8 +876,7 @@ const rulesOfCheckedReads: Record<string, Case[]> = {
     missing + `declare const numbers: number[];\nconst small = numbers[i]! < 5;`,
     missing + `declare const text: string;\nconst early = text[i]! < "b";`,
     missing + `declare const bytes: Uint8Array;\nconst first = bytes[i]! || 0;`,
-    missing +
-      `declare const numbers: number[];\nfunction f() { const first = numbers[i]!; if (first === undefined) return 0; return double(first); }`,
+    missing + `declare const numbers: number[];\nfunction f() { const first = numbers[i]!; if (first === undefined) return 0; return double(first); }`,
   ],
 };
 
@@ -965,14 +894,7 @@ function marked(code: string, messages: Message[]) {
   return code;
 }
 
-const compilerOptions = {
-  strict: true,
-  target: "esnext",
-  module: "esnext",
-  moduleResolution: "bundler",
-  noEmit: true,
-  allowJs: true,
-};
+const compilerOptions = { strict: true, target: "esnext", module: "esnext", moduleResolution: "bundler", noEmit: true, allowJs: true };
 
 async function lint(files: Record<string, string>, args: string[], more: Record<string, boolean> = {}) {
   const tsconfig = JSON.stringify({ compilerOptions: { ...compilerOptions, ...more } });
@@ -1002,9 +924,7 @@ async function lint(files: Record<string, string>, args: string[], more: Record<
 
 const tables = [
   ...Object.entries(rules).map(([name, table]) => [name, table, {}] as const),
-  ...Object.entries(rulesOfCheckedReads).map(
-    ([name, table]) => [name, table, { noUncheckedIndexedAccess: true }] as const,
-  ),
+  ...Object.entries(rulesOfCheckedReads).map(([name, table]) => [name, table, { noUncheckedIndexedAccess: true }] as const),
 ];
 describe.concurrent.each(tables)("bun/%s", (name, table, more) => {
   test("reports", async () => {
@@ -1029,11 +949,8 @@ describe.concurrent.each(tables)("bun/%s", (name, table, more) => {
   });
 });
 
-const both =
-  user +
-  `const id: number = body.id;\ndouble(body.id);\nfunction f(): number { return body.id; }\nfunction* g(): Generator<number> { yield body.id; }\nconst ids: number[] = [body.id];\n`;
-const rulesAt = (messages: Message[]) =>
-  messages.filter(it => /unsafe-(a|r)|aot-/.test(it.ruleId)).map(it => `${it.line} ${it.ruleId}`);
+const both = user + `const id: number = body.id;\ndouble(body.id);\nfunction f(): number { return body.id; }\nfunction* g(): Generator<number> { yield body.id; }\nconst ids: number[] = [body.id];\n`;
+const rulesAt = (messages: Message[]) => messages.filter(it => /unsafe-(a|r)|aot-/.test(it.ruleId)).map(it => `${it.line} ${it.ruleId}`);
 
 const flatConfig = (rules: Record<string, string>) =>
   `export default [{
@@ -1060,9 +977,7 @@ describe.concurrent("the switch", () => {
   });
 
   test("a rule can be turned off again", async () => {
-    const { of } = await lint({ "a.ts": both, "bunfig.toml": `[lint.rules]\n"bun/aot-no-any-to-typed" = "off"\n` }, [
-      "--aot",
-    ]);
+    const { of } = await lint({ "a.ts": both, "bunfig.toml": `[lint.rules]\n"bun/aot-no-any-to-typed" = "off"\n` }, ["--aot"]);
     expect(rulesAt(of("a.ts"))).toEqual([]);
   });
 
@@ -1087,14 +1002,8 @@ describe.concurrent("the switch", () => {
   });
 
   test("a config file's setting for a rule wins", async () => {
-    const code =
-      user +
-      `const it = body as User;\nconst byName = new Map<string, number>();\nconst size = byName.get("a")!;\ndouble(body.id);\n`;
-    const rules = {
-      "bun/aot-outside-data": "off",
-      "bun/aot-non-null-escapes": "warn",
-      "bun/aot-no-any-to-typed": "error",
-    };
+    const code = user + `const it = body as User;\nconst byName = new Map<string, number>();\nconst size = byName.get("a")!;\ndouble(body.id);\n`;
+    const rules = { "bun/aot-outside-data": "off", "bun/aot-non-null-escapes": "warn", "bun/aot-no-any-to-typed": "error" };
     const { of, exitCode } = await lint({ "a.ts": code, "eslint.config.mjs": flatConfig(rules) }, ["--aot"]);
     expect(rulesAt(of("a.ts"))).toEqual(["8 bun/aot-non-null-escapes", "9 bun/aot-no-any-to-typed"]);
     expect(exitCode).toBe(1);
@@ -1106,8 +1015,7 @@ describe.concurrent("the switch", () => {
       `declare function sum(all: number[]): number;\nsum([body.id]);\nfunction h(): number[] { return [body.id]; }\nconst it = body as User;\nconst copy = body.id;\n`;
     const more = ["--rule", "@typescript-eslint/no-unsafe-type-assertion: warn"];
     const { of } = await lint({ "a.ts": code }, ["--aot", "--type-aware", ...more]);
-    const at = (messages: Message[]) =>
-      messages.filter(it => /unsafe-(a|r|t)|aot-/.test(it.ruleId)).map(it => `${it.line} ${it.ruleId}`);
+    const at = (messages: Message[]) => messages.filter(it => /unsafe-(a|r|t)|aot-/.test(it.ruleId)).map(it => `${it.line} ${it.ruleId}`);
     expect(at(of("a.ts"))).toEqual([
       ...[6, 7, 8, 9, 10, 12, 13].map(line => `${line} bun/aot-no-any-to-typed`),
       "14 bun/aot-outside-data",
@@ -1116,23 +1024,11 @@ describe.concurrent("the switch", () => {
   });
 
   test("an error of typescript-eslint stays an error", async () => {
-    const code =
-      user +
-      `const id: number = body.id;\ndouble(body.id);\nfunction f(): number { return body.id; }\nconst it = body as User;\n`;
-    const errors = ["assignment", "argument", "return", "type-assertion"].flatMap(it => [
-      "--rule",
-      `@typescript-eslint/no-unsafe-${it}: error`,
-    ]);
+    const code = user + `const id: number = body.id;\ndouble(body.id);\nfunction f(): number { return body.id; }\nconst it = body as User;\n`;
+    const errors = ["assignment", "argument", "return", "type-assertion"].flatMap(it => ["--rule", `@typescript-eslint/no-unsafe-${it}: error`]);
     const at = (messages: Message[]) =>
-      messages
-        .filter(it => /unsafe-(a|r|t)|aot-/.test(it.ruleId))
-        .map(it => `${it.line} ${it.severity} ${it.ruleId.replace(/.*\//, "")}`);
-    const theirs = [
-      "6 2 no-unsafe-assignment",
-      "7 2 no-unsafe-argument",
-      "8 2 no-unsafe-return",
-      "9 2 no-unsafe-type-assertion",
-    ];
+      messages.filter(it => /unsafe-(a|r|t)|aot-/.test(it.ruleId)).map(it => `${it.line} ${it.severity} ${it.ruleId.replace(/.*\//, "")}`);
+    const theirs = ["6 2 no-unsafe-assignment", "7 2 no-unsafe-argument", "8 2 no-unsafe-return", "9 2 no-unsafe-type-assertion"];
     const ours = [6, 7, 8].map(line => `${line} 1 aot-no-any-to-typed`).concat("9 1 aot-outside-data");
     const [without, beside, quiet] = await Promise.all(
       [[], ["--aot"], ["--aot", "--quiet"]].map(more => lint({ "a.ts": code }, ["--type-aware", ...errors, ...more])),
@@ -1149,13 +1045,9 @@ describe.concurrent("the switch", () => {
     const [off, on, raised] = await Promise.all([
       lint({ "a.ts": code + `/* eslint ${own}: "off" */\n` }, ["--aot", "--type-aware"]),
       lint({ "a.ts": code + `/* eslint ${own}: "warn" */\n` }, ["--type-aware"]),
-      lint({ "a.ts": code + `/* eslint @typescript-eslint/no-unsafe-assignment: "error" */\n` }, [
-        "--aot",
-        "--type-aware",
-      ]),
+      lint({ "a.ts": code + `/* eslint @typescript-eslint/no-unsafe-assignment: "error" */\n` }, ["--aot", "--type-aware"]),
     ]);
-    const at = (messages: Message[]) =>
-      messages.filter(it => /unsafe-a|aot-/.test(it.ruleId)).map(it => `${it.line} ${it.ruleId}`);
+    const at = (messages: Message[]) => messages.filter(it => /unsafe-a|aot-/.test(it.ruleId)).map(it => `${it.line} ${it.ruleId}`);
     expect(at(off.of("a.ts"))).toEqual(["6 @typescript-eslint/no-unsafe-assignment"]);
     expect(at(on.of("a.ts"))).toEqual([`6 ${own}`]);
     expect(at(raised.of("a.ts")).toSorted()).toEqual(["6 @typescript-eslint/no-unsafe-assignment", `6 ${own}`]);
@@ -1163,9 +1055,7 @@ describe.concurrent("the switch", () => {
   });
 
   test("a comment that silences a typescript-eslint rule does not silence these rules", async () => {
-    const code =
-      user +
-      `// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment\nconst id: number = body.id;\n// eslint-disable-next-line bun/aot-no-any-to-typed\nconst other: number = body.id;\n`;
+    const code = user + `// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment\nconst id: number = body.id;\n// eslint-disable-next-line bun/aot-no-any-to-typed\nconst other: number = body.id;\n`;
     const { of } = await lint({ "a.ts": code }, ["--aot", "--type-aware"]);
     expect(rulesAt(of("a.ts"))).toEqual(["7 bun/aot-no-any-to-typed"]);
   });
@@ -1223,9 +1113,7 @@ describe.concurrent("bun/aot-locked-builtin-write", () => {
   ].join("\n");
   const own = "bun/aot-locked-builtin-write";
   const rulesAt = (messages: Message[]) =>
-    messages
-      .filter(it => /aot-|no-extend-native|no-global-assign/.test(it.ruleId))
-      .map(it => `${it.line} ${it.ruleId}`);
+    messages.filter(it => /aot-|no-extend-native|no-global-assign/.test(it.ruleId)).map(it => `${it.line} ${it.ruleId}`);
   const bunfig = (twins: string) =>
     `[lint.rules]\n"${own}" = "warn"\n"no-extend-native" = "${twins}"\n"no-global-assign" = "${twins}"\n`;
 
@@ -1254,19 +1142,15 @@ describe.concurrent("bun/aot-locked-builtin-write", () => {
   );
 
   // After an upgrade of JavaScriptCore: bun src/sema/check/aot/generate-locked-builtins.mjs
-  test.skipIf(!!unsupported)(
-    "its table of built-in objects matches this engine",
-    async () => {
-      await using proc = spawn({
-        cmd: [bunExe(), join(import.meta.dir, "../../../src/sema/check/aot/generate-locked-builtins.mjs"), "--check"],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(exitCode).toBe(0);
-    },
-    120_000,
-  );
+  test.skipIf(!!unsupported)("its table of built-in objects matches this engine", async () => {
+    await using proc = spawn({
+      cmd: [bunExe(), join(import.meta.dir, "../../../src/sema/check/aot/generate-locked-builtins.mjs"), "--check"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  }, 120_000);
 });

@@ -88,10 +88,7 @@ impl Checker<'_, '_> {
     pub(super) fn check_unused(&mut self, file: FileId) {
         let options = self.check_options(file);
         let is_checked_against_them = !self.is_restricted_to_fixed_set(file);
-        let (locals, parameters) = (
-            options.no_unused_locals && is_checked_against_them,
-            options.no_unused_parameters && is_checked_against_them,
-        );
+        let (locals, parameters) = (options.no_unused_locals && is_checked_against_them, options.no_unused_parameters && is_checked_against_them);
         let renamed = std::mem::take(&mut self.renamed_binding_elements_in_types);
         let (hir, bound) = (self.hir(file), self.bound(file));
         if !(locals || parameters || !renamed.is_empty()) || hir.kind == FileKind::Declaration {
@@ -433,9 +430,8 @@ impl Checker<'_, '_> {
                 options.jsx,
                 JsxEmit::React | JsxEmit::ReactJsx | JsxEmit::ReactJsxDev
             );
-        let asks_the_checker = !self.check_options(file).verbatim_module_syntax
-            || transforms_jsx
-            || options.emit_decorator_metadata;
+        let asks_the_checker =
+            !self.check_options(file).verbatim_module_syntax || transforms_jsx || options.emit_decorator_metadata;
         // `getModuleTransformer`, `ImpliedModuleTransformer`, `CommonJSModuleTransformer.visitSourceFile`
         let is_commonjs = options.module != ModuleKind::Preserve
             && self.emit_module_format_of_file(file) < ModuleKind::Es2015
@@ -445,8 +441,7 @@ impl Checker<'_, '_> {
             return;
         }
         // `ShouldPreserveConstEnums`
-        let preserves_const_enums = self.check_options(file).preserve_const_enums
-            || self.check_options(file).isolated_modules;
+        let preserves_const_enums = self.check_options(file).preserve_const_enums || self.check_options(file).isolated_modules;
         // `shouldEmitEnumDeclaration`, `shouldEmitModuleDeclaration`
         let enums = hir.enums.iter().enumerate().filter_map(|(i, it)| {
             let is_emitted = !it.flags.contains(Flags::CONST) || preserves_const_enums;

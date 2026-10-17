@@ -94,8 +94,7 @@ class Internals {
   bindOnwrite: ((stream: any, state: WritableState) => WriteCallback) | undefined = undefined;
   onReadableConstructed: ((stream: any, state: ReadableState) => void) | undefined = undefined;
   onWritableConstructed: ((stream: any, state: WritableState) => void) | undefined = undefined;
-  writeToWritable: ((stream: any, state: WritableState, chunk: any, encoding: any, cb: any) => any) | undefined =
-    undefined;
+  writeToWritable: ((stream: any, state: WritableState, chunk: any, encoding: any, cb: any) => any) | undefined = undefined;
   writingMethod: Function | undefined = undefined;
   constructReadable: ((stream: any, highWaterMark: unknown) => void) | undefined = undefined;
   resumeOnNextTick: ((stream: any, state: ReadableState) => void) | undefined = undefined;
@@ -911,7 +910,7 @@ restoreAttributes(ReadableState.prototype);
 restoreAttributes(WritableState.prototype);
 if (!IS_BUN_AOT) makeEnumerable(WritableState.prototype, "getBuffer");
 
-export type { AfterWriteTickInfo, BufferedWrite, ReadableState, WritableState, WriteCallback };
+export type { ReadableState, WritableState, BufferedWrite, AfterWriteTickInfo, WriteCallback };
 
 export default {
   getHighWaterMark,

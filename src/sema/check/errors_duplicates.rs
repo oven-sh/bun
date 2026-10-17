@@ -467,8 +467,8 @@ impl Checker<'_, '_> {
         });
         if let Some((home, start)) = first {
             // `ShouldPreserveConstEnums`
-            let preserves_const_enums = self.check_options(file).preserve_const_enums
-                || self.check_options(file).isolated_modules;
+            let preserves_const_enums =
+                self.check_options(file).preserve_const_enums || self.check_options(file).isolated_modules;
             for &(of, decl, is_own) in decls {
                 let Decl::Module(m) = decl else { continue };
                 let module = self.hir(of)[m];

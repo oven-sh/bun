@@ -2,7 +2,7 @@
 //! Bun prints its own errors, `agent`, the same in tags and without colors, and `github`, the
 //! workflow commands that GitHub Actions turns into annotations.
 
-use super::{Meta, exposed_at, linked};
+use super::{Meta, linked, exposed_at};
 use crate::paths;
 use crate::results::{Counts, FileResult};
 use bstr::BStr;

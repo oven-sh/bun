@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
+import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { test } from "./supported";
 
 const files = {
   "main.mjs": `
@@ -53,19 +53,10 @@ async function run(cmd: string[], cwd: string, env: Record<string, string | unde
 test("what is learnt about a class with private fields may be learnt again after any number of full collections", async () => {
   using dir = tempDir("aot-private-fields-across-full-collections", files);
   const executable = join(String(dir), "main" + (isWindows ? ".exe" : ""));
-  const built = await run(
-    [bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", executable],
-    String(dir),
-    bunEnv,
-  );
+  const built = await run([bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", executable], String(dir), bunEnv);
   expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
   const path = join(String(dir), "counts");
-  const env = {
-    ...bunEnv,
-    BUN_JSC_crashIfInterpreterIsUsed: "1",
-    BUN_JSC_useAOTOperationCounters: "1",
-    BUN_JSC_aotTypeCoverageCountsPath: path,
-  };
+  const env = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1", BUN_JSC_useAOTOperationCounters: "1", BUN_JSC_aotTypeCoverageCountsPath: path };
   expect(await run([executable], String(dir), env)).toEqual({ stdout: "600000\n", stderr: "", exitCode: 0 });
   const counts: Record<string, number> = { operationAOTTypedTryPutProperties: 0, operationAOTTypedPrivateFieldAdd: 0 };
   for (const line of readFileSync(path + ".operations", "utf8").split("\n")) {

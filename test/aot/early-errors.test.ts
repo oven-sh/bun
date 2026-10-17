@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
 import { describe, test } from "./supported";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 // Some early errors of the language are not reported by Bun's parser but by JavaScriptCore's, when it is handed the transpiled
 // module. A program compiled ahead of time is never handed to it at run time, so the build does that check: the same words as
@@ -20,22 +20,13 @@ async function expectSameSyntaxError(file: string, source: string, line: number,
   const cwd = String(dir);
   const plain = await run(cwd, "run", `./${file}`);
   const expected = syntaxErrorOf(plain.stderr);
-  expect({ expected, stdout: plain.stdout, exitCode: plain.exitCode }).toEqual({
-    expected: expect.any(String),
-    stdout: "",
-    exitCode: 1,
-  });
+  expect({ expected, stdout: plain.stdout, exitCode: plain.exitCode }).toEqual({ expected: expect.any(String), stdout: "", exitCode: 1 });
   for (const args of [
     ["run", "--debug-aot", `./${file}`],
     ["build", "--compile", "--aot", ...buildFlags, `./${file}`, "--outfile", "app"],
   ]) {
     const { stdout, stderr, exitCode } = await run(cwd, ...args);
-    expect({ args, error: syntaxErrorOf(stderr), stdout: args[0] === "run" ? stdout : "", exitCode }).toEqual({
-      args,
-      error: expected,
-      stdout: "",
-      exitCode: 1,
-    });
+    expect({ args, error: syntaxErrorOf(stderr), stdout: args[0] === "run" ? stdout : "", exitCode }).toEqual({ args, error: expected, stdout: "", exitCode: 1 });
     expect(stderr).toMatch(new RegExp(`${file.replace(".", "\\.")}:${line}\\b`));
     expect(stderr.match(/^error\b.*/gm)).toEqual([`error: ${expected}`]);
   }
@@ -67,11 +58,7 @@ const programs: Record<string, string> = {
 describe.concurrent("an early error that only JavaScriptCore reports stops the build in the words of bun run", () => {
   for (const [name, statement] of Object.entries(programs)) {
     test(name, async () => {
-      await expectSameSyntaxError(
-        "main.js",
-        `// The error is on the third line.\nconsole.log("never printed");\n${statement}\nconsole.log("never printed");\n`,
-        3,
-      );
+      await expectSameSyntaxError("main.js", `// The error is on the third line.\nconsole.log("never printed");\n${statement}\nconsole.log("never printed");\n`, 3);
     });
   }
 
@@ -81,21 +68,11 @@ describe.concurrent("an early error that only JavaScriptCore reports stops the b
   });
 
   test("the line is that of the source under --minify", async () => {
-    await expectSameSyntaxError(
-      "main.js",
-      `console.log("never printed");\n\n\nfunction unused() {\n  return /[b-a]/;\n}\nconsole.log(unused);\n`,
-      5,
-      "--minify",
-    );
+    await expectSameSyntaxError("main.js", `console.log("never printed");\n\n\nfunction unused() {\n  return /[b-a]/;\n}\nconsole.log(unused);\n`, 5, "--minify");
   });
 
   test("the name is that of the source under --minify-identifiers", async () => {
-    await expectSameSyntaxError(
-      "main.js",
-      `console.log("never printed");\nvar both; function both() {} both;\nconsole.log("never printed");\n`,
-      3,
-      "--minify-identifiers",
-    );
+    await expectSameSyntaxError("main.js", `console.log("never printed");\nvar both; function both() {} both;\nconsole.log("never printed");\n`, 3, "--minify-identifiers");
   });
 
   test("in a module that is imported", async () => {
@@ -117,11 +94,7 @@ describe.concurrent("an early error that only JavaScriptCore reports stops the b
   });
 
   test("in a CommonJS module", async () => {
-    await expectSameSyntaxError(
-      "main.cjs",
-      `module.exports = 1;\nconsole.log("never printed");\nfunction unused() { return /(?<n>a)(?<n>b)/; }\n`,
-      3,
-    );
+    await expectSameSyntaxError("main.cjs", `module.exports = 1;\nconsole.log("never printed");\nfunction unused() { return /(?<n>a)(?<n>b)/; }\n`, 3);
   });
 });
 
@@ -139,33 +112,21 @@ test("what is valid in a CommonJS module and not in a module still builds and ru
 describe.concurrent("a name that --minify-identifiers hands out may be a name of the source", () => {
   const letters = [..."abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ$_"];
   const programs: Record<string, [source: string, output: string]> = {
-    "two declarations": [
-      `const first = exports.first = []\nconst s = exports.second = {}\nconsole.log(Object.keys(exports).join(), first.length, typeof s);\n`,
-      "first,second 0 object\n",
-    ],
+    "two declarations": [`const first = exports.first = []\nconst s = exports.second = {}\nconsole.log(Object.keys(exports).join(), first.length, typeof s);\n`, "first,second 0 object\n"],
     "every name of one letter": [
       `const first = exports.first = [];\nlet count = 0;\nconst add = (name, value) => { count++; first.push(name); return value; };\n` +
-        letters
-          .map((letter, index) => `const ${letter} = exports.member${index} = add("${letter}", ${index});\n`)
-          .join("") +
+        letters.map((letter, index) => `const ${letter} = exports.member${index} = add("${letter}", ${index});\n`).join("") +
         `console.log(count, first.join(""), ${letters.join(" + ")});\n`,
       `54 ${letters.join("")} 1431\n`,
     ],
   };
   for (const [name, [source, output]] of Object.entries(programs)) {
-    for (const flags of [
-      ["--minify-identifiers"],
-      ["--minify"],
-      ["--minify-identifiers", "--no-compile-function-source"],
-    ]) {
+    for (const flags of [["--minify-identifiers"], ["--minify"], ["--minify-identifiers", "--no-compile-function-source"]]) {
       test(`${name}, ${flags.join(" ")}`, async () => {
         using dir = tempDir("aot-early-errors", { "main.cjs": source });
         const cwd = String(dir);
         const build = await run(cwd, "build", "--compile", "--aot", ...flags, "./main.cjs", "--outfile", "app");
-        expect({ errors: build.stderr.match(/^error\b.*/gm), exitCode: build.exitCode }).toEqual({
-          errors: null,
-          exitCode: 0,
-        });
+        expect({ errors: build.stderr.match(/^error\b.*/gm), exitCode: build.exitCode }).toEqual({ errors: null, exitCode: 0 });
         await using proc = Bun.spawn({ cmd: [`${cwd}/app`], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
         const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
         expect({ stdout, exitCode }).toEqual({ stdout: output, exitCode: 0 });

@@ -1061,7 +1061,7 @@ void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
     }
 
     // A context decides for itself, as in Node.js, unless nothing in the process may.
-    setEvalEnabled(m_contextOptions.allowStrings && !Bun::isCodeGenerationFromStringsStrict(), Bun::codeGenerationFromStringsDisallowedMessage);
+    setEvalEnabled(m_contextOptions.allowStrings && !Bun::isCodeGenerationFromStringsStrict(), Bun::codeGenerationFromStringsDisallowedMessage());
     setWebAssemblyEnabled(m_contextOptions.allowWasm, "Wasm code generation disallowed by embedder"_s);
 
     if (!m_contextOptions.allowWasm) {

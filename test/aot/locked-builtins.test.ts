@@ -374,18 +374,10 @@ for (let i = 0; i < rows.length; i++) {
 }
 log(stringify(out));
 `;
-const table = rows
-  .map(([target, code]) => `  [() => ${target}, () => { ${code.startsWith("Reflect.") ? "return " : ""}${code} }],\n`)
-  .join("");
+const table = rows.map(([target, code]) => `  [() => ${target}, () => { ${code.startsWith("Reflect.") ? "return " : ""}${code} }],\n`).join("");
 
 async function bun(cwd: string, ...args: string[]) {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), ...args],
-    cwd,
-    env: { ...bunEnv, NO_COLOR: "1" },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: { ...bunEnv, NO_COLOR: "1" }, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
@@ -422,17 +414,12 @@ describe.skipIf(!!unsupported)("writes to built-in objects under --aot", () => {
       stopped.add(Number(file));
     }
     const reported = new Set<number>();
-    for (const { filePath, messages } of JSON.parse(lint.stdout) as {
-      filePath: string;
-      messages: { ruleId: string }[];
-    }[]) {
-      if (messages.some(it => it.ruleId === "bun/aot-locked-builtin-write"))
-        reported.add(Number(/(\d+)\.js$/.exec(filePath)?.[1]));
+    for (const { filePath, messages } of JSON.parse(lint.stdout) as { filePath: string; messages: { ruleId: string }[] }[]) {
+      if (messages.some(it => it.ruleId === "bun/aot-locked-builtin-write")) reported.add(Number(/(\d+)\.js$/.exec(filePath)?.[1]));
     }
 
     // Refused: it changes nothing, and says so. Otherwise it does what it does without `--aot`.
-    const verdict = (before: string, now: string) =>
-      now === before ? "same" : /^(throws TypeError|false)$/.test(now) ? "refused" : `${before} | ${now}`;
+    const verdict = (before: string, now: string) => (now === before ? "same" : /^(throws TypeError|false)$/.test(now) ? "refused" : `${before} | ${now}`);
     const found = rows.map(([, code], i) => ({
       code,
       build: stopped.has(i) ? "refused" : "same",

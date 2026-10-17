@@ -27,54 +27,60 @@
 // if `fromShadowRealm` is false, we are wrapping an object from the incubating
 // realm; if true, we are wrapping an object from the shadow realm
 $linkTimeConstant;
-export function wrapRemoteValue(fromShadowRealm, shadowRealm, target) {
-  "use strict";
+export function wrapRemoteValue(fromShadowRealm, shadowRealm, target)
+{
+    "use strict";
 
-  if ($isCallable(target)) return $createRemoteFunction(target, fromShadowRealm ? null : shadowRealm);
+    if ($isCallable(target))
+        return $createRemoteFunction(target, fromShadowRealm ? null : shadowRealm);
 
-  if ($isObject(target)) throw new TypeError("value passing between realms must be callable or primitive");
+    if ($isObject(target))
+        throw new TypeError("value passing between realms must be callable or primitive");
 
-  return target;
+    return target;
 }
 
-export function evaluate(sourceText) {
-  "use strict";
+export function evaluate(sourceText)
+{
+    "use strict";
 
-  if (!$isShadowRealm(this))
-    throw new TypeError("`%ShadowRealm%.evaluate requires that |this| be a ShadowRealm instance");
+    if (!$isShadowRealm(this))
+        throw new TypeError("`%ShadowRealm%.evaluate requires that |this| be a ShadowRealm instance");
 
-  if (typeof sourceText !== "string")
-    throw new TypeError("`%ShadowRealm%.evaluate requires that the |sourceText| argument be a string");
+    if (typeof sourceText !== 'string')
+        throw new TypeError("`%ShadowRealm%.evaluate requires that the |sourceText| argument be a string");
 
-  return $wrapRemoteValue(true, this, $evalInRealm(this, sourceText));
+    return $wrapRemoteValue(true, this, $evalInRealm(this, sourceText));
 }
 
 $linkTimeConstant;
-export function crossRealmThrow(error) {
-  "use strict";
+export function crossRealmThrow(error)
+{
+    "use strict";
 
-  // re-throw because import issues raise errors using the realm's global object
-  throw new TypeError(`${error}`);
+    // re-throw because import issues raise errors using the realm's global object
+    throw new TypeError(`${error}`);
 }
 
-export function importValue(specifier, exportName) {
-  "use strict";
+export function importValue(specifier, exportName)
+{
+    "use strict";
 
-  if (!$isShadowRealm(this))
-    throw new TypeError("`%ShadowRealm%.importValue requires that |this| be a ShadowRealm instance");
+    if (!$isShadowRealm(this))
+        throw new TypeError("`%ShadowRealm%.importValue requires that |this| be a ShadowRealm instance");
 
-  var specifierString = `${specifier}`;
+    var specifierString = `${specifier}`;
 
-  if (typeof exportName !== "string")
-    throw new TypeError("`%ShadowRealm%.importValue requires that the |exportName| argument be a string");
+    if (typeof exportName !== 'string')
+        throw new TypeError("`%ShadowRealm%.importValue requires that the |exportName| argument be a string");
 
-  var lookupBinding = module => {
-    var lookup = module[exportName];
-    if (lookup === undefined)
-      throw new TypeError("%ShadowRealm%.importValue requires |exportName| to exist in the |specifier|");
+    var lookupBinding = (module) => {
+        var lookup = module[exportName]
+        if (lookup === undefined)
+            throw new TypeError("%ShadowRealm%.importValue requires |exportName| to exist in the |specifier|");
 
-    return $wrapRemoteValue(true, this, lookup);
-  };
+        return $wrapRemoteValue(true, this, lookup);
+    };
 
-  return $importInRealm(this, specifierString).$then(lookupBinding, $crossRealmThrow);
+    return $importInRealm(this, specifierString).$then(lookupBinding, $crossRealmThrow);
 }

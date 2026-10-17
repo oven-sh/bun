@@ -13,9 +13,7 @@ import { bunEnv, isASAN, isDebug } from "harness";
 import { join } from "path";
 import { jsc, python, sema, whyNoScriptRuns } from "./shell/tools";
 
-const whySkipped =
-  whyNoScriptRuns ??
-  (isASAN || isDebug ? "a sanitizer or debug build generates the same code many times slower" : undefined);
+const whySkipped = whyNoScriptRuns ?? (isASAN || isDebug ? "a sanitizer or debug build generates the same code many times slower" : undefined);
 if (whySkipped) console.error(`SKIPPED: test/aot/generated-code.test.ts: ${whySkipped}`);
 
 test.skipIf(!!whySkipped)(
@@ -28,11 +26,7 @@ test.skipIf(!!whySkipped)(
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      checker.stdout.text(),
-      checker.stderr.text(),
-      checker.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([checker.stdout.text(), checker.stderr.text(), checker.exited]);
     const lines = stdout.split("\n").filter(line => line !== "");
     expect(stderr).toBe("");
     expect(lines.at(-1)).toMatch(/^[1-9][0-9]* programs, [1-9][0-9]* expectation lines: /);

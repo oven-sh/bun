@@ -1,15 +1,13 @@
 // A Date in what JSON.stringify or Response.json is handed does not send the whole answer the slow way round: an executable built
 // with --aot does not let a program alter Date.prototype, so a date that has nothing of its own is written where it stands.
 import { expect } from "bun:test";
+import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { test } from "./supported";
 
 const files = {
-  "tsconfig.json": JSON.stringify({
-    compilerOptions: { typeRoots: [join(import.meta.dir, "../../packages")], types: ["bun-types"] },
-  }),
+  "tsconfig.json": JSON.stringify({ compilerOptions: { typeRoots: [join(import.meta.dir, "../../packages")], types: ["bun-types"] } }),
   "main.ts": `
     interface Comment { id: number; at: Date; replies: Comment[] }
     const comment = (id: number, depth: number): Comment => ({ id, at: new Date(1_700_000_000_000 + id * 86_400_123), replies: depth ? [comment(id * 2 + 1, depth - 1), comment(id * 2 + 2, depth - 1)] : [] });

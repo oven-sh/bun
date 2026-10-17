@@ -459,7 +459,7 @@ extern "C" const uint8_t* Bun__BytecodeLinkEncoder__aotImage(size_t* size)
 }
 extern "C" void Bun__BytecodeLinkEncoder__freeAOTImage()
 {
-    s_aotImageForProgramData = std::exchange(s_lastLinkAOTImage, {});
+    s_aotImageForProgramData = std::exchange(s_lastLinkAOTImage, { });
 }
 extern "C" bool Bun__BytecodeLinkEncoder__finish(JSC::BytecodeLinkEncoder* encoder, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr, uint32_t* entryOffsets, size_t entryOffsetCount, uint32_t* regionEnds, uint32_t* namedHotFunctions, uint32_t* placedHotFunctions, uint32_t* functionsWithoutName)
 {
@@ -536,8 +536,7 @@ static std::optional<off_t> offsetInExecutableFile(const void* address)
                 context.result = static_cast<off_t>(segment.p_offset + (context.target - start));
         }
         return context.result ? 1 : 0;
-    },
-        &context);
+    }, &context);
     return result;
 #endif
     return std::nullopt;
@@ -568,25 +567,25 @@ extern "C" void Bun__AOT__setImageCodec()
 extern "C" void Bun__AOT__buildProgramData(const uint8_t* strings, size_t stringsSize, void* ctx, void (*reserve)(void* ctx, size_t size), void (*append)(void* ctx, const uint8_t* bytes, size_t size),
     void* findCtx, bool (*find)(void* ctx, uint32_t moduleEntryOffset, uint32_t line, uint32_t column, const uint8_t** name, size_t* nameLength, uint32_t* sourceLine, uint32_t* sourceColumn))
 {
-    Vector<JSC::FunctionReportableSites> reportableSites = std::exchange(s_lastLinkReportableSites, {});
-    Vector<uint8_t> codeImage = std::exchange(s_aotImageForProgramData, {});
+    Vector<JSC::FunctionReportableSites> reportableSites = std::exchange(s_lastLinkReportableSites, { });
+    Vector<uint8_t> codeImage = std::exchange(s_aotImageForProgramData, { });
     JSC::VM& vm = vmForBytecodeCache();
     JSC::JSLockHolder locker(vm);
     RefPtr payload = std::exchange(s_lastLinkPayload, nullptr);
-    Vector<uint32_t> modules = std::exchange(s_lastLinkModules, {});
-    Vector<std::optional<Vector<uint32_t>>> variablesExportedByModules = std::exchange(s_lastLinkExportedVariables, {});
+    Vector<uint32_t> modules = std::exchange(s_lastLinkModules, { });
+    Vector<std::optional<Vector<uint32_t>>> variablesExportedByModules = std::exchange(s_lastLinkExportedVariables, { });
     JSC::AOT::ProgramData::RetainedPositions positions { reportableSites, [&](uint32_t moduleEntryOffset, JSC::LineColumn inModule, UTF8CString& sourceName, JSC::LineColumn& inSource) {
-                                                            const uint8_t* name = nullptr;
-                                                            size_t nameLength = 0;
-                                                            uint32_t line = 0;
-                                                            uint32_t column = 0;
-                                                            if (!find(findCtx, moduleEntryOffset, inModule.line, inModule.column, &name, &nameLength, &line, &column))
-                                                                return false;
-                                                            sourceName = UTF8CString(std::span { reinterpret_cast<const char8_t*>(name), nameLength });
-                                                            inSource = { line, column };
-                                                            return true;
-                                                        } };
-    Vector<uint8_t> image = JSC::AOT::ProgramData::build(vm, { strings, stringsSize }, payload ? payload->span() : std::span<const uint8_t> {}, modules.span(), codeImage.span(), positions, reportableSites.span(), variablesExportedByModules.span());
+        const uint8_t* name = nullptr;
+        size_t nameLength = 0;
+        uint32_t line = 0;
+        uint32_t column = 0;
+        if (!find(findCtx, moduleEntryOffset, inModule.line, inModule.column, &name, &nameLength, &line, &column))
+            return false;
+        sourceName = UTF8CString(std::span { reinterpret_cast<const char8_t*>(name), nameLength });
+        inSource = { line, column };
+        return true;
+    } };
+    Vector<uint8_t> image = JSC::AOT::ProgramData::build(vm, { strings, stringsSize }, payload ? payload->span() : std::span<const uint8_t> { }, modules.span(), codeImage.span(), positions, reportableSites.span(), variablesExportedByModules.span());
     JSC::AOT::ProgramData::release(reportableSites);
     if (image.isEmpty())
         return;
@@ -684,6 +683,32 @@ static bool keepsOnlyCodeExecutable(const uint8_t* bytes, size_t length)
 }
 #endif
 
+#if OS(WINDOWS)
+extern "C" uint64_t Bun__getStandaloneModuleGraphPELength();
+extern "C" uint8_t* Bun__getStandaloneModuleGraphPEData();
+
+static void keepOnlyCodeExecutable(const uint8_t* bytes, size_t length)
+{
+    auto range = JSC::aotImageCodeRange({ bytes, length });
+    uint8_t* data = Bun__getStandaloneModuleGraphPEData();
+    MEMORY_BASIC_INFORMATION region;
+    if (!range || !data || !VirtualQuery(bytes, &region, sizeof(region)) || region.Protect != PAGE_EXECUTE_READ)
+        return;
+    size_t pageSize = WTF::pageSize();
+    uint8_t* start = data - sizeof(uint64_t);
+    uint8_t* end = start + WTF::roundUpToMultipleOf(pageSize, sizeof(uint64_t) + static_cast<size_t>(Bun__getStandaloneModuleGraphPELength()));
+    uint8_t* code = const_cast<uint8_t*>(bytes) + range->first;
+    uint8_t* codeEnd = code + WTF::roundUpToMultipleOf(pageSize, range->second);
+    if (code < start || codeEnd > end || reinterpret_cast<uintptr_t>(code) % pageSize)
+        return;
+    DWORD previousProtection;
+    if (code > start)
+        VirtualProtect(start, code - start, PAGE_READONLY, &previousProtection);
+    if (codeEnd < end)
+        VirtualProtect(codeEnd, end - codeEnd, PAGE_READONLY, &previousProtection);
+}
+#endif
+
 extern "C" bool Bun__AOT__imageSymbols(const uint8_t* image, size_t length, void* ctx, uint8_t* (*reserve)(void* ctx, size_t size))
 {
 #if ENABLE(AOT)
@@ -706,6 +731,8 @@ extern "C" void Bun__AOT__useImage(const uint8_t* bytes, size_t length, int file
 #if OS(DARWIN) || OS(LINUX) || OS(FREEBSD) || OS(WINDOWS)
     const char* verbose = getenv("BUN_AOT_VERBOSE");
 #if OS(WINDOWS)
+    if (fileDescriptor < 0)
+        keepOnlyCodeExecutable(bytes, length);
     JSC::AOTFileUse use = fileDescriptor < 0 ? JSC::useAOTFileInLoadedSection({ bytes, length }) : JSC::useAOTFile({ bytes, length }, reinterpret_cast<void*>(static_cast<intptr_t>(fileDescriptor)), offsetInFile);
 #else
     bool isInExecutable = fileDescriptor < 0;
@@ -924,52 +951,29 @@ JSC_DEFINE_HOST_FUNCTION(jsAOTAuditIsProxy, (JSC::JSGlobalObject*, JSC::CallFram
 static ASCIILiteral classNameFromCell(JSC::JSType type)
 {
     switch (type) {
-    case JSC::ArrayBufferType:
-        return "ArrayBuffer"_s;
-    case JSC::DataViewType:
-        return "DataView"_s;
-    case JSC::JSDateType:
-        return "Date"_s;
-    case JSC::ErrorInstanceType:
-        return "Error"_s;
-    case JSC::JSMapType:
-        return "Map"_s;
-    case JSC::JSSetType:
-        return "Set"_s;
-    case JSC::JSWeakMapType:
-        return "WeakMap"_s;
-    case JSC::JSWeakSetType:
-        return "WeakSet"_s;
-    case JSC::JSPromiseType:
-        return "Promise"_s;
-    case JSC::RegExpObjectType:
-        return "RegExp"_s;
-    case JSC::Int8ArrayType:
-        return "Int8Array"_s;
-    case JSC::Uint8ArrayType:
-        return "Uint8Array"_s;
-    case JSC::Uint8ClampedArrayType:
-        return "Uint8ClampedArray"_s;
-    case JSC::Int16ArrayType:
-        return "Int16Array"_s;
-    case JSC::Uint16ArrayType:
-        return "Uint16Array"_s;
-    case JSC::Int32ArrayType:
-        return "Int32Array"_s;
-    case JSC::Uint32ArrayType:
-        return "Uint32Array"_s;
-    case JSC::Float16ArrayType:
-        return "Float16Array"_s;
-    case JSC::Float32ArrayType:
-        return "Float32Array"_s;
-    case JSC::Float64ArrayType:
-        return "Float64Array"_s;
-    case JSC::BigInt64ArrayType:
-        return "BigInt64Array"_s;
-    case JSC::BigUint64ArrayType:
-        return "BigUint64Array"_s;
-    default:
-        return {};
+    case JSC::ArrayBufferType: return "ArrayBuffer"_s;
+    case JSC::DataViewType: return "DataView"_s;
+    case JSC::JSDateType: return "Date"_s;
+    case JSC::ErrorInstanceType: return "Error"_s;
+    case JSC::JSMapType: return "Map"_s;
+    case JSC::JSSetType: return "Set"_s;
+    case JSC::JSWeakMapType: return "WeakMap"_s;
+    case JSC::JSWeakSetType: return "WeakSet"_s;
+    case JSC::JSPromiseType: return "Promise"_s;
+    case JSC::RegExpObjectType: return "RegExp"_s;
+    case JSC::Int8ArrayType: return "Int8Array"_s;
+    case JSC::Uint8ArrayType: return "Uint8Array"_s;
+    case JSC::Uint8ClampedArrayType: return "Uint8ClampedArray"_s;
+    case JSC::Int16ArrayType: return "Int16Array"_s;
+    case JSC::Uint16ArrayType: return "Uint16Array"_s;
+    case JSC::Int32ArrayType: return "Int32Array"_s;
+    case JSC::Uint32ArrayType: return "Uint32Array"_s;
+    case JSC::Float16ArrayType: return "Float16Array"_s;
+    case JSC::Float32ArrayType: return "Float32Array"_s;
+    case JSC::Float64ArrayType: return "Float64Array"_s;
+    case JSC::BigInt64ArrayType: return "BigInt64Array"_s;
+    case JSC::BigUint64ArrayType: return "BigUint64Array"_s;
+    default: return { };
     }
 }
 

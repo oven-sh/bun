@@ -14,12 +14,49 @@ door tools exit ^<bun_runtime::cli::run_command::RunCommand>::check_main$
 door tools exit ^bun_runtime::cli::aot_audit::prepare$
 door tools exit ^Bun__BytecodeLinkEncoder__setTypedProgram$
 door jit return ^Bun__installCompilers$
+feature text what turns text and files into code at run time
+when text world open
+when text Bun Transpiler
+when text Bun FileSystemRouter
+when text Bun plugin
+when text module bun:test
+when text native bun:test
+when text module bun:internal-for-testing
+smallest text 3000000
+door text return ^Bun__loadsModulesAtRunTime$
+door text exit ^Bun__transpileVirtualModule$
+door text exit ^Bun__AOT__functionSourceInFile$
+door text exit ^<bun_jsc::runtime_transpiler_store::RuntimeTranspilerStore>::(run_from_js_thread|transpile)$
+door text exit ^<bun_jsc::runtime_transpiler_store::TranspilerJob>::
+door text exit ^<bun_jsc::async_module::AsyncModule>::on_done$
+door text exit ^<bun_jsc::async_module::Queue>::on_poll$
+door text exit ^<bun_install::git_runner::GitSubprocess>::maybe_finished$
+door text exit ^__bun_resolver_init_package_manager$
+door text exit ^bun_install::dependency::parse_with_tag$
+door text exit ^<bun_install_types::resolver_hooks::DependencyVersionTag as bun_install::dependency::TagExt>::infer$
+door text exit ^JS2Rust___src_(install|css|jsc_BytecodeOrderRecorder)
+door text exit ^WebCore::JSTranspiler::create(Prototype|Structure|Constructor)\(
+door text exit ^<bun_runtime::test_runner::expect_core::Expect>::snapshot$
+door text exit ^MatchedRoutePrototype__getScriptSrc$
+door text exit (^| )JSC::Parser<JSC::Lexer<[^>]+>>::
+door text exit ^JSC::BytecodeGenerator::(BytecodeGenerator|~BytecodeGenerator|generate)\(
+door text exit ^JSC::BytecodeIntrinsicNode::emit_intrinsic_
+door text exit ^std::unique_ptr<JSC::\w+, std::default_delete<JSC::\w+>> JSC::(parse|parseRootNode)<
+door text exit ^JSC::parseFunctionForFunctionConstructor\(
+door text exit ^JSC::ParserError JSC::BytecodeGenerator::generate<
+door text exit ^bun_runtime::jsc_hooks::transpile_source_code_(inner|of_any_provenance)::<false>$
+door text exit ^bun_jsc::bytecode_order_recorder::(write_order_file|write_digests)$
+door text exit ^bun_jsc::node_compile_cache::generate_bytecode$
+door text exit ^<bun_install::lifecycle_script_runner::LifecycleScriptSubprocess( as bun_io::pipe_reader::BufferedReaderParent)?>::(on_reader_error|maybe_finished)$
+door text exit ^Bun::generateInternalModuleFromText\(
+door text return ^Bun__textOfBuiltinFunctions$
+door text exit ^Bun::jsInternalModuleBytecode\(
 feature bundler Bun.build, HTML imports and the development server
 when bundler Bun build
 when bundler loader html
 smallest bundler 1500000
 door bundler return ^Bun__hasBundler$
-door bundler exit ^<*bun_runtime::bake::
+door bundler exit ^<*bun_runtime::bake::(?!dev_server::http::is_allowed_)
 door bundler exit ^<*bun_runtime::server::html_bundle::
 door bundler exit ^<*bun_runtime::api::js_bundle_completion_task::
 door bundler exit ^<*bun_runtime::api::js_bundler::
@@ -39,3 +76,175 @@ door htmlrewriter exit ^Bun__HTMLRewriter__
 door htmlrewriter exit ^HTMLRewriterSink__
 door htmlrewriter exit ^WebCore::(HTMLRewriterSink__|JS(Readable)?HTMLRewriterSink)
 door htmlrewriter exit ^WebCore::JS(HTMLRewriter|HTMLRewriterTransform|TextChunk|DocType|DocEnd|Comment|EndTag|AttributeIterator|Element)::create(Prototype|Structure|Constructor)\(
+feature image Bun.Image
+when image Bun Image
+when image property image
+smallest image 300000
+door image exit ^<*bun_runtime::image::
+door image exit ^BunObject_lazyPropCb_wrap_Image\(
+door image exit ^BlobPrototype__doImage$
+door image exit ^WebCore::JSImage::(create(Prototype|Structure|Constructor)|destroy|visitChildren|estimatedSize|analyzeHeap)\(
+feature sqlite bun:sqlite and node:sqlite
+when sqlite module bun:sqlite
+when sqlite module node:sqlite
+when sqlite native JSSQLStatement.cpp:createJSSQLStatementConstructor
+when sqlite loader sqlite
+when sqlite loader sqlite_embedded
+smallest sqlite 30000
+door sqlite exit ^WebCore::createJSSQL(StatementConstructor|StatementStructure|DatabaseStructure)\(
+door sqlite exit ^Zig::generateNativeModule_NodeSqlite\(
+door sqlite exit ^Bun::JS(DatabaseSync|StatementSync|StatementSyncIterator|NodeSqliteSession|NodeSqliteLimits|NodeSqliteTagStore)(Constructor|Prototype)?::(?!destroy\()
+door sqlite exit ^VersionSqlite3::
+door sqlite exit ^Bun__sqliteCheckpointForTermination$
+door sqlite exit ^sqlite3_(busy_timeout|close_v2|wal_checkpoint_v2)$
+feature webassembly WebAssembly
+when webassembly global WebAssembly
+when webassembly module node:wasi
+when webassembly loader wasm
+smallest webassembly 300000
+door webassembly exit ^JSC::createWebAssemblyProperty\(
+door webassembly exit ^JSC::(JS)?WebAssembly(?!StreamingContext::createStructure|Instance::destroy)\w*::
+door webassembly exit ^JSC::webAssembly\w+\(
+door webassembly exit ^JSC::Wasm::(?!(RTT|RecursionGroup|Subtype|Projection|TypeInformation|TypeSectionState)::|Tag::jsExceptionTag|Thunks::(initialize|singleton)|CodeInImage::(isInProcess|compile|layOut)|(prepare|activate)SignalingMemory|startTrackingCurrentThread|existingWorklistOrNull|trapHandler|Memory::addressIsInGrowableOrFastMemory|(wasm|js)CallingConvention\()(?!BBQ|OMG|OSREntryPlan|parseAndCompile(BBQ|OMG)|FunctionParser<JSC::Wasm::(BBQ|OMG)|(callPolymorphicCallee|materializeBaselineData|throwExceptionFromOMGThunk|crashDueTo(BBQ|OMG)StackOverflow|triggerOMGEntryTierUpThunk)Generator|ByteLoopIdiom|emit[A-Z]|Inlining|MergedProfile|CompilationContext|triggerOMG|shouldTriggerOMG|OpcodeOrigin|loadValuesIntoBuffer|doOSREntry|buildEntryBufferForCatch|InternalFunction|ModuleForImage|StorageType|toB3Type|maxAcceptableOffsetForNullReference|prepareForTailCallImpl)
+door webassembly exit ^JSC::Wasm::RTT::(emitJSToWasmICEntrypoint|jsToWasmICEntrypoint)\(
+door webassembly exit ^void JSC::WebAssemblyGCStructure::visitAdditionalChildren<
+door webassembly exit ^JSC::IPInt::(?!initialize|verifyInitialization)
+door webassembly exit ^ipint_extern_
+door webassembly exit ^operation(WasmToJSExitMarshal(Arguments|ReturnValues)|JSToWasmEntryWrapperBuild(Return)?Frame|GetWasmCalleeStackSize|WasmUnwind)$
+door webassembly exit ^wasm_builtin__
+door webassembly exit ^runWebAssemblySuspendingFunction$
+door webassembly exit ^slow_path_wasm_(unwind|throw)_exception$
+door webassembly exit ^WebCore::(JSWasmStreamingCompiler|jsWasmStreamingCompiler)
+door webassembly exit ^Zig::(handleResponseOnStreamingAction|GlobalObject::(compile|instantiate)Streaming)\(
+door webassembly exit ^JSC__Wasm__StreamingCompiler__addBytes$
+door webassembly exit ^<*bun_runtime::webcore::wasm_streaming::
+door webassembly exit ^Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming$
+feature inspector the debugger and node:inspector
+when inspector module node:inspector
+when inspector module node:inspector/promises
+when inspector native bun:jsc
+smallest inspector 120000
+door inspector exit ^Inspector::(?!(\w+)::~?\1\(|(AgentRegistry|FrontendRouter|ScriptArguments|RemoteControllableTarget|RemoteInspectionTarget|RemoteAutomationTarget)::|RemoteInspector::(singleton|start|registerTarget|unregisterTarget|updateTarget\w*|pushListingsSoon|listingFor\w+|nextAvailableTargetIdentifier)\(|Socket::init\(|createScriptArguments\(|JSGlobalObjectInspectorController::(globalObjectDestroyed|consoleClient)\(|(Console)?BackendDispatcher::create\(|InjectedScriptHost::(create|clearAllWrappers)\(|InjectedScriptManager::(disconnect|discardInjectedScripts)\(|InspectorConsoleAgent::discardValues\(|\w+::\w*[cC]heckedPtr)
+door inspector exit ^JSC::(Debugger|DebuggerCallFrame|DebuggerScope|DebuggerPausePositions|DebuggerParseData|Breakpoint)::
+door inspector exit ^<*bun_jsc::debugger::
+door inspector exit ^Bun::BunInspectorConnection::
+door inspector exit ^Bun__startJSDebuggerThread$
+door inspector exit ^Bun::jsFunction\w*NodeInspector\w*\(
+door inspector exit ^functionStartRemoteDebugger\(
+feature profiler the CPU and heap profilers, heap snapshots and code coverage
+when profiler native bun:jsc
+when profiler module node:inspector
+when profiler module node:inspector/promises
+when profiler module node:v8
+when profiler Bun generateHeapSnapshot
+when profiler console takeHeapSnapshot
+smallest profiler 60000
+door profiler exit ^JSC::(SamplingProfiler|HeapProfiler|HeapSnapshot|HeapSnapshotBuilder|BunV8HeapSnapshotBuilder|Profiler|TypeProfiler|TypeProfilerLog|ControlFlowProfiler|FunctionHasExecutedCache)::
+door profiler exit ^Bun__stopCPUProfiler$
+door profiler exit ^Bun::startCPUProfiler\(
+door profiler exit ^<*bun_jsc::bun_(cpu|heap)_profiler::
+door profiler exit ^jsFunction_\w*(CPUProfiler|PreciseCoverage)\w*\(
+door profiler exit ^Bun__generateHeap(SnapshotV8|Profile)$
+door profiler exit ^Bun::functionGenerateHeapSnapshot\(
+door profiler exit ^Bun__ConsoleObject__takeHeapSnapshot$
+door profiler exit ^WebCore::jsWorkerPrototypeFunction_(startCpuProfile|stopCpuProfile|getHeapSnapshot)\w*\(
+door profiler exit ^function(RunProfiler|StartSamplingProfiler|SamplingProfilerStackTraces|GenerateHeapSnapshotForDebugging|CodeCoverageForFile)\(
+feature zstd compression with zstd
+when zstd Bun zstdCompress
+when zstd Bun zstdCompressSync
+when zstd native node_zlib_binding.rs:NativeZstd
+when zstd global CompressionStream
+when zstd global fetch
+when zstd Bun fetch
+when zstd Bun FetchSession
+when zstd Bun build
+when zstd loader html
+smallest zstd 120000
+door zstd exit ^ZSTD_(compress|compressBound|compressStream2|createCCtx|freeCCtx|CCtx_(loadDictionary|reset|setParameter|setPledgedSrcSize))$
+feature archive Bun.Archive
+smallest archive 0
+when archive Bun Archive
+when archive native pack_command.rs:bindings.jsReadTarball
+door archive exit ^<*bun_runtime::api::archive::
+door archive exit ^BunObject_lazyPropCb_wrap_Archive\(
+door archive exit ^WebCore::JSArchive::(create(Prototype|Structure|Constructor)|destroy|visitChildren|estimatedSize|analyzeHeap)\(
+door archive exit ^JS2Rust___src_runtime_cli_pack_command_rs__bindings_jsReadTarball$
+feature json5 Bun.JSON5
+smallest json5 0
+when json5 Bun JSON5
+door json5 exit ^Bun::Bindgen::Generated::JSON5Object::createJSON5\(
+feature yaml Bun.YAML
+smallest yaml 0
+when yaml Bun YAML
+door yaml exit ^Bun::Bindgen::Generated::YAMLObject::createYAML\(
+feature markdown Bun.markdown
+smallest markdown 0
+when markdown Bun markdown
+door markdown exit ^BunObject_lazyPropCb_wrap_markdown\(
+feature toml Bun.TOML
+smallest toml 0
+when toml Bun TOML
+door toml exit ^Bun::Bindgen::Generated::TOMLObject::createTOML\(
+feature bunfig reading bunfig.toml when the executable starts
+smallest bunfig 0
+when bunfig autoload bunfig
+door bunfig exit ^<bun_bunfig::bunfig::Bunfig>::parse$
+feature xml Bun.XML
+smallest xml 0
+when xml Bun XML
+door xml exit ^Bun::Bindgen::Generated::XMLObject::createXML\(
+feature s3 reading what an S3 server answers
+smallest s3 0
+when s3 Bun s3
+when s3 Bun S3Client
+when s3 Bun file
+when s3 Bun write
+when s3 global fetch
+when s3 Bun fetch
+when s3 Bun FetchSession
+door s3 exit ^bun_runtime::webcore::__s3_list_objects::parse_s3_list_objects_result$
+door s3 exit ^<bun_runtime::webcore::__s3_multipart::MultiPartUpload>::start_multi_part_request_result$
+door s3 exit ^bun_runtime::webcore::__s3_xml_response::parse_error$
+feature brotli_encoder compression with Brotli
+smallest brotli_encoder 0
+when brotli_encoder native node_zlib_binding.rs:NativeBrotli
+when brotli_encoder global CompressionStream
+when brotli_encoder global fetch
+when brotli_encoder Bun fetch
+when brotli_encoder Bun FetchSession
+door brotli_encoder exit ^BrotliEncoder(AttachPreparedDictionary|Compress|CompressStream|CreateInstance|DestroyInstance|DestroyPreparedDictionary|MaxCompressedSize|PrepareDictionary|SetParameter)$
+feature brotli_decoder decompression of Brotli
+smallest brotli_decoder 0
+when brotli_decoder native node_zlib_binding.rs:NativeBrotli
+when brotli_decoder global DecompressionStream
+when brotli_decoder global fetch
+when brotli_decoder Bun fetch
+when brotli_decoder Bun FetchSession
+when brotli_decoder Bun s3
+when brotli_decoder Bun S3Client
+when brotli_decoder Bun file
+when brotli_decoder Bun write
+door brotli_decoder exit ^BrotliDecoder(AttachDictionary|CreateInstance|DecompressStream|DestroyInstance|ErrorString|HasMoreOutput|SetParameter)$
+feature compression_streams CompressionStream and DecompressionStream
+smallest compression_streams 0
+when compression_streams global CompressionStream
+when compression_streams global DecompressionStream
+door compression_streams exit ^CompressionStreamCoder__(create|destroy|transform|transformInto|transformAsync)$
+feature libdeflate_compressor gzip and deflate compression in one call
+smallest libdeflate_compressor 0
+when libdeflate_compressor Bun gzipSync
+when libdeflate_compressor Bun deflateSync
+when libdeflate_compressor Bun Archive
+when libdeflate_compressor global fetch
+when libdeflate_compressor Bun fetch
+when libdeflate_compressor Bun FetchSession
+door libdeflate_compressor exit ^libdeflate_(alloc_compressor|free_compressor|(deflate|gzip|zlib)_compress(_bound)?)$
+feature node_zlib the native half of node:zlib
+smallest node_zlib 0
+when node_zlib native node_zlib_binding.rs:NativeZlib
+when node_zlib native node_zlib_binding.rs:NativeBrotli
+when node_zlib native node_zlib_binding.rs:NativeZstd
+door node_zlib exit ^Native(Zlib|Brotli|Zstd)__getConstructor$
+door node_zlib exit ^<*bun_runtime::node::(native_zlib_impl|native_brotli_impl|native_zstd_impl|node_zlib_binding)::
+door node_zlib exit ^WebCore::JSNative(Zlib|Brotli|Zstd)::(create(Prototype|Structure|Constructor)|destroy|visitChildren|estimatedSize|analyzeHeap)\(
+

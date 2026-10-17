@@ -2318,8 +2318,7 @@ pub mod parse_worker {
         // `'static` matches `JSAst = BundledAst<'static>`; the arena outlives all
         // reads through the returned ASTs. `arena` is a `*const Bump` field; the
         // deref points outside `*worker_raw`.
-        let bump: &'static Bump =
-            unsafe { bun_ptr::detach_lifetime_ref((*worker_raw).parse_arena()) };
+        let bump: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref((*worker_raw).parse_arena()) };
 
         // SAFETY: `worker_raw` just derived from the live `this: &mut Worker`.
         let mut transpiler: *mut Transpiler<'static> =
@@ -2529,8 +2528,7 @@ pub mod parse_worker {
         };
         opts.inline_import_meta_paths = topts.preserve_source_paths;
         opts.keeps_reexport_only_modules = topts.preserve_source_paths;
-        opts.defers_import_assignment_errors =
-            topts.preserve_source_paths && topts.compiles_ahead_of_time();
+        opts.defers_import_assignment_errors = topts.preserve_source_paths && topts.compiles_ahead_of_time();
         opts.compiles_ahead_of_time = topts.compiles_ahead_of_time();
         opts.features.inject_jest_globals = topts.rewrite_jest_for_tests;
         opts.features.minify_syntax = topts.minify_syntax;
@@ -2856,10 +2854,7 @@ pub mod parse_worker {
             let is_parsed_for_analysis_only = bundle_options.compiles_ahead_of_time()
                 && !this.source_index.is_runtime()
                 && this.known_target != options::Target::Browser
-                && this
-                    .loader
-                    .or_else(|| this.path.loader(&bundle_options.loaders))
-                    .is_some_and(|loader| loader.is_javascript_like());
+                && this.loader.or_else(|| this.path.loader(&bundle_options.loaders)).is_some_and(|loader| loader.is_javascript_like());
             if is_parsed_for_analysis_only {
                 worker.enter_scan_arena();
             }
@@ -2872,11 +2867,8 @@ pub mod parse_worker {
                 Ok(ast) => {
                     // When using HMR, always flag asts with errors as parse failures.
                     // Not done outside of the dev server out of fear of breaking existing code.
-                    let runs_in_place = ctx.transpiler().options.preserve_source_paths
-                        && ctx.transpiler().options.compiles_ahead_of_time();
-                    if (ctx.transpiler().options.has_dev_server() || runs_in_place)
-                        && ast.log.has_errors()
-                    {
+                    let runs_in_place = ctx.transpiler().options.preserve_source_paths && ctx.transpiler().options.compiles_ahead_of_time();
+                    if (ctx.transpiler().options.has_dev_server() || runs_in_place) && ast.log.has_errors() {
                         break 'value ResultValue::Err(ResultError {
                             err: crate::Error::SyntaxError,
                             step: Step::Parse,

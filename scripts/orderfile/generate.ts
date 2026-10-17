@@ -891,8 +891,7 @@ function appWorkloads(bunProfile: string, scratch: string, aot = false): Workloa
 }
 
 const supportsAOT =
-  (process.platform === "linux" && process.arch === "x64") ||
-  (process.platform === "darwin" && process.arch === "arm64");
+  (process.platform === "linux" && process.arch === "x64") || (process.platform === "darwin" && process.arch === "arm64");
 
 function aotWorkloads(bunProfile: string, scratch: string, sources: string[]): Workload[] {
   if (!supportsAOT) return [];

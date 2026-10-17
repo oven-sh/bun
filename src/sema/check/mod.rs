@@ -103,8 +103,8 @@ use errors_names_and_exports::{root_declaration, root_pattern};
 use errors_type_nodes::array_element_type_node;
 use errors_type_nodes::has_parse_diagnostics;
 use errors_type_nodes::start_of_type;
-pub(crate) use mapped::combine_surrogate_pairs;
 pub use regexp_scanner::get_spelling_suggestion;
+pub(crate) use mapped::combine_surrogate_pairs;
 use regexp_scanner::spelling_suggestion;
 use shape::members_among;
 use sink::{Arg, Reported};
@@ -119,32 +119,22 @@ use std::sync::atomic::AtomicBool;
 use symbols::{AliasTarget, ExcludedMeanings};
 use task::{Open, OrderDependent, Stored, Task};
 
-pub use aot::Identity;
-pub use aot::ImportedCode;
-pub use aot::locked_builtins;
-pub use aot::nullish_flow;
-pub use aot::{
-    Activation, Capture, CapturedVariable, DeclaredClosure, NotCopiedReason, Receiver, argument_use,
-};
 pub use aot::{AddedMembers, ClassFacts, MethodStore, ReplacedMethods};
+pub use aot::ImportedCode;
 pub use aot::{AotCheck, AotCheckKind};
-pub use aot::{
-    BuiltIn, Candidate, DataOrigin, FilePartition, FlowNotes, KindsDeclared, LayoutUsage, Literal,
-    Membership, Place, SearchBarrier, SubtypeAnswer, SubtypeQuery, TruncatedSearch, UntypedReason,
-};
-pub use aot::{Callee, SingleFunction};
-pub use aot::{Cause, FieldTypes, LoggingRelaxation, Sizes, Subtypes};
-pub use aot::{Claim, is_engine_global, is_typed_array_class};
-pub use aot::{
-    CodeOwner, FlowNode, FlowSource, Int32Verdict, NotInt32Reason, NumberFlow, expected_int32,
-};
 pub use aot::{CommonJsExports, ExportsReference};
-pub use aot::{
-    Constant, OtherKeys, Placeholder, PlanNode, Planned, PlannedMember, PlannedPrimitive, Rule,
-    ValidationCall, ValidationPlan,
-};
-pub use aot::{ConstantSymbol, FieldKey};
+pub use aot::Identity;
+pub use aot::nullish_flow;
+pub use aot::{NotInt32Reason, FlowNode, FlowSource, Int32Verdict, NumberFlow, CodeOwner, expected_int32};
+pub use aot::{SubtypeAnswer, BuiltIn, Candidate, TruncatedSearch, KindsDeclared, Literal, SearchBarrier, Membership, FlowNotes, DataOrigin, Place, SubtypeQuery, LayoutUsage, FilePartition, UntypedReason};
+pub use aot::{Cause, FieldTypes, LoggingRelaxation, Sizes, Subtypes};
 pub use aot::{EvaluationTime, FirstStore, Primitive, ReferenceRead, Storage, kind};
+pub use aot::{Claim, is_engine_global, is_typed_array_class};
+pub use aot::{ConstantSymbol, FieldKey};
+pub use aot::{Constant, OtherKeys, Placeholder, PlanNode, Planned, PlannedMember, PlannedPrimitive, Rule, ValidationCall, ValidationPlan};
+pub use aot::locked_builtins;
+pub use aot::{Callee, SingleFunction};
+pub use aot::{Activation, Capture, CapturedVariable, DeclaredClosure, NotCopiedReason, Receiver, argument_use};
 pub use call::ResolvedCall;
 pub use shape::Members;
 pub use spans::compute_ecma_line_starts;
@@ -255,6 +245,7 @@ pub struct Program<'s> {
     pub compiler_diagnostics: Guarded<Vec<CompilerDiagnostic>>,
     pub rule_scopes: std::sync::OnceLock<crate::aot_rules::Scopes>,
     pub compiled_untyped: Guarded<Vec<CompilerDiagnostic>>,
+    pub uncompiled_runtime_sources: Guarded<Vec<FileId>>,
     /// `autoArrayType`
     auto_array_type: TypeId,
     /// See `Services::file_info`. Made when it is first asked for.
@@ -536,6 +527,7 @@ impl<'s> Program<'s> {
             compiler_diagnostics: Default::default(),
             rule_scopes: Default::default(),
             compiled_untyped: Default::default(),
+            uncompiled_runtime_sources: Default::default(),
             auto_array_type,
             package_names_of_linked_files: Default::default(),
             types,
@@ -644,6 +636,7 @@ impl<'s> Program<'s> {
         self.distributed_intersections = ByKey::new_in(session);
         *self.compiler_diagnostics.get_mut() = Default::default();
         *self.compiled_untyped.get_mut() = Default::default();
+        *self.uncompiled_runtime_sources.get_mut() = Default::default();
         self.rule_scopes = Default::default();
         // SAFETY: the driver calls this once, as its last use of the program, and the arena that holds the program drops nothing.
         unsafe { core::mem::ManuallyDrop::drop(&mut self.aot) };
@@ -2092,8 +2085,7 @@ impl<'p, 's> Checker<'p, 's> {
     pub(crate) fn is_half_of_stack_in_use(&self) -> bool {
         let is_in_use = self.stack_base.saturating_sub(stack_pointer()) > self.stack_limit / 2;
         if is_in_use {
-            self.stack_half_used_count
-                .set(self.stack_half_used_count.get().wrapping_add(1));
+            self.stack_half_used_count.set(self.stack_half_used_count.get().wrapping_add(1));
         }
         is_in_use
     }
@@ -3435,9 +3427,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn lowest_event_since(events: &[(u64, u32)], serial: u64) -> usize {
         let first = events.partition_point(|event| event.0 < serial);
-        events
-            .get(first)
-            .map_or(usize::MAX, |event| event.1 as usize)
+        events.get(first).map_or(usize::MAX, |event| event.1 as usize)
     }
 
     /// The diagnostics of the innermost query are dropped, whether or not its result is cached.

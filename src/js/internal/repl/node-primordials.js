@@ -132,5 +132,4 @@ export default {
   SymbolAsyncIterator: Symbol.asyncIterator,
   SymbolDispose: Symbol.dispose,
   SyntaxError,
-  globalThis,
 };

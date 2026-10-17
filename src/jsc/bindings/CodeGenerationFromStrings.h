@@ -8,6 +8,7 @@
 
 #if !defined(BUN_DISALLOW_CODE_GENERATION_FROM_STRINGS)
 extern "C" uint8_t Bun__codeGenerationFromStrings();
+extern "C" bool Bun__isCodeGenerationDisallowedByTrimming();
 #endif
 
 namespace Bun {
@@ -40,7 +41,14 @@ inline CodeGenerationFromStrings codeGenerationFromStrings()
 }
 #endif
 
-inline constexpr ASCIILiteral codeGenerationFromStringsDisallowedMessage = "Code generation from strings disallowed for this context"_s;
+inline ASCIILiteral codeGenerationFromStringsDisallowedMessage()
+{
+#if !defined(BUN_DISALLOW_CODE_GENERATION_FROM_STRINGS)
+    if (Bun__isCodeGenerationDisallowedByTrimming())
+        return "Code generation from strings disallowed for this context: this executable was built with --compile-trim-runtime, and nothing in the program was seen to turn a string into code or to load code at run time"_s;
+#endif
+    return "Code generation from strings disallowed for this context"_s;
+}
 
 inline bool isCodeGenerationFromStringsStrict()
 {
@@ -49,7 +57,7 @@ inline bool isCodeGenerationFromStringsStrict()
 
 inline JSC::JSObject* createCodeGenerationFromStringsError(JSC::JSGlobalObject* globalObject)
 {
-    return JSC::createEvalError(globalObject, codeGenerationFromStringsDisallowedMessage);
+    return JSC::createEvalError(globalObject, codeGenerationFromStringsDisallowedMessage());
 }
 
 // Throws and returns the rest when nothing may make script from a string. Where the level is a

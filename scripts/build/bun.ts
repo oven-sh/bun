@@ -467,19 +467,13 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   if (strippedExe !== undefined && !cfg.windows) {
     const slimName = "bun-slim-profile";
     const renamed = (path: string) => path.replaceAll(`${exeName}.`, `${slimName}.`);
-    const slimExe = link(
-      n,
-      cfg,
-      slimName,
-      [regExpCompilerOnlyObject, ...linkObjects.filter(o => o !== compilersObject)],
-      {
-        libs: depLibs,
-        lazyObjects: depLink.lazy,
-        flags: ldflags.map(renamed),
-        implicitInputs: [...linkImplicitInputs(cfg), ...shimInputs],
-        linkerMapOutputs: linkerMapOutputs(cfg).map(renamed),
-      },
-    );
+    const slimExe = link(n, cfg, slimName, [regExpCompilerOnlyObject, ...linkObjects.filter(o => o !== compilersObject)], {
+      libs: depLibs,
+      lazyObjects: depLink.lazy,
+      flags: ldflags.map(renamed),
+      implicitInputs: [...linkImplicitInputs(cfg), ...shimInputs],
+      linkerMapOutputs: linkerMapOutputs(cfg).map(renamed),
+    });
     emitStrip(n, cfg, slimExe, flags.stripflags, "bun-slim");
   }
 

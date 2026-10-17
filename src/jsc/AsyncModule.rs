@@ -294,6 +294,7 @@ impl Queue {
         }
     }
 
+    #[inline(never)]
     pub fn on_poll(&mut self) {
         bun_core::scoped_log!(AsyncModule, "onPoll");
         if self.map.is_empty() {
@@ -587,6 +588,7 @@ impl AsyncModule {
         clippy::boxed_local,
         reason = "reclaim point for the box `done()` handed to the task queue"
     )]
+    #[inline(never)]
     pub fn on_done(mut this: Box<AsyncModule>) -> JsResult<()> {
         jsc::mark_binding();
         // Copy the `GlobalRef` out (it is `Copy`) so the borrow of `this` ends

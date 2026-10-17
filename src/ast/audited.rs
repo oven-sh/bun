@@ -32,19 +32,13 @@ pub struct AuditedFile {
 
 impl AuditedFile {
     pub fn sort(&mut self) {
-        self.expressions
-            .sort_unstable_by_key(|it| (it.next, core::cmp::Reverse(it.start)));
-        self.parameters
-            .sort_unstable_by_key(|it| (it.function, it.index));
-        self.validations
-            .sort_unstable_by_key(|it| (it.next, it.start));
+        self.expressions.sort_unstable_by_key(|it| (it.next, core::cmp::Reverse(it.start)));
+        self.parameters.sort_unstable_by_key(|it| (it.function, it.index));
+        self.validations.sort_unstable_by_key(|it| (it.next, it.start));
     }
 
     pub fn validation_at(&self, start: u32, next: u32) -> Option<&AuditedValidation> {
-        let at = self
-            .validations
-            .binary_search_by_key(&(next, start), |it| (it.next, it.start))
-            .ok()?;
+        let at = self.validations.binary_search_by_key(&(next, start), |it| (it.next, it.start)).ok()?;
         Some(&self.validations[at])
     }
 

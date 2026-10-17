@@ -21,21 +21,8 @@ function randomRules(kind: string): any[] {
     rules.push([["int"], ["min", 1], ["max", 3]][pick(3)]);
     if (pick(2)) rules.push([["int"], ["min", 2], ["max", 0]][pick(3)]);
   }
-  if (kind === "string")
-    rules.push(
-      [
-        ["minLength", 2],
-        ["maxLength", 2],
-        ["pattern", "^a"],
-      ][pick(3)],
-    );
-  if (kind === "array")
-    rules.push(
-      [
-        ["minLength", 1],
-        ["maxLength", 2],
-      ][pick(2)],
-    );
+  if (kind === "string") rules.push([["minLength", 2], ["maxLength", 2], ["pattern", "^a"]][pick(3)]);
+  if (kind === "array") rules.push([["minLength", 1], ["maxLength", 2]][pick(2)]);
   return rules;
 }
 
@@ -91,9 +78,7 @@ function randomPlan(): any[] {
     node.push(
       node[1].map((member: any) => {
         const child = nodes[member[1]];
-        return child[0] === 2 && child[3].length === 0 && !child[5]
-          ? 1 + ["number", "string", "boolean"].indexOf(child[1])
-          : 0;
+        return child[0] === 2 && child[3].length === 0 && !child[5] ? 1 + ["number", "string", "boolean"].indexOf(child[1]) : 0;
       }),
     );
   }
@@ -132,11 +117,7 @@ function valueFor(plan: any[], at: number, depth: number): any {
   const node = plan[1][at];
   switch (node[0]) {
     case 2:
-      return node[1] === "number"
-        ? [0, 1, 2, 3, 4, 1.5][pick(6)]
-        : node[1] === "string"
-          ? ["a", "ab", "abc", "b"][pick(4)]
-          : !!pick(2);
+      return node[1] === "number" ? [0, 1, 2, 3, 4, 1.5][pick(6)] : node[1] === "string" ? ["a", "ab", "abc", "b"][pick(4)] : !!pick(2);
     case 3:
       return node[1];
     case 5:
@@ -150,8 +131,7 @@ function valueFor(plan: any[], at: number, depth: number): any {
     }
     case 8: {
       const made: any = {};
-      for (const member of node[1])
-        if (member[2] === 0 || pick(2)) made[member[0]] = valueFor(plan, member[1], depth + 1);
+      for (const member of node[1]) if (member[2] === 0 || pick(2)) made[member[0]] = valueFor(plan, member[1], depth + 1);
       if (!pick(5)) made.extra = node[2] >= 0 ? valueFor(plan, node[2], depth + 1) : 1;
       return made;
     }
@@ -211,11 +191,7 @@ function validate(plan: any[], at: number, input: any, isSpeculative: boolean): 
   if (!isPlainObject(input)) return fail(0);
   const members = node[1];
   for (let position = 0; position < members.length; position++) {
-    if (
-      members[position][2] !== 2 &&
-      validate(plan, members[position][1], input[members[position][0]], false) === refused
-    )
-      return fail(position);
+    if (members[position][2] !== 2 && validate(plan, members[position][1], input[members[position][0]], false) === refused) return fail(position);
   }
   if (node[2] === -1) return true;
   for (const key of Object.keys(input)) {

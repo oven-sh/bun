@@ -1241,11 +1241,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The type an object literal is checked against, narrowed to the member of a union that its properties single out.
-    pub(super) fn contextual_type_of_literal_uncached(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-    ) -> Option<TypeId> {
+    pub(super) fn contextual_type_of_literal_uncached(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         if self.is_spread_part(file, e) {
             return None;
         }

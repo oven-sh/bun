@@ -15,12 +15,12 @@ description: "Find what changes when your program is compiled ahead of time, fix
 
 Most programs have a few places where data from outside the type system, such as `JSON.parse`, `any` or an untyped package, is not what its type says. Four tools find them. Use them in this order:
 
-| Step | Command                                                   | Where           | Your program                                    |
-| ---- | --------------------------------------------------------- | --------------- | ----------------------------------------------- |
-| 1    | `bun --aot-audit`, `bun test --aot-audit`                 | development, CI | runs as usual, and logs                         |
-| 2    | `bun check --aot`, `bun check --aot --aot-explain=throws` | CI, every build | is not run                                      |
-| 3    | `bun build --compile --aot --aot-type-errors=log`         | production      | is compiled, logs, and keeps going where it can |
-| 4    | `bun build --compile --aot`                               | production      | is compiled, and throws                         |
+| Step | Command                                                    | Where                 | Your program                           |
+| ---- | ---------------------------------------------------------- | --------------------- | -------------------------------------- |
+| 1    | `bun --aot-audit`, `bun test --aot-audit`                  | development, CI       | runs as usual, and logs                |
+| 2    | `bun check --aot`, `bun check --aot --aot-explain=throws`  | CI, every build       | is not run                             |
+| 3    | `bun build --compile --aot --aot-type-errors=log`          | production            | is compiled, logs, and keeps going where it can |
+| 4    | `bun build --compile --aot`                                | production            | is compiled, and throws                |
 
 Before you run anything, [`bun lint --aot`](/lint#before-you-compile-with-aot) reads your source and lists where data without a type enters your program, and where it reaches a type.
 
@@ -87,11 +87,11 @@ bun --hot --aot-audit server.ts
 
 Each line ends with what an `--aot` build would do:
 
-| Action          | Under `--aot`                                                      |
-| --------------- | ------------------------------------------------------------------ |
-| `would-throw`   | a `TypeError` is thrown here                                       |
-| `would-convert` | `as` converts the value, so the program goes on with another value |
-| `would-refuse`  | this write to a built-in object throws a `TypeError`               |
+| Action          | Under `--aot`                                                        |
+| --------------- | -------------------------------------------------------------------- |
+| `would-throw`   | a `TypeError` is thrown here                                         |
+| `would-convert` | `as` converts the value, so the program goes on with another value   |
+| `would-refuse`  | this write to a built-in object throws a `TypeError`                 |
 
 An `--aot` build stops at the first `TypeError` that your program does not catch. The audit goes on, so a later line tells you what happens once the earlier ones are fixed.
 
@@ -122,16 +122,16 @@ One group of type errors does not stop the build. When `@types/bun` is not insta
 
 A second group is not reported under `--aot` at all. These errors are about the files that `tsc` would write, or about how Node.js finds a module. Bun writes no such files and has no such rules, so `bun run` and `bun build --compile` run these programs as they are:
 
-| Errors                                 | What they are about                                                                                                                                      |
-| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `TS2834`, `TS2835`                     | A relative import without a file extension, under `"moduleResolution": "node16"` or `"nodenext"`. Bun finds the file, and what you import has its types. |
-| `TS5097`                               | An import path that ends in `.ts`, without `allowImportingTsExtensions`.                                                                                 |
-| `TS1343`, `TS1470`                     | `import.meta`, under a `module` setting or in a file that `tsc` would write as CommonJS.                                                                 |
-| `TS1309`, `TS1378`, `TS1432`, `TS2854` | `await`, `for await` and `await using` at the top level of a module.                                                                                     |
-| `TS1323`, `TS1324`, `TS2823`           | `import()` and import attributes, under an older `module` setting.                                                                                       |
-| `TS1471`, `TS1479`, `TS1541`, `TS1542` | An ES module that is imported from a file that `package.json` makes CommonJS.                                                                            |
-| `TS1543`, `TS1544`                     | JSON imports, under `"module": "nodenext"`.                                                                                                              |
-| `TS6059`                               | A file outside `rootDir`.                                                                                                                                |
+| Errors | What they are about |
+| --- | --- |
+| `TS2834`, `TS2835` | A relative import without a file extension, under `"moduleResolution": "node16"` or `"nodenext"`. Bun finds the file, and what you import has its types. |
+| `TS5097` | An import path that ends in `.ts`, without `allowImportingTsExtensions`. |
+| `TS1343`, `TS1470` | `import.meta`, under a `module` setting or in a file that `tsc` would write as CommonJS. |
+| `TS1309`, `TS1378`, `TS1432`, `TS2854` | `await`, `for await` and `await using` at the top level of a module. |
+| `TS1323`, `TS1324`, `TS2823` | `import()` and import attributes, under an older `module` setting. |
+| `TS1471`, `TS1479`, `TS1541`, `TS1542` | An ES module that is imported from a file that `package.json` makes CommonJS. |
+| `TS1543`, `TS1544` | JSON imports, under `"module": "nodenext"`. |
+| `TS6059` | A file outside `rootDir`. |
 
 `TS2688`, a package that `types` names and that is not installed, is a warning. If your code uses a name from that package, that use is an error of its own.
 
@@ -154,12 +154,12 @@ wrong.ts(5,13): error TS100013: This always throws a TypeError under --aot: argu
 Found 1 error in 1 file, checked 1 file
 ```
 
-| Code       | What always fails                                                    |
-| ---------- | -------------------------------------------------------------------- |
+| Code       | What always fails                                              |
+| ---------- | -------------------------------------------------------------- |
 | `TS100013` | a value of the wrong type for a parameter, variable, field or result |
-| `TS100014` | a write to a built-in object                                         |
-| `TS100015` | a change to an object that its type does not allow                   |
-| `TS100017` | `as` on a value that is always of another primitive type             |
+| `TS100014` | a write to a built-in object                                   |
+| `TS100015` | a change to an object that its type does not allow             |
+| `TS100017` | `as` on a value that is always of another primitive type       |
 
 `TS100031` to `TS100034` are about [`int32`](/bundler/executables#32-bit-integers), which is never checked when the program runs: the build has to prove every value that is stored as one, and these are the places where it cannot.
 
@@ -179,33 +179,33 @@ bun check --aot --aot-explain=throws app.ts
 [aot] type-check summary: those that can fail: 1 at an `as`, 1 where a value that an `as` let through is used, 1 on an `any`
 ```
 
-| Report            | Lists                                                                                            |
-| ----------------- | ------------------------------------------------------------------------------------------------ |
-| `throws`          | every check that can fail because of `any`, JavaScript code, data from outside, or `as`          |
+| Report            | Lists                                                                                     |
+| ----------------- | ----------------------------------------------------------------------------------------- |
+| `throws`          | every check that can fail because of `any`, JavaScript code, data from outside, or `as`   |
 | `throws-all`      | also the checks that fail only if your TypeScript code itself produces a value of the wrong type |
-| `throws-json`     | the same as `throws`, one JSON object per line, on stdout                                        |
-| `throws-all-json` | the same as `throws-all`, one JSON object per line, on stdout                                    |
-| `rules-json`      | what the [rules](/bundler/aot-debugging#rules) found, one JSON object per line, on stdout        |
+| `throws-json`     | the same as `throws`, one JSON object per line, on stdout                                 |
+| `throws-all-json` | the same as `throws-all`, one JSON object per line, on stdout                             |
+| `rules-json`      | what the [rules](/bundler/aot-debugging#rules) found, one JSON object per line, on stdout |
 
 On a large program, `throws` prints at most 200 lines of each category and counts the rest. The other reports are never cut short. To look up the id of a line from the log, use `throws-all-json`.
 
 The last line counts the checks that can fail by what causes them. Start with the causes that you wrote yourself: an `as`, a `!`, an `any`. In the JSON reports, each object has its cause as `cause`:
 
-| `cause`             | The check is                                                          |
-| ------------------- | --------------------------------------------------------------------- |
-| `as`                | at an `as`                                                            |
-| `non-null`          | at a `!`                                                              |
-| `after-as`          | where a value that an `as` let through is used                        |
-| `declared-only`     | on a value from code that has only a declaration: a package, a global |
-| `called-as-a-value` | on a parameter of a function that is called as a value or with `any`  |
-| `any`               | on an `any`                                                           |
-| `unknown-source`    | on a value whose source is not known                                  |
-| `javascript`        | on a value from a JavaScript file of the program                      |
-| `caught`            | on a caught exception                                                 |
-| `builtin-write`     | at a write to a built-in object                                       |
-| `rule`              | by another `--aot` rule                                               |
-| `narrowing`         | where a type is narrowed. Only in `throws-all`                        |
-| `typed-code`        | within typed code. Only in `throws-all`                               |
+| `cause`             | The check is                                                              |
+| ------------------- | ------------------------------------------------------------------------- |
+| `as`                | at an `as`                                                                |
+| `non-null`          | at a `!`                                                                  |
+| `after-as`          | where a value that an `as` let through is used                            |
+| `declared-only`     | on a value from code that has only a declaration: a package, a global     |
+| `called-as-a-value` | on a parameter of a function that is called as a value or with `any`      |
+| `any`               | on an `any`                                                               |
+| `unknown-source`    | on a value whose source is not known                                      |
+| `javascript`        | on a value from a JavaScript file of the program                          |
+| `caught`            | on a caught exception                                                     |
+| `builtin-write`     | at a write to a built-in object                                           |
+| `rule`              | by another `--aot` rule                                                   |
+| `narrowing`         | where a type is narrowed. Only in `throws-all`                            |
+| `typed-code`        | within typed code. Only in `throws-all`                                   |
 
 A line ends in `warning` if the check can fail, and in `error` if it always fails. `bun build --compile --aot` takes the same flag. `Bun.build` returns the lines in `logs`, at level `"verbose"`:
 
@@ -221,20 +221,19 @@ const result = await Bun.build({
 Tests do not see all the data that production sees. Build with `--aot-type-errors=log`, and the executable writes a line where it would throw.
 
 <Warning>
-  A log build does not keep going everywhere yet. Where it does not, it writes its line and then throws, so that request
-  fails as it does in step 4.
+  A log build does not keep going everywhere yet. Where it does not, it writes its line and then throws, so that request fails as it does in step 4.
 </Warning>
 
-| What happens                                                                                                                                                                                                                                                                                                                                                                    | The line says          | Then                                                                                                                                                     |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A string, number or boolean is passed where the parameter has another type, also an interface or a type literal, to a function, an arrow function, an `async` function or a method of an object literal, such as a handler of `Bun.serve`: by name, or as a callback, a listener, a handler in a table or a `Map`, or a closure that another function returns, yields or stores | `continued`            | The call runs as plain JavaScript                                                                                                                        |
-| The same is passed to a method of a class, a generator, a constructor, a `function` that uses `this`, or any function that uses `arguments`, a rest parameter, `super` or a private name, or that declares a class                                                                                                                                                              | `threw`                | `TypeError`                                                                                                                                              |
-| A string, number, boolean, `null` or `undefined` of the wrong type reaches a variable, a property or a return type, or comes out of a call or an `await`                                                                                                                                                                                                                        | `threw`                | `TypeError`                                                                                                                                              |
-| `as number`, `as string` or `as boolean` on a value of another of these types                                                                                                                                                                                                                                                                                                   | `converted`            | The value is converted, as in step 4                                                                                                                     |
-| An object does not match its interface, type literal or class: parsed JSON without a property, an object from a package                                                                                                                                                                                                                                                         | `continued` or `threw` | It depends on the type. Where it goes on, a missing property reads `undefined`                                                                           |
-| Such an object has no value for a `number` or `boolean` property, and your code reads it                                                                                                                                                                                                                                                                                        | `threw`                | `TypeError`. If the object was passed to a function or an arrow function, that call runs as plain JavaScript instead, and the property reads `undefined` |
-| Something else arrives where an array, a function or a built-in class such as `Map` is expected                                                                                                                                                                                                                                                                                 | `threw`                | `TypeError`                                                                                                                                              |
-| A write to a built-in object                                                                                                                                                                                                                                                                                                                                                    | `threw`                | `TypeError`                                                                                                                                              |
+| What happens                                                                                                                                              | The line says            | Then                                                        |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ | ----------------------------------------------------------- |
+| A string, number or boolean is passed where the parameter has another type, also an interface or a type literal, to a function, an arrow function, an `async` function or a method of an object literal, such as a handler of `Bun.serve`: by name, or as a callback, a listener, a handler in a table or a `Map`, or a closure that another function returns, yields or stores | `continued`              | The call runs as plain JavaScript                           |
+| The same is passed to a method of a class, a generator, a constructor, a `function` that uses `this`, or any function that uses `arguments`, a rest parameter, `super` or a private name, or that declares a class | `threw`                  | `TypeError`                                                 |
+| A string, number, boolean, `null` or `undefined` of the wrong type reaches a variable, a property or a return type, or comes out of a call or an `await` | `threw`                  | `TypeError`                                                 |
+| `as number`, `as string` or `as boolean` on a value of another of these types                                                                             | `converted`              | The value is converted, as in step 4                        |
+| An object does not match its interface, type literal or class: parsed JSON without a property, an object from a package                                   | `continued` or `threw`   | It depends on the type. Where it goes on, a missing property reads `undefined` |
+| Such an object has no value for a `number` or `boolean` property, and your code reads it                                                                  | `threw`                  | `TypeError`. If the object was passed to a function or an arrow function, that call runs as plain JavaScript instead, and the property reads `undefined` |
+| Something else arrives where an array, a function or a built-in class such as `Map` is expected                                                           | `threw`                  | `TypeError`                                                 |
+| A write to a built-in object                                                                                                                              | `threw`                  | `TypeError`                                                 |
 
 To accept an object that does not match, the compiler has to discard what it knows about that type and about every type that can contain it. It does so for a type that data from outside the type system reaches, such as `any`, `unknown` or the result of an untyped function, unless too many other types would follow. Add `--aot-explain=throws` to the build to see what it decided. Each line says what this build does at that place, and the last line counts the places. A line of the log has the id of its line in the report:
 
@@ -273,33 +272,20 @@ To accept an object that does not match, the compiler has to discard what it kno
 
 A line never contains a value from your program, only its kind, such as `string`, `untyped object` (an object literal or parsed JSON that has not been given a type) or `native Buffer` (an object that Bun or JavaScript provides). Each location writes a line for its 1st, 10th, 100th failure and so on, and a total when the process exits.
 
-| Environment variable            | Value                                                                    |
-| ------------------------------- | ------------------------------------------------------------------------ |
-| `BUN_AOT_TYPE_ERROR_LOG`        | `stderr` (default), a file to append to, or `off`                        |
-| `BUN_AOT_TYPE_ERROR_LOG_FORMAT` | `text` or `json`. The default is `text` for stderr and `json` for a file |
+| Environment variable             | Value                                                        |
+| -------------------------------- | ------------------------------------------------------------ |
+| `BUN_AOT_TYPE_ERROR_LOG`         | `stderr` (default), a file to append to, or `off`            |
+| `BUN_AOT_TYPE_ERROR_LOG_FORMAT`  | `text` or `json`. The default is `text` for stderr and `json` for a file |
 
 ```json
-{
-  "aot": "type-error",
-  "id": "4d3156b73eaf",
-  "kind": "enter-argument",
-  "what": "As",
-  "file": "app.ts",
-  "line": 6,
-  "col": 13,
-  "fn": "module",
-  "expected": "number | undefined",
-  "got": "string",
-  "action": "continued",
-  "count": 1
-}
+{"aot":"type-error","id":"4d3156b73eaf","kind":"enter-argument","what":"As","file":"app.ts","line":6,"col":13,"fn":"module","expected":"number | undefined","got":"string","action":"continued","count":1}
 ```
 
-| Action      | What the executable did                                                                      |
-| ----------- | -------------------------------------------------------------------------------------------- |
-| `continued` | went on with the value, as plain JavaScript does                                             |
+| Action      | What the executable did                                   |
+| ----------- | --------------------------------------------------------- |
+| `continued` | went on with the value, as plain JavaScript does          |
 | `converted` | `as` converted the value, so the program goes on with another value than in plain JavaScript |
-| `threw`     | threw the `TypeError`: it could not go on from there                                         |
+| `threw`     | threw the `TypeError`: it could not go on from there      |
 
 A write to a built-in object still throws.
 
@@ -369,14 +355,14 @@ TypeError: Cannot change 'call$0' of Function.prototype: built-ins are locked in
       at dartProgram (node_modules/sass/sass.dart.js:125905:12)
 ```
 
-| Package                          | What it does                                                                              | What you see                                                            | What works                                                                                                                                                                                                                                                                        |
-| -------------------------------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `chai` 6, `vitest` 4 through it  | `chai.should()` defines `Object.prototype.should`                                         | `Cannot change 'should' of Object.prototype`, when `should()` is called | `expect` and `assert` of `chai`, `expect` of `vitest`                                                                                                                                                                                                                             |
-| `sinon`                          | `useFakeTimers()` replaces `globalThis.Date`                                              | `Cannot change 'Date' of globalThis`, when `useFakeTimers()` is called  | Spies and stubs. In `sinon` 6, also `useFakeTimers({ toFake: ["setTimeout", "setInterval"] })`. In `sinon` 22, every form of `useFakeTimers()` throws                                                                                                                             |
-| `@colors/colors` 1               | Its default entry point adds getters such as `"text".red` to `String.prototype`           | `Cannot change 'strip' of String.prototype`, on import                  | `import colors from "@colors/colors/safe"`, then `colors.red("text")`                                                                                                                                                                                                             |
-| `sass` 1                         | The Dart runtime inside it adds `call$0`, `call$1` and so on to `Function.prototype`      | `Cannot change 'call$0' of Function.prototype`, on import               | Compile your stylesheets before you build the executable. Or use `compileStringAsync()` of `sass-embedded`, with `node_modules` next to the executable: it starts a compiler that is a program of its own. Its `compileString()` hangs in any executable, with or without `--aot` |
-| `core-js` 3                      | Every entry point, even `core-js/actual/array/at`, replaces `Function.prototype.toString` | `Cannot change 'toString' of Function.prototype`, on import             | Remove the import: Bun implements what it fills in. With Babel, set `useBuiltIns: false`. Or import one feature at a time from `core-js-pure`, such as `core-js-pure/actual/array/at`. `core-js-pure/stable` throws `Cannot change 'isError' of Error`                            |
-| `envinfo` 7, `@webpack-cli/info` | They contain `core-js` 2, which deletes `Function.prototype.toString`                     | `Cannot delete 'toString' of Function.prototype`, on import             | Nothing that we know of                                                                                                                                                                                                                                                           |
+| Package                             | What it does                                                                              | What you see                                                            | What works                                                                                                                                                                                                 |
+| ----------------------------------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `chai` 6, `vitest` 4 through it     | `chai.should()` defines `Object.prototype.should`                                         | `Cannot change 'should' of Object.prototype`, when `should()` is called | `expect` and `assert` of `chai`, `expect` of `vitest`                                                                                                                                                      |
+| `sinon`                             | `useFakeTimers()` replaces `globalThis.Date`                                              | `Cannot change 'Date' of globalThis`, when `useFakeTimers()` is called  | Spies and stubs. In `sinon` 6, also `useFakeTimers({ toFake: ["setTimeout", "setInterval"] })`. In `sinon` 22, every form of `useFakeTimers()` throws                                                      |
+| `@colors/colors` 1                  | Its default entry point adds getters such as `"text".red` to `String.prototype`           | `Cannot change 'strip' of String.prototype`, on import                  | `import colors from "@colors/colors/safe"`, then `colors.red("text")`                                                                                                                                      |
+| `sass` 1                            | The Dart runtime inside it adds `call$0`, `call$1` and so on to `Function.prototype`      | `Cannot change 'call$0' of Function.prototype`, on import               | Compile your stylesheets before you build the executable. Or use `compileStringAsync()` of `sass-embedded`, with `node_modules` next to the executable: it starts a compiler that is a program of its own. Its `compileString()` hangs in any executable, with or without `--aot` |
+| `core-js` 3                         | Every entry point, even `core-js/actual/array/at`, replaces `Function.prototype.toString` | `Cannot change 'toString' of Function.prototype`, on import             | Remove the import: Bun implements what it fills in. With Babel, set `useBuiltIns: false`. Or import one feature at a time from `core-js-pure`, such as `core-js-pure/actual/array/at`. `core-js-pure/stable` throws `Cannot change 'isError' of Error` |
+| `envinfo` 7, `@webpack-cli/info`    | They contain `core-js` 2, which deletes `Function.prototype.toString`                     | `Cannot delete 'toString' of Function.prototype`, on import             | Nothing that we know of                                                                                                                                                                                    |
 
 [`bun --aot-audit`](#1-audit-while-you-develop) reports these writes while your program still runs as usual, and the lint rule [`bun/aot-locked-builtin-write`](/lint/rules/bun/aot-locked-builtin-write) finds them in your own code. `Error.prototype` and the prototypes that inherit from it are not locked, and neither is what Bun or your program defines, such as `process`, `console` or `setTimeout`.
 
@@ -418,9 +404,9 @@ To check, start the server once with `BUN_JSC_crashIfInterpreterIsUsed=1` in its
 
 The build stops and names the file and the line.
 
-| You wrote                       | The build says                                                   | Write instead                                                                        |
-| ------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `with (options) { run(name); }` | ``--aot does not support a `with` statement``                    | `run(options.name);`                                                                 |
+| You wrote                       | The build says                                                  | Write instead                                                                        |
+| ------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `with (options) { run(name); }` | ``--aot does not support a `with` statement``                   | `run(options.name);`                                                                 |
 | `eval(...parts)`                | ``--aot does not support a direct `eval` with spread arguments`` | `eval(parts[0])`, or `(0, eval)(...parts)` if the code does not read local variables |
 
 `with` is only valid in files that are not modules and not in strict mode. Code that a template engine generates when the program runs and passes to `new Function` may use it.
@@ -431,13 +417,13 @@ The build stops and names the file and the line.
 [aot] type-error 81eda900c1a1 read-property app.ts:6:20 (module): expected number | undefined, got string; would-throw; count 1; call 4d3156b73eaf; from server.ts:41 < router.ts:12
 ```
 
-| Part                    | Meaning                                                                                                                                                                                                                                                                                |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `81eda900c1a1`          | The id of this location. It is the same in the audit, in the report and in the executable, and from run to run, until the line moves. For an argument of a call, the executable uses the id after `call`.                                                                              |
-| `read-property`         | What happens there: `enter-argument`, `enter-function`, `enter-variable`, `enter-field`, `enter-return`, `read-property`, `read-element`, `call-result`, `as-convert`, `non-null`, and others. `as-late-use` is the use of a value that `as` could not check, because it is an object. |
-| `app.ts:6:20 (module)`  | File, line, column, and the function. `module` is code outside of any function.                                                                                                                                                                                                        |
-| `expected ..., got ...` | What passes this check, and the kind of value that did not. A check can let more pass than the type says: here `undefined` passes too, as a missing argument does in JavaScript.                                                                                                       |
-| `count 1`               | How often this location has failed with this kind of value.                                                                                                                                                                                                                            |
-| `reason ...`            | For an object: which property does not match, such as `property 'id' is missing in untyped object but required in User`. Only the executable writes it.                                                                                                                                |
-| `call 4d3156b73eaf`     | The value is an argument of a call. An executable built with `--aot-type-errors=log` reports it under this id, at the position of the call.                                                                                                                                            |
-| `from ...`              | The callers, nearest first.                                                                                                                                                                                                                                                            |
+| Part                       | Meaning                                                                                                   |
+| -------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `81eda900c1a1`             | The id of this location. It is the same in the audit, in the report and in the executable, and from run to run, until the line moves. For an argument of a call, the executable uses the id after `call`. |
+| `read-property`            | What happens there: `enter-argument`, `enter-function`, `enter-variable`, `enter-field`, `enter-return`, `read-property`, `read-element`, `call-result`, `as-convert`, `non-null`, and others. `as-late-use` is the use of a value that `as` could not check, because it is an object. |
+| `app.ts:6:20 (module)`     | File, line, column, and the function. `module` is code outside of any function.                           |
+| `expected ..., got ...`    | What passes this check, and the kind of value that did not. A check can let more pass than the type says: here `undefined` passes too, as a missing argument does in JavaScript. |
+| `count 1`                  | How often this location has failed with this kind of value.                                               |
+| `reason ...`               | For an object: which property does not match, such as `property 'id' is missing in untyped object but required in User`. Only the executable writes it. |
+| `call 4d3156b73eaf`        | The value is an argument of a call. An executable built with `--aot-type-errors=log` reports it under this id, at the position of the call. |
+| `from ...`                 | The callers, nearest first.                                                                               |

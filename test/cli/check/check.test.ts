@@ -818,17 +818,13 @@ describe.concurrent("bun check", () => {
       "packages/first/package.json": `{ "name": "first" }`,
       "packages/first/index.ts": `export const first = 1;\n`,
       "packages/second/package.json": `{ "name": "second" }`,
-      "packages/second/index.ts": `import { untyped } from "untyped";\nconst unused = 1;\nexport function second(flag: boolean) {\n  if (flag) return 1;\n}\nexport const used = untyped;\n`,
+      "packages/second/index.ts":
+        `import { untyped } from "untyped";\nconst unused = 1;\nexport function second(flag: boolean) {\n  if (flag) return 1;\n}\nexport const used = untyped;\n`,
       "node_modules/untyped/package.json": `{ "name": "untyped", "main": "index.js" }`,
       "node_modules/untyped/index.js": `exports.untyped = 1;\n`,
     });
     const { stdout, exitCode } = await check(dir);
-    expect(
-      stdout
-        .split("\n")
-        .filter(line => line.includes("error TS"))
-        .map(line => line.slice(0, line.indexOf(":", line.indexOf("error TS")))),
-    ).toEqual([
+    expect(stdout.split("\n").filter(line => line.includes("error TS")).map(line => line.slice(0, line.indexOf(":", line.indexOf("error TS"))))).toEqual([
       "packages/second/index.ts(1,25): error TS7016",
       "packages/second/index.ts(2,7): error TS6133",
       "packages/second/index.ts(3,17): error TS7030",
@@ -846,9 +842,7 @@ describe.concurrent("bun check", () => {
       "node_modules/shipped/index.ts": `const unused = 1;\nexport const shipped = 1;\n`,
     });
     const { stdout, exitCode } = await check(dir);
-    expect(stdout).toBe(
-      `node_modules/shipped/index.ts(1,7): error TS6133: 'unused' is declared but its value is never read.`,
-    );
+    expect(stdout).toBe(`node_modules/shipped/index.ts(1,7): error TS6133: 'unused' is declared but its value is never read.`);
     expect(exitCode).toBe(1);
   });
 
@@ -3906,11 +3900,8 @@ export const alsoWrong = wrong.nope;
           "a.ts": `declare const f: any;\ndeclare let a: any;\nexport const r = ${repeat(open, depth)}1${repeat(close, depth)};\nexport const wrong: number = "";\n`,
         });
         const { stdout, exitCode } = await check(dir, [], {}, 10_000);
-        const tooLarge =
-          "a.ts(1,1): error TS2563: The containing function or module body is too large for control flow analysis.\n";
-        expect(stdout).toBe(
-          `${kind === "conditions" ? tooLarge : ""}a.ts(4,14): error TS2322: Type 'string' is not assignable to type 'number'.`,
-        );
+        const tooLarge = "a.ts(1,1): error TS2563: The containing function or module body is too large for control flow analysis.\n";
+        expect(stdout).toBe(`${kind === "conditions" ? tooLarge : ""}a.ts(4,14): error TS2322: Type 'string' is not assignable to type 'number'.`);
         expect(exitCode).toBe(1);
       },
       // Longer than the child may take, which does not outlive the test then.

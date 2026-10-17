@@ -1,5 +1,19 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
+exports[`asks a Set made from a literal of twelve constant strings for a string that it holds 1`] = `
+"typed, function: 127.41 instructions (stub SetHasWithStringKey 91, kernel 36.28, module 0.13), 357 bytes
+typed, module level: 115.23 instructions (stub SetHasWithStringKey 91, module 24.23), 2445 bytes
+untyped, function: 148.57 instructions (stub SetHas 93, kernel 55.45, module 0.13), 697 bytes
+untyped, module level: 148.42 instructions (stub SetHas 93, module 55.42), 2884 bytes"
+`;
+
+exports[`walks a Set made from a literal of twelve constant strings 1`] = `
+"typed, function: 55.83 instructions (kernel 54.83, module 1), 919 bytes
+typed, module level: 51.17 instructions (module 51.17), 1687 bytes
+untyped, function: 100.17 instructions (stub IterHasInFrame 50.17, kernel 47, stub IterOpenInFrame 2, module 1), 955 bytes
+untyped, module level: 94.75 instructions (stub IterHasInFrame 50.17, module 42.58, stub IterOpenInFrame 2), 1824 bytes"
+`;
+
 exports[`makes a Set from an array of four strings 1`] = `
 "typed, function: 1286.86 instructions (the runtime 1211, kernel 33.50, elsewhere 26.06, stub OperationValueWithInstance 14, stub OperationValueWithInstance to operationAOTTypedTryNewStringSet 2, module 0.30), 363 bytes
 typed, module level: 1275.94 instructions (the runtime 1211, elsewhere 26.06, module 22.88, stub OperationValueWithInstance 14, stub OperationValueWithInstance to operationAOTTypedTryNewStringSet 2), 1326 bytes
@@ -8,10 +22,10 @@ untyped, module level: 1290.94 instructions (the runtime 1211, module 37.88, els
 `;
 
 exports[`assigns the four fields of a new instance of a class that has an accessor 1`] = `
-"typed, function: 1563.80 instructions (the runtime 1489, kernel 40.50, stub AllocateTypedObject 18, stub OperationVoidWithInstance 14, stub OperationVoidWithInstance to operationAOTTypedObjectAssignFrom 2, module 0.30), 366 bytes
-typed, module level: 1551.88 instructions (the runtime 1489, module 28.88, stub AllocateTypedObject 18, stub OperationVoidWithInstance 14, stub OperationVoidWithInstance to operationAOTTypedObjectAssignFrom 2), 1381 bytes
-untyped, function: 671.88 instructions (the runtime 542, kernel 69.58, stub NewObjectLiteral4 24, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRBX 20, stub OperationVoidWithInstance 14, stub OperationVoidWithInstance to operationAOTTypedObjectAssignFrom 2, module 0.30), 750 bytes
-untyped, module level: 655.92 instructions (the runtime 542, module 53.92, stub NewObjectLiteral4 24, stub OperationVoidWithInstance 14, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRBX 10, stub GetByNameWithDirectColumnWithReceiverInRBX 10, stub OperationVoidWithInstance to operationAOTTypedObjectAssignFrom 2), 1609 bytes"
+"typed, function: 87.75 instructions (kernel 70.45, stub AllocateTypedObject 17, module 0.30), 663 bytes
+typed, module level: 72.80 instructions (module 55.80, stub AllocateTypedObject 17), 1809 bytes
+untyped, function: 670.88 instructions (the runtime 541, kernel 69.58, stub NewObjectLiteral4 24, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRBX 20, stub OperationVoidWithInstance 14, stub OperationVoidWithInstance to operationAOTTypedObjectAssignFrom 2, module 0.30), 750 bytes
+untyped, module level: 654.92 instructions (the runtime 541, module 53.92, stub NewObjectLiteral4 24, stub OperationVoidWithInstance 14, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRBX 10, stub GetByNameWithDirectColumnWithReceiverInRBX 10, stub OperationVoidWithInstance to operationAOTTypedObjectAssignFrom 2), 1605 bytes"
 `;
 
 exports[`sets three headers by constant names through a method that takes the name 1`] = `

@@ -63,6 +63,7 @@ unsafe extern "C" {
 /// `BUN_BYTECODE_DIGEST_OUT=<path>`: decode everything every module's bytecode holds and write one sorted line per
 /// module, `<path the bytecode is keyed on> <digest> <code blocks>` (`- -` where the bytecode does not decode for the
 /// module). Two builds of the same sources have equal digests however their bytecode is laid out.
+#[inline(never)]
 fn write_digests(vm: &VirtualMachine, graph: &'static dyn bun_resolver::StandaloneModuleGraph) {
     let Some(path) = bun_core::env_var::BUN_BYTECODE_DIGEST_OUT.get_not_empty() else {
         return;
@@ -164,6 +165,9 @@ pub(crate) fn write_at_exit(
     let Some(graph) = graph else {
         return;
     };
+    if !graph.aot_image().is_empty() {
+        return;
+    }
     if WRITTEN.swap(true, core::sync::atomic::Ordering::Relaxed) {
         return;
     }
@@ -174,6 +178,7 @@ pub(crate) fn write_at_exit(
 
 /// What every VM of the process recorded, as an order file names it: JavaScriptCore knows the code it saw run by where
 /// it starts in which of the executable's bytecode, and the names come from parsing the text all of it was compiled from.
+#[inline(never)]
 fn write_order_file(graph: &'static dyn bun_resolver::StandaloneModuleGraph) {
     let Some(path) = output_path() else {
         return;

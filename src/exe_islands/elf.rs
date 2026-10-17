@@ -7,8 +7,7 @@ use bun_collections::index_sort::sort_slice_by_key;
 use core::ops::Range;
 
 use crate::bytes::{
-    minus, plus, put_u16, put_u32, put_u64, slice, slice_mut, u16_at, u32_at, u64_at, usize_at,
-    whole_pages,
+    minus, plus, put_u16, put_u32, put_u64, slice, slice_mut, u16_at, u32_at, u64_at, usize_at, whole_pages,
 };
 use crate::{Error, Result};
 
@@ -146,45 +145,25 @@ fn grow_table_in_place(
 ) -> Result<Option<Moved>> {
     const NOTE_HEADER: u64 = 16;
     let table = u64_at(file, 0x20)?;
-    let block =
-        table + (headers.len() * PROGRAM_HEADER) as u64..minus(room.start as u64, NOTE_HEADER)?;
+    let block = table + (headers.len() * PROGRAM_HEADER) as u64..minus(room.start as u64, NOTE_HEADER)?;
     let (room_start, room_end) = (room.start as u64, room.end as u64);
-    let is_in_block =
-        |h: &ProgramHeader| block.contains(&h.offset) && h.offset + h.file_size <= block.end;
-    let is_the_note = |h: &ProgramHeader| {
-        h.kind == PT_NOTE && h.offset == block.end && h.offset + h.file_size == room_end
-    };
-    let touches = |h: &ProgramHeader| {
-        h.kind != PT_LOAD
-            && h.kind != PT_PHDR
-            && h.offset < room_end
-            && h.offset + h.file_size > block.start
-    };
-    if block.start > block.end
-        || !headers
-            .iter()
-            .filter(|h| touches(h))
-            .all(|h| is_in_block(h) || is_the_note(h))
-    {
+    let is_in_block = |h: &ProgramHeader| block.contains(&h.offset) && h.offset + h.file_size <= block.end;
+    let is_the_note = |h: &ProgramHeader| h.kind == PT_NOTE && h.offset == block.end && h.offset + h.file_size == room_end;
+    let touches = |h: &ProgramHeader| h.kind != PT_LOAD && h.kind != PT_PHDR && h.offset < room_end && h.offset + h.file_size > block.start;
+    if block.start > block.end || !headers.iter().filter(|h| touches(h)).all(|h| is_in_block(h) || is_the_note(h)) {
         return Ok(None);
     }
     new.retain(|h| !is_the_note(h));
     let end = table + (new.len() * PROGRAM_HEADER) as u64;
-    let to = minus(room_end, (block.end - block.start).next_multiple_of(16))? / 16 * 16
-        + block.start % 16;
-    let to = if to + (block.end - block.start) > room_end {
-        minus(to, 16)?
-    } else {
-        to
-    };
+    let to = minus(room_end, (block.end - block.start).next_multiple_of(16))? / 16 * 16 + block.start % 16;
+    let to = if to + (block.end - block.start) > room_end { minus(to, 16)? } else { to };
     if end > to || to < room_start {
         return Ok(None);
     }
     let by = to - block.start;
     out.copy_within(block.start as usize..block.end as usize, to as usize);
     for h in new.iter_mut().filter(|h| is_in_block(h)) {
-        (h.offset, h.address, h.physical_address) =
-            (h.offset + by, h.address + by, h.physical_address + by);
+        (h.offset, h.address, h.physical_address) = (h.offset + by, h.address + by, h.physical_address + by);
     }
     let size = end - table;
     for h in new.iter_mut().filter(|h| h.kind == PT_PHDR) {
@@ -195,11 +174,7 @@ fn grow_table_in_place(
     }
     slice_mut(out, end as usize, (to - end) as usize)?.fill(0);
     put_u16(out, 0x38, new.len() as u16)?;
-    Ok(Some(Moved {
-        block,
-        by,
-        unused: end..to,
-    }))
+    Ok(Some(Moved { block, by, unused: end..to }))
 }
 
 /// `range` without `gaps`, which are sorted.

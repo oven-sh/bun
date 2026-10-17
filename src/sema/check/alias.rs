@@ -237,7 +237,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // The symbols are compared before any alias type argument is computed.
         let alias = self.alias_symbol_of_type(source)?;
-        if self.alias_symbol_of_type(target)? != alias || self.is_in_flight(Query::Declared(alias))
+        if self.alias_symbol_of_type(target)? != alias
+            || self.is_in_flight(Query::Declared(alias))
         {
             return None;
         }

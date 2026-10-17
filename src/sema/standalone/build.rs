@@ -6,8 +6,7 @@
 
 fn main() {
     println!("cargo:rerun-if-env-changed=BUN_CODEGEN_DIR");
-    let codegen = std::env::var("BUN_CODEGEN_DIR")
-        .expect("BUN_CODEGEN_DIR: the codegen directory of a build of Bun");
+    let codegen = std::env::var("BUN_CODEGEN_DIR").expect("BUN_CODEGEN_DIR: the codegen directory of a build of Bun");
     if std::env::var_os("CARGO_FEATURE_MIMALLOC").is_some() {
         let object = std::path::Path::new(&codegen).join("../obj/vendor/mimalloc/src/static.c.o");
         if object.exists() {
@@ -17,13 +16,8 @@ fn main() {
     }
     let library = std::path::Path::new(&codegen).join("../obj/vendor/zstd/lib");
     for directory in ["common", "compress", "decompress"] {
-        let Ok(entries) = std::fs::read_dir(library.join(directory)) else {
-            continue;
-        };
-        let mut objects: Vec<_> = entries
-            .filter_map(|entry| Some(entry.ok()?.path()))
-            .filter(|path| path.extension().is_some_and(|it| it == "o"))
-            .collect();
+        let Ok(entries) = std::fs::read_dir(library.join(directory)) else { continue };
+        let mut objects: Vec<_> = entries.filter_map(|entry| Some(entry.ok()?.path())).filter(|path| path.extension().is_some_and(|it| it == "o")).collect();
         objects.sort();
         for object in objects {
             println!("cargo:rustc-link-arg-bins={}", object.display());

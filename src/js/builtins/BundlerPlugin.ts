@@ -359,9 +359,7 @@ export function runSetupFunction(
   var setupResult = setup({
     config: config,
     onDispose: () => {
-      throw new TypeError(
-        "On-dispose callbacks is not implemented yet. See https://github.com/oven-sh/bun/issues/2771",
-      );
+      throw new TypeError("On-dispose callbacks is not implemented yet. See https://github.com/oven-sh/bun/issues/2771");
     },
     onEnd,
     onLoad,

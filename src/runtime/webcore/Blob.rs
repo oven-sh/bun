@@ -2060,22 +2060,14 @@ impl BlobExt for Blob {
             }
             store::DataTag::S3 => crate::webcore::s3_file::get_stat(self, global_this, callback),
             store::DataTag::Bytes => {
-                let name = &self
-                    .store()
-                    .expect("infallible: store present")
-                    .data
-                    .as_bytes()
-                    .stored_name;
-                if !bun_standalone_graph::Graph::get_ref()
-                    .is_some_and(|graph| graph.contains_file(name))
-                {
+                let name = &self.store().expect("infallible: store present").data.as_bytes().stored_name;
+                if !bun_standalone_graph::Graph::get_ref().is_some_and(|graph| graph.contains_file(name)) {
                     return Ok(JSValue::UNDEFINED);
                 }
                 // SAFETY: bun_vm() returns the live VM for this global.
                 let vm = global_this.bun_vm().as_mut();
                 // SAFETY: lazily-initialised per-VM NodeFS binding; never null after init.
-                let binding =
-                    unsafe { &*vm.node_fs().cast::<crate::node::node_fs_binding::Binding>() };
+                let binding = unsafe { &*vm.node_fs().cast::<crate::node::node_fs_binding::Binding>() };
                 Ok(crate::node::fs::async_::Stat::create(
                     &global_this.js_thread_of_caller(callback),
                     binding,

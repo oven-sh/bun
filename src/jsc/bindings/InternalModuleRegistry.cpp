@@ -105,15 +105,9 @@ static String internalModuleSource(uint32_t id)
 }
 #endif
 
-JSC::JSValue generateInternalModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, uint32_t id)
+static NEVER_INLINE JSC::JSValue generateInternalModuleFromText(JSC::JSGlobalObject* globalObject, JSC::VM& vm, uint32_t id)
 {
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-#if ENABLE(AOT)
-    if (JSC::AOT::Typed::hasBuiltinModule(globalObject, id)) {
-        Bun::ModuleGraphContextScope realmContext(*defaultGlobalObject(globalObject)->scriptExecutionContext());
-        RELEASE_AND_RETURN(throwScope, JSC::AOT::Typed::evaluateBuiltinModule(globalObject, id));
-    }
-#endif
     const auto& m = internalModuleRecord(id);
     String moduleName = internalModuleString(m.nameOffset, m.nameLength);
     SourceCode source = makeInternalModuleSource(internalModuleSource(id), moduleName, internalModuleString(m.urlOffset, m.urlLength));
@@ -155,6 +149,17 @@ JSC::JSValue generateInternalModule(JSC::JSGlobalObject* globalObject, JSC::VM& 
         "Expected \"%s\" to export a JSObject. Bun is going to crash.",
         moduleName.utf8().legacyCStringPointer());
     return result;
+}
+
+JSC::JSValue generateInternalModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, uint32_t id)
+{
+#if ENABLE(AOT)
+    if (JSC::AOT::Typed::hasBuiltinModule(globalObject, id)) {
+        Bun::ModuleGraphContextScope realmContext(*defaultGlobalObject(globalObject)->scriptExecutionContext());
+        return JSC::AOT::Typed::evaluateBuiltinModule(globalObject, id);
+    }
+#endif
+    return generateInternalModuleFromText(globalObject, vm, id);
 }
 
 // Accepts both generator signatures (BUN_FOREACH_ESM_NATIVE_MODULE and BUN_FOREACH_LAZY_ESM_NATIVE_MODULE);

@@ -126,9 +126,7 @@ impl FetchHeaders {
     ) -> JsResult<Option<NonNull<FetchHeaders>>> {
         host_fn::from_js_host_call_generic(global, || {
             // SAFETY: the caller upholds the contract above.
-            NonNull::new(unsafe {
-                WebCore__FetchHeaders__createFromNamesAndValues(global, count, names_and_values)
-            })
+            NonNull::new(unsafe { WebCore__FetchHeaders__createFromNamesAndValues(global, count, names_and_values) })
         })
     }
 

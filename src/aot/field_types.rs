@@ -4,11 +4,7 @@ use crate::ir::{Program, field_flags};
 use bun_sema::check::FieldTypes;
 use bun_sema::types::TypeId;
 
-pub(crate) fn field_types(
-    program: &Program,
-    views: &[(LayoutId, TypeId)],
-    copy_targets: Vec<u32>,
-) -> FieldTypes {
+pub(crate) fn field_types(program: &Program, views: &[(LayoutId, TypeId)], copy_targets: Vec<u32>) -> FieldTypes {
     let mut layout_index = vec![u32::MAX; program.layouts.len()];
     for (index, view) in views.iter().enumerate() {
         layout_index[view.0.idx()] = index as u32;
@@ -17,25 +13,9 @@ pub(crate) fn field_types(
     let mut union_of = vec![u32::MAX; program.tys.list.len()];
     let mut part_layouts: Vec<u32> = Vec::new();
     for (ty, number) in union_of.iter_mut().enumerate() {
-        let parts = program
-            .tys
-            .get(TyId::new(ty))
-            .parts
-            .iter()
-            .filter_map(|part| {
-                if let Part::Class(layout) = part {
-                    Some(*layout)
-                } else {
-                    None
-                }
-            });
+        let parts = program.tys.get(TyId::new(ty)).parts.iter().filter_map(|part| if let Part::Class(layout) = part { Some(*layout) } else { None });
         part_layouts.clear();
-        part_layouts.extend(
-            parts
-                .filter(|layout| layout.is_some())
-                .map(|layout| layout_index[layout.idx()])
-                .filter(|&view| view != u32::MAX),
-        );
+        part_layouts.extend(parts.filter(|layout| layout.is_some()).map(|layout| layout_index[layout.idx()]).filter(|&view| view != u32::MAX));
         if part_layouts.len() > 1 {
             part_layouts.sort_unstable();
             *number = together.len() as u32;
@@ -60,12 +40,7 @@ pub(crate) fn field_types(
             for part in &program.tys.get(at).parts {
                 let held: &[TyId] = match part {
                     Part::Class(layout) => {
-                        found.extend(
-                            layout
-                                .is_some()
-                                .then(|| layout_index[layout.idx()])
-                                .filter(|&view| view != u32::MAX),
-                        );
+                        found.extend(layout.is_some().then(|| layout_index[layout.idx()]).filter(|&view| view != u32::MAX));
                         &[]
                     }
                     Part::Array(elements) => std::slice::from_ref(elements),
@@ -88,14 +63,8 @@ pub(crate) fn field_types(
     }
     let fields_by_layout = (views.iter())
         .map(|view| {
-            let fields = program.layouts[view.0.idx()].fields.iter().filter(|field| {
-                field.name.is_some()
-                    && field.declared.is_some()
-                    && field.flags & field_flags::NEVER_STORED == 0
-            });
-            let mut fields: Vec<(u32, u32)> = fields
-                .map(|field| (field.name.0, field.declared.0))
-                .collect();
+            let fields = program.layouts[view.0.idx()].fields.iter().filter(|field| field.name.is_some() && field.declared.is_some() && field.flags & field_flags::NEVER_STORED == 0);
+            let mut fields: Vec<(u32, u32)> = fields.map(|field| (field.name.0, field.declared.0)).collect();
             fields.sort_unstable();
             fields
         })
@@ -105,12 +74,5 @@ pub(crate) fn field_types(
         .filter(|declared| declared.is_some())
         .map(|declared| declared.0)
         .collect();
-    FieldTypes {
-        fields_by_layout,
-        static_field_types,
-        layouts_in_type,
-        together,
-        unions_in_type,
-        copy_targets,
-    }
+    FieldTypes { fields_by_layout, static_field_types, layouts_in_type, together, unions_in_type, copy_targets }
 }

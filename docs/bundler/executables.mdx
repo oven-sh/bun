@@ -469,18 +469,18 @@ cursor.ts(9,19): error TS100031: Property 'column' of 'Cursor' is an 'int32', an
 
 Because every store is proven, the executable has no test for it and never throws because of it. `| 0` is ordinary JavaScript: it gives the same 32-bit value with `--aot`, without it, and in every other engine.
 
-| Proven                                                                  | Not proven, and what to write                                                            |
-| ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| a whole number in range: `7`, `-1`, `2 ** 31 - 1`                       | `1.5`, `2 ** 31`, `-0`, `NaN`: error `TS100032`                                          |
-| another `int32`: a variable, a field, a parameter, a result             | a `number`, an `any`: `n \| 0`                                                           |
-| `a \| b`, `a & b`, `a ^ b`, `~a`, `a << n`, `a >> n`, of any numbers    | `a >>> 0`, which goes up to 4294967295: `a \| 0`                                         |
-| `Math.imul(a, b)`, `Math.clz32(a)`                                      | `a * b`: `Math.imul(a, b)`                                                               |
-| `text.length`, `text.indexOf(..)`                                       | `array.length`, which goes up to 4294967295: `array.length \| 0`                         |
-| arithmetic that stays in range: `(a & 255) * 3 + 1`                     | `a + b`, `a - b` of two `int32` values, which can overflow: `(a + b) \| 0`               |
-| `i + 1` and `i++` where a test limits `i`: `i < end`, `i < text.length` | `i++` with no limit in sight, or under `i <= end`: `i = (i + 1) \| 0`                    |
-| `a % b` where `a` is not negative and `b` is positive                   | `a / b`, `Math.floor(x)`: `(a / b) \| 0`                                                 |
-|                                                                         | `bytes[i]`, which is `undefined` when `i` is out of range: `bytes[i] \| 0`               |
-|                                                                         | `text.charCodeAt(i)`, which is `NaN` when `i` is out of range: `text.charCodeAt(i) \| 0` |
+| Proven                                                              | Not proven, and what to write                                                    |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| a whole number in range: `7`, `-1`, `2 ** 31 - 1`                   | `1.5`, `2 ** 31`, `-0`, `NaN`: error `TS100032`                                  |
+| another `int32`: a variable, a field, a parameter, a result         | a `number`, an `any`: `n \| 0`                                                   |
+| `a \| b`, `a & b`, `a ^ b`, `~a`, `a << n`, `a >> n`, of any numbers  | `a >>> 0`, which goes up to 4294967295: `a \| 0`                                  |
+| `Math.imul(a, b)`, `Math.clz32(a)`                                  | `a * b`: `Math.imul(a, b)`                                                       |
+| `text.length`, `text.indexOf(..)`                                   | `array.length`, which goes up to 4294967295: `array.length \| 0`                  |
+| arithmetic that stays in range: `(a & 255) * 3 + 1`                 | `a + b`, `a - b` of two `int32` values, which can overflow: `(a + b) \| 0`        |
+| `i + 1` and `i++` where a test limits `i`: `i < end`, `i < text.length` | `i++` with no limit in sight, or under `i <= end`: `i = (i + 1) \| 0`         |
+| `a % b` where `a` is not negative and `b` is positive               | `a / b`, `Math.floor(x)`: `(a / b) \| 0`                                          |
+|                                                                     | `bytes[i]`, which is `undefined` when `i` is out of range: `bytes[i] \| 0`        |
+|                                                                     | `text.charCodeAt(i)`, which is `NaN` when `i` is out of range: `text.charCodeAt(i) \| 0` |
 
 `value as int32` is proven too, because with `--aot` `as` converts between primitives: it is `value | 0`. Without `--aot` it does nothing, so a value that was not an int32 stays what it was. Prefer `| 0`, which is the same everywhere; `as int32` is for text that may only gain types, such as the typed version of a package.
 
@@ -522,12 +522,12 @@ Bun.serve({
 });
 ```
 
-| Call                         | A value that is a `T`                                                       | A value that is not                            |
-| ---------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------- |
-| `Bun.validate<T>(value)`     | returns a copy that is a `T`                                                | throws a `TypeError` with an `issues` property |
-| `Bun.safeValidate<T>(value)` | `{ success: true, data }`                                                   | `{ success: false, issues }`                   |
-| `Bun.parse<T>(text)`         | returns a `T`                                                               | throws a `TypeError` with an `issues` property |
-| `Bun.schema<T>()`            | a [Standard Schema](https://standardschema.dev) for libraries that take one |                                                |
+| Call                         | A value that is a `T`         | A value that is not                            |
+| ---------------------------- | ----------------------------- | ---------------------------------------------- |
+| `Bun.validate<T>(value)`     | returns a copy that is a `T`  | throws a `TypeError` with an `issues` property |
+| `Bun.safeValidate<T>(value)` | `{ success: true, data }`     | `{ success: false, issues }`                   |
+| `Bun.parse<T>(text)`         | returns a `T`                 | throws a `TypeError` with an `issues` property |
+| `Bun.schema<T>()`            | a [Standard Schema](https://standardschema.dev) for libraries that take one |          |
 
 - Each issue has a `path`, a `code`, `expected`, `received` and a `message`.
 - Properties that `T` does not declare are left out of the result. A type with an index signature, such as `{ id: number; [key: string]: unknown }`, keeps them. `T & Strict` makes them an issue.
@@ -587,11 +587,11 @@ The options that change the code Bun generates are read exactly as they are with
 
 Some options cannot differ between the files of one program:
 
-| Options                                                                                                                       | What the program uses                                                                                                                                                                                                                                                       |
-| ----------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Options | What the program uses |
+| --- | --- |
 | `strictNullChecks`, `exactOptionalPropertyTypes`, `strictFunctionTypes`, `strictBindCallApply`, `strictBuiltinIteratorReturn` | On if the `tsconfig.json` of any of your TypeScript files turns it on. If a file whose own `tsconfig.json` leaves one off has type errors, they do not stop the build: Bun prints a warning and compiles that file without its types, which is slower but behaves the same. |
-| Global declarations (`declare global`, `.d.ts` files) in files that a `tsconfig.json` includes                                | Those of the `tsconfig.json` of every entry point. A `tsconfig.json` without `include` includes every file below it, as it does for `tsc`.                                                                                                                                  |
-| `lib`, `types`, `module`, `moduleResolution`, `skipLibCheck` and the rest                                                     | The `tsconfig.json` of the entry points. If they have different ones, the one nearest to the folder that contains all of them. If there is none, or it only has `references`, each option is what all of them say, and Bun's default where they differ.                     |
+| Global declarations (`declare global`, `.d.ts` files) in files that a `tsconfig.json` includes | Those of the `tsconfig.json` of every entry point. A `tsconfig.json` without `include` includes every file below it, as it does for `tsc`. |
+| `lib`, `types`, `module`, `moduleResolution`, `skipLibCheck` and the rest | The `tsconfig.json` of the entry points. If they have different ones, the one nearest to the folder that contains all of them. If there is none, or it only has `references`, each option is what all of them say, and Bun's default where they differ. |
 
 To list every place where your program would behave differently, without stopping at the first one, use [`bun --aot-audit`](/bundler/aot-adoption).
 
@@ -627,13 +627,13 @@ Either one has a `sound.json` and a `lay` directory:
 }
 ```
 
-| Field             | Meaning                                                                                                                                                 |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`, `version` | The installed package they are for.                                                                                                                     |
-| `when`            | What the build must [`define`](/bundler#define), as strings.                                                                                            |
-| `basis`           | Installed files that the types were written for and that are not replaced, each with its SHA-256.                                                       |
+| Field             | Meaning                                                                                                                                                |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `name`, `version` | The installed package they are for.                                                                                                                    |
+| `when`            | What the build must [`define`](/bundler#define), as strings.                                                                                           |
+| `basis`           | Installed files that the types were written for and that are not replaced, each with its SHA-256.                                                      |
 | `lay`             | Paths in the package that `lay/<path>` takes the place of, each with the SHA-256 of the installed file, or `"new"` for a file the package doesn't have. |
-| `needs`           | Other packages whose typed versions must be in use too.                                                                                                 |
+| `needs`           | Other packages whose typed versions must be in use too.                                                                                                |
 
 Bun uses a typed version only if everything matches, and says so:
 
@@ -847,17 +847,81 @@ What is left out:
 - the ahead-of-time compiler
 - with `--aot`, the just-in-time compilers, which such an executable never starts
 
-Everything that a program can import or call stays: `Bun.build`, `Bun.Transpiler`, `eval`, `new Function`, `import()` and `require()` of files on disk, workers, WebAssembly, every `node:` and `bun:` module, N-API addons, `BUN_OPTIONS` and `--compile-exec-argv`.
+Without `--aot`, everything that a program can import or call stays: `Bun.build`, `Bun.Transpiler`, `eval`, `new Function`, `import()` and `require()` of files on disk, workers, WebAssembly, every `node:` and `bun:` module, N-API addons, `BUN_OPTIONS` and `--compile-exec-argv`. With `--aot`, more can go: see [Parts your program does not use](#parts-your-program-does-not-use).
 
 What no longer works:
 
-|                                                                               | without the flag         | with the flag                                                         |
-| ----------------------------------------------------------------------------- | ------------------------ | --------------------------------------------------------------------- |
-| `BUN_BE_BUN=1 ./myapp install`, `run`, `x`, `-e`, a file name, or no argument | acts as the `bun` CLI    | prints that the Bun command line was left out, and exits with code 70 |
-| `BUN_BE_BUN=1 ./myapp --version` or `--revision`                              | prints it                | prints it                                                             |
-| `BUN_OPTIONS=--help ./myapp`                                                  | prints the help of `bun` | prints that the Bun command line was left out, and exits with code 70 |
-| `Bun.build({ check: true })` or `({ dts: true })`, called by the executable   | type checks              | throws a `TypeError`                                                  |
-| `Bun.build({ compile: { aot: true } })`, called by the executable             | compiles ahead of time   | throws a `TypeError`                                                  |
+| | without the flag | with the flag |
+| --- | --- | --- |
+| `BUN_BE_BUN=1 ./myapp install`, `run`, `x`, `-e`, a file name, or no argument | acts as the `bun` CLI | prints that the Bun command line was left out, and exits with code 70 |
+| `BUN_BE_BUN=1 ./myapp --version` or `--revision` | prints it | prints it |
+| `BUN_OPTIONS=--help ./myapp` | prints the help of `bun` | prints that the Bun command line was left out, and exits with code 70 |
+| `Bun.build({ check: true })` or `({ dts: true })`, called by the executable | type checks | throws a `TypeError` |
+| `Bun.build({ compile: { aot: true } })`, called by the executable | compiles ahead of time | throws a `TypeError` |
+
+### Parts your program does not use
+
+```ts server.ts icon="/icons/typescript.svg"
+Bun.serve({
+  routes: { "/": () => new Response("hello") },
+});
+```
+
+```bash icon="terminal" terminal
+bun build --compile --aot --compile-trim-runtime ./server.ts --outfile server
+```
+
+This server never mentions `HTMLRewriter`, so the executable does not contain it. With `--aot`, the compiler has read the whole program, your dependencies included. It knows which globals, which properties of `Bun` and `process` and which built-in modules the program names, and the parts of Bun behind the names it does not use are left out as well. You do not list anything. A program that does name `HTMLRewriter` gets it, unchanged.
+
+That only works when the compiler can see every name the program will ever use. It cannot when the program:
+
+- calls `eval`, `Function`, or anything in `node:vm`
+- calls `import()` or `require()` with a name or path that is computed at run time
+- starts a `Worker`, or creates a `ShadowRealm`
+- uses `node:module` or `node:repl` to load code, `process.getBuiltinModule`, `process.mainModule` or `Bun.plugin`
+- passes `globalThis`, `process` or `Bun` around as a value, or reads them with a computed key such as `globalThis[name]`
+- does the same with `this` in a function that is not in strict mode, where `this` can be the global object
+- includes a native addon (`.node`), or an import that is left `external`
+
+One such place in code that the program can reach, including in a dependency, and the executable keeps everything that a program can import or call. `globalThis.foo`, `typeof globalThis.foo` and `process.env.FOO` are fine. `--aot-explain=runtime-use` prints what the compiler found:
+
+```bash icon="terminal" terminal
+bun build --compile --aot --compile-trim-runtime --aot-explain=runtime-use ./server.ts --outfile server
+```
+
+```txt
+aot: runtime use: closed
+aot: runtime use: global Response
+aot: runtime use: Bun serve
+...
+```
+
+The first line is `closed`, or `open` with the reason and the file.
+
+When there is no such place, the executable also runs with [`--disallow-code-generation-from-strings=strict`](/runtime/code-generation-from-strings): it runs the code it was built from, and nothing else. That closes the ways to make code that a compiler cannot see:
+
+```ts
+const AsyncFunction = (async () => {}).constructor;
+new AsyncFunction("return 1");
+// EvalError: Code generation from strings disallowed for this context: this executable was built with
+// --compile-trim-runtime, and nothing in the program was seen to turn a string into code or to load code
+// at run time
+```
+
+What no longer works in such an executable, on top of the table above:
+
+| | otherwise | in an executable that runs only its own code |
+| --- | --- | --- |
+| `f.constructor("code")`, for any function `f` | makes a function | throws an `EvalError` |
+| `BUN_OPTIONS=--preload ./x.js`, `--import` or `--require`, or `preload` in a `bunfig.toml` that the executable reads | loads the file first | prints the `EvalError` and exits |
+| `BUN_INSPECT` | starts the debugger | prints an error and exits |
+| `BUN_INSPECT_CONNECT_TO`, which editors set for every process in their terminals | connects to the editor | is ignored |
+| `inspector.open()` from `node:inspector`, `startRemoteDebugger()` from `bun:jsc` | starts the debugger | throws an `EvalError` |
+| `Bun.serve()` with the experimental `app` option | starts the development server | throws an `EvalError` |
+
+`process.execArgv` does not list the flag, because nobody passed it. To debug the program, build it without `--compile-trim-runtime`.
+
+### What does not change
 
 Nothing that stays is moved, so addresses in crash reports and profiles mean the same as in the untrimmed executable. On macOS the executable is signed again.
 

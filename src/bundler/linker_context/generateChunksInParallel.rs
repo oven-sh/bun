@@ -682,12 +682,8 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         let additional_files = graph.input_files.items_additional_files();
         let sources = graph.input_files.items_source();
         for ((key, files), source) in keys.iter().zip(additional_files).zip(sources) {
-            let Some(file) = files.last().filter(|_| !key.is_empty()) else {
-                continue;
-            };
-            let path = &graph.additional_output_files.as_slice()
-                [crate::chunk::additional_output_file_index(file)]
-            .dest_path;
+            let Some(file) = files.last().filter(|_| !key.is_empty()) else { continue };
+            let path = &graph.additional_output_files.as_slice()[crate::chunk::additional_output_file_index(file)].dest_path;
             let path = match c.options.preserve_source_paths {
                 true => source.path.text.to_vec(),
                 false => cheap_prefix_normalizer(c.options.public_path, path).concat(),
@@ -699,16 +695,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         }
         for index in 0..graph.html_imports.server_source_indices.len() as u32 {
             let key = [&c.unique_key_prefix[..], format!("H{index:08}").as_bytes()].concat();
-            let manifest = format!(
-                "{}",
-                crate::html_import_manifest::HTMLImportManifest {
-                    index,
-                    graph,
-                    chunks: &*chunks,
-                    linker_graph: &c.graph
-                }
-            )
-            .into_bytes();
+            let manifest = format!("{}", crate::html_import_manifest::HTMLImportManifest { index, graph, chunks: &*chunks, linker_graph: &c.graph }).into_bytes();
             for bytes in [&key[..], &manifest[..]] {
                 replaced_strings.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
                 replaced_strings.extend_from_slice(bytes);
@@ -906,8 +893,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
     // Don't write to disk if compile mode is enabled - we need buffer values for compilation
     let is_compile = bundler.transpiler.options.compile_mode.is_executable();
-    if root_path.len() > 0 && !is_compile && bundler.transpiler.options.write_sound_files.is_none()
-    {
+    if root_path.len() > 0 && !is_compile && bundler.transpiler.options.write_sound_files.is_none() {
         write_output_files_to_disk(
             c,
             root_path,
@@ -1071,11 +1057,10 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         .finalize(&code_result.shifts)
                         .expect("Failed to allocate memory for external source map");
                     let tokens = c.facts.as_ref().and_then(|facts| facts.tokens.as_deref());
-                    let output_source_map =
-                        match tokens.filter(|_| chunk.entry_point.is_entry_point()) {
-                            Some(tokens) => with_aot_tokens(&output_source_map, tokens),
-                            None => output_source_map,
-                        };
+                    let output_source_map = match tokens.filter(|_| chunk.entry_point.is_entry_point()) {
+                        Some(tokens) => with_aot_tokens(&output_source_map, tokens),
+                        None => output_source_map,
+                    };
                     let mut source_map_final_rel_path: Vec<u8> =
                         Vec::with_capacity(chunk.final_rel_path.len() + b".map".len());
                     source_map_final_rel_path.extend_from_slice(&chunk.final_rel_path);
@@ -1443,7 +1428,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             .and_then(|table| table.get())
             .expect("an order file is only loaded for --compile --bytecode");
         let encoder =
-            crate::bundle_v2::dispatch::BytecodeLinkEncoderHandle::new(table, order, c.options.aot);
+            crate::bundle_v2::dispatch::BytecodeLinkEncoderHandle::new(
+                table,
+                order,
+                c.options.aot,
+            );
         linked_bytecode_chunks
             .sort_by_key(|&(chunk_index, _, _)| output_files.output_files[chunk_index].load_order);
         // An entry function of the compiled program takes the place of the code of each of its entry points, which are empty:
@@ -1452,14 +1441,10 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             .flat_map(|facts| facts.entry_points.iter())
             .filter_map(|path| {
                 let sources = c.parse_graph().input_files.items_source();
-                linked_bytecode_chunks
-                    .iter()
-                    .position(|&(chunk_index, _, _)| {
-                        let chunk = &chunks[chunk_index];
-                        chunk.is_entry_point()
-                            && *sources[chunk.entry_point.source_index() as usize].path.text
-                                == **path
-                    })
+                linked_bytecode_chunks.iter().position(|&(chunk_index, _, _)| {
+                    let chunk = &chunks[chunk_index];
+                    chunk.is_entry_point() && *sources[chunk.entry_point.source_index() as usize].path.text == **path
+                })
             })
             .map(|position| position as u32)
             .collect();
@@ -1512,14 +1497,8 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         let engine = c.facts.as_mut().and_then(|facts| facts.engine.take());
         if let Some(typed) = c.facts.as_ref().and_then(|facts| facts.typed.as_deref()) {
             let is_set = match engine {
-                Some(engine) => engine.finish().is_some_and(|prepared| {
-                    linked
-                        .encoder
-                        .set_prepared_typed_program(prepared, &typed_modules)
-                }),
-                None => linked
-                    .encoder
-                    .set_typed_program(typed, &typed_modules, &replaced_strings),
+                Some(engine) => engine.finish().is_some_and(|prepared| linked.encoder.set_prepared_typed_program(prepared, &typed_modules)),
+                None => linked.encoder.set_typed_program(typed, &typed_modules, &replaced_strings),
             };
             if !is_set {
                 add_aot_build_errors(c, linked.encoder.take_build_errors());
@@ -1826,47 +1805,87 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             is_executable: false,
             ..Default::default()
         }));
+        if let Some(bytes) = runtime_use(c) {
+            result.push(options::OutputFile::init(options::OutputFileInit {
+                output_path: b".runtime-use".to_vec().into_boxed_slice(),
+                input_path: Box::default(),
+                input_loader: Loader::File,
+                hash: None,
+                output_kind: options::OutputKind::RuntimeUse,
+                loader: Loader::File,
+                size: Some(bytes.len()),
+                display_size: bytes.len() as u32,
+                data: options::OutputFileData::Buffer { data: bytes },
+                side: None,
+                entry_point_index: None,
+                is_executable: false,
+                ..Default::default()
+            }));
+        }
     }
     debug_assert_no_placeholder_left(c, &result);
     Ok(result)
 }
 
-fn builtin_modules_of_compiled_entry_point<'a>(
-    c: &'a LinkerContext,
-    chunk: &Chunk,
-) -> &'a [Box<[u8]>] {
-    let Some(facts) = c
-        .facts
-        .as_ref()
-        .filter(|facts| facts.typed.is_some() && chunk.is_entry_point())
-    else {
+fn import_resolved_at_run_time(c: &LinkerContext) -> Option<&'static [u8]> {
+    let import_records = c.graph.ast.items_import_records();
+    let records = c.graph.reachable_files.iter().filter_map(|source_index| import_records.get(source_index.get() as usize));
+    records.flat_map(|records| records.as_slice()).find_map(|record| {
+        let specifier: &'static [u8] = record.path.text;
+        let loads_code = matches!(record.kind, bun_ast::ImportKind::Stmt | bun_ast::ImportKind::Require | bun_ast::ImportKind::Dynamic);
+        let is_builtin = record.tag != bun_ast::ImportRecordTag::None
+            || strings::has_prefix(specifier, b"node:")
+            || strings::has_prefix(specifier, b"bun:")
+            || bun_resolve_builtins::HardcodedModule::Alias::get(specifier, crate::options::Target::Bun, Default::default()).is_some();
+        let is_left = loads_code
+            && !record.source_index.is_valid()
+            && !specifier.is_empty()
+            && !record.path.is_disabled
+            && !record.flags.contains(bun_ast::ImportRecordFlags::IS_UNUSED)
+            && !is_builtin;
+        is_left.then_some(specifier)
+    })
+}
+
+fn runtime_use(c: &LinkerContext) -> Option<Box<[u8]>> {
+    let facts = c.facts.as_ref()?.runtime_use.as_deref()?;
+    let loaders = c.parse_graph().input_files.items_loader();
+    let opened_by: Option<[&[u8]; 2]> = if loaders.contains(&Loader::Napi) {
+        Some([&b"a native addon"[..], &b""[..]])
+    } else {
+        import_resolved_at_run_time(c).map(|specifier| [&b"an import that is resolved at run time: "[..], specifier])
+    };
+    let mut text = match opened_by {
+        Some([why, specifier]) if facts == b"closed" || facts.starts_with(b"closed\n") => [&b"open "[..], why, specifier, &facts[b"closed".len()..]].concat(),
+        _ => facts.to_vec(),
+    };
+    if text.last().is_some_and(|&last| last != b'\n') {
+        text.push(b'\n');
+    }
+    let mut loaders: Vec<&'static str> = loaders.iter().map(|&loader| loader.into()).collect();
+    loaders.sort_unstable();
+    loaders.dedup();
+    for loader in loaders {
+        text.extend_from_slice(b"loader ");
+        text.extend_from_slice(loader.as_bytes());
+        text.push(b'\n');
+    }
+    Some(text.into_boxed_slice())
+}
+
+fn builtin_modules_of_compiled_entry_point<'a>(c: &'a LinkerContext, chunk: &Chunk) -> &'a [Box<[u8]>] {
+    let Some(facts) = c.facts.as_ref().filter(|facts| facts.typed.is_some() && chunk.is_entry_point()) else {
         return &[];
     };
-    let path = c.parse_graph().input_files.items_source()
-        [chunk.entry_point.source_index() as usize]
-        .path
-        .text;
-    let entry_point = facts
-        .entry_points
-        .iter()
-        .position(|compiled| **compiled == *path);
-    entry_point
-        .and_then(|entry_point| facts.builtin_modules_of_entry_points.get(entry_point))
-        .map_or(&[], Vec::as_slice)
+    let path = c.parse_graph().input_files.items_source()[chunk.entry_point.source_index() as usize].path.text;
+    let entry_point = facts.entry_points.iter().position(|compiled| **compiled == *path);
+    entry_point.and_then(|entry_point| facts.builtin_modules_of_entry_points.get(entry_point)).map_or(&[], Vec::as_slice)
 }
 
 fn with_aot_tokens(source_map: &[u8], tokens: &[u8]) -> Box<[u8]> {
     let end = strings::last_index_of_char(source_map, b'}').unwrap_or(source_map.len());
     let body = source_map[..end].trim_ascii_end();
-    [
-        body,
-        b",\n  \"x_bun_aot\": ",
-        tokens,
-        b"\n",
-        &source_map[end..],
-    ]
-    .concat()
-    .into_boxed_slice()
+    [body, b",\n  \"x_bun_aot\": ", tokens, b"\n", &source_map[end..]].concat().into_boxed_slice()
 }
 
 fn add_aot_build_errors(c: &mut LinkerContext, errors: Vec<crate::bytecode_order::AotBuildError>) {
@@ -1883,16 +1902,8 @@ fn add_aot_build_errors(c: &mut LinkerContext, errors: Vec<crate::bytecode_order
         text.extend_from_slice(&error.message);
         let location = (!error.path.is_empty()).then(|| bun_ast::Location {
             file: std::borrow::Cow::Owned(error.path),
-            line: if error.line == 0 {
-                -1
-            } else {
-                error.line as i32
-            },
-            column: if error.line == 0 {
-                -1
-            } else {
-                error.column as i32
-            },
+            line: if error.line == 0 { -1 } else { error.line as i32 },
+            column: if error.line == 0 { -1 } else { error.column as i32 },
             ..Default::default()
         });
         let log = c.log_mut();

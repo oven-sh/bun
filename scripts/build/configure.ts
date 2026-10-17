@@ -30,7 +30,7 @@ import {
   resolveConfig,
 } from "./config.ts";
 import { BuildError } from "./error.ts";
-import { orderFilePath, usesOrderFile } from "./flags.ts";
+import { islandsPlanPath, orderFilePath, usesOrderFile } from "./flags.ts";
 import { mkdirAll, writeIfChanged } from "./fs.ts";
 import { ensureMacosSdk } from "./macos-sdk.ts";
 import { ensureNinja } from "./ninja-release.ts";
@@ -559,6 +559,7 @@ async function generate<N extends string | undefined>(
   if (usesOrderFile(cfg) && !existsSync(orderFilePath(cfg))) {
     writeIfChanged(orderFilePath(cfg), "# no order file yet — an empty file is a no-op for the linker\n");
   }
+  if (cfg.islands && !existsSync(islandsPlanPath(cfg))) writeIfChanged(islandsPlanPath(cfg), "no plan yet\n");
   mark("orderFile");
 
   const ninjaFile = ninjaPath;

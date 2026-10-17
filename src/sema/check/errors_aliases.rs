@@ -548,10 +548,7 @@ impl Checker<'_, '_> {
         // only apply to JavaScript and `isolatedModules`.
         let meanings =
             SymFlags::VALUE | SymFlags::EXPORT_VALUE | SymFlags::TYPE | SymFlags::NAMESPACE;
-        if !hir.is_js
-            && !files.check_options(file).isolated_modules
-            && !files.flags(symbol).intersects(meanings)
-        {
+        if !hir.is_js && !files.check_options(file).isolated_modules && !files.flags(symbol).intersects(meanings) {
             return;
         }
         let target = self.resolve_alias(sym);
@@ -1305,20 +1302,12 @@ impl Checker<'_, '_> {
             if site.is_for_augmentation {
                 let path = self.atoms().bytes(importing.untyped_import_files[index].0);
                 self.error_at(at, 2665, &[Arg::Atom(spec), Arg::Path(path)]);
-            } else if files.check_options(file).no_implicit_any
-                && !site.is_not_validated
-                && !is_side_effect
-            {
+            } else if files.check_options(file).no_implicit_any && !site.is_not_validated && !is_side_effect {
                 self.error_on_implicit_any_module(file, spec, mode, at);
             }
             return false;
         }
-        if site.is_not_validated
-            || options
-                .host_modules_without_paths
-                .iter()
-                .any(|name| name == text)
-        {
+        if site.is_not_validated || options.host_modules_without_paths.iter().any(|name| name == text) {
             return false;
         }
         // "See if this was possibly a projectReference redirect"

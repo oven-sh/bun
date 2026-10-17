@@ -1,9 +1,4 @@
-import {
-  accessorsReadOffReceiversOfManyKinds,
-  calledConstructedAndExtended,
-  calledOnReceiversOfManyKinds,
-  heldAndCalledWithoutTheirHolder,
-} from "./generated/builtins-vs-running-bun";
+import { accessorsReadOffReceiversOfManyKinds, calledConstructedAndExtended, calledOnReceiversOfManyKinds, heldAndCalledWithoutTheirHolder } from "./generated/builtins-vs-running-bun";
 import { generated } from "./generated/run-generated";
 
 generated(

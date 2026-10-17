@@ -358,10 +358,7 @@ describe.concurrent("formats that show a hint", () => {
 });
 
 describe.concurrent("bun/aot", () => {
-  const project = {
-    "tsconfig.json": `{ "compilerOptions": { "strict": true } }`,
-    "bunfig.toml": "[lint]\naot = true\n",
-  };
+  const project = { "tsconfig.json": `{ "compilerOptions": { "strict": true } }`, "bunfig.toml": "[lint]\naot = true\n" };
 
   test("where an any comes from", async () => {
     const code = `declare function double(n: number): number;\nconst body = JSON.parse("{}");\ndouble(body.visits);\nexport {};\n`;

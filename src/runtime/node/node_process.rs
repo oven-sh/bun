@@ -239,7 +239,7 @@ mod _impl {
                 // the level as a constant: there nobody gave the flag, and a list that names it
                 // cannot be handed on to another Worker.
                 if !bun_core::CODE_GENERATION_FROM_STRINGS_DISALLOWED_BY_BUILD
-                    && bun_core::code_generation_from_strings()
+                    && bun_core::code_generation_from_strings_by_flags()
                         == bun_core::CodeGenerationFromStrings::Strict
                 {
                     array.push(

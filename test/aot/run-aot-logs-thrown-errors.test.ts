@@ -16,13 +16,7 @@ console.log("done");
 };
 
 async function run(dir: string, log: string | undefined) {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "run", "--aot", "main.ts"],
-    cwd: dir,
-    env: { ...bunEnv, BUN_AOT_TYPE_ERROR_LOG: log },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  await using proc = Bun.spawn({ cmd: [bunExe(), "run", "--aot", "main.ts"], cwd: dir, env: { ...bunEnv, BUN_AOT_TYPE_ERROR_LOG: log }, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
@@ -42,33 +36,10 @@ test("BUN_AOT_TYPE_ERROR_LOG=stderr", async () => {
 test("a file", async () => {
   using dir = tempDir("run-aot-logs-thrown-errors", files);
   const { stdout, stderr, exitCode } = await run(String(dir), join(String(dir), "log.jsonl"));
-  const lines = readFileSync(join(String(dir), "log.jsonl"), "utf8")
-    .trim()
-    .split("\n")
-    .map(line => JSON.parse(line));
+  const lines = readFileSync(join(String(dir), "log.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line));
   expect(lines).toEqual([
-    expect.objectContaining({
-      aot: "type-error",
-      kind: "enter-function",
-      file: "main.ts",
-      line: 2,
-      col: 1,
-      fn: "double",
-      expected: "number",
-      got: "string",
-      action: "threw",
-      count: 1,
-    }),
-    expect.objectContaining({
-      aot: "type-error",
-      file: "main.ts",
-      line: 5,
-      col: 52,
-      expected: "number",
-      got: "string",
-      action: "threw",
-      count: 1,
-    }),
+    expect.objectContaining({ aot: "type-error", kind: "enter-function", file: "main.ts", line: 2, col: 1, fn: "double", expected: "number", got: "string", action: "threw", count: 1 }),
+    expect.objectContaining({ aot: "type-error", file: "main.ts", line: 5, col: 52, expected: "number", got: "string", action: "threw", count: 1 }),
   ]);
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "done\n", stderr: "", exitCode: 0 });
 });

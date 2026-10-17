@@ -245,9 +245,7 @@ pub fn assignment_declaration_kind(hir: &File, e: ExprId) -> JsDeclarationKind {
         return JsDeclarationKind::None;
     }
     match assignment_declaration_kind_in_javascript(hir, e) {
-        JsDeclarationKind::ThisProperty | JsDeclarationKind::ObjectDefinePropertyValue => {
-            JsDeclarationKind::None
-        }
+        JsDeclarationKind::ThisProperty | JsDeclarationKind::ObjectDefinePropertyValue => JsDeclarationKind::None,
         exported => exported,
     }
 }
@@ -1595,11 +1593,7 @@ impl<S: Storage> BoundIn<S> {
         if flags.contains(SymFlags::TYPE_PARAMETER) && !meaning.intersects(SymFlags::TYPE) {
             return false;
         }
-        if self.uses_ecmascript_bindings
-            && matches!(from, ScopeKind::Param(_))
-            && ((meaning & flags).contains(SymFlags::FUNCTION) || flags.contains(SymFlags::ALIAS))
-            && !flags.contains(SymFlags::PARAMETER)
-        {
+        if self.uses_ecmascript_bindings && matches!(from, ScopeKind::Param(_)) && ((meaning & flags).contains(SymFlags::FUNCTION) || flags.contains(SymFlags::ALIAS)) && !flags.contains(SymFlags::PARAMETER) {
             return false;
         }
         let f = match from {
@@ -1773,11 +1767,7 @@ impl Bound<'_> {
     pub fn is_const(&self, hir: &File, d: VarDeclId) -> bool {
         match hir[d].kind {
             VarKind::Const => true,
-            VarKind::Var => self
-                .pat_symbol
-                .get(hir[d].pat.idx())
-                .and_then(|symbol| symbol.some())
-                .is_some_and(|symbol| self.symbols[symbol.idx()].flags.contains(SymFlags::CONST)),
+            VarKind::Var => self.pat_symbol.get(hir[d].pat.idx()).and_then(|symbol| symbol.some()).is_some_and(|symbol| self.symbols[symbol.idx()].flags.contains(SymFlags::CONST)),
             VarKind::Let | VarKind::Using | VarKind::AwaitUsing => false,
         }
     }

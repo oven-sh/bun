@@ -861,8 +861,7 @@ fn resolve(
 
     let owned: SmallVec<[Utf8Bytes<'_>; 8]> = views.iter().map(JSStringView::to_utf8).collect();
     if owned.iter().any(Utf8Bytes::is_owned) {
-        let wide: SmallVec<[std::borrow::Cow<'_, [u16]>; 8]> =
-            views.iter().rev().map(units_of).collect();
+        let wide: SmallVec<[std::borrow::Cow<'_, [u16]>; 8]> = views.iter().rev().map(units_of).collect();
         let paths: SmallVec<[&[u16]; 8]> = wide.iter().map(|units| &units[..]).collect();
         let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
         return resolve_js_t::<u16>(global_object, pool, is_windows, &paths);

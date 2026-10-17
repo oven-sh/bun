@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
+import { describe, test } from "./supported";
 import { bunEnv, bunExe, isASAN, isLinux, tempDir } from "harness";
 import { join } from "node:path";
 import { withoutCoreDump } from "./run-programs";
-import { describe, test } from "./supported";
 
 // An ahead-of-time compiled program keeps most references between objects in 32 bits, so its objects live in one reserved range of
 // address space. Each Worker has a range of its own. These tests shrink the ranges to see what happens at their end.
@@ -72,33 +72,18 @@ parentPort!.postMessage("done");
 };
 
 async function run(cmd: string[], cwd: string, env: Record<string, string> = {}) {
-  await using proc = Bun.spawn({
-    cmd,
-    cwd,
-    env: { ...bunEnv, BUN_CRASH_REPORT_URL: "", ...env },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  await using proc = Bun.spawn({ cmd, cwd, env: { ...bunEnv, BUN_CRASH_REPORT_URL: "", ...env }, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
 
 async function build(cwd: string, ...moreEntryPoints: string[]) {
-  const built = await run(
-    [bunExe(), "build", "--compile", "--aot", "program.ts", ...moreEntryPoints, "--outfile", "program"],
-    cwd,
-  );
-  expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({
-    stderr: expect.not.stringMatching(/^error\b/m),
-    exitCode: 0,
-  });
+  const built = await run([bunExe(), "build", "--compile", "--aot", "program.ts", ...moreEntryPoints, "--outfile", "program"], cwd);
+  expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
   return join(cwd, "program");
 }
 
-if (isASAN)
-  console.error(
-    "SKIPPED: the tests of heap-limit.test.ts under `ulimit -v`: a program built with AddressSanitizer does not start there",
-  );
+if (isASAN) console.error("SKIPPED: the tests of heap-limit.test.ts under `ulimit -v`: a program built with AddressSanitizer does not start there");
 
 describe.concurrent("the address space for objects of a compiled program", () => {
   test("a program that keeps more objects alive than fit stops and says why", async () => {
@@ -127,18 +112,14 @@ describe.concurrent("the address space for objects of a compiled program", () =>
   test("two Workers each keep more alive than half a range holds", async () => {
     using folder = tempDir("aot-heap-limit", twoWorkersThatKeepMoreThanHalfARange);
     const program = await build(String(folder), "worker.ts");
-    const { stdout, stderr, exitCode } = await run([program], String(folder), {
-      BUN_JSC_markedBlockCageSizeInMB: "128",
-    });
+    const { stdout, stderr, exitCode } = await run([program], String(folder), { BUN_JSC_markedBlockCageSizeInMB: "128" });
     expect(stderr).not.toContain("FATAL");
     expect({ stdout, exitCode }).toEqual({ stdout: "3002300000,3002300000 2000000000\n", exitCode: 0 });
   }, 120_000);
 
-  test.skipIf(!isLinux || isASAN)(
-    "where address space is limited a Worker shares the range of the main thread",
-    async () => {
-      using folder = tempDir("aot-heap-limit", {
-        "program.ts": `import { readFileSync } from "node:fs";
+  test.skipIf(!isLinux || isASAN)("where address space is limited a Worker shares the range of the main thread", async () => {
+    using folder = tempDir("aot-heap-limit", {
+      "program.ts": `import { readFileSync } from "node:fs";
 import { Worker } from "node:worker_threads";
 type Entry = { id: number; next: Entry | null };
 const free = () => 64 * 1024 * 1024 - Number(/VmSize:\\s+(\\d+) kB/.exec(readFileSync("/proc/self/status", "utf8"))![1]);
@@ -152,7 +133,7 @@ new Worker("./worker.ts").once("message", (sum: number) => {
   console.log(after > before / 2 ? "shares" : "took " + (before - after) + " kB of " + before, sum, own);
 });
 `,
-        "worker.ts": `import { parentPort } from "node:worker_threads";
+      "worker.ts": `import { parentPort } from "node:worker_threads";
 type Entry = { id: number; next: Entry | null };
 let head: Entry | null = null;
 for (let i = 0; i < 100_000; i++) head = { id: i, next: head };
@@ -160,19 +141,15 @@ let sum = 0;
 for (let entry: Entry | null = head; entry; entry = entry.next) sum += entry.id;
 parentPort!.postMessage(sum);
 `,
-      });
-      await build(String(folder), "worker.ts");
-      const { stdout, exitCode } = await run(["sh", "-c", "ulimit -v 67108864 && exec ./program"], String(folder));
-      expect({ stdout, exitCode }).toEqual({ stdout: "shares 4999950000 4999950000\n", exitCode: 0 });
-    },
-    120_000,
-  );
+    });
+    await build(String(folder), "worker.ts");
+    const { stdout, exitCode } = await run(["sh", "-c", "ulimit -v 67108864 && exec ./program"], String(folder));
+    expect({ stdout, exitCode }).toEqual({ stdout: "shares 4999950000 4999950000\n", exitCode: 0 });
+  }, 120_000);
 
-  test.skipIf(!isLinux || isASAN)(
-    "where address space is limited much of it is left for Workers and their threads",
-    async () => {
-      using folder = tempDir("aot-heap-limit", {
-        "program.ts": `import { readFileSync } from "node:fs";
+  test.skipIf(!isLinux || isASAN)("where address space is limited much of it is left for Workers and their threads", async () => {
+    using folder = tempDir("aot-heap-limit", {
+      "program.ts": `import { readFileSync } from "node:fs";
 import { Worker } from "node:worker_threads";
 const limit = 8 * 1024 * 1024;
 const free = limit - Number(/VmSize:\\s+(\\d+) kB/.exec(readFileSync("/proc/self/status", "utf8"))![1]);
@@ -187,7 +164,7 @@ for (const worker of workers) {
   });
 }
 `,
-        "worker.ts": `import { parentPort } from "node:worker_threads";
+      "worker.ts": `import { parentPort } from "node:worker_threads";
 type Entry = { id: number; next: Entry | null };
 let head: Entry | null = null;
 for (let i = 0; i < 100_000; i++) head = { id: i, next: head };
@@ -197,28 +174,15 @@ await fetch("http://127.0.0.1:1/").catch(() => {});
 parentPort!.once("message", () => {});
 parentPort!.postMessage(sum);
 `,
-      });
-      await build(String(folder), "worker.ts");
-      const { stdout, stderr, exitCode } = await run(
-        ["sh", "-c", "ulimit -v 8388608 && exec ./program"],
-        String(folder),
-      );
-      expect({ stdout, stderr, exitCode }).toEqual({
-        stdout: "roomy 4999950000,4999950000,4999950000,4999950000\n",
-        stderr: "",
-        exitCode: 0,
-      });
-    },
-    120_000,
-  );
+    });
+    await build(String(folder), "worker.ts");
+    const { stdout, stderr, exitCode } = await run(["sh", "-c", "ulimit -v 8388608 && exec ./program"], String(folder));
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "roomy 4999950000,4999950000,4999950000,4999950000\n", stderr: "", exitCode: 0 });
+  }, 120_000);
 
-  test.skipIf(!isLinux)(
-    "the range of a Worker that has ended is given back",
-    async () => {
-      using folder = tempDir("aot-heap-limit", sixWorkersOneAfterTheOther);
-      const { stdout, exitCode } = await run([await build(String(folder), "worker.ts")], String(folder));
-      expect({ stdout, exitCode }).toEqual({ stdout: "given back\n", exitCode: 0 });
-    },
-    120_000,
-  );
+  test.skipIf(!isLinux)("the range of a Worker that has ended is given back", async () => {
+    using folder = tempDir("aot-heap-limit", sixWorkersOneAfterTheOther);
+    const { stdout, exitCode } = await run([await build(String(folder), "worker.ts")], String(folder));
+    expect({ stdout, exitCode }).toEqual({ stdout: "given back\n", exitCode: 0 });
+  }, 120_000);
 });

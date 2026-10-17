@@ -1193,6 +1193,9 @@ pub(crate) mod command {
             // standalone executable silently drops `BUN_OPTIONS` flags.
             let original_argv_len = bun::argv().len();
             let bun_options_argc = bun::bun_options_argc();
+            if graph.runtime_options.runs_static_code_only {
+                bun_core::disallow_code_generation_in_trimmed_executable();
+            }
             if !graph.compile_exec_argv.is_empty() || bun_options_argc > 0 {
                 let mut argv_list: Vec<&'static bun_core::ZStr> = bun::argv().to_vec();
                 if !graph.compile_exec_argv.is_empty() {

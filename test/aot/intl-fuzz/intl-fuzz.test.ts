@@ -4,16 +4,9 @@
 //   AOT_INTL_FUZZ_SWEEP_PARTS=<n>   how many parts of the sweep over every combination and locale (default 2 of over 9,000)
 //   AOT_INTL_FUZZ_FIRST_PART=<n>    the first part (default 1234)
 import { expect } from "bun:test";
-import { bunEnv, bunExe } from "harness";
 import { test } from "../supported";
-import {
-  generateProgram,
-  generateSweepProgram,
-  generateTypicalProgram,
-  numberOfSweepPrograms,
-  numberOfTypicalPrograms,
-  typicalFormattersWithoutAPattern,
-} from "./generate";
+import { bunEnv, bunExe } from "harness";
+import { generateProgram, generateSweepProgram, generateTypicalProgram, numberOfSweepPrograms, numberOfTypicalPrograms, typicalFormattersWithoutAPattern } from "./generate";
 import { buildAndRun } from "./sweep";
 
 const programs = Number(process.env.AOT_INTL_FUZZ_PROGRAMS ?? 3);
@@ -25,12 +18,7 @@ function agreesWithICU(name: string, generate: () => string, expectedWithoutAPat
   test.concurrent(
     `constant formatters agree with ICU, ${name}`,
     async () => {
-      const { said, differences, refused, comparisons, formatters, withAPattern } = await buildAndRun(
-        bunExe(),
-        name,
-        generate(),
-        bunEnv,
-      );
+      const { said, differences, refused, comparisons, formatters, withAPattern } = await buildAndRun(bunExe(), name, generate(), bunEnv);
       expect({ said, differences, refused }).toEqual({ said: [], differences: 0, refused: 0 });
       expect(comparisons).toBeGreaterThan(100_000);
       if (expectedWithoutAPattern !== undefined) expect(formatters - withAPattern).toBe(expectedWithoutAPattern);
@@ -39,13 +27,6 @@ function agreesWithICU(name: string, generate: () => string, expectedWithoutAPat
   );
 }
 
-for (let seed = firstSeed; seed < firstSeed + programs; seed++)
-  agreesWithICU(`seed ${seed}`, () => generateProgram(seed));
-for (let part = firstPart; part < Math.min(firstPart + parts, numberOfSweepPrograms()); part++)
-  agreesWithICU(`part ${part} of the sweep`, () => generateSweepProgram(part));
-for (let part = 0; part < numberOfTypicalPrograms; part++)
-  agreesWithICU(
-    `part ${part} of what programs usually ask for`,
-    () => generateTypicalProgram(part),
-    typicalFormattersWithoutAPattern[part],
-  );
+for (let seed = firstSeed; seed < firstSeed + programs; seed++) agreesWithICU(`seed ${seed}`, () => generateProgram(seed));
+for (let part = firstPart; part < Math.min(firstPart + parts, numberOfSweepPrograms()); part++) agreesWithICU(`part ${part} of the sweep`, () => generateSweepProgram(part));
+for (let part = 0; part < numberOfTypicalPrograms; part++) agreesWithICU(`part ${part} of what programs usually ask for`, () => generateTypicalProgram(part), typicalFormattersWithoutAPattern[part]);

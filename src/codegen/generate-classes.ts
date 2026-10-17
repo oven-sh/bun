@@ -657,13 +657,7 @@ function assertType(typeName: string, name: string, type: string | undefined, va
   if (!type) return "";
   const tests = type.split("|").map(part => {
     const word = part.trim();
-    const primitive = {
-      string: "isString",
-      number: "isNumber",
-      boolean: "isBoolean",
-      undefined: "isUndefined",
-      null: "isNull",
-    }[word];
+    const primitive = { string: "isString", number: "isNumber", boolean: "isBoolean", undefined: "isUndefined", null: "isNull" }[word];
     return primitive ? `${value}.${primitive}()` : `isInstanceOfClassNamed(${value}, ${JSON.stringify(word)}_s)`;
   });
   if (mayBeEmpty) tests.unshift(`${value}.isEmpty()`);
@@ -768,8 +762,7 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
 }`.trim(),
         );
         if (proto[name].writable) {
-          if (proto[name].type)
-            throw new Error(`${typeName}.${name}: anything may be stored to a writable getter, so it has no type`);
+          if (proto[name].type) throw new Error(`${typeName}.${name}: anything may be stored to a writable getter, so it has no type`);
           rows.push(
             `
 JSC_DEFINE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue encodedThisValue, EncodedJSValue encodedValue, PropertyName attributeName))
@@ -1491,15 +1484,7 @@ function cachedGetters(classes: ClassDefinition[]) {
       .map(([name, field]) => {
         const member = typeof field.cache === "string" ? field.cache : name;
         const mayBeRedefined = field.configurable ?? obj.configurable ?? false;
-        return {
-          typeName: obj.name,
-          number,
-          name,
-          member,
-          mayBeRedefined,
-          offset: firstOffset + 8 * members.indexOf(member),
-          type: field.type ?? "",
-        };
+        return { typeName: obj.name, number, name, member, mayBeRedefined, offset: firstOffset + 8 * members.indexOf(member), type: field.type ?? "" };
       });
   });
 }
@@ -2631,9 +2616,7 @@ function writeCppSerializers() {
       ...cachedGetters(classes).filter(getter => !getter.mayBeRedefined),
       ...classes.flatMap((obj, number) =>
         Object.entries(obj.proto)
-          .filter(
-            ([, field]) => "getter" in field && !field.cache && field.type && !(field.configurable ?? obj.configurable),
-          )
+          .filter(([, field]) => "getter" in field && !field.cache && field.type && !(field.configurable ?? obj.configurable))
           .map(([name, field]) => ({ typeName: obj.name, number, name, offset: 0, type: field.type })),
       ),
     ]

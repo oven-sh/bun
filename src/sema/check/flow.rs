@@ -673,14 +673,8 @@ impl About {
         }
         let Some(first) = reference.path.first() else {
             let is_named_whole = match is_hashed {
-                true => {
-                    About::may_contain(roots_with_any_property, root, 0)
-                        || About::may_contain(pairs, root, About::ALONE)
-                }
-                false => self
-                    .chains
-                    .iter()
-                    .any(|chain| chain.0 == root && (chain.1 == 0 || chain.1 == About::ALONE)),
+                true => About::may_contain(roots_with_any_property, root, 0) || About::may_contain(pairs, root, About::ALONE),
+                false => self.chains.iter().any(|chain| chain.0 == root && (chain.1 == 0 || chain.1 == About::ALONE)),
             };
             return if is_named_whole || self.state & About::PROPERTY_NARROWS_ROOT != 0 {
                 TestRelevance::Related
@@ -695,20 +689,10 @@ impl About {
             AccessedName::None | AccessedName::Unresolved(_) => 0,
         };
         let is_related = match is_hashed {
-            true => {
-                About::may_contain(roots_with_any_property, root, 0)
-                    || About::may_contain(pairs, root, first)
-            }
-            false => self
-                .chains
-                .iter()
-                .any(|chain| chain.0 == root && (chain.1 == 0 || chain.1 == first)),
+            true => About::may_contain(roots_with_any_property, root, 0) || About::may_contain(pairs, root, first),
+            false => self.chains.iter().any(|chain| chain.0 == root && (chain.1 == 0 || chain.1 == first)),
         };
-        if is_related {
-            TestRelevance::Related
-        } else {
-            unrelated
-        }
+        if is_related { TestRelevance::Related } else { unrelated }
     }
 }
 
@@ -2704,12 +2688,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// Whether `narrow` may narrow `reference` by `expr`, the test of the flow node `flow`. If not,
     /// it would run no query and return its input type. It may still ask whether a variable is
     /// assigned.
-    fn test_relevance(
-        &mut self,
-        reference: &Reference,
-        flow: FlowId,
-        expr: ExprId,
-    ) -> TestRelevance {
+    fn test_relevance(&mut self, reference: &Reference, flow: FlowId, expr: ExprId) -> TestRelevance {
         let file = reference.file;
         // Every comparison asks for the name of the outermost key of the reference.
         if reference.unresolved.get() != 0 || self.has_order_dependent_assignment_marks(file) {
@@ -2968,9 +2947,7 @@ impl<'p, 's> Checker<'p, 's> {
                     first = match hir[index].kind {
                         _ if is_parenthesized(hir, index) => 0,
                         ExprKind::String(name) => name.0.wrapping_add(1),
-                        ExprKind::Number(n) => {
-                            self.number_name(hir.numbers[n as usize]).0.wrapping_add(1)
-                        }
+                        ExprKind::Number(n) => self.number_name(hir.numbers[n as usize]).0.wrapping_add(1),
                         _ => 0,
                     };
                     is_link = chain != Chain::No;
@@ -6690,10 +6667,7 @@ impl<'p, 's> Checker<'p, 's> {
             let element = self.union(&[element, added]);
             self.evolving_array(element)
         };
-        if (self.p.context_free_expr_types)
-            .get(&self.task, &(file, typed))
-            .is_some()
-        {
+        if (self.p.context_free_expr_types).get(&self.task, &(file, typed)).is_some() {
             self.evolving_arrays_grown.insert((ty, file, value), grown);
         }
         grown
@@ -6740,9 +6714,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if self.flow_memo.quiet_index_file != Some(file) {
                     self.index_quiet_nodes(file);
                 }
-                if let Some((arrived_at, passed)) =
-                    self.before_quiet_nodes(file, quiet_key, !walk.reference.path.is_empty(), flow)
-                {
+                if let Some((arrived_at, passed)) = self.before_quiet_nodes(file, quiet_key, !walk.reference.path.is_empty(), flow) {
                     walk.steps = walk.steps.saturating_add(passed);
                     flow = arrived_at;
                     continue;
@@ -6812,12 +6784,8 @@ impl<'p, 's> Checker<'p, 's> {
                     };
                     let then = match relevance {
                         TestRelevance::Related => Some(Pending::Cond(expr, sense)),
-                        TestRelevance::RelatedByProperty => {
-                            Some(Pending::PropertyCond(expr, sense))
-                        }
-                        TestRelevance::UnrelatedWithUnion => {
-                            Some(Pending::UnrelatedCond(expr, sense))
-                        }
+                        TestRelevance::RelatedByProperty => Some(Pending::PropertyCond(expr, sense)),
+                        TestRelevance::UnrelatedWithUnion => Some(Pending::UnrelatedCond(expr, sense)),
                         TestRelevance::Unrelated => None,
                     };
                     if let Some(then) = then {
@@ -7092,22 +7060,16 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 Pending::Nothing => seen,
                 // Only `getTypeAtFlowCondition` returns `never` as it is.
-                Pending::Cond(..) | Pending::UnrelatedCond(..) | Pending::PropertyCond(..)
-                    if ty.is_never() =>
-                {
-                    seen
-                }
+                Pending::Cond(..) | Pending::UnrelatedCond(..) | Pending::PropertyCond(..) if ty.is_never() => seen,
                 Pending::UnrelatedCond(..) if seen == TypeId::ANY || !self.is_any(seen) => seen,
                 Pending::PropertyCond(..)
-                    if (seen == TypeId::ANY || !self.is_any(seen))
-                        && !self.is_union(seen)
-                        && !self.is_union(walk.declared) =>
+                    if (seen == TypeId::ANY || !self.is_any(seen)) && !self.is_union(seen) && !self.is_union(walk.declared) =>
                 {
                     seen
                 }
-                Pending::Cond(expr, sense)
-                | Pending::UnrelatedCond(expr, sense)
-                | Pending::PropertyCond(expr, sense) => self.narrow(reference, seen, expr, sense),
+                Pending::Cond(expr, sense) | Pending::UnrelatedCond(expr, sense) | Pending::PropertyCond(expr, sense) => {
+                    self.narrow(reference, seen, expr, sense)
+                }
                 Pending::Switch(stmt, from, to) => {
                     self.narrow_by_switch(reference, seen, stmt, from as usize, to as usize)
                 }
@@ -7544,12 +7506,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getTypeOfDestructuredArrayElement`
-    fn get_type_of_destructured_array_element(
-        &mut self,
-        file: FileId,
-        ty: TypeId,
-        index: usize,
-    ) -> TypeId {
+    fn get_type_of_destructured_array_element(&mut self, file: FileId, ty: TypeId, index: usize) -> TypeId {
         if self.parts(ty).iter().all(|&t| self.is_tuple_like(t))
             && let Some(element_type) = self.get_tuple_element_type(file, ty, index)
         {
@@ -8144,15 +8101,10 @@ impl<'p, 's> Checker<'p, 's> {
                     match hir[at].kind {
                         ExprKind::NonNull(x) => at = x,
                         ExprKind::Assign { target, .. } => at = target,
-                        ExprKind::Binary {
-                            op: BinOp::Comma,
-                            right,
-                            ..
-                        } => at = right,
+                        ExprKind::Binary { op: BinOp::Comma, right, .. } => at = right,
                         ExprKind::Ident(name) => {
                             let is_resolved_here = bound.unchecked_assignment_targets.contains(&at);
-                            return (!is_resolved_here)
-                                .then(|| root_key(self.root_of_identifier(file, at, name)));
+                            return (!is_resolved_here).then(|| root_key(self.root_of_identifier(file, at, name)));
                         }
                         _ => return Some(0),
                     }
@@ -8166,18 +8118,11 @@ impl<'p, 's> Checker<'p, 's> {
         let bound = self.bound(file);
         let nodes = bound.flow.len();
         let (mut head, mut place) = (vec![u32::MAX; nodes], vec![0u32; nodes]);
-        let (mut stop, mut call, mut earlier_call) = (
-            vec![u32::MAX; nodes],
-            vec![u32::MAX; nodes],
-            vec![u32::MAX; nodes],
-        );
+        let (mut stop, mut call, mut earlier_call) = (vec![u32::MAX; nodes], vec![u32::MAX; nodes], vec![u32::MAX; nodes]);
         let mut about: FxHashMap<u32, Vec<u32>> = FxHashMap::default();
         let mut about_members: FxHashMap<u32, Vec<u32>> = FxHashMap::default();
         for (i, &node) in bound.flow.iter().enumerate() {
-            let (Flow::Assign { before, .. }
-            | Flow::ArrayMutation { before, .. }
-            | Flow::Call { before, .. }) = node
-            else {
+            let (Flow::Assign { before, .. } | Flow::ArrayMutation { before, .. } | Flow::Call { before, .. }) = node else {
                 continue;
             };
             let b = before.idx();
@@ -8208,43 +8153,23 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn quiet_member_root(&self, file: FileId, target: FlowTarget) -> Option<u32> {
         let hir = self.hir(file);
-        let FlowTarget::Expr(e) = target else {
-            return Some(0);
-        };
+        let FlowTarget::Expr(e) = target else { return Some(0) };
         let (mut at, mut is_member) = (e, false);
         loop {
             match hir[at].kind {
                 ExprKind::NonNull(x) => at = x,
                 ExprKind::Assign { target, .. } if !is_member => at = target,
-                ExprKind::Binary {
-                    op: BinOp::Comma,
-                    right,
-                    ..
-                } if !is_member => at = right,
-                ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => {
-                    (at, is_member) = (obj, true)
-                }
-                ExprKind::Ident(name) if is_member => {
-                    return Some(root_key(self.root_of_identifier(file, at, name)));
-                }
-                ExprKind::Call(_) | ExprKind::New(_) | ExprKind::This | ExprKind::Super
-                    if is_member =>
-                {
-                    return Some(0);
-                }
+                ExprKind::Binary { op: BinOp::Comma, right, .. } if !is_member => at = right,
+                ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => (at, is_member) = (obj, true),
+                ExprKind::Ident(name) if is_member => return Some(root_key(self.root_of_identifier(file, at, name))),
+                ExprKind::Call(_) | ExprKind::New(_) | ExprKind::This | ExprKind::Super if is_member => return Some(0),
                 _ if is_member => return None,
                 _ => return Some(0),
             }
         }
     }
 
-    fn before_quiet_nodes(
-        &mut self,
-        file: FileId,
-        key: u32,
-        has_path: bool,
-        flow: FlowId,
-    ) -> Option<(FlowId, u32)> {
+    fn before_quiet_nodes(&mut self, file: FileId, key: u32, has_path: bool, flow: FlowId) -> Option<(FlowId, u32)> {
         let bound = self.bound(file);
         let memo = &mut self.flow_memo;
         let head = memo.quiet_head[flow.idx()];
@@ -8270,28 +8195,14 @@ impl<'p, 's> Checker<'p, 's> {
                 .copied()
         };
         let about = memo.quiet_about.get(&key).and_then(nearest_of);
-        let about_members = memo
-            .quiet_about_members
-            .get(&key)
-            .filter(|_| has_path)
-            .and_then(nearest_of);
-        let nearest = [
-            memo.quiet_stop[flow.idx()],
-            call,
-            about.unwrap_or(u32::MAX),
-            about_members.unwrap_or(u32::MAX),
-        ]
-        .into_iter()
-        .filter(|&node| node != u32::MAX)
-        .max();
+        let about_members = memo.quiet_about_members.get(&key).filter(|_| has_path).and_then(nearest_of);
+        let nearest = [memo.quiet_stop[flow.idx()], call, about.unwrap_or(u32::MAX), about_members.unwrap_or(u32::MAX)].into_iter().filter(|&node| node != u32::MAX).max();
         let place = memo.quiet_place[flow.idx()];
         match nearest {
             Some(node) if node == flow.0 => None,
             Some(node) => Some((FlowId(node), place - memo.quiet_place[node as usize] - 1)),
             None => match bound.flow[head as usize] {
-                Flow::Assign { before, .. }
-                | Flow::ArrayMutation { before, .. }
-                | Flow::Call { before, .. } => Some((before, place)),
+                Flow::Assign { before, .. } | Flow::ArrayMutation { before, .. } | Flow::Call { before, .. } => Some((before, place)),
                 _ => None,
             },
         }

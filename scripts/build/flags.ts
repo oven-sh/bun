@@ -1610,6 +1610,14 @@ export function orderFilePath(cfg: Pick<Config, "buildDir">): string {
   return join(cfg.buildDir, "linker.order");
 }
 
+export function islandsPlanPath(cfg: Pick<Config, "buildDir">): string {
+  return join(cfg.buildDir, "islands.plan");
+}
+
+export function freshIslandsPlanPath(cfg: Config): string {
+  return join(cfg.buildDir, `${bunExeName(cfg)}${cfg.exeSuffix}.islands-plan`);
+}
+
 /**
  * Whether the link writes its map(s); mirrors the map flags above (linux: the
  * `-icf=safe` entry, darwin: `-dead_strip`, windows: `/lldmap` + `/map`).
@@ -1674,6 +1682,7 @@ export function linkDepends(cfg: Config): string[] {
       ? [join(cfg.cwd, "src/symbols.txt")]
       : [exportListPath(cfg), versionScriptPath(cfg)];
   if (usesOrderFile(cfg)) depends.push(orderFilePath(cfg));
+  if (cfg.islands) depends.push(islandsPlanPath(cfg));
   return depends;
 }
 

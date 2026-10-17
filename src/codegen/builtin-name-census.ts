@@ -46,11 +46,7 @@ function declares(node: ts.Identifier): boolean {
 function positionOf(node: ts.Identifier, declared: Set<string>): Position | undefined {
   if (isInType(node)) return undefined;
   const parent = node.parent as any;
-  if (
-    (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
-    (ts.isQualifiedName(parent) && parent.right === node)
-  )
-    return "Member";
+  if ((ts.isPropertyAccessExpression(parent) && parent.name === node) || (ts.isQualifiedName(parent) && parent.right === node)) return "Member";
   const isKey =
     parent.name === node &&
     (ts.isPropertyAssignment(parent) ||
@@ -61,13 +57,7 @@ function positionOf(node: ts.Identifier, declared: Set<string>): Position | unde
       ts.isPropertySignature(parent) ||
       ts.isMethodSignature(parent));
   if (isKey || (ts.isBindingElement(parent) && parent.propertyName === node)) return "Member";
-  if (
-    ts.isBindingElement(parent) &&
-    parent.name === node &&
-    !parent.propertyName &&
-    ts.isObjectBindingPattern(parent.parent)
-  )
-    return "Member";
+  if (ts.isBindingElement(parent) && parent.name === node && !parent.propertyName && ts.isObjectBindingPattern(parent.parent)) return "Member";
   if (ts.isShorthandPropertyAssignment(parent)) return "Member";
   if (declared.has(node.text)) return undefined;
   return ts.isCallExpression(parent) && parent.expression === node ? "Call" : "Value";
@@ -78,17 +68,9 @@ function positionOf(node: ts.Identifier, declared: Set<string>): Position | unde
  * `receiver`. That is so as long as internal/primordials.js says what it says here. Nothing: it does. Else what is no longer there.
  */
 export function uncurryThisMismatch(primordials: string): string | undefined {
-  const source = ts.createSourceFile(
-    primordials,
-    fs.readFileSync(primordials, "utf8"),
-    ts.ScriptTarget.ESNext,
-    true,
-    ts.ScriptKind.JS,
-  );
+  const source = ts.createSourceFile(primordials, fs.readFileSync(primordials, "utf8"), ts.ScriptTarget.ESNext, true, ts.ScriptKind.JS);
   const printer = ts.createPrinter({ removeComments: true });
-  const statements = source.statements.map(statement =>
-    printer.printNode(ts.EmitHint.Unspecified, statement, source).replace(/\s+/g, " "),
-  );
+  const statements = source.statements.map(statement => printer.printNode(ts.EmitHint.Unspecified, statement, source).replace(/\s+/g, " "));
   for (const expected of [
     'const FunctionPrototypeCall = $getByIdDirect(Function.prototype, "call");',
     "function uncurryThis(func) { return FunctionPrototypeCall.bind(func); }",
@@ -99,9 +81,7 @@ export function uncurryThisMismatch(primordials: string): string | undefined {
   const isExported =
     exported !== undefined &&
     ts.isObjectLiteralExpression(exported) &&
-    exported.properties.some(
-      property => ts.isShorthandPropertyAssignment(property) && property.name.text === "uncurryThis",
-    );
+    exported.properties.some(property => ts.isShorthandPropertyAssignment(property) && property.name.text === "uncurryThis");
   return isExported ? undefined : "export default { uncurryThis }";
 }
 
@@ -119,13 +99,7 @@ export function census(files: string[]): Use[] {
     const visit = (node: ts.Node) => {
       if (isDollarName(node)) {
         const position = positionOf(node, declared);
-        if (position)
-          uses.push({
-            file,
-            line: source.getLineAndCharacterOfPosition(node.getStart()).line + 1,
-            name: node.text.slice(1),
-            position,
-          });
+        if (position) uses.push({ file, line: source.getLineAndCharacterOfPosition(node.getStart()).line + 1, name: node.text.slice(1), position });
       }
       ts.forEachChild(node, visit);
     };

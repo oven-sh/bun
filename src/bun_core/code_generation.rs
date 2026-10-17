@@ -43,18 +43,32 @@ mod level {
     use core::sync::atomic::{AtomicU8, Ordering};
 
     static LEVEL: AtomicU8 = AtomicU8::new(CodeGenerationFromStrings::Allowed as u8);
+    static LEVEL_FROM_FLAGS: AtomicU8 = AtomicU8::new(CodeGenerationFromStrings::Allowed as u8);
 
-    pub fn code_generation_from_strings() -> CodeGenerationFromStrings {
-        match LEVEL.load(Ordering::Relaxed) {
+    fn level_of(level: &AtomicU8) -> CodeGenerationFromStrings {
+        match level.load(Ordering::Relaxed) {
             0 => CodeGenerationFromStrings::Allowed,
             1 => CodeGenerationFromStrings::DisallowedLikeNode,
             _ => CodeGenerationFromStrings::Strict,
         }
     }
 
+    pub fn code_generation_from_strings() -> CodeGenerationFromStrings {
+        level_of(&LEVEL)
+    }
+
+    pub fn code_generation_from_strings_by_flags() -> CodeGenerationFromStrings {
+        level_of(&LEVEL_FROM_FLAGS)
+    }
+
     /// Raises the level. There is no way to lower it.
     pub fn disallow_code_generation_from_strings(level: CodeGenerationFromStrings) {
+        LEVEL_FROM_FLAGS.fetch_max(level as u8, Ordering::Relaxed);
         LEVEL.fetch_max(level as u8, Ordering::Relaxed);
+    }
+
+    pub fn disallow_code_generation_in_trimmed_executable() {
+        LEVEL.fetch_max(CodeGenerationFromStrings::Strict as u8, Ordering::Relaxed);
     }
 }
 
@@ -67,9 +81,25 @@ mod level {
         CodeGenerationFromStrings::Strict
     }
 
+    #[inline(always)]
+    pub const fn code_generation_from_strings_by_flags() -> CodeGenerationFromStrings {
+        CodeGenerationFromStrings::Strict
+    }
+
     /// The level is already the highest, so a flag that asks for one changes nothing.
     #[inline(always)]
     pub fn disallow_code_generation_from_strings(_level: CodeGenerationFromStrings) {}
+
+    #[inline(always)]
+    pub fn disallow_code_generation_in_trimmed_executable() {}
 }
 
-pub use level::{code_generation_from_strings, disallow_code_generation_from_strings};
+pub use level::{
+    code_generation_from_strings, code_generation_from_strings_by_flags, disallow_code_generation_from_strings,
+    disallow_code_generation_in_trimmed_executable,
+};
+
+pub fn is_code_generation_disallowed_by_trimming() -> bool {
+    code_generation_from_strings() == CodeGenerationFromStrings::Strict
+        && code_generation_from_strings_by_flags() != CodeGenerationFromStrings::Strict
+}

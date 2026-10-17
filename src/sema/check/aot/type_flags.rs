@@ -49,102 +49,42 @@ impl Checker<'_, '_> {
     #[inline]
     pub(super) fn row(&self, ty: TypeId) -> u64 {
         let row = self.types().row(ty).load(Ordering::Relaxed);
-        if row & IS_READ != 0 {
-            row
-        } else {
-            self.read_type_flags(ty)
-        }
+        if row & IS_READ != 0 { row } else { self.read_type_flags(ty) }
     }
 
     #[inline(never)]
     fn read_type_flags(&self, ty: TypeId) -> u64 {
         let if_holding = |holds: bool| if holds { MAY_HOLD_OBJECTS } else { 0 };
         let read = match *self.data(ty) {
-            TypeData::Union(ref parts) => if_holding(
-                !self.has_primitive_flag(ty)
-                    && parts
-                        .iter()
-                        .any(|&part| self.row(part) & MAY_HOLD_OBJECTS != 0),
-            ),
-            TypeData::Intersection(ref parts) => {
-                DECLARES_PROPERTIES
-                    | if_holding(
-                        parts
-                            .iter()
-                            .all(|&part| self.row(part) & MAY_HOLD_OBJECTS != 0),
-                    )
-            }
+            TypeData::Union(ref parts) => if_holding(!self.has_primitive_flag(ty) && parts.iter().any(|&part| self.row(part) & MAY_HOLD_OBJECTS != 0)),
+            TypeData::Intersection(ref parts) => DECLARES_PROPERTIES | if_holding(parts.iter().all(|&part| self.row(part) & MAY_HOLD_OBJECTS != 0)),
             TypeData::Ref { target, .. } => {
                 let is_array = self.is_array(ty);
                 let is_instance_type = self.files().flags(target).contains(SymFlags::CLASS);
-                let is_declared_externally = !is_array
-                    && self
-                        .files()
-                        .decls_of(target)
-                        .iter()
-                        .all(|&(declared_in, _)| {
-                            self.hir(declared_in).kind == FileKind::Declaration
-                        });
+                let is_declared_externally = !is_array && self.files().decls_of(target).iter().all(|&(declared_in, _)| self.hir(declared_in).kind == FileKind::Declaration);
                 MAY_HOLD_OBJECTS
-                    | if is_array {
-                        IS_ARRAY
-                    } else {
-                        DECLARES_PROPERTIES
-                    }
-                    | if is_instance_type {
-                        IS_INSTANCE_TYPE
-                    } else {
-                        0
-                    }
-                    | if is_declared_externally {
-                        IS_DECLARED_EXTERNALLY
-                    } else {
-                        0
-                    }
+                    | if is_array { IS_ARRAY } else { DECLARES_PROPERTIES }
+                    | if is_instance_type { IS_INSTANCE_TYPE } else { 0 }
+                    | if is_declared_externally { IS_DECLARED_EXTERNALLY } else { 0 }
             }
             TypeData::Tuple { .. } => MAY_HOLD_OBJECTS | IS_TUPLE,
-            TypeData::Anon {
-                origin: Origin::Module(_),
-                ..
-            } => MAY_HOLD_OBJECTS | IS_NAMESPACE_OBJECT,
-            TypeData::Anon {
-                origin:
-                    Origin::TypeLiteral(..)
-                    | Origin::Mapped(..)
-                    | Origin::ObjectLiteral(..)
-                    | Origin::WidenedLiteral(..),
-                ..
-            } => MAY_HOLD_OBJECTS | DECLARES_PROPERTIES,
-            TypeData::Synth(_) | TypeData::ReverseMapped { .. } => {
-                MAY_HOLD_OBJECTS | DECLARES_PROPERTIES
-            }
-            TypeData::Anon { .. }
-            | TypeData::TypeParam(..)
-            | TypeData::ThisParam(_)
-            | TypeData::IndexedAccess { .. }
-            | TypeData::Cond { .. }
-            | TypeData::Substitution { .. } => MAY_HOLD_OBJECTS,
+            TypeData::Anon { origin: Origin::Module(_), .. } => MAY_HOLD_OBJECTS | IS_NAMESPACE_OBJECT,
+            TypeData::Anon { origin: Origin::TypeLiteral(..) | Origin::Mapped(..) | Origin::ObjectLiteral(..) | Origin::WidenedLiteral(..), .. } => MAY_HOLD_OBJECTS | DECLARES_PROPERTIES,
+            TypeData::Synth(_) | TypeData::ReverseMapped { .. } => MAY_HOLD_OBJECTS | DECLARES_PROPERTIES,
+            TypeData::Anon { .. } | TypeData::TypeParam(..) | TypeData::ThisParam(_) | TypeData::IndexedAccess { .. } | TypeData::Cond { .. } | TypeData::Substitution { .. } => MAY_HOLD_OBJECTS,
             _ => 0,
         };
-        self.types()
-            .row(ty)
-            .fetch_or(IS_READ | read, Ordering::Relaxed)
-            | IS_READ
-            | read
+        self.types().row(ty).fetch_or(IS_READ | read, Ordering::Relaxed) | IS_READ | read
     }
 
     #[inline]
     pub(super) fn cached_nesting_bound(&self, ty: TypeId) -> Option<u32> {
         let row = self.types().row(ty).load(Ordering::Relaxed);
-        (row & NESTING_BOUND_KNOWN != 0)
-            .then_some((row >> NESTING_BOUND_SHIFT) as u32 & MAX_NESTING_BOUND)
+        (row & NESTING_BOUND_KNOWN != 0).then_some((row >> NESTING_BOUND_SHIFT) as u32 & MAX_NESTING_BOUND)
     }
 
     pub(super) fn cache_nesting_bound(&self, ty: TypeId, bound: u32) {
-        self.types().row(ty).fetch_or(
-            NESTING_BOUND_KNOWN | u64::from(bound.min(MAX_NESTING_BOUND)) << NESTING_BOUND_SHIFT,
-            Ordering::Relaxed,
-        );
+        self.types().row(ty).fetch_or(NESTING_BOUND_KNOWN | u64::from(bound.min(MAX_NESTING_BOUND)) << NESTING_BOUND_SHIFT, Ordering::Relaxed);
     }
 
     #[inline]
@@ -154,9 +94,7 @@ impl Checker<'_, '_> {
     }
 
     pub(super) fn cache_type_flag(&self, ty: TypeId, knows: u64, holds: u64, found: bool) -> bool {
-        self.types()
-            .row(ty)
-            .fetch_or(if found { knows | holds } else { knows }, Ordering::Relaxed);
+        self.types().row(ty).fetch_or(if found { knows | holds } else { knows }, Ordering::Relaxed);
         found
     }
 
@@ -173,11 +111,7 @@ impl Checker<'_, '_> {
 
     #[inline]
     pub(super) fn shared_type_flags(&self, ty: TypeId) -> u64 {
-        if self.can_share_type_flags() {
-            self.types().row(ty).load(Ordering::Relaxed)
-        } else {
-            0
-        }
+        if self.can_share_type_flags() { self.types().row(ty).load(Ordering::Relaxed) } else { 0 }
     }
 
     #[inline]
@@ -197,25 +131,14 @@ impl Checker<'_, '_> {
     #[inline]
     pub fn cached_description(&self, ty: TypeId) -> u16 {
         let row = self.shared_type_flags(ty);
-        (row >> DESCRIPTION_KIND_SHIFT & 0x1F) as u16
-            | ((row >> DESCRIPTION_BITS_SHIFT & 0x7FF) as u16) << 5
+        (row >> DESCRIPTION_KIND_SHIFT & 0x1F) as u16 | ((row >> DESCRIPTION_BITS_SHIFT & 0x7FF) as u16) << 5
     }
 
     pub fn publish_description(&self, ty: TypeId, description: u16) {
-        self.publish_type_flags(
-            ty,
-            u64::from(description & 0x1F) << DESCRIPTION_KIND_SHIFT
-                | u64::from(description >> 5) << DESCRIPTION_BITS_SHIFT,
-        );
+        self.publish_type_flags(ty, u64::from(description & 0x1F) << DESCRIPTION_KIND_SHIFT | u64::from(description >> 5) << DESCRIPTION_BITS_SHIFT);
     }
 
-    pub(super) fn publish_type_flag(
-        &self,
-        ty: TypeId,
-        knows: u64,
-        holds: u64,
-        found: bool,
-    ) -> bool {
+    pub(super) fn publish_type_flag(&self, ty: TypeId, knows: u64, holds: u64, found: bool) -> bool {
         self.publish_type_flags(ty, if found { knows | holds } else { knows })
     }
 }

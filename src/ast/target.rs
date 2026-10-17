@@ -116,9 +116,10 @@ impl Target {
         match self {
             Target::Node => NODE,
             Target::Browser => BROWSER,
-            Target::Bun | Target::BunMacro | Target::ServerComponentsSsr | Target::BunBuiltins => {
-                BUN
-            }
+            Target::Bun
+            | Target::BunMacro
+            | Target::ServerComponentsSsr
+            | Target::BunBuiltins => BUN,
         }
     }
 

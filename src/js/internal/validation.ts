@@ -49,12 +49,7 @@ function matchesPlaceholder(kind: string, part: string): boolean {
 
 function matchesTemplate(texts: string[], kinds: string, value: string): boolean {
   const last = texts.length - 1;
-  if (
-    value.length < texts[0].length + texts[last].length ||
-    !value.startsWith(texts[0]) ||
-    !value.endsWith(texts[last])
-  )
-    return false;
+  if (value.length < texts[0].length + texts[last].length || !value.startsWith(texts[0]) || !value.endsWith(texts[last])) return false;
   const end = value.length - texts[last].length;
   let position = texts[0].length;
   for (let i = 1; i < last; i++) {
@@ -298,16 +293,7 @@ function reportMembers(nodes: any[], node: any[], from: number, input: any, path
   reportMembersWith(undefined, undefined, nodes, node, from, input, path, issues);
 }
 
-function reportElements(
-  pending: any[],
-  validate: any,
-  nodes: any[],
-  node: any[],
-  from: number,
-  list: any[],
-  key: any,
-  issues: any[],
-): void {
+function reportElements(pending: any[], validate: any, nodes: any[], node: any[], from: number, list: any[], key: any, issues: any[]): void {
   for (let i = from; i < list.length; i++) {
     if (validate !== undefined && validate(list[i]) !== undefined) continue;
     const found: any[] = [];
@@ -318,16 +304,7 @@ function reportElements(
   }
 }
 
-function reportMembersWith(
-  pending: any,
-  compiled: any,
-  nodes: any[],
-  node: any[],
-  from: number,
-  input: any,
-  path: any[],
-  issues: any[],
-): void {
+function reportMembersWith(pending: any, compiled: any, nodes: any[], node: any[], from: number, input: any, path: any[], issues: any[]): void {
   const members = node[0] === 8 ? node[1] : [];
   const others = node[0] === 8 ? node[2] : node[1];
   const kinds: number[] = node[0] === 8 ? node[7] : [];
@@ -337,14 +314,7 @@ function reportMembersWith(
     const name = member[0];
     const value = input[name];
     const kind = kinds[i];
-    if (
-      kind === 1
-        ? typeof value === "number" && Number.isFinite(value)
-        : kind === 2
-          ? typeof value === "string"
-          : kind === 3 && typeof value === "boolean"
-    )
-      continue;
+    if (kind === 1 ? typeof value === "number" && Number.isFinite(value) : kind === 2 ? typeof value === "string" : kind === 3 && typeof value === "boolean") continue;
     let validate: any = undefined;
     if (compiled !== undefined) {
       for (let j = 0; j < compiled.length; j += 2) {

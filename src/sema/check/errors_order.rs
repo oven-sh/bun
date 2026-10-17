@@ -161,9 +161,7 @@ impl Checker<'_, '_> {
             2448
         } else if flags.contains(SymFlags::CLASS) {
             2449
-        } else if flags.contains(SymFlags::REGULAR_ENUM)
-            || self.check_options(file).isolated_modules
-        {
+        } else if flags.contains(SymFlags::REGULAR_ENUM) || self.check_options(file).isolated_modules {
             2450
         } else {
             return;

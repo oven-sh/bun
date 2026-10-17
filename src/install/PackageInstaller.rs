@@ -218,6 +218,22 @@ fn join_normalized_z<'b>(buf: &'b mut [u8], folder: &[u8], file_path: &[u8]) -> 
     ZStr::from_buf(buf, len)
 }
 
+fn is_link_mode(stat: &bun_sys::Stat) -> bool {
+    bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode) == bun_sys::EntryKind::SymLink
+}
+
+/// Whether `target`, what a link reads as, leads into the store of the isolated linker.
+fn leads_into_store(target: &[u8]) -> bool {
+    let (mut store, mut entry): (&[u8], &[u8]) = (b"", b"");
+    for component in strings::tokenize_any(target, b"/\\") {
+        if store == b".bun" && strings::contains_char(entry, b'@') && component == b"node_modules" {
+            return true;
+        }
+        (store, entry) = (entry, component);
+    }
+    false
+}
+
 impl NodeModulesFolder {
     /// Returns the path of `file_path` in this folder, relative to the root `node_modules`, so a
     /// syscall on that directory's fd does not walk the directories above it.
@@ -285,6 +301,63 @@ impl NodeModulesFolder {
         bun_sys::fstatat(&dir, file_path).ok()
     }
 
+    /// Whether the entry is itself a link. `None`: nothing is there.
+    pub(crate) fn is_link(&self, root_node_modules_dir: &Dir, file_path: &ZStr) -> Option<bool> {
+        let fits = file_path.len() + self.path.len() * 2 < MAX_PATH_BYTES;
+        // `lstatat` takes a junction for a directory.
+        #[cfg(windows)]
+        let stat = {
+            let _ = root_node_modules_dir;
+            let mut path_buf = bun_paths::path_buffer_pool::get();
+            let parts = [self.path.as_slice(), file_path.as_bytes()];
+            let path = fits.then(|| join_z_buf::<platform::Auto>(path_buf.as_mut_slice(), &parts));
+            bun_sys::lstat(path?)
+        };
+        #[cfg(not(windows))]
+        let stat = if fits {
+            let mut path_buf = bun_paths::path_buffer_pool::get();
+            bun_sys::lstatat(
+                root_node_modules_dir.fd(),
+                self.path_from_root(path_buf.as_mut_slice(), file_path),
+            )
+        } else {
+            bun_sys::lstatat(&self.open_dir(root_node_modules_dir).ok()?, file_path)
+        };
+        Some(is_link_mode(&stat.ok()?))
+    }
+
+    /// `open_file` that says ELOOP for a link anywhere in the path from the root `node_modules`.
+    /// `None`: there is no such open here, or the path does not start at the root `node_modules`.
+    pub(crate) fn open_file_no_links(
+        &self,
+        root_node_modules_dir: &Dir,
+        file_path: &ZStr,
+    ) -> Option<bun_sys::Result<bun_sys::File>> {
+        #[cfg(unix)]
+        {
+            if self.path.len() + file_path.len() * 2 >= MAX_PATH_BYTES {
+                return None;
+            }
+            let mut path_buf = bun_paths::path_buffer_pool::get();
+            let path = self.path_from_root(path_buf.as_mut_slice(), file_path);
+            if path.as_bytes().first() == Some(&SEP) {
+                return None;
+            }
+            let opened = bun_sys::openat_no_symlinks(
+                root_node_modules_dir.fd(),
+                path,
+                bun_sys::O::RDONLY,
+                0,
+            )?;
+            Some(opened.map(bun_sys::File::from_fd))
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (root_node_modules_dir, file_path);
+            None
+        }
+    }
+
     /// Since the stack size of these functions are rather large, let's not let them be inlined.
     #[inline(never)]
     fn open_file_without_opening_directories(
@@ -298,23 +371,6 @@ impl NodeModulesFolder {
             bun_sys::O::RDONLY,
             0,
         )
-    }
-
-    pub(crate) fn read_small_file(
-        &self,
-        root_node_modules_dir: &Dir,
-        file_path: &ZStr,
-    ) -> crate::Result<bun_sys::file::ReadToEndResult> {
-        let file = self.open_file(root_node_modules_dir, file_path)?;
-        let res = file.read_to_end_small();
-        let _ = file.close(); // close error is non-actionable
-        Ok(match res {
-            Ok(bytes) => bun_sys::file::ReadToEndResult { bytes, err: None },
-            Err(e) => bun_sys::file::ReadToEndResult {
-                bytes: Vec::new(),
-                err: Some(e),
-            },
-        })
     }
 
     pub(crate) fn open_file(
@@ -369,6 +425,55 @@ impl NodeModulesFolder {
                 .map_err(|e| e.to_zig_err())?,
             ));
         }
+    }
+
+    /// Below the `node_modules` of the project or of a workspace, an `@scope`, the folder of a
+    /// package from the cache and its `node_modules` are the installer's own directories. A link
+    /// in the place of one leads to a directory with its own files. Returns the dependency whose
+    /// folder has the first link in the path of this tree. `own`: this tree's `node_modules` too.
+    pub(crate) fn link_above(&self, lockfile: &Lockfile, own: bool) -> Option<DependencyID> {
+        let trees = lockfile.buffers.trees.as_slice();
+        let dependencies = lockfile.buffers.dependencies.as_slice();
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+        let resolutions = lockfile.packages.items_resolution();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let mut is_link = |path: &[u8]| {
+            path.len() < MAX_PATH_BYTES
+                && bun_sys::lstat(bun_paths::resolve_path::z(path, &mut path_buf))
+                    .is_ok_and(|stat| is_link_mode(&stat))
+        };
+        let mut path = self.path.as_slice();
+        let mut tree = trees[self.tree_id as usize];
+        let mut look_at_node_modules = own;
+        while tree.parent != lockfile::tree::INVALID_ID {
+            let package_id = lockfile.buffers.resolutions.as_slice()[tree.dependency_id as usize];
+            let folder_name = tree.folder_name(dependencies, string_buf);
+            if (resolutions.get(package_id as usize))
+                .is_some_and(|resolution| resolution.tag.can_enqueue_install_task())
+            {
+                let owner = dirname::<platform::Auto>(path);
+                if (look_at_node_modules && is_link(path))
+                    || is_link(owner)
+                    || (strings::contains_char(folder_name, b'/')
+                        && is_link(dirname::<platform::Auto>(owner)))
+                {
+                    return Some(tree.dependency_id);
+                }
+            } else if tree.parent == 0 {
+                // The path of a workspace is its own.
+                break;
+            }
+            look_at_node_modules = true;
+            // `path` is `<parent tree>/<folder name>/node_modules`.
+            let Some(parent_len) =
+                (path.len()).checked_sub(folder_name.len() + "//node_modules".len())
+            else {
+                return Some(tree.dependency_id);
+            };
+            path = &path[..parent_len];
+            tree = trees[tree.parent as usize];
+        }
+        None
     }
 
     fn make_and_open_dir(&self, root: &Dir, lockfile: &Lockfile) -> crate::Result<Dir> {
@@ -437,6 +542,12 @@ pub struct TreeContext {
     pub(crate) inside_replaced_folder: bool,
     /// See `PackageInstaller::set_outlived_root`.
     pub(crate) outlived_root: bool,
+    /// `NodeModulesFolder::link_above` when the first package of the tree is about to be linked.
+    pub(crate) behind_link: core::cell::Cell<Option<Option<DependencyID>>>,
+    /// For `PackageInstaller::slot_has_link`: whether the path of the tree has a link, and the
+    /// last `@scope` in it that was seen to be no link.
+    pub(crate) has_link: core::cell::Cell<Option<bool>>,
+    pub(crate) real_scope: core::cell::RefCell<Vec<u8>>,
 }
 
 type TreeContextId = lockfile::tree::Id;
@@ -1175,6 +1286,134 @@ impl<'a> PackageInstaller<'a> {
                 < self.manager().options.max_concurrent_lifecycle_scripts
     }
 
+    /// Whether bun itself places no link in the path of the current tree from the root
+    /// `node_modules`: every package above it comes from the cache.
+    fn tree_path_is_from_cache(&self) -> bool {
+        let lockfile = self.lockfile();
+        let trees = lockfile.buffers.trees.as_slice();
+        let mut tree = trees[self.current_tree_id as usize];
+        while tree.parent != lockfile::tree::INVALID_ID {
+            let package_id = lockfile.buffers.resolutions.as_slice()[tree.dependency_id as usize];
+            if !(self.resolutions[package_id as usize])
+                .tag
+                .can_enqueue_install_task()
+            {
+                return false;
+            }
+            tree = trees[tree.parent as usize];
+        }
+        true
+    }
+
+    /// Whether a folder above `alias` in the current tree is a link: the folders of the tree
+    /// once, an `@scope` once for each run of its packages.
+    fn folder_above_has_link(&self, alias: &ZStr) -> bool {
+        let tree = &self.trees[self.current_tree_id as usize];
+        let has_link = tree.has_link.get().unwrap_or_else(|| {
+            let has_link = (self.node_modules)
+                .link_above(self.lockfile(), true)
+                .is_some();
+            tree.has_link.set(Some(has_link));
+            has_link
+        });
+        if has_link {
+            return true;
+        }
+        if let Some((scope, _)) = strings::split_once_char(alias.as_bytes(), b'/')
+            && *tree.real_scope.borrow() != scope
+        {
+            let mut scope_buf = bun_paths::path_buffer_pool::get();
+            let scope_path = bun_paths::resolve_path::z(scope, &mut scope_buf);
+            if (self.node_modules).is_link(&self.root_node_modules_folder, scope_path)
+                != Some(false)
+            {
+                return true;
+            }
+            *tree.real_scope.borrow_mut() = scope.to_vec();
+        }
+        false
+    }
+
+    /// `NodeModulesFolder::link_above` for the current tree, looked up once: when its first
+    /// package is about to be linked, every package above it has been.
+    fn tree_behind_link(&self) -> Option<DependencyID> {
+        let tree = &self.trees[self.current_tree_id as usize];
+        tree.behind_link.get().unwrap_or_else(|| {
+            let behind = self.node_modules.link_above(self.lockfile(), false);
+            tree.behind_link.set(Some(behind));
+            behind
+        })
+    }
+
+    fn warn_replaced_link(&self, installer: &PackageInstall<'_>, log_level: Options::LogLevel) {
+        let alias = installer.destination_dir_subpath;
+        if log_level == Options::LogLevel::Silent
+            || alias.len() + self.node_modules.path.len() * 2 >= MAX_PATH_BYTES
+        {
+            return;
+        }
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let mut target_buf = bun_paths::path_buffer_pool::get();
+        let path = (self.node_modules).path_from_root(path_buf.as_mut_slice(), alias);
+        let root = self.root_node_modules_folder.fd();
+        // A hoisted install over the isolated linker's tree replaces every link of that tree.
+        if bun_sys::readlinkat(root, path, target_buf.as_mut_slice())
+            .is_ok_and(|len| leads_into_store(&target_buf[..len]))
+        {
+            return;
+        }
+        let string_buf = self.lockfile().buffers.string_bytes.as_slice();
+        bun_core::warn!(
+            "replacing link {}{}{} with {}@{}",
+            bun_core::fmt::fmt_path(self.node_modules.path.as_slice(), Default::default()),
+            SEP as char,
+            bun_core::fmt::for_terminal(bstr::BStr::new(alias.as_bytes())),
+            bun_core::fmt::for_terminal(bstr::BStr::new(installer.package_name.slice(string_buf))),
+            bun_core::fmt::for_terminal(bstr::BStr::new(installer.package_version)),
+        );
+    }
+
+    /// `PackageInstall::verify` for a package of the current tree.
+    fn is_installed(
+        &self,
+        installer: &mut PackageInstall<'_>,
+        resolution: &Resolution,
+        package_id: PackageID,
+        log_level: Options::LogLevel,
+    ) -> bool {
+        let integrity = &self.metas[package_id as usize].integrity;
+        let skips_verify = self.manager().skips_verify(resolution.tag);
+        let root = &self.root_node_modules_folder;
+        // Windows has no open that refuses a link in the path, and a warm install does not pay
+        // an `lstat` for every package.
+        if cfg!(windows) || !resolution.tag.can_enqueue_install_task() {
+            return installer.verify(resolution, integrity, skips_verify, root);
+        }
+
+        // A package from the cache is a folder of its own, and so is every folder above it up
+        // to the `node_modules` of the project or of a workspace. What is behind a link there
+        // is not this package, and the `node_modules` below it is not this package's.
+        if self.tree_path_is_from_cache() {
+            installer.no_links = true;
+            let verified = installer.verify(resolution, integrity, skips_verify, root);
+            installer.no_links = false;
+            if !core::mem::take(&mut installer.refused) {
+                return verified;
+            }
+        }
+        if self.folder_above_has_link(installer.destination_dir_subpath) {
+            return false;
+        }
+        match (self.node_modules).is_link(root, installer.destination_dir_subpath) {
+            Some(false) => installer.verify(resolution, integrity, skips_verify, root),
+            Some(true) => {
+                self.warn_replaced_link(installer, log_level);
+                false
+            }
+            None => false,
+        }
+    }
+
     /// A tree can start installing packages when the parent has installed all its packages. If the parent
     /// isn't finished, we need to wait because it's possible a package installed in this tree will be deleted by the parent.
     fn can_install_package_for_tree(
@@ -1825,6 +2064,8 @@ impl<'a> PackageInstaller<'a> {
             node_modules: node_modules_ref.get(),
             lockfile: self.lockfile(),
             cache_dir_subpath: ZStr::EMPTY,
+            no_links: false,
+            refused: false,
         };
         bun_output::scoped_log!(
             PackageInstaller,
@@ -1957,12 +2198,7 @@ impl<'a> PackageInstaller<'a> {
         let needs_install = !verifying
             || remove_patch
             || inside_replaced_folder
-            || !installer.verify(
-                resolution,
-                &self.metas[package_id as usize].integrity,
-                self.manager().skips_verify(resolution.tag),
-                &self.root_node_modules_folder,
-            );
+            || !self.is_installed(&mut installer, resolution, package_id, log_level);
         self.summary.skipped += (!needs_install) as u32;
         if !needs_install && log_level.show_progress() {
             self.node.complete_one();
@@ -2124,6 +2360,31 @@ impl<'a> PackageInstaller<'a> {
                         tree_id: self.current_tree_id,
                         path: self.node_modules.path.clone(),
                     });
+                return;
+            }
+
+            // Nothing is installed below a package whose folder is a link: see `link_above`.
+            if !(self.skip_delete && !outlived_root)
+                && let Some(owner) = self.tree_behind_link()
+            {
+                let owner_package_id =
+                    self.lockfile().buffers.resolutions.as_slice()[owner as usize];
+                let required = (self.manager()).is_package_required(owner, owner_package_id);
+                if required && log_level != Options::LogLevel::Silent {
+                    Output::err(
+                        crate::Error::Sys(bun_errno::SystemErrno::ELOOP),
+                        "Failed to open node_modules folder for <r><red>{}<r> in {}",
+                        (
+                            bstr::BStr::new(pkg_name.slice(string_buf!())),
+                            bun_core::fmt::fmt_path(
+                                self.node_modules.path.as_slice(),
+                                Default::default(),
+                            ),
+                        ),
+                    );
+                }
+                self.summary.fail += required as u32;
+                self.increment_tree_install_count(is_pending_package_install, log_level);
                 return;
             }
 

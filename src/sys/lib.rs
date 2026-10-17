@@ -1983,6 +1983,76 @@ mod posix_impl {
         }
         openat(dir, path, flags, mode)
     }
+    /// `openat` without `O_NOFOLLOW` that says ELOOP for a symlink anywhere in `path`. `None`: no such open here.
+    pub fn openat_no_symlinks(
+        dir: impl AsFd,
+        path: &ZStr,
+        flags: i32,
+        mode: Mode,
+    ) -> Option<Maybe<Fd>> {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            use core::sync::atomic::{AtomicBool, Ordering};
+            static UNAVAILABLE: AtomicBool = AtomicBool::new(false);
+
+            if UNAVAILABLE.load(Ordering::Relaxed) {
+                return None;
+            }
+            let dir = dir.as_fd();
+            let flags = flags | O::CLOEXEC;
+            // `openat2` says EINVAL for a mode that no file gets.
+            let creates = flags & O::CREAT != 0 || flags & O::TMPFILE == O::TMPFILE;
+            let mode = if creates { mode } else { 0 };
+            let error = |e| Error::from_code_int(e, Tag::open).with_path(path.as_bytes());
+            // What a kernel or a sandbox without `openat2` answers. `openat2` answers some of them for a path too.
+            let missing = |e| {
+                matches!(
+                    e,
+                    libc::ENOSYS
+                        | libc::EPERM
+                        | libc::EACCES
+                        | libc::EFAULT
+                        | libc::EOPNOTSUPP
+                        | libc::EINVAL
+                        | libc::E2BIG
+                )
+            };
+            match super::linux_syscall::openat2_no_symlinks(dir, path, flags, mode) {
+                Ok(fd) => Some(Ok(fd)),
+                // No `openat2`, or an error about `path`? `/` opens for every process, so the same call on it tells.
+                Err(e) if missing(e) => {
+                    let probe = super::linux_syscall::openat2_no_symlinks(
+                        dir,
+                        bun_core::zstr!("/"),
+                        O::PATH | O::DIRECTORY | O::CLOEXEC,
+                        0,
+                    );
+                    match probe {
+                        Err(e) if missing(e) => {
+                            UNAVAILABLE.store(true, Ordering::Relaxed);
+                            None
+                        }
+                        other => {
+                            if let Ok(fd) = other {
+                                let _ = close(fd);
+                            }
+                            Some(Err(error(e)))
+                        }
+                    }
+                }
+                Err(e) => Some(Err(error(e))),
+            }
+        }
+        #[cfg(target_os = "macos")]
+        {
+            Some(openat(dir, path, flags | O::NOFOLLOW_ANY, mode))
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
+        {
+            let _ = (dir, path, flags, mode);
+            None
+        }
+    }
     pub fn close(fd: Fd) -> Maybe<()> {
         // Call close ONCE; never retry on EINTR (Linux may have already
         // released the fd, retrying would close someone else's). Only EBADF surfaces.

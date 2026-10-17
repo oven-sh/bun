@@ -1126,9 +1126,18 @@ impl<'a> HoistedTree<'a> {
                 };
             }
             ResolutionTag::Folder if kind == EntryKind::SymLink => return Installed::Matches,
+            // As in `PackageInstaller::is_installed`: not the copy of a package from the cache,
+            // unless it is the isolated linker's link to one.
+            tag if kind == EntryKind::SymLink
+                && !cfg!(windows)
+                && tag.can_enqueue_install_task()
+                && store_link_target(&folder, alias).is_none() =>
+            {
+                return Installed::Mismatch;
+            }
             _ => {}
         }
-        // A link counts as what it points at, as in `PackageInstall::verify`.
+        // Any other link counts as what it points at.
         let package = match kind {
             EntryKind::SymLink if is_dangling(&folder, alias) => return Installed::Missing,
             EntryKind::SymLink => folder.open_at(alias).ok(),

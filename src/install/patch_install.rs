@@ -536,6 +536,8 @@ impl PatchTask {
             // dummy value
             node_modules: &dummy_node_modules,
             lockfile,
+            no_links: false,
+            refused: false,
         };
 
         match pkg_install.install(

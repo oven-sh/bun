@@ -35,6 +35,12 @@ pub struct PackageInstall<'a> {
 
     pub(crate) node_modules: &'a NodeModulesFolder,
     pub lockfile: &'a Lockfile,
+
+    /// `verify` opens the files of the package with `NodeModulesFolder::open_file_no_links`.
+    pub(crate) no_links: bool,
+    /// That open did not say whether the package is there: a link is in the path, or there is
+    /// no such open here.
+    pub(crate) refused: bool,
 }
 
 /// The file work of a `PackageInstall`. No lockfile and no manager, so any thread can do it.
@@ -1205,13 +1211,36 @@ impl<'a> PackageInstall<'a> {
             &[self.destination_dir_subpath.as_bytes(), BUN_TAG],
         );
 
-        let Ok(bun_tag_file) = self
-            .node_modules
-            .read_small_file(root_node_modules_dir, bun_tag_path)
-        else {
+        let Some(bun_tag_file) = self.open_installed(root_node_modules_dir, bun_tag_path) else {
             return false;
         };
-        matches(&bun_tag_file.bytes)
+        let bytes = bun_tag_file.read_to_end_small().unwrap_or_default();
+        let _ = bun_tag_file.close(); // close error is non-actionable
+        matches(&bytes)
+    }
+
+    /// Opens a file of the installed package for `verify`.
+    fn open_installed(
+        &mut self,
+        root_node_modules_dir: &Dir,
+        file_path: &ZStr,
+    ) -> Option<sys::File> {
+        if !self.no_links {
+            return (self.node_modules)
+                .open_file(root_node_modules_dir, file_path)
+                .ok();
+        }
+        match (self.node_modules).open_file_no_links(root_node_modules_dir, file_path) {
+            Some(Ok(file)) => Some(file),
+            Some(Err(err)) => {
+                self.refused = !matches!(err.get_errno(), sys::E::ENOENT | sys::E::ENOTDIR);
+                None
+            }
+            None => {
+                self.refused = true;
+                None
+            }
+        }
     }
 
     pub(crate) fn verify(
@@ -1306,10 +1335,7 @@ impl<'a> PackageInstall<'a> {
             &[self.destination_dir_subpath.as_bytes(), b"package.json"],
         );
 
-        let package_json_file = self
-            .node_modules
-            .open_file(root_node_modules_dir, package_json_path)
-            .ok()?;
+        let package_json_file = self.open_installed(root_node_modules_dir, package_json_path)?;
 
         // Heuristic: most package.jsons will be less than 2048 bytes.
         loop {

@@ -971,7 +971,9 @@ test("--hot reload: the connections of the last run of the script belong to the 
         // A connection that the server closed does not answer.
         state.socket.write("GET /second HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
         const afterSweep = await state.afterSweep.promise;
-        console.log(JSON.stringify({ socketServerIsThisServer, connections, afterSweep }));
+        // The close of that connection is counted down on this server, or its close() waits for ever.
+        const left = await new Promise(resolve => server.getConnections((error, count) => resolve(count)));
+        console.log(JSON.stringify({ socketServerIsThisServer, connections, afterSweep, left }));
         process.exit(0);
       }
     `,
@@ -985,7 +987,7 @@ test("--hot reload: the connections of the last run of the script belong to the 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr.replaceAll(/^DEBUG:.*\n/gm, "")).toBe("");
-  expect(stdout).toBe('{"socketServerIsThisServer":true,"connections":1,"afterSweep":"closed"}\n');
+  expect(stdout).toBe('{"socketServerIsThisServer":true,"connections":1,"afterSweep":"closed","left":0}\n');
   expect(exitCode).toBe(0);
 });
 

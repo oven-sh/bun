@@ -8,6 +8,7 @@ use bun_collections::VecExt;
 use bun_dotenv as dot_env;
 use bun_js_parser as js_ast;
 use bun_resolver::fs as Fs;
+use bun_resolver::fs::PathResolverExt as _;
 use bun_resolver::{self as resolver, Resolver};
 
 use crate::options;
@@ -2774,24 +2775,27 @@ impl<'a> Transpiler<'a> {
         // expect `bun_paths::fs::Path<'_>` / `bun_paths::fs::Path<'static>`. Re-init via
         // `text` (the only field both shapes share semantically).
         let file_path_text: &'static [u8] = crate::linker::dupe(file_path_ref.text);
-        let file_path_ext: &'static [u8] = crate::linker::dupe(file_path_ref.name().ext);
 
         // Step 1. Parse & scan
         // Key the loader on the ORIGINAL resolve
-        // result's extension *before* the `client_entry_point` path override.
+        // result's path *before* the `client_entry_point` path override.
         // Compute it here, then apply the override.
-        let loader = self.options.loader(file_path_ext);
+        let loader = if file_path_ref.is_data_url() {
+            // `Path::loader` says `dataurl` for a `data:` URL; the bundler then picks by MIME type.
+            self.options.loader(file_path_ref.name().ext)
+        } else {
+            file_path_ref
+                .loader(&self.options.loaders)
+                .unwrap_or(options::Loader::File)
+        };
 
         // `client_entry_point_` is always `None` from the only in-tree caller;
         // its source path uses the `bun_paths::fs::Path<'static>` shape, so just override
-        // text/ext when present.
-        let (file_path_text, file_path_ext) = if let Some(cep) = client_entry_point_.as_deref() {
-            (
-                crate::linker::dupe(cep.source.path.text),
-                crate::linker::dupe(cep.source.path.name().ext),
-            )
+        // text when present.
+        let file_path_text = if let Some(cep) = client_entry_point_.as_deref() {
+            crate::linker::dupe(cep.source.path.text)
         } else {
-            (file_path_text, file_path_ext)
+            file_path_text
         };
 
         let mut file_path = Fs::Path::init(file_path_text);
@@ -2918,7 +2922,16 @@ impl<'a> Transpiler<'a> {
                 };
             }
             options::Loader::Dataurl | options::Loader::Base64 => {
-                bun_core::Output::panic(format_args!("TODO: dataurl, base64"));
+                self.log_mut().add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "The \"{}\" loader is not supported with --no-bundle: \"{}\"",
+                        <&'static str>::from(loader),
+                        bstr::BStr::new(file_path.pretty),
+                    ),
+                );
+                return Ok(None);
             }
             options::Loader::Css => {
                 match self.build_css_output(
@@ -2942,7 +2955,8 @@ impl<'a> Transpiler<'a> {
             | options::Loader::Wasm
             | options::Loader::File
             | options::Loader::Napi => {
-                output_file.value = self.build_copied_file_output(file_path_text, file_path_ext)?;
+                output_file.value =
+                    self.build_copied_file_output(file_path_text, file_path.name().ext)?;
             }
         }
 

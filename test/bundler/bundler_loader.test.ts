@@ -99,6 +99,36 @@ describe("bundler", async () => {
           expect(code).toContain('Temporal.Instant.from("1979-05-27T00:32:00-07:00")');
         },
       });
+      itBundled("bun/loader-xml-no-bundle", {
+        target,
+        bundling: false,
+        entryPoints: ["/config.xml"],
+        files: {
+          "/config.xml": `<config env="production"><port>3000</port></config>`,
+        },
+        runtimeFiles: {
+          "/test.js": `import doc, { config } from "./out.js"; console.write(JSON.stringify([doc, config]));`,
+        },
+        run: {
+          file: "/test.js",
+          stdout: '[{"config":{"@env":"production","port":"3000"}},{"@env":"production","port":"3000"}]',
+        },
+      });
+      itBundled("bun/loader-md-no-bundle", {
+        target,
+        bundling: false,
+        entryPoints: ["/readme.md"],
+        files: {
+          "/readme.md": `# Title\n\nhello *world*\n`,
+        },
+        runtimeFiles: {
+          "/test.js": `import html from "./out.js"; console.write(JSON.stringify(html));`,
+        },
+        run: {
+          file: "/test.js",
+          stdout: '"<h1>Title</h1>\\n<p>hello <em>world</em></p>\\n"',
+        },
+      });
       // TOML date/time values bundle as Temporal construction calls; the
       // bundled module yields the same values Bun.TOML.parse returns.
       itBundled("bun/loader-toml-datetime", {

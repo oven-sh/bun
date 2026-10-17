@@ -162,7 +162,7 @@ describe("css", () => {
         .host { container: page / inline-size; }
         .longhand { container-name: page; container-type: inline-size; }
         .multi { container-name: page sidebar; }
-        .scroll { container: page / scroll-state; }
+        .scroll { container: page / inline-size scroll-state; }
         @container page (max-width: 700px) { .item { color: red; } }
         @container sidebar (min-width: 200px) { .item { color: blue; } }
       `,
@@ -183,7 +183,7 @@ describe("css", () => {
       // The `container` shorthand references the SAME scoped name and keeps
       // its container type.
       expect(css).toContain(`container: ${page} / inline-size;`);
-      expect(css).toContain(`container: ${page} / scroll-state;`);
+      expect(css).toContain(`container: ${page} / inline-size scroll-state;`);
 
       // The `container-name` longhand references the SAME scoped name.
       expect(css).toContain(`container-name: ${page};`);

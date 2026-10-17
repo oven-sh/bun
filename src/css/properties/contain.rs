@@ -5,17 +5,79 @@ use crate as css;
 use crate::css_rules::container::ContainerName as ContainerIdent;
 use crate::{Parser, PrintErr, Printer, Result as CssResult, SmallList};
 
-/// A value for the [container-type](https://drafts.csswg.org/css-contain-3/#container-type) property.
-#[derive(Clone, Copy, PartialEq, Eq, css::DefineEnumProperty, css::CssEql, css::DeepClone)]
-pub enum ContainerType {
-    /// The element is not a query container for size queries.
-    Normal,
+/// The size half of [container-type](https://drafts.csswg.org/css-contain-3/#container-type).
+#[derive(Clone, Copy, PartialEq, Eq, css::DefineEnumProperty)]
+pub enum ContainerSizeType {
     /// The element is a query container for inline size and block size queries.
     Size,
     /// The element is a query container for inline size queries.
     InlineSize,
-    /// The element is a query container for scroll-state queries.
-    ScrollState,
+}
+
+/// A value for the [container-type](https://drafts.csswg.org/css-contain-3/#container-type) property.
+///
+/// `normal | [ [ size | inline-size ] || scroll-state ]`
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct ContainerType {
+    /// The size query container type, if any.
+    pub(crate) size: Option<ContainerSizeType>,
+    /// Whether the element is a query container for scroll-state queries.
+    pub(crate) scroll_state: bool,
+}
+
+impl ContainerType {
+    /// The `normal` keyword: not a query container.
+    pub const NORMAL: Self = Self {
+        size: None,
+        scroll_state: false,
+    };
+
+    pub fn parse(input: &mut Parser) -> CssResult<Self> {
+        if input
+            .try_parse(|i| i.expect_ident_matching(b"normal"))
+            .is_ok()
+        {
+            return Ok(Self::NORMAL);
+        }
+        let mut this = Self::NORMAL;
+        loop {
+            if this.size.is_none() {
+                if let Ok(size) = input.try_parse(ContainerSizeType::parse) {
+                    this.size = Some(size);
+                    continue;
+                }
+            }
+            if !this.scroll_state
+                && input
+                    .try_parse(|i| i.expect_ident_matching(b"scroll-state"))
+                    .is_ok()
+            {
+                this.scroll_state = true;
+                continue;
+            }
+            break;
+        }
+        if this == Self::NORMAL {
+            return Err(input.new_error_for_next_token());
+        }
+        Ok(this)
+    }
+
+    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        if *self == Self::NORMAL {
+            return dest.write_str("normal");
+        }
+        if let Some(size) = &self.size {
+            size.to_css(dest)?;
+            if self.scroll_state {
+                dest.write_char(b' ')?;
+            }
+        }
+        if self.scroll_state {
+            dest.write_str("scroll-state")?;
+        }
+        Ok(())
+    }
 }
 
 /// A value for the [container-name](https://drafts.csswg.org/css-contain-3/#container-name) property.
@@ -76,7 +138,7 @@ impl Container {
         let container_type = if input.try_parse(|i| i.expect_delim(b'/')).is_ok() {
             ContainerType::parse(input)?
         } else {
-            ContainerType::Normal
+            ContainerType::NORMAL
         };
         Ok(Container {
             name,
@@ -86,7 +148,7 @@ impl Container {
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         self.name.to_css(dest)?;
-        if self.container_type != ContainerType::Normal {
+        if self.container_type != ContainerType::NORMAL {
             dest.delim(b'/', true)?;
             self.container_type.to_css(dest)?;
         }

@@ -246,6 +246,7 @@ mod generic_registrations {
         // contain
         contain::Container,
         contain::ContainerName,
+        contain::ContainerType,
         // css_modules
         css_modules::Composes,
         // display

@@ -2669,8 +2669,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         res
     }
 
-    /// Whether a write that `write_maybe_corked` does not take now can be taken after a
-    /// writable event: the socket is connected and nothing has ended its write side for good.
+    /// Whether a write refused with would-block can still be taken after a writable event.
     pub(crate) fn write_side_open(&self) -> bool {
         let socket = self.socket.get();
         socket.is_established()
@@ -4177,8 +4176,7 @@ impl NativeCallbacks {
         unsafe { (*h2).on_native_writable() };
         true
     }
-    /// Whether the attached parser takes over a half-close of the socket: it still has output
-    /// to write, and sends the FIN after it.
+    /// Whether the attached parser takes over the half-close, to send the FIN after its own output.
     pub(crate) fn defer_shutdown(&self) -> bool {
         let h2 = match self {
             NativeCallbacks::H2(h2) => h2.as_ptr(),

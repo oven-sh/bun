@@ -925,11 +925,7 @@ struct SendDataOptions {
     defer_write_callback: bool,
 }
 
-/// Set while a parser that `detach(true)` let go of stays in the socket's native-callback slot.
-/// A stream counts its frames as sent when they are serialized, so `write_buffer` can hold
-/// output that is already reported as written: the end of the session must not free it, and the
-/// socket's FIN must not overtake it (the rule of uSockets' `ssl_shutdown_after_spill`, one
-/// layer up).
+/// Frames count as sent once serialized, so `detach(true)` leaves the parser attached until the socket has them.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum Draining {
     #[default]
@@ -7462,8 +7458,7 @@ impl H2FrameParser {
         !self.write_buffer.get().slice()[self.write_buffer_offset.get()..].is_empty()
     }
 
-    /// Whether the socket can take `write_buffer` from a later writable event: one that reaches
-    /// this parser (`Tcp` / `Tls`) without running JS, on a write side that nothing has ended.
+    /// Whether a later writable event reaches this parser without running JS, on a write side that is still open.
     fn socket_takes_output(&self) -> bool {
         !self.transport_write_runs_js()
             && match self.native_socket.get() {
@@ -7477,8 +7472,7 @@ impl H2FrameParser {
         self.has_unsent_output() && !self.transport_write_fatal.get() && self.socket_takes_output()
     }
 
-    /// The socket is asked to half-close its write side. True when a draining parser holds that
-    /// back: `finish_draining` issues it after the output.
+    /// True when a draining parser holds back the socket's half-close: `finish_draining` issues it after the output.
     pub(crate) fn defer_shutdown(&self) -> bool {
         if self.draining.get() == Draining::No || !self.owes_output() {
             return false;
@@ -7832,8 +7826,8 @@ impl H2FrameParser {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// The session is over: free its streams, let go of the socket (see `detach`), and stop
-    /// keeping the wrapper (and through it the handlers and their context object) alive.
+    /// The session is over: free its streams, let go of the socket, and stop keeping the wrapper
+    /// (and through it the handlers and their context object) alive.
     fn release_from_js(&self, keep_output: bool) {
         let this = self;
         this.abort_handle.leave();
@@ -7853,22 +7847,23 @@ impl H2FrameParser {
         }
     }
 
-    /// Ends the session's use of the parser: stream contexts and HPACK state go, and so does
-    /// the socket with whatever it has not taken. With `keep_output`, output the socket still
-    /// owes the peer stays, and the parser stays attached to write it (`Draining`). Can be
-    /// called more than once.
+    /// be careful when calling detach be sure that the socket is closed and the parser not accesible anymore
+    /// this function can be called multiple times, it will erase stream info
     pub(crate) fn detach(&self, keep_output: bool) {
         self.uncork();
         self.unregister_auto_flush();
-        if keep_output && self.owes_output() {
-            if self.draining.get() == Draining::No {
-                self.draining.set(Draining::Output);
-            }
-        } else {
+        // The socket still owes this output to the peer: stay attached and write it (`Draining`).
+        let draining = keep_output && self.owes_output();
+        if !draining {
             self.draining.set(Draining::No);
             self.detach_native_socket();
-            // Free the allocation, not just the length: detach() is reachable from JS without a
-            // following `deinit`, so the capacity must be released here.
+        } else if self.draining.get() == Draining::No {
+            self.draining.set(Draining::Output);
+        }
+
+        // Free the allocation, not just the length: detach() is reachable from JS without a
+        // following `deinit`, so the capacity must be released here.
+        if !draining {
             self.write_buffer.with_mut(|wb| wb.clear_and_free());
             self.write_buffer_offset.set(0);
         }

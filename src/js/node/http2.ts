@@ -449,10 +449,7 @@ function emitSessionCloseNT(self: Http2Session, frame) {
     runInFrame(frame, self.emit, self, "close");
   }
 }
-// node emits the session 'close' event asynchronously (a listener attached right after
-// close()/destroy() returns must still observe it). `closingSocket` is the socket of a graceful
-// close: it still writes what the session queued, so 'close' waits for that socket's 'close',
-// where node emits it: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1188-L1218
+// A graceful close leaves `closingSocket` to write what the session queued: 'close' follows its 'close', as in node.
 function emitSessionCloseAfterDestroy(self: Http2Session, frame, closingSocket) {
   if (closingSocket && !closingSocket.destroyed) {
     closingSocket.once("close", emitSessionCloseNT.bind(undefined, self, frame));
@@ -4849,6 +4846,8 @@ class ServerHttp2Session extends Http2Session {
     if (error) {
       runInFrame(asyncFrame, this.emit, this, "error", error);
     }
+    // node emits the session 'close' event asynchronously (a listener attached right after
+    // close()/destroy() returns must still observe it).
     emitSessionCloseAfterDestroy(this, asyncFrame, closingSocket);
   }
 }
@@ -5959,6 +5958,8 @@ class ClientHttp2Session extends Http2Session {
     if (error) {
       runInFrame(asyncFrame, this.emit, this, "error", error);
     }
+    // node emits the session 'close' event asynchronously (a listener attached right after
+    // close()/destroy() returns must still observe it).
     emitSessionCloseAfterDestroy(this, asyncFrame, closingSocket);
   }
 

@@ -3,7 +3,7 @@
 // a peer with the largest window, and the kernel takes about a sixth of it in one write. The rest
 // waits in the session. The end of the session must not free it, and the FIN must not overtake it.
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tls as certs, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, tls as certs } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
@@ -322,54 +322,49 @@ describe("a graceful close delivers a body that still waits for the socket", () 
     });
   }
 
-  it(
-    "process.exit() in the session.close() callback",
-    async () => {
-      await using server = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `
-          const http2 = require("node:http2");
-          const server = http2.createServer();
-          server.on("stream", stream => {
-            const session = stream.session;
-            stream.respond({ ":status": 200 });
-            stream.end(Buffer.alloc(${SIZE}, "a"));
-            session.close(() => process.exit(0));
-            // close() queued the destroy of the session before this.
-            setImmediate(() => console.log("destroyed", session.destroyed));
-          });
-          server.listen(0, "127.0.0.1", () => console.log(server.address().port));
-          `,
-        ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "inherit",
-      });
-      const reader = server.stdout.getReader();
-      let output = "";
-      // The next line of the child's output, or what is left of it when the child has exited.
-      async function line() {
-        while (!output.includes("\n")) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          output += Buffer.from(value).toString();
-        }
-        const [first, ...rest] = output.split("\n");
-        output = rest.join("\n");
-        return first;
+  it("process.exit() in the session.close() callback", async () => {
+    await using server = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const http2 = require("node:http2");
+        const server = http2.createServer();
+        server.on("stream", stream => {
+          const session = stream.session;
+          stream.respond({ ":status": 200 });
+          stream.end(Buffer.alloc(${SIZE}, "a"));
+          session.close(() => process.exit(0));
+          // close() queued the destroy of the session before this.
+          setImmediate(() => console.log("destroyed", session.destroyed));
+        });
+        server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const reader = server.stdout.getReader();
+    let output = "";
+    // The next line of the child's output, or what is left of it when the child has exited.
+    async function line() {
+      while (!output.includes("\n")) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        output += Buffer.from(value).toString();
       }
-      // The peer reads nothing until the session is destroyed, so the body cannot leave before that.
-      const peer = openPeer(Number(await line()), { stopReading: true });
-      await line();
-      peer.socket.resume();
-      expect(await peer.closed).toEqual(whole);
-      expect(await server.exited).toBe(0);
-    },
-    // A debug or ASAN build needs seconds to start the child.
-    isDebug || isASAN ? 30_000 : undefined,
-  );
+      const [first, ...rest] = output.split("\n");
+      output = rest.join("\n");
+      return first;
+    }
+    // The peer reads nothing until the session is destroyed, so the body cannot leave before that.
+    const peer = openPeer(Number(await line()), { stopReading: true });
+    await line();
+    peer.socket.resume();
+    expect(await peer.closed).toEqual(whole);
+    expect(await server.exited).toBe(0);
+  });
 
   // An HTTP/2 server on a raw socket. It answers the request at once with an empty 200, so the
   // request is closed on both sides as soon as the client has serialized its body.

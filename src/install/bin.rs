@@ -957,6 +957,14 @@ impl<'a> Linker<'a> {
             // Skip seen destinations for this tree
             // https://github.com/npm/cli/blob/22731831e22011e32fa0ca12178e242c2ee2b33d/node_modules/bin-links/lib/link-gently.js#L30
             if seen.contains_key(abs_dest.as_bytes()) {
+                // The name is taken, and `bunx <this package>` starts the file itself.
+                #[cfg(not(windows))]
+                if let Ok(target_stat) = sys::stat(abs_target)
+                    && !(target_needs_resolved_containment_check
+                        && self.resolved_target_parent_escapes_package_dir(abs_target))
+                {
+                    Self::make_executable(abs_target, &target_stat);
+                }
                 return;
             }
         }
@@ -1016,13 +1024,16 @@ impl<'a> Linker<'a> {
         }
 
         #[cfg(not(windows))]
-        {
-            let mode = exec_mode();
-            if (target_stat.st_mode as Mode) & 0o777 != mode {
-                let _ = sys::lchmod(abs_target, mode);
-            }
-            Self::try_normalize_shebang(abs_target, target_stat.st_size as u64);
+        Self::make_executable(abs_target, &target_stat);
+    }
+
+    #[cfg(not(windows))]
+    fn make_executable(abs_target: &ZStr, target_stat: &sys::Stat) {
+        let mode = exec_mode();
+        if (target_stat.st_mode as Mode) & 0o777 != mode {
+            let _ = sys::lchmod(abs_target, mode);
         }
+        Self::try_normalize_shebang(abs_target, target_stat.st_size as u64);
     }
 
     #[cfg(not(windows))]

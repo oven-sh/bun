@@ -1769,10 +1769,12 @@ export class Getter {
 }
 
 export class Builtin {
-  constructor(
-    readonly name: string,
-    readonly length: number,
-  ) {}
+  readonly name: string;
+  readonly length: number;
+  constructor(name: string, length: number) {
+    this.name = name;
+    this.length = length;
+  }
 }
 
 export type ClassMember = FunctionDefinition | Getter | Builtin;

@@ -1748,7 +1748,8 @@ describe("a rule for a tarball or git dependency", () => {
       );
 
       expect({ stdout, stderr }).toEqual({ stdout: JSON.stringify(["MODULE_NOT_FOUND", "3.0.0"]), stderr: "" });
-      expect(spec.requested("a")).toBe(0);
+      // one lookup that failed and was tried again once, and the one after that
+      expect({ b: spec.requested("b"), a: spec.requested("a") }).toEqual({ b: 3, a: 0 });
       expect(exitCode).toBe(0);
     });
 

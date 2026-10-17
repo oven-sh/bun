@@ -667,15 +667,14 @@ pub fn enqueue_dependency_to_root(
         let dependency = this.lockfile.buffers.dependencies[dep_id as usize].clone();
         let (install_peer, is_root) = (false, true);
 
-        // A rule can send the import to the manifest of another name, or to none.
+        // A rule can change the manifest that the import asks for. `Err` is the one it waits for.
         let mut replacement = None;
-        let registry_name =
-            match asked_version(this, dep_id, &dependency, is_root, &mut replacement) {
-                Ok(asked) => asked.version.tag.is_npm().then_some(asked.name),
-                Err(_) => Some(dependency.realname()),
-            };
-        manifest_task_id =
-            registry_name.map(|name| Task::Id::for_manifest(this.lockfile.str(&name)));
+        manifest_task_id = match asked_version(this, dep_id, &dependency, is_root, &mut replacement)
+        {
+            Ok(asked) => (asked.version.tag.is_npm())
+                .then(|| Task::Id::for_manifest(this.lockfile.str(&asked.name))),
+            Err(task_id) => Some(task_id),
+        };
         if let Some(manifest_task_id) = manifest_task_id
             && (this.network_dedupe_map.get(&manifest_task_id)).is_some_and(|entry| {
                 entry.missed_in.is_some_and(|missed_in| missed_in != turn)

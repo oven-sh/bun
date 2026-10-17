@@ -1,7 +1,9 @@
+import { dlopen, ptr } from "bun:ffi";
+import { createSocketPair } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { closeSync, openSync, writeSync } from "fs";
+import { closeSync, constants, fstatSync, openSync, statSync, symlinkSync, writeSync } from "fs";
 import fsPromises from "fs/promises";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, libcPathForDlopen, tempDir } from "harness";
 import { join } from "path";
 
 test("delete() and stat() should work with unicode paths", async () => {
@@ -159,80 +161,196 @@ test("Bun.file().json() with UTF-8 BOM does not free an interior pointer", async
 
 // A pipe and a socket have no length. macOS and the BSDs report the bytes that wait in one as its
 // st_size, and a Bun.file() that takes that count for its size stops every later read there.
-describe.skipIf(isWindows)("Bun.stdin asked for its size while bytes wait in it", () => {
+describe.skipIf(isWindows)("Bun.file() of a pipe or a socket that has bytes waiting", () => {
   const first = "first,";
   const second = "second";
+  // The st_size of a descriptor that has `first` in it. Linux reports 0 for a pipe and a socket.
+  const waiting = isLinux ? 0 : first.length;
 
-  // A byte on the READY FIFO says that `first` is in the child's stdin. The child prints the size on
-  // a line of its own, and `second` is sent only after that line.
-  const script = (ask: string, read: string) => `
-    const fs = require("fs");
-    fs.readSync(fs.openSync(process.env.READY, "r"), Buffer.alloc(1));
-    ${ask}
-    process.stdout.write(String(Bun.stdin.size) + "\\n");
-    ${read}
-    process.stdout.write(text);
-  `;
-  const asks = {
-    ".size": "",
-    "exists()": "await Bun.stdin.exists();",
-  };
-  const reads = {
-    "text()": "const text = await Bun.stdin.text();",
-    "stream()": 'let text = ""; for await (const chunk of Bun.stdin.stream()) text += Buffer.from(chunk).toString();',
-  };
-  const stdins = {
-    // The stdin that Bun.spawn hands out is a socketpair. The test says when `first` is in it.
-    socket: { cmd: (script: string) => [bunExe(), "-e", script], saysReady: false },
-    // A shell pipeline is a kernel pipe. Its left side passes `first` on, says so, then passes the rest on.
-    pipe: {
-      cmd: () => ["sh", "-c", `{ head -c ${first.length}; echo >"$READY"; cat; } | "$BUN" -e "$SCRIPT"`],
-      saysReady: true,
+  const openLibc = () => dlopen(libcPathForDlopen(), { pipe: { args: ["ptr"], returns: "i32" } });
+  let libc: ReturnType<typeof openLibc> | undefined;
+  // Each gives [read end, write end].
+  const kinds = {
+    socket: (): number[] => createSocketPair(),
+    pipe: (): number[] => {
+      libc ??= openLibc();
+      const fds = new Int32Array(2);
+      if (libc.symbols.pipe(ptr(fds)) !== 0) throw new Error("pipe() failed");
+      return [...fds];
     },
   };
+  // Every descriptor is closed once, also when an expectation throws first.
+  function open(kind: keyof typeof kinds) {
+    const fds = new Set(kinds[kind]());
+    const [readFd, writeFd] = fds;
+    const close = (fd: number) => void (fds.delete(fd) && closeSync(fd));
+    return { readFd, writeFd, close, [Symbol.dispose]: () => fds.forEach(close) };
+  }
 
-  for (const [stdinName, stdin] of Object.entries(stdins)) {
-    for (const [askName, ask] of Object.entries(asks)) {
-      for (const [readName, read] of Object.entries(reads)) {
-        test.concurrent(`${stdinName}: ${askName}, then ${readName} reads to the end`, async () => {
-          using dir = tempDir("bun-stdin-size-waiting", {});
-          const ready = join(String(dir), "ready");
-          expect(Bun.spawnSync({ cmd: ["mkfifo", ready] }).exitCode).toBe(0);
-          // Open for both directions: no open of the FIFO blocks, and the byte stays in it until the child reads it.
-          const readyFd = openSync(ready, "r+");
-          try {
-            const SCRIPT = script(ask, read);
-            await using proc = Bun.spawn({
-              cmd: stdin.cmd(SCRIPT),
-              env: { ...bunEnv, BUN: bunExe(), SCRIPT, READY: ready },
-              stdin: "pipe",
-              stdout: "pipe",
-              stderr: "pipe",
-            });
-            // Drained from the start so a failing child can never block on a full stderr pipe.
-            const stderr = proc.stderr.text();
-            const reader = proc.stdout.getReader();
-            const decoder = new TextDecoder();
-            let stdout = "";
+  for (const kind of ["socket", "pipe"] as const) {
+    test(`${kind}: Bun.file(fd).size, then text() reads to the end`, async () => {
+      using fds = open(kind);
+      writeSync(fds.writeFd, first);
+      const file = Bun.file(fds.readFd);
+      const asked = { st_size: fstatSync(fds.readFd).size, size: file.size };
+      writeSync(fds.writeFd, second);
+      fds.close(fds.writeFd);
 
-            proc.stdin.write(first);
-            await proc.stdin.flush();
-            if (!stdin.saysReady) writeSync(readyFd, "\n");
-            for (let r; !stdout.includes("\n") && !(r = await reader.read()).done;) {
-              stdout += decoder.decode(r.value, { stream: true });
-            }
+      expect({ ...asked, text: await file.text() }).toEqual({ st_size: waiting, size: Infinity, text: first + second });
+    });
+  }
 
-            proc.stdin.write(second);
-            await proc.stdin.end();
-            for (let r; !(r = await reader.read()).done;) stdout += decoder.decode(r.value, { stream: true });
+  describe("as the stdin of a child", () => {
+    // `first` is in the child's stdin before the child starts. The child asks, then prints what `fstat`
+    // reported on a line of its own. `second` is sent only after that line.
+    type Case = { file?: string; stat?: string; ask: string; read: string };
+    const script = ({ file = "Bun.stdin", stat = "fs.fstatSync(0)", ask, read }: Case) => `
+      const fs = require("fs");
+      const stdin = ${file};
+      const st_size = ${stat}.size;
+      ${ask}
+      process.stdout.write(st_size + "\\n");
+      let text = "";
+      ${read}
+      process.stdout.write(JSON.stringify({ size: String(stdin.size), text }));
+    `;
 
-            expect({ stdout, stderr: await stderr }).toEqual({ stdout: "Infinity\n" + first + second, stderr: "" });
-            expect(await proc.exited).toBe(0);
-          } finally {
-            closeSync(readyFd);
-          }
-        });
+    async function readsToTheEnd(kind: keyof typeof kinds, parts: Case) {
+      using fds = open(kind);
+      writeSync(fds.writeFd, first);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script(parts)],
+        env: bunEnv,
+        stdin: fds.readFd,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      fds.close(fds.readFd);
+      // Drained from the start so a failing child can never block on a full stderr pipe.
+      const stderr = proc.stderr.text();
+      const reader = proc.stdout.getReader();
+      const decoder = new TextDecoder();
+      let stdout = "";
+
+      for (let r; !stdout.includes("\n") && !(r = await reader.read()).done;) {
+        stdout += decoder.decode(r.value, { stream: true });
+      }
+      try {
+        writeSync(fds.writeFd, second);
+      } catch {
+        // A child that stopped reading early is gone by now. Its output below is the better report.
+      }
+      fds.close(fds.writeFd);
+      for (let r; !(r = await reader.read()).done;) stdout += decoder.decode(r.value, { stream: true });
+
+      expect({ stdout, stderr: await stderr }).toEqual({
+        stdout: waiting + "\n" + JSON.stringify({ size: "Infinity", text: first + second }),
+        stderr: "",
+      });
+      expect(await proc.exited).toBe(0);
+    }
+
+    const text = "text = await stdin.text();";
+    const stream = "for await (const chunk of stdin.stream()) text += Buffer.from(chunk);";
+    const cases: Record<string, Case> = {
+      ".size, then text()": { ask: "stdin.size;", read: text },
+      ".size, then stream()": { ask: "stdin.size;", read: stream },
+      "exists(), then text()": { ask: "await stdin.exists();", read: text },
+      "exists(), then stream()": { ask: "await stdin.exists();", read: stream },
+    };
+    for (const kind of ["socket", "pipe"] as const) {
+      for (const [caseName, parts] of Object.entries(cases)) {
+        test.concurrent(`${kind}: ${caseName} reads to the end`, () => readsToTheEnd(kind, parts));
       }
     }
+
+    // The kind of stdin makes no difference to these, so only the pipe runs them.
+    describe("asked or read another way", () => {
+      const otherCases: Record<string, Case> = {
+        "lastModified, then text()": { ask: "stdin.lastModified;", read: text },
+        "structuredClone(), then text()": { ask: "structuredClone(stdin);", read: text },
+        "Bun.inspect(new Response(Bun.stdin)), then its text()": {
+          ask: "const response = new Response(stdin); Bun.inspect(response);",
+          read: "text = await response.text();",
+        },
+        ".size, then slice(0, 100).text()": { ask: "stdin.size;", read: "text = await stdin.slice(0, 100).text();" },
+        ".size, then process.stdin": {
+          ask: "stdin.size;",
+          read: "for await (const chunk of process.stdin) text += chunk;",
+        },
+        "new Response(Bun.stdin).body": {
+          ask: "const body = new Response(stdin).body;",
+          read: "for await (const chunk of body) text += Buffer.from(chunk);",
+        },
+        "Bun.file(0).size, then text()": { file: "Bun.file(0)", ask: "stdin.size;", read: text },
+        // The same pipe through `stat()` of a path.
+        'Bun.file("/dev/stdin").size, then text()': {
+          file: 'Bun.file("/dev/stdin")',
+          stat: 'fs.statSync("/dev/stdin")',
+          ask: "stdin.size;",
+          read: text,
+        },
+      };
+      for (const [caseName, parts] of Object.entries(otherCases)) {
+        test.concurrent(`pipe: ${caseName} reads to the end`, () => readsToTheEnd("pipe", parts));
+      }
+    });
+  });
+});
+
+// `fstat` of a symlink gives the length of its target. Linux can show the same rule with it, without a pipe.
+test.skipIf(!isLinux)("Bun.file(fd of a symlink).size is Infinity", () => {
+  using dir = tempDir("bun-file-symlink-size", { "target.txt": "hello" });
+  const target = join(String(dir), "target.txt");
+  const link = join(String(dir), "link");
+  symlinkSync(target, link);
+  const O_PATH = 0o10000000;
+  const fd = openSync(link, O_PATH | constants.O_NOFOLLOW);
+  try {
+    const stat = fstatSync(fd);
+    expect({ isSymbolicLink: stat.isSymbolicLink(), st_size: stat.size }).toEqual({
+      isSymbolicLink: true,
+      st_size: Buffer.byteLength(target),
+    });
+    expect({ fd: Bun.file(fd).size, path: Bun.file(`/proc/self/fd/${fd}`).size }).toEqual({
+      fd: Infinity,
+      path: Infinity,
+    });
+  } finally {
+    closeSync(fd);
   }
 });
+
+// `stat` gives most directories a size, and Bun.file() reports that number.
+test.skipIf(isWindows)("Bun.file(directory).size is the st_size of the directory", () => {
+  using dir = tempDir("bun-file-directory-size", { "file.txt": "hello" });
+  const { size } = statSync(String(dir));
+  const fd = openSync(String(dir), "r");
+  try {
+    expect(size).toBeGreaterThan(0);
+    expect({ path: Bun.file(String(dir)).size, fd: Bun.file(fd).size }).toEqual({ path: size, fd: size });
+  } finally {
+    closeSync(fd);
+  }
+});
+
+// `stat` gives 0 for a directory of procfs and for every directory on Windows. That is not a size.
+test.skipIf(!isLinux && !isWindows)(
+  "Bun.file(directory).size is Infinity when the st_size of the directory is 0",
+  () => {
+    using dir = tempDir("bun-file-directory-size-0", {});
+    const directory = isLinux ? "/proc" : String(dir);
+    expect({ st_size: statSync(directory).size, size: Bun.file(directory).size }).toEqual({
+      st_size: 0,
+      size: Infinity,
+    });
+    if (isLinux) {
+      const fd = openSync(directory, "r");
+      try {
+        expect(Bun.file(fd).size).toBe(Infinity);
+      } finally {
+        closeSync(fd);
+      }
+    }
+  },
+);

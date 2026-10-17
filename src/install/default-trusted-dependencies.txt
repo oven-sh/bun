@@ -86,6 +86,7 @@
 @serialport/bindings-cpp
 @shopify/ngrok
 @shopify/plugin-cloudflare
+@shopify/react-native-skia
 @sitespeed.io/chromedriver
 @sitespeed.io/edgedriver
 @softvisio/core

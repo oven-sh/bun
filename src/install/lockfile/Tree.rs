@@ -472,6 +472,16 @@ pub(crate) enum Layout {
     Older,
 }
 
+/// What `Lockfile::hoist` does with a required peer that already resolves to a package.
+#[derive(PartialEq, Eq, Clone, Copy, Default)]
+pub(crate) enum Peers {
+    /// Resolves it again by version, as loading bun.lock does. bun.lock stores no peer.
+    #[default]
+    ByVersion,
+    /// Keeps the package. bun.lockb stores what every dependency resolves to.
+    Recorded,
+}
+
 /// What `Lockfile::hoist` returns, besides the trees it stores in the lockfile.
 pub(crate) struct Hoisted {
     /// See `Builder::late_bound_peer`.
@@ -582,6 +592,11 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     /// would place every row that this install keeps exactly where it is now.
     pub(crate) places: Vec<(u64, PackageID)>,
     pub(crate) linked: reachable::Linked,
+    pub(crate) peers: Peers,
+    /// The last peer that `Peers::Recorded` kept on another package than `peer_by_version` finds.
+    /// `PeerProbes` do not stop its walk: the hoist that saved the peer walked with the package
+    /// that `peer_by_version` finds, and an older Bun had no probes.
+    pub(crate) unprobed: DependencyID,
 }
 
 /// The hoisted package's required peers (does staying put find it in range?); who has any.
@@ -823,17 +838,35 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
     }
 
     /// Resolves a peer to `peer_by_version` before it is placed, so that every hoist of the same
-    /// packages starts from the same resolution. Returns whether `peer_by_version` found a package.
+    /// packages starts from the same resolution. With `Peers::Recorded` that resolution is the
+    /// package the peer already resolves to, if any. Returns whether the peer was resolved by
+    /// version.
     #[inline]
     fn bind_peer(&mut self, dep_id: DependencyID) -> bool {
         if !self.dependencies[dep_id as usize].behavior.is_peer() {
             return false;
         }
-        let bound = self.peer_by_version(dep_id);
-        if let Some(pkg_id) = bound {
-            self.resolutions[dep_id as usize] = pkg_id;
+        let Some(by_version) = self.peer_by_version(dep_id) else {
+            return false;
+        };
+        if self.peers == Peers::Recorded && self.keeps_recorded_peer(dep_id, by_version) {
+            return false;
         }
-        bound.is_some()
+        self.resolutions[dep_id as usize] = by_version;
+        true
+    }
+
+    /// Whether the peer resolves to a package already. Out of line: bun.lock never gets here.
+    #[inline(never)]
+    fn keeps_recorded_peer(&mut self, dep_id: DependencyID, by_version: PackageID) -> bool {
+        let recorded = self.resolutions[dep_id as usize];
+        if recorded == invalid_package_id {
+            return false;
+        }
+        if recorded != by_version {
+            self.unprobed = dep_id;
+        }
+        true
     }
 
     #[cold]
@@ -1939,7 +1972,11 @@ impl Tree {
                     deps,
                     &*builder.resolutions,
                     input_dep_range,
-                    package_id,
+                    if builder.unprobed == input_dep_id {
+                        invalid_package_id
+                    } else {
+                        package_id
+                    },
                 );
             }
             let id = Tree::hoist_dependency::<false, METHOD>(
@@ -2016,6 +2053,7 @@ impl Tree {
                 let dep = &deps[dep_id as usize];
                 // Until this pass walks a peer's package, `resolutions` holds what the last pass
                 // wrote in `bind_served_peers`. Ask `peer_by_version` first, as `bind_peer` will.
+                // Also for a peer that `Peers::Recorded` keeps: the hoist that saved it asked too.
                 dep.name_hash == name_hash
                     && !dep.behavior.is_bundled()
                     && (builder.peer_by_version(dep_id)).unwrap_or(resolutions[dep_id as usize])

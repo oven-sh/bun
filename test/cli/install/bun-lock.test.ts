@@ -2882,6 +2882,49 @@ async function installWithOwnCache(cwd: string, ...args: string[]) {
   return { out, err };
 }
 
+// bun.lock stores no package for a peer. Loading it resolves a ranged peer to the highest version in the file that
+// the range accepts, whatever tree the file records. This is the file that Bun 1.3 and 1.4 write for these packages:
+// zz-10's peer is zz-9@1.0.1 at the top, and zz-3 has its own zz-9@1.0.2. Since Bun 1.4.0 an install lays 1.0.2 at
+// the top and leaves the file as it is. bun.lockb stores the peer, and an install keeps it (bun-lockb.test.ts).
+it.concurrent("loading bun.lock resolves a ranged peer by version, not from the tree it records", async () => {
+  using registry = await serveRegistry({
+    "zz-10": { "2.1.0": { peerDependencies: { "zz-9": "~1.0.1" } } },
+    "zz-11": { "3.1.0": { peerDependencies: { "zz-3": "^1.5.0" } } },
+    "zz-3": { "1.5.0": { dependencies: { "zz-9": "^1.0.2" } } },
+    "zz-9": { "1.0.1": {}, "1.0.2": {} },
+  });
+  const entry = (name: string, version: string, info: object = {}) => [
+    `${name}@${version}`,
+    `${registry.origin}/${name}-${version}.tgz`,
+    info,
+    "",
+  ];
+  const dependencies = { "zz-10": ">=0.0.2", "zz-11": "^3.1.0" };
+  const lockfile = JSON.stringify({
+    lockfileVersion: 1,
+    configVersion: 1,
+    workspaces: { "": { name: "app", dependencies } },
+    packages: {
+      "zz-10": entry("zz-10", "2.1.0", { peerDependencies: { "zz-9": "~1.0.1" } }),
+      "zz-11": entry("zz-11", "3.1.0", { peerDependencies: { "zz-3": "^1.5.0" } }),
+      "zz-3": entry("zz-3", "1.5.0", { dependencies: { "zz-9": "^1.0.2" } }),
+      "zz-9": entry("zz-9", "1.0.1"),
+      "zz-3/zz-9": entry("zz-9", "1.0.2"),
+    },
+  });
+  using dir = tempDir("bun-lock-peer-by-version", {
+    "package.json": JSON.stringify({ name: "app", dependencies }),
+    "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url, linker: "hoisted" } }),
+    "bun.lock": lockfile,
+  });
+  const cwd = String(dir);
+
+  await installWithOwnCache(cwd, "--frozen-lockfile");
+  expect(await file(join(cwd, "node_modules", "zz-9", "package.json")).json()).toMatchObject({ version: "1.0.2" });
+  expect(await exists(join(cwd, "node_modules", "zz-3", "node_modules", "zz-9"))).toBeFalse();
+  expect(await file(join(cwd, "bun.lock")).text()).toBe(lockfile);
+});
+
 // https://github.com/oven-sh/bun/issues/26046
 // A required peer that nothing in the tree provides and that no published
 // version satisfies stays unresolved. The bun.lock written afterwards has to

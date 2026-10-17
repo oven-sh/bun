@@ -187,6 +187,10 @@ pub struct Lockfile {
     /// Packages that a row other than a weak peer (`is_weak_peer`) resolved to at load.
     pub(crate) held_at_load: DynamicBitSet,
 
+    /// `Recorded` from the load of a bun.lockb until an install changes the dependencies.
+    /// Runtime-only. `clean_with_logger` carries it over.
+    pub(crate) peers: tree::Peers,
+
     /// Packages that were appended for a dependency on one exact version. A wider range may share
     /// such a package even when the range would pick a higher major version on its own.
     /// Runtime-only, sized lazily.
@@ -736,6 +740,7 @@ impl Lockfile {
         };
 
         self.tag_workspace_links(link_workspace_packages);
+        self.peers = tree::Peers::Recorded;
 
         LoadResult::Ok(LoadResultOk {
             lockfile: self,
@@ -1261,6 +1266,8 @@ impl Lockfile {
         preinstall_state.fill(Install::PreinstallState::Unknown);
 
         let mut new: Box<Lockfile> = Box::default();
+        // `flush` hoists, so the new lockfile has this first.
+        new.peers = old.peers;
         new.string_pool
             .ensure_total_capacity(old.string_pool.capacity())?;
         new.package_index
@@ -1612,13 +1619,17 @@ impl<'a> Cloner<'a> {
 
 impl Lockfile {
     /// Hoists again for as long as a pass binds or rebinds a peer. The result is then the same as
-    /// after a reload of the lockfile, where those peers are bound before the first pass.
+    /// after a reload of the lockfile, where those peers are bound before the first pass. A reload
+    /// of bun.lockb has every peer as stored, in a tree or not, so `Peers::Recorded` moves none to
+    /// a printed package.
     pub(crate) fn resolve(&mut self, log: &mut bun_ast::Log) -> Result<(), tree::SubtreeError> {
         const METHOD: tree::BuilderMethod = tree::BuilderMethod::Resolvable;
         while (self.hoist::<METHOD>(log, None, true, &[], None, tree::Layout::Locked)?)
             .late_bound_peer
         {}
-        TextLockfile::rebind_peers_to_printed_packages(self)?;
+        if self.peers == tree::Peers::ByVersion {
+            TextLockfile::rebind_peers_to_printed_packages(self)?;
+        }
         Ok(())
     }
 
@@ -1653,6 +1664,8 @@ impl Lockfile {
         layout: tree::Layout,
     ) -> Result<tree::Hoisted, tree::SubtreeError> {
         let slice = self.packages.slice();
+        let recorded = (cfg!(debug_assertions) && self.peers == tree::Peers::Recorded)
+            .then(|| self.buffers.resolutions.clone());
 
         // Only the install applies the barrier, so the saved tree does not depend on it.
         let self_contained = if METHOD == tree::BuilderMethod::Filter {
@@ -1694,6 +1707,8 @@ impl Lockfile {
             older_layout: layout == tree::Layout::Older,
             places: Vec::new(),
             linked: Default::default(),
+            peers: self.peers,
+            unprobed: invalid_dependency_id,
         };
 
         Tree::default().process_subtree(tree::ROOT_DEP_ID, tree::INVALID_ID, &mut builder)?;
@@ -1717,8 +1732,19 @@ impl Lockfile {
             late_bound_peer: builder.late_bound_peer,
             places: core::mem::take(&mut builder.places),
         };
+        drop(builder);
         self.buffers.trees = cleaned.trees;
         self.buffers.hoisted_dependencies = cleaned.dep_ids;
+        if let Some(recorded) = recorded {
+            let rows = (self.buffers.dependencies.iter()).zip(&recorded);
+            for ((row, &before), &after) in rows.zip(&self.buffers.resolutions) {
+                let required_peer = row.behavior.is_peer() && !row.behavior.is_optional_peer();
+                debug_assert!(
+                    !required_peer || before == invalid_package_id || before == after,
+                    "`Peers::Recorded` moved a required peer off the package it resolves to",
+                );
+            }
+        }
         Ok(hoisted)
     }
 }
@@ -2262,6 +2288,7 @@ impl Lockfile {
             saved_config_version: None,
             loaded_package_count: 0,
             held_at_load: DynamicBitSet::default(),
+            peers: tree::Peers::ByVersion,
             exact_pinned: DynamicBitSet::default(),
             only_bundled: DynamicBitSet::default(),
         }

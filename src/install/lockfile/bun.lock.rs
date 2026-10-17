@@ -3053,7 +3053,8 @@ pub(crate) fn parse_into_binary_lockfile(
 /// package's peer goes through it, and stays on the workspace if no published version is in range.
 ///
 /// For the hoister this result is only a starting point: `tree::bind_served_peers` prefers the
-/// root's or the package's own dependency of that name if it is in range.
+/// root's or the package's own dependency of that name if it is in range. With
+/// `tree::Peers::Recorded` the hoister keeps the package that the peer already resolves to.
 /// `is_candidate` restricts the scan for lockfiles holding packages a reload will not see.
 pub(crate) fn resolve_peer_dep_version_based(
     dep: &Dependency,

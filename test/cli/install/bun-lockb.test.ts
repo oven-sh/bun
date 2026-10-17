@@ -1,10 +1,10 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { chmodSync, readFileSync, statSync } from "fs";
+import { chmodSync, existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "fs";
 import { copyFile, exists, open, rm, symlink, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, isLinux, isRoot, isWindows, runBunInstall, tempDir, textLockfile } from "harness";
-import { join } from "path";
-import { TestRegistry } from "registry";
+import { dirname, join } from "path";
+import { installEnv, TestRegistry, toml } from "registry";
 
 const registry = new TestRegistry();
 
@@ -1042,6 +1042,248 @@ describe.concurrent("no command sees the version that a peer moved away from", (
 
     expect(await run(packageDir, "install")).toMatchObject({ exitCode: 0 });
     expect((await run(packageDir, "pm", "hash")).stdout).toBe(hash);
+  });
+});
+
+// bun.lockb stores the package that every dependency resolves to. bun.lock stores none for a peer, so loading it
+// resolves a peer to the highest version in its range. An install that changes no dependency keeps what bun.lockb stores.
+describe.concurrent("a peer stays on the package that bun.lockb stores for it", () => {
+  type Graph = Record<string, Record<string, object>>;
+  // zz-10's peer accepts both versions of zz-9, and pf's peer both versions of nd.
+  const graph: Graph = {
+    "zz-10": { "2.1.0": { peerDependencies: { "zz-9": "~1.0.1" } } },
+    "zz-11": { "3.1.0": { peerDependencies: { "zz-3": "^1.5.0" }, scripts: { postinstall: "exit 0" } } },
+    "zz-3": { "1.5.0": { dependencies: { "zz-9": "^1.0.2" } } },
+    "zz-9": { "1.0.1": {}, "1.0.2": {} },
+    pf: { "1.0.0": { peerDependencies: { nd: "^1.0.0" } } },
+    od: { "1.0.0": { dependencies: { nd: "1.0.1" } } },
+    nd: { "1.0.1": {}, "1.1.0": {} },
+    unrelated: { "1.0.0": {} },
+  };
+  const app = (dependencies: object) => JSON.stringify({ name: "app", version: "1.0.0", dependencies });
+  const bunfig = (server: { url: URL }, install: object = {}) =>
+    toml({ install: { registry: server.url.href, ...install } });
+
+  async function serve(graph: Graph, latest: Record<string, string> = {}) {
+    const tarballs = new Map<string, Uint8Array>();
+    for (const [name, versions] of Object.entries(graph)) {
+      for (const [version, manifest] of Object.entries(versions)) {
+        const files = { "package/package.json": JSON.stringify({ name, version, ...manifest }) };
+        tarballs.set(`/${name}/-/${name}-${version}.tgz`, await new Bun.Archive(files, { compress: "gzip" }).bytes());
+      }
+    }
+    return Bun.serve({
+      port: 0,
+      fetch(request) {
+        const { origin, pathname } = new URL(request.url);
+        const tarball = tarballs.get(pathname);
+        if (tarball) return new Response(tarball);
+        const name = pathname.slice(1);
+        if (!(name in graph)) return new Response("{}", { status: 404 });
+        const versions: Record<string, object> = {};
+        for (const [version, manifest] of Object.entries(graph[name])) {
+          const dist = { tarball: `${origin}/${name}/-/${name}-${version}.tgz` };
+          versions[version] = { name, version, ...manifest, hasInstallScript: "scripts" in manifest, dist };
+        }
+        const tags = { latest: latest[name] ?? Object.keys(versions).at(-1) };
+        return Response.json({ name, versions, "dist-tags": tags });
+      },
+    });
+  }
+
+  // The tests run at the same time, so each project has a cache of its own, in `project`.
+  async function bun(cwd: string, args: string[], project = cwd) {
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: installEnv(project),
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ args, stderr, exitCode }).toEqual({ args, stderr: expect.not.stringContaining("error:"), exitCode: 0 });
+    return stdout + stderr;
+  }
+  const wipe = (dir: string) => rm(join(dir, "node_modules"), { recursive: true, force: true });
+
+  // Every folder below node_modules, as `zz-3/zz-9@1.0.2`. Not the links.
+  function folders(dir: string) {
+    const found: string[] = [];
+    const walk = (folder: string, label: string) => {
+      const nodeModules = join(folder, "node_modules");
+      if (!existsSync(nodeModules)) return;
+      for (const name of readdirSync(nodeModules).sort()) {
+        const path = join(nodeModules, name);
+        if (name.startsWith(".") || lstatSync(path).isSymbolicLink()) continue;
+        found.push(`${label}${name}@${JSON.parse(readFileSync(join(path, "package.json"), "utf8")).version}`);
+        walk(path, `${label}${name}/`);
+      }
+    };
+    walk(dir, "");
+    return found;
+  }
+
+  // The version of the last name that node loads, going from the project through the names before it.
+  function loaded(dir: string, ...names: string[]) {
+    let from = dir;
+    for (const name of names) {
+      let at = realpathSync(from);
+      while (!existsSync(join(at, "node_modules", name, "package.json"))) {
+        if (at === dirname(at)) throw new Error(`${from} cannot load ${name}`);
+        at = dirname(at);
+      }
+      from = join(at, "node_modules", name);
+    }
+    return JSON.parse(readFileSync(join(from, "package.json"), "utf8")).version;
+  }
+
+  // Bun v1.4.2 wrote the fixture: `bun install` with zz-10, zz-11 and pf, then `bun add od@1.0.0`. It stores
+  // zz-10 -> zz-9@1.0.1, the `latest` of that day, at the top of the tree, with zz-9@1.0.2 below zz-3. It stores
+  // pf -> nd@1.1.0, which is in no tree: od's nd@1.0.1 is at the top. Its registry was `http://localhost:1/`, so
+  // the tarballs have to be in the cache, which an install in `fill` puts there.
+  const older = readFileSync(join(import.meta.dir, "fixtures", "bun.lockb.v1.4.2-peers"));
+  const olderDependencies = { od: "1.0.0", pf: "1.0.0", "zz-10": ">=0.0.2", "zz-11": "^3.1.0" };
+  const everyVersion = Object.fromEntries(
+    Object.entries(graph).flatMap(([name, versions]) =>
+      Object.keys(versions).map(version => [`${name}-${version}`, `npm:${name}@${version}`]),
+    ),
+  );
+  async function olderProject(server: { url: URL }, linker: "hoisted" | "isolated") {
+    const dir = tempDir("lockb-stored-peers", {
+      "bun.lockb": older,
+      "package.json": app(olderDependencies),
+      "bunfig.toml": bunfig(server, { linker }),
+      fill: { "package.json": app(everyVersion), "bunfig.toml": bunfig(server) },
+    });
+    await bun(join(String(dir), "fill"), ["install"], String(dir));
+    return dir;
+  }
+
+  it.each(["hoisted", "isolated"] as const)("%s", async linker => {
+    using server = await serve(graph);
+    using dir = await olderProject(server, linker);
+    const cwd = String(dir);
+
+    for (const args of [["install", "--frozen-lockfile"], ["install"]]) {
+      await wipe(cwd);
+      await bun(cwd, args);
+      expect({
+        args,
+        "zz-10 loads zz-9": loaded(cwd, "zz-10", "zz-9"),
+        "zz-3 loads zz-9": loaded(cwd, "zz-11", "zz-3", "zz-9"),
+        "pf loads nd": loaded(cwd, "pf", "nd"),
+      }).toEqual({
+        args,
+        "zz-10 loads zz-9": "1.0.1",
+        "zz-3 loads zz-9": "1.0.2",
+        // Hoisted, pf finds the nd at the top of the tree. Isolated, it is linked to the one bun.lockb stores.
+        "pf loads nd": linker === "hoisted" ? "1.0.1" : "1.1.0",
+      });
+      expect(await file(join(cwd, "bun.lockb")).bytes()).toEqual(older);
+    }
+    if (linker === "hoisted") {
+      expect(folders(cwd)).toEqual([
+        "nd@1.0.1",
+        "od@1.0.0",
+        "pf@1.0.0",
+        "zz-10@2.1.0",
+        "zz-11@3.1.0",
+        "zz-3@1.5.0",
+        "zz-3/zz-9@1.0.2",
+        "zz-9@1.0.1",
+      ]);
+      // `bun prune` lays out the tree of the same bun.lockb, and finds what the install laid.
+      expect(await bun(cwd, ["prune", "--dry-run"])).not.toContain("zz-9");
+    }
+  });
+
+  // `bun pm trust` lays out the tree of the lockfile it loaded, and then saves it.
+  it("bun pm trust saves it as it is", async () => {
+    using server = await serve(graph);
+    using dir = await olderProject(server, "hoisted");
+    const cwd = String(dir);
+
+    await bun(cwd, ["install", "--frozen-lockfile"]);
+    expect(await bun(cwd, ["pm", "trust", "zz-11"])).toContain("1 script ran across 1 package");
+    await wipe(cwd);
+    await bun(cwd, ["install", "--frozen-lockfile"]);
+    expect(loaded(cwd, "zz-10", "zz-9")).toBe("1.0.1");
+    expect(await bun(cwd, ["pm", "hash-string"])).toContain("nd@1.1.0");
+  });
+
+  it("until an install changes the dependencies", async () => {
+    using server = await serve(graph);
+    using dir = await olderProject(server, "hoisted");
+    const cwd = String(dir);
+
+    await write(join(cwd, "package.json"), app({ ...olderDependencies, unrelated: "1.0.0" }));
+    await bun(cwd, ["install"]);
+    // Both peers are on the version that a bun.lock of these packages loads them with, and the versions that only
+    // they held are gone.
+    expect(folders(cwd)).toEqual([
+      "nd@1.0.1",
+      "od@1.0.0",
+      "pf@1.0.0",
+      "unrelated@1.0.0",
+      "zz-10@2.1.0",
+      "zz-11@3.1.0",
+      "zz-3@1.5.0",
+      "zz-9@1.0.2",
+    ]);
+    const hash = await bun(cwd, ["pm", "hash-string"]);
+    expect(hash).not.toContain("zz-9@1.0.1");
+    expect(hash).not.toContain("nd@1.1.0");
+
+    const lockb = await file(join(cwd, "bun.lockb")).bytes();
+    await wipe(cwd);
+    await bun(cwd, ["install", "--frozen-lockfile"]);
+    expect(folders(cwd)).toContain("zz-9@1.0.2");
+    expect(await file(join(cwd, "bun.lockb")).bytes()).toEqual(lockb);
+  });
+
+  it.each([true, false])("saveTextLockfile = %p: an install lays the tree that the one before it saved", async text => {
+    using server = await serve(graph, { "zz-9": "1.0.1" });
+    using dir = tempDir("lockfile-round-trip", {
+      "package.json": app({ "zz-10": ">=0.0.2", "zz-11": "^3.1.0" }),
+      "bunfig.toml": bunfig(server, { linker: "hoisted", saveTextLockfile: text }),
+    });
+    const cwd = String(dir);
+    const lockfile = join(cwd, text ? "bun.lock" : "bun.lockb");
+
+    await bun(cwd, ["install"]);
+    const saved = { folders: folders(cwd), lockfile: await file(lockfile).bytes() };
+    for (const args of [["install", "--frozen-lockfile"], ["install"]]) {
+      await wipe(cwd);
+      await bun(cwd, args);
+      expect({ args, folders: folders(cwd), lockfile: await file(lockfile).bytes() }).toEqual({ args, ...saved });
+    }
+  });
+
+  // xx's peer zz is the root's zz@1.0.0, and bun.lockb stores that. By version it is hh's zz@1.1.0. The root's
+  // zz@1.0.0 has a peer of its own, which it finds in range below xx and not at the top.
+  it("a peer that the root's own dependency provides gets no second copy", async () => {
+    using server = await serve({
+      zz: { "1.0.0": { peerDependencies: { qq: "^1.0.0" } }, "1.1.0": {} },
+      qq: { "1.0.0": {}, "2.0.0": {} },
+      xx: { "1.0.0": { dependencies: { qq: "^1.0.0" }, peerDependencies: { zz: "^1.0.0" } } },
+      hh: { "1.0.0": { dependencies: { zz: "1.1.0" } } },
+    });
+    using dir = tempDir("lockb-served-peer", {
+      "package.json": app({ zz: "1.0.0", qq: "2.0.0", xx: "1.0.0", hh: "1.0.0" }),
+      "bunfig.toml": bunfig(server, { linker: "hoisted", saveTextLockfile: false }),
+    });
+    const cwd = String(dir);
+    const expected = ["hh@1.0.0", "hh/zz@1.1.0", "qq@2.0.0", "xx@1.0.0", "xx/qq@1.0.0", "zz@1.0.0"];
+
+    await bun(cwd, ["install"]);
+    expect(folders(cwd)).toEqual(expected);
+    const lockb = await file(join(cwd, "bun.lockb")).bytes();
+    for (const args of [["install", "--frozen-lockfile"], ["install"]]) {
+      await wipe(cwd);
+      await bun(cwd, args);
+      expect({ args, folders: folders(cwd) }).toEqual({ args, folders: expected });
+      expect(await file(join(cwd, "bun.lockb")).bytes()).toEqual(lockb);
+    }
   });
 });
 

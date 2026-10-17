@@ -657,6 +657,17 @@ pub fn install_with_manager(
     super::add_catalog::refuse_declared_positionals(manager);
     super::package_json_write_back::fold_resolved_positionals(manager);
 
+    // bun.lockb stores what each peer resolves to, and an install that changes no dependency keeps
+    // that. An install that changes one, or that converts the file to bun.lock, resolves the peers
+    // by version, as loading bun.lock does. Both formats then hold the same tree.
+    if manager.summary.changes_dependencies()
+        || manager.to_update
+        || matches!(manager.subcommand, Subcommand::Dedupe | Subcommand::Audit)
+        || converts_binary_lockfile_to_text(&load_result, load_result.save_format(&manager.options))
+    {
+        manager.lockfile.peers = lockfile::tree::Peers::ByVersion;
+    }
+
     let lockfile_before_clean = clean_lockfile(manager, log_level)?;
     if !manager.options.dry_run {
         Output::flush();

@@ -416,7 +416,9 @@ impl CompileTarget {
         ]
     }
 
-    pub fn define_values(&self) -> [&'static [u8]; 3] {
+    /// Values for [`define_keys`](Self::define_keys): they describe the target
+    /// executable, not the bun running the build.
+    pub fn define_values(&self) -> [Box<[u8]>; 3] {
         // Each axis gets its own exhaustive match so that adding a variant to
         // `OperatingSystem` / `Architecture` / `Libc` is a compile error here,
         // not a runtime panic behind a wildcard arm.
@@ -436,9 +438,20 @@ impl CompileTarget {
             Architecture::Arm64 => b"\"arm64\"",
             Architecture::Wasm => b"\"wasm\"",
         };
-        const VERSION: &[u8] =
-            const_format::concatcp!("\"", bun_core::Global::package_json_version, "\"").as_bytes();
-        [platform, arch, VERSION]
+        // Mirrors the runtime's own `process.versions.bun`: the default target
+        // embeds this very executable (so the "-debug" suffix of debug builds is
+        // kept); any other target embeds the release build of `self.version`.
+        let version: Box<[u8]> = if self.is_default() {
+            Box::from(const_format::concatcp!("\"", Global::package_json_version, "\"").as_bytes())
+        } else {
+            format!(
+                "\"{}.{}.{}\"",
+                self.version.major, self.version.minor, self.version.patch
+            )
+            .into_bytes()
+            .into_boxed_slice()
+        };
+        [Box::from(platform), Box::from(arch), version]
     }
 }
 

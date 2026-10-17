@@ -95,7 +95,7 @@ impl BuildCommand {
                 keys.append(&mut define.keys);
                 let mut values: Vec<Box<[u8]>> =
                     Vec::with_capacity(compile_define_values.len() + define.values.len());
-                values.extend(compile_define_values.iter().map(|s| Box::<[u8]>::from(*s)));
+                values.extend(compile_define_values);
                 values.append(&mut define.values);
 
                 define.keys = keys;
@@ -106,10 +106,7 @@ impl BuildCommand {
                         .iter()
                         .map(|s| Box::<[u8]>::from(*s))
                         .collect(),
-                    values: compile_define_values
-                        .iter()
-                        .map(|s| Box::<[u8]>::from(*s))
-                        .collect(),
+                    values: compile_define_values.into(),
                 });
             }
         }

@@ -1600,6 +1600,42 @@ export function writeShebangScript(path: string, program: string, data: string) 
   }
 }
 
+/** Reads a stream line by line. `within` is a bounded window for a negative check. */
+export class LineReader {
+  #lines: AsyncIterator<string>;
+  #pending: Promise<IteratorResult<string>> | undefined;
+  constructor(stream: ReadableStream<Uint8Array>) {
+    this.#lines = forEachLine(stream);
+  }
+  /** The read in flight. It stays in flight across a timed-out `within` so no line is lost. */
+  #next(): Promise<IteratorResult<string>> {
+    this.#pending ??= this.#lines.next();
+    return this.#pending;
+  }
+  async until(predicate: (line: string) => boolean): Promise<string> {
+    while (true) {
+      const { value, done } = await this.#next();
+      this.#pending = undefined;
+      if (done) throw new Error("stream ended before the expected line");
+      if (predicate(value)) return value;
+    }
+  }
+  /** The lines that arrive within `ms`. A line that arrives later stays queued for the next read. */
+  async within(ms: number): Promise<string[]> {
+    const out: string[] = [];
+    const deadline = Date.now() + ms;
+    while (true) {
+      const left = deadline - Date.now();
+      if (left <= 0) return out;
+      const result = await Promise.race([this.#next(), Bun.sleep(left).then(() => undefined)]);
+      if (result === undefined) return out;
+      this.#pending = undefined;
+      if (result.done) return out;
+      out.push(result.value);
+    }
+  }
+}
+
 export async function* forEachLine(iter: AsyncIterable<NodeJS.TypedArray | ArrayBufferLike>) {
   var decoder = new (require("string_decoder").StringDecoder)("utf8");
   var str = "";

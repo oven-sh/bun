@@ -326,7 +326,7 @@ fn in_any_directory(pattern: &[u8]) -> Cow<'_, [u8]> {
     }
 }
 
-/// Converts a pattern for paths without `.` components and empty ones: `./a`, `a//b` and `a/./b` become `a`, `a/b` and `a/b`.
+/// Converts a pattern for paths without `.` and empty components: `./a` and `a//b` become `a` and `a/b`. A leading `/` stays.
 pub fn of_normalized_paths(written: &[u8]) -> Vec<u8> {
     let mut rest = written;
     while let Some(after) = rest.strip_prefix(b"./") {
@@ -336,6 +336,9 @@ pub fn of_normalized_paths(written: &[u8]) -> Vec<u8> {
     let (bangs, rest) = rest.split_at(matcher::negations(rest));
     let shape = Shape::of(rest);
     let mut pattern = bangs.to_vec();
+    if rest.first() == Some(&b'/') {
+        pattern.push(b'/');
+    }
     let (mut at, mut component, mut is_first) = (0, 0, true);
     loop {
         let is_end = at == rest.len();

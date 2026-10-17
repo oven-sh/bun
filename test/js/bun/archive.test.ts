@@ -1783,6 +1783,7 @@ describe("Bun.Archive", () => {
         "src/*": "src/*",
         "*": "*",
         "abs/**": "abs/**",
+        "/abs/**": "/abs/**",
         "../**": "../**",
         "**, !**/../**": ["**", "!**/../**"],
       };
@@ -1802,11 +1803,12 @@ describe("Bun.Archive", () => {
         };
       }
 
-      // extract() writes such an entry below the destination. files() returns its key only for a pattern that has the "..".
+      // extract() writes such an entry below the destination. files() returns its key only for a pattern that has the ".." or the "/".
       expect(selected).toEqual({
         "src/*": { keys: ["src/ok.ts"], written: ["src/ok.ts", "src/x.ts", "src/y.ts"] },
         "*": { keys: [], written: ["top.txt"] },
         "abs/**": { keys: [], written: ["abs/src/z.ts"] },
+        "/abs/**": { keys: ["/abs/src/z.ts"], written: [] },
         "../**": { keys: ["../../top.txt", "../src/x.ts"], written: [] },
         "**, !**/../**": {
           keys: ["/abs/src/z.ts", "src/ok.ts"],

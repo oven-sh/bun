@@ -304,8 +304,12 @@ impl Execution {
         Ok(())
     }
 
-    /// The kill-only half of [`handle_timeout`]: reaps a timed-out test's spawned processes without touching the runner's queue, so it may run from inside `spawnSync`'s isolated loop.
+    /// The kill-only half of [`handle_timeout`]: signals a timed-out test's spawned processes without touching the runner's queue, so it may run from inside `spawnSync`'s isolated loop.
     pub(crate) fn kill_dangling_processes_on_timeout(&mut self, global_this: &JSGlobalObject) {
+        // The file timer can fire after the active entry returned and before `run` steps past it: that entry did not time out.
+        if self.active_entry_reported() {
+            return;
+        }
         // if the concurrent group has one sequence and the sequence has an active entry that has timed out,
         //   kill any dangling processes
         // when using test.concurrent(), we can't do this because it could kill multiple tests at once.
@@ -319,9 +323,13 @@ impl Execution {
                     // SAFETY: arena-owned entry, alive for lifetime of BunTest
                     let entry = unsafe { entry.as_ref() };
                     let now = Timespec::now_force_real_time();
-                    if entry.timespec.order(&now) == core::cmp::Ordering::Less {
-                        // SAFETY: bun_vm() returns the live per-thread VM.
-                        let kill_count = global_this.bun_vm().as_mut().auto_killer.kill();
+                    // A stale file timer can fire while an unlimited entry is active.
+                    if !entry.timespec.eql(&Timespec::EPOCH)
+                        && entry.timespec.order(&now) == core::cmp::Ordering::Less
+                    {
+                        let vm = global_this.bun_vm_ptr();
+                        // SAFETY: bun_vm_ptr() returns the live per-thread VM.
+                        let kill_count = unsafe { (*vm).auto_killer.kill_on_timeout(vm) };
                         if kill_count.processes > 0 {
                             bun_core::pretty_errorln!(
                                 "<d>killed {} dangling process{}<r>",
@@ -334,6 +342,17 @@ impl Execution {
                 }
             }
         }
+    }
+
+    /// A result for an active entry is queued: its callback returned and `run` has not stepped yet.
+    fn active_entry_reported(&mut self) -> bool {
+        let buntest = self.bun_test();
+        // SAFETY: `result_queue` is a sibling field of `self` in `BunTest`, read without forming a `&BunTest`.
+        let queue = unsafe { &(*buntest).result_queue };
+        (0..queue.readable_length()).any(|offset| {
+            self.get_current_and_valid_execution_sequence(&queue.peek_item(offset))
+                .is_some()
+        })
     }
 
     pub(crate) fn step(
@@ -1027,6 +1046,9 @@ fn step_sequence_one(
             (*on_stack_cell).set(prev_on_stack);
             (*on_stack_data_cell).set(prev_on_stack_data);
         });
+
+        // One scope per callback: what this entry spawns is its own at a timeout.
+        global_this.bun_vm().as_mut().auto_killer.begin_scope();
 
         if BunTest::run_test_callback(
             buntest_strong,

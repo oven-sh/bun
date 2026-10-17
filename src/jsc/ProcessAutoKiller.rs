@@ -1,20 +1,49 @@
 use bun_collections::ArrayHashMap;
+use bun_core::{Timespec, TimespecMockMode};
+use bun_event_loop::EventLoopTimer::{EventLoopTimer, State as TimerState, Tag as TimerTag};
 use bun_spawn::Process;
 use bun_sys::SignalCode;
 use core::ptr::NonNull;
 
+use crate::virtual_machine::VirtualMachine;
+
 bun_core::declare_scope!(AutoKiller, hidden);
 
-#[derive(Default)]
 pub struct ProcessAutoKiller {
     /// Keys are intrusively-refcounted `*Process` (ref()'d on insert, deref()'d
     /// on remove/drop). Stored as raw ptr for identity-hash semantics.
-    pub(crate) processes: ArrayHashMap<*mut Process, ()>,
+    /// The value is the `scope` the process was spawned in.
+    pub(crate) processes: ArrayHashMap<*mut Process, u32>,
     pub enabled: bool,
     pub(crate) ever_enabled: bool,
+    /// The test runner begins a new one for each test and hook callback.
+    scope: u32,
+    /// What a timed-out callback spawned, was sent SIGTERM and has not exited. Each keeps the ref
+    /// it had in `processes` until it exits, `timer` fires, or Bun exits.
+    terminating: Vec<*mut Process>,
+    /// Armed for `GRACE_MS` after the SIGTERM to `terminating`.
+    timer: EventLoopTimer,
+}
+
+bun_event_loop::impl_timer_owner!(ProcessAutoKiller; from_timer_ptr => timer);
+
+impl Default for ProcessAutoKiller {
+    fn default() -> Self {
+        Self {
+            processes: ArrayHashMap::default(),
+            enabled: false,
+            ever_enabled: false,
+            scope: 0,
+            terminating: Vec::new(),
+            timer: EventLoopTimer::init_paused(TimerTag::ProcessAutoKiller),
+        }
+    }
 }
 
 impl ProcessAutoKiller {
+    /// How long a process has to exit after a timeout sent it SIGTERM, before it is sent SIGKILL.
+    pub const GRACE_MS: i64 = 500;
+
     pub fn enable(&mut self) {
         self.enabled = true;
         self.ever_enabled = true;
@@ -24,29 +53,137 @@ impl ProcessAutoKiller {
         self.enabled = false;
     }
 
+    pub fn begin_scope(&mut self) {
+        self.scope = self.scope.wrapping_add(1);
+    }
+
+    /// One SIGTERM to every tracked process: for the `--isolate` swap between files.
     pub fn kill(&mut self) -> Result {
         Result {
-            processes: self.kill_processes(),
+            processes: self.kill_processes(None),
         }
     }
 
-    fn kill_processes(&mut self) -> u32 {
+    /// A test or hook callback timed out. One SIGTERM to every tracked process, as [`Self::kill`].
+    /// A process can ignore that on POSIX, so what the callback spawned itself stays ref'd, and
+    /// is sent SIGKILL if it is still running `GRACE_MS` later: from `vm`'s event loop, or from
+    /// [`Self::finish_before_exit`] when Bun exits first.
+    pub fn kill_on_timeout(&mut self, vm: *mut VirtualMachine) -> Result {
+        let count = self.kill_processes(Some(self.scope));
+        if !self.terminating.is_empty() {
+            let timer = &raw mut self.timer;
+            // SAFETY: `self` is `vm.auto_killer`, so the node is address-stable while it is
+            // linked; JS thread. The real clock: the grace period is Bun's, not the test's.
+            unsafe {
+                if (*timer).state == TimerState::ACTIVE {
+                    VirtualMachine::timer_remove(vm, timer);
+                }
+                (*timer).next =
+                    Timespec::ms_from_now(TimespecMockMode::ForceRealTime, Self::GRACE_MS);
+                VirtualMachine::timer_insert(vm, timer);
+            }
+        }
+        Result { processes: count }
+    }
+
+    fn kill_processes(&mut self, own_scope: Option<u32>) -> u32 {
         let mut count: u32 = 0;
         while let Some(entry) = self.processes.pop() {
-            {
-                // SAFETY: every key in `processes` was ref()'d on insert and is
-                // live until the matching deref() below; popped entry is
-                // exclusively owned for this scope so `&mut Process` is unaliased.
-                let p: &mut Process = unsafe { &mut *entry.key };
-                if !p.has_exited() {
-                    bun_core::scoped_log!(AutoKiller, "process.kill {}", p.pid);
-                    count += p.kill(SignalCode::DEFAULT.0).is_ok() as u32;
+            // SAFETY: every key in `processes` was ref()'d on insert and is
+            // live until the matching deref() below; popped entry is
+            // exclusively owned for this scope so `&mut Process` is unaliased.
+            let p: &mut Process = unsafe { &mut *entry.key };
+            if !p.has_exited() {
+                bun_core::scoped_log!(AutoKiller, "process.kill {}", p.pid);
+                let asked = p.kill(SignalCode::DEFAULT.0).is_ok();
+                count += asked as u32;
+                if asked && own_scope == Some(entry.value) && Self::can_force_kill(p) {
+                    // Its ref moves to `terminating`.
+                    self.terminating.push(entry.key);
+                    continue;
                 }
             }
             // SAFETY: key live until this releases the ref taken on insert.
             unsafe { Process::deref(entry.key) };
         }
         count
+    }
+
+    /// Whether a second signal can go to `process` when it ignores the first.
+    fn can_force_kill(process: &Process) -> bool {
+        // Windows ends the process on the first one. A waiter thread reaps off this thread, so the
+        // pid can be another process's before `status` says so. In no-orphans mode the exit
+        // sweep ends the process with its descendants, which a SIGKILL now would orphan.
+        #[cfg(unix)]
+        {
+            matches!(process.poller, bun_spawn::process::Poller::Fd(_))
+                && !bun_io::ParentDeathWatchdog::is_enabled()
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = process;
+            false
+        }
+    }
+
+    /// SIGKILL to what is left of `terminating`, and its refs released.
+    fn kill_terminating(&mut self) {
+        for process in self.terminating.drain(..) {
+            // SAFETY: ref'd by `terminating` until the deref below; nothing else borrows it.
+            let p: &mut Process = unsafe { &mut *process };
+            if !p.has_exited() && Self::can_force_kill(p) {
+                bun_core::scoped_log!(AutoKiller, "process.kill {} SIGKILL", p.pid);
+                let _ = p.kill(SignalCode::SIGKILL.0);
+            }
+            // SAFETY: releases the ref that `kill_processes` left with `terminating`.
+            unsafe { Process::deref(process) };
+        }
+    }
+
+    /// `Tag::ProcessAutoKiller` fire body: the grace period is over.
+    pub fn on_timer(&mut self) {
+        self.timer.state = TimerState::FIRED;
+        self.kill_terminating();
+    }
+
+    /// Bun is about to exit, so `timer` cannot fire any more. Gives what is left of `terminating`
+    /// the rest of its grace period, then sends SIGKILL. Turns no event loop and runs no exit
+    /// handler.
+    pub fn finish_before_exit(&mut self) {
+        #[cfg(unix)]
+        {
+            let mut step_ms: i64 = 1;
+            loop {
+                self.terminating.retain(|&process| {
+                    // SAFETY: ref'd by `terminating`.
+                    let p = unsafe { &*process };
+                    let ended = p.has_exited() || !Self::can_force_kill(p) || {
+                        let mut status: core::ffi::c_int = 0;
+                        // This reaps the child, which is fine: nothing else waits for it any more.
+                        // SAFETY: `status` is a valid out-pointer.
+                        unsafe { libc::waitpid(p.pid, &raw mut status, libc::WNOHANG) != 0 }
+                    };
+                    if ended {
+                        // SAFETY: releases the ref that `kill_processes` left with `terminating`.
+                        unsafe { Process::deref(process) };
+                    }
+                    !ended
+                });
+                let remaining_ms = self
+                    .timer
+                    .next
+                    .duration(&Timespec::now(TimespecMockMode::ForceRealTime))
+                    .ms();
+                if self.terminating.is_empty() || remaining_ms <= 0 {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(
+                    step_ms.min(remaining_ms).unsigned_abs(),
+                ));
+                step_ms = (step_ms * 2).min(16);
+            }
+        }
+        self.kill_terminating();
     }
 
     pub fn clear(&mut self) {
@@ -69,7 +206,7 @@ impl ProcessAutoKiller {
         if self.enabled {
             // Alloc failure means we never took
             // a ref, so just bail. `put` here is fallible only on OOM.
-            if self.processes.put(process.as_ptr(), ()).is_err() {
+            if self.processes.put(process.as_ptr(), self.scope).is_err() {
                 return;
             }
             // SAFETY: caller passes a live Process; we take a ref to extend its
@@ -82,10 +219,18 @@ impl ProcessAutoKiller {
     /// ref taken at spawn.
     pub(crate) fn on_subprocess_exit(&mut self, process: NonNull<Process>) {
         if self.ever_enabled {
-            if self.processes.swap_remove(&process.as_ptr()) {
+            let process = process.as_ptr();
+            let terminating = &mut self.terminating;
+            if self.processes.swap_remove(&process)
+                || terminating
+                    .iter()
+                    .position(|&tracked| tracked == process)
+                    .map(|index| terminating.swap_remove(index))
+                    .is_some()
+            {
                 // SAFETY: we held a ref from on_subprocess_spawn; the pointee
                 // is live until this deref() releases it.
-                unsafe { Process::deref(process.as_ptr()) };
+                unsafe { Process::deref(process) };
             }
         }
     }
@@ -98,7 +243,7 @@ pub struct Result {
 
 impl Drop for ProcessAutoKiller {
     fn drop(&mut self) {
-        for process in self.processes.keys() {
+        for process in self.processes.keys().iter().chain(&self.terminating) {
             // SAFETY: see kill_processes — key is live until deref().
             unsafe { Process::deref(*process) };
         }

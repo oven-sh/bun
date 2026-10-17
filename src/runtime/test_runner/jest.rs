@@ -191,6 +191,21 @@ impl<'a> TestRunner<'a> {
         bun_core::Timespec { sec: active_file.timer.next.sec, nsec: active_file.timer.next.nsec }
     }
 
+    /// Whether [`Self::get_active_timeout`] is the deadline of the callback that calls `spawnSync`: it is on the
+    /// stack, or it is the only one running. Otherwise that deadline can be another test's, or a stale file timer.
+    pub(crate) fn active_timeout_is_callers(&self) -> bool {
+        let Some(active_file) = self.bun_test_root.active_file.as_deref() else {
+            return false;
+        };
+        if active_file.execution.on_stack_entry.get().is_some() {
+            return true;
+        }
+        active_file.phase == bun_test::Phase::Execution
+            && active_file.execution.active_group_ref().is_some_and(|group| {
+                matches!(group.sequences_const(&active_file.execution), [only] if only.active_entry.is_some())
+            })
+    }
+
     pub(crate) fn remove_active_timeout(&mut self, vm: &mut VirtualMachine) {
         let Some(active_file) = self.bun_test_root.active_file.as_ref() else {
             return;

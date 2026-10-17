@@ -1832,11 +1832,13 @@ fn spawn_maybe_sync(
 
         let has_user_timespec = !user_timespec.eql(&Timespec::EPOCH);
         let mut bun_test_fired = false;
+        // Once the bun:test deadline has fired: when the child is sent SIGKILL. `EPOCH`: never.
+        let mut force_kill_at = Timespec::EPOCH;
 
         while subprocess.compute_has_pending_activity() {
             // Re-evaluate this at each iteration of the loop since it may change between iterations.
             let bun_test_timeout: Timespec = if bun_test_fired {
-                Timespec::EPOCH
+                force_kill_at
             } else if let Some(runner) = crate::test_runner::jest::Jest::runner() {
                 runner.get_active_timeout()
             } else {
@@ -1871,7 +1873,7 @@ fn spawn_maybe_sync(
 
             // Tick the isolated event loop without passing timeout to avoid blocking
             // The timeout check is done at the top of the loop
-            match sync_loop.tick_with_timeout(if has_timespec && !did_timeout {
+            match sync_loop.tick_with_timeout(if has_timespec {
                 Some(&absolute_timespec)
             } else {
                 None
@@ -1879,12 +1881,15 @@ fn spawn_maybe_sync(
                 TickState::Completed => {}
                 TickState::Timeout => {
                     now = Timespec::now(TimespecMockMode::ForceRealTime);
-                    let did_user_timeout = has_user_timespec
+                    let did_user_timeout = !did_timeout
+                        && has_user_timespec
                         && (absolute_timespec.eql(&user_timespec)
                             || user_timespec.order(&now) == core::cmp::Ordering::Less);
 
                     if did_user_timeout {
                         did_timeout = true;
+                        // It fired: only a bun:test deadline is left to wake this loop.
+                        user_timespec = Timespec::EPOCH;
                         let _ = subprocess.try_kill(subprocess.kill_signal);
                     }
 
@@ -1895,20 +1900,32 @@ fn spawn_maybe_sync(
                     if has_bun_test_timeout
                         && bun_test_timeout.order(&now) == core::cmp::Ordering::Less
                     {
-                        bun_test_fired = true;
-                        *bun_test_deadline = Some(absolute_timespec);
-                        if let Some(active_file) = crate::test_runner::jest::Jest::runner()
-                            .unwrap()
-                            .bun_test_root
-                            .active_file
-                            .clone()
-                        {
-                            active_file
-                                .get()
-                                .execution
-                                .kill_dangling_processes_on_timeout(cx.global());
+                        if bun_test_fired {
+                            force_kill_at = Timespec::EPOCH;
+                            // Not `kill_signal`, which the child may ignore: nothing else bounds the wait.
+                            let _ = subprocess.try_kill(SignalCode::SIGKILL);
+                        } else {
+                            bun_test_fired = true;
+                            *bun_test_deadline = Some(absolute_timespec);
+                            let runner = crate::test_runner::jest::Jest::runner().unwrap();
+                            // Only for a deadline that is this call's own. In no-orphans mode the exit sweep ends the
+                            // child with its descendants, which a SIGKILL now would orphan.
+                            if jsc_vm.is_main_thread
+                                && runner.active_timeout_is_callers()
+                                && !bun_io::ParentDeathWatchdog::is_enabled()
+                            {
+                                force_kill_at = now.add_ms(
+                                    bun_jsc::process_auto_killer::ProcessAutoKiller::GRACE_MS,
+                                );
+                            }
+                            if let Some(active_file) = runner.bun_test_root.active_file.clone() {
+                                active_file
+                                    .get()
+                                    .execution
+                                    .kill_dangling_processes_on_timeout(cx.global());
+                            }
+                            let _ = subprocess.try_kill(subprocess.kill_signal);
                         }
-                        let _ = subprocess.try_kill(subprocess.kill_signal);
                     }
                 }
             }

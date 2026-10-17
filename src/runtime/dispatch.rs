@@ -140,6 +140,7 @@ use crate::test_runner::bun_test::{BunTest, BunTestPtr};
 use crate::timer::{DateHeaderTimer, EventLoopDelayMonitor};
 use bun_jsc::abort_signal::Timeout as AbortSignalTimeout;
 use bun_jsc::garbage_collection_controller::GarbageCollectionController;
+use bun_jsc::process_auto_killer::ProcessAutoKiller;
 
 #[cfg(not(windows))]
 use bun_io::pipe_writer::PosixPipeWriter; // brings `on_poll` into scope for FileSinkPoll/StaticPipeWriterPoll/etc.
@@ -1143,6 +1144,13 @@ pub(crate) unsafe fn __bun_fire_timer(
                 gc_repeating_timer,
                 |c, _now, vm| GarbageCollectionController::on_gc_repeating_timer(c, vm)
             )
+        }
+        EventLoopTimerTag::ProcessAutoKiller => {
+            // SAFETY: §Dispatch — `t` is the `timer` of the per-VM `ProcessAutoKiller`.
+            let container = unsafe { ProcessAutoKiller::from_timer_ptr(t) };
+            // SAFETY: per fn contract. It sends signals and runs no JS.
+            unsafe { (*container).on_timer() };
+            Ok(())
         }
         EventLoopTimerTag::DateHeaderTimer => {
             timer_arm!(DateHeaderTimer, event_loop_timer, |c, _now, vm| (*c)

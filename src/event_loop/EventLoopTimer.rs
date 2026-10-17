@@ -209,6 +209,7 @@ pub enum Tag {
     CronJob,
     GcRepeating,
     QuicEndpoint,
+    ProcessAutoKiller,
 }
 
 impl Tag {

@@ -1413,6 +1413,11 @@ impl CommandLineReporter {
                     Output::flush();
                     this.write_junit_report_if_needed();
                     this.write_timings_if_needed();
+                    // This exit does not go through `VirtualMachine::global_exit`.
+                    if let Some(vm) = VirtualMachine::get_or_null() {
+                        // SAFETY: the live per-thread VM.
+                        unsafe { (*vm).auto_killer.finish_before_exit() };
+                    }
                     Global::exit(1);
                 }
             }

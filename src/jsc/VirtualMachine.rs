@@ -2332,6 +2332,8 @@ impl VirtualMachine {
         // doing it causes like 50+ tests to break
         // self.event_loop().tick();
 
+        self.auto_killer.finish_before_exit();
+
         if self.should_destruct_main_thread_on_exit() {
             // SAFETY: main-thread VM on the main thread; exit handlers have run.
             unsafe { Self::teardown(core::ptr::from_mut(self), Teardown::MainThreadExit) };

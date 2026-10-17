@@ -156,7 +156,7 @@ Bun.serve({
 
 Static responses do not allocate additional memory after initialization. You can generally expect at least a 15% performance improvement over manually returning a `Response` object.
 
-Bun caches static route responses for the lifetime of the server object. To reload static routes, call `server.reload(options)`.
+Bun caches static route responses for the lifetime of the server object. To reload static routes, call `server.reload(options)` with a new `routes` object. The new object replaces every route, so include the routes that you want to keep.
 
 ### File Responses vs Static Responses
 

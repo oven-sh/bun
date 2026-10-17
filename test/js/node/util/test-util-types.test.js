@@ -1,6 +1,8 @@
 import assert from "assert";
 import { expect, test } from "bun:test";
+import { promisify } from "util";
 import def, * as ns from "util/types";
+import vm from "vm";
 const req = require("util/types");
 const types = def;
 
@@ -325,6 +327,70 @@ test("isGeneratorFunction", () => {
   ]) {
     expect(types.isGeneratorFunction(fn)).toBeFalse();
   }
+});
+
+// The kind of a function. Every expected value is the output of Node.js v26.3.0.
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+const GeneratorFunction = Object.getPrototypeOf(function* () {}).constructor;
+const reproto = (fn, proto) => Object.setPrototypeOf(fn, proto);
+const indirectEval = eval;
+
+// prettier-ignore
+const functionKinds = [
+  ["async arrow", () => async () => {}, true, false],
+  ["async method", () => ({ async am() {} }).am, true, false],
+  ["generator method", () => ({ *gen() {} }).gen, false, true],
+  ["async generator method", () => ({ async *agen() {} }).agen, true, true],
+  ["method named asyncStorage", () => ({ asyncStorage() {} }).asyncStorage, false, false],
+  ["class", () => class K {}, false, false],
+  ["arrow with a parameter named async", () => indirectEval("(async => async)"), false, false],
+  ["async function from another realm", () => vm.runInNewContext("(async function h() {})"), true, false],
+  ["generator method from another realm", () => vm.runInNewContext("({ *gen() {} }).gen"), false, true],
+
+  // The kind does not follow the prototype.
+  ["async function with Function.prototype", () => reproto(async function h() {}, Function.prototype), true, false],
+  ["async function with a null prototype", () => reproto(async function h() {}, null), true, false],
+  ["async function with Object.create(AsyncFunction.prototype)", () => reproto(async function h() {}, Object.create(AsyncFunction.prototype)), true, false],
+  ["async arrow with Function.prototype", () => reproto(async () => {}, Function.prototype), true, false],
+  ["function with AsyncFunction.prototype", () => reproto(function f() {}, AsyncFunction.prototype), false, false],
+  ["generator function with AsyncFunction.prototype", () => reproto(function* g() {}, AsyncFunction.prototype), false, true],
+  ["class with AsyncFunction.prototype", () => reproto(class K {}, AsyncFunction.prototype), false, false],
+  ["generator function with Function.prototype", () => reproto(function* g() {}, Function.prototype), false, true],
+  ["generator function with a null prototype", () => reproto(function* g() {}, null), false, true],
+  ["function with GeneratorFunction.prototype", () => reproto(function f() {}, GeneratorFunction.prototype), false, false],
+  ["subclass of AsyncFunction", () => new (class Sub extends AsyncFunction {})("return 1"), true, false],
+  ["subclass of GeneratorFunction", () => new (class Sub extends GeneratorFunction {})("yield 1"), false, true],
+  ["Reflect.construct(Function, [body], AsyncFunction)", () => Reflect.construct(Function, ["return 1"], AsyncFunction), false, false],
+  ["util.promisify(async function)", () => promisify(async function h() {}), false, false],
+
+  // A Proxy is not a function of any kind.
+  ["Proxy of an async function", () => new Proxy(async function h() {}, {}), false, false],
+  ["Proxy of a generator function", () => new Proxy(function* g() {}, {}), false, false],
+];
+
+test.each(functionKinds)(
+  "isAsyncFunction and isGeneratorFunction report the kind of: %s",
+  (_, create, isAsyncFunction, isGeneratorFunction) => {
+    const fn = create();
+    expect({
+      isAsyncFunction: types.isAsyncFunction(fn),
+      isGeneratorFunction: types.isGeneratorFunction(fn),
+    }).toEqual({ isAsyncFunction, isGeneratorFunction });
+  },
+);
+
+test("isAsyncFunction gives the same answer after the prototype of the function changes", () => {
+  const answers = (fn, prototypes) => [
+    types.isAsyncFunction(fn),
+    ...prototypes.map(proto => types.isAsyncFunction(Object.setPrototypeOf(fn, proto))),
+  ];
+  expect({
+    asyncFunction: answers(async function () {}, [Function.prototype, null, {}, AsyncFunction.prototype]),
+    plainFunction: answers(function () {}, [AsyncFunction.prototype, null, {}, Function.prototype]),
+  }).toEqual({
+    asyncFunction: [true, true, true, true, true],
+    plainFunction: [false, false, false, false, false],
+  });
 });
 
 test("isKeyObject", () => {

@@ -141,15 +141,7 @@ const extractedSplitNewLinesFastPathStringsOnly = $bindgen(
   "extractedSplitNewLinesFastPathStringsOnly",
 );
 
-const isAsyncFunction = v =>
-  typeof v === "function" && StringPrototypeStartsWith(FunctionPrototypeToString(v), "async");
-const isGeneratorFunction = v =>
-  typeof v === "function" && StringPrototypeMatch(FunctionPrototypeToString(v), /^(async\s+)?function *\*/);
-
 const {
-  //! The native versions of the commented out functions are currently buggy, so we use the polyfills above for now.
-  //isAsyncFunction,
-  //isGeneratorFunction,
   isAnyArrayBuffer,
   isArrayBuffer,
   isArgumentsObject,
@@ -175,6 +167,10 @@ const {
 // previewEntries() reads internal fields of whatever these two accept, so a script must not be able to replace them.
 const isMapIterator = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionIsMapIterator", 1);
 const isSetIterator = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionIsSetIterator", 1);
+
+// As in Node.js, a replaced `util.types.isAsyncFunction` does not change the kind in a function's label.
+const isAsyncFunction = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionIsAsyncFunction", 1);
+const isGeneratorFunction = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionIsGeneratorFunction", 1);
 
 // We need this duplicate here to avoid a circular dependency between node:assert and node:util.
 class AssertionError extends Error {
@@ -1030,7 +1026,7 @@ function initializeWellKnownPrototypes() {
   // wellKnownPrototypes.set(TypedArray.prototype, { name: "TypedArray", constructor: TypedArray });
 }
 
-function getConstructorName(obj, ctx, recurseTimes, protoProps) {
+function getConstructorName(obj, ctx, recurseTimes, protoProps, isPrototype = false) {
   let firstProto;
   const tmp = obj;
   if (!wellKnownPrototypes) initializeWellKnownPrototypes();
@@ -1067,13 +1063,13 @@ function getConstructorName(obj, ctx, recurseTimes, protoProps) {
     return null;
   }
 
-  const res = internalGetConstructorName(tmp);
+  const res = internalGetConstructorName(tmp, isPrototype);
 
   if (recurseTimes > ctx.depth && ctx.depth !== null) {
     return `${res} <Complex prototype>`;
   }
 
-  const protoConstr = getConstructorName(firstProto, ctx, recurseTimes + 1, protoProps);
+  const protoConstr = getConstructorName(firstProto, ctx, recurseTimes + 1, protoProps, true);
 
   if (protoConstr === null) {
     return `${res} <${inspect(firstProto, {
@@ -2809,8 +2805,19 @@ function previewEntries(val, isIterator = false) {
   if (isWeakSet(val)) return [];
   else throw new Error("previewEntries(): Invalid object received");
 }
-function internalGetConstructorName(val) {
-  if (!val || typeof val !== "object") throw new Error("Invalid object");
+// Stands in for V8's GetConstructorHelper, which Node.js calls here:
+// https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/deps/v8/src/objects/js-objects.cc#L594-L686
+// A function gets the name of its map's constructor, which is the intrinsic constructor of its kind. A prototype
+// gets a name from its chain. In V8 so do a class, a bound function, a function made by a subclass and a former
+// prototype. That part is not ported: here they get the kind.
+function internalGetConstructorName(val, isPrototype = false) {
+  if (typeof val === "function") {
+    if (!isPrototype) {
+      return `${isAsyncFunction(val) ? "Async" : ""}${isGeneratorFunction(val) ? "Generator" : ""}Function`;
+    }
+  } else if (!val || typeof val !== "object") {
+    throw new Error("Invalid object");
+  }
   const ctorName = val.constructor?.name;
   if (ctorName) return ctorName;
   const str = ObjectPrototypeToString(val);

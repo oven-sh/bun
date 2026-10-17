@@ -1597,6 +1597,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionEmitPendingMessages, (JSGlobalObject * 
     if (!pending || !Bun__GlobalObject__connectedIPC(global) || !process->wrapped().hasEventListeners(vm.propertyNames->message))
         return JSValue::encode(jsUndefined());
 
+    // Node empties the list after the loop, so a listener that throws gets the same messages again at the next listener.
     process->m_pendingMessages.clear();
     for (unsigned i = 0, length = pending->length(); i < length; i += 2) {
         JSC::MarkedArgumentBuffer args;
@@ -1605,7 +1606,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionEmitPendingMessages, (JSGlobalObject * 
         args.append(pending->getIndex(global, i + 1));
         RETURN_IF_EXCEPTION(scope, {});
         process->wrapped().emit(vm.propertyNames->message, args);
-        RETURN_IF_EXCEPTION(scope, {});
     }
     return JSValue::encode(jsUndefined());
 }
@@ -1635,10 +1635,9 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                 disconnectListenerCount--;
             }
             auto totalListenerCount = messageListenerCount + disconnectListenerCount;
-            if (isAdded && global->processObject()->m_pendingMessages) {
-                global->processObject()->queueNextTick(global, JSFunction::create(vm, global, 0, String(), Process_functionEmitPendingMessages, ImplementationVisibility::Private));
-            }
             if (isAdded) {
+                if (eventName == "message" && global->processObject()->m_pendingMessages)
+                    global->processObject()->queueNextTick(global, JSFunction::create(vm, global, 0, ""_s, Process_functionEmitPendingMessages, ImplementationVisibility::Private));
                 if (Bun__GlobalObject__hasIPC(global)
                     && totalListenerCount == 1) {
                     Bun__ensureProcessIPCInitialized(global);
@@ -4985,6 +4984,7 @@ extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSVa
 {
     auto* process = global->processObject();
     auto& vm = JSC::getVM(global);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     auto& names = WebCore::builtinNames(vm);
     auto ident = vm.propertyNames->message;
@@ -5005,20 +5005,20 @@ extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSVa
         args.append(JSValue::decode(handle));
         process->wrapped().emit(ident, args);
     } else if (ident == vm.propertyNames->message) {
-        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         auto* pending = process->m_pendingMessages.get();
         if (!pending) {
             pending = JSC::constructEmptyArray(global, nullptr);
-            if (scope.exception()) [[unlikely]] {
-                CLEAR_IF_EXCEPTION(scope);
-                return;
-            }
-            process->m_pendingMessages.set(vm, process, pending);
+            if (!scope.exception())
+                process->m_pendingMessages.set(vm, process, pending);
         }
-        pending->push(global, message);
-        if (!scope.exception()) [[likely]]
+        if (!scope.exception())
+            pending->push(global, message);
+        if (!scope.exception())
             pending->push(global, JSValue::decode(handle));
-        CLEAR_IF_EXCEPTION(scope);
+        if (auto* exception = scope.exception()) {
+            CLEAR_IF_EXCEPTION(scope);
+            Bun__reportUnhandledError(global, JSValue::encode(exception));
+        }
     }
 }
 
@@ -5026,6 +5026,7 @@ extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
 {
     auto* process = global->processObject();
     auto& vm = JSC::getVM(global);
+    process->m_pendingMessages.clear();
     auto ident = Identifier::fromString(vm, "disconnect"_s);
     if (process->wrapped().hasEventListeners(ident)) {
         JSC::MarkedArgumentBuffer args;

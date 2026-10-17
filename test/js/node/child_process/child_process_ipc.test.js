@@ -18,15 +18,18 @@ test.concurrent("a message that arrives before there is a 'message' listener is 
   const output = await $`${bunExe()} ${import.meta.dir}/fixtures/ipc-pending-messages-fixture.mjs`.text();
   // node (v26.7.0) has identical output, except that a listener that throws gets ["first","first","end"]
   expect(output).toMatchInlineSnapshot(`
-    "child, process.send(): ["first","second","end"]
-    child, process.on('disconnect'): ["first","second","end"]
-    child, a listener that was removed: ["first","second","end"]
-    child, process.once('message') that fired: ["second","end"]
+    "child, a late listener: ["first","second","end"]
+    child, a handle: [["first","Server"],"second","end"]
     child, a listener that throws: ["first","second","end"]
-    child, after 'disconnect': []
-    parent: ["first","second","end"]
-    parent, a listener that throws: ["first","second","end"]
-    parent, after 'disconnect': []
+    child, once: ["first","end"]
+    child, added and removed in one tick: ["first","second","end"]
+    child, disconnect() in the tick that adds it: []
+    parent, a late listener: ["first","second","end"]
+    parent, a handle: [["first","Server"],"second","end"]
+    parent, a listener that throws: ["first","end"]
+    parent, once: ["first","end"]
+    parent, added and removed in one tick: ["first","second","end"]
+    parent, disconnect() in the tick that adds it: []
     "
   `);
 });

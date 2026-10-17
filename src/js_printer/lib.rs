@@ -3052,6 +3052,10 @@ pub(crate) mod __gated_printer {
         pub(crate) fn print_pure(&mut self) {
             if self.options.print_dce_annotations {
                 let from = self.writer.written();
+                // Avoid forming a single-line comment
+                if from > 0 && self.writer.prev_char() == b'/' {
+                    self.print(b" ");
+                }
                 self.print_whitespacer(ws!(b"/* @__PURE__ */ "));
                 let to = self.writer.written();
                 // Every expression start mark goes here: the comment precedes the first token.

@@ -426,7 +426,7 @@ describe("printed /* @__PURE__ */ comments", () => {
           "const wrapped = () => (/* @__PURE__ */ ({ a: { b: 9 } }).valueOf()).a;",
           "const ctor = () => /* @__PURE__ */ new ({ C: class { a = 10; } }).C();",
           'console.log(has({ a: 1 }, "a"), tag(null), index("valueOf").a, optional().a, left(), test());',
-          "console.log(inner(), template(), fn(), wrapped().b, ctor().a);",
+          "console.log(inner(), template(), fn(), wrapped().b, ctor().a, 22 / /* @__PURE__ */ Number(2));",
           "asyncArrow().then(o => console.log(o.a));",
           '/* @__PURE__ */ ({}).valueOf() || console.log("object");',
           '/* @__PURE__ */ (function () {})() || console.log("function");',
@@ -458,7 +458,7 @@ describe("printed /* @__PURE__ */ comments", () => {
               "  a = 10;",
               "} }.C;",
               'console.log(has({ a: 1 }, "a"), tag(null), index("valueOf").a, optional().a, left(), test());',
-              "console.log(inner(), template(), fn(), wrapped().b, ctor().a);",
+              "console.log(inner(), template(), fn(), wrapped().b, ctor().a, 22 / /* @__PURE__ */ Number(2));",
               "asyncArrow().then((o) => console.log(o.a));",
               '/* @__PURE__ */ ({}).valueOf() || console.log("object");',
               '/* @__PURE__ */ (function() {})() || console.log("function");',
@@ -472,7 +472,7 @@ describe("printed /* @__PURE__ */ comments", () => {
             ].join("\n"),
           );
       },
-      run: { stdout: "true [object Null] 1 2 3 4\n5 6 8 9 10\nfunction\nclass\nnew\n7" },
+      run: { stdout: "true [object Null] 1 2 3 4\n5 6 8 9 10 11\nfunction\nclass\nnew\n7" },
     });
   }
   itBundled("pure call target keeps its parentheses with minified whitespace", {
@@ -490,6 +490,28 @@ describe("printed /* @__PURE__ */ comments", () => {
         .toBe('var has=(o,k)=>/*@__PURE__*/({}).hasOwnProperty.call(o,k);console.log(has({a:1},"a"));\n');
     },
     run: { stdout: "true" },
+  });
+  // Without a space, the `/` of the division and the `/*` of the comment start a line comment.
+  itBundled("pure call after a division is not in a line comment with minified whitespace", {
+    files: {
+      "/entry.js": /* js */ `
+        const two = () => 2;
+        class Four { valueOf() { return 4; } }
+        const call = 8 / /* @__PURE__ */ two();
+        const made = 8 / /* @__PURE__ */ new Four();
+        console.log(call, made);
+      `,
+    },
+    minifyWhitespace: true,
+    emitDCEAnnotations: true,
+    onAfterBundle(api) {
+      api
+        .expectFile("/out.js")
+        .toBe(
+          "var two=()=>2;class Four{valueOf(){return 4}}var call=8/ /*@__PURE__*/two();var made=8/ /*@__PURE__*/new Four;console.log(call,made);\n",
+        );
+    },
+    run: { stdout: "4 2" },
   });
   // `--minify-syntax` turns the block body into an expression body.
   itBundled("pure call target keeps its parentheses after --minify-syntax", {

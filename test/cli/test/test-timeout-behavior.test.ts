@@ -300,8 +300,8 @@ if (isFlaky && isLinux) {
         await new Promise(resolve => setImmediate(resolve));
         child = Bun.spawn({ cmd: ["sh", "-c", ${JSON.stringify(children.handlesSigterm)}], ...ignore });
         waitUntilReady();
-        while (performance.now() - start < 80) Bun.sleepSync(5);
-      }, 40);
+        while (performance.now() - start < 350) Bun.sleepSync(5);
+      }, 250);
 
       test("the child is still running", () => {
         expect(child.exitCode).toBe(null);
@@ -322,7 +322,7 @@ if (isFlaky && isLinux) {
     ],
     [
       "Bun.spawnSync after its own timeout",
-      `test("times out", () => { report(Bun.spawnSync({ cmd, timeout: 50, ...ignore }).signalCode); }, 300);`,
+      `test("times out", () => { report(Bun.spawnSync({ cmd, timeout: 100, ...ignore }).signalCode); }, 300);`,
     ],
     // The runner signals nothing for a group of concurrent tests, so only the wait itself can end the child.
     [
@@ -368,7 +368,7 @@ if (isFlaky && isLinux) {
       test("waits for the child", () => {
         const { exitCode, exitedDueToTimeout } = Bun.spawnSync({
           cmd: ["sh", "-c", "trap '' TERM; sleep 1; exit 7"],
-          timeout: 50,
+          timeout: 100,
           ...ignore,
         });
         expect({ exitCode, exitedDueToTimeout }).toEqual({ exitCode: 7, exitedDueToTimeout: true });

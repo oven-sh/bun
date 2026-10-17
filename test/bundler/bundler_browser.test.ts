@@ -183,6 +183,55 @@ describe("bundler", () => {
     },
   });
   // TODO: use nodePolyfillList to generate the code in here.
+  // `events.on` returns an async iterator over an event's arguments. It was
+  // missing from the polyfill, so `for await (const args of on(emitter, "x"))`
+  // threw. The expected output is what Node.js prints for the same code.
+  itBundled("browser/NodeEventsOn", {
+    files: {
+      "/entry.js": /* js */ `
+        import { on, EventEmitter } from "node:events";
+        const results = [];
+        {
+          const e = new EventEmitter();
+          const it = on(e, "x", { close: ["done"] });
+          e.emit("x", 1, "a"); e.emit("x", 2); e.emit("done");
+          const seen = [];
+          for await (const args of it) seen.push(JSON.stringify(args));
+          results.push(seen.join(" "));
+          results.push(e.listenerCount("x") + "," + e.listenerCount("error") + "," + e.listenerCount("done"));
+        }
+        {
+          const e = new EventEmitter();
+          const it = on(e, "x");
+          e.emit("error", new Error("boom"));
+          results.push(await it.next().then(() => "resolved", err => "rejected:" + err.message));
+        }
+        {
+          const e = new EventEmitter();
+          const ac = new AbortController();
+          const it = on(e, "x", { signal: ac.signal });
+          ac.abort();
+          results.push(await it.next().then(() => "resolved", err => err.name + ":" + err.code));
+        }
+        {
+          const et = new EventTarget();
+          const it = on(et, "ping");
+          et.dispatchEvent(new Event("ping"));
+          const { value } = await it.next();
+          results.push(value[0].type);
+        }
+        console.log(results.join("\\n"));
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: '[1,"a"] [2]\n0,0,0\nrejected:boom\nAbortError:ABORT_ERR\nping',
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      assert(!out.includes("$newPromiseCapability"), "events polyfill must not reference a JSC builtin intrinsic");
+    },
+  });
   const NodePolyfills = itBundled("browser/NodePolyfills", {
     files: {
       "/entry.js": /* js */ `

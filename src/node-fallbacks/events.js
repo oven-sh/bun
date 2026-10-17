@@ -357,6 +357,152 @@ function once(emitter, type, options) {
   });
 }
 
+const AsyncIteratorPrototype = Object.getPrototypeOf(Object.getPrototypeOf(async function* () {}).prototype);
+
+function createIterResult(value, done) {
+  return { value, done };
+}
+
+function validateInteger(value, name, min) {
+  validateNumber(value, name);
+  if (!Number.isInteger(value)) throw ERR_OUT_OF_RANGE(name, "an integer", value);
+  if (value < min) throw ERR_OUT_OF_RANGE(name, ">= " + min, value);
+}
+
+// `events.on(emitter, event)` returns an async iterator over the event's
+// arguments. Ported from Bun's own `node:events` without the JSC intrinsics
+// and the async_hooks plumbing, neither of which exists in a browser bundle.
+function on(emitter, event, options = {}) {
+  if (options === null || typeof options !== "object") {
+    throw ERR_INVALID_ARG_TYPE("options", "Object", options);
+  }
+  const signal = options.signal;
+  validateAbortSignal(signal, "options.signal");
+  if (signal?.aborted) throw new AbortError(undefined, { cause: signal?.reason });
+
+  const highWatermark = options.highWaterMark ?? options.highWatermark ?? Number.MAX_SAFE_INTEGER;
+  validateInteger(highWatermark, "options.highWaterMark", 1);
+  const lowWatermark = options.lowWaterMark ?? options.lowWatermark ?? 1;
+  validateInteger(lowWatermark, "options.lowWaterMark", 1);
+
+  const unconsumedEvents = [];
+  const unconsumedPromises = [];
+  let paused = false;
+  let error = null;
+  let finished = false;
+
+  const iterator = Object.setPrototypeOf(
+    {
+      next() {
+        // Consume anything that arrived before this call.
+        if (unconsumedEvents.length) {
+          const value = unconsumedEvents.shift();
+          if (paused && unconsumedEvents.length < lowWatermark) {
+            emitter.resume?.();
+            paused = false;
+          }
+          return Promise.resolve(createIterResult(value, false));
+        }
+
+        // Then the error, if one arrived. Only the first `next` sees it, since
+        // the 'error' listener is removed once it fires.
+        if (error) {
+          const promise = Promise.reject(error);
+          error = null;
+          return promise;
+        }
+
+        if (finished) return closeHandler();
+
+        return new Promise((resolve, reject) => {
+          unconsumedPromises.push({ resolve, reject });
+        });
+      },
+
+      return() {
+        return closeHandler();
+      },
+
+      throw(err) {
+        if (!err || !(err instanceof Error)) {
+          throw ERR_INVALID_ARG_TYPE("EventEmitter.AsyncIterator", "Error", err);
+        }
+        errorHandler(err);
+      },
+
+      [Symbol.asyncIterator]() {
+        return this;
+      },
+    },
+    AsyncIteratorPrototype,
+  );
+
+  eventTargetAgnosticAddListener(emitter, event, eventHandler, {});
+  if (event !== "error" && typeof emitter.on === "function") {
+    eventTargetAgnosticAddListener(emitter, "error", errorHandler, {});
+  }
+  const closeEvents = options?.close;
+  if (closeEvents?.length) {
+    for (let i = 0; i < closeEvents.length; i++) {
+      eventTargetAgnosticAddListener(emitter, closeEvents[i], closeHandler, {});
+    }
+  }
+  const abortListener = signal ? addAbortListener(signal, onAbort) : null;
+
+  return iterator;
+
+  function onAbort() {
+    errorHandler(new AbortError(undefined, { cause: signal?.reason }));
+  }
+
+  function eventHandler(...args) {
+    const promise = unconsumedPromises.shift();
+    if (promise) {
+      promise.resolve(createIterResult(args, false));
+      return;
+    }
+    unconsumedEvents.push(args);
+    if (unconsumedEvents.length > highWatermark) {
+      paused = true;
+      emitter.pause?.();
+    }
+  }
+
+  function errorHandler(err) {
+    const promise = unconsumedPromises.shift();
+    if (promise) {
+      promise.reject(err);
+    } else {
+      error = err;
+    }
+    removeAllListeners();
+  }
+
+  function closeHandler() {
+    removeAllListeners();
+    finished = true;
+    let promise = unconsumedPromises.shift();
+    while (promise) {
+      promise.resolve(createIterResult(undefined, true));
+      promise = unconsumedPromises.shift();
+    }
+    return Promise.resolve(createIterResult(undefined, true));
+  }
+
+  function removeAllListeners() {
+    abortListener?.[Symbol.dispose]?.();
+    eventTargetAgnosticRemoveListener(emitter, event, eventHandler, {});
+    if (event !== "error" && typeof emitter.on === "function") {
+      eventTargetAgnosticRemoveListener(emitter, "error", errorHandler, {});
+    }
+    if (closeEvents?.length) {
+      for (let i = 0; i < closeEvents.length; i++) {
+        eventTargetAgnosticRemoveListener(emitter, closeEvents[i], closeHandler, {});
+      }
+    }
+  }
+}
+
 function getEventListeners(emitter, type) {
   return emitter.listeners(type);
 }
@@ -528,6 +674,7 @@ Object.assign(EventEmitter, {
   addAbortListener,
   init: EventEmitter,
   listenerCount,
+  on,
 });
 
 export default EventEmitter;
@@ -539,6 +686,7 @@ export {
   getMaxListeners,
   EventEmitter as init,
   listenerCount,
+  on,
   once,
   setMaxListeners,
 };

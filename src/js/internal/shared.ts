@@ -435,7 +435,6 @@ export default {
   once,
   getLazy,
   guardCallback,
-  reportUncaughtException,
   isInsideNodeModules,
   resistStopPropagation,
 

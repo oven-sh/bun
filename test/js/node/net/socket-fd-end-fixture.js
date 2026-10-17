@@ -25,8 +25,8 @@ function lateWrite(fd) {
   }
 }
 
-function adopt(name, fd, recorded = ["prefinish", "finish", "close"]) {
-  const socket = new net.Socket({ fd, writable: true, readable: false });
+function adopt(name, fd, recorded = ["prefinish", "finish", "close"], options = { readable: false }) {
+  const socket = new net.Socket({ fd, writable: true, ...options });
   const entry = (report[name] = { fd, events: [] });
   for (const event of recorded) socket.on(event, () => entry.events.push(event));
   socket.on("error", err => entry.events.push("error " + err.code));
@@ -68,6 +68,28 @@ const endThen = then => (name, fd, done) => {
   then(socket, entry);
 };
 
+// `from` calls end() from the place that the name of the scenario says. That place queues an
+// immediate before end(), and a nextTick and a microtask after it. 'close' is left out: node
+// emits it from the loop, and bun on a tick.
+const orderFrom = from => (name, fd, done) => {
+  const { AsyncLocalStorage } = require("node:async_hooks");
+  const [socket, entry] = adopt(name, fd, ["prefinish", "finish"]);
+  const store = new AsyncLocalStorage();
+  let pending = 2;
+  const settle = () => --pending === 0 && done();
+  socket.on("close", settle);
+  from(() => {
+    setImmediate(() => {
+      entry.events.push("setImmediate");
+      settle();
+    });
+    store.run("store", () => socket.end("x", () => entry.events.push("end callback in " + store.getStore())));
+    entry.events.push("end() returned");
+    process.nextTick(() => entry.events.push("nextTick"));
+    queueMicrotask(() => entry.events.push("microtask"));
+  });
+};
+
 const groups = {
   // end() half-closes the fd: the peer reads end-of-file, and a later write fails with EPIPE.
   end: {
@@ -107,6 +129,20 @@ const groups = {
       });
       socket.end("x", endCallback(entry));
     },
+    // The shutdown does not wait for a clock that a program put in place of setImmediate.
+    "a fake clock holds the immediates"(name, fd, done) {
+      const [socket, entry] = adopt(name, fd);
+      const real = globalThis.setImmediate;
+      entry.held = 0;
+      globalThis.setImmediate = () => void entry.held++;
+      socket.end("x");
+      real(() =>
+        real(() => {
+          globalThis.setImmediate = real;
+          done();
+        }),
+      );
+    },
     // The close in destroy() gives the peer no end-of-file here.
     "another process holds the socket"(name, fd, done) {
       const [socket] = adopt(name, fd);
@@ -121,24 +157,6 @@ const groups = {
         done();
       });
       socket.end("x");
-    },
-    // libuv issues the shutdown from the loop: after what the block of end() queued, and before an
-    // immediate that was queued earlier. 'close' is left out: node emits it after that immediate.
-    "order"(name, fd, done) {
-      const { AsyncLocalStorage } = require("node:async_hooks");
-      const [socket, entry] = adopt(name, fd, ["prefinish", "finish"]);
-      const store = new AsyncLocalStorage();
-      let pending = 2;
-      const settle = () => --pending === 0 && done();
-      setImmediate(() => {
-        entry.events.push("setImmediate");
-        settle();
-      });
-      store.run("store", () => socket.end("x", () => entry.events.push("end callback in " + store.getStore())));
-      entry.events.push("end() returned");
-      process.nextTick(() => entry.events.push("nextTick"));
-      queueMicrotask(() => entry.events.push("microtask"));
-      socket.on("close", settle);
     },
     // shutdown(2) fails on a FIFO: its reader gets end-of-file when the fd closes.
     "the fd is a FIFO": throwingEndCallback,
@@ -177,6 +195,21 @@ const groups = {
       socket.end("x");
       socket.destroy();
     },
+    // A shutdown that the loop issued is over: the next life has nothing of it to cancel.
+    "connect() after the shutdown"(name, fd, done) {
+      const [socket, entry] = adopt(name, fd);
+      socket._writableState.autoDestroy = false;
+      socket.on("finish", () => {
+        socket.connect({ port: 1, host: "localhost", lookup() {} });
+        setImmediate(() =>
+          setImmediate(() => {
+            entry.connecting = socket.connecting;
+            done();
+          }),
+        );
+      });
+      socket.end("x");
+    },
     // Each socket has its own request: the 'finish' of the first comes before the shutdown of the second.
     "the 'finish' of another socket destroys it"(name, fd, done) {
       const [socket, entry] = adopt(name, fd);
@@ -187,8 +220,41 @@ const groups = {
       socket.end("x", endCallback(entry));
     },
   },
-  // What only bun does: its connect() takes an fd, it ends a socket that has no `readable: false`
-  // by itself, and it has Bun.gc().
+  // Where the shutdown comes among what the place that calls end() queued. libuv issues it from
+  // its pending queue, ahead of the immediates of the loop turn. bun issues it from an immediate
+  // of its own, so the reports of the two differ.
+  order: {
+    // The first scenario of a group runs from the main script.
+    "from the main script": orderFrom(run => run()),
+    "from a nextTick": orderFrom(run => process.nextTick(run)),
+    "from a microtask": orderFrom(run => queueMicrotask(run)),
+    "from a timer": orderFrom(run => setTimeout(run, 1)),
+    "from a socket callback": orderFrom(run => {
+      const server = net.createServer(peer => peer.destroy());
+      server.listen(0, "127.0.0.1", () => {
+        const client = net.connect(server.address().port, "127.0.0.1", () => {
+          run();
+          client.destroy();
+          server.close();
+        });
+      });
+    }),
+    "from an fs callback": orderFrom(run => fs.stat(__filename, run)),
+    "from an immediate": orderFrom(run => setImmediate(run)),
+    "from the 'finish' of another socket": orderFrom(run =>
+      new net.Socket({ fd: 1, writable: true, readable: false }).on("finish", run).end(),
+    ),
+    // libuv has issued the shutdown when this immediate runs. In bun the immediate comes first.
+    "an immediate that was queued before end() calls destroy()"(name, fd, done) {
+      const [socket, entry] = adopt(name, fd);
+      untilClose(socket, entry, done);
+      setImmediate(() => socket.destroy());
+      socket.end("x", endCallback(entry));
+    },
+  },
+  // What only bun does: its connect() takes an fd, and gives a socket that adopted an fd a new
+  // handle. It ends a socket that has no `readable: false` by itself. It adopts a datagram socket.
+  // It has Bun.gc().
   bun: {
     // connect({ fd }) gives the fd to a native handle, which closes it when the peer hangs up, or
     // here. The number is then not end()'s to shut down: _final completes inside end(), as on any
@@ -207,21 +273,19 @@ const groups = {
         entry.events.push("end() returned");
       })();
     },
-    // A shutdown that the loop issued is over: connect({ fd }) has nothing to cancel.
-    "connect({ fd }) after the shutdown"(name, fd, done) {
-      const [socket] = adopt(name, fd);
-      socket._writableState.autoDestroy = false;
-      socket.on("finish", () => {
-        socket.connect({ fd });
-        setImmediate(done);
-      });
-      socket.end("x");
+    // The new handle starts the next life of the socket, which forgets that end() was called: the
+    // shutdown is cancelled first, and the life that end() was called in finishes.
+    "connect() in the block of end()"(name, fd, done) {
+      const [socket, entry] = adopt(name, fd);
+      untilClose(socket, entry, done);
+      socket.end("x", endCallback(entry));
+      socket.connect({ port: 1, host: "localhost", lookup() {} });
+      entry.events.push("connect() returned");
     },
-    // That end() is not the caller's, and it leaves the fd as it is.
+    // bun does not read an adopted fd: it gives this socket an EOF, and the stream then ends the
+    // socket by itself. That end() is not the caller's, and it leaves the fd as it is.
     "`readable` is omitted"(name, fd, done) {
-      const socket = new net.Socket({ fd, writable: true });
-      const entry = (report[name] = { fd, events: [] });
-      for (const event of ["prefinish", "finish", "close"]) socket.on(event, () => entry.events.push(event));
+      const [socket] = adopt(name, fd, ["prefinish", "finish", "close"], {});
       socket.on("close", done);
     },
     // A FIFO has nothing to shut down, and keeps the order it had. In node, 'prefinish' comes
@@ -232,7 +296,14 @@ const groups = {
       socket.end("x");
       entry.events.push("end() returned");
     },
-    // Until the loop issues the shutdown, the request is all that refers to the socket.
+    // node refuses this fd. A shutdown(2) stops the sends of every holder of a datagram socket.
+    "the fd is a datagram socket"(name, fd, done) {
+      const [socket, entry] = adopt(name, fd);
+      socket.on("close", done);
+      socket.end();
+      entry.events.push("end() returned");
+    },
+    // Until the loop issues the shutdown, its immediate is all that refers to the socket.
     "nothing else refers to the socket"(name, fd, done) {
       const entry = (report[name] = { fd, events: [] });
       new net.Socket({ fd, writable: true, readable: false })
@@ -244,6 +315,18 @@ const groups = {
       Bun.gc(true);
       queueMicrotask(() => Bun.gc(true));
       process.nextTick(() => Bun.gc(true));
+    },
+  },
+  // connect({ fd }) gives the fd that end() shut down to a native handle.
+  handle: {
+    "connect({ fd }) after the shutdown"(name, fd, done) {
+      const [socket] = adopt(name, fd);
+      socket._writableState.autoDestroy = false;
+      socket.on("finish", () => {
+        socket.connect({ fd });
+        setImmediate(done);
+      });
+      socket.end("x");
     },
   },
 };

@@ -183,8 +183,7 @@ pub(crate) fn do_connect(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
     )
 }
 
-/// `(fd)` → `shutdown(fd, SHUT_WR)` on a socket that node:net adopted by descriptor. The result is
-/// ignored, as node's `afterShutdown` ignores it: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L560-L566
+/// `(fd)` → `shutdown(fd, SHUT_WR)`. The result is ignored, as in node: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L560-L566
 #[bun_jsc::host_fn]
 pub(crate) fn shutdown_write_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let fd =

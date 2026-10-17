@@ -15,13 +15,6 @@ export const escapePowershell = (code: string) => fmtBinding(code, "escape-power
 
 export const canonicalizeIP = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeIP", 1);
 
-// The task-queue hop behind node:net's half-close of an adopted socket fd.
-export const queueLoopTask: (fn: (a: unknown, b: unknown) => void, a?: unknown, b?: unknown) => void = $newCppFunction(
-  "BunProcess.cpp",
-  "jsFunctionQueueLoopTask",
-  3,
-);
-
 // Runtime-dispatched SIMD xxHash3 kernel (src/jsc/bindings/xxhash3.cpp), driven
 // directly so tests can exercise the Highway path independent of Bun.hash.
 export const xxHash3ForTesting: (view: ArrayBufferView, seed?: number | bigint) => bigint = $newCppFunction(

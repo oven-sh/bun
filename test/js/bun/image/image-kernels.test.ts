@@ -315,18 +315,18 @@ describe("png({palette:true}) never splits one colour across two palette entries
   });
 
   test("three alphas of one colour, colors:2: the cut is on the alpha channel", async () => {
-    // 60% opaque, 20% alpha 128, 20% alpha 0. Only alpha has error, and
-    // {0, 128} | {255} leaves the least. Neither alpha has more than half
-    // of its box, so the entry is their mean, 64.
-    const alphaOf = (y: number) => (y < 24 ? 255 : y < 32 ? 128 : 0);
+    // 60% opaque, 20% alpha 128, 20% alpha 64. Only alpha has error, and
+    // {64, 128} | {255} leaves the least. Neither alpha has more than half
+    // of its box, so the entry is their mean, 96.
+    const alphaOf = (y: number) => (y < 24 ? 255 : y < 32 ? 128 : 64);
     const src = makePng(40, 40, (_x, y) => [100, 100, 100, alphaOf(y)]);
     const out = await new Bun.Image(src).png({ palette: true, colors: 2 }).bytes();
     expect(pngPalette(out)).toEqual([
-      [100, 100, 100, 64],
+      [100, 100, 100, 96],
       [100, 100, 100, 255],
     ]);
     const back = decodePng(await new Bun.Image(out).png().bytes());
-    expect([0, 24, 32].map(y => rgbaAt(back.data, 40, 0, y)[3])).toEqual([255, 64, 64]);
+    expect([0, 24, 32].map(y => rgbaAt(back.data, 40, 0, y)[3])).toEqual([255, 96, 96]);
   });
 
   // Black, a middle grey, then white, in 40 rows. The middle run straddles
@@ -540,6 +540,39 @@ describe("png({palette:true}) keeps the colours that fit and splits the rest by 
     });
   });
 
+  describe("fully transparent pixels in an image that does not fit", () => {
+    test.each([false, true])("hide no colour: they are one entry (dither %p)", async dither => {
+      // 24 rows of alpha 0 that hide a different colour at every pixel, then 8
+      // opaque colours in rows of 5. With the hidden colours: 1,544 colours.
+      const opaque = Array.from({ length: 8 }, (_, i): Rgba => [i * 36, 255 - i * 36, (i * 90) % 256, 255]);
+      const pixel = (x: number, y: number): Rgba =>
+        (y < 24 ? [...colourAt(y * 64 + x)].fill(0, 3) : opaque[((y - 24) / 5) | 0]) as Rgba;
+      const out = await new Bun.Image(makePng(64, 64, pixel)).png({ palette: true, colors: 16, dither }).bytes();
+      expect(pngPalette(out)).toEqual([[0, 0, 0, 0] as Rgba, ...opaque].sort(byChannel));
+      const back = (await decode(out)).data;
+      let wrong = 0;
+      for (let y = 0; y < 64; y++) {
+        for (let x = 0; x < 64; x++) {
+          const want = y < 24 ? [0, 0, 0, 0] : pixel(x, y);
+          if (rgbaAt(back, 64, x, y).join() !== want.join()) wrong++;
+        }
+      }
+      expect(wrong).toBe(0);
+    });
+
+    test.each([false, true])("that hide white are not written as opaque white (dither %p)", async dither => {
+      // Transparent white is nearer to opaque white than to transparent black.
+      const pixel = (x: number, y: number): Rgba =>
+        y < 32 ? [255, 255, 255, 0] : y < 48 ? [255, 255, 255, 255] : [x * 3, x * 3, x * 3, 255];
+      const out = await new Bun.Image(makePng(64, 64, pixel)).png({ palette: true, colors: 16, dither }).bytes();
+      expect(pngPalette(out)[0]).toEqual([0, 0, 0, 0]);
+      const back = (await decode(out)).data;
+      let visible = 0;
+      for (let y = 0; y < 32; y++) for (let x = 0; x < 64; x++) if (rgbaAt(back, 64, x, y)[3] !== 0) visible++;
+      expect(visible).toBe(0);
+    });
+  });
+
   test("the next box to split is the one with the most squared error, not the widest", async () => {
     // Three greys share almost every pixel. Four single pixels are
     // saturated colours: the widest box is always one that holds them.
@@ -685,12 +718,12 @@ describe("png({palette:true}) keeps the colours that fit and splits the rest by 
   });
 
   test("the error of a box counts alpha", async () => {
-    // The first cut is on alpha: the greys at 90 with alpha 0 and 128 on one
+    // The first cut is on alpha: the greys at 90 with alpha 1 and 128 on one
     // side, the opaque greys on the other. The alpha side has more squared
-    // error (30,720 against 29,455), so it is split next. Grey 90 has more
+    // error (30,242 against 29,455), so it is split next. Grey 90 has more
     // than half of the opaque side.
     const runs: [Rgba, number][] = [
-      [[90, 90, 90, 0], 5],
+      [[90, 90, 90, 1], 5],
       [[150, 150, 150, 255], 5],
       [[90, 90, 90, 128], 3],
       [[90, 90, 90, 255], 6],
@@ -700,7 +733,7 @@ describe("png({palette:true}) keeps the colours that fit and splits the rest by 
       .png({ palette: true, colors: 3 })
       .bytes();
     expect(pngPalette(out)).toEqual([
-      [90, 90, 90, 0],
+      [90, 90, 90, 1],
       [90, 90, 90, 128],
       [90, 90, 90, 255],
     ]);
@@ -750,6 +783,8 @@ describe("png({palette:true}) keeps the colours that fit and splits the rest by 
     let palette: Rgba[] = [];
     for (const p of pixels) if (!palette.some(e => e.join() === p.join())) palette.push(p);
     if (palette.length > colors) {
+      // A fully transparent pixel shows no colour: they are all one colour.
+      pixels = pixels.map((p): Rgba => (p[3] === 0 ? [0, 0, 0, 0] : p));
       const boxes = [boxOf(pixels)];
       while (boxes.length < colors) {
         // The box with the most squared error.

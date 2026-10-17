@@ -53,13 +53,16 @@ pub(crate) fn quantize(
         // Every pixel has its own entry, so there is no error to diffuse.
         Some(palette) => palette,
         None => {
-            // More than `want` colours, so this is `want` entries.
+            // At most `want` entries: fewer when transparent pixels hid the colours over the limit.
             let palette = split_boxes(pixels, want)?;
             let k: u16 = u16::try_from(palette.len() / 4).expect("int cast");
             if opts.dither {
                 map_floyd_steinberg(rgba, w, h, &palette, k, &mut indices)?;
             } else {
-                map_runs(pixels, &mut indices, |key| nearest(&palette, k, key));
+                // Alpha is the top byte of a key: a transparent pixel is searched as `[0; 4]`.
+                map_runs(pixels, &mut indices, |key| {
+                    nearest(&palette, k, if key >> 24 == 0 { 0 } else { key })
+                });
             }
             palette
         }
@@ -83,6 +86,11 @@ fn try_filled<T: Clone + Default>(len: usize) -> Result<Vec<T>, AllocError> {
     v.try_reserve_exact(len).map_err(|_| AllocError)?;
     v.resize(len, T::default());
     Ok(v)
+}
+
+/// A fully transparent pixel shows no colour: in an image that does not fit, it is `[0; 4]`.
+fn shown(pixel: [u8; 4]) -> [u8; 4] {
+    if pixel[3] == 0 { [0; 4] } else { pixel }
 }
 
 /// One slot of an open-addressing table from a colour to its palette index plus 1.
@@ -218,7 +226,7 @@ fn split_boxes(pixels: &[[u8; 4]], want: usize) -> Result<Vec<u8>, AllocError> {
         let mut copy = Vec::new();
         copy.try_reserve_exact(pixels.len())
             .map_err(|_| AllocError)?;
-        copy.extend_from_slice(pixels);
+        copy.extend(pixels.iter().map(|&pixel| shown(pixel)));
         copy
     };
     // Sums per value of the split channel. `cut` leaves it zero.
@@ -395,6 +403,7 @@ fn map_floyd_steinberg(
     // Two rows of accumulated error in sixteenths of a level, ×4 channels.
     // `cur` carries error pushed *into* the current row from the row above;
     // `nxt` collects error for the row below.
+    let (pixels, _) = rgba.as_chunks::<4>();
     let stride: usize = w as usize * 4;
     let mut cur: Vec<i32> = vec![0i32; stride];
     let mut nxt: Vec<i32> = vec![0i32; stride];
@@ -409,10 +418,11 @@ fn map_floyd_steinberg(
             let off: usize = usize::try_from(x).expect("int cast") * 4;
 
             // Source + carried error, in sixteenths, kept inside 0..255. `cand`: nearest level.
+            let source = shown(pixels[px]);
             let mut wanted: [i32; 4] = [0; 4];
             let mut cand: [i32; 4] = [0; 4];
             for c in 0..4usize {
-                wanted[c] = (16 * i32::from(rgba[px * 4 + c]) + cur[off + c]).clamp(0, 16 * 255);
+                wanted[c] = (16 * i32::from(source[c]) + cur[off + c]).clamp(0, 16 * 255);
                 cand[c] = (wanted[c] + 8) >> 4;
             }
 

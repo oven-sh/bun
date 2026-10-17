@@ -616,9 +616,17 @@ const FAMILIES: Record<string, Entry[]> = {
       worker: `const bytes = new Uint8Array([0,97,115,109,1,0,0,0]); WebAssembly.instantiate(bytes).then(() => hit(() => WebAssembly.instantiate(bytes)));`,
     },
     {
+      // "inside" only. For "after" this re-arm dispatches again from inside the listener and recurses until the
+      // stack overflows: that uncaught RangeError stops the worker, so a worker that honours the stop cannot signal.
       name: "EventTarget dispatch",
-      phases: ["inside", "after"],
+      phases: ["inside"],
       worker: `const et = new EventTarget(); et.addEventListener("x", () => hit(() => et.dispatchEvent(new Event("x")))); setImmediate(() => et.dispatchEvent(new Event("x")));`,
+    },
+    {
+      // The re-arm is a later dispatch, like the follow-on completions of the other entries.
+      name: "EventTarget dispatch, re-armed from an immediate",
+      phases: ["after"],
+      worker: `const et = new EventTarget(); et.addEventListener("x", () => hit(() => setImmediate(() => et.dispatchEvent(new Event("x"))))); setImmediate(() => et.dispatchEvent(new Event("x")));`,
     },
     {
       name: "process.on('exit') handlers",

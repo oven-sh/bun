@@ -39,7 +39,6 @@
 #include "DOMWrapperWorld.h"
 #include "EventNames.h"
 #include "EventTargetConcrete.h"
-#include "JSErrorHandler.h"
 #include "JSEventListener.h"
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/MainThread.h>
@@ -167,7 +166,6 @@ void EventTarget::setAttributeEventListener(const AtomString& eventType, JSC::JS
         addEventListener(eventType, JSMaybeErrorEventListener::create(*asObject(listener), jsEventTarget, true, isolatedWorld), {});
 }
 
-template void EventTarget::setAttributeEventListener<JSErrorHandler>(const AtomString& eventType, JSC::JSValue listener, JSC::JSObject& jsEventTarget);
 template void EventTarget::setAttributeEventListener<JSEventListener>(const AtomString& eventType, JSC::JSValue listener, JSC::JSObject& jsEventTarget);
 
 JSEventListener* EventTarget::attributeEventListener(const AtomString& eventType, DOMWrapperWorld& isolatedWorld)
@@ -275,8 +273,13 @@ void EventTarget::innerInvokeEventListeners(Event& event, EventListenerVector li
         // If stopImmediatePropagation has been called, skip the remaining listeners. Listeners
         // registered with resistStopPropagation still run: they are how internal modules attach
         // teardown that unrelated code sharing the event target must not be able to suppress.
-        if (event.immediatePropagationStopped() && !registeredListener->resistsStopPropagation())
-            continue;
+        if (event.immediatePropagationStopped()) {
+            if (!registeredListener->resistsStopPropagation())
+                continue;
+            // A termination that unwinds beneath script stops them too: they are not entered, so not unregistered.
+            if (context->vm().hasPendingTerminationException()) [[unlikely]]
+                break;
+        }
 
         // Make sure the JS wrapper and function stay alive until the end of this scope. Otherwise,
         // event listeners with 'once' flag may get collected as soon as they get unregistered below,

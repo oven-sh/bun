@@ -18,8 +18,11 @@ namespace Bun {
 // execution (WebCore's forbidExecution() at the same point). Beneath script it stays pending for JSC to unwind. True if
 // taken. bindings.cpp.
 bool takeTerminationOutsideScript(JSC::VM&, JSC::TopExceptionScope&);
+// False when what native-called script threw is the VM's stop, not its error: takeTerminationOutsideScript() has run. Else cleared.
+bool clearExceptionOrTakeTermination(JSC::VM&, JSC::TopExceptionScope&);
 }
 extern "C" bool Bun__VM__takeTerminationOutsideScript(JSC::JSGlobalObject*);
+extern "C" void JSC__JSGlobalObject__throwTerminationException(JSC::JSGlobalObject*); // bindings.cpp
 
 namespace WebCore {
 class WorkerMessagingProxy;

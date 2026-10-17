@@ -32,6 +32,7 @@
 
 #include "JSCallbackData.h"
 
+#include "BunClientData.h"
 #include "JSDOMBinding.h"
 // #include "JSExecState.h"
 // #include "JSExecStateInstrumentation.h"
@@ -44,6 +45,10 @@ using namespace JSC;
 JSValue JSCallbackData::invokeCallback(VM& vm, JSObject* callback, JSValue thisValue, MarkedArgumentBuffer& args, CallbackType method, PropertyName functionName, NakedPtr<JSC::Exception>& returnedException)
 {
     ASSERT(callback);
+
+    // A termination that unwinds beneath script (a node:vm timeout): no callback is entered over it.
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        return JSValue();
 
     // https://webidl.spec.whatwg.org/#ref-for-prepare-to-run-script makes callback's [[Realm]] a running JavaScript execution context,
     // which is used for creating TypeError objects: https://tc39.es/ecma262/#sec-ecmascript-function-objects-call-thisargument-argumentslist (step 4).
@@ -94,9 +99,15 @@ JSValue JSCallbackData::invokeCallback(VM& vm, JSObject* callback, JSValue thisV
     // JSExecState::instrumentFunction(context, callData);
 
     returnedException = nullptr;
-    JSValue result = JSC::profiledCall(lexicalGlobalObject, JSC::ProfilingReason::Other, function, callData, thisValue, args, returnedException);
+    JSValue result = JSC::profiledCall(lexicalGlobalObject, JSC::ProfilingReason::Other, function, callData, thisValue, args);
 
     // InspectorInstrumentation::didCallFunction(context);
+
+    if (scope.exception()) [[unlikely]] {
+        returnedException = scope.exception();
+        (void)Bun::clearExceptionOrTakeTermination(vm, scope);
+        return jsUndefined();
+    }
 
     return result;
 }

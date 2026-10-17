@@ -1497,12 +1497,15 @@ test.concurrent("--isolate: destroying a global with many leaked AbortController
       });
     `,
   });
+  // The child's 5 s default per-test timeout would turn a slow but linear
+  // collection on a loaded debug runner into a failure. The ratio below is
+  // the assertion, the outer timeout bounds the run.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "test",
       "--parallel=1",
-      "--timeout=600000",
+      "--timeout=60000",
       "./a-first.test.ts",
       "./b-leak.test.ts",
       "./c-collect.test.ts",

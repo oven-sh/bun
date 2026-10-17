@@ -7570,38 +7570,14 @@ impl NodeFS {
     ) -> Maybe<ret::Realpath> {
         #[cfg(windows)]
         {
-            let mut req = UvFsReq::new();
-            let rc = unsafe {
-                uv::uv_fs_realpath(
-                    bun_io::Loop::get(),
-                    &mut *req,
-                    args.path.slice_z(&mut self.sync_error_buf).as_ptr(),
-                    None,
-                )
-            };
-            if let Some(err) = rc.to_error(sys::Tag::realpath) {
-                return Err(err.with_path(args.path.slice()));
-            }
-            // `fs_t.ptr` *is* the nullable C
-            // string pointer (libuv stores the realpath result directly), so
-            // `ptr_as::<c_char>()` yields the value, not a pointer-to-Option.
-            // SAFETY: `rc` was not an error ⇒ libuv populated `req.ptr`.
-            let ptr: *const c_char = unsafe { req.ptr_as::<c_char>() };
-            if ptr.is_null() {
-                return Err(sys::Error {
-                    errno: E::ENOENT as _,
-                    syscall: sys::Tag::realpath,
-                    path: args.path.slice().into(),
-                    ..Default::default()
-                });
-            }
-            let mut buf = unsafe { bun_core::ffi::cstr(ptr) }.to_bytes();
+            let mut outbuf = bun_paths::path_buffer_pool::get();
+            let mut buf: &[u8] =
+                match sys::realpath(args.path.slice_z(&mut self.sync_error_buf), &mut outbuf) {
+                    Err(err) => return Err(err.with_path(args.path.slice())),
+                    Ok(buf_) => buf_,
+                };
             if variant == RealpathVariant::Emulated {
                 // remove the trailing slash
-                //
-                // `buf` is an immutable view and every consumer below copies by
-                // length, so just shrink the slice — writing a NUL back through
-                // `ptr.cast_mut()` while `buf` is live would be Stacked-Borrows UB.
                 if buf.last() == Some(&b'\\') {
                     buf = &buf[..buf.len() - 1];
                 }

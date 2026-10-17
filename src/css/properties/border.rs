@@ -608,6 +608,8 @@ pub struct BorderHandler {
     border_image_handler: BorderImageHandler,
     border_radius_handler: BorderRadiusHandler,
     flushed_properties: BorderProperty,
+    /// A `border` (which also resets `border-image`) was seen since the last flush.
+    has_border_shorthand: bool,
     has_any: bool,
 }
 
@@ -648,6 +650,8 @@ mod border_handler_body {
         arena: &'bump Bump,
         logical_supported: bool,
         logical_shorthand_supported: bool,
+        /// This block resets or fully redeclares `border-image`, as `border` does.
+        border_shorthand_safe: bool,
     }
 
     // `f.logicalProp(ltr, ltr_key, rtl, rtl_key, val)` — ltr_key/rtl_key were unused.
@@ -1038,11 +1042,12 @@ mod border_handler_body {
             }};
         }
 
-        if block_start.is_valid()
+        let all_valid = block_start.is_valid()
             && block_end.is_valid()
             && inline_start.is_valid()
-            && inline_end.is_valid()
-        {
+            && inline_end.is_valid();
+
+        if all_valid && f.border_shorthand_safe {
             let top_eq_bottom = block_start.eql(block_end);
             let left_eq_right = inline_start.eql(inline_end);
             let top_eq_left = block_start.eql(inline_start);
@@ -1133,17 +1138,33 @@ mod border_handler_body {
                     side_diff!(block_end, inline_start, $inline_start_prop, $inline_start_width, $inline_start_style, $inline_start_color);
                 }, true);
             } else {
+                // Still leads with `border`, so a source `border` keeps its reset.
                 prop_diff!(block_start, {
-                    fc_prop!(f, $block_start_prop, block_start.to_border(f.arena));
                     fc_prop!(f, $block_end_prop, block_end.to_border(f.arena));
                     fc_prop!(f, $inline_start_prop, inline_start.to_border(f.arena));
                     fc_prop!(f, $inline_end_prop, inline_end.to_border(f.arena));
-                }, false);
+                }, true);
             }
+        } else if all_valid
+            && !$is_logical
+            && !(is_eq!(width) || is_eq!(style) || is_eq!(color))
+            && !(block_start.eql(block_end) && inline_start.eql(inline_end))
+        {
+            // Shorter than three multi-value shorthands (`border-top: 0; ...; border-bottom: 1px solid`).
+            fc_prop!(f, $block_start_prop, block_start.to_border(f.arena));
+            fc_prop!(f, $block_end_prop, block_end.to_border(f.arena));
+            fc_prop!(f, $inline_start_prop, inline_start.to_border(f.arena));
+            fc_prop!(f, $inline_end_prop, inline_end.to_border(f.arena));
         } else {
-            shorthand!(BorderStyle, BorderStyle, style);
-            shorthand!(BorderWidth, BorderWidth, width);
-            shorthand!(BorderColor, BorderColor, color);
+            // Complete, unequal logical sides are shorter as `border-block` / `border-inline` below.
+            let all_equal = block_start.eql(block_end)
+                && block_start.eql(inline_start)
+                && block_start.eql(inline_end);
+            if !$is_logical || !all_valid || all_equal {
+                shorthand!(BorderStyle, BorderStyle, style);
+                shorthand!(BorderWidth, BorderWidth, width);
+                shorthand!(BorderColor, BorderColor, color);
+            }
 
             if $is_logical && block_start.eql(block_end) && block_start.is_valid() {
                 if f.logical_supported {
@@ -1423,11 +1444,16 @@ mod border_handler_body {
 
                     // Setting the `border` property resets `border-image`
                     self.border_image_handler.reset();
+                    self.has_border_shorthand = true;
                     self.has_any = true;
                 }
                 Property::Unparsed(val) => {
                     if is_border_property(val.property_id.tag()) {
                         self.flush(dest, context);
+                        if val.property_id.tag() == PropertyIdTag::Border {
+                            // `border: var(..)` still resets the `border-image` buffered before it.
+                            self.border_image_handler.reset();
+                        }
                         self.flush_unparsed(val, dest, context);
                     } else {
                         if self.border_image_handler.will_flush(property) {
@@ -1475,8 +1501,10 @@ mod border_handler_body {
 
             self.has_any = false;
 
-            self.flush_physical(dest, context);
-            self.flush_logical(dest, context);
+            let border_shorthand_safe =
+                self.has_border_shorthand || self.border_image_handler.will_flush_shorthand();
+            self.flush_physical(dest, context, border_shorthand_safe);
+            self.flush_logical(dest, context, border_shorthand_safe);
 
             let arena = dest.bump();
             self.border_top.reset(arena);
@@ -1487,6 +1515,7 @@ mod border_handler_body {
             self.border_block_end.reset(arena);
             self.border_inline_start.reset(arena);
             self.border_inline_end.reset(arena);
+            self.has_border_shorthand = false;
         }
 
         #[inline(never)]
@@ -1494,6 +1523,7 @@ mod border_handler_body {
             &mut self,
             dest: &mut DeclarationList,
             context: &mut PropertyHandlerContext,
+            border_shorthand_safe: bool,
         ) {
             let logical_supported = !context.should_compile_logical(Feature::LogicalBorders);
             let logical_shorthand_supported =
@@ -1509,6 +1539,7 @@ mod border_handler_body {
                 arena,
                 logical_supported,
                 logical_shorthand_supported,
+                border_shorthand_safe,
             };
 
             flush_category!(
@@ -1542,6 +1573,7 @@ mod border_handler_body {
             &mut self,
             dest: &mut DeclarationList,
             context: &mut PropertyHandlerContext,
+            border_shorthand_safe: bool,
         ) {
             let logical_supported = !context.should_compile_logical(Feature::LogicalBorders);
             let logical_shorthand_supported =
@@ -1555,6 +1587,7 @@ mod border_handler_body {
                 arena,
                 logical_supported,
                 logical_shorthand_supported,
+                border_shorthand_safe,
             };
 
             flush_category!(

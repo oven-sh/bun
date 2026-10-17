@@ -956,15 +956,28 @@ pub(crate) fn defines_from_transform_options(
     let inputs: Vec<(Box<[u8]>, Box<[u8]>)> = if keeps_inputs {
         (user_defines.keys().iter().zip(user_defines.values().iter()))
             .map(|(key, value)| (Box::from(key.as_ref()), Box::from(value.as_ref())))
-            .chain((environment_defines.keys().iter().zip(environment_defines.values().iter())).filter_map(|(key, value)| match &value.value {
-                defines::DefineValue::EString(text) if text.is_utf8() => {
-                    let mut quoted = bun_core::MutableString::init_empty();
-                    bun_js_printer::quote_for_json(text.slice8(), &mut quoted, false).ok()?;
-                    Some((Box::from(key.as_ref()), quoted.take_slice().into_boxed_slice()))
-                }
-                _ => None,
-            }))
-            .chain(drop.iter().filter(|dropped| !dropped.is_empty() && **dropped != b"debugger").map(|dropped| (Box::from(*dropped), Box::default())))
+            .chain(
+                (environment_defines
+                    .keys()
+                    .iter()
+                    .zip(environment_defines.values().iter()))
+                .filter_map(|(key, value)| match &value.value {
+                    defines::DefineValue::EString(text) if text.is_utf8() => {
+                        let mut quoted = bun_core::MutableString::init_empty();
+                        bun_js_printer::quote_for_json(text.slice8(), &mut quoted, false).ok()?;
+                        Some((
+                            Box::from(key.as_ref()),
+                            quoted.take_slice().into_boxed_slice(),
+                        ))
+                    }
+                    _ => None,
+                }),
+            )
+            .chain(
+                drop.iter()
+                    .filter(|dropped| !dropped.is_empty() && **dropped != b"debugger")
+                    .map(|dropped| (Box::from(*dropped), Box::default())),
+            )
             .collect()
     } else {
         Vec::new()
@@ -1278,7 +1291,9 @@ pub struct EarlySource {
 
 impl PartialEq for EarlySource {
     fn eq(&self, other: &EarlySource) -> bool {
-        self.path == other.path && self.loader == other.loader && (std::ptr::eq::<[u8]>(&*self.text, &*other.text) || self.text == other.text)
+        self.path == other.path
+            && self.loader == other.loader
+            && (std::ptr::eq::<[u8]>(&*self.text, &*other.text) || self.text == other.text)
     }
 }
 
@@ -1308,7 +1323,13 @@ pub struct OwnedFileJsxOptions {
 
 impl OwnedFileJsxOptions {
     pub fn borrowed(&self) -> FileJsxOptions<'_> {
-        FileJsxOptions { is_classic: self.is_classic, factory: &self.factory, fragment: &self.fragment, import_source: &self.import_source, overrides_pragmas: self.overrides_pragmas }
+        FileJsxOptions {
+            is_classic: self.is_classic,
+            factory: &self.factory,
+            fragment: &self.fragment,
+            import_source: &self.import_source,
+            overrides_pragmas: self.overrides_pragmas,
+        }
     }
 }
 
@@ -1328,16 +1349,25 @@ pub struct DeferredReactCompilerOutputs<'a> {
 
 impl<'a> DeferredReactCompilerOutputs<'a> {
     pub fn none() -> Self {
-        Self { printed: std::sync::mpsc::channel().1, paths: Vec::new() }
+        Self {
+            printed: std::sync::mpsc::channel().1,
+            paths: Vec::new(),
+        }
     }
 
     pub fn wait(self) -> Vec<(&'a [u8], Box<[u8]>)> {
         let mut outputs: Vec<Option<Box<[u8]>>> = self.paths.iter().map(|_| None).collect();
         for _ in 0..outputs.len() {
-            let Ok((number, printed)) = self.printed.recv() else { break };
+            let Ok((number, printed)) = self.printed.recv() else {
+                break;
+            };
             outputs[number] = printed;
         }
-        self.paths.into_iter().zip(outputs).filter_map(|(path, printed)| Some((path, printed?))).collect()
+        self.paths
+            .into_iter()
+            .zip(outputs)
+            .filter_map(|(path, printed)| Some((path, printed?)))
+            .collect()
     }
 }
 
@@ -1364,8 +1394,10 @@ pub type TypeCheck = fn(checked: TypeChecked<'_, '_>, log: &mut bun_ast::Log) ->
 
 /// `BundleOptions::analyze`: the whole-program analysis that ahead-of-time compilation is driven by. `None`: there is nothing to say
 /// about the program.
-pub type Analyze =
-    fn(checked: TypeChecked<'_, '_>, log: &mut bun_ast::Log) -> Option<bun_ast::type_tags::ProgramFacts>;
+pub type Analyze = fn(
+    checked: TypeChecked<'_, '_>,
+    log: &mut bun_ast::Log,
+) -> Option<bun_ast::type_tags::ProgramFacts>;
 
 pub type DeclarationFiles = Vec<(Box<[u8]>, Box<[u8]>)>;
 
@@ -1374,7 +1406,8 @@ pub struct Declarations {
     pub module_types: Option<Box<dyn core::any::Any + Send>>,
 }
 
-pub type EmitDeclarations = fn(checked: TypeChecked<'_, '_>, log: &mut bun_ast::Log) -> Option<Declarations>;
+pub type EmitDeclarations =
+    fn(checked: TypeChecked<'_, '_>, log: &mut bun_ast::Log) -> Option<Declarations>;
 
 pub struct WrittenJavaScript<'a> {
     pub path: &'a [u8],
@@ -1408,12 +1441,18 @@ pub struct TypedOutputs {
     pub declaration_files: DeclarationFiles,
 }
 
-pub const SKIPPED_SOUND_FILES: &str = "--dts: the typed JavaScript that --aot compiles a package from is left out";
+pub const SKIPPED_SOUND_FILES: &str =
+    "--dts: the typed JavaScript that --aot compiles a package from is left out";
 
-pub type WriteSoundFiles = fn(request: SoundFilesRequest<'_>, log: &mut bun_ast::Log) -> TypedOutputs;
+pub type WriteSoundFiles =
+    fn(request: SoundFilesRequest<'_>, log: &mut bun_ast::Log) -> TypedOutputs;
 
-pub type TypedPackage =
-    fn(root: &[u8], defines: &[(Box<[u8]>, Box<[u8]>)], directory: &[u8], name: &[u8]) -> (Vec<(Box<[u8]>, Box<[u8]>, bool)>, Option<Box<str>>);
+pub type TypedPackage = fn(
+    root: &[u8],
+    defines: &[(Box<[u8]>, Box<[u8]>)],
+    directory: &[u8],
+    name: &[u8],
+) -> (Vec<(Box<[u8]>, Box<[u8]>, bool)>, Option<Box<str>>);
 
 /// BundleOptions is effectively webpack + babel
 pub struct BundleOptions<'a> {
@@ -1664,8 +1703,12 @@ pub(crate) fn ineffective_aot_env_vars() -> impl Iterator<Item = &'static [u8]> 
     bun_sys::environ().iter().filter_map(|&entry| {
         // SAFETY: environ entries are NUL-terminated C strings from the OS
         let entry: &'static [u8] = unsafe { bun_core::ffi::cstr(entry) }.to_bytes();
-        let name = bun_core::strings::split(entry, b"=").next().unwrap_or(entry);
-        let is_aot_name = AOT_ENV_VAR_PREFIXES.iter().any(|family| name.starts_with(family));
+        let name = bun_core::strings::split(entry, b"=")
+            .next()
+            .unwrap_or(entry);
+        let is_aot_name = AOT_ENV_VAR_PREFIXES
+            .iter()
+            .any(|family| name.starts_with(family));
         (is_aot_name && !EFFECTIVE_AOT_ENV_VARS.contains(&name)).then_some(name)
     })
 }

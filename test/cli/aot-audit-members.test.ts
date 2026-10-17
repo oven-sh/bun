@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { unsupported } from "../aot/run-programs";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, isArm64, isLinux, isMacOS, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+import { unsupported } from "../aot/run-programs";
 
 // ONE RULE, WRITTEN TWICE. What becomes of an object that typed code has not made, where it enters a record type that admits no
 // strangers, is decided by the engine in an --aot executable (class Coercion in JavaScriptCore/aot/AOTTypedObject.cpp) and foretold by
@@ -16,7 +16,14 @@ import { join } from "path";
 // foretell: that goes by sizes which only the compiler's placement knows.
 const compiles = !unsupported;
 const tsconfig = JSON.stringify({
-  compilerOptions: { strict: true, module: "esnext", moduleResolution: "bundler", target: "esnext", types: [], lib: ["esnext", "dom"] },
+  compilerOptions: {
+    strict: true,
+    module: "esnext",
+    moduleResolution: "bundler",
+    target: "esnext",
+    types: [],
+    lib: ["esnext", "dom"],
+  },
 });
 
 async function spawned(cmd: string[], cwd: string, env: Record<string, string> = {}) {
@@ -82,9 +89,10 @@ describe.concurrent.skipIf(!compiles)("the audit and the executable hold an outs
       for (const line of audit.stderr.split("\n")) {
         const match = /^\[aot\] type-error [0-9a-f]{12} [a-z0-9-]+ [^: ]+:(\d+):\d+ .*; would-throw;/.exec(line);
         if (!match) continue;
-        const numbers = [match[1], ...(line.split("; from ")[1] ?? "").matchAll(/cases\.ts:(\d+)/g).map(caller => caller[1])].map(
-          written => Number(written) - lineOfFirstCase + 1,
-        );
+        const numbers = [
+          match[1],
+          ...(line.split("; from ")[1] ?? "").matchAll(/cases\.ts:(\d+)/g).map(caller => caller[1]),
+        ].map(written => Number(written) - lineOfFirstCase + 1);
         foretold.add(numbers.find(number => asBuilt.has(number)) ?? numbers[0]);
       }
       expect(asBuilt.size).toBe(asPlain.size);

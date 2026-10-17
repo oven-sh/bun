@@ -1,16 +1,19 @@
 use crate::build::Problem;
 use crate::declared::{Declared, DeclaredTable, Part};
 use crate::id::{BlockId, FuncId, GlobalId, LayoutId, ModuleId, StrId, TyId, V};
-use crate::ir::{Block, Def, Field, Func, FuncKind, Global, Layout, Literal, Method, NO_VARIABLE, Op, Operation, Prediction, Strs, Value, CoerceReason};
+use crate::ir::{
+    Block, CoerceReason, Def, Field, Func, FuncKind, Global, Layout, Literal, Method, NO_VARIABLE,
+    Op, Operation, Prediction, Strs, Value,
+};
 use bun_sema::bind::SymbolId;
-use bun_sema::check::{Identity, MethodStore, FlowNotes, NumberFlow};
+use bun_sema::check::{FlowNotes, Identity, MethodStore, NumberFlow};
 use bun_sema::hir::{ClassId, FnId};
 use bun_sema::program::FileId;
 use bun_sema::util::{InParallel, for_each_mut};
+use bun_threading::Guarded;
 use std::hash::{BuildHasher, Hash};
 use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicU32, Ordering};
-use bun_threading::Guarded;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum FuncKey {
@@ -87,7 +90,9 @@ impl LayoutKey {
     pub fn file(self) -> Option<FileId> {
         match self {
             LayoutKey::Record(_) => None,
-            LayoutKey::Instance(file, _) | LayoutKey::ClassEnvironment(file, _) | LayoutKey::Environment(file, _) => Some(file),
+            LayoutKey::Instance(file, _)
+            | LayoutKey::ClassEnvironment(file, _)
+            | LayoutKey::Environment(file, _) => Some(file),
         }
     }
 }
@@ -108,7 +113,14 @@ pub enum GlobalKey {
 impl GlobalKey {
     pub fn file(&self) -> Option<FileId> {
         match *self {
-            GlobalKey::Symbol(file, _) | GlobalKey::Enum(file, _) | GlobalKey::Namespace(file, _) | GlobalKey::ClassVariable(file, ..) | GlobalKey::ModuleInternal(file, _) | GlobalKey::Export(file, _) | GlobalKey::Hidden(file, _) | GlobalKey::LazyVariableState(file, _) => Some(file),
+            GlobalKey::Symbol(file, _)
+            | GlobalKey::Enum(file, _)
+            | GlobalKey::Namespace(file, _)
+            | GlobalKey::ClassVariable(file, ..)
+            | GlobalKey::ModuleInternal(file, _)
+            | GlobalKey::Export(file, _)
+            | GlobalKey::Hidden(file, _)
+            | GlobalKey::LazyVariableState(file, _) => Some(file),
             GlobalKey::ExternalModule(_) => None,
         }
     }
@@ -125,8 +137,15 @@ pub struct ReferencedIds {
 impl ReferencedIds {
     #[inline]
     fn part(&self, index: usize) -> &[u32] {
-        let start = if index == 0 { 0 } else { self.ends[index - 1] as usize };
-        let end = self.ends.get(index).map_or(self.all.len(), |&end| end as usize);
+        let start = if index == 0 {
+            0
+        } else {
+            self.ends[index - 1] as usize
+        };
+        let end = self
+            .ends
+            .get(index)
+            .map_or(self.all.len(), |&end| end as usize);
         &self.all[start..end]
     }
     pub fn strs(&self) -> impl Iterator<Item = StrId> + '_ {
@@ -177,17 +196,30 @@ impl ModulePart {
         let own_blocks = || (self.blocks.0..self.blocks.1).map(BlockId);
         let mut seen: rustc_hash::FxHashMap<V, V> = Default::default();
         let own_operations = own_blocks().flat_map(|block| &func.blocks[block.idx()].ops);
-        seen.extend(func.blocks[from.idx()].ops[start as usize..].iter().chain(own_operations).map(|&v| (v, V::NONE)));
-        let mut args_by_target: rustc_hash::FxHashMap<BlockId, Vec<crate::ir::Args>> = Default::default();
+        seen.extend(
+            func.blocks[from.idx()].ops[start as usize..]
+                .iter()
+                .chain(own_operations)
+                .map(|&v| (v, V::NONE)),
+        );
+        let mut args_by_target: rustc_hash::FxHashMap<BlockId, Vec<crate::ir::Args>> =
+            Default::default();
         for source in std::iter::once(from).chain(own_blocks()) {
             if let Some(term) = &func.blocks[source.idx()].term {
-                term.for_each_target(|target| args_by_target.entry(target.block).or_default().push(target.args.clone()));
+                term.for_each_target(|target| {
+                    args_by_target
+                        .entry(target.block)
+                        .or_default()
+                        .push(target.args.clone())
+                });
             }
         }
         let mut is_asked: rustc_hash::FxHashSet<V> = Default::default();
         let mut asked: Vec<V> = func.blocks[to.idx()].params.clone();
         while let Some(&param) = asked.last() {
-            let Def::Param(block, index) = func.values[param.idx()].def else { unreachable!() };
+            let Def::Param(block, index) = func.values[param.idx()].def else {
+                unreachable!()
+            };
             if seen.contains_key(&param) {
                 asked.pop();
                 continue;
@@ -196,9 +228,14 @@ impl ModulePart {
             let (mut found, mut agree, mut waits_for) = (V::NONE, true, V::NONE);
             for args in args_by_target.get(&block).map_or(&[][..], |list| &list[..]) {
                 let arg = args.get(index as usize).copied().unwrap_or(V::NONE);
-                let handed = match (seen.get(&arg), arg.is_some().then(|| &func.values[arg.idx()].def)) {
+                let handed = match (
+                    seen.get(&arg),
+                    arg.is_some().then(|| &func.values[arg.idx()].def),
+                ) {
                     (Some(&answer), _) => answer,
-                    (None, Some(&Def::Param(of, _))) if is_own(of) && is_asked.contains(&arg) => V::NONE,
+                    (None, Some(&Def::Param(of, _))) if is_own(of) && is_asked.contains(&arg) => {
+                        V::NONE
+                    }
                     (None, Some(&Def::Param(of, _))) if is_own(of) => {
                         waits_for = arg;
                         break;
@@ -215,7 +252,11 @@ impl ModulePart {
             seen.insert(param, if agree { found } else { V::NONE });
             asked.pop();
         }
-        self.passed_through = func.blocks[to.idx()].params.iter().map(|param| seen[param]).collect();
+        self.passed_through = func.blocks[to.idx()]
+            .params
+            .iter()
+            .map(|param| seen[param])
+            .collect();
     }
 
     pub fn values(&self, func: &Func) -> Vec<V> {
@@ -225,9 +266,19 @@ impl ModulePart {
         }
         let mut values = func.blocks[from.idx()].ops[start as usize..].to_vec();
         for block in (self.blocks.0..self.blocks.1).map(BlockId) {
-            let Block { params, ops, term: _ } = &func.blocks[block.idx()];
+            let Block {
+                params,
+                ops,
+                term: _,
+            } = &func.blocks[block.idx()];
             if block == to {
-                values.extend(params.iter().zip(&self.passed_through).filter(|(_, handed)| handed.is_none()).map(|(&param, _)| param));
+                values.extend(
+                    params
+                        .iter()
+                        .zip(&self.passed_through)
+                        .filter(|(_, handed)| handed.is_none())
+                        .map(|(&param, _)| param),
+                );
                 values.extend_from_slice(&ops[..end as usize]);
             } else {
                 values.extend_from_slice(params);
@@ -328,22 +379,52 @@ macro_rules! pass {
 
 pub fn for_each_op_id(op: &mut Op, ids: &mut impl Ids) {
     match op {
-        Op::Str(text) | Op::BigInt(text) | Op::Symbol(text) | Op::ExternalModule(text) => pass!(ids.str(text)),
+        Op::Str(text) | Op::BigInt(text) | Op::Symbol(text) | Op::ExternalModule(text) => {
+            pass!(ids.str(text))
+        }
         Op::FreeGet { name, is_typeof: _ }
         | Op::FreeSet { name, value: _ }
         | Op::PropGet { obj: _, name }
-        | Op::PropSet { obj: _, name, value: _ }
+        | Op::PropSet {
+            obj: _,
+            name,
+            value: _,
+        }
         | Op::PropHas { obj: _, name }
         | Op::PropDelete { obj: _, name }
-        | Op::CallMethod { obj: _, name, args: _ } => pass!(ids.str(name)),
-        Op::FuncRef(func) | Op::Closure { func, captures: _ } | Op::ClosureOnce { func, captures: _, env: _, field: _ } => pass!(ids.func(func, Used::AsValue)),
+        | Op::CallMethod {
+            obj: _,
+            name,
+            args: _,
+        } => pass!(ids.str(name)),
+        Op::FuncRef(func)
+        | Op::Closure { func, captures: _ }
+        | Op::ClosureOnce {
+            func,
+            captures: _,
+            env: _,
+            field: _,
+        } => pass!(ids.func(func, Used::AsValue)),
         Op::CallDirect { func, args: _ } => pass!(ids.func(func, Used::Called)),
         Op::GlobalGet(global) | Op::GlobalSet(global, _) => pass!(ids.global(global)),
         Op::New(layout)
-        | Op::FieldGet { obj: _, layout, field: _ }
-        | Op::FieldSet { obj: _, layout, field: _, value: _ }
+        | Op::FieldGet {
+            obj: _,
+            layout,
+            field: _,
+        }
+        | Op::FieldSet {
+            obj: _,
+            layout,
+            field: _,
+            value: _,
+        }
         | Op::IsInstance { value: _, layout } => pass!(ids.layout(layout)),
-        Op::NewWith { layout, name, value: _ } => {
+        Op::NewWith {
+            layout,
+            name,
+            value: _,
+        } => {
             pass!(ids.layout(layout));
             pass!(ids.str(name));
         }
@@ -402,7 +483,24 @@ pub fn for_each_func_id(func: &mut Func, ids: &mut impl Ids) {
 }
 
 fn for_each_header_id(func: &mut Func, ids: &mut impl Ids) {
-    let Func { name, module, pos: _, source_start: _, source_end: _, kind: _, flags: _, length: _, captures, declared_this_type, params, annotated: _, result, blocks: _, values: _, spans: _ } = func;
+    let Func {
+        name,
+        module,
+        pos: _,
+        source_start: _,
+        source_end: _,
+        kind: _,
+        flags: _,
+        length: _,
+        captures,
+        declared_this_type,
+        params,
+        annotated: _,
+        result,
+        blocks: _,
+        values: _,
+        spans: _,
+    } = func;
     pass!(ids.str(name));
     pass!(ids.module(module));
     for capture in captures {
@@ -467,7 +565,15 @@ pub fn for_each_layout_id(layout: &mut Layout, ids: &mut impl Ids) {
     pass!(ids.str(name));
     pass!(ids.layout(base));
     for field in fields {
-        let Field { name, declared, flags: _, literals, type_text, single_function, single_function_flags: _ } = field;
+        let Field {
+            name,
+            declared,
+            flags: _,
+            literals,
+            type_text,
+            single_function,
+            single_function_flags: _,
+        } = field;
         pass!(ids.str(name));
         pass!(ids.ty(declared));
         pass!(ids.str(type_text));
@@ -481,7 +587,13 @@ pub fn for_each_layout_id(layout: &mut Layout, ids: &mut impl Ids) {
     }
     pass!(ids.func(constructor, Used::AsMember));
     for method in methods {
-        let Method { name, func, kind: _, flags: _, key } = method;
+        let Method {
+            name,
+            func,
+            kind: _,
+            flags: _,
+            key,
+        } = method;
         pass!(ids.str(name));
         pass!(ids.func(func, Used::AsMember));
         if has_module_variables {
@@ -493,14 +605,25 @@ pub fn for_each_layout_id(layout: &mut Layout, ids: &mut impl Ids) {
         pass!(ids.str(name));
         pass!(ids.ty(declared));
     }
-    for other in members.iter_mut().chain(structural_subtypes).chain(specializations) {
+    for other in members
+        .iter_mut()
+        .chain(structural_subtypes)
+        .chain(specializations)
+    {
         pass!(ids.layout(other));
     }
     pass!(ids.str(declared_path));
 }
 
 pub fn for_each_global_id(global: &mut Global, ids: &mut impl Ids) {
-    let Global { name, module, declared, initialization: _, single_function, single_function_flags: _ } = global;
+    let Global {
+        name,
+        module,
+        declared,
+        initialization: _,
+        single_function,
+        single_function_flags: _,
+    } = global;
     pass!(ids.str(name));
     pass!(ids.module(module));
     pass!(ids.ty(declared));
@@ -567,7 +690,10 @@ impl Ids for ReferenceCollector {
 
 impl ReferenceCollector {
     fn take_referenced_ids(&mut self) -> ReferencedIds {
-        let mut mentions = ReferencedIds { all: Vec::with_capacity(self.found.iter().map(Vec::len).sum()), ends: [0; 5] };
+        let mut mentions = ReferencedIds {
+            all: Vec::with_capacity(self.found.iter().map(Vec::len).sum()),
+            ends: [0; 5],
+        };
         for (index, part) in self.found.iter_mut().enumerate() {
             mentions.all.extend_from_slice(part);
             part.clear();
@@ -584,7 +710,12 @@ impl ReferenceCollector {
         self.take_referenced_ids()
     }
 
-    pub fn of_values(&mut self, func: &mut Func, with_header: bool, indices: &[u32]) -> ReferencedIds {
+    pub fn of_values(
+        &mut self,
+        func: &mut Func,
+        with_header: bool,
+        indices: &[u32],
+    ) -> ReferencedIds {
         self.round += 1;
         if with_header {
             for_each_header_id(func, self);
@@ -643,7 +774,11 @@ impl FunctionOutline {
     }
 
     pub fn list(&self, list: usize) -> std::ops::Range<usize> {
-        (if list == 0 { self.start } else { self.ends[list - 1] }) as usize..self.ends[list] as usize
+        (if list == 0 {
+            self.start
+        } else {
+            self.ends[list - 1]
+        }) as usize..self.ends[list] as usize
     }
 }
 
@@ -660,7 +795,11 @@ pub struct LayoutOutline {
 
 impl LayoutOutline {
     pub fn list(&self, list: usize) -> std::ops::Range<usize> {
-        (if list == 0 { self.start } else { self.ends[list - 1] }) as usize..self.ends[list] as usize
+        (if list == 0 {
+            self.start
+        } else {
+            self.ends[list - 1]
+        }) as usize..self.ends[list] as usize
     }
 }
 
@@ -700,8 +839,29 @@ pub struct OutlineBatch<'a> {
 }
 
 impl<'a> OutlineBatch<'a> {
-    pub fn new(fragment: u32, file: FileId, ids: &'a LocalToProgram, summary: &'a Summary, first: [u32; 3], functions: &'a mut [Function], shapes: &'a mut [Shape], variables: &'a [Variable]) -> OutlineBatch<'a> {
-        OutlineBatch { fragment, file, ids, summary, first, functions, shapes, variables, is_preferred: Default::default(), list_len: 0, rebuilt_list_len: 0 }
+    pub fn new(
+        fragment: u32,
+        file: FileId,
+        ids: &'a LocalToProgram,
+        summary: &'a Summary,
+        first: [u32; 3],
+        functions: &'a mut [Function],
+        shapes: &'a mut [Shape],
+        variables: &'a [Variable],
+    ) -> OutlineBatch<'a> {
+        OutlineBatch {
+            fragment,
+            file,
+            ids,
+            summary,
+            first,
+            functions,
+            shapes,
+            variables,
+            is_preferred: Default::default(),
+            list_len: 0,
+            rebuilt_list_len: 0,
+        }
     }
 }
 
@@ -716,7 +876,11 @@ impl ListWriter<'_> {
     fn extend(&mut self, locals: impl Iterator<Item = u32>, ids: &[u32]) -> u32 {
         for local in locals {
             self.local[self.written].write(local);
-            self.program[self.written].write(if local == u32::MAX { local } else { ids[local as usize] });
+            self.program[self.written].write(if local == u32::MAX {
+                local
+            } else {
+                ids[local as usize]
+            });
             self.written += 1;
         }
         self.start + self.written as u32
@@ -724,15 +888,33 @@ impl ListWriter<'_> {
 }
 
 fn function_list_len(function: &Function) -> usize {
-    let header_len = function.func.as_ref().map_or(0, |func| 2 + func.captures.len() + func.params.len());
-    let body_len = function.body.as_ref().map_or(0, |body| body.mentions.all.len() + body.classes_as_values.len() + body.declares.len());
+    let header_len = function
+        .func
+        .as_ref()
+        .map_or(0, |func| 2 + func.captures.len() + func.params.len());
+    let body_len = function.body.as_ref().map_or(0, |body| {
+        body.mentions.all.len() + body.classes_as_values.len() + body.declares.len()
+    });
     header_len + body_len
 }
 
-fn outline_function(function: &Function, fragment: u32, index: u32, fragment_file: FileId, ids: &LocalToProgram, lists: &mut ListWriter<'_>) -> FunctionOutline {
+fn outline_function(
+    function: &Function,
+    fragment: u32,
+    index: u32,
+    fragment_file: FileId,
+    ids: &LocalToProgram,
+    lists: &mut ListWriter<'_>,
+) -> FunctionOutline {
     use outline_flags::{EVALUATES_MODULE, HAS_BODY, HAS_HEADER, HAS_PARTS, IS_CONSTRUCTOR};
     let start = lists.start + lists.written as u32;
-    let runs_at_start = matches!(function.key, FuncKey::Module(_) | FuncKey::ModuleBody(_) | FuncKey::ModuleTouch(_) | FuncKey::ModuleSettling(_));
+    let runs_at_start = matches!(
+        function.key,
+        FuncKey::Module(_)
+            | FuncKey::ModuleBody(_)
+            | FuncKey::ModuleTouch(_)
+            | FuncKey::ModuleSettling(_)
+    );
     let mut outline = FunctionOutline {
         start,
         ends: [start; Outline::LISTS],
@@ -745,32 +927,71 @@ fn outline_function(function: &Function, fragment: u32, index: u32, fragment_fil
         name: StrId::NONE,
         file: function.key.file(),
         captures: 0,
-        flags: if runs_at_start { outline_flags::RUNS_AT_START } else { 0 },
+        flags: if runs_at_start {
+            outline_flags::RUNS_AT_START
+        } else {
+            0
+        },
     };
     if let Some(func) = &function.func {
-        outline.flags |= HAS_HEADER | if func.kind == FuncKind::Constructor { IS_CONSTRUCTOR } else { 0 };
-        (outline.module, outline.name, outline.captures) = (func.module, func.name, func.captures.len() as u32);
-        outline.ends[Outline::HEADER_TYS] = lists.extend([func.declared_this_type, func.result].into_iter().chain(func.captures.iter().copied()).chain(func.params.iter().copied()).map(|ty| ty.0), &ids.tys);
+        outline.flags |= HAS_HEADER
+            | if func.kind == FuncKind::Constructor {
+                IS_CONSTRUCTOR
+            } else {
+                0
+            };
+        (outline.module, outline.name, outline.captures) =
+            (func.module, func.name, func.captures.len() as u32);
+        outline.ends[Outline::HEADER_TYS] = lists.extend(
+            [func.declared_this_type, func.result]
+                .into_iter()
+                .chain(func.captures.iter().copied())
+                .chain(func.params.iter().copied())
+                .map(|ty| ty.0),
+            &ids.tys,
+        );
     }
     let header_end = outline.ends[Outline::HEADER_TYS];
     outline.ends[Outline::STRS..].fill(header_end);
     if let Some(body) = &function.body {
-        outline.flags |= HAS_BODY | if body.parts.is_empty() { 0 } else { HAS_PARTS } | if function.key == FuncKey::Module(fragment_file) { EVALUATES_MODULE } else { 0 };
+        outline.flags |= HAS_BODY
+            | if body.parts.is_empty() { 0 } else { HAS_PARTS }
+            | if function.key == FuncKey::Module(fragment_file) {
+                EVALUATES_MODULE
+            } else {
+                0
+            };
         outline.class = body.class;
-        outline.class_id = if body.class.is_none() { u32::MAX } else { ids.layouts[body.class.idx()] };
+        outline.class_id = if body.class.is_none() {
+            u32::MAX
+        } else {
+            ids.layouts[body.class.idx()]
+        };
         outline.ends[Outline::STRS] = lists.extend(body.mentions.strs().map(|id| id.0), &ids.strs);
         outline.ends[Outline::TYS] = lists.extend(body.mentions.tys().map(|id| id.0), &ids.tys);
-        outline.ends[Outline::LAYOUTS] = lists.extend(body.mentions.layouts().map(|id| id.0), &ids.layouts);
-        outline.ends[Outline::GLOBALS] = lists.extend(body.mentions.globals().map(|id| id.0), &ids.globals);
-        outline.ends[Outline::CALLED] = lists.extend(body.mentions.called().map(|id| id.0), &ids.funcs);
-        outline.ends[Outline::VALUES] = lists.extend(body.mentions.values().map(|id| id.0), &ids.funcs);
-        outline.ends[Outline::CLASSES_AS_VALUES] = lists.extend(body.classes_as_values.iter().map(|id| id.0), &ids.layouts);
-        outline.ends[Outline::DECLARES] = lists.extend(body.declares.iter().map(|id| id.0), &ids.layouts);
+        outline.ends[Outline::LAYOUTS] =
+            lists.extend(body.mentions.layouts().map(|id| id.0), &ids.layouts);
+        outline.ends[Outline::GLOBALS] =
+            lists.extend(body.mentions.globals().map(|id| id.0), &ids.globals);
+        outline.ends[Outline::CALLED] =
+            lists.extend(body.mentions.called().map(|id| id.0), &ids.funcs);
+        outline.ends[Outline::VALUES] =
+            lists.extend(body.mentions.values().map(|id| id.0), &ids.funcs);
+        outline.ends[Outline::CLASSES_AS_VALUES] =
+            lists.extend(body.classes_as_values.iter().map(|id| id.0), &ids.layouts);
+        outline.ends[Outline::DECLARES] =
+            lists.extend(body.declares.iter().map(|id| id.0), &ids.layouts);
     }
     outline
 }
 
-fn outline_layout(definition: &Definition, fragment: u32, index: u32, ids: &LocalToProgram, lists: &mut ListWriter<'_>) -> LayoutOutline {
+fn outline_layout(
+    definition: &Definition,
+    fragment: u32,
+    index: u32,
+    ids: &LocalToProgram,
+    lists: &mut ListWriter<'_>,
+) -> LayoutOutline {
     let start = lists.start + lists.written as u32;
     let mentions = &definition.mentions;
     let ends = [
@@ -782,11 +1003,25 @@ fn outline_layout(definition: &Definition, fragment: u32, index: u32, ids: &Loca
         lists.extend(mentions.values().map(|id| id.0), &ids.funcs),
     ];
     let constructs = definition.constructs;
-    LayoutOutline { start, ends, fragment, index, base: definition.layout.base, constructs, constructs_id: if constructs.is_none() { u32::MAX } else { ids.layouts[constructs.idx()] } }
+    LayoutOutline {
+        start,
+        ends,
+        fragment,
+        index,
+        base: definition.layout.base,
+        constructs,
+        constructs_id: if constructs.is_none() {
+            u32::MAX
+        } else {
+            ids.layouts[constructs.idx()]
+        },
+    }
 }
 
 fn slot_at(slots: &[AtomicU32], id: u32) -> Option<usize> {
-    Some(slots.get(id as usize)?.load(Ordering::Relaxed)).filter(|&slot| slot != u32::MAX).map(|slot| slot as usize)
+    Some(slots.get(id as usize)?.load(Ordering::Relaxed))
+        .filter(|&slot| slot != u32::MAX)
+        .map(|slot| slot as usize)
 }
 
 impl Outline {
@@ -803,9 +1038,12 @@ impl Outline {
     pub const LAYOUT_LISTS: usize = 6;
 
     pub fn grow(&mut self, ids: &ProgramIds) {
-        self.func_slots.resize_with(ids.funcs.bound(), || AtomicU32::new(u32::MAX));
-        self.layout_slots.resize_with(ids.layouts.bound(), || AtomicU32::new(u32::MAX));
-        self.variable_slots.resize_with(ids.globals.bound(), || AtomicU32::new(u32::MAX));
+        self.func_slots
+            .resize_with(ids.funcs.bound(), || AtomicU32::new(u32::MAX));
+        self.layout_slots
+            .resize_with(ids.layouts.bound(), || AtomicU32::new(u32::MAX));
+        self.variable_slots
+            .resize_with(ids.globals.bound(), || AtomicU32::new(u32::MAX));
     }
 
     #[inline]
@@ -828,24 +1066,102 @@ impl Outline {
         slot_at(&self.variable_slots, id).map(|slot| &self.variables[slot])
     }
 
-    pub fn add(&mut self, batches: &mut [OutlineBatch<'_>], is_preferred: &(dyn Fn(usize, u32, u32, u32) -> bool + Sync), in_parallel: InParallel<'_>) {
+    pub fn add(
+        &mut self,
+        batches: &mut [OutlineBatch<'_>],
+        is_preferred: &(dyn Fn(usize, u32, u32, u32) -> bool + Sync),
+        in_parallel: InParallel<'_>,
+    ) {
         for_each_mut(batches, in_parallel, &|batch| {
-            let preferred_flags = |kind: usize, ids: &[u32], count: usize| -> Vec<bool> { (0..count as u32).map(|offset| is_preferred(kind, batch.fragment, batch.first[kind] + offset, ids[(batch.first[kind] + offset) as usize])).collect() };
-            batch.is_preferred = [preferred_flags(0, &batch.ids.funcs, batch.functions.len()), preferred_flags(1, &batch.ids.layouts, batch.shapes.len()), preferred_flags(2, &batch.ids.globals, batch.variables.len())];
-            let function_lists_len: usize = batch.functions.iter().zip(&batch.is_preferred[0]).filter(|function| *function.1).map(|function| function_list_len(function.0)).sum();
-            let layout_lists_len: usize = batch.shapes.iter().zip(&batch.is_preferred[1]).filter(|shape| *shape.1).filter_map(|shape| shape.0.definition.as_ref()).map(|definition| definition.mentions.all.len()).sum();
+            let preferred_flags = |kind: usize, ids: &[u32], count: usize| -> Vec<bool> {
+                (0..count as u32)
+                    .map(|offset| {
+                        is_preferred(
+                            kind,
+                            batch.fragment,
+                            batch.first[kind] + offset,
+                            ids[(batch.first[kind] + offset) as usize],
+                        )
+                    })
+                    .collect()
+            };
+            batch.is_preferred = [
+                preferred_flags(0, &batch.ids.funcs, batch.functions.len()),
+                preferred_flags(1, &batch.ids.layouts, batch.shapes.len()),
+                preferred_flags(2, &batch.ids.globals, batch.variables.len()),
+            ];
+            let function_lists_len: usize = batch
+                .functions
+                .iter()
+                .zip(&batch.is_preferred[0])
+                .filter(|function| *function.1)
+                .map(|function| function_list_len(function.0))
+                .sum();
+            let layout_lists_len: usize = batch
+                .shapes
+                .iter()
+                .zip(&batch.is_preferred[1])
+                .filter(|shape| *shape.1)
+                .filter_map(|shape| shape.0.definition.as_ref())
+                .map(|definition| definition.mentions.all.len())
+                .sum();
             batch.list_len = function_lists_len + layout_lists_len;
-            let with_parts = batch.functions.iter().zip(&batch.is_preferred[0]).filter(|function| *function.1).map(|function| function.0).filter(|function| function.body.as_ref().is_some_and(|body| !body.parts.is_empty()));
-            batch.rebuilt_list_len = with_parts.map(|function| function_list_len(function) + function.body.iter().flat_map(|body| &body.parts).map(|part| part.mentions.all.len()).sum::<usize>()).sum();
+            let with_parts = batch
+                .functions
+                .iter()
+                .zip(&batch.is_preferred[0])
+                .filter(|function| *function.1)
+                .map(|function| function.0)
+                .filter(|function| {
+                    function
+                        .body
+                        .as_ref()
+                        .is_some_and(|body| !body.parts.is_empty())
+                });
+            batch.rebuilt_list_len = with_parts
+                .map(|function| {
+                    function_list_len(function)
+                        + function
+                            .body
+                            .iter()
+                            .flat_map(|body| &body.parts)
+                            .map(|part| part.mentions.all.len())
+                            .sum::<usize>()
+                })
+                .sum();
         });
-        let count = |kind: usize| -> usize { batches.iter().map(|batch| batch.is_preferred[kind].iter().filter(|is_preferred| **is_preferred).count()).sum() };
-        let (functions, layouts, variables, list_len) = (count(0), count(1), count(2), batches.iter().map(|batch| batch.list_len).sum::<usize>());
-        let before = [self.funcs.len(), self.layouts.len(), self.variables.len(), self.local.len()];
+        let count = |kind: usize| -> usize {
+            batches
+                .iter()
+                .map(|batch| {
+                    batch.is_preferred[kind]
+                        .iter()
+                        .filter(|is_preferred| **is_preferred)
+                        .count()
+                })
+                .sum()
+        };
+        let (functions, layouts, variables, list_len) = (
+            count(0),
+            count(1),
+            count(2),
+            batches.iter().map(|batch| batch.list_len).sum::<usize>(),
+        );
+        let before = [
+            self.funcs.len(),
+            self.layouts.len(),
+            self.variables.len(),
+            self.local.len(),
+        ];
         self.funcs.reserve_exact(functions);
         self.layouts.reserve_exact(layouts);
         self.variables.reserve_exact(variables);
         if self.local.capacity() - self.local.len() < list_len {
-            let spare = batches.iter().map(|batch| batch.rebuilt_list_len).sum::<usize>() + list_len / 16;
+            let spare = batches
+                .iter()
+                .map(|batch| batch.rebuilt_list_len)
+                .sum::<usize>()
+                + list_len / 16;
             self.local.reserve_exact(list_len + spare);
             self.program.reserve_exact(list_len + spare);
         }
@@ -858,7 +1174,17 @@ impl Outline {
             lists: ListWriter<'a>,
             funcs_with_parts: Vec<u32>,
         }
-        let Outline { funcs, layouts: all_layouts, variables: all_variables, local, program, func_slots, layout_slots, variable_slots, funcs_with_parts } = self;
+        let Outline {
+            funcs,
+            layouts: all_layouts,
+            variables: all_variables,
+            local,
+            program,
+            func_slots,
+            layout_slots,
+            variable_slots,
+            funcs_with_parts,
+        } = self;
         let mut funcs_rest = &mut funcs.spare_capacity_mut()[..functions];
         let mut layouts_rest = &mut all_layouts.spare_capacity_mut()[..layouts];
         let mut variables_rest = &mut all_variables.spare_capacity_mut()[..variables];
@@ -867,55 +1193,150 @@ impl Outline {
         let mut next = before;
         let mut outputs: Vec<BatchOutput<'_, '_>> = Vec::with_capacity(batches.len());
         for batch in batches.iter_mut() {
-            let counts = [0, 1, 2].map(|kind| batch.is_preferred[kind].iter().filter(|is_preferred| **is_preferred).count());
+            let counts = [0, 1, 2].map(|kind| {
+                batch.is_preferred[kind]
+                    .iter()
+                    .filter(|is_preferred| **is_preferred)
+                    .count()
+            });
             let (funcs_chunk, layouts_chunk, variables_chunk, local_chunk, program_chunk);
             (funcs_chunk, funcs_rest) = std::mem::take(&mut funcs_rest).split_at_mut(counts[0]);
-            (layouts_chunk, layouts_rest) = std::mem::take(&mut layouts_rest).split_at_mut(counts[1]);
-            (variables_chunk, variables_rest) = std::mem::take(&mut variables_rest).split_at_mut(counts[2]);
-            (local_chunk, local_rest) = std::mem::take(&mut local_rest).split_at_mut(batch.list_len);
-            (program_chunk, program_rest) = std::mem::take(&mut program_rest).split_at_mut(batch.list_len);
-            let lists = ListWriter { local: local_chunk, program: program_chunk, written: 0, start: next[3] as u32 };
+            (layouts_chunk, layouts_rest) =
+                std::mem::take(&mut layouts_rest).split_at_mut(counts[1]);
+            (variables_chunk, variables_rest) =
+                std::mem::take(&mut variables_rest).split_at_mut(counts[2]);
+            (local_chunk, local_rest) =
+                std::mem::take(&mut local_rest).split_at_mut(batch.list_len);
+            (program_chunk, program_rest) =
+                std::mem::take(&mut program_rest).split_at_mut(batch.list_len);
+            let lists = ListWriter {
+                local: local_chunk,
+                program: program_chunk,
+                written: 0,
+                start: next[3] as u32,
+            };
             let first_slots = [next[0] as u32, next[1] as u32, next[2] as u32];
-            next = [next[0] + counts[0], next[1] + counts[1], next[2] + counts[2], next[3] + batch.list_len];
-            outputs.push(BatchOutput { batch, first_slots, funcs: funcs_chunk, layouts: layouts_chunk, variables: variables_chunk, lists, funcs_with_parts: Vec::new() });
+            next = [
+                next[0] + counts[0],
+                next[1] + counts[1],
+                next[2] + counts[2],
+                next[3] + batch.list_len,
+            ];
+            outputs.push(BatchOutput {
+                batch,
+                first_slots,
+                funcs: funcs_chunk,
+                layouts: layouts_chunk,
+                variables: variables_chunk,
+                lists,
+                funcs_with_parts: Vec::new(),
+            });
         }
-        for_each_mut(&mut outputs, in_parallel, &|BatchOutput { batch, first_slots, funcs, layouts, variables, lists, funcs_with_parts }| {
-            let OutlineBatch { fragment, file, ids, summary, first, functions, shapes, variables: fragment_variables, is_preferred, list_len, .. } = &mut **batch;
-            let ids: &LocalToProgram = ids;
-            let mut count = 0;
-            for (offset, function) in functions.iter_mut().enumerate().filter(|function| is_preferred[0][function.0]) {
-                let mut outline = outline_function(function, *fragment, first[0] + offset as u32, *file, ids, lists);
-                if summary.runtime_modules.binary_search_by_key(&outline.index, |found| found.0).is_ok() {
-                    outline.flags |= outline_flags::REQUESTS_RUNTIME_MODULES;
+        for_each_mut(
+            &mut outputs,
+            in_parallel,
+            &|BatchOutput {
+                  batch,
+                  first_slots,
+                  funcs,
+                  layouts,
+                  variables,
+                  lists,
+                  funcs_with_parts,
+              }| {
+                let OutlineBatch {
+                    fragment,
+                    file,
+                    ids,
+                    summary,
+                    first,
+                    functions,
+                    shapes,
+                    variables: fragment_variables,
+                    is_preferred,
+                    list_len,
+                    ..
+                } = &mut **batch;
+                let ids: &LocalToProgram = ids;
+                let mut count = 0;
+                for (offset, function) in functions
+                    .iter_mut()
+                    .enumerate()
+                    .filter(|function| is_preferred[0][function.0])
+                {
+                    let mut outline = outline_function(
+                        function,
+                        *fragment,
+                        first[0] + offset as u32,
+                        *file,
+                        ids,
+                        lists,
+                    );
+                    if summary
+                        .runtime_modules
+                        .binary_search_by_key(&outline.index, |found| found.0)
+                        .is_ok()
+                    {
+                        outline.flags |= outline_flags::REQUESTS_RUNTIME_MODULES;
+                    }
+                    if outline.has(outline_flags::HAS_PARTS) {
+                        funcs_with_parts.push(first_slots[0] + count as u32);
+                    }
+                    func_slots[outline.id as usize]
+                        .store(first_slots[0] + count as u32, Ordering::Relaxed);
+                    funcs[count].write(outline);
+                    count += 1;
                 }
-                if outline.has(outline_flags::HAS_PARTS) {
-                    funcs_with_parts.push(first_slots[0] + count as u32);
+                for body in functions
+                    .iter_mut()
+                    .filter_map(|function| function.body.as_mut())
+                {
+                    body.mentions = ReferencedIds::default();
                 }
-                func_slots[outline.id as usize].store(first_slots[0] + count as u32, Ordering::Relaxed);
-                funcs[count].write(outline);
-                count += 1;
-            }
-            for body in functions.iter_mut().filter_map(|function| function.body.as_mut()) {
-                body.mentions = ReferencedIds::default();
-            }
-            let mut count = 0;
-            for (offset, shape) in shapes.iter_mut().enumerate().filter(|shape| is_preferred[1][shape.0]) {
-                let index = first[1] + offset as u32;
-                let definition = shape.definition.as_mut().expect("the index preferred_flags no shape that is only named");
-                layouts[count].write(outline_layout(definition, *fragment, index, ids, lists));
-                definition.mentions = ReferencedIds::default();
-                layout_slots[ids.layouts[index as usize] as usize].store(first_slots[1] + count as u32, Ordering::Relaxed);
-                count += 1;
-            }
-            let mut count = 0;
-            for (offset, variable) in fragment_variables.iter().enumerate().filter(|variable| is_preferred[2][variable.0]) {
-                let (index, declared) = (first[2] + offset as u32, variable.global.declared);
-                variables[count].write(VariableOutline { fragment: *fragment, index, declared, declared_id: if declared.is_none() { u32::MAX } else { ids.tys[declared.idx()] } });
-                variable_slots[ids.globals[index as usize] as usize].store(first_slots[2] + count as u32, Ordering::Relaxed);
-                count += 1;
-            }
-            assert_eq!(lists.written, *list_len, "the lists are as long as computed");
-        });
+                let mut count = 0;
+                for (offset, shape) in shapes
+                    .iter_mut()
+                    .enumerate()
+                    .filter(|shape| is_preferred[1][shape.0])
+                {
+                    let index = first[1] + offset as u32;
+                    let definition = shape
+                        .definition
+                        .as_mut()
+                        .expect("the index preferred_flags no shape that is only named");
+                    layouts[count].write(outline_layout(definition, *fragment, index, ids, lists));
+                    definition.mentions = ReferencedIds::default();
+                    layout_slots[ids.layouts[index as usize] as usize]
+                        .store(first_slots[1] + count as u32, Ordering::Relaxed);
+                    count += 1;
+                }
+                let mut count = 0;
+                for (offset, variable) in fragment_variables
+                    .iter()
+                    .enumerate()
+                    .filter(|variable| is_preferred[2][variable.0])
+                {
+                    let (index, declared) = (first[2] + offset as u32, variable.global.declared);
+                    variables[count].write(VariableOutline {
+                        fragment: *fragment,
+                        index,
+                        declared,
+                        declared_id: if declared.is_none() {
+                            u32::MAX
+                        } else {
+                            ids.tys[declared.idx()]
+                        },
+                    });
+                    variable_slots[ids.globals[index as usize] as usize]
+                        .store(first_slots[2] + count as u32, Ordering::Relaxed);
+                    count += 1;
+                }
+                assert_eq!(
+                    lists.written, *list_len,
+                    "the lists are as long as computed"
+                );
+            },
+        );
         for output in &mut outputs {
             funcs_with_parts.append(&mut output.funcs_with_parts);
         }
@@ -930,31 +1351,79 @@ impl Outline {
         }
     }
 
-    pub fn rebuild_functions(&mut self, functions: &mut [(u32, &mut Function, &LocalToProgram, FileId)], in_parallel: InParallel<'_>) {
-        let list_len: usize = functions.iter().map(|function| function_list_len(&*function.1)).sum();
+    pub fn rebuild_functions(
+        &mut self,
+        functions: &mut [(u32, &mut Function, &LocalToProgram, FileId)],
+        in_parallel: InParallel<'_>,
+    ) {
+        let list_len: usize = functions
+            .iter()
+            .map(|function| function_list_len(&*function.1))
+            .sum();
         let before = self.local.len();
         self.local.reserve_exact(list_len);
         self.program.reserve_exact(list_len);
         let mut local_rest = &mut self.local.spare_capacity_mut()[..list_len];
         let mut program_rest = &mut self.program.spare_capacity_mut()[..list_len];
         let mut start = before;
-        let mut rebuilt: Vec<(&mut (u32, &mut Function, &LocalToProgram, FileId), ListWriter<'_>, Option<FunctionOutline>, (u32, u32, u8))> = Vec::with_capacity(functions.len());
+        let mut rebuilt: Vec<(
+            &mut (u32, &mut Function, &LocalToProgram, FileId),
+            ListWriter<'_>,
+            Option<FunctionOutline>,
+            (u32, u32, u8),
+        )> = Vec::with_capacity(functions.len());
         for function in functions.iter_mut() {
-            let (list_len, previous) = (function_list_len(&*function.1), &self.funcs[function.0 as usize]);
+            let (list_len, previous) = (
+                function_list_len(&*function.1),
+                &self.funcs[function.0 as usize],
+            );
             let (local_chunk, program_chunk);
             (local_chunk, local_rest) = std::mem::take(&mut local_rest).split_at_mut(list_len);
-            (program_chunk, program_rest) = std::mem::take(&mut program_rest).split_at_mut(list_len);
-            rebuilt.push((function, ListWriter { local: local_chunk, program: program_chunk, written: 0, start: start as u32 }, None, (previous.fragment, previous.index, previous.flags & outline_flags::REQUESTS_RUNTIME_MODULES)));
+            (program_chunk, program_rest) =
+                std::mem::take(&mut program_rest).split_at_mut(list_len);
+            rebuilt.push((
+                function,
+                ListWriter {
+                    local: local_chunk,
+                    program: program_chunk,
+                    written: 0,
+                    start: start as u32,
+                },
+                None,
+                (
+                    previous.fragment,
+                    previous.index,
+                    previous.flags & outline_flags::REQUESTS_RUNTIME_MODULES,
+                ),
+            ));
             start += list_len;
         }
-        for_each_mut(&mut rebuilt, in_parallel, &|(function, lists, outline, (fragment, index, flags))| {
-            let rebuilt = outline_function(&*function.1, *fragment, *index, function.3, function.2, lists);
-            *outline = Some(FunctionOutline { flags: rebuilt.flags | *flags, ..rebuilt });
+        for_each_mut(&mut rebuilt, in_parallel, &|(
+            function,
+            lists,
+            outline,
+            (fragment, index, flags),
+        )| {
+            let rebuilt = outline_function(
+                &*function.1,
+                *fragment,
+                *index,
+                function.3,
+                function.2,
+                lists,
+            );
+            *outline = Some(FunctionOutline {
+                flags: rebuilt.flags | *flags,
+                ..rebuilt
+            });
             if let Some(body) = &mut function.1.body {
                 body.mentions = ReferencedIds::default();
             }
         });
-        let outlines: Vec<(u32, FunctionOutline)> = rebuilt.into_iter().filter_map(|(function, _, outline, _)| Some((function.0, outline?))).collect();
+        let outlines: Vec<(u32, FunctionOutline)> = rebuilt
+            .into_iter()
+            .filter_map(|(function, _, outline, _)| Some((function.0, outline?)))
+            .collect();
         // SAFETY: the functions partition the reserved capacity, and each one initialized its whole chunk.
         unsafe {
             self.local.set_len(before + list_len);
@@ -963,7 +1432,8 @@ impl Outline {
         for (slot, outline) in outlines {
             self.funcs[slot as usize] = outline;
         }
-        self.funcs_with_parts.retain(|&slot| self.funcs[slot as usize].has(outline_flags::HAS_PARTS));
+        self.funcs_with_parts
+            .retain(|&slot| self.funcs[slot as usize].has(outline_flags::HAS_PARTS));
     }
 }
 
@@ -986,11 +1456,17 @@ impl Summary {
         let mut summary = Summary::default();
         for (index, function) in fragment.funcs.iter().enumerate() {
             let index = index as u32;
-            if matches!(function.key, FuncKey::Module(file) | FuncKey::ModuleBody(file) | FuncKey::ModuleSettling(file) | FuncKey::ModuleDriver(file) | FuncKey::ModuleInner(file) | FuncKey::Required(file) if file == fragment.file) {
+            if matches!(function.key, FuncKey::Module(file) | FuncKey::ModuleBody(file) | FuncKey::ModuleSettling(file) | FuncKey::ModuleDriver(file) | FuncKey::ModuleInner(file) | FuncKey::Required(file) if file == fragment.file)
+            {
                 summary.run_at_evaluation.push(index);
             }
-            let (Some(func), Some(body)) = (&function.func, &function.body) else { continue };
-            if matches!(function.key, FuncKey::GenericEntrypoint(..) | FuncKey::UntypedClone(..)) {
+            let (Some(func), Some(body)) = (&function.func, &function.body) else {
+                continue;
+            };
+            if matches!(
+                function.key,
+                FuncKey::GenericEntrypoint(..) | FuncKey::UntypedClone(..)
+            ) {
                 summary.entrypoints_and_clones.push(index);
             }
             if body.notes.has_mutations() {
@@ -998,15 +1474,25 @@ impl Summary {
             }
             for value in &func.values {
                 let found = match &value.def {
-                    Def::Op(Op::Operation { which: Operation::RequireBuiltinModule, args }) if !args.is_empty() => match func.op(args[0]) {
+                    Def::Op(Op::Operation {
+                        which: Operation::RequireBuiltinModule,
+                        args,
+                    }) if !args.is_empty() => match func.op(args[0]) {
                         Some(&Op::Int(number)) => Some(RuntimeModule::Number(number)),
                         _ => None,
                     },
-                    Def::Op(Op::Operation { which: Operation::RequireExternalModule | Operation::ImportExternalModule, args }) if !args.is_empty() => crate::link::constant_string(func, args[0]).map(RuntimeModule::Name),
+                    Def::Op(Op::Operation {
+                        which: Operation::RequireExternalModule | Operation::ImportExternalModule,
+                        args,
+                    }) if !args.is_empty() => {
+                        crate::link::constant_string(func, args[0]).map(RuntimeModule::Name)
+                    }
                     Def::Op(Op::ExternalModule(name)) => Some(RuntimeModule::Name(*name)),
                     _ => None,
                 };
-                summary.runtime_modules.extend(found.map(|module| (index, module)));
+                summary
+                    .runtime_modules
+                    .extend(found.map(|module| (index, module)));
             }
         }
         summary
@@ -1031,7 +1517,17 @@ pub struct Interner<K> {
 
 impl<K: Hash + Eq + Clone> Interner<K> {
     fn new() -> Interner<K> {
-        Interner { shards: (0..SHARDS).map(|_| Guarded::new(InternerShard { keys: Vec::new(), hashes: Vec::new(), ids: hashbrown::HashTable::new() })).collect() }
+        Interner {
+            shards: (0..SHARDS)
+                .map(|_| {
+                    Guarded::new(InternerShard {
+                        keys: Vec::new(),
+                        hashes: Vec::new(),
+                        ids: hashbrown::HashTable::new(),
+                    })
+                })
+                .collect(),
+        }
     }
 
     fn intern(&self, key: K) -> u32 {
@@ -1053,7 +1549,9 @@ impl<K: Hash + Eq + Clone> Interner<K> {
         let hash = rustc_hash::FxBuildHasher.hash_one(key);
         let shard_number = shard_of(hash);
         let shard = self.shards[shard_number].lock();
-        let index = *shard.ids.find(hash, |&index| shard.keys[index as usize] == *key)?;
+        let index = *shard
+            .ids
+            .find(hash, |&index| shard.keys[index as usize] == *key)?;
         Some(index * SHARDS as u32 + shard_number as u32)
     }
 
@@ -1062,7 +1560,13 @@ impl<K: Hash + Eq + Clone> Interner<K> {
     }
 
     pub fn bound(&self) -> usize {
-        SHARDS * self.shards.iter().map(|shard| shard.lock().keys.len()).max().unwrap_or(0)
+        SHARDS
+            * self
+                .shards
+                .iter()
+                .map(|shard| shard.lock().keys.len())
+                .max()
+                .unwrap_or(0)
     }
 }
 
@@ -1076,18 +1580,31 @@ pub struct ProgramIds {
 
 impl Default for ProgramIds {
     fn default() -> ProgramIds {
-        ProgramIds { strs: (0..SHARDS).map(|_| Guarded::new(Strs::default())).collect(), tys: Interner::new(), layouts: Interner::new(), globals: Interner::new(), funcs: Interner::new() }
+        ProgramIds {
+            strs: (0..SHARDS).map(|_| Guarded::new(Strs::default())).collect(),
+            tys: Interner::new(),
+            layouts: Interner::new(),
+            globals: Interner::new(),
+            funcs: Interner::new(),
+        }
     }
 }
 
 impl ProgramIds {
     pub fn str(&self, hash: u64, bytes: &[u8]) -> u32 {
         let shard_number = shard_of(hash);
-        self.strs[shard_number].lock().intern_hashed(hash, bytes).0 * SHARDS as u32 + shard_number as u32
+        self.strs[shard_number].lock().intern_hashed(hash, bytes).0 * SHARDS as u32
+            + shard_number as u32
     }
 
     pub fn strs_upper_bound(&self) -> usize {
-        SHARDS * self.strs.iter().map(|shard| shard.lock().len()).max().unwrap_or(0)
+        SHARDS
+            * self
+                .strs
+                .iter()
+                .map(|shard| shard.lock().len())
+                .max()
+                .unwrap_or(0)
     }
 
     pub fn tys_upper_bound(&self) -> usize {
@@ -1095,24 +1612,75 @@ impl ProgramIds {
     }
 
     pub fn assign(&self, fragment: &mut Fragment) {
-        let strs: Vec<u32> = (0..fragment.strs.len()).map(StrId::new).map(|id| self.str(fragment.strs.hash(id), fragment.strs.get(id))).collect();
-        let layouts: Vec<u32> = fragment.layouts.iter().map(|shape| self.layouts.intern(shape.key)).collect();
-        let globals: Vec<u32> = fragment.globals.iter().map(|variable| self.globals.intern(variable.key.clone())).collect();
-        let funcs: Vec<u32> = fragment.funcs.iter().map(|function| self.funcs.intern(function.key)).collect();
+        let strs: Vec<u32> = (0..fragment.strs.len())
+            .map(StrId::new)
+            .map(|id| self.str(fragment.strs.hash(id), fragment.strs.get(id)))
+            .collect();
+        let layouts: Vec<u32> = fragment
+            .layouts
+            .iter()
+            .map(|shape| self.layouts.intern(shape.key))
+            .collect();
+        let globals: Vec<u32> = fragment
+            .globals
+            .iter()
+            .map(|variable| self.globals.intern(variable.key.clone()))
+            .collect();
+        let funcs: Vec<u32> = fragment
+            .funcs
+            .iter()
+            .map(|function| self.funcs.intern(function.key))
+            .collect();
         let mut tys: Vec<u32> = Vec::with_capacity(fragment.tys.list.len());
-        for Declared { prims, ints, parts, any_object, any_function } in &fragment.tys.list {
-            let ty = |local: TyId| if local.is_none() { local } else { TyId(tys[local.idx()]) };
+        for Declared {
+            prims,
+            ints,
+            parts,
+            any_object,
+            any_function,
+        } in &fragment.tys.list
+        {
+            let ty = |local: TyId| {
+                if local.is_none() {
+                    local
+                } else {
+                    TyId(tys[local.idx()])
+                }
+            };
             let mut parts: smallvec::SmallVec<[Part; 1]> = (parts.iter())
                 .map(|part| match part {
-                    Part::Class(layout) => Part::Class(if layout.is_none() { *layout } else { LayoutId(layouts[layout.idx()]) }),
-                    Part::Global(name, arguments) => Part::Global(if name.is_none() { *name } else { StrId(strs[name.idx()]) }, arguments.iter().map(|&argument| ty(argument)).collect()),
+                    Part::Class(layout) => Part::Class(if layout.is_none() {
+                        *layout
+                    } else {
+                        LayoutId(layouts[layout.idx()])
+                    }),
+                    Part::Global(name, arguments) => Part::Global(
+                        if name.is_none() {
+                            *name
+                        } else {
+                            StrId(strs[name.idx()])
+                        },
+                        arguments.iter().map(|&argument| ty(argument)).collect(),
+                    ),
                     Part::Array(element) => Part::Array(ty(*element)),
                 })
                 .collect();
             parts.sort_unstable();
-            tys.push(self.tys.intern(Declared { prims: *prims, ints: *ints, parts, any_object: *any_object, any_function: *any_function }));
+            tys.push(self.tys.intern(Declared {
+                prims: *prims,
+                ints: *ints,
+                parts,
+                any_object: *any_object,
+                any_function: *any_function,
+            }));
         }
-        fragment.program_ids = LocalToProgram { strs, tys, layouts, globals, funcs };
+        fragment.program_ids = LocalToProgram {
+            strs,
+            tys,
+            layouts,
+            globals,
+            funcs,
+        };
         fragment.summary = Summary::new(fragment);
         fragment.tys.close();
     }
@@ -1125,29 +1693,59 @@ pub struct Fragments {
 
 impl Fragments {
     pub fn new(files: usize) -> Fragments {
-        Fragments { by_file: (0..files).map(|_| Guarded::new(None)).collect(), program_ids: ProgramIds::default() }
+        Fragments {
+            by_file: (0..files).map(|_| Guarded::new(None)).collect(),
+            program_ids: ProgramIds::default(),
+        }
     }
 
     pub fn put(&self, mut fragment: Box<Fragment>) {
         self.program_ids.assign(&mut fragment);
         let mut place = self.by_file[fragment.file.idx()].lock();
-        fragment.translation_count += place.as_ref().map_or(0, |earlier| earlier.translation_count);
+        fragment.translation_count += place
+            .as_ref()
+            .map_or(0, |earlier| earlier.translation_count);
         *place = Some(fragment);
     }
 
     pub fn is_any_of(&self, test: &dyn Fn(FileId) -> bool) -> bool {
-        self.by_file.iter().any(|place| place.lock().as_ref().is_some_and(|fragment| test(fragment.file)))
+        self.by_file.iter().any(|place| {
+            place
+                .lock()
+                .as_ref()
+                .is_some_and(|fragment| test(fragment.file))
+        })
     }
 
-    pub fn take(&self, rank_of_file: &dyn Fn(FileId) -> u32, in_parallel: InParallel<'_>) -> Vec<Fragment> {
+    pub fn take(
+        &self,
+        rank_of_file: &dyn Fn(FileId) -> u32,
+        in_parallel: InParallel<'_>,
+    ) -> Vec<Fragment> {
         const FRAGMENTS_PER_RUN: usize = 128;
-        let mut boxes: Vec<Option<Box<Fragment>>> = self.by_file.iter().map(|place| place.lock().take()).filter(Option::is_some).collect();
-        boxes.sort_by_cached_key(|fragment| fragment.as_ref().map(|fragment| rank_of_file(fragment.file)));
+        let mut boxes: Vec<Option<Box<Fragment>>> = self
+            .by_file
+            .iter()
+            .map(|place| place.lock().take())
+            .filter(Option::is_some)
+            .collect();
+        boxes.sort_by_cached_key(|fragment| {
+            fragment
+                .as_ref()
+                .map(|fragment| rank_of_file(fragment.file))
+        });
         let mut fragments: Vec<Fragment> = Vec::with_capacity(boxes.len());
-        let mut runs: Vec<(&mut [Option<Box<Fragment>>], &mut [MaybeUninit<Fragment>])> = boxes.chunks_mut(FRAGMENTS_PER_RUN).zip(fragments.spare_capacity_mut().chunks_mut(FRAGMENTS_PER_RUN)).collect();
+        let mut runs: Vec<(&mut [Option<Box<Fragment>>], &mut [MaybeUninit<Fragment>])> = boxes
+            .chunks_mut(FRAGMENTS_PER_RUN)
+            .zip(fragments.spare_capacity_mut().chunks_mut(FRAGMENTS_PER_RUN))
+            .collect();
         for_each_mut(&mut runs, in_parallel, &|(boxes, places)| {
             for (fragment, place) in boxes.iter_mut().zip(places.iter_mut()) {
-                place.write(*fragment.take().expect("only fragments that are there are listed"));
+                place.write(
+                    *fragment
+                        .take()
+                        .expect("only fragments that are there are listed"),
+                );
             }
         });
         drop(runs);

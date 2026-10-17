@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { test } from "./supported";
 
 const files = {
   "main.cjs": `
@@ -66,24 +66,44 @@ const folded = [
 
 test("bun run and bun run --aot read process.platform, process.arch and process.versions.bun", async () => {
   using dir = tempDir("aot-process-platform", files);
-  expect(await run([bunExe(), "run", "main.cjs"], String(dir), bunEnv)).toEqual({ stdout: read, stderr: "", exitCode: 0 });
-  expect(await run([bunExe(), "run", "--debug-aot", "main.cjs"], String(dir), compiledOnly)).toEqual({ stdout: read, stderr: "", exitCode: 0 });
+  expect(await run([bunExe(), "run", "main.cjs"], String(dir), bunEnv)).toEqual({
+    stdout: read,
+    stderr: "",
+    exitCode: 0,
+  });
+  expect(await run([bunExe(), "run", "--debug-aot", "main.cjs"], String(dir), compiledOnly)).toEqual({
+    stdout: read,
+    stderr: "",
+    exitCode: 0,
+  });
 }, 120_000);
 
 test("bun build --compile folds them for its target, with --aot and without", async () => {
   using dir = tempDir("aot-process-platform", files);
   for (const flags of [[], ["--aot"]]) {
     const executable = join(String(dir), "main" + flags.length + (isWindows ? ".exe" : ""));
-    const built = await run([bunExe(), "build", "--compile", ...flags, "main.cjs", "--outfile", executable], String(dir), bunEnv);
+    const built = await run(
+      [bunExe(), "build", "--compile", ...flags, "main.cjs", "--outfile", executable],
+      String(dir),
+      bunEnv,
+    );
     expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-    expect(await run([executable], String(dir), flags.length ? compiledOnly : bunEnv)).toEqual({ stdout: folded, stderr: "", exitCode: 0 });
+    expect(await run([executable], String(dir), flags.length ? compiledOnly : bunEnv)).toEqual({
+      stdout: folded,
+      stderr: "",
+      exitCode: 0,
+    });
   }
 }, 240_000);
 
 test("bun test and bun test --aot: a test can try another platform's road", async () => {
   using dir = tempDir("aot-process-platform", files);
   for (const flags of [[], ["--debug-aot"]]) {
-    const { stderr, exitCode } = await run([bunExe(), "test", ...flags, "./platform.test.js"], String(dir), flags.length ? compiledOnly : bunEnv);
+    const { stderr, exitCode } = await run(
+      [bunExe(), "test", ...flags, "./platform.test.js"],
+      String(dir),
+      flags.length ? compiledOnly : bunEnv,
+    );
     expect(stderr).toContain("1 pass");
     expect(stderr).toContain("0 fail");
     expect(exitCode).toBe(0);

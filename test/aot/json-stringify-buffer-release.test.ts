@@ -1,9 +1,9 @@
 // The compiled JSON.stringify writes into a buffer that the program keeps between calls. A large buffer is released at the end of
 // every call, whichever way the call ends: an 8-bit result, a 16-bit result, or a fallback to the generic writer.
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { test } from "./supported";
 
 const files = {
   "main.ts": `

@@ -22,7 +22,11 @@ async function spawned(cmd: string[], cwd: string) {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
-const build = (cwd: string, ...args: string[]) => spawned([bunExe(), "build", "src/index.ts", "--outdir", "dist", "--target", "bun", "--packages", "external", ...args], cwd);
+const build = (cwd: string, ...args: string[]) =>
+  spawned(
+    [bunExe(), "build", "src/index.ts", "--outdir", "dist", "--target", "bun", "--packages", "external", ...args],
+    cwd,
+  );
 const text = (...path: string[]) => Bun.file(join(...path)).text();
 const withoutTypes = (typescript: string) => new Bun.Transpiler({ loader: "ts" }).transformSync(typescript);
 
@@ -33,7 +37,16 @@ async function install(from: string, into: string, name: string) {
 
 const application = {
   "package.json": JSON.stringify({ name: "app" }),
-  "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, module: "esnext", moduleResolution: "bundler", target: "esnext", types: [], lib: ["esnext", "dom"] } }),
+  "tsconfig.json": JSON.stringify({
+    compilerOptions: {
+      strict: true,
+      module: "esnext",
+      moduleResolution: "bundler",
+      target: "esnext",
+      types: [],
+      lib: ["esnext", "dom"],
+    },
+  }),
 };
 
 describe("bun build --dts: the typed JavaScript", () => {
@@ -42,7 +55,9 @@ describe("bun build --dts: the typed JavaScript", () => {
     expect(await build(String(dir), "--dts")).toMatchObject({ stderr: "", exitCode: 0 });
     const javascript = await text(String(dir), "dist", "index.js");
     const typed = await text(String(dir), "dist", "index.sound.ts");
-    expect((await text(String(dir), "dist", "index.d.ts")).split("\n")[0]).toBe(`// @sound index.sound.ts ${createHash("sha256").update(javascript).digest("hex")}`);
+    expect((await text(String(dir), "dist", "index.d.ts")).split("\n")[0]).toBe(
+      `// @sound index.sound.ts ${createHash("sha256").update(javascript).digest("hex")}`,
+    );
     expect(typed).toContain("function serve<S extends Server>(server: S, ...rest: string[]): string {");
     expect(typed).toContain("class Polite implements Greeter {");
     expect(typed).toContain("  private moods?: Options;");
@@ -96,7 +111,11 @@ describe("bun build --dts: the typed JavaScript", () => {
     ],
     [
       "augments",
-      ["declare global {\n  interface SymbolConstructor {\n    readonly watched: symbol;\n  }", "type Last<T> = () => T;", "interface Watched<T> {\n  [Symbol.watched]: () => T;\n}"],
+      [
+        "declare global {\n  interface SymbolConstructor {\n    readonly watched: symbol;\n  }",
+        "type Last<T> = () => T;",
+        "interface Watched<T> {\n  [Symbol.watched]: () => T;\n}",
+      ],
     ],
     [
       "directives",
@@ -118,7 +137,7 @@ describe("bun build --dts: the typed JavaScript", () => {
       "namespaces-of-types-and-code",
       [
         "namespace errors {\nexport type Message = string | { message?: string };\n}\nvar errors: any;\n((errors) => {\n  type Message = string | { message?: string };\n  errors.toObject = (message?: Message): { message?: string } =>",
-        "export namespace deep {\nexport type Key = \"a\" | \"b\";\n}",
+        'export namespace deep {\nexport type Key = "a" | "b";\n}',
         "  function dist(a: P, b: Hidden = util.origin): number {",
         "function far(point: util.P, key: util.deep.Key, id: onlyTypes.Id): number {",
       ],
@@ -126,7 +145,7 @@ describe("bun build --dts: the typed JavaScript", () => {
     [
       "casts-on-defaults-and-symbol-members",
       [
-        "var cookie_default = { key: \"\", origin: null } as Cookie;",
+        'var cookie_default = { key: "", origin: null } as Cookie;',
         "var settings_default = { depth: 1 } as Settings;",
         "    return this[target] as Event;\n  }\n  public get sure(): Event {\n    return this[target]!;",
         "    return host + ([] as string[]).length + (made.key.length as unknown as number);",
@@ -150,7 +169,7 @@ describe("bun build --dts: the typed JavaScript", () => {
         "    case 0 as Kind3.Leaf /* Leaf */:",
         "  return { kind: 0 as Kind3.Leaf /* Leaf */, value };",
         'function paint(color: Color3 = "red" as Color3.Red /* Red */): Color3 {',
-        '  return { name: name as string, [OTHER]: record[NAME].length, [KEY]: NIL ?? NOTHING ?? undefined };',
+        "  return { name: name as string, [OTHER]: record[NAME].length, [KEY]: NIL ?? NOTHING ?? undefined };",
         "function pick(name: keyof typeof exports_keys2): unknown {",
         "  const first = tree.kind === (1 as Kind3.Branch) /* Branch */ ? +flag : -flag;",
         "  state: Kind3 = 0 as Kind3.Leaf /* Leaf */;",
@@ -238,7 +257,14 @@ describe("bun build --dts: the typed JavaScript", () => {
         "interface Options2 {\n    readonly loud?: boolean;",
       ],
     ],
-    ["declaration-modules", ["interface Parsed { value: string }", 'type Kind = "a" | "b";', "function parse(text: string, kind: Kind): Parsed {"]],
+    [
+      "declaration-modules",
+      [
+        "interface Parsed { value: string }",
+        'type Kind = "a" | "b";',
+        "function parse(text: string, kind: Kind): Parsed {",
+      ],
+    ],
     [
       "shadowed-names",
       [
@@ -272,7 +298,11 @@ describe("bun build --dts: the typed JavaScript", () => {
     using dir = library("constants");
     expect((await build(String(dir), "--dts")).exitCode).toBe(0);
     const javascript = await text(String(dir), "dist", "index.js");
-    expect(readdirSync(join(String(dir), "dist")).filter(name => !name.endsWith(".d.ts")).sort()).toEqual(["index.js", "index.sound.ts"]);
+    expect(
+      readdirSync(join(String(dir), "dist"))
+        .filter(name => !name.endsWith(".d.ts"))
+        .sort(),
+    ).toEqual(["index.js", "index.sound.ts"]);
     expect((await build(String(dir))).exitCode).toBe(0);
     expect(await text(String(dir), "dist", "index.js")).toBe(javascript);
   });
@@ -290,127 +320,315 @@ console.log(serve(server, "a", "b"), new Polite("hi").greet({ name: "you" }, 2))
     await install(String(dir), String(app), "greeter");
     const plain = await spawned([bunExe(), "app.ts"], String(app));
     expect(plain).toEqual({ stdout: `hello WORLD,world80802 [ "hi you", "hi you" ]\n`, stderr: "", exitCode: 0 });
-    const compiled = await spawned([bunExe(), "build", "--compile", "--aot", "app.ts", "--outfile", "app"], String(app));
-    expect({ said: (compiled.stdout + compiled.stderr).split("\n").filter(line => /^(note|warn|error)/.test(line)), exitCode: compiled.exitCode }).toEqual({
+    const compiled = await spawned(
+      [bunExe(), "build", "--compile", "--aot", "app.ts", "--outfile", "app"],
+      String(app),
+    );
+    expect({
+      said: (compiled.stdout + compiled.stderr).split("\n").filter(line => /^(note|warn|error)/.test(line)),
+      exitCode: compiled.exitCode,
+    }).toEqual({
       said: [`note: "greeter" 1.2.3 is compiled from its typed version in node_modules/greeter/dist`],
       exitCode: 0,
     });
     expect(await spawned([join(String(app), "app")], String(app))).toEqual(plain);
   });
 
-  test.skipIf(!!unsupported)("--no-bundle: a typed file beside each JavaScript file, and --aot compiles the package from them", async () => {
-    using dir = library("greeter");
-    const files = ["index", "mood", "options", "polite"];
-    const built = await spawned([bunExe(), "build", ...files.map(name => `src/${name}.ts`), "--no-bundle", "--outdir", "dist", "--target", "bun", "--dts"], String(dir));
-    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
-    expect(readdirSync(join(String(dir), "dist")).sort()).toEqual(files.flatMap(name => [`${name}.d.ts`, `${name}.js`, `${name}.sound.ts`]).sort());
-    for (const name of files) {
-      expect((await text(String(dir), "dist", name + ".d.ts")).split("\n")[0]).toBe(`// @sound ${name}.sound.ts ${createHash("sha256").update(await text(String(dir), "dist", name + ".js")).digest("hex")}`);
-      expect(withoutTypes(await text(String(dir), "dist", name + ".sound.ts"))).toBe(withoutTypes(await text(String(dir), "dist", name + ".js")));
-    }
-    expect(await text(String(dir), "dist", "polite.sound.ts")).toContain('import type { Greeter, Options } from "./options";');
-    expect(await text(String(dir), "dist", "options.sound.ts")).toContain("export type Options = { name: string; loud?: boolean };");
-    using app = tempDir("build-sound-apart-application", {
-      ...application,
-      "app.ts": `import { Polite, serve, type Server } from "greeter";
+  test.skipIf(!!unsupported)(
+    "--no-bundle: a typed file beside each JavaScript file, and --aot compiles the package from them",
+    async () => {
+      using dir = library("greeter");
+      const files = ["index", "mood", "options", "polite"];
+      const built = await spawned(
+        [
+          bunExe(),
+          "build",
+          ...files.map(name => `src/${name}.ts`),
+          "--no-bundle",
+          "--outdir",
+          "dist",
+          "--target",
+          "bun",
+          "--dts",
+        ],
+        String(dir),
+      );
+      expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+      expect(readdirSync(join(String(dir), "dist")).sort()).toEqual(
+        files.flatMap(name => [`${name}.d.ts`, `${name}.js`, `${name}.sound.ts`]).sort(),
+      );
+      for (const name of files) {
+        expect((await text(String(dir), "dist", name + ".d.ts")).split("\n")[0]).toBe(
+          `// @sound ${name}.sound.ts ${createHash("sha256")
+            .update(await text(String(dir), "dist", name + ".js"))
+            .digest("hex")}`,
+        );
+        expect(withoutTypes(await text(String(dir), "dist", name + ".sound.ts"))).toBe(
+          withoutTypes(await text(String(dir), "dist", name + ".js")),
+        );
+      }
+      expect(await text(String(dir), "dist", "polite.sound.ts")).toContain(
+        'import type { Greeter, Options } from "./options";',
+      );
+      expect(await text(String(dir), "dist", "options.sound.ts")).toContain(
+        "export type Options = { name: string; loud?: boolean };",
+      );
+      using app = tempDir("build-sound-apart-application", {
+        ...application,
+        "app.ts": `import { Polite, serve, type Server } from "greeter";
 const server: Server = { port: 8080, options: { name: "world", loud: true } };
 console.log(serve(server, "a", "b"), new Polite("hi").greet({ name: "you" }, 2));
 `,
-    });
-    await install(String(dir), String(app), "greeter");
-    const plain = await spawned([bunExe(), "app.ts"], String(app));
-    expect(plain).toEqual({ stdout: `hello WORLD,world80802 [ "hi you", "hi you" ]\n`, stderr: "", exitCode: 0 });
-    const compiled = await spawned([bunExe(), "build", "--compile", "--aot", "app.ts", "--outfile", "app"], String(app));
-    expect({ said: (compiled.stdout + compiled.stderr).split("\n").filter(line => /^(note|warn|error)/.test(line)), exitCode: compiled.exitCode }).toEqual({
-      said: [`note: "greeter" 1.2.3 is compiled from its typed version in node_modules/greeter/dist`],
-      exitCode: 0,
-    });
-    expect(await spawned([join(String(app), "app")], String(app))).toEqual(plain);
-  });
+      });
+      await install(String(dir), String(app), "greeter");
+      const plain = await spawned([bunExe(), "app.ts"], String(app));
+      expect(plain).toEqual({ stdout: `hello WORLD,world80802 [ "hi you", "hi you" ]\n`, stderr: "", exitCode: 0 });
+      const compiled = await spawned(
+        [bunExe(), "build", "--compile", "--aot", "app.ts", "--outfile", "app"],
+        String(app),
+      );
+      expect({
+        said: (compiled.stdout + compiled.stderr).split("\n").filter(line => /^(note|warn|error)/.test(line)),
+        exitCode: compiled.exitCode,
+      }).toEqual({
+        said: [`note: "greeter" 1.2.3 is compiled from its typed version in node_modules/greeter/dist`],
+        exitCode: 0,
+      });
+      expect(await spawned([join(String(app), "app")], String(app))).toEqual(plain);
+    },
+  );
 
-  test.skipIf(!!unsupported)("--no-bundle with rewriteRelativeImportExtensions: the typed files import the JavaScript files, for types too", async () => {
-    using dir = tempDir("build-sound-rewritten-imports", {
-      "package.json": JSON.stringify({ name: "welcome", version: "1.0.0", type: "module", main: "./dist/index.js", types: "./dist/index.d.ts" }),
-      "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, module: "nodenext", target: "esnext", types: [], lib: ["esnext"], rewriteRelativeImportExtensions: true, verbatimModuleSyntax: true } }),
-      "src/index.ts": `import { greet } from "./greet.ts";\nimport type { Error } from "./greet.ts";\nimport type { Options } from "./options.ts";\nexport type { Options } from "./options.ts";\nexport type Loud = import("./options.ts").Options & { loud: true };\nexport function welcome(options: Options, error?: Error): string {\n  return greet(options, error) + "!";\n}\n`,
-      "src/greet.ts": `import type { Options } from "./options.ts";\nexport type Error = { reason: string };\nexport function isError(value: unknown): value is globalThis.Error {\n  return value instanceof Error;\n}\nexport function greet(options: Options, error?: Error): string {\n  return "hello " + options.name + (error?.reason ?? "");\n}\n`,
-      "src/options.ts": `export type Options = { name: string };\n`,
-    });
-    const built = await spawned([bunExe(), "build", "src/index.ts", "src/greet.ts", "src/options.ts", "--no-bundle", "--outdir", "dist", "--target", "bun", "--dts"], String(dir));
-    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
-    expect(await text(String(dir), "dist", "index.js")).toContain('import { greet } from "./greet.js";');
-    const typed = await text(String(dir), "dist", "index.sound.ts");
-    expect(typed).toContain('import { greet } from "./greet.js";');
-    expect(typed).toContain('import type { Error } from "./greet.js";');
-    expect(typed).toContain('import type { Options } from "./options.js";');
-    expect(typed).toContain('export type { Options } from "./options.js";');
-    expect(typed).toContain('export type Loud = import("./options.js").Options & { loud: true };');
-    expect(await text(String(dir), "dist", "greet.sound.ts")).toContain("export type Error = { reason: string };\n");
-    using app = tempDir("build-sound-rewritten-imports-application", {
-      ...application,
-      "app.ts": `import { welcome, type Options } from "welcome";\nconst options: Options = { name: "you" };\nconsole.log(welcome(options));\n`,
-    });
-    await install(String(dir), String(app), "welcome");
-    const plain = await spawned([bunExe(), "app.ts"], String(app));
-    expect(plain).toEqual({ stdout: "hello you!\n", stderr: "", exitCode: 0 });
-    const compiled = await spawned([bunExe(), "build", "--compile", "--aot", "app.ts", "--outfile", "app"], String(app));
-    expect({ said: (compiled.stdout + compiled.stderr).split("\n").filter(line => /^(note|warn|error)/.test(line)), exitCode: compiled.exitCode }).toEqual({
-      said: [`note: "welcome" 1.0.0 is compiled from its typed version in node_modules/welcome/dist`],
-      exitCode: 0,
-    });
-    expect(await spawned([join(String(app), "app")], String(app))).toEqual(plain);
-  });
+  test.skipIf(!!unsupported)(
+    "--no-bundle with rewriteRelativeImportExtensions: the typed files import the JavaScript files, for types too",
+    async () => {
+      using dir = tempDir("build-sound-rewritten-imports", {
+        "package.json": JSON.stringify({
+          name: "welcome",
+          version: "1.0.0",
+          type: "module",
+          main: "./dist/index.js",
+          types: "./dist/index.d.ts",
+        }),
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: {
+            strict: true,
+            module: "nodenext",
+            target: "esnext",
+            types: [],
+            lib: ["esnext"],
+            rewriteRelativeImportExtensions: true,
+            verbatimModuleSyntax: true,
+          },
+        }),
+        "src/index.ts": `import { greet } from "./greet.ts";\nimport type { Error } from "./greet.ts";\nimport type { Options } from "./options.ts";\nexport type { Options } from "./options.ts";\nexport type Loud = import("./options.ts").Options & { loud: true };\nexport function welcome(options: Options, error?: Error): string {\n  return greet(options, error) + "!";\n}\n`,
+        "src/greet.ts": `import type { Options } from "./options.ts";\nexport type Error = { reason: string };\nexport function isError(value: unknown): value is globalThis.Error {\n  return value instanceof Error;\n}\nexport function greet(options: Options, error?: Error): string {\n  return "hello " + options.name + (error?.reason ?? "");\n}\n`,
+        "src/options.ts": `export type Options = { name: string };\n`,
+      });
+      const built = await spawned(
+        [
+          bunExe(),
+          "build",
+          "src/index.ts",
+          "src/greet.ts",
+          "src/options.ts",
+          "--no-bundle",
+          "--outdir",
+          "dist",
+          "--target",
+          "bun",
+          "--dts",
+        ],
+        String(dir),
+      );
+      expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+      expect(await text(String(dir), "dist", "index.js")).toContain('import { greet } from "./greet.js";');
+      const typed = await text(String(dir), "dist", "index.sound.ts");
+      expect(typed).toContain('import { greet } from "./greet.js";');
+      expect(typed).toContain('import type { Error } from "./greet.js";');
+      expect(typed).toContain('import type { Options } from "./options.js";');
+      expect(typed).toContain('export type { Options } from "./options.js";');
+      expect(typed).toContain('export type Loud = import("./options.js").Options & { loud: true };');
+      expect(await text(String(dir), "dist", "greet.sound.ts")).toContain("export type Error = { reason: string };\n");
+      using app = tempDir("build-sound-rewritten-imports-application", {
+        ...application,
+        "app.ts": `import { welcome, type Options } from "welcome";\nconst options: Options = { name: "you" };\nconsole.log(welcome(options));\n`,
+      });
+      await install(String(dir), String(app), "welcome");
+      const plain = await spawned([bunExe(), "app.ts"], String(app));
+      expect(plain).toEqual({ stdout: "hello you!\n", stderr: "", exitCode: 0 });
+      const compiled = await spawned(
+        [bunExe(), "build", "--compile", "--aot", "app.ts", "--outfile", "app"],
+        String(app),
+      );
+      expect({
+        said: (compiled.stdout + compiled.stderr).split("\n").filter(line => /^(note|warn|error)/.test(line)),
+        exitCode: compiled.exitCode,
+      }).toEqual({
+        said: [`note: "welcome" 1.0.0 is compiled from its typed version in node_modules/welcome/dist`],
+        exitCode: 0,
+      });
+      expect(await spawned([join(String(app), "app")], String(app))).toEqual(plain);
+    },
+  );
 
-  test.skipIf(!!unsupported)("--no-bundle: a declaration file that says ./x.ts finds the same class as the typed file", async () => {
-    using dir = tempDir("build-sound-one-class", {
-      "package.json": JSON.stringify({ name: "welcome", version: "1.0.0", type: "module", main: "./dist/index.js", types: "./dist/index.d.ts", exports: { ".": "./dist/index.js", "./*": "./dist/*.js" } }),
-      "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, module: "nodenext", target: "esnext", types: [], lib: ["esnext"], rewriteRelativeImportExtensions: true, verbatimModuleSyntax: true } }),
-      "src/index.ts": `import { Issue } from "./issue.ts";\nexport function make(text: string): Issue {\n  return new Issue(text);\n}\n`,
-      "src/issue.ts": `export class Issue {\n  #text: string;\n  constructor(text: string) {\n    this.#text = text;\n  }\n  get text(): string {\n    return this.#text;\n  }\n}\n`,
-      "src/named.ts": `import type { Issue } from "./issue.ts";\nexport function read(issue: Issue): string {\n  return issue.text;\n}\n`,
-    });
-    const built = await spawned([bunExe(), "build", "src/index.ts", "src/issue.ts", "src/named.ts", "--no-bundle", "--outdir", "dist", "--target", "bun", "--dts"], String(dir));
-    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
-    using app = tempDir("build-sound-one-class-application", {
-      ...application,
-      "app.ts": `import { make } from "welcome";\nimport { read } from "welcome/named";\nconsole.log(read(make("one class")));\n`,
-    });
-    await install(String(dir), String(app), "welcome");
-    const compiled = await spawned([bunExe(), "build", "--compile", "--aot", "app.ts", "--outfile", "app"], String(app));
-    expect({ said: (compiled.stdout + compiled.stderr).split("\n").filter(line => /^(note|warn|error)/.test(line)), exitCode: compiled.exitCode }).toEqual({
-      said: [`note: "welcome" 1.0.0 is compiled from its typed version in node_modules/welcome/dist`],
-      exitCode: 0,
-    });
-    expect(await spawned([join(String(app), "app")], String(app))).toEqual({ stdout: "one class\n", stderr: "", exitCode: 0 });
-  });
+  test.skipIf(!!unsupported)(
+    "--no-bundle: a declaration file that says ./x.ts finds the same class as the typed file",
+    async () => {
+      using dir = tempDir("build-sound-one-class", {
+        "package.json": JSON.stringify({
+          name: "welcome",
+          version: "1.0.0",
+          type: "module",
+          main: "./dist/index.js",
+          types: "./dist/index.d.ts",
+          exports: { ".": "./dist/index.js", "./*": "./dist/*.js" },
+        }),
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: {
+            strict: true,
+            module: "nodenext",
+            target: "esnext",
+            types: [],
+            lib: ["esnext"],
+            rewriteRelativeImportExtensions: true,
+            verbatimModuleSyntax: true,
+          },
+        }),
+        "src/index.ts": `import { Issue } from "./issue.ts";\nexport function make(text: string): Issue {\n  return new Issue(text);\n}\n`,
+        "src/issue.ts": `export class Issue {\n  #text: string;\n  constructor(text: string) {\n    this.#text = text;\n  }\n  get text(): string {\n    return this.#text;\n  }\n}\n`,
+        "src/named.ts": `import type { Issue } from "./issue.ts";\nexport function read(issue: Issue): string {\n  return issue.text;\n}\n`,
+      });
+      const built = await spawned(
+        [
+          bunExe(),
+          "build",
+          "src/index.ts",
+          "src/issue.ts",
+          "src/named.ts",
+          "--no-bundle",
+          "--outdir",
+          "dist",
+          "--target",
+          "bun",
+          "--dts",
+        ],
+        String(dir),
+      );
+      expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+      using app = tempDir("build-sound-one-class-application", {
+        ...application,
+        "app.ts": `import { make } from "welcome";\nimport { read } from "welcome/named";\nconsole.log(read(make("one class")));\n`,
+      });
+      await install(String(dir), String(app), "welcome");
+      const compiled = await spawned(
+        [bunExe(), "build", "--compile", "--aot", "app.ts", "--outfile", "app"],
+        String(app),
+      );
+      expect({
+        said: (compiled.stdout + compiled.stderr).split("\n").filter(line => /^(note|warn|error)/.test(line)),
+        exitCode: compiled.exitCode,
+      }).toEqual({
+        said: [`note: "welcome" 1.0.0 is compiled from its typed version in node_modules/welcome/dist`],
+        exitCode: 0,
+      });
+      expect(await spawned([join(String(app), "app")], String(app))).toEqual({
+        stdout: "one class\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
 
-  test.skipIf(!!unsupported)("--no-bundle: a package that imports itself by name while its exports point at its sources", async () => {
-    using dir = tempDir("build-sound-self-name", {
-      "package.json": JSON.stringify({ name: "welcome", version: "1.0.0", type: "module", exports: { ".": "./src/index.ts", "./*": "./src/*.ts" } }),
-      "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, module: "nodenext", target: "esnext", types: [], lib: ["esnext"], rewriteRelativeImportExtensions: true, verbatimModuleSyntax: true } }),
-      "src/index.ts": `import { Issue } from "welcome/issue";\nimport { read } from "./named.ts";\nexport const text: string = read(new Issue("one class"));\n`,
-      "src/issue.ts": `export class Issue {\n  #text: string;\n  constructor(text: string) {\n    this.#text = text;\n  }\n  get text(): string {\n    return this.#text;\n  }\n}\n`,
-      "src/named.ts": `import type { Issue } from "./issue.ts";\nexport function read(issue: Issue): string {\n  return issue.text;\n}\n`,
-    });
-    const built = await spawned([bunExe(), "build", "src/index.ts", "src/issue.ts", "src/named.ts", "--no-bundle", "--root", "src", "--outdir", "dist", "--target", "bun", "--dts"], String(dir));
-    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
-    expect(await text(String(dir), "dist", "index.sound.ts")).toContain('import { Issue } from "welcome/issue";');
-  });
+  test.skipIf(!!unsupported)(
+    "--no-bundle: a package that imports itself by name while its exports point at its sources",
+    async () => {
+      using dir = tempDir("build-sound-self-name", {
+        "package.json": JSON.stringify({
+          name: "welcome",
+          version: "1.0.0",
+          type: "module",
+          exports: { ".": "./src/index.ts", "./*": "./src/*.ts" },
+        }),
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: {
+            strict: true,
+            module: "nodenext",
+            target: "esnext",
+            types: [],
+            lib: ["esnext"],
+            rewriteRelativeImportExtensions: true,
+            verbatimModuleSyntax: true,
+          },
+        }),
+        "src/index.ts": `import { Issue } from "welcome/issue";\nimport { read } from "./named.ts";\nexport const text: string = read(new Issue("one class"));\n`,
+        "src/issue.ts": `export class Issue {\n  #text: string;\n  constructor(text: string) {\n    this.#text = text;\n  }\n  get text(): string {\n    return this.#text;\n  }\n}\n`,
+        "src/named.ts": `import type { Issue } from "./issue.ts";\nexport function read(issue: Issue): string {\n  return issue.text;\n}\n`,
+      });
+      const built = await spawned(
+        [
+          bunExe(),
+          "build",
+          "src/index.ts",
+          "src/issue.ts",
+          "src/named.ts",
+          "--no-bundle",
+          "--root",
+          "src",
+          "--outdir",
+          "dist",
+          "--target",
+          "bun",
+          "--dts",
+        ],
+        String(dir),
+      );
+      expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+      expect(await text(String(dir), "dist", "index.sound.ts")).toContain('import { Issue } from "welcome/issue";');
+    },
+  );
 
   test("require() in a bundle for the browser", async () => {
     using dir = library("odd-names");
-    expect(await spawned([bunExe(), "build", "src/index.ts", "--outdir", "dist", "--packages", "external", "--dts"], String(dir))).toMatchObject({ stderr: "", exitCode: 0 });
-    expect(await text(String(dir), "dist", "index.sound.ts")).toContain("return (require as any).apply(this, arguments);");
+    expect(
+      await spawned(
+        [bunExe(), "build", "src/index.ts", "--outdir", "dist", "--packages", "external", "--dts"],
+        String(dir),
+      ),
+    ).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(await text(String(dir), "dist", "index.sound.ts")).toContain(
+      "return (require as any).apply(this, arguments);",
+    );
     expect(await text(String(dir), "dist", "index.js")).toContain("return require.apply(this, arguments);");
   });
 
   test("several entry points, overloads of async methods, a directive beside a template literal", async () => {
     using dir = library("found-on-servers");
-    const built = await spawned([bunExe(), "build", "src/index.ts", "src/helper/index.ts", "--outdir", "dist", "--root", "src", "--target", "bun", "--packages", "external", "--dts"], String(dir));
+    const built = await spawned(
+      [
+        bunExe(),
+        "build",
+        "src/index.ts",
+        "src/helper/index.ts",
+        "--outdir",
+        "dist",
+        "--root",
+        "src",
+        "--target",
+        "bun",
+        "--packages",
+        "external",
+        "--dts",
+      ],
+      String(dir),
+    );
     expect(built).toMatchObject({ stderr: "", exitCode: 0 });
     const typed = await text(String(dir), "dist", "index.sound.ts");
-    expect(typed).toContain("  async parse(options?: Partial<Input>): Promise<Result<Input>>;\n  async parse(options?: Partial<Input>): Promise<Result<Input>> {");
-    expect(typed).toContain("  static async make(count: number): Promise<Request[]>;\n  static async make(count?: number): Promise<Request | Request[]> {");
+    expect(typed).toContain(
+      "  async parse(options?: Partial<Input>): Promise<Result<Input>>;\n  async parse(options?: Partial<Input>): Promise<Result<Input>> {",
+    );
+    expect(typed).toContain(
+      "  static async make(count: number): Promise<Request[]>;\n  static async make(count?: number): Promise<Request | Request[]> {",
+    );
     expect(typed).toContain("  each(from: number): Generator<number>;\n  *each(from = 0) {");
     expect(typed).toContain("  literal += /* @ts-ignore */`\n");
     expect(withoutTypes(typed)).toBe(withoutTypes(await text(String(dir), "dist", "index.js")));
@@ -438,20 +656,36 @@ export function clamp(value: number, limit = LIMIT): number {
 `,
     });
     expect(await build(String(dir), "--dts")).toMatchObject({ stderr: "", exitCode: 0 });
-    expect(await text(String(dir), "dist", "index.sound.ts")).toContain('var ROOT = "root";\nvar KEY = "key";\nvar LIMIT = 4;');
+    expect(await text(String(dir), "dist", "index.sound.ts")).toContain(
+      'var ROOT = "root";\nvar KEY = "key";\nvar LIMIT = 4;',
+    );
   });
 
   test("is judged as --aot judges it: not by noUnusedLocals, as an ES module and under the tsconfig.json of its sources wherever --outdir is", async () => {
     using dir = library("greeter", {
       "package.json": JSON.stringify({ name: "greeter", version: "1.2.3", type: "module" }),
       "tsconfig.json": JSON.stringify({
-        compilerOptions: { strict: true, module: "nodenext", target: "esnext", types: [], lib: ["esnext", "dom"], noUnusedLocals: true, noUnusedParameters: true, verbatimModuleSyntax: true, allowImportingTsExtensions: true, noEmit: true },
+        compilerOptions: {
+          strict: true,
+          module: "nodenext",
+          target: "esnext",
+          types: [],
+          lib: ["esnext", "dom"],
+          noUnusedLocals: true,
+          noUnusedParameters: true,
+          verbatimModuleSyntax: true,
+          allowImportingTsExtensions: true,
+          noEmit: true,
+        },
       }),
       "src/index.ts": `import { used, type Shape } from "./shapes.ts";\nexport const meta: ImportMeta = import.meta;\nexport const later = (run: () => void): number => setTimeout(run, 1);\nexport function area(shape: Shape): number {\n  return used(shape);\n}\n`,
       "src/shapes.ts": `export interface Shape { side: number }\nexport interface Unused { name: string }\nexport function used(shape: Shape): number {\n  return shape.side ** 2;\n}\n`,
     });
     using out = tempDir("build-sound-outside", {});
-    const built = await spawned([bunExe(), "build", "src/index.ts", "--outdir", String(out), "--target", "bun", "--dts"], String(dir));
+    const built = await spawned(
+      [bunExe(), "build", "src/index.ts", "--outdir", String(out), "--target", "bun", "--dts"],
+      String(dir),
+    );
     expect(built).toMatchObject({ stderr: "", exitCode: 0 });
     expect(readdirSync(String(out)).sort()).toEqual(["index.d.ts", "index.js", "index.sound.ts"]);
     expect(await text(String(out), "index.sound.ts")).toContain("interface Unused { name: string }");
@@ -460,7 +694,20 @@ export function clamp(value: number, limit = LIMIT): number {
   test("under a tsconfig.json that only references projects, is judged under the project that has its sources", async () => {
     using dir = library("greeter", {
       "tsconfig.json": JSON.stringify({ files: [], references: [{ path: "./tsconfig.build.json" }] }),
-      "tsconfig.build.json": JSON.stringify({ compilerOptions: { composite: true, strict: true, module: "esnext", moduleResolution: "bundler", target: "esnext", types: [], lib: ["esnext", "dom"], noEmit: false, outDir: "built" }, include: ["src"] }),
+      "tsconfig.build.json": JSON.stringify({
+        compilerOptions: {
+          composite: true,
+          strict: true,
+          module: "esnext",
+          moduleResolution: "bundler",
+          target: "esnext",
+          types: [],
+          lib: ["esnext", "dom"],
+          noEmit: false,
+          outDir: "built",
+        },
+        include: ["src"],
+      }),
       "src/index.ts": `export function reply(text: string): Response {\n  return new Response(text);\n}\n`,
     });
     expect(await build(String(dir), "--dts")).toMatchObject({ stderr: "", exitCode: 0 });
@@ -479,14 +726,20 @@ export function clamp(value: number, limit = LIMIT): number {
     ["--splitting", "--splitting"],
     ["--format=cjs", "--format other than esm"],
     ["--sourcemap=inline", "--sourcemap=inline"],
-  ])("%s: the declaration files are written, and one warning says that the typed JavaScript is left out", async (flag, named) => {
-    using dir = library("greeter");
-    expect(await build(String(dir), "--dts", flag)).toMatchObject({ stderr: `${leftOut}it does not support ${named} yet\n`, exitCode: 0 });
-    const names = readdirSync(join(String(dir), "dist"));
-    expect(names).toContain("index.d.ts");
-    expect(names.filter(name => name.endsWith(".sound.ts"))).toEqual([]);
-    expect(await text(String(dir), "dist", "index.d.ts")).not.toContain("@sound");
-  });
+  ])(
+    "%s: the declaration files are written, and one warning says that the typed JavaScript is left out",
+    async (flag, named) => {
+      using dir = library("greeter");
+      expect(await build(String(dir), "--dts", flag)).toMatchObject({
+        stderr: `${leftOut}it does not support ${named} yet\n`,
+        exitCode: 0,
+      });
+      const names = readdirSync(join(String(dir), "dist"));
+      expect(names).toContain("index.d.ts");
+      expect(names.filter(name => name.endsWith(".sound.ts"))).toEqual([]);
+      expect(await text(String(dir), "dist", "index.d.ts")).not.toContain("@sound");
+    },
+  );
 
   test("a type error that only the typed JavaScript has is a warning", async () => {
     using dir = library("greeter", {

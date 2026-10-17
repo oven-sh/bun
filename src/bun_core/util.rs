@@ -2841,7 +2841,9 @@ pub fn get_thread_count() -> u16 {
 
 pub unsafe fn copy_in_parallel(to: *mut u8, from: *const u8, len: usize) {
     const MIN_BYTES_PER_THREAD: usize = 16 << 20;
-    let threads = usize::from(get_thread_count()).min(len / MIN_BYTES_PER_THREAD).min(16);
+    let threads = usize::from(get_thread_count())
+        .min(len / MIN_BYTES_PER_THREAD)
+        .min(16);
     if threads < 2 {
         // SAFETY: the caller's contract is that of `copy_nonoverlapping`.
         return unsafe { core::ptr::copy_nonoverlapping(from, to, len) };
@@ -2852,7 +2854,13 @@ pub unsafe fn copy_in_parallel(to: *mut u8, from: *const u8, len: usize) {
         for start in (share..len).step_by(share) {
             // SAFETY: a part of what the caller's contract covers, and no two threads get the same
             // part.
-            scope.spawn(move || unsafe { core::ptr::copy_nonoverlapping((from + start) as *const u8, (to + start) as *mut u8, share.min(len - start)) });
+            scope.spawn(move || unsafe {
+                core::ptr::copy_nonoverlapping(
+                    (from + start) as *const u8,
+                    (to + start) as *mut u8,
+                    share.min(len - start),
+                )
+            });
         }
         // SAFETY: the first part, which no thread above was given.
         unsafe { core::ptr::copy_nonoverlapping(from as *const u8, to as *mut u8, share.min(len)) };
@@ -4331,7 +4339,8 @@ pub fn maybe_handle_panic_during_process_reload() {
 }
 
 static BEFORE_RELOAD: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
-static KEEP_OPEN_ACROSS_RELOAD: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(-1);
+static KEEP_OPEN_ACROSS_RELOAD: core::sync::atomic::AtomicI32 =
+    core::sync::atomic::AtomicI32::new(-1);
 
 pub fn before_reload(hook: fn()) {
     let _ = BEFORE_RELOAD.set(hook);
@@ -4409,7 +4418,11 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
             hook();
         }
         let kept_open = KEEP_OPEN_ACROSS_RELOAD.load(AOrdering::SeqCst);
-        let errno = execve_self(&dupe_argv, (kept_open >= 0).then(|| Fd::from_native(kept_open)), true);
+        let errno = execve_self(
+            &dupe_argv,
+            (kept_open >= 0).then(|| Fd::from_native(kept_open)),
+            true,
+        );
         if may_return {
             crate::output::pretty_errorln(format_args!(
                 "error: Failed to reload process: errno {}",

@@ -1219,12 +1219,21 @@ mod draft {
                 }
                 #[cfg(windows)]
                 {
-                    let is_compiled = |address: &usize| Bun__AOT__offsetInCode(*address as *const core::ffi::c_void) >= 0;
-                    if addresses_in_trace[..trace_address_count].iter().any(is_compiled) {
-                        static IS_DONE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+                    let is_compiled = |address: &usize| {
+                        Bun__AOT__offsetInCode(*address as *const core::ffi::c_void) >= 0
+                    };
+                    if addresses_in_trace[..trace_address_count]
+                        .iter()
+                        .any(is_compiled)
+                    {
+                        static IS_DONE: core::sync::atomic::AtomicBool =
+                            core::sync::atomic::AtomicBool::new(false);
                         unsafe extern "system" {
                             safe fn GetCurrentProcess() -> *mut core::ffi::c_void;
-                            safe fn TerminateProcess(process: *mut core::ffi::c_void, exit_code: u32) -> i32;
+                            safe fn TerminateProcess(
+                                process: *mut core::ffi::c_void,
+                                exit_code: u32,
+                            ) -> i32;
                         }
                         let _ = std::thread::Builder::new().spawn(|| {
                             std::thread::sleep(core::time::Duration::from_secs(2));
@@ -1710,7 +1719,9 @@ mod draft {
             let range = bun_sys::windows::exe_image_range();
             WINDOWS_EXE_IMAGE_BASE.store(range.start, Ordering::Relaxed);
             WINDOWS_EXE_IMAGE_END.store(range.end, Ordering::Relaxed);
-            bun_core::debug::set_keeps_frame_pointer_chain(|address| Bun__AOT__offsetInCode(address as *const core::ffi::c_void) >= 0);
+            bun_core::debug::set_keeps_frame_pointer_chain(|address| {
+                Bun__AOT__offsetInCode(address as *const core::ffi::c_void) >= 0
+            });
 
             // SAFETY: AddVectoredExceptionHandler is a valid Win32 call
             unsafe {

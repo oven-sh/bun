@@ -20,14 +20,19 @@ pub struct Barrier {
 
 impl Barrier {
     pub fn new(parties: usize) -> Barrier {
-        Barrier { parties: parties as u32, arrived: AtomicU32::new(0), generation: AtomicU32::new(0) }
+        Barrier {
+            parties: parties as u32,
+            arrived: AtomicU32::new(0),
+            generation: AtomicU32::new(0),
+        }
     }
 
     pub fn wait(&self) -> bool {
         let generation = self.generation.load(Ordering::Acquire);
         if self.arrived.fetch_add(1, Ordering::AcqRel) + 1 == self.parties {
             self.arrived.store(0, Ordering::Relaxed);
-            self.generation.store(generation.wrapping_add(1), Ordering::Release);
+            self.generation
+                .store(generation.wrapping_add(1), Ordering::Release);
             bun_threading::futex::wake(&self.generation, u32::MAX);
             return true;
         }

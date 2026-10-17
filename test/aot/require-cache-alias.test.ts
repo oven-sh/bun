@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
-import { describe, test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { describe, test } from "./supported";
 
 // `Module._cache` is `require.cache` by another name: what a program writes to it, or deletes from it, counts for every `require()` that follows.
 
@@ -72,7 +72,13 @@ describe.concurrent.each(Object.keys(programs))("%s", entry => {
       [entry]: programs[entry],
     });
     const run = async (flags: string[], env: Record<string, string | undefined>) => {
-      await using proc = Bun.spawn({ cmd: [bunExe(), "run", ...flags, entry], cwd: String(dir), env, stdout: "pipe", stderr: "pipe" });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", ...flags, entry],
+        cwd: String(dir),
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       return { stdout, stderr, exitCode };
     };

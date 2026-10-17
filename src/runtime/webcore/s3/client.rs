@@ -285,9 +285,7 @@ pub(crate) fn head_bucket(
     )
 }
 
-/// CreateBucket: a signed `PUT` on the bucket root. The region is the
-/// `LocationConstraint`, as the AWS SDK sends it: none for `us-east-1` (S3
-/// refuses it) or `auto` (not S3).
+/// CreateBucket: a signed `PUT` on the bucket root.
 pub(crate) fn create_bucket(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
@@ -302,6 +300,7 @@ pub(crate) fn create_bucket(
         &this.region
     };
     let mut body: Vec<u8> = Vec::new();
+    // The LocationConstraint of the AWS SDK: the region, except us-east-1 (S3 refuses it) and auto (not S3).
     if !region.is_empty() && region != b"us-east-1" && region != b"auto" {
         body.extend_from_slice(
             b"<CreateBucketConfiguration xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><LocationConstraint>",

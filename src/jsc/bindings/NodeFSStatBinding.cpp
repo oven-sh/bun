@@ -211,6 +211,19 @@ static const Identifier& identifier(JSC::VM& vm, DateFieldType dateField)
     ASSERT_NOT_REACHED();
 }
 
+// A cached transition that adds `name` proves an ordinary, extensible object has no own `name`: putDirect() then equals [[DefineOwnProperty]].
+static ALWAYS_INLINE bool canDefineWithPutDirect(JSC::VM& vm, JSC::JSObject* object, JSC::PropertyName name)
+{
+    JSC::Structure* structure = object->structure();
+    if (object->type() != JSC::FinalObjectType || !structure->isStructureExtensible() || structure->isDictionary())
+        return false;
+    JSC::PropertyOffset offset;
+    if (!JSC::Structure::addPropertyTransitionToExistingStructure(structure, name, 0, offset))
+        return false;
+    ASSERT_UNUSED(vm, structure->get(vm, name) == invalidOffset);
+    return true;
+}
+
 template<DateFieldType field, bool isBigInt>
 inline JSC::JSValue getDateField(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName propertyName)
 {
@@ -221,8 +234,11 @@ inline JSC::JSValue getDateField(JSC::JSGlobalObject* globalObject, JSC::Encoded
     if (!thisObject)
         return JSC::jsUndefined();
 
+    // An object with the class structure is ordinary, extensible and has no own date property.
+    const JSC::StructureID classStructureID = getStructure<isBigInt>(defaultGlobalObject(globalObject))->id();
+
     JSValue value;
-    if (thisObject->structureID() == getStructure<isBigInt>(defaultGlobalObject(globalObject))->id()) {
+    if (thisObject->structureID() == classStructureID) {
         value = thisObject->getDirect(static_cast<int>(field));
         ASSERT(thisObject->getDirectOffset(vm, identifier(vm, field)) == static_cast<int>(field));
     } else {
@@ -234,9 +250,17 @@ inline JSC::JSValue getDateField(JSC::JSGlobalObject* globalObject, JSC::Encoded
     RETURN_IF_EXCEPTION(scope, {});
 
     JSValue result = JSC::DateInstance::create(vm, globalObject->dateStructure(), internalNumber);
-    if (!thisObject->structure()->mayBePrototype()) {
-        thisObject->putDirect(vm, propertyName, result, 0);
+    // The number conversion above can run user code, so this compares the structure again.
+    if (thisObject->structureID() != classStructureID) {
+        if (thisObject->structure()->mayBePrototype())
+            return result;
+        if (!canDefineWithPutDirect(vm, thisObject, propertyName)) {
+            thisObject->createDataProperty(globalObject, propertyName, result, true);
+            RETURN_IF_EXCEPTION(scope, {});
+            return result;
+        }
     }
+    thisObject->putDirect(vm, propertyName, result, 0);
     return result;
 }
 
@@ -279,12 +303,18 @@ JSC_DEFINE_CUSTOM_GETTER(jsBigIntStatsPrototypeGetter_atime, (JSGlobalObject * g
 JSC_DEFINE_CUSTOM_SETTER(jsStatsPrototypeFunction_DatePutter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName propertyName))
 {
     auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* thisObject = dynamicDowncast<JSObject>(JSValue::decode(thisValue).toThis(globalObject, JSC::ECMAMode::strict()));
     if (!thisObject)
         return false;
 
-    thisObject->putDirect(vm, propertyName, JSValue::decode(encodedValue), 0);
-    return true;
+    JSValue value = JSValue::decode(encodedValue);
+    if (canDefineWithPutDirect(vm, thisObject, propertyName)) {
+        thisObject->putDirect(vm, propertyName, value, 0);
+        return true;
+    }
+    // Node: setOwnProperty(this, name, value), https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/utils.js#L472-L517
+    RELEASE_AND_RETURN(scope, thisObject->createDataProperty(globalObject, propertyName, value, true));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsStatsPrototypeFunction_isBlockDevice, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))

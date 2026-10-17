@@ -55,17 +55,10 @@ fn write(
             {
                 return Ok((new, Some(read)));
             }
-            debug_assert!(false, "package.json text does not say what its tree says");
             true
         }
         Err(Stop::Printer(err)) => return Err(err),
-        Err(Stop::Unread) => {
-            debug_assert!(
-                false,
-                "the scanners stop in a package.json that the parser read"
-            );
-            true
-        }
+        Err(Stop::Unread) => true,
         Err(Stop::NotTheText) => false,
     };
     // A text that `root` was parsed from, and that no edit has changed, says it as it is.
@@ -73,16 +66,24 @@ fn write(
     if let Some(read) = read(&same, json::PACKAGE_JSON_OPTS, false, with_positions)
         && is_tree(&read.root, &root, stack)
     {
+        debug_assert!(!is_wrong, "package.json text is not written over itself");
         return Ok((same, Some(read)));
     }
-    if is_wrong {
+    let whole = print_new_file(old, root, indentation)?;
+    // A tree that the printer cannot write either (a string that is not UTF-8) is not a
+    // bug here: the file gets what the printer writes, as on main.
+    if is_wrong
+        && read(&whole, json::PACKAGE_JSON_OPTS, false, false)
+            .is_some_and(|read| is_tree(&read.root, &root, stack))
+    {
+        debug_assert!(false, "package.json text does not say what its tree says");
         bun_core::warn!(
             "could not write the edit into the text of {}: the whole file is printed again, without its comments and formatting",
             bun_core::fmt::quote(path),
         );
         bun_core::note!("this is a bug in Bun: report it at https://github.com/oven-sh/bun/issues");
     }
-    Ok((print_new_file(old, root, indentation)?, None))
+    Ok((whole, None))
 }
 
 fn print_new_file(old: &[u8], root: Expr, indentation: Indentation) -> js_printer::Result<Vec<u8>> {

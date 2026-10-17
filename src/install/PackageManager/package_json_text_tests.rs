@@ -387,6 +387,13 @@ fn a_container_on_one_line_that_gets_or_loses_a_member_is_printed() {
         ),
         "{\n  // outside\n  \"files\": [\"a\", \"b\", \"c\"] // beside\n}\n"
     );
+    assert_eq!(
+        saved(
+            "{\n  \"a\": { /* none yet */ },\n  \"b\": 1\n}\n",
+            r#"{"a": {"x": 1}, "b": 1}"#
+        ),
+        "{\n  \"a\": {\n    \"x\": 1\n  },\n  \"b\": 1\n}\n"
+    );
     // A value that changes in it is not a member that it gets or loses.
     assert_eq!(
         saved(
@@ -482,6 +489,18 @@ fn a_root_that_is_not_an_object_or_an_array_is_left_alone_by_a_command_that_chan
     ] {
         assert_unchanged(old);
     }
+}
+
+#[test]
+fn a_string_that_the_printer_cannot_write_is_written_as_the_printer_writes_it() {
+    bun_ast::initialize_store_or_reset();
+    let bump = bun_alloc::Arena::new();
+    let old = b"{\n  // c\n  \"name\": \"app\"\n}\n";
+    // The parser takes the bytes of a string as they are. This one is not UTF-8.
+    let root = parse(b"{\"name\": \"caf\xE9\"}", &bump);
+    let printed = print(PATH, old, root, Indentation::default()).expect("prints");
+    let whole = print_new_file(old, root, Indentation::default()).expect("prints");
+    assert_eq!(bstr::BStr::new(&printed), bstr::BStr::new(&whole));
 }
 
 #[test]

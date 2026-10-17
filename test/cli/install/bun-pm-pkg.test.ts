@@ -1698,6 +1698,22 @@ describe.concurrent("bun pm pkg", () => {
       }
     });
 
+    // argv cannot carry a byte that is not UTF-8 on Windows.
+    it.skipIf(isWindows)("prints the whole file for a value that the printer cannot write", async () => {
+      using dir = tempDir("pm-pkg-text-bytes", { "package.json": `{\n  // the name\n  "name": "app"\n}\n` });
+      await using proc = spawn({
+        cmd: ["sh", "-c", `"$0" pm pkg set "$(printf 'description=caf\\351')"`, bunExe()],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // The read-back does not blame the writer for what the printer writes. It is not a crash either.
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+      expect(JSON.parse(await readRaw(String(dir)))).toMatchObject({ name: "app", description: expect.any(String) });
+    });
+
     it("keeps what is around a value that changes", async () => {
       expect(await edited(`{\n  "name" /* a */ : /* b */ "app" /* c */ ,\n  "n": 1\n}`, "set", "name=lib")).toBe(
         `{\n  "name" /* a */ : /* b */ "lib" /* c */ ,\n  "n": 1\n}`,

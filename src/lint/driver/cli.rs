@@ -4,7 +4,7 @@
 use crate::args::{Argument, Group, Param, error};
 pub use crate::args::{Help, UsageError};
 use crate::configs::{Flavor, is_category, plugin_shorthand};
-use crate::paths;
+use crate::{fs, paths};
 use bun_clap as clap;
 use bun_core::strings;
 use bun_lint::context::Severity;
@@ -570,6 +570,8 @@ pub struct Options {
     pub ignore_path: Option<Vec<u8>>,
     /// `ignorePath` of bunfig.toml as it is written there: to oxlint it is a name, for every directory.
     pub ignore_file_name_of_bunfig: Option<Vec<u8>>,
+    /// [`Options::load_pipes`]
+    pub(crate) pipes: fs::NamedPipes,
     pub disable_nested_config: bool,
     /// What the configuration asks for and cannot be done is a warning, and not an error at the end.
     pub allow_unsupported: bool,
@@ -668,6 +670,7 @@ impl Default for Options {
             silent: false,
             ignore_path: None,
             ignore_file_name_of_bunfig: None,
+            pipes: fs::NamedPipes::default(),
             disable_nested_config: false,
             allow_unsupported: false,
             native_plugin_rules: NativePlugins::All,
@@ -1031,6 +1034,18 @@ impl Options {
         }
         self.start_settings_at_bunfig(cwd);
         self
+    }
+
+    /// Reads the pipes that `--config` and `--ignore-path` name: [`fs::NamedPipes::load`].
+    pub(crate) fn load_pipes(&mut self, cwd: &[u8]) -> Result<(), Vec<u8>> {
+        let mut named = Vec::new();
+        if !self.is_config_of_bunfig {
+            named.extend(self.config.clone());
+        }
+        if self.ignore_file_name_of_bunfig.is_none() {
+            named.extend(self.ignore_path.clone());
+        }
+        self.pipes.load(cwd, &named)
     }
 
     /// `rules`, with where bunfig.toml has them: `places`. The rules read the paths and the patterns in their options from the

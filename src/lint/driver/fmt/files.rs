@@ -503,7 +503,7 @@ impl Ignored {
                 return Err(Fatal([&file[..], b": File not found"].concat()));
             }
             let excludes = excludes.take();
-            match fs::read(&file) {
+            match options.pipes.read(&file) {
                 Ok(text) => files.extend(
                     match gitignore::root_of_exclude_file(&file, cwd) {
                         Some(root) => gitignore::with_excludes(None, &root, &text, is_oxfmt),

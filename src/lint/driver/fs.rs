@@ -102,14 +102,37 @@ pub(crate) fn is_file(path: &[u8]) -> bool {
     kind(path) == Some(Kind::File)
 }
 
+fn too_large() -> bun_sys::Error {
+    bun_sys::Error::from_code(bun_sys::E::EFBIG, bun_sys::Tag::read)
+}
+
+/// Otherwise, opening a named pipe waits until someone opens it for writing, which may never happen.
+fn open_without_waiting(path: &[u8]) -> bun_sys::Result<File> {
+    let without_waiting = if cfg!(unix) { O::NONBLOCK } else { 0 };
+    File::openat(Fd::cwd(), path, O::RDONLY | without_waiting, 0)
+}
+
+/// Everything in `file`, which [`open_without_waiting`] opened and which isn't a regular file.
+fn read_stream(file: &File) -> bun_sys::Result<Vec<u8>> {
+    // Reading does wait, for a writer that is there: `--config <(..)`.
+    bun_sys::update_nonblocking(file.handle(), false)?;
+    let (mut text, mut part) = (Vec::new(), vec![0; 64 << 10]);
+    loop {
+        match file.read(&mut part)? {
+            0 => return Ok(text),
+            read => text.extend_from_slice(&part[..read]),
+        }
+        if text.len() > 64 << 20 {
+            return Err(too_large());
+        }
+    }
+}
+
 /// `EFBIG` for a file that JavaScript could not hold as a string, as Node has an error for it, and for more than 64 MB of what is
 /// no file: `/dev/null` and a pipe are read, and a link in a repository can lead to `/dev/zero`. A named pipe that nobody has
 /// open for writing is empty.
 pub(crate) fn read(path: &[u8]) -> bun_sys::Result<Vec<u8>> {
-    let too_large = || bun_sys::Error::from_code(bun_sys::E::EFBIG, bun_sys::Tag::read);
-    // Otherwise opening a named pipe waits for somebody to open it for writing, who may never come.
-    let without_waiting = if cfg!(unix) { O::NONBLOCK } else { 0 };
-    let file = File::openat(Fd::cwd(), path, O::RDONLY | without_waiting, 0)?;
+    let file = open_without_waiting(path)?;
     let found = file.stat()?;
     if matches!(bun_sys::kind_from_mode(found.st_mode as _), EntryKind::File) {
         let size = found.st_size as u64;
@@ -121,16 +144,51 @@ pub(crate) fn read(path: &[u8]) -> bun_sys::Result<Vec<u8>> {
         file.read_to_end_into(&mut text)?;
         return Ok(text);
     }
-    // Reading does wait, for a writer that is there: `--config <(..)`.
-    bun_sys::update_nonblocking(file.handle(), false)?;
-    let (mut text, mut part) = (Vec::new(), vec![0; 64 << 10]);
-    loop {
-        match file.read(&mut part)? {
-            0 => return Ok(text),
-            read => text.extend_from_slice(&part[..read]),
+    read_stream(&file)
+}
+
+/// The text of the pipes that flags name. A pipe gives its text once, and a run reads some of these files more than once.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct NamedPipes(Vec<(Vec<u8>, Vec<u8>)>);
+
+impl NamedPipes {
+    /// Reads those of `named` that are pipes. `named`: paths from `cwd`, as they are written. `Err`: what to tell the user.
+    /// A pipe that nobody has open for writing is an error. Taken for empty, `--ignore-path` would ignore nothing. Waited for,
+    /// a pipe in a checkout would hang the CI job that names its path.
+    pub(crate) fn load(&mut self, cwd: &[u8], named: &[Vec<u8>]) -> Result<(), Vec<u8>> {
+        for written in named.iter().filter(|_| cfg!(unix)) {
+            let path = paths::resolve(cwd, &paths::from_native(written));
+            if self.0.iter().any(|it| it.0 == path) {
+                continue;
+            }
+            // Whoever reads the file later reports what is wrong with it.
+            let Ok(file) = open_without_waiting(&path) else {
+                continue;
+            };
+            let is_pipe = file.stat().is_ok_and(|found| {
+                bun_sys::kind_from_mode(found.st_mode as _) == EntryKind::NamedPipe
+            });
+            if !is_pipe {
+                continue;
+            }
+            let cannot_read = |why: &[u8]| [b"cannot read ", &written[..], b": ", why].concat();
+            match read_stream(&file) {
+                // A writer that closed the pipe without writing looks the same.
+                Ok(text) if text.is_empty() => {
+                    return Err(cannot_read(b"nothing is writing to this pipe"));
+                }
+                Ok(text) => self.0.push((path, text)),
+                Err(error) => return Err(cannot_read(&describe(&error))),
+            }
         }
-        if text.len() > 64 << 20 {
-            return Err(too_large());
+        Ok(())
+    }
+
+    /// [`read`], or what the pipe at `path` had.
+    pub(crate) fn read(&self, path: &[u8]) -> bun_sys::Result<Vec<u8>> {
+        match self.0.iter().find(|it| it.0 == path) {
+            Some((_, text)) => Ok(text.clone()),
+            None => read(path),
         }
     }
 }

@@ -2326,6 +2326,24 @@ describe.concurrent("--fix keeps what the program does, and its comments", () =>
       ],
       extension: "ts",
     },
+    {
+      rule: "import/order",
+      // The type would be that of `a`.
+      kept: '/** @type {{ b: number }} */\nconst b = require("./b");\nconst a = require("a-package");\nconsole.log(a, b);\n',
+      fixed: [
+        '// the two letters\nconst b = require("./b");\nconst a = require("a-package");\nconsole.log(a, b);\n',
+        '// the two letters\nconst a = require("a-package");\nconst b = require("./b");\nconsole.log(a, b);\n',
+      ],
+    },
+    {
+      rule: "import/order",
+      // `require("./b")` and `[a, b]` would be one expression.
+      kept: 'const b = require("./b")\nconst a = require("a-package")\n;[a, b].forEach(console.log)\n',
+      fixed: [
+        'const b = require("./b");\nconst a = require("a-package")\n;[a, b].forEach(console.log)\n',
+        'const a = require("a-package")\n;\nconst b = require("./b");\n[a, b].forEach(console.log)\n',
+      ],
+    },
   ];
 
   test.each(cases)("$rule", async ({ rule, kept, dangerous = kept, fixed, extension = "js" }) => {
@@ -2343,6 +2361,194 @@ describe.concurrent("--fix keeps what the program does, and its comments", () =>
     expect(filesWithReports(safe)).toEqual([keptName]);
     expect(all.texts).toEqual({ [keptName]: dangerous, ...after });
     expect(filesWithReports(all)).toEqual(dangerous === kept ? [keptName] : []);
+  });
+
+  describe("@typescript-eslint/prefer-function-type", () => {
+    const rule = "@typescript-eslint/prefer-function-type";
+    const use = "export const handler: Handler = () => {};\n";
+    const alias = "type Handler = (event: string) => void;";
+    /** The code, and what --fix makes of it. */
+    type Cases = Record<string, [string, string]>;
+    // typescript-eslint 8.71.1 puts the declaration behind a line comment that stood on the line of the signature, so it is commented
+    // out. It turns the order around and loses what is before the `{`. oxlint 1.87.0 writes a comment in the signature twice, and
+    // loses all those of an interface with type parameters and of a type literal.
+    const comments: Cases = {
+      "after-the-signature.ts": [
+        `interface Handler {\n  (event: string): void; // called once\n}\n${use}`,
+        `// called once\n${alias}\n${use}`,
+      ],
+      "above-the-signature.ts": [
+        `interface Handler {\n  // called once\n  (event: string): void;\n}\n${use}`,
+        `// called once\n${alias}\n${use}`,
+      ],
+      "below-the-signature.ts": [
+        `interface Handler {\n  (event: string): void;\n  // called once\n}\n${use}`,
+        `// called once\n${alias}\n${use}`,
+      ],
+      "after-the-opening-brace.ts": [
+        `interface Handler { // called once\n  (event: string): void;\n}\n${use}`,
+        `// called once\n${alias}\n${use}`,
+      ],
+      "after-the-closing-brace.ts": [
+        `interface Handler {\n  (event: string): void;\n} // called once\n${use}`,
+        `${alias} // called once\n${use}`,
+      ],
+      "code-after-the-closing-brace.ts": [
+        `interface Handler {\n  (event: string): void; // called once\n} ${use}`,
+        `// called once\n${alias} ${use}`,
+      ],
+      "everywhere.ts": [
+        `interface /* one */ Handler /* two */ { // three\n  // four\n  /* five */ (event: string /* six */): void /* seven */; // eight\n  /** nine */\n} // ten\n${use}`,
+        `/* one */\n/* two */\n// three\n// four\n/* five */ // eight\n/** nine */\ntype Handler = (event: string /* six */) => void /* seven */; // ten\n${use}`,
+      ],
+      "block-comments-on-the-line.ts": [
+        `interface Handler {\n  /* called */ (event: string): void; /* once */\n}\n${use}`,
+        `/* called */ /* once */ ${alias}\n${use}`,
+      ],
+      "jsdoc.ts": [
+        `interface Handler {\n  /**\n   * Called once.\n   */\n  (event: string): void;\n}\n${use}`,
+        `/**\n   * Called once.\n   */\n${alias}\n${use}`,
+      ],
+      "in-the-signature.ts": [
+        `interface Handler {\n  (\n    event: string, // the name\n  ): void;\n}\n${use}`,
+        `type Handler = (\n    event: string, // the name\n  ) => void;\n${use}`,
+      ],
+      "comma.ts": [
+        `interface Handler {\n  (event: string): void, // called once\n}\n${use}`,
+        `// called once\n${alias}\n${use}`,
+      ],
+      "crlf.ts": [
+        `interface Handler {\r\n  (event: string): void; // called once\r\n}\r\n${use}`,
+        `// called once\n${alias}\r\n${use}`,
+      ],
+      "export.ts": [
+        "export interface Handler {\n  /* called */ (event: string): void; // once\n}\n",
+        `/* called */\n// once\nexport ${alias}\n`,
+      ],
+      "export-declare.ts": [
+        "export declare interface Handler {\n  (event: string): void; // called once\n}\n",
+        `// called once\nexport ${alias}\n`,
+      ],
+      "declare.ts": [
+        `declare interface Handler {\n  (event: string): void; // called once\n}\n${use}`,
+        `// called once\n${alias}\n${use}`,
+      ],
+      "type-parameters.ts": [
+        "export interface Handler<T /* the event */> /* generic */ {\n  (event: T): void; // called once\n}\n",
+        "/* generic */\n// called once\nexport type Handler<T /* the event */> = (event: T) => void;\n",
+      ],
+      "construct-signature.ts": [
+        "export interface Maker {\n  new (name: string): object; // called once\n}\n",
+        "// called once\nexport type Maker = new (name: string) => object;\n",
+      ],
+      "directive.ts": [
+        "export interface Handler {\n  // @ts-expect-error Missing is not declared\n  (event: Missing): void;\n}\n",
+        "// @ts-expect-error Missing is not declared\nexport type Handler = (event: Missing) => void;\n",
+      ],
+      "type-literal.ts": [
+        "export type Handler = {\n  (event: string): void; // called once\n};\n",
+        "export type Handler = // called once\n(event: string) => void;\n",
+      ],
+      "type-literal-above.ts": [
+        "export type Handler = {\n  // called once\n  (event: string): void;\n};\n",
+        "export type Handler = // called once\n(event: string) => void;\n",
+      ],
+      "type-literal-comma.ts": [
+        "export type Handler = { (event: string): void, };\n",
+        "export type Handler = (event: string) => void;\n",
+      ],
+      "union.ts": [
+        "export type Handler = {\n  (event: string): void; // called once\n} | undefined;\n",
+        "export type Handler = // called once\n((event: string) => void) | undefined;\n",
+      ],
+      "union-on-one-line.ts": [
+        "export type Handler = { /* called */ (event: string): void /* once */ } | undefined;\n",
+        "export type Handler = /* called */ /* once */ ((event: string) => void) | undefined;\n",
+      ],
+      "parameter.ts": [
+        'export function call(handler: {\n  (event: string): void; // called once\n}) {\n  handler("a");\n}\n',
+        'export function call(handler: // called once\n(event: string) => void) {\n  handler("a");\n}\n',
+      ],
+    };
+    // oxlint says nothing about these. typescript-eslint only has parentheses in the array: `() => void["length"]` and
+    // `() => void extends object ? 1 : 2` are functions.
+    const parentheses: Cases = {
+      "array.ts": [
+        "export type Handlers = {\n  (event: string): void; // called once\n}[];\n",
+        "export type Handlers = // called once\n((event: string) => void)[];\n",
+      ],
+      "keyof.ts": ["export type Keys = keyof { (): void };\n", "export type Keys = keyof (() => void);\n"],
+      "indexed-access.ts": [
+        'export type Length = { (): void }["length"];\n',
+        'export type Length = (() => void)["length"];\n',
+      ],
+      "conditional.ts": [
+        "export type One = { (): void } extends object ? 1 : 2;\nexport type IsCallable<T> = T extends { (): void } ? { (): true } : { (): false };\n",
+        "export type One = (() => void) extends object ? 1 : 2;\nexport type IsCallable<T> = T extends (() => void) ? () => true : () => false;\n",
+      ],
+      "tuple.ts": [
+        "export type Optional = [{ (): void }?];\nexport type Named = [handler?: { (): void }];\n",
+        "export type Optional = [(() => void)?];\nexport type Named = [handler?: () => void];\n",
+      ],
+      "type-argument.ts": [
+        "export const handlers: Array<{ (): void }> = [];\n",
+        "export const handlers: Array<() => void> = [];\n",
+      ],
+    };
+    // There is no `export default type`. In the other two, a block comment would come between the directive and its line.
+    const kept = {
+      "export-default.ts": "export default interface Handler {\n  (event: string): void; // called once\n}\n",
+      "directive-above.ts":
+        "// @ts-expect-error Missing is not declared\nexport interface Handler<T extends Missing> {\n  /* called once */\n  (event: T): void;\n}\n",
+      "directive-and-a-comment-below.ts":
+        "export interface Handler {\n  // @ts-expect-error Missing is not declared\n  (event: Missing): void;\n  /* called once */\n}\n",
+    };
+    const inNamespace: Cases = {
+      "namespace.ts": [
+        `export namespace Events {\n  interface Handler {\n    (event: string): void; // called once\n  }\n  ${use}}\n`,
+        `export namespace Events {\n  // called once\n${alias}\n  ${use}}\n`,
+      ],
+      "exported-from-namespace.ts": [
+        "export namespace Events {\n  export interface Handler {\n    (event: string): void; // called once\n  }\n}\n",
+        `export namespace Events {\n  // called once\nexport ${alias}\n}\n`,
+      ],
+    };
+    const pick = (cases: Cases, index: 0 | 1) =>
+      Object.fromEntries(Object.entries(cases).map(([name, texts]) => [name, texts[index]]));
+    const filesWithReports = (result: { reports: string[] }) =>
+      [...new Set(result.reports.filter(it => it.endsWith(` ${rule}`)).map(it => it.slice(0, it.indexOf(":"))))].sort();
+    const turnedOn = ["--rule", `${rule}: warn`];
+    const oxlintrc = '{ "plugins": ["typescript"], "rules": { "typescript/prefer-function-type": "warn" } }\n';
+
+    test.each([
+      ["no config", {}, turnedOn, { ...comments, ...parentheses }],
+      [".oxlintrc.json", { ".oxlintrc.json": oxlintrc }, [], comments],
+    ])("has every comment once, and no code behind a line comment: %s", async (_, config, args, cases) => {
+      const expected = { ...config, ...pick(cases, 1), ...kept };
+      const first = await lint({ ...config, ...pick(cases, 0), ...kept }, ["--fix", ...args]);
+      expect(first.texts).toEqual(expected);
+      const second = await lint(first.texts, ["--fix", ...args]);
+      expect(second.texts).toEqual(expected);
+    });
+
+    test("still reports what it has no fix for", async () => {
+      const result = await lint({ ...pick(comments, 0), ...kept }, ["--fix-dangerously", ...turnedOn]);
+      expect(result.texts).toEqual({ ...pick(comments, 1), ...kept });
+      expect(filesWithReports(result)).toEqual(Object.keys(kept).sort());
+    });
+
+    test("in a namespace", async () => {
+      const [safe, first] = await Promise.all([
+        lint(pick(inNamespace, 0), ["--fix", ...turnedOn]),
+        lint(pick(inNamespace, 0), ["--fix-dangerously", ...turnedOn]),
+      ]);
+      expect(safe.texts).toEqual(pick(inNamespace, 0));
+      expect(filesWithReports(safe)).toEqual(Object.keys(inNamespace).sort());
+      expect(first.texts).toEqual(pick(inNamespace, 1));
+      const second = await lint(first.texts, ["--fix-dangerously", ...turnedOn]);
+      expect(second.texts).toEqual(pick(inNamespace, 1));
+      expect(filesWithReports(second)).toEqual([]);
+    });
   });
 
   test("a new first import goes below what has to stay first", async () => {
@@ -2366,6 +2572,218 @@ describe.concurrent("--fix keeps what the program does, and its comments", () =>
     expect(first.texts["a.ts"]).toBe(
       '"use client";\nimport { b } from "./b";\nconst started = 1;\nconsole.log(started, b);\n',
     );
+  });
+
+  describe("an import that becomes the first statement", () => {
+    type Cases = Record<string, [before: string, after: string]>;
+    const license = "// Copyright 2026 Someone\n// Use of this file is governed by the MIT license.\n";
+    const moduleDoc = "/**\n * Counts.\n * @module\n */\n\n";
+    const suppressed = "// @ts-expect-error a string is no number\n";
+    const filesWithReports = (result: { reports: string[] }, rule: string) =>
+      [...new Set(result.reports.filter(it => it.endsWith(` ${rule}`)).map(it => it.slice(0, it.indexOf(":"))))].sort();
+
+    /** `--fix` makes each `after` of its `before`, nothing is left to report, and a second run changes nothing. */
+    async function expectFixed(rule: string, cases: Cases) {
+      const pick = (index: 0 | 1) => Object.fromEntries(Object.entries(cases).map(([name, it]) => [name, it[index]]));
+      const args = ["--fix", "--rule", `${rule}: warn`];
+      const first = await lint(pick(0), args);
+      expect(first.texts).toEqual(pick(1));
+      expect(filesWithReports(first, rule)).toEqual([]);
+      const second = await lint(first.texts, args);
+      expect(second.texts).toEqual(pick(1));
+    }
+
+    /** `--fix` leaves the files alone, without trying a fix that breaks them, and each still has its report. */
+    async function expectKept(rule: string, files: Record<string, string>) {
+      const result = await lint(files, ["--fix", "--rule", `${rule}: warn`]);
+      expect(result.texts).toEqual(files);
+      expect(result.stderr).not.toContain("not applied");
+      expect(filesWithReports(result, rule)).toEqual(Object.keys(files).sort());
+    }
+
+    // What stays first, and the first statement with the comments that are about it.
+    const heads: Record<string, [head: string, first: string]> = {
+      "directive.ts": ["", `${suppressed}console.log(Math.abs("1"));\n`],
+      "doc.ts": ["", "/** Adds one. */\nfunction increment(n: number) {\n  return n + 1;\n}\n"],
+      "use-client.ts": ['"use client";\n', `${suppressed}console.log(Math.abs("1"));\n`],
+      "use-strict.ts": ['"use strict";\n', "/** Starts at one. */\nconst count = 1;\n"],
+      "comment-beside-use-client.ts": ['"use client"; // for the router\n', "// starts at one\nconst count = 1;\n"],
+      "nocheck.ts": ["// @ts-nocheck\n", "// starts at one\nconst count = 1;\n"],
+      "reference.ts": ['/// <reference lib="dom" />\n', "// starts at one\nconst count = 1;\n"],
+      "hashbang.ts": ["#!/usr/bin/env bun\n", "// starts at one\nconst count = 1;\n"],
+      "license.ts": [`${license}\n`, "// starts at one\nconst count = 1;\n"],
+      "license-without-an-empty-line.ts": [license, "const count = 1;\n"],
+      "license-and-directive.ts": [license, `${suppressed}console.log(Math.abs("1"));\n`],
+      "directive-above-license.ts": ["", `${suppressed}// Copyright 2026 Someone\nconsole.log(Math.abs("1"));\n`],
+      "module-doc.ts": [moduleDoc, "/** Starts at one. */\nconst count = 1;\n"],
+      "byte-order-mark.ts": ["\ufeff", "// starts at one\nconst count = 1;\n"],
+    };
+
+    test("import/first: below what stays first, above the comments of the first statement", async () => {
+      const a = 'import { a } from "./a";\n';
+      const cases = Object.entries(heads).map(([name, [head, first]]) => [
+        name,
+        [`${head}${first}${a}console.log(a);\n`, `${head}${a}${first}console.log(a);\n`],
+      ]);
+      await expectFixed("import/first", {
+        ...Object.fromEntries(cases),
+        "directive-beside-use-client.ts": [
+          `"use client"; ${suppressed}console.log(Math.abs("1"));\n${a}console.log(a);\n`,
+          `"use client"; ${a}${suppressed}console.log(Math.abs("1"));\nconsole.log(a);\n`,
+        ],
+        "indented.ts": [
+          `  // starts at one\n  const count = 1;\n  ${a}  console.log(a, count);\n`,
+          `  ${a}  // starts at one\n  const count = 1;\n  console.log(a, count);\n`,
+        ],
+      });
+    });
+
+    test.each([
+      ["vitest/prefer-importing-vitest-globals", "import { test } from 'vitest';\n"],
+      ["jest/prefer-importing-jest-globals", "const { test } = require('@jest/globals');\n"],
+    ])("%s: below what stays first, above the comments of the first statement", async (rule, statement) => {
+      const cases = Object.entries(heads).map(([name, [head, first]]) => [
+        name.replace(".ts", ".test.ts"),
+        [`${head}${first}test("a", () => {});\n`, `${head}${statement}${first}test("a", () => {});\n`],
+      ]);
+      await expectFixed(rule, Object.fromEntries(cases));
+    });
+
+    test("import/first: a comment beside a statement stays beside it", async () => {
+      const [a, b] = ['import { a } from "./a";', 'import { b } from "./b";'];
+      await expectFixed("import/first", {
+        "the-statement-before.ts": [
+          `const count = 1; // starts at one\n${a}\nconsole.log(a, count);\n`,
+          `${a}\nconst count = 1; // starts at one\nconsole.log(a, count);\n`,
+        ],
+        "the-import.ts": [
+          `const count = 1;\n${a} // the first letter\nconsole.log(a, count);\n`,
+          `${a} // the first letter\nconst count = 1;\nconsole.log(a, count);\n`,
+        ],
+        "two-imports.ts": [
+          `const count = 1;\n${a} // the first letter\n${b} // the second letter\nconsole.log(a, b, count);\n`,
+          `${a} // the first letter\n${b} // the second letter\nconst count = 1;\nconsole.log(a, b, count);\n`,
+        ],
+        "the-last-import-on-top.ts": [
+          `${b} // the second letter\nconst count = 1;\n${a}\nconsole.log(a, b, count);\n`,
+          `${b} // the second letter\n${a}\nconst count = 1;\nconsole.log(a, b, count);\n`,
+        ],
+        "an-import-behind-a-statement.ts": [
+          `const count = 1;\n${a} // the first letter\nconsole.log(count); ${b}\nconsole.log(a, b);\n`,
+          `${a} // the first letter\n${b}\nconst count = 1;\nconsole.log(count);\nconsole.log(a, b);\n`,
+        ],
+        // These two are about the next line.
+        "directive-for-the-import.ts": [
+          'const count = 1; // @ts-expect-error there is no c\nimport { c } from "./a";\nconsole.log(c, count);\n',
+          '// @ts-expect-error there is no c\nimport { c } from "./a";\nconst count = 1;\nconsole.log(c, count);\n',
+        ],
+        "directive-beside-the-import.ts": [
+          `const count = 1;\n${a} ${suppressed}console.log(Math.abs("1"));\nconsole.log(a, count);\n`,
+          `${a}\nconst count = 1; ${suppressed}console.log(Math.abs("1"));\nconsole.log(a, count);\n`,
+        ],
+      });
+      // The second `run()` would be part of the comment.
+      await expectKept("import/first", { "code-behind-the-import.js": 'run(); // once\nimport "./side"; run();\n' });
+    });
+
+    describe("import/first: in code without semicolons", () => {
+      // Each goes on with the line before it, unless that ends with a `;`.
+      const starts = {
+        bracket: "[1, 2].forEach(run)",
+        parenthesis: "(function () {})()",
+        template: "`a`.trim()",
+        plus: "+run()",
+        minus: "-run()",
+        regex: "/a/.test(run())",
+        jsx: "<div />",
+      };
+      const each = <T>(make: (name: string, start: string) => [string, T][]) =>
+        Object.fromEntries(Object.entries(starts).flatMap(([name, start]) => make(name, start)));
+
+      test("the `;` that a line starts with stays there", async () => {
+        await expectFixed("import/first", {
+          ...each<[string, string]>((name, start) => [
+            [`${name}.js`, [`run()\nimport "./side"\n;${start}\n`, `import "./side"\nrun()\n;${start}\n`]],
+            [`closed-${name}.js`, [`run();\nimport "./side"\n${start}\n`, `import "./side"\nrun();\n${start}\n`]],
+          ]),
+          "two-imports.js": [
+            'run()\nimport "./side"\nimport "./other"\n;[1, 2].forEach(run)\n',
+            'import "./side"\nimport "./other"\nrun()\n;[1, 2].forEach(run)\n',
+          ],
+          "comment-beside-the-import.js": [
+            'run()\nimport "./side" // first\n;[1, 2].forEach(run)\n',
+            'import "./side" // first\nrun()\n;[1, 2].forEach(run)\n',
+          ],
+          "below-the-last-import-on-top.js": [
+            'import "./first"\n;[1, 2].forEach(run)\nimport "./side"\n',
+            'import "./first"\nimport "./side"\n;[1, 2].forEach(run)\n',
+          ],
+        });
+      });
+
+      test("an import without a `;` gets a line of its own", async () => {
+        await expectFixed("import/first", {
+          "behind-a-statement.js": ['run(); import "./side"\nrun()\n', 'import "./side"\nrun();\nrun()\n'],
+          "behind-a-statement-with-an-import-on-top.js": [
+            'import "./first"\nrun(); import "./side"\nrun()\n',
+            'import "./first"\nimport "./side"\nrun();\nrun()\n',
+          ],
+          "behind-a-block.js": [
+            'if (run()) {} import "./side"\n[1, 2].forEach(run)\n',
+            'import "./side"\nif (run()) {}\n[1, 2].forEach(run)\n',
+          ],
+        });
+      });
+
+      test("a next line that can't continue the previous statement is fine", async () => {
+        await expectFixed("import/first", {
+          "word.js": ['run()\nimport "./side"\nrun()\n', 'import "./side"\nrun()\nrun()\n'],
+          "increment.js": ['let n = run()\nimport "./side"\n++n\n', 'import "./side"\nlet n = run()\n++n\n'],
+          "function.js": [
+            'function f() {}\nimport "./side"\n[1, 2].forEach(f)\n',
+            'import "./side"\nfunction f() {}\n[1, 2].forEach(f)\n',
+          ],
+          "same-line.js": ['run();\nimport "./side"; run()\n', 'import "./side";\nrun(); run()\n'],
+          "parenthesis-after-increment.js": [
+            'let n = 1\nn++\nimport "./side"\n(run)(n)\n',
+            'import "./side"\nlet n = 1\nn++\n(run)(n)\n',
+          ],
+          "parenthesis-after-type.ts": [
+            'const n = run() as number\nimport "./side"\n(run)(n)\n',
+            'import "./side"\nconst n = run() as number\n(run)(n)\n',
+          ],
+        });
+      });
+
+      test("no fix is offered where two statements would join", async () => {
+        await expectKept("import/first", {
+          ...each<string>((name, start) => [
+            [`${name}.js`, `run()\nimport "./side"\n${start}\n`],
+            [`semicolon-${name}.js`, `run()\nimport "./side";\n${start}\n`],
+          ]),
+          "object.js": 'const o = {}\nimport "./side"\n[1, 2].forEach(run)\n',
+          "two-imports.js": 'run()\nimport "./side"\nimport "./other"\n[1, 2].forEach(run)\n',
+          "same-line.js": 'run()\nimport "./side"; run()\n',
+          "same-line-parenthesis.js": 'run()\nimport "./side"; (run)()\n',
+          "plus-after-increment.js": 'let n = 1\nn++\nimport "./side"\n+run(n)\n',
+          "minus-after-type.ts": 'const n = run() as number\nimport "./side"\n-run(n)\n',
+          "minus-after-type-in-braces.ts": 'const o = {} satisfies { a?: 1 }\nimport "./side"\n-run(o)\n',
+        });
+      });
+    });
+
+    test("import/first: an import doesn't pass an `export .. from`, whose module would run later", async () => {
+      await expectKept("import/first", {
+        "all.js": 'export * from "./first";\nimport "./side";\n',
+        "names.js": 'export { a } from "./first";\nimport "./side";\n',
+      });
+      await expectFixed("import/first", {
+        "own-names.js": [
+          'const a = 1;\nexport { a };\nimport "./side";\n',
+          'import "./side";\nconst a = 1;\nexport { a };\n',
+        ],
+      });
+    });
   });
 
   test("with types", async () => {

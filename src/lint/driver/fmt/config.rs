@@ -1194,7 +1194,7 @@ impl<'c> Configs<'c> {
     fn load(&self, path: &[u8], is_oxfmt: bool) -> Result<Option<Arc<Config>>, Fatal> {
         let name = paths::basename(path);
         let read = || {
-            fs::read(path).map_err(|error| {
+            self.options.pipes.read(path).map_err(|error| {
                 Fatal(
                     [
                         b"Cannot read the configuration file ",

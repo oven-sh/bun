@@ -241,7 +241,7 @@ impl Checker<'_, '_> {
         let is_checked = match self.expected {
             Requested::All => true,
             // There the types depend on what was checked before, and the rules do not ask in the order of the file.
-            Requested::Types => self.depends_on_order(file),
+            Requested::Types => self.bound(file).has_types_that_depend_on_order(),
             Requested::Syntactic | Requested::Declaration => false,
         };
         if !is_checked || is_json || !self.reports_semantic_errors(file) {

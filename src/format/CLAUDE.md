@@ -107,7 +107,7 @@ text ─ lexer.rs ─→ tokens ─ parser.rs, parse.rs ─→ Tree (ast.rs) ─
 - **Angular** (`angular.rs`, `angular/`): a port of Angular's own lexer and parser says what is an error, and rewrites the expression as TypeScript that our parser reads into the same tree: `a | b: c` is `a | b(c)`, and in Angular every `|` is a pipe.
 - **Other languages**: YAML, Markdown, JSON, GraphQL, Handlebars and the style sheets of a file of HTML are printed to text at the width that is left (`Writer::printed_text`). Where that width is not known (in a template of JavaScript, in Markdown), and for a `style` attribute, a style sheet comes as a `Doc` (`css::document`) that `css/embed.rs::write_document` writes to the document. Prettier calls `cleanDoc` with the document of what is embedded: `Sink::is_cleaned`.
 - `in_js.rs`, `map_strings.rs`: HTML in the templates of JavaScript, Prettier's `embed/html.js`.
-- `verify.rs`: `--debug-check`. The same elements, attributes, comments and blocks in each other the same way, and the same letters as often in all that is text, in whatever language.
+- `verify.rs`: `--debug-check`. The same elements, attributes, comments and blocks in each other the same way, text that is more than white space in the same places between them, and the same letters as often in all that is text, in whatever language.
 - `cursor.rs`: `cursorOffset`. A range is all of the text in Vue and nothing elsewhere, as in Prettier.
 
 ## oxc file → our file

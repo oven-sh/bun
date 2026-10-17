@@ -2340,12 +2340,17 @@ pub fn run(options: &Options, environment: &Environment) -> Outcome {
 }
 
 fn run_in(options: &Options, environment: &Environment, modules: Option<&Modules>) -> Outcome {
+    let mut options = options.clone();
+    let mut loaded = options.load_pipes(&environment.cwd);
     let as_oxfmt = options
         .as_oxfmt_reads_it()
-        .filter(|_| Configs::new(options, environment).flavor == Flavor::Oxfmt);
-    let options = as_oxfmt.as_ref().unwrap_or(options);
+        .filter(|_| Configs::new(&options, environment).flavor == Flavor::Oxfmt);
+    if let Some(as_oxfmt) = as_oxfmt {
+        options = as_oxfmt;
+        loaded = loaded.and_then(|()| options.load_pipes(&environment.cwd));
+    }
     let run = Run {
-        options,
+        options: &options,
         environment,
         out: Outcome::default(),
         began: Instant::now(),
@@ -2353,5 +2358,8 @@ fn run_in(options: &Options, environment: &Environment, modules: Option<&Modules
         is_native: false,
         has_left_files: false,
     };
-    run.execute()
+    match loaded {
+        Ok(()) => run.execute(),
+        Err(why) => run.fail(&why),
+    }
 }

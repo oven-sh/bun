@@ -127,7 +127,7 @@ impl<'p, 's> Checker<'p, 's> {
         let arena = Arena::new();
         // `check_file` skips a file that reports no semantic errors, and rules do not ask in source order.
         if self.task.file == Some(file)
-            && self.depends_on_order(file)
+            && self.bound(file).has_types_that_depend_on_order()
             && !self.reports_semantic_errors(file)
         {
             self.check_source_file_and_report_nothing(file);

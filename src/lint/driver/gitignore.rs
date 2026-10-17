@@ -108,7 +108,7 @@ pub(crate) fn refused_line<'l>(lines: impl IntoIterator<Item = &'l [u8]>) -> Opt
 }
 
 /// `chain` and `file`, whose lines are relative to `directory`.
-pub(crate) fn with_file(chain: Chain, directory: &[u8], file: &[u8], is_for_oxc: bool) -> Chain {
+fn with_file(chain: Chain, directory: &[u8], file: &[u8], is_for_oxc: bool) -> Chain {
     match fs::read(file) {
         Ok(text) => with_text(chain, directory, &text, is_for_oxc),
         Err(_) => chain,
@@ -352,7 +352,12 @@ impl Files {
     /// What counts in `directory`, which is where a search starts. `name`: `.eslintignore`, or what `--ignore-path` has. The
     /// root of a repository does not end the way up for it. Above `directory` it is joined to each directory, so a path is
     /// found too, and an absolute one is read for each. From `directory` on it is looked for among the entries.
-    pub(crate) fn above_and_in(directory: &[u8], name: Option<&[u8]>, of_git: OfGit) -> Self {
+    pub(crate) fn above_and_in(
+        directory: &[u8],
+        name: Option<&[u8]>,
+        of_git: OfGit,
+        pipes: &fs::NamedPipes,
+    ) -> Self {
         let mut named = None;
         if let Some(name) = name {
             let is_path = strings::contains_char(name, b'/');
@@ -360,7 +365,9 @@ impl Files {
                 .skip(usize::from(is_path))
                 .collect();
             for directory in directories.iter().rev() {
-                named = with_file(named, directory, &paths::resolve(directory, name), true);
+                if let Ok(text) = pipes.read(&paths::resolve(directory, name)) {
+                    named = with_text(named, directory, &text, true);
+                }
             }
         }
         Self { named, of_git }
@@ -389,13 +396,10 @@ impl Files {
     }
 }
 
-/// Whether `file` has a line for `argument`, a file that oxlint is to lint. It asks the crate `ignore` with both as they are
-/// spelled, `Gitignore::new(file).matched(argument, false)`: where `argument` does not start with the directory in `file`, the
-/// lines are compared with all of it.
-pub(crate) fn has_argument(cwd: &[u8], file: &[u8], argument: &[u8]) -> bool {
-    let Ok(text) = fs::read(&paths::resolve(cwd, file)) else {
-        return false;
-    };
+/// Whether `file`, which has `text`, has a line for `argument`, a file that oxlint is to lint. It asks the crate `ignore` with
+/// both as they are spelled, `Gitignore::new(file).matched(argument, false)`: where `argument` does not start with the
+/// directory in `file`, the lines are compared with all of it.
+pub(crate) fn has_argument(text: &[u8], file: &[u8], argument: &[u8]) -> bool {
     let mut root = &file[..strings::last_index_of_char(file, b'/').unwrap_or(0)];
     while let [rest @ .., b'/'] = root {
         root = rest;
@@ -409,7 +413,7 @@ pub(crate) fn has_argument(cwd: &[u8], file: &[u8], argument: &[u8]) -> bool {
     {
         path = rest.strip_prefix(b"/").unwrap_or(rest);
     }
-    IgnoreRules::from_text(&text, OF_OXC).verdict(path, false) == Verdict::Ignored
+    IgnoreRules::from_text(text, OF_OXC).verdict(path, false) == Verdict::Ignored
 }
 
 /// Whether `path` is ignored, if the directory that it is in is not. The nearest file that says

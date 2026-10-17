@@ -325,8 +325,8 @@ pub(crate) fn file_of_eslint(cwd: &[u8]) -> Option<Vec<u8>> {
 }
 
 /// Whether the file at `path`, which `--config` names, has what only a configuration file of oxlint has.
-fn is_written_for_oxlint(path: &[u8]) -> bool {
-    let Some(json) = fs::read(path)
+fn is_written_for_oxlint(path: &[u8], pipes: &fs::NamedPipes) -> bool {
+    let Some(json) = (pipes.read(path))
         .ok()
         .and_then(|it| bun_lint::json::parse(&it))
     else {
@@ -1836,7 +1836,7 @@ impl<'l> Loader<'l> {
         let json = match syntax {
             Syntax::Program => evaluate::evaluate(self.environment, evaluate::ESLINT, path)?,
             Syntax::Json => {
-                let text = fs::read(path).map_err(|error| {
+                let text = self.options.pipes.read(path).map_err(|error| {
                     Fatal(
                         [
                             b"Cannot read the configuration file ",
@@ -2076,7 +2076,8 @@ impl<'l> Loader<'l> {
                 Some((directory, found.0, found.1))
             });
             let names_file_of_oxlint = (options.config.as_ref()).is_some_and(|it| {
-                is_written_for_oxlint(&paths::resolve(self.cwd(), &paths::from_native(it)))
+                let path = paths::resolve(self.cwd(), &paths::from_native(it));
+                is_written_for_oxlint(&path, &options.pipes)
             });
             if wanted.is_none()
                 && options.config.is_none()
@@ -2373,7 +2374,8 @@ impl<'l> Loader<'l> {
                 return true;
             }
             // A file that can be either is one of oxlint, whatever the working directory has.
-            eslintrc::is_one(&paths::resolve(self.cwd(), &paths::from_native(path)))
+            let path = paths::resolve(self.cwd(), &paths::from_native(path));
+            eslintrc::is_one(&path, &options.pipes)
         })
     }
 
@@ -2464,6 +2466,7 @@ impl<'l> Loader<'l> {
             plugins_from: plugins_from.clone(),
             command_line: (command_line.clone(), self.legacy_command_line()),
             printed: Vec::new(),
+            pipes: &options.pipes,
         };
         let mut files = match directory {
             Some(directory) => eslintrc::cascade(directory, cwd, &mut modules)?,
@@ -2478,7 +2481,11 @@ impl<'l> Loader<'l> {
         if options.ignore {
             let path = options.ignore_path.as_ref().map(absolute);
             let start = self.start_of_patterns_in(path.as_deref());
-            files.extend(eslintrc::ignore_file(path.as_deref(), &start)?);
+            files.extend(eslintrc::ignore_file(
+                path.as_deref(),
+                &start,
+                &options.pipes,
+            )?);
         }
         // Only if no file says anything.
         if files.is_empty() && options.eslintrc {
@@ -2867,13 +2874,16 @@ impl<'l> Loader<'l> {
         let is_in_file = self.ignore_file_name(loaded).is_some_and(|file| {
             let (start, file) = (self.start_of_ignore_path(), paths::from_native(file));
             let resolved = paths::resolve(&start, &file);
+            let Ok(text) = self.options.pipes.read(&resolved) else {
+                return false;
+            };
             if let Some(root) = gitignore::root_of_exclude_file(&resolved, self.cwd()) {
-                return gitignore::has_argument(&root, &resolved, &paths::relative(&root, path));
+                return gitignore::has_argument(&text, &resolved, &paths::relative(&root, path));
             }
             // How it is spelled counts for oxlint. From below bunfig.toml it is spelled as from there.
             match start == self.cwd() {
-                true => gitignore::has_argument(&start, &file, argument),
-                false => gitignore::has_argument(&start, &file, &paths::relative(&start, path)),
+                true => gitignore::has_argument(&text, &file, argument),
+                false => gitignore::has_argument(&text, &file, &paths::relative(&start, path)),
             }
         });
         is_in_file || self.is_ignored_by_the_run(path, loaded)
@@ -2913,7 +2923,8 @@ impl<'l> Loader<'l> {
             None => OfGit::above_and_in(directory, true, is_for_oxc),
         };
         let name = self.ignore_file_name(loaded).map(paths::from_native);
-        let mut files = Files::above_and_in(directory, name.as_deref(), of_git);
+        let pipes = &self.options.pipes;
+        let mut files = Files::above_and_in(directory, name.as_deref(), of_git, pipes);
         if !self.options.ignore {
             return Some(files);
         }
@@ -2926,7 +2937,9 @@ impl<'l> Loader<'l> {
         } else if let Some(path) = &self.options.ignore_path {
             let path = paths::resolve(self.cwd(), &paths::from_native(path));
             let start = self.start_of_patterns_in(Some(&path));
-            files.named = gitignore::with_file(files.named, &start, &path, true);
+            if let Ok(text) = pipes.read(&path) {
+                files.named = gitignore::with_text(files.named, &start, &text, true);
+            }
         }
         Some(files)
     }

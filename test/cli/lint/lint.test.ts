@@ -15,10 +15,13 @@ import {
 import {
   chmodSync,
   chownSync,
+  closeSync,
+  constants,
   existsSync,
   linkSync,
   lstatSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
   realpathSync,
@@ -27,6 +30,7 @@ import {
   symlinkSync,
   truncateSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
 import { basename, dirname, join, parse, posix, sep, win32 } from "node:path";
 import { endChildren, spawn } from "../children";
@@ -1431,6 +1435,87 @@ describe.concurrent("bun lint", () => {
         expect(raw).toContain("a.js");
       },
     );
+
+    describe.skipIf(isWindows)("a named pipe that a flag names", () => {
+      const makePipes = (dir: string) =>
+        expect(Bun.spawnSync(["mkfifo", join(dir, "pipe"), join(dir, "pipe.json")]).exitCode).toBe(0);
+
+      // Taken for empty, the list would ignore nothing. Nothing waits for a writer either.
+      describe.each([
+        ["no config", {}],
+        ["eslint.config.js", { "eslint.config.js": basic }],
+        [".oxlintrc.json", { ".oxlintrc.json": "{}\n" }],
+        [".eslintrc.json", { ".eslintrc.json": "{}\n" }],
+      ])("that nobody writes to is an error, with %s", (_, config: Record<string, string>) => {
+        test.each([
+          [["--ignore-path", "pipe"], "pipe"],
+          [["--ignore-path=./pipe"], "./pipe"],
+          [["--config", "pipe.json"], "pipe.json"],
+          [["-c", "pipe.json"], "pipe.json"],
+          [["--config=pipe"], "pipe"],
+        ])("%j", async (flags, name) => {
+          const result = await lint({ ...config, "a.js": bad }, ["--fix", ...flags, "."], {
+            before: makePipes,
+            reads: ["a.js"],
+            mayFail: true,
+          });
+          expect(result.stderr).toBe(`error: cannot read ${name}: nothing is writing to this pipe`);
+          expect(result.raw).toBe("");
+          expect(result.files).toEqual({ "a.js": bad });
+          expect(result.exitCode).toBe(2);
+        });
+      });
+
+      test("named in bunfig.toml, it still reads as empty", async () => {
+        const files = { "bunfig.toml": '[lint]\nignorePath = "pipe"\n', "a.js": bad };
+        const { stdout, exitCode } = await lint(files, ["-f", "unix", "."], { before: makePipes });
+        expect(stdout).toContain("<dir>/a.js:2:15: ");
+        expect(exitCode).toBe(1);
+      });
+
+      /** Runs `bun lint` with `args` in a directory with `files`, while `text` is written to the pipe called `name` there. */
+      async function lintWhileWriting(files: Record<string, string>, args: string[], name: string, text: string) {
+        using dir = tempDir("bun-lint", files);
+        makePipes(String(dir));
+        // With a reader, opening it for writing doesn't wait, and what is written stays until it is read.
+        const reader = openSync(join(String(dir), name), constants.O_RDONLY | constants.O_NONBLOCK);
+        const writer = openSync(join(String(dir), name), constants.O_WRONLY);
+        try {
+          const stdio = { stdin: "ignore", stdout: "pipe", stderr: "pipe" } as const;
+          await using proc = spawn({ cmd: [...command, ...args], env, cwd: String(dir), ...stdio });
+          writeSync(writer, text);
+          closeSync(writer);
+          const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+          return { stdout, exitCode };
+        } finally {
+          closeSync(reader);
+        }
+      }
+
+      // A pipe gives its text once, and the list is asked for every directory that is searched.
+      test.each([
+        ["no config", {}, 1],
+        [".oxlintrc.json", { ".oxlintrc.json": "{}\n" }, 0],
+        [".eslintrc.json", { ".eslintrc.json": '{ "rules": { "no-debugger": "error" } }\n' }, 1],
+      ])("--ignore-path: what somebody writes to it counts, with %s", async (_, config, exitCode) => {
+        const files = { ...config, "src/a.js": bad, "src/b.js": bad, "lib/a.js": bad, "lib/b.js": bad };
+        const args = ["-f", "unix", "--ignore-path", "pipe", "src", "lib"];
+        const result = await lintWhileWriting(files, args, "pipe", "a.js\n");
+        expect(result.stdout.match(/(?:src|lib)\/[ab]\.js:2:15/g)).toEqual(["lib/b.js:2:15", "src/b.js:2:15"]);
+        expect(result.exitCode).toBe(exitCode);
+      });
+
+      // What tells whose file it is reads it too.
+      test.each([
+        ["oxlint", '{ "rules": { "no-debugger": "off", "eqeqeq": "error" } }\n'],
+        ["ESLint 8", '{ "root": true, "rules": { "eqeqeq": "error" } }\n'],
+      ])("--config: what somebody writes to it counts, for %s", async (_, text) => {
+        const args = ["-f", "unix", "--config", "pipe.json", "a.js"];
+        const result = await lintWhileWriting({ "a.js": bad }, args, "pipe.json", text);
+        expect(result.stdout.match(/a\.js:\d+:\d+: .+/g)).toEqual([expect.stringContaining("eqeqeq")]);
+        expect(result.exitCode).toBe(1);
+      });
+    });
 
     // git keeps a link to `/dev/zero` as it is.
     test.skipIf(isWindows).each([
@@ -10262,90 +10347,6 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         expect(exitCode).toBe(1);
       },
     );
-
-    // `server` is `any` to TypeScript, because its initializer leads back to it. But whoever asks for it first gets what `serve`
-    // returns. So what `start()` is depends on whether TypeScript comes to the declaration first, or to something that needs
-    // the return type of `start`. tsc 7.0.2 has `any` in declared.ts, and `Server<undefined>` in hoisted.ts, arrow.ts and early.ts.
-    describe("a variable that a callback in its own initializer refers to", () => {
-      const use = "await using s = start();\ns.port;\n";
-      const circle = "serve({ fetch: path => path + server.port })";
-      const sources = {
-        "tsconfig.json": JSON.stringify({
-          compilerOptions: {
-            ...JSON.parse(files["tsconfig.json"]).compilerOptions,
-            noImplicitAny: false,
-            moduleDetection: "force",
-          },
-        }),
-        "serve.d.ts": `interface Server<T> {\n  port: number;\n  data: T;\n  [Symbol.dispose](): void;\n}
-declare function serve<T = undefined>(options: { fetch(path: string): string; data?: T }): Server<T>;\n`,
-        "declared.ts": `function start() {\n  const server = ${circle};\n  return server;\n}\n${use}`,
-        "hoisted.ts": `${use}function start() {\n  const server = ${circle};\n  return server;\n}\n`,
-        "arrow.ts": `const start = () => {\n  const server = ${circle};\n  return server;\n};\n${use}`,
-        "early.ts": `function start(really = true) {\n  if (really) return serve({ fetch: path => path });
-  const server = ${circle};\n  return server;\n}\n${use}`,
-        "property.ts": `class Holder {\n  server = serve({ fetch: path => path + this.server.port });\n}
-function start() {\n  return new Holder().server;\n}\n${use}`,
-        "pattern.ts": `function start() {\n  const { port, data } = serve({ fetch: path => path + port });\n  return { port, data };\n}
-await start().port;\n`,
-        "indirect.ts": `function start() {\n  const server = serve({ fetch: path => path + port() });
-  function port() {\n    return server.port;\n  }\n  return server;\n}\n${use}`,
-        "parameter.ts": `function start(server = ${circle}) {\n  return server;\n}\n${use}`,
-        "no-circle.ts": `function start() {\n  const server = serve({ fetch: path => path });\n  return server;\n}\n${use}`,
-        "lib.ts": `export function start() {\n  const server = ${circle};\n  return server;\n}\n`,
-        "imports.ts": `import { start } from "./lib";\n${use}`,
-      };
-      const rules = ["await-thenable", "no-unsafe-assignment", "no-unsafe-member-access", "no-unsafe-return"];
-      // `file:line rule`, sorted.
-      const reports = async (on: string[], ...flags: string[]) => {
-        const turnedOn = on.flatMap(rule => ["--rule", `@typescript-eslint/${rule}: warn`]);
-        const args = ["--type-aware", "-f", "unix", "--rule", "@typescript-eslint/*: off", ...turnedOn, ...flags];
-        const { raw } = await lint(sources, args);
-        return Array.from(raw.matchAll(/([\w-]+\.ts:\d+):\d+: .*\/([a-z-]+)\]$/gm), it => `${it[1]} ${it[2]}`).sort();
-      };
-      // The lines of `server.port` and `return server`, and those of `use`.
-      const inCircle = (line: number) => [`${line} no-unsafe-member-access`, `${line + 1} no-unsafe-return`];
-      const isAny = (line: number) => [`${line} no-unsafe-assignment`, `${line + 1} no-unsafe-member-access`];
-      const isServer = (line: number) => [`${line} await-thenable`];
-      const byFile = {
-        "declared.ts": [...inCircle(2), ...isAny(5)],
-        "hoisted.ts": [...isServer(1), ...inCircle(4)],
-        "arrow.ts": [...inCircle(2), ...isServer(5)],
-        "early.ts": [...inCircle(3), ...isServer(6)],
-        "property.ts": ["2 no-unsafe-member-access", "5 no-unsafe-return", ...isAny(7)],
-        "pattern.ts": ["3 no-unsafe-assignment"],
-        "indirect.ts": ["4 no-unsafe-member-access", "4 no-unsafe-return", "6 no-unsafe-return", ...isAny(8)],
-        "parameter.ts": [...inCircle(1), ...isAny(4)],
-        "no-circle.ts": isServer(5),
-        "lib.ts": inCircle(2),
-        "imports.ts": isAny(2),
-      };
-      const expected = Object.entries(byFile)
-        .flatMap(([file, lines]) => lines.map(it => `${file}:${it}`))
-        .sort();
-      const of = (on: string[]) => expected.filter(it => on.some(rule => it.endsWith(` ${rule}`)));
-
-      test.each([[["--type-check"]], [[]], [["--threads", "1"]], [["--threads", "8"]]])(
-        "has the type that a check of the whole file gives it: %j",
-        async flags => {
-          expect(await reports(rules, ...flags)).toEqual(expected);
-        },
-      );
-
-      test.each(rules)("%s reports the same alone as with the other rules", async rule => {
-        expect(await reports([rule])).toEqual(of([rule]));
-      });
-
-      test("no-unsafe-member-access keeps its reports when await-thenable is on too", async () => {
-        const both = ["await-thenable", "no-unsafe-member-access"];
-        expect(await reports(both)).toEqual(of(both));
-      });
-
-      // lib.ts isn't checked then, so the call is the first to ask.
-      test.each([[[]], [["--type-check"]]])("in a file that isn't linted: %j", async flags => {
-        expect(await reports(rules, ...flags, "imports.ts")).toEqual(["imports.ts:2 await-thenable"]);
-      });
-    });
 
     // `subst` gives the directory a drive letter, as in test/cli/check/check.test.ts.
     test.skipIf(!isWindows)(

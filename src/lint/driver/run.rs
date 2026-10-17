@@ -1950,16 +1950,21 @@ pub fn refuse_command_line(message: &[u8], environment: &Environment) -> Outcome
 }
 
 pub fn run(options: &Options, environment: &Environment) -> Outcome {
+    let mut options = options.clone();
+    let loaded = options.load_pipes(&environment.cwd);
     let execute = |environment: &Environment, modules: Option<&Modules>| {
         let run = Run {
-            options,
+            options: &options,
             environment,
             out: Outcome::default(),
             began: Instant::now(),
             is_for_oxlint: None,
             modules,
         };
-        run.execute()
+        match &loaded {
+            Ok(()) => run.execute(),
+            Err(why) => run.refuse_flag(why),
+        }
     };
     match options.doctor {
         true => doctor::watching(environment, |environment, modules| {

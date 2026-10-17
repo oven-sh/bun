@@ -794,8 +794,6 @@ impl<'s> Program<'s> {
             enclosing_module_specifier_mode: None,
             emit_resolver_links: Default::default(),
             expected: Requested::All,
-            checked_in_full: Vec::new(),
-            found_to_depend_on_order: Vec::new(),
             declaration_file: None,
             declaration_indent: None,
             has_ambient_context: false,
@@ -1118,7 +1116,7 @@ pub enum Requested {
     /// `GetSyntacticDiagnostics`: the diagnostics of the parser and the scanner.
     Syntactic,
     /// The same, for a caller that then asks for the types it needs, as typescript-eslint and tsgolint do, and reads no
-    /// diagnostics. A file that `depends_on_order` is checked in full, as under `All`. If it is too large for
+    /// diagnostics. A file that `has_types_that_depend_on_order` is checked in full, as under `All`. If it is too large for
     /// control flow analysis (TS2563), that check turns the analysis off one block at a time, and stores the types of
     /// everything else before any rule asks.
     Types,
@@ -1530,10 +1528,6 @@ pub struct Checker<'p, 's> {
     enclosing_module_specifier_mode: Option<ResolutionMode>,
     emit_resolver_links: errors_declaration_emit::EmitResolverLinks,
     expected: Requested,
-    /// See `check_in_full`.
-    checked_in_full: Vec<FileId>,
-    /// See `take_files_that_depend_on_order`.
-    found_to_depend_on_order: Vec<FileId>,
     /// The output `get_declaration_diagnostics` leaves for `checked`.
     declaration_file: Option<Vec<u8>>,
     /// During declaration emit: the indentation depth of the current line.
@@ -2581,7 +2575,6 @@ impl<'p, 's> Checker<'p, 's> {
             }
             if !self.frames[j].circular {
                 bun_core::scoped_log!(SemaCycles, "CIRCLE {:?} in {:?}", q, &self.stack[i..]);
-                self.note_circular_resolution(q);
             }
             self.frames[j].circular = true;
         }

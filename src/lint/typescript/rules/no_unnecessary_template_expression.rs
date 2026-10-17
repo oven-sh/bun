@@ -299,6 +299,25 @@ fn is_type_of_expression(template: TypeNode) -> bool {
     }
 }
 
+/// How tightly a type has to bind to stand where `ty` stands without parentheses, 0 where any type can. A conditional or a
+/// function type binds with 0, a union with 1, an intersection with 2, `keyof T` with 3.
+pub(crate) fn binding_needed_in_place_of(ty: TypeNode) -> u8 {
+    let is_ty = |it: TypeNode| it.span() == ty.span();
+    match ty.parent() {
+        Node::TupleElem(element) if element.is_optional() && element.name().is_none() => 4,
+        Node::Type(parent) => match parent.kind() {
+            TypeKind::Array(_) => 4,
+            TypeKind::IndexedAccess { obj, .. } if is_ty(obj) => 4,
+            TypeKind::Keyof(_) | TypeKind::Readonly(_) | TypeKind::Unique(_) => 3,
+            TypeKind::Intersection(_) => 2,
+            TypeKind::Union(_) => 1,
+            TypeKind::Cond { check, extends, .. } if is_ty(check) || is_ty(extends) => 1,
+            _ => 0,
+        },
+        _ => 0,
+    }
+}
+
 /// Whether the type around `template` would take `moved` apart: `A | B` in `T[]`, `T[K]`, `keyof T`, `T & C` or
 /// `[T?]`, a conditional type in a union or before the `?` of another. tsgolint writes no parentheses there.
 fn moved_type_needs_parentheses(template: TypeNode, moved: TypeNode) -> bool {
@@ -309,21 +328,7 @@ fn moved_type_needs_parentheses(template: TypeNode, moved: TypeNode) -> bool {
         TypeKind::Keyof(_) | TypeKind::Readonly(_) | TypeKind::Unique(_) | TypeKind::Infer(_) => 3,
         _ => return false,
     };
-    let is_template = |it: TypeNode| it.span() == template.span();
-    let needed = match template.parent() {
-        Node::TupleElem(element) if element.is_optional() && element.name().is_none() => 4,
-        Node::Type(parent) => match parent.kind() {
-            TypeKind::Array(_) => 4,
-            TypeKind::IndexedAccess { obj, .. } if is_template(obj) => 4,
-            TypeKind::Keyof(_) | TypeKind::Readonly(_) | TypeKind::Unique(_) => 3,
-            TypeKind::Intersection(_) => 2,
-            TypeKind::Union(_) => 1,
-            TypeKind::Cond { check, extends, .. } if is_template(check) || is_template(extends) => 1,
-            _ => 0,
-        },
-        _ => 0,
-    };
-    binding < needed
+    binding < binding_needed_in_place_of(template)
 }
 
 /// Whether `` `${interpolation}` `` is there to make a string of whatever a caller passes. The type says what the author promises,

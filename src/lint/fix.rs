@@ -3,7 +3,8 @@
 use crate::ast::File;
 use crate::context::IntoText;
 use crate::span::{Span, Spanned};
-use crate::tokens::Token;
+use crate::tokens::{Token, TokenKind};
+use crate::utils::ast_utils::is_on_one_line;
 use crate::utils::directives::match_directives_pattern;
 use bun_core::strings;
 
@@ -126,13 +127,18 @@ pub const MAX_STRING_LENGTH: u64 = (1 << 29) - 24;
 
 /// Whether `content` has an `@name` that says something about a file, as a word of its own: not `@bun/types`.
 fn has_tag_about_the_file(content: &[u8]) -> bool {
-    const TAGS: [&[u8]; 12] = [
+    const TAGS: [&[u8]; 17] = [
         b"ts-nocheck",
         b"ts-check",
         b"bun",
         b"license",
         b"preserve",
         b"copyright",
+        b"file",
+        b"fileoverview",
+        b"overview",
+        b"module",
+        b"packageDocumentation",
         b"flow",
         b"noflow",
         b"format",
@@ -161,17 +167,25 @@ fn has_tag_about_the_file(content: &[u8]) -> bool {
     false
 }
 
+/// Whether a license starts in `content`, the text of a comment.
+fn starts_license(content: &[u8]) -> bool {
+    let is_star = |byte: &&u8| matches!(byte, b'*') || byte.is_ascii_whitespace();
+    let stars = content.iter().take_while(is_star).count();
+    let text = content.get(stars..).unwrap_or_default();
+    strings::starts_with_case_insensitive_ascii(text, b"copyright")
+        || strings::contains(content, b"SPDX-License-Identifier")
+}
+
 /// Whether `comment` is about the file, going by its text: the `#!` line, a pragma, which counts only before all code
 /// (`// @ts-nocheck`, `/// <reference path="a" />`, `/** @jsx h */`), a directive for a linter, which counts from where it stands
-/// (`/* eslint-disable */`), or a license. `bun fmt` keeps the same comments above the imports that it sorts.
+/// (`/* eslint-disable */`), a license, or what documents the file (`/** @module */`). `bun fmt` keeps such comments above the
+/// imports that it sorts.
 fn is_about_the_file(comment: &Token) -> bool {
     let (text, content) = (comment.text(), strings::trim_js_whitespace(comment.value()));
     let starts_with_word = |word: &[u8]| {
         (content.strip_prefix(word))
             .is_some_and(|rest| rest.first().is_none_or(u8::is_ascii_whitespace))
     };
-    let is_star = |byte: &&u8| matches!(byte, b'*') || byte.is_ascii_whitespace();
-    let stars = content.iter().take_while(is_star).count();
     let is_triple_slash_directive =
         (text.strip_prefix(b"///")).is_some_and(|rest| rest.trim_ascii_start().starts_with(b"<"));
     text.starts_with(b"#!")
@@ -183,12 +197,28 @@ fn is_about_the_file(comment: &Token) -> bool {
         || [&b"oxlint-disable"[..], b"oxlint-enable", b"biome-ignore-all"]
             .into_iter()
             .any(starts_with_word)
-        || strings::starts_with_case_insensitive_ascii(
-            content.get(stars..).unwrap_or_default(),
-            b"copyright",
-        )
-        || strings::contains(content, b"SPDX-License-Identifier")
+        || starts_license(content)
         || has_tag_about_the_file(content)
+}
+
+/// Whether `comment` is about the line after it: `// @ts-expect-error`, `// eslint-disable-next-line`, ..
+fn is_about_the_next_line(comment: &Token) -> bool {
+    const DIRECTIVES: [&[u8]; 6] = [
+        b"@ts-expect-error",
+        b"@ts-ignore",
+        b"eslint-disable-next-line",
+        b"oxlint-disable-next-line",
+        b"biome-ignore",
+        b"prettier-ignore",
+    ];
+    let content = comment.text().get(2..).unwrap_or_default();
+    let content = content.trim_ascii_start();
+    DIRECTIVES.iter().any(|it| content.starts_with(it))
+}
+
+/// Whether tools take `comment` to be about the code after it: the line after it, or what a `/** @type {A} */` documents.
+fn is_about_what_follows(comment: &Token) -> bool {
+    comment.text().starts_with(b"/**") || is_about_the_next_line(comment)
 }
 
 /// Makes [`Fix`]es, as ESLint's `fixer`. Each method takes a node, a token, a comment or a
@@ -221,35 +251,96 @@ impl<'a> Fixer<'a> {
         comments.all(|it| strings::contains(&fix.text, it.text()))
     }
 
-    /// Puts `statement`, which is a whole line without its line break, before the other statements of the file. It goes after what
-    /// has to stay first: the `#!` line, the comments about the file like `// @ts-nocheck`, and directives like `"use strict"`.
+    /// Where the comments end that are beside `at`, the end of a statement: they follow it on its line. `at` if code follows them
+    /// there, or if one of them is about what follows.
+    pub fn end_with_comments_beside(self, at: u32) -> u32 {
+        let mut end = at;
+        for comment in self.file.comments_after(Span::empty(at)) {
+            if !is_on_one_line(self.file, Span::new(end, comment.start())) {
+                break;
+            }
+            if is_about_what_follows(&comment) {
+                return at;
+            }
+            end = comment.end();
+        }
+        match Around::of(self.file.text(), Span::new(at, end)).line_break {
+            Some(_) => end,
+            None => at,
+        }
+    }
+
+    /// Where what has to stay first in the file ends: the `#!` line, the comments about the file like `// @ts-nocheck` or a license,
+    /// and directives like `"use strict"` with the comments beside them. `None` if the file has none of these.
+    fn end_of_head(self) -> Option<u32> {
+        let file = self.file;
+        let directives = (file.body().iter()).take_while(|it| it.directive().is_some());
+        let mut end = (directives.last()).map(|it| self.end_with_comments_beside(it.span().end));
+        let start_of_text = if file.has_bom() { 3 } else { 0 };
+        // A license in `//` lines goes on to the last of them.
+        let mut is_in_license = false;
+        for comment in file.comments_after(Span::empty(end.unwrap_or(start_of_text))) {
+            let is_line = comment.kind() == TokenKind::Line;
+            let goes_on = is_in_license
+                && is_line
+                && end.is_some_and(|end| file.line_of(end) + 1 == file.line_of(comment.start()));
+            if !is_about_the_file(&comment) {
+                if is_about_what_follows(&comment) {
+                    break;
+                }
+                if !goes_on {
+                    is_in_license = false;
+                    continue;
+                }
+            }
+            end = Some(comment.end());
+            is_in_license = is_line && (goes_on || starts_license(comment.value().trim_ascii()));
+        }
+        end
+    }
+
+    /// Where a statement goes that is to be the first of the file: after what has to stay first, and before the first statement
+    /// and the comments above it, which are about it.
+    pub fn start_of_first_statement(self) -> u32 {
+        self.skip_white_space(self.end_of_head().unwrap_or(0))
+    }
+
+    fn skip_white_space(self, at: u32) -> u32 {
+        let rest = self.file.text().get(at as usize..).unwrap_or_default();
+        at + (rest.len() - strings::trim_js_whitespace_start(rest).len()) as u32
+    }
+
+    /// Puts `statement`, which is a whole line without its line break, [before the other statements](Self::start_of_first_statement)
+    /// of the file.
     pub fn insert_first_statement(self, statement: &[u8]) -> Fix {
-        let directives = (self.file.body().iter()).take_while(|it| it.directive().is_some());
-        let code = (self.file.body().first()).map_or(u32::MAX, |it| it.span().start);
-        let comments = || self.file.comments().take_while(|it| it.end() <= code);
-        let after = (directives.last().map(|it| it.span().end))
-            .or_else(|| comments().filter(is_about_the_file).last().map(Token::end));
-        match after {
-            Some(after) => self.insert_after(Span::empty(after), [&b"\n"[..], statement].concat()),
-            None => self.insert_before(Span::empty(0), [statement, b"\n"].concat()),
+        let Some(after) = self.end_of_head() else {
+            let start_of_text = if self.file.has_bom() { 3 } else { 0 };
+            return self.insert_before(Span::empty(start_of_text), [statement, b"\n"].concat());
+        };
+        let blank = Span::new(after, self.skip_white_space(after));
+        match strings::last_index_of_char(self.file.slice(blank), b'\n') {
+            // The same text either way. This is the edit that oxlint makes, and its help quotes it.
+            Some(0) | None => {
+                self.insert_after(Span::empty(after), [&b"\n"[..], statement].concat())
+            }
+            Some(at) => {
+                let line = Span::empty(after + at as u32 + 1);
+                self.insert_before(line, [statement, b"\n"].concat())
+            }
         }
     }
 
     /// Whether a comment directly before `at` is about the line after it: `// @ts-expect-error`, `// eslint-disable-next-line`, ..
     /// A fix that moves `at` away from it, or puts something between the two, makes it be about other code.
     pub fn has_directive_before(self, at: impl Spanned) -> bool {
-        const DIRECTIVES: [&[u8]; 6] = [
-            b"@ts-expect-error",
-            b"@ts-ignore",
-            b"eslint-disable-next-line",
-            b"oxlint-disable-next-line",
-            b"biome-ignore",
-            b"prettier-ignore",
-        ];
-        self.file.comments_before(at).any(|it| {
-            let content = it.text().get(2..).unwrap_or_default().trim_ascii_start();
-            DIRECTIVES.iter().any(|it| content.starts_with(it))
-        })
+        let mut comments = self.file.comments_before(at);
+        comments.any(|it| is_about_the_next_line(&it))
+    }
+
+    /// [`Fixer::has_directive_before`], or a `/** .. */`, which documents `at`.
+    pub fn has_directive_or_doc_before(self, at: impl Spanned) -> bool {
+        let mut comments = self.file.comments_before(at);
+        comments.any(|it| is_about_what_follows(&it))
     }
 
     /// `replaceText`, `replaceTextRange`

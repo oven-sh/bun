@@ -431,7 +431,6 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         };
         let content = tags.node_content(id);
         let attempt = self.out.start_attempt();
-        self.out.built_text(|out| tags.opening_tag_prefix(id, out));
         self.out.start_group();
         self.print_opening_tag(id);
         self.out.end_group();
@@ -445,10 +444,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             );
             self.out.hardline();
         }
-        self.out.built_text(|out| {
-            tags.closing_tag(id, out);
-            tags.closing_tag_suffix(id, out);
-        });
+        self.out.built_text(|out| tags.closing_tag(id, out));
         self.out.end_attempt(attempt, is_written)
     }
 

@@ -75,8 +75,9 @@ impl<'s, 'a> Statement<'s, 'a> {
     }
 
     /// A script gets the value of a custom property as it is written, and `style()` compares it that way. So what it is made
-    /// of stays as it is, and nothing gets a blank next to it that has none. Prettier and oxfmt format it like any other value:
-    /// `#FFF` is `#fff`, `.50` is `0.5`, `'a'` is `"a"`, `1,000` is `1, 000`, and for Prettier `16:9` is `16: 9`.
+    /// of stays as it is, nothing gets a blank next to it that has none, and no line ends after a comma that touches what
+    /// follows it. Prettier and oxfmt format it like any other value: `#FFF` is `#fff`, `.50` is `0.5`, `'a'` is `"a"`, `1,000`
+    /// is `1, 000`, and for Prettier `16:9` is `16: 9`.
     pub(crate) fn is_custom_property(&self) -> bool {
         self.node().kind == Kind::Decl && self.node().prop.starts_with(b"--")
     }
@@ -809,9 +810,7 @@ impl<'a> Printer<'a, '_> {
                         && !(node.scss_default || node.scss_global)
                         && is_more_than_values(printer.context.of(raw.value), printer.syntax()) =>
                 {
-                    printer.sink.text(bun_core::strings::trim_js_whitespace(
-                        printer.context.of(raw.value),
-                    ));
+                    printer.sink.text(printer.context.written(raw.value));
                 }
                 Value::Parsed(value) => {
                     // `hasComposesNode`

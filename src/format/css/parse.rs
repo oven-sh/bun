@@ -292,6 +292,19 @@ impl<'a> Context<'a> {
         postcss::text_of_range(range, self.text, self.extra)
     }
 
+    /// The text of `range` as the file has it, trimmed. The copy of a Less file that gets parsed has a blank in place of every
+    /// `*`, `"` and `'` between a `//` and the end of its line, whether or not the `//` starts a comment. Such a blank at the
+    /// end of a value or a comment falls outside `range`.
+    pub(crate) fn written(&self, range: Range) -> &'a [u8] {
+        let behind = self.text.get(range.end as usize..);
+        let Some(behind) = behind.filter(|_| !self.is_original_text) else {
+            return strings::trim_js_whitespace(self.of(range));
+        };
+        let blanks = behind.iter().take_while(|it| **it == b' ').count();
+        let written = (self.original_text).get(range.start as usize..range.end as usize + blanks);
+        strings::trim_js_whitespace(written.unwrap_or_default())
+    }
+
     /// The texts of `ranges`, one after the other.
     fn concat(&self, ranges: &[Range]) -> Cow<'a, [u8]> {
         let mut all = Range::default();
@@ -327,10 +340,8 @@ impl<'a> Context<'a> {
             return None;
         }
         let at = line_comment_at_end(text)?;
-        let comment = (self.original_text)
-            .get(start as usize + at..start as usize + text.len())
-            .filter(|it| it.starts_with(b"//"))?;
-        Some((&text[..at], comment))
+        let comment = self.written(Range::new(start + at as u32, start + text.len() as u32));
+        comment.starts_with(b"//").then_some((&text[..at], comment))
     }
 
     /// Whether there is a `//` comment in `value`, of a custom property, which a `;` after it could end up in. To CSS
@@ -627,7 +638,7 @@ impl<'a> Context<'a> {
                 strings::trim_js_whitespace_start(rest).first(),
                 Some(b'"' | b'\'')
             ) {
-                node.value = Value::Text(Cow::Borrowed(strings::trim_js_whitespace(value)));
+                node.value = Value::Text(Cow::Borrowed(self.written(raw.value)));
                 return Ok(());
             }
             let mut rules = None;
@@ -714,8 +725,11 @@ impl<'a> Context<'a> {
                 && strings::contains(value, b"//")
                 && next_line_comment(value, 0).is_some()
                 && !self.has_line_comment(value);
+            let end = raw.value.start + value.len() as u32;
             node.value = match is_as_written {
-                true => Value::Text(Cow::Borrowed(strings::trim_js_whitespace(value))),
+                true => Value::Text(Cow::Borrowed(
+                    self.written(Range::new(raw.value.start, end)),
+                )),
                 false => Value::Parsed(root),
             };
         }

@@ -502,13 +502,17 @@ impl<'a> Printer<'a, '_> {
                     | ValueKind::Func
                     | ValueKind::AtWord
             );
-            // The first blank of `\31  x` ends the escape. To the parser `\31` is the unit of a number without digits.
+            // The first blank after `\31` ends the escape: `\31 x` is one word and `\31  x` is two. Prettier breaks the line
+            // there, which makes two of the one. To the parser `\31` is the unit of a number without digits.
             if i_node.kind() == ValueKind::Number
                 && is_next_word
-                && i_node.blanks_behind() > 1
+                && i_node.blanks_behind() > 0
                 && i_node.number_as_written().is_some_and(ends_with_hex_escape)
             {
-                self.sink.token("  ");
+                self.sink.token(match i_node.blanks_behind() {
+                    1 => " ",
+                    _ => "  ",
+                });
                 continue;
             }
             let i_value = i_node.value().filter(|it| !it.is_empty());
@@ -1070,9 +1074,7 @@ impl<'a> Printer<'a, '_> {
                     match (force_hard_line, is_behind_comment) {
                         (true, _) => self.sink.hard_line(),
                         (false, true) => self.sink.fill_separator(Separator::HardLine),
-                        (false, false) if is_custom_property && touches_what_is_before(child) => {
-                            self.sink.fill_separator(Separator::SoftLine)
-                        }
+                        (false, false) if is_custom_property && touches_what_is_before(child) => {}
                         (false, false) => self.sink.fill_separator(Separator::Line),
                     }
                 }
@@ -1147,12 +1149,9 @@ impl<'a> Printer<'a, '_> {
         self.sink.soft_line();
         for (index, child) in node.groups().enumerate() {
             let is_last = index + 1 == count;
-            match index > 0 {
-                true if is_custom_property && touches_what_is_before(child) => {
-                    self.sink.soft_line()
-                }
-                true => self.sink.line(),
-                false => {}
+            // Prettier prints `f(⏎a,⏎b⏎)` for `f(a,b)`.
+            if index > 0 && !(is_custom_property && touches_what_is_before(child)) {
+                self.sink.line();
             }
             // For oxfmt the comments before a key make no difference to what follows them.
             let is_in_group_with_comments = self.print_comments_above_pair(statement, id, child);

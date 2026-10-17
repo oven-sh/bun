@@ -1053,7 +1053,17 @@ impl Order {
         }
         report.fix(|fixer| {
             // The lines above a declaration stay where they are.
-            if fixer.has_directive_before(second.root) || !is_after && fixer.has_directive_before(first.root) {
+            if fixer.has_directive_or_doc_before(second.root)
+                || !is_after && fixer.has_directive_or_doc_before(first.root)
+            {
+                return None;
+            }
+            // What follows the two gets another statement before it.
+            let (previous, next) = match is_after {
+                false => (file.token_before(second.root), file.token_after(second.root)),
+                true => (file.last_token(second.root), file.token_after(first.root)),
+            };
+            if previous.zip(next).is_some_and(|it| ast_utils::continues_statement(file, it.0, it.1)) {
                 return None;
             }
             let lines_of = |it: &Entry| {

@@ -128,13 +128,23 @@ EncodedJSValue ValueTrue = { TagValueTrue };
 
 typedef void* JSContext;
 
-// Bun_FFI_PointerOffsetToArgumentsList is injected into the build 
-// The value is BUN_FFI_POINTER_OFFSET_TO_ARGUMENTS_LIST in src/jsc/sizes.rs
-// The value is 6.
-// On ARM64_32, the value is something else but it really doesn't matter for our case
-// However, I don't want this to subtly break amidst future upgrades to JavaScriptCore
-#define LOAD_ARGUMENTS_FROM_CALL_FRAME \
-  int64_t *argsPtr = (int64_t*)((size_t*)callFrame + Bun_FFI_PointerOffsetToArgumentsList)
+// A call frame holds only the arguments the call passed. A call with fewer than `count` continues on a copy of its argument slots, padded with undefined.
+static inline void* Bun_FFI_padArguments(void* callFrame, EncodedJSValue* paddedFrame, int32_t count) {
+  EncodedJSValue *passed = (EncodedJSValue*)callFrame + Bun_FFI_PointerOffsetToArgumentsList;
+  EncodedJSValue *padded = paddedFrame + Bun_FFI_PointerOffsetToArgumentsList;
+  int32_t passedCount = ((EncodedJSValue*)callFrame)[Bun_FFI_PointerOffsetToArgumentCountIncludingThis].asBits.payload - 1;
+  int32_t i = 0;
+  for (; i < passedCount; i++) padded[i].asInt64 = passed[i].asInt64;
+  for (; i < count; i++) padded[i].asInt64 = TagValueUndefined;
+  return paddedFrame;
+}
+
+#define LOAD_ARGUMENTS_FROM_CALL_FRAME(count) \
+  EncodedJSValue Bun_FFI_paddedFrame[Bun_FFI_PointerOffsetToArgumentsList + count]; \
+  if (((EncodedJSValue*)callFrame)[Bun_FFI_PointerOffsetToArgumentCountIncludingThis].asBits.payload <= count) \
+    callFrame = Bun_FFI_padArguments(callFrame, Bun_FFI_paddedFrame, count)
+
+#define ARGUMENT_FROM_CALL_FRAME(i) (((EncodedJSValue*)callFrame)[Bun_FFI_PointerOffsetToArgumentsList + (i)])
 
 
 
@@ -208,7 +218,8 @@ static uint64_t JSVALUE_TO_TYPED_ARRAY_LENGTH(EncodedJSValue val) {
 // This behavior change enables the JIT to handle it better
 // It also is better readability when console.log(myPtr)
 static void* JSVALUE_TO_PTR(EncodedJSValue val) {
-  if (val.asInt64 == TagValueNull)
+  // null or undefined, which is what an argument the call did not pass is
+  if ((val.asInt64 & ~UndefinedTag) == TagValueNull)
     return 0;
 
   if (JSCELL_IS_TYPED_ARRAY(val)) {

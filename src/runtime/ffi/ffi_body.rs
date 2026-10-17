@@ -64,12 +64,15 @@ fn dangerously_run_without_jit_protections<R>(func: impl FnOnce() -> R) -> R {
     func()
 }
 
+/// Mirrors `FFIFields` in `src/jsc/bindings/ffi.cpp`.
 #[repr(C)]
 struct Offsets {
     js_array_buffer_view_offset_of_length: u32,
     js_array_buffer_view_offset_of_byte_offset: u32,
     js_array_buffer_view_offset_of_vector: u32,
     js_cell_offset_of_type: u32,
+    call_frame_argument_count_including_this_slot: u32,
+    call_frame_first_argument_slot: u32,
 }
 
 unsafe extern "C" {
@@ -2101,46 +2104,15 @@ impl Function {
             )?;
         }
 
-        if !self.arg_types.is_empty() {
-            writer.write_all(b"  LOAD_ARGUMENTS_FROM_CALL_FRAME;\n")?;
-            for (i, arg) in self.arg_types.iter().enumerate() {
-                if *arg == ABIType::NapiEnv {
-                    write!(
-                        writer,
-                        "  napi_env arg{} = (napi_env)&Bun__thisFFIModuleNapiEnv;\n  argsPtr++;\n",
-                        i
-                    )?;
-                } else if *arg == ABIType::NapiValue {
-                    writeln!(
-                        writer,
-                        "  EncodedJSValue arg{} = {{ .asInt64 = *argsPtr++ }};",
-                        i
-                    )?;
-                } else if arg.needs_a_cast_in_c() {
-                    if i < self.arg_types.len() - 1 {
-                        writeln!(
-                            writer,
-                            "  EncodedJSValue arg{} = {{ .asInt64 = *argsPtr++ }};",
-                            i
-                        )?;
-                    } else {
-                        write!(
-                            writer,
-                            "  EncodedJSValue arg{};\n  arg{}.asInt64 = *argsPtr;\n",
-                            i, i
-                        )?;
-                    }
-                } else {
-                    if i < self.arg_types.len() - 1 {
-                        writeln!(writer, "  int64_t arg{} = *argsPtr++;", i)?;
-                    } else {
-                        writeln!(writer, "  int64_t arg{} = *argsPtr;", i)?;
-                    }
-                }
-            }
+        // The wrapper fills in a napi_env parameter itself: its slot in the frame is a placeholder that is never read.
+        let slots_read = self
+            .arg_types
+            .iter()
+            .rposition(|arg| *arg != ABIType::NapiEnv)
+            .map_or(0, |last| last + 1);
+        if slots_read > 0 {
+            writeln!(writer, "  LOAD_ARGUMENTS_FROM_CALL_FRAME({slots_read});")?;
         }
-
-        let mut arg_buf = [0u8; 512];
 
         writer.write_all(b"    ")?;
         if self.return_type != ABIType::Void {
@@ -2149,7 +2121,10 @@ impl Function {
         }
         write!(writer, "{}(", BStr::new(self.base_name.as_bytes()))?;
         first = true;
-        arg_buf[0..3].copy_from_slice(b"arg");
+        // Each argument is read from the frame where the call uses it: a local per argument costs a store and a load.
+        const SLOT: &[u8] = b"ARGUMENT_FROM_CALL_FRAME(";
+        let mut slot_buf = [0u8; 64];
+        slot_buf[..SLOT.len()].copy_from_slice(SLOT);
         for (i, arg) in self.arg_types.iter().enumerate() {
             if !first {
                 writer.write_all(b", ")?;
@@ -2157,12 +2132,14 @@ impl Function {
             first = false;
             writer.write_all(b"    ")?;
 
-            let length_buf = bun_core::fmt::print_int(&mut arg_buf[3..], i);
-            let arg_name = &arg_buf[0..3 + length_buf];
+            let digits = bun_core::fmt::print_int(&mut slot_buf[SLOT.len()..], i);
+            slot_buf[SLOT.len() + digits] = b')';
+            let slot = &slot_buf[..SLOT.len() + digits + 1];
             if arg.needs_a_cast_in_c() {
-                write!(writer, "{}", arg.to_c(arg_name))?;
+                write!(writer, "{}", arg.to_c(slot))?;
             } else {
-                writer.write_all(arg_name)?;
+                writer.write_all(slot)?;
+                writer.write_all(b".asInt64")?;
             }
         }
         writer.write_all(b");\n")?;
@@ -2488,7 +2465,11 @@ impl CompilerRT {
         state.define_symbols(&[
             (
                 "Bun_FFI_PointerOffsetToArgumentsList",
-                bun_jsc::sizes::BUN_FFI_POINTER_OFFSET_TO_ARGUMENTS_LIST as i64,
+                offsets.call_frame_first_argument_slot as i64,
+            ),
+            (
+                "Bun_FFI_PointerOffsetToArgumentCountIncludingThis",
+                offsets.call_frame_argument_count_including_this_slot as i64,
             ),
             (
                 "JSArrayBufferView__offsetOfLength",

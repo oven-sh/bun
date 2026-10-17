@@ -274,12 +274,15 @@ async function handler(req: Request, server: Bun.Server<undefined>): Promise<Res
     }
     case "/passthrough":
       return new Response(req.body, { headers: { "x-passthrough": "1" } });
-    case "/stop":
+    case "/stop": {
+      // ?exit: leave once the stop() promise resolves, that is once every connection is gone.
+      const exit = url.searchParams.has("exit");
       setTimeout(() => {
-        server.stop();
+        server.stop().then(() => exit && process.exit(0));
         stopCalled.resolve();
       }, 0);
       return new Response("stopping");
+    }
     // Starts its body at once and ends it after /stop: a client that has the response has a stream open across the stop.
     case "/open-until-stop":
       return new Response(async function* () {

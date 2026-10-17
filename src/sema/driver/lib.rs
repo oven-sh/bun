@@ -2086,10 +2086,8 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
     let run = (!is_one).then(|| {
         let run = Run::new(&of_run, disk.provided_paths().cloned().collect());
         match request.plan_options.shares_every_file {
-            true if at_once > 1 => run.overlapping(),
             true => run,
-            // One of them can be a build, whose programs run at the same time.
-            false => run.overlapping().of_declaration_files(),
+            false => run.of_declaration_files(),
         }
     });
     let projects = Guarded::new(projects);
@@ -3039,9 +3037,7 @@ fn check_with_references(
     // The programs read the same declaration files: the libraries, what is in `node_modules`, and what one emits for the
     // others. Each is parsed once, and freed in the end.
     let of_this_build = (run.is_none() && !reads_sources && loaded().count() > 1).then(|| {
-        Run::new(&of_build, host.provided_paths().cloned().collect())
-            .overlapping()
-            .of_declaration_files()
+        Run::new(&of_build, host.provided_paths().cloned().collect()).of_declaration_files()
     });
     let of_request = run.filter(|_| !reads_sources);
     let first_origin = match &of_this_build {

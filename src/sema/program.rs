@@ -808,15 +808,15 @@ struct ParseKey {
 
 /// What the programs of one request have in common: the names, and each file parsed and bound once. A file is the same
 /// for two programs if its path and its `ParseKey` are. It is read once: a file does not change during a request.
+/// The programs may run at the same time.
 pub struct Run<'u> {
     session: &'u Session,
+    /// `Interner::in_common`
     atoms: Interner<'u>,
     /// By path. Last, whether it could not be read: see `Host::read_source`.
     parsed: ShardedMap<Vec<u8>, Guarded<Vec<(ParseKey, &'u Parse<'u>, bool)>>>,
     /// The paths (`tspath.Path`) whose text is not what is on the disk. They are parsed for each program.
     provided: FxHashSet<Vec<u8>>,
-    /// Programs run at the same time.
-    overlaps: bool,
     /// Every other file is parsed for each program, and freed with it.
     only_declaration_files: bool,
     parses: AtomicUsize,
@@ -829,22 +829,13 @@ impl<'u> Run<'u> {
     pub fn new(session: &'u Session, provided: FxHashSet<Vec<u8>>) -> Run<'u> {
         Run {
             session,
-            atoms: Interner::new_in(session),
+            atoms: Interner::in_common(session),
             parsed: ShardedMap::default(),
             provided,
-            overlaps: false,
             only_declaration_files: false,
             parses: AtomicUsize::new(0),
             bytes: AtomicUsize::new(0),
             origins: AtomicUsize::new(1),
-        }
-    }
-
-    /// Its programs run at the same time.
-    pub fn overlapping(self) -> Run<'u> {
-        Run {
-            overlaps: true,
-            ..self
         }
     }
 
@@ -5358,8 +5349,8 @@ impl<'s> Files<'s> {
         let memo = Memo::new_in(&Bases::new_in(modules.iter().map(|_| 0), &session), session);
         // Every atom in the files is in it: no file gets into a program from here on.
         let atoms = match run {
-            Some(run) if run.overlaps => Interner::over(session, atoms),
-            _ => atoms,
+            Some(_) => Interner::over(session, atoms),
+            None => atoms,
         };
         let mut files = Files {
             session,

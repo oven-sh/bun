@@ -155,14 +155,17 @@ struct Tables {
     texts: Texts,
     /// Sequence number of this interner among all that have been created.
     number: u64,
+    /// `Interner::in_common`
+    is_in_common: bool,
 }
 
 impl Tables {
-    fn new() -> Tables {
+    fn new(is_in_common: bool) -> Tables {
         Tables {
             shards: Box::new(std::array::from_fn(|_| GrowingPlaces::default())),
             texts: AppendVec::new(),
             number: NEXT_NUMBER.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            is_in_common,
         }
     }
 }
@@ -616,8 +619,20 @@ impl Intern for InternerPerThread<'_> {
 }
 
 impl<'s> Interner<'s> {
+    /// For a single program, or for code that has no program.
     pub fn new_in(session: &'s Session) -> Self {
-        let tables = session.keep(Tables::new());
+        Self::with_known_atoms(session, false)
+    }
+
+    /// Shared by several programs, which may add names to it concurrently while they load. No program is type-checked with it
+    /// directly: the checker assumes that nobody else adds an atom (`Atoms::find_published`, `TypeStore::link`), so each
+    /// program layers its own interner on top with `over`.
+    pub fn in_common(session: &'s Session) -> Self {
+        Self::with_known_atoms(session, true)
+    }
+
+    fn with_known_atoms(session: &'s Session, is_in_common: bool) -> Self {
+        let tables = session.keep(Tables::new(is_in_common));
         let this = Interner {
             session,
             tables,
@@ -638,23 +653,24 @@ impl<'s> Interner<'s> {
         this
     }
 
-    /// An interner that has the atoms that `below` has now, with the same numbers, and adds its own after them, where nobody
-    /// else sees them. For a program that is checked while others, which have `below` in common with it, are loaded: the
-    /// check takes it that nobody else adds an atom (`Atoms::find_published`, `TypeStore::link`).
+    /// Layers a private interner over `below`, which must be `in_common`. It sees the atoms that `below` has right now, under
+    /// the same numbers, and numbers its own after them. Nobody else sees those.
     pub fn over(session: &'s Session, below: Interner<'s>) -> Interner<'s> {
-        assert_eq!(below.first, 0);
+        assert!(below.tables.is_in_common);
         let Tables { shards, texts, .. } = below.tables;
         Interner {
             session,
-            tables: session.keep(Tables::new()),
+            tables: session.keep(Tables::new(false)),
             below: below.tables,
             // A text is pushed under the lock of its shard: then none below the length is half written.
             first: GrowingPlaces::while_none_grows(&shards[..], || texts.len()),
         }
     }
 
-    /// For the merge at the barrier. Last, the number of the first text.
+    /// For the merge at the barrier. It writes without synchronization, so the tables must not be shared. The last value is
+    /// the number of the first text.
     pub(crate) fn halves(&self) -> (&[GrowingPlaces], &Texts, u32) {
+        assert!(!self.tables.is_in_common);
         (&self.tables.shards[..], &self.tables.texts, self.first)
     }
 

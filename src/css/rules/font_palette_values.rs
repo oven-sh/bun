@@ -3,7 +3,7 @@ use crate::css_rules::Location;
 use crate::css_values::color::CssColor;
 use crate::css_values::ident::DashedIdent;
 use crate::generics::DeepClone as _;
-use crate::{PrintErr, Printer};
+use crate::{PrintErr, Printer, SmallList};
 
 use super::ArrayList;
 
@@ -69,7 +69,7 @@ impl FontPaletteValuesRule {
 /// See [FontPaletteValuesRule](FontPaletteValuesRule).
 pub enum FontPaletteValuesProperty {
     /// The `font-family` property.
-    FontFamily(crate::css_properties::font::FontFamily),
+    FontFamily(SmallList<crate::css_properties::font::FontFamily, 1>),
     /// The `base-palette` property.
     BasePalette(BasePalette),
     /// The `override-colors` property.
@@ -94,7 +94,7 @@ impl FontPaletteValuesProperty {
             FontPaletteValuesProperty::FontFamily(f) => {
                 dest.write_str("font-family")?;
                 dest.delim(b':', false)?;
-                f.to_css(dest)
+                css::to_css::from_list(f.slice(), dest)
             }
             FontPaletteValuesProperty::BasePalette(b) => {
                 dest.write_str("base-palette")?;
@@ -249,11 +249,20 @@ const _: () = {
             crate::match_ignore_ascii_case! { name, {
                 b"font-family" => {
                     // https://drafts.csswg.org/css-fonts-4/#font-family-2-desc
-                    if let Ok(font_family) = FontFamily::parse(input) {
-                        if matches!(font_family, FontFamily::Generic(_)) {
-                            return Err(input.new_custom_error(ParserError::invalid_declaration));
+                    // The raw-token fallback below is only for a value whose first item does not parse.
+                    if let Ok(mut family) = FontFamily::parse(input) {
+                        let mut families: SmallList<FontFamily, 1> = SmallList::default();
+                        loop {
+                            if matches!(family, FontFamily::Generic(_)) {
+                                return Err(input.new_custom_error(ParserError::invalid_declaration));
+                            }
+                            families.append(family);
+                            match input.next().map(|token| matches!(token, css::Token::Comma)) {
+                                Err(_) => return Ok(FontPaletteValuesProperty::FontFamily(families)),
+                                Ok(true) => family = FontFamily::parse(input)?,
+                                Ok(false) => return Err(input.new_custom_error(ParserError::invalid_declaration)),
+                            }
                         }
-                        return Ok(FontPaletteValuesProperty::FontFamily(font_family));
                     }
                 },
                 b"base-palette" => {

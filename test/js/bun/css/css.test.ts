@@ -2,10 +2,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { cssInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 import {
+  type Browsers,
   cssTest,
   cssTestTodo,
   indoc,
@@ -16,6 +18,8 @@ import {
   ParserOptions,
   prefix_test,
 } from "./util";
+
+const { minifyTest, prefixTest } = cssInternals;
 
 function Some(n: number): number {
   return n;
@@ -6131,7 +6135,7 @@ describe("css tests", () => {
         }
       `,
       `
-        @media (min-width: 240.001px) {
+        @media not all and (max-width: 240px) {
           .foo {
             color: #7fff00;
           }
@@ -6191,7 +6195,7 @@ describe("css tests", () => {
         }
       `,
       `
-        @media (max-width: 239.999px) {
+        @media not all and (min-width: 240px) {
           .foo {
             color: #7fff00;
           }
@@ -6291,7 +6295,7 @@ describe("css tests", () => {
         }
       `,
       `
-        @media (min-width: 100.001px) and (max-width: 199.999px) {
+        @media (width > 100px) and (width < 200px) {
           .foo {
             color: #7fff00;
           }
@@ -6322,6 +6326,568 @@ describe("css tests", () => {
       },
     );
 
+    // A `min-`/`max-` feature is inclusive, so a strict bound is lowered by negation
+    // and nothing is added to its value. Chrome 104 and Safari 16.4 are the first with
+    // range syntax, and also the first with `not (..)` inside a condition. Before them
+    // `not` only negates a whole query, so a query with more parts than the one bound
+    // becomes nested `@media` rules.
+    describe("strict range bounds", () => {
+      const chrome85: Browsers = { chrome: 85 << 16 };
+      const lower = (query: string, targets?: Browsers) =>
+        prefixTest(`@media ${query} { a { color: red } }`, "", targets);
+
+      // What `lower()` prints for these preludes: one `@media` rule per prelude, each
+      // inside the one before, around the style rule.
+      function nested(preludes: string[]): string {
+        const indent = (depth: number) => Buffer.alloc(depth * 2, " ").toString();
+        const inner = indent(preludes.length);
+        return [
+          ...preludes.map((prelude, depth) => `${indent(depth)}@media ${prelude} {`),
+          `${inner}a {`,
+          `${inner}  color: red;`,
+          `${inner}}`,
+          ...preludes.map((_, depth) => `${indent(depth)}}`).reverse(),
+          "",
+        ].join("\n");
+      }
+
+      describe("a query that is one strict bound", () => {
+        test.each([
+          ["(width < 240px)", "not all and (min-width: 240px)"],
+          ["(width > 240px)", "not all and (max-width: 240px)"],
+          ["(240px > width)", "not all and (min-width: 240px)"],
+          ["(width < 1024px)", "not all and (min-width: 1024px)"],
+          ["(width > 1280px)", "not all and (max-width: 1280px)"],
+          ["(height > 1080px)", "not all and (max-height: 1080px)"],
+          ["(width < 100000px)", "not all and (min-width: 100000px)"],
+          ["(width < 64rem)", "not all and (min-width: 64rem)"],
+          ["(width < calc(1000px + 2em))", "not all and (min-width: calc(1000px + 2em))"],
+          ["(width < env(safe-area-inset-left))", "not all and (min-width: env(safe-area-inset-left))"],
+          ["(resolution < 192dpi)", "not all and (min-resolution: 192dpi)"],
+          ["(resolution > 1000dpi)", "not all and (max-resolution: 1000dpi)"],
+          ["(aspect-ratio > 1920/1080)", "not all and (max-aspect-ratio: 1920 / 1080)"],
+          // Chrome before 110 rejects a ratio that is a single number.
+          ["(aspect-ratio < 1)", "not all and (min-aspect-ratio: 1 / 1)"],
+          // An integer has an inclusive neighbour.
+          ["(color > 2)", "(min-color: 3)"],
+          ["(color < 2)", "(max-color: 1)"],
+        ])("%s", (query, expected) => {
+          expect(lower(query, chrome85)).toBe(nested([expected]));
+        });
+
+        // At the end of the integer range there is no neighbour. The step to it used to
+        // overflow, which aborts a debug build, so this runs in a child process.
+        test("an integer at the end of its range", async () => {
+          await using proc = Bun.spawn({
+            cmd: [
+              bunExe(),
+              "-e",
+              `const { prefixTest } = require("bun:internal-for-testing").cssInternals;
+for (const query of ["(color > 2147483647)", "(color < -2147483648)"])
+  console.log(prefixTest("@media " + query + " { a { color: red } }", "", { chrome: 85 << 16 }).split("\\n")[0]);`,
+            ],
+            env: bunEnv,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stdout).toBe(
+            "@media not all and (max-color: 2147483647) {\n@media not all and (min-color: -2147483648) {\n",
+          );
+          expect(exitCode).toBe(0);
+        });
+      });
+
+      describe("a query with other parts is one nested rule per part", () => {
+        test.each([
+          ["screen and (width < 1024px)", ["screen", "not all and (min-width: 1024px)"]],
+          ["only screen and (width < 1024px)", ["only screen", "not all and (min-width: 1024px)"]],
+          ["(hover) and (width < 1024px)", ["(hover)", "not all and (min-width: 1024px)"]],
+          ["(width >= 640px) and (width < 1024px)", ["(min-width: 640px)", "not all and (min-width: 1024px)"]],
+          ["(640px <= width < 1024px)", ["(min-width: 640px)", "not all and (min-width: 1024px)"]],
+          ["(100px < width <= 200px)", ["(max-width: 200px)", "not all and (max-width: 100px)"]],
+          ["(100px < width < 200px)", ["not all and (max-width: 100px)", "not all and (min-width: 200px)"]],
+          [
+            "(1 < color < 8) and (width < 1024px)",
+            ["(min-color: 2) and (max-color: 7)", "not all and (min-width: 1024px)"],
+          ],
+          [
+            "(width < 1024px) and ((hover) and (height > 300px))",
+            ["(hover)", "not all and (min-width: 1024px)", "not all and (max-height: 300px)"],
+          ],
+          [
+            "(hover) and (not (pointer: fine)) and (width < 1024px)",
+            ["(hover) and (not (pointer: fine))", "not all and (min-width: 1024px)"],
+          ],
+          [
+            "(width < 1024px) and ((hover) or (pointer: fine))",
+            ["((hover) or (pointer: fine))", "not all and (min-width: 1024px)"],
+          ],
+          [
+            "screen and (400px < width < 1024px) and (300px < height < 900px)",
+            [
+              "screen",
+              "not all and (max-width: 400px)",
+              "not all and (min-width: 1024px)",
+              "not all and (max-height: 300px)",
+              "not all and (min-height: 900px)",
+            ],
+          ],
+        ])("%s", (query, expected) => {
+          expect(lower(query, chrome85)).toBe(nested(expected));
+        });
+      });
+
+      describe("a negated query is a list", () => {
+        test.each([
+          ["not screen and (width < 1024px)", "not screen, (min-width: 1024px)"],
+          ["not all and (width < 1024px)", "(min-width: 1024px)"],
+          [
+            "not screen and (hover) and (width < 1024px) and (height > 300px)",
+            "not screen and (hover), (min-width: 1024px), (max-height: 300px)",
+          ],
+          ["not print and (aspect-ratio < 1)", "not print, (min-aspect-ratio: 1 / 1)"],
+          ["screen and (not (width > 1024px))", "screen and (max-width: 1024px)"],
+          ["not screen and (not (width < 1024px))", "not screen and (min-width: 1024px)"],
+          // `not (..)` that is the whole query is `not all and ..`.
+          ["not (width < 1024px)", "(min-width: 1024px)"],
+          ["not (width > 1024px)", "(max-width: 1024px)"],
+          ["not (width >= 48rem)", "not all and (min-width: 48rem)"],
+          ["not (hover)", "not all and (hover)"],
+          ["not ((hover: hover) and (pointer: fine))", "not all and (hover: hover) and (pointer: fine)"],
+          ["not ((width < 1024px) and (hover))", "not all and (hover), (min-width: 1024px)"],
+          ["not (100px < width < 200px)", "(max-width: 100px), (min-width: 200px)"],
+          ["not (100px <= width <= 200px)", "not all and (min-width: 100px) and (max-width: 200px)"],
+        ])("%s", (query, expected) => {
+          expect(lower(query, chrome85)).toBe(nested([expected]));
+        });
+      });
+
+      describe("a list of queries", () => {
+        const three = "screen and (width < 1px), print and (width < 2px), tv and (width < 3px)";
+        test.each([
+          ["(width < 600px), (width > 1200px)", ["not all and (min-width: 600px), not all and (max-width: 1200px)"]],
+          ["print, (width < 600px)", ["print, not all and (min-width: 600px)"]],
+          ["print, screen and (width < 1024px)", ["print, screen", "print, not all and (min-width: 1024px)"]],
+          [
+            "(width < 600px), screen and (width > 1200px)",
+            [
+              "not all and (min-width: 600px), screen",
+              "not all and (min-width: 600px), not all and (max-width: 1200px)",
+            ],
+          ],
+          [
+            "not screen and (width < 600px), print and (width > 1200px)",
+            [
+              "not screen, (min-width: 600px), print",
+              "not screen, (min-width: 600px), not all and (max-width: 1200px)",
+            ],
+          ],
+          [
+            "screen and (width < 600px), print and (width > 1200px)",
+            [
+              "screen, print",
+              "not all and (min-width: 600px), print",
+              "screen, not all and (max-width: 1200px)",
+              "not all and (min-width: 600px), not all and (max-width: 1200px)",
+            ],
+          ],
+          [
+            three,
+            [
+              "screen, print, tv",
+              "not all and (min-width: 1px), print, tv",
+              "screen, not all and (min-width: 2px), tv",
+              "not all and (min-width: 1px), not all and (min-width: 2px), tv",
+              "screen, print, not all and (min-width: 3px)",
+              "not all and (min-width: 1px), print, not all and (min-width: 3px)",
+              "screen, not all and (min-width: 2px), not all and (min-width: 3px)",
+              "not all and (min-width: 1px), not all and (min-width: 2px), not all and (min-width: 3px)",
+            ],
+          ],
+        ])("%s", (query, expected) => {
+          expect(lower(query, chrome85)).toBe(nested(expected));
+        });
+
+        // A bound under `or`, or under a `not` with more in it, has no whole query to
+        // negate. A list that needs more than 8 nested rules is not nested. These print
+        // as written, and a browser without range syntax skips the rule.
+        const bounds = [1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => `(width < ${n}px)`);
+        test.each([
+          ["(hover) or (width < 1024px)", "(hover) or (width < 1024px)"],
+          ["not ((hover) or (width < 1024px))", "not ((hover) or (width < 1024px))"],
+          ["(width < 600px) and ((hover) or (height > 1200px))", "(width < 600px) and ((hover) or (height > 1200px))"],
+          [
+            "(width < 600px) and (not ((height < 100px) and (hover)))",
+            "(width < 600px) and (not ((height < 100px) and (hover)))",
+          ],
+          [
+            "(width < 600px), (hover) or (width > 1200px)",
+            "not all and (min-width: 600px), (hover) or (width > 1200px)",
+          ],
+          [`${three}, tty and (width < 4px)`, `${three}, tty and (width < 4px)`],
+          [
+            "screen and (400px < width < 800px), print and (100px < height < 200px)",
+            "screen and (width > 400px) and (width < 800px), print and (height > 100px) and (height < 200px)",
+          ],
+          [bounds.join(" and "), bounds.join(" and ")],
+        ])("%s", (query, expected) => {
+          expect(lower(query, chrome85)).toBe(nested([expected]));
+        });
+
+        test("8 strict bounds in one query are 8 nested rules", () => {
+          expect(lower(bounds.slice(0, 8).join(" and "), chrome85)).toBe(
+            nested(bounds.slice(0, 8).map(bound => bound.replace("(width < ", "not all and (min-width: "))),
+          );
+        });
+      });
+
+      describe("an inclusive bound keeps its form", () => {
+        test.each([
+          ["(width <= 240px)", "(max-width: 240px)"],
+          ["(width >= 240px)", "(min-width: 240px)"],
+          ["(100px <= width <= 200px)", "(min-width: 100px) and (max-width: 200px)"],
+          ["(min-aspect-ratio: 16/9)", "(min-aspect-ratio: 16 / 9)"],
+          // Chrome before 110 rejects a ratio that is a single number.
+          ["(aspect-ratio >= 1)", "(min-aspect-ratio: 1 / 1)"],
+          [
+            "screen and (width <= 1024px), (width < 600px)",
+            "screen and (max-width: 1024px), not all and (min-width: 600px)",
+          ],
+        ])("%s", (query, expected) => {
+          expect(lower(query, chrome85)).toBe(nested([expected]));
+        });
+      });
+
+      describe("targets with range syntax", () => {
+        test.each([
+          ["(width < 1024px)", { chrome: 104 << 16 }, "(width < 1024px)"],
+          ["(width < 1024px)", { safari: (16 << 16) | (4 << 8) }, "(width < 1024px)"],
+          ["screen and (100px < width < 200px)", { chrome: 104 << 16 }, "screen and (100px < width < 200px)"],
+          ["not (width < 1024px)", { chrome: 104 << 16 }, "not (width < 1024px)"],
+          ["not (hover)", { chrome: 104 << 16 }, "not (hover)"],
+          ["(width < 1024px)", undefined, "(width < 1024px)"],
+          // Firefox 63 to 101 has range syntax and no interval syntax.
+          ["(width < 1024px)", { firefox: 85 << 16 }, "(width < 1024px)"],
+          ["not (hover)", { firefox: 85 << 16 }, "not (hover)"],
+          ["(100px < width <= 200px)", { firefox: 85 << 16 }, "(width > 100px) and (max-width: 200px)"],
+          [
+            "screen and (100px <= width < 200px)",
+            { firefox: 85 << 16 },
+            "screen and (min-width: 100px) and (width < 200px)",
+          ],
+        ])("%s %j", (query, targets, expected) => {
+          expect(lower(query, targets)).toBe(nested([expected]));
+        });
+      });
+
+      test("the rules stay inside the innermost rule", () => {
+        const source = "@media screen and (640px <= width < 1024px) { a { color: red } b { color: green } }";
+        expect(prefixTest(source, "", chrome85)).toBe(
+          [
+            "@media screen and (min-width: 640px) {",
+            "  @media not all and (min-width: 1024px) {",
+            "    a {",
+            "      color: red;",
+            "    }",
+            "",
+            "    b {",
+            "      color: green;",
+            "    }",
+            "  }",
+            "}",
+            "",
+          ].join("\n"),
+        );
+        expect(minifyTest(source, "", chrome85)).toBe(
+          "@media screen and (min-width:640px){@media not all and (min-width:1024px){a{color:red}b{color:green}}}",
+        );
+      });
+
+      // `@import` has no block to nest in. A list that is one clause is lowered. Any
+      // other list is printed as written. `(--name)` puts a `@custom-media` query inside
+      // other queries, so its strict bounds are never negated.
+      test.each([
+        ['@import "foo.css" (width < 1024px);', '@import "foo.css" not all and (min-width: 1024px);'],
+        ['@import "foo.css" not screen and (width < 1024px);', '@import "foo.css" not screen, (min-width: 1024px);'],
+        ['@import "foo.css" print, (width > 1280px);', '@import "foo.css" print, not all and (max-width: 1280px);'],
+        ['@import "foo.css" not (width >= 48rem);', '@import "foo.css" not all and (min-width: 48rem);'],
+        ['@import "foo.css" screen and (width < 1024px);', '@import "foo.css" screen and (width < 1024px);'],
+        ["@custom-media --narrow (width < 600px);", "@custom-media --narrow (width < 600px);"],
+        ["@custom-media --x not screen and (width < 600px);", "@custom-media --x not screen and (width < 600px);"],
+        ["@custom-media --wide (width >= 600px);", "@custom-media --wide (min-width: 600px);"],
+        [
+          "@container (width < 400px) {\n  a {\n    color: red;\n  }\n}",
+          "@container (width < 400px) {\n  a {\n    color: red;\n  }\n}",
+        ],
+      ])("%s", (source, expected) => {
+        expect(prefixTest(source, "", chrome85).trim()).toBe(expected);
+      });
+
+      // The tables above pin bytes. This checks meaning: for generated query lists, the
+      // printed rules apply exactly when the source list is true.
+      describe("the lowered rules mean what the source means", () => {
+        type Env = { type: string; width: number; height: number; color: number };
+        type Cond =
+          | { kind: "range"; feature: string; op: string; value: number }
+          | { kind: "interval"; feature: string; low: number; lowOp: string; high: number; highOp: string }
+          | { kind: "prefixed"; feature: string; bound: "min" | "max"; value: number }
+          | { kind: "orientation"; value: string }
+          | { kind: "not"; cond: Cond }
+          | { kind: "and" | "or"; conds: Cond[] };
+        type Query = { qualifier?: string; type?: string; conds: Cond[] };
+
+        const compare: Record<string, (a: number, b: number) => boolean> = {
+          "<": (a, b) => a < b,
+          "<=": (a, b) => a <= b,
+          ">": (a, b) => a > b,
+          ">=": (a, b) => a >= b,
+        };
+        const unit = (feature: string) => (feature === "color" ? "" : "px");
+        const get = (env: Env, feature: string) => env[feature as "width" | "height" | "color"];
+        const orientation = (env: Env) => (env.height >= env.width ? "portrait" : "landscape");
+
+        function condText(cond: Cond, whole = false): string {
+          switch (cond.kind) {
+            case "range":
+              return `(${cond.feature} ${cond.op} ${cond.value}${unit(cond.feature)})`;
+            case "interval": {
+              const u = unit(cond.feature);
+              return `(${cond.low}${u} ${cond.lowOp} ${cond.feature} ${cond.highOp} ${cond.high}${u})`;
+            }
+            case "prefixed":
+              return `(${cond.bound}-${cond.feature}: ${cond.value}${unit(cond.feature)})`;
+            case "orientation":
+              return `(orientation: ${cond.value})`;
+            case "not":
+              return whole ? `not ${condText(cond.cond)}` : `(not ${condText(cond.cond)})`;
+            default: {
+              const text = cond.conds.map(c => condText(c)).join(` ${cond.kind} `);
+              return whole ? text : `(${text})`;
+            }
+          }
+        }
+        function condTruth(cond: Cond, env: Env): boolean {
+          switch (cond.kind) {
+            case "range":
+              return compare[cond.op](get(env, cond.feature), cond.value);
+            case "interval":
+              return (
+                compare[cond.lowOp](cond.low, get(env, cond.feature)) &&
+                compare[cond.highOp](get(env, cond.feature), cond.high)
+              );
+            case "prefixed":
+              return cond.bound === "min" ? get(env, cond.feature) >= cond.value : get(env, cond.feature) <= cond.value;
+            case "orientation":
+              return orientation(env) === cond.value;
+            case "not":
+              return !condTruth(cond.cond, env);
+            case "and":
+              return cond.conds.every(c => condTruth(c, env));
+            case "or":
+              return cond.conds.some(c => condTruth(c, env));
+          }
+        }
+        function queryText(query: Query): string {
+          const head = [query.qualifier, query.type].filter(Boolean).join(" ");
+          if (!head && query.conds.length === 1) return condText(query.conds[0], true);
+          return [head, ...query.conds.map(c => condText(c))].filter(Boolean).join(" and ");
+        }
+        function queryTruth(query: Query, env: Env): boolean {
+          const truth =
+            (!query.type || query.type === "all" || query.type === env.type) &&
+            query.conds.every(c => condTruth(c, env));
+          return query.qualifier === "not" ? !truth : truth;
+        }
+
+        // Reads one printed prelude (a media query list) into a function of the environment.
+        function parseList(text: string): (env: Env) => boolean {
+          const tokens = text.match(/[<>]=?|[(),:]|[^\s()<>=,:]+/g) ?? [];
+          let at = 0;
+          const peek = () => tokens[at];
+          const next = () => tokens[at++];
+          const expectToken = (token: string) => {
+            if (next() !== token) throw new Error(`expected "${token}" in "${text}"`);
+          };
+          const number = (token: string) => {
+            const match = /^(-?[\d.]+)(px)?$/.exec(token);
+            if (!match) throw new Error(`unexpected value "${token}" in "${text}"`);
+            return Number(match[1]);
+          };
+          function inParens(): (env: Env) => boolean {
+            expectToken("(");
+            let result: (env: Env) => boolean;
+            if (peek() === "(" || peek() === "not") {
+              result = condition(true);
+            } else {
+              const first = next();
+              if (peek() === ":") {
+                next();
+                const value = next();
+                const match = /^(?:(min|max)-)?(width|height|color)$/.exec(first);
+                if (first === "orientation") {
+                  result = env => orientation(env) === value;
+                } else if (match?.[1]) {
+                  const [, bound, feature] = match;
+                  const n = number(value);
+                  result = env => (bound === "min" ? get(env, feature) >= n : get(env, feature) <= n);
+                } else {
+                  throw new Error(`unexpected feature "${first}" in "${text}"`);
+                }
+              } else if (/^[a-z]/.test(first)) {
+                const op = next();
+                const n = number(next());
+                result = env => compare[op](get(env, first), n);
+              } else {
+                const lowOp = next();
+                const feature = next();
+                const highOp = next();
+                const low = number(first);
+                const high = number(next());
+                result = env => compare[lowOp](low, get(env, feature)) && compare[highOp](get(env, feature), high);
+              }
+            }
+            expectToken(")");
+            return result;
+          }
+          function condition(allowOr: boolean): (env: Env) => boolean {
+            if (peek() === "not") {
+              next();
+              const negated = inParens();
+              return env => !negated(env);
+            }
+            const parts = [inParens()];
+            let operator: string | undefined;
+            while (peek() === "and" || (allowOr && peek() === "or")) {
+              const token = next();
+              if (operator && operator !== token) throw new Error(`mixed "and" and "or" in "${text}"`);
+              operator = token;
+              parts.push(inParens());
+            }
+            return operator === "or" ? env => parts.some(p => p(env)) : env => parts.every(p => p(env));
+          }
+          function query(): (env: Env) => boolean {
+            if (peek() === "(" || (peek() === "not" && tokens[at + 1] === "(")) return condition(true);
+            const qualifier = peek() === "not" || peek() === "only" ? next() : undefined;
+            const type = next();
+            if (type !== "all" && type !== "screen" && type !== "print") {
+              throw new Error(`unexpected media type "${type}" in "${text}"`);
+            }
+            let rest: (env: Env) => boolean = () => true;
+            if (peek() === "and") {
+              next();
+              rest = condition(false);
+            }
+            return env => {
+              const truth = (type === "all" || type === env.type) && rest(env);
+              return qualifier === "not" ? !truth : truth;
+            };
+          }
+          const queries = [query()];
+          while (peek() === ",") {
+            next();
+            queries.push(query());
+          }
+          if (at !== tokens.length) throw new Error(`unexpected "${peek()}" in "${text}"`);
+          return env => queries.some(q => q(env));
+        }
+
+        // Deterministic lists of 1 to 3 queries, each with 1 to 3 `and`-ed conditions.
+        function generate(count: number): Query[][] {
+          let seed = 1;
+          const random = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 2 ** 32;
+          const pick = <T>(items: T[]): T => items[Math.floor(random() * items.length)];
+          const values: Record<string, number[]> = { width: [600, 1024], height: [300, 900], color: [2, 7] };
+          const feature = () => pick(["width", "width", "width", "height", "color"]);
+          const range = (): Cond => {
+            const f = feature();
+            return { kind: "range", feature: f, op: pick(["<", "<", ">", ">", "<=", ">="]), value: pick(values[f]) };
+          };
+          const interval = (): Cond => {
+            const f = feature();
+            const low = Math.floor(random() * (values[f].length - 1));
+            const high = low + 1 + Math.floor(random() * (values[f].length - 1 - low));
+            return {
+              kind: "interval",
+              feature: f,
+              low: values[f][low],
+              lowOp: pick(["<", "<="]),
+              high: values[f][high],
+              highOp: pick(["<", "<="]),
+            };
+          };
+          const leaf = (): Cond => {
+            const r = random();
+            if (r < 0.5) return range();
+            if (r < 0.7) return interval();
+            const f = feature();
+            if (r < 0.85) return { kind: "prefixed", feature: f, bound: pick(["min", "max"]), value: pick(values[f]) };
+            return { kind: "orientation", value: pick(["landscape", "portrait"]) };
+          };
+          // The parser takes no `or` after a media type.
+          const cond = (allowOr: boolean): Cond => {
+            const r = random();
+            if (r < 0.7) return leaf();
+            if (r < 0.8) return { kind: "not", cond: leaf() };
+            if (r < 0.88) return { kind: "not", cond: { kind: "and", conds: [leaf(), leaf()] } };
+            if (r < 0.94 && allowOr) return { kind: "or", conds: [leaf(), leaf()] };
+            return { kind: "and", conds: [leaf(), leaf()] };
+          };
+          const query = (): Query => {
+            const r = random();
+            const qualifier = r < 0.25 ? "not" : r < 0.33 ? "only" : undefined;
+            const type = qualifier ? pick(["all", "screen", "print"]) : pick([undefined, undefined, "screen", "print"]);
+            const conds = Array.from({ length: 1 + Math.floor(random() * 3) }, () => cond(!type));
+            return { qualifier, type, conds };
+          };
+          return Array.from({ length: count }, () => Array.from({ length: 1 + Math.floor(random() * 3) }, query));
+        }
+
+        // Every bound of the list, and a value just below and just above it. A bound that
+        // is moved a little, and not negated, gives the wrong answer at one of these.
+        function environments(list: Query[]): Env[] {
+          const bounds: Record<string, Set<number>> = { width: new Set(), height: new Set(), color: new Set() };
+          const visit = (cond: Cond) => {
+            if (cond.kind === "range" || cond.kind === "prefixed") bounds[cond.feature].add(cond.value);
+            else if (cond.kind === "interval") bounds[cond.feature].add(cond.low).add(cond.high);
+            else if (cond.kind === "not") visit(cond.cond);
+            else if (cond.kind !== "orientation") cond.conds.forEach(visit);
+          };
+          list.forEach(query => query.conds.forEach(visit));
+          const around = (feature: string, step: number, fallback: number) => {
+            const values = [...bounds[feature]].flatMap(bound => [bound - step, bound, bound + step]);
+            return values.length ? [...new Set(values)] : [fallback];
+          };
+          const envs: Env[] = [];
+          for (const type of ["screen", "print"])
+            for (const width of around("width", 0.0005, 800))
+              for (const height of around("height", 0.0005, 600))
+                for (const color of around("color", 1, 8)) envs.push({ type, width, height, color });
+          return envs;
+        }
+
+        test.each([
+          [16, chrome85],
+          [8, { firefox: 85 << 16 }],
+        ])("%d lists for targets %j", (count, targets) => {
+          for (const list of generate(count)) {
+            const source = list.map(queryText).join(", ");
+            const printed = lower(source, targets)
+              .split("\n")
+              .map(line => line.trim())
+              .filter(line => line.startsWith("@media "))
+              .map(line => line.slice("@media ".length, -" {".length));
+            const rules = printed.map(parseList);
+            const wrong = environments(list).filter(
+              env => rules.every(rule => rule(env)) !== list.some(query => queryTruth(query, env)),
+            );
+            expect({ source, printed, wrong }).toEqual({ source, printed, wrong: [] });
+          }
+        });
+      });
+    });
+
     cssTest(
       `
       @media not all {
@@ -6342,7 +6908,7 @@ describe("css tests", () => {
       }
       `,
       `
-        @media (min-width: calc(1.001px + 1rem)) {
+        @media not all and (max-width: calc(1px + 1rem)) {
           .foo {
             color: #ff0;
           }
@@ -6359,7 +6925,7 @@ describe("css tests", () => {
       }
       `,
       `
-        @media (min-width: calc(max(10px, 1rem) + .001px)) {
+        @media not all and (max-width: max(10px, 1rem)) {
           .foo {
             color: #ff0;
           }
@@ -6376,7 +6942,7 @@ describe("css tests", () => {
       }
       `,
       `
-        @media (min-width: .001px) {
+        @media not all and (max-width: 0) {
           .foo {
             color: #ff0;
           }

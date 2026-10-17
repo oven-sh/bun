@@ -1,5 +1,5 @@
 use crate::css_rules::{CssRuleList, Location};
-use crate::media_query::MediaList;
+use crate::media_query::{LoweredClauses, MediaList};
 use crate::{PrintErr, Printer};
 
 /// A `@media` rule.
@@ -24,11 +24,36 @@ impl<R> MediaRule<R> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
+        if let Some(clauses) = self.query.lowered_clauses(&dest.targets) {
+            return self.write_clauses(&clauses, 0, dest);
+        }
+
         dest.write_str("@media ")?;
-        self.query.to_css(dest)?;
+        self.query.to_css_as_written(dest)?;
         dest.block(|d| {
             d.newline()?;
             self.rules.to_css(d)
+        })
+    }
+
+    /// Writes one `@media` per clause from `clause` on, each nested in the one before,
+    /// around the rules: nesting is how CSS says "and" between query lists.
+    #[cold]
+    fn write_clauses(
+        &self,
+        clauses: &LoweredClauses<'_>,
+        clause: u32,
+        dest: &mut Printer,
+    ) -> Result<(), PrintErr> {
+        dest.write_str("@media ")?;
+        clauses.write(clause, dest)?;
+        dest.block(|d| {
+            d.newline()?;
+            if clause + 1 < clauses.count() {
+                self.write_clauses(clauses, clause + 1, d)
+            } else {
+                self.rules.to_css(d)
+            }
         })
     }
 }

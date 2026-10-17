@@ -619,9 +619,7 @@ impl PropertyIdTag {
 /// A known CSS property name + (for prefixable properties) the vendor
 /// prefix it was parsed with. Variants without payload are unprefixed.
 //
-// No `#[derive(PartialEq, Eq)]`: the `CustomPropertyName` payload holds arena
-// `*const [u8]` idents, which have `CssEql` and no `PartialEq`. The
-// hand-written impl below compares tag + prefix + custom name.
+// `PartialEq` is hand-written below: `CustomPropertyName` has no `PartialEq`.
 #[derive(Debug, Clone, Copy)]
 pub enum PropertyId {
     BackgroundColor,
@@ -880,10 +878,6 @@ pub enum PropertyId {
     Custom(CustomPropertyName),
 }
 
-// `PropertyId` equality compares the tag, the `VendorPrefix` payload (via
-// `prefix()`, which is `VendorPrefix::empty()` for every non-prefixed
-// variant), and for `Custom` the property name: `--a` and `--b` are distinct
-// properties.
 impl PartialEq for PropertyId {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
@@ -896,9 +890,7 @@ impl PartialEq for PropertyId {
 
 impl Eq for PropertyId {}
 
-// Agrees with `eq`. The prefix is not hashed: it would cost a second write
-// for every declaration in `StyleRule::hash_key`. Ids that differ only in
-// the prefix share a bucket there, and `eq` tells them apart.
+// The prefix is left out on purpose: equal ids still hash equal, and `eq` tells prefixes apart.
 impl core::hash::Hash for PropertyId {
     #[inline]
     fn hash<H: core::hash::Hasher>(&self, h: &mut H) {

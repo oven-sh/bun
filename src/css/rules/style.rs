@@ -40,8 +40,6 @@ impl<R> StyleRule<R> {
         // Wyhash seeded with 0 — same algorithm as bun.hash
         let mut hasher = bun_wyhash::Wyhash::init(0);
         self.selectors.hash(&mut hasher);
-        // Hash the `PropertyId` (tag + custom name) so distinct custom
-        // properties don't collide into one dedup bucket.
         for decl in self.declarations.declarations.iter() {
             decl.property_id().hash(&mut hasher);
         }
@@ -468,8 +466,7 @@ impl<R> StyleRule<R> {
                 .all(|(a, b)| a.property_id() == b.property_id())
         };
         let (a, b) = (&self.declarations, &other.declarations);
-        // Cheapest checks first: a rule that changed in a merge stays in its
-        // old bucket, and the selector comparison is the costly part.
+        // Cheap checks first: the selector comparison is the costly part.
         a.declarations.len() == b.declarations.len()
             && a.important_declarations.len() == b.important_declarations.len()
             && self.selectors.v.len() == other.selectors.v.len()

@@ -107,6 +107,46 @@ function runInThisContext(code, options) {
   return new Script(code, options).runInThisContext(options);
 }
 
+// Node's lib/vm.js getContextOptions(): runInNewContext() names the context
+// options contextName, contextOrigin and contextCodeGeneration. Validate them
+// under those names, then hand them to createContext() under its own names.
+function getContextOptions(options) {
+  if (!options) {
+    return {};
+  }
+  const contextOptions = {
+    name: options.contextName,
+    origin: options.contextOrigin,
+    codeGeneration: undefined,
+    microtaskMode: options.microtaskMode,
+    importModuleDynamically: options.importModuleDynamically,
+  };
+  if (contextOptions.name !== undefined) {
+    validateString(contextOptions.name, "options.contextName");
+  }
+  if (contextOptions.origin !== undefined) {
+    validateString(contextOptions.origin, "options.contextOrigin");
+  }
+  if (options.contextCodeGeneration !== undefined) {
+    validateObject(options.contextCodeGeneration, "options.contextCodeGeneration");
+    const { strings, wasm } = options.contextCodeGeneration;
+    const codeGeneration = {};
+    if (strings !== undefined) {
+      validateBoolean(strings, "options.contextCodeGeneration.strings");
+      codeGeneration.strings = strings;
+    }
+    if (wasm !== undefined) {
+      validateBoolean(wasm, "options.contextCodeGeneration.wasm");
+      codeGeneration.wasm = wasm;
+    }
+    contextOptions.codeGeneration = codeGeneration;
+  }
+  if (options.microtaskMode !== undefined) {
+    validateString(options.microtaskMode, "options.microtaskMode");
+  }
+  return contextOptions;
+}
+
 function runInNewContext(code, context, options) {
   if (context !== undefined && (typeof context !== "object" || context === null)) {
     validateContext(context);
@@ -116,7 +156,7 @@ function runInNewContext(code, context, options) {
   } else {
     options = { ...options };
   }
-  context = createContext(context, options);
+  context = createContext(context, getContextOptions(options));
   return createScript(code, options).runInNewContext(context, options);
 }
 

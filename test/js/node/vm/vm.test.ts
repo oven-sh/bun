@@ -1677,8 +1677,8 @@ describe("context options with throwing getters", () => {
   // the process, so run the matrix in a subprocess.
   test.concurrent("the getter's exception propagates to the caller", async () => {
     // Each entry point tests the context-option keys it actually reads:
-    // createContext takes codeGeneration, Script#runInNewContext takes
-    // contextCodeGeneration, and vm.runInNewContext goes through both.
+    // createContext takes codeGeneration, Script#runInNewContext and
+    // vm.runInNewContext take contextCodeGeneration.
     // A dotted key puts the throwing getter on the nested object.
     const codeGenerationKeys = (key: string) => [key, `${key}.strings`, `${key}.wasm`];
     const contextKeys = (...codeGenerationKeyNames: string[]) => [
@@ -1690,7 +1690,7 @@ describe("context options with throwing getters", () => {
     ];
     const matrix = {
       createContext: contextKeys("codeGeneration"),
-      runInNewContext: contextKeys("codeGeneration", "contextCodeGeneration"),
+      runInNewContext: contextKeys("contextCodeGeneration"),
       scriptRunInNewContext: contextKeys("contextCodeGeneration"),
     };
     const code = `
@@ -1865,10 +1865,31 @@ describe("a context's global proxy passed as a context", () => {
     expect(runInContext("fromProxy", ctx)).toBe(1);
   });
 
+  test("runInNewContext(code, DONT_CONTEXTIFY) returns a global that is a context", () => {
+    const proxy = runInNewContext("this", constants.DONT_CONTEXTIFY);
+    expect(isContext(proxy)).toBe(true);
+    expect(runInContext("1 + 1", proxy)).toBe(2);
+    runInNewContext("fromFirstRun = 3", proxy);
+    expect(runInContext("fromFirstRun", proxy)).toBe(3);
+  });
+
+  test("runInNewContext on an existing context runs in that context's global", () => {
+    const ctx = createContext({});
+    expect(runInNewContext("Array", ctx)).toBe(runInContext("Array", ctx));
+    expect(runInNewContext("this", ctx)).toBe(runInContext("this", ctx));
+    runInNewContext("let lexical = 1; class K {}", ctx);
+    expect(runInContext("typeof lexical + typeof K", ctx)).toBe("numberfunction");
+
+    const sandbox = {};
+    new Script("1").runInNewContext(sandbox);
+    expect(isContext(sandbox)).toBe(true);
+  });
+
   test("compileFunction parsingContext accepts the same contexts as isContext", () => {
     const ctx = createContext(constants.DONT_CONTEXTIFY);
     ctx.fromCtx = 7;
     expect(compileFunction("return fromCtx", [], { parsingContext: ctx })()).toBe(7);
+    expect(compileFunction("return fromCtx", [], { parsingContext: runInContext("this", ctx) })()).toBe(7);
 
     const g = runInContext("this", createContext());
     expect(() => compileFunction("1", [], { parsingContext: g })).toThrow(

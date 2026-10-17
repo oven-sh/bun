@@ -300,6 +300,16 @@ mod _impl {
         }
     }
 
+    bitflags::bitflags! {
+        /// The fields of the same name in node's `ZstdDecompressContext`.
+        #[derive(Clone, Copy, Default, PartialEq, Eq)]
+        pub(crate) struct DecodeState: u8 {
+            const FRAME_COMPLETE                = 1 << 0;
+            const DECODING_FRAME_AFTER_COMPLETE = 1 << 1;
+            const IGNORING_TRAILING_INPUT       = 1 << 2;
+        }
+    }
+
     pub(crate) struct Context {
         pub(crate) mode: NodeMode,
         // LIFETIMES.tsv: FFI → Option<*mut c_void> (ZSTD_createCCtx/DCtx; freed in deinit_state)
@@ -309,7 +319,15 @@ mod _impl {
         pub(crate) output: c::ZSTD_outBuffer,
         pub(crate) pledged_src_size: u64,
         pub(crate) remaining: u64,
+        pub(crate) decode: DecodeState,
+        /// Magic-number bytes seen of the frame after a complete one, counted across writes up to 4.
+        pub(crate) frame_prefix_size: u8,
+        /// `ZSTD_FRAME | SKIPPABLE_FRAME`, less each type that those bytes rule out.
+        pub(crate) possible_frame_types: u8,
     }
+
+    // The decode state fits the tail padding of `Context`, so a handle does not grow.
+    const _: () = assert!(core::mem::size_of::<Context>() == 88);
 
     impl Default for Context {
         fn default() -> Self {
@@ -329,6 +347,9 @@ mod _impl {
                 },
                 pledged_src_size: u64::MAX,
                 remaining: 0,
+                decode: DecodeState::empty(),
+                frame_prefix_size: 0,
+                possible_frame_types: 0,
             }
         }
     }
@@ -360,6 +381,9 @@ mod _impl {
             if self.state.is_some() {
                 self.deinit_state();
             }
+            self.decode = DecodeState::empty();
+            self.frame_prefix_size = 0;
+            self.possible_frame_types = 0;
             match self.mode {
                 NodeMode::ZSTD_COMPRESS => {
                     self.pledged_src_size = pledged_src_size;
@@ -505,12 +529,15 @@ mod _impl {
 
         const ZSTD_MAGICNUMBER: [u8; 4] = 0xFD2FB528u32.to_le_bytes();
         const ZSTD_MAGIC_SKIPPABLE: [u8; 4] = 0x184D2A50u32.to_le_bytes();
+        const ZSTD_FRAME: u8 = 1 << 0;
+        const SKIPPABLE_FRAME: u8 = 1 << 1;
 
-        /// True when the unconsumed input begins a zstd/skippable frame magic (or a prefix of one).
-        fn next_input_is_frame(&self) -> bool {
-            let n = (self.input.size - self.input.pos).min(4);
+        /// Reads up to 4 bytes of the input as the next bytes of a frame magic number, and consumes none.
+        fn classify_frame_prefix(&mut self) {
+            let seen = usize::from(self.frame_prefix_size);
+            let n = (self.input.size - self.input.pos).min(4 - seen);
             if n == 0 {
-                return false;
+                return;
             }
             let mut head = [0u8; 4];
             // SAFETY: input.src[pos..pos+n] lies within the slice installed by set_buffers.
@@ -521,9 +548,70 @@ mod _impl {
                     n,
                 );
             }
-            head[..n] == Self::ZSTD_MAGICNUMBER[..n]
-                || (head[0] & 0xF0 == Self::ZSTD_MAGIC_SKIPPABLE[0]
-                    && head[1..n] == Self::ZSTD_MAGIC_SKIPPABLE[1..n])
+            for (index, &byte) in (seen..).zip(&head[..n]) {
+                if byte != Self::ZSTD_MAGICNUMBER[index] {
+                    self.possible_frame_types &= !Self::ZSTD_FRAME;
+                }
+                // The low 4 bits of the first byte of a skippable magic number are free.
+                let skippable = if index == 0 {
+                    byte & 0xF0 == Self::ZSTD_MAGIC_SKIPPABLE[0]
+                } else {
+                    byte == Self::ZSTD_MAGIC_SKIPPABLE[index]
+                };
+                if !skippable {
+                    self.possible_frame_types &= !Self::SKIPPABLE_FRAME;
+                }
+            }
+            self.frame_prefix_size += n as u8;
+        }
+
+        /// Node's `ZstdDecompressContext::DoThreadPoolWork` without `rejectGarbageAfterEnd`: https://github.com/nodejs/node/blob/v26.10.0/src/node_zlib.cc#L1841-L1911
+        fn do_work_decompress(&mut self) -> usize {
+            if self.decode.contains(DecodeState::IGNORING_TRAILING_INPUT) {
+                return 0;
+            }
+            // The JS drivers write again with no input after a full output buffer, and that write starts no frame.
+            if self.decode.contains(DecodeState::FRAME_COMPLETE) && self.input.size == 0 {
+                return 0;
+            }
+            loop {
+                if self.decode.contains(DecodeState::FRAME_COMPLETE) {
+                    self.decode
+                        .insert(DecodeState::DECODING_FRAME_AFTER_COMPLETE);
+                    self.frame_prefix_size = 0;
+                    self.possible_frame_types = Self::ZSTD_FRAME | Self::SKIPPABLE_FRAME;
+                }
+                if self
+                    .decode
+                    .contains(DecodeState::DECODING_FRAME_AFTER_COMPLETE)
+                    && self.frame_prefix_size < 4
+                {
+                    self.classify_frame_prefix();
+                    if self.possible_frame_types == 0 {
+                        // The stream ended with the last frame: this input and all later input stay unconsumed.
+                        self.decode =
+                            DecodeState::FRAME_COMPLETE | DecodeState::IGNORING_TRAILING_INPUT;
+                        return 0;
+                    }
+                }
+                // SAFETY: state is a valid DCtx; input/output point to caller-kept-alive buffers (set_buffers).
+                let ret = unsafe {
+                    c::ZSTD_decompressStream(
+                        self.state_ptr().cast(),
+                        &raw mut self.output,
+                        &raw mut self.input,
+                    )
+                };
+                // 0 is frame-complete. A size hint and an error code are both nonzero.
+                if ret != 0 {
+                    self.decode.remove(DecodeState::FRAME_COMPLETE);
+                    return ret;
+                }
+                self.decode = DecodeState::FRAME_COMPLETE;
+                if self.input.pos == self.input.size || self.output.pos == self.output.size {
+                    return 0;
+                }
+            }
         }
 
         pub(crate) fn do_work(&mut self) {
@@ -543,31 +631,7 @@ mod _impl {
                         self.flush as c_uint,
                     )
                 },
-                NodeMode::ZSTD_DECOMPRESS => {
-                    // SAFETY: state is a valid DCtx.
-                    let mut ret = unsafe {
-                        c::ZSTD_decompressStream(
-                            self.state_ptr().cast(),
-                            &raw mut self.output,
-                            &raw mut self.input,
-                        )
-                    };
-                    // ret == 0 is frame-complete; mirrors NativeZlib::do_work_inflate's GUNZIP loop.
-                    while ret == 0
-                        && self.output.pos < self.output.size
-                        && self.next_input_is_frame()
-                    {
-                        // SAFETY: state is a valid DCtx; input/output point to caller-kept-alive buffers.
-                        ret = unsafe {
-                            c::ZSTD_decompressStream(
-                                self.state_ptr().cast(),
-                                &raw mut self.output,
-                                &raw mut self.input,
-                            )
-                        };
-                    }
-                    ret
-                }
+                NodeMode::ZSTD_DECOMPRESS => self.do_work_decompress(),
                 _ => unreachable!(),
             } as u64;
         }
@@ -577,11 +641,40 @@ mod _impl {
             *avail_out = u32::try_from(self.output.size - self.output.pos).expect("int cast");
         }
 
+        /// Node's `ZstdDecompressContext::GetErrorInfo` without `rejectGarbageAfterEnd`: https://github.com/nodejs/node/blob/v26.10.0/src/node_zlib.cc#L1913-L1937
+        fn input_ended_inside_frame(&self) -> bool {
+            // A compressor keeps no frame state, and a handle that `init()` did not set up decoded nothing.
+            if self.mode != NodeMode::ZSTD_DECOMPRESS || self.state.is_none() {
+                return false;
+            }
+            // With a full output buffer the caller writes again, and that write gets the result.
+            if self.flush != c::ZSTD_e_end as c_int
+                || self.decode.contains(DecodeState::FRAME_COMPLETE)
+                || self.input.pos != self.input.size
+                || self.output.pos == self.output.size
+            {
+                return false;
+            }
+            // Fewer than 4 bytes after a complete frame do not show that a frame began, so node ignores them.
+            !(self
+                .decode
+                .contains(DecodeState::DECODING_FRAME_AFTER_COMPLETE)
+                && self.frame_prefix_size < 4)
+        }
+
         pub(crate) fn get_error_info(&mut self) -> Error {
             // Compute result, then clear `remaining`, then return.
             let err = c::ZSTD_getErrorCode(self.remaining as usize);
             let result = if err == 0 {
-                Error::OK
+                if self.input_ended_inside_frame() {
+                    Error::init(
+                        c"unexpected end of file".as_ptr(),
+                        bun_zlib::ReturnCode::BufError as c_int,
+                        c"Z_BUF_ERROR".as_ptr(),
+                    )
+                } else {
+                    Error::OK
+                }
             } else {
                 Error {
                     err: err as c_int,

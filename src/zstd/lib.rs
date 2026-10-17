@@ -33,6 +33,7 @@ pub mod c {
 
     // ZSTD_EndDirective
     pub const ZSTD_e_continue: ZSTD_EndDirective = 0;
+    pub const ZSTD_e_end: ZSTD_EndDirective = 2;
 
     // ZSTD_cParameter
     pub const ZSTD_c_compressionLevel: ZSTD_cParameter = 100;

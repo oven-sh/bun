@@ -135,7 +135,7 @@ pub struct Options {
     pub is_javascript: bool,
     /// `.json`: `parseJSONText`. With `is_javascript` and `is_jsx`, as `initializeState` has it.
     pub is_json: bool,
-    pub is_typescript_under_a_javascript_name: bool,
+    pub is_typescript_with_js_extension: bool,
     /// The top level is not an await context.
     pub await_is_a_name: bool,
     /// For oxc, in a file whose name does not say what it is: until something says that it is a module, an `await` at the top

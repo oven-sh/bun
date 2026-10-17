@@ -579,8 +579,8 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             FileKind::Ts
         };
         self.f.is_js = self.options.is_javascript && !self.options.is_json;
-        if self.options.is_typescript_under_a_javascript_name {
-            self.f.rare_syntax |= rare::TYPESCRIPT_UNDER_A_JAVASCRIPT_NAME;
+        if self.options.is_typescript_with_js_extension {
+            self.f.rare_syntax |= rare::TYPESCRIPT_WITH_JS_EXTENSION;
         }
         self.f.is_flow = self.is_flow();
         self.next();
@@ -616,6 +616,10 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             self.end_of_file_jsdoc(reparsed);
         }
         self.f.body = self.take_ids(base);
+        if self.f.pats.iter().any(|pat| matches!(pat.kind, PatKind::Ident(name) if self.lx.text_of(name) == b"__dirname")) {
+            let folded = core::mem::take(&mut self.f.folded_specifiers);
+            self.f.folded_specifiers = folded.into_iter().filter(|&(argument, _)| !self.starts_with_dirname(argument)).collect();
+        }
         // What was parsed twice counts twice, and the answer is "maybe".
         if self.module_statements.0 > self.module_statements.1 {
             self.f.rare_syntax |= rare::NESTED_MODULE_SYNTAX;

@@ -5,7 +5,7 @@ use super::fit::Ty;
 use super::{FileBuild, Fx, Jump};
 use crate::builder::Var;
 use crate::id::{BlockId, StrId, TyId, V};
-use crate::ir::{self, Op, Target, Term, Why};
+use crate::ir::{self, Op, Target, Term, CoerceReason};
 use bun_sema::atom::Atom;
 use bun_sema::hir::{ClassId, ExprId, ExprKind};
 use bun_sema::program::FileId;
@@ -47,7 +47,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.switch_to(there);
         let got = self.emit_throwing(fx, Op::IterGet { iter: it.iter, index });
         if wants_value {
-            let got = self.fit(fx, got, Ty::of(claim), Why::Claim);
+            let got = self.coerce_to(fx, got, Ty::of(claim), CoerceReason::Claim);
             self.write(fx, result, got);
         }
         fx.b.jump(join);
@@ -61,7 +61,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     /// An array of what is left.
-    pub(crate) fn rest_of_pattern_iterator(&mut self, fx: &mut Fx, it: &PatternIterator, from: i64) -> V {
+    pub(crate) fn collect_pattern_iterator_rest(&mut self, fx: &mut Fx, it: &PatternIterator, from: i64) -> V {
         let array = self.emit_throwing(fx, Op::NewArray(ir::Args::new()));
         let index = self.new_counter(fx, from);
         let (header, step, inside, exit) = (fx.b.new_block(), fx.b.new_block(), fx.b.new_block(), fx.b.new_block());
@@ -91,7 +91,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     /// What `f` emits is not a step of the iterator: an initializer, a target, a nested pattern. If it throws, the iterator is closed.
-    pub(crate) fn closing_pattern_iterator<R>(&mut self, fx: &mut Fx, it: &PatternIterator, f: impl FnOnce(&mut Self, &mut Fx) -> R) -> R {
+    pub(crate) fn with_pattern_iterator_close<R>(&mut self, fx: &mut Fx, it: &PatternIterator, f: impl FnOnce(&mut Self, &mut Fx) -> R) -> R {
         if !self.out.funcs[fx.id.idx()].has(ir::func_flags::GENERATOR) {
             fx.handlers.push(it.closing);
             let result = f(self, fx);
@@ -99,7 +99,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return result;
         }
         let done = self.read(fx, it.done);
-        let outer = fx.not_closed_if.insert(it.iter, done);
+        let outer = fx.skip_close_if.insert(it.iter, done);
         let unwind_depth = fx.handlers.len();
         fx.handlers.push(it.closing);
         fx.jumps.push(Jump { label: Atom::NONE, break_to: BlockId::NONE, continue_to: BlockId::NONE, iter: it.iter, unwind_depth, is_unlabeled_break_target: false, finally_context: None });
@@ -107,8 +107,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.jumps.pop();
         fx.handlers.pop();
         match outer {
-            Some(outer) => fx.not_closed_if.insert(it.iter, outer),
-            None => fx.not_closed_if.remove(&it.iter),
+            Some(outer) => fx.skip_close_if.insert(it.iter, outer),
+            None => fx.skip_close_if.remove(&it.iter),
         };
         result
     }
@@ -173,32 +173,32 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     // ───────────────────────────── NamedEvaluation ─────────────────────────────
 
     /// The expression, which if it is an anonymous function or class takes `name` for its own.
-    pub(crate) fn expr_named(&mut self, fx: &mut Fx, e: ExprId, name: Atom) -> V {
+    pub(crate) fn expr_with_name(&mut self, fx: &mut Fx, e: ExprId, name: Atom) -> V {
         if name.is_some() {
             // `#x = () => {}` is named `#x`, as it is written.
             let name = match self.private_name_text(name) {
                 Some(written) => self.out.strs.intern(&written),
                 None => self.str(name),
             };
-            self.give_name(fx, e, name);
+            self.set_inferred_name(fx, e, name);
         }
         self.expr(fx, e)
     }
 
-    pub(crate) fn expr_named_by_key(&mut self, fx: &mut Fx, e: ExprId, written: ExprId, key: V) -> V {
+    pub(crate) fn expr_with_key_name(&mut self, fx: &mut Fx, e: ExprId, written: ExprId, key: V) -> V {
         let hir = self.hir(fx.file);
-        match hir[self.target_of_inferred_name(fx, e)].kind {
+        match hir[self.inferred_name_target(fx, e)].kind {
             ExprKind::Fn(function) if hir[function].name.is_none() => {
-                self.name_by_well_known_symbol(fx.file, function, written, b"");
-                self.name_by_key = key;
+                self.name_from_well_known_symbol(fx.file, function, written, b"");
+                self.key_name_value = key;
                 let value = self.expr(fx, e);
-                self.name_by_key = V::NONE;
+                self.key_name_value = V::NONE;
                 value
             }
             ExprKind::Class(class) if hir[class].name.is_none() => {
-                self.name_by_key = key;
+                self.key_name_value = key;
                 let value = self.expr(fx, e);
-                self.name_by_key = V::NONE;
+                self.key_name_value = V::NONE;
                 value
             }
             _ => self.expr(fx, e),
@@ -206,11 +206,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     /// The same as what it goes straight to holds it to: see `expr_into`.
-    pub(crate) fn expr_named_into(&mut self, fx: &mut Fx, e: ExprId, name: Atom, want: Ty, why: Why) -> V {
+    pub(crate) fn expr_with_name_into(&mut self, fx: &mut Fx, e: ExprId, name: Atom, want: Ty, why: CoerceReason) -> V {
         // A function or a class, which is all that takes a name, is held to nothing.
-        if matches!(self.hir(fx.file)[self.target_of_inferred_name(fx, e)].kind, ExprKind::Fn(_) | ExprKind::Class(_)) {
-            let value = self.expr_named(fx, e, name);
-            return self.fit(fx, value, want, why);
+        if matches!(self.hir(fx.file)[self.inferred_name_target(fx, e)].kind, ExprKind::Fn(_) | ExprKind::Class(_)) {
+            let value = self.expr_with_name(fx, e, name);
+            return self.coerce_to(fx, value, want, why);
         }
         self.expr_into(fx, e, want, why)
     }
@@ -219,7 +219,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     pub(crate) fn name_of_class(&mut self, file: FileId, class: ClassId) -> StrId {
         let name = self.hir(file)[class].name;
         let is_default_export = self.hir(file)[class].flags.contains(bun_sema::hir::Flags::DEFAULT);
-        match self.given_class_names.get(&(file, class)) {
+        match self.inferred_class_names.get(&(file, class)) {
             _ if name.is_some() => self.str(name),
             Some(&given) => given,
             None if is_default_export => self.out.strs.intern(b"default"),
@@ -227,7 +227,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    fn target_of_inferred_name(&self, fx: &Fx, mut e: ExprId) -> ExprId {
+    fn inferred_name_target(&self, fx: &Fx, mut e: ExprId) -> ExprId {
         let hir = self.hir(fx.file);
         while let ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::AsConst(expr) | ExprKind::NonNull(expr) | ExprKind::Instantiation { expr, .. } = hir[e].kind {
             e = expr;
@@ -235,14 +235,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         e
     }
 
-    pub(crate) fn give_name(&mut self, fx: &Fx, e: ExprId, name: StrId) {
+    pub(crate) fn set_inferred_name(&mut self, fx: &Fx, e: ExprId, name: StrId) {
         let hir = self.hir(fx.file);
-        match hir[self.target_of_inferred_name(fx, e)].kind {
+        match hir[self.inferred_name_target(fx, e)].kind {
             ExprKind::Fn(func) if hir[func].name.is_none() => {
-                self.given_function_names.entry((fx.file, func)).or_insert(name);
+                self.inferred_function_names.entry((fx.file, func)).or_insert(name);
             }
             ExprKind::Class(class) if hir[class].name.is_none() => {
-                self.given_class_names.entry((fx.file, class)).or_insert(name);
+                self.inferred_class_names.entry((fx.file, class)).or_insert(name);
             }
             _ => {}
         }

@@ -183,15 +183,15 @@ for (const file of [...moduleList.slice(0, nativeStartIndex), ...functionFiles])
 
 // As `Manifest::resolve` does.
 const sourceFiles = moduleList.slice(0, nativeStartIndex);
-const idOfPath = new Map(sourceFiles.map((file, id) => [file, id]));
-const idOfSpecifier = new Map(moduleList.map((file, id) => [id < nativeStartIndex ? specifierOf(file) : file, id]));
+const pathId = new Map(sourceFiles.map((file, id) => [file, id]));
+const specifierId = new Map(moduleList.map((file, id) => [id < nativeStartIndex ? specifierOf(file) : file, id]));
 function resolve(specifier: string, importer: string) {
-  const named = idOfSpecifier.get(specifier);
+  const named = specifierId.get(specifier);
   if (named !== undefined) return named;
   for (const directory of [path.posix.dirname(importer), "."]) {
     const joined = path.posix.join(directory, specifier);
     for (const extension of ["", ".ts", ".js"]) {
-      const id = idOfPath.get(joined + extension);
+      const id = pathId.get(joined + extension);
       if (id !== undefined) return id;
     }
   }
@@ -204,7 +204,7 @@ const ipc = ["node:net", "node:dgram", "internal/dgram", "node:fs", "internal/se
 const standardStream = ["node:tty", "node:fs", "internal/fs/streams"];
 
 // What a module requires through native code or a builtin function: no `require("..")` in its text says so.
-const requiredBesides: Record<string, string[]> = {
+const alsoRequired: Record<string, string[]> = {
   "node:fs/promises": ["internal/fifo"],
   "node:console": console_,
   "internal/promisify": ["node:timers/promises"],
@@ -213,7 +213,7 @@ const requiredBesides: Record<string, string[]> = {
   "node:repl": standardStream,
 };
 
-// What a builtin function requires is here or in `requiredBesides`, under what makes native code call the function.
+// What a builtin function requires is here or in `alsoRequired`, under what makes native code call the function.
 const triggers: Record<string, string[]> = {
   "process.stdout": standardStream,
   "process.stderr": standardStream,
@@ -229,11 +229,11 @@ const triggers: Record<string, string[]> = {
   "Bun.SQL": ["bun:sql"],
   "Bun.postgres": ["bun:sql"],
 };
-const namesInPatternsOf = (code: string, global: string) =>
+const patternNames = (code: string, global: string) =>
   [...code.matchAll(new RegExp(`\\{([^{}]*)\\}\\s*=\\s*${global}\\b(?!\\s*[.(\\[?])`, "g"))].flatMap(([, names]) =>
     names.split(",").map(name => name.split(/[:=]/)[0].trim()),
   );
-const hidesWhichPropertiesItReads = (code: string, global: string) =>
+const hasOpaquePropertyReads = (code: string, global: string) =>
   new RegExp(
     `(?<![=!<>}]\\s*)(?:=|\\|\\|=|&&=|\\?\\?=)\\s*${global}\\s*(?:[;,)\\n]|$)|\\}\\s*\\}\\s*=\\s*${global}\\b|(?<![.\\w$])${global}\\s*(?:\\?\\.)?\\[`,
     "m",
@@ -245,16 +245,16 @@ const modulesKnownToAlias: Record<string, string[]> = {
 const modulesTriggeredBy = (file: string) => {
   const code = transpiler.transformSync(read(file));
   for (const global of new Set(Object.keys(triggers).map(property => property.split(".")[0]))) {
-    if (hidesWhichPropertiesItReads(code, global) && !modulesKnownToAlias[specifierOf(file)]?.includes(global)) {
+    if (hasOpaquePropertyReads(code, global) && !modulesKnownToAlias[specifierOf(file)]?.includes(global)) {
       throw new Error(
-        `${file} aliases ${global}, reads it by a computed name or takes it apart in a nested pattern, so \`triggers\` cannot tell which of its properties the module reads. Write ${global}.<property>, or add the module to \`modulesKnownToAlias\` and what it needs to \`requiredBesides\`.`,
+        `${file} aliases ${global}, reads it by a computed name or takes it apart in a nested pattern, so \`triggers\` cannot tell which of its properties the module reads. Write ${global}.<property>, or add the module to \`modulesKnownToAlias\` and what it needs to \`alsoRequired\`.`,
       );
     }
   }
   return Object.entries(triggers)
     .filter(([trigger]) => {
       const [global, property] = trigger.split(".");
-      return new RegExp(`\\b${global}\\??\\.${property}\\b`).test(code) || namesInPatternsOf(code, global).includes(property);
+      return new RegExp(`\\b${global}\\??\\.${property}\\b`).test(code) || patternNames(code, global).includes(property);
     })
     .flatMap(([, specifiers]) => specifiers);
 };
@@ -264,11 +264,11 @@ for (const [id, file] of sourceFiles.entries()) {
     .scanImports(read(file))
     .filter(record => record.kind === "require-call")
     .map(record => resolve(record.path, file))
-    .concat(idsOf(requiredBesides[specifierOf(file)] ?? []))
+    .concat(idsOf(alsoRequired[specifierOf(file)] ?? []))
     .filter(required => required !== id);
   if (required.length) lines.push(`requires\t${id}\t${[...new Set(required)].sort((a, b) => a - b).join("\t")}`);
 }
-for (const [specifier, besides] of Object.entries(requiredBesides)) {
+for (const [specifier, besides] of Object.entries(alsoRequired)) {
   lines.push(`besides\t${resolve(specifier, "")}\t${idsOf(besides).join("\t")}`);
 }
 for (const [id, file] of sourceFiles.entries()) {
@@ -317,16 +317,16 @@ const rows = fs
   .split("\n")
   .filter(line => line)
   .map(line => line.split("\t"));
-const keyOfRow = (name: string, position: string) => `${name}\t${position}`;
-const unused = new Set(rows.filter(row => row[2] !== "hardened").map(([name, position]) => keyOfRow(name, position)));
-const plain = new Set(rows.filter(([name]) => !name.endsWith("*")).map(([name, position]) => keyOfRow(name, position)));
+const rowKey = (name: string, position: string) => `${name}\t${position}`;
+const unused = new Set(rows.filter(row => row[2] !== "hardened").map(([name, position]) => rowKey(name, position)));
+const plain = new Set(rows.filter(([name]) => !name.endsWith("*")).map(([name, position]) => rowKey(name, position)));
 const prefixes = rows.filter(([name]) => name.endsWith("*")).map(([name, position]) => [name.slice(0, -1), position]);
 const failures: string[] = [];
 for (const use of census([...sourceFiles, ...functionFiles].map(locate))) {
-  const key = keyOfRow(use.name, use.position);
+  const key = rowKey(use.name, use.position);
   const prefix = prefixes.find(([prefix, position]) => position === use.position && use.name.startsWith(prefix));
   if (plain.has(key)) unused.delete(key);
-  else if (prefix) unused.delete(keyOfRow(prefix[0] + "*", prefix[1]));
+  else if (prefix) unused.delete(rowKey(prefix[0] + "*", prefix[1]));
   else failures.push(`${use.file}:${use.line}: $${use.name} as ${use.position} has no row in aot/builtins/bun.def`);
 }
 for (const key of unused) {

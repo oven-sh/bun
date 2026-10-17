@@ -154,7 +154,7 @@ impl Run<'_, '_, '_, '_> {
     /// `Err`: the visit pass does not hand it over.
     fn convert(&mut self, candidate: &Candidate) -> Result<(PendingCompile, Vec<Stmt>), Outcome> {
         let declared = &self.hir[candidate.func];
-        let is_suppressed = self.adapter.is_under_a_suppression(candidate.func);
+        let is_suppressed = self.adapter.is_function_suppressed(candidate.func);
         let prologue = match declared.body {
             FnBody::Block(list) => self.adapter.directives(list),
             _ => Vec::new(),

@@ -17,14 +17,14 @@ const builds = Number(process.env.AOT_REPEATED_BUILDS) || 6;
 const atOnce = Math.max(2, Math.min(builds, availableParallelism()));
 const programs = [
   // What it prints depends on which methods the compiler has seen their classes assign to.
-  "repeated-builds/methods-that-their-classes-assign-to.ts",
-  "programs/typed-objects/a-field-that-few-members-of-a-union-have.ts",
-  "programs/classes-and-closures/members-by-fit.ts",
-  "programs/async-and-generators/async-functions-in-many-ways.ts",
+  "repeated-builds/methods-reassigned-by-class.ts",
+  "programs/typed-objects/field-on-few-union-members.ts",
+  "programs/classes-and-closures/structural-subtypes.ts",
+  "programs/async-and-generators/async-function-forms.ts",
   "programs/strings/equality-switch-plus-and-templates-untyped.js",
-  "programs/commonjs/a-typed-file-required-by-a-typed-file/main.ts",
-  "programs/objects/accessors-of-object-literals-with-data-members.ts",
-  "programs/untyped-code/a-counter-compared-with-a-length.js",
+  "programs/commonjs/typed-requires-typed/main.ts",
+  "programs/objects/literal-accessors-with-data-members.ts",
+  "programs/untyped-code/counter-compared-with-length.js",
 ];
 const root = String(tempDir("aot-repeated-builds", {}));
 afterAll(() => rmSync(root, { recursive: true, force: true }));

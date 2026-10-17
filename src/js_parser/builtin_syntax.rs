@@ -346,7 +346,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         true
     }
 
-    fn call_in_place_of_new(&mut self, new: &mut E::New, callee: &[u8], loc: Loc) -> Expr {
+    fn call_replacing_new(&mut self, new: &mut E::New, callee: &[u8], loc: Loc) -> Expr {
         let target = self.private_identifier(callee, new.target.loc);
         self.new_expr(
             E::Call {
@@ -374,7 +374,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if self.constructor_name(&new) != b"TypeError" {
             return false;
         }
-        *e = self.call_in_place_of_new(&mut new, b"makeTypeError", e.loc);
+        *e = self.call_replacing_new(&mut new, b"makeTypeError", e.loc);
         true
     }
 
@@ -386,7 +386,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             b"RangeError" => b"throwRangeError",
             _ => return None,
         };
-        Some(self.call_in_place_of_new(&mut new, callee, value.loc))
+        Some(self.call_replacing_new(&mut new, callee, value.loc))
     }
 
     /// A class extends the public global, not its private copy.

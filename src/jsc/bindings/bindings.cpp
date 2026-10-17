@@ -1236,19 +1236,19 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     if (o1->type() == ObjectType || o2->type() == ObjectType) {
         static_assert(!checkPrototypes || isStrict);
         struct OwnProperties {
-            bool isOfCompiledObject { false };
+            bool isCompiledObject { false };
             Vector<UniquedStringImpl*, 16> names;
             MarkedArgumentBuffer values;
         };
         OwnProperties properties1;
         OwnProperties properties2;
         auto collect = [&](JSObject* object, OwnProperties& properties) -> bool {
-            properties.isOfCompiledObject = JSC::AOT::Typed::forEachOwnPropertyOfCompiledObject(object, [&](UniquedStringImpl& name, JSValue value) {
+            properties.isCompiledObject = JSC::AOT::Typed::forEachCompiledObjectOwnProperty(object, [&](UniquedStringImpl& name, JSValue value) {
                 properties.names.append(&name);
                 properties.values.appendWithCrashOnOverflow(value);
                 return true;
             });
-            if (properties.isOfCompiledObject)
+            if (properties.isCompiledObject)
                 return true;
             Structure* structure = object->structure();
             if (structure->hasNonReifiedStaticProperties() || !structure->canPerformFastPropertyEnumeration())
@@ -1267,7 +1267,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 return expected;
             return properties.names.find(name);
         };
-        if (collect(o1, properties1) && collect(o2, properties2) && (properties1.isOfCompiledObject || properties2.isOfCompiledObject)) {
+        if (collect(o1, properties1) && collect(o2, properties2) && (properties1.isCompiledObject || properties2.isCompiledObject)) {
             MarkedArgumentBuffer pairs;
             for (size_t i = 0; i < properties1.names.size(); i++) {
                 UniquedStringImpl* name = properties1.names[i];
@@ -5108,7 +5108,7 @@ BunString JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlo
         }
     }
 
-    if (WTF::String written = JSC::AOT::writtenNameOfClosure(obj); !written.isNull())
+    if (WTF::String written = JSC::AOT::closureDeclaredName(obj); !written.isNull())
         return toStringAdopt(WTF::move(written));
 
     if (JSC::JSFunction* function = dynamicDowncast<JSC::JSFunction>(obj)) {
@@ -6650,9 +6650,9 @@ extern "C" EncodedJSValue JSArray__constructEmptyArray(
     return JSValue::encode(JSC::constructEmptyArray(global, (ArrayAllocationProfile*)nullptr, len));
 }
 
-extern "C" bool JSGlobalObject__valueThrownByHostFunctionIsIgnored(JSC::JSGlobalObject* globalObject)
+extern "C" bool JSGlobalObject__ignoresHostFunctionException(JSC::JSGlobalObject* globalObject)
 {
-    return JSC::getVM(globalObject).interpreter.valueThrownByHostFunctionIsIgnored();
+    return JSC::getVM(globalObject).interpreter.hostFunctionThrownValueIsIgnored();
 }
 
 extern "C" bool JSGlobalObject__hasException(JSC::JSGlobalObject* globalObject)

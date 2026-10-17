@@ -948,7 +948,7 @@ function bmallocGroup(wk: WebKitBuild, flags: WebKitFlags, lists: LibraryLists):
       "-DBUILDING_bmalloc",
       "-D_GNU_SOURCE",
       // bmalloc's own TUs never see cmakeconfig.h (BPlatform.h reads -D's).
-      ...(usesMimalloc(cfg) ? ["-DUSE_MIMALLOC=1"] : []),
+      ...(usesMimalloc(cfg) ? ["-DUSE_MIMALLOC=1", "-DUSE_EXTERNAL_MIMALLOC=1"] : []),
       "-Wno-cast-align",
       "-Wno-missing-field-initializers",
       // libpas' 16-byte CAS on x64 (bmalloc/CMakeLists.txt, MSVC branch; the

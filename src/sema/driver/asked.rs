@@ -18,11 +18,13 @@ pub enum Kind {
     Exists,
     /// Of a path in the checker's format: what the search of a file that the program may not hold has found.
     Scanned,
+    /// Of a path in the checker's format: what the listing of a directory above the working directory says of one name.
+    Entry,
 }
 
 impl Kind {
     pub fn from_number(number: u64) -> Option<Kind> {
-        [Kind::Text, Kind::Listing, Kind::IsDirectory, Kind::RealPath, Kind::IsCaseSensitive, Kind::NativeText, Kind::Exists, Kind::Scanned].into_iter().find(|&kind| kind as u64 == number)
+        [Kind::Text, Kind::Listing, Kind::IsDirectory, Kind::RealPath, Kind::IsCaseSensitive, Kind::NativeText, Kind::Exists, Kind::Scanned, Kind::Entry].into_iter().find(|&kind| kind as u64 == number)
     }
 }
 
@@ -35,64 +37,80 @@ pub struct Question {
 
 pub type Hash = fn(&[u8]) -> u64;
 
-struct Noted {
+struct Recording {
     hash: Hash,
     questions: Vec<Question>,
-    is_spoiled: bool,
+    is_invalidated: bool,
 }
 
-static IS_NOTING: AtomicBool = AtomicBool::new(false);
-static NOTED: Guarded<Option<Noted>> = Guarded::new(None);
+static IS_RECORDING: AtomicBool = AtomicBool::new(false);
+static RECORDED: Guarded<Option<Recording>> = Guarded::new(None);
 
 /// From here to `end`, every question to the disk is noted, on whichever thread.
+static WORKING_DIRECTORY: Guarded<Vec<u8>> = Guarded::new(Vec::new());
+
+/// In the checker's format. It is the same when the questions are asked again.
+pub fn set_working_directory(path: &[u8]) {
+    *WORKING_DIRECTORY.lock() = path.to_vec();
+}
+
+/// The name in `directory` that leads to the working directory, if `directory` is above it.
+pub(crate) fn child_toward_working_directory(directory: &[u8]) -> Option<Vec<u8>> {
+    let working_directory = WORKING_DIRECTORY.lock();
+    let below = working_directory.strip_prefix(directory)?;
+    let below = if directory.ends_with(b"/") { below } else { below.strip_prefix(b"/")? };
+    let name = below.split(|&byte| byte == b'/').next()?;
+    (!name.is_empty()).then(|| name.to_vec())
+}
+
 pub fn begin(hash: Hash) {
-    *NOTED.lock() = Some(Noted { hash, questions: Vec::new(), is_spoiled: false });
-    IS_NOTING.store(true, Ordering::Release);
+    *RECORDED.lock() = Some(Recording { hash, questions: Vec::new(), is_invalidated: false });
+    IS_RECORDING.store(true, Ordering::Release);
 }
 
 /// Each question once, sorted. `None`: they do not tell the whole: something was read by another road, or one question was answered in
 /// two ways.
 pub fn end() -> Option<Vec<Question>> {
-    IS_NOTING.store(false, Ordering::Release);
-    let Noted { mut questions, is_spoiled, .. } = NOTED.lock().take()?;
+    IS_RECORDING.store(false, Ordering::Release);
+    let Recording { mut questions, is_invalidated, .. } = RECORDED.lock().take()?;
     questions.sort_unstable();
     questions.dedup();
-    let is_answered_in_two_ways = questions.windows(2).any(|pair| (pair[0].kind, &pair[0].path) == (pair[1].kind, &pair[1].path));
-    (!is_spoiled && !is_answered_in_two_ways).then_some(questions)
+    let has_conflicting_answers = questions.windows(2).any(|pair| (pair[0].kind, &pair[0].path) == (pair[1].kind, &pair[1].path));
+    (!is_invalidated && !has_conflicting_answers).then_some(questions)
 }
 
 /// Something is read that is not noted.
-pub fn spoil() {
-    if IS_NOTING.load(Ordering::Acquire)
-        && let Some(noted) = NOTED.lock().as_mut()
+pub fn invalidate_recording() {
+    if IS_RECORDING.load(Ordering::Acquire)
+        && let Some(noted) = RECORDED.lock().as_mut()
     {
-        noted.is_spoiled = true;
+        noted.is_invalidated = true;
     }
 }
 
 thread_local! {
-    static IS_UNNOTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static IS_RECORDING_SUSPENDED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// What `run` asks on this thread is not noted: whoever calls it notes what comes of it.
-pub(crate) fn unnoted<T>(run: impl FnOnce() -> T) -> T {
-    let before = IS_UNNOTED.replace(true);
+pub(crate) fn without_recording<T>(run: impl FnOnce() -> T) -> T {
+    let before = IS_RECORDING_SUSPENDED.replace(true);
     let found = run();
-    IS_UNNOTED.set(before);
+    IS_RECORDING_SUSPENDED.set(before);
     found
 }
 
-pub(crate) fn is_noting() -> bool {
-    IS_NOTING.load(Ordering::Acquire)
+pub(crate) fn is_recording() -> bool {
+    IS_RECORDING.load(Ordering::Acquire)
 }
 
 pub fn note(kind: Kind, path: &[u8], answer: impl FnOnce(Hash) -> u64) {
-    if !IS_NOTING.load(Ordering::Acquire) || IS_UNNOTED.get() {
+    if !IS_RECORDING.load(Ordering::Acquire) || IS_RECORDING_SUSPENDED.get() {
         return;
     }
-    let Some(hash) = NOTED.lock().as_ref().map(|noted| noted.hash) else { return };
+    let Some(hash) = RECORDED.lock().as_ref().map(|noted| noted.hash) else { return };
     let answer = answer(hash);
-    if let Some(noted) = NOTED.lock().as_mut() {
+    if let Some(noted) = RECORDED.lock().as_mut() {
         noted.questions.push(Question { kind, path: path.to_vec(), answer });
     }
 }
@@ -108,7 +126,7 @@ pub(crate) fn exists(path: &[u8]) -> bool {
 }
 
 /// Which of them the disk answers otherwise than it did, in order.
-pub fn answered_otherwise(questions: &[Question], hash: Hash, threads: usize) -> Vec<usize> {
+pub fn changed_answers(questions: &[Question], hash: Hash, threads: usize) -> Vec<usize> {
     let found: Guarded<Vec<usize>> = Guarded::new(Vec::new());
     let share = questions.len().div_ceil(threads.max(1)).max(1);
     std::thread::scope(|scope| {
@@ -116,7 +134,7 @@ pub fn answered_otherwise(questions: &[Question], hash: Hash, threads: usize) ->
             let found = &found;
             scope.spawn(move || {
                 for (at, question) in part.iter().enumerate() {
-                    if crate::host::answer_now(question.kind, &question.path, hash) != question.answer {
+                    if crate::host::current_answer(question.kind, &question.path, hash) != question.answer {
                         found.lock().push(number * share + at);
                     }
                 }

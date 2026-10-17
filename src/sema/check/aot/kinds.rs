@@ -19,7 +19,7 @@
 //!
 //! Where a name is read, more may be known than what its variable holds over its whole life: `if (typeof n !== "number") throw ..`, and `n` is a number from there
 //! on. From the read back over the flow nodes of the binder, to the stores that reach it, with the tests that have been passed on the way. Only for a variable of which
-//! the flow tells every store: see `told_of_variable`.
+//! the flow tells every store: see `variable_flow_coverage`.
 //!
 //! A function returns what its `return`s yield, whoever calls it. A call yields that where its callee is a name that stands for one function
 //! of the file whenever it is read. The functions of a file are in the same fixed point as its variables.
@@ -62,22 +62,22 @@ pub mod kind {
 pub(super) struct State {
     /// By file: what the variables, parameters and `#private` fields hold whose stores are followed.
     held: FxHashMap<FileId, FxHashMap<SymbolId, u16>>,
-    variables_followed: Vec<(SymbolId, Rc<Place>, bool)>,
-    functions_followed: Vec<FnId>,
+    tracked_variables: Vec<(SymbolId, Rc<Place>, bool)>,
+    tracked_functions: Vec<FnId>,
     /// While that is found for a file: what has been found so far.
     growing: Option<(FileId, FxHashMap<SymbolId, u16>)>,
-    reads_of_what_grows: u64,
-    /// By file: `kinds_returned_by`.
+    reads_of_growing: u64,
+    /// By file: `returned_kinds`.
     returned: FxHashMap<FileId, FxHashMap<FnId, u16>>,
     /// The same while `growing`.
     returned_so_far: FxHashMap<FnId, u16>,
-    /// `kinds_yielded_by`, once the file is done.
+    /// `result_kinds_of`, once the file is done.
     yielded: FxHashMap<(FileId, ExprId), u16>,
     /// The same while `growing`, for one round.
     produced_this_round: FxHashMap<ExprId, u16>,
-    /// `told_of_variable`, as far as it has been asked.
-    told: FxHashMap<Sym, Option<Told>>,
-    /// `kinds_asserted_by`, as far as it has been asked. What is found further in is cut off earlier: by the depth too.
+    /// `variable_flow_coverage`, as far as it has been asked.
+    told: FxHashMap<Sym, Option<FlowCoverage>>,
+    /// `asserted_kinds`, as far as it has been asked. What is found further in is cut off earlier: by the depth too.
     asserted: FxHashMap<(FileId, FnId, u32, u8), u16>,
     /// `kinds_at`, by variable and flow node, once the file is done.
     at_flow: FxHashMap<(Sym, FlowId), u16>,
@@ -106,14 +106,14 @@ pub(super) struct Shared {
 }
 
 impl State {
-    pub(super) fn nothing_grows(&self) -> bool {
+    pub(super) fn is_stable(&self) -> bool {
         self.growing.is_none()
     }
 }
 
 /// How far control flow tells what a variable holds.
 #[derive(Copy, Clone)]
-struct Told {
+struct FlowCoverage {
     /// The code that declares it. Every store to it is part of that code.
     container: Container,
     /// Nothing is stored to it once it has its first value, and no read comes before that.
@@ -136,12 +136,12 @@ struct Walk {
     depth: u8,
 }
 
-const MOST_STEPS: u32 = 20_000;
-const MOST_DEPTH: u8 = 3;
-const NIL: u16 = kind::UNDEFINED | kind::NULL;
+const MAX_STEPS: u32 = 20_000;
+const MAX_DEPTH: u8 = 3;
+const NULLISH: u16 = kind::UNDEFINED | kind::NULL;
 
 /// What `typeof` calls by the name, and what it calls by another. An object may pass itself off as `undefined`.
-fn kinds_called(name: &[u8]) -> (u16, u16) {
+fn typeof_kinds(name: &[u8]) -> (u16, u16) {
     let (called, never_otherwise) = match name {
         b"undefined" => (kind::UNDEFINED | kind::OBJECT, kind::UNDEFINED),
         b"object" => (kind::NULL | kind::ARRAY | kind::OBJECT, kind::NULL | kind::ARRAY),
@@ -156,7 +156,7 @@ fn kinds_called(name: &[u8]) -> (u16, u16) {
     (called, kind::ANYTHING & !never_otherwise)
 }
 
-const FUNCTIONS_OF_MATH: [&[u8]; 35] = [
+const MATH_FUNCTIONS: [&[u8]; 35] = [
     b"abs", b"acos", b"acosh", b"asin", b"asinh", b"atan", b"atan2", b"atanh", b"cbrt", b"ceil", b"clz32", b"cos", b"cosh", b"exp", b"expm1", b"floor", b"fround", b"hypot",
     b"imul", b"log", b"log10", b"log1p", b"log2", b"max", b"min", b"pow", b"random", b"round", b"sign", b"sin", b"sinh", b"sqrt", b"tan", b"tanh", b"trunc",
 ];
@@ -197,7 +197,7 @@ fn sum(a: u16, b: u16) -> u16 {
 
 impl<'p, 's> Checker<'p, 's> {
     /// Every value that the variable or the parameter ever holds is of one of the kinds. `kind::ANYTHING`: nothing is known.
-    pub fn kinds_held_by(&mut self, at: Sym) -> u16 {
+    pub fn symbol_kinds(&mut self, at: Sym) -> u16 {
         if let Some(&known) = self.aot.kinds.held.get(&at.file).and_then(|held| held.get(&at.id)) {
             return known;
         }
@@ -205,19 +205,19 @@ impl<'p, 's> Checker<'p, 's> {
             && *file == at.file
         {
             let so_far = so_far.get(&at.id).copied();
-            self.aot.kinds.reads_of_what_grows += 1;
+            self.aot.kinds.reads_of_growing += 1;
             return match so_far {
                 Some(so_far) => so_far,
                 None if self.follow_variable(at) => kind::NOTHING,
-                None => self.kinds_declared_for(at),
+                None => self.declared_kinds(at),
             };
         }
-        self.settle_kinds(at.file, |c| {
+        self.converge_kinds(at.file, |c| {
             c.follow_variable(at);
         });
         match self.aot.kinds.held.get(&at.file).and_then(|held| held.get(&at.id)) {
             Some(&found) => found,
-            None => self.kinds_declared_for(at),
+            None => self.declared_kinds(at),
         }
     }
 
@@ -228,9 +228,9 @@ impl<'p, 's> Checker<'p, 's> {
             _ => return false,
         };
         let growing = self.aot.kinds.growing.take();
-        let place = self.place_of_integers(at);
+        let place = self.integer_slot(at);
         // A variable is blank at first. Whether anything reads it by then is known.
-        let starts_blank = place.is_followed && place.starts_nil && (!is_variable || self.starts_undefined(self.files().sym(at.file, at.id)));
+        let starts_uninitialized = place.is_followed && place.starts_undefined && (!is_variable || self.starts_undefined(self.files().sym(at.file, at.id)));
         self.aot.kinds.growing = growing;
         if !place.is_followed {
             return false;
@@ -238,20 +238,20 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some((_, so_far)) = &mut self.aot.kinds.growing {
             so_far.insert(at.id, kind::NOTHING);
         }
-        self.aot.kinds.variables_followed.push((at.id, place, starts_blank));
+        self.aot.kinds.tracked_variables.push((at.id, place, starts_uninitialized));
         true
     }
 
     fn follow_function(&mut self, func: FnId) {
         self.aot.kinds.returned_so_far.insert(func, kind::NOTHING);
-        self.aot.kinds.functions_followed.push(func);
+        self.aot.kinds.tracked_functions.push(func);
     }
 
-    fn settle_kinds(&mut self, file: FileId, begin: impl FnOnce(&mut Self)) {
+    fn converge_kinds(&mut self, file: FileId, begin: impl FnOnce(&mut Self)) {
         // No name of another file is looked into, so one file is gone through at a time.
         let outer = self.aot.kinds.growing.replace((file, FxHashMap::default()));
-        let outer_variables = std::mem::take(&mut self.aot.kinds.variables_followed);
-        let outer_functions = std::mem::take(&mut self.aot.kinds.functions_followed);
+        let outer_variables = std::mem::take(&mut self.aot.kinds.tracked_variables);
+        let outer_functions = std::mem::take(&mut self.aot.kinds.tracked_functions);
         let outer_returned = std::mem::take(&mut self.aot.kinds.returned_so_far);
         let outer_produced = std::mem::take(&mut self.aot.kinds.produced_this_round);
         let outer_at_flow = std::mem::take(&mut self.aot.kinds.at_flow_this_round);
@@ -259,37 +259,37 @@ impl<'p, 's> Checker<'p, 's> {
         let (mut settled_functions, mut settled): (FxHashSet<FnId>, FxHashSet<SymbolId>) = Default::default();
         loop {
             let mut has_grown = false;
-            let followed_before = (self.aot.kinds.functions_followed.len(), self.aot.kinds.variables_followed.len());
+            let followed_before = (self.aot.kinds.tracked_functions.len(), self.aot.kinds.tracked_variables.len());
             self.aot.kinds.produced_this_round.clear();
             self.aot.kinds.at_flow_this_round.clear();
             let mut next = 0;
-            while let Some(&func) = self.aot.kinds.functions_followed.get(next) {
+            while let Some(&func) = self.aot.kinds.tracked_functions.get(next) {
                 next += 1;
                 if self.aot.kinds.returned_so_far.get(&func) == Some(&kind::ANYTHING) || settled_functions.contains(&func) {
                     continue;
                 }
-                let reads = self.aot.kinds.reads_of_what_grows;
-                let all = self.find_kinds_returned_by(file, func) | self.aot.kinds.returned_so_far.get(&func).copied().unwrap_or(kind::NOTHING);
-                if self.aot.kinds.reads_of_what_grows == reads {
+                let reads = self.aot.kinds.reads_of_growing;
+                let all = self.find_returned_kinds(file, func) | self.aot.kinds.returned_so_far.get(&func).copied().unwrap_or(kind::NOTHING);
+                if self.aot.kinds.reads_of_growing == reads {
                     settled_functions.insert(func);
                 }
                 has_grown |= self.aot.kinds.returned_so_far.insert(func, all) != Some(all);
             }
             let mut next = 0;
-            while let Some((id, place, starts_blank)) = self.aot.kinds.variables_followed.get(next).cloned() {
+            while let Some((id, place, starts_uninitialized)) = self.aot.kinds.tracked_variables.get(next).cloned() {
                 next += 1;
                 if matches!(&self.aot.kinds.growing, Some((_, so_far)) if so_far.get(&id) == Some(&kind::ANYTHING)) || settled.contains(&id) {
                     continue;
                 }
-                let reads = self.aot.kinds.reads_of_what_grows;
-                let mut all = if starts_blank { kind::UNDEFINED } else { kind::NOTHING };
+                let reads = self.aot.kinds.reads_of_growing;
+                let mut all = if starts_uninitialized { kind::UNDEFINED } else { kind::NOTHING };
                 for &store in &place.stores {
                     all |= match store {
-                        Store::Value(e) | Store::Computed(e) => self.kinds_yielded_by(file, e),
+                        Store::Value(e) | Store::Computed(e) => self.result_kinds_of(file, e),
                         Store::Nil => kind::UNDEFINED,
                     };
                 }
-                if self.aot.kinds.reads_of_what_grows == reads {
+                if self.aot.kinds.reads_of_growing == reads {
                     settled.insert(id);
                 }
                 if let Some((_, so_far)) = &mut self.aot.kinds.growing {
@@ -297,7 +297,7 @@ impl<'p, 's> Checker<'p, 's> {
                     has_grown |= so_far.insert(id, all) != Some(all);
                 }
             }
-            if !has_grown && followed_before == (self.aot.kinds.functions_followed.len(), self.aot.kinds.variables_followed.len()) {
+            if !has_grown && followed_before == (self.aot.kinds.tracked_functions.len(), self.aot.kinds.tracked_variables.len()) {
                 break;
             }
         }
@@ -305,14 +305,14 @@ impl<'p, 's> Checker<'p, 's> {
         self.aot.kinds.held.entry(file).or_default().extend(held);
         let returned = std::mem::replace(&mut self.aot.kinds.returned_so_far, outer_returned);
         self.aot.kinds.returned.entry(file).or_default().extend(returned);
-        self.aot.kinds.variables_followed = outer_variables;
-        self.aot.kinds.functions_followed = outer_functions;
+        self.aot.kinds.tracked_variables = outer_variables;
+        self.aot.kinds.tracked_functions = outer_functions;
         self.aot.kinds.produced_this_round = outer_produced;
         self.aot.kinds.at_flow_this_round = outer_at_flow;
     }
 
     /// Whatever a call of the function yields is of one of the kinds, whoever calls it. Not what `new` makes of it.
-    pub fn kinds_returned_by(&mut self, file: FileId, func: FnId) -> u16 {
+    pub fn returned_kinds(&mut self, file: FileId, func: FnId) -> u16 {
         if let Some(&known) = self.aot.kinds.returned.get(&file).and_then(|returned| returned.get(&func)) {
             return known;
         }
@@ -320,30 +320,30 @@ impl<'p, 's> Checker<'p, 's> {
             return kind::ANYTHING;
         }
         if matches!(&self.aot.kinds.growing, Some((growing, _)) if *growing == file) {
-            self.aot.kinds.reads_of_what_grows += 1;
+            self.aot.kinds.reads_of_growing += 1;
             if let Some(&so_far) = self.aot.kinds.returned_so_far.get(&func) {
                 return so_far;
             }
             self.follow_function(func);
             return kind::NOTHING;
         }
-        self.settle_kinds(file, |c| c.follow_function(func));
+        self.converge_kinds(file, |c| c.follow_function(func));
         self.aot.kinds.returned.get(&file).and_then(|returned| returned.get(&func)).copied().unwrap_or(kind::ANYTHING)
     }
 
-    fn find_kinds_returned_by(&mut self, file: FileId, func: FnId) -> u16 {
+    fn find_returned_kinds(&mut self, file: FileId, func: FnId) -> u16 {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // The promise, the generator.
         if hir[func].flags.intersects(Flags::ASYNC | Flags::GENERATOR) {
             return kind::OBJECT;
         }
         if let FnBody::Expr(value) = hir[func].body {
-            return self.kinds_yielded_by(file, value);
+            return self.result_kinds_of(file, value);
         }
         let mut all = if bound.fns[func.idx()].end == UNREACHABLE { kind::NOTHING } else { kind::UNDEFINED };
         for stmt in bound.ids(bound.fns[func.idx()].returns) {
             if let StmtKind::Return(value) = hir[stmt].kind {
-                all |= if value.is_some() { self.kinds_yielded_by(file, value) } else { kind::UNDEFINED };
+                all |= if value.is_some() { self.result_kinds_of(file, value) } else { kind::UNDEFINED };
             }
         }
         all
@@ -351,7 +351,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The function of the file that the name `e` stands for whenever it is read: a function declaration that nothing is assigned to, or a
     /// `const` that a function expression initializes. In JavaScript a function in a block is a `var` besides, which holds `undefined` at first.
-    fn function_named_by_text(&self, file: FileId, e: ExprId) -> Option<FnId> {
+    fn function_for_name_syntactically(&self, file: FileId, e: ExprId) -> Option<FnId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let local = bound.expr_symbol[e.idx()].some()?;
         let symbol = &bound.symbols[local.idx()];
@@ -382,15 +382,15 @@ impl<'p, 's> Checker<'p, 's> {
     /// `+`, which also concatenates.
     pub(super) fn is_used_as_number(&mut self, at: Sym) -> bool {
         let program = self.p;
-        let uses = program.aot.kinds.used_as_numbers.get_or_init(program.files.modules.len(), at.file, || self.find_names_used_as_numbers_in(at.file));
-        uses.holds_for(at.id, |beside| self.kinds_yielded_by(at.file, beside) == kind::NUMBER)
+        let uses = program.aot.kinds.used_as_numbers.get_or_init(program.files.modules.len(), at.file, || self.find_number_like_names(at.file));
+        uses.holds_for(at.id, |beside| self.result_kinds_of(at.file, beside) == kind::NUMBER)
     }
 
-    fn find_names_used_as_numbers_in(&self, file: FileId) -> Uses {
+    fn find_number_like_names(&self, file: FileId) -> Uses {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let (mut as_numbers, mut otherwise): (FxHashSet<SymbolId>, FxHashSet<SymbolId>) = Default::default();
         let mut if_number: FxHashMap<SymbolId, Vec<ExprId>> = FxHashMap::default();
-        for &e in self.exprs_by_kind_of(file).of(ExprTag::Ident) {
+        for &e in self.file_exprs_by_kind(file).of(ExprTag::Ident) {
             let symbol = bound.expr_symbol[e.idx()];
             let Parent::Expr(parent) = bound.expr_parent[e.idx()] else { continue };
             if symbol.is_none() || parent.is_none() {
@@ -425,15 +425,15 @@ impl<'p, 's> Checker<'p, 's> {
     /// As an array: it is indexed by what is shown to be a number, or a method is called on it that only arrays have.
     pub(super) fn is_used_as_array(&mut self, at: Sym) -> bool {
         let program = self.p;
-        let uses = program.aot.kinds.used_as_arrays.get_or_init(program.files.modules.len(), at.file, || self.find_names_used_as_arrays_in(at.file));
-        uses.holds_for(at.id, |index| self.kinds_yielded_by(at.file, index) == kind::NUMBER)
+        let uses = program.aot.kinds.used_as_arrays.get_or_init(program.files.modules.len(), at.file, || self.find_array_like_names(at.file));
+        uses.holds_for(at.id, |index| self.result_kinds_of(at.file, index) == kind::NUMBER)
     }
 
-    fn find_names_used_as_arrays_in(&self, file: FileId) -> Uses {
+    fn find_array_like_names(&self, file: FileId) -> Uses {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let (mut as_arrays, mut otherwise): (FxHashSet<SymbolId>, FxHashSet<SymbolId>) = Default::default();
         let mut if_number: FxHashMap<SymbolId, Vec<ExprId>> = FxHashMap::default();
-        for &e in self.exprs_by_kind_of(file).of(ExprTag::Ident) {
+        for &e in self.file_exprs_by_kind(file).of(ExprTag::Ident) {
             let symbol = bound.expr_symbol[e.idx()];
             let Parent::Expr(parent) = bound.expr_parent[e.idx()] else { continue };
             if symbol.is_none() || parent.is_none() {
@@ -465,7 +465,7 @@ impl<'p, 's> Checker<'p, 's> {
         Uses { surely: as_arrays, otherwise, if_number }
     }
 
-    pub(super) fn is_method_of_strings_alone(&self, name: Atom) -> bool {
+    pub(super) fn is_string_only_method(&self, name: Atom) -> bool {
         matches!(
             self.atoms().bytes(name),
             b"charCodeAt"
@@ -500,13 +500,13 @@ impl<'p, 's> Checker<'p, 's> {
 
     pub(super) fn is_used_as_string(&mut self, at: Sym) -> bool {
         let program = self.p;
-        program.aot.kinds.used_as_strings.get_or_init(program.files.modules.len(), at.file, || self.find_names_used_as_strings_in(at.file)).contains(&at.id)
+        program.aot.kinds.used_as_strings.get_or_init(program.files.modules.len(), at.file, || self.find_string_like_names(at.file)).contains(&at.id)
     }
 
-    fn find_names_used_as_strings_in(&self, file: FileId) -> FxHashSet<SymbolId> {
+    fn find_string_like_names(&self, file: FileId) -> FxHashSet<SymbolId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let (mut as_strings, mut otherwise): (FxHashSet<SymbolId>, FxHashSet<SymbolId>) = Default::default();
-        for &e in self.exprs_by_kind_of(file).of(ExprTag::Ident) {
+        for &e in self.file_exprs_by_kind(file).of(ExprTag::Ident) {
             let symbol = bound.expr_symbol[e.idx()];
             let Parent::Expr(parent) = bound.expr_parent[e.idx()] else { continue };
             if symbol.is_none() || parent.is_none() {
@@ -514,7 +514,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             match hir[parent].kind {
                 ExprKind::Dot { obj, name, .. } if obj == e => {
-                    if self.is_method_of_strings_alone(name) {
+                    if self.is_string_only_method(name) {
                         as_strings.insert(symbol);
                     } else if matches!(
                         self.atoms().bytes(name),
@@ -540,7 +540,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Of a name whose stores are not followed one by one: a function declaration that nothing is assigned to. Not in JavaScript, where a
     /// function in a block is a `var` besides.
-    fn kinds_declared_for(&mut self, at: Sym) -> u16 {
+    fn declared_kinds(&mut self, at: Sym) -> u16 {
         let (hir, bound) = (self.hir(at.file), self.bound(at.file));
         let Some(symbol) = bound.symbols.get(at.id.idx()) else { return kind::ANYTHING };
         let is_more = SymFlags::VALUE.difference(SymFlags::FUNCTION) | SymFlags::MERGED | SymFlags::ASSIGNED | SymFlags::ALIAS;
@@ -549,16 +549,16 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `None`: code that the control flow does not tell of may store to the variable or the parameter at any time.
-    fn told_of_variable(&mut self, at: Sym) -> Option<Told> {
+    fn variable_flow_coverage(&mut self, at: Sym) -> Option<FlowCoverage> {
         if let Some(&known) = self.aot.kinds.told.get(&at) {
             return known;
         }
-        let found = self.find_told_of_variable(at);
+        let found = self.find_variable_flow_coverage(at);
         self.aot.kinds.told.insert(at, found);
         found
     }
 
-    fn find_told_of_variable(&mut self, at: Sym) -> Option<Told> {
+    fn find_variable_flow_coverage(&mut self, at: Sym) -> Option<FlowCoverage> {
         let file = at.file;
         let (hir, bound) = (self.hir(file), self.bound(file));
         let symbol = bound.symbols.get(at.id.idx())?;
@@ -574,7 +574,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if matches!(hir[stmt].kind, StmtKind::Try { .. }) {
                     begins_at = bound.stmt_flow[stmt.idx()];
                 }
-                (self.container_of_flow(file, bound.stmt_parent[stmt.idx()]), false)
+                (self.flow_container(file, bound.stmt_parent[stmt.idx()]), false)
             }
             Decl::Param(pat) => {
                 let PatParent::Param(p) = root_declaration(bound, pat) else { return None };
@@ -595,23 +595,23 @@ impl<'p, 's> Checker<'p, 's> {
             _ => return None,
         }
         let stores = bound.assignments_to(at.id);
-        if stores.iter().any(|&(_, target)| self.container_of_flow(file, bound.expr_parent[target.idx()]) != container || self.runs_off_the_flow(file, target)) {
+        if stores.iter().any(|&(_, target)| self.flow_container(file, bound.expr_parent[target.idx()]) != container || self.is_outside_flow_graph(file, target)) {
             return None;
         }
         let is_constant = stores.is_empty() && (is_parameter || !self.starts_undefined(self.files().sym(file, at.id)));
-        Some(Told { container, is_constant, begins_at })
+        Some(FlowCoverage { container, is_constant, begins_at })
     }
 
-    /// Whether the name of the variable stands somewhere where `kinds_passing` and `kinds_entering` look at it. One pass over the names of a file.
+    /// Whether the name of the variable stands somewhere where `kinds_after_test` and `kinds_in_switch_clauses` look at it. One pass over the names of a file.
     fn is_tested(&mut self, at: Sym) -> bool {
         let program = self.p;
-        program.aot.kinds.tested.get_or_init(program.files.modules.len(), at.file, || self.find_names_tested_in(at.file)).contains(&at.id)
+        program.aot.kinds.tested.get_or_init(program.files.modules.len(), at.file, || self.find_tested_names(at.file)).contains(&at.id)
     }
 
-    fn find_names_tested_in(&self, file: FileId) -> FxHashSet<SymbolId> {
+    fn find_tested_names(&self, file: FileId) -> FxHashSet<SymbolId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut tested: FxHashSet<SymbolId> = FxHashSet::default();
-        for &e in self.exprs_by_kind_of(file).of(ExprTag::Ident) {
+        for &e in self.file_exprs_by_kind(file).of(ExprTag::Ident) {
             let symbol = bound.expr_symbol[e.idx()];
             if symbol.is_none() {
                 continue;
@@ -636,19 +636,19 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Whatever the name `e` yields where it stands is of one of the kinds: what its variable holds, less what the tests that have been passed and the stores on the way
     /// to `e` rule out.
-    fn kinds_read_by(&mut self, file: FileId, e: ExprId, id: SymbolId) -> u16 {
+    fn read_kinds(&mut self, file: FileId, e: ExprId, id: SymbolId) -> u16 {
         let at = Sym { file, id };
-        let held = self.kinds_held_by(at);
+        let held = self.symbol_kinds(at);
         // Most variables are never tested, and hold what they hold wherever they are read.
         if held == kind::NOTHING || !self.is_tested(at) {
             return held;
         }
-        let Some(told) = self.told_of_variable(at) else { return held };
+        let Some(told) = self.variable_flow_coverage(at) else { return held };
         let bound = self.bound(file);
         let flow = bound.expr_flow[e.idx()];
         // Between a test or a store and the read, code that the control flow does not tell of may store to it.
-        let is_read_elsewhere = told.container != self.container_of_flow(file, bound.expr_parent[e.idx()]);
-        if is_read_elsewhere && !told.is_constant || flow.is_none() || flow == UNREACHABLE || self.runs_off_the_flow(file, e) {
+        let is_read_elsewhere = told.container != self.flow_container(file, bound.expr_parent[e.idx()]);
+        if is_read_elsewhere && !told.is_constant || flow.is_none() || flow == UNREACHABLE || self.is_outside_flow_graph(file, e) {
             return held;
         }
         let mut walk = Walk { at, held, is_constant: told.is_constant, is_of_read: true, begins_at: told.begins_at, joins: FxHashMap::default(), steps: 0, depth: 0 };
@@ -663,7 +663,7 @@ impl<'p, 's> Checker<'p, 's> {
         let is_growing = matches!(&self.aot.kinds.growing, Some((growing, _)) if *growing == walk.at.file);
         let known = if is_growing { self.aot.kinds.at_flow_this_round.get(&(walk.at.id, start)) } else { self.aot.kinds.at_flow.get(&(walk.at, start)) };
         if let Some(&known) = known {
-            self.aot.kinds.reads_of_what_grows += u64::from(is_growing);
+            self.aot.kinds.reads_of_growing += u64::from(is_growing);
             return known;
         }
         let found = self.find_kinds_at(walk, start);
@@ -682,7 +682,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut flow = start;
         let found = loop {
             walk.steps += 1;
-            if walk.steps > MOST_STEPS || flow == walk.begins_at || self.is_half_of_stack_in_use() {
+            if walk.steps > MAX_STEPS || flow == walk.begins_at || self.is_half_of_stack_in_use() {
                 break walk.held;
             }
             match bound.flow[flow.idx()] {
@@ -695,21 +695,21 @@ impl<'p, 's> Checker<'p, 's> {
                     flow = outer;
                 }
                 Flow::Assign { before, target } => {
-                    if self.is_store_to_place(walk.at, target) {
-                        break self.kinds_stored_at(file, target) & walk.held;
+                    if self.is_store_to_slot(walk.at, target) {
+                        break self.kinds_at_assignment(file, target) & walk.held;
                     }
                     flow = before;
                 }
                 Flow::Cond { before, expr, sense } => {
-                    passing &= self.kinds_passing(file, expr, sense, walk.at.id);
+                    passing &= self.kinds_after_test(file, expr, sense, walk.at.id);
                     flow = before;
                 }
                 Flow::Switch { before, stmt, from, to } => {
-                    passing &= self.kinds_entering(file, stmt, from, to, walk.at.id);
+                    passing &= self.kinds_in_switch_clauses(file, stmt, from, to, walk.at.id);
                     flow = before;
                 }
                 Flow::Call { before, call } => {
-                    passing &= self.kinds_passing_call(file, call, walk.at.id, walk.depth);
+                    passing &= self.kinds_after_call(file, call, walk.at.id, walk.depth);
                     flow = before;
                 }
                 // After a `finally` block only some of the paths into the block count. All of them are taken.
@@ -730,7 +730,7 @@ impl<'p, 's> Checker<'p, 's> {
                     [] => break kind::NOTHING,
                     [entry] => flow = entry,
                     [entry, ..] => {
-                        if self.is_stored_to_in_loop(walk.at, flow) {
+                        if self.is_assigned_in_loop(walk.at, flow) {
                             break walk.held;
                         }
                         flow = entry;
@@ -742,14 +742,14 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// What an assignment node for the variable stores.
-    fn kinds_stored_at(&mut self, file: FileId, target: FlowTarget) -> u16 {
+    fn kinds_at_assignment(&mut self, file: FileId, target: FlowTarget) -> u16 {
         let hir = self.hir(file);
         match target {
             // Not the variable of `for .. of`, which has no initializer.
-            FlowTarget::Var(d) if hir[d].init.is_some() && matches!(hir[hir[d].pat].kind, PatKind::Ident(_)) => self.kinds_yielded_by(file, hir[d].init),
+            FlowTarget::Var(d) if hir[d].init.is_some() && matches!(hir[hir[d].pat].kind, PatKind::Ident(_)) => self.result_kinds_of(file, hir[d].init),
             FlowTarget::Var(_) | FlowTarget::Pat(_) => kind::ANYTHING,
-            FlowTarget::Expr(e) => match self.store_to_target(file, e) {
-                Some(Store::Value(stored) | Store::Computed(stored)) => self.kinds_yielded_by(file, stored),
+            FlowTarget::Expr(e) => match self.target_store(file, e) {
+                Some(Store::Value(stored) | Store::Computed(stored)) => self.result_kinds_of(file, stored),
                 Some(Store::Nil) => kind::UNDEFINED,
                 None => kind::ANYTHING,
             },
@@ -757,7 +757,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The kind of a literal, of `undefined` and of `void 0`. `NOTHING`: it is none of them.
-    fn kind_of_literal(&self, file: FileId, e: ExprId) -> u16 {
+    fn literal_kind(&self, file: FileId, e: ExprId) -> u16 {
         let hir = self.hir(file);
         match hir[e].kind {
             ExprKind::Null => kind::NULL,
@@ -772,49 +772,49 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Of which kinds the variable can be, `test` having turned out truthy, if `holds`, or falsy. `ANYTHING`: the test says nothing of it.
-    fn kinds_passing(&mut self, file: FileId, test: ExprId, holds: bool, id: SymbolId) -> u16 {
+    fn kinds_after_test(&mut self, file: FileId, test: ExprId, holds: bool, id: SymbolId) -> u16 {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let names_it = |e: ExprId| matches!(hir[e].kind, ExprKind::Ident(_)) && bound.expr_symbol[e.idx()] == id;
+        let references_it = |e: ExprId| matches!(hir[e].kind, ExprKind::Ident(_)) && bound.expr_symbol[e.idx()] == id;
         // `a === (a = 1)`: what was tested is no longer what is held.
         if bound.assignments_to(id).iter().any(|&(_, target)| hir[target].pos >= hir[test].pos && hir[target].end <= hir[test].end) {
             return kind::ANYTHING;
         }
         match hir[test].kind {
             // No function, no array and no symbol is falsy.
-            ExprKind::Ident(_) if names_it(test) => kind::ANYTHING & !(if holds { NIL } else { kind::SYMBOL | kind::FUNCTION | kind::ARRAY }),
-            ExprKind::Unary { op: UnOp::Not, operand } => self.kinds_passing(file, operand, !holds, id),
+            ExprKind::Ident(_) if references_it(test) => kind::ANYTHING & !(if holds { NULLISH } else { kind::SYMBOL | kind::FUNCTION | kind::ARRAY }),
+            ExprKind::Unary { op: UnOp::Not, operand } => self.kinds_after_test(file, operand, !holds, id),
             ExprKind::Binary { op: op @ (BinOp::EqEqEq | BinOp::NotEqEq | BinOp::EqEq | BinOp::NotEq), left, right } => {
                 let is_equal = matches!(op, BinOp::EqEqEq | BinOp::EqEq) == holds;
                 let is_strict = matches!(op, BinOp::EqEqEq | BinOp::NotEqEq);
                 for (one, other) in [(left, right), (right, left)] {
                     if let (ExprKind::Unary { op: UnOp::Typeof, operand }, ExprKind::String(name)) = (hir[one].kind, hir[other].kind)
-                        && names_it(operand)
+                        && references_it(operand)
                     {
-                        let (called, otherwise) = kinds_called(self.atoms().bytes(name));
+                        let (called, otherwise) = typeof_kinds(self.atoms().bytes(name));
                         return if is_equal { called } else { otherwise };
                     }
-                    let compared_with = self.kind_of_literal(file, other);
-                    if !names_it(one) || compared_with == kind::NOTHING {
+                    let compared_with = self.literal_kind(file, other);
+                    if !references_it(one) || compared_with == kind::NOTHING {
                         continue;
                     }
-                    return match (compared_with & NIL != 0, is_strict, is_equal) {
+                    return match (compared_with & NULLISH != 0, is_strict, is_equal) {
                         (_, true, true) => compared_with,
                         (true, true, false) => kind::ANYTHING & !compared_with,
                         // So for both, and for an object that passes itself off as `undefined`.
-                        (true, false, true) => NIL | kind::OBJECT,
-                        (true, false, false) => kind::ANYTHING & !NIL,
+                        (true, false, true) => NULLISH | kind::OBJECT,
+                        (true, false, false) => kind::ANYTHING & !NULLISH,
                         _ => kind::ANYTHING,
                     };
                 }
                 kind::ANYTHING
             }
             // None of their own functions can be replaced.
-            ExprKind::Call(call) if hir[call].chain == Chain::No && hir.ids(hir[call].args).next().is_some_and(names_it) => {
+            ExprKind::Call(call) if hir[call].chain == Chain::No && hir.ids(hir[call].args).next().is_some_and(references_it) => {
                 let ExprKind::Dot { obj, name, chain: Chain::No, .. } = hir[hir[call].callee].kind else { return kind::ANYTHING };
                 match self.atoms().bytes(name) {
-                    b"isInteger" | b"isSafeInteger" | b"isFinite" | b"isNaN" if holds && self.names_global_object(file, obj, b"Number") => kind::NUMBER,
+                    b"isInteger" | b"isSafeInteger" | b"isFinite" | b"isNaN" if holds && self.refers_to_global_object(file, obj, b"Number") => kind::NUMBER,
                     // So for a proxy of an array as well.
-                    b"isArray" if self.names_global_object(file, obj, b"Array") => kind::ANYTHING & if holds { kind::ARRAY | kind::OBJECT } else { !kind::ARRAY },
+                    b"isArray" if self.refers_to_global_object(file, obj, b"Array") => kind::ANYTHING & if holds { kind::ARRAY | kind::OBJECT } else { !kind::ARRAY },
                     _ => kind::ANYTHING,
                 }
             }
@@ -823,7 +823,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Of which kinds the variable can be, the call having returned: `validateString(name, "name")`, where the function throws unless it is handed a string.
-    fn kinds_passing_call(&mut self, file: FileId, call: ExprId, id: SymbolId, depth: u8) -> u16 {
+    fn kinds_after_call(&mut self, file: FileId, call: ExprId, id: SymbolId, depth: u8) -> u16 {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let ExprKind::Call(c) = hir[call].kind else { return kind::ANYTHING };
         let c = &hir[c];
@@ -832,12 +832,12 @@ impl<'p, 's> Checker<'p, 's> {
         if c.chain != Chain::No || is_stored_to || !matches!(hir[c.callee].kind, ExprKind::Ident(_)) {
             return kind::ANYTHING;
         }
-        let Some(func) = self.function_named_by_text(file, c.callee) else { return kind::ANYTHING };
+        let Some(func) = self.function_for_name_syntactically(file, c.callee) else { return kind::ANYTHING };
         let mut passing = kind::ANYTHING;
         for (index, argument) in hir.ids(c.args).enumerate() {
             match hir[argument].kind {
                 ExprKind::Spread(_) => break,
-                ExprKind::Ident(_) if bound.expr_symbol[argument.idx()] == id => passing &= self.kinds_asserted_by(file, func, index, depth),
+                ExprKind::Ident(_) if bound.expr_symbol[argument.idx()] == id => passing &= self.asserted_kinds(file, func, index, depth),
                 _ => {}
             }
         }
@@ -845,20 +845,20 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Of which kinds what is passed for the parameter of that number is, whenever a call of the function returns. `ANYTHING`: nothing is shown. By the text of the function alone.
-    fn kinds_asserted_by(&mut self, file: FileId, func: FnId, index: usize, depth: u8) -> u16 {
+    fn asserted_kinds(&mut self, file: FileId, func: FnId, index: usize, depth: u8) -> u16 {
         if let Some(&known) = self.aot.kinds.asserted.get(&(file, func, index as u32, depth)) {
             return known;
         }
-        let found = self.find_kinds_asserted_by(file, func, index, depth);
+        let found = self.find_asserted_kinds(file, func, index, depth);
         self.aot.kinds.asserted.insert((file, func, index as u32, depth), found);
         found
     }
 
-    fn find_kinds_asserted_by(&mut self, file: FileId, func: FnId, index: usize, depth: u8) -> u16 {
+    fn find_asserted_kinds(&mut self, file: FileId, func: FnId, index: usize, depth: u8) -> u16 {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let f = &hir[func];
         // What an async function throws, whoever calls it does not see.
-        if depth >= MOST_DEPTH || f.flags.intersects(Flags::ASYNC | Flags::GENERATOR) || !matches!(f.body, FnBody::Block(_)) {
+        if depth >= MAX_DEPTH || f.flags.intersects(Flags::ASYNC | Flags::GENERATOR) || !matches!(f.body, FnBody::Block(_)) {
             return kind::ANYTHING;
         }
         let Some(p) = f.params.iter().nth(index) else { return kind::ANYTHING };
@@ -866,7 +866,7 @@ impl<'p, 's> Checker<'p, 's> {
             return kind::ANYTHING;
         }
         let at = Sym { file, id: bound.pat_symbol[hir[p].pat.idx()] };
-        if at.id.is_none() || !self.told_of_variable(at).is_some_and(|told| told.is_constant) {
+        if at.id.is_none() || !self.variable_flow_coverage(at).is_some_and(|told| told.is_constant) {
             return kind::ANYTHING;
         }
         let info = bound.fns[func.idx()];
@@ -886,21 +886,21 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Of which kinds the variable can be, one of the clauses `from..to` of the `switch` statement having matched.
-    fn kinds_entering(&mut self, file: FileId, stmt: StmtId, from: u16, to: u16, id: SymbolId) -> u16 {
+    fn kinds_in_switch_clauses(&mut self, file: FileId, stmt: StmtId, from: u16, to: u16, id: SymbolId) -> u16 {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let StmtKind::Switch { expr, cases } = hir[stmt].kind else { return kind::ANYTHING };
-        let names_it = |e: ExprId| matches!(hir[e].kind, ExprKind::Ident(_)) && bound.expr_symbol[e.idx()] == id;
-        let is_typeof = matches!(hir[expr].kind, ExprKind::Unary { op: UnOp::Typeof, operand } if names_it(operand));
+        let references_it = |e: ExprId| matches!(hir[e].kind, ExprKind::Ident(_)) && bound.expr_symbol[e.idx()] == id;
+        let is_typeof = matches!(hir[expr].kind, ExprKind::Unary { op: UnOp::Typeof, operand } if references_it(operand));
         // No clauses: none has matched.
-        if from >= to || !is_typeof && !names_it(expr) {
+        if from >= to || !is_typeof && !references_it(expr) {
             return kind::ANYTHING;
         }
         let mut all = kind::NOTHING;
         for case in cases.iter().skip(from as usize).take((to - from) as usize) {
             let test = hir[case].test;
             all |= match test.some().map(|test| hir[test].kind) {
-                Some(ExprKind::String(name)) if is_typeof => kinds_called(self.atoms().bytes(name)).0,
-                Some(_) if !is_typeof && self.kind_of_literal(file, test) != kind::NOTHING => self.kind_of_literal(file, test),
+                Some(ExprKind::String(name)) if is_typeof => typeof_kinds(self.atoms().bytes(name)).0,
+                Some(_) if !is_typeof && self.literal_kind(file, test) != kind::NOTHING => self.literal_kind(file, test),
                 // `default`, or a test that is not looked into.
                 _ => return kind::ANYTHING,
             };
@@ -909,29 +909,29 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Whatever the expression yields is of one of the kinds. For `a++` and `a--`: what is stored.
-    pub fn kinds_yielded_by(&mut self, file: FileId, e: ExprId) -> u16 {
+    pub fn result_kinds_of(&mut self, file: FileId, e: ExprId) -> u16 {
         // In the last round nothing grows, so what is remembered there is what is found there.
         if matches!(&self.aot.kinds.growing, Some((growing, _)) if *growing == file) {
             if let Some(&known) = self.aot.kinds.produced_this_round.get(&e) {
-                self.aot.kinds.reads_of_what_grows += 1;
+                self.aot.kinds.reads_of_growing += 1;
                 return known;
             }
-            let found = self.find_kinds_produced_by(file, e);
+            let found = self.find_result_kinds_of(file, e);
             self.aot.kinds.produced_this_round.insert(e, found);
             return found;
         }
         if self.aot.kinds.growing.is_some() {
-            return self.find_kinds_produced_by(file, e);
+            return self.find_result_kinds_of(file, e);
         }
         if let Some(&known) = self.aot.kinds.yielded.get(&(file, e)) {
             return known;
         }
-        let found = self.find_kinds_produced_by(file, e);
+        let found = self.find_result_kinds_of(file, e);
         self.aot.kinds.yielded.insert((file, e), found);
         found
     }
 
-    fn find_kinds_produced_by(&mut self, file: FileId, e: ExprId) -> u16 {
+    fn find_result_kinds_of(&mut self, file: FileId, e: ExprId) -> u16 {
         if self.is_half_of_stack_in_use() {
             return kind::ANYTHING;
         }
@@ -957,7 +957,7 @@ impl<'p, 's> Checker<'p, 's> {
                     };
                 }
                 let flags = self.bound(file).symbols[local.idx()].flags;
-                if flags.intersects(SymFlags::ALIAS | SymFlags::MERGED) { kind::ANYTHING } else { self.kinds_read_by(file, e, local) }
+                if flags.intersects(SymFlags::ALIAS | SymFlags::MERGED) { kind::ANYTHING } else { self.read_kinds(file, e, local) }
             }
             ExprKind::Unary { op, operand } => match op {
                 UnOp::Not | UnOp::Delete => kind::BOOLEAN,
@@ -965,19 +965,19 @@ impl<'p, 's> Checker<'p, 's> {
                 UnOp::Void => kind::UNDEFINED,
                 UnOp::Plus => kind::NUMBER,
                 UnOp::Minus | UnOp::BitNot | UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec => {
-                    let operand = self.kinds_yielded_by(file, operand);
+                    let operand = self.result_kinds_of(file, operand);
                     numeric(operand, operand)
                 }
             },
             ExprKind::Binary { op, left, right } | ExprKind::Assign { op: Some(op), target: left, value: right } => match op {
                 BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq | BinOp::In | BinOp::Instanceof => kind::BOOLEAN,
                 BinOp::UShr => kind::NUMBER,
-                BinOp::Comma => self.kinds_yielded_by(file, right),
-                BinOp::And | BinOp::Or => self.kinds_yielded_by(file, left) | self.kinds_yielded_by(file, right),
-                BinOp::Nullish => self.kinds_yielded_by(file, left) & !(kind::UNDEFINED | kind::NULL) | self.kinds_yielded_by(file, right),
-                BinOp::Add => sum(self.kinds_yielded_by(file, left), self.kinds_yielded_by(file, right)),
+                BinOp::Comma => self.result_kinds_of(file, right),
+                BinOp::And | BinOp::Or => self.result_kinds_of(file, left) | self.result_kinds_of(file, right),
+                BinOp::Nullish => self.result_kinds_of(file, left) & !(kind::UNDEFINED | kind::NULL) | self.result_kinds_of(file, right),
+                BinOp::Add => sum(self.result_kinds_of(file, left), self.result_kinds_of(file, right)),
                 BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem | BinOp::Pow | BinOp::Shl | BinOp::Shr | BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor => {
-                    numeric(self.kinds_yielded_by(file, left), self.kinds_yielded_by(file, right))
+                    numeric(self.result_kinds_of(file, left), self.result_kinds_of(file, right))
                 }
             },
             ExprKind::Assign { op: None, value: expr, .. }
@@ -985,16 +985,16 @@ impl<'p, 's> Checker<'p, 's> {
             | ExprKind::Satisfies { expr, .. }
             | ExprKind::AsConst(expr)
             | ExprKind::NonNull(expr)
-            | ExprKind::Instantiation { expr, .. } => self.kinds_yielded_by(file, expr),
-            ExprKind::Cond { yes, no, .. } => self.kinds_yielded_by(file, yes) | self.kinds_yielded_by(file, no),
+            | ExprKind::Instantiation { expr, .. } => self.result_kinds_of(file, expr),
+            ExprKind::Cond { yes, no, .. } => self.result_kinds_of(file, yes) | self.result_kinds_of(file, no),
             // Every store to a `#private` field is in the body of its class.
-            ExprKind::Dot { name, chain: Chain::No, .. } if self.private_field_named_by(file, e, name).is_some() => {
-                let id = self.private_field_named_by(file, e, name);
-                self.kinds_held_by(Sym { file, id })
+            ExprKind::Dot { name, chain: Chain::No, .. } if self.private_field_for_access(file, e, name).is_some() => {
+                let id = self.private_field_for_access(file, e, name);
+                self.symbol_kinds(Sym { file, id })
             }
             // Their own property, which nothing can be put in the place of.
             ExprKind::Dot { obj, name, chain: Chain::No, .. } if name == known::length => {
-                match self.kinds_yielded_by(file, obj) {
+                match self.result_kinds_of(file, obj) {
                     kind::NOTHING => kind::NOTHING,
                     of if of & !(kind::ARRAY | kind::STRING) == 0 => kind::NUMBER,
                     _ => kind::ANYTHING,
@@ -1006,18 +1006,18 @@ impl<'p, 's> Checker<'p, 's> {
                     return kind::ANYTHING;
                 }
                 match hir[callee].kind {
-                    ExprKind::Ident(_) if self.names_global_object(file, callee, b"String") => kind::STRING,
-                    ExprKind::Ident(_) if self.names_global_object(file, callee, b"Boolean") => kind::BOOLEAN,
-                    ExprKind::Ident(_) if self.names_global_object(file, callee, b"Number") => kind::NUMBER,
-                    ExprKind::Ident(_) if self.names_global_object(file, callee, b"Symbol") => kind::SYMBOL,
-                    ExprKind::Dot { obj, name, chain: Chain::No, .. } if self.atoms().bytes(name) == b"for" && self.names_global_object(file, obj, b"Symbol") => kind::SYMBOL,
-                    ExprKind::Ident(_) if self.function_named_by_text(file, callee).is_some() => match self.function_named_by_text(file, callee) {
-                        Some(func) => self.kinds_returned_by(file, func),
+                    ExprKind::Ident(_) if self.refers_to_global_object(file, callee, b"String") => kind::STRING,
+                    ExprKind::Ident(_) if self.refers_to_global_object(file, callee, b"Boolean") => kind::BOOLEAN,
+                    ExprKind::Ident(_) if self.refers_to_global_object(file, callee, b"Number") => kind::NUMBER,
+                    ExprKind::Ident(_) if self.refers_to_global_object(file, callee, b"Symbol") => kind::SYMBOL,
+                    ExprKind::Dot { obj, name, chain: Chain::No, .. } if self.atoms().bytes(name) == b"for" && self.refers_to_global_object(file, obj, b"Symbol") => kind::SYMBOL,
+                    ExprKind::Ident(_) if self.function_for_name_syntactically(file, callee).is_some() => match self.function_for_name_syntactically(file, callee) {
+                        Some(func) => self.returned_kinds(file, func),
                         None => kind::ANYTHING,
                     },
                     // A function may be added to `Math`. None of its own can be replaced.
-                    ExprKind::Dot { obj, name, chain: Chain::No, .. } if FUNCTIONS_OF_MATH.contains(&self.atoms().bytes(name)) && self.names_global_object(file, obj, b"Math") => kind::NUMBER,
-                    ExprKind::Dot { obj, name, chain: Chain::No, .. } => match self.kinds_yielded_by(file, obj) {
+                    ExprKind::Dot { obj, name, chain: Chain::No, .. } if MATH_FUNCTIONS.contains(&self.atoms().bytes(name)) && self.refers_to_global_object(file, obj, b"Math") => kind::NUMBER,
+                    ExprKind::Dot { obj, name, chain: Chain::No, .. } => match self.result_kinds_of(file, obj) {
                         kind::NOTHING => kind::NOTHING,
                         kind::STRING => {
                             let first = hir.ids(hir[call].args).next();
@@ -1036,7 +1036,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn kinds_returned_by_string_method(&mut self, file: FileId, name: Atom, first: Option<ExprId>) -> u16 {
         // Handed an object, these hand over to a method of it, which yields what it likes. That of a regular expression is the engine's.
         let is_plain = |c: &mut Self| match first {
-            Some(first) => matches!(c.hir(file)[first].kind, ExprKind::Regex) || c.kinds_yielded_by(file, first) & !kind::STRING == 0,
+            Some(first) => matches!(c.hir(file)[first].kind, ExprKind::Regex) || c.result_kinds_of(file, first) & !kind::STRING == 0,
             None => true,
         };
         match self.atoms().bytes(name) {

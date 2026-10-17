@@ -297,7 +297,7 @@ extern "C" void Bun__AOT__setImageCodec();
 extern "C" void Bun__AOT__setCachedGettersOfGeneratedClasses();
 extern "C" [[noreturn]] void Bun__outOfMemory();
 
-extern "C" bool Bun__AOTAudit__acts();
+extern "C" bool Bun__AOTAudit__isEnforcing();
 
 extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup, bool shortLivedGlobals, bool useAOT, bool crashIfInterpreterIsUsed)
 {
@@ -359,7 +359,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::useImportDefer() = true;
             JSC::Options::useTemporal() = true;
             JSC::Options::useAOT() = useAOT;
-            if (Bun__AOTAudit__acts())
+            if (Bun__AOTAudit__isEnforcing())
                 JSC::Options::useImmutableIntrinsics() = true;
             JSC::Options::crashIfInterpreterIsUsed() = crashIfInterpreterIsUsed;
             // Upstream enabled Wasm Memory64 by default (0d0080ea539d); keep
@@ -541,9 +541,9 @@ Zig::GlobalObject* defaultGlobalObject(JSC::VM& vm)
     return defaultGlobalObject();
 }
 
-extern "C" bool Bun__AOTAudit__isWanted();
+extern "C" bool Bun__AOTAudit__isEnabled();
 extern "C" void Bun__AOTAudit__installFor(JSC::JSGlobalObject*);
-void Bun__AOTAudit__reportRefusedChange(JSC::JSGlobalObject*, ASCIILiteral kind, const WTF::String& message, const WTF::String& functionName, const WTF::String& sourceURL, unsigned line, unsigned column);
+void Bun__AOTAudit__reportRejectedChange(JSC::JSGlobalObject*, ASCIILiteral kind, const WTF::String& message, const WTF::String& functionName, const WTF::String& sourceURL, unsigned line, unsigned column);
 
 extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, bool evalMode, void* worker_ptr)
 {
@@ -554,8 +554,8 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     }
     vmPtr->refSuppressingSaferCPPChecking();
     JSC::VM& vm = *vmPtr;
-    if (Bun__AOTAudit__isWanted()) [[unlikely]]
-        vm.setImmutableIntrinsicsAuditReporter(Bun__AOTAudit__reportRefusedChange);
+    if (Bun__AOTAudit__isEnabled()) [[unlikely]]
+        vm.setImmutableIntrinsicsAuditReporter(Bun__AOTAudit__reportRejectedChange);
     // This must happen before JSVMClientData::create
     vm.heap.acquireAccess();
     JSC::JSLockHolder locker(vm);
@@ -707,7 +707,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
         }
     }
 
-    if (Bun__AOTAudit__isWanted()) [[unlikely]]
+    if (Bun__AOTAudit__isEnabled()) [[unlikely]]
         Bun__AOTAudit__installFor(globalObject);
 
     return globalObject;
@@ -789,7 +789,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     oldGlobal->isThreadLocalDefaultGlobalObject = false;
     JSC::gcUnprotect(oldGlobal);
 
-    if (Bun__AOTAudit__isWanted()) [[unlikely]]
+    if (Bun__AOTAudit__isEnabled()) [[unlikely]]
         Bun__AOTAudit__installFor(globalObject);
 
     return globalObject;
@@ -895,7 +895,7 @@ static JSC::JSObject* evaluatedCompiledNamespace(JSC::JSGlobalObject* globalObje
 {
     if (!keyValue.isString() || moduleLoaderOfRequirer(globalObject, requirer) != globalObject->moduleLoader())
         return nullptr;
-    return Bun::namespaceOfEvaluatedCompiledModule(uncheckedDowncast<Zig::GlobalObject>(globalObject), asString(keyValue)->value(globalObject));
+    return Bun::evaluatedCompiledModuleNamespace(uncheckedDowncast<Zig::GlobalObject>(globalObject), asString(keyValue)->value(globalObject));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionEsmNamespaceForCjs, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -3819,7 +3819,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     }
 
     if (Bun::hasFilesOfCompiledProgram(globalObject) && !parameters && !Bun::moduleGraphOfLoader(globalObject, loader)) [[unlikely]] {
-        JSC::JSPromise* imported = Bun::importFileOfCompiledProgram(globalObject, loader, moduleName, sourceOriginStringHolder);
+        JSC::JSPromise* imported = Bun::importCompiledProgramFile(globalObject, loader, moduleName, sourceOriginStringHolder);
         if (scope.exception()) [[unlikely]]
             return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
         if (imported)
@@ -3872,7 +3872,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     }
 
     if (Bun::hasFilesOfCompiledProgram(globalObject) && !parameters && !Bun::moduleGraphOfLoader(globalObject, loader)) [[unlikely]] {
-        JSC::JSSourceCode* compiled = Bun::sourceOfFileOfCompiledProgram(static_cast<Zig::GlobalObject*>(globalObject), moduleKey);
+        JSC::JSSourceCode* compiled = Bun::compiledProgramFileSource(static_cast<Zig::GlobalObject*>(globalObject), moduleKey);
         if (scope.exception()) [[unlikely]] {
             JSPromise* rejected = JSPromise::create(vm, globalObject->promiseStructure());
             rejected->markAsHandled();
@@ -3880,7 +3880,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
         }
         if (compiled)
             return resolvedInternalPromise(globalObject, compiled);
-        JSC::JSPromise* awaited = Bun::sourceOfFileOfCompiledProgramThatAwaits(static_cast<Zig::GlobalObject*>(globalObject), moduleKey);
+        JSC::JSPromise* awaited = Bun::asyncCompiledProgramFileSource(static_cast<Zig::GlobalObject*>(globalObject), moduleKey);
         if (scope.exception()) [[unlikely]] {
             JSPromise* rejected = JSPromise::create(vm, globalObject->promiseStructure());
             rejected->markAsHandled();
@@ -4437,7 +4437,7 @@ static void noteModuleEvaluation(Zig::GlobalObject* globalObject, JSModuleLoader
     Bun__VM__noteEntryEvaluationStarted(bunVM);
 }
 
-extern "C" bool Bun__VM__hasToLookForServer(void*);
+extern "C" bool Bun__VM__shouldLookForServer(void*);
 extern "C" void Bun__VM__didLookForServer(void*);
 
 static bool isServerConfig(Zig::GlobalObject* globalObject, JSValue config)
@@ -4459,7 +4459,7 @@ static bool isServerConfig(Zig::GlobalObject* globalObject, JSValue config)
     return !stop.isCallable();
 }
 
-static void startServerOfNamespace(Zig::GlobalObject* globalObject, JSValue entryNamespace)
+static void startServerFromNamespace(Zig::GlobalObject* globalObject, JSValue entryNamespace)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -4500,9 +4500,9 @@ static void startServerOfNamespace(Zig::GlobalObject* globalObject, JSValue entr
     JSC::call(globalObject, debug, console, debugArguments, "console.debug is not a function"_s);
 }
 
-JSC_DEFINE_HOST_FUNCTION(functionStartServerOfNamespace, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(functionStartServerFromNamespace, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    startServerOfNamespace(defaultGlobalObject(lexicalGlobalObject), callFrame->argument(0));
+    startServerFromNamespace(defaultGlobalObject(lexicalGlobalObject), callFrame->argument(0));
     return JSValue::encode(jsUndefined());
 }
 
@@ -4516,30 +4516,30 @@ static void lookForServer(Zig::GlobalObject* globalObject, JSModuleLoader* modul
     JSValue then = entryNamespace.get(globalObject, vm.propertyNames->then);
     RETURN_IF_EXCEPTION(scope, void());
     if (!then.isCallable())
-        RELEASE_AND_RETURN(scope, startServerOfNamespace(globalObject, entryNamespace));
+        RELEASE_AND_RETURN(scope, startServerFromNamespace(globalObject, entryNamespace));
     JSValue reportError = globalObject->get(globalObject, JSC::Identifier::fromString(vm, "reportError"_s));
     RETURN_IF_EXCEPTION(scope, void());
     JSC::MarkedArgumentBuffer arguments;
-    arguments.append(JSC::JSFunction::create(vm, globalObject, 1, String(), functionStartServerOfNamespace, ImplementationVisibility::Private));
+    arguments.append(JSC::JSFunction::create(vm, globalObject, 1, String(), functionStartServerFromNamespace, ImplementationVisibility::Private));
     arguments.append(reportError);
     scope.release();
     JSC::call(globalObject, then, entryNamespace, arguments, "then is not a function"_s);
 }
 
-static JSC::AbstractModuleRecord* recordOfEntryPoint(Zig::GlobalObject* globalObject, JSModuleLoader* moduleLoader)
+static JSC::AbstractModuleRecord* entryPointRecord(Zig::GlobalObject* globalObject, JSModuleLoader* moduleLoader)
 {
     BunString rootKey = Bun__VM__entryRootKey(globalObject->bunVM());
     auto* entry = moduleLoader->registryEntry(JSC::Identifier::fromString(globalObject->vm(), rootKey.toWTFString(BunString::ZeroCopy)));
     return entry ? entry->record() : nullptr;
 }
 
-JSC_DEFINE_HOST_FUNCTION(functionLookForServerOnceEvaluated, (JSGlobalObject * lexicalGlobalObject, CallFrame*))
+JSC_DEFINE_HOST_FUNCTION(functionLookForServerAfterEvaluation, (JSGlobalObject * lexicalGlobalObject, CallFrame*))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
-    if (!Bun__VM__hasToLookForServer(globalObject->bunVM()))
+    if (!Bun__VM__shouldLookForServer(globalObject->bunVM()))
         return JSValue::encode(jsUndefined());
-    if (auto* record = recordOfEntryPoint(globalObject, globalObject->moduleLoader()))
+    if (auto* record = entryPointRecord(globalObject, globalObject->moduleLoader()))
         lookForServer(globalObject, globalObject->moduleLoader(), record);
     if (auto* exception = scope.exception()) {
         (void)scope.tryClearException();
@@ -4548,11 +4548,11 @@ JSC_DEFINE_HOST_FUNCTION(functionLookForServerOnceEvaluated, (JSGlobalObject * l
     return JSValue::encode(jsUndefined());
 }
 
-extern "C" void Bun__lookForServerOnceEvaluated(JSC::JSGlobalObject* globalObject, JSC::JSPromise* promise)
+extern "C" void Bun__lookForServerAfterEvaluation(JSC::JSGlobalObject* globalObject, JSC::JSPromise* promise)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSObject* derived = promise->then(globalObject, JSC::JSFunction::create(vm, globalObject, 0, String(), functionLookForServerOnceEvaluated, ImplementationVisibility::Private), jsUndefined());
+    JSObject* derived = promise->then(globalObject, JSC::JSFunction::create(vm, globalObject, 0, String(), functionLookForServerAfterEvaluation, ImplementationVisibility::Private), jsUndefined());
     scope.assertNoException();
     if (auto* derivedPromise = dynamicDowncast<JSC::JSPromise>(derived))
         derivedPromise->markAsHandled();
@@ -4572,9 +4572,9 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObj
     noteModuleEvaluation(globalObject, moduleLoader);
     JSValue result = moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode);
     RETURN_IF_EXCEPTION(scope, {});
-    if (Bun__VM__hasToLookForServer(globalObject->bunVM())) [[unlikely]] {
+    if (Bun__VM__shouldLookForServer(globalObject->bunVM())) [[unlikely]] {
         auto* record = dynamicDowncast<JSC::AbstractModuleRecord>(moduleRecordValue);
-        if (record && !record->hasTLA() && record == recordOfEntryPoint(globalObject, moduleLoader)) {
+        if (record && !record->hasTLA() && record == entryPointRecord(globalObject, moduleLoader)) {
             lookForServer(globalObject, moduleLoader, record);
             RETURN_IF_EXCEPTION(scope, {});
         }
@@ -4743,8 +4743,8 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::jsFunctionOnLoadObjectResultResolve;
     } else if (handler == jsFunctionOnLoadObjectResultReject) {
         return GlobalObject::PromiseFunctions::jsFunctionOnLoadObjectResultReject;
-    } else if (handler == Bun::jsFunctionSourceOfCompiledNamespace) {
-        return GlobalObject::PromiseFunctions::jsFunctionSourceOfCompiledNamespace;
+    } else if (handler == Bun::jsFunctionCompiledNamespaceSource) {
+        return GlobalObject::PromiseFunctions::jsFunctionCompiledNamespaceSource;
     } else if (handler == jsFunctionMockModuleFactoryResolve) {
         return GlobalObject::PromiseFunctions::jsFunctionMockModuleFactoryResolve;
     } else if (handler == jsFunctionMockModuleFactoryReject) {

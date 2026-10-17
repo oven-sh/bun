@@ -8,6 +8,8 @@ mod filters;
 mod format;
 #[path = "../rivals/rust/src/markdown.rs"]
 mod markdown;
+#[path = "../rivals/rust/src/queries.rs"]
+mod queries;
 #[path = "../rivals/rust/src/thread.rs"]
 mod thread;
 #[path = "../rivals/rust/src/types.rs"]
@@ -20,6 +22,27 @@ use types::*;
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+pub struct Failure(String);
+
+impl<E: std::fmt::Display> From<E> for Failure {
+    fn from(error: E) -> Self {
+        Failure(error.to_string())
+    }
+}
+
+/// Fetches one issue's comments, one query per round.
+async fn rows(issue_id: i32, rounds: usize) -> Result<usize, Failure> {
+    use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
+    let config: tokio_postgres::Config = std::env::var("DATABASE_URL")?.parse()?;
+    let manager = Manager::from_config(config, tokio_postgres::NoTls, ManagerConfig { recycling_method: RecyclingMethod::Fast });
+    let client = Pool::builder(manager).max_size(1).build()?.get().await?;
+    let mut count = 0;
+    for _ in 0..rounds {
+        count = queries::comments_of(&client, issue_id).await?.len();
+    }
+    Ok(count)
+}
 
 struct Loaded {
     project: Project,
@@ -99,6 +122,12 @@ struct IssueAnswer<'a> {
 
 fn main() {
     let arguments: Vec<String> = std::env::args().collect();
+    if arguments[1] == "rows" {
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let count = runtime.block_on(rows(number(&arguments[2]), arguments[3].parse().unwrap())).unwrap_or_else(|failure| panic!("{}", failure.0));
+        println!("rows {count}");
+        return;
+    }
     let all = load(&std::fs::read_to_string(&arguments[2]).unwrap());
     let session = Session {
         token: "t".repeat(64),

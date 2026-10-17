@@ -33,13 +33,14 @@ use crate::check::relate::Relation;
 use crate::check::task::Finished;
 use super::identity::Identity;
 use super::rows;
+use super::type_caches::{NestedPairs, TypeCaches, is_published};
 use super::callees::Callee;
-use super::subtypes::{self, AlteredViews, Cause, Facts, FieldTypes, Gathered, OpensForTheLog, Sizes, Subtypes};
+use super::subtypes::{self, MutatedTypes, Cause, Facts, FieldTypes, Gathered, LoggingRelaxation, Sizes, Subtypes};
 use super::creation::Creations;
-use super::alterations::{Alteration, DoorsCounted, NUMBER_OF_OPERANDS, UntypedAlterations, WidestAlterations};
+use super::mutations::{Mutation, CountedRedefinitions, NUMBER_OF_OPERANDS, UntypedMutations, WidestMutations};
 use super::escape_closure::{Escapes, TypeParameter};
 use super::first_stores::Constructions;
-use super::storage::Made;
+use super::storage::FreshGraph;
 use crate::hir::{BinOp, Chain, ClassId, ExprId, ExprKind, ExprTag, FileKind, FnId, MappedModifier, MemberKind, PatKind, PropKey, PropKind, TypeNodeId, TypeNodeKind, UnOp};
 use crate::program::{FileId, Sym};
 use crate::types::{ComponentsId, EnumValue, Follow, Intrinsic, MapperId, Origin, Prop, PropFlags, PropSource, Shape, SigId, TypeData, TypeId, Visitor};
@@ -49,7 +50,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
 /// The classes of the language whose objects the engine makes and tells by what they are.
-const CLASSES_OF_THE_ENGINE: [&[u8]; 23] = [
+const ENGINE_CLASSES: [&[u8]; 23] = [
     b"Map",
     b"Set",
     b"WeakMap",
@@ -76,7 +77,7 @@ const CLASSES_OF_THE_ENGINE: [&[u8]; 23] = [
 ];
 
 /// A type in whose own type arguments one declaration is applied more often than this, one application within the other, is not laid out.
-const MOST_APPLICATIONS_WITHIN_EACH_OTHER: u32 = 8;
+const MAX_NESTED_APPLICATIONS: u32 = 8;
 const PRIMITIVES: [TypeId; 5] = [TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN, TypeId::BIGINT, TypeId::SYMBOL];
 
 const MAX_INSTANTIATIONS_INSPECTED: u32 = 8;
@@ -85,11 +86,11 @@ const MAX_INSTANTIATIONS_INSPECTED_IN_TOTAL: u32 = 2048;
 
 const MAX_LEVELS_INSPECTED: u32 = 256;
 
-const MOST_PROPERTIES_OF_A_RECORD_THAT_IS_TURNED_WHERE_IT_LIES: usize = 6;
+const MAX_IN_PLACE_CONVERSION_PROPERTIES: usize = 6;
 
-const MOST_TYPES_THAT_CROSS_FROM_ONE_PLACE: u32 = 1 << 16;
+const MAX_BOUNDARY_TYPES_PER_SITE: u32 = 1 << 16;
 
-pub struct GaveUp {
+pub struct TruncatedSearch {
     rank: (u8, u32, u32),
     pub typed_side: FileId,
     pub name: String,
@@ -114,7 +115,7 @@ impl Default for Place {
 }
 
 /// What has been noted while a program, or a part of one, was translated. The types are those that say how objects are laid out
-/// (`laid_out_as`), but for `not_laid_out`. `T`: what a type is called by. What costs something comes with the first place in
+/// (`layout_defining_type`), but for `without_fixed_layout`. `T`: what a type is called by. What costs something comes with the first place in
 /// the program that it was noted at, so that it can be said why.
 struct NotedTables<T = TypeId> {
     /// What an allocation site makes.
@@ -134,24 +135,24 @@ struct NotedTables<T = TypeId> {
     tests: FxHashSet<(T, T)>,
     /// A value that the operations say nothing of is held to it: an element, what an indirect or a generic call yields, an argument of
     /// whoever calls a function without knowing it.
-    vouched_into: FxHashMap<T, Place>,
+    trusted_into: FxHashMap<T, Place>,
     /// An object that is not laid out, of a type that is assignable to this one, is let into a place of it, and no test is made there.
     /// With the type of the object.
     foreign: FxHashMap<T, (Option<T>, Place)>,
     /// The value of an expression whose type says nothing of it, `any`, `unknown`, `object`, `{}`, is held to it.
     untyped_into: FxHashMap<T, Place>,
     untyped_into_both: FxHashSet<(T, T)>,
-    held_read_only: FxHashSet<(T, T)>,
-    read_only_handed_on: FxHashSet<T>,
+    stored_read_only: FxHashSet<(T, T)>,
+    read_only_passed_on: FxHashSet<T>,
     any_into: FxHashMap<T, Place>,
     checked_into: FxHashMap<T, Place>,
-    checked_by_road: [usize; 7],
+    checked_by_path: [usize; 7],
     /// Types that no declaration names and whose objects are not laid out: `(() => number) & { unit: string }`, `number[] & { tag: string }`.
-    not_laid_out: FxHashSet<T>,
-    cut_short: FxHashMap<Place, [u32; 4]>,
-    most_looked_into: [u32; 3],
+    without_fixed_layout: FxHashSet<T>,
+    truncated: FxHashMap<Place, [u32; 4]>,
+    max_inspected: [u32; 3],
     /// By field, which is a layout and a name: the functions whose closures the allocation sites of the layout store there.
-    callees_at_birth: FxHashMap<(T, Atom), Callee>,
+    callees_at_creation: FxHashMap<(T, Atom), Callee>,
     /// The same for the stores through a supertype, which reach the objects of every subtype.
     callees_stored: FxHashMap<(T, Atom), Callee>,
     /// Which fields objects get right after their allocation: see `creation.rs`.
@@ -176,19 +177,19 @@ impl<T> Default for NotedTables<T> {
             guards: FxHashSet::default(),
             forced: FxHashSet::default(),
             tests: FxHashSet::default(),
-            vouched_into: FxHashMap::default(),
+            trusted_into: FxHashMap::default(),
             foreign: FxHashMap::default(),
             untyped_into: FxHashMap::default(),
             untyped_into_both: FxHashSet::default(),
-            held_read_only: FxHashSet::default(),
-            read_only_handed_on: FxHashSet::default(),
+            stored_read_only: FxHashSet::default(),
+            read_only_passed_on: FxHashSet::default(),
             any_into: FxHashMap::default(),
             checked_into: FxHashMap::default(),
-            checked_by_road: [0; 7],
-            not_laid_out: FxHashSet::default(),
-            cut_short: FxHashMap::default(),
-            most_looked_into: [0; 3],
-            callees_at_birth: FxHashMap::default(),
+            checked_by_path: [0; 7],
+            without_fixed_layout: FxHashSet::default(),
+            truncated: FxHashMap::default(),
+            max_inspected: [0; 3],
+            callees_at_creation: FxHashMap::default(),
             callees_stored: FxHashMap::default(),
             creations: Creations::default(),
             constructions: Constructions::default(),
@@ -198,8 +199,8 @@ impl<T> Default for NotedTables<T> {
 }
 
 impl<T: Copy + Eq + Hash> NotedTables<T> {
-    fn evidence_of_strangers(&self) -> (Vec<T>, Vec<T>, Vec<T>) {
-        self.escapes.with_alterations(|noted| (noted.let_out(), noted.entered_by_strangers(), noted.entered_if_let_out()))
+    fn untyped_object_evidence(&self) -> (Vec<T>, Vec<T>, Vec<T>) {
+        self.escapes.with_mutations(|noted| (noted.escaped(), noted.receiving_untyped(), noted.receiving_untyped_if_escaped()))
     }
 
     /// Adds what has been noted elsewhere, in terms of the same names for the types.
@@ -209,17 +210,17 @@ impl<T: Copy + Eq + Hash> NotedTables<T> {
         self.casts.extend(other.casts);
         self.guards.extend(other.guards);
         self.untyped_into_both.extend(other.untyped_into_both);
-        self.held_read_only.extend(other.held_read_only);
-        self.read_only_handed_on.extend(other.read_only_handed_on);
+        self.stored_read_only.extend(other.stored_read_only);
+        self.read_only_passed_on.extend(other.read_only_passed_on);
         self.forced.extend(other.forced);
         self.tests.extend(other.tests);
-        self.not_laid_out.extend(other.not_laid_out);
-        for (at, times) in other.cut_short {
-            for (sum, more) in self.cut_short.entry(at).or_default().iter_mut().zip(times) {
+        self.without_fixed_layout.extend(other.without_fixed_layout);
+        for (at, times) in other.truncated {
+            for (sum, more) in self.truncated.entry(at).or_default().iter_mut().zip(times) {
                 *sum += more;
             }
         }
-        for (most, other) in self.most_looked_into.iter_mut().zip(other.most_looked_into) {
+        for (most, other) in self.max_inspected.iter_mut().zip(other.max_inspected) {
             *most = (*most).max(other);
         }
         self.creations.absorb(other.creations);
@@ -229,12 +230,12 @@ impl<T: Copy + Eq + Hash> NotedTables<T> {
             self.add_upcast(upcast, at);
         }
         for (view, (source, at)) in other.foreign {
-            self.add_foreign(view, source, at);
+            self.add_untyped(view, source, at);
         }
         for (view, at) in other.checked_into {
             self.add_check(view, at);
         }
-        for (sum, more) in self.checked_by_road.iter_mut().zip(other.checked_by_road) {
+        for (sum, more) in self.checked_by_path.iter_mut().zip(other.checked_by_path) {
             *sum += more;
         }
         for (view, at) in other.untyped_into {
@@ -243,11 +244,11 @@ impl<T: Copy + Eq + Hash> NotedTables<T> {
         for (view, at) in other.any_into {
             self.add_any_inflow(view, at);
         }
-        for (view, at) in other.vouched_into {
-            self.add_vouched_inflow(view, at);
+        for (view, at) in other.trusted_into {
+            self.add_trusted_inflow(view, at);
         }
-        for (field, callee) in other.callees_at_birth {
-            join_callee(&mut self.callees_at_birth, field, callee);
+        for (field, callee) in other.callees_at_creation {
+            join_callee(&mut self.callees_at_creation, field, callee);
         }
         for (field, callee) in other.callees_stored {
             join_callee(&mut self.callees_stored, field, callee);
@@ -259,7 +260,7 @@ impl<T: Copy + Eq + Hash> NotedTables<T> {
         *first = at.min(*first);
     }
 
-    fn add_foreign(&mut self, view: T, source: Option<T>, at: Place) {
+    fn add_untyped(&mut self, view: T, source: Option<T>, at: Place) {
         let first = self.foreign.entry(view).or_insert((source, at));
         if at < first.1 {
             *first = (source, at);
@@ -281,17 +282,17 @@ impl<T: Copy + Eq + Hash> NotedTables<T> {
         *first = at.min(*first);
     }
 
-    fn add_vouched_inflow(&mut self, view: T, at: Place) {
-        let first = self.vouched_into.entry(view).or_insert(at);
+    fn add_trusted_inflow(&mut self, view: T, at: Place) {
+        let first = self.trusted_into.entry(view).or_insert(at);
         *first = at.min(*first);
     }
 
     fn absorb_others(&mut self, others: OtherNotes<T>) {
-        for (sum, more) in self.checked_by_road.iter_mut().zip(others.checked_by_road) {
+        for (sum, more) in self.checked_by_path.iter_mut().zip(others.checked_by_path) {
             *sum += more;
         }
-        for (field, callee) in others.callees_at_birth {
-            join_callee(&mut self.callees_at_birth, field, callee);
+        for (field, callee) in others.callees_at_creation {
+            join_callee(&mut self.callees_at_creation, field, callee);
         }
         for (field, callee) in others.callees_stored {
             join_callee(&mut self.callees_stored, field, callee);
@@ -309,8 +310,8 @@ impl<T: Copy + Eq + Hash> NotedTables<T> {
             NoteKind::CopiedInto => {
                 self.copied_into.insert(first);
             }
-            NoteKind::NotLaidOut => {
-                self.not_laid_out.insert(first);
+            NoteKind::NoFixedLayout => {
+                self.without_fixed_layout.insert(first);
             }
             NoteKind::Cast => {
                 self.casts.insert((first, second));
@@ -325,27 +326,27 @@ impl<T: Copy + Eq + Hash> NotedTables<T> {
                 self.tests.insert((first, second));
             }
             NoteKind::Upcast => self.add_upcast((first, second), at),
-            NoteKind::VouchedInto => self.add_vouched_inflow(first, at),
+            NoteKind::TrustedInto => self.add_trusted_inflow(first, at),
             NoteKind::UntypedInto => self.add_untyped_inflow(first, at),
             NoteKind::UntypedIntoBoth => {
                 self.untyped_into_both.insert((first, second));
             }
-            NoteKind::HeldReadOnly => {
-                self.held_read_only.insert((first, second));
+            NoteKind::StoredReadOnly => {
+                self.stored_read_only.insert((first, second));
             }
-            NoteKind::ReadOnlyHandedOn => {
-                self.read_only_handed_on.insert(first);
+            NoteKind::ReadOnlyPassedOn => {
+                self.read_only_passed_on.insert(first);
             }
             NoteKind::AnyInto => self.add_any_inflow(first, at),
             NoteKind::CheckedInto => self.add_check(first, at),
-            NoteKind::Foreign => self.add_foreign(first, has_second.then_some(second), at),
+            NoteKind::Foreign => self.add_untyped(first, has_second.then_some(second), at),
             NoteKind::EntersParameter
-            | NoteKind::InstanceLetOut
-            | NoteKind::InstanceEnteredByForeignObjects
-            | NoteKind::InstanceEnteredIfLetOut
-            | NoteKind::ViewLetOut
-            | NoteKind::EnteringView
-            | NoteKind::InstanceEnteringViews => self.escapes.alterations.get_or_insert_with(Default::default).add_note(kind, first, second, at),
+            | NoteKind::InstanceEscapes
+            | NoteKind::InstanceReceivesUntyped
+            | NoteKind::InstanceReceivesUntypedIfEscapes
+            | NoteKind::TypeEscapes
+            | NoteKind::FlowsIntoType
+            | NoteKind::InstanceFlowsIntoTypes => self.escapes.mutations.get_or_insert_with(Default::default).add_note(kind, first, second, at),
         }
     }
 }
@@ -354,43 +355,43 @@ impl<T: Copy + Eq + Hash> NotedTables<T> {
 pub(super) enum NoteKind {
     AllocatedAtSite,
     CopiedInto,
-    NotLaidOut,
+    NoFixedLayout,
     Cast,
     Guard,
     Forced,
     Test,
     Upcast,
-    VouchedInto,
+    TrustedInto,
     UntypedInto,
     UntypedIntoBoth,
-    HeldReadOnly,
-    ReadOnlyHandedOn,
+    StoredReadOnly,
+    ReadOnlyPassedOn,
     AnyInto,
     CheckedInto,
     Foreign,
     EntersParameter,
-    InstanceLetOut,
-    InstanceEnteredByForeignObjects,
-    InstanceEnteredIfLetOut,
-    ViewLetOut,
-    EnteringView,
-    InstanceEnteringViews,
+    InstanceEscapes,
+    InstanceReceivesUntyped,
+    InstanceReceivesUntypedIfEscapes,
+    TypeEscapes,
+    FlowsIntoType,
+    InstanceFlowsIntoTypes,
 }
 
 impl NoteKind {
-    fn keeps_first_place(self) -> bool {
-        matches!(self, NoteKind::Upcast | NoteKind::VouchedInto | NoteKind::UntypedInto | NoteKind::AnyInto | NoteKind::CheckedInto)
+    fn keeps_first_site(self) -> bool {
+        matches!(self, NoteKind::Upcast | NoteKind::TrustedInto | NoteKind::UntypedInto | NoteKind::AnyInto | NoteKind::CheckedInto)
     }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum ParameterNoteKind {
     Enters,
-    LetOut,
-    EnteredByForeignObjects,
-    EnteredIfLetOut,
-    UntypedEnters,
-    AnythingEnters,
+    Escaped,
+    ReceivesUntyped,
+    ReceivesUntypedIfEscapes,
+    UntypedInflow,
+    AnyInflow,
 }
 
 pub(super) type ParameterNote = (ParameterNoteKind, TypeParameter, TypeParameter);
@@ -405,8 +406,8 @@ struct Note<T> {
 }
 
 struct OtherNotes<T> {
-    checked_by_road: [usize; 7],
-    callees_at_birth: FxHashMap<(T, Atom), Callee>,
+    checked_by_path: [usize; 7],
+    callees_at_creation: FxHashMap<(T, Atom), Callee>,
     callees_stored: FxHashMap<(T, Atom), Callee>,
     creations: Creations<T>,
     constructions: Constructions<T>,
@@ -414,17 +415,17 @@ struct OtherNotes<T> {
 
 impl<T> Default for OtherNotes<T> {
     fn default() -> OtherNotes<T> {
-        OtherNotes { checked_by_road: [0; 7], callees_at_birth: FxHashMap::default(), callees_stored: FxHashMap::default(), creations: Creations::default(), constructions: Constructions::default() }
+        OtherNotes { checked_by_path: [0; 7], callees_at_creation: FxHashMap::default(), callees_stored: FxHashMap::default(), creations: Creations::default(), constructions: Constructions::default() }
     }
 }
 
 impl<T: Copy + Eq + Hash> OtherNotes<T> {
     fn absorb(&mut self, other: OtherNotes<T>) {
-        for (sum, more) in self.checked_by_road.iter_mut().zip(other.checked_by_road) {
+        for (sum, more) in self.checked_by_path.iter_mut().zip(other.checked_by_path) {
             *sum += more;
         }
-        for (field, callee) in other.callees_at_birth {
-            join_callee(&mut self.callees_at_birth, field, callee);
+        for (field, callee) in other.callees_at_creation {
+            join_callee(&mut self.callees_at_creation, field, callee);
         }
         for (field, callee) in other.callees_stored {
             join_callee(&mut self.callees_stored, field, callee);
@@ -443,49 +444,49 @@ impl<T: Copy + Eq + Hash> OtherNotes<T> {
             }
             renamed
         };
-        let (callees_at_birth, callees_stored) = (of_fields(self.callees_at_birth), of_fields(self.callees_stored));
+        let (callees_at_creation, callees_stored) = (of_fields(self.callees_at_creation), of_fields(self.callees_stored));
         let creations = self.creations.renamed(&mut *rename);
         let constructions = self.constructions.renamed(rename);
-        OtherNotes { checked_by_road: self.checked_by_road, callees_at_birth, callees_stored, creations, constructions }
+        OtherNotes { checked_by_path: self.checked_by_path, callees_at_creation, callees_stored, creations, constructions }
     }
 }
 
-pub struct Noted<T = TypeId> {
+pub struct FlowNotes<T = TypeId> {
     notes: Vec<Note<T>>,
     parameter_notes: Vec<ParameterNote>,
-    cut_short: FxHashMap<Place, [u32; 4]>,
-    most_looked_into: [u32; 3],
+    truncated: FxHashMap<Place, [u32; 4]>,
+    max_inspected: [u32; 3],
     others: Option<Box<OtherNotes<T>>>,
     escapes: Escapes<T>,
     absorbed: Option<Box<NotedTables<T>>>,
 }
 
-impl<T> Default for Noted<T> {
-    fn default() -> Noted<T> {
-        Noted { notes: Vec::new(), parameter_notes: Vec::new(), cut_short: FxHashMap::default(), most_looked_into: [0; 3], others: None, escapes: Escapes::default(), absorbed: None }
+impl<T> Default for FlowNotes<T> {
+    fn default() -> FlowNotes<T> {
+        FlowNotes { notes: Vec::new(), parameter_notes: Vec::new(), truncated: FxHashMap::default(), max_inspected: [0; 3], others: None, escapes: Escapes::default(), absorbed: None }
     }
 }
 
-impl<T: Copy + Eq + Hash> Noted<T> {
-    pub fn has_alterations(&self) -> bool {
-        self.escapes.alterations.is_some() || !self.parameter_notes.is_empty() || self.notes.last().is_some_and(|note| note.kind >= NoteKind::EntersParameter)
+impl<T: Copy + Eq + Hash> FlowNotes<T> {
+    pub fn has_mutations(&self) -> bool {
+        self.escapes.mutations.is_some() || !self.parameter_notes.is_empty() || self.notes.last().is_some_and(|note| note.kind >= NoteKind::EntersParameter)
     }
 
-    pub fn absorb_evidence_of_strangers(&mut self, other: &Noted<T>) {
-        let evidence = self.absorbed.get_or_insert_with(Default::default).escapes.alterations.get_or_insert_with(Default::default);
+    pub fn absorb_untyped_object_evidence(&mut self, other: &FlowNotes<T>) {
+        let evidence = self.absorbed.get_or_insert_with(Default::default).escapes.mutations.get_or_insert_with(Default::default);
         for note in &other.notes[other.first_evidence()..] {
             evidence.add_note(note.kind, note.first, note.second, note.at);
         }
-        for &note in other.parameter_notes.iter().filter(|note| note.0 <= ParameterNoteKind::EnteredIfLetOut) {
+        for &note in other.parameter_notes.iter().filter(|note| note.0 <= ParameterNoteKind::ReceivesUntypedIfEscapes) {
             evidence.add_parameter_note(note);
         }
     }
 
-    pub fn evidence_of_strangers(&self) -> (Vec<T>, Vec<T>, Vec<T>) {
-        self.absorbed.as_ref().map_or_else(Default::default, |absorbed| absorbed.evidence_of_strangers())
+    pub fn untyped_object_evidence(&self) -> (Vec<T>, Vec<T>, Vec<T>) {
+        self.absorbed.as_ref().map_or_else(Default::default, |absorbed| absorbed.untyped_object_evidence())
     }
 
-    pub fn absorb(&mut self, other: Noted<T>) {
+    pub fn absorb(&mut self, other: FlowNotes<T>) {
         other.add_to(self.absorbed.get_or_insert_with(Default::default));
     }
 
@@ -493,7 +494,7 @@ impl<T: Copy + Eq + Hash> Noted<T> {
         self.notes.partition_point(|note| note.kind < NoteKind::EntersParameter)
     }
 
-    pub fn append_taken(&mut self, mut other: Noted<T>) {
+    pub fn append_taken(&mut self, mut other: FlowNotes<T>) {
         let (mine, theirs) = (self.first_evidence(), other.first_evidence());
         let (evidence, evidence_of_other) = (self.notes.split_off(mine), other.notes.split_off(theirs));
         self.notes.append(&mut other.notes);
@@ -502,15 +503,15 @@ impl<T: Copy + Eq + Hash> Noted<T> {
         self.append(other);
     }
 
-    pub fn append(&mut self, mut other: Noted<T>) {
+    pub fn append(&mut self, mut other: FlowNotes<T>) {
         self.notes.append(&mut other.notes);
         self.parameter_notes.append(&mut other.parameter_notes);
-        for (at, times) in other.cut_short {
-            for (sum, more) in self.cut_short.entry(at).or_default().iter_mut().zip(times) {
+        for (at, times) in other.truncated {
+            for (sum, more) in self.truncated.entry(at).or_default().iter_mut().zip(times) {
                 *sum += more;
             }
         }
-        for (most, other) in self.most_looked_into.iter_mut().zip(other.most_looked_into) {
+        for (most, other) in self.max_inspected.iter_mut().zip(other.max_inspected) {
             *most = (*most).max(other);
         }
         match (&mut self.others, other.others) {
@@ -529,17 +530,17 @@ impl<T: Copy + Eq + Hash> Noted<T> {
             tables.add_note(note);
         }
         if !self.parameter_notes.is_empty() {
-            let alterations = tables.escapes.alterations.get_or_insert_with(Default::default);
+            let mutations = tables.escapes.mutations.get_or_insert_with(Default::default);
             for note in self.parameter_notes {
-                alterations.add_parameter_note(note);
+                mutations.add_parameter_note(note);
             }
         }
-        for (at, times) in self.cut_short {
-            for (sum, more) in tables.cut_short.entry(at).or_default().iter_mut().zip(times) {
+        for (at, times) in self.truncated {
+            for (sum, more) in tables.truncated.entry(at).or_default().iter_mut().zip(times) {
                 *sum += more;
             }
         }
-        for (most, other) in tables.most_looked_into.iter_mut().zip(self.most_looked_into) {
+        for (most, other) in tables.max_inspected.iter_mut().zip(self.max_inspected) {
             *most = (*most).max(other);
         }
         if let Some(others) = self.others {
@@ -600,7 +601,7 @@ impl<T: Copy + Eq + Hash> Noted<T> {
         self.add_pair_at(NoteKind::Upcast, upcast.0, upcast.1, at);
     }
 
-    fn add_foreign(&mut self, view: T, source: Option<T>, at: Place) {
+    fn add_untyped(&mut self, view: T, source: Option<T>, at: Place) {
         self.notes.push(Note { kind: NoteKind::Foreign, has_second: source.is_some(), first: view, second: source.unwrap_or(view), at });
     }
 
@@ -616,12 +617,12 @@ impl<T: Copy + Eq + Hash> Noted<T> {
         self.add_at(NoteKind::AnyInto, view, at);
     }
 
-    fn add_vouched_inflow(&mut self, view: T, at: Place) {
-        self.add_at(NoteKind::VouchedInto, view, at);
+    fn add_trusted_inflow(&mut self, view: T, at: Place) {
+        self.add_at(NoteKind::TrustedInto, view, at);
     }
 
     /// The same in terms of other names for the types. What `rename` has no name for is left out, a pair if either has none.
-    pub fn renamed<U: Copy + Eq + Hash>(self, mut rename: impl FnMut(T) -> Option<U>) -> Noted<U> {
+    pub fn renamed<U: Copy + Eq + Hash>(self, mut rename: impl FnMut(T) -> Option<U>) -> FlowNotes<U> {
         let mut notes = Vec::with_capacity(self.notes.len());
         let mut last: Option<(T, Option<U>)> = None;
         for note in self.notes {
@@ -642,18 +643,18 @@ impl<T: Copy + Eq + Hash> Noted<T> {
         }
         let others = self.others.map(|others| Box::new(others.renamed(&mut rename)));
         let escapes = self.escapes.renamed(&mut rename);
-        Noted { notes, parameter_notes: self.parameter_notes, cut_short: self.cut_short, most_looked_into: self.most_looked_into, others, escapes, absorbed: None }
+        FlowNotes { notes, parameter_notes: self.parameter_notes, truncated: self.truncated, max_inspected: self.max_inspected, others, escapes, absorbed: None }
     }
 }
 
-impl Noted<TypeId> {
+impl FlowNotes<TypeId> {
     fn sort_and_deduplicate(&mut self) {
         self.notes.sort_by(|a, b| {
             let by_second = || if a.kind == NoteKind::Foreign { std::cmp::Ordering::Equal } else { a.second.0.cmp(&b.second.0) };
             (a.kind, a.first.0).cmp(&(b.kind, b.first.0)).then_with(by_second).then_with(|| a.at.cmp(&b.at))
         });
         self.notes.dedup_by(|later, earlier| {
-            later.kind == earlier.kind && later.first == earlier.first && (later.kind == NoteKind::Foreign || later.second == earlier.second && (later.kind.keeps_first_place() || later.at == earlier.at))
+            later.kind == earlier.kind && later.first == earlier.first && (later.kind == NoteKind::Foreign || later.second == earlier.second && (later.kind.keeps_first_site() || later.at == earlier.at))
         });
         self.parameter_notes.sort_unstable();
         self.parameter_notes.dedup();
@@ -663,14 +664,14 @@ impl Noted<TypeId> {
         (self.notes.len(), self.parameter_notes.len())
     }
 
-    fn notes_since(&self, position: (usize, usize)) -> Noted {
-        let mut since = Noted { notes: self.notes[position.0..].to_vec(), parameter_notes: self.parameter_notes[position.1..].to_vec(), ..Noted::default() };
+    fn notes_since(&self, position: (usize, usize)) -> FlowNotes {
+        let mut since = FlowNotes { notes: self.notes[position.0..].to_vec(), parameter_notes: self.parameter_notes[position.1..].to_vec(), ..FlowNotes::default() };
         since.sort_and_deduplicate();
         since
     }
 
-    fn repeat(&mut self, earlier: &Noted, at: Place) {
-        self.notes.extend(earlier.notes.iter().map(|note| Note { at: if note.kind.keeps_first_place() || note.kind == NoteKind::Foreign { at } else { note.at }, ..*note }));
+    fn repeat(&mut self, earlier: &FlowNotes, at: Place) {
+        self.notes.extend(earlier.notes.iter().map(|note| Note { at: if note.kind.keeps_first_site() || note.kind == NoteKind::Foreign { at } else { note.at }, ..*note }));
         self.parameter_notes.extend_from_slice(&earlier.parameter_notes);
     }
 }
@@ -706,100 +707,188 @@ pub enum Literal {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
-enum EscapeQuery {
+pub(super) enum EscapeQuery {
     OfType(TypeId),
-    IntoUntypedPlace(TypeId, Option<TypeId>),
+    IntoUntypedSlot(TypeId, Option<TypeId>),
+    Entry(TypeId, Option<TypeId>),
+    HandedOver(TypeId, bool),
+    UntypedIntoPlace(TypeId),
+    ThroughGuardsOf(TypeId),
+    UntypedIntoNestedClasses(TypeId, bool),
+}
+
+impl EscapeQuery {
+    fn is_local(self) -> bool {
+        let is_local = |ty: TypeId| crate::local::is_local_number(ty.0);
+        match self {
+            EscapeQuery::OfType(ty) | EscapeQuery::HandedOver(ty, _) | EscapeQuery::UntypedIntoPlace(ty) | EscapeQuery::ThroughGuardsOf(ty) | EscapeQuery::UntypedIntoNestedClasses(ty, _) => is_local(ty),
+            EscapeQuery::IntoUntypedSlot(own, target) | EscapeQuery::Entry(own, target) => is_local(own) || target.is_some_and(is_local),
+        }
+    }
+
+    fn subject(self) -> TypeId {
+        match self {
+            EscapeQuery::OfType(ty) | EscapeQuery::HandedOver(ty, _) | EscapeQuery::UntypedIntoPlace(ty) | EscapeQuery::ThroughGuardsOf(ty) | EscapeQuery::UntypedIntoNestedClasses(ty, _) => ty,
+            EscapeQuery::IntoUntypedSlot(own, _) | EscapeQuery::Entry(own, _) => own,
+        }
+    }
+
+    fn shard(self) -> usize {
+        use std::hash::BuildHasher;
+        (crate::util::FxBuild.hash_one(self) >> 58) as usize
+    }
+}
+
+type EscapeNotes = FxHashMap<EscapeQuery, Option<Arc<FlowNotes>>>;
+
+struct ListsByType<K> {
+    shards: Vec<RwLock<FxHashMap<K, Arc<[TypeId]>>>>,
+}
+
+impl<K> ListsByType<K> {
+    fn take(&self) -> Vec<FxHashMap<K, Arc<[TypeId]>>> {
+        self.shards.iter().map(|shard| std::mem::take(&mut *shard.write())).collect()
+    }
+}
+
+impl<K> Default for ListsByType<K> {
+    fn default() -> ListsByType<K> {
+        ListsByType { shards: (0..64).map(|_| RwLock::new(FxHashMap::default())).collect() }
+    }
+}
+
+impl<K: Copy + Eq + Hash> ListsByType<K> {
+    fn shard(&self, key: K) -> &RwLock<FxHashMap<K, Arc<[TypeId]>>> {
+        use std::hash::BuildHasher;
+        &self.shards[(crate::util::FxBuild.hash_one(key) >> 58) as usize]
+    }
+
+    fn get(&self, key: K) -> Option<Arc<[TypeId]>> {
+        self.shard(key).read().get(&key).cloned()
+    }
+
+    fn add(&self, key: K, list: &[TypeId]) {
+        if !list.iter().any(|ty| crate::local::is_local_number(ty.0)) {
+            self.shard(key).write().entry(key).or_insert_with(|| list.into());
+        }
+    }
+}
+
+#[derive(Default)]
+pub(super) struct ListsSharedByTasks {
+    nested_types_staying_untyped: ListsByType<(TypeId, bool)>,
+    wide_data_records: ListsByType<TypeId>,
+    records: ListsByType<TypeId>,
+    nested_class_types: ListsByType<TypeId>,
+}
+
+pub(super) struct Shared {
+    escape_notes: [Vec<RwLock<EscapeNotes>>; 2],
+    lists: [ListsSharedByTasks; 2],
+}
+
+impl Shared {
+    pub(super) fn release(&self) {
+        let notes: Vec<EscapeNotes> = self.escape_notes.iter().flatten().map(|shard| std::mem::take(&mut *shard.write())).collect();
+        let lists: Vec<_> = (self.lists.iter())
+            .map(|lists| (lists.nested_types_staying_untyped.take(), lists.wide_data_records.take(), lists.records.take(), lists.nested_class_types.take()))
+            .collect();
+        let _ = std::thread::Builder::new().spawn(move || drop((notes, lists)));
+    }
+}
+
+impl Default for Shared {
+    fn default() -> Shared {
+        Shared { escape_notes: [0, 1].map(|_| (0..64).map(|_| RwLock::new(EscapeNotes::default())).collect()), lists: Default::default() }
+    }
 }
 
 #[derive(Default)]
 pub(super) struct State {
-    escape_notes: FxHashMap<EscapeQuery, std::rc::Rc<Noted>>,
-    noted: Noted,
-    /// `is_seen_as`, as far as it has been asked.
+    escape_notes: EscapeNotes,
+    noted: FlowNotes,
+    /// `is_upcast_safe`, as far as it has been asked.
     seen_as: FxHashMap<(TypeId, TypeId), bool>,
     /// What `is_provably_assignable` has given up on.
-    pub(super) cut_short: FxHashSet<(TypeId, TypeId, u8)>,
+    pub(super) truncated: FxHashSet<(TypeId, TypeId, u8)>,
     pub(super) provably_related: FxHashMap<(TypeId, TypeId, u8), bool>,
-    views_made: FxHashMap<(TypeId, ViewOf), TypeId>,
-    pub(super) times_not_known: usize,
+    derived_types: FxHashMap<(TypeId, DerivedTypeKind), TypeId>,
+    pub(super) literal_contextual_types: FxHashMap<(FileId, ExprId), Option<TypeId>>,
+    pub(super) unknown_count: usize,
     /// `root_of`, as far as it has been asked. Arrays, functions and the classes of the engine are in it from the first time on.
     roots: FxHashMap<Sym, Root>,
-    /// What is being translated: see `note_place`.
+    /// What is being translated: see `set_current_site`.
     place: Place,
-    /// What `types_held_entering` has been asked.
-    held_entering: FxHashSet<(TypeId, TypeId)>,
+    /// What `nested_inflow_pairs` has been asked.
+    visited_inflow_pairs: FxHashSet<(TypeId, TypeId)>,
     looked_into: FxHashMap<(Applied, Applied), [u32; 2]>,
-    not_looked_into: FxHashSet<(TypeId, bool)>,
-    levels_looked_into: u32,
-    /// `find_applications_in`, as far as it has been asked.
+    uninspected: FxHashSet<(TypeId, bool)>,
+    levels_inspected: u32,
+    /// `collect_applications`, as far as it has been asked.
     applications: FxHashMap<TypeId, Vec<(Applied, u32)>>,
     /// Once the program is linked: a bit for every published name, by its number. Set: some code of the program stores a property by it.
     stored: Option<std::sync::Arc<Vec<u64>>>,
     /// Cache of `canonical_type`.
     canonical: FxHashMap<TypeId, TypeId>,
-    laid_out: FxHashMap<TypeId, TypeId>,
-    first_of_structure: FxHashMap<Identity, TypeId>,
-    with_room_for_what_nothing_is_said_of: FxHashMap<TypeId, bool>,
+    layout_types_cache: FxHashMap<TypeId, TypeId>,
+    first_with_structure: FxHashMap<Identity, TypeId>,
+    structure_representatives_used: u32,
+    accepts_untyped_values_cache: FxHashMap<TypeId, bool>,
     seen_before: Option<Arc<FxHashSet<Identity>>>,
     finding_canonical: u32,
-    pub(super) objects_of: FxHashMap<TypeId, std::rc::Rc<super::alterations::ObjectsOf>>,
+    pub(super) without_primitives: FxHashMap<TypeId, std::rc::Rc<super::mutations::ObjectTypes>>,
     pub(super) carried: FxHashMap<(TypeId, TypeId), std::rc::Rc<[(TypeId, TypeId)]>>,
-    pub(super) saying_nothing_of_objects: FxHashMap<TypeId, bool>,
-    pub(super) saying_nothing_of_fields: FxHashMap<TypeId, bool>,
+    pub(super) untyped_for_objects: FxHashMap<TypeId, bool>,
+    pub(super) untyped_for_fields: FxHashMap<TypeId, bool>,
     untyped: FxHashMap<TypeId, bool>,
-    primitives_of_types: FxHashMap<TypeId, Vec<TypeId>>,
+    type_primitives: FxHashMap<TypeId, Vec<TypeId>>,
     cast_into_dictionaries: FxHashMap<(TypeId, TypeId), std::rc::Rc<[(TypeId, TypeId)]>>,
-    held_by_names: FxHashMap<TypeId, std::rc::Rc<[(Atom, TypeId)]>>,
-    held_by_name: FxHashMap<(TypeId, Atom), Option<TypeId>>,
-    pub(super) redefined_somewhere: FxHashMap<TypeId, bool>,
-    held_and_called_by: FxHashMap<TypeId, ([Option<TypeId>; 2], [bool; 2])>,
-    function_members_of: FxHashMap<TypeId, std::rc::Rc<[(Atom, TypeId)]>>,
+    stored_property_types: FxHashMap<TypeId, std::rc::Rc<[(Atom, TypeId)]>>,
+    stored_property_type: FxHashMap<(TypeId, Atom), Option<TypeId>>,
+    pub(super) is_redefined_cache: FxHashMap<TypeId, bool>,
+    element_and_call_types: FxHashMap<TypeId, ([Option<TypeId>; 2], [bool; 2])>,
+    function_members_cache: FxHashMap<TypeId, std::rc::Rc<[(Atom, TypeId)]>>,
     tags: FxHashMap<TypeId, std::rc::Rc<[(Atom, Box<[u64]>)]>>,
-    pub(super) accepts_primitives_itself: FxHashMap<TypeId, bool>,
+    pub(super) accepts_primitives_cache: FxHashMap<TypeId, bool>,
     pub(super) array_subtypes: FxHashMap<TypeId, bool>,
     pub(super) function_types: Option<[TypeId; 3]>,
     /// `is_tainted`, as far as it has been asked.
     tainted: FxHashMap<TypeId, bool>,
     with_tainted_part: FxHashMap<TypeId, bool>,
-    being_asked_of_taint: u32,
-    /// This checker is at the search from the doors. While it is, no type is tainted.
-    is_searching_from_doors: bool,
-    is_crossing_bounded: bool,
-    crossing_from_one_place: u32,
-    gave_up_crossing: Option<GaveUp>,
-    records_held_by_javascript: Vec<(TypeId, Place)>,
+    taint_query_depth: u32,
+    /// This checker is at the search from the redefinition_counts. While it is, no type is tainted.
+    is_searching_from_sources: bool,
+    is_boundary_bounded: bool,
+    boundary_types_at_site: u32,
+    boundary_overflow: Option<TruncatedSearch>,
+    records_reaching_javascript: Vec<(TypeId, Place)>,
     /// For the search: the untyped files that a tool has made of a TypeScript file which is still in the program, checked, and only declares (`P.tsx.js` of `P.tsx`), and those TypeScript files.
-    made_of_checked_text: FxHashSet<FileId>,
-    checked_texts: FxHashSet<FileId>,
+    generated_from_checked_source: FxHashSet<FileId>,
+    checked_sources: FxHashSet<FileId>,
     pairs_compared: FxHashSet<(TypeId, TypeId, bool)>,
     compared_again: FxHashSet<crate::check::relate::Key>,
-    called_with_a_type_parameter: FxHashMap<TypeId, bool>,
+    generic_callback_cache: FxHashMap<TypeId, bool>,
     reached_from_types: Reached,
+    nested_types_staying_untyped: FxHashMap<(TypeId, bool), std::rc::Rc<[TypeId]>>,
     wide_data_records: FxHashMap<TypeId, Box<[TypeId]>>,
     records: FxHashMap<TypeId, Box<[TypeId]>>,
-    instances_within: FxHashMap<TypeId, Box<[TypeId]>>,
-    instances_within_levels: FxHashMap<(TypeId, u32), std::rc::Rc<[TypeId]>>,
-    guards_of_something_untyped: FxHashMap<TypeId, Box<[TypeId]>>,
+    nested_class_types: FxHashMap<TypeId, Box<[TypeId]>>,
+    nested_class_types_by_depth: FxHashMap<(TypeId, u32), std::rc::Rc<[TypeId]>>,
+    mapped_layout_types_in_progress: Vec<TypeId>,
+    untyped_type_guards: FxHashMap<TypeId, Box<[TypeId]>>,
     dictionaries: FxHashMap<TypeId, Box<[TypeId]>>,
     plain_data: FxHashMap<(TypeId, bool), bool>,
-    given_and_kept_by_nobody: Vec<Vec<Atom>>,
-    held_by_pair: FxHashMap<(TypeId, TypeId), std::rc::Rc<HeldByPair>>,
+    unretained_external_data: Vec<Vec<Atom>>,
+    nested_pairs_cache: FxHashMap<(TypeId, TypeId), std::rc::Rc<NestedPairs>>,
+    large_union_infos: FxHashMap<TypeId, std::rc::Rc<LargeUnionInfo>>,
 }
 
 #[derive(Default)]
-struct HeldByPair {
-    pairs: Vec<(TypeId, TypeId)>,
-    runs: Vec<(TypeId, TypeId, usize, usize)>,
-}
-
-impl HeldByPair {
-    fn add_run(&mut self, from: TypeId, to: TypeId, run: &[(TypeId, TypeId)]) {
-        if !run.is_empty() {
-            let start = self.pairs.len();
-            self.pairs.extend_from_slice(run);
-            self.runs.push((from, to, start, self.pairs.len()));
-        }
-    }
+struct LargeUnionInfo {
+    relevant_parts: Vec<u32>,
+    parts_by_declaration: Vec<(Sym, u32)>,
+    element_and_call_types: Vec<Option<([Option<TypeId>; 2], [bool; 2])>>,
+    function_members: Vec<Option<std::rc::Rc<[(Atom, TypeId)]>>>,
 }
 
 impl State {
@@ -841,16 +930,16 @@ enum Standing {
     InGroup(u32),
 }
 
-struct Entered {
+struct SccEntry {
     index: u32,
     lowest: u32,
     first_view: usize,
-    first_group_behind: usize,
+    first_successor_group: usize,
 }
 
 struct Group {
     views: Vec<TypeId>,
-    groups_behind: Vec<u32>,
+    successor_groups: Vec<u32>,
     all_views: Option<std::rc::Rc<[TypeId]>>,
 }
 
@@ -859,9 +948,9 @@ struct Reached {
     standing: FxHashMap<(TypeId, bool), Standing>,
     groups: Vec<Group>,
     path: Vec<(TypeId, bool)>,
-    entered: Vec<Entered>,
+    entered: Vec<SccEntry>,
     views: Vec<TypeId>,
-    groups_behind: Vec<u32>,
+    successor_groups: Vec<u32>,
 }
 
 impl Walk for Reached {
@@ -875,7 +964,7 @@ impl Walk for Reached {
                 true
             }
             Some(&Standing::InGroup(group)) => {
-                self.groups_behind.push(group);
+                self.successor_groups.push(group);
                 true
             }
         }
@@ -885,7 +974,7 @@ impl Walk for Reached {
         let index = self.path.len() as u32;
         self.standing.insert((ty, stays), Standing::OnPath(index));
         self.path.push((ty, stays));
-        self.entered.push(Entered { index, lowest: index, first_view: self.views.len(), first_group_behind: self.groups_behind.len() });
+        self.entered.push(SccEntry { index, lowest: index, first_view: self.views.len(), first_successor_group: self.successor_groups.len() });
     }
 
     fn add_view(&mut self, view: TypeId) {
@@ -905,18 +994,18 @@ impl Walk for Reached {
             self.standing.insert(member, Standing::InGroup(group));
         }
         let views = self.views.split_off(left.first_view);
-        let mut groups_behind = self.groups_behind.split_off(left.first_group_behind);
-        groups_behind.sort_unstable();
-        groups_behind.dedup();
-        self.groups.push(Group { views, groups_behind, all_views: None });
-        self.groups_behind.push(group);
+        let mut successor_groups = self.successor_groups.split_off(left.first_successor_group);
+        successor_groups.sort_unstable();
+        successor_groups.dedup();
+        self.groups.push(Group { views, successor_groups, all_views: None });
+        self.successor_groups.push(group);
     }
 }
 
 impl Reached {
     fn take_views(&mut self) -> std::rc::Rc<[TypeId]> {
-        let Some(group) = self.groups_behind.pop() else { return Vec::new().into() };
-        self.groups_behind.clear();
+        let Some(group) = self.successor_groups.pop() else { return Vec::new().into() };
+        self.successor_groups.clear();
         if let Some(known) = &self.groups[group as usize].all_views {
             return std::rc::Rc::clone(known);
         }
@@ -924,7 +1013,7 @@ impl Reached {
         while let Some(next) = pending.pop() {
             if seen.insert(next) {
                 views.extend_from_slice(&self.groups[next as usize].views);
-                pending.extend_from_slice(&self.groups[next as usize].groups_behind);
+                pending.extend_from_slice(&self.groups[next as usize].successor_groups);
             }
         }
         views.sort_unstable_by_key(|view| view.0);
@@ -934,20 +1023,20 @@ impl Reached {
         views
     }
 
-    fn forget_groups_from(&mut self, first: usize) {
+    fn truncate_groups(&mut self, first: usize) {
         self.groups.truncate(first);
         self.standing.retain(|_, standing| matches!(*standing, Standing::InGroup(group) if (group as usize) < first));
     }
 }
 
-/// What the search from the doors has found, as every task reads it: it mentions no type by its number. It follows from the program alone, so that it does not matter which task has made it.
+/// What the search from the redefinition_counts has found, as every task reads it: it mentions no type by its number. It follows from the program alone, so that it does not matter which task has made it.
 #[derive(Default, Clone)]
-pub(super) struct Given {
-    went_on_by_pairs: bool,
+pub(super) struct ExternalTypes {
+    continued_by_pairs: bool,
     identities: FxHashSet<Identity>,
     names: FxHashMap<Identity, Vec<Box<[u8]>>>,
-    /// Of those that have properties: by name, `said_by` what the property holds. A name is its text: a text first seen during the check is an atom of the task that has seen it, and another task has another text by that number.
-    properties: Vec<FxHashMap<Box<[u8]>, Said>>,
+    /// Of those that have properties: by name, `value_summary` what the property holds. A name is its text: a text first seen during the check is an atom of the task that has seen it, and another task has another text by that number.
+    properties: Vec<FxHashMap<Box<[u8]>, ValueSummary>>,
     /// By name of a property: the indexes in `properties` of those that have it.
     by_name: FxHashMap<Box<[u8]>, Vec<u32>>,
 }
@@ -957,22 +1046,22 @@ fn is_keyed_by_symbol(name: &[u8]) -> bool {
     name.first() == Some(&0xFE)
 }
 
-/// What is read off the type of a property: `Checker::said_by`.
+/// What is read off the type of a property: `Checker::value_summary`.
 #[derive(Clone, PartialEq, Eq, Hash)]
-struct Said {
+struct ValueSummary {
     kinds: u16,
     /// The strings and the numbers that it can be, each kind by itself, if the type names them all: a discriminant. Empty: it can be others. By text and by bits: nothing that is numbered by task. In order.
     strings: Vec<Box<[u8]>>,
     numbers: Vec<u64>,
 }
 
-impl Said {
+impl ValueSummary {
     /// Whether a type that says this may be assignable to one that says `taken`.
-    fn may_fit(&self, taken: &Said) -> bool {
-        if !said::may_fit(self.kinds, taken.kinds) {
+    fn may_be_assignable_to(&self, taken: &ValueSummary) -> bool {
+        if !said::may_be_assignable_to(self.kinds, taken.kinds) {
             return false;
         }
-        if (self.kinds | taken.kinds) & said::ANYTHING != 0 {
+        if (self.kinds | taken.kinds) & (said::ANYTHING | said::UNKNOWN) != 0 {
             return true;
         }
         (self.kinds & said::STRING == 0 || taken.strings.is_empty() || !self.strings.is_empty() && self.strings.iter().all(|text| taken.strings.contains(text)))
@@ -980,7 +1069,7 @@ impl Said {
     }
 }
 
-/// `Checker::kinds_said_by`
+/// `Checker::declared_value_kinds`
 mod said {
     pub(super) const TRUE: u16 = 1;
     pub(super) const FALSE: u16 = 1 << 1;
@@ -994,15 +1083,16 @@ mod said {
     pub(super) const FUNCTIONS: u16 = 1 << 8;
     /// Nothing is read off the type.
     pub(super) const ANYTHING: u16 = 1 << 9;
+    pub(super) const UNKNOWN: u16 = 1 << 10;
 
     /// Whether a type that says `held` may be assignable to one that says `taken`. That a string is a `{ length: number }`, an array too, and a function a `{ name: string }` is left aside: no property of what the program is given is looked at so.
-    pub(super) fn may_fit(held: u16, taken: u16) -> bool {
-        (held | taken) & ANYTHING != 0 || held & !taken == 0
+    pub(super) fn may_be_assignable_to(held: u16, taken: u16) -> bool {
+        taken & (ANYTHING | UNKNOWN) != 0 || held & ANYTHING != 0 || held & !taken == 0
     }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
-enum ViewOf {
+enum DerivedTypeKind {
     Union,
     Either,
     AnythingAs,
@@ -1060,12 +1150,12 @@ pub struct Reach {
     /// Or of a type that it replaces the prototype of objects of, by anything but `null`.
     pub may_have_other_prototype: bool,
     /// An object that is not laid out can be in places of this type.
-    pub admits_foreign: bool,
-    pub is_opened_for_the_log: bool,
-    pub admits_only_other_layouts: bool,
+    pub accepts_untyped: bool,
+    pub is_relaxed_for_logging: bool,
+    pub accepts_only_other_layouts: bool,
     /// The allocated types whose objects can be in places of this type, itself among them if it is allocated. Ascending.
     pub members: Vec<u32>,
-    pub members_by_fit: Vec<u32>,
+    pub structural_subtypes: Vec<u32>,
     /// What a cast may turn an object into, where it is, that was made as this type. Each is a member of this type. Ascending.
     pub specializations: Vec<u32>,
     /// By name of a field: the one function whose closures the stores that are seen put there, in the objects of every subtype. A
@@ -1076,22 +1166,22 @@ pub struct Reach {
     pub set_at_creation: Vec<(Atom, bool)>,
     /// Of a layout that is allocated: the names of the required fields that nobody ever sees absent. A fact: see
     /// `first_stores.rs`. In no order that means anything.
-    pub never_seen_absent: Vec<Atom>,
+    pub never_observed_absent: Vec<Atom>,
 }
 
 pub struct Membership {
     /// For each of the views that were asked about.
     pub views: Vec<Reach>,
-    pub(super) alteration_sites: [[u32; NUMBER_OF_OPERANDS]; 2],
-    pub(super) altered_by: [[u32; 3]; 2],
-    pub(super) evidence_of_alterations: [u32; 5],
-    pub(super) untyped_alterations: UntypedAlterations,
-    pub(super) widest_alterations: WidestAlterations,
+    pub(super) mutation_sites: [[u32; NUMBER_OF_OPERANDS]; 2],
+    pub(super) mutated_by: [[u32; 3]; 2],
+    pub(super) mutation_evidence: [u32; 5],
+    pub(super) untyped_mutations: UntypedMutations,
+    pub(super) widest_mutations: WidestMutations,
     pub(super) constructions_are_incomplete: bool,
-    pub(super) doors: DoorsCounted,
+    pub(super) redefinition_counts: CountedRedefinitions,
     pub sizes: Sizes,
     /// For each view that admits foreign objects: why.
-    pub why_foreign: Vec<Option<WhyForeign>>,
+    pub untyped_reasons: Vec<Option<UntypedReason>>,
     /// For each view: its subtypes, and after them, by numbers that no view has, types without a layout. Ascending. And why each is one.
     pub subtypes: Vec<Vec<u32>>,
     pub causes: Vec<Vec<Cause>>,
@@ -1101,9 +1191,9 @@ pub struct Membership {
     pub vouched: Vec<(u32, Place)>,
 }
 
-/// Where a value of type `any` or `unknown` comes from, going by the text: `Checker::origin_of_data`. The first three are known for data that nobody has made anything of.
+/// Where a value of type `any` or `unknown` comes from, going by the text: `Checker::data_origin`. The first three are known for data that nobody has made anything of.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub enum OriginOfData {
+pub enum DataOrigin {
     /// `JSON.parse(..)`
     Parsed,
     /// What a declaration without a body has produced.
@@ -1123,21 +1213,21 @@ pub enum OriginOfData {
     Awaited,
 }
 
-impl OriginOfData {
-    pub fn is_known_for_data(self) -> bool {
-        self <= OriginOfData::JsonModule
+impl DataOrigin {
+    pub fn is_known_plain_data(self) -> bool {
+        self <= DataOrigin::JsonModule
     }
 }
 
-struct LookedAt {
+struct InspectedCast {
     target: (TypeId, Identity),
-    parts_of_target: Vec<Identity>,
+    target_parts: Vec<Identity>,
     source: (TypeId, Identity),
-    parts_of_source: Vec<Identity>,
+    source_parts: Vec<Identity>,
     file: FileId,
     written: TypeNodeId,
     operand: ExprId,
-    is_known_for_data: Option<bool>,
+    is_known_plain_data: Option<bool>,
 }
 
 struct WrittenUnion {
@@ -1148,12 +1238,12 @@ struct WrittenUnion {
 
 #[derive(Default)]
 struct Left {
-    looked_at: FxHashMap<FileId, Vec<LookedAt>>,
+    looked_at: FxHashMap<FileId, Vec<InspectedCast>>,
     unions: FxHashMap<FileId, Vec<WrittenUnion>>,
     arrays: Vec<(Identity, Vec<Identity>)>,
 }
 
-type SaidByType = (Identity, Option<Vec<(Box<[u8]>, Said)>>);
+type TypePropertySummary = (Identity, Option<Vec<(Box<[u8]>, ValueSummary)>>);
 
 fn share_by_weight(files: &[FileId], weights: &[u64], index: usize, searchers: usize) -> Vec<FileId> {
     let total: u64 = files.iter().map(|file| weights[file.idx()]).sum();
@@ -1172,7 +1262,7 @@ pub enum Share<'a> {
     Rest { index: usize, of: usize, is_taken: &'a [bool] },
 }
 
-pub struct Meeting {
+pub struct SearchBarrier {
     barrier: Barrier,
     search: Search,
 }
@@ -1180,16 +1270,16 @@ pub struct Meeting {
 pub(super) struct Search {
     searchers: usize,
     barrier: Barrier,
-    found_by_all: [AtomicUsize; 3],
+    total_found: [AtomicUsize; 3],
     seen: RwLock<FxHashSet<Identity>>,
     tainted: RwLock<FxHashSet<Identity>>,
-    made_plain: RwLock<FxHashSet<Identity>>,
-    said: Vec<Guarded<Vec<SaidByType>>>,
-    said_so_far: Guarded<FxHashSet<Vec<(Box<[u8]>, Said)>>>,
-    given: RwLock<Given>,
-    gave_up: Guarded<Option<GaveUp>>,
-    continues_past_doors: (Guarded<Option<bool>>, Condvar),
-    is_gone_on_with: bool,
+    despecialized: RwLock<FxHashSet<Identity>>,
+    said: Vec<Guarded<Vec<TypePropertySummary>>>,
+    summaries_so_far: Guarded<FxHashSet<Vec<(Box<[u8]>, ValueSummary)>>>,
+    given: RwLock<ExternalTypes>,
+    gave_up: Guarded<Option<TruncatedSearch>>,
+    continues_past_sources: (Guarded<Option<bool>>, Condvar),
+    is_continuation: bool,
     left: Guarded<Left>,
     seen_before: Option<Arc<FxHashSet<Identity>>>,
     targets_by_source: FxHashMap<Identity, Vec<Identity>>,
@@ -1202,16 +1292,16 @@ impl Search {
         Search {
             searchers,
             barrier: Barrier::new(searchers),
-            found_by_all: Default::default(),
+            total_found: Default::default(),
             seen: RwLock::new(Default::default()),
             tainted: RwLock::new(Default::default()),
-            made_plain: RwLock::new(Default::default()),
+            despecialized: RwLock::new(Default::default()),
             said: (0..searchers).map(|_| Guarded::default()).collect(),
-            said_so_far: Guarded::default(),
+            summaries_so_far: Guarded::default(),
             given: RwLock::new(Default::default()),
             gave_up: Guarded::default(),
-            continues_past_doors: Default::default(),
-            is_gone_on_with: false,
+            continues_past_sources: Default::default(),
+            is_continuation: false,
             left: Guarded::default(),
             seen_before: None,
             targets_by_source: FxHashMap::default(),
@@ -1220,14 +1310,14 @@ impl Search {
         }
     }
 
-    fn going_on_from(first: Search, parties: usize) -> Search {
+    fn continuing_from(first: Search, parties: usize) -> Search {
         let seen = std::mem::take(&mut *first.seen.write());
         Search {
             seen_before: Some(Arc::new(seen.clone())),
             seen: RwLock::new(seen),
             tainted: first.tainted,
-            made_plain: first.made_plain,
-            said_so_far: first.said_so_far,
+            despecialized: first.despecialized,
+            summaries_so_far: first.summaries_so_far,
             given: first.given,
             left: first.left,
             names: first.names,
@@ -1235,30 +1325,30 @@ impl Search {
         }
     }
 
-    fn found(&self) -> Given {
-        Given { names: std::mem::take(&mut *self.names.lock()), ..std::mem::take(&mut *self.given.write()) }
+    fn found(&self) -> ExternalTypes {
+        ExternalTypes { names: std::mem::take(&mut *self.names.lock()), ..std::mem::take(&mut *self.given.write()) }
     }
 
     fn has_any_found(&self, found: usize, turn: &mut usize) -> bool {
         let (current, previous) = (*turn % 3, (*turn + 2) % 3);
         *turn += 1;
-        self.found_by_all[current].fetch_add(found, Ordering::SeqCst);
+        self.total_found[current].fetch_add(found, Ordering::SeqCst);
         if self.barrier.wait() {
-            self.found_by_all[previous].store(0, Ordering::SeqCst);
+            self.total_found[previous].store(0, Ordering::SeqCst);
         }
-        self.found_by_all[current].load(Ordering::SeqCst) != 0
+        self.total_found[current].load(Ordering::SeqCst) != 0
     }
 
-    fn add_what_was_said(&self) {
-        let (mut given, mut said_so_far) = (self.given.write(), self.said_so_far.lock());
+    fn publish_summaries(&self) {
+        let (mut given, mut summaries_so_far) = (self.given.write(), self.summaries_so_far.lock());
         for said in &self.said {
             for (identity, properties) in said.lock().drain(..) {
                 let is_new = given.identities.insert(identity);
                 let Some(properties) = properties.filter(|_| is_new) else { continue };
-                if properties.is_empty() || said_so_far.contains(&properties) {
+                if properties.is_empty() || summaries_so_far.contains(&properties) {
                     continue;
                 }
-                said_so_far.insert(properties.clone());
+                summaries_so_far.insert(properties.clone());
                 let index = given.properties.len() as u32;
                 for (name, _) in &properties {
                     match given.by_name.get_mut(name) {
@@ -1275,7 +1365,7 @@ impl Search {
 }
 
 impl<'s> Program<'s> {
-    pub fn is_what_is_given_found(&self) -> bool {
+    pub fn is_external_data_found(&self) -> bool {
         self.aot.storage.given.get().is_some()
     }
 
@@ -1285,9 +1375,9 @@ impl<'s> Program<'s> {
         }
     }
 
-    pub fn meeting_of(&self, parties: usize) -> Meeting {
-        let first = self.aot.storage.found_at_first.lock().take().expect("the search from the doors is made ahead of the plan");
-        let mut search = Search::going_on_from(first, parties);
+    pub fn meeting_of(&self, parties: usize) -> SearchBarrier {
+        let first = self.aot.storage.initial_search.lock().take().expect("the search from the redefinition_counts is made ahead of the plan");
+        let mut search = Search::continuing_from(first, parties);
         for (source, target) in std::mem::take(&mut *self.aot.storage.pairs_compared.lock()) {
             search.targets_by_source.entry(source).or_default().push(target);
         }
@@ -1295,22 +1385,23 @@ impl<'s> Program<'s> {
             targets.sort_unstable();
             targets.dedup();
         }
-        Meeting { barrier: Barrier::new(parties), search }
+        SearchBarrier { barrier: Barrier::new(parties), search }
     }
 
-    pub fn find_what_is_given(&self, searchers: usize, step: u32, is_searched_again: bool, at_once: &dyn Fn(usize, &(dyn Fn(usize) + Sync))) -> Result<Vec<Finished<'s>>, GaveUp> {
+    pub fn find_external_data(&self, searchers: usize, step: u32, is_searched_again: bool, at_once: &dyn Fn(usize, &(dyn Fn(usize) + Sync))) -> Result<Vec<Finished<'s>>, TruncatedSearch> {
         if self.aot.storage.given.get().is_some() {
             return Ok(Vec::new());
         }
-        let search = Search { is_gone_on_with: is_searched_again, seen_by_other_declarations: self.checker().importers_that_see_other_declarations(), ..Search::new(searchers.max(1)) };
-        search.given.write().went_on_by_pairs = is_searched_again;
+        self.aot.storage.is_search_under_way.store(is_searched_again, Ordering::Relaxed);
+        let search = Search { is_continuation: is_searched_again, seen_by_other_declarations: self.checker().importers_with_other_declarations(), ..Search::new(searchers.max(1)) };
+        search.given.write().continued_by_pairs = is_searched_again;
         let finished: Vec<Guarded<Option<Finished<'s>>>> = (0..search.searchers).map(|_| Guarded::new(None)).collect();
         const TABLES: usize = 9;
         at_once(search.searchers + TABLES, &|index| {
             if let Some(part) = index.checked_sub(search.searchers) {
-                let mut goes_on = search.continues_past_doors.0.lock();
+                let mut goes_on = search.continues_past_sources.0.lock();
                 while goes_on.is_none() {
-                    search.continues_past_doors.1.wait_guarded(&mut goes_on);
+                    search.continues_past_sources.1.wait_guarded(&mut goes_on);
                 }
                 if *goes_on != Some(true) {
                     return;
@@ -1319,7 +1410,7 @@ impl<'s> Program<'s> {
                 let mut checker = self.checker();
                 checker.begin_stack_budget();
                 checker.begin_task(step, part as u32, false);
-                checker.while_translating(|checker| match part {
+                checker.during_translation(|checker| match part {
                     0 => checker.precompute_class_tables(),
                     4 => {
                         checker.free_names();
@@ -1340,9 +1431,9 @@ impl<'s> Program<'s> {
                     searcher.task.begin_file(file, false);
                 }
             }
-            searcher.aot.flows.is_searching_from_doors = true;
-            searcher.aot.flows.is_crossing_bounded = true;
-            searcher.search_from_doors(&search, index, &Share::Rest { index, of: search.searchers, is_taken: &[] }, &FxHashMap::default());
+            searcher.aot.flows.is_searching_from_sources = true;
+            searcher.aot.flows.is_boundary_bounded = true;
+            searcher.search_from_sources(&search, index, &Share::Rest { index, of: search.searchers, is_taken: &[] }, &FxHashMap::default());
             let mut found = searcher.end_task();
             found.diagnostics.retain(|(owner, _)| owner.is_some());
             *finished[index].lock() = Some(found);
@@ -1352,8 +1443,8 @@ impl<'s> Program<'s> {
         }
         match is_searched_again {
             true => {
-                self.aot.storage.given.set_for_warming_up(search.given.read().clone());
-                *self.aot.storage.found_at_first.lock() = Some(search);
+                self.aot.storage.given.set_warmup_value(search.given.read().clone());
+                *self.aot.storage.initial_search.lock() = Some(search);
             }
             false => {
                 let _ = self.aot.storage.given.set(search.found());
@@ -1365,14 +1456,14 @@ impl<'s> Program<'s> {
 
 /// Why a view admits objects that are not laid out.
 #[derive(Copy, Clone)]
-pub enum WhyForeign {
+pub enum UntypedReason {
     /// A value of the type `source`, if that is still known, has been let in.
     Seen { source: Option<TypeId>, at: Place },
     /// The value of an expression whose type says nothing has been held to the view, or to one that holds it, and objects of the kind are
     /// of the type of the view.
     Untyped { at: Place, candidate: Candidate },
-    Given { at: Place, candidate: Candidate },
-    GivenAndKeptByNobody { at: Place },
+    ExternalData { at: Place, candidate: Candidate },
+    UnretainedExternalData { at: Place },
     /// What is in a place of the view `from` gets into places of this one untested.
     Inherited { from: u32, at: Place },
     /// A declaration file declares the type: it describes host objects to begin with.
@@ -1385,16 +1476,16 @@ pub enum WhyForeign {
     Weak { at: Place },
     /// All its properties are primitives, and something untyped is held to it: nothing has to be made of that.
     Flat { at: Place },
-    MayLackRoom { at: Place },
+    MayLackCapacity { at: Place },
     AnotherLayout { at: Place },
     UnconvertibleLayout { from: u32 },
     Dictionary { at: Place },
     /// More layouts may fit it than phase B asks about for one target, and a value that only its type vouches for is held to it.
     TooMany { at: Place },
-    ForTheLog { at: Place },
-    NothingIsMadeAsIt { at: Place },
+    ForLogging { at: Place },
+    NeverAllocated { at: Place },
     /// JavaScript of the program gets hold of its objects, and may do to one whatever the language allows: that object is an ordinary one from then on.
-    HeldByJavaScript { at: Place },
+    ReachesJavaScript { at: Place },
 }
 
 /// A kind of objects that are not laid out. `Checker::name_of_candidate` says which.
@@ -1406,26 +1497,26 @@ pub struct KindsDeclared {
     next: AtomicUsize,
     found: Vec<OnceLock<Option<Vec<(Sym, Option<bool>, bool)>>>>,
     namespaces: OnceLock<Vec<Sym>>,
-    nothing_is_published: RwLock<()>,
+    publish_lock: RwLock<()>,
 }
 
 impl KindsDeclared {
-    const FILES_OF_A_CHECKER: usize = 64;
-    const HELPERS_OF_THE_POOL: usize = 64;
+    const FILES_PER_CHECKER: usize = 64;
+    const POOL_HELPERS: usize = 64;
 
     pub fn help(&self, program: &Program<'_>) {
         loop {
-            let _shared = self.nothing_is_published.read();
+            let _shared = self.publish_lock.read();
             let at = self.next.fetch_add(1, Ordering::Relaxed);
             if at == 0 {
                 self.namespaces.set(program.checker().namespaces_used_as_values()).expect("the first to come finds the namespaces");
                 continue;
             }
-            let Some(slice) = self.declaring.chunks(KindsDeclared::FILES_OF_A_CHECKER).nth(at - 1) else { break };
+            let Some(slice) = self.declaring.chunks(KindsDeclared::FILES_PER_CHECKER).nth(at - 1) else { break };
             let mut c = program.checker();
             c.begin_stack_budget();
             let made = c.kinds_declared_in(slice);
-            self.found[at - 1].set((!c.take_ran_out_of_stack() && c.times_half_of_stack_was_in_use() == 0).then_some(made)).expect("a slice is gone through once");
+            self.found[at - 1].set((!c.take_ran_out_of_stack() && c.stack_half_used_count() == 0).then_some(made)).expect("a slice is gone through once");
         }
     }
 
@@ -1433,35 +1524,52 @@ impl KindsDeclared {
         self.next.store(usize::MAX / 2, Ordering::Relaxed);
     }
 
-    pub fn while_nothing_is_published<R>(&self, work: impl FnOnce() -> R) -> R {
-        let _shared = self.nothing_is_published.read();
+    pub fn with_publishing_blocked<R>(&self, work: impl FnOnce() -> R) -> R {
+        let _shared = self.publish_lock.read();
         work()
     }
 
     pub fn publish<R>(&self, work: impl FnOnce() -> R) -> R {
-        let _alone = self.nothing_is_published.write();
+        let _alone = self.publish_lock.write();
         work()
     }
 }
 
 /// Types, by their index in a list, and which of them has a property by which name.
 #[derive(Default)]
-struct Having {
+struct PropertyIndex {
     /// Ascending, as are `indexable` and each list of `by_name`.
     all: Vec<u32>,
     /// Those that a type with an index signature can take: they have one, or are known to have no properties but those they say.
     indexable: Vec<u32>,
     by_name: FxHashMap<Atom, Vec<u32>>,
+    bit_set_words: usize,
+    bit_sets_of_long_lists: FxHashMap<Atom, Vec<u64>>,
 }
 
-const MOST_GIVEN_KINDS_ASKED_ABOUT: usize = 256;
+impl PropertyIndex {
+    fn build_bit_sets_of_long_lists(&mut self) {
+        self.bit_set_words = self.by_name.values().filter_map(|indexes| indexes.last()).max().map_or(0, |&last| last as usize / 64 + 1);
+        for (&name, indexes) in &self.by_name {
+            if indexes.len() >= self.bit_set_words {
+                let mut bits = vec![0u64; self.bit_set_words];
+                for &index in indexes {
+                    bits[index as usize / 64] |= 1 << (index % 64);
+                }
+                self.bit_sets_of_long_lists.insert(name, bits);
+            }
+        }
+    }
+}
+
+const MAX_EXTERNAL_KINDS_QUERIED: usize = 256;
 
 /// What a question is about.
 #[derive(Copy, Clone)]
 enum Kind {
     /// Objects that are made as the type.
-    Made(TypeId),
-    /// The same, and the types of reference fields count: see `Checker::is_of_type_as`.
+    Allocated(TypeId),
+    /// The same, and the types of reference fields count: see `Checker::is_allocated_subtype_by`.
     Assignable(TypeId),
     /// Objects that are not laid out: arrays, functions, the objects of a class or an interface, a class or a function as a value. With
     /// `any` for type parameters. They are named by what every checker finds for itself, and not by a type that one checker has made.
@@ -1471,7 +1579,7 @@ enum Kind {
     ValueOf(Sym),
     /// Objects of a type that no declaration names, which whoever has noted it has kept.
     Of(TypeId),
-    Given(TypeId),
+    ExternalTypes(TypeId),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -1490,17 +1598,17 @@ pub struct Question {
 }
 
 impl Question {
-    pub(super) fn whether_made_is_of(made: TypeId, view: TypeId) -> Question {
-        Question { kind: Kind::Made(made), view }
+    pub(super) fn allocated_is_subtype_query(made: TypeId, view: TypeId) -> Question {
+        Question { kind: Kind::Allocated(made), view }
     }
 
-    pub(super) fn whether_made_is_assignable_to(made: TypeId, view: TypeId) -> Question {
+    pub(super) fn allocated_is_assignable_query(made: TypeId, view: TypeId) -> Question {
         Question { kind: Kind::Assignable(made), view }
     }
 
-    pub(super) fn about_what_is_made(&self) -> Option<(bool, TypeId, TypeId)> {
+    pub(super) fn as_allocated_query(&self) -> Option<(bool, TypeId, TypeId)> {
         match self.kind {
-            Kind::Made(made) => Some((false, made, self.view)),
+            Kind::Allocated(made) => Some((false, made, self.view)),
             Kind::Assignable(made) => Some((true, made, self.view)),
             _ => None,
         }
@@ -1515,13 +1623,28 @@ impl<'p, 's> Checker<'p, 's> {
     /// type over a type parameter is the same over what the parameter is bounded by, as the parameter by itself is: where `T extends
     /// Node`, a `Mutable<T>` is a `Mutable<Node>`. `Identifier & BinaryExpression`, which nothing is, going by `kind`, is `never`: no view, no
     /// member, nothing that objects are made as or cast to.
-    pub fn laid_out_as(&mut self, ty: TypeId) -> TypeId {
-        if let Some(&known) = self.aot.flows.laid_out.get(&ty) {
+    pub fn layout_defining_type(&mut self, ty: TypeId) -> TypeId {
+        if self.shared_type_flags(ty) & rows::IS_OWN_LAYOUT_TYPE != 0 {
+            return ty;
+        }
+        if let Some(&known) = self.aot.flows.layout_types_cache.get(&ty) {
             return known;
         }
-        let found = self.find_layout_type(ty);
+        let caches = self.type_caches().filter(|_| is_published(ty));
+        if let Some(known) = caches.and_then(|caches| caches.layout_types.get_as(ty, |&known| known)) {
+            self.aot.flows.layout_types_cache.insert(ty, known);
+            return known;
+        }
+        let representatives_used = self.aot.flows.structure_representatives_used;
+        let (found, is_cacheable) = self.compute_cacheable(|c| c.find_layout_type(ty));
         if self.aot.flows.finding_canonical == 0 {
-            self.aot.flows.laid_out.insert(ty, found);
+            let is_task_independent = is_cacheable && self.aot.flows.structure_representatives_used == representatives_used;
+            if !is_task_independent || found != ty || !self.publish_type_flags(ty, rows::IS_OWN_LAYOUT_TYPE) {
+                self.aot.flows.layout_types_cache.insert(ty, found);
+                if let Some(caches) = caches.filter(|_| is_task_independent && is_published(found) && !self.has_order_dependent_results()) {
+                    caches.layout_types.insert(ty, found);
+                }
+            }
         }
         found
     }
@@ -1531,38 +1654,49 @@ impl<'p, 's> Checker<'p, 's> {
         match *self.data(ty) {
             TypeData::Ref { target, .. } | TypeData::ThisParam(target) if self.files().flags(target).contains(SymFlags::CLASS) => self.declared_type(target),
             TypeData::Anon { origin: Origin::Mapped(file, node), mapper } => {
-                let Some((over, _)) = self.mapped_modifiers_source(file, node) else { return ty };
-                let over = self.instantiate(over, mapper);
-                // `Mutable<T>`, `Readonly<T>`: there is no `readonly` when the program runs, so it is a `T`.
-                if self.only_changes_readonly(file, node) {
-                    let over = if self.is_type_param(over) { self.base_constraint(over) } else { over };
-                    if self.says_properties(over) {
-                        return self.laid_out_as(over);
-                    }
-                }
-                if !self.is_type_param(over) {
+                if self.aot.flows.mapped_layout_types_in_progress.contains(&ty) {
                     return ty;
                 }
-                let bound = self.base_constraint(over);
-                let bounded = self.types().mapper(vec![(over, bound)]);
-                let bounded = self.instantiate(ty, bounded);
-                if bounded == ty { ty } else { self.laid_out_as(bounded) }
+                self.aot.flows.mapped_layout_types_in_progress.push(ty);
+                let found = self.find_mapped_layout_type(ty, file, node, mapper);
+                self.aot.flows.mapped_layout_types_in_progress.pop();
+                found
             }
             _ => {
                 let ty = self.regular(ty);
                 let ty = self.regular_type_of_object_literal(ty);
                 let ty = self.canonical_type(ty);
-                if self.structure_of_plain_literal(ty).is_none() {
+                if self.plain_literal_structure(ty).is_none() {
                     return ty;
                 }
                 self.keep_type(ty);
-                let identity = self.identity_of_type(ty);
-                *self.aot.flows.first_of_structure.entry(identity).or_insert(ty)
+                let identity = self.type_identity(ty);
+                self.aot.flows.structure_representatives_used += 1;
+                *self.aot.flows.first_with_structure.entry(identity).or_insert(ty)
             }
         }
     }
 
-    pub fn place_of_object_literal(&self, ty: TypeId) -> Option<(u32, u32)> {
+    fn find_mapped_layout_type(&mut self, ty: TypeId, file: FileId, node: TypeNodeId, mapper: MapperId) -> TypeId {
+        let Some((over, _)) = self.mapped_modifiers_source(file, node) else { return ty };
+        let over = self.instantiate(over, mapper);
+        // `Mutable<T>`, `Readonly<T>`: there is no `readonly` when the program runs, so it is a `T`.
+        if self.only_changes_readonly(file, node) {
+            let over = if self.is_type_param(over) { self.base_constraint(over) } else { over };
+            if self.declares_properties(over) {
+                return self.layout_defining_type(over);
+            }
+        }
+        if !self.is_type_param(over) {
+            return ty;
+        }
+        let bound = self.base_constraint(over);
+        let bounded = self.types().mapper(vec![(over, bound)]);
+        let bounded = self.instantiate(ty, bounded);
+        if bounded == ty { ty } else { self.layout_defining_type(bounded) }
+    }
+
+    pub fn object_literal_span(&self, ty: TypeId) -> Option<(u32, u32)> {
         match *self.data(ty) {
             TypeData::Anon { origin: Origin::ObjectLiteral(file, e, ..), .. } => Some((file.0, self.hir(file)[e].pos)),
             _ => None,
@@ -1579,7 +1713,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    pub(super) fn structure_of_plain_literal(&mut self, ty: TypeId) -> Option<Vec<(Atom, u8, TypeId)>> {
+    pub(super) fn plain_literal_structure(&mut self, ty: TypeId) -> Option<Vec<(Atom, u8, TypeId)>> {
         let TypeData::Anon { origin: Origin::ObjectLiteral(file, literal, false, _, _, _, false), mapper: MapperId::IDENTITY } = *self.data(ty) else { return None };
         if self.types().provenance(ty).is_some() || self.is_untyped_file(file) {
             return None;
@@ -1632,18 +1766,18 @@ impl<'p, 's> Checker<'p, 's> {
         let mut supertypes = supertypes;
         if let TypeData::Ref { target, .. } = *self.data(ty)
             && self.is_created_by_program(ty)
-            && !self.is_type_of_instances(ty)
+            && !self.is_instance_type(ty)
         {
-            let at_bounds = self.at_primitive_bounds_of_parameters(target);
+            let at_bounds = self.declared_type_with_primitive_bounds(target);
             if at_bounds != ty {
                 supertypes.push(at_bounds);
             }
         }
         let mut canonical = ty;
         for supertype in supertypes {
-            let is_record = self.says_properties(supertype) && self.is_created_by_program(supertype) && !self.is_type_of_instances(supertype);
+            let is_record = self.declares_properties(supertype) && self.is_created_by_program(supertype) && !self.is_instance_type(supertype);
             if is_record && self.has_same_fields(ty, supertype, true) {
-                canonical = self.laid_out_as(supertype);
+                canonical = self.layout_defining_type(supertype);
                 break;
             }
         }
@@ -1700,19 +1834,19 @@ impl<'p, 's> Checker<'p, 's> {
     /// * Real primitives have to agree.
     fn differs_in_references_only(&mut self, sub: TypeId, sup: TypeId, exact: bool) -> bool {
         let is_generic = |c: &Self, ty: TypeId| c.parts(ty).iter().any(|&part| c.is_instantiable(part));
-        // By its bound: a type parameter does not stand for a constant here either. `is_of_type` would let it.
+        // By its bound: a type parameter does not stand for a constant here either. `is_allocated_subtype` would let it.
         if is_generic(self, sub) || is_generic(self, sup) {
             if exact {
-                let (sub_bound, sup_bound) = (self.at_primitive_bounds(sub), self.at_primitive_bounds(sup));
+                let (sub_bound, sup_bound) = (self.with_primitive_bounds(sub), self.with_primitive_bounds(sup));
                 let is_bounded = (sub_bound != sub || sup_bound != sup) && !is_generic(self, sub_bound) && !is_generic(self, sup_bound);
                 return is_bounded && (sub_bound == sup_bound || self.differs_in_references_only(sub_bound, sup_bound, true));
             }
             let relation = if self.aot.flows.stored.is_some() { Relation::AssignableAsStored } else { Relation::Assignable };
             return self.is_provably_related(sub, sup, relation);
         }
-        let is_nil = |part: TypeId| part.is_undefined() || part.is_null() || part == TypeId::VOID;
+        let is_nullish = |part: TypeId| part.is_undefined() || part.is_null() || part == TypeId::VOID;
         let has_references = |c: &Self, ty: TypeId| c.parts(ty).iter().any(|&part| !c.has_primitive_flag(part));
-        let primitives = |c: &Self, ty: TypeId| -> Vec<TypeId> { c.parts(ty).iter().copied().filter(|&part| c.has_primitive_flag(part) && !is_nil(part)).collect() };
+        let primitives = |c: &Self, ty: TypeId| -> Vec<TypeId> { c.parts(ty).iter().copied().filter(|&part| c.has_primitive_flag(part) && !is_nullish(part)).collect() };
         let is_boxed = |ty: TypeId| ty.is_any() || ty == TypeId::UNKNOWN;
         if is_boxed(sup) {
             return is_boxed(sub) || primitives(self, sub).is_empty();
@@ -1754,14 +1888,14 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The type with every part that has a `primitive_bound` replaced by that.
-    fn at_primitive_bounds(&mut self, ty: TypeId) -> TypeId {
+    fn with_primitive_bounds(&mut self, ty: TypeId) -> TypeId {
         let parts: Vec<TypeId> = self.parts(ty).to_vec();
         let bounded: Vec<TypeId> = parts.into_iter().map(|part| self.primitive_bound(part).unwrap_or(part)).collect();
         self.union(&bounded)
     }
 
     /// `Site<E>` as it is declared, with every parameter that has a `primitive_bound` replaced by that.
-    fn at_primitive_bounds_of_parameters(&mut self, target: Sym) -> TypeId {
+    fn declared_type_with_primitive_bounds(&mut self, target: Sym) -> TypeId {
         let declared = self.declared_type(target);
         let parameters: Vec<TypeId> = self.type_params_of_symbol(target).iter().copied().collect();
         let mut pairs: Vec<(TypeId, TypeId)> = Vec::new();
@@ -1795,19 +1929,22 @@ impl<'p, 's> Checker<'p, 's> {
     /// where `A<T>` has a `B<T[]>` and `B<T>` an `A<T[]>`, `T[][][]..`. A long tuple and a long text count for more, so that what only grows
     /// sideways, `C<[...T, 0]>`, ends as well. A generic alias is such a declaration though it stand for the same each time: with `type Maybe<T> = T | null`, `Maybe<Maybe<number>>` is another type than `Maybe<number>`. So is what waits for a type parameter: `Awaited<Awaited<T>>`, `T[K][K]`.
     pub fn is_nested_too_deeply(&mut self, ty: TypeId) -> bool {
-        if let Some(known) = self.known_from_row(ty, rows::KNOWS_NESTING, rows::IS_NESTED_TOO_DEEPLY) {
+        if let Some(known) = self.cached_type_flag(ty, rows::NESTING_KNOWN, rows::IS_NESTED_TOO_DEEPLY) {
             return known;
         }
-        let found = self.find_is_nested_too_deeply(ty);
-        self.keep_in_row(ty, rows::KNOWS_NESTING, rows::IS_NESTED_TOO_DEEPLY, found)
+        let found = self.compute_is_nested_too_deeply(ty);
+        self.cache_type_flag(ty, rows::NESTING_KNOWN, rows::IS_NESTED_TOO_DEEPLY, found)
     }
 
-    fn find_is_nested_too_deeply(&mut self, ty: TypeId) -> bool {
-        self.find_applications_in(ty);
-        self.aot.flows.applications[&ty].iter().any(|&(_, times)| times > MOST_APPLICATIONS_WITHIN_EACH_OTHER)
+    fn compute_is_nested_too_deeply(&mut self, ty: TypeId) -> bool {
+        if self.nesting_bound(ty) <= MAX_NESTED_APPLICATIONS {
+            return false;
+        }
+        self.collect_applications(ty);
+        self.aot.flows.applications[&ty].iter().any(|&(_, times)| times > MAX_NESTED_APPLICATIONS)
     }
 
-    fn generic_form_of(&mut self, ty: TypeId) -> Option<TypeId> {
+    fn generic_form(&mut self, ty: TypeId) -> Option<TypeId> {
         match *self.data(ty) {
             TypeData::Ref { target, .. } => Some(self.declared_type(target)),
             TypeData::Anon { origin: Origin::TypeLiteral(file, node) | Origin::Mapped(file, node), .. } => Some(self.type_from_node(file, node)),
@@ -1815,24 +1952,24 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    pub fn is_beyond_the_layouts(&mut self, ty: TypeId) -> bool {
+    pub fn is_beyond_layouts(&mut self, ty: TypeId) -> bool {
         if ty == TypeId::UNRESOLVED {
             return false;
         }
-        if let Some(known) = self.known_from_row(ty, rows::KNOWS_WHETHER_BEYOND_THE_LAYOUTS, rows::IS_BEYOND_THE_LAYOUTS) {
+        if let Some(known) = self.cached_type_flag(ty, rows::BEYOND_LAYOUTS_KNOWN, rows::IS_BEYOND_LAYOUTS) {
             return known;
         }
         let parts: Vec<TypeId> = self.parts(ty).to_vec();
         let found = parts.into_iter().any(|part| self.is_nested_too_deeply(part));
-        self.keep_in_row(ty, rows::KNOWS_WHETHER_BEYOND_THE_LAYOUTS, rows::IS_BEYOND_THE_LAYOUTS, found)
+        self.cache_type_flag(ty, rows::BEYOND_LAYOUTS_KNOWN, rows::IS_BEYOND_LAYOUTS, found)
     }
 
-    pub fn is_read_from_beyond_the_layouts(&mut self, file: FileId, e: ExprId) -> bool {
+    pub fn is_read_from_beyond_layouts(&mut self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
         let call = match hir[e].kind {
             ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => {
                 let of_object = self.type_of_expr(file, obj);
-                return self.is_beyond_the_layouts(of_object);
+                return self.is_beyond_layouts(of_object);
             }
             ExprKind::Call(call) => call,
             _ => return false,
@@ -1843,7 +1980,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         if let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } = hir[callee].kind {
             let of_receiver = self.type_of_expr(file, obj);
-            if self.is_beyond_the_layouts(of_receiver) {
+            if self.is_beyond_layouts(of_receiver) {
                 return true;
             }
         }
@@ -1854,93 +1991,93 @@ impl<'p, 's> Checker<'p, 's> {
                 _ => argument,
             };
             let of_argument = self.type_of_expr(file, argument);
-            if self.is_beyond_the_layouts(of_argument) {
+            if self.is_beyond_layouts(of_argument) {
                 return true;
             }
         }
         false
     }
 
-    pub fn note_foreign_source(&mut self, ty: TypeId) {
+    pub fn record_untyped_source(&mut self, ty: TypeId) {
         if ty == TypeId::UNRESOLVED {
             return;
         }
-        let views = self.views_staying_untyped_within(ty, true);
+        let views = self.nested_types_staying_untyped(ty, true);
         for &view in views.iter() {
-            self.note_foreign(view, TypeId::UNRESOLVED);
+            self.record_untyped(view, TypeId::UNRESOLVED);
         }
     }
 
-    pub fn note_generic_function_result(&mut self, made: &Made, made_as: TypeId) {
-        if made_as == TypeId::UNRESOLVED {
+    pub fn record_generic_function_result(&mut self, made: &FreshGraph, allocated_as: TypeId) {
+        if allocated_as == TypeId::UNRESOLVED {
             return;
         }
         let mut views = Vec::new();
-        self.add_created_as(made, made_as, &mut views);
+        self.add_allocated_types(made, allocated_as, &mut views);
         for view in views {
-            self.note_foreign(view, TypeId::UNRESOLVED);
+            self.record_untyped(view, TypeId::UNRESOLVED);
         }
     }
 
-    fn add_created_as(&mut self, made: &Made, made_as: TypeId, out: &mut Vec<TypeId>) {
-        let mut made_as = self.reduced(made_as);
-        if self.is_instantiable(made_as) {
-            let bound = self.base_constraint(made_as);
-            made_as = self.reduced(bound);
+    fn add_allocated_types(&mut self, made: &FreshGraph, allocated_as: TypeId, out: &mut Vec<TypeId>) {
+        let mut allocated_as = self.reduced(allocated_as);
+        if self.is_instantiable(allocated_as) {
+            let bound = self.base_constraint(allocated_as);
+            allocated_as = self.reduced(bound);
         }
-        if !self.may_hold_objects(made_as) {
+        if !self.may_hold_objects(allocated_as) {
             return;
         }
-        if let TypeData::Union(parts) = self.data(made_as) {
+        if let TypeData::Union(parts) = self.data(allocated_as) {
             let parts: Vec<TypeId> = parts.to_vec();
-            let objects: Vec<TypeId> = parts.iter().copied().filter(|&part| self.says_properties(part)).collect();
+            let objects: Vec<TypeId> = parts.iter().copied().filter(|&part| self.declares_properties(part)).collect();
             if objects.len() > 1 {
                 let objects = self.union(&objects);
-                let common = self.view_of_union(objects);
+                let common = self.common_supertype_of_union(objects);
                 if !matches!(self.data(common), TypeData::Union(_)) {
-                    self.add_created_as(made, common, out);
+                    self.add_allocated_types(made, common, out);
                 }
             }
             for part in parts {
-                self.add_created_as(made, part, out);
+                self.add_allocated_types(made, part, out);
             }
             return;
         }
-        if self.is_array_or_tuple(made_as) {
+        if self.is_array_or_tuple(allocated_as) {
             if let Some(elements) = &made.elements {
-                let of_elements: Vec<TypeId> = self.type_arguments(made_as).to_vec();
+                let of_elements: Vec<TypeId> = self.type_arguments(allocated_as).to_vec();
                 for of_element in of_elements {
-                    self.add_created_as(elements, of_element, out);
+                    self.add_allocated_types(elements, of_element, out);
                 }
             }
             return;
         }
-        let is_module = matches!(self.data(made_as), TypeData::Anon { origin: Origin::Module(..), .. });
-        if !made.is_object || self.built_in_that_is(made_as).is_some() || self.is_type_of_instances(made_as) || !self.says_properties(made_as) || is_module {
+        let is_module = matches!(self.data(allocated_as), TypeData::Anon { origin: Origin::Module(..), .. });
+        if !made.is_object || self.built_in_for_type(allocated_as).is_some() || self.is_instance_type(allocated_as) || !self.declares_properties(allocated_as) || is_module {
             return;
         }
-        let view = self.laid_out_as(made_as);
+        let view = self.layout_defining_type(allocated_as);
         out.push(view);
         for (name, held) in &made.within {
-            if let Some(of_field) = self.type_of_property(made_as, *name) {
-                self.add_created_as(held, of_field, out);
+            if let Some(of_field) = self.type_of_property(allocated_as, *name) {
+                self.add_allocated_types(held, of_field, out);
             }
         }
         if let Some(anywhere) = &made.anywhere
-            && let Some(members) = self.members(made_as)
+            && let Some(members) = self.members(allocated_as)
         {
             for info in members.shape().index.iter() {
-                self.add_created_as(anywhere, info.value, out);
+                self.add_allocated_types(anywhere, info.value, out);
             }
             for prop in members.shape().props.iter() {
                 let of_field = self.type_of_prop(prop, members.mapper);
-                self.add_created_as(anywhere, of_field, out);
+                self.add_allocated_types(anywhere, of_field, out);
             }
         }
     }
 
     /// The types that the record of the type refers to, those that its mappers map to among them, and the type arguments of the alias that is stored with it.
-    fn types_referred_to_by(&self, at: TypeId) -> Vec<TypeId> {
+    fn referenced_types(&self, at: TypeId) -> Vec<TypeId> {
         let mut referred = Referred::default();
         self.data(at).visit(&mut referred);
         // What a spread was made of is no part of it: `{ ...a, ...b, ...c }` is made of `{ ...a, ...b }` and `c`, and has the properties of all three itself.
@@ -1967,7 +2104,49 @@ impl<'p, 's> Checker<'p, 's> {
     /// For each declaration: how often at most it is applied, one application within the other, in `ty` and its type arguments. It goes by
     /// the records of the types and the aliases stored with them, which refer to older records only, so it ends: the arguments of `Json[]` in `type Json = string | Json[]`
     /// are a node there and not the type they resolve to. Types may be nested thousands deep, so it keeps its own list of what is to do.
-    fn find_applications_in(&mut self, ty: TypeId) {
+    fn nesting_bound(&self, ty: TypeId) -> u32 {
+        let mut pending = vec![ty];
+        while let Some(&at) = pending.last() {
+            if self.cached_nesting_bound(at).is_some() {
+                pending.pop();
+                continue;
+            }
+            let referred = self.referenced_types(at);
+            let known = pending.len();
+            pending.extend(referred.iter().copied().filter(|&argument| self.cached_nesting_bound(argument).is_none()));
+            if pending.len() > known {
+                continue;
+            }
+            let within = referred.iter().filter_map(|&argument| self.cached_nesting_bound(argument)).max().unwrap_or(0);
+            let (own, alias) = self.own_applications(at, referred.len());
+            let added = own.into_iter().chain(alias).map(|applied| applied.1).max().unwrap_or(0);
+            self.cache_nesting_bound(at, within.saturating_add(added));
+            pending.pop();
+        }
+        self.cached_nesting_bound(ty).unwrap_or(u32::MAX)
+    }
+
+    fn own_applications(&self, at: TypeId, referred: usize) -> (Option<(Applied, u32)>, Option<(Applied, u32)>) {
+        let arguments = (referred - self.stored_alias(at).map_or(0, |stored| stored.1.len())) as u32;
+        let own = match *self.data(at) {
+            TypeData::StringLit { value, .. } => Some((Applied::Text, self.atoms().bytes(value).len() as u32 / 64)),
+            _ if arguments == 0 => None,
+            TypeData::Ref { target, .. } => Some((Applied::Named(target), 1)),
+            TypeData::Anon { origin, .. } => Some((Applied::Written(origin), 1)),
+            TypeData::Fns { ref decls, .. } => decls.first().map(|&(file, func)| (Applied::Function(file, func), 1)),
+            TypeData::Synth(_) | TypeData::ReverseMapped { .. } => Some((Applied::Computed, 1)),
+            TypeData::Tuple { .. } => Some((Applied::Tuple, 1 + arguments / 16)),
+            TypeData::Cond { file, node, .. } => Some((Applied::Conditional(file, node), 1)),
+            TypeData::IndexedAccess { .. } => Some((Applied::IndexedAccess, 1)),
+            TypeData::StringMapping { .. } => Some((Applied::StringMapping, 1)),
+            TypeData::Template { ref texts, .. } => Some((Applied::Text, texts.iter().map(|&text| self.atoms().bytes(text).len() as u32).sum::<u32>() / 64)),
+            _ => None,
+        };
+        let alias = self.stored_alias(at).filter(|stored| !stored.1.is_empty()).map(|stored| (Applied::Alias(stored.0), 1));
+        (own, alias)
+    }
+
+    fn collect_applications(&mut self, ty: TypeId) {
         if self.aot.flows.applications.contains_key(&ty) {
             return;
         }
@@ -1977,29 +2156,14 @@ impl<'p, 's> Checker<'p, 's> {
                 pending.pop();
                 continue;
             }
-            let referred = self.types_referred_to_by(at);
+            let referred = self.referenced_types(at);
             // The arguments first.
             let known = pending.len();
             pending.extend(referred.iter().copied().filter(|argument| !self.aot.flows.applications.contains_key(argument)));
             if pending.len() > known {
                 continue;
             }
-            let arguments = (referred.len() - self.stored_alias(at).map_or(0, |stored| stored.1.len())) as u32;
-            let own = match *self.data(at) {
-                TypeData::StringLit { value, .. } => Some((Applied::Text, self.atoms().bytes(value).len() as u32 / 64)),
-                _ if arguments == 0 => None,
-                TypeData::Ref { target, .. } => Some((Applied::Named(target), 1)),
-                TypeData::Anon { origin, .. } => Some((Applied::Written(origin), 1)),
-                TypeData::Fns { ref decls, .. } => decls.first().map(|&(file, func)| (Applied::Function(file, func), 1)),
-                TypeData::Synth(_) | TypeData::ReverseMapped { .. } => Some((Applied::Computed, 1)),
-                TypeData::Tuple { .. } => Some((Applied::Tuple, 1 + arguments / 16)),
-                TypeData::Cond { file, node, .. } => Some((Applied::Conditional(file, node), 1)),
-                TypeData::IndexedAccess { .. } => Some((Applied::IndexedAccess, 1)),
-                TypeData::StringMapping { .. } => Some((Applied::StringMapping, 1)),
-                TypeData::Template { ref texts, .. } => Some((Applied::Text, texts.iter().map(|&text| self.atoms().bytes(text).len() as u32).sum::<u32>() / 64)),
-                _ => None,
-            };
-            let alias = self.stored_alias(at).filter(|stored| !stored.1.is_empty()).map(|stored| (Applied::Alias(stored.0), 1));
+            let (own, alias) = self.own_applications(at, referred.len());
             let mut all: Vec<(Applied, u32)> = Vec::new();
             for argument in &referred {
                 for &(applied, times) in &self.aot.flows.applications[argument] {
@@ -2020,16 +2184,16 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `laid_out_as` of the objects of the class.
-    pub fn type_of_instances(&mut self, file: FileId, class: ClassId) -> TypeId {
+    /// `layout_defining_type` of the objects of the class.
+    pub fn class_instance_type(&mut self, file: FileId, class: ClassId) -> TypeId {
         let class = self.class_sym(file, class);
         self.declared_type(class)
     }
 
     /// Whether the type is that of the objects of a class.
     #[inline]
-    pub fn is_type_of_instances(&self, ty: TypeId) -> bool {
-        self.row(ty) & rows::IS_TYPE_OF_INSTANCES != 0
+    pub fn is_instance_type(&self, ty: TypeId) -> bool {
+        self.row(ty) & rows::IS_INSTANCE_TYPE != 0
     }
 
     /// Whether an object that is looked at as `source` says may be looked at as `target` says without a test: whatever is a member of the
@@ -2039,22 +2203,22 @@ impl<'p, 's> Checker<'p, 's> {
     /// whatever `T` is bounded by, and a place for a `Box<string>` is not a place for any box: in `source` a type parameter is like nothing
     /// else. Any box will do for a `Box<T>`: in `target` it stands for anything. So on the way out of generic code a test is made, and on
     /// the way in none.
-    pub fn is_seen_as(&mut self, source: TypeId, target: TypeId) -> bool {
+    pub fn is_upcast_safe(&mut self, source: TypeId, target: TypeId) -> bool {
         if let Some(&known) = self.aot.flows.seen_as.get(&(source, target)) {
             return known;
         }
-        let not_known_before = self.aot.flows.times_not_known;
+        let not_known_before = self.aot.flows.unknown_count;
         let (opaque, any) = (self.restrictive_instantiation(source), self.permissive_instantiation(target));
         let is_seen = self.is_provably_assignable(opaque, any);
-        if self.aot.flows.times_not_known == not_known_before {
+        if self.aot.flows.unknown_count == not_known_before {
             self.aot.flows.seen_as.insert((source, target), is_seen);
         }
         is_seen
     }
 
-    /// An object that is looked at as `source` says is looked at as `target` says, and no test is made: `is_seen_as` has been relied on, or
-    /// the object is known to be the same, see `argument_handed_back_by`.
-    pub fn note_upcast(&mut self, source: TypeId, target: TypeId) {
+    /// An object that is looked at as `source` says is looked at as `target` says, and no test is made: `is_upcast_safe` has been relied on, or
+    /// the object is known to be the same, see `returned_argument_of`.
+    pub fn record_upcast(&mut self, source: TypeId, target: TypeId) {
         let at = self.aot.flows.place;
         self.aot.flows.noted.add_upcast((source, target), at);
     }
@@ -2062,7 +2226,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// Where the type that the view stands for is declared: the name of the alias, the interface or the class, the first of them if it is
     /// merged, or the start of a type literal or an object literal. `None`: nothing declares it: an intersection, a mapped type, what
     /// the parts of a union have in common.
-    pub fn declaration_of_view(&self, view: TypeId) -> Option<Place> {
+    pub fn type_declaration_site(&self, view: TypeId) -> Option<Place> {
         let named = |sym: Sym| {
             let declarations = self.files().decls_of(sym);
             let places = declarations.iter().filter_map(|&(file, decl)| {
@@ -2092,35 +2256,35 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// What is translated from here on is at `pos` of `file`. What is noted is noted for that place.
-    pub fn note_place(&mut self, file: FileId, pos: u32) {
+    pub fn set_current_site(&mut self, file: FileId, pos: u32) {
         self.aot.flows.place = Place { file, pos };
     }
 
     /// What the parts of the union have in common, which is what an object is looked at as of which it is not known which part it is of.
     /// Each part is seen as that, whatever the relation makes of it.
-    pub fn view_of_union(&mut self, union: TypeId) -> TypeId {
-        self.view_kept_as(union, ViewOf::Union, Self::find_view_of_union)
+    pub fn common_supertype_of_union(&mut self, union: TypeId) -> TypeId {
+        self.cached_derived_type(union, DerivedTypeKind::Union, Self::compute_common_supertype_of_union)
     }
 
-    fn view_kept_as(&mut self, ty: TypeId, kind: ViewOf, find: fn(&mut Self, TypeId) -> TypeId) -> TypeId {
-        let may_be_kept = !self.answers_are_provisional();
-        if may_be_kept && let Some(&known) = self.aot.flows.views_made.get(&(ty, kind)) {
+    fn cached_derived_type(&mut self, ty: TypeId, kind: DerivedTypeKind, find: fn(&mut Self, TypeId) -> TypeId) -> TypeId {
+        let is_result_cacheable = !self.results_are_provisional();
+        if is_result_cacheable && let Some(&known) = self.aot.flows.derived_types.get(&(ty, kind)) {
             return known;
         }
-        let careful_before = (self.times_half_of_stack_was_in_use(), self.aot.flows.times_not_known);
+        let careful_before = (self.stack_half_used_count(), self.aot.flows.unknown_count);
         let view = find(self, ty);
-        if may_be_kept && careful_before == (self.times_half_of_stack_was_in_use(), self.aot.flows.times_not_known) {
-            self.aot.flows.views_made.insert((ty, kind), view);
+        if is_result_cacheable && careful_before == (self.stack_half_used_count(), self.aot.flows.unknown_count) {
+            self.aot.flows.derived_types.insert((ty, kind), view);
         }
         view
     }
 
-    fn find_view_of_union(&mut self, union: TypeId) -> TypeId {
+    fn compute_common_supertype_of_union(&mut self, union: TypeId) -> TypeId {
         let union = self.reduced(union);
-        let view = self.union_as_view(union);
+        let view = self.union_as_record(union);
         for &part in self.parts(union) {
-            if self.says_properties(part) {
-                let part = self.laid_out_as(part);
+            if self.declares_properties(part) {
+                let part = self.layout_defining_type(part);
                 self.aot.flows.seen_as.insert((part, view), true);
             }
         }
@@ -2129,8 +2293,8 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `union_as_object` as a record that is the same in every task. That has the names in the order of the first part and keeps the constituents of
     /// each property in the order of the parts, which is that of their ids. This has the same properties with the same types, by name. The
-    /// union is kept where a spread keeps its operands, with a rank that no spread has, nor a `view_with_all_names`.
-    fn union_as_view(&mut self, union: TypeId) -> TypeId {
+    /// union is kept where a spread keeps its operands, with a rank that no spread has, nor a `record_with_all_names`.
+    fn union_as_record(&mut self, union: TypeId) -> TypeId {
         let object = self.union_as_object(union);
         let Some(members) = self.members(object) else { return object };
         let mut shape = Shape::new_in(self.arena);
@@ -2153,50 +2317,50 @@ impl<'p, 's> Checker<'p, 's> {
     /// What an object is looked at as that is of one of the parts of the union, where a property is accessed that not all of them have:
     /// `(node as NamedDeclaration).name`, where the object may be any `Node`. It has a property by every name that one of the parts has.
     /// What some part lacks or need not have, it need not have. Each part is seen as that, whatever the relation makes of it.
-    pub fn view_of_either(&mut self, union: TypeId) -> TypeId {
-        self.view_kept_as(union, ViewOf::Either, Self::find_view_of_either)
+    pub fn union_all_members_type(&mut self, union: TypeId) -> TypeId {
+        self.cached_derived_type(union, DerivedTypeKind::Either, Self::compute_union_all_members_type)
     }
 
-    fn find_view_of_either(&mut self, union: TypeId) -> TypeId {
+    fn compute_union_all_members_type(&mut self, union: TypeId) -> TypeId {
         let union = self.reduced(union);
-        let parts: Vec<TypeId> = self.parts(union).iter().copied().filter(|&part| self.says_properties(part)).collect();
-        self.view_with_all_names(&parts, (TypeId::NEVER, union))
+        let parts: Vec<TypeId> = self.parts(union).iter().copied().filter(|&part| self.declares_properties(part)).collect();
+        self.record_with_all_names(&parts, (TypeId::NEVER, union))
     }
 
     /// What an object is looked at as of which nothing is known and that has been coerced to `target`: one of `target`, if it could be made
     /// one, or whatever it was. It has the properties of `target`, and need not have any. It is a type of its own, so that `target`
     /// stays what it is: a view that has only its members in its places.
-    fn view_of_anything_as(&mut self, target: TypeId) -> TypeId {
-        self.view_kept_as(target, ViewOf::AnythingAs, Self::find_view_of_anything_as)
+    fn coerced_unknown_type(&mut self, target: TypeId) -> TypeId {
+        self.cached_derived_type(target, DerivedTypeKind::AnythingAs, Self::compute_coerced_unknown_type)
     }
 
-    fn find_view_of_anything_as(&mut self, target: TypeId) -> TypeId {
+    fn compute_coerced_unknown_type(&mut self, target: TypeId) -> TypeId {
         let parts: Vec<TypeId> = self.parts(target).to_vec();
-        self.view_with_all_names(&parts, (TypeId::UNKNOWN, target))
+        self.record_with_all_names(&parts, (TypeId::UNKNOWN, target))
     }
 
-    /// Whether the type is a `view_of_anything_as`.
-    pub fn is_view_of_anything(&self, ty: TypeId) -> bool {
+    /// Whether the type is a `coerced_unknown_type`.
+    pub fn is_coerced_unknown_type(&self, ty: TypeId) -> bool {
         matches!(self.data(ty), TypeData::Synth(shape) if shape.spread_rank == u32::MAX && matches!(shape.created_from, Some((TypeId::UNKNOWN, _))))
     }
 
-    /// For a `view_of_anything_as` the type that was cast to, for a `view_of_either` the union. Any other type unchanged.
-    fn type_coerced_to(&self, ty: TypeId) -> TypeId {
+    /// For a `coerced_unknown_type` the type that was cast to, for a `union_all_members_type` the union. Any other type unchanged.
+    fn coercion_target(&self, ty: TypeId) -> TypeId {
         match self.data(ty) {
             TypeData::Synth(shape) if shape.spread_rank == u32::MAX => shape.created_from.map_or(ty, |made_for| made_for.1),
             _ => ty,
         }
     }
 
-    /// Whether the type is a `view_of_anything_as` or a `view_of_either`: nobody has declared it, and no primitive is of it.
-    pub fn is_view_made_by_coercion(&self, ty: TypeId) -> bool {
+    /// Whether the type is a `coerced_unknown_type` or a `union_all_members_type`: nobody has declared it, and no primitive is of it.
+    pub fn is_coercion_result_type(&self, ty: TypeId) -> bool {
         matches!(self.data(ty), TypeData::Synth(shape) if shape.spread_rank == u32::MAX && shape.created_from.is_some())
     }
 
-    /// `made_for`: `unknown` and the type that is meant, for `view_of_anything_as`; `never` and the union, for `view_of_either`. It is kept
+    /// `made_for`: `unknown` and the type that is meant, for `coerced_unknown_type`; `never` and the union, for `union_all_members_type`. It is kept
     /// where a spread keeps its operands, with a rank that no spread has: that tells the type from every other, in every checker.
-    fn view_with_all_names(&mut self, parts: &[TypeId], made_for: (TypeId, TypeId)) -> TypeId {
-        let is_of_anything = made_for.0 == TypeId::UNKNOWN;
+    fn record_with_all_names(&mut self, parts: &[TypeId], made_for: (TypeId, TypeId)) -> TypeId {
+        let is_any_type = made_for.0 == TypeId::UNKNOWN;
         let mut of_parts = Vec::with_capacity(parts.len());
         for &part in parts {
             let apparent = self.apparent_type(part);
@@ -2206,7 +2370,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut seen: FxHashSet<Atom> = FxHashSet::default();
         for members in &of_parts {
             for prop in members.shape().props.iter().filter(|prop| seen.insert(prop.name)) {
-                let (mut types, mut is_optional, mut flags) = (Vec::new(), is_of_anything, PropFlags::METHOD);
+                let (mut types, mut is_optional, mut flags) = (Vec::new(), is_any_type, PropFlags::METHOD);
                 for other in &of_parts {
                     let Some(found) = other.resolved.prop(prop.name) else {
                         is_optional = true;
@@ -2229,7 +2393,7 @@ impl<'p, 's> Checker<'p, 's> {
         (shape.created_from, shape.spread_rank) = (Some(made_for), u32::MAX);
         let view = self.synth(shape);
         for &part in parts {
-            let part = self.laid_out_as(part);
+            let part = self.layout_defining_type(part);
             self.aot.flows.seen_as.insert((part, view), true);
         }
         view
@@ -2243,23 +2407,23 @@ impl<'p, 's> Checker<'p, 's> {
     ///   string or number it is, is not looked at: `5 as 1 | 2` is a number, and so is `2.5 as Small`, an enum.
     /// * An object stays the same object. It is made one of `target` if it can be: it is one, it was made as less and has what is
     ///   missing, it is plain data. Otherwise it is what it was. So the result is of `target` or of one of the object types of `source`.
-    /// * If nothing is known of `e`, it is of `target` or anything: `view_of_anything_as` of the parts of `target` that say which properties
+    /// * If nothing is known of `e`, it is of `target` or anything: `coerced_unknown_type` of the parts of `target` that say which properties
     ///   an object has. An array, an object of a class of the engine is what nothing can be made: those parts stay, and whoever emits the
     ///   cast sees that there is no room for anything else and asserts. Not so with a function.
     /// * Not so with `Error` and what extends it, which are types like any other here: `catch (e) { (e as Error).message }` is everywhere,
-    ///   and what is thrown may be anything. Where `target` is nothing else, see `lets_everything_through`, a primitive stays what it is too.
+    ///   and what is thrown may be anything. Where `target` is nothing else, see `is_noop_cast_target`, a primitive stays what it is too.
     /// * So it is if `target` has no objects: `raw as string` of a `string | Tree` is a string or a `Tree`.
-    pub fn type_coerced(&mut self, source: TypeId, target: TypeId) -> TypeId {
+    pub fn coerced_type(&mut self, source: TypeId, target: TypeId) -> TypeId {
         // Where the result is `target`, it is the very type that was given: whoever asks compares the two.
         let given = target;
         let (source, target) = (self.reduced(source), self.reduced(target));
         let is_untyped = self.is_untyped(source);
-        let may_be_any_object = is_untyped || self.is_of_several_kinds_of_primitives(source);
-        if self.says_nothing(target) || (!is_untyped && self.is_provably_assignable(source, target)) {
+        let may_be_any_object = is_untyped || self.has_multiple_primitive_kinds(source);
+        if self.is_uninformative(target) || (!is_untyped && self.is_provably_assignable(source, target)) {
             return given;
         }
-        let lets_everything_through = self.lets_everything_through(target);
-        if lets_everything_through && !is_untyped {
+        let is_noop_cast_target = self.is_noop_cast_target(target);
+        if is_noop_cast_target && !is_untyped {
             return self.union(&[target, source]);
         }
         let (mut views, mut parts, mut is_as_given) = (Vec::new(), Vec::new(), true);
@@ -2283,16 +2447,16 @@ impl<'p, 's> Checker<'p, 's> {
         }
         if !views.is_empty() {
             let views = self.union(&views);
-            parts.push(self.view_of_anything_as(views));
+            parts.push(self.coerced_unknown_type(views));
         }
-        if lets_everything_through {
+        if is_noop_cast_target {
             parts.extend([TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN, TypeId::BIGINT, TypeId::SYMBOL, TypeId::UNDEFINED, TypeId::NULL]);
         }
         let number_of_target = parts.len();
         // Of a value of which nothing is known as well: an object stays the object it is.
         // So it does under a cast to a function type, which asserts nothing: the call does, by the language. `memo(C) as typeof C` is an object that nobody calls.
         let objects: Vec<TypeId> = parts.iter().copied().filter(|&part| !self.has_primitive_flag(part)).collect();
-        if may_be_any_object && objects.into_iter().all(|part| matches!(self.built_in_that_is(part), Some(BuiltIn::Function))) {
+        if may_be_any_object && objects.into_iter().all(|part| matches!(self.built_in_for_type(part), Some(BuiltIn::Function))) {
             parts.push(TypeId::OBJECT);
         }
         if !is_untyped {
@@ -2310,8 +2474,8 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Primitives of more than one kind and nothing else: `boolean | number | string`. Nil is no kind. A place of such a type has room for an object that an `as` has let through:
-    /// `Declared::is_of_several_kinds_of_primitives`.
-    pub fn is_of_several_kinds_of_primitives(&mut self, ty: TypeId) -> bool {
+    /// `Declared::has_multiple_primitive_kinds`.
+    pub fn has_multiple_primitive_kinds(&mut self, ty: TypeId) -> bool {
         let ty = self.reduced(ty);
         let parts: Vec<TypeId> = self.parts(ty).to_vec();
         let mut kinds: Vec<TypeId> = Vec::new();
@@ -2339,16 +2503,16 @@ impl<'p, 's> Checker<'p, 's> {
     /// Whether an object of which nothing is known can be made one of the type, which is a part of the target of a cast: it says which properties an object has, and is no array, no function and
     /// no class of the engine.
     pub(super) fn can_be_created_from_any_object(&mut self, part: TypeId) -> bool {
-        self.says_properties(part)
+        self.declares_properties(part)
             && self.has_properties(part)
-            && self.element_of_array_subtype(part).is_none()
-            && (self.built_in_that_is(part).is_none() || self.extends_error(part))
-            && (!self.is_left_without_a_layout(part) || self.extends_error(part))
+            && self.array_subtype_element(part).is_none()
+            && (self.built_in_for_type(part).is_none() || self.extends_error(part))
+            && (!self.is_ambient_interface_type(part) || self.extends_error(part))
     }
 
     /// An interface that `lib.*.d.ts` declares, or all of whose declarations are ambient: it says what code without a body hands out. There is no layout for it, so nothing is made one of it:
-    /// `FileBuild::is_object_type_of_program`.
-    fn is_left_without_a_layout(&self, ty: TypeId) -> bool {
+    /// `FileBuild::is_record_type`.
+    fn is_ambient_interface_type(&self, ty: TypeId) -> bool {
         match *self.data(ty) {
             TypeData::Ref { target, .. } => self.files().module(target.file).is_lib || self.is_ambient_interface(target),
             _ => false,
@@ -2357,13 +2521,13 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Whether the objects of the type are those of the class `Error` of the engine, or of what extends it.
     fn extends_error(&mut self, ty: TypeId) -> bool {
-        let Some(BuiltIn::Instance(class)) = self.built_in_that_is(ty) else { return false };
+        let Some(BuiltIn::Instance(class)) = self.built_in_for_type(ty) else { return false };
         matches!(*self.data(class), TypeData::Ref { target, .. } if self.atoms().bytes(self.files().symbol(target).name) == b"Error")
     }
 
     /// `e as Error`, `e as MyError | undefined`: all that the type has besides nil is `Error` or extends it. Such a cast does nothing at all
     /// to a value, whatever it is.
-    pub fn lets_everything_through(&mut self, target: TypeId) -> bool {
+    pub fn is_noop_cast_target(&mut self, target: TypeId) -> bool {
         let target = self.reduced(target);
         let mut has_error = false;
         for &part in self.parts(target) {
@@ -2382,22 +2546,22 @@ impl<'p, 's> Checker<'p, 's> {
     /// `T["name"]`. The read is a coercion itself, as if `x.name as T["name"]` were written. For such a read `e`: the type of what is found,
     /// `unknown` where the object need not have the property, and the type it is coerced to. What the object has not is `undefined`, and
     /// so is what need not be there by the type that is found, and what a chain yields that is cut short.
-    pub fn property_read_of_coerced(&mut self, file: FileId, e: ExprId) -> Option<(TypeId, TypeId)> {
+    pub fn coerced_property_read(&mut self, file: FileId, e: ExprId) -> Option<(TypeId, TypeId)> {
         let ExprKind::Dot { obj, name, chain, .. } = self.hir(file)[e].kind else { return None };
         if matches!(self.hir(file)[obj].kind, ExprKind::Super) || !self.has_declared_type(file, e) {
             return None;
         }
-        let known = self.type_yielded_by(file, obj);
-        if known == self.type_of_expr(file, obj) || self.says_nothing(known) {
+        let known = self.result_type_of(file, obj);
+        if known == self.type_of_expr(file, obj) || self.is_uninformative(known) {
             return None;
         }
-        // `(x as string).length`: the string's: see `has_no_objects_by_its_type`.
-        if self.has_no_objects_by_its_type(file, obj) {
+        // `(x as string).length`: the string's: see `is_primitive_by_type`.
+        if self.is_primitive_by_type(file, obj) {
             return None;
         }
         let object = self.non_nullable(known);
-        let is_of_anything = self.parts(object).iter().any(|&part| self.is_view_of_anything(part));
-        let found = if is_of_anything { None } else { self.type_of_property(object, name) };
+        let is_any_type = self.parts(object).iter().any(|&part| self.is_coerced_unknown_type(part));
+        let found = if is_any_type { None } else { self.type_of_property(object, name) };
         let target = self.type_of_expr(file, e);
         let may_be_missing = chain != Chain::No || found.is_none_or(|found| self.contains_undefined(found));
         let target = if may_be_missing { self.union(&[target, TypeId::UNDEFINED]) } else { target };
@@ -2405,110 +2569,119 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `e` is a string, a number, a boolean and the like to the checker. What it yields may be an object all the same, which an `as` has let through. Whoever only looks sees that
-    /// object. A use that needs the primitive asserts that it is one, or goes by it as a prediction: `FileBuild::used_as_its_type`.
-    pub fn has_no_objects_by_its_type(&mut self, file: FileId, e: ExprId) -> bool {
+    /// object. A use that needs the primitive asserts that it is one, or goes by it as a prediction: `FileBuild::as_checked_primitive`.
+    pub fn is_primitive_by_type(&mut self, file: FileId, e: ExprId) -> bool {
         let declared = self.type_of_expr(file, e);
         let parts: Vec<TypeId> = self.parts(declared).to_vec();
-        !self.says_nothing(declared) && !parts.iter().all(|&part| self.is_nullish(part)) && parts.into_iter().all(|part| self.has_primitive_flag(part))
+        !self.is_uninformative(declared) && !parts.iter().all(|&part| self.is_nullish(part)) && parts.into_iter().all(|part| self.has_primitive_flag(part))
     }
 
     /// Whether the type is one about what the program is given from outside. Such a type is a prediction, and a prediction never asserts.
-    pub fn is_prediction_about_outside_data(&self, _declared: TypeId) -> bool {
+    pub fn is_external_data_prediction(&self, _declared: TypeId) -> bool {
         false
     }
 
-    /// `has_no_objects_by_its_type`, and a use of `e` asserts.
+    /// `is_primitive_by_type`, and a use of `e` asserts.
     pub fn is_asserted_at_use(&mut self, file: FileId, e: ExprId) -> bool {
         let declared = self.type_of_expr(file, e);
-        self.has_no_objects_by_its_type(file, e) && !self.is_prediction_about_outside_data(declared)
+        self.is_primitive_by_type(file, e) && !self.is_external_data_prediction(declared)
     }
 
     /// An object of which nothing is known is in a place of the view from here on. `source`: the checker's type of it.
-    pub fn note_foreign(&mut self, view: TypeId, source: TypeId) {
+    pub fn record_untyped(&mut self, view: TypeId, source: TypeId) {
         let at = self.aot.flows.place;
-        self.aot.flows.noted.add_foreign(view, (source != TypeId::UNRESOLVED).then_some(source), at);
+        self.aot.flows.noted.add_untyped(view, (source != TypeId::UNRESOLVED).then_some(source), at);
     }
 
-    fn has_a_namespace_among_its_parts(&self, ty: TypeId) -> bool {
+    fn has_namespace_part(&self, ty: TypeId) -> bool {
         self.parts(ty).iter().any(|&part| matches!(self.data(part), TypeData::Anon { origin: Origin::Module(..), .. }))
     }
 
-    pub fn calls_static_of_global_object(&mut self, file: FileId, e: ExprId, name: Atom) -> bool {
+    pub fn calls_global_static_method(&mut self, file: FileId, e: ExprId, name: Atom) -> bool {
         let ExprKind::Call(call) = self.hir(file)[e].kind else { return false };
         let ExprKind::Dot { obj, chain: Chain::No, .. } = self.hir(file)[self.hir(file)[call].callee].kind else { return false };
         let name = self.atoms().bytes(name).to_vec();
-        self.hir(file)[call].chain == Chain::No && self.names_global_object(file, obj, &name)
+        self.hir(file)[call].chain == Chain::No && self.refers_to_global_object(file, obj, &name)
     }
 
     pub fn constructs_global_object(&mut self, file: FileId, e: ExprId, name: Atom) -> bool {
         let ExprKind::New(call) = self.hir(file)[e].kind else { return false };
         let (callee, name) = (self.hir(file)[call].callee, self.atoms().bytes(name).to_vec());
-        self.names_global_object(file, callee, &name)
+        self.refers_to_global_object(file, callee, &name)
     }
 
-    pub fn makes_a_proxy(&mut self, file: FileId, e: ExprId) -> bool {
+    pub fn creates_proxy(&mut self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
         match hir[e].kind {
-            ExprKind::As { expr: inner, .. } | ExprKind::NonNull(inner) | ExprKind::Satisfies { expr: inner, .. } => self.makes_a_proxy(file, inner),
-            ExprKind::Cond { yes, no, .. } => self.makes_a_proxy(file, yes) || self.makes_a_proxy(file, no),
-            ExprKind::New(call) => self.names_global_object(file, hir[call].callee, b"Proxy"),
+            ExprKind::As { expr: inner, .. } | ExprKind::NonNull(inner) | ExprKind::Satisfies { expr: inner, .. } => self.creates_proxy(file, inner),
+            ExprKind::Cond { yes, no, .. } => self.creates_proxy(file, yes) || self.creates_proxy(file, no),
+            ExprKind::New(call) => self.refers_to_global_object(file, hir[call].callee, b"Proxy"),
             _ => false,
         }
     }
 
-    pub fn may_yield_a_namespace(&mut self, file: FileId, e: ExprId) -> bool {
+    pub fn may_return_namespace(&mut self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
         match hir[e].kind {
             ExprKind::ImportCall { .. } => true,
-            ExprKind::Await(inner) | ExprKind::As { expr: inner, .. } | ExprKind::NonNull(inner) | ExprKind::Satisfies { expr: inner, .. } => self.may_yield_a_namespace(file, inner),
-            ExprKind::Cond { yes, no, .. } => self.may_yield_a_namespace(file, yes) || self.may_yield_a_namespace(file, no),
+            ExprKind::Await(inner) | ExprKind::As { expr: inner, .. } | ExprKind::NonNull(inner) | ExprKind::Satisfies { expr: inner, .. } => self.may_return_namespace(file, inner),
+            ExprKind::Cond { yes, no, .. } => self.may_return_namespace(file, yes) || self.may_return_namespace(file, no),
             ExprKind::Call(call) if matches!(hir[hir[call].callee].kind, ExprKind::Ident(name) if self.atoms().bytes(name) == b"require") => true,
             _ => {
                 let own = self.type_of_expr(file, e);
-                let awaited = self.awaited(own);
-                self.has_a_namespace_among_its_parts(own) || self.has_a_namespace_among_its_parts(awaited)
+                if let Some(known) = self.shared_type_flag(own, rows::NAMESPACE_TEST_KNOWN, rows::MAY_BE_NAMESPACE) {
+                    return known;
+                }
+                let (found, is_cacheable) = self.compute_cacheable(|c| {
+                    let awaited = c.awaited(own);
+                    c.has_namespace_part(own) || c.has_namespace_part(awaited)
+                });
+                if is_cacheable {
+                    self.publish_type_flag(own, rows::NAMESPACE_TEST_KNOWN, rows::MAY_BE_NAMESPACE, found);
+                }
+                found
             }
         }
     }
 
-    pub(super) fn noted_creations(&mut self) -> &mut Creations {
+    pub(super) fn recorded_creations(&mut self) -> &mut Creations {
         &mut self.aot.flows.noted.others().creations
     }
 
-    pub(super) fn notes(&mut self) -> &mut Noted {
+    pub(super) fn notes(&mut self) -> &mut FlowNotes {
         &mut self.aot.flows.noted
     }
 
-    pub(super) fn escapes_noted(&mut self) -> &mut Escapes {
+    pub(super) fn recorded_escapes(&mut self) -> &mut Escapes {
         &mut self.aot.flows.noted.escapes
     }
 
-    pub(super) fn noted_constructions(&mut self) -> &mut Constructions {
+    pub(super) fn recorded_constructions(&mut self) -> &mut Constructions {
         &mut self.aot.flows.noted.others().constructions
     }
 
     /// The value of the expression `value` is stored to the field `name` of an object. `holder`: with `is_birth`, the layout that it is being
     /// allocated as. Else the supertype that it is looked at as.
-    pub fn note_callee_stored(&mut self, holder: TypeId, name: Atom, file: FileId, value: ExprId, is_birth: bool) {
-        let callee = self.callee_yielded_by(file, value, 0).callee;
+    pub fn record_stored_callee(&mut self, holder: TypeId, name: Atom, file: FileId, value: ExprId, is_birth: bool) {
+        let callee = self.result_callees_of(file, value, 0).callee;
         if callee != Callee::Nothing {
             let noted = self.aot.flows.noted.others();
-            join_callee(if is_birth { &mut noted.callees_at_birth } else { &mut noted.callees_stored }, (holder, name), callee);
+            join_callee(if is_birth { &mut noted.callees_at_creation } else { &mut noted.callees_stored }, (holder, name), callee);
         }
     }
 
     /// The same for a closure of the function, which a declaration stores there: `namespace N { export function f() {} }`.
-    pub fn note_callee_declared(&mut self, holder: TypeId, name: Atom, file: FileId, func: FnId) {
+    pub fn record_declared_callee(&mut self, holder: TypeId, name: Atom, file: FileId, func: FnId) {
         join_callee(&mut self.aot.flows.noted.others().callees_stored, (holder, name), Callee::One(file, func));
     }
 
-    pub fn note_unknown_callee(&mut self, holder: TypeId, name: Atom, file: FileId, pos: u32) {
+    pub fn record_unknown_callee(&mut self, holder: TypeId, name: Atom, file: FileId, pos: u32) {
         join_callee(&mut self.aot.flows.noted.others().callees_stored, (holder, name), Callee::Unknown(Place { file, pos }));
     }
 
     /// An object is made as `ty` says.
-    pub fn note_allocation(&mut self, ty: TypeId) {
-        let ty = self.laid_out_as(ty);
+    pub fn record_allocation(&mut self, ty: TypeId) {
+        let ty = self.layout_defining_type(ty);
         self.aot.flows.noted.add_at(NoteKind::AllocatedAtSite, ty, Place::NOWHERE);
     }
 
@@ -2518,17 +2691,17 @@ impl<'p, 's> Checker<'p, 's> {
     ///
     /// Not for a supertype that a coercion made: `const name = (child as NamedDeclaration).name; isPropertyName(name)`. It says what `name`
     /// was coerced to, not what it is, which may be a `QualifiedName`. An intersection with it would assert its discriminants.
-    pub fn type_of_both(&mut self, source: TypeId, target: TypeId) -> Option<TypeId> {
-        let not_known_before = self.aot.flows.times_not_known;
-        if self.is_view_made_by_coercion(source) || self.is_view_made_by_coercion(target) {
+    pub fn intersection_for_forced_cast(&mut self, source: TypeId, target: TypeId) -> Option<TypeId> {
+        let not_known_before = self.aot.flows.unknown_count;
+        if self.is_coercion_result_type(source) || self.is_coercion_result_type(target) {
             return None;
         }
-        let are_laid_out = self.says_properties(source) && self.says_properties(target) && !self.is_type_of_instances(source) && !self.is_type_of_instances(target);
-        if !are_laid_out || self.is_of_type(target, source) || self.is_of_type(source, target) || self.aot.flows.times_not_known != not_known_before {
+        let have_fixed_layout = self.declares_properties(source) && self.declares_properties(target) && !self.is_instance_type(source) && !self.is_instance_type(target);
+        if !have_fixed_layout || self.is_allocated_subtype(target, source) || self.is_allocated_subtype(source, target) || self.aot.flows.unknown_count != not_known_before {
             return None;
         }
         let both = self.intersection(&[source, target]);
-        let both = self.laid_out_as(both);
+        let both = self.layout_defining_type(both);
         matches!(self.data(both), TypeData::Intersection(_)).then_some(both)
     }
 
@@ -2536,22 +2709,22 @@ impl<'p, 's> Checker<'p, 's> {
     /// as, as far as it is an object of the program. `may_be_plain`: it may be an object that the program has not laid out. All say how
     /// objects are laid out.
     ///
-    /// `is_vouched`: the operations say nothing of the value, and `sources` is what the checker takes it for. `may_change`: it is a cast, and
+    /// `is_trusted`: the operations say nothing of the value, and `sources` is what the checker takes it for. `may_convert`: it is a cast, and
     /// does not only make sure. `is_guard`: it is a type guard, which makes no copy of plain data.
     ///
     /// A cast may make an object of `target`: of plain data a copy, of an object that was made as something `target` extends that
     /// object. Nothing becomes an object of a class but by its constructor. What it makes of which layout is found at the link.
-    pub fn note_cast(&mut self, sources: &[TypeId], target: TypeId, may_be_plain: bool, is_vouched: bool, may_change: bool, is_guard: bool) {
+    pub fn record_cast(&mut self, sources: &[TypeId], target: TypeId, may_be_plain: bool, is_trusted: bool, may_convert: bool, is_guard: bool) {
         let at = self.aot.flows.place;
-        if may_be_plain && !self.is_type_of_instances(target) {
+        if may_be_plain && !self.is_instance_type(target) {
             self.aot.flows.noted.add_at(NoteKind::CopiedInto, target, Place::NOWHERE);
         }
-        if is_vouched {
-            self.aot.flows.noted.add_vouched_inflow(target, at);
+        if is_trusted {
+            self.aot.flows.noted.add_trusted_inflow(target, at);
         }
         let noted = &mut self.aot.flows.noted;
-        noted.add_pairs_into(if may_change { NoteKind::Cast } else { NoteKind::Test }, sources, target);
-        if !may_change {
+        noted.add_pairs_into(if may_convert { NoteKind::Cast } else { NoteKind::Test }, sources, target);
+        if !may_convert {
             return;
         }
         if is_guard {
@@ -2562,23 +2735,23 @@ impl<'p, 's> Checker<'p, 's> {
         // the rest becomes one of the intersection.
         if let TypeData::Intersection(parts) = self.data(target) {
             for &part in parts.iter() {
-                if self.says_properties(part) {
-                    let part = self.laid_out_as(part);
+                if self.declares_properties(part) {
+                    let part = self.layout_defining_type(part);
                     self.aot.flows.noted.add_pair(NoteKind::Cast, part, target);
                 }
             }
         }
     }
 
-    /// The cast from `sources` to `target`, which `note_cast` has been told of, is forced: `x as unknown as T`, `<T><any>x`, or it is at the way out of generic code and stands for such a cast to a type
+    /// The cast from `sources` to `target`, which `record_cast` has been told of, is forced: `x as unknown as T`, `<T><any>x`, or it is at the way out of generic code and stands for such a cast to a type
     /// with type parameters in there. It makes what it can of an object, and refuses none.
-    pub fn note_forced_cast(&mut self, sources: &[TypeId], target: TypeId) {
+    pub fn record_forced_cast(&mut self, sources: &[TypeId], target: TypeId) {
         self.aot.flows.noted.add_pairs_into(NoteKind::Forced, sources, target);
     }
 
     /// `e`: a call. What the declaration of the function says it yields, where this call yields something else: `createToken<TKind>(kind)` is
     /// declared to yield a `Token<TKind>`, which is what it makes, and yields an `AsteriskToken` here.
-    pub fn declared_result_of_call(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
+    pub fn declared_call_result(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         let sig = self.resolved_signature(file, e).sig?;
         let (of, func, _) = self.sig_decl(sig)?;
         let declared = self.return_type_of_fn(of, func);
@@ -2588,13 +2761,13 @@ impl<'p, 's> Checker<'p, 's> {
     /// If the call `e` yields its first argument itself, whatever more the type of the call says of it: that argument. `Object.assign(target,
     /// ..)`, which is a `T & U`, `Object.freeze(o)`, a `Readonly<T>`, `seal`, `preventExtensions`, `defineProperty`, `defineProperties`,
     /// `setPrototypeOf`. The function is known by the signature the call is resolved to. For a function of the program:
-    /// `Checker::argument_handed_back_by_function`.
-    pub fn argument_handed_back_by(&mut self, file: FileId, e: ExprId) -> Option<ExprId> {
+    /// `Checker::returned_argument_of_function`.
+    pub fn returned_argument_of(&mut self, file: FileId, e: ExprId) -> Option<ExprId> {
         const NAMES: [&[u8]; 7] = [b"assign", b"freeze", b"seal", b"preventExtensions", b"defineProperty", b"defineProperties", b"setPrototypeOf"];
         let hir = self.hir(file);
         let ExprKind::Call(call) = hir[e].kind else { return None };
         let ExprKind::Dot { obj, name, chain: Chain::No, .. } = hir[hir[call].callee].kind else { return None };
-        if name.is_none() || !NAMES.contains(&self.atoms().bytes(name)) || !self.names_global_object(file, obj, b"Object") {
+        if name.is_none() || !NAMES.contains(&self.atoms().bytes(name)) || !self.refers_to_global_object(file, obj, b"Object") {
             return None;
         }
         let first = hir.ids(hir[call].args).next().filter(|&first| !matches!(hir[first].kind, ExprKind::Spread(_) | ExprKind::Missing))?;
@@ -2602,8 +2775,8 @@ impl<'p, 's> Checker<'p, 's> {
         let (of, bound) = (self.hir(declared_in), self.bound(declared_in));
         let FnOwner::Member(member) = bound.fns[func.idx()].owner else { return None };
         let MemberOwner::Interface(interface) = bound.member_owner[member.idx()] else { return None };
-        let is_the_global = of.kind == FileKind::Declaration && of[func].name.is_some() && NAMES.contains(&self.atoms().bytes(of[func].name)) && self.atoms().bytes(of[interface].name) == b"ObjectConstructor";
-        is_the_global.then_some(first)
+        let is_global_object = of.kind == FileKind::Declaration && of[func].name.is_some() && NAMES.contains(&self.atoms().bytes(of[func].name)) && self.atoms().bytes(of[interface].name) == b"ObjectConstructor";
+        is_global_object.then_some(first)
     }
 
     pub fn generic_callback_parameters(&mut self, file: FileId, e: ExprId) -> Vec<(TypeId, TypeId)> {
@@ -2616,7 +2789,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let Some(index) = hir.ids(hir[call].args).position(|argument| argument == e) else { return pairs };
         let Some((declared_in, func, _)) = self.resolved_signature(file, parent).sig.and_then(|sig| self.sig_decl(sig)) else { return pairs };
-        if self.is_untyped_file(declared_in) || self.only_declares(declared_in) {
+        if self.is_untyped_file(declared_in) || self.is_declaration_only(declared_in) {
             return pairs;
         }
         let generic = self.sig_of_fn(declared_in, func);
@@ -2630,14 +2803,14 @@ impl<'p, 's> Checker<'p, 's> {
             return pairs;
         }
         for part in self.parts(callback).to_vec() {
-            if !self.may_be_called_with_a_type_parameter(part) {
+            if !self.is_generic_callback(part) {
                 continue;
             }
             for called_as in self.signatures(part, false).to_vec() {
                 let arguments = self.sig_params(called_as);
                 for own in self.parts(handed_over).to_vec() {
-                    for declared_as in self.signatures(own, false).to_vec() {
-                        let parameters = self.sig_params(declared_as);
+                    for declared_sig in self.signatures(own, false).to_vec() {
+                        let parameters = self.sig_params(declared_sig);
                         for at in 0..parameters.len() {
                             if let (Some(argument), Some(parameter)) = (self.param_type_at(&arguments, at), self.param_type_at(&parameters, at))
                                 && self.is_instantiable(argument)
@@ -2652,46 +2825,79 @@ impl<'p, 's> Checker<'p, 's> {
         pairs
     }
 
-    fn may_be_called_with_a_type_parameter(&mut self, callback: TypeId) -> bool {
-        if let Some(&known) = self.aot.flows.called_with_a_type_parameter.get(&callback) {
+    fn is_generic_callback(&mut self, callback: TypeId) -> bool {
+        if let Some(known) = self.shared_type_flag(callback, rows::GENERIC_CALLBACK_KNOWN, rows::IS_GENERIC_CALLBACK).or_else(|| self.aot.flows.generic_callback_cache.get(&callback).copied()) {
             return known;
         }
         let (scope, mark) = (self.begin_scope(), self.non_cacheable_mark());
         let apparent = self.reduced_apparent_type(callback);
-        let may_be = !self.is_union(apparent) || self.may_take_a_type_parameter_in_common(apparent);
+        let may_be = !self.is_union(apparent) || self.union_has_generic_callback(apparent);
         let is_settled = self.non_cacheable_mark() == mark;
-        if self.end_scope(scope).is_ok() && is_settled {
-            self.aot.flows.called_with_a_type_parameter.insert(callback, may_be);
+        if self.end_scope(scope).is_ok() && is_settled && !self.publish_type_flag(callback, rows::GENERIC_CALLBACK_KNOWN, rows::IS_GENERIC_CALLBACK, may_be) {
+            self.aot.flows.generic_callback_cache.insert(callback, may_be);
         }
         may_be
     }
 
-    fn may_take_a_type_parameter_in_common(&mut self, union: TypeId) -> bool {
-        let mut taken = Vec::new();
-        for member in self.parts(union).to_vec() {
+    fn union_has_generic_callback(&mut self, union: TypeId) -> bool {
+        #[derive(Copy, Clone, PartialEq)]
+        enum CommonType {
+            Unseen,
+            Instantiable(TypeId),
+            Rejected,
+        }
+        let mut callbacks: Vec<(SigId, usize, bool)> = Vec::new();
+        for &member in self.parts(union) {
             let signatures = self.signatures(member, false);
             let &[only] = &signatures[..] else { return true };
             if !self.sig_type_params(only).is_empty() {
                 return true;
             }
-            let parameters = self.sig_params(only);
-            if parameters.last().is_some_and(|last| last.rest && self.array_element(last.ty).is_none()) {
-                return true;
-            }
-            taken.push(parameters);
+            let declared_count = match *self.types().sig(only) {
+                crate::types::SigData::Decl { file, func, .. } => {
+                    let hir = self.hir(file);
+                    let has_rest = hir[func].params.iter().next_back().is_some_and(|last| hir[last].flags.contains(crate::hir::Flags::REST));
+                    (!has_rest).then(|| hir[func].params.len())
+                }
+                _ => None,
+            };
+            let (count, has_rest) = match declared_count {
+                Some(count) => (count, false),
+                None => {
+                    let parameters = self.sig_params(only);
+                    if parameters.last().is_some_and(|last| last.rest && self.array_element(last.ty).is_none()) {
+                        return true;
+                    }
+                    (parameters.len(), parameters.last().is_some_and(|last| last.rest))
+                }
+            };
+            callbacks.push((only, count, has_rest));
         }
-        let most = taken.iter().map(|parameters| parameters.len()).max().unwrap_or(0);
-        (0..=most).any(|at| {
-            let mut in_common = None;
-            for parameters in &taken {
-                match self.param_type_at(parameters, at) {
+        let positions = 1 + callbacks.iter().map(|callback| callback.1).max().unwrap_or(0);
+        let mut common = vec![CommonType::Unseen; positions];
+        for (signature, count, has_rest) in callbacks {
+            let reached = if has_rest { positions } else { count };
+            if common[..reached].iter().all(|&state| state == CommonType::Rejected) {
+                continue;
+            }
+            let parameters = self.sig_params(signature);
+            for at in 0..reached {
+                if common[at] == CommonType::Rejected {
+                    continue;
+                }
+                match self.param_type_at(&parameters, at) {
                     None | Some(TypeId::UNKNOWN) => {}
-                    Some(ty) if in_common.is_none_or(|other| other == ty) => in_common = Some(ty),
-                    Some(_) => return false,
+                    Some(ty) => {
+                        common[at] = match common[at] {
+                            CommonType::Unseen if self.is_instantiable(ty) => CommonType::Instantiable(ty),
+                            CommonType::Instantiable(other) if other == ty => CommonType::Instantiable(ty),
+                            _ => CommonType::Rejected,
+                        }
+                    }
                 }
             }
-            in_common.is_some_and(|ty| self.is_instantiable(ty))
-        })
+        }
+        common.iter().any(|state| matches!(state, CommonType::Instantiable(_)))
     }
 
     /// `f.call(x as A)`, `id(x as A)`. `e`: an argument of a call or a `new`. Whether the parameter that takes it is declared as a type parameter of the very
@@ -2714,26 +2920,26 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Whether `undefined` is of the type. Of a type parameter it may be.
-    pub fn admits_undefined(&mut self, ty: TypeId) -> bool {
-        self.admits_nil(ty) || self.parts(ty).iter().any(|&part| part.is_any() || part.is_undefined() || matches!(part, TypeId::UNKNOWN | TypeId::VOID | TypeId::UNRESOLVED) || self.is_instantiable(part))
+    pub fn accepts_undefined(&mut self, ty: TypeId) -> bool {
+        self.accepts_nullish(ty) || self.parts(ty).iter().any(|&part| part.is_any() || part.is_undefined() || matches!(part, TypeId::UNKNOWN | TypeId::VOID | TypeId::UNRESOLVED) || self.is_instantiable(part))
     }
 
     /// An expression is of type `ty`. Takes note of the intersections in it with an array, a function or a class of the engine: there are
     /// objects of such a type, they are not laid out, and no declaration names it.
-    pub fn note_object_without_a_layout(&mut self, ty: TypeId) {
-        self.aot.flows.noted.add_at(NoteKind::NotLaidOut, ty, Place::NOWHERE);
+    pub fn record_object_without_layout(&mut self, ty: TypeId) {
+        self.aot.flows.noted.add_at(NoteKind::NoFixedLayout, ty, Place::NOWHERE);
     }
 
-    pub fn note_type_of_expression(&mut self, ty: TypeId) {
+    pub fn record_expression_type(&mut self, ty: TypeId) {
         for &part in self.parts(ty) {
-            if matches!(self.data(part), TypeData::Intersection(_)) && (self.element_of_array_subtype(part).is_some() || self.built_in_extended_by(part).is_some()) {
-                self.aot.flows.noted.add_at(NoteKind::NotLaidOut, part, Place::NOWHERE);
+            if matches!(self.data(part), TypeData::Intersection(_)) && (self.array_subtype_element(part).is_some() || self.extended_built_in(part).is_some()) {
+                self.aot.flows.noted.add_at(NoteKind::NoFixedLayout, part, Place::NOWHERE);
             }
             if let TypeData::Anon { origin: Origin::Module(module), .. } = *self.data(part) {
                 let declarations = self.files().decls(module);
-                let is_made_by_blocks = !declarations.is_empty() && declarations.iter().all(|&(file, decl)| matches!(decl, Decl::Module(_)) && !self.only_declares(file) && !self.files().module(file).is_untyped());
-                if !is_made_by_blocks {
-                    self.aot.flows.noted.add_at(NoteKind::NotLaidOut, part, Place::NOWHERE);
+                let is_allocated_in_blocks = !declarations.is_empty() && declarations.iter().all(|&(file, decl)| matches!(decl, Decl::Module(_)) && !self.is_declaration_only(file) && !self.files().module(file).is_untyped());
+                if !is_allocated_in_blocks {
+                    self.aot.flows.noted.add_at(NoteKind::NoFixedLayout, part, Place::NOWHERE);
                 }
             }
         }
@@ -2741,7 +2947,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// What a value of the type yields when it is called or constructed. Something of which nothing is known that is cast to `(n: number)
     /// => Wrapped` yields what nothing is known of either, and that is held to `Wrapped`.
-    pub fn results_of_calls(&mut self, ty: TypeId) -> Vec<TypeId> {
+    pub fn call_results(&mut self, ty: TypeId) -> Vec<TypeId> {
         let mut results = Vec::new();
         if ty == TypeId::UNRESOLVED {
             return results;
@@ -2757,13 +2963,13 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     pub fn produced_types(&mut self, ty: TypeId) -> Vec<TypeId> {
-        let mut found = self.results_of_calls(ty);
+        let mut found = self.call_results(ty);
         if ty == TypeId::UNRESOLVED {
             return found;
         }
         for part in self.parts(ty).to_vec() {
             let is_namespace = matches!(self.data(part), TypeData::Anon { origin: Origin::Module(..), .. });
-            if !is_namespace && (!self.is_record_written_by_the_program(part) || self.is_type_of_instances(part)) {
+            if !is_namespace && (!self.is_program_declared_record(part) || self.is_instance_type(part)) {
                 continue;
             }
             let Some(members) = self.members(part) else { continue };
@@ -2772,7 +2978,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if is_namespace {
                     found.push(held);
                 }
-                found.extend(self.results_of_calls(held));
+                found.extend(self.call_results(held));
             }
         }
         found
@@ -2784,36 +2990,36 @@ impl<'p, 's> Checker<'p, 's> {
         if ty == TypeId::UNRESOLVED {
             return false;
         }
-        if !self.answers_are_provisional()
+        if !self.results_are_provisional()
             && let Some(&known) = self.aot.flows.untyped.get(&ty)
         {
             return known;
         }
-        let (found, is_cacheable) = self.compute_cacheable(|c| c.find_is_untyped(ty));
+        let (found, is_cacheable) = self.compute_cacheable(|c| c.compute_is_untyped(ty));
         if is_cacheable {
             self.aot.flows.untyped.insert(ty, found);
         }
         found
     }
 
-    fn find_is_untyped(&mut self, ty: TypeId) -> bool {
+    fn compute_is_untyped(&mut self, ty: TypeId) -> bool {
         self.parts(ty).iter().any(|&part| {
             let part = if self.is_instantiable(part) { self.base_constraint(part) } else { part };
-            part.is_any() || part == TypeId::UNKNOWN || part == TypeId::OBJECT || self.admits_primitives(part)
+            part.is_any() || part == TypeId::UNKNOWN || part == TypeId::OBJECT || self.accepts_primitives(part)
         })
     }
 
     /// Data of the origin is held to `ty`, by a cast or by a place whose type is written down. `is_in_container`: nothing is made of it from the top, as with the value of a
     /// JSON module. A cast walks no container, so what is in one stays what it is, with all that it holds: the views that it is looked at as from
     /// then on take it as it is, if it is known for data.
-    pub fn note_what_stays_untyped(&mut self, ty: TypeId, is_in_container: bool, origin: OriginOfData) {
+    pub fn record_types_staying_untyped(&mut self, ty: TypeId, is_in_container: bool, origin: DataOrigin) {
         if ty == TypeId::UNRESOLVED {
             return;
         }
-        let views = self.views_staying_untyped_within(ty, is_in_container);
-        if origin.is_known_for_data() {
+        let views = self.nested_types_staying_untyped(ty, is_in_container);
+        if origin.is_known_plain_data() {
             for &view in views.iter() {
-                self.note_foreign(view, TypeId::UNRESOLVED);
+                self.record_untyped(view, TypeId::UNRESOLVED);
             }
         }
     }
@@ -2823,8 +3029,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// Whether declaration files alone declare the interface or the class. What they declare is made elsewhere: nothing is laid out by it, and what is read out of it is a prediction already (trust.rs), but for the language's and the host's own
     /// objects, which are made of nobody's data and cannot be replaced: `Math`, `JSON`, `console`. Not an array: what is handed in as one need not be one.
     #[inline]
-    fn is_declared_outside(&self, ty: TypeId) -> bool {
-        self.row(ty) & rows::IS_DECLARED_OUTSIDE != 0
+    fn is_declared_externally(&self, ty: TypeId) -> bool {
+        self.row(ty) & rows::IS_DECLARED_EXTERNALLY != 0
     }
 
     /// Whether data from outside the program is looked at as the type. Types are facts about what the program makes and predictions about what it is given: a place of such a type holds
@@ -2834,7 +3040,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut seen: FxHashSet<Sym> = FxHashSet::default();
         let mut declared: Vec<Sym> = Vec::new();
         for (file, module) in files.modules.iter().enumerate() {
-            if module.is_untyped() || self.only_declares(FileId(file as u32)) {
+            if module.is_untyped() || self.is_declaration_only(FileId(file as u32)) {
                 continue;
             }
             for (id, symbol) in module.bound.symbols.iter().enumerate() {
@@ -2847,45 +3053,57 @@ impl<'p, 's> Checker<'p, 's> {
         let given = self.given();
         let (mut all, mut by_identity, mut by_looks, mut otherwise) = (0u32, 0u32, 0u32, 0u32);
         let mut lost: Vec<String> = Vec::new();
-        let mut given_by_what_they_are: Vec<String> = Vec::new();
+        let mut external_by_nature: Vec<String> = Vec::new();
         for sym in declared {
             let ty = self.declared_type(sym);
-            if !self.says_properties(ty) || !self.may_hold_objects(ty) || self.is_declared_outside(ty) {
+            if !self.declares_properties(ty) || !self.may_hold_objects(ty) || self.is_declared_externally(ty) {
                 continue;
             }
             all += 1;
             if !self.is_tainted(ty) {
                 continue;
             }
-            let identity = self.identity_of_type(ty);
+            let identity = self.type_identity(ty);
             if given.identities.contains(&identity) {
                 by_identity += 1;
-                given_by_what_they_are.push(self.name_for_people(ty));
-            } else if self.takes_what_is_given(ty, given) {
+                external_by_nature.push(self.display_name(ty));
+            } else if self.accepts_external_data(ty, given) {
                 by_looks += 1;
                 if lost.len() < 8 {
-                    let name = self.name_for_people(ty);
-                    lost.push(format!("alterations: given: where: by its looks: {name}"));
+                    let name = self.display_name(ty);
+                    lost.push(format!("mutations: given: where: by its looks: {name}"));
                 }
             } else {
                 otherwise += 1;
             }
         }
-        let mut lines = vec![format!("alterations: given: of the {all} classes and interfaces that compiled files declare, data from outside is looked at as {by_identity} by what they are, {by_looks} by their looks, {otherwise} otherwise; {} types are given", given.identities.len())];
+        let mut lines = vec![format!("mutations: given: of the {all} classes and interfaces that compiled files declare, data from outside is looked at as {by_identity} by what they are, {by_looks} by their looks, {otherwise} otherwise; {} types are given", given.identities.len())];
         lines.append(&mut lost);
-        given_by_what_they_are.sort();
-        lines.extend(given_by_what_they_are.iter().take(40).map(|name| format!("alterations: given: where: by what it is: {name}")));
+        external_by_nature.sort();
+        lines.extend(external_by_nature.iter().take(40).map(|name| format!("mutations: given: where: by what it is: {name}")));
         lines
     }
 
     pub fn is_tainted(&mut self, ty: TypeId) -> bool {
-        if self.aot.flows.is_searching_from_doors || !(self.says_properties(ty) || self.is_array_or_tuple(ty)) {
+        if let Some(known) = self.shared_type_flag(ty, rows::TAINT_KNOWN, rows::IS_TAINTED) {
+            return known;
+        }
+        let is_computed_now = !self.aot.flows.tainted.contains_key(&ty);
+        let (is_tainted, is_cacheable) = self.compute_cacheable(|c| c.compute_is_tainted(ty));
+        if is_computed_now && is_cacheable && !matches!(self.data(ty), TypeData::Anon { origin: Origin::ObjectLiteral(..) | Origin::WidenedLiteral(..), .. }) {
+            self.publish_type_flag(ty, rows::TAINT_KNOWN, rows::IS_TAINTED, is_tainted);
+        }
+        is_tainted
+    }
+
+    fn compute_is_tainted(&mut self, ty: TypeId) -> bool {
+        if self.aot.flows.is_searching_from_sources || !(self.declares_properties(ty) || self.is_array_or_tuple(ty)) {
             return false;
         }
         if let Some(&known) = self.aot.flows.tainted.get(&ty) {
             return known;
         }
-        if !self.may_hold_objects(ty) || self.is_declared_outside(ty) {
+        if !self.may_hold_objects(ty) || self.is_declared_externally(ty) {
             self.aot.flows.tainted.insert(ty, false);
             return false;
         }
@@ -2895,54 +3113,55 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // The type that a literal is checked against may be that of another literal.
         self.aot.flows.tainted.insert(ty, false);
-        self.aot.flows.being_asked_of_taint += 1;
-        let identity = self.identity_of_type(ty);
-        let is_tainted = given.identities.contains(&identity) || self.takes_what_is_given(ty, given) || self.is_type_of_literal_that_is_given_otherwise(ty, given) || self.is_type_of_plain_literal(ty);
-        self.aot.flows.being_asked_of_taint -= 1;
+        self.aot.flows.taint_query_depth += 1;
+        let identity = self.type_identity(ty);
+        let is_tainted = given.identities.contains(&identity) || self.accepts_external_data(ty, given) || self.is_literal_type_of_external_data(ty, given) || self.is_plain_literal_type(ty);
+        self.aot.flows.taint_query_depth -= 1;
         self.aot.flows.tainted.insert(ty, is_tainted);
         is_tainted
     }
 
-    fn is_type_of_literal_that_is_given_otherwise(&mut self, ty: TypeId, given: &Given) -> bool {
+    fn is_literal_type_of_external_data(&mut self, ty: TypeId, given: &ExternalTypes) -> bool {
         if !matches!(self.data(ty), TypeData::Anon { origin: Origin::ObjectLiteral(..), .. }) {
             return false;
         }
         let regular = self.regular_type_of_object_literal(ty);
         let widened = self.get_widened_type(regular);
-        [regular, widened].into_iter().any(|other| other != ty && given.identities.contains(&self.identity_of_type(other)))
+        [regular, widened].into_iter().any(|other| other != ty && given.identities.contains(&self.type_identity(other)))
     }
 
-    /// Whether it is the type of an object literal that stands where a tainted type is expected. Such a literal is made as a plain object (`FileBuild::is_asked_to_be_dynamic`). A place that takes its type from an initializer takes it from
+    /// Whether it is the type of an object literal that stands where a tainted type is expected. Such a literal is made as a plain object (`FileBuild::is_explicitly_dynamic`). A place that takes its type from an initializer takes it from
     /// what the initializer is made as: the field of the literal around it, an element of the array literal around it, `const x = { .. } satisfies T`, a result that is inferred.
     /// `{ A: { p: [] } } satisfies { [N in Names]?: Row<N> }`: the inner literal is checked against `Row<"A">` and stored to a field of the outer one, which is of the inner one's own type.
-    fn is_type_of_plain_literal(&mut self, ty: TypeId) -> bool {
+    fn is_plain_literal_type(&mut self, ty: TypeId) -> bool {
         let (TypeData::Anon { origin: Origin::ObjectLiteral(file, literal, ..), .. } | TypeData::Anon { origin: Origin::WidenedLiteral(file, literal, ..), .. }) = *self.data(ty) else { return false };
         matches!(self.hir(file)[literal].kind, ExprKind::Object(_)) && self.contextual_type_of_literal(file, literal).is_some_and(|expected| self.has_tainted_part(expected))
     }
 
     /// The search is made once for the program: a task that finds it made reads it. Tasks that find it missing at the same time all make it, and come to the same.
-    pub(super) fn is_searching_from_doors(&self) -> bool {
-        self.aot.flows.is_searching_from_doors
+    pub(super) fn is_searching_from_sources(&self) -> bool {
+        self.aot.flows.is_searching_from_sources
     }
 
-    fn given(&mut self) -> &'p Given {
+    fn given(&mut self) -> &'p ExternalTypes {
         let program = self.p;
         if let Some(given) = program.aot.storage.given.get() {
             return given;
         }
+        assert!(!program.aot.storage.is_search_under_way.load(Ordering::Relaxed), "what the program is given is asked for while the search for it is under way");
         // By a checker of its own, outside the plan: what it finds out on the way is dropped with it. So the task that happens to make the search is left as every other task is: with nothing looked at out of its order, and
         // nothing remembered from while no type was tainted.
-        let search = Search { seen_by_other_declarations: self.importers_that_see_other_declarations(), ..Search::new(1) };
+        let search = Search { seen_by_other_declarations: self.importers_with_other_declarations(), ..Search::new(1) };
         let mut searcher = program.checker();
         searcher.begin_task(0, 0, true);
         (searcher.stack_base, searcher.stack_limit) = (self.stack_base, self.stack_limit);
-        searcher.aot.flows.is_searching_from_doors = true;
-        searcher.search_from_doors(&search, 0, &Share::Rest { index: 0, of: 1, is_taken: &[] }, &FxHashMap::default());
+        searcher.aot.flows.is_searching_from_sources = true;
+        searcher.search_from_sources(&search, 0, &Share::Rest { index: 0, of: 1, is_taken: &[] }, &FxHashMap::default());
         drop(searcher);
         program.aot.storage.given.get_or_init(|| search.found())
     }
 
-    fn said_by_properties_of(&mut self, ty: TypeId) -> Option<Vec<(Box<[u8]>, Said)>> {
+    fn property_summary(&mut self, ty: TypeId) -> Option<Vec<(Box<[u8]>, ValueSummary)>> {
         if self.is_array_or_tuple(ty) {
             return None;
         }
@@ -2954,17 +3173,17 @@ impl<'p, 's> Checker<'p, 's> {
                     continue;
                 }
                 let of_prop = self.type_of_prop(prop, members.mapper);
-                properties.push((name, self.said_by(of_prop)));
+                properties.push((name, self.value_summary(of_prop)));
             }
         }
         properties.sort_unstable_by(|one, other| one.0.cmp(&other.0));
         Some(properties)
     }
 
-    fn said_by(&mut self, ty: TypeId) -> Said {
+    fn value_summary(&mut self, ty: TypeId) -> ValueSummary {
         let ty = self.reduced(ty);
-        let mut said = Said { kinds: self.kinds_said_by(ty), strings: Vec::new(), numbers: Vec::new() };
-        for literal in self.literals_of_type(ty) {
+        let mut said = ValueSummary { kinds: self.declared_value_kinds(ty), strings: Vec::new(), numbers: Vec::new() };
+        for literal in self.type_literals(ty) {
             match literal {
                 Literal::String(text) => said.strings.push(self.atoms().bytes(text).into()),
                 Literal::Number(number) => said.numbers.push(number.to_bits()),
@@ -2976,16 +3195,17 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Which kinds of values the type has room for, nil aside, as far as that is read off it without a question to the checker's relations.
-    fn kinds_said_by(&mut self, ty: TypeId) -> u16 {
+    fn declared_value_kinds(&mut self, ty: TypeId) -> u16 {
         let ty = self.reduced(ty);
         match self.data(ty) {
-            TypeData::Union(parts) => parts.to_vec().into_iter().fold(0, |all, part| all | self.kinds_said_by(part)),
+            TypeData::Union(parts) => parts.to_vec().into_iter().fold(0, |all, part| all | self.declared_value_kinds(part)),
             TypeData::Intrinsic(intrinsic) => match intrinsic {
                 Intrinsic::String => said::STRING,
                 Intrinsic::Number => said::NUMBER,
                 Intrinsic::BigInt => said::BIGINT,
                 Intrinsic::Symbol => said::SYMBOL,
                 Intrinsic::Object => said::RECORDS | said::ARRAYS | said::FUNCTIONS,
+                Intrinsic::Unknown => said::UNKNOWN,
                 Intrinsic::Undefined | Intrinsic::Missing | Intrinsic::UndefinedWidening | Intrinsic::Null | Intrinsic::NullWidening | Intrinsic::Never => 0,
                 _ => said::ANYTHING,
             },
@@ -2996,12 +3216,12 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::BoolLit { .. } => said::FALSE,
             TypeData::UniqueSymbol { .. } => said::SYMBOL,
             TypeData::Ref { .. } | TypeData::Tuple { .. } | TypeData::Anon { .. } | TypeData::Synth(_) | TypeData::ReverseMapped { .. } | TypeData::Fns { .. } => {
-                if self.is_array_or_tuple(ty) || self.element_of_array_subtype(ty).is_some() {
+                if self.is_array_or_tuple(ty) || self.array_subtype_element(ty).is_some() {
                     said::ARRAYS
-                } else if self.is_declared_outside(ty) || self.is_empty_object_type(ty) {
+                } else if self.is_declared_externally(ty) || self.is_empty_object_type(ty) {
                     // `Iterable<T>`, `ArrayLike<T>`, `{}`
                     said::ANYTHING
-                } else if matches!(self.built_in_that_is(ty), Some(BuiltIn::Function)) {
+                } else if matches!(self.built_in_for_type(ty), Some(BuiltIn::Function)) {
                     said::FUNCTIONS
                 } else {
                     said::RECORDS
@@ -3014,19 +3234,19 @@ impl<'p, 's> Checker<'p, 's> {
     /// Where the data may go on to: whether one of the types that the search has found may be assignable to the type: `takeDeep(node: Deep<All>)`, handed a `node: All`; `Readonly<T>`, `Partial<T>`, `Pick<T, ..>`, a base interface. Asked of a
     /// type when somebody has to do with it, once: nobody goes through the types of the program. It goes by the names of the properties and by the kinds of what they hold, which every task finds the same: whoever is assignable has every
     /// required property and one of the properties at least, and holds nothing there that the type has no room for.
-    fn takes_what_is_given(&mut self, ty: TypeId, given: &Given) -> bool {
-        if !self.says_properties(ty) || self.is_type_of_instances(ty) || self.built_in_that_is(ty).is_some() || self.element_of_array_subtype(ty).is_some() {
+    fn accepts_external_data(&mut self, ty: TypeId, given: &ExternalTypes) -> bool {
+        if !self.declares_properties(ty) || self.is_instance_type(ty) || self.built_in_for_type(ty).is_some() || self.array_subtype_element(ty).is_some() {
             return false;
         }
         let Some(members) = self.members(ty) else { return false };
-        if given.went_on_by_pairs
-            && members.shape().props.len() <= MOST_PROPERTIES_OF_A_RECORD_THAT_IS_TURNED_WHERE_IT_LIES
+        if given.continued_by_pairs
+            && members.shape().props.len() <= MAX_IN_PLACE_CONVERSION_PROPERTIES
             && (members.shape().props.iter().filter(|prop| !prop.flags.contains(PropFlags::OPTIONAL)).count() >= 2
                 || (matches!(self.data(ty), TypeData::Ref { .. }) || self.alias_of_type(ty).is_some())
-                    && self.generic_form_of(ty).and_then(|form| self.members(form)).unwrap_or(members).shape().props.iter().any(|prop| {
+                    && self.generic_form(ty).and_then(|form| self.members(form)).unwrap_or(members).shape().props.iter().any(|prop| {
                         let held = self.type_of_prop(prop, MapperId::IDENTITY);
                         let held = if self.is_instantiable(held) { self.base_constraint(held) } else { held };
-                        self.says_nothing(held) || self.may_hold_objects(held) || self.parts(held).iter().any(|&part| matches!(self.data(part), TypeData::Fns { .. }))
+                        self.is_uninformative(held) || self.may_hold_objects(held) || self.parts(held).iter().any(|&part| matches!(self.data(part), TypeData::Fns { .. }))
                     }))
         {
             return false;
@@ -3040,7 +3260,7 @@ impl<'p, 's> Checker<'p, 's> {
             None => names.iter().map(|name| having(name.0)).collect(),
         };
         // What the type itself says is only found out once one has the names.
-        let mut taken: Vec<(&[u8], Said)> = Vec::new();
+        let mut taken: Vec<(&[u8], ValueSummary)> = Vec::new();
         for &index in lists.into_iter().flatten() {
             let held = &given.properties[index as usize];
             if !names.iter().all(|&(name, is_optional)| is_optional || held.contains_key(name)) {
@@ -3049,10 +3269,10 @@ impl<'p, 's> Checker<'p, 's> {
             if taken.is_empty() {
                 for prop in members.shape().props.iter() {
                     let of_prop = self.type_of_prop(prop, members.mapper);
-                    taken.push((atoms.bytes(prop.name), self.said_by(of_prop)));
+                    taken.push((atoms.bytes(prop.name), self.value_summary(of_prop)));
                 }
             }
-            if taken.iter().all(|(name, taken)| held.get(*name).is_none_or(|held| held.may_fit(taken))) {
+            if taken.iter().all(|(name, taken)| held.get(*name).is_none_or(|held| held.may_be_assignable_to(taken))) {
                 return true;
             }
         }
@@ -3061,15 +3281,15 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Whether the value of the expression is what the program is given, or is read out of that: it is of a tainted type, a prediction, or a property or an element of one. Nothing is asserted of it, and no cast makes
     /// anything of it.
-    pub fn is_given(&mut self, file: FileId, e: ExprId) -> bool {
+    pub fn is_external_data(&mut self, file: FileId, e: ExprId) -> bool {
         let own = self.type_of_expr(file, e);
-        self.has_tainted_part(own) || self.unvouched_claim(file, e).is_some() || self.is_predicted(file, e)
+        self.has_tainted_part(own) || self.unverified_claim(file, e).is_some() || self.is_predicted(file, e)
     }
 
     /// `--aot-explain=given`: of the unions of two or more record types that are written in a typed text, of the program's graph or not: how many have a member that is tainted and one that is not, and how many there are. A place of such a union holds
     /// anything, and a narrowing that names the other member expects its layout.
     /// And of the first: how many have no member that the search has found: a member only takes what was found, by its names, kinds and discriminants: it looks like what is given.
-    pub fn count_unions_given_in_part(&mut self) -> (usize, usize, usize) {
+    pub fn count_partially_tainted_unions(&mut self) -> (usize, usize, usize) {
         let (mut in_part, mut by_looks, mut all) = (0, 0, 0);
         for file in (0..self.files().modules.len() as u32).map(FileId) {
             if self.hir(file).kind == FileKind::Declaration || self.is_untyped_file(file) {
@@ -3084,11 +3304,11 @@ impl<'p, 's> Checker<'p, 's> {
                 let (mut tainted, mut found, mut records) = (0, 0, 0);
                 for member in self.parts(union).to_vec() {
                     let member = self.reduced(member);
-                    if self.says_properties(member) && !self.is_type_of_instances(member) && self.built_in_that_is(member).is_none() && self.element_of_array_subtype(member).is_none() && !self.is_declared_outside(member) {
+                    if self.declares_properties(member) && !self.is_instance_type(member) && self.built_in_for_type(member).is_none() && self.array_subtype_element(member).is_none() && !self.is_declared_externally(member) {
                         records += 1;
                         if self.is_tainted(member) {
                             tainted += 1;
-                            let identity = self.identity_of_type(member);
+                            let identity = self.type_identity(member);
                             found += usize::from(self.given().identities.contains(&identity));
                         }
                     }
@@ -3107,11 +3327,11 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Whether there is such a type in the program at all.
     pub fn is_any_type_tainted(&mut self) -> bool {
-        !self.aot.flows.is_searching_from_doors && !self.given().identities.is_empty()
+        !self.aot.flows.is_searching_from_sources && !self.given().identities.is_empty()
     }
 
     /// Whether no object of the type is laid out by it, nor an element of an array of it: primitives, arrays of them, what the engine makes. Such a type is everybody's and cannot be tainted.
-    pub(super) fn is_laid_out_nowhere(&mut self, ty: TypeId) -> bool {
+    pub(super) fn never_has_fixed_layout(&mut self, ty: TypeId) -> bool {
         let (mut seen, mut found) = (FxHashSet::default(), Vec::new());
         self.add_object_types_in(ty, true, &mut seen, &mut found);
         found.is_empty()
@@ -3130,7 +3350,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let parts: Vec<TypeId> = self.parts(ty).to_vec();
         let has_one = parts.into_iter().any(|part| self.is_tainted(part));
-        if self.aot.flows.being_asked_of_taint == 0 {
+        if self.aot.flows.taint_query_depth == 0 {
             self.aot.flows.with_tainted_part.insert(ty, has_one);
         }
         has_one
@@ -3143,11 +3363,11 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// It goes by the trees, the symbols and the checker's types alone: every task finds the same, and nothing is remembered on the way that the answer would change.
-    pub fn search_with_the_others(&mut self, meeting: &Meeting, index: usize, share: &Share<'_>) {
+    pub fn search_in_parallel(&mut self, meeting: &SearchBarrier, index: usize, share: &Share<'_>) {
         let program = self.p;
-        let own_pairs = self.targets_compared_by_source();
+        let own_pairs = self.compared_targets_by_source();
         self.aot = Default::default();
-        self.aot.flows.is_searching_from_doors = true;
+        self.aot.flows.is_searching_from_sources = true;
         self.aot.flows.seen_before = meeting.search.seen_before.clone();
         if let Share::Rest { .. } = share {
             for file in (0..program.files.modules.len() as u32).map(FileId) {
@@ -3156,7 +3376,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
         }
-        self.search_from_doors(&meeting.search, index, share, &own_pairs);
+        self.search_from_sources(&meeting.search, index, share, &own_pairs);
         if meeting.barrier.wait() {
             let _ = program.aot.storage.given.set(meeting.search.found());
         }
@@ -3164,7 +3384,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.aot = Default::default();
     }
 
-    fn go_through_the_doors(&mut self, search: &Search, share: &Share<'_>, held_to: &mut Vec<TypeId>, made_plain: &mut Vec<TypeId>, looked_at: &mut Vec<LookedAt>, written_unions: &mut Vec<WrittenUnion>) -> bool {
+    fn visit_external_sources(&mut self, search: &Search, share: &Share<'_>, held_to: &mut Vec<TypeId>, despecialized: &mut Vec<TypeId>, looked_at: &mut Vec<InspectedCast>, written_unions: &mut Vec<WrittenUnion>) -> bool {
         let count = self.files().modules.len() as u32;
         let all = move || (0..count).map(FileId);
         let weights: Vec<u64> = all().map(|file| self.hir(file).exprs.len() as u64 + 1).collect();
@@ -3179,27 +3399,27 @@ impl<'p, 's> Checker<'p, 's> {
             }
         };
         // `P.tsx.js`, which a tool has made of `P.tsx`, does what the checked text does. No value of another type gets anywhere than in the text: all that differs is that what the text makes is made as plain objects.
-        let standing_in: FxHashMap<&[u8], FileId> = (all().filter(|&file| self.only_declares(file) && self.hir(file).kind != FileKind::Declaration && self.hir(file).decorators.is_empty()))
+        let placeholder: FxHashMap<&[u8], FileId> = (all().filter(|&file| self.is_declaration_only(file) && self.hir(file).kind != FileKind::Declaration && self.hir(file).decorators.is_empty()))
             .map(|file| (self.files().module(file).file_name(), file))
             .collect();
         let made_of: Vec<(FileId, FileId)> = (all().filter(|&file| self.is_compiled(file) && self.is_untyped_file(file)))
-            .filter_map(|file| Some((file, *standing_in.get(self.files().module(file).file_name().strip_suffix(b".js")?)?)))
+            .filter_map(|file| Some((file, *placeholder.get(self.files().module(file).file_name().strip_suffix(b".js")?)?)))
             .collect();
-        self.aot.flows.made_of_checked_text = made_of.iter().map(|made| made.0).collect();
-        self.aot.flows.checked_texts = made_of.iter().map(|made| made.1).collect();
+        self.aot.flows.generated_from_checked_source = made_of.iter().map(|made| made.0).collect();
+        self.aot.flows.checked_sources = made_of.iter().map(|made| made.1).collect();
         let texts: Vec<FileId> = made_of.iter().map(|made| made.1).collect();
         for text in own(&texts) {
-            self.add_types_born_in(text, made_plain);
+            self.add_types_allocated_in(text, despecialized);
         }
         // So the text is gone through like that of a typed file.
-        let files: Vec<FileId> = all().filter(|&file| (self.is_compiled(file) || self.aot.flows.checked_texts.contains(&file)) && !self.is_untyped_file(file)).collect();
+        let files: Vec<FileId> = all().filter(|&file| (self.is_compiled(file) || self.aot.flows.checked_sources.contains(&file)) && !self.is_untyped_file(file)).collect();
         // A type is written where its alias is: also in a module that is imported for its types alone, which is no module of the program's graph.
         let written: Vec<FileId> = all().filter(|&file| self.hir(file).kind != FileKind::Declaration && !self.is_untyped_file(file)).collect();
         for file in own(&files) {
-            self.add_types_that_data_is_held_to(file, held_to);
+            self.add_external_data_target_types(file, held_to);
         }
         // Untyped code of the program is outside as well: it calls what it imports with what it has made, and stores to what it is handed.
-        let untyped: Vec<FileId> = all().filter(|&file| self.is_compiled(file) && self.is_untyped_file(file) && !self.aot.flows.made_of_checked_text.contains(&file)).collect();
+        let untyped: Vec<FileId> = all().filter(|&file| self.is_compiled(file) && self.is_untyped_file(file) && !self.aot.flows.generated_from_checked_source.contains(&file)).collect();
         let (mut imported, mut crossed, mut handed_over, mut gotten) = (FxHashSet::default(), FxHashSet::default(), FxHashSet::default(), FxHashSet::default());
         let seen_by_other_declarations = &search.seen_by_other_declarations;
         for file in own(&files) {
@@ -3207,72 +3427,72 @@ impl<'p, 's> Checker<'p, 's> {
                 let module = self.files().file_symbol(file);
                 let value = self.files().module_value(module);
                 let of_module = self.type_of_symbol(value);
-                self.add_what_is_handed_to(of_module, 0, file, at, &mut FxHashSet::default(), &mut crossed, held_to);
+                self.add_passed_values(of_module, 0, file, at, &mut FxHashSet::default(), &mut crossed, held_to);
             }
         }
         for file in own(&untyped) {
-            self.add_what_is_handed_to_what_is_exported_again(file, &mut crossed, held_to);
+            self.add_arguments_to_reexports(file, &mut crossed, held_to);
         }
         if !untyped.is_empty() {
             for file in own(&untyped).into_iter().chain(own(&files)) {
-                self.add_types_imported_across(file, &mut imported, &mut gotten, &mut crossed, held_to);
+                self.add_types_imported_across_boundary(file, &mut imported, &mut gotten, &mut crossed, held_to);
             }
             for file in own(&files) {
-                self.add_types_handed_to_javascript(file, &mut handed_over, &mut crossed, held_to);
+                self.add_types_passed_to_javascript(file, &mut handed_over, &mut crossed, held_to);
             }
         }
-        for (record, at) in std::mem::take(&mut self.aot.flows.records_held_by_javascript) {
-            let identity = self.identity_of_type(record);
-            let mut held = self.p.aot.storage.records_held_by_javascript.lock();
+        for (record, at) in std::mem::take(&mut self.aot.flows.records_reaching_javascript) {
+            let identity = self.type_identity(record);
+            let mut held = self.p.aot.storage.records_reaching_javascript.lock();
             let first = held.entry(identity).or_insert(at);
             *first = at.min(*first);
         }
-        if let Some(gave_up) = self.aot.flows.gave_up_crossing.take() {
+        if let Some(gave_up) = self.aot.flows.boundary_overflow.take() {
             let mut first = search.gave_up.lock();
             if first.as_ref().is_none_or(|known| gave_up.rank < known.rank) {
                 *first = Some(gave_up);
             }
         }
         for file in own(&files) {
-            self.add_what_is_looked_at_in(file, looked_at);
+            self.add_inspected_casts(file, looked_at);
         }
         for file in own(&written) {
-            self.add_unions_written_in(file, written_unions);
+            self.add_declared_unions(file, written_unions);
         }
         let is_last = search.barrier.wait();
         let goes_on = search.gave_up.lock().is_none();
         if is_last {
-            *search.continues_past_doors.0.lock() = Some(goes_on);
-            search.continues_past_doors.1.notify_all();
+            *search.continues_past_sources.0.lock() = Some(goes_on);
+            search.continues_past_sources.1.notify_all();
         }
         goes_on
     }
 
-    pub(in crate::check) fn notes_pairs_compared(&self) -> bool {
-        self.p.files.options.undefined_properties_name_nobody && self.aot.flows.seen_before.is_none() && !self.p.aot.storage.given.is_made_for_good() && (!self.is_warming_up() || self.fuel.get() == u64::MAX)
+    pub(in crate::check) fn records_compared_pairs(&self) -> bool {
+        self.p.files.options.undefined_properties_have_no_declaration && self.aot.flows.seen_before.is_none() && !self.p.aot.storage.given.is_finalized() && (!self.is_warming_up() || self.fuel.get() == u64::MAX)
     }
 
-    pub(in crate::check) fn note_compared_again(&mut self, key: crate::check::relate::Key) -> bool {
+    pub(in crate::check) fn record_recompared(&mut self, key: crate::check::relate::Key) -> bool {
         self.aot.flows.compared_again.insert(key)
     }
 
-    pub(in crate::check) fn note_pair_compared(&mut self, source: TypeId, target: TypeId, relation: Relation, is_reported: bool) {
-        if relation != Relation::Identity && (relation != Relation::Comparable || is_reported) && self.notes_pairs_compared() {
+    pub(in crate::check) fn record_compared_pair(&mut self, source: TypeId, target: TypeId, relation: Relation, is_reported: bool) {
+        if relation != Relation::Identity && (relation != Relation::Comparable || is_reported) && self.records_compared_pairs() {
             self.aot.flows.pairs_compared.insert((source, target, is_reported));
         }
     }
 
-    pub(in crate::check) fn are_compared_pairs_noted(&self) -> bool {
-        self.p.files.options.undefined_properties_name_nobody && self.aot.flows.seen_before.is_none() && self.p.aot.storage.given.get().is_none()
+    pub(in crate::check) fn are_compared_pairs_recorded(&self) -> bool {
+        self.p.files.options.undefined_properties_have_no_declaration && self.aot.flows.seen_before.is_none() && self.p.aot.storage.given.get().is_none()
     }
 
-    fn pairs_that_carry_on(&mut self) -> Vec<(TypeId, TypeId)> {
+    fn propagating_pairs(&mut self) -> Vec<(TypeId, TypeId)> {
         let mut compared: Vec<(TypeId, TypeId, bool)> = std::mem::take(&mut self.aot.flows.pairs_compared).into_iter().collect();
         compared.sort_unstable_by_key(|pair| (pair.0.0, pair.1.0, pair.2));
         let mut pairs = Vec::new();
         for (source, target, is_reported) in compared {
-            let takes = self.says_properties(target) && self.may_hold_objects(target) && !self.is_type_of_instances(target) && self.built_in_that_is(target).is_none() && self.element_of_array_subtype(target).is_none() && !self.is_declared_outside(target);
-            if !takes || !self.says_properties(source) || !self.may_hold_objects(source) || !(is_reported || self.is_assignable(source, target)) {
+            let takes = self.declares_properties(target) && self.may_hold_objects(target) && !self.is_instance_type(target) && self.built_in_for_type(target).is_none() && self.array_subtype_element(target).is_none() && !self.is_declared_externally(target);
+            if !takes || !self.declares_properties(source) || !self.may_hold_objects(source) || !(is_reported || self.is_assignable(source, target)) {
                 continue;
             }
             pairs.push((source, target));
@@ -3283,40 +3503,40 @@ impl<'p, 's> Checker<'p, 's> {
 
     pub(crate) fn take_pairs_compared(&mut self) -> Vec<(Identity, Identity)> {
         let mut pairs = Vec::new();
-        for (source, target) in self.pairs_that_carry_on() {
+        for (source, target) in self.propagating_pairs() {
             self.keep_type(target);
-            pairs.push((self.identity_of_type(source), self.identity_of_type(target)));
+            pairs.push((self.type_identity(source), self.type_identity(target)));
         }
         pairs
     }
 
-    fn targets_compared_by_source(&mut self) -> FxHashMap<Identity, Vec<TypeId>> {
+    fn compared_targets_by_source(&mut self) -> FxHashMap<Identity, Vec<TypeId>> {
         let mut targets: FxHashMap<Identity, Vec<TypeId>> = FxHashMap::default();
-        for (source, target) in self.pairs_that_carry_on() {
-            targets.entry(self.identity_of_type(source)).or_default().push(target);
+        for (source, target) in self.propagating_pairs() {
+            targets.entry(self.type_identity(source)).or_default().push(target);
         }
         targets
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn add_targets_of_what_is_found(&mut self, search: &Search, own_pairs: &FxHashMap<Identity, Vec<TypeId>>, kept_targets: &FxHashMap<Identity, TypeId>, followed: &mut FxHashSet<Identity>, followed_as_plain: &mut FxHashSet<Identity>, out: &mut Vec<TypeId>, made_plain: &mut Vec<TypeId>) {
+    fn add_targets_of_found_types(&mut self, search: &Search, own_pairs: &FxHashMap<Identity, Vec<TypeId>>, kept_targets: &FxHashMap<Identity, TypeId>, followed: &mut FxHashSet<Identity>, tracked_as_plain: &mut FxHashSet<Identity>, out: &mut Vec<TypeId>, despecialized: &mut Vec<TypeId>) {
         if own_pairs.is_empty() && kept_targets.is_empty() {
             return;
         }
         let mut found: Vec<Identity> = {
             let by_all = search.tainted.read();
-            let of_earlier_tasks = (!kept_targets.is_empty()).then(|| search.targets_by_source.keys());
-            own_pairs.keys().chain(of_earlier_tasks.into_iter().flatten()).copied().filter(|identity| by_all.contains(identity) && !followed.contains(identity)).collect()
+            let from_earlier_tasks = (!kept_targets.is_empty()).then(|| search.targets_by_source.keys());
+            own_pairs.keys().chain(from_earlier_tasks.into_iter().flatten()).copied().filter(|identity| by_all.contains(identity) && !followed.contains(identity)).collect()
         };
         found.sort_unstable();
         found.dedup();
-        let (plain_by_all, seen_by_all) = (search.made_plain.read(), search.seen.read());
+        let (plain_by_all, seen_by_all) = (search.despecialized.read(), search.seen.read());
         for identity in found {
             let out = if plain_by_all.contains(&identity) && !seen_by_all.contains(&identity) {
-                if !followed_as_plain.insert(identity) {
+                if !tracked_as_plain.insert(identity) {
                     continue;
                 }
-                &mut *made_plain
+                &mut *despecialized
             } else {
                 followed.insert(identity);
                 &mut *out
@@ -3328,78 +3548,78 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    fn search_from_doors(&mut self, search: &Search, index: usize, share: &Share<'_>, own_pairs: &FxHashMap<Identity, Vec<TypeId>>) {
-        let (mut held_to, mut made_plain, mut looked_at, mut written_unions) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    fn search_from_sources(&mut self, search: &Search, index: usize, share: &Share<'_>, own_pairs: &FxHashMap<Identity, Vec<TypeId>>) {
+        let (mut held_to, mut despecialized, mut looked_at, mut written_unions) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         let goes_on = search.seen_before.is_some();
         let mut turn = 0;
-        if !goes_on && !self.go_through_the_doors(search, share, &mut held_to, &mut made_plain, &mut looked_at, &mut written_unions) {
+        if !goes_on && !self.visit_external_sources(search, share, &mut held_to, &mut despecialized, &mut looked_at, &mut written_unions) {
             return;
         }
         let (mut is_left_taken, mut arrays_before, mut arrays_found, mut arrays_not_said_yet): (bool, Vec<(Identity, Vec<Identity>)>, Vec<Identity>, Vec<Identity>) = (!goes_on, Vec::new(), Vec::new(), Vec::new());
         let (mut seen, mut views): (FxHashSet<(TypeId, bool)>, Vec<TypeId>) = (FxHashSet::default(), Vec::new());
-        let mut gone_through: FxHashSet<(TypeId, bool)> = FxHashSet::default();
+        let mut visited: FxHashSet<(TypeId, bool)> = FxHashSet::default();
         let mut tainted: FxHashSet<TypeId> = FxHashSet::default();
         let mut arrays: Vec<(TypeId, Vec<Identity>)> = Vec::new();
         let mut listed: FxHashSet<TypeId> = FxHashSet::default();
-        let mut not_said_yet: Vec<TypeId> = Vec::new();
+        let mut not_reported_yet: Vec<TypeId> = Vec::new();
         let mut followed: FxHashSet<Identity> = FxHashSet::default();
-        let mut followed_as_plain: FxHashSet<Identity> = FxHashSet::default();
-        let mut offered_as_plain: FxHashSet<Identity> = FxHashSet::default();
+        let mut tracked_as_plain: FxHashSet<Identity> = FxHashSet::default();
+        let mut plain_candidates: FxHashSet<Identity> = FxHashSet::default();
         let mut kept_targets: FxHashMap<Identity, TypeId> = FxHashMap::default();
         if let (false, &Share::Rest { index, of, .. }) = (search.targets_by_source.is_empty(), share) {
             for (at, ty) in self.kept_types().into_iter().enumerate() {
                 if at % of == index {
-                    kept_targets.insert(self.identity_of_type(ty), ty);
+                    kept_targets.insert(self.type_identity(ty), ty);
                 }
             }
         }
-        self.add_targets_of_what_is_found(search, own_pairs, &kept_targets, &mut followed, &mut followed_as_plain, &mut held_to, &mut made_plain);
+        self.add_targets_of_found_types(search, own_pairs, &kept_targets, &mut followed, &mut tracked_as_plain, &mut held_to, &mut despecialized);
         loop {
-            while search.has_any_found(held_to.len() + made_plain.len() + usize::from(turn == 0), &mut turn) {
+            while search.has_any_found(held_to.len() + despecialized.len() + usize::from(turn == 0), &mut turn) {
                 if !is_left_taken {
                     is_left_taken = true;
-                    self.take_what_was_left(search, index, share, &mut looked_at, &mut written_unions, &mut arrays_before);
+                    self.take_remaining_work(search, index, share, &mut looked_at, &mut written_unions, &mut arrays_before);
                 }
                 for ty in held_to.drain(..) {
-                    self.add_what_stays_untyped(ty, true, &mut seen, &mut views);
+                    self.add_types_staying_untyped(ty, true, &mut seen, &mut views);
                 }
                 let mut newly: Vec<TypeId> = views.drain(..).filter(|&ty| tainted.insert(ty)).collect();
                 let mut newly_plain = Vec::new();
-                for ty in made_plain.drain(..) {
-                    self.add_records_made_plain(ty, &mut views);
+                for ty in despecialized.drain(..) {
+                    self.add_despecialized_records(ty, &mut views);
                 }
                 for ty in views.drain(..).filter(|&ty| tainted.insert(ty)) {
-                    newly_plain.push(self.identity_of_type(ty));
+                    newly_plain.push(self.type_identity(ty));
                     newly.push(ty);
                 }
                 if !newly_plain.is_empty() {
-                    search.made_plain.write().extend(newly_plain);
+                    search.despecialized.write().extend(newly_plain);
                 }
-                let so_far: Vec<(TypeId, bool)> = seen.iter().copied().filter(|&one| gone_through.insert(one)).collect();
-                let mut seen_to_stay = Vec::new();
+                let so_far: Vec<(TypeId, bool)> = seen.iter().copied().filter(|&one| visited.insert(one)).collect();
+                let mut stable_seen = Vec::new();
                 for &(ty, stays) in &so_far {
                     if stays {
-                        seen_to_stay.push(self.identity_of_type(ty));
+                        stable_seen.push(self.type_identity(ty));
                     }
-                    if self.says_properties(ty) && !self.is_type_of_instances(ty) && self.built_in_that_is(ty).is_none() && self.element_of_array_subtype(ty).is_none() && tainted.insert(ty) {
+                    if self.declares_properties(ty) && !self.is_instance_type(ty) && self.built_in_for_type(ty).is_none() && self.array_subtype_element(ty).is_none() && tainted.insert(ty) {
                         newly.push(ty);
                     }
                     if self.is_array_or_tuple(ty) && !tainted.contains(&ty) && listed.insert(ty) {
                         let mut parts = Vec::new();
                         for element in self.type_arguments(ty).to_vec() {
                             for part in self.parts(element).to_vec() {
-                                parts.push(self.identity_of_type(part));
+                                parts.push(self.type_identity(part));
                             }
                         }
                         arrays.push((ty, parts));
                     }
                 }
-                if !seen_to_stay.is_empty() {
-                    search.seen.write().extend(seen_to_stay);
+                if !stable_seen.is_empty() {
+                    search.seen.write().extend(stable_seen);
                 }
                 // An array of them that the data may hold. Not `string[]`, which is everybody's.
                 loop {
-                    let identities: Vec<Identity> = newly.iter().map(|&ty| self.identity_of_type(ty)).collect();
+                    let identities: Vec<Identity> = newly.iter().map(|&ty| self.type_identity(ty)).collect();
                     let mut names = Vec::with_capacity(newly.len());
                     for (&ty, &identity) in newly.iter().zip(&identities) {
                         self.keep_type(ty);
@@ -3413,24 +3633,24 @@ impl<'p, 's> Checker<'p, 's> {
                     if !(identities.is_empty() && arrays_found.is_empty()) {
                         search.tainted.write().extend(identities.into_iter().chain(arrays_found.iter().copied()));
                     }
-                    not_said_yet.append(&mut newly);
+                    not_reported_yet.append(&mut newly);
                     arrays_not_said_yet.append(&mut arrays_found);
                     search.barrier.wait();
                     {
                         let by_all = search.tainted.read();
                         arrays.retain(|(ty, parts)| {
-                            let is_of_them = parts.iter().any(|part| by_all.contains(part));
-                            if is_of_them && tainted.insert(*ty) {
+                            let is_member = parts.iter().any(|part| by_all.contains(part));
+                            if is_member && tainted.insert(*ty) {
                                 newly.push(*ty);
                             }
-                            !is_of_them
+                            !is_member
                         });
                         arrays_before.retain(|(identity, parts)| {
-                            let is_of_them = parts.iter().any(|part| by_all.contains(part));
-                            if is_of_them {
+                            let is_member = parts.iter().any(|part| by_all.contains(part));
+                            if is_member {
                                 arrays_found.push(*identity);
                             }
-                            !is_of_them
+                            !is_member
                         });
                     }
                     if !search.has_any_found(newly.len() + arrays_found.len(), &mut turn) {
@@ -3438,30 +3658,30 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                 }
                 // What the program has made and looks at as such a type is written to as the data is: `(second as ListItem).next = parsed`, `const item: ListItem = second`.
-                self.add_types_looked_at_as(&mut looked_at, search, &mut offered_as_plain, &mut held_to, &mut made_plain);
-                self.add_targets_of_what_is_found(search, own_pairs, &kept_targets, &mut followed, &mut followed_as_plain, &mut held_to, &mut made_plain);
+                self.add_cast_target_types(&mut looked_at, search, &mut plain_candidates, &mut held_to, &mut despecialized);
+                self.add_targets_of_found_types(search, own_pairs, &kept_targets, &mut followed, &mut tracked_as_plain, &mut held_to, &mut despecialized);
             }
             // The members of a union that is written go together, also where one of them only takes what has been found.
             let mut said = Vec::new();
-            for ty in not_said_yet.drain(..) {
-                let identity = self.identity_of_type(ty);
+            for ty in not_reported_yet.drain(..) {
+                let identity = self.type_identity(ty);
                 if !search.given.read().identities.contains(&identity) {
-                    said.push((identity, self.said_by_properties_of(ty)));
+                    said.push((identity, self.property_summary(ty)));
                 }
             }
             said.extend(arrays_not_said_yet.drain(..).map(|identity| (identity, None)));
             *search.said[index].lock() = said;
             search.barrier.wait();
             if index == 0 {
-                search.add_what_was_said();
+                search.publish_summaries();
             }
             search.barrier.wait();
-            self.add_members_of_written_unions(&written_unions, search, &mut offered_as_plain, &mut held_to, &mut made_plain);
-            if !search.has_any_found(held_to.len() + made_plain.len(), &mut turn) {
+            self.add_declared_union_members(&written_unions, search, &mut plain_candidates, &mut held_to, &mut despecialized);
+            if !search.has_any_found(held_to.len() + despecialized.len(), &mut turn) {
                 break;
             }
         }
-        if search.is_gone_on_with {
+        if search.is_continuation {
             let seen = search.seen.read();
             let mut left = search.left.lock();
             for it in looked_at {
@@ -3475,12 +3695,12 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
             for (ty, parts) in arrays {
-                left.arrays.push((self.identity_of_type(ty), parts));
+                left.arrays.push((self.type_identity(ty), parts));
             }
         }
     }
 
-    fn take_what_was_left(&mut self, search: &Search, index: usize, share: &Share<'_>, looked_at: &mut Vec<LookedAt>, unions: &mut Vec<WrittenUnion>, arrays: &mut Vec<(Identity, Vec<Identity>)>) {
+    fn take_remaining_work(&mut self, search: &Search, index: usize, share: &Share<'_>, looked_at: &mut Vec<InspectedCast>, unions: &mut Vec<WrittenUnion>, arrays: &mut Vec<(Identity, Vec<Identity>)>) {
         let (mut of_looked_at, mut of_unions) = (Vec::new(), Vec::new());
         {
             let mut left = search.left.lock();
@@ -3520,13 +3740,13 @@ impl<'p, 's> Checker<'p, 's> {
                     members.push(member);
                 }
             }
-            union.members = members.into_iter().map(|member| (member, self.identity_of_type(member))).collect();
+            union.members = members.into_iter().map(|member| (member, self.type_identity(member))).collect();
             unions.push(union);
         }
     }
 
-    /// A place of `A | B` holds anything as soon as `A` is tainted, a literal there that no discriminant singles out is made plain, and what is narrowed to `B` is expected to be laid out as a `B`. `taking`: `takes_what_is_given`, as far as asked.
-    fn add_unions_written_in(&mut self, file: FileId, out: &mut Vec<WrittenUnion>) {
+    /// A place of `A | B` holds anything as soon as `A` is tainted, a literal there that no discriminant singles out is made plain, and what is narrowed to `B` is expected to be laid out as a `B`. `taking`: `accepts_external_data`, as far as asked.
+    fn add_declared_unions(&mut self, file: FileId, out: &mut Vec<WrittenUnion>) {
         let hir = self.hir(file);
         for (index, node) in hir.types.iter().enumerate() {
             if !matches!(node.kind, TypeNodeKind::Union(_)) {
@@ -3537,7 +3757,7 @@ impl<'p, 's> Checker<'p, 's> {
             for member in self.parts(union).to_vec() {
                 let member = self.reduced(member);
                 if self.may_hold_objects(member) {
-                    members.push((member, self.identity_of_type(member)));
+                    members.push((member, self.type_identity(member)));
                 }
             }
             if members.len() >= 2 {
@@ -3546,45 +3766,45 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    fn add_members_of_written_unions(&mut self, unions: &[WrittenUnion], search: &Search, offered_as_plain: &mut FxHashSet<Identity>, out: &mut Vec<TypeId>, made_plain: &mut Vec<TypeId>) {
-        let (seen, tainted, plain, given) = (search.seen.read(), search.tainted.read(), search.made_plain.read(), search.given.read());
+    fn add_declared_union_members(&mut self, unions: &[WrittenUnion], search: &Search, plain_candidates: &mut FxHashSet<Identity>, out: &mut Vec<TypeId>, despecialized: &mut Vec<TypeId>) {
+        let (seen, tainted, plain, given) = (search.seen.read(), search.tainted.read(), search.despecialized.read(), search.given.read());
         let mut taking: FxHashMap<TypeId, bool> = FxHashMap::default();
         for WrittenUnion { members, .. } in unions {
             if members.iter().all(|member| seen.contains(&member.1)) {
                 continue;
             }
             if members.iter().any(|member| tainted.contains(&member.1)) && members.iter().all(|member| !tainted.contains(&member.1) || plain.contains(&member.1) && !seen.contains(&member.1)) {
-                made_plain.extend(members.iter().filter(|member| !tainted.contains(&member.1) && offered_as_plain.insert(member.1)).map(|member| member.0));
+                despecialized.extend(members.iter().filter(|member| !tainted.contains(&member.1) && plain_candidates.insert(member.1)).map(|member| member.0));
                 continue;
             }
-            let mut is_given = false;
+            let mut is_external_data = false;
             for &(member, identity) in members {
-                is_given = tainted.contains(&identity)
+                is_external_data = tainted.contains(&identity)
                     || match taking.get(&member) {
                         Some(&known) => known,
                         None => {
-                            let takes = self.takes_what_is_given(member, &given);
+                            let takes = self.accepts_external_data(member, &given);
                             taking.insert(member, takes);
                             takes
                         }
                     };
-                if is_given {
+                if is_external_data {
                     break;
                 }
             }
-            if is_given {
+            if is_external_data {
                 out.extend(members.iter().filter(|member| !seen.contains(&member.1)).map(|member| member.0));
             }
         }
     }
 
     /// What a cast or an annotated variable with an initializer carries, both ways, as far as it has not been seen. BACK: the type of the operand of a cast to one of the types, of the initializer of a variable that is annotated with one.
-    /// ON: the type after `as`, or the annotation, where the operand is of one of the types (`base as Derived`: no assignability tells that), or where nothing is known of the operand and it is known for data (`origin_of_data`): `load(path) as Settings`
+    /// ON: the type after `as`, or the annotation, where the operand is of one of the types (`base as Derived`: no assignability tells that), or where nothing is known of the operand and it is known for data (`data_origin`): `load(path) as Settings`
     /// with a `load` of a package that yields `any`, `const s: Settings = loose` with a `loose` that holds what was parsed, the value of a JSON module. Not what goes through an `any` of the program's own, `(x: unknown) => x as T`: only a flow tells
     /// what gets there.
-    fn add_what_is_looked_at_in(&mut self, file: FileId, out: &mut Vec<LookedAt>) {
+    fn add_inspected_casts(&mut self, file: FileId, out: &mut Vec<InspectedCast>) {
         let hir = self.hir(file);
-        let casts = self.exprs_by_kind_of(file).of(ExprTag::As).iter().filter_map(|&cast| match hir[cast].kind {
+        let casts = self.file_exprs_by_kind(file).of(ExprTag::As).iter().filter_map(|&cast| match hir[cast].kind {
             ExprKind::As { expr, ty } => Some((ty, expr)),
             _ => None,
         });
@@ -3599,26 +3819,26 @@ impl<'p, 's> Checker<'p, 's> {
             self.prepare_enclosing(file, value);
             // `x as unknown as T`: what is looked at as a `T` is `x`.
             let (mut operand, mut source) = (value, self.type_of_expr(file, value));
-            while self.says_nothing(source)
+            while self.is_uninformative(source)
                 && let ExprKind::As { expr, .. } | ExprKind::NonNull(expr) = hir[operand].kind
             {
                 operand = expr;
                 source = self.type_of_expr(file, operand);
             }
             let source = self.reduced(source);
-            let mut identities_of_parts = |ty: TypeId| -> Vec<Identity> { self.parts(ty).to_vec().into_iter().map(|part| self.identity_of_type(part)).collect() };
-            let (parts_of_target, parts_of_source) = (identities_of_parts(target), identities_of_parts(source));
-            let (target, source) = ((target, self.identity_of_type(target)), (source, self.identity_of_type(source)));
-            out.push(LookedAt { target, parts_of_target, source, parts_of_source, file, written, operand, is_known_for_data: None });
+            let mut identities_of_parts = |ty: TypeId| -> Vec<Identity> { self.parts(ty).to_vec().into_iter().map(|part| self.type_identity(part)).collect() };
+            let (target_parts, source_parts) = (identities_of_parts(target), identities_of_parts(source));
+            let (target, source) = ((target, self.type_identity(target)), (source, self.type_identity(source)));
+            out.push(InspectedCast { target, target_parts, source, source_parts, file, written, operand, is_known_plain_data: None });
         }
     }
 
-    fn add_types_looked_at_as(&mut self, looked_at: &mut [LookedAt], search: &Search, offered_as_plain: &mut FxHashSet<Identity>, out: &mut Vec<TypeId>, made_plain: &mut Vec<TypeId>) {
-        let (seen, tainted, plain) = (search.seen.read(), search.tainted.read(), search.made_plain.read());
-        let is_given = |part: &Identity| tainted.contains(part) && !(plain.contains(part) && !seen.contains(part));
+    fn add_cast_target_types(&mut self, looked_at: &mut [InspectedCast], search: &Search, plain_candidates: &mut FxHashSet<Identity>, out: &mut Vec<TypeId>, despecialized: &mut Vec<TypeId>) {
+        let (seen, tainted, plain) = (search.seen.read(), search.tainted.read(), search.despecialized.read());
+        let is_external_data = |part: &Identity| tainted.contains(part) && !(plain.contains(part) && !seen.contains(part));
         for it in looked_at {
-            if it.parts_of_target.iter().any(|part| tainted.contains(part)) {
-                if it.parts_of_target.iter().any(is_given) && self.may_hold_objects(it.source.0) && !seen.contains(&it.source.1) {
+            if it.target_parts.iter().any(|part| tainted.contains(part)) {
+                if it.target_parts.iter().any(is_external_data) && self.may_hold_objects(it.source.0) && !seen.contains(&it.source.1) {
                     out.push(it.source.0);
                 }
                 continue;
@@ -3626,14 +3846,14 @@ impl<'p, 's> Checker<'p, 's> {
             if seen.contains(&it.target.1) {
                 continue;
             }
-            if !it.parts_of_source.iter().any(is_given) && it.parts_of_source.iter().any(|part| tainted.contains(part)) {
-                if offered_as_plain.insert(it.target.1) {
-                    made_plain.push(it.target.0);
+            if !it.source_parts.iter().any(is_external_data) && it.source_parts.iter().any(|part| tainted.contains(part)) {
+                if plain_candidates.insert(it.target.1) {
+                    despecialized.push(it.target.0);
                 }
                 continue;
             }
-            if it.parts_of_source.iter().any(is_given)
-                || self.says_nothing(it.source.0) && *it.is_known_for_data.get_or_insert_with(|| self.origin_of_data(it.file, it.operand).is_some_and(|origin| origin.is_known_for_data()))
+            if it.source_parts.iter().any(is_external_data)
+                || self.is_uninformative(it.source.0) && *it.is_known_plain_data.get_or_insert_with(|| self.data_origin(it.file, it.operand).is_some_and(|origin| origin.is_known_plain_data()))
             {
                 out.push(it.target.0);
             }
@@ -3641,25 +3861,25 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Whether the code behind what the file declares is untyped code of the program that nobody has checked: JavaScript, or a TypeScript file that stands in for a declaration file. Not what a tool has made of a checked text.
-    fn is_declared_for_javascript(&self, declared_in: FileId) -> bool {
+    fn is_declaration_for_javascript(&self, declared_in: FileId) -> bool {
         let flows = &self.aot.flows;
-        self.is_untyped_file(declared_in) && !flows.made_of_checked_text.contains(&declared_in)
-            || self.only_declares(declared_in) && self.hir(declared_in).kind != FileKind::Declaration && !flows.checked_texts.contains(&declared_in)
+        self.is_untyped_file(declared_in) && !flows.generated_from_checked_source.contains(&declared_in)
+            || self.is_declaration_only(declared_in) && self.hir(declared_in).kind != FileKind::Declaration && !flows.checked_sources.contains(&declared_in)
     }
 
     /// What the text makes, where untyped code made of it runs in its place: every object literal and the attributes of every JSX element, by its own type and by the type it is checked against. From there it gets on as in typed code.
-    fn add_records_made_plain(&mut self, ty: TypeId, out: &mut Vec<TypeId>) {
+    fn add_despecialized_records(&mut self, ty: TypeId, out: &mut Vec<TypeId>) {
         let ty = self.reduced(ty);
         for part in self.parts(ty).to_vec() {
-            if self.says_properties(part) && !self.is_type_of_instances(part) && !self.is_declared_outside(part) && self.built_in_that_is(part).is_none() && self.element_of_array_subtype(part).is_none() {
+            if self.declares_properties(part) && !self.is_instance_type(part) && !self.is_declared_externally(part) && self.built_in_for_type(part).is_none() && self.array_subtype_element(part).is_none() {
                 out.push(part);
-                out.push(self.laid_out_as(part));
+                out.push(self.layout_defining_type(part));
             }
         }
     }
 
-    fn add_types_born_in(&mut self, file: FileId, out: &mut Vec<TypeId>) {
-        let by_kind = self.exprs_by_kind_of(file);
+    fn add_types_allocated_in(&mut self, file: FileId, out: &mut Vec<TypeId>) {
+        let by_kind = self.file_exprs_by_kind(file);
         for &literal in by_kind.of(ExprTag::Object) {
             self.prepare_enclosing(file, literal);
             out.push(self.type_of_expr(file, literal));
@@ -3673,10 +3893,10 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// What an untyped file refers to that a typed file of the program declares, and what a typed file refers to that untyped code is behind. `imported`: what has been looked at, and whether from an untyped file.
-    fn add_types_imported_across(&mut self, file: FileId, imported: &mut FxHashSet<(Sym, bool)>, handed_over: &mut FxHashSet<TypeId>, seen: &mut FxHashSet<TypeId>, out: &mut Vec<TypeId>) {
+    fn add_types_imported_across_boundary(&mut self, file: FileId, imported: &mut FxHashSet<(Sym, bool)>, handed_over: &mut FxHashSet<TypeId>, seen: &mut FxHashSet<TypeId>, out: &mut Vec<TypeId>) {
         let bound = self.bound(file);
         let is_untyped = self.is_untyped_file(file);
-        for &name in self.exprs_by_kind_of(file).of(ExprTag::Ident) {
+        for &name in self.file_exprs_by_kind(file).of(ExprTag::Ident) {
             let local = bound.expr_symbol[name.idx()];
             if local.is_none() {
                 continue;
@@ -3691,22 +3911,22 @@ impl<'p, 's> Checker<'p, 's> {
             }
             let across = self.files().decls_of(target).iter().map(|declared| declared.0).find(|&declared_in| match is_untyped {
                 true => !self.is_untyped_file(declared_in) && self.hir(declared_in).kind != FileKind::Declaration,
-                false => self.is_declared_for_javascript(declared_in),
+                false => self.is_declaration_for_javascript(declared_in),
             });
             if let Some(declared_in) = across {
                 let of_target = self.type_of_symbol(target);
                 let typed_side = if is_untyped { declared_in } else { file };
                 let at = Place { file, pos: self.hir(file)[name].pos };
                 if is_untyped {
-                    self.add_what_is_handed_over_at(of_target, false, typed_side, at, handed_over, seen, out);
+                    self.add_escaping_values(of_target, false, typed_side, at, handed_over, seen, out);
                 } else {
-                    self.add_what_crosses_at(of_target, 1, typed_side, at, seen, out);
+                    self.add_boundary_types_at(of_target, 1, typed_side, at, seen, out);
                 }
             }
         }
     }
 
-    fn add_what_is_handed_to_what_is_exported_again(&mut self, file: FileId, seen: &mut FxHashSet<TypeId>, out: &mut Vec<TypeId>) {
+    fn add_arguments_to_reexports(&mut self, file: FileId, seen: &mut FxHashSet<TypeId>, out: &mut Vec<TypeId>) {
         let module = self.files().file_symbol(file);
         let value = self.files().module_value(module);
         let of_module = self.type_of_symbol(value);
@@ -3718,20 +3938,20 @@ impl<'p, 's> Checker<'p, 's> {
             let declared_in = self.files().decls_of(target).iter().map(|declaration| declaration.0).find(|&declared_in| !self.is_untyped_file(declared_in) && self.hir(declared_in).kind != FileKind::Declaration);
             if let Some(declared_in) = declared_in {
                 let of_target = self.type_of_symbol(target);
-                self.add_what_is_handed_to(of_target, 0, declared_in, Place { file, pos: 0 }, &mut FxHashSet::default(), seen, out);
+                self.add_passed_values(of_target, 0, declared_in, Place { file, pos: 0 }, &mut FxHashSet::default(), seen, out);
             }
         }
     }
 
-    fn add_data_that_crosses_at(&mut self, ty: TypeId, depth: u32, typed_side: FileId, at: Place, seen: &mut FxHashSet<TypeId>, out: &mut Vec<TypeId>) {
+    fn add_boundary_data(&mut self, ty: TypeId, depth: u32, typed_side: FileId, at: Place, seen: &mut FxHashSet<TypeId>, out: &mut Vec<TypeId>) {
         let ty = self.reduced(ty);
         for part in self.parts(ty).to_vec() {
             if self.contains_only_plain_data(part, &mut FxHashSet::default()) {
-                self.add_what_crosses_at(part, 1, typed_side, at, seen, out);
+                self.add_boundary_types_at(part, 1, typed_side, at, seen, out);
             } else if depth < 4 {
                 for signature in self.signatures(part, false).to_vec() {
                     let yielded = self.sig_return(signature);
-                    self.add_data_that_crosses_at(yielded, depth + 1, typed_side, at, seen, out);
+                    self.add_boundary_data(yielded, depth + 1, typed_side, at, seen, out);
                 }
             }
         }
@@ -3746,35 +3966,43 @@ impl<'p, 's> Checker<'p, 's> {
         if !allows_functions && self.parts(ty).iter().any(|&part| matches!(self.data(part), TypeData::Fns { .. })) {
             return false;
         }
-        if !self.may_hold_objects(ty) || self.says_nothing(ty) {
+        if !self.may_hold_objects(ty) || self.is_uninformative(ty) {
             return true;
         }
-        let is_asked_first = visited.is_empty();
-        if !self.answers_are_provisional() {
+        let is_first_query = visited.is_empty();
+        if !self.results_are_provisional() {
             match self.aot.flows.plain_data.get(&(ty, allows_functions)) {
                 Some(true) => return true,
-                Some(false) if is_asked_first => return false,
+                Some(false) if is_first_query => return false,
                 _ => {}
             }
+        }
+        let caches = if is_first_query { self.type_caches().filter(|_| is_published(ty)) } else { None };
+        if let Some(known) = caches.and_then(|caches| caches.plain_data.get_as((ty, allows_functions), |&known| known)) {
+            self.aot.flows.plain_data.insert((ty, allows_functions), known);
+            return known;
         }
         if !visited.insert(ty) {
             return true;
         }
-        if !is_asked_first {
-            return self.holds_plain_data_alone(ty, allows_functions, visited);
+        if !is_first_query {
+            return self.contains_plain_data_only(ty, allows_functions, visited);
         }
-        let (is_plain, is_cacheable) = self.compute_cacheable(|c| c.holds_plain_data_alone(ty, allows_functions, visited));
+        let (is_plain, is_cacheable) = self.compute_cacheable(|c| c.contains_plain_data_only(ty, allows_functions, visited));
         if is_cacheable && is_plain {
             self.aot.flows.plain_data.extend(visited.iter().map(|&reached| ((reached, allows_functions), true)));
         } else if is_cacheable {
             self.aot.flows.plain_data.insert((ty, allows_functions), false);
         }
+        if let Some(caches) = caches.filter(|_| is_cacheable && !self.has_order_dependent_results()) {
+            caches.plain_data.insert((ty, allows_functions), is_plain);
+        }
         is_plain
     }
 
-    fn holds_plain_data_alone(&mut self, ty: TypeId, allows_functions: bool, visited: &mut FxHashSet<TypeId>) -> bool {
+    fn contains_plain_data_only(&mut self, ty: TypeId, allows_functions: bool, visited: &mut FxHashSet<TypeId>) -> bool {
         for part in self.parts(ty).to_vec() {
-            if !self.may_hold_objects(part) || self.says_nothing(part) || matches!(self.data(part), TypeData::Fns { .. }) {
+            if !self.may_hold_objects(part) || self.is_uninformative(part) || matches!(self.data(part), TypeData::Fns { .. }) {
                 continue;
             }
             if self.is_instantiable(part) {
@@ -3792,7 +4020,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 continue;
             }
-            if self.is_type_of_instances(part) || self.built_in_that_is(part).is_some() {
+            if self.is_instance_type(part) || self.built_in_for_type(part).is_some() {
                 return false;
             }
             if !self.signatures(part, false).is_empty() || !self.signatures(part, true).is_empty() {
@@ -3802,7 +4030,7 @@ impl<'p, 's> Checker<'p, 's> {
                 return false;
             }
             if self.is_nested_too_deeply(part) {
-                if let Some(form) = self.generic_form_of(part)
+                if let Some(form) = self.generic_form(part)
                     && !self.is_plain_data_type(form, allows_functions, visited)
                 {
                     return false;
@@ -3823,18 +4051,18 @@ impl<'p, 's> Checker<'p, 's> {
         true
     }
 
-    fn add_what_is_handed_to(&mut self, ty: TypeId, depth: u32, typed_side: FileId, at: Place, gone_through: &mut FxHashSet<TypeId>, seen: &mut FxHashSet<TypeId>, out: &mut Vec<TypeId>) {
+    fn add_passed_values(&mut self, ty: TypeId, depth: u32, typed_side: FileId, at: Place, visited: &mut FxHashSet<TypeId>, seen: &mut FxHashSet<TypeId>, out: &mut Vec<TypeId>) {
         let ty = self.reduced(ty);
-        if depth > 4 || !gone_through.insert(ty) {
+        if depth > 4 || !visited.insert(ty) {
             return;
         }
         for part in self.parts(ty).to_vec() {
             if matches!(self.data(part), TypeData::Ref { .. } | TypeData::Tuple { .. }) {
                 for argument in self.type_arguments(part).to_vec() {
-                    self.add_what_is_handed_to(argument, depth + 1, typed_side, at, gone_through, seen, out);
+                    self.add_passed_values(argument, depth + 1, typed_side, at, visited, seen, out);
                 }
             }
-            if self.is_declared_outside(part) {
+            if self.is_declared_externally(part) {
                 continue;
             }
             for is_construct in [false, true] {
@@ -3842,10 +4070,10 @@ impl<'p, 's> Checker<'p, 's> {
                     let parameters = self.sig_params(signature);
                     for index in 0..parameters.len() + 8 {
                         let Some(parameter) = self.param_type_at(&parameters, index) else { break };
-                        self.add_data_that_is_handed_in_at(parameter, typed_side, at, &mut FxHashSet::default(), seen, out);
+                        self.add_incoming_data(parameter, typed_side, at, &mut FxHashSet::default(), seen, out);
                     }
                     let yielded = self.sig_return(signature);
-                    self.add_what_is_handed_to(yielded, depth + 1, typed_side, at, gone_through, seen, out);
+                    self.add_passed_values(yielded, depth + 1, typed_side, at, visited, seen, out);
                 }
             }
             if !self.may_hold_objects(part) || self.is_array_or_tuple(part) || self.is_instantiable(part) {
@@ -3857,20 +4085,20 @@ impl<'p, 's> Checker<'p, 's> {
                 held.push((self.type_of_prop(prop, members.mapper), prop.flags.contains(PropFlags::READONLY)));
             }
             let is_module = matches!(self.data(part), TypeData::Anon { origin: Origin::Module(_), .. });
-            let is_written_record = self.is_written_record(part);
+            let is_declared_record = self.is_declared_record(part);
             for (held, is_readonly) in held {
-                if !is_readonly && !is_module && !is_written_record {
-                    self.add_data_that_crosses_at(held, 0, typed_side, at, seen, out);
+                if !is_readonly && !is_module && !is_declared_record {
+                    self.add_boundary_data(held, 0, typed_side, at, seen, out);
                 }
-                self.add_what_is_handed_to(held, depth + 1, typed_side, at, gone_through, seen, out);
+                self.add_passed_values(held, depth + 1, typed_side, at, visited, seen, out);
             }
         }
     }
 
     /// The arguments of the calls of the typed file whose callee is reached through a name that is imported from an untyped file, or from a file whose code is one: `render(state)`, `new View(options)`, `lib.store.set(item)`.
-    fn add_types_handed_to_javascript(&mut self, file: FileId, handed_over: &mut FxHashSet<TypeId>, seen: &mut FxHashSet<TypeId>, out: &mut Vec<TypeId>) {
+    fn add_types_passed_to_javascript(&mut self, file: FileId, handed_over: &mut FxHashSet<TypeId>, seen: &mut FxHashSet<TypeId>, out: &mut Vec<TypeId>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let by_kind = self.exprs_by_kind_of(file);
+        let by_kind = self.file_exprs_by_kind(file);
         for &e in by_kind.of(ExprTag::Call).iter().chain(by_kind.of(ExprTag::New)) {
             let (ExprKind::Call(call) | ExprKind::New(call)) = hir[e].kind else { continue };
             let mut named = hir[call].callee;
@@ -3881,7 +4109,7 @@ impl<'p, 's> Checker<'p, 's> {
                 continue;
             }
             let local = self.files().sym(file, bound.expr_symbol[named.idx()]);
-            if !self.files().flags(local).contains(SymFlags::ALIAS) || !self.files().resolve_alias(local).is_some_and(|target| self.is_declared_for_javascript(target.file)) {
+            if !self.files().flags(local).contains(SymFlags::ALIAS) || !self.files().resolve_alias(local).is_some_and(|target| self.is_declaration_for_javascript(target.file)) {
                 continue;
             }
             for argument in hir.ids(hir[call].args) {
@@ -3891,30 +4119,30 @@ impl<'p, 's> Checker<'p, 's> {
                 };
                 self.prepare_enclosing(file, argument);
                 let handed = self.type_of_expr(file, argument);
-                self.add_what_is_handed_over_at(handed, false, file, Place { file, pos: hir[argument].pos }, handed_over, seen, out);
+                self.add_escaping_values(handed, false, file, Place { file, pos: hir[argument].pos }, handed_over, seen, out);
             }
         }
     }
 
-    fn add_what_is_handed_over_at(&mut self, ty: TypeId, parameters_cross: bool, typed_side: FileId, at: Place, handed_over: &mut FxHashSet<TypeId>, seen: &mut FxHashSet<TypeId>, out: &mut Vec<TypeId>) {
+    fn add_escaping_values(&mut self, ty: TypeId, parameters_cross: bool, typed_side: FileId, at: Place, handed_over: &mut FxHashSet<TypeId>, seen: &mut FxHashSet<TypeId>, out: &mut Vec<TypeId>) {
         let ty = self.reduced(ty);
         if !(self.may_hold_objects(ty) || matches!(self.data(ty), TypeData::Fns { .. })) || !handed_over.insert(ty) {
             return;
         }
         if let TypeData::Union(parts) = self.data(ty) {
             for part in parts.to_vec() {
-                self.add_what_is_handed_over_at(part, parameters_cross, typed_side, at, handed_over, seen, out);
+                self.add_escaping_values(part, parameters_cross, typed_side, at, handed_over, seen, out);
             }
             return;
         }
-        let is_container = self.is_array_or_tuple(ty) || matches!(self.built_in_that_is(ty), Some(BuiltIn::Instance(_)));
+        let is_container = self.is_array_or_tuple(ty) || matches!(self.built_in_for_type(ty), Some(BuiltIn::Instance(_)));
         let is_function = matches!(self.data(ty), TypeData::Fns { .. } | TypeData::Anon { origin: Origin::Function(_), .. });
-        let is_written_record = self.is_written_record(ty);
-        if !(is_container || is_function || is_written_record) {
-            return self.add_what_crosses_at(ty, 2, typed_side, at, seen, out);
+        let is_declared_record = self.is_declared_record(ty);
+        if !(is_container || is_function || is_declared_record) {
+            return self.add_boundary_types_at(ty, 2, typed_side, at, seen, out);
         }
-        if is_written_record {
-            self.note_record_held_by_javascript(ty, at);
+        if is_declared_record {
+            self.record_record_reaching_javascript(ty, at);
         }
         let mut held: Vec<TypeId> = Vec::new();
         if is_container {
@@ -3926,7 +4154,7 @@ impl<'p, 's> Checker<'p, 's> {
                     for index in 0..parameters.len() + 8 {
                         let Some(parameter) = self.param_type_at(&parameters, index) else { break };
                         if parameters_cross {
-                            self.add_what_crosses_at(parameter, 2, typed_side, at, seen, out);
+                            self.add_boundary_types_at(parameter, 2, typed_side, at, seen, out);
                         } else {
                             held.push(parameter);
                         }
@@ -3942,19 +4170,19 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         for held in held {
-            self.add_what_is_handed_over_at(held, parameters_cross, typed_side, at, handed_over, seen, out);
+            self.add_escaping_values(held, parameters_cross, typed_side, at, handed_over, seen, out);
         }
     }
 
-    fn add_data_that_is_handed_in_at(&mut self, ty: TypeId, typed_side: FileId, at: Place, gone_through: &mut FxHashSet<TypeId>, seen: &mut FxHashSet<TypeId>, out: &mut Vec<TypeId>) {
+    fn add_incoming_data(&mut self, ty: TypeId, typed_side: FileId, at: Place, visited: &mut FxHashSet<TypeId>, seen: &mut FxHashSet<TypeId>, out: &mut Vec<TypeId>) {
         let ty = self.reduced(ty);
         for part in self.parts(ty).to_vec() {
-            let is_container = self.is_array_or_tuple(part) || matches!(self.built_in_that_is(part), Some(BuiltIn::Instance(_)));
-            if !(is_container || self.is_written_record(part)) {
-                self.add_data_that_crosses_at(part, 0, typed_side, at, seen, out);
+            let is_container = self.is_array_or_tuple(part) || matches!(self.built_in_for_type(part), Some(BuiltIn::Instance(_)));
+            if !(is_container || self.is_declared_record(part)) {
+                self.add_boundary_data(part, 0, typed_side, at, seen, out);
                 continue;
             }
-            if !gone_through.insert(part) {
+            if !visited.insert(part) {
                 continue;
             }
             let mut held: Vec<TypeId> = Vec::new();
@@ -3967,45 +4195,45 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
             for held in held {
-                self.add_data_that_is_handed_in_at(held, typed_side, at, gone_through, seen, out);
+                self.add_incoming_data(held, typed_side, at, visited, seen, out);
             }
         }
     }
 
-    fn note_record_held_by_javascript(&mut self, record: TypeId, at: Place) {
-        if !self.is_type_of_instances(record) {
-            self.aot.flows.records_held_by_javascript.push((record, at));
+    fn record_record_reaching_javascript(&mut self, record: TypeId, at: Place) {
+        if !self.is_instance_type(record) {
+            self.aot.flows.records_reaching_javascript.push((record, at));
         }
     }
 
-    fn is_written_record(&mut self, ty: TypeId) -> bool {
+    fn is_declared_record(&mut self, ty: TypeId) -> bool {
         (match *self.data(ty) {
             TypeData::Ref { .. } => self.type_arguments(ty).is_empty(),
             TypeData::Anon { origin: Origin::TypeLiteral(..), .. } => true,
             _ => false,
-        }) && !self.is_declared_outside(ty)
+        }) && !self.is_declared_externally(ty)
             && !self.is_nested_too_deeply(ty)
     }
 
-    fn add_what_crosses_at(&mut self, ty: TypeId, rank: u8, typed_side: FileId, at: Place, seen: &mut FxHashSet<TypeId>, out: &mut Vec<TypeId>) {
-        if self.aot.flows.gave_up_crossing.is_some() {
+    fn add_boundary_types_at(&mut self, ty: TypeId, rank: u8, typed_side: FileId, at: Place, seen: &mut FxHashSet<TypeId>, out: &mut Vec<TypeId>) {
+        if self.aot.flows.boundary_overflow.is_some() {
             return;
         }
-        self.aot.flows.crossing_from_one_place = 0;
-        self.add_what_crosses(ty, seen, out);
-        if self.aot.flows.crossing_from_one_place > MOST_TYPES_THAT_CROSS_FROM_ONE_PLACE {
+        self.aot.flows.boundary_types_at_site = 0;
+        self.add_boundary_types(ty, seen, out);
+        if self.aot.flows.boundary_types_at_site > MAX_BOUNDARY_TYPES_PER_SITE {
             let name = match *self.data(ty) {
-                TypeData::Anon { origin: Origin::Module(module), .. } => format!("typeof import(\"{}\")", self.path_for_people(module.file)),
-                _ => self.name_for_people(ty),
+                TypeData::Anon { origin: Origin::Module(module), .. } => format!("typeof import(\"{}\")", self.display_path(module.file)),
+                _ => self.display_name(ty),
             };
             let text = &self.hir(at.file).text;
             let line = bun_core::strings::count_char(&text[..(at.pos as usize).min(text.len())], b'\n') + 1;
-            let place = format!("{}:{line}", self.path_for_people(at.file));
-            self.aot.flows.gave_up_crossing = Some(GaveUp { rank: (rank, at.file.0, at.pos), typed_side, name, place });
+            let place = format!("{}:{line}", self.display_path(at.file));
+            self.aot.flows.boundary_overflow = Some(TruncatedSearch { rank: (rank, at.file.0, at.pos), typed_side, name, place });
         }
     }
 
-    fn path_for_people(&self, file: FileId) -> String {
+    fn display_path(&self, file: FileId) -> String {
         let path = bstr::BStr::new(self.files().module(file).file_name()).to_string();
         match path.rsplit_once("/node_modules/") {
             Some((_, inside)) => inside.to_owned(),
@@ -4015,28 +4243,28 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// What untyped code has to do with once it holds a value of the type. A function it calls with what it has made, and what the function yields it holds in turn. Of an object it reads and stores the properties, of a
     /// container the elements. `out`: the types among all that which say properties. What a declaration file declares is gone through by its type arguments alone: nothing is laid out by it.
-    fn add_what_crosses(&mut self, ty: TypeId, seen: &mut FxHashSet<TypeId>, out: &mut Vec<TypeId>) {
-        if self.aot.flows.crossing_from_one_place > MOST_TYPES_THAT_CROSS_FROM_ONE_PLACE {
+    fn add_boundary_types(&mut self, ty: TypeId, seen: &mut FxHashSet<TypeId>, out: &mut Vec<TypeId>) {
+        if self.aot.flows.boundary_types_at_site > MAX_BOUNDARY_TYPES_PER_SITE {
             return;
         }
         let ty = self.reduced(ty);
         if !(self.may_hold_objects(ty) || matches!(self.data(ty), TypeData::Fns { .. })) || !seen.insert(ty) {
             return;
         }
-        self.aot.flows.crossing_from_one_place += u32::from(self.aot.flows.is_crossing_bounded);
+        self.aot.flows.boundary_types_at_site += u32::from(self.aot.flows.is_boundary_bounded);
         // `wrap(): Box<Box<T>>`: it is laid out so far and no further.
         if self.is_nested_too_deeply(ty) {
             return;
         }
         if let TypeData::Union(parts) = self.data(ty) {
             for part in parts.to_vec() {
-                self.add_what_crosses(part, seen, out);
+                self.add_boundary_types(part, seen, out);
             }
             return;
         }
         if self.is_instantiable(ty) {
             let bound = self.base_constraint(ty);
-            self.add_what_crosses(bound, seen, out);
+            self.add_boundary_types(bound, seen, out);
             return;
         }
         for is_construct in [false, true] {
@@ -4045,15 +4273,15 @@ impl<'p, 's> Checker<'p, 's> {
                 // A rest parameter of a tuple type stands for several.
                 for index in 0..parameters.len() + 8 {
                     let Some(parameter) = self.param_type_at(&parameters, index) else { break };
-                    self.add_what_crosses(parameter, seen, out);
+                    self.add_boundary_types(parameter, seen, out);
                 }
                 let yielded = self.sig_return(signature);
-                self.add_what_crosses(yielded, seen, out);
+                self.add_boundary_types(yielded, seen, out);
             }
         }
         if matches!(self.data(ty), TypeData::Ref { .. } | TypeData::Tuple { .. }) {
             for argument in self.type_arguments(ty).to_vec() {
-                self.add_what_crosses(argument, seen, out);
+                self.add_boundary_types(argument, seen, out);
             }
         }
         // An array that untyped code hands in need not be one.
@@ -4061,69 +4289,69 @@ impl<'p, 's> Checker<'p, 's> {
             out.push(ty);
             return;
         }
-        if self.is_declared_outside(ty) {
+        if self.is_declared_externally(ty) {
             return;
         }
         if let TypeData::Anon { origin: Origin::Mapped(file, node), .. } = *self.data(ty)
-            && (self.has_type_variables(ty) || self.generic_form_of(ty) == Some(ty))
+            && (self.has_type_variables(ty) || self.generic_form(ty) == Some(ty))
         {
             let template = self.mapped_decl(file, node).ty;
             if template.is_some() {
                 let template = self.type_from_node(file, template);
-                self.add_what_crosses(template, seen, out);
+                self.add_boundary_types(template, seen, out);
             }
         }
-        if let Some(form) = self.generic_form_of(ty)
+        if let Some(form) = self.generic_form(ty)
             && form != ty
-            && self.is_applied_to_what_is_applied(ty)
+            && self.is_nested_application(ty)
         {
-            self.add_what_crosses(form, seen, out);
-            for argument in self.types_referred_to_by(ty) {
-                self.add_what_crosses(argument, seen, out);
+            self.add_boundary_types(form, seen, out);
+            for argument in self.referenced_types(ty) {
+                self.add_boundary_types(argument, seen, out);
             }
-            if self.says_properties(ty) {
+            if self.declares_properties(ty) {
                 out.push(ty);
             }
             return;
         }
         let Some(members) = self.members(ty) else { return };
         for info in members.shape().index.iter() {
-            self.add_what_crosses(info.value, seen, out);
+            self.add_boundary_types(info.value, seen, out);
         }
         for prop in members.shape().props.iter() {
             let of_prop = self.type_of_prop(prop, members.mapper);
-            self.add_what_crosses(of_prop, seen, out);
+            self.add_boundary_types(of_prop, seen, out);
         }
-        if self.says_properties(ty) {
+        if self.declares_properties(ty) {
             out.push(ty);
         }
     }
 
-    fn has_room_for_what_nothing_is_said_of(&mut self, ty: TypeId, depth: u32) -> bool {
+    fn accepts_untyped_values(&mut self, ty: TypeId, depth: u32) -> bool {
         if depth == 0
-            && let Some(&known) = self.aot.flows.with_room_for_what_nothing_is_said_of.get(&ty)
+            && let Some(&known) = self.aot.flows.accepts_untyped_values_cache.get(&ty)
         {
             return known;
         }
-        let found = self.says_nothing_of_objects(ty)
+        let found = self.is_untyped_for_objects(ty)
             || depth < 2
                 && self.parts(ty).to_vec().into_iter().any(|part| {
-                    matches!(self.data(part), TypeData::Ref { .. } | TypeData::Tuple { .. }) && self.type_arguments(part).to_vec().into_iter().any(|argument| self.has_room_for_what_nothing_is_said_of(argument, depth + 1))
+                    matches!(self.data(part), TypeData::Ref { .. } | TypeData::Tuple { .. }) && self.type_arguments(part).to_vec().into_iter().any(|argument| self.accepts_untyped_values(argument, depth + 1))
                 });
         if depth == 0 {
-            self.aot.flows.with_room_for_what_nothing_is_said_of.insert(ty, found);
+            self.aot.flows.accepts_untyped_values_cache.insert(ty, found);
         }
         found
     }
 
-    pub(super) fn note_what_enters_a_place_that_says_nothing(&mut self, own: TypeId, target: Option<TypeId>) {
-        if !self.may_hold_objects(own) && !matches!(self.data(own), TypeData::Fns { .. }) || !self.aot.escape_closure.entered_untyped_places.insert((own, target)) {
+    pub(super) fn record_flow_into_untyped_slot(&mut self, own: TypeId, target: Option<TypeId>) {
+        if !self.may_hold_objects(own) && !matches!(self.data(own), TypeData::Fns { .. }) || !self.aot.escape_closure.visited_untyped_slots.insert((own, target)) {
             return;
         }
-        self.note_escape_query(EscapeQuery::IntoUntypedPlace(own, target));
+        self.record_escape_query(EscapeQuery::IntoUntypedSlot(own, target));
     }
 
-    fn walk_entry_into_untyped_place(&mut self, own: TypeId, target: Option<TypeId>) {
+    fn expand_flow_into_untyped_slot(&mut self, own: TypeId, target: Option<TypeId>) {
         if let Some(target) = target {
             if matches!(self.data(own), TypeData::Fns { .. } | TypeData::Anon { origin: Origin::Function(_), .. }) {
                 for mine in self.signatures(own, false).to_vec() {
@@ -4131,66 +4359,120 @@ impl<'p, 's> Checker<'p, 's> {
                         let (taken, handed) = (self.sig_params(mine), self.sig_params(theirs));
                         for index in 0..taken.len() {
                             let (Some(into), Some(from)) = (self.param_type_at(&taken, index), self.param_type_at(&handed, index)) else { break };
-                            if self.has_room_for_what_nothing_is_said_of(into, 0) {
-                                self.note_all_that_is_brought_by(from, 0);
+                            if self.accepts_untyped_values(into, 0) {
+                                self.record_transitive_types(from, 0);
                             }
                         }
                         let (yielded, expected) = (self.sig_return(mine), self.sig_return(theirs));
-                        if self.has_room_for_what_nothing_is_said_of(expected, 0) {
-                            self.note_all_that_is_brought_by(yielded, 0);
+                        if self.accepts_untyped_values(expected, 0) {
+                            self.record_transitive_types(yielded, 0);
                         }
                     }
                 }
             }
-            if !self.has_room_for_what_nothing_is_said_of(target, 0) {
+            if !self.accepts_untyped_values(target, 0) {
                 return;
             }
         }
-        self.note_all_that_is_brought_by(own, 0);
+        self.record_transitive_types(own, 0);
     }
 
-    fn note_all_that_is_brought_by(&mut self, ty: TypeId, depth: u32) {
+    fn record_transitive_types(&mut self, ty: TypeId, depth: u32) {
         if depth == 0 {
-            self.note_escape_query(EscapeQuery::OfType(ty));
+            self.record_escape_query(EscapeQuery::OfType(ty));
         } else {
-            self.walk_types_brought_by(ty, depth);
+            self.expand_transitive_types(ty, depth);
         }
     }
 
-    fn note_escape_query(&mut self, query: EscapeQuery) {
-        if let Some(known) = self.aot.flows.escape_notes.get(&query) {
-            let (known, at) = (std::rc::Rc::clone(known), self.aot.flows.place);
-            return self.aot.flows.noted.repeat(&known, at);
+    pub(super) fn note_escape_query_once(&mut self, query: EscapeQuery) {
+        let at = self.aot.flows.place;
+        match self.aot.escape_closure.queries.entry(query) {
+            std::collections::hash_map::Entry::Occupied(mut first) => {
+                if *first.get() <= at {
+                    return;
+                }
+                first.insert(at);
+            }
+            std::collections::hash_map::Entry::Vacant(first) => {
+                first.insert(at);
+            }
         }
-        let careful_before = (self.answers_are_provisional(), self.times_half_of_stack_was_in_use(), self.aot.flows.times_not_known);
+        self.record_escape_query(query);
+    }
+
+    fn is_type_of_one_expression(&self, ty: TypeId) -> bool {
+        match *self.data(ty) {
+            TypeData::Fns { ref decls, .. } => decls.first().is_some_and(|&(file, func)| matches!(self.hir(file)[func].kind, crate::hir::FnKind::Expr | crate::hir::FnKind::Arrow)),
+            TypeData::Anon { origin: Origin::ObjectLiteral(..), .. } => true,
+            _ => false,
+        }
+    }
+
+    fn expand_escape_query(&mut self, query: EscapeQuery) {
+        match query {
+            EscapeQuery::OfType(ty) => self.expand_transitive_types(ty, 0),
+            EscapeQuery::IntoUntypedSlot(own, target) => self.expand_flow_into_untyped_slot(own, target),
+            EscapeQuery::Entry(own, target) => self.walk_entry(own, target),
+            EscapeQuery::HandedOver(shown, is_tested_on_entry) => self.walk_what_is_handed_over(shown, is_tested_on_entry),
+            EscapeQuery::UntypedIntoPlace(target) => self.record_untyped_inflow_to_slot(target),
+            EscapeQuery::ThroughGuardsOf(shown) => self.record_untyped_inflow_through_type_guards(shown),
+            EscapeQuery::UntypedIntoNestedClasses(target, includes_self) => self.expand_untyped_into_nested_classes_query(target, includes_self),
+        }
+    }
+
+    fn record_escape_query(&mut self, query: EscapeQuery) {
+        if self.is_type_of_one_expression(query.subject()) {
+            return self.expand_escape_query(query);
+        }
+        let flows = &mut self.aot.flows;
+        if let Some(known) = flows.escape_notes.get(&query) {
+            let Some(known) = known else { return };
+            return flows.noted.repeat(known, flows.place);
+        }
+        let program = self.p;
+        let is_shared = self.aot.is_translating && !query.is_local() && !self.is_warming_up() && self.aot.flows.stored.is_none();
+        let shared = is_shared.then(|| &program.aot.flows.escape_notes[usize::from(self.aot.is_after_check)][query.shard()]);
+        if let Some(found_elsewhere) = shared.and_then(|shared| shared.read().get(&query).cloned()) {
+            let flows = &mut self.aot.flows;
+            if let Some(known) = &found_elsewhere {
+                flows.noted.repeat(known, flows.place);
+            }
+            flows.escape_notes.insert(query, found_elsewhere);
+            return;
+        }
+        let careful_before = (self.results_are_provisional(), self.stack_half_used_count(), self.aot.flows.unknown_count);
         let (scope, mark) = (self.begin_scope(), self.non_cacheable_mark());
         let position = self.aot.flows.noted.position();
-        match query {
-            EscapeQuery::OfType(ty) => self.walk_types_brought_by(ty, 0),
-            EscapeQuery::IntoUntypedPlace(own, target) => self.walk_entry_into_untyped_place(own, target),
-        }
-        let is_settled = self.non_cacheable_mark() == mark && careful_before == (false, self.times_half_of_stack_was_in_use(), self.aot.flows.times_not_known);
+        self.expand_escape_query(query);
+        let is_settled = self.non_cacheable_mark() == mark && careful_before == (false, self.stack_half_used_count(), self.aot.flows.unknown_count);
         if self.end_scope(scope).is_ok() && is_settled {
-            let notes = std::rc::Rc::new(self.aot.flows.noted.notes_since(position));
+            let notes = self.aot.flows.noted.notes_since(position);
+            let is_empty = notes.notes.is_empty() && notes.parameter_notes.is_empty();
+            let belongs_to_task = notes.notes.iter().any(|note| crate::local::is_local_number(note.first.0) || crate::local::is_local_number(note.second.0));
+            let notes = (!is_empty).then(|| Arc::new(notes));
+            if let Some(shared) = shared.filter(|_| !belongs_to_task && !self.has_order_dependent_results()) {
+                shared.write().entry(query).or_insert_with(|| notes.clone());
+            }
             self.aot.flows.escape_notes.insert(query, notes);
         }
     }
 
-    fn walk_types_brought_by(&mut self, ty: TypeId, depth: u32) {
-        self.note_what_is_let_out(ty, None);
+    fn expand_transitive_types(&mut self, ty: TypeId, depth: u32) {
+        self.record_escaping_types(ty, None);
         if depth == 0 {
-            self.note_any_inflow_into_parameters_in(ty, 0, &mut FxHashSet::default());
+            self.record_any_inflow_to_parameters(ty, 0, &mut FxHashSet::default());
         }
         for part in self.parts(ty).to_vec() {
-            if self.says_properties(part) && !self.is_type_of_instances(part) && !self.is_declared_outside(part) {
-                self.note_view_let_out(part);
+            if self.declares_properties(part) && !self.is_instance_type(part) && !self.is_declared_externally(part) {
+                self.record_type_escapes(part);
             }
             if depth >= 2 {
                 continue;
             }
             if matches!(self.data(part), TypeData::Ref { .. } | TypeData::Tuple { .. }) {
                 for argument in self.type_arguments(part).to_vec() {
-                    self.note_all_that_is_brought_by(argument, depth + 1);
+                    self.record_transitive_types(argument, depth + 1);
                 }
             }
             if matches!(self.data(part), TypeData::Anon { origin: Origin::ObjectLiteral(..) | Origin::WidenedLiteral(..), .. })
@@ -4201,15 +4483,15 @@ impl<'p, 's> Checker<'p, 's> {
                     held.push(self.type_of_prop(prop, members.mapper));
                 }
                 for held in held {
-                    self.note_all_that_is_brought_by(held, depth + 1);
+                    self.record_transitive_types(held, depth + 1);
                 }
             }
         }
     }
 
-    fn is_applied_to_what_is_applied(&mut self, ty: TypeId) -> bool {
-        self.find_applications_in(ty);
-        for argument in self.types_referred_to_by(ty) {
+    fn is_nested_application(&mut self, ty: TypeId) -> bool {
+        self.collect_applications(ty);
+        for argument in self.referenced_types(ty) {
             if self.is_instantiable(argument) || self.has_type_variables(argument) || self.aot.flows.applications[&argument].iter().any(|applied| applied.1 > 0) {
                 return true;
             }
@@ -4218,13 +4500,13 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `JSON.parse(..)`, `response.json()`, `structuredClone(..)`.
-    fn is_door_for_data(&mut self, file: FileId, e: ExprId) -> bool {
+    fn is_external_data_source(&mut self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
         let ExprKind::Call(call) = hir[e].kind else { return false };
         let callee = hir[call].callee;
         match hir[callee].kind {
             ExprKind::Dot { obj, name, .. } => match self.atoms().bytes(name) {
-                b"parse" => self.names_global_object(file, obj, b"JSON"),
+                b"parse" => self.refers_to_global_object(file, obj, b"JSON"),
                 b"json" => hir.ids(hir[call].args).next().is_none() && self.resolved_signature(file, e).sig.and_then(|sig| self.sig_decl(sig)).is_some_and(|(of, ..)| self.hir(of).kind == FileKind::Declaration),
                 _ => false,
             },
@@ -4245,7 +4527,7 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    fn operand_behind_casts(&self, file: FileId, mut operand: ExprId) -> ExprId {
+    fn operand_through_casts(&self, file: FileId, mut operand: ExprId) -> ExprId {
         while let ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) = self.hir(file)[operand].kind {
             operand = expr;
         }
@@ -4253,14 +4535,14 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn add_contents_promised_by_container_cast(&mut self, file: FileId, operand: ExprId, target: TypeId, out: &mut Vec<TypeId>) {
-        let operand = self.operand_behind_casts(file, operand);
+        let operand = self.operand_through_casts(file, operand);
         let hir = self.hir(file);
-        let is_made_empty = match hir[operand].kind {
+        let is_allocated_empty = match hir[operand].kind {
             ExprKind::New(call) => hir[call].args.len == 0,
             ExprKind::Array(elements) => elements.len == 0,
             _ => false,
         };
-        if is_made_empty || self.is_result_unknown(target, 0) {
+        if is_allocated_empty || self.is_result_unknown(target, 0) {
             return;
         }
         self.prepare_enclosing(file, operand);
@@ -4282,7 +4564,7 @@ impl<'p, 's> Checker<'p, 's> {
         if promised.is_empty() {
             return;
         }
-        let operand = self.operand_behind_casts(file, operand);
+        let operand = self.operand_through_casts(file, operand);
         self.prepare_enclosing(file, operand);
         let source = self.type_of_expr(file, operand);
         let mut is_unknown = source.is_any() || source == TypeId::UNKNOWN;
@@ -4302,12 +4584,12 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The types that are written where what has come through a door of the file gets to.
-    fn add_types_that_data_is_held_to(&mut self, file: FileId, out: &mut Vec<TypeId>) {
+    fn add_external_data_target_types(&mut self, file: FileId, out: &mut Vec<TypeId>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let by_kind = self.exprs_by_kind_of(file);
+        let by_kind = self.file_exprs_by_kind(file);
         let mut pending: Vec<ExprId> = Vec::new();
         for &call in by_kind.of(ExprTag::Call) {
-            if self.is_door_for_data(file, call) {
+            if self.is_external_data_source(file, call) {
                 pending.push(call);
             }
         }
@@ -4362,15 +4644,15 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Nobody else can hold what the expression yields, nor anything that hangs below it: `JSON.parse(text)`, with one argument: a reviver sees what is made. Not what a variable holds.
-    pub fn is_fresh_graph_by_text(&mut self, file: FileId, e: ExprId) -> bool {
+    pub fn is_syntactically_fresh_graph(&mut self, file: FileId, e: ExprId) -> bool {
         match self.hir(file)[e].kind {
-            ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) => self.is_fresh_graph_by_text(file, expr),
+            ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) => self.is_syntactically_fresh_graph(file, expr),
             ExprKind::Call(call) => {
                 let has_one_argument = {
                     let hir = self.hir(file);
                     hir[call].args.len == 1 && !hir.ids(hir[call].args).any(|argument| matches!(hir[argument].kind, ExprKind::Spread(_) | ExprKind::Missing))
                 };
-                has_one_argument && self.origin_of_data(file, e) == Some(OriginOfData::Parsed)
+                has_one_argument && self.data_origin(file, e) == Some(DataOrigin::Parsed)
             }
             _ => false,
         }
@@ -4380,65 +4662,65 @@ impl<'p, 's> Checker<'p, 's> {
     /// that has a type, `(x as any).field`, what `new` makes.
     ///
     /// Nothing rests on it but which types take an object as it is: what is not let in is turned away where it is read.
-    pub fn origin_of_data(&mut self, file: FileId, e: ExprId) -> Option<OriginOfData> {
-        self.origin_of_data_within(file, e, 0)
+    pub fn data_origin(&mut self, file: FileId, e: ExprId) -> Option<DataOrigin> {
+        self.data_origin_at_depth(file, e, 0)
     }
 
-    pub(super) fn origin_of_data_without_taint(&mut self, file: FileId, e: ExprId) -> Option<OriginOfData> {
-        let before = std::mem::replace(&mut self.aot.flows.is_searching_from_doors, true);
-        let origin = self.origin_of_data(file, e);
-        self.aot.flows.is_searching_from_doors = before;
+    pub(super) fn data_origin_ignoring_taint(&mut self, file: FileId, e: ExprId) -> Option<DataOrigin> {
+        let before = std::mem::replace(&mut self.aot.flows.is_searching_from_sources, true);
+        let origin = self.data_origin(file, e);
+        self.aot.flows.is_searching_from_sources = before;
         origin
     }
 
-    fn origin_of_data_within(&mut self, file: FileId, e: ExprId, depth: u32) -> Option<OriginOfData> {
-        let says_nothing = |c: &Self, ty: TypeId| ty != TypeId::UNRESOLVED && c.parts(ty).iter().any(|&part| part.is_any() || part == TypeId::UNKNOWN);
+    fn data_origin_at_depth(&mut self, file: FileId, e: ExprId, depth: u32) -> Option<DataOrigin> {
+        let is_uninformative = |c: &Self, ty: TypeId| ty != TypeId::UNRESOLVED && c.parts(ty).iter().any(|&part| part.is_any() || part == TypeId::UNKNOWN);
         let ty = self.type_of_expr(file, e);
-        if !says_nothing(self, ty) || depth > 8 {
+        if !is_uninformative(self, ty) || depth > 8 {
             return None;
         }
-        if self.unvouched_claim(file, e).is_some() {
-            return Some(OriginOfData::Prediction);
+        if self.unverified_claim(file, e).is_some() {
+            return Some(DataOrigin::Prediction);
         }
         // Of two, the one that is known for data.
-        let either = |a: Option<OriginOfData>, b: Option<OriginOfData>| a.into_iter().chain(b).min();
+        let either = |a: Option<DataOrigin>, b: Option<DataOrigin>| a.into_iter().chain(b).min();
         match self.hir(file)[e].kind {
-            ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) | ExprKind::AsConst(expr) => self.origin_of_data_within(file, expr, depth + 1),
-            ExprKind::Binary { op: BinOp::Or | BinOp::Nullish, left, right } => either(self.origin_of_data_within(file, left, depth + 1), self.origin_of_data_within(file, right, depth + 1)),
-            ExprKind::Binary { op: BinOp::And | BinOp::Comma, right, .. } => self.origin_of_data_within(file, right, depth + 1),
-            ExprKind::Cond { yes, no, .. } => either(self.origin_of_data_within(file, yes, depth + 1), self.origin_of_data_within(file, no, depth + 1)),
+            ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) | ExprKind::AsConst(expr) => self.data_origin_at_depth(file, expr, depth + 1),
+            ExprKind::Binary { op: BinOp::Or | BinOp::Nullish, left, right } => either(self.data_origin_at_depth(file, left, depth + 1), self.data_origin_at_depth(file, right, depth + 1)),
+            ExprKind::Binary { op: BinOp::And | BinOp::Comma, right, .. } => self.data_origin_at_depth(file, right, depth + 1),
+            ExprKind::Cond { yes, no, .. } => either(self.data_origin_at_depth(file, yes, depth + 1), self.data_origin_at_depth(file, no, depth + 1)),
             ExprKind::Call(_) => match self.resolved_signature(file, e).sig.and_then(|sig| self.sig_decl(sig)) {
-                Some((declared_in, func, _)) if self.only_declares(declared_in) => {
+                Some((declared_in, func, _)) if self.is_declaration_only(declared_in) => {
                     let (hir, bound) = (self.hir(declared_in), self.bound(declared_in));
                     let is_parse = matches!(bound.fns[func.idx()].owner, FnOwner::Member(member) if matches!(bound.member_owner[member.idx()], MemberOwner::Interface(interface) if self.atoms().bytes(hir[interface].name) == b"JSON"))
                         && hir[func].name.is_some()
                         && self.atoms().bytes(hir[func].name) == b"parse";
-                    Some(if is_parse { OriginOfData::Parsed } else { OriginOfData::BuiltIn })
+                    Some(if is_parse { DataOrigin::Parsed } else { DataOrigin::BuiltIn })
                 }
-                _ => Some(OriginOfData::Function),
+                _ => Some(DataOrigin::Function),
             },
             // What data holds is data. `(element as any).parent`: what the program's own object holds, the program has put there.
             ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => {
                 let holder = self.type_of_expr(file, obj);
-                if says_nothing(self, holder) { self.origin_of_data_within(file, obj, depth + 1) } else { Some(OriginOfData::Property) }
+                if is_uninformative(self, holder) { self.data_origin_at_depth(file, obj, depth + 1) } else { Some(DataOrigin::Property) }
             }
             ExprKind::Await(operand) => match self.hir(file)[operand].kind {
-                ExprKind::Call(_) if self.unvouched_claim(file, operand).is_some() => Some(OriginOfData::Prediction),
-                _ => Some(OriginOfData::Awaited),
+                ExprKind::Call(_) if self.unverified_claim(file, operand).is_some() => Some(DataOrigin::Prediction),
+                _ => Some(DataOrigin::Awaited),
             },
             ExprKind::Ident(name) => {
-                let named = Some(OriginOfData::Inferred);
+                let named = Some(DataOrigin::Inferred);
                 let Some(sym) = self.symbol_of_identifier(file, e, name) else { return named };
-                let Some((of, Decl::Var(pat))) = self.files().value_declaration(sym) else { return Some(OriginOfData::Annotated) };
+                let Some((of, Decl::Var(pat))) = self.files().value_declaration(sym) else { return Some(DataOrigin::Annotated) };
                 let (hir, bound) = (self.hir(of), self.bound(of));
                 let PatParent::Var(d) = bound.pat_parent[pat.idx()] else { return named };
-                let otherwise = Some(if hir[d].ty.is_some() { OriginOfData::Annotated } else { OriginOfData::Inferred });
+                let otherwise = Some(if hir[d].ty.is_some() { DataOrigin::Annotated } else { DataOrigin::Inferred });
                 // It holds what it is initialized with.
                 if hir[d].pat != pat || hir[d].init.is_none() || !bound.assignments_to(bound.pat_symbol[pat.idx()]).is_empty() {
                     return otherwise;
                 }
-                match self.origin_of_data_within(of, hir[d].init, depth + 1) {
-                    Some(origin) if origin.is_known_for_data() => Some(origin),
+                match self.data_origin_at_depth(of, hir[d].init, depth + 1) {
+                    Some(origin) if origin.is_known_plain_data() => Some(origin),
                     // `const loose: any = typed`
                     None => None,
                     _ => otherwise,
@@ -4449,127 +4731,148 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `stays`: what is of type `ty` is in a container, or is held by what is.
-    fn add_what_stays_untyped(&mut self, ty: TypeId, stays: bool, seen: &mut FxHashSet<(TypeId, bool)>, out: &mut Vec<TypeId>) {
-        self.walk_what_stays_untyped(ty, stays, &mut (seen, out));
+    fn add_types_staying_untyped(&mut self, ty: TypeId, stays: bool, seen: &mut FxHashSet<(TypeId, bool)>, out: &mut Vec<TypeId>) {
+        self.walk_types_staying_untyped(ty, stays, &mut (seen, out));
     }
 
-    fn walk_what_stays_untyped<W: Walk>(&mut self, ty: TypeId, stays: bool, walk: &mut W) {
+    fn walk_types_staying_untyped<W: Walk>(&mut self, ty: TypeId, stays: bool, walk: &mut W) {
         let ty = self.reduced(ty);
         if !self.may_hold_objects(ty) || walk.has_reached(ty, stays) {
             return;
         }
         if stays && self.aot.flows.seen_before.is_some() {
-            let identity = self.identity_of_type(ty);
+            let identity = self.type_identity(ty);
             if self.aot.flows.seen_before.as_ref().is_some_and(|before| before.contains(&identity)) {
                 return;
             }
         }
         walk.enter(ty, stays);
-        self.walk_what_is_held_by(ty, stays, walk);
+        self.walk_contained_types(ty, stays, walk);
         walk.leave();
     }
 
-    fn walk_what_is_held_by<W: Walk>(&mut self, ty: TypeId, stays: bool, walk: &mut W) {
+    fn walk_contained_types<W: Walk>(&mut self, ty: TypeId, stays: bool, walk: &mut W) {
         if let TypeData::Union(parts) = self.data(ty) {
             let parts: Vec<TypeId> = parts.to_vec();
             // What an object is looked at as of which it is not known which part it is of.
-            // Of the object types among the parts alone, as `FileBuild::layout_in_common` has it: `{ a: boolean } | { a: boolean; b: boolean } | undefined`.
-            let objects: Vec<TypeId> = parts.iter().copied().filter(|&part| self.says_properties(part)).collect();
+            // Of the object types among the parts alone, as `FileBuild::common_layout` has it: `{ a: boolean } | { a: boolean; b: boolean } | undefined`.
+            let objects: Vec<TypeId> = parts.iter().copied().filter(|&part| self.declares_properties(part)).collect();
             if stays && objects.len() > 1 {
                 // Its properties are unions in turn, of what the parts have by the name.
                 let objects = self.union(&objects);
-                let common = self.view_of_union(objects);
-                self.walk_what_stays_untyped(common, true, walk);
+                let common = self.common_supertype_of_union(objects);
+                self.walk_types_staying_untyped(common, true, walk);
             }
             for part in parts {
-                self.walk_what_stays_untyped(part, stays, walk);
+                self.walk_types_staying_untyped(part, stays, walk);
             }
         } else if self.is_instantiable(ty) {
             let bound = self.base_constraint(ty);
-            self.walk_what_stays_untyped(bound, stays, walk);
+            self.walk_types_staying_untyped(bound, stays, walk);
         } else if self.is_array_or_tuple(ty) {
             for &element in self.type_arguments(ty) {
-                self.walk_what_stays_untyped(element, true, walk);
+                self.walk_types_staying_untyped(element, true, walk);
             }
-        } else if let Some(element) = self.element_of_array_subtype(ty) {
-            self.walk_what_stays_untyped(element, true, walk);
+        } else if let Some(element) = self.array_subtype_element(ty) {
+            self.walk_types_staying_untyped(element, true, walk);
         } else {
-            match self.built_in_that_is(ty) {
+            match self.built_in_for_type(ty) {
                 Some(BuiltIn::Function | BuiltIn::Claimed) => return,
                 // `Map<K, V>`, `Set<T>`, `Promise<T>`
                 Some(BuiltIn::Instance(_)) => {
                     for &argument in self.type_arguments(ty) {
-                        self.walk_what_stays_untyped(argument, true, walk);
+                        self.walk_types_staying_untyped(argument, true, walk);
                     }
                     return;
                 }
                 None => {}
             }
-            if self.is_declared_outside(ty) {
+            if self.is_declared_externally(ty) {
                 for &argument in self.type_arguments(ty) {
-                    self.walk_what_stays_untyped(argument, true, walk);
+                    self.walk_types_staying_untyped(argument, true, walk);
                 }
             }
             // Plain data is no object of a class.
-            if self.is_type_of_instances(ty) {
+            if self.is_instance_type(ty) {
                 return;
             }
             let Some(members) = self.members(ty) else { return };
             let goes_on = !self.is_nested_too_deeply(ty);
-            if !goes_on && let Some(form) = self.generic_form_of(ty) {
-                self.walk_what_stays_untyped(form, true, walk);
+            if !goes_on && let Some(form) = self.generic_form(ty) {
+                self.walk_types_staying_untyped(form, true, walk);
             }
             for info in members.shape().index.iter().filter(|_| goes_on) {
-                self.walk_what_stays_untyped(info.value, true, walk);
+                self.walk_types_staying_untyped(info.value, true, walk);
             }
             // The type of a module says what it exports, and no object is laid out by it: `import * as data from "./x.json"`, `import("./x.json")`.
             let is_module = matches!(self.data(ty), TypeData::Anon { origin: Origin::Module(..), .. });
-            if !self.says_properties(ty) && !is_module {
+            if !self.declares_properties(ty) && !is_module {
                 return;
             }
             if stays && !is_module {
-                walk.add_view(self.laid_out_as(ty));
+                walk.add_view(self.layout_defining_type(ty));
             }
             for prop in members.shape().props.iter().filter(|_| goes_on) {
                 let of_field = self.type_of_prop(prop, members.mapper);
-                self.walk_what_stays_untyped(of_field, stays, walk);
+                self.walk_types_staying_untyped(of_field, stays, walk);
             }
         }
     }
 
-    fn views_staying_untyped_within(&mut self, ty: TypeId, stays: bool) -> std::rc::Rc<[TypeId]> {
-        if self.answers_are_provisional() || self.aot.flows.seen_before.is_some() {
+    fn nested_types_staying_untyped(&mut self, ty: TypeId, stays: bool) -> std::rc::Rc<[TypeId]> {
+        if self.results_are_provisional() || self.aot.flows.seen_before.is_some() {
             let (mut seen, mut views) = (FxHashSet::default(), Vec::new());
-            self.add_what_stays_untyped(ty, stays, &mut seen, &mut views);
+            self.add_types_staying_untyped(ty, stays, &mut seen, &mut views);
             return views.into();
+        }
+        if let Some(known) = self.aot.flows.nested_types_staying_untyped.get(&(ty, stays)) {
+            return std::rc::Rc::clone(known);
+        }
+        let shared = self.lists_shared_by_tasks(ty);
+        if let Some(known) = shared.and_then(|shared| shared.nested_types_staying_untyped.get((ty, stays))) {
+            let known: std::rc::Rc<[TypeId]> = known.as_ref().into();
+            self.aot.flows.nested_types_staying_untyped.insert((ty, stays), std::rc::Rc::clone(&known));
+            return known;
         }
         let mut reached = std::mem::take(&mut self.aot.flows.reached_from_types);
         let groups_before = reached.groups.len();
-        let ((), is_cacheable) = self.compute_cacheable(|c| c.walk_what_stays_untyped(ty, stays, &mut reached));
+        let ((), is_cacheable) = self.compute_cacheable(|c| c.walk_types_staying_untyped(ty, stays, &mut reached));
         let views = reached.take_views();
         if !is_cacheable {
-            reached.forget_groups_from(groups_before);
+            reached.truncate_groups(groups_before);
         }
         self.aot.flows.reached_from_types = reached;
+        if is_cacheable {
+            self.aot.flows.nested_types_staying_untyped.insert((ty, stays), std::rc::Rc::clone(&views));
+            if let Some(shared) = shared.filter(|_| !self.has_order_dependent_results()) {
+                shared.nested_types_staying_untyped.add((ty, stays), &views);
+            }
+        }
         views
     }
 
+    fn lists_shared_by_tasks(&self, about: TypeId) -> Option<&'p ListsSharedByTasks> {
+        let program = self.p;
+        let are_shared = self.aot.is_translating && !crate::local::is_local_number(about.0) && !self.is_warming_up() && !self.results_are_provisional() && self.aot.flows.stored.is_none() && self.aot.flows.seen_before.is_none();
+        are_shared.then(|| &program.aot.flows.lists[usize::from(self.aot.is_after_check)])
+    }
+
     /// The value of an expression whose type `is_untyped` is held to `target`, which says how objects are laid out.
-    pub fn dictionaries_taking_more_than(&mut self, view: TypeId, record: TypeId) -> Vec<TypeId> {
-        let mut taking_more = Vec::new();
+    pub fn dictionaries_wider_than(&mut self, view: TypeId, record: TypeId) -> Vec<TypeId> {
+        let mut accepting_more = Vec::new();
         if view == TypeId::UNRESOLVED || record == TypeId::UNRESOLVED {
-            return taking_more;
+            return accepting_more;
         }
-        let Some(of_record) = self.members(record) else { return taking_more };
+        let Some(of_record) = self.members(record) else { return accepting_more };
         if !of_record.shape().index.is_empty() {
-            return taking_more;
+            return accepting_more;
         }
         let parts = self.parts(view).to_vec();
         for part in parts {
             if matches!(self.data(part), TypeData::TypeParam(..)) {
                 let bound = self.base_constraint(part);
-                if bound != part && !self.dictionaries_taking_more_than(bound, record).is_empty() {
-                    taking_more.push(part);
+                if bound != part && !self.dictionaries_wider_than(bound, record).is_empty() {
+                    accepting_more.push(part);
                 }
                 continue;
             }
@@ -4585,26 +4888,35 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                 }
                 if takes_more {
-                    taking_more.push(part);
+                    accepting_more.push(part);
                     break;
                 }
             }
         }
-        taking_more
+        accepting_more
     }
 
     pub fn dictionaries_in(&mut self, ty: TypeId) -> Vec<TypeId> {
         if ty == TypeId::UNRESOLVED {
             return Vec::new();
         }
-        if !self.answers_are_provisional()
+        if !self.results_are_provisional()
             && let Some(known) = self.aot.flows.dictionaries.get(&ty)
         {
             return known.to_vec();
         }
+        let caches = self.type_caches().filter(|_| is_published(ty));
+        if let Some(known) = caches.and_then(|caches| caches.dictionaries.get_as(ty, |known| known.clone())) {
+            let found = known.to_vec();
+            self.aot.flows.dictionaries.insert(ty, known);
+            return found;
+        }
         let (found, is_cacheable) = self.compute_cacheable(|c| c.find_dictionaries_in(ty));
         if is_cacheable {
             self.aot.flows.dictionaries.insert(ty, found.as_slice().into());
+            if let Some(caches) = caches.filter(|_| found.iter().all(|&part| is_published(part)) && !self.has_order_dependent_results()) {
+                caches.dictionaries.insert(ty, found.as_slice().into());
+            }
         }
         found
     }
@@ -4623,20 +4935,20 @@ impl<'p, 's> Checker<'p, 's> {
             .collect()
     }
 
-    pub fn note_held_read_only(&mut self, held: TypeId, dictionary: TypeId) {
-        self.aot.flows.noted.add_pair(NoteKind::HeldReadOnly, held, dictionary);
+    pub fn record_stored_read_only(&mut self, held: TypeId, dictionary: TypeId) {
+        self.aot.flows.noted.add_pair(NoteKind::StoredReadOnly, held, dictionary);
     }
 
-    pub fn note_read_only_handed_on(&mut self, dictionary: TypeId) {
-        self.aot.flows.noted.add_all(NoteKind::ReadOnlyHandedOn, &[dictionary]);
+    pub fn record_read_only_passed_on(&mut self, dictionary: TypeId) {
+        self.aot.flows.noted.add_all(NoteKind::ReadOnlyPassedOn, &[dictionary]);
     }
 
-    pub fn note_untyped_inflow(&mut self, target: TypeId) {
+    pub fn record_untyped_inflow(&mut self, target: TypeId) {
         let at = self.aot.flows.place;
         self.aot.flows.noted.add_untyped_inflow(target, at);
     }
 
-    pub fn note_untyped_inflow_into_arms(&mut self, arms: &[TypeId]) {
+    pub fn record_untyped_inflow_to_union_members(&mut self, arms: &[TypeId]) {
         for (index, &arm) in arms.iter().enumerate() {
             for &other in &arms[index + 1..] {
                 self.aot.flows.noted.add_pair(NoteKind::UntypedIntoBoth, arm, other);
@@ -4644,17 +4956,17 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    pub fn note_untyped_inflow_within(&mut self, ty: TypeId) {
+    pub fn record_untyped_inflow_to_nested(&mut self, ty: TypeId) {
         if ty == TypeId::UNRESOLVED {
             return;
         }
-        let views = self.views_staying_untyped_within(ty, false);
+        let views = self.nested_types_staying_untyped(ty, false);
         for &view in views.iter() {
-            self.note_untyped_inflow(view);
+            self.record_untyped_inflow(view);
         }
     }
 
-    pub fn note_any_inflow(&mut self, target: TypeId) {
+    pub fn record_any_inflow(&mut self, target: TypeId) {
         let at = self.aot.flows.place;
         self.aot.flows.noted.add_any_inflow(target, at);
     }
@@ -4663,18 +4975,26 @@ impl<'p, 's> Checker<'p, 's> {
         if ty == TypeId::UNRESOLVED {
             return false;
         }
-        self.parts(ty).iter().any(|&part| part.is_any() || part == TypeId::UNKNOWN || part == TypeId::OBJECT || !self.is_instantiable(part) && self.admits_primitives(part))
+        self.parts(ty).iter().any(|&part| part.is_any() || part == TypeId::UNKNOWN || part == TypeId::OBJECT || !self.is_instantiable(part) && self.accepts_primitives(part))
     }
 
     pub fn records_in(&mut self, ty: TypeId) -> Vec<TypeId> {
-        if !self.answers_are_provisional()
+        if !self.results_are_provisional()
             && let Some(known) = self.aot.flows.records.get(&ty)
         {
+            return known.to_vec();
+        }
+        let shared = self.lists_shared_by_tasks(ty);
+        if let Some(known) = shared.and_then(|shared| shared.records.get(ty)) {
+            self.aot.flows.records.insert(ty, known.as_ref().into());
             return known.to_vec();
         }
         let (found, is_cacheable) = self.compute_cacheable(|c| c.find_records_in(ty));
         if is_cacheable {
             self.aot.flows.records.insert(ty, found.as_slice().into());
+            if let Some(shared) = shared.filter(|_| !self.has_order_dependent_results()) {
+                shared.records.add(ty, &found);
+            }
         }
         found
     }
@@ -4684,14 +5004,14 @@ impl<'p, 's> Checker<'p, 's> {
         while let Some((ty, depth)) = pending.pop() {
             let ty = self.reduced(ty);
             for part in self.parts(ty).to_vec() {
-                if depth > 4 || !self.may_hold_objects(part) || self.says_nothing(part) || self.is_instantiable(part) || !seen.insert(part) {
+                if depth > 4 || !self.may_hold_objects(part) || self.is_uninformative(part) || self.is_instantiable(part) || !seen.insert(part) {
                     continue;
                 }
-                if self.is_array_or_tuple(part) || self.built_in_that_is(part).is_some() {
+                if self.is_array_or_tuple(part) || self.built_in_for_type(part).is_some() {
                     pending.extend(self.type_arguments(part).to_vec().into_iter().map(|argument| (argument, depth + 1)));
                     continue;
                 }
-                if self.is_type_of_instances(part) {
+                if self.is_instance_type(part) {
                     continue;
                 }
                 let Some(members) = self.members(part) else { continue };
@@ -4702,61 +5022,75 @@ impl<'p, 's> Checker<'p, 's> {
         found
     }
 
-    pub fn types_of_instances_within(&mut self, ty: TypeId) -> Vec<TypeId> {
-        if !self.answers_are_provisional()
-            && let Some(known) = self.aot.flows.instances_within.get(&ty)
+    pub fn find_nested_class_types(&mut self, ty: TypeId) -> Vec<TypeId> {
+        if !self.results_are_provisional()
+            && let Some(known) = self.aot.flows.nested_class_types.get(&ty)
         {
             return known.to_vec();
         }
         if !self.may_hold_objects(ty) {
             return Vec::new();
         }
+        let shared = self.lists_shared_by_tasks(ty);
+        if let Some(known) = shared.and_then(|shared| shared.nested_class_types.get(ty)) {
+            self.aot.flows.nested_class_types.insert(ty, known.as_ref().into());
+            return known.to_vec();
+        }
         let ((found, fresh), is_cacheable) = self.compute_cacheable(|c| {
             let mut fresh = FxHashMap::default();
-            let found = c.find_types_of_instances_within(ty, 4, true, &mut fresh);
+            let found = c.collect_nested_class_types(ty, 4, true, &mut fresh);
             let reduced = c.reduced(ty);
-            let asked_about = c.parts(reduced).to_vec();
-            let found: Vec<TypeId> = found.iter().copied().filter(|instances| !asked_about.contains(instances)).collect();
+            let root_parts = c.parts(reduced).to_vec();
+            let found: Vec<TypeId> = found.iter().copied().filter(|instances| !root_parts.contains(instances)).collect();
             (found, fresh)
         });
         if is_cacheable {
-            self.aot.flows.instances_within.insert(ty, found.clone().into_boxed_slice());
-            self.aot.flows.instances_within_levels.extend(fresh);
+            self.aot.flows.nested_class_types.insert(ty, found.clone().into_boxed_slice());
+            self.aot.flows.nested_class_types_by_depth.extend(fresh);
+            if let Some(shared) = shared.filter(|_| !self.has_order_dependent_results()) {
+                shared.nested_class_types.add(ty, &found);
+            }
         }
         found
     }
 
-    pub fn types_of_instances_within_prediction(&mut self, file: FileId, e: ExprId) -> Vec<TypeId> {
+    pub fn find_predicted_nested_class_types(&mut self, file: FileId, e: ExprId) -> Vec<TypeId> {
         if !matches!(self.hir(file)[e].kind, ExprKind::Call(_) | ExprKind::New(_) | ExprKind::Await(_)) {
             return Vec::new();
         }
-        if self.builtin_module_required_by(file, e).is_some() || !self.is_predicted(file, e) {
+        if self.required_builtin_module(file, e).is_some() || !self.is_predicted(file, e) {
             return Vec::new();
         }
         let checked = self.type_of_expr(file, e);
-        self.types_of_instances_within(checked)
+        self.find_nested_class_types(checked)
     }
 
-    fn is_compared_by_declaration(&mut self, instances: TypeId) -> bool {
+    fn is_nominal_class(&mut self, instances: TypeId) -> bool {
         let Some(members) = self.members(instances) else { return false };
         members.shape().props.iter().any(|prop| prop.flags.intersects(PropFlags::PRIVATE | PropFlags::PROTECTED) || self.is_private_name(prop.name))
     }
 
-    pub(super) fn note_untyped_inflow_into_instances_in(&mut self, target: TypeId) {
-        self.note_untyped_inflow_into_instances(target, true);
+    pub(super) fn record_untyped_inflow_to_classes(&mut self, target: TypeId) {
+        self.record_untyped_inflow_to_nested_classes(target, true);
     }
 
-    pub(super) fn note_untyped_inflow_into_place(&mut self, target: TypeId) {
+    pub(super) fn record_untyped_inflow_to_slot(&mut self, target: TypeId) {
         let reduced = self.reduced(target);
-        let kinds_of_objects = self.parts(reduced).iter().filter(|&&part| self.may_hold_objects(part)).count();
-        self.note_untyped_inflow_into_instances(target, kinds_of_objects > 1);
+        let object_part_count = self.parts(reduced).iter().filter(|&&part| self.may_hold_objects(part)).count();
+        self.record_untyped_inflow_to_nested_classes(target, object_part_count > 1);
     }
 
-    fn note_untyped_inflow_into_instances(&mut self, target: TypeId, is_itself_entered: bool) {
-        let mut found = self.types_of_instances_within(target);
+    fn record_untyped_inflow_to_nested_classes(&mut self, target: TypeId, includes_self: bool) {
+        if self.may_hold_objects(target) {
+            self.record_escape_query(EscapeQuery::UntypedIntoNestedClasses(target, includes_self));
+        }
+    }
+
+    fn expand_untyped_into_nested_classes_query(&mut self, target: TypeId, includes_self: bool) {
+        let mut found = self.find_nested_class_types(target);
         let reduced = self.reduced(target);
         for part in self.parts(reduced).to_vec() {
-            if is_itself_entered && self.is_type_of_instances(part) && !self.is_compared_by_declaration(part) {
+            if includes_self && self.is_instance_type(part) && !self.is_nominal_class(part) {
                 found.push(part);
             }
         }
@@ -4764,8 +5098,8 @@ impl<'p, 's> Checker<'p, 's> {
         while let Some((ty, depth)) = pending.pop() {
             for part in self.parts(ty).to_vec() {
                 if matches!(self.data(part), TypeData::TypeParam(..)) {
-                    if depth > 0 || is_itself_entered {
-                        self.note_type_admits_foreign_objects(part, false);
+                    if depth > 0 || includes_self {
+                        self.record_type_accepts_untyped(part, false);
                     }
                 } else if depth < 3 {
                     pending.extend(self.type_arguments(part).to_vec().into_iter().map(|argument| (argument, depth + 1)));
@@ -4773,13 +5107,13 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         for instances in found {
-            let view = self.laid_out_as(instances);
-            self.note_untyped_inflow(view);
-            self.note_foreign(view, TypeId::ANY);
+            let view = self.layout_defining_type(instances);
+            self.record_untyped_inflow(view);
+            self.record_untyped(view, TypeId::ANY);
         }
     }
 
-    fn note_untyped_inflow_into_instances_in_parameters_of(&mut self, ty: TypeId, depth: u32, seen: &mut FxHashSet<TypeId>) {
+    fn record_untyped_inflow_to_parameters(&mut self, ty: TypeId, depth: u32, seen: &mut FxHashSet<TypeId>) {
         for part in self.parts(ty).to_vec() {
             if !seen.insert(part) {
                 continue;
@@ -4793,7 +5127,7 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                 }
                 for exported in exported {
-                    self.note_untyped_inflow_into_instances_in_parameters_of(exported, depth, seen);
+                    self.record_untyped_inflow_to_parameters(exported, depth, seen);
                 }
                 continue;
             }
@@ -4802,15 +5136,15 @@ impl<'p, 's> Checker<'p, 's> {
                 for signature in signatures {
                     let parameters: Vec<TypeId> = self.sig_params(signature).iter().map(|parameter| parameter.ty).collect();
                     for parameter in parameters {
-                        self.note_untyped_inflow_into_instances_in(parameter);
+                        self.record_untyped_inflow_to_classes(parameter);
                     }
                     if depth < 2 {
                         let yielded = self.sig_return(signature);
-                        self.note_untyped_inflow_into_instances_in_parameters_of(yielded, depth + 1, seen);
+                        self.record_untyped_inflow_to_parameters(yielded, depth + 1, seen);
                     }
                 }
             }
-            if depth >= 2 || !self.says_properties(part) || self.is_declared_outside(part) {
+            if depth >= 2 || !self.declares_properties(part) || self.is_declared_externally(part) {
                 continue;
             }
             let Some(members) = self.members(part) else { continue };
@@ -4820,16 +5154,16 @@ impl<'p, 's> Checker<'p, 's> {
             }
             for property_type in property_types {
                 if self.parts(property_type).to_vec().into_iter().any(|part| !self.signatures(part, false).is_empty()) {
-                    self.note_untyped_inflow_into_instances_in_parameters_of(property_type, depth + 1, seen);
+                    self.record_untyped_inflow_to_parameters(property_type, depth + 1, seen);
                 }
             }
         }
     }
 
-    pub(super) fn note_what_javascript_hands_to_what_it_imports(&mut self, file: FileId) {
+    pub(super) fn record_js_calls_to_typed_imports(&mut self, file: FileId) {
         let bound = self.bound(file);
         let mut imported: FxHashSet<Sym> = FxHashSet::default();
-        for &name in self.exprs_by_kind_of(file).of(ExprTag::Ident) {
+        for &name in self.file_exprs_by_kind(file).of(ExprTag::Ident) {
             let local = bound.expr_symbol[name.idx()];
             if local.is_none() {
                 continue;
@@ -4846,12 +5180,12 @@ impl<'p, 's> Checker<'p, 's> {
             if is_typed {
                 let of_target = self.type_of_symbol(target);
                 let pos = self.hir(file)[name].pos;
-                self.note_place(file, pos);
-                self.note_untyped_inflow_into_instances_in_parameters_of(of_target, 0, &mut FxHashSet::default());
+                self.set_current_site(file, pos);
+                self.record_untyped_inflow_to_parameters(of_target, 0, &mut FxHashSet::default());
             }
         }
-        let required: Vec<ExprId> = self.exprs_by_kind_of(file).of(ExprTag::Call).iter().copied().filter(|&call| crate::bind::required_specifier(self.hir(file), call).is_some()).collect();
-        let loaded: Vec<ExprId> = self.exprs_by_kind_of(file).of(ExprTag::ImportCall).to_vec();
+        let required: Vec<ExprId> = self.file_exprs_by_kind(file).of(ExprTag::Call).iter().copied().filter(|&call| crate::bind::required_specifier(self.hir(file), call).is_some()).collect();
+        let loaded: Vec<ExprId> = self.file_exprs_by_kind(file).of(ExprTag::ImportCall).to_vec();
         for (e, is_promised) in required.into_iter().map(|e| (e, false)).chain(loaded.into_iter().map(|e| (e, true))) {
             let hir = self.hir(file);
             let (specifier, mode) = match hir[e].kind {
@@ -4868,17 +5202,17 @@ impl<'p, 's> Checker<'p, 's> {
             let yielded = self.type_of_expr(file, e);
             let of_module = if is_promised { self.awaited(yielded) } else { yielded };
             let pos = self.hir(file)[e].pos;
-            self.note_place(file, pos);
-            self.note_untyped_inflow_into_instances_in_parameters_of(of_module, 0, &mut FxHashSet::default());
+            self.set_current_site(file, pos);
+            self.record_untyped_inflow_to_parameters(of_module, 0, &mut FxHashSet::default());
         }
     }
 
-    pub(super) fn note_untyped_inflow_through_guards_of(&mut self, shown: TypeId) {
-        if !self.answers_are_provisional()
-            && let Some(known) = self.aot.flows.guards_of_something_untyped.get(&shown)
+    pub(super) fn record_untyped_inflow_through_type_guards(&mut self, shown: TypeId) {
+        if !self.results_are_provisional()
+            && let Some(known) = self.aot.flows.untyped_type_guards.get(&shown)
         {
             for guard in known.to_vec() {
-                self.note_untyped_inflow_into_instances_in(guard);
+                self.record_untyped_inflow_to_classes(guard);
             }
             return;
         }
@@ -4898,34 +5232,34 @@ impl<'p, 's> Checker<'p, 's> {
             guards
         });
         if is_cacheable {
-            self.aot.flows.guards_of_something_untyped.insert(shown, guards.clone().into_boxed_slice());
+            self.aot.flows.untyped_type_guards.insert(shown, guards.clone().into_boxed_slice());
         }
         for guard in guards {
-            self.note_untyped_inflow_into_instances_in(guard);
+            self.record_untyped_inflow_to_classes(guard);
         }
     }
 
-    fn find_types_of_instances_within(&mut self, ty: TypeId, levels_left: u32, is_asked_about: bool, fresh: &mut FxHashMap<(TypeId, u32), std::rc::Rc<[TypeId]>>) -> std::rc::Rc<[TypeId]> {
+    fn collect_nested_class_types(&mut self, ty: TypeId, remaining_depth: u32, is_asked_about: bool, fresh: &mut FxHashMap<(TypeId, u32), std::rc::Rc<[TypeId]>>) -> std::rc::Rc<[TypeId]> {
         let ty = self.reduced(ty);
         if !is_asked_about
-            && let Some(known) = self.aot.flows.instances_within_levels.get(&(ty, levels_left)).or_else(|| fresh.get(&(ty, levels_left)))
+            && let Some(known) = self.aot.flows.nested_class_types_by_depth.get(&(ty, remaining_depth)).or_else(|| fresh.get(&(ty, remaining_depth)))
         {
             return std::rc::Rc::clone(known);
         }
         let mut found: Vec<TypeId> = Vec::new();
         for part in self.parts(ty).to_vec() {
-            if !self.may_hold_objects(part) || self.says_nothing(part) || self.is_instantiable(part) {
+            if !self.may_hold_objects(part) || self.is_uninformative(part) || self.is_instantiable(part) {
                 continue;
             }
             let mut held: Vec<TypeId> = Vec::new();
-            if self.is_array_or_tuple(part) || self.built_in_that_is(part).is_some() || self.is_declared_outside(part) {
+            if self.is_array_or_tuple(part) || self.built_in_for_type(part).is_some() || self.is_declared_externally(part) {
                 held.extend(self.type_arguments(part).to_vec());
             } else {
                 if !self.signatures(part, false).is_empty() || !self.signatures(part, true).is_empty() {
                     continue;
                 }
                 let Some(members) = self.members(part) else { continue };
-                if self.is_type_of_instances(part) {
+                if self.is_instance_type(part) {
                     if members.shape().props.iter().any(|prop| prop.flags.intersects(PropFlags::PRIVATE | PropFlags::PROTECTED) || self.is_private_name(prop.name)) {
                         continue;
                     }
@@ -4933,17 +5267,17 @@ impl<'p, 's> Checker<'p, 's> {
                         found.push(part);
                     }
                 }
-                if levels_left > 0 {
+                if remaining_depth > 0 {
                     held.extend(members.shape().index.iter().map(|info| info.value));
                     for prop in members.shape().props.iter() {
                         held.push(self.type_of_prop(prop, members.mapper));
                     }
                 }
             }
-            if levels_left > 0 {
+            if remaining_depth > 0 {
                 for held in held {
                     if self.may_hold_objects(held) {
-                        found.extend(self.find_types_of_instances_within(held, levels_left - 1, false, fresh).iter().copied());
+                        found.extend(self.collect_nested_class_types(held, remaining_depth - 1, false, fresh).iter().copied());
                     }
                 }
             }
@@ -4952,26 +5286,26 @@ impl<'p, 's> Checker<'p, 's> {
         found.retain(|&instances| seen.insert(instances));
         let found: std::rc::Rc<[TypeId]> = found.into();
         if !is_asked_about {
-            fresh.insert((ty, levels_left), std::rc::Rc::clone(&found));
+            fresh.insert((ty, remaining_depth), std::rc::Rc::clone(&found));
         }
         found
     }
 
-    pub(super) fn note_any_inflow_into_records_in(&mut self, target: TypeId) {
+    pub(super) fn record_any_inflow_to_records(&mut self, target: TypeId) {
         for record in self.records_in(target) {
-            if self.says_properties(record) && !self.is_declared_outside(record) {
-                let view = self.laid_out_as(record);
-                self.note_any_inflow(view);
+            if self.declares_properties(record) && !self.is_declared_externally(record) {
+                let view = self.layout_defining_type(record);
+                self.record_any_inflow(view);
             }
         }
     }
 
-    pub(super) fn is_served_by_a_second_body(&mut self, signature: SigId) -> bool {
+    pub(super) fn is_served_by_untyped_clone(&mut self, signature: SigId) -> bool {
         let Some((declared_in, func, _)) = self.sig_decl(signature) else { return false };
-        self.has_second_body(declared_in, func)
+        self.has_untyped_clone(declared_in, func)
     }
 
-    fn note_any_inflow_into_parameters_in(&mut self, ty: TypeId, depth: u32, seen: &mut FxHashSet<TypeId>) {
+    fn record_any_inflow_to_parameters(&mut self, ty: TypeId, depth: u32, seen: &mut FxHashSet<TypeId>) {
         for part in self.parts(ty).to_vec() {
             if !seen.insert(part) {
                 continue;
@@ -4981,20 +5315,20 @@ impl<'p, 's> Checker<'p, 's> {
                 for signature in signatures {
                     let parameters: Vec<TypeId> = self.sig_params(signature).iter().map(|parameter| parameter.ty).collect();
                     for &parameter in &parameters {
-                        self.note_untyped_inflow_into_instances_in(parameter);
+                        self.record_untyped_inflow_to_classes(parameter);
                     }
-                    if !self.is_served_by_a_second_body(signature) {
+                    if !self.is_served_by_untyped_clone(signature) {
                         for parameter in parameters {
-                            self.note_any_inflow_into_records_in(parameter);
+                            self.record_any_inflow_to_records(parameter);
                         }
                     }
                     if constructs && depth < 2 {
                         let instance = self.sig_return(signature);
-                        self.note_any_inflow_into_parameters_in(instance, depth + 1, seen);
+                        self.record_any_inflow_to_parameters(instance, depth + 1, seen);
                     }
                 }
             }
-            if depth >= 2 || !self.says_properties(part) || self.is_declared_outside(part) {
+            if depth >= 2 || !self.declares_properties(part) || self.is_declared_externally(part) {
                 continue;
             }
             let Some(members) = self.members(part) else { continue };
@@ -5004,16 +5338,16 @@ impl<'p, 's> Checker<'p, 's> {
             }
             for property_type in property_types {
                 if self.parts(property_type).to_vec().into_iter().any(|part| !self.signatures(part, false).is_empty()) {
-                    self.note_any_inflow_into_parameters_in(property_type, depth + 1, seen);
+                    self.record_any_inflow_to_parameters(property_type, depth + 1, seen);
                 }
             }
         }
     }
 
-    pub fn note_check_of_a_log_build(&mut self, target: TypeId, road: usize) {
+    pub fn record_log_build_check(&mut self, target: TypeId, road: usize) {
         let at = self.aot.flows.place;
         self.aot.flows.noted.add_check(target, at);
-        self.aot.flows.noted.others().checked_by_road[road] += 1;
+        self.aot.flows.noted.others().checked_by_path[road] += 1;
     }
 
     /// The type that the checker has for where the value of `e` goes, if `e` is an argument, an element of an array literal, the value of
@@ -5034,7 +5368,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             for wide in self.parts(from).to_vec() {
                 for narrow in self.parts(to).to_vec() {
-                    let is_skipped = |c: &mut Self, part: TypeId| !c.may_hold_objects(part) || c.says_nothing(part) || c.is_instantiable(part);
+                    let is_skipped = |c: &mut Self, part: TypeId| !c.may_hold_objects(part) || c.is_uninformative(part) || c.is_instantiable(part);
                     if wide == narrow || is_skipped(self, wide) || is_skipped(self, narrow) {
                         continue;
                     }
@@ -5045,7 +5379,7 @@ impl<'p, 's> Checker<'p, 's> {
                         }
                         continue;
                     }
-                    if self.is_type_of_instances(wide) || self.is_type_of_instances(narrow) || self.built_in_that_is(wide).is_some() || self.built_in_that_is(narrow).is_some() {
+                    if self.is_instance_type(wide) || self.is_instance_type(narrow) || self.built_in_for_type(wide).is_some() || self.built_in_for_type(narrow).is_some() {
                         continue;
                     }
                     let (Some(of_wide), Some(of_narrow)) = (self.members(wide), self.members(narrow)) else { continue };
@@ -5061,7 +5395,7 @@ impl<'p, 's> Checker<'p, 's> {
         pairs
     }
 
-    pub fn type_entered_by(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
+    pub fn destination_type_of_expr(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         self.destination_type(file, e, false)
     }
 
@@ -5075,21 +5409,29 @@ impl<'p, 's> Checker<'p, 's> {
         let (ExprKind::As { .. }, ExprKind::Call(call)) = (hir[e].kind, hir[parent].kind) else { return None };
         let ExprKind::Dot { obj, .. } = hir[hir[call].callee].kind else { return None };
         let receiver = self.type_of_expr(file, obj);
-        if !self.is_array_or_tuple(receiver) && !matches!(self.built_in_that_is(receiver), Some(BuiltIn::Instance(_))) {
+        if !self.is_array_or_tuple(receiver) && !matches!(self.built_in_for_type(receiver), Some(BuiltIn::Instance(_))) {
             return None;
         }
         self.destination_type_of_untyped_expr(file, e)
     }
 
     pub fn wide_data_records_in(&mut self, ty: TypeId) -> Vec<TypeId> {
-        if !self.answers_are_provisional()
+        if !self.results_are_provisional()
             && let Some(known) = self.aot.flows.wide_data_records.get(&ty)
         {
+            return known.to_vec();
+        }
+        let shared = self.lists_shared_by_tasks(ty);
+        if let Some(known) = shared.and_then(|shared| shared.wide_data_records.get(ty)) {
+            self.aot.flows.wide_data_records.insert(ty, known.as_ref().into());
             return known.to_vec();
         }
         let (found, is_cacheable) = self.compute_cacheable(|c| c.find_wide_data_records_in(ty));
         if is_cacheable {
             self.aot.flows.wide_data_records.insert(ty, found.as_slice().into());
+            if let Some(shared) = shared.filter(|_| !self.has_order_dependent_results()) {
+                shared.wide_data_records.add(ty, &found);
+            }
         }
         found
     }
@@ -5099,14 +5441,14 @@ impl<'p, 's> Checker<'p, 's> {
         while let Some((ty, depth)) = pending.pop() {
             let ty = self.reduced(ty);
             for part in self.parts(ty).to_vec() {
-                if depth > 4 || !self.may_hold_objects(part) || self.says_nothing(part) || self.is_instantiable(part) || !seen.insert(part) {
+                if depth > 4 || !self.may_hold_objects(part) || self.is_uninformative(part) || self.is_instantiable(part) || !seen.insert(part) {
                     continue;
                 }
-                if self.is_array_or_tuple(part) || self.built_in_that_is(part).is_some() {
+                if self.is_array_or_tuple(part) || self.built_in_for_type(part).is_some() {
                     pending.extend(self.type_arguments(part).to_vec().into_iter().map(|held| (held, depth + 1)));
                     continue;
                 }
-                if self.is_type_of_instances(part) || !self.contains_only_plain_data(part, &mut FxHashSet::default()) {
+                if self.is_instance_type(part) || !self.contains_only_plain_data(part, &mut FxHashSet::default()) {
                     continue;
                 }
                 let Some(members) = self.members(part) else { continue };
@@ -5145,10 +5487,10 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         let source = self.type_of_expr(file, e);
-        if self.says_nothing(source) != is_untyped || !is_untyped && self.parts(source).iter().all(|&part| self.has_primitive_flag(part)) {
+        if self.is_uninformative(source) != is_untyped || !is_untyped && self.parts(source).iter().all(|&part| self.has_primitive_flag(part)) {
             return None;
         }
-        if is_untyped && self.is_nullish_by_its_text(file, e) {
+        if is_untyped && self.is_syntactically_nullish(file, e) {
             return None;
         }
         if let Some(parameter) = self.parameter_reached_through_bind_or_apply(file, e) {
@@ -5161,7 +5503,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             _ => None,
         });
-        entered.filter(|&target| !self.says_nothing(target))
+        entered.filter(|&target| !self.is_uninformative(target))
     }
 
     fn parameter_reached_through_bind_or_apply(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
@@ -5205,11 +5547,11 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         let reached = self.union(&reached);
-        (!self.says_nothing(reached)).then_some(reached)
+        (!self.is_uninformative(reached)).then_some(reached)
     }
 
     /// `list.push(...more)`. `e`: the spread, an argument of a call or a `new`. The type of what it iterates over, and the type that the checker has for where each of those goes.
-    pub fn types_entered_by_spread(&mut self, file: FileId, e: ExprId) -> Option<(TypeId, TypeId)> {
+    pub fn spread_destination_types(&mut self, file: FileId, e: ExprId) -> Option<(TypeId, TypeId)> {
         let hir = self.hir(file);
         let ExprKind::Spread(spread) = hir[e].kind else { return None };
         let Parent::Expr(parent) = self.bound(file).expr_parent[e.idx()] else { return None };
@@ -5219,11 +5561,11 @@ impl<'p, 's> Checker<'p, 's> {
         let iterable = self.type_of_expr(file, spread);
         let source = self.iterated_type(iterable, false);
         let target = self.contextual_type_of_literal(file, e)?;
-        (!self.says_nothing(source) && !self.says_nothing(target)).then_some((source, target))
+        (!self.is_uninformative(source) && !self.is_uninformative(target)).then_some((source, target))
     }
 
     /// `Object.assign(target, a, b)`. For each property of the type `source` that the type `target` has by the same name: the two types.
-    pub fn properties_assigned(&mut self, source: TypeId, target: TypeId) -> Vec<(TypeId, TypeId)> {
+    pub fn assigned_property_types(&mut self, source: TypeId, target: TypeId) -> Vec<(TypeId, TypeId)> {
         let mut entering = Vec::new();
         for &from in &self.parts(source).to_vec() {
             let Some(of_source) = self.members(from) else { continue };
@@ -5243,23 +5585,23 @@ impl<'p, 's> Checker<'p, 's> {
     /// declaration file or JavaScript declares, whoever calls the function there is not compiled with the program, and calls it with
     /// what that type says: for each parameter, the type of what it is called with and the type it is declared with. These are the
     /// signatures that the checker compares when it checks the one type against the other.
-    pub fn arguments_of_callback(&mut self, source: TypeId, target: TypeId) -> Vec<(TypeId, TypeId)> {
+    pub fn callback_argument_types(&mut self, source: TypeId, target: TypeId) -> Vec<(TypeId, TypeId)> {
         let mut entering = Vec::new();
         if !matches!(self.data(source), TypeData::Fns { .. } | TypeData::Anon { origin: Origin::Function(_), .. }) {
             return entering;
         }
         for &part in self.parts(target) {
             for &called_as in self.signatures(part, false).iter() {
-                let is_called_from_outside = self.sig_decl(called_as).is_some_and(|(file, ..)| self.is_untyped_file(file) || self.only_declares(file));
-                if !is_called_from_outside {
+                let has_external_caller = self.sig_decl(called_as).is_some_and(|(file, ..)| self.is_untyped_file(file) || self.is_declaration_only(file));
+                if !has_external_caller {
                     continue;
                 }
                 let arguments = self.sig_params(called_as);
-                for &declared_as in self.signatures(source, false).iter() {
-                    if !self.sig_decl(declared_as).is_some_and(|(file, ..)| !self.is_untyped_file(file) && !self.only_declares(file)) {
+                for &declared_sig in self.signatures(source, false).iter() {
+                    if !self.sig_decl(declared_sig).is_some_and(|(file, ..)| !self.is_untyped_file(file) && !self.is_declaration_only(file)) {
                         continue;
                     }
-                    let parameters = self.sig_params(declared_as);
+                    let parameters = self.sig_params(declared_sig);
                     for index in 0..parameters.len() {
                         if let (Some(argument), Some(parameter)) = (self.param_type_at(&arguments, index), self.param_type_at(&parameters, index)) {
                             entering.push((argument, parameter));
@@ -5277,13 +5619,13 @@ impl<'p, 's> Checker<'p, 's> {
     /// the two are instantiations of one declaration, or else what their index signatures say. Likewise what goes through a function:
     /// its arguments the other way, from the type it is taken for to its own, and what it yields; and through a function that is a property of the two. The first time it is asked of the two
     /// types, and nothing after that.
-    pub fn types_held_entering(&mut self, source: TypeId, target: TypeId) -> Vec<(TypeId, TypeId)> {
+    pub fn nested_inflow_pairs(&mut self, source: TypeId, target: TypeId) -> Vec<(TypeId, TypeId)> {
         let mut entering = Vec::new();
-        if source == target || self.says_nothing(source) || self.says_nothing(target) {
+        if source == target || self.is_uninformative(source) || self.is_uninformative(target) {
             return entering;
         }
-        if let Some(known) = self.aot.flows.held_by_pair.get(&(source, target)) {
-            if known.pairs.is_empty() || !self.aot.flows.held_entering.insert((source, target)) {
+        if let Some(known) = self.aot.flows.nested_pairs_cache.get(&(source, target)) {
+            if known.pairs.is_empty() || !self.aot.flows.visited_inflow_pairs.insert((source, target)) {
                 return entering;
             }
             let known = std::rc::Rc::clone(known);
@@ -5293,45 +5635,37 @@ impl<'p, 's> Checker<'p, 's> {
                 let first = entering.len();
                 entering.extend_from_slice(&known.pairs[start..end]);
                 taken = end;
-                self.end_what_grows(from, to, first, &mut entering);
+                self.truncate_growing_types(from, to, first, &mut entering);
             }
             entering.extend_from_slice(&known.pairs[taken..]);
             return entering;
         }
-        if !self.aot.flows.held_entering.insert((source, target)) {
+        let caches = self.type_caches().filter(|_| is_published(source) && is_published(target));
+        if let Some(known) = caches.and_then(|caches| caches.nested_pairs_cache.get_as((source, target), NestedPairs::clone)) {
+            self.aot.flows.nested_pairs_cache.insert((source, target), std::rc::Rc::new(known));
+            return self.nested_inflow_pairs(source, target);
+        }
+        if !self.aot.flows.visited_inflow_pairs.insert((source, target)) {
             return entering;
         }
-        let may_be_kept = !self.answers_are_provisional();
-        let careful_before = (self.times_half_of_stack_was_in_use(), self.aot.flows.times_not_known);
-        let mut held = HeldByPair::default();
-        let mut functions_of: Vec<Option<std::rc::Rc<[(Atom, TypeId)]>>> = vec![None; self.parts(target).len()];
-        let mut said_by: Vec<Option<([Option<TypeId>; 2], [bool; 2])>> = vec![None; self.parts(target).len()];
+        let is_result_cacheable = !self.results_are_provisional();
+        let careful_before = (self.stack_half_used_count(), self.aot.flows.unknown_count);
+        let scope = self.begin_scope();
+        let marks_before = (self.non_cacheable_mark(), self.cuts());
+        let mut held = NestedPairs::default();
         let is_large = self.parts(target).len() >= 16;
-        let (mut taking, mut by_declaration): (Vec<u32>, Vec<(Sym, u32)>) = (Vec::new(), Vec::new());
-        if is_large {
-            for (number, &to) in self.parts(target).iter().enumerate() {
-                if self.has_primitive_flag(to) {
-                    continue;
-                }
-                if let TypeData::Ref { target: declared, .. } = *self.data(to) {
-                    by_declaration.push((declared, number as u32));
-                }
-                let (held_as, is_called) = *said_by[number].insert(self.held_and_called(to));
-                let functions = self.function_members_of(to);
-                if held_as != [None, None] || is_called != [false, false] || !functions.is_empty() {
-                    taking.push(number as u32);
-                }
-                functions_of[number] = Some(functions);
-            }
-            by_declaration.sort_unstable();
-        }
+        let large = if is_large { self.large_union_info(target) } else { Default::default() };
+        let mut functions_of: Vec<Option<std::rc::Rc<[(Atom, TypeId)]>>> = vec![None; if is_large { 0 } else { self.parts(target).len() }];
+        let mut value_summary: Vec<Option<([Option<TypeId>; 2], [bool; 2])>> = vec![None; functions_of.len()];
+        let (taking, by_declaration) = (&large.relevant_parts, &large.parts_by_declaration);
         for &from in self.parts(source) {
             if self.has_primitive_flag(from) {
                 continue;
             }
-            let is_written = self.is_record_written_by_the_program(from);
+            let is_written = self.is_program_declared_record(from);
+            let is_declared_only = !is_written && self.is_declared_only_record(from);
             let mut said_by_from = None;
-            let gone_through: Option<Vec<u32>> = (is_large && is_written).then(|| {
+            let visited: Option<Vec<u32>> = (is_large && is_written).then(|| {
                 let mut numbers = taking.clone();
                 if let TypeData::Ref { target: declared, .. } = self.data(from) {
                     let first = by_declaration.partition_point(|of_part| of_part.0 < *declared);
@@ -5341,10 +5675,10 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 numbers
             });
-            let tags_of_from = if gone_through.as_ref().is_some_and(|numbers| numbers.len() > 1) { Some(self.tags_of(from)) } else { None };
+            let tags_of_from = if visited.as_ref().is_some_and(|numbers| numbers.len() > 1) { Some(self.tags_of(from)) } else { None };
             let mut next = 0;
             loop {
-                let number = match &gone_through {
+                let number = match &visited {
                     Some(numbers) => match numbers.get(next) {
                         Some(&number) => number as usize,
                         None => break,
@@ -5375,15 +5709,16 @@ impl<'p, 's> Checker<'p, 's> {
                 let first = entering.len();
                 let (held_by_key, is_declared) = match said_by_from {
                     Some(known) => known,
-                    None => *said_by_from.insert(self.held_and_called(from)),
+                    None => *said_by_from.insert(self.element_and_call_types_of(from)),
                 };
-                let (held_as, is_called) = match said_by[number] {
+                let (slot_type, is_called) = match if is_large { large.element_and_call_types[number] } else { value_summary[number] } {
                     Some(known) => known,
-                    None => *said_by[number].insert(self.held_and_called(to)),
+                    None if is_large => self.element_and_call_types_of(to),
+                    None => *value_summary[number].insert(self.element_and_call_types_of(to)),
                 };
                 for key in 0..2 {
-                    if let (Some(held), Some(held_as)) = (held_by_key[key], held_as[key]) {
-                        entering.push((held, held_as));
+                    if let (Some(held), Some(slot_type)) = (held_by_key[key], slot_type[key]) {
+                        entering.push((held, slot_type));
                     }
                 }
                 // A function that is called as `to` says is handed what that takes, and what it yields is taken for what that yields.
@@ -5393,60 +5728,95 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     for &called_as in self.signatures(to, constructs).iter() {
                         let arguments = self.sig_params(called_as);
-                        for &declared_as in self.signatures(from, constructs).iter() {
-                            let parameters = self.sig_params(declared_as);
+                        for &declared_sig in self.signatures(from, constructs).iter() {
+                            let parameters = self.sig_params(declared_sig);
                             for index in 0..parameters.len() {
                                 if let (Some(argument), Some(parameter)) = (self.param_type_at(&arguments, index), self.param_type_at(&parameters, index)) {
                                     entering.push((argument, parameter));
                                 }
                             }
-                            entering.push((self.sig_return(declared_as), self.sig_return(called_as)));
+                            entering.push((self.sig_return(declared_sig), self.sig_return(called_as)));
                         }
                     }
                 }
                 // So with a function that is a property: `{ deps: (ctx: A) => .. }` that is taken for a `{ deps: (ctx: Big) => .. }` is handed a `Big`.
                 // Not of what the standard library or a declaration file writes: `then` yields a `Promise` of a type parameter of its own, whose `then` yields another: that does not end.
                 if !is_written {
-                    if self.is_declared_only_record(from) {
-                        for (name, held_as) in self.object_members_of(to) {
+                    if is_declared_only {
+                        for (name, slot_type) in self.object_members(to) {
                             if let Some(held) = self.type_of_property(from, name)
-                                && held != held_as
+                                && held != slot_type
                             {
-                                entering.push((held, held_as));
+                                entering.push((held, slot_type));
                             }
                         }
                     }
                     held.add_run(from, to, &entering[first..]);
-                    self.end_what_grows(from, to, first, &mut entering);
+                    self.truncate_growing_types(from, to, first, &mut entering);
                     continue;
                 }
-                if functions_of[number].is_none() {
-                    functions_of[number] = Some(self.function_members_of(to));
-                }
-                for index in 0..functions_of[number].as_ref().map_or(0, |functions| functions.len()) {
-                    let Some(&(name, held_as)) = functions_of[number].as_ref().and_then(|functions| functions.get(index)) else { break };
+                let functions = match if is_large { &large.function_members[number] } else { &functions_of[number] } {
+                    Some(known) => std::rc::Rc::clone(known),
+                    None if is_large => self.function_members_cache(to),
+                    None => std::rc::Rc::clone(functions_of[number].insert(self.function_members_cache(to))),
+                };
+                for &(name, slot_type) in functions.iter() {
                     if let Some(held) = self.type_of_property(from, name)
-                        && held != held_as
+                        && held != slot_type
                     {
-                        entering.push((held, held_as));
+                        entering.push((held, slot_type));
                     }
                 }
                 held.add_run(from, to, &entering[first..]);
-                self.end_what_grows(from, to, first, &mut entering);
+                self.truncate_growing_types(from, to, first, &mut entering);
             }
         }
-        if may_be_kept && careful_before == (self.times_half_of_stack_was_in_use(), self.aot.flows.times_not_known) {
-            self.aot.flows.held_by_pair.insert((source, target), std::rc::Rc::new(held));
+        let is_whole = self.end_scope(scope).is_ok() && marks_before == (self.non_cacheable_mark(), self.cuts());
+        if is_result_cacheable && careful_before == (self.stack_half_used_count(), self.aot.flows.unknown_count) {
+            if let Some(caches) = caches.filter(|_| is_whole && held.is_published() && !self.has_order_dependent_results()) {
+                caches.nested_pairs_cache.insert((source, target), held.clone());
+            }
+            self.aot.flows.nested_pairs_cache.insert((source, target), std::rc::Rc::new(held));
         }
         entering
     }
 
-    fn tags_of(&mut self, ty: TypeId) -> std::rc::Rc<[(Atom, Box<[u64]>)]> {
-        let may_be_kept = !self.answers_are_provisional();
-        if may_be_kept && let Some(known) = self.aot.flows.tags.get(&ty) {
+    fn large_union_info(&mut self, union: TypeId) -> std::rc::Rc<LargeUnionInfo> {
+        let is_result_cacheable = !self.results_are_provisional();
+        if is_result_cacheable && let Some(known) = self.aot.flows.large_union_infos.get(&union) {
             return std::rc::Rc::clone(known);
         }
-        let careful_before = (self.times_half_of_stack_was_in_use(), self.aot.flows.times_not_known);
+        let careful_before = (self.stack_half_used_count(), self.aot.flows.unknown_count);
+        let part_count = self.parts(union).len();
+        let mut info = LargeUnionInfo { element_and_call_types: vec![None; part_count], function_members: vec![None; part_count], ..Default::default() };
+        for (number, &part) in self.parts(union).iter().enumerate() {
+            if self.has_primitive_flag(part) {
+                continue;
+            }
+            if let TypeData::Ref { target: declared, .. } = *self.data(part) {
+                info.parts_by_declaration.push((declared, number as u32));
+            }
+            let (element_types, is_called) = *info.element_and_call_types[number].insert(self.element_and_call_types_of(part));
+            let functions = self.function_members_cache(part);
+            if element_types != [None, None] || is_called != [false, false] || !functions.is_empty() {
+                info.relevant_parts.push(number as u32);
+            }
+            info.function_members[number] = Some(functions);
+        }
+        info.parts_by_declaration.sort_unstable();
+        let info = std::rc::Rc::new(info);
+        if is_result_cacheable && careful_before == (self.stack_half_used_count(), self.aot.flows.unknown_count) {
+            self.aot.flows.large_union_infos.insert(union, std::rc::Rc::clone(&info));
+        }
+        info
+    }
+
+    fn tags_of(&mut self, ty: TypeId) -> std::rc::Rc<[(Atom, Box<[u64]>)]> {
+        let is_result_cacheable = !self.results_are_provisional();
+        if is_result_cacheable && let Some(known) = self.aot.flows.tags.get(&ty) {
+            return std::rc::Rc::clone(known);
+        }
+        let careful_before = (self.stack_half_used_count(), self.aot.flows.unknown_count);
         let mut tags = Vec::new();
         if let Some(members) = self.members(ty) {
             for prop in members.shape().props.iter().filter(|prop| !prop.flags.contains(PropFlags::OPTIONAL)) {
@@ -5454,7 +5824,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if !self.parts(of_prop).iter().all(|&part| matches!(self.data(part), TypeData::StringLit { .. } | TypeData::NumberLit { .. } | TypeData::EnumLit { .. })) {
                     continue;
                 }
-                let constants: Box<[u64]> = (self.literals_of_type(of_prop).into_iter())
+                let constants: Box<[u64]> = (self.type_literals(of_prop).into_iter())
                     .map(|constant| match constant {
                         Literal::String(text) => 0x7FF8_0001_0000_0000 | u64::from(text.0),
                         Literal::Number(number) => number.to_bits(),
@@ -5466,62 +5836,74 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let tags: std::rc::Rc<[(Atom, Box<[u64]>)]> = tags.into();
-        if may_be_kept && careful_before == (self.times_half_of_stack_was_in_use(), self.aot.flows.times_not_known) {
+        if is_result_cacheable && careful_before == (self.stack_half_used_count(), self.aot.flows.unknown_count) {
             self.aot.flows.tags.insert(ty, std::rc::Rc::clone(&tags));
         }
         tags
     }
 
-    fn object_members_of(&mut self, ty: TypeId) -> Vec<(Atom, TypeId)> {
-        if !self.is_record_written_by_the_program(ty) {
+    fn object_members(&mut self, ty: TypeId) -> Vec<(Atom, TypeId)> {
+        if !self.is_program_declared_record(ty) {
             return Vec::new();
         }
         let Some(members) = self.members(ty) else { return Vec::new() };
         let names: Vec<Atom> = members.shape().props.iter().map(|prop| prop.name).collect();
         let mut found = Vec::new();
         for name in names {
-            if let Some(held_as) = self.type_of_property(ty, name)
-                && (self.may_hold_objects(held_as) || self.parts(held_as).iter().any(|&part| !self.signatures(part, false).is_empty()))
+            if let Some(slot_type) = self.type_of_property(ty, name)
+                && (self.may_hold_objects(slot_type) || self.parts(slot_type).iter().any(|&part| !self.signatures(part, false).is_empty()))
             {
-                found.push((name, held_as));
+                found.push((name, slot_type));
             }
         }
         found
     }
 
-    fn function_members_of(&mut self, ty: TypeId) -> std::rc::Rc<[(Atom, TypeId)]> {
-        let may_be_kept = !self.answers_are_provisional();
-        if may_be_kept && let Some(known) = self.aot.flows.function_members_of.get(&ty) {
+    fn function_members_cache(&mut self, ty: TypeId) -> std::rc::Rc<[(Atom, TypeId)]> {
+        let is_result_cacheable = !self.results_are_provisional();
+        if is_result_cacheable && let Some(known) = self.aot.flows.function_members_cache.get(&ty) {
             return std::rc::Rc::clone(known);
         }
-        let careful_before = (self.times_half_of_stack_was_in_use(), self.aot.flows.times_not_known);
+        let caches = self.type_caches().filter(|_| is_published(ty));
+        if let Some(known) = caches.and_then(|caches| caches.function_members.get_as(ty, |known| std::rc::Rc::<[(Atom, TypeId)]>::from(&known[..]))) {
+            self.aot.flows.function_members_cache.insert(ty, std::rc::Rc::clone(&known));
+            return known;
+        }
+        let careful_before = (self.stack_half_used_count(), self.aot.flows.unknown_count);
+        let scope = self.begin_scope();
+        let marks_before = (self.non_cacheable_mark(), self.cuts());
         let mut functions = Vec::new();
-        if self.is_record_written_by_the_program(ty)
+        if self.is_program_declared_record(ty)
             && let Some(members) = self.members(ty)
         {
             let names: Vec<Atom> = members.shape().props.iter().map(|prop| prop.name).collect();
             for name in names {
-                if let Some(held_as) = self.type_of_property(ty, name)
-                    && self.parts(held_as).iter().any(|&part| !self.signatures(part, false).is_empty())
+                if let Some(slot_type) = self.type_of_property(ty, name)
+                    && self.parts(slot_type).iter().any(|&part| !self.signatures(part, false).is_empty())
                 {
-                    functions.push((name, held_as));
+                    functions.push((name, slot_type));
                 }
             }
         }
+        let is_whole = self.end_scope(scope).is_ok() && marks_before == (self.non_cacheable_mark(), self.cuts());
         let functions: std::rc::Rc<[(Atom, TypeId)]> = functions.into();
-        if may_be_kept && careful_before == (self.times_half_of_stack_was_in_use(), self.aot.flows.times_not_known) {
-            self.aot.flows.function_members_of.insert(ty, std::rc::Rc::clone(&functions));
+        if is_result_cacheable && careful_before == (self.stack_half_used_count(), self.aot.flows.unknown_count) {
+            self.aot.flows.function_members_cache.insert(ty, std::rc::Rc::clone(&functions));
+            let is_task_independent = is_whole && functions.iter().all(|&(name, slot_type)| !name.is_own() && is_published(slot_type));
+            if let Some(caches) = caches.filter(|_| is_task_independent && !self.has_order_dependent_results()) {
+                caches.function_members.insert(ty, functions.iter().copied().collect());
+            }
         }
         functions
     }
 
-    pub fn values_cast_into_dictionaries(&mut self, source: TypeId, target: TypeId) -> std::rc::Rc<[(TypeId, TypeId)]> {
-        if !self.answers_are_provisional()
+    pub fn dictionary_cast_value_pairs(&mut self, source: TypeId, target: TypeId) -> std::rc::Rc<[(TypeId, TypeId)]> {
+        if !self.results_are_provisional()
             && let Some(known) = self.aot.flows.cast_into_dictionaries.get(&(source, target))
         {
             return std::rc::Rc::clone(known);
         }
-        let (found, is_cacheable) = self.compute_cacheable(|c| c.find_values_cast_into_dictionaries(source, target));
+        let (found, is_cacheable) = self.compute_cacheable(|c| c.compute_dictionary_cast_value_pairs(source, target));
         let found: std::rc::Rc<[(TypeId, TypeId)]> = found.into();
         if is_cacheable {
             self.aot.flows.cast_into_dictionaries.insert((source, target), std::rc::Rc::clone(&found));
@@ -5529,9 +5911,9 @@ impl<'p, 's> Checker<'p, 's> {
         found
     }
 
-    fn held_by_names_of(&mut self, ty: TypeId) -> std::rc::Rc<[(Atom, TypeId)]> {
-        if !self.answers_are_provisional()
-            && let Some(known) = self.aot.flows.held_by_names.get(&ty)
+    fn compute_stored_property_types(&mut self, ty: TypeId) -> std::rc::Rc<[(Atom, TypeId)]> {
+        if !self.results_are_provisional()
+            && let Some(known) = self.aot.flows.stored_property_types.get(&ty)
         {
             return std::rc::Rc::clone(known);
         }
@@ -5541,51 +5923,51 @@ impl<'p, 's> Checker<'p, 's> {
         });
         let found: std::rc::Rc<[(Atom, TypeId)]> = found.into();
         if is_cacheable {
-            self.aot.flows.held_by_names.insert(ty, std::rc::Rc::clone(&found));
+            self.aot.flows.stored_property_types.insert(ty, std::rc::Rc::clone(&found));
         }
         found
     }
 
-    fn held_by_name(&mut self, ty: TypeId, name: Atom) -> Option<TypeId> {
-        if !self.answers_are_provisional()
-            && let Some(&known) = self.aot.flows.held_by_name.get(&(ty, name))
+    fn stored_property_type(&mut self, ty: TypeId, name: Atom) -> Option<TypeId> {
+        if !self.results_are_provisional()
+            && let Some(&known) = self.aot.flows.stored_property_type.get(&(ty, name))
         {
             return known;
         }
         let (found, is_cacheable) = self.compute_cacheable(|c| c.type_of_property(ty, name));
         if is_cacheable {
-            self.aot.flows.held_by_name.insert((ty, name), found);
+            self.aot.flows.stored_property_type.insert((ty, name), found);
         }
         found
     }
 
-    fn find_values_cast_into_dictionaries(&mut self, source: TypeId, target: TypeId) -> Vec<(TypeId, TypeId)> {
+    fn compute_dictionary_cast_value_pairs(&mut self, source: TypeId, target: TypeId) -> Vec<(TypeId, TypeId)> {
         let mut found = Vec::new();
         let mut pending = vec![(source, target, 0u8)];
         let mut seen: FxHashSet<(TypeId, TypeId)> = FxHashSet::default();
         while let Some((source, target, depth)) = pending.pop() {
-            if depth > 4 || source == target || self.says_nothing(source) || self.says_nothing(target) || !seen.insert((source, target)) {
+            if depth > 4 || source == target || self.is_uninformative(source) || self.is_uninformative(target) || !seen.insert((source, target)) {
                 continue;
             }
             for from in self.parts(source).to_vec() {
-                if self.has_primitive_flag(from) || !self.is_record_written_by_the_program(from) || self.index_type_of_type(from, TypeId::STRING).is_some() {
+                if self.has_primitive_flag(from) || !self.is_program_declared_record(from) || self.index_type_of_type(from, TypeId::STRING).is_some() {
                     continue;
                 }
-                let held_by_names = self.held_by_names_of(from);
+                let stored_property_types = self.compute_stored_property_types(from);
                 for to in self.parts(target).to_vec() {
                     if from == to || self.has_primitive_flag(to) {
                         continue;
                     }
                     let value = self.index_type_of_type(to, TypeId::STRING);
-                    for &(name, held) in held_by_names.iter() {
+                    for &(name, held) in stored_property_types.iter() {
                         match value {
                             Some(value) => {
                                 found.push((held, value));
                                 pending.push((held, value, depth + 1));
                             }
                             None => {
-                                if let Some(held_as) = self.held_by_name(to, name) {
-                                    pending.push((held, held_as, depth + 1));
+                                if let Some(slot_type) = self.stored_property_type(to, name) {
+                                    pending.push((held, slot_type, depth + 1));
                                 }
                             }
                         }
@@ -5596,33 +5978,58 @@ impl<'p, 's> Checker<'p, 's> {
         found
     }
 
-    fn held_and_called(&mut self, ty: TypeId) -> ([Option<TypeId>; 2], [bool; 2]) {
-        let may_be_kept = !self.answers_are_provisional();
-        if may_be_kept && let Some(&known) = self.aot.flows.held_and_called_by.get(&ty) {
+    pub(super) fn type_caches(&self) -> Option<&'p TypeCaches> {
+        let program = self.p;
+        let is_shared = self.aot.is_translating
+            && program.aot.storage.given.is_finalized()
+            && !self.is_warming_up()
+            && !self.results_are_provisional()
+            && self.aot.flows.stored.is_none()
+            && self.aot.flows.seen_before.is_none();
+        is_shared.then(|| &program.aot.type_caches)
+    }
+
+    fn element_and_call_types_of(&mut self, ty: TypeId) -> ([Option<TypeId>; 2], [bool; 2]) {
+        let is_result_cacheable = !self.results_are_provisional();
+        if is_result_cacheable && let Some(&known) = self.aot.flows.element_and_call_types.get(&ty) {
             return known;
         }
-        let careful_before = (self.times_half_of_stack_was_in_use(), self.aot.flows.times_not_known);
-        let held = [TypeId::NUMBER, TypeId::STRING].map(|key| self.index_type_of_type(ty, key));
-        let found = (held, [false, true].map(|constructs| !self.signatures(ty, constructs).is_empty()));
-        if may_be_kept && careful_before == (self.times_half_of_stack_was_in_use(), self.aot.flows.times_not_known) {
-            self.aot.flows.held_and_called_by.insert(ty, found);
+        let caches = self.type_caches().filter(|_| is_published(ty));
+        if let Some(known) = caches.and_then(|caches| caches.index_and_call_facts.get_as(ty, |&known| known)) {
+            self.aot.flows.element_and_call_types.insert(ty, known);
+            return known;
+        }
+        let careful_before = (self.stack_half_used_count(), self.aot.flows.unknown_count);
+        let (found, is_cacheable) = self.compute_cacheable(|c| {
+            let held = [TypeId::NUMBER, TypeId::STRING].map(|key| c.index_type_of_type(ty, key));
+            (held, [false, true].map(|constructs| !c.signatures(ty, constructs).is_empty()))
+        });
+        if is_result_cacheable && careful_before == (self.stack_half_used_count(), self.aot.flows.unknown_count) {
+            self.aot.flows.element_and_call_types.insert(ty, found);
+            let is_task_independent = is_cacheable && found.0.iter().flatten().all(|&held| is_published(held));
+            if let Some(caches) = caches.filter(|_| is_task_independent && !self.has_order_dependent_results()) {
+                caches.index_and_call_facts.insert(ty, found);
+            }
         }
         found
     }
 
-    fn applied_by(&self, ty: TypeId) -> Applied {
+    fn application_of(&self, ty: TypeId) -> Applied {
         match *self.data(ty) {
             TypeData::Ref { target, .. } => Applied::Named(target),
             TypeData::Anon { origin, .. } => Applied::Written(origin),
             TypeData::Fns { ref decls, .. } => decls.first().map_or(Applied::Computed, |&(file, func)| Applied::Function(file, func)),
-            TypeData::Intersection(ref parts) => parts.first().map_or(Applied::Computed, |&part| self.applied_by(part)),
+            TypeData::Intersection(ref parts) => parts.first().map_or(Applied::Computed, |&part| self.application_of(part)),
             _ => Applied::Computed,
         }
     }
 
-    fn is_nested_more_in_itself(&mut self, inner: TypeId, outer: [TypeId; 2]) -> bool {
+    fn is_self_nesting_growing(&mut self, inner: TypeId, outer: [TypeId; 2]) -> bool {
+        if self.nesting_bound(inner) == 0 {
+            return false;
+        }
         for ty in [inner, outer[0], outer[1]] {
-            self.find_applications_in(ty);
+            self.collect_applications(ty);
         }
         let applications = &self.aot.flows.applications;
         applications[&inner].iter().any(|&(applied, times)| {
@@ -5631,49 +6038,60 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    pub fn times_not_known(&self) -> usize {
-        self.aot.flows.times_not_known
+    pub fn unknown_count(&self) -> usize {
+        self.aot.flows.unknown_count
     }
 
     pub(super) fn compute_cacheable<R>(&mut self, compute: impl FnOnce(&mut Checker<'p, 's>) -> R) -> (R, bool) {
-        let may_be_kept = !self.answers_are_provisional();
+        let is_result_cacheable = !self.results_are_provisional();
         let scope = self.begin_scope();
-        let before = (self.non_cacheable_mark(), self.cuts(), self.times_half_of_stack_was_in_use(), self.aot.flows.times_not_known);
+        let before = (self.non_cacheable_mark(), self.cuts(), self.stack_half_used_count(), self.aot.flows.unknown_count);
         let found = compute(self);
-        let is_whole = before == (self.non_cacheable_mark(), self.cuts(), self.times_half_of_stack_was_in_use(), self.aot.flows.times_not_known);
-        (found, self.end_scope(scope).is_ok() && is_whole && may_be_kept)
+        let is_whole = before == (self.non_cacheable_mark(), self.cuts(), self.stack_half_used_count(), self.aot.flows.unknown_count);
+        (found, self.end_scope(scope).is_ok() && is_whole && is_result_cacheable)
     }
 
-    pub(super) fn answers_are_provisional(&self) -> bool {
-        self.aot.flows.is_searching_from_doors || self.aot.flows.being_asked_of_taint != 0 || self.aot.flows.finding_canonical != 0
+    pub fn contextual_type_of_literal(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
+        if let Some(&cached) = self.aot.flows.literal_contextual_types.get(&(file, e)) {
+            return cached;
+        }
+        let (found, is_cacheable) = self.compute_cacheable(|c| c.contextual_type_of_literal_uncached(file, e));
+        if is_cacheable {
+            self.aot.flows.literal_contextual_types.insert((file, e), found);
+        }
+        found
+    }
+
+    pub(super) fn results_are_provisional(&self) -> bool {
+        self.aot.flows.is_searching_from_sources || self.aot.flows.taint_query_depth != 0 || self.aot.flows.finding_canonical != 0
     }
 
     pub fn descend_into_checked_value(&mut self) {
-        self.aot.flows.levels_looked_into += 1;
+        self.aot.flows.levels_inspected += 1;
     }
 
-    pub fn come_back_a_level(&mut self) {
-        self.aot.flows.levels_looked_into -= 1;
+    pub fn ascend_from_checked_value(&mut self) {
+        self.aot.flows.levels_inspected -= 1;
     }
 
-    fn end_what_grows(&mut self, from: TypeId, to: TypeId, first: usize, entering: &mut Vec<(TypeId, TypeId)>) {
+    fn truncate_growing_types(&mut self, from: TypeId, to: TypeId, first: usize, entering: &mut Vec<(TypeId, TypeId)>) {
         if entering.len() == first {
             return;
         }
         let mut grown = Vec::new();
         for index in first..entering.len() {
-            let (held, held_as) = entering[index];
-            if self.is_nested_more_in_itself(held, [from, to]) || self.is_nested_more_in_itself(held_as, [from, to]) {
+            let (held, slot_type) = entering[index];
+            if self.is_self_nesting_growing(held, [from, to]) || self.is_self_nesting_growing(slot_type, [from, to]) {
                 grown.push(index);
             }
         }
-        let key = (self.applied_by(from), self.applied_by(to));
+        let key = (self.application_of(from), self.application_of(to));
         let times = self.aot.flows.looked_into.entry(key).or_default();
         times[0] += 1;
         times[1] += u32::from(!grown.is_empty());
         let [at_all, for_what_grows] = *times;
-        let levels = self.aot.flows.levels_looked_into;
-        let most = &mut self.aot.flows.noted.most_looked_into;
+        let levels = self.aot.flows.levels_inspected;
+        let most = &mut self.aot.flows.noted.max_inspected;
         *most = [most[0].max(at_all), most[1].max(for_what_grows), most[2].max(levels)];
         let why = if levels > MAX_LEVELS_INSPECTED {
             3
@@ -5690,40 +6108,40 @@ impl<'p, 's> Checker<'p, 's> {
             grown = (first..entering.len()).collect();
         }
         let at = self.aot.flows.place;
-        self.aot.flows.noted.cut_short.entry(at).or_default()[why] += 1;
+        self.aot.flows.noted.truncated.entry(at).or_default()[why] += 1;
         for index in grown.into_iter().rev() {
-            let (held, held_as) = entering.remove(index);
-            self.note_uninspected_type(held, held_as);
+            let (held, slot_type) = entering.remove(index);
+            self.record_uninspected_type(held, slot_type);
         }
     }
 
-    fn note_foreign_source_once(&mut self, ty: TypeId) {
+    fn record_untyped_source_once(&mut self, ty: TypeId) {
         if ty == TypeId::UNRESOLVED {
             return;
         }
-        let (mut seen, mut views) = (std::mem::take(&mut self.aot.flows.not_looked_into), Vec::new());
-        self.add_what_stays_untyped(ty, true, &mut seen, &mut views);
-        self.aot.flows.not_looked_into = seen;
+        let (mut seen, mut views) = (std::mem::take(&mut self.aot.flows.uninspected), Vec::new());
+        self.add_types_staying_untyped(ty, true, &mut seen, &mut views);
+        self.aot.flows.uninspected = seen;
         for view in views {
-            self.note_foreign(view, TypeId::UNRESOLVED);
+            self.record_untyped(view, TypeId::UNRESOLVED);
         }
     }
 
-    fn note_uninspected_type(&mut self, held: TypeId, held_as: TypeId) {
-        self.note_foreign_source_once(held_as);
-        for (function, is_what_it_is_called_as) in [(held_as, true), (held, false)] {
+    fn record_uninspected_type(&mut self, held: TypeId, slot_type: TypeId) {
+        self.record_untyped_source_once(slot_type);
+        for (function, is_what_it_is_called_as) in [(slot_type, true), (held, false)] {
             for &part in self.parts(function) {
                 for constructs in [false, true] {
                     for &signature in self.signatures(part, constructs).iter() {
                         if is_what_it_is_called_as {
                             let yielded = self.sig_return(signature);
-                            self.note_foreign_source_once(yielded);
+                            self.record_untyped_source_once(yielded);
                             continue;
                         }
                         let parameters = self.sig_params(signature);
                         for index in 0..parameters.len() {
                             if let Some(parameter) = self.param_type_at(&parameters, index) {
-                                self.note_foreign_source_once(parameter);
+                                self.record_untyped_source_once(parameter);
                             }
                         }
                     }
@@ -5732,7 +6150,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    fn is_record_written_by_the_program(&self, ty: TypeId) -> bool {
+    fn is_program_declared_record(&self, ty: TypeId) -> bool {
         let file = match *self.data(ty) {
             TypeData::Ref { target, .. } => target.file,
             TypeData::Anon { origin: Origin::TypeLiteral(file, _) | Origin::ObjectLiteral(file, ..) | Origin::WidenedLiteral(file, ..), .. } => file,
@@ -5744,23 +6162,23 @@ impl<'p, 's> Checker<'p, 's> {
     /// Whether a value of type `source`, whose objects are not laid out, may enter a place for objects of one of `views` as it is: `source`
     /// says what they are, which `any`, `unknown`, `object` and `{}` do not, and each is seen as one of the views. If so, note is taken
     /// that the view admits them.
-    pub fn admits_foreign(&mut self, source: TypeId, views: &[TypeId]) -> bool {
+    pub fn accepts_untyped(&mut self, source: TypeId, views: &[TypeId]) -> bool {
         let source = self.reduced(source);
-        if self.has_a_namespace_among_its_parts(source) {
+        if self.has_namespace_part(source) {
             let at = self.aot.flows.place;
             for &view in views {
-                self.aot.flows.noted.add_foreign(view, Some(source), at);
+                self.aot.flows.noted.add_untyped(view, Some(source), at);
             }
         }
         let mut admitting = Vec::new();
-        let is_admitted = self.is_taken_by_views(source, views, &mut admitting) && !admitting.is_empty();
-        if is_admitted {
+        let is_accepted = self.find_accepting_types(source, views, &mut admitting) && !admitting.is_empty();
+        if is_accepted {
             let at = self.aot.flows.place;
-            let comes_from_beyond = self.is_beyond_the_layouts(source);
+            let is_external = self.is_beyond_layouts(source);
             for view in admitting {
-                self.aot.flows.noted.add_foreign(view, Some(source), at);
-                if comes_from_beyond {
-                    self.note_foreign_source(view);
+                self.aot.flows.noted.add_untyped(view, Some(source), at);
+                if is_external {
+                    self.record_untyped_source(view);
                 }
             }
         } else if self.has_tainted_part(source) {
@@ -5770,43 +6188,43 @@ impl<'p, 's> Checker<'p, 's> {
                     continue;
                 }
                 for &view in views {
-                    if self.is_type_of_instances(view) && self.is_seen_as(part, view) {
-                        self.aot.flows.noted.add_foreign(view, Some(part), at);
+                    if self.is_instance_type(view) && self.is_upcast_safe(part, view) {
+                        self.aot.flows.noted.add_untyped(view, Some(part), at);
                     }
                 }
             }
         }
-        is_admitted
+        is_accepted
     }
 
     /// Appends the views that take the objects a value of type `source` can be. False: there is none for some, or it is not known what
     /// they are.
-    fn is_taken_by_views(&mut self, source: TypeId, views: &[TypeId], out: &mut Vec<TypeId>) -> bool {
+    fn find_accepting_types(&mut self, source: TypeId, views: &[TypeId], out: &mut Vec<TypeId>) -> bool {
         if let TypeData::Union(parts) = self.data(source) {
-            return parts.iter().all(|&part| self.is_taken_by_views(part, views, out));
+            return parts.iter().all(|&part| self.find_accepting_types(part, views, out));
         }
-        if self.says_nothing(source) || source == TypeId::OBJECT {
+        if self.is_uninformative(source) || source == TypeId::OBJECT {
             return false;
         }
         if self.is_instantiable(source) {
             let bound = self.base_constraint(source);
-            return bound != source && self.is_taken_by_views(bound, views, out);
+            return bound != source && self.find_accepting_types(bound, views, out);
         }
         // Whether a primitive may enter is not asked here.
         if self.has_primitive_flag(source) {
             return true;
         }
-        if self.admits_primitives(source) {
+        if self.accepts_primitives(source) {
             return false;
         }
         let mut not_known = Vec::new();
         for &view in views {
-            let not_known_before = self.aot.flows.times_not_known;
-            if self.is_seen_as(source, view) {
+            let not_known_before = self.aot.flows.unknown_count;
+            if self.is_upcast_safe(source, view) {
                 out.push(view);
                 return true;
             }
-            if self.aot.flows.times_not_known != not_known_before {
+            if self.aot.flows.unknown_count != not_known_before {
                 not_known.push(view);
             }
         }
@@ -5817,31 +6235,31 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Whether an object literal that is checked against the type is checked against the type of the objects of a class. It is not made
     /// as that: nothing but the constructor makes one.
-    pub fn is_checked_against_a_class(&self, expected: TypeId) -> bool {
-        self.parts(expected).iter().any(|&part| self.is_type_of_instances(part))
+    pub fn is_checked_against_class(&self, expected: TypeId) -> bool {
+        self.parts(expected).iter().any(|&part| self.is_instance_type(part))
     }
 
-    fn classes_named_by(&self, types: &[TypeId]) -> FxHashSet<Sym> {
+    fn classes_of_types(&self, types: &[TypeId]) -> FxHashSet<Sym> {
         (types.iter())
             .filter_map(|&ty| match *self.data(ty) {
-                TypeData::Ref { target, .. } if self.is_type_of_instances(ty) => Some(target),
+                TypeData::Ref { target, .. } if self.is_instance_type(ty) => Some(target),
                 _ => None,
             })
             .collect()
     }
 
-    fn classes_opened_for_strangers(&mut self, let_out: &[TypeId], entered: &[TypeId], entered_if_let_out: &[TypeId]) -> FxHashSet<Sym> {
-        let (mut opened, evidence) = (self.classes_named_by(entered), self.classes_named_by(let_out));
-        let (mut pending, mut ancestors_of_escaped): (Vec<TypeId>, FxHashSet<Sym>) = (let_out.to_vec(), FxHashSet::default());
+    fn classes_accepting_untyped(&mut self, escaped: &[TypeId], entered: &[TypeId], receiving_untyped_if_escaped: &[TypeId]) -> FxHashSet<Sym> {
+        let (mut opened, evidence) = (self.classes_of_types(entered), self.classes_of_types(escaped));
+        let (mut pending, mut ancestors_of_escaped): (Vec<TypeId>, FxHashSet<Sym>) = (escaped.to_vec(), FxHashSet::default());
         while let Some(ty) = pending.pop() {
             let TypeData::Ref { target, .. } = *self.data(ty) else { continue };
             if ancestors_of_escaped.insert(target) {
                 pending.extend(self.base_types(target).iter().copied());
             }
         }
-        for &ty in entered_if_let_out {
+        for &ty in receiving_untyped_if_escaped {
             let TypeData::Ref { target, .. } = *self.data(ty) else { continue };
-            if !self.is_type_of_instances(ty) || opened.contains(&target) {
+            if !self.is_instance_type(ty) || opened.contains(&target) {
                 continue;
             }
             if ancestors_of_escaped.contains(&target) || self.extends_one_of(ty, &evidence) {
@@ -5851,14 +6269,14 @@ impl<'p, 's> Checker<'p, 's> {
         opened
     }
 
-    pub fn classes_served_by_second_bodies(&mut self, let_out: &[TypeId], entered: &[TypeId], entered_if_let_out: &[TypeId], classes: &[TypeId]) -> Vec<bool> {
-        let opened = self.classes_opened_for_strangers(let_out, entered, entered_if_let_out);
-        let mut pending: Vec<TypeId> = let_out.to_vec();
-        let let_out = self.classes_named_by(let_out);
+    pub fn classes_served_by_untyped_clones(&mut self, escaped: &[TypeId], entered: &[TypeId], receiving_untyped_if_escaped: &[TypeId], classes: &[TypeId]) -> Vec<bool> {
+        let opened = self.classes_accepting_untyped(escaped, entered, receiving_untyped_if_escaped);
+        let mut pending: Vec<TypeId> = escaped.to_vec();
+        let escaped = self.classes_of_types(escaped);
         let is_open: Vec<bool> = classes.iter().map(|&class| self.extends_one_of(class, &opened)).collect();
         let mut met: FxHashSet<Sym> = FxHashSet::default();
         for (&class, &is_open) in classes.iter().zip(&is_open) {
-            if is_open || self.extends_one_of(class, &let_out) {
+            if is_open || self.extends_one_of(class, &escaped) {
                 pending.push(class);
             }
         }
@@ -5871,42 +6289,42 @@ impl<'p, 's> Checker<'p, 's> {
         (classes.iter().zip(is_open)).map(|(&class, is_open)| !is_open && matches!(*self.data(class), TypeData::Ref { target, .. } if met.contains(&target))).collect()
     }
 
-    pub fn note_evidence_of_strangers_in(&mut self, file: FileId) {
+    pub fn record_untyped_object_evidence(&mut self, file: FileId) {
         let program = self.p;
-        let kept = self.take_noted();
-        for (_, expressions) in self.code_whose_escapes_are_noted(file) {
-            self.note_escapes_of(file, &expressions);
+        let kept = self.take_notes_recorded();
+        for (_, expressions) in self.code_with_recorded_escapes(file) {
+            self.record_escapes_of(file, &expressions);
         }
-        self.note_escapes_of(file, &[]);
-        let noted = self.take_noted();
+        self.record_escapes_of(file, &[]);
+        let noted = self.take_notes_recorded();
         self.aot.flows.noted = kept;
         let noted = noted.renamed(|ty| match *self.data(ty) {
-            TypeData::Ref { target, .. } if self.is_type_of_instances(ty) => Some(target),
+            TypeData::Ref { target, .. } if self.is_instance_type(ty) => Some(target),
             _ => None,
         });
-        let mut evidence: Noted<Sym> = Noted::default();
-        evidence.absorb_evidence_of_strangers(&noted);
-        let places = program.aot.storage.evidence_of_foreign_objects_noted.get_or_init(|| (0..program.files.modules.len()).map(|_| Guarded::new(None)).collect());
-        *places[file.idx()].lock() = Some(evidence.absorbed.and_then(|absorbed| absorbed.escapes.alterations).unwrap_or_default());
+        let mut evidence: FlowNotes<Sym> = FlowNotes::default();
+        evidence.absorb_untyped_object_evidence(&noted);
+        let places = program.aot.storage.recorded_untyped_object_evidence.get_or_init(|| (0..program.files.modules.len()).map(|_| Guarded::new(None)).collect());
+        *places[file.idx()].lock() = Some(evidence.absorbed.and_then(|absorbed| absorbed.escapes.mutations).unwrap_or_default());
     }
 
-    pub fn merge_noted_evidence_of_foreign_objects(&mut self, is_compiled: &dyn Fn(FileId) -> bool) {
+    pub fn merge_untyped_object_evidence(&mut self, is_compiled: &dyn Fn(FileId) -> bool) {
         let program = self.p;
-        let Some(places) = program.aot.storage.evidence_of_foreign_objects_noted.get() else { return };
-        let mut all: super::alterations::Alterations<Sym> = Default::default();
+        let Some(places) = program.aot.storage.recorded_untyped_object_evidence.get() else { return };
+        let mut all: super::mutations::Mutations<Sym> = Default::default();
         for file in (0..program.files.modules.len() as u32).map(FileId) {
             if !is_compiled(file) || self.hir(file).kind == FileKind::Declaration || self.files.module(file).is_opaque() || self.is_untyped_file(file) {
                 continue;
             }
             let Some(noted) = places[file.idx()].lock().take() else { return };
-            all.absorb_evidence_of_strangers(&noted);
+            all.absorb_untyped_object_evidence(&noted);
         }
-        let evidence: FxHashSet<Sym> = all.all_with_evidence_of_foreign_objects().into_iter().collect();
+        let evidence: FxHashSet<Sym> = all.all_with_untyped_object_evidence().into_iter().collect();
         let mut met: FxHashSet<Sym> = FxHashSet::default();
         let files = if evidence.is_empty() { Vec::new() } else { self.files_declaring_classes() };
         for file in files {
             for class in (0..self.hir(file).classes.len() as u32).map(ClassId) {
-                let ty = self.type_of_instances(file, class);
+                let ty = self.class_instance_type(file, class);
                 if !self.extends_one_of(ty, &evidence) {
                     continue;
                 }
@@ -5919,13 +6337,13 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
         }
-        let _ = program.aot.storage.evidence_of_strangers.set(met);
+        let _ = program.aot.storage.untyped_object_evidence.set(met);
     }
 
-    pub fn may_be_served_by_second_bodies(&mut self, file: FileId, class: ClassId) -> bool {
+    pub fn may_use_untyped_clones(&mut self, file: FileId, class: ClassId) -> bool {
         let program = self.p;
-        let Some(met) = program.aot.storage.evidence_of_strangers.get() else { return true };
-        let ty = self.type_of_instances(file, class);
+        let Some(met) = program.aot.storage.untyped_object_evidence.get() else { return true };
+        let ty = self.class_instance_type(file, class);
         matches!(*self.data(ty), TypeData::Ref { target, .. } if met.contains(&target))
     }
 
@@ -5946,27 +6364,27 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Hands over what has been noted to this checker, which starts anew: what is noted from here on does not depend on what was asked
     /// before.
-    pub fn note_what_is_given(&mut self, kept: &dyn Fn(&Identity) -> Option<TypeId>) -> usize {
+    pub fn record_external_data(&mut self, kept: &dyn Fn(&Identity) -> Option<TypeId>) -> usize {
         let given = self.given();
-        let mut kept_by_nobody: Vec<Identity> = Vec::new();
+        let mut unretained: Vec<Identity> = Vec::new();
         for identity in &given.identities {
             match kept(identity) {
                 Some(ty) => {
-                    self.aot.flows.noted.add_at(NoteKind::NotLaidOut, ty, Place::NOWHERE);
+                    self.aot.flows.noted.add_at(NoteKind::NoFixedLayout, ty, Place::NOWHERE);
                 }
-                None => kept_by_nobody.push(*identity),
+                None => unretained.push(*identity),
             }
         }
-        kept_by_nobody.sort_unstable();
+        unretained.sort_unstable();
         let atoms = self.atoms();
-        self.aot.flows.given_and_kept_by_nobody = kept_by_nobody.iter().filter_map(|identity| given.names.get(identity)).map(|names| names.iter().filter_map(|name| atoms.lookup(name)).collect()).collect();
-        kept_by_nobody.len()
+        self.aot.flows.unretained_external_data = unretained.iter().filter_map(|identity| given.names.get(identity)).map(|names| names.iter().filter_map(|name| atoms.lookup(name)).collect()).collect();
+        unretained.len()
     }
 
-    pub fn take_noted(&mut self) -> Noted {
-        self.aot.flows.held_entering.clear();
+    pub fn take_notes_recorded(&mut self) -> FlowNotes {
+        self.aot.flows.visited_inflow_pairs.clear();
         self.aot.flows.looked_into.clear();
-        self.aot.flows.not_looked_into.clear();
+        self.aot.flows.uninspected.clear();
         let mut noted = std::mem::take(&mut self.aot.flows.noted);
         noted.sort_and_deduplicate();
         noted
@@ -5983,9 +6401,9 @@ impl<'p, 's> Checker<'p, 's> {
     /// Whether it is a type that says which properties its objects have, so that they can be laid out by it. Neither a union nor a type
     /// parameter: those stand for other types.
     #[inline]
-    pub(super) fn says_properties(&self, ty: TypeId) -> bool {
+    pub(super) fn declares_properties(&self, ty: TypeId) -> bool {
         let row = self.row(ty);
-        row & rows::SAYS_PROPERTIES != 0 || row & rows::IS_NAMESPACE_OBJECT != 0 && matches!(self.data(ty), TypeData::Anon { origin: Origin::Module(namespace), .. } if self.is_reified_namespace(*namespace))
+        row & rows::DECLARES_PROPERTIES != 0 || row & rows::IS_NAMESPACE_OBJECT != 0 && matches!(self.data(ty), TypeData::Anon { origin: Origin::Module(namespace), .. } if self.is_reified_namespace(*namespace))
     }
 
     /// Not `{}`, which anything is.
@@ -6013,12 +6431,12 @@ impl<'p, 's> Checker<'p, 's> {
                     self.add_object_types_in(element, in_arrays, seen, out);
                 }
             }
-        } else if let Some(element) = self.element_of_array_subtype(ty) {
+        } else if let Some(element) = self.array_subtype_element(ty) {
             if in_arrays {
                 self.add_object_types_in(element, in_arrays, seen, out);
             }
-        } else if self.says_properties(ty) {
-            out.push(self.laid_out_as(ty));
+        } else if self.declares_properties(ty) {
+            out.push(self.layout_defining_type(ty));
         }
     }
 
@@ -6056,7 +6474,7 @@ impl<'p, 's> Checker<'p, 's> {
                     self.aot.flows.roots.insert(global, root);
                 }
             }
-            for class in self.classes_of_the_engine() {
+            for class in self.engine_classes() {
                 self.aot.flows.roots.insert(class, Root::Class(class));
             }
         }
@@ -6090,27 +6508,27 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// As far as the program's library declares them.
-    fn classes_of_the_engine(&self) -> Vec<Sym> {
-        CLASSES_OF_THE_ENGINE.iter().filter_map(|name| self.global_type_symbol(self.atoms().intern(name))).collect()
+    fn engine_classes(&self) -> Vec<Sym> {
+        ENGINE_CLASSES.iter().filter_map(|name| self.global_type_symbol(self.atoms().intern(name))).collect()
     }
 
     /// `interface Failure extends Error { code: string }`, `interface Callback { (): void; label: string }`, `Buffer`, and `Int32Array & { 0:
     /// number }`, where the other types of the intersection only say more of the properties: what the objects of the type are, whatever
-    /// more it says of them. `None`: nothing of the kind, or an array (`element_of_array_subtype`), or a class of the engine itself.
-    pub fn built_in_extended_by(&mut self, ty: TypeId) -> Option<BuiltIn> {
+    /// more it says of them. `None`: nothing of the kind, or an array (`array_subtype_element`), or a class of the engine itself.
+    pub fn extended_built_in(&mut self, ty: TypeId) -> Option<BuiltIn> {
         match *self.data(ty) {
             TypeData::Ref { target, .. } if self.root_of(target) == Root::Class(target) => None,
-            TypeData::Ref { .. } | TypeData::Intersection(_) => self.built_in_that_is(ty),
+            TypeData::Ref { .. } | TypeData::Intersection(_) => self.built_in_for_type(ty),
             _ => None,
         }
     }
 
     pub(super) fn is_primitive_or_built_in(&mut self, ty: TypeId) -> bool {
-        self.is_primitive(ty) || matches!(self.built_in_that_is(ty), Some(BuiltIn::Instance(_)))
+        self.is_primitive(ty) || matches!(self.built_in_for_type(ty), Some(BuiltIn::Instance(_)))
     }
 
     /// The same, where `ty` may be a class of the engine or the type of a function itself.
-    fn built_in_that_is(&mut self, ty: TypeId) -> Option<BuiltIn> {
+    fn built_in_for_type(&mut self, ty: TypeId) -> Option<BuiltIn> {
         match *self.data(ty) {
             TypeData::Ref { target, .. } => match self.root_of(target) {
                 Root::Function => Some(BuiltIn::Function),
@@ -6122,7 +6540,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 _ => None,
             },
-            TypeData::Intersection(ref parts) => parts.iter().find_map(|&part| self.built_in_that_is(part)),
+            TypeData::Intersection(ref parts) => parts.iter().find_map(|&part| self.built_in_for_type(part)),
             TypeData::Fns { .. } | TypeData::Anon { origin: Origin::Function(_) | Origin::ClassStatic(_), .. } => Some(BuiltIn::Function),
             TypeData::Anon { origin: Origin::TypeLiteral(file, _), .. } => {
                 let is_called = !self.signatures(ty, false).is_empty() || !self.signatures(ty, true).is_empty();
@@ -6137,7 +6555,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// themselves: all of them, or none if it can be others as well, as with `string`, a template literal type, or a type parameter.
     /// The type of a member of an enum names the value of the member. A numeric enum as a whole names nothing: flags are combined. In
     /// an order that only depends on what they are.
-    pub fn literals_of_type(&mut self, ty: TypeId) -> Vec<Literal> {
+    pub fn type_literals(&mut self, ty: TypeId) -> Vec<Literal> {
         let (mut strings, mut numbers): (Vec<Atom>, Vec<f64>) = (Vec::new(), Vec::new());
         let (mut is_any_string, mut is_any_number) = (false, false);
         let parts = self.parts(ty);
@@ -6193,11 +6611,11 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The primitive types that are assignable to the object type `ty`: a string is a `{ length: number }`.
-    pub fn requires_nothing(&mut self, ty: TypeId) -> bool {
+    pub fn has_no_required_properties(&mut self, ty: TypeId) -> bool {
         let objects: Vec<TypeId> = self.parts(ty).iter().copied().filter(|&part| !self.has_primitive_flag(part)).collect();
         !objects.is_empty()
             && objects.into_iter().all(|part| {
-                self.says_properties(part)
+                self.declares_properties(part)
                     && self.members(part).is_some_and(|members| {
                         let shape = members.shape();
                         !shape.props.is_empty() && shape.index.is_empty() && shape.call.is_empty() && shape.construct.is_empty() && shape.props.iter().all(|prop| prop.flags.contains(PropFlags::OPTIONAL))
@@ -6205,33 +6623,33 @@ impl<'p, 's> Checker<'p, 's> {
             })
     }
 
-    pub fn primitives_of_type(&mut self, ty: TypeId) -> Vec<TypeId> {
-        let is_the_same_for_every_task = self.aot.flows.stored.is_none();
-        if !self.answers_are_provisional() {
-            let row = if is_the_same_for_every_task { self.shared_row(ty) } else { 0 };
-            if row & rows::KNOWS_PRIMITIVES != 0 {
-                return PRIMITIVES.iter().enumerate().filter(|primitive| row >> (rows::FIRST_PRIMITIVE + primitive.0 as u32) & 1 != 0).map(|primitive| *primitive.1).collect();
+    pub fn assignable_primitives(&mut self, ty: TypeId) -> Vec<TypeId> {
+        let is_task_independent = self.aot.flows.stored.is_none();
+        if !self.results_are_provisional() {
+            let row = if is_task_independent { self.shared_type_flags(ty) } else { 0 };
+            if row & rows::ASSIGNABLE_PRIMITIVES_KNOWN != 0 {
+                return PRIMITIVES.iter().enumerate().filter(|primitive| row >> (rows::ASSIGNABLE_PRIMITIVES_SHIFT + primitive.0 as u32) & 1 != 0).map(|primitive| *primitive.1).collect();
             }
-            if let Some(known) = self.aot.flows.primitives_of_types.get(&ty) {
+            if let Some(known) = self.aot.flows.type_primitives.get(&ty) {
                 return known.clone();
             }
         }
-        let (found, is_cacheable) = self.compute_cacheable(|c| c.find_primitives_of_type(ty));
+        let (found, is_cacheable) = self.compute_cacheable(|c| c.compute_type_primitives(ty));
         if is_cacheable {
-            let bits = PRIMITIVES.iter().enumerate().filter(|primitive| found.contains(primitive.1)).fold(rows::KNOWS_PRIMITIVES, |bits, primitive| bits | 1 << (rows::FIRST_PRIMITIVE + primitive.0 as u32));
-            if !is_the_same_for_every_task || !self.share_bits(ty, bits) {
-                self.aot.flows.primitives_of_types.insert(ty, found.clone());
+            let bits = PRIMITIVES.iter().enumerate().filter(|primitive| found.contains(primitive.1)).fold(rows::ASSIGNABLE_PRIMITIVES_KNOWN, |bits, primitive| bits | 1 << (rows::ASSIGNABLE_PRIMITIVES_SHIFT + primitive.0 as u32));
+            if !is_task_independent || !self.publish_type_flags(ty, bits) {
+                self.aot.flows.type_primitives.insert(ty, found.clone());
             }
         }
         found
     }
 
-    fn find_primitives_of_type(&mut self, ty: TypeId) -> Vec<TypeId> {
+    fn compute_type_primitives(&mut self, ty: TypeId) -> Vec<TypeId> {
         let mut primitives = Vec::new();
         for primitive in PRIMITIVES {
             let wrapper = self.apparent_type(primitive);
-            let not_known_before = self.aot.flows.times_not_known;
-            if self.has_the_names_of(wrapper, ty) && (self.is_of_type(primitive, ty) || self.aot.flows.times_not_known != not_known_before) {
+            let not_known_before = self.aot.flows.unknown_count;
+            if self.has_required_names_of(wrapper, ty) && (self.is_allocated_subtype(primitive, ty) || self.aot.flows.unknown_count != not_known_before) {
                 primitives.push(primitive);
             }
         }
@@ -6240,17 +6658,17 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Whether `ty` has a property by every name that an object of type `view` cannot be without. If not, it is not assignable to it. The
     /// same as `add_candidates` finds out for many types at once.
-    fn has_the_names_of(&mut self, ty: TypeId, view: TypeId) -> bool {
+    fn has_required_names_of(&mut self, ty: TypeId, view: TypeId) -> bool {
         if let TypeData::Intersection(parts) = self.data(view) {
-            return parts.iter().all(|&part| self.has_the_names_of(ty, part));
+            return parts.iter().all(|&part| self.has_required_names_of(ty, part));
         }
         let object = self.global_ref(known::Object, &[]);
-        let (Some(of_type), Some(of_view), of_every_object) = (self.members(ty), self.members(view), self.members(object)) else { return false };
-        let shape = of_view.shape();
+        let (Some(of_type), Some(layout_entry), any_object_type) = (self.members(ty), self.members(view), self.members(object)) else { return false };
+        let shape = layout_entry.shape();
         let mut is_weak = shape.index.is_empty();
         for prop in shape.props.iter().filter(|prop| !prop.flags.contains(PropFlags::OPTIONAL)) {
             is_weak = false;
-            if of_type.resolved.prop(prop.name).is_none() && !of_every_object.is_some_and(|members| members.resolved.prop(prop.name).is_some()) && !self.is_never_stored(prop.name) {
+            if of_type.resolved.prop(prop.name).is_none() && !any_object_type.is_some_and(|members| members.resolved.prop(prop.name).is_some()) && !self.is_never_stored(prop.name) {
                 return false;
             }
         }
@@ -6258,7 +6676,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Adds the names of the properties of `ty`. Whether a type with an index signature can take it.
-    fn add_names_of(&mut self, names: &mut Vec<Atom>, ty: TypeId) -> bool {
+    fn add_property_names(&mut self, names: &mut Vec<Atom>, ty: TypeId) -> bool {
         let Some(members) = self.members(ty) else { return false };
         names.extend(members.shape().props.iter().map(|prop| prop.name));
         !members.shape().index.is_empty() || self.is_object_type_with_inferable_index(ty)
@@ -6270,8 +6688,8 @@ impl<'p, 's> Checker<'p, 's> {
     pub fn kinds_declared(&self) -> KindsDeclared {
         let files = self.files();
         // What a package declares is let in where it is seen to come in. Of JavaScript nothing is declared.
-        let declaring: Vec<FileId> = (0..files.modules.len() as u32).map(FileId).filter(|&file| !(files.module(file).is_untyped() || (self.only_declares(file) && !files.module(file).is_lib))).collect();
-        KindsDeclared { found: declaring.chunks(KindsDeclared::FILES_OF_A_CHECKER).map(|_| OnceLock::new()).collect(), declaring, next: AtomicUsize::new(0), namespaces: OnceLock::new(), nothing_is_published: RwLock::new(()) }
+        let declaring: Vec<FileId> = (0..files.modules.len() as u32).map(FileId).filter(|&file| !(files.module(file).is_untyped() || (self.is_declaration_only(file) && !files.module(file).is_lib))).collect();
+        KindsDeclared { found: declaring.chunks(KindsDeclared::FILES_PER_CHECKER).map(|_| OnceLock::new()).collect(), declaring, next: AtomicUsize::new(0), namespaces: OnceLock::new(), publish_lock: RwLock::new(()) }
     }
 
     fn namespaces_used_as_values(&self) -> Vec<Sym> {
@@ -6320,26 +6738,26 @@ impl<'p, 's> Checker<'p, 's> {
         found
     }
 
-    fn kinds_not_laid_out(&mut self, noted: &FxHashSet<TypeId>, given: &[TypeId], required_names: &FxHashSet<Atom>, declared: &KindsDeclared, in_parallel: crate::util::InParallel<'_>) -> (Vec<Kind>, Having, Having) {
-        const KINDS_OF_A_CHECKER: usize = 512;
+    fn kinds_without_fixed_layout(&mut self, noted: &FxHashSet<TypeId>, given: &[TypeId], required_names: &FxHashSet<Atom>, declared: &KindsDeclared, in_parallel: crate::util::InParallel<'_>) -> (Vec<Kind>, PropertyIndex, PropertyIndex) {
+        const KINDS_PER_CHECKER: usize = 512;
         let mut kinds: Vec<(Kind, bool)> = vec![(Kind::Arrays, false), (Kind::Functions, true)];
-        kinds.extend(self.classes_of_the_engine().into_iter().map(|class| (Kind::InstancesOf(class), false)));
+        kinds.extend(self.engine_classes().into_iter().map(|class| (Kind::InstancesOf(class), false)));
         let mut noted: Vec<TypeId> = noted.iter().copied().collect();
         noted.sort_unstable_by_key(|ty| ty.0);
         for ty in noted {
-            let is_function = matches!(self.built_in_that_is(ty), Some(BuiltIn::Function));
+            let is_function = matches!(self.built_in_for_type(ty), Some(BuiltIn::Function));
             kinds.push((Kind::Of(ty), is_function));
         }
-        kinds.extend(given.iter().map(|&ty| (Kind::Given(ty), false)));
+        kinds.extend(given.iter().map(|&ty| (Kind::ExternalTypes(ty), false)));
         let files = self.files();
         let program = self.p;
-        in_parallel(KindsDeclared::HELPERS_OF_THE_POOL, &|_| declared.help(program));
+        in_parallel(KindsDeclared::POOL_HELPERS, &|_| declared.help(program));
         for &namespace in declared.namespaces.wait() {
             if files.flags(namespace).contains(SymFlags::VALUE_MODULE) {
                 kinds.push((Kind::ValueOf(namespace), false));
             }
         }
-        let declared: Vec<Vec<(Sym, Option<bool>, bool)>> = (declared.declaring.chunks(KindsDeclared::FILES_OF_A_CHECKER).zip(&declared.found))
+        let declared: Vec<Vec<(Sym, Option<bool>, bool)>> = (declared.declaring.chunks(KindsDeclared::FILES_PER_CHECKER).zip(&declared.found))
             .map(|(slice, found)| match found.wait() {
                 Some(found) => found.clone(),
                 None => self.kinds_declared_in(slice),
@@ -6359,7 +6777,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !required_names.is_empty() {
             let mut seen_kinds: FxHashSet<Sym> = kinds.iter().filter_map(|kind| if let Kind::InstancesOf(sym) = kind.0 { Some(sym) } else { None }).collect();
             for file in (0..files.modules.len() as u32).map(FileId) {
-                if files.module(file).is_untyped() || !self.only_declares(file) {
+                if files.module(file).is_untyped() || !self.is_declaration_only(file) {
                     continue;
                 }
                 let bound = &files.module(file).bound;
@@ -6369,21 +6787,21 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     let sym = files.sym(file, SymbolId(id as u32));
                     let has_behavior = files.flags(sym).intersects(SymFlags::VALUE) || bound.table(symbol.members).iter().any(|member| bound.symbols[member.1.0 as usize].flags.intersects(SymFlags::METHOD | SymFlags::ACCESSOR));
-                    if has_behavior && files.decls_of(sym).iter().all(|&(declared_in, _)| self.only_declares(declared_in)) && seen_kinds.insert(sym) {
+                    if has_behavior && files.decls_of(sym).iter().all(|&(declared_in, _)| self.is_declaration_only(declared_in)) && seen_kinds.insert(sym) {
                         kinds.push((Kind::InstancesOf(sym), false));
                     }
                 }
             }
         }
-        let names = self.in_slices(&kinds, KINDS_OF_A_CHECKER, Some(in_parallel), &|c, slice| {
+        let names = self.map_slices(&kinds, KINDS_PER_CHECKER, Some(in_parallel), &|c, slice| {
             let of_functions = [known::Function, known::CallableFunction, known::NewableFunction].map(|name| c.global_ref(name, &[]));
             let mut of_slice: Vec<(bool, Vec<Atom>, Vec<Box<[u8]>>)> = Vec::with_capacity(slice.len());
             for &(kind, is_function) in slice {
                 let mut names = Vec::new();
-                let ty = c.type_of_kind(kind);
-                let mut is_indexable = c.add_names_of(&mut names, ty);
+                let ty = c.kind_type(kind);
+                let mut is_indexable = c.add_property_names(&mut names, ty);
                 for of_function in of_functions.into_iter().filter(|_| is_function) {
-                    is_indexable |= c.add_names_of(&mut names, of_function);
+                    is_indexable |= c.add_property_names(&mut names, of_function);
                 }
                 let own: Vec<Box<[u8]>> = names.iter().filter(|name| name.is_own()).map(|&name| c.atoms().bytes(name).into()).collect();
                 names.retain(|name| !name.is_own());
@@ -6391,7 +6809,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             of_slice
         });
-        let (mut having, mut having_declared_only) = (Having::default(), Having::default());
+        let (mut having, mut having_declared_only) = (PropertyIndex::default(), PropertyIndex::default());
         for (index, (is_indexable, names, own)) in names.into_iter().flatten().enumerate() {
             let is_declared_only = index >= first_declared_only;
             let index = index as u32;
@@ -6409,13 +6827,15 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
         }
+        having.build_bit_sets_of_long_lists();
+        having_declared_only.build_bit_sets_of_long_lists();
         (kinds.into_iter().map(|kind| kind.0).collect(), having, having_declared_only)
     }
 
-    fn type_of_kind(&mut self, kind: Kind) -> TypeId {
+    fn kind_type(&mut self, kind: Kind) -> TypeId {
         let ty = match kind {
-            Kind::Made(ty) | Kind::Assignable(ty) => return ty,
-            Kind::Of(ty) | Kind::Given(ty) => ty,
+            Kind::Allocated(ty) | Kind::Assignable(ty) => return ty,
+            Kind::Of(ty) | Kind::ExternalTypes(ty) => ty,
             Kind::Arrays => return self.array_of(TypeId::ANY),
             Kind::Functions => return self.global_ref(known::Function, &[]),
             Kind::InstancesOf(sym) => self.declared_type(sym),
@@ -6436,25 +6856,25 @@ impl<'p, 's> Checker<'p, 's> {
     /// see `Subtypes::verdict`. Not so for an object of a generic class: one layout for all instantiations, no shape transition.
     ///
     /// Once it is known which names are stored, `view` has no property by any other, nor have the types of its properties.
-    fn is_of_type(&mut self, made: TypeId, view: TypeId) -> bool {
-        self.is_of_type_as(made, view, true)
+    fn is_allocated_subtype(&mut self, made: TypeId, view: TypeId) -> bool {
+        self.is_allocated_subtype_by(made, view, true)
     }
 
     /// `goes_by_fields`: see below. Without it, it is assignability as the language has it, dead properties and type parameters aside.
-    fn is_of_type_as(&mut self, made: TypeId, view: TypeId, goes_by_fields: bool) -> bool {
+    fn is_allocated_subtype_by(&mut self, made: TypeId, view: TypeId, goes_by_fields: bool) -> bool {
         let relation = if self.aot.flows.stored.is_some() { Relation::AssignableAsStored } else { Relation::Assignable };
         if self.is_provably_related(made, view, relation) {
             return true;
         }
         // It has the live fields, with the same discriminants: a subtype whatever its reference fields are declared to point to. A read
         // through the narrower type is tested (`Lowering::readField`). At the link only, where the dead fields are known.
-        if goes_by_fields && self.aot.flows.stored.is_some() && self.says_properties(made) && self.says_properties(view) && self.has_same_fields(made, view, false) {
+        if goes_by_fields && self.aot.flows.stored.is_some() && self.declares_properties(made) && self.declares_properties(view) && self.has_same_fields(made, view, false) {
             return true;
         }
         if goes_by_fields
             && self.aot.flows.stored.is_some()
-            && self.says_properties(made)
-            && self.says_properties(view)
+            && self.declares_properties(made)
+            && self.declares_properties(view)
             && !self.is_provably_related(view, made, relation)
             && self.is_assignable_ignoring_optionality(made, view, relation)
         {
@@ -6464,34 +6884,34 @@ impl<'p, 's> Checker<'p, 's> {
         if !is_created_generic && !self.has_type_variables(view) {
             return false;
         }
-        if is_created_generic && !self.is_type_of_instances(made) && !self.discriminants_agree(made, view, relation, !goes_by_fields) {
+        if is_created_generic && !self.is_instance_type(made) && !self.discriminants_agree(made, view, relation, !goes_by_fields) {
             return false;
         }
         let (made, view) = (self.permissive_instantiation(made), self.permissive_instantiation(view));
         self.is_provably_related(made, view, relation)
     }
 
-    fn may_turn_out_to_be(&mut self, given: TypeId, view: TypeId) -> bool {
-        self.says_properties(given) && self.says_properties(view) && self.is_provably_related(given, view, Relation::Comparable)
+    fn may_be_subtype_at_runtime(&mut self, given: TypeId, view: TypeId) -> bool {
+        self.declares_properties(given) && self.declares_properties(view) && self.is_provably_related(given, view, Relation::Comparable)
     }
 
     fn is_narrowed_from(&mut self, view: TypeId, made: TypeId) -> bool {
-        if !matches!(self.data(view), TypeData::Intersection(_)) || !self.says_properties(made) || !self.says_properties(view) {
+        if !matches!(self.data(view), TypeData::Intersection(_)) || !self.declares_properties(made) || !self.declares_properties(view) {
             return false;
         }
         let relation = if self.aot.flows.stored.is_some() { Relation::AssignableAsStored } else { Relation::Assignable };
-        let (Some(of_created), Some(of_view)) = (self.members(made), self.members(view)) else { return false };
+        let (Some(of_created), Some(layout_entry)) = (self.members(made), self.members(view)) else { return false };
         let is_plain = |shape: &Shape| shape.call.is_empty() && shape.construct.is_empty() && shape.index.is_empty();
-        if !is_plain(of_created.shape()) || !is_plain(of_view.shape()) || of_created.shape().props.len() != of_view.shape().props.len() {
+        if !is_plain(of_created.shape()) || !is_plain(layout_entry.shape()) || of_created.shape().props.len() != layout_entry.shape().props.len() {
             return false;
         }
         const KIND: PropFlags = PropFlags::METHOD.union(PropFlags::ACCESSOR);
-        for view_prop in of_view.shape().props.iter() {
+        for view_prop in layout_entry.shape().props.iter() {
             let Some(created_prop) = of_created.resolved.prop(view_prop.name) else { return false };
             if created_prop.flags & KIND != view_prop.flags & KIND {
                 return false;
             }
-            let (created_type, view_type) = (self.type_of_prop(created_prop, of_created.mapper), self.type_of_prop(view_prop, of_view.mapper));
+            let (created_type, view_type) = (self.type_of_prop(created_prop, of_created.mapper), self.type_of_prop(view_prop, layout_entry.mapper));
             if created_type != view_type && !self.is_provably_related(created_type, view_type, relation) && !self.is_provably_related(view_type, created_type, relation) {
                 return false;
             }
@@ -6500,13 +6920,13 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn is_assignable_ignoring_optionality(&mut self, made: TypeId, view: TypeId, relation: Relation) -> bool {
-        let (Some(of_created), Some(of_view)) = (self.members(made), self.members(view)) else { return false };
+        let (Some(of_created), Some(layout_entry)) = (self.members(made), self.members(view)) else { return false };
         let is_plain = |shape: &Shape| shape.call.is_empty() && shape.construct.is_empty() && shape.index.is_empty();
-        if !is_plain(of_created.shape()) || !is_plain(of_view.shape()) {
+        if !is_plain(of_created.shape()) || !is_plain(layout_entry.shape()) {
             return false;
         }
         let mut is_one_optional = false;
-        for view_prop in of_view.shape().props.iter() {
+        for view_prop in layout_entry.shape().props.iter() {
             if self.is_never_stored(view_prop.name) {
                 continue;
             }
@@ -6517,7 +6937,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 continue;
             };
-            let (mut created_type, view_type) = (self.type_of_prop(created_prop, of_created.mapper), self.type_of_prop(view_prop, of_view.mapper));
+            let (mut created_type, view_type) = (self.type_of_prop(created_prop, of_created.mapper), self.type_of_prop(view_prop, layout_entry.mapper));
             if is_required && created_prop.flags.contains(PropFlags::OPTIONAL) {
                 created_type = self.non_nullable(created_type);
                 is_one_optional = true;
@@ -6533,11 +6953,11 @@ impl<'p, 's> Checker<'p, 's> {
     /// (`subtypes.rs`, phase B): also every field of `view` that holds primitives alone, where that of `made` is a type parameter whose bound is primitives alone. A numeric enum as
     /// a whole names no constant, and `TKind extends SyntaxKind` is no `TypeMapKind` all the same.
     fn discriminants_agree(&mut self, made: TypeId, view: TypeId, relation: Relation, by_bounds: bool) -> bool {
-        let (Some(of_created), Some(of_view)) = (self.members(made), self.members(view)) else { return true };
+        let (Some(of_created), Some(layout_entry)) = (self.members(made), self.members(view)) else { return true };
         let are_primitives = |c: &Self, ty: TypeId| c.parts(ty).iter().all(|&part| c.has_primitive_flag(part));
-        for view_prop in of_view.shape().props.iter() {
-            let view_type = self.type_of_prop(view_prop, of_view.mapper);
-            let names_constants = !self.literals_of_type(view_type).is_empty();
+        for view_prop in layout_entry.shape().props.iter() {
+            let view_type = self.type_of_prop(view_prop, layout_entry.mapper);
+            let names_constants = !self.type_literals(view_type).is_empty();
             if !names_constants && !(by_bounds && are_primitives(self, view_type)) {
                 continue;
             }
@@ -6557,23 +6977,23 @@ impl<'p, 's> Checker<'p, 's> {
     /// nothing else. The checker keeps the union members that are SUBTYPES of that type, which drops `Cls { name?: string }` under
     /// `n is { name: string }` although the guard was truthful for it. What is left of `stored` is every member that has the fields
     /// the guard's type requires, optional or not, besides what the checker kept (`own`). `None`: no guard is seen to be the cause.
-    pub(super) fn type_proved_by_guard(&mut self, file: FileId, e: ExprId, stored: TypeId, own: TypeId) -> Option<TypeId> {
+    pub(super) fn guard_proven_type(&mut self, file: FileId, e: ExprId, stored: TypeId, own: TypeId) -> Option<TypeId> {
         let guard = self.guard_narrowing(file, e)?;
-        let kept = self.filter(stored, |c, part| c.parts(own).contains(&part) || (c.says_properties(part) && c.has_the_names_of(part, guard)));
+        let kept = self.filter(stored, |c, part| c.parts(own).contains(&part) || (c.declares_properties(part) && c.has_required_names_of(part, guard)));
         Some(kept)
     }
 
     /// The type of the nearest type guard that is known to have returned true for the name `e` where it is read, with nothing but other
     /// conditions in between.
     fn guard_narrowing(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
-        const MOST_STEPS: usize = 32;
+        const MAX_STEPS: usize = 32;
         let (hir, bound) = (self.hir(file), self.bound(file));
         let named = bound.expr_symbol[e.idx()];
         if named.is_none() {
             return None;
         }
         let mut at = bound.expr_flow[e.idx()];
-        for _ in 0..MOST_STEPS {
+        for _ in 0..MAX_STEPS {
             let (before, tested) = match bound.flow[at.idx()] {
                 Flow::Cond { before, expr, sense: true } => (before, expr),
                 Flow::Cond { before, .. } | Flow::Switch { before, .. } => (before, ExprId::NONE),
@@ -6594,9 +7014,9 @@ impl<'p, 's> Checker<'p, 's> {
         None
     }
 
-    /// From here on `is_of_type` and all that goes before it leave out the properties whose names are not among `stored`.
-    fn go_by_names_stored(&mut self, stored: &FxHashSet<Atom>) {
-        let bits = self.p.aot.storage.names_stored.get_or_init(|| {
+    /// From here on `is_allocated_subtype` and all that goes before it leave out the properties whose names are not among `stored`.
+    fn restrict_to_stored_names(&mut self, stored: &FxHashSet<Atom>) {
+        let bits = self.p.aot.storage.stored_names.get_or_init(|| {
             let mut bits: Vec<u64> = Vec::new();
             for name in stored.iter().filter(|name| name.is_some() && !name.is_own()) {
                 let at = name.0 as usize;
@@ -6614,7 +7034,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// elsewhere, and so is an array: which names the program stores says nothing of what those have.
     pub(in crate::check) fn is_created_by_program(&self, ty: TypeId) -> bool {
         match *self.data(ty) {
-            TypeData::Ref { target, .. } => !self.only_declares(target.file),
+            TypeData::Ref { target, .. } => !self.is_declaration_only(target.file),
             TypeData::Tuple { .. } => false,
             _ => true,
         }
@@ -6625,8 +7045,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// So it always admits foreign objects.
     pub fn is_declared_only_record(&self, ty: TypeId) -> bool {
         match self.data(ty) {
-            TypeData::Ref { target, .. } => self.only_declares(target.file),
-            TypeData::Anon { origin: Origin::TypeLiteral(file, _), .. } => self.only_declares(*file),
+            TypeData::Ref { target, .. } => self.is_declaration_only(target.file),
+            TypeData::Anon { origin: Origin::TypeLiteral(file, _), .. } => self.is_declaration_only(*file),
             TypeData::Intersection(parts) => parts.iter().any(|&part| self.is_declared_only_record(part)),
             TypeData::Synth(shape) if shape.spread_rank >= u32::MAX - 1 => shape.created_from.is_some_and(|(_, viewed)| self.parts(viewed).iter().any(|&part| self.is_declared_only_record(part))),
             _ => false,
@@ -6663,23 +7083,25 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Appends those of the types of `having` that have a property by every name that an object of type `view` cannot be without. No other
     /// is assignable to it. In no order, and some more than once.
-    fn add_candidates(&mut self, having: &Having, view: TypeId, out: &mut Vec<u32>) {
+    fn add_candidates(&mut self, having: &PropertyIndex, view: TypeId, out: &mut Vec<u32>) {
         let Some(members) = self.members(view) else { return };
         let shape = members.shape();
         // The members of the global `Object`, which every object is taken to have.
         let object = self.global_ref(known::Object, &[]);
-        let of_every_object = self.members(object);
+        let any_object_type = self.members(object);
         let mut is_weak = shape.index.is_empty();
         let mut required: Vec<&[u32]> = Vec::new();
+        let mut required_names: Vec<Atom> = Vec::new();
         for prop in shape.props.iter().filter(|prop| !prop.flags.contains(PropFlags::OPTIONAL)) {
             // As the relation has it: a type that requires a property is not weak, stored or not.
             is_weak = false;
-            if of_every_object.is_some_and(|members| members.resolved.prop(prop.name).is_some()) || self.is_never_stored(prop.name) {
+            if any_object_type.is_some_and(|members| members.resolved.prop(prop.name).is_some()) || self.is_never_stored(prop.name) {
                 continue;
             }
             // Nobody has it.
             let Some(indexes) = having.by_name.get(&prop.name) else { return };
             required.push(indexes);
+            required_names.push(prop.name);
         }
         let Some(&rarest) = required.iter().min_by_key(|indexes| indexes.len()) else {
             // A type all of whose properties are optional takes what has one of them.
@@ -6695,6 +7117,18 @@ impl<'p, 's> Checker<'p, 's> {
             }
             return;
         };
+        if rarest.len() >= having.bit_set_words
+            && let Some(bit_sets) = required_names.iter().map(|name| having.bit_sets_of_long_lists.get(name)).collect::<Option<Vec<&Vec<u64>>>>()
+        {
+            for at in 0..having.bit_set_words {
+                let mut word = bit_sets.iter().fold(u64::MAX, |word, bits| word & bits[at]);
+                while word != 0 {
+                    out.push(at as u32 * 64 + word.trailing_zeros());
+                    word &= word - 1;
+                }
+            }
+            return;
+        }
         out.extend(rarest.iter().filter(|candidate| required.iter().all(|indexes| indexes.binary_search(candidate).is_ok())));
     }
 
@@ -6703,7 +7137,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// The views that what is held to one of `roots` gets into, if it is plain data: those, the types of their fields, and so on all the
     /// way down, through arrays. Not what the fields of a class hold: plain data is no object of a class. `index_of`: of the views. Each
     /// with the first of the places of the roots it is come by from.
-    fn views_held_within(&mut self, roots: impl Iterator<Item = (TypeId, Place)>, index_of: &FxHashMap<TypeId, u32>, forms_beyond: &mut Vec<TypeId>) -> FxHashMap<TypeId, Place> {
+    fn types_reachable_from_plain_data(&mut self, roots: impl Iterator<Item = (TypeId, Place)>, index_of: &FxHashMap<TypeId, u32>, external_forms: &mut Vec<TypeId>) -> FxHashMap<TypeId, Place> {
         let mut roots: Vec<(TypeId, Place)> = roots.collect();
         roots.sort_unstable_by_key(|root| root.1);
         let mut seen: FxHashSet<TypeId> = FxHashSet::default();
@@ -6713,7 +7147,7 @@ impl<'p, 's> Checker<'p, 's> {
             while let Some(ty) = pending.pop() {
                 if !index_of.contains_key(&ty) {
                     if self.is_nested_too_deeply(ty) {
-                        forms_beyond.extend(self.generic_form_of(ty));
+                        external_forms.extend(self.generic_form(ty));
                     }
                     continue;
                 }
@@ -6721,7 +7155,7 @@ impl<'p, 's> Checker<'p, 's> {
                     continue;
                 }
                 held.insert(ty, at);
-                if self.is_type_of_instances(ty) {
+                if self.is_instance_type(ty) {
                     continue;
                 }
                 let Some(members) = self.members(ty) else { continue };
@@ -6739,7 +7173,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `subtypes.rs`, and nowhere else. What comes of it depends on what is in the sets and on the order of the views, and on nothing else.
     ///
     /// What it yields goes in rounds. Any number of checkers of the program may `answer` any slices of `Subtypes::questions`, if the views are
-    /// published, this one answers `Subtypes::own_questions`, and the answers, in the order of the questions, go to `Subtypes::advance`, until
+    /// published, this one answers `Subtypes::own_queries`, and the answers, in the order of the questions, go to `Subtypes::advance`, until
     /// there are no more questions.
     ///
     /// `stored`: the names by which some code of the linked program stores a property, or defines a method or an accessor. A property by
@@ -6747,106 +7181,107 @@ impl<'p, 's> Checker<'p, 's> {
     /// with any name that a layout has no field for, and so is what plain data brings along when it is copied into a layout.
     ///
     /// `says_progress`: `--aot-explain=progress`.
-    pub fn begin_subtypes(&mut self, noted: Noted, views: &[TypeId], fields: FieldTypes, stored: FxHashSet<Atom>, kinds_declared: &KindsDeclared, says_progress: Option<fn(std::fmt::Arguments<'_>)>, in_parallel: crate::util::InParallel<'_>) -> Subtypes {
-        const VIEWS_OF_A_CHECKER: usize = 512;
-        const TYPES_OF_A_WALK: usize = 128;
+    pub fn begin_subtypes(&mut self, noted: FlowNotes, views: &[TypeId], fields: FieldTypes, stored: FxHashSet<Atom>, kinds_declared: &KindsDeclared, says_progress: Option<fn(std::fmt::Arguments<'_>)>, in_parallel: crate::util::InParallel<'_>) -> Subtypes {
+        const LAYOUTS_PER_CHECKER: usize = 512;
+        const TYPES_PER_WALK: usize = 128;
+        self.p.aot.type_caches.release();
         let noted = noted.into_tables();
         let mut clock = subtypes::Clock::new(says_progress);
         clock.say(format_args!(
             "gathering: {} views, {} types of fields with {} views in them, {} unions; noted: {} sites, {} upcasts, {} casts, {} tests, {} vouched for, {} untyped into, {} copied into, {} not laid out",
             views.len(),
-            fields.views_in.len(),
-            fields.views_in.iter().map(Vec::len).sum::<usize>(),
+            fields.layouts_in_type.len(),
+            fields.layouts_in_type.iter().map(Vec::len).sum::<usize>(),
             fields.together.len(),
             noted.allocated_at_site.len(),
             noted.upcasts.len(),
             noted.casts.len(),
             noted.tests.len(),
-            noted.vouched_into.len(),
+            noted.trusted_into.len(),
             noted.untyped_into.len(),
             noted.copied_into.len(),
             noted.foreign.len()
         ));
-        let mut cut_short: Vec<(Place, [u32; 4])> = noted.cut_short.iter().map(|(&at, &times)| (at, times)).collect();
-        cut_short.sort_unstable();
-        let sums = cut_short.iter().fold([0u32; 4], |sums, cut| [sums[0] + cut.1[0], sums[1] + cut.1[1], sums[2] + cut.1[2], sums[3] + cut.1[3]]);
-        let first = cut_short.first().map_or_else(String::new, |cut| format!("; the first at {}", self.place_for_people(cut.0)));
+        let mut truncated: Vec<(Place, [u32; 4])> = noted.truncated.iter().map(|(&at, &times)| (at, times)).collect();
+        truncated.sort_unstable();
+        let sums = truncated.iter().fold([0u32; 4], |sums, cut| [sums[0] + cut.1[0], sums[1] + cut.1[1], sums[2] + cut.1[2], sums[3] + cut.1[3]]);
+        let first = truncated.first().map_or_else(String::new, |cut| format!("; the first at {}", self.display_location(cut.0)));
         clock.say(format_args!(
             "what is held within what enters: the walk was cut short at {} places: {} times for what nests in itself, {} for too many of two declarations, {} for the stack, {} for too many levels{first}; the most of two declarations in one body: {} looked into, {} of them for what nests in itself; the deepest: {} levels",
-            cut_short.len(),
+            truncated.len(),
             sums[0],
             sums[1],
             sums[2],
             sums[3],
-            noted.most_looked_into[0],
-            noted.most_looked_into[1],
-            noted.most_looked_into[2]
+            noted.max_inspected[0],
+            noted.max_inspected[1],
+            noted.max_inspected[2]
         ));
-        self.go_by_names_stored(&stored);
+        self.restrict_to_stored_names(&stored);
         let mut index_of: FxHashMap<TypeId, u32> = FxHashMap::default();
         for (index, &view) in views.iter().enumerate() {
             index_of.entry(view).or_insert(index as u32);
         }
         // Plain data is copied into the layout of the type it is cast to, and what it holds into the layouts of the types of the fields.
         // So objects are made as those.
-        let mut forms_beyond: Vec<TypeId> = Vec::new();
-        let copied_into = self.views_held_within(noted.copied_into.iter().map(|&ty| (ty, Place::NOWHERE)), &index_of, &mut Vec::new());
-        let untyped_into = self.views_held_within(noted.untyped_into.iter().map(|(&ty, &at)| (ty, at)), &index_of, &mut forms_beyond);
+        let mut external_forms: Vec<TypeId> = Vec::new();
+        let copied_into = self.types_reachable_from_plain_data(noted.copied_into.iter().map(|&ty| (ty, Place::NOWHERE)), &index_of, &mut Vec::new());
+        let untyped_into = self.types_reachable_from_plain_data(noted.untyped_into.iter().map(|(&ty, &at)| (ty, at)), &index_of, &mut external_forms);
         let mut noted = noted;
-        let mut stored_through: FxHashSet<TypeId> = noted.read_only_handed_on.iter().copied().collect();
+        let mut stored_through: FxHashSet<TypeId> = noted.read_only_passed_on.iter().copied().collect();
         loop {
             let before = stored_through.len();
-            stored_through.extend(noted.held_read_only.iter().filter(|held| stored_through.contains(&held.1)).map(|held| held.0).collect::<Vec<TypeId>>());
+            stored_through.extend(noted.stored_read_only.iter().filter(|held| stored_through.contains(&held.1)).map(|held| held.0).collect::<Vec<TypeId>>());
             if stored_through.len() == before {
                 break;
             }
         }
-        let mut opened: Vec<(TypeId, TypeId)> = noted.held_read_only.iter().copied().filter(|held| stored_through.contains(&held.1) && index_of.contains_key(&held.0)).collect();
+        let mut opened: Vec<(TypeId, TypeId)> = noted.stored_read_only.iter().copied().filter(|held| stored_through.contains(&held.1) && index_of.contains_key(&held.0)).collect();
         opened.sort_unstable_by_key(|held| (held.0.0, held.1.0));
         for (held, dictionary) in opened {
-            noted.add_foreign(held, Some(dictionary), Place::NOWHERE);
+            noted.add_untyped(held, Some(dictionary), Place::NOWHERE);
         }
         let (mut seen_beyond, mut staying) = (FxHashSet::default(), Vec::new());
-        for form in forms_beyond {
-            self.add_what_stays_untyped(form, true, &mut seen_beyond, &mut staying);
+        for form in external_forms {
+            self.add_types_staying_untyped(form, true, &mut seen_beyond, &mut staying);
         }
         for view in staying {
-            noted.add_foreign(view, None, Place::NOWHERE);
+            noted.add_untyped(view, None, Place::NOWHERE);
         }
         clock.say(format_args!("what is held within: {} copied into, {} untyped into", copied_into.len(), untyped_into.len()));
 
         let types: Vec<TypeId> = views.to_vec();
-        let mut redefined: Vec<TypeId> = noted.escapes.with_alterations(|noted| noted.closed(Alteration::Redefinition)).types;
+        let mut redefined: Vec<TypeId> = noted.escapes.with_mutations(|noted| noted.closed(Mutation::Redefinition)).types;
         redefined.sort_unstable_by_key(|ty| ty.0);
         redefined.dedup();
         for &view in &redefined {
-            noted.add_foreign(view, None, Place::NOWHERE);
+            noted.add_untyped(view, None, Place::NOWHERE);
         }
         let is_of_literal = |c: &Self, ty: TypeId| match c.data(ty) {
             TypeData::Anon { origin: Origin::ObjectLiteral(..) | Origin::WidenedLiteral(..), .. } => true,
-            TypeData::Synth(_) => !c.is_view_made_by_coercion(ty),
+            TypeData::Synth(_) => !c.is_coercion_result_type(ty),
             _ => false,
         };
-        let edges: Vec<(TypeId, TypeId)> = noted.upcasts.keys().chain(&noted.casts).copied().filter(|&(from, to)| from != to && is_of_literal(self, from) && !self.says_nothing(to)).collect();
-        let mut made_by_identity: FxHashMap<Identity, Vec<TypeId>> = FxHashMap::default();
+        let edges: Vec<(TypeId, TypeId)> = noted.upcasts.keys().chain(&noted.casts).copied().filter(|&(from, to)| from != to && is_of_literal(self, from) && !self.is_uninformative(to)).collect();
+        let mut allocated_by_identity: FxHashMap<Identity, Vec<TypeId>> = FxHashMap::default();
         let mut sites: Vec<TypeId> = noted.allocated_at_site.iter().copied().filter(|&site| is_of_literal(self, site)).collect();
         sites.sort_unstable_by_key(|ty| ty.0);
         for site in sites {
-            made_by_identity.entry(self.identity_of_type(site)).or_default().push(site);
+            allocated_by_identity.entry(self.type_identity(site)).or_default().push(site);
         }
-        let mut seen_as_written: FxHashSet<TypeId> = edges.iter().filter(|edge| !is_of_literal(self, edge.1)).map(|edge| edge.0).collect();
+        let mut seen_as_annotated: FxHashSet<TypeId> = edges.iter().filter(|edge| !is_of_literal(self, edge.1)).map(|edge| edge.0).collect();
         let (mut forms_of_literals, mut walked, mut let_out_unwritten): (Vec<[TypeId; 3]>, FxHashSet<TypeId>, FxHashSet<TypeId>) = Default::default();
-        let mut to_walk: Vec<TypeId> = noted.escapes.with_alterations(|noted| noted.let_out());
+        let mut to_walk: Vec<TypeId> = noted.escapes.with_mutations(|noted| noted.escaped());
         loop {
             let is_own = |ty: &TypeId| crate::local::is_local_number(ty.0);
             let (own, published): (Vec<TypeId>, Vec<TypeId>) = std::mem::take(&mut to_walk).into_iter().filter(|&ty| walked.insert(ty)).partition(is_own);
             let walk = |c: &mut Checker<'p, 's>, ty: TypeId| {
                 let mut forms = Vec::new();
-                c.add_types_of_object_literals_within(ty, &mut forms);
-                let identities: Vec<Identity> = forms.iter().map(|form| c.identity_of_type(form[1])).collect();
+                c.add_nested_object_literal_types(ty, &mut forms);
+                let identities: Vec<Identity> = forms.iter().map(|form| c.type_identity(form[1])).collect();
                 (forms, identities)
             };
-            let of_slices = self.in_slices(&published, TYPES_OF_A_WALK, Some(in_parallel), &|c, slice| -> Vec<Option<(Vec<[TypeId; 3]>, Vec<Identity>)>> {
+            let of_slices = self.map_slices(&published, TYPES_PER_WALK, Some(in_parallel), &|c, slice| -> Vec<Option<(Vec<[TypeId; 3]>, Vec<Identity>)>> {
                 slice.iter().map(|&ty| Some(walk(c, ty)).filter(|(forms, _)| !forms.iter().flatten().any(is_own))).collect()
             });
             let mut identities: Vec<Identity> = Vec::new();
@@ -6857,37 +7292,37 @@ impl<'p, 's> Checker<'p, 's> {
                 identities.append(&mut of_forms);
             }
             for (index, identity) in (known..forms_of_literals.len()).zip(identities) {
-                let laid_out = forms_of_literals[index][1];
-                for &site in made_by_identity.get(&identity).into_iter().flatten() {
-                    forms_of_literals.push([laid_out, site, site]);
+                let layout_types_cache = forms_of_literals[index][1];
+                for &site in allocated_by_identity.get(&identity).into_iter().flatten() {
+                    forms_of_literals.push([layout_types_cache, site, site]);
                     to_walk.push(site);
                 }
             }
             loop {
-                let before = seen_as_written.len();
-                let below: Vec<TypeId> = edges.iter().filter(|edge| seen_as_written.contains(&edge.1)).map(|edge| edge.0).collect();
-                seen_as_written.extend(below);
-                if seen_as_written.len() == before {
+                let before = seen_as_annotated.len();
+                let below: Vec<TypeId> = edges.iter().filter(|edge| seen_as_annotated.contains(&edge.1)).map(|edge| edge.0).collect();
+                seen_as_annotated.extend(below);
+                if seen_as_annotated.len() == before {
                     break;
                 }
             }
             let_out_unwritten.extend(forms_of_literals.iter().flatten().copied());
-            let made_as: Vec<TypeId> = edges.iter().filter(|edge| let_out_unwritten.contains(&edge.1) && !seen_as_written.contains(&edge.1) && !let_out_unwritten.contains(&edge.0)).map(|edge| edge.0).collect();
-            to_walk.extend(made_as.iter().copied());
-            let_out_unwritten.extend(made_as);
+            let allocated_as: Vec<TypeId> = edges.iter().filter(|edge| let_out_unwritten.contains(&edge.1) && !seen_as_annotated.contains(&edge.1) && !let_out_unwritten.contains(&edge.0)).map(|edge| edge.0).collect();
+            to_walk.extend(allocated_as.iter().copied());
+            let_out_unwritten.extend(allocated_as);
             to_walk.retain(|ty| !walked.contains(ty));
             if to_walk.is_empty() {
                 break;
             }
         }
-        let mut nobody_wrote: Vec<TypeId> = let_out_unwritten.into_iter().filter(|form| !seen_as_written.contains(form)).collect();
-        nobody_wrote.sort_unstable_by_key(|ty| ty.0);
-        for &view in &nobody_wrote {
-            noted.add_foreign(view, None, Place::NOWHERE);
+        let mut unannotated: Vec<TypeId> = let_out_unwritten.into_iter().filter(|form| !seen_as_annotated.contains(form)).collect();
+        unannotated.sort_unstable_by_key(|ty| ty.0);
+        for &view in &unannotated {
+            noted.add_untyped(view, None, Place::NOWHERE);
         }
-        let altered = Alteration::ALL.map(|alteration| noted.escapes.with_alterations(|noted| noted.closed(alteration)));
-        let types_altered: [Vec<TypeId>; 2] = [0, 1].map(|alteration: usize| {
-            let mut handed_over: Vec<TypeId> = altered[alteration].types.clone();
+        let altered = Mutation::ALL.map(|mutation| noted.escapes.with_mutations(|noted| noted.closed(mutation)));
+        let mutated_types: [Vec<TypeId>; 2] = [0, 1].map(|mutation: usize| {
+            let mut handed_over: Vec<TypeId> = altered[mutation].types.clone();
             handed_over.sort_unstable_by_key(|ty| ty.0);
             let (mut found, mut seen): (Vec<TypeId>, FxHashSet<TypeId>) = Default::default();
             for ty in handed_over {
@@ -6898,15 +7333,15 @@ impl<'p, 's> Checker<'p, 's> {
 
         // The members of the global `Object`, which every object is taken to have.
         let object = self.global_ref(known::Object, &[]);
-        let mut of_every_object: Vec<u32> = self.members(object).map_or_else(Vec::new, |members| members.shape().props.iter().map(|prop| prop.name.0).collect());
-        of_every_object.sort_unstable();
+        let mut any_object_type: Vec<u32> = self.members(object).map_or_else(Vec::new, |members| members.shape().props.iter().map(|prop| prop.name.0).collect());
+        any_object_type.sort_unstable();
         let numbered: Vec<(usize, TypeId)> = types.iter().copied().enumerate().collect();
         let gather = |c: &mut Checker<'p, 's>, slice: &[(usize, TypeId)]| {
-            c.go_by_names_stored(&stored);
+            c.restrict_to_stored_names(&stored);
             let (mut facts, mut declared): (Vec<Facts>, Vec<(u32, u32)>) = Default::default();
             let (mut passed, mut found): (FxHashSet<TypeId>, Vec<u32>) = Default::default();
             for &(index, ty) in slice {
-                let mut of_type = c.facts_of(ty, &of_every_object);
+                let mut of_type = c.facts_of(ty, &any_object_type);
                 c.add_undeclared_fields_to(&mut of_type, ty, &stored);
                 if noted.allocated_at_site.contains(&ty) {
                     of_type.flags |= subtypes::HAS_SITE;
@@ -6929,53 +7364,53 @@ impl<'p, 's> Checker<'p, 's> {
             [&facts.declared, &facts.live, &facts.required, &facts.open].into_iter().any(|names| names.iter().any(|&name| is_own(name)))
                 || facts.constants.iter().any(|&(name, constant)| is_own(name) || constant >> 32 == 0x7FF8_0001 && is_own(constant as u32))
         };
-        let of_slices = self.in_slices(&numbered, VIEWS_OF_A_CHECKER, Some(in_parallel), &|c, slice| Some(gather(c, slice)).filter(|gathered| !gathered.0.iter().any(has_own_atoms)));
+        let of_slices = self.map_slices(&numbered, LAYOUTS_PER_CHECKER, Some(in_parallel), &|c, slice| Some(gather(c, slice)).filter(|gathered| !gathered.0.iter().any(has_own_atoms)));
         let mut facts: Vec<Facts> = Vec::with_capacity(types.len());
         let mut declared: Vec<(u32, u32)> = Vec::new();
-        for (slice, gathered) in numbered.chunks(VIEWS_OF_A_CHECKER).zip(of_slices) {
+        for (slice, gathered) in numbered.chunks(LAYOUTS_PER_CHECKER).zip(of_slices) {
             let (of_facts, of_declared) = gathered.unwrap_or_else(|| gather(self, slice));
             facts.extend(of_facts);
             declared.extend(of_declared);
         }
         let has_own_names: Vec<bool> = facts.iter().map(has_own_atoms).collect();
         clock.say(format_args!("the facts: {} types, {} declared supertypes", types.len(), declared.len()));
-        let asked_as: Vec<TypeId> = types.iter().map(|&ty| self.type_coerced_to(ty)).collect();
+        let asked_as: Vec<TypeId> = types.iter().map(|&ty| self.coercion_target(ty)).collect();
         clock.say(format_args!("the pairs that the relation is queried for"));
 
         // Whatever is held to a type without the operations saying what it is: see `subtypes.rs`, phase B.
-        let mut first_vouched: FxHashMap<u32, Place> = FxHashMap::default();
-        for (ty, &at) in noted.vouched_into.iter().chain(&untyped_into).chain(&copied_into) {
+        let mut first_trusted: FxHashMap<u32, Place> = FxHashMap::default();
+        for (ty, &at) in noted.trusted_into.iter().chain(&untyped_into).chain(&copied_into) {
             if let Some(&index) = index_of.get(ty) {
-                let first = first_vouched.entry(index).or_insert(at);
+                let first = first_trusted.entry(index).or_insert(at);
                 *first = at.min(*first);
             }
         }
         // Whoever stores to a field without knowing the layout hands it anything, and the engine holds that to the type of the field.
-        for ty in fields.of_views.iter().flatten().map(|field| field.1).chain(fields.of_static_fields.iter().copied()) {
-            for &view in &fields.views_in[ty as usize] {
-                first_vouched.entry(view).or_insert(Place::NOWHERE);
+        for ty in fields.fields_by_layout.iter().flatten().map(|field| field.1).chain(fields.static_field_types.iter().copied()) {
+            for &view in &fields.layouts_in_type[ty as usize] {
+                first_trusted.entry(view).or_insert(Place::NOWHERE);
             }
         }
-        let mut vouched: Vec<(u32, Place)> = first_vouched.into_iter().collect();
+        let mut vouched: Vec<(u32, Place)> = first_trusted.into_iter().collect();
         vouched.sort_unstable();
 
         // An object that is not laid out is in a place of the type where it has been seen to get there, and may be where the program
         // holds a value to the type of which its text says nothing, if there is such an object that is of the type.
-        let mut foreign: Vec<(u32, Option<TypeId>, WhyForeign)> = Vec::new();
-        let mut about_kinds: Vec<(Question, u32, WhyForeign)> = Vec::new();
-        let is_given = |c: &mut Checker<'p, 's>, ty: TypeId| c.is_tainted(ty) || !matches!(c.data(ty), TypeData::Intersection(_) | TypeData::Anon { origin: Origin::Module(..), .. });
-        let (own, published): (Vec<TypeId>, Vec<TypeId>) = noted.not_laid_out.iter().copied().partition(|ty| crate::local::is_local_number(ty.0));
-        let of_slices = self.in_slices(&published, VIEWS_OF_A_CHECKER, Some(in_parallel), &|c, slice| -> Vec<TypeId> { slice.iter().copied().filter(|&ty| is_given(c, ty)).collect() });
+        let mut foreign: Vec<(u32, Option<TypeId>, UntypedReason)> = Vec::new();
+        let mut kind_queries: Vec<(Question, u32, UntypedReason)> = Vec::new();
+        let is_external_data = |c: &mut Checker<'p, 's>, ty: TypeId| c.is_tainted(ty) || !matches!(c.data(ty), TypeData::Intersection(_) | TypeData::Anon { origin: Origin::Module(..), .. });
+        let (own, published): (Vec<TypeId>, Vec<TypeId>) = noted.without_fixed_layout.iter().copied().partition(|ty| crate::local::is_local_number(ty.0));
+        let of_slices = self.map_slices(&published, LAYOUTS_PER_CHECKER, Some(in_parallel), &|c, slice| -> Vec<TypeId> { slice.iter().copied().filter(|&ty| is_external_data(c, ty)).collect() });
         let mut given: Vec<TypeId> = of_slices.into_iter().flatten().collect();
-        given.extend(own.into_iter().filter(|&ty| is_given(self, ty)));
+        given.extend(own.into_iter().filter(|&ty| is_external_data(self, ty)));
         for ty in &given {
-            noted.not_laid_out.remove(ty);
+            noted.without_fixed_layout.remove(ty);
         }
         given.extend(redefined.iter().copied());
         given.sort_unstable_by_key(|ty| ty.0);
         given.dedup();
         let required_names: FxHashSet<Atom> = (types.iter().zip(&facts)).filter(|(ty, _)| untyped_into.contains_key(*ty) && !noted.foreign.contains_key(*ty)).flat_map(|(_, facts)| facts.required.iter().map(|&name| Atom(name))).collect();
-        let (others, having, having_declared_only) = self.kinds_not_laid_out(&noted.not_laid_out, &given, &required_names, kinds_declared, in_parallel);
+        let (others, having, having_declared_only) = self.kinds_without_fixed_layout(&noted.without_fixed_layout, &given, &required_names, kinds_declared, in_parallel);
         clock.say(format_args!("{} vouched for, {} kinds that are not laid out", vouched.len(), others.len()));
         let is_namespace_kind = |c: &Self, kind: Kind| match kind {
             Kind::Of(ty) => matches!(c.data(ty), TypeData::Anon { origin: Origin::Module(..), .. }),
@@ -6984,41 +7419,42 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let is_namespace: Vec<bool> = others.iter().map(|&kind| is_namespace_kind(self, kind)).collect();
         let has_namespaces = is_namespace.contains(&true);
-        let mut having_of_nobody = Having::default();
-        for (index, names) in std::mem::take(&mut self.aot.flows.given_and_kept_by_nobody).into_iter().enumerate() {
-            having_of_nobody.all.push(index as u32);
-            having_of_nobody.indexable.push(index as u32);
+        let mut unowned_members = PropertyIndex::default();
+        for (index, names) in std::mem::take(&mut self.aot.flows.unretained_external_data).into_iter().enumerate() {
+            unowned_members.all.push(index as u32);
+            unowned_members.indexable.push(index as u32);
             for name in names {
-                having_of_nobody.by_name.entry(name).or_default().push(index as u32);
+                unowned_members.by_name.entry(name).or_default().push(index as u32);
             }
         }
-        let (let_out, entered, entered_if_let_out) = noted.evidence_of_strangers();
-        let opened = self.classes_opened_for_strangers(&let_out, &entered, &entered_if_let_out);
+        unowned_members.build_bit_sets_of_long_lists();
+        let (escaped, entered, receiving_untyped_if_escaped) = noted.untyped_object_evidence();
+        let opened = self.classes_accepting_untyped(&escaped, &entered, &receiving_untyped_if_escaped);
         let numbered: Vec<(usize, TypeId)> = views.iter().copied().enumerate().collect();
-        let held_by_javascript = self.p.aot.storage.records_held_by_javascript.lock().clone();
+        let held_by_js = self.p.aot.storage.records_reaching_javascript.lock().clone();
         let ask = |c: &mut Checker<'p, 's>, slice: &[(usize, TypeId)]| {
-            c.go_by_names_stored(&stored);
-            let mut foreign: Vec<(u32, Option<TypeId>, WhyForeign)> = Vec::new();
-            let mut about_kinds: Vec<(Question, u32, WhyForeign)> = Vec::new();
+            c.restrict_to_stored_names(&stored);
+            let mut foreign: Vec<(u32, Option<TypeId>, UntypedReason)> = Vec::new();
+            let mut kind_queries: Vec<(Question, u32, UntypedReason)> = Vec::new();
             let (mut candidates, mut of_nobody): (Vec<u32>, Vec<u32>) = Default::default();
             for &(index, view) in slice {
                 let seen_at = noted.foreign.get(&view).map(|seen| seen.1);
                 if let Some(&(source, at)) = noted.foreign.get(&view) {
                     // What a coercion lets through is whatever it was, laid out or not. It passes no cast for being that.
-                    let passing = source.filter(|_| !c.is_view_made_by_coercion(view));
-                    foreign.push((index as u32, passing, WhyForeign::Seen { source, at }));
-                } else if let Some(&at) = held_by_javascript.get(&c.identity_of_type(view)) {
-                    foreign.push((index as u32, None, WhyForeign::HeldByJavaScript { at }));
+                    let passing = source.filter(|_| !c.is_coercion_result_type(view));
+                    foreign.push((index as u32, passing, UntypedReason::Seen { source, at }));
+                } else if let Some(&at) = held_by_js.get(&c.type_identity(view)) {
+                    foreign.push((index as u32, None, UntypedReason::ReachesJavaScript { at }));
                 } else if c.is_declared_only_record(view) {
-                    foreign.push((index as u32, None, WhyForeign::DeclaredOnly));
+                    foreign.push((index as u32, None, UntypedReason::DeclaredOnly));
                     continue;
-                } else if c.is_type_of_instances(view) && c.extends_one_of(view, &opened) {
-                    foreign.push((index as u32, None, WhyForeign::Instance));
+                } else if c.is_instance_type(view) && c.extends_one_of(view, &opened) {
+                    foreign.push((index as u32, None, UntypedReason::Instance));
                     continue;
                 }
                 let untyped_at = untyped_into.get(&view).copied().filter(|_| seen_at.is_none());
-                let vouched_at = vouched.binary_search_by_key(&(index as u32), |target| target.0).ok().map(|found| vouched[found].1);
-                let flows_in = seen_at.or(untyped_at).or(vouched_at);
+                let trusted_at = vouched.binary_search_by_key(&(index as u32), |target| target.0).ok().map(|found| vouched[found].1);
+                let flows_in = seen_at.or(untyped_at).or(trusted_at);
                 let Some(at) = flows_in.or(has_namespaces.then_some(Place::NOWHERE)) else { continue };
                 candidates.clear();
                 c.add_candidates(&having, view, &mut candidates);
@@ -7027,37 +7463,37 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 candidates.sort_unstable();
                 candidates.dedup();
-                let is_given = |candidate: &u32| matches!(others[*candidate as usize], Kind::Given(_));
-                let is_made_by_coercion = c.is_view_made_by_coercion(view) || flows_in.is_none();
-                if !is_made_by_coercion {
+                let is_external_data = |candidate: &u32| matches!(others[*candidate as usize], Kind::ExternalTypes(_));
+                let is_allocated_by_coercion = c.is_coercion_result_type(view) || flows_in.is_none();
+                if !is_allocated_by_coercion {
                     of_nobody.clear();
-                    c.add_candidates(&having_of_nobody, view, &mut of_nobody);
+                    c.add_candidates(&unowned_members, view, &mut of_nobody);
                     if !of_nobody.is_empty() {
-                        foreign.push((index as u32, None, WhyForeign::GivenAndKeptByNobody { at }));
+                        foreign.push((index as u32, None, UntypedReason::UnretainedExternalData { at }));
                         continue;
                     }
                 }
-                let of_given: Vec<u32> = candidates.iter().copied().filter(|candidate| !is_made_by_coercion && is_given(candidate)).collect();
-                if of_given.len() > MOST_GIVEN_KINDS_ASKED_ABOUT {
-                    foreign.push((index as u32, None, WhyForeign::Given { at, candidate: Candidate(others[of_given[0] as usize]) }));
+                let external_types: Vec<u32> = candidates.iter().copied().filter(|candidate| !is_allocated_by_coercion && is_external_data(candidate)).collect();
+                if external_types.len() > MAX_EXTERNAL_KINDS_QUERIED {
+                    foreign.push((index as u32, None, UntypedReason::ExternalData { at, candidate: Candidate(others[external_types[0] as usize]) }));
                     continue;
                 }
-                about_kinds.extend(of_given.iter().map(|&candidate| {
+                kind_queries.extend(external_types.iter().map(|&candidate| {
                     let kind = others[candidate as usize];
-                    (Question { kind, view }, index as u32, WhyForeign::Given { at, candidate: Candidate(kind) })
+                    (Question { kind, view }, index as u32, UntypedReason::ExternalData { at, candidate: Candidate(kind) })
                 }));
-                about_kinds.extend(candidates.iter().filter(|candidate| (is_namespace[**candidate as usize] || untyped_at.is_some()) && !is_given(candidate)).map(|&candidate| {
+                kind_queries.extend(candidates.iter().filter(|candidate| (is_namespace[**candidate as usize] || untyped_at.is_some()) && !is_external_data(candidate)).map(|&candidate| {
                     let kind = others[candidate as usize];
-                    (Question { kind, view }, index as u32, WhyForeign::Untyped { at, candidate: Candidate(kind) })
+                    (Question { kind, view }, index as u32, UntypedReason::Untyped { at, candidate: Candidate(kind) })
                 }));
             }
-            (foreign, about_kinds)
+            (foreign, kind_queries)
         };
-        let of_slices = self.in_slices(&numbered, VIEWS_OF_A_CHECKER, Some(in_parallel), &|c, slice| (!slice.iter().any(|view| has_own_names[view.0])).then(|| ask(c, slice)));
-        for (slice, asked) in numbered.chunks(VIEWS_OF_A_CHECKER).zip(of_slices) {
+        let of_slices = self.map_slices(&numbered, LAYOUTS_PER_CHECKER, Some(in_parallel), &|c, slice| (!slice.iter().any(|view| has_own_names[view.0])).then(|| ask(c, slice)));
+        for (slice, asked) in numbered.chunks(LAYOUTS_PER_CHECKER).zip(of_slices) {
             let (of_foreign, of_kinds) = asked.unwrap_or_else(|| ask(self, slice));
             foreign.extend(of_foreign);
-            about_kinds.extend(of_kinds);
+            kind_queries.extend(of_kinds);
         }
 
         let mut upcasts: Vec<(u32, u32, Place)> = noted.upcasts.iter().filter_map(|(&(from, to), &at)| Some((*index_of.get(&from)?, *index_of.get(&to)?, at))).collect();
@@ -7072,31 +7508,31 @@ impl<'p, 's> Checker<'p, 's> {
         tests.sort_unstable();
         // What is altered need not be a view: nothing may be looked at as it. It has no number then, and no set. What is seen to get to it may
         // be altered, and what may fit it by its names.
-        let altered: [AlteredViews; 2] = [0, 1].map(|alteration: usize| {
-            let besides: FxHashSet<TypeId> = types_altered[alteration].iter().copied().filter(|ty| !index_of.contains_key(ty)).collect();
+        let altered: [MutatedTypes; 2] = [0, 1].map(|mutation: usize| {
+            let besides: FxHashSet<TypeId> = mutated_types[mutation].iter().copied().filter(|ty| !index_of.contains_key(ty)).collect();
             let into_besides = noted.upcasts.keys().chain(&noted.casts).chain(&noted.tests).filter(|edge| besides.contains(&edge.1)).filter_map(|edge| index_of.get(&edge.0).copied());
-            let mut views: Vec<u32> = types_altered[alteration].iter().filter_map(|ty| index_of.get(ty).copied()).chain(into_besides).collect();
+            let mut views: Vec<u32> = mutated_types[mutation].iter().filter_map(|ty| index_of.get(ty).copied()).chain(into_besides).collect();
             views.sort_unstable();
             views.dedup();
             let mut besides: Vec<TypeId> = besides.into_iter().collect();
             besides.sort_unstable_by_key(|ty| ty.0);
-            let besides: Vec<Facts> = besides.into_iter().map(|ty| self.facts_of(ty, &of_every_object)).collect();
-            AlteredViews { views, besides, is_untyped: altered[alteration].is_untyped, is_anything: altered[alteration].is_anything }
+            let besides: Vec<Facts> = besides.into_iter().map(|ty| self.facts_of(ty, &any_object_type)).collect();
+            MutatedTypes { views, besides, is_untyped: altered[mutation].is_untyped, is_any_layout: altered[mutation].is_any_layout }
         });
-        let mut held_untyped: Vec<(u32, Place)> = noted.untyped_into.iter().filter_map(|(ty, &at)| Some((*index_of.get(ty)?, at))).collect();
+        let mut untyped_inflow_sites: Vec<(u32, Place)> = noted.untyped_into.iter().filter_map(|(ty, &at)| Some((*index_of.get(ty)?, at))).collect();
         let mut checked: Vec<(u32, Place)> = noted.checked_into.iter().filter_map(|(ty, &at)| Some((*index_of.get(ty)?, at))).collect();
         checked.sort_unstable();
-        held_untyped.sort_unstable();
-        let mut held_untyped_together: Vec<(u32, u32)> = (noted.untyped_into_both.iter()).filter_map(|(arm, other)| Some((*index_of.get(arm)?, *index_of.get(other)?))).flat_map(|(arm, other)| [(arm, other), (other, arm)]).collect();
-        held_untyped_together.sort_unstable();
-        held_untyped_together.dedup();
-        let mut held_any: Vec<(u32, Place)> = noted.any_into.iter().filter_map(|(ty, &at)| Some((*index_of.get(ty)?, at))).collect();
-        held_any.sort_unstable();
-        let by_view = |callees: &FxHashMap<(TypeId, Atom), Callee>| -> Vec<(u32, Atom, Callee)> { callees.iter().filter_map(|(&(holder, name), &callee)| Some((*index_of.get(&holder)?, name, callee))).collect() };
-        let (callees_at_birth, callees_stored) = (by_view(&noted.callees_at_birth), by_view(&noted.callees_stored));
-        let creations = noted.creations.by_view(&index_of);
-        let constructions = noted.constructions.by_view(&index_of);
-        clock.say(format_args!("the edges: {} questions about kinds", about_kinds.len()));
+        untyped_inflow_sites.sort_unstable();
+        let mut untyped_inflow_pairs: Vec<(u32, u32)> = (noted.untyped_into_both.iter()).filter_map(|(arm, other)| Some((*index_of.get(arm)?, *index_of.get(other)?))).flat_map(|(arm, other)| [(arm, other), (other, arm)]).collect();
+        untyped_inflow_pairs.sort_unstable();
+        untyped_inflow_pairs.dedup();
+        let mut any_inflow_sites: Vec<(u32, Place)> = noted.any_into.iter().filter_map(|(ty, &at)| Some((*index_of.get(ty)?, at))).collect();
+        any_inflow_sites.sort_unstable();
+        let by_layout_index = |callees: &FxHashMap<(TypeId, Atom), Callee>| -> Vec<(u32, Atom, Callee)> { callees.iter().filter_map(|(&(holder, name), &callee)| Some((*index_of.get(&holder)?, name, callee))).collect() };
+        let (callees_at_creation, callees_stored) = (by_layout_index(&noted.callees_at_creation), by_layout_index(&noted.callees_stored));
+        let creations = noted.creations.by_layout_index(&index_of);
+        let constructions = noted.constructions.by_layout_index(&index_of);
+        clock.say(format_args!("the edges: {} questions about kinds", kind_queries.len()));
         let gathered = Gathered {
             types,
             asked_as,
@@ -7108,23 +7544,23 @@ impl<'p, 's> Checker<'p, 's> {
             forced,
             tests,
             vouched,
-            held_untyped,
-            held_untyped_together,
-            held_any,
+            untyped_inflow_sites,
+            untyped_inflow_pairs,
+            any_inflow_sites,
             checked,
-            checked_by_road: noted.checked_by_road,
+            checked_by_path: noted.checked_by_path,
             logs_type_errors: self.logs_type_errors(),
-            opens_for_the_log: OpensForTheLog::Nothing,
-            admitting_when_closed: Vec::new(),
-            members_when_closed: Vec::new(),
-            becomes_when_closed: Vec::new(),
-            about_kinds_once_more: Vec::new(),
+            logging_relaxation: LoggingRelaxation::Nothing,
+            accepting_when_strict: Vec::new(),
+            subtypes_when_strict: Vec::new(),
+            conversions_when_strict: Vec::new(),
+            kind_queries_retry: Vec::new(),
             foreign,
-            about_kinds,
+            kind_queries,
             altered,
             fields,
             stored,
-            callees_at_birth,
+            callees_at_creation,
             callees_stored,
             escapes: noted.escapes,
             creations,
@@ -7134,7 +7570,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// What kind of type it is, in a word that says nothing of the program.
-    fn kind_of_view(&self, ty: TypeId) -> &'static str {
+    fn type_kind_label(&self, ty: TypeId) -> &'static str {
         match self.data(ty) {
             TypeData::Ref { .. } => "a reference",
             TypeData::Intersection(_) => "an intersection",
@@ -7148,15 +7584,15 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// What is compared of the type before the relation is asked about it. `of_every_object`: the names that every object has, ascending.
-    fn facts_of(&mut self, ty: TypeId, of_every_object: &[u32]) -> Facts {
+    /// What is compared of the type before the relation is asked about it. `any_object_type`: the names that every object has, ascending.
+    fn facts_of(&mut self, ty: TypeId, any_object_type: &[u32]) -> Facts {
         let mut flags = 0;
-        for (is_so, flag) in [(self.is_view_made_by_coercion(ty), subtypes::IS_MADE_BY_COERCION), (self.is_type_of_instances(ty), subtypes::IS_INSTANCE), (self.has_type_variables(ty), subtypes::IS_GENERIC)] {
+        for (is_so, flag) in [(self.is_coercion_result_type(ty), subtypes::IS_COERCION_RESULT), (self.is_instance_type(ty), subtypes::IS_INSTANCE), (self.has_type_variables(ty), subtypes::IS_GENERIC)] {
             if is_so {
                 flags |= flag;
             }
         }
-        let kind = self.kind_of_view(ty);
+        let kind = self.type_kind_label(ty);
         let Some(members) = self.members(ty) else { return Facts { flags, kind, ..Facts::default() } };
         let shape = members.shape();
         let (mut declared, mut live, mut required, mut open): (Vec<u32>, Vec<u32>, Vec<u32>, Vec<u32>) = Default::default();
@@ -7172,7 +7608,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             if !prop.flags.contains(PropFlags::OPTIONAL) {
                 requires_a_property = true;
-                if is_live && of_every_object.binary_search(&name).is_err() {
+                if is_live && any_object_type.binary_search(&name).is_err() {
                     required.push(name);
                 }
             }
@@ -7180,7 +7616,7 @@ impl<'p, 's> Checker<'p, 's> {
             // Also what no code of the program stores: plain data brings it along, and a read finds it.
             is_flat &= self.parts(of_prop).iter().all(|&part| self.has_primitive_flag(part));
             // Nothing is ever made of a function either.
-            is_flat_but_for_functions &= self.parts(of_prop).iter().all(|&part| self.has_primitive_flag(part) || matches!(self.built_in_that_is(part), Some(BuiltIn::Function)));
+            is_flat_but_for_functions &= self.parts(of_prop).iter().all(|&part| self.has_primitive_flag(part) || matches!(self.built_in_for_type(part), Some(BuiltIn::Function)));
             if of_prop.is_any() || of_prop.is_never() || self.has_type_variables(of_prop) {
                 open.push(name);
                 continue;
@@ -7197,7 +7633,7 @@ impl<'p, 's> Checker<'p, 's> {
             if !self.parts(of_prop).iter().all(|&part| is_nullish_or_constant(self, part)) {
                 continue;
             }
-            let named = self.literals_of_type(of_prop);
+            let named = self.type_literals(of_prop);
             if prop.flags.contains(PropFlags::OPTIONAL) || self.parts(of_prop).iter().any(|&part| matches!(self.data(part), TypeData::Intrinsic(_))) {
                 constants.push((name, 0x7FF8_0002_0000_0000));
             }
@@ -7211,7 +7647,7 @@ impl<'p, 's> Checker<'p, 's> {
             }));
         }
         if flags & subtypes::IS_INSTANCE == 0 && self.contains_only_plain_data(ty, &mut FxHashSet::default()) {
-            flags |= subtypes::IS_PLAIN_DATA | subtypes::IS_PLAIN_DATA_OR_FUNCTIONS | if live.len() > 6 { subtypes::MAY_LACK_ROOM } else { 0 };
+            flags |= subtypes::IS_PLAIN_DATA | subtypes::IS_PLAIN_DATA_OR_FUNCTIONS | if live.len() > 6 { subtypes::MAY_LACK_CAPACITY } else { 0 };
         } else if flags & subtypes::IS_INSTANCE == 0 && self.is_plain_data_type(ty, true, &mut FxHashSet::default()) {
             flags |= subtypes::IS_PLAIN_DATA_OR_FUNCTIONS;
         }
@@ -7246,11 +7682,11 @@ impl<'p, 's> Checker<'p, 's> {
             _ => Vec::new(),
         };
         for supertype in supertypes {
-            if !self.says_properties(supertype) || !passed.insert(supertype) {
+            if !self.declares_properties(supertype) || !passed.insert(supertype) {
                 continue;
             }
-            let laid_out = self.laid_out_as(supertype);
-            match index_of.get(&laid_out) {
+            let layout_types_cache = self.layout_defining_type(supertype);
+            match index_of.get(&layout_types_cache) {
                 Some(&index) => out.push(index),
                 None => self.add_declared_supertypes(supertype, index_of, passed, out),
             }
@@ -7260,33 +7696,33 @@ impl<'p, 's> Checker<'p, 's> {
     /// The answers to the questions, in their order. Of the questions of a slice whether a view admits an object that is not laid out, those
     /// after the first yes are not gone into and answered no: one yes is all that counts. `stored`: `Subtypes::stored`.
     pub fn answer(&mut self, questions: &[Question], stored: &FxHashSet<Atom>) -> Vec<Answer> {
-        self.go_by_names_stored(stored);
+        self.restrict_to_stored_names(stored);
         let mut admitting = None;
         let mut answers = Vec::with_capacity(questions.len());
         for question in questions {
-            let not_known_before = self.aot.flows.times_not_known;
+            let not_known_before = self.aot.flows.unknown_count;
             let is_so = match question.kind {
-                Kind::Made(made) => self.is_of_type(made, question.view),
-                Kind::Assignable(made) => self.is_of_type_as(made, question.view, false) || self.is_narrowed_from(question.view, made),
+                Kind::Allocated(made) => self.is_allocated_subtype(made, question.view),
+                Kind::Assignable(made) => self.is_allocated_subtype_by(made, question.view, false) || self.is_narrowed_from(question.view, made),
                 _ if admitting == Some(question.view) => false,
-                Kind::Given(_) => {
-                    let given = self.type_of_kind(question.kind);
-                    let is_admitted = self.is_of_type_as(given, question.view, false) || self.may_turn_out_to_be(given, question.view);
-                    if is_admitted {
+                Kind::ExternalTypes(_) => {
+                    let given = self.kind_type(question.kind);
+                    let is_accepted = self.is_allocated_subtype_by(given, question.view, false) || self.may_be_subtype_at_runtime(given, question.view);
+                    if is_accepted {
                         admitting = Some(question.view);
                     }
-                    is_admitted
+                    is_accepted
                 }
                 kind => {
-                    let other = self.type_of_kind(kind);
-                    let is_admitted = self.is_of_type(other, question.view);
-                    if is_admitted {
+                    let other = self.kind_type(kind);
+                    let is_accepted = self.is_allocated_subtype(other, question.view);
+                    if is_accepted {
                         admitting = Some(question.view);
                     }
-                    is_admitted
+                    is_accepted
                 }
             };
-            answers.push(if self.aot.flows.times_not_known != not_known_before {
+            answers.push(if self.aot.flows.unknown_count != not_known_before {
                 Answer::NotKnown
             } else if is_so {
                 Answer::Yes
@@ -7301,52 +7737,52 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// A line for each of `views` that admits objects that are not laid out, in their order: the view, and how it has come to that, back to
     /// where such an object was let in or something untyped was held to a view.
-    pub fn explain_foreign(&mut self, views: &[TypeId], membership: &Membership, is_left_out: &[bool]) -> Vec<String> {
+    pub fn explain_untyped(&mut self, views: &[TypeId], membership: &Membership, is_left_out: &[bool]) -> Vec<String> {
         let mut lines = Vec::new();
         for (index, &view) in views.iter().enumerate() {
-            let mut why = membership.why_foreign[index];
+            let mut why = membership.untyped_reasons[index];
             if why.is_none() || is_left_out[index] {
                 continue;
             }
-            let mut line = format!("foreign: {}: ", self.name_for_people(view));
+            let mut line = format!("foreign: {}: ", self.display_name(view));
             // The reasons lead back to where something was let in. Should they not, the line ends.
             for _ in 0..32 {
                 let Some(reason) = why.take() else { break };
                 match reason {
-                    WhyForeign::Seen { source, at } => {
-                        let source = source.map_or_else(|| "a type that was not retained".to_owned(), |source| self.name_for_people(source));
-                        line += &format!("seen: {source} at {}", self.place_for_people(at));
+                    UntypedReason::Seen { source, at } => {
+                        let source = source.map_or_else(|| "a type that was not retained".to_owned(), |source| self.display_name(source));
+                        line += &format!("seen: {source} at {}", self.display_location(at));
                     }
-                    WhyForeign::Untyped { at, candidate } => {
-                        let candidate = self.type_of_kind(candidate.0);
-                        line += &format!("untyped: something untyped is held to it at {}, and {} is of the type", self.place_for_people(at), self.name_for_people(candidate));
+                    UntypedReason::Untyped { at, candidate } => {
+                        let candidate = self.kind_type(candidate.0);
+                        line += &format!("untyped: something untyped is held to it at {}, and {} is of the type", self.display_location(at), self.display_name(candidate));
                     }
-                    WhyForeign::Given { at, candidate } => {
-                        let candidate = self.type_of_kind(candidate.0);
+                    UntypedReason::ExternalData { at, candidate } => {
+                        let candidate = self.kind_type(candidate.0);
                         let (rule, said_of_it) = if self.is_tainted(candidate) { ("given", "which the program is given") } else { ("not laid out", "objects of which are not laid out") };
-                        line += &format!("{rule}: a value that only its type vouches for is held to it or to what holds it at {}, and {}, {said_of_it}, is assignable to it or to what holds it", self.place_for_people(at), self.name_for_people(candidate));
+                        line += &format!("{rule}: a value that only its type vouches for is held to it or to what holds it at {}, and {}, {said_of_it}, is assignable to it or to what holds it", self.display_location(at), self.display_name(candidate));
                     }
-                    WhyForeign::GivenAndKeptByNobody { at } => line += &format!("given: a value that only its type vouches for is held to it or to what holds it at {}, and a type that the program is given and that no task could keep, such as untyped code makes, has its names", self.place_for_people(at)),
-                    WhyForeign::DeclaredOnly => line += "declared in a declaration file",
-                    WhyForeign::HeldByJavaScript { at } => line += &format!("JavaScript of the program gets hold of its objects at {}: one that is altered there is an ordinary object from then on", self.place_for_people(at)),
-                    WhyForeign::ForTheLog { at } => line += &format!("for the log: something untyped is held to it at {}, and few views open with it", self.place_for_people(at)),
-                    WhyForeign::Instance => line += "a class: the text shows that an object its constructor has not made can come to be: an object of it or a method of it is handed to what is not typed code, or to a built-in that lets it out",
-                    WhyForeign::Flat { at } => line += &format!("flat: all its properties are primitives, and something untyped is held to it at {}", self.place_for_people(at)),
-                    WhyForeign::Dictionary { at } => line += &format!("dictionary: it has an index signature, and something untyped is held to it at {}", self.place_for_people(at)),
-                    WhyForeign::AnotherLayout { at } => line += &format!("another layout: a value of type any or unknown is assigned to it or to a type that contains it at {}: the value may be an object that is already laid out as another record type, or one that cannot become this one, which stays as it is and is read by name", self.place_for_people(at)),
-                    WhyForeign::MayLackRoom { at } => line += &format!("room: it has more than six fields, or is a member of or in a union with a type that does, and an untyped value is assigned to it or to a type that contains it at {}: a matching object may be too small to convert in place", self.place_for_people(at)),
-                    WhyForeign::UnconvertibleLayout { from } => line += &format!("{} reaches it below a cast or through an untyped value, and can neither be converted to it in place nor pass as it", self.name_of_view(views, from)),
-                    WhyForeign::TooMany { at } => line += &format!("too many layouts may fit it to ask about each, and a value that only its type vouches for is held to it at {}", self.place_for_people(at)),
-                    WhyForeign::NothingIsMadeAsIt { at } => line += &format!("nothing is made as it and no layout fits it, and a value that only its type vouches for is held to it at {}", self.place_for_people(at)),
-                    WhyForeign::Weak { at } => line += &format!("weak: it requires no live field, and a value that only its type vouches for is held to it at {}", self.place_for_people(at)),
-                    WhyForeign::Inherited { from, at } => {
-                        let from_whom = self.name_of_view(views, from);
-                        line += &format!("inherited from {from_whom} over an upcast noted at {}; which is ", self.place_for_people(at));
-                        why = membership.why_foreign.get(from as usize).copied().flatten();
+                    UntypedReason::UnretainedExternalData { at } => line += &format!("given: a value that only its type vouches for is held to it or to what holds it at {}, and a type that the program is given and that no task could keep, such as untyped code makes, has its names", self.display_location(at)),
+                    UntypedReason::DeclaredOnly => line += "declared in a declaration file",
+                    UntypedReason::ReachesJavaScript { at } => line += &format!("JavaScript of the program gets hold of its objects at {}: one that is altered there is an ordinary object from then on", self.display_location(at)),
+                    UntypedReason::ForLogging { at } => line += &format!("for the log: something untyped is held to it at {}, and few views open with it", self.display_location(at)),
+                    UntypedReason::Instance => line += "a class: the text shows that an object its constructor has not made can come to be: an object of it or a method of it is handed to what is not typed code, or to a built-in that lets it out",
+                    UntypedReason::Flat { at } => line += &format!("flat: all its properties are primitives, and something untyped is held to it at {}", self.display_location(at)),
+                    UntypedReason::Dictionary { at } => line += &format!("dictionary: it has an index signature, and something untyped is held to it at {}", self.display_location(at)),
+                    UntypedReason::AnotherLayout { at } => line += &format!("another layout: a value of type any or unknown is assigned to it or to a type that contains it at {}: the value may be an object that is already laid out as another record type, or one that cannot become this one, which stays as it is and is read by name", self.display_location(at)),
+                    UntypedReason::MayLackCapacity { at } => line += &format!("room: it has more than six fields, or is a member of or in a union with a type that does, and an untyped value is assigned to it or to a type that contains it at {}: a matching object may be too small to convert in place", self.display_location(at)),
+                    UntypedReason::UnconvertibleLayout { from } => line += &format!("{} reaches it below a cast or through an untyped value, and can neither be converted to it in place nor pass as it", self.type_display_name(views, from)),
+                    UntypedReason::TooMany { at } => line += &format!("too many layouts may fit it to ask about each, and a value that only its type vouches for is held to it at {}", self.display_location(at)),
+                    UntypedReason::NeverAllocated { at } => line += &format!("nothing is made as it and no layout fits it, and a value that only its type vouches for is held to it at {}", self.display_location(at)),
+                    UntypedReason::Weak { at } => line += &format!("weak: it requires no live field, and a value that only its type vouches for is held to it at {}", self.display_location(at)),
+                    UntypedReason::Inherited { from, at } => {
+                        let source_type = self.type_display_name(views, from);
+                        line += &format!("inherited from {source_type} over an upcast noted at {}; which is ", self.display_location(at));
+                        why = membership.untyped_reasons.get(from as usize).copied().flatten();
                     }
-                    WhyForeign::PassedCast { from } => {
-                        line += &format!("what is in a place of {} passes a cast to it; which is ", self.name_of_view(views, from));
-                        why = membership.why_foreign.get(from as usize).copied().flatten();
+                    UntypedReason::PassedCast { from } => {
+                        line += &format!("what is in a place of {} passes a cast to it; which is ", self.type_display_name(views, from));
+                        why = membership.untyped_reasons.get(from as usize).copied().flatten();
                     }
                 }
             }
@@ -7355,18 +7791,18 @@ impl<'p, 's> Checker<'p, 's> {
         lines
     }
 
-    fn name_of_view(&mut self, views: &[TypeId], view: u32) -> String {
-        views.get(view as usize).map_or_else(|| "types without a layout".to_owned(), |&view| self.name_for_people(view))
+    fn type_display_name(&mut self, views: &[TypeId], view: u32) -> String {
+        views.get(view as usize).map_or_else(|| "types without a layout".to_owned(), |&view| self.display_name(view))
     }
 
-    pub(super) fn name_for_people(&mut self, ty: TypeId) -> String {
+    pub(super) fn display_name(&mut self, ty: TypeId) -> String {
         const MOST: usize = 72;
         let text = self.type_to_string(ty);
         let text = bstr::BStr::new(&text).to_string();
         if text.chars().count() <= MOST { text } else { text.chars().take(MOST).chain(" ..".chars()).collect() }
     }
 
-    pub(super) fn place_for_people(&self, at: Place) -> String {
+    pub(super) fn display_location(&self, at: Place) -> String {
         if at == Place::NOWHERE {
             return "no place in the source".to_owned();
         }

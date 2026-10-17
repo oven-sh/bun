@@ -1,4 +1,4 @@
-use bun_lint::language::Twins;
+use bun_lint::language::RuleOverlaps;
 use bun_lint::prelude::*;
 use bun_lint::types::{Type, TypeFlags};
 use bun_lint::types::tsutils::{
@@ -114,7 +114,7 @@ fn check_return<'a>(return_node: Expr<'a>, reporting_node: Span, cx: &Cx<'a, NoU
             return;
         }
 
-        if return_node.ts_node().is_left_to_aot_no_any_to_typed(Twins::NO_UNSAFE_RETURN_LEAVES) {
+        if return_node.ts_node().is_deferred_to_aot_no_any_to_typed(RuleOverlaps::NO_UNSAFE_RETURN_LEAVES) {
             return;
         }
         let options = cx.file().type_checker().compiler_options();
@@ -144,7 +144,7 @@ fn check_return<'a>(return_node: Expr<'a>, reporting_node: Span, cx: &Cx<'a, NoU
     else {
         return;
     };
-    if return_node.ts_node().is_left_to_aot_no_any_to_typed(Twins::NO_UNSAFE_RETURN_LEAVES) {
+    if return_node.ts_node().is_deferred_to_aot_no_any_to_typed(RuleOverlaps::NO_UNSAFE_RETURN_LEAVES) {
         return;
     }
     cx.report(reporting_node, UNSAFE_RETURN_ASSIGNMENT)

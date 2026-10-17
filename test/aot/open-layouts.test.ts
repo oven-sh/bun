@@ -31,46 +31,46 @@ describe.skipIf(!!unsupported)("compile/aot/open-layouts", () => {
 
   test("data from outside in that place still opens the type", () =>
     slot(async () => {
-      expect(await openAmong("data-in-the-place-of-a-placeholder.ts", ["Holder", "Big", "Leaf"])).toContain("Big");
+      expect(await openAmong("data-replacing-placeholder.ts", ["Holder", "Big", "Leaf"])).toContain("Big");
     }), 600_000);
 
   test("a union that is only written beside an open type opens none of its other arms", () =>
     slot(async () => {
-      expect(await openAmong("a-union-written-beside-an-open-type.ts", ["Settings", "Tree", "Twig", "Fruit"])).toEqual(["Settings"]);
+      expect(await openAmong("union-next-to-open-type.ts", ["Settings", "Tree", "Twig", "Fruit"])).toEqual(["Settings"]);
     }), 600_000);
 
   test("data from outside that is held to a union opens all its arms, and each arm is found", () =>
     slot(async () => {
-      expect(await openAmong("data-held-to-a-union.ts", ["Settings", "Small", "Tree"])).toEqual(["Settings", "Small", "Tree"]);
+      expect(await openAmong("data-checked-against-union.ts", ["Settings", "Small", "Tree"])).toEqual(["Settings", "Small", "Tree"]);
     }), 600_000);
 
   test("a constructor function that is cast to a type with its own call signature opens no type", () =>
     slot(async () => {
-      expect(await openAmong("a-constructor-function-cast-to-its-own-signatures.ts", ["State", "Task", "Request"])).toEqual([]);
+      expect(await openAmong("constructor-function-cast-to-own-signatures.ts", ["State", "Task", "Request"])).toEqual([]);
     }), 600_000);
 
   test("a constructor function that leaves typed code takes what it is handed there", () =>
     slot(async () => {
-      expect(await openAmong("a-constructor-function-that-leaves-typed-code.ts", ["State", "Request"])).toContain("State");
+      expect(await openAmong("constructor-function-escapes-typed-code.ts", ["State", "Request"])).toContain("State");
     }), 600_000);
 
   test("a literal with accessors that has a layout opens no type it is handed on as", () =>
     slot(async () => {
-      expect(await openAmong("a-literal-with-accessors-that-has-a-layout.ts", ["Factory", "Tools", "Sink"])).toEqual([]);
+      expect(await openAmong("accessor-literal-with-layout.ts", ["Factory", "Tools", "Sink"])).toEqual([]);
     }), 600_000);
 
   test("a literal with accessors that is made as an ordinary object still opens the type", () =>
     slot(async () => {
-      expect(await openAmong("an-ordinary-literal-with-accessors.ts", ["Factory"])).toEqual(["Factory"]);
+      expect(await openAmong("plain-accessor-literal.ts", ["Factory"])).toEqual(["Factory"]);
     }), 600_000);
 
   test("the object of a namespace block opens no type", () =>
     slot(async () => {
-      expect(await openAmong("the-object-of-a-namespace-block.ts", ["typeof Debug", "typeof Inner"])).toEqual([]);
+      expect(await openAmong("namespace-block-object.ts", ["typeof Debug", "typeof Inner"])).toEqual([]);
     }), 600_000);
 
   test("a look-alike that is held to the type of a namespace still opens it", () =>
     slot(async () => {
-      expect(await openAmong("a-look-alike-held-to-the-type-of-a-namespace.ts", ["typeof Debug"])).toEqual(["typeof Debug"]);
+      expect(await openAmong("lookalike-checked-against-namespace-type.ts", ["typeof Debug"])).toEqual(["typeof Debug"]);
     }), 600_000);
 });

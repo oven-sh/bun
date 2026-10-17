@@ -13,7 +13,7 @@ describe.skipIf(!!unsupported)("compile/aot/react-compiler", () => {
   const folder = String(tempDir("aot-react-compiler", {}));
   afterAll(() => rmSync(folder, { recursive: true, force: true }));
 
-  test.concurrent.each(["stores-through-a-wider-type", "types-held-by-what-a-component-makes", "a-literal-with-a-getter-exported-by-a-component-file", "a-component-file-that-needs-no-cache"])(
+  test.concurrent.each(["stores-through-wider-type", "types-of-component-results", "getter-literal-exported-by-component-file", "component-file-without-cache"])(
     "%s",
     name =>
       slot(async () => {
@@ -32,12 +32,12 @@ describe.skipIf(!!unsupported)("compile/aot/react-compiler", () => {
   );
 
   test(
-    "component-files-beside-a-slow-plugin",
+    "component-files-with-slow-plugin",
     () =>
       slot(async () => {
-        const main = join(programs, "component-files-beside-a-slow-plugin", "main.ts");
-        const executable = join(folder, "component-files-beside-a-slow-plugin");
-        built(await spawned([bunExe(), "run", join(programs, "build-with-a-slow-plugin.ts"), main, executable], programs, bunEnv));
+        const main = join(programs, "component-files-with-slow-plugin", "main.ts");
+        const executable = join(folder, "component-files-with-slow-plugin");
+        built(await spawned([bunExe(), "run", join(programs, "build-with-slow-plugin.ts"), main, executable], programs, bunEnv));
         const compiled = await spawned([executable], programs, bunEnv);
         expect(compiled.signal).toBeNull();
         // Each of the three components ran as the compiler's output.
@@ -50,11 +50,11 @@ describe.skipIf(!!unsupported)("compile/aot/react-compiler", () => {
   );
 
   test(
-    "a-type-error-in-a-component-file",
+    "type-error-in-component-file",
     () =>
       slot(async () => {
-        const main = join(programs, "a-type-error-in-a-component-file", "main.ts");
-        const build = await spawned([bunExe(), "run", join(programs, "build.ts"), main, join(folder, "a-type-error-in-a-component-file")], programs, bunEnv);
+        const main = join(programs, "type-error-in-component-file", "main.ts");
+        const build = await spawned([bunExe(), "run", join(programs, "build.ts"), main, join(folder, "type-error-in-component-file")], programs, bunEnv);
         expect({ errors: build.stderr.match(/\bTS\d+: .*/g), signal: build.signal, exitCode: build.exitCode }).toEqual({
           errors: [
             "TS2322: Type 'string' is not assignable to type 'number'.",

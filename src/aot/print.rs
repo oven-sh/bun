@@ -3,7 +3,7 @@
 use crate::declared::Part;
 use crate::format::{Opcode, end_of, record};
 use crate::id::{FuncId, StrId, TyId, V};
-use crate::ir::{LayoutKind, Literal, Operation, Prediction, Program, Target, Term, Why, class_flags, method_flags, only_function_flags};
+use crate::ir::{LayoutKind, Literal, Operation, Prediction, Program, Target, Term, CoerceReason, class_flags, method_flags, single_function_flags};
 use std::fmt::Write;
 
 impl Program {
@@ -27,7 +27,7 @@ impl Program {
         self.dump_where(&|_| true, &|_| true, &|_| true, true)
     }
 
-    fn dump_where(&self, shows_type: &dyn Fn(usize) -> bool, shows_shape: &dyn Fn(usize) -> bool, shows_function: &dyn Fn(usize) -> bool, shows_the_rest: bool) -> String {
+    fn dump_where(&self, shows_type: &dyn Fn(usize) -> bool, shows_shape: &dyn Fn(usize) -> bool, shows_function: &dyn Fn(usize) -> bool, shows_rest: bool) -> String {
         let mut out = String::new();
         let o = &mut out;
         let index = |o: &mut String, value: u32| {
@@ -37,9 +37,9 @@ impl Program {
                 let _ = write!(o, "{value}");
             }
         };
-        let only_function = |o: &mut String, func: FuncId, flags: u8| {
+        let single_function = |o: &mut String, func: FuncId, flags: u8| {
             if func.is_some() {
-                let _ = write!(o, " only f{}{}", func.0, if flags & only_function_flags::IS_FACT != 0 { " fact" } else { "" });
+                let _ = write!(o, " only f{}{}", func.0, if flags & single_function_flags::IS_PROVEN != 0 { " proven" } else { "" });
             }
         };
         let ty = |o: &mut String, t: TyId| {
@@ -135,12 +135,12 @@ impl Program {
                 o.push_str(" environment ");
                 index(o, layout.environment.0);
                 for (flag, what) in [
-                    (class_flags::IS_LAID_OUT, " laid out"),
+                    (class_flags::HAS_FIXED_LAYOUT, " fixed-layout"),
                     (class_flags::IS_EVALUATED_ONCE, " evaluated once"),
-                    (class_flags::HAS_FOREIGN_ROOT, " foreign root"),
+                    (class_flags::HAS_UNTYPED_BASE, " untyped-base"),
                     (class_flags::HAS_FIXED_MEMBERS, " fixed members"),
                     (class_flags::MAY_HAVE_OTHER_PROTOTYPE, " other prototypes"),
-                    (class_flags::HAS_STATIC_MEMBER_OF_UNKNOWN_NAME, " unknown static names"),
+                    (class_flags::HAS_COMPUTED_STATIC_MEMBER, " unknown static names"),
                     (class_flags::CONSTRUCTOR_MAY_BE_REPLACED, " replaceable constructor"),
                 ] {
                     if layout.class_flags & flag != 0 {
@@ -157,17 +157,17 @@ impl Program {
             if layout.may_be_frozen {
                 o.push_str(" frozen");
             }
-            if layout.admits_foreign {
-                o.push_str(" foreign");
+            if layout.accepts_untyped {
+                o.push_str(" accepts-untyped");
             }
-            if layout.is_opened_for_the_log {
-                o.push_str(" for the log");
+            if layout.is_relaxed_for_logging {
+                o.push_str(" relaxed-for-logging");
             }
-            if layout.admits_only_other_layouts {
+            if layout.accepts_only_other_layouts {
                 o.push_str(" other layouts only");
             }
             o.push('\n');
-            for (what, layouts) in [("members", &layout.members), ("members by fit", &layout.members_by_fit), ("specializations", &layout.specializations)] {
+            for (what, layouts) in [("subtypes", &layout.members), ("structural subtypes", &layout.structural_subtypes), ("specializations", &layout.specializations)] {
                 if !layouts.is_empty() {
                     let _ = write!(o, "  {what}");
                     for other in layouts {
@@ -195,7 +195,7 @@ impl Program {
                     o.push_str(" type ");
                     self.quoted(o, field.type_text);
                 }
-                only_function(o, field.only_function, field.only_function_flags);
+                single_function(o, field.single_function, field.single_function_flags);
                 o.push('\n');
             }
             for (side, what) in [(0, "  method "), (method_flags::STATIC, "  static method ")] {
@@ -217,7 +217,7 @@ impl Program {
                 o.push('\n');
             }
         }
-        for (i, global) in self.globals.iter().enumerate().filter(|_| shows_the_rest) {
+        for (i, global) in self.globals.iter().enumerate().filter(|_| shows_rest) {
             let _ = write!(o, "variable {i} ");
             self.quoted(o, global.name);
             o.push_str(" module ");
@@ -227,20 +227,20 @@ impl Program {
             o.push_str(match global.initialization {
                 crate::ir::Initialization::Uninitialized => "",
                 crate::ir::Initialization::Undefined | crate::ir::Initialization::Lazy => " undefined",
-                crate::ir::Initialization::NeverSeen => " never seen uninitialized",
-                crate::ir::Initialization::NeverSeenAndStoredOnce => " never seen uninitialized, stored once",
+                crate::ir::Initialization::NeverReadUninitialized => " never read uninitialized",
+                crate::ir::Initialization::NeverReadUninitializedStoredOnce => " never read uninitialized, stored once",
             });
-            only_function(o, global.only_function, global.only_function_flags);
+            single_function(o, global.single_function, global.single_function_flags);
             o.push('\n');
         }
-        for (i, module) in self.modules.iter().enumerate().filter(|_| shows_the_rest) {
+        for (i, module) in self.modules.iter().enumerate().filter(|_| shows_rest) {
             let _ = write!(o, "module {i} ");
             self.quoted(o, module.path);
             let _ = write!(o, " f{} ", module.init.0);
             self.quoted(o, module.display_path);
             let _ = writeln!(o, " line table {} bytes", module.line_table.len());
         }
-        if !self.prototype_property_names.is_empty() && shows_the_rest {
+        if !self.prototype_property_names.is_empty() && shows_rest {
             o.push_str("prototype property names");
             for &name in &self.prototype_property_names {
                 o.push(' ');
@@ -248,20 +248,20 @@ impl Program {
             }
             o.push('\n');
         }
-        for &(id, func) in self.builtin_modules.iter().filter(|_| shows_the_rest) {
+        for &(id, func) in self.builtin_modules.iter().filter(|_| shows_rest) {
             let _ = writeln!(o, "builtin module {id} f{}", func.0);
         }
-        for &(id, func, visibility) in self.builtin_functions.iter().filter(|_| shows_the_rest) {
+        for &(id, func, visibility) in self.builtin_functions.iter().filter(|_| shows_rest) {
             let _ = writeln!(o, "builtin function {id} f{} visibility {visibility}", func.0);
         }
-        for &(property, key, func) in self.functions_by_key.iter().filter(|_| shows_the_rest) {
+        for &(property, key, func) in self.functions_by_key.iter().filter(|_| shows_rest) {
             o.push_str("by key ");
             self.quoted(o, property);
             o.push(' ');
             self.quoted(o, key);
             let _ = writeln!(o, " f{}", func.0);
         }
-        for entry in self.entries.iter().filter(|_| shows_the_rest) {
+        for entry in self.entries.iter().filter(|_| shows_rest) {
             let _ = writeln!(o, "entry f{}", entry.0);
         }
         for (i, func) in self.funcs.iter().enumerate().filter(|&(i, _)| shows_function(i)) {
@@ -277,14 +277,14 @@ impl Program {
                 ty(o, capture);
             }
             o.push_str(") this ");
-            ty(o, func.this_declared);
+            ty(o, func.declared_this_type);
             o.push_str(" (");
             for (i, &param) in func.params.iter().enumerate() {
                 if i != 0 {
                     o.push_str(", ");
                 }
                 ty(o, param);
-                if func.why_of_param(i) == Why::Cast {
+                if func.param_cast_reason(i) == CoerceReason::Cast {
                     o.push_str(" annotated");
                 }
             }

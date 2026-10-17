@@ -1,6 +1,6 @@
 //! What ahead-of-time compilation asks of the types beyond what checking does.
 
-mod alterations;
+mod mutations;
 mod builtin_constants;
 mod builtins_generated;
 mod callees;
@@ -28,26 +28,27 @@ mod sloppy;
 mod storage;
 mod subtypes;
 mod trust;
+mod type_caches;
 mod types_of_bun;
 mod undeclared_fields;
 mod validation;
 
-pub use callees::{Callee, OnlyFunction};
-pub use captures::{Activation, Capture, CapturedVariable, DeclaredClosure, NotCopied, Receiver};
+pub use callees::{Callee, SingleFunction};
+pub use captures::{Activation, Capture, CapturedVariable, DeclaredClosure, NotCopiedReason, Receiver};
 pub use escape::argument_use;
 pub use classes::{ClassFacts, MethodStore, ReplacedMethods};
-pub use commonjs::{CommonJsExports, ExportsMention};
+pub use commonjs::{CommonJsExports, ExportsReference};
 pub use first_stores::FirstStore;
 pub use identity::Identity;
-pub use int32_fields::{Contrary, FlowNode, FlowSource, Int32Verdict, NumberFlow, RunBy, expected_int32};
-pub use javascript::CodeOfImport;
+pub use int32_fields::{NotInt32Reason, FlowNode, FlowSource, Int32Verdict, NumberFlow, CodeOwner, expected_int32};
+pub use javascript::ImportedCode;
 pub use kinds::kind;
-pub use flows::{Answer, BuiltIn, Candidate, GaveUp, KindsDeclared, Literal, Meeting, Membership, Noted, OriginOfData, Place, Question, Reach, Share, WhyForeign};
-pub use subtypes::{Cause, FieldTypes, OpensForTheLog, Sizes, Subtypes};
+pub use flows::{Answer, BuiltIn, Candidate, TruncatedSearch, KindsDeclared, Literal, SearchBarrier, Membership, FlowNotes, DataOrigin, Place, Question, Reach, Share, UntypedReason};
+pub use subtypes::{Cause, FieldTypes, LoggingRelaxation, Sizes, Subtypes};
 pub use storage::{Evaluates, Primitive, ReferenceRead, Storage};
 pub use reported_by_lint::{AotCheck, AotCheckKind};
-pub use trust::{Claim, is_global_of_the_engine};
-pub use validation::{Constant, OtherKeys, PlanNode, Planned, PlannedMember, PlannedPrimitive, Rule, ValidationCall, ValidationPlan};
+pub use trust::{Claim, is_engine_global};
+pub use validation::{Constant, OtherKeys, Placeholder, PlanNode, Planned, PlannedMember, PlannedPrimitive, Rule, ValidationCall, ValidationPlan};
 
 use super::{Checker, Program};
 use super::relate::Relation;
@@ -59,12 +60,12 @@ use crate::program::{FileId, Sym};
 use crate::types::{TypeData, TypeId};
 use crate::util::{InParallel, for_each_mut};
 
-const DEEPEST_NEST_OF_A_TASK: u32 = 1000;
-const STACK_OF_A_LEVEL: usize = 16 << 10;
-const MAX_STACK_FOR_A_NEST: usize = 2 << 30;
+const MAX_TASK_NESTING: u32 = 1000;
+const STACK_PER_LEVEL: usize = 16 << 10;
+const MAX_NESTING_STACK: usize = 2 << 30;
 
 fn longest_chain(parents: &[Parent], above: impl Fn(Parent) -> Option<usize>) -> u32 {
-    if parents.len() <= DEEPEST_NEST_OF_A_TASK as usize / 2 {
+    if parents.len() <= MAX_TASK_NESTING as usize / 2 {
         return 0;
     }
     let mut lengths = vec![0u32; parents.len()];
@@ -89,17 +90,17 @@ fn longest_chain(parents: &[Parent], above: impl Fn(Parent) -> Option<usize>) ->
 }
 
 impl Program<'_> {
-    pub fn extra_stack_beyond_task(&self, files: &[FileId]) -> usize {
-        let deepest = files.iter().map(|&file| self.deepest_nest(file)).max().unwrap_or(0);
-        if deepest <= DEEPEST_NEST_OF_A_TASK { 0 } else { (deepest as usize * STACK_OF_A_LEVEL).min(MAX_STACK_FOR_A_NEST) }
+    pub fn extra_stack_for_nesting(&self, files: &[FileId]) -> usize {
+        let deepest = files.iter().map(|&file| self.max_nesting_depth(file)).max().unwrap_or(0);
+        if deepest <= MAX_TASK_NESTING { 0 } else { (deepest as usize * STACK_PER_LEVEL).min(MAX_NESTING_STACK) }
     }
 
-    fn deepest_nest(&self, file: FileId) -> u32 {
-        *self.aot.deepest_nests.get_or_init(self.files.modules.len(), file, || {
+    fn max_nesting_depth(&self, file: FileId) -> u32 {
+        *self.aot.max_nesting_depths.get_or_init(self.files.modules.len(), file, || {
             let bound = self.files.bound(file);
-            let of_expressions = longest_chain(&bound.expr_parent, |parent| if let Parent::Expr(above) = parent { above.is_some().then(|| above.idx()) } else { None });
+            let expr_predictions = longest_chain(&bound.expr_parent, |parent| if let Parent::Expr(above) = parent { above.is_some().then(|| above.idx()) } else { None });
             let of_statements = longest_chain(&bound.stmt_parent, |parent| if let Parent::Stmt(above) = parent { above.is_some().then(|| above.idx()) } else { None });
-            of_expressions + of_statements
+            expr_predictions + of_statements
         })
     }
 }
@@ -113,7 +114,7 @@ thread_local! {
 
 struct OnceLock<T> {
     made: std::sync::OnceLock<T>,
-    made_while_warming_up: std::sync::OnceLock<Box<T>>,
+    warmup_value: std::sync::OnceLock<Box<T>>,
 }
 
 impl<T> Default for OnceLock<T> {
@@ -124,12 +125,12 @@ impl<T> Default for OnceLock<T> {
 
 impl<T> OnceLock<T> {
     const fn new() -> OnceLock<T> {
-        OnceLock { made: std::sync::OnceLock::new(), made_while_warming_up: std::sync::OnceLock::new() }
+        OnceLock { made: std::sync::OnceLock::new(), warmup_value: std::sync::OnceLock::new() }
     }
 
     fn get(&self) -> Option<&T> {
         match self.made.get() {
-            None if IS_WARMING_UP.get() => self.made_while_warming_up.get().map(|made| &**made),
+            None if IS_WARMING_UP.get() => self.warmup_value.get().map(|made| &**made),
             made => made,
         }
     }
@@ -137,29 +138,29 @@ impl<T> OnceLock<T> {
     fn get_or_init(&self, make: impl FnOnce() -> T) -> &T {
         match self.made.get() {
             Some(made) => made,
-            None if IS_WARMING_UP.get() => self.made_while_warming_up.get_or_init(|| Box::new(make())),
+            None if IS_WARMING_UP.get() => self.warmup_value.get_or_init(|| Box::new(make())),
             None => self.made.get_or_init(make),
         }
     }
 
     fn set(&self, value: T) -> Result<(), T> {
         match IS_WARMING_UP.get() {
-            true => self.made_while_warming_up.set(Box::new(value)).map_err(|value| *value),
+            true => self.warmup_value.set(Box::new(value)).map_err(|value| *value),
             false => self.made.set(value),
         }
     }
 
-    fn is_made_for_good(&self) -> bool {
+    fn is_finalized(&self) -> bool {
         self.made.get().is_some()
     }
 
-    fn set_for_warming_up(&self, value: T) {
-        let _ = self.made_while_warming_up.set(Box::new(value));
+    fn set_warmup_value(&self, value: T) {
+        let _ = self.warmup_value.set(Box::new(value));
     }
 }
 
 impl<'p, 's> Checker<'p, 's> {
-    pub fn while_warming_up<R>(&mut self, work: impl FnOnce(&mut Checker<'p, 's>) -> R) -> R {
+    pub fn during_warmup<R>(&mut self, work: impl FnOnce(&mut Checker<'p, 's>) -> R) -> R {
         let kept = std::mem::take(&mut self.aot);
         let kept_by_translator = self.translator.take();
         IS_WARMING_UP.set(true);
@@ -176,21 +177,21 @@ impl<'p, 's> Checker<'p, 's> {
         IS_WARMING_UP.get()
     }
 
-    pub fn has_answers_that_depend_on_order(&self) -> bool {
+    pub fn has_order_dependent_results(&self) -> bool {
         !self.task.listings.is_empty() || self.task.order_dependent_variances.iter().any(|it| it.compared | it.failed | it.inferred != 0)
     }
 
-    pub fn while_translating<R>(&mut self, work: impl FnOnce(&mut Checker<'p, 's>) -> R) -> R {
+    pub fn during_translation<R>(&mut self, work: impl FnOnce(&mut Checker<'p, 's>) -> R) -> R {
         let before = std::mem::replace(&mut self.aot.is_translating, true);
         let result = work(self);
         self.aot.is_translating = before;
         result
     }
 
-    pub fn while_translating_behind_the_check<R>(&mut self, work: impl FnOnce(&mut Checker<'p, 's>) -> R) -> R {
-        let before = std::mem::replace(&mut self.aot.is_behind_the_check, true);
-        let result = self.while_translating(work);
-        self.aot.is_behind_the_check = before;
+    pub fn during_translation_after_check<R>(&mut self, work: impl FnOnce(&mut Checker<'p, 's>) -> R) -> R {
+        let before = std::mem::replace(&mut self.aot.is_after_check, true);
+        let result = self.during_translation(work);
+        self.aot.is_after_check = before;
         result
     }
 
@@ -198,12 +199,12 @@ impl<'p, 's> Checker<'p, 's> {
         self.aot.is_translating
     }
 
-    pub(in crate::check) fn is_behind_the_check(&self) -> bool {
-        self.aot.is_behind_the_check
+    pub(in crate::check) fn is_after_check(&self) -> bool {
+        self.aot.is_after_check
     }
 
-    pub(in crate::check) fn asks_out_of_order(&self) -> bool {
-        self.aot.is_translating || self.is_searching_from_doors()
+    pub(in crate::check) fn queries_out_of_order(&self) -> bool {
+        self.aot.is_translating || self.is_searching_from_sources()
     }
 }
 
@@ -222,23 +223,27 @@ impl<T> ByFile<T> {
     fn get_or_init(&self, files: usize, file: FileId, make: impl FnOnce() -> T) -> &T {
         self.0.get_or_init(|| (0..files).map(|_| OnceLock::new()).collect())[file.idx()].get_or_init(make)
     }
+
+    fn get(&self, files: usize, file: FileId) -> Option<&T> {
+        self.0.get_or_init(|| (0..files).map(|_| OnceLock::new()).collect())[file.idx()].get()
+    }
 }
 
 struct ByExpression<T> {
     file: FileId,
     round: u32,
     of_file: Vec<(u32, T)>,
-    of_other_files: crate::util::FxHashMap<(FileId, ExprId), T>,
+    other_files: crate::util::FxHashMap<(FileId, ExprId), T>,
 }
 
 impl<T> Default for ByExpression<T> {
     fn default() -> ByExpression<T> {
-        ByExpression { file: FileId(u32::MAX), round: 1, of_file: Vec::new(), of_other_files: Default::default() }
+        ByExpression { file: FileId(u32::MAX), round: 1, of_file: Vec::new(), other_files: Default::default() }
     }
 }
 
 impl<T: Copy> ByExpression<T> {
-    fn turn_to(&mut self, file: FileId, expressions: usize, blank: T) {
+    fn switch_to_file(&mut self, file: FileId, expressions: usize, blank: T) {
         if self.file == file {
             return;
         }
@@ -252,7 +257,7 @@ impl<T: Copy> ByExpression<T> {
     #[inline]
     fn get(&self, at: (FileId, ExprId)) -> Option<&T> {
         if at.0 != self.file {
-            return self.of_other_files.get(&at);
+            return self.other_files.get(&at);
         }
         self.of_file.get(at.1.idx()).filter(|entry| entry.0 == self.round).map(|entry| &entry.1)
     }
@@ -262,41 +267,41 @@ impl<T: Copy> ByExpression<T> {
         match self.of_file.get_mut(at.1.idx()) {
             Some(entry) if at.0 == self.file => *entry = (self.round, answer),
             _ => {
-                self.of_other_files.insert(at, answer);
+                self.other_files.insert(at, answer);
             }
         }
     }
 
     fn clear(&mut self) {
         self.round += 1;
-        self.of_other_files.clear();
+        self.other_files.clear();
     }
 }
 
-struct WaysUp {
+struct ParentLinks {
     file: FileId,
-    from_expressions: Vec<Parent>,
-    from_statements: Vec<Parent>,
+    expr_parents: Vec<Parent>,
+    stmt_parents: Vec<Parent>,
 }
 
-impl Default for WaysUp {
-    fn default() -> WaysUp {
-        WaysUp { file: FileId(u32::MAX), from_expressions: Vec::new(), from_statements: Vec::new() }
+impl Default for ParentLinks {
+    fn default() -> ParentLinks {
+        ParentLinks { file: FileId(u32::MAX), expr_parents: Vec::new(), stmt_parents: Vec::new() }
     }
 }
 
 impl Checker<'_, '_> {
-    fn find_ways_up_in(&mut self, file: FileId) {
-        if self.aot.ways_up.file == file {
+    fn compute_parent_links(&mut self, file: FileId) {
+        if self.aot.parent_links.file == file {
             return;
         }
         const NOT_FOUND: Parent = Parent::Expr(ExprId::NONE);
         let bound = self.bound(file);
-        let (mut from_expressions, mut from_statements) = (std::mem::take(&mut self.aot.ways_up.from_expressions), std::mem::take(&mut self.aot.ways_up.from_statements));
-        from_expressions.clear();
-        from_expressions.resize(bound.expr_parent.len(), NOT_FOUND);
-        from_statements.clear();
-        from_statements.resize(bound.stmt_parent.len(), NOT_FOUND);
+        let (mut expr_parents, mut stmt_parents) = (std::mem::take(&mut self.aot.parent_links.expr_parents), std::mem::take(&mut self.aot.parent_links.stmt_parents));
+        expr_parents.clear();
+        expr_parents.resize(bound.expr_parent.len(), NOT_FOUND);
+        stmt_parents.clear();
+        stmt_parents.resize(bound.stmt_parent.len(), NOT_FOUND);
         let mut passed: Vec<Parent> = Vec::new();
         let expressions = (0..bound.expr_parent.len() as u32).map(|e| Parent::Expr(ExprId(e)));
         let statements = (0..bound.stmt_parent.len() as u32).map(|stmt| Parent::Stmt(StmtId(stmt)));
@@ -307,15 +312,15 @@ impl Checker<'_, '_> {
                 _ => NOT_FOUND,
             };
             let known = match above {
-                Parent::Expr(e) if e.is_some() => from_expressions[e.idx()],
-                Parent::Stmt(stmt) if stmt.is_some() => from_statements[stmt.idx()],
+                Parent::Expr(e) if e.is_some() => expr_parents[e.idx()],
+                Parent::Stmt(stmt) if stmt.is_some() => stmt_parents[stmt.idx()],
                 Parent::FnBody(_) | Parent::ParamDefault(_) | Parent::MemberInit(_) | Parent::Module(_) | Parent::File | Parent::None => above,
                 _ => NOT_FOUND,
             };
             if known != NOT_FOUND {
                 match start {
-                    Parent::Expr(e) => from_expressions[e.idx()] = known,
-                    Parent::Stmt(stmt) => from_statements[stmt.idx()] = known,
+                    Parent::Expr(e) => expr_parents[e.idx()] = known,
+                    Parent::Stmt(stmt) => stmt_parents[stmt.idx()] = known,
                     _ => {}
                 }
                 continue;
@@ -324,15 +329,15 @@ impl Checker<'_, '_> {
             let found = loop {
                 at = match at {
                     Parent::Expr(e) if e.is_some() => {
-                        if from_expressions[e.idx()] != NOT_FOUND {
-                            break from_expressions[e.idx()];
+                        if expr_parents[e.idx()] != NOT_FOUND {
+                            break expr_parents[e.idx()];
                         }
                         passed.push(at);
                         bound.expr_parent[e.idx()]
                     }
                     Parent::Stmt(stmt) if stmt.is_some() => {
-                        if from_statements[stmt.idx()] != NOT_FOUND {
-                            break from_statements[stmt.idx()];
+                        if stmt_parents[stmt.idx()] != NOT_FOUND {
+                            break stmt_parents[stmt.idx()];
                         }
                         passed.push(at);
                         bound.stmt_parent[stmt.idx()]
@@ -343,27 +348,27 @@ impl Checker<'_, '_> {
             };
             for below in passed.drain(..) {
                 match below {
-                    Parent::Expr(e) => from_expressions[e.idx()] = found,
-                    Parent::Stmt(stmt) => from_statements[stmt.idx()] = found,
+                    Parent::Expr(e) => expr_parents[e.idx()] = found,
+                    Parent::Stmt(stmt) => stmt_parents[stmt.idx()] = found,
                     _ => {}
                 }
             }
         }
-        self.aot.ways_up = WaysUp { file, from_expressions, from_statements };
+        self.aot.parent_links = ParentLinks { file, expr_parents, stmt_parents };
     }
 
     #[inline]
-    pub fn way_up_from_expression(&self, file: FileId, e: ExprId) -> Parent {
-        if file == self.aot.ways_up.file { self.aot.ways_up.from_expressions[e.idx()] } else { self.bound(file).expr_parent[e.idx()] }
+    pub fn expr_parent_link(&self, file: FileId, e: ExprId) -> Parent {
+        if file == self.aot.parent_links.file { self.aot.parent_links.expr_parents[e.idx()] } else { self.bound(file).expr_parent[e.idx()] }
     }
 
     #[inline]
-    pub fn way_up_from_statement(&self, file: FileId, stmt: StmtId) -> Parent {
-        if file == self.aot.ways_up.file { self.aot.ways_up.from_statements[stmt.idx()] } else { self.bound(file).stmt_parent[stmt.idx()] }
+    pub fn stmt_parent_link(&self, file: FileId, stmt: StmtId) -> Parent {
+        if file == self.aot.parent_links.file { self.aot.parent_links.stmt_parents[stmt.idx()] } else { self.bound(file).stmt_parent[stmt.idx()] }
     }
 
     #[inline]
-    pub(super) fn symbol_kept_for(&self, file: FileId, e: ExprId, name: Atom) -> Option<Option<Sym>> {
+    pub(super) fn cached_symbol_for(&self, file: FileId, e: ExprId, name: Atom) -> Option<Option<Sym>> {
         let kept = &self.aot.symbols_named;
         if file != kept.file {
             return None;
@@ -372,7 +377,7 @@ impl Checker<'_, '_> {
     }
 
     #[inline]
-    pub(super) fn keep_symbol_for(&mut self, file: FileId, e: ExprId, name: Atom, found: Option<Sym>) {
+    pub(super) fn cache_symbol_for(&mut self, file: FileId, e: ExprId, name: Atom, found: Option<Sym>) {
         if file == self.aot.symbols_named.file {
             self.aot.symbols_named.insert((file, e), (name, found));
         }
@@ -385,29 +390,36 @@ impl Checker<'_, '_> {
 /// What takes types to find is noted file by file, by the task that has them, and put together when no task is running.
 #[derive(Default)]
 pub(super) struct Shared {
-    /// `exprs_by_kind_of`
+    /// `file_exprs_by_kind`
     exprs_by_kind: ByFile<ExprsByKind>,
-    names_written_in_code: std::sync::OnceLock<crate::util::FxHashSet<Atom>>,
-    deepest_nests: ByFile<u32>,
+    names_in_code: std::sync::OnceLock<crate::util::FxHashSet<Atom>>,
+    max_nesting_depths: ByFile<u32>,
+    captures: captures::Shared,
     classes: classes::Shared,
     commonjs: commonjs::Shared,
     escape: escape::Shared,
+    flows: flows::Shared,
     identity: identity::Shared,
     integers: integers::Shared,
     javascript: javascript::Shared,
     kinds: kinds::Shared,
     storage: storage::Shared,
+    type_caches: type_caches::TypeCaches,
     undeclared_fields: undeclared_fields::Shared,
-    is_given_up: std::sync::atomic::AtomicBool,
+    has_bailed_out: std::sync::atomic::AtomicBool,
 }
 
 impl Program<'_> {
     pub fn give_up(&self) {
-        self.aot.is_given_up.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.aot.has_bailed_out.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
-    pub fn is_given_up(&self) -> bool {
-        self.aot.is_given_up.load(std::sync::atomic::Ordering::Relaxed)
+    pub fn has_bailed_out(&self) -> bool {
+        self.aot.has_bailed_out.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub fn release_translation_caches(&self) {
+        self.aot.flows.release();
     }
 }
 
@@ -415,7 +427,6 @@ impl Program<'_> {
 #[derive(Default)]
 pub(super) struct State {
     callees: callees::State,
-    captures: captures::State,
     commonjs: commonjs::State,
     creation: creation::State,
     undeclared_fields: undeclared_fields::State,
@@ -430,21 +441,36 @@ pub(super) struct State {
     javascript: javascript::State,
     storage: storage::State,
     is_translating: bool,
-    is_behind_the_check: bool,
+    is_after_check: bool,
     symbols_named: ByExpression<(Atom, Option<Sym>)>,
-    ways_up: WaysUp,
+    parent_links: ParentLinks,
+    non_nullable_types: crate::util::FxHashMap<TypeId, TypeId>,
 }
 
 impl<'p, 's> Checker<'p, 's> {
+    pub fn non_nullable(&mut self, ty: TypeId) -> TypeId {
+        if !self.aot.is_translating {
+            return self.compute_non_nullable(ty);
+        }
+        if let Some(&known) = self.aot.non_nullable_types.get(&ty) {
+            return known;
+        }
+        let (found, is_cacheable) = self.compute_cacheable(|c| c.compute_non_nullable(ty));
+        if is_cacheable {
+            self.aot.non_nullable_types.insert(ty, found);
+        }
+        found
+    }
+
     /// `exprs_by_kind`, for a file that need not be the one the task is at. That keeps the index of one file. This one stays.
-    fn exprs_by_kind_of(&self, file: FileId) -> &'p ExprsByKind {
+    fn file_exprs_by_kind(&self, file: FileId) -> &'p ExprsByKind {
         let program = self.p;
         program.aot.exprs_by_kind.get_or_init(program.files.modules.len(), file, || ExprsByKind::outside(self.hir(file), program.files.module(file).cut))
     }
 
-    pub fn is_written_in_code(&self, name: Atom) -> bool {
+    pub fn occurs_in_code(&self, name: Atom) -> bool {
         let program = self.p;
-        let written = program.aot.names_written_in_code.get_or_init(|| {
+        let written = program.aot.names_in_code.get_or_init(|| {
             let mut names = crate::util::FxHashSet::default();
             for file in (0..program.files.modules.len() as u32).map(FileId) {
                 let hir = self.hir(file);
@@ -456,7 +482,7 @@ impl<'p, 's> Checker<'p, 's> {
                     let after = cut.partition_point(|range| range.0 <= pos);
                     after != 0 && pos < cut[after - 1].1
                 };
-                let by_kind = self.exprs_by_kind_of(file);
+                let by_kind = self.file_exprs_by_kind(file);
                 for &e in by_kind.of(ExprTag::Dot).iter().chain(by_kind.of(ExprTag::String)) {
                     if let ExprKind::Dot { name, .. } | ExprKind::String(name) = hir[e].kind {
                         names.insert(name);
@@ -473,7 +499,7 @@ impl<'p, 's> Checker<'p, 's> {
         written.contains(&name)
     }
 
-    pub fn in_slices<T: Sync, R: Send>(&mut self, items: &[T], size: usize, in_parallel: Option<InParallel<'_>>, work: &(dyn Fn(&mut Checker<'p, 's>, &[T]) -> R + Sync)) -> Vec<R> {
+    pub fn map_slices<T: Sync, R: Send>(&mut self, items: &[T], size: usize, in_parallel: Option<InParallel<'_>>, work: &(dyn Fn(&mut Checker<'p, 's>, &[T]) -> R + Sync)) -> Vec<R> {
         let Some(in_parallel) = in_parallel else { return items.chunks(size).map(|slice| work(self, slice)).collect() };
         let program = self.p;
         let mut slices: Vec<(&[T], Option<R>)> = items.chunks(size).map(|slice| (slice, None)).collect();
@@ -481,7 +507,7 @@ impl<'p, 's> Checker<'p, 's> {
             let mut c = program.checker();
             c.begin_stack_budget();
             let made = work(&mut c, slice);
-            *result = (!c.take_ran_out_of_stack() && c.times_half_of_stack_was_in_use() == 0).then_some(made);
+            *result = (!c.take_ran_out_of_stack() && c.stack_half_used_count() == 0).then_some(made);
         });
         slices.into_iter().map(|(slice, result)| result.unwrap_or_else(|| work(self, slice))).collect()
     }
@@ -490,16 +516,16 @@ impl<'p, 's> Checker<'p, 's> {
     /// such an interface, `number[] & { tag: string }`: the type of the elements. Its objects are arrays that have been given more
     /// properties. Not of a class that extends `Array`, nor of an intersection with one: what such a class makes has another prototype,
     /// where it may find other methods, and the engine does not take it for an array.
-    pub fn element_of_array_subtype(&mut self, ty: TypeId) -> Option<TypeId> {
+    pub fn array_subtype_element(&mut self, ty: TypeId) -> Option<TypeId> {
         if !matches!(self.data(ty), TypeData::Ref { .. } | TypeData::Intersection(_)) {
             return None;
         }
-        let known = if self.answers_are_provisional() { None } else { self.shared_answer(ty, rows::KNOWS_WHETHER_ARRAY_SUBTYPE, rows::IS_ARRAY_SUBTYPE).or_else(|| self.aot.flows.array_subtypes.get(&ty).copied()) };
+        let known = if self.results_are_provisional() { None } else { self.shared_type_flag(ty, rows::ARRAY_SUBTYPE_KNOWN, rows::IS_ARRAY_SUBTYPE).or_else(|| self.aot.flows.array_subtypes.get(&ty).copied()) };
         let is_array = match known {
             Some(known) => known,
             None => {
                 let (found, is_cacheable) = self.compute_cacheable(|c| c.is_array_subtype(ty));
-                if is_cacheable && !self.share_answer(ty, rows::KNOWS_WHETHER_ARRAY_SUBTYPE, rows::IS_ARRAY_SUBTYPE, found) {
+                if is_cacheable && !self.publish_type_flag(ty, rows::ARRAY_SUBTYPE_KNOWN, rows::IS_ARRAY_SUBTYPE, found) {
                     self.aot.flows.array_subtypes.insert(ty, found);
                 }
                 found
@@ -513,10 +539,10 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn is_array_subtype(&mut self, ty: TypeId) -> bool {
         match self.data(ty) {
-            TypeData::Ref { .. } => !self.is_array_or_tuple(ty) && !self.is_type_of_instances(ty) && self.is_array_like(ty),
+            TypeData::Ref { .. } => !self.is_array_or_tuple(ty) && !self.is_instance_type(ty) && self.is_array_like(ty),
             TypeData::Intersection(parts) => {
-                !parts.iter().any(|&part| self.is_type_of_instances(part) && self.is_array_like(part))
-                    && parts.iter().any(|&part| self.is_array_or_tuple(part) || self.element_of_array_subtype(part).is_some())
+                !parts.iter().any(|&part| self.is_instance_type(part) && self.is_array_like(part))
+                    && parts.iter().any(|&part| self.is_array_or_tuple(part) || self.array_subtype_element(part).is_some())
             }
             _ => false,
         }
@@ -525,16 +551,16 @@ impl<'p, 's> Checker<'p, 's> {
     /// `any`, `unknown`, `never`, `void`: no value is known for what it is by it.
     /// `{}`, `Object`, an interface without members: a string or a number is one as well. `object` is not meant.
     /// A type that data from outside the program is looked at as: whatever the data holds is there.
-    pub fn admits_primitives(&mut self, ty: TypeId) -> bool {
+    pub fn accepts_primitives(&mut self, ty: TypeId) -> bool {
         if ty == TypeId::OBJECT || matches!(self.data(ty), TypeData::Union(_)) {
             return false;
         }
-        let by_itself = match self.shared_answer(ty, rows::KNOWS_WHETHER_IT_ACCEPTS_PRIMITIVES, rows::ACCEPTS_PRIMITIVES).or_else(|| self.aot.flows.accepts_primitives_itself.get(&ty).copied()) {
+        let by_itself = match self.shared_type_flag(ty, rows::ACCEPTS_PRIMITIVES_KNOWN, rows::ACCEPTS_PRIMITIVES).or_else(|| self.aot.flows.accepts_primitives_cache.get(&ty).copied()) {
             Some(known) => known,
             None => {
                 let (found, is_cacheable) = self.compute_cacheable(|c| c.is_empty_object_type(ty) || ty == c.global_ref(known::Object, &[]));
-                if !is_cacheable || !self.share_answer(ty, rows::KNOWS_WHETHER_IT_ACCEPTS_PRIMITIVES, rows::ACCEPTS_PRIMITIVES, found) {
-                    self.aot.flows.accepts_primitives_itself.insert(ty, found);
+                if !is_cacheable || !self.publish_type_flag(ty, rows::ACCEPTS_PRIMITIVES_KNOWN, rows::ACCEPTS_PRIMITIVES, found) {
+                    self.aot.flows.accepts_primitives_cache.insert(ty, found);
                 }
                 found
             }
@@ -554,26 +580,26 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The same for any relation.
     fn is_provably_related(&mut self, source: TypeId, target: TypeId, relation: Relation) -> bool {
-        if self.aot.flows.cut_short.contains(&(source, target, relation as u8)) {
-            self.aot.flows.times_not_known += 1;
+        if self.aot.flows.truncated.contains(&(source, target, relation as u8)) {
+            self.aot.flows.unknown_count += 1;
             return false;
         }
         let (cuts, fuel) = (self.cuts(), self.fuel.get());
-        let is_kept = fuel == u64::MAX && !self.answers_are_provisional();
+        let is_kept = fuel == u64::MAX && !self.results_are_provisional();
         if is_kept && let Some(&known) = self.aot.flows.provably_related.get(&(source, target, relation as u8)) {
             return known;
         }
         let was_too_complex = self.relation_too_complex;
-        let had_run_out_of_stack = self.ran_out_of_stack.get();
+        let had_stack_overflow = self.ran_out_of_stack.get();
         let most = fuel.min(FUEL);
         self.fuel.set(most);
         let is_related = self.related(source, target, relation);
         let burnt = most - self.fuel.get();
         self.fuel.set(if fuel == u64::MAX { fuel } else { fuel - burnt });
         if self.cuts() != cuts {
-            self.ran_out_of_stack.set(had_run_out_of_stack);
-            self.aot.flows.times_not_known += 1;
-            self.aot.flows.cut_short.insert((source, target, relation as u8));
+            self.ran_out_of_stack.set(had_stack_overflow);
+            self.aot.flows.unknown_count += 1;
+            self.aot.flows.truncated.insert((source, target, relation as u8));
             return false;
         }
         if is_kept && self.relation_too_complex == was_too_complex {
@@ -582,15 +608,15 @@ impl<'p, 's> Checker<'p, 's> {
         is_related
     }
 
-    pub fn questions_cut_short(&self) -> Vec<(TypeId, TypeId, u8)> {
-        self.aot.flows.cut_short.iter().copied().filter(|question| !question.is_local()).collect()
+    pub fn truncated_queries(&self) -> Vec<(TypeId, TypeId, u8)> {
+        self.aot.flows.truncated.iter().copied().filter(|question| !question.is_local()).collect()
     }
 
-    pub fn know_questions_cut_short(&mut self, questions: &[(TypeId, TypeId, u8)]) {
-        self.aot.flows.cut_short.extend(questions.iter().copied());
+    pub fn set_truncated_queries(&mut self, questions: &[(TypeId, TypeId, u8)]) {
+        self.aot.flows.truncated.extend(questions.iter().copied());
     }
 
-    pub fn says_nothing(&self, ty: TypeId) -> bool {
+    pub fn is_uninformative(&self, ty: TypeId) -> bool {
         ty.is_any() || ty.is_never() || matches!(ty, TypeId::UNKNOWN | TypeId::VOID | TypeId::UNRESOLVED)
     }
 }

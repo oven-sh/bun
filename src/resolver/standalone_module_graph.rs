@@ -50,7 +50,7 @@ pub trait StandaloneModuleGraph: Send + Sync {
     fn is_compiled_module(&self, _name: &[u8]) -> bool {
         false
     }
-    fn sources_of_compiled_program(&self) -> &'static [u8] {
+    fn compiled_program_sources(&self) -> &'static [u8] {
         &[]
     }
     /// Where modules keep their paths: the file of the program that `specifier` names in a file of `source_dir`.
@@ -166,7 +166,7 @@ pub trait StandaloneModuleGraph: Send + Sync {
     fn source_path(&self, _name: &[u8]) -> Option<&'static [u8]> {
         None
     }
-    fn holds_paths_of_entry_points(&self) -> bool {
+    fn has_entry_point_paths(&self) -> bool {
         false
     }
     fn entry_point_at(&self, _source_dir: &[u8], _specifier: &[u8], _is_require: bool) -> Option<&'static [u8]> {

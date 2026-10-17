@@ -55,7 +55,7 @@ pub(super) fn find(name: &[u8]) -> Option<Vec<Json>> {
 
 /// `bun/aot`: what behaves differently in a program that is compiled with `bun build --aot`. `bun/aot-non-null-escapes` is for
 /// whoever asks for it.
-pub(super) const RULES_OF_AOT: [&str; 5] = [
+pub(super) const AOT_RULES: [&str; 5] = [
     "aot-cast-lacks-member",
     "aot-locked-builtin-write",
     "aot-no-any-to-typed",
@@ -67,7 +67,7 @@ pub(super) const RULES_OF_AOT: [&str; 5] = [
 fn parse(name: &[u8]) -> Option<Vec<Json>> {
     if name == b"bun/aot" {
         let warn = |rule: &&str| ([b"bun/", rule.as_bytes()].concat(), Json::String(b"warn".to_vec()));
-        let rules = Json::Object(RULES_OF_AOT.iter().map(warn).collect());
+        let rules = Json::Object(AOT_RULES.iter().map(warn).collect());
         return Some(vec![Json::Object(vec![(b"rules".to_vec(), rules)])]);
     }
     let lines = bun_zstd::embed_compressed!(

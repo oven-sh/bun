@@ -43,11 +43,26 @@ pub(super) fn line_break_len(text: &[u8], at: usize) -> usize {
 
 /// `ComputeECMALineStarts`: the start of each line of `text`.
 pub fn compute_ecma_line_starts(text: &[u8]) -> Vec<u32> {
-    let mut starts = vec![0u32];
+    const ONES: u64 = 0x0101_0101_0101_0101;
+    const HIGH_BITS: u64 = 0x8080_8080_8080_8080;
+    let zero_bytes = |word: u64| word.wrapping_sub(ONES) & !word & HIGH_BITS;
+    let mut starts = Vec::with_capacity(text.len() / 32 + 1);
+    starts.push(0u32);
     let mut i = 0;
     // 0xE2 starts U+2028 and U+2029, which end a line too.
-    while let Some(found) = bun_core::strings::index_of_any(&text[i..], b"\n\r\xE2") {
-        i += found;
+    while i < text.len() {
+        if let Some(&bytes) = text[i..].first_chunk::<8>() {
+            let word = u64::from_le_bytes(bytes);
+            let found = zero_bytes(word ^ (ONES * 0x0A)) | zero_bytes(word ^ (ONES * 0x0D)) | zero_bytes(word ^ (ONES * 0xE2));
+            if found == 0 {
+                i += 8;
+                continue;
+            }
+            i += found.trailing_zeros() as usize / 8;
+        } else if !matches!(text[i], b'\n' | b'\r' | 0xE2) {
+            i += 1;
+            continue;
+        }
         match text[i] {
             b'\r' if text.get(i + 1) == Some(&b'\n') => i += 1,
             0xE2 => {

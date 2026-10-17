@@ -83,8 +83,8 @@ impl<'p, 's> Checker<'p, 's> {
         loop {
             parent = match parent {
                 // FOR SPEED: most steps are these two.
-                Parent::Expr(e) if e.is_some() => self.way_up_from_expression(file, e),
-                Parent::Stmt(s) if s.is_some() => self.way_up_from_statement(file, s),
+                Parent::Expr(e) if e.is_some() => self.expr_parent_link(file, e),
+                Parent::Stmt(s) if s.is_some() => self.stmt_parent_link(file, s),
                 Parent::FnBody(f) => return Some(f),
                 Parent::ParamDefault(p) => return Some(bound.param_fn[p.idx()]),
                 Parent::None | Parent::File => return None,
@@ -1241,7 +1241,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The type an object literal is checked against, narrowed to the member of a union that its properties single out.
-    pub fn contextual_type_of_literal(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
+    pub(super) fn contextual_type_of_literal_uncached(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         if self.is_spread_part(file, e) {
             return None;
         }

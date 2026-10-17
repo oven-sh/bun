@@ -126,7 +126,7 @@ fn builtin_module_head(c: &LinkerContext, chunk: &Chunk) -> Box<[u8]> {
 }
 
 /// `return { a, b };`: what a builtin module with named exports evaluates to.
-fn return_of_exports(items: &[bun_ast::ClauseItem]) -> Stmt {
+fn exports_return_statement(items: &[bun_ast::ClauseItem]) -> Stmt {
     let mut properties = G::PropertyList::init_capacity(items.len());
     for item in items {
         VecExt::append(
@@ -1165,7 +1165,7 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                         let items: &mut [bun_ast::ClauseItem] = arena.alloc_slice_fill_iter(items);
                         if !items.is_empty() {
                             stmts.push(if ast.target == options::Target::BunBuiltins {
-                                return_of_exports(items)
+                                exports_return_statement(items)
                             } else {
                                 Stmt::alloc(
                                     S::ExportClause {

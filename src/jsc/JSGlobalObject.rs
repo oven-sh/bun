@@ -907,8 +907,8 @@ impl JSGlobalObject {
         JSC__JSGlobalObject__queueMicrotaskJob(self, function, first, second)
     }
 
-    pub fn value_thrown_by_host_function_is_ignored(&self) -> bool {
-        JSGlobalObject__valueThrownByHostFunctionIsIgnored(self)
+    pub fn ignores_host_function_exception(&self) -> bool {
+        JSGlobalObject__ignoresHostFunctionException(self)
     }
 
     pub fn throw_value(&self, value: JSValue) -> JsError {
@@ -1610,7 +1610,7 @@ unsafe extern "C" {
     safe fn JSGlobalObject__clearExceptionExceptTermination(this: &JSGlobalObject) -> bool;
     safe fn JSGlobalObject__clearTerminationException(this: &JSGlobalObject);
     safe fn JSGlobalObject__hasException(this: &JSGlobalObject) -> bool;
-    safe fn JSGlobalObject__valueThrownByHostFunctionIsIgnored(this: &JSGlobalObject) -> bool;
+    safe fn JSGlobalObject__ignoresHostFunctionException(this: &JSGlobalObject) -> bool;
     safe fn JSGlobalObject__setTimeZone(this: &JSGlobalObject, time_zone: &EncodedSlice) -> bool;
     safe fn JSGlobalObject__tryTakeException(this: &JSGlobalObject) -> JSValue;
 

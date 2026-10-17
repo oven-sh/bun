@@ -4,25 +4,25 @@ exports[`Code made at run time meets compiled code: 0 the loop alone 1`] = `"a t
 
 exports[`Code made at run time meets compiled code: 0 calls a function made of text 1`] = `"a turn: 333.75 instructions (the runtime 333.72, elsewhere 0.03), 0 bytes"`;
 
-exports[`Code made at run time meets compiled code: 1 calls a typed function (numbers) 1`] = `"a turn: 315.77 instructions (the runtime 225.41, stub EnterSlimClosure 59, add 31, elsewhere 0.36), 0 bytes"`;
+exports[`Code made at run time meets compiled code: 1 calls a typed function (numbers) 1`] = `"a turn: 305.77 instructions (the runtime 225.41, stub EnterSlimClosure 59, stub BoxNumber 8, add 5, stub LeafUnboxNumberArgument0ToFPR0 4, stub LeafUnboxNumberArgument1ToFPR1 4, elsewhere 0.36), 0 bytes"`;
 
-exports[`Code made at run time meets compiled code: 1 the same, made by eval 1`] = `"a turn: 319.30 instructions (the runtime 228.83, stub EnterSlimClosure 59, add 31, elsewhere 0.47), 0 bytes"`;
+exports[`Code made at run time meets compiled code: 1 the same, made by eval 1`] = `"a turn: 308.72 instructions (the runtime 228.25, stub EnterSlimClosure 59, stub BoxNumber 8, add 5, stub LeafUnboxNumberArgument0ToFPR0 4, stub LeafUnboxNumberArgument1ToFPR1 4, elsewhere 0.47), 0 bytes"`;
 
-exports[`Code made at run time meets compiled code: 1 the same, made by node:vm 1`] = `"a turn: 317.85 instructions (the runtime 227.38, stub EnterSlimClosure 59, add 31, elsewhere 0.47), 0 bytes"`;
+exports[`Code made at run time meets compiled code: 1 the same, made by node:vm 1`] = `"a turn: 308.04 instructions (the runtime 227.57, stub EnterSlimClosure 59, stub BoxNumber 8, add 5, stub LeafUnboxNumberArgument0ToFPR0 4, stub LeafUnboxNumberArgument1ToFPR1 4, elsewhere 0.47), 0 bytes"`;
 
-exports[`Code made at run time meets compiled code: 1 calls a typed function (a typed object in) 1`] = `"a turn: 292.93 instructions (the runtime 211.56, stub EnterSlimClosure 59, width 22, elsewhere 0.36), 0 bytes"`;
+exports[`Code made at run time meets compiled code: 1 calls a typed function (a typed object in) 1`] = `"a turn: 289.93 instructions (the runtime 211.56, stub EnterSlimClosure 59, width 11, stub BoxNumber 8, elsewhere 0.36), 0 bytes"`;
 
-exports[`Code made at run time meets compiled code: 1 calls a typed function (a plain object in) 1`] = `"a turn: 310.93 instructions (the runtime 211.56, stub EnterSlimClosure 59, width 25, stub GetByNameAsDouble 15, elsewhere 0.36), 0 bytes"`;
+exports[`Code made at run time meets compiled code: 1 calls a typed function (a plain object in) 1`] = `"a turn: 307.93 instructions (the runtime 211.56, stub EnterSlimClosure 59, stub GetByNameAsDouble 15, width 14, stub BoxNumber 8, elsewhere 0.36), 0 bytes"`;
 
 exports[`Code made at run time meets compiled code: 2 calls an untyped function 1`] = `"a turn: 298.77 instructions (the runtime 225.41, stub EnterSlimClosure 59, stub Add 8, built-in modules 6, elsewhere 0.36), 0 bytes"`;
 
-exports[`Code made at run time meets compiled code: 3 calls a typed closure 1`] = `"a turn: 309.93 instructions (the runtime 227.56, stub EnterSlimClosure 59, a function without a name 23, elsewhere 0.36), 0 bytes"`;
+exports[`Code made at run time meets compiled code: 3 calls a typed closure 1`] = `"a turn: 303.93 instructions (the runtime 227.56, stub EnterSlimClosure 59, stub BoxNumber 8, a function without a name 5, stub LeafUnboxNumberArgument0ToFPR0 4, elsewhere 0.36), 0 bytes"`;
 
 exports[`Code made at run time meets compiled code: 3 calls an untyped closure 1`] = `"a turn: 304.93 instructions (the runtime 227.56, stub EnterSlimClosure 59, built-in modules 10, stub Add 8, elsewhere 0.36), 0 bytes"`;
 
-exports[`Code made at run time meets compiled code: 4 calls a method of a typed class 1`] = `"a turn: 350.44 instructions (the runtime 257.07, stub EnterSlimClosure 63, bump 27, makeBox 3, elsewhere 0.36), 0 bytes"`;
+exports[`Code made at run time meets compiled code: 4 calls a method of a typed class 1`] = `"a turn: 347.44 instructions (the runtime 257.07, stub EnterSlimClosure 63, bump 16, stub BoxNumber 8, makeBox 3, elsewhere 0.36), 0 bytes"`;
 
-exports[`Code made at run time meets compiled code: 4 calls a method of an untyped class 1`] = `"a turn: 382.44 instructions (the runtime 257.07, stub EnterSlimClosure 63, built-in modules 20, stub PutByNameBelowNumberOfColumns 14, stub GetByNameBelowNumberOfColumnsKeepingTwoWithReceiverInRDI 10, stub GetByNameBelowNumberOfColumnsWithReceiverInRAX 10, stub Add 8, elsewhere 0.36), 0 bytes"`;
+exports[`Code made at run time meets compiled code: 4 calls a method of an untyped class 1`] = `"a turn: 382.44 instructions (the runtime 257.07, stub EnterSlimClosure 63, built-in modules 20, stub PutByNameWithDirectColumn 14, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDI 10, stub GetByNameWithDirectColumnWithReceiverInRAX 10, stub Add 8, elsewhere 0.36), 0 bytes"`;
 
 exports[`Code made at run time meets compiled code: 5 reads a declared field of a typed object 1`] = `"a turn: 197.65 instructions (the runtime 197.28, elsewhere 0.36), 0 bytes"`;
 
@@ -52,112 +52,122 @@ exports[`Code made at run time meets compiled code: 8 Array.prototype.push 1`] =
 
 exports[`Code made at run time meets compiled code: 8 JSON.stringify of a typed object 1`] = `"a turn: 1222.99 instructions (the runtime 1205.35, elsewhere 17.64), 0 bytes"`;
 
-exports[`Code made at run time meets compiled code: 8 JSON.stringify of an untyped object 1`] = `"a turn: 1141.99 instructions (the runtime 1124.35, elsewhere 17.64), 0 bytes"`;
+exports[`Code made at run time meets compiled code: 8 JSON.stringify of an untyped object 1`] = `"a turn: 1142.12 instructions (the runtime 1124.48, elsewhere 17.64), 0 bytes"`;
 
 exports[`Code made at run time meets compiled code: 8 Map.prototype.get 1`] = `"a turn: 395.44 instructions (the runtime 395.07, elsewhere 0.36), 0 bytes"`;
 
-exports[`Untyped code uses the objects of typed code: 0 the loop alone 1`] = `"a turn: 28 instructions (built-in modules 28), 0 bytes"`;
+exports[`Untyped access to typed objects: 0 empty loop 1`] = `"a turn: 28 instructions (built-in modules 28), 0 bytes"`;
 
-exports[`Untyped code uses the objects of typed code: 1 stores a number into a record 1`] = `"a turn: 79 instructions (built-in modules 35, stub PutByNameStoresFieldDoubleKeepingTwo 31, stub PutByNameBelowNumberOfColumnsKeepingTwo 13), 0 bytes"`;
+exports[`Untyped access to typed objects: 1 store number, record 1`] = `"a turn: 79 instructions (built-in modules 35, stub PutByNameStoresFieldDoublePreservingTwo 31, stub PutByNameWithDirectColumnPreservingTwo 13), 0 bytes"`;
 
-exports[`Untyped code uses the objects of typed code: 1 stores a number into an instance 1`] = `"a turn: 79 instructions (built-in modules 35, stub PutByNameStoresFieldDoubleKeepingTwo 31, stub PutByNameBelowNumberOfColumnsKeepingTwo 13), 0 bytes"`;
+exports[`Untyped access to typed objects: 1 store number, class instance 1`] = `"a turn: 79 instructions (built-in modules 35, stub PutByNameStoresFieldDoublePreservingTwo 31, stub PutByNameWithDirectColumnPreservingTwo 13), 0 bytes"`;
 
-exports[`Untyped code uses the objects of typed code: 1 stores a number into an untyped object 1`] = `"a turn: 49 instructions (built-in modules 35, stub PutByNameBelowNumberOfColumnsKeepingTwo 14), 0 bytes"`;
+exports[`Untyped access to typed objects: 1 store number, plain object 1`] = `"a turn: 49 instructions (built-in modules 35, stub PutByNameWithDirectColumnPreservingTwo 14), 0 bytes"`;
 
-exports[`Untyped code uses the objects of typed code: 2 stores a string into a record 1`] = `"a turn: 84 instructions (stub PutByNameStoresFieldCell32KeepingTwo 38, built-in modules 29, stub PutByNameBelowNumberOfColumnsKeepingTwo 13, stub WriteBarrier 4), 0 bytes"`;
+exports[`Untyped access to typed objects: 2 store string, record 1`] = `"a turn: 84 instructions (stub PutByNameStoresFieldCell32PreservingTwo 38, built-in modules 29, stub PutByNameWithDirectColumnPreservingTwo 13, stub WriteBarrier 4), 0 bytes"`;
 
-exports[`Untyped code uses the objects of typed code: 2 stores a string into an instance 1`] = `"a turn: 84 instructions (stub PutByNameStoresFieldCell32KeepingTwo 38, built-in modules 29, stub PutByNameBelowNumberOfColumnsKeepingTwo 13, stub WriteBarrier 4), 0 bytes"`;
+exports[`Untyped access to typed objects: 2 store string, class instance 1`] = `"a turn: 84 instructions (stub PutByNameStoresFieldCell32PreservingTwo 38, built-in modules 29, stub PutByNameWithDirectColumnPreservingTwo 13, stub WriteBarrier 4), 0 bytes"`;
 
-exports[`Untyped code uses the objects of typed code: 2 stores a string into an untyped object 1`] = `"a turn: 46 instructions (built-in modules 29, stub PutByNameBelowNumberOfColumnsKeepingTwo 13, stub WriteBarrier 4), 0 bytes"`;
+exports[`Untyped access to typed objects: 2 store string, plain object 1`] = `"a turn: 46 instructions (built-in modules 29, stub PutByNameWithDirectColumnPreservingTwo 13, stub WriteBarrier 4), 0 bytes"`;
 
-exports[`Untyped code uses the objects of typed code: 3 stores an object into a record 1`] = `"a turn: 108 instructions (stub PutByNameStoresFieldBoxedKeepingTwo 62, built-in modules 29, stub PutByNameBelowNumberOfColumnsKeepingTwo 13, stub WriteBarrier 4), 0 bytes"`;
+exports[`Untyped access to typed objects: 3 store object, record 1`] = `"a turn: 108 instructions (stub PutByNameStoresFieldBoxedPreservingTwo 62, built-in modules 29, stub PutByNameWithDirectColumnPreservingTwo 13, stub WriteBarrier 4), 0 bytes"`;
 
-exports[`Untyped code uses the objects of typed code: 3 stores an object into an instance 1`] = `"a turn: 108 instructions (stub PutByNameStoresFieldBoxedKeepingTwo 62, built-in modules 29, stub PutByNameBelowNumberOfColumnsKeepingTwo 13, stub WriteBarrier 4), 0 bytes"`;
+exports[`Untyped access to typed objects: 3 store object, class instance 1`] = `"a turn: 108 instructions (stub PutByNameStoresFieldBoxedPreservingTwo 62, built-in modules 29, stub PutByNameWithDirectColumnPreservingTwo 13, stub WriteBarrier 4), 0 bytes"`;
 
-exports[`Untyped code uses the objects of typed code: 3 stores an object into an untyped object 1`] = `"a turn: 46 instructions (built-in modules 29, stub PutByNameBelowNumberOfColumnsKeepingTwo 13, stub WriteBarrier 4), 0 bytes"`;
+exports[`Untyped access to typed objects: 3 store object, plain object 1`] = `"a turn: 46 instructions (built-in modules 29, stub PutByNameWithDirectColumnPreservingTwo 13, stub WriteBarrier 4), 0 bytes"`;
 
-exports[`Untyped code uses the objects of typed code: 4 reads a number of a record 1`] = `"a turn: 58 instructions (built-in modules 31, stub ReadFieldDoubleByNameKeepingTwo 14, stub GetByNameBelowNumberOfColumnsKeepingTwoWithReceiverInRAX 13), 0 bytes"`;
+exports[`Untyped access to typed objects: 4 read number, record 1`] = `"a turn: 58 instructions (built-in modules 31, stub ReadFieldDoubleByNamePreservingTwo 14, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13), 0 bytes"`;
 
-exports[`Untyped code uses the objects of typed code: 4 reads a number of an instance 1`] = `"a turn: 58 instructions (built-in modules 31, stub ReadFieldDoubleByNameKeepingTwo 14, stub GetByNameBelowNumberOfColumnsKeepingTwoWithReceiverInRAX 13), 0 bytes"`;
+exports[`Untyped access to typed objects: 4 read number, class instance 1`] = `"a turn: 58 instructions (built-in modules 31, stub ReadFieldDoubleByNamePreservingTwo 14, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13), 0 bytes"`;
 
-exports[`Untyped code uses the objects of typed code: 4 reads a number of an untyped object 1`] = `"a turn: 41 instructions (built-in modules 31, stub GetByNameBelowNumberOfColumnsKeepingTwoWithReceiverInRAX 10), 0 bytes"`;
+exports[`Untyped access to typed objects: 4 read number, plain object 1`] = `"a turn: 41 instructions (built-in modules 31, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10), 0 bytes"`;
 
-exports[`Untyped code uses the objects of typed code: 5 reads a string of a record 1`] = `"a turn: 51 instructions (built-in modules 31, stub GetByNameBelowNumberOfColumnsKeepingTwoWithReceiverInRAX 13, stub ReadFieldCell32ByNameKeepingTwo 7), 0 bytes"`;
+exports[`Untyped access to typed objects: 5 read string, record 1`] = `"a turn: 51 instructions (built-in modules 31, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub ReadFieldCell32ByNamePreservingTwo 7), 0 bytes"`;
 
-exports[`Untyped code uses the objects of typed code: 5 reads a string of an instance 1`] = `"a turn: 51 instructions (built-in modules 31, stub GetByNameBelowNumberOfColumnsKeepingTwoWithReceiverInRAX 13, stub ReadFieldCell32ByNameKeepingTwo 7), 0 bytes"`;
+exports[`Untyped access to typed objects: 5 read string, class instance 1`] = `"a turn: 51 instructions (built-in modules 31, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub ReadFieldCell32ByNamePreservingTwo 7), 0 bytes"`;
 
-exports[`Untyped code uses the objects of typed code: 5 reads a string of an untyped object 1`] = `"a turn: 41 instructions (built-in modules 31, stub GetByNameBelowNumberOfColumnsKeepingTwoWithReceiverInRAX 10), 0 bytes"`;
+exports[`Untyped access to typed objects: 5 read string, plain object 1`] = `"a turn: 41 instructions (built-in modules 31, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10), 0 bytes"`;
 
-exports[`Untyped code uses the objects of typed code: 6 reads an object of a record 1`] = `"a turn: 49 instructions (built-in modules 30, stub GetByNameBelowNumberOfColumnsKeepingTwoWithReceiverInRAX 13, stub ReadFieldBoxedByNameKeepingTwo 6), 0 bytes"`;
+exports[`Untyped access to typed objects: 6 read object, record 1`] = `"a turn: 49 instructions (built-in modules 30, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub ReadFieldBoxedByNamePreservingTwo 6), 0 bytes"`;
 
-exports[`Untyped code uses the objects of typed code: 6 reads an object of an instance 1`] = `"a turn: 49 instructions (built-in modules 30, stub GetByNameBelowNumberOfColumnsKeepingTwoWithReceiverInRAX 13, stub ReadFieldBoxedByNameKeepingTwo 6), 0 bytes"`;
+exports[`Untyped access to typed objects: 6 read object, class instance 1`] = `"a turn: 49 instructions (built-in modules 30, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub ReadFieldBoxedByNamePreservingTwo 6), 0 bytes"`;
 
-exports[`Untyped code uses the objects of typed code: 6 reads an object of an untyped object 1`] = `"a turn: 40 instructions (built-in modules 30, stub GetByNameBelowNumberOfColumnsKeepingTwoWithReceiverInRAX 10), 0 bytes"`;
+exports[`Untyped access to typed objects: 6 read object, plain object 1`] = `"a turn: 40 instructions (built-in modules 30, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10), 0 bytes"`;
 
-exports[`Untyped code uses the objects of typed code: 7 reads an optional field that a record lacks 1`] = `"a turn: 98 instructions (built-in modules 31, stub GetByNameGenerally 27, stub ReadThroughSlotsByNameKeepingTwo 25, stub GetByNameBelowNumberOfColumnsKeepingTwoWithReceiverInRAX 13, stub GetThroughSlotByName 2), 0 bytes"`;
+exports[`Untyped access to typed objects: 7 read missing optional field, record 1`] = `"a turn: 98 instructions (built-in modules 31, stub GetByNameGeneric 27, stub ReadThroughSlotsByNamePreservingTwo 25, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub GetThroughSlotByName 2), 0 bytes"`;
 
-exports[`Untyped code uses the objects of typed code: 7 reads an optional field that an instance lacks 1`] = `"a turn: 54 instructions (built-in modules 31, stub GetByNameBelowNumberOfColumnsKeepingTwoWithReceiverInRAX 13, stub ReadFieldCell32ByNameKeepingTwo 10), 0 bytes"`;
+exports[`Untyped access to typed objects: 7 read missing optional field, class instance 1`] = `"a turn: 54 instructions (built-in modules 31, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub ReadFieldCell32ByNamePreservingTwo 10), 0 bytes"`;
 
-exports[`Untyped code uses the objects of typed code: 7 reads a property that an untyped object lacks 1`] = `"a turn: 46 instructions (built-in modules 31, stub GetByNameBelowNumberOfColumnsKeepingTwoWithReceiverInRAX 13, stub ReadAbsentByName 2), 0 bytes"`;
+exports[`Untyped access to typed objects: 7 read missing property, plain object 1`] = `"a turn: 46 instructions (built-in modules 31, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub ReadAbsentByName 2), 0 bytes"`;
 
-exports[`What others inherit from is stored to: 0 the loop alone 1`] = `"a turn: 28 instructions (built-in modules 28), 0 bytes"`;
+exports[`Stores to prototype objects: 0 empty loop 1`] = `"a turn: 28 instructions (built-in modules 28), 0 bytes"`;
 
-exports[`What others inherit from is stored to: 1 stores a number into an object that nothing inherits from 1`] = `"a turn: 49 instructions (built-in modules 35, stub PutByNameBelowNumberOfColumnsKeepingTwo 14), 0 bytes"`;
+exports[`Stores to prototype objects: 1 store number, plain object 1`] = `"a turn: 49 instructions (built-in modules 35, stub PutByNameWithDirectColumnPreservingTwo 14), 0 bytes"`;
 
-exports[`What others inherit from is stored to: 1 stores a number into an object that others inherit from 1`] = `"a turn: 49 instructions (built-in modules 35, stub PutByNameBelowNumberOfColumnsKeepingTwo 14), 0 bytes"`;
+exports[`Stores to prototype objects: 1 store number, prototype object 1`] = `"a turn: 49 instructions (built-in modules 35, stub PutByNameWithDirectColumnPreservingTwo 14), 0 bytes"`;
 
-exports[`What others inherit from is stored to: 1 stores a number out of line into an object that others inherit from 1`] = `"a turn: 54 instructions (built-in modules 35, stub PutByNameBelowNumberOfColumnsKeepingTwo 13, stub ReplaceOutOfLineByName 6), 0 bytes"`;
+exports[`Stores to prototype objects: 1 store number out of line, prototype object 1`] = `"a turn: 54 instructions (built-in modules 35, stub PutByNameWithDirectColumnPreservingTwo 13, stub ReplaceOutOfLineByName 6), 0 bytes"`;
 
-exports[`What others inherit from is stored to: 1 stores a number into the prototype of a function 1`] = `"a turn: 49 instructions (built-in modules 35, stub PutByNameBelowNumberOfColumnsKeepingTwo 14), 0 bytes"`;
+exports[`Stores to prototype objects: 1 store number, prototype property of a function 1`] = `"a turn: 49 instructions (built-in modules 35, stub PutByNameWithDirectColumnPreservingTwo 14), 0 bytes"`;
 
-exports[`What others inherit from is stored to: 1 stores a number into a static field of a class that is extended 1`] = `"a turn: 54 instructions (built-in modules 35, stub PutByNameBelowNumberOfColumnsKeepingTwo 13, stub ReplaceOutOfLineByName 6), 0 bytes"`;
+exports[`Stores to prototype objects: 1 store number, static field of a base class 1`] = `"a turn: 54 instructions (built-in modules 35, stub PutByNameWithDirectColumnPreservingTwo 13, stub ReplaceOutOfLineByName 6), 0 bytes"`;
 
-exports[`What others inherit from is stored to: 2 stores an object into an object that nothing inherits from 1`] = `"a turn: 46 instructions (built-in modules 29, stub PutByNameBelowNumberOfColumnsKeepingTwo 13, stub WriteBarrier 4), 0 bytes"`;
+exports[`Stores to prototype objects: 2 store object, plain object 1`] = `"a turn: 46 instructions (built-in modules 29, stub PutByNameWithDirectColumnPreservingTwo 13, stub WriteBarrier 4), 0 bytes"`;
 
-exports[`What others inherit from is stored to: 2 stores an object into an object that others inherit from 1`] = `"a turn: 46 instructions (built-in modules 29, stub PutByNameBelowNumberOfColumnsKeepingTwo 13, stub WriteBarrier 4), 0 bytes"`;
+exports[`Stores to prototype objects: 2 store object, prototype object 1`] = `"a turn: 46 instructions (built-in modules 29, stub PutByNameWithDirectColumnPreservingTwo 13, stub WriteBarrier 4), 0 bytes"`;
 
-exports[`What others inherit from is stored to: 3 stores by a key into an object that nothing inherits from 1`] = `"a turn: 51.50 instructions (built-in modules 37.50, stub PutByNameBelowNumberOfColumnsKeepingTwo 14), 0 bytes"`;
+exports[`Stores to prototype objects: 3 store by computed key, plain object 1`] = `"a turn: 51.50 instructions (built-in modules 37.50, stub PutByNameWithDirectColumnPreservingTwo 14), 0 bytes"`;
 
-exports[`What others inherit from is stored to: 3 stores by a key into an object that others inherit from 1`] = `"a turn: 51.50 instructions (built-in modules 37.50, stub PutByNameBelowNumberOfColumnsKeepingTwo 14), 0 bytes"`;
+exports[`Stores to prototype objects: 3 store by computed key, prototype object 1`] = `"a turn: 51.50 instructions (built-in modules 37.50, stub PutByNameWithDirectColumnPreservingTwo 14), 0 bytes"`;
 
-exports[`What others inherit from is stored to: 4 reads a number of an object that others inherit from 1`] = `"a turn: 41 instructions (built-in modules 31, stub GetByNameBelowNumberOfColumnsKeepingTwoWithReceiverInRAX 10), 0 bytes"`;
+exports[`Stores to prototype objects: 4 read number, prototype object 1`] = `"a turn: 41 instructions (built-in modules 31, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10), 0 bytes"`;
 
-exports[`What others inherit from is stored to: 4 reads a number that is inherited 1`] = `"a turn: 49 instructions (built-in modules 31, stub GetByNameBelowNumberOfColumnsKeepingTwoWithReceiverInRAX 13, stub ReadInheritedInObjectByName 5), 0 bytes"`;
+exports[`Stores to prototype objects: 4 read inherited number 1`] = `"a turn: 49 instructions (built-in modules 31, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub ReadInheritedInlineByName 5), 0 bytes"`;
 
-exports[`What an Error lacks: 0 the loop alone 1`] = `"a turn: 28 instructions (built-in modules 28), 0 bytes"`;
+exports[`Missing properties on Error objects: 0 empty loop 1`] = `"a turn: 28 instructions (built-in modules 28), 0 bytes"`;
 
-exports[`What an Error lacks: 1 reads a property that an untyped object lacks 1`] = `"a turn: 46 instructions (built-in modules 31, stub GetByNameBelowNumberOfColumnsKeepingTwoWithReceiverInRAX 13, stub ReadAbsentByName 2), 0 bytes"`;
+exports[`Missing properties on Error objects: 1 read missing property, plain object 1`] = `"a turn: 46 instructions (built-in modules 31, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub ReadAbsentByName 2), 0 bytes"`;
 
-exports[`What an Error lacks: 1 reads a property that an Error lacks 1`] = `"a turn: 46 instructions (built-in modules 31, stub GetByNameBelowNumberOfColumnsKeepingTwoWithReceiverInRAX 13, stub ReadAbsentByName 2), 0 bytes"`;
+exports[`Missing properties on Error objects: 1 read missing property, Error 1`] = `"a turn: 46 instructions (built-in modules 31, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub ReadAbsentByName 2), 0 bytes"`;
 
-exports[`What an Error lacks: 2 asks whether an untyped object has a property that it lacks 1`] = `"a turn: 72 instructions (built-in modules 42, stub InByValCached 30), 0 bytes"`;
+exports[`Missing properties on Error objects: 2 in operator, missing property, plain object 1`] = `"a turn: 72 instructions (built-in modules 42, stub InByValCached 30), 0 bytes"`;
 
-exports[`What an Error lacks: 2 asks whether an Error has a property that it lacks 1`] = `"a turn: 70 instructions (built-in modules 42, stub InByValCached 28), 0 bytes"`;
+exports[`Missing properties on Error objects: 2 in operator, missing property, Error 1`] = `"a turn: 70 instructions (built-in modules 42, stub InByValCached 28), 0 bytes"`;
 
-exports[`What an Error lacks: 3 reads a property that an untyped object has 1`] = `"a turn: 41 instructions (built-in modules 31, stub GetByNameBelowNumberOfColumnsKeepingTwoWithReceiverInRAX 10), 0 bytes"`;
+exports[`Missing properties on Error objects: 3 read own property, plain object 1`] = `"a turn: 41 instructions (built-in modules 31, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10), 0 bytes"`;
 
-exports[`What an Error lacks: 3 reads a property that an Error has 1`] = `"a turn: 48 instructions (built-in modules 31, stub GetByNameBelowNumberOfColumnsKeepingTwoWithReceiverInRAX 13, stub ReadOutOfLineByName 4), 0 bytes"`;
+exports[`Missing properties on Error objects: 3 read own property, Error 1`] = `"a turn: 48 instructions (built-in modules 31, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub ReadOutOfLineByName 4), 0 bytes"`;
 
-exports[`What many properties were deleted from: 0 the loop alone 1`] = `"a turn: 28 instructions (built-in modules 28), 0 bytes"`;
+exports[`Dictionary-mode objects: 0 empty loop 1`] = `"a turn: 28 instructions (built-in modules 28), 0 bytes"`;
 
-exports[`What many properties were deleted from: 1 stores into an untyped object 1`] = `"a turn: 49 instructions (built-in modules 35, stub PutByNameBelowNumberOfColumnsKeepingTwo 14), 0 bytes"`;
+exports[`Dictionary-mode objects: 1 store, plain object 1`] = `"a turn: 49 instructions (built-in modules 35, stub PutByNameWithDirectColumnPreservingTwo 14), 0 bytes"`;
 
-exports[`What many properties were deleted from: 1 stores into an object that many properties were deleted from 1`] = `"a turn: 49 instructions (built-in modules 35, stub PutByNameBelowNumberOfColumnsKeepingTwo 14), 0 bytes"`;
+exports[`Dictionary-mode objects: 1 store, dictionary object 1`] = `"a turn: 49 instructions (built-in modules 35, stub PutByNameWithDirectColumnPreservingTwo 14), 0 bytes"`;
 
-exports[`What many properties were deleted from: 1 stores into one that was so used, read, and so used again 1`] = `"a turn: 304.07 instructions (the runtime 217.07, built-in modules 35, stub PutByNameGenerally 17, stub PutByNameStoresFieldBooleanKeepingTwo 14, stub PutByNameThroughSlotsKeepingTwo 11, stub PutByNameBelowNumberOfColumnsKeepingTwo 10), 0 bytes"`;
+exports[`Dictionary-mode objects: 1 store, permanent dictionary object 1`] = `"a turn: 291.96 instructions (the runtime 211.96, built-in modules 35, stub PutByNameGeneric 17, stub PutByNameThroughSlotsPreservingTwo 11, stub PutByNameWithDirectColumnPreservingTwo 10, stub PutByNameStoresFieldBooleanPreservingTwo 7), 0 bytes"`;
 
-exports[`What many properties were deleted from: 2 stores by a key into an untyped object 1`] = `"a turn: 51.50 instructions (built-in modules 37.50, stub PutByNameBelowNumberOfColumnsKeepingTwo 14), 0 bytes"`;
+exports[`Dictionary-mode objects: 2 store by computed key, plain object 1`] = `"a turn: 51.50 instructions (built-in modules 37.50, stub PutByNameWithDirectColumnPreservingTwo 14), 0 bytes"`;
 
-exports[`What many properties were deleted from: 2 stores by a key into an object that many properties were deleted from 1`] = `"a turn: 51.50 instructions (built-in modules 37.50, stub PutByNameBelowNumberOfColumnsKeepingTwo 14), 0 bytes"`;
+exports[`Dictionary-mode objects: 2 store by computed key, dictionary object 1`] = `"a turn: 51.50 instructions (built-in modules 37.50, stub PutByNameWithDirectColumnPreservingTwo 14), 0 bytes"`;
 
-exports[`What many properties were deleted from: 2 stores by a key into one that was so used, read, and so used again 1`] = `"a turn: 306.57 instructions (the runtime 217.07, built-in modules 37.50, stub PutByNameGenerally 17, stub PutByNameStoresFieldBooleanKeepingTwo 14, stub PutByNameThroughSlotsKeepingTwo 11, stub PutByNameBelowNumberOfColumnsKeepingTwo 10), 0 bytes"`;
+exports[`Dictionary-mode objects: 2 store by computed key, permanent dictionary object 1`] = `"a turn: 294.46 instructions (the runtime 211.96, built-in modules 37.50, stub PutByNameGeneric 17, stub PutByNameThroughSlotsPreservingTwo 11, stub PutByNameWithDirectColumnPreservingTwo 10, stub PutByNameStoresFieldBooleanPreservingTwo 7), 0 bytes"`;
 
-exports[`What many properties were deleted from: 3 reads a property of an untyped object 1`] = `"a turn: 41 instructions (built-in modules 31, stub GetByNameBelowNumberOfColumnsKeepingTwoWithReceiverInRAX 10), 0 bytes"`;
+exports[`Dictionary-mode objects: 3 read, plain object 1`] = `"a turn: 41 instructions (built-in modules 31, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10), 0 bytes"`;
 
-exports[`What many properties were deleted from: 3 reads a property of an object that many properties were deleted from 1`] = `"a turn: 41 instructions (built-in modules 31, stub GetByNameBelowNumberOfColumnsKeepingTwoWithReceiverInRAX 10), 0 bytes"`;
+exports[`Dictionary-mode objects: 3 read, dictionary object 1`] = `"a turn: 41 instructions (built-in modules 31, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10), 0 bytes"`;
 
-exports[`What many properties were deleted from: 3 reads a property of one that was so used, read, and so used again 1`] = `"a turn: 266.60 instructions (the runtime 176.60, built-in modules 31, stub GetByNameGenerally 24, stub GetByNameBelowNumberOfColumnsKeepingTwoWithReceiverInRAX 12, stub ReadExportOfNamespaceByNameKeepingTwo 12, stub ReadThroughSlotsByNameKeepingTwo 11), 0 bytes"`;
+exports[`Dictionary-mode objects: 3 read, permanent dictionary object 1`] = `"a turn: 251.40 instructions (the runtime 173.40, built-in modules 31, stub GetByNameGeneric 24, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 12, stub ReadThroughSlotsByNamePreservingTwo 11), 0 bytes"`;
 
-exports[`What many properties were deleted from: 4 reads by a key of an untyped object 1`] = `"a turn: 43.50 instructions (built-in modules 33.50, stub GetByNameBelowNumberOfColumnsKeepingTwoWithReceiverInRAX 10), 0 bytes"`;
+exports[`Dictionary-mode objects: 4 read by computed key, plain object 1`] = `"a turn: 43.50 instructions (built-in modules 33.50, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 10), 0 bytes"`;
 
-exports[`What many properties were deleted from: 4 reads by a key of one that was so used, read, and so used again 1`] = `"a turn: 269.10 instructions (the runtime 176.60, built-in modules 33.50, stub GetByNameGenerally 24, stub GetByNameBelowNumberOfColumnsKeepingTwoWithReceiverInRAX 12, stub ReadExportOfNamespaceByNameKeepingTwo 12, stub ReadThroughSlotsByNameKeepingTwo 11), 0 bytes"`;
+exports[`Dictionary-mode objects: 4 read by computed key, permanent dictionary object 1`] = `"a turn: 253.90 instructions (the runtime 173.40, built-in modules 33.50, stub GetByNameGeneric 24, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 12, stub ReadThroughSlotsByNamePreservingTwo 11), 0 bytes"`;
+
+exports[`Property cache misses: 0 new shape only 1`] = `"a turn: 2794.34 instructions (the runtime 2588.94, elsewhere 75.25, stub PutByValCached 48.06, built-in modules 43, stub NewObjectFromDescriptor4 23.09, stub OperationValueWithInstance 14, stub OperationValueWithInstance to operationAOTTypedConcatenateWithIntegers 2), 0 bytes"`;
+
+exports[`Property cache misses: 1 replace four properties, new shape 1`] = `"a turn: 5603.87 instructions (the runtime 5181.38, built-in modules 95, elsewhere 76.34, stub PutByNameGeneric 68, stub PutByValCached 48.06, stub PutByNameWithDirectColumn 40, stub PutByNameStoresFieldBoolean 28, stub PutByNameThroughSlots 28, stub NewObjectFromDescriptor4 23.09, stub OperationValueWithInstance 14, stub OperationValueWithInstance to operationAOTTypedConcatenateWithIntegers 2), 0 bytes"`;
+
+exports[`Property cache misses: 2 add four properties, new shape 1`] = `"a turn: 11949.77 instructions (the runtime 11450.22, elsewhere 134.62, built-in modules 95, stub PutByNameGeneric 68, stub PutByValCached 47.94, stub NewObjectFromDescriptor4 41.99, stub PutByNameWithDirectColumn 40, stub PutByNameStoresFieldBoolean 28, stub PutByNameThroughSlots 28, stub OperationValueWithInstance 14, stub OperationValueWithInstance to operationAOTTypedConcatenateWithIntegers 2), 0 bytes"`;
+
+exports[`Property cache misses: 3 read four own properties, new shape 1`] = `"a turn: 2993.68 instructions (the runtime 2615.28, built-in modules 140, stub GetById 76, elsewhere 75.25, stub PutByValCached 48.06, stub NewObjectFromDescriptor4 23.09, stub OperationValueWithInstance 14, stub OperationValueWithInstance to operationAOTTypedConcatenateWithIntegers 2), 0 bytes"`;
+
+exports[`Property cache misses: 4 read four missing properties, new shape 1`] = `"a turn: 5145.59 instructions (the runtime 4828.95, elsewhere 75.50, built-in modules 62, stub GetByNameWithDirectColumnWithReceiverInRBX 55, stub PutByValCached 48.06, stub GetByNameGeneric 24, stub NewObjectFromDescriptor4 23.09, stub OperationValueWithInstance 14, stub ReadThroughSlotsByName 7, stub ReadAbsentByName 6, stub OperationValueWithInstance to operationAOTTypedConcatenateWithIntegers 2), 0 bytes"`;

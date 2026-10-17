@@ -104,7 +104,7 @@ const REPORTS_UNMEASURABLE: u8 = 8;
 const REPORTS_UNRELIABLE: u8 = 16;
 pub(super) const COMPLEXITY_OVERFLOW: u8 = 32;
 pub(super) const STACK_DEPTH_OVERFLOW: u8 = 64;
-const MADE_WHILE_WARMING_UP: u8 = 128;
+const CREATED_DURING_WARMUP: u8 = 128;
 const OVERFLOW: u8 = COMPLEXITY_OVERFLOW | STACK_DEPTH_OVERFLOW;
 
 // VarianceFlags
@@ -316,9 +316,9 @@ pub(super) type RecursionId = (u8, u32, u32);
 /// equality test.
 const NOT_PLAIN: RecursionId = (u8::MAX, 0, 0);
 
-const MEMBERS_OF_A_LARGE_INTERSECTION: usize = 16;
+const LARGE_INTERSECTION_SIZE: usize = 16;
 
-pub(super) struct IdentitiesOfMembers {
+pub(super) struct MemberIdentities {
     by_identity: Box<[(RecursionId, TypeId)]>,
     by_type: Box<[(TypeId, RecursionId)]>,
 }
@@ -1033,7 +1033,7 @@ impl<'p, 's> Checker<'p, 's> {
         if is_object_kind(sd) && is_object_kind(td) {
             let key = self.relation_key_as(source, sd, target, td, relation, STATE_NONE);
             if let Some(entry) = self.p.relations.get(&self.task, &key.0)
-                && !self.is_to_be_compared_again(entry, key.0)
+                && !self.needs_recomparison(entry, key.0)
             {
                 // The cache is shared between threads, so another thread measuring the same symbol may have stored this
                 // comparison already. Without its flags the variances would lack `UNMEASURABLE` or `UNRELIABLE`.
@@ -3786,7 +3786,7 @@ impl<'p, 's> Checker<'p, 's> {
             false => self.p.relations.get(&self.task, &key),
         };
         let cached = match cached {
-            Some(entry) if self.is_to_be_compared_again(entry, key) => None,
+            Some(entry) if self.needs_recomparison(entry, key) => None,
             cached => cached,
         };
         if let Some(entry) = cached
@@ -3835,7 +3835,7 @@ impl<'p, 's> Checker<'p, 's> {
             r.overflow = true;
             return Ternary::FALSE;
         }
-        self.note_pair_compared(source, target, r.relation, REPORT);
+        self.record_compared_pair(source, target, r.relation, REPORT);
         self.burn(1);
         let maybe_start = r.maybe_keys.len();
         let scope = self.begin_scope();
@@ -3947,7 +3947,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `relation.set(key, entry)`
     fn set_relation(&mut self, key: Key, entry: u8, stored: Stored) {
-        let entry = if self.is_warming_up() && self.fuel.get() != u64::MAX { entry | MADE_WHILE_WARMING_UP } else { entry };
+        let entry = if self.is_warming_up() && self.fuel.get() != u64::MAX { entry | CREATED_DURING_WARMUP } else { entry };
         if self.p.relations.get(&self.task, &key).is_none() {
             self.insert_relation(key, entry, stored);
         } else {
@@ -3956,12 +3956,12 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `relation.set(key, entry)` for a key that has no entry.
-    fn is_to_be_compared_again(&mut self, entry: u8, key: Key) -> bool {
-        entry & MADE_WHILE_WARMING_UP != 0 && self.notes_pairs_compared() && self.note_compared_again(key)
+    fn needs_recomparison(&mut self, entry: u8, key: Key) -> bool {
+        entry & CREATED_DURING_WARMUP != 0 && self.records_compared_pairs() && self.record_recompared(key)
     }
 
     fn insert_relation(&mut self, key: Key, entry: u8, stored: Stored) {
-        let entry = if self.is_warming_up() && self.fuel.get() != u64::MAX { entry | MADE_WHILE_WARMING_UP } else { entry };
+        let entry = if self.is_warming_up() && self.fuel.get() != u64::MAX { entry | CREATED_DURING_WARMUP } else { entry };
         self.generic_relation_entries_not_published += u64::from(key.is_hash_of_own_ids());
         self.relation_sizes[usize::from(key.2 & 0xf)] += 1;
         self.p.relations.insert(&self.task, key, entry, stored);
@@ -4015,7 +4015,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let (t, data) = self.mapped_target_with_symbol(t);
         if let TypeData::Intersection(parts) = data
-            && parts.len() >= MEMBERS_OF_A_LARGE_INTERSECTION
+            && parts.len() >= LARGE_INTERSECTION_SIZE
         {
             let identities: SmallVec<[(TypeId, RecursionId); 16]> = stack
                 .iter()
@@ -4209,38 +4209,38 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    fn identities_of_members(
+    fn member_identities(
         &mut self,
         intersection: TypeId,
         parts: &[TypeId],
-    ) -> Option<std::rc::Rc<IdentitiesOfMembers>> {
-        if let Some(known) = self.identities_of_intersections.get(&intersection) {
+    ) -> Option<std::rc::Rc<MemberIdentities>> {
+        if let Some(known) = self.intersection_identities.get(&intersection) {
             return known.clone();
         }
         let mut by_identity = Vec::with_capacity(parts.len());
-        let found = self.add_identities_of_members(parts, &mut by_identity).then(|| {
+        let found = self.add_member_identities(parts, &mut by_identity).then(|| {
             by_identity.sort_unstable_by_key(|member| (member.0, member.1.0));
             by_identity.dedup();
             let mut by_type: Vec<(TypeId, RecursionId)> =
                 by_identity.iter().map(|member| (member.1, member.0)).collect();
             by_type.sort_unstable_by_key(|member| member.0.0);
-            std::rc::Rc::new(IdentitiesOfMembers {
+            std::rc::Rc::new(MemberIdentities {
                 by_identity: by_identity.into_boxed_slice(),
                 by_type: by_type.into_boxed_slice(),
             })
         });
-        self.identities_of_intersections.insert(intersection, found.clone());
+        self.intersection_identities.insert(intersection, found.clone());
         found
     }
 
-    fn add_identities_of_members(
+    fn add_member_identities(
         &self,
         parts: &[TypeId],
         members: &mut Vec<(RecursionId, TypeId)>,
     ) -> bool {
         parts.iter().all(|&part| match self.data(part) {
             data if is_mapped_kind(data) => false,
-            TypeData::Intersection(inner) => self.add_identities_of_members(inner, members),
+            TypeData::Intersection(inner) => self.add_member_identities(inner, members),
             data => {
                 members.push((self.recursion_identity_as(part, data), part));
                 true
@@ -4248,10 +4248,10 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    fn some_member_has_identity(&self, members: &IdentitiesOfMembers, identity: RecursionId) -> bool {
+    fn some_member_has_identity(&self, members: &MemberIdentities, identity: RecursionId) -> bool {
         let start = members.by_identity.partition_point(|member| member.0 < identity);
-        let kept_as_it = members.by_identity[start..].iter().take_while(|member| member.0 == identity);
-        if kept_as_it.into_iter().any(|member| self.recursion_identity_by_now(member.1, member.0) == identity) {
+        let kept_unchanged = members.by_identity[start..].iter().take_while(|member| member.0 == identity);
+        if kept_unchanged.into_iter().any(|member| self.recursion_identity_by_now(member.1, member.0) == identity) {
             return true;
         }
         identity.0 == 0
@@ -4269,8 +4269,8 @@ impl<'p, 's> Checker<'p, 's> {
     fn has_matching_recursion_identity(&mut self, t: TypeId, identity: RecursionId) -> bool {
         let (t, data) = self.mapped_target_with_symbol(t);
         match data {
-            TypeData::Intersection(parts) if parts.len() >= MEMBERS_OF_A_LARGE_INTERSECTION => {
-                match self.identities_of_members(t, parts) {
+            TypeData::Intersection(parts) if parts.len() >= LARGE_INTERSECTION_SIZE => {
+                match self.member_identities(t, parts) {
                     Some(members) => self.some_member_has_identity(&members, identity),
                     None => parts
                         .iter()
@@ -4716,7 +4716,7 @@ impl<'p, 's> Checker<'p, 's> {
         None
     }
 
-    fn is_refused_by_a_type_written_there(
+    fn is_rejected_by_annotated_type(
         &mut self,
         r: &mut Relater,
         source: TypeId,
@@ -4919,7 +4919,7 @@ impl<'p, 's> Checker<'p, 's> {
                     if !self.is_generic_object_type(base_object)
                         && !self.is_generic_index_type(base_index)
                         && (REPORT
-                            || !self.is_refused_by_a_type_written_there(
+                            || !self.is_rejected_by_annotated_type(
                                 r,
                                 source,
                                 (base_object, base_index),

@@ -449,7 +449,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // Up to here they were ordered by id.
         self.sort_type_set(actual, &mut members);
-        let is_totally_ordered = members.len() >= Self::MEMBERS_WORTH_INSERTING_INTO && !self.has_compared_without_total_order.get();
+        let is_totally_ordered = members.len() >= Self::MIN_MEMBERS_FOR_INSERTION && !self.has_compared_without_total_order.get();
         let first_new_type_id = self.types().first_new_type_id();
         let union = match members[..] {
             [] => TypeId::NEVER,
@@ -1154,14 +1154,14 @@ impl<'p, 's> Checker<'p, 's> {
     fn add_types_to_intersection(
         &mut self,
         set: &mut Flat,
-        members_of_a_large_set: &mut crate::util::FxHashSet<TypeId>,
+        large_set_members: &mut crate::util::FxHashSet<TypeId>,
         mut includes: u32,
         types: &[TypeId],
     ) -> u32 {
         for &ty in types {
             let ty = self.regular(ty);
             if let TypeData::Intersection(inner) = self.data(ty) {
-                includes = self.add_types_to_intersection(set, members_of_a_large_set, includes, inner);
+                includes = self.add_types_to_intersection(set, large_set_members, includes, inner);
                 continue;
             }
             // Only the first of the types that count as `{}` is added.
@@ -1193,11 +1193,11 @@ impl<'p, 's> Checker<'p, 's> {
                 let is_there = if set.len() < LARGE_SET {
                     set.contains(&ty)
                 } else {
-                    if members_of_a_large_set.len() != set.len() {
-                        members_of_a_large_set.clear();
-                        members_of_a_large_set.extend(set.iter().copied());
+                    if large_set_members.len() != set.len() {
+                        large_set_members.clear();
+                        large_set_members.extend(set.iter().copied());
                     }
-                    !members_of_a_large_set.insert(ty)
+                    !large_set_members.insert(ty)
                 };
                 if !is_there {
                     // No value has two different unit types. The `object` flag next to the unit
@@ -2422,10 +2422,10 @@ impl<'p, 's> Checker<'p, 's> {
         *members = type_set;
     }
 
-    const MEMBERS_WORTH_INSERTING_INTO: usize = 64;
+    const MIN_MEMBERS_FOR_INSERTION: usize = 64;
 
     fn inserted_into_ordered_union(&self, actual: &[TypeId], members: &Flat) -> Option<Flat> {
-        if members.len() < Self::MEMBERS_WORTH_INSERTING_INTO {
+        if members.len() < Self::MIN_MEMBERS_FOR_INSERTION {
             return None;
         }
         let ordered = actual.iter().copied().find(|ty| self.totally_ordered_unions.borrow().contains(ty))?;
@@ -2459,8 +2459,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    fn compare_sorted_members(&self, a: &SortedMember, b: &SortedMember, orders_of_pairs: Option<&mut crate::util::FxHashMap<(TypeId, TypeId), (std::cmp::Ordering, bool)>>) -> std::cmp::Ordering {
-        if let Some(orders_of_pairs) = orders_of_pairs
+    fn compare_sorted_members(&self, a: &SortedMember, b: &SortedMember, pair_orders: Option<&mut crate::util::FxHashMap<(TypeId, TypeId), (std::cmp::Ordering, bool)>>) -> std::cmp::Ordering {
+        if let Some(pair_orders) = pair_orders
             && a.is_intersection_without_alias
             && b.is_intersection_without_alias
             && let (TypeData::Intersection(x), TypeData::Intersection(y)) = (self.data(a.ty), self.data(b.ty))
@@ -2469,7 +2469,7 @@ impl<'p, 's> Checker<'p, 's> {
             && !matches!((self.data(s), self.data(t)), (TypeData::Intersection(_), TypeData::Intersection(_)))
         {
             let types = self.types();
-            let (order, is_ordered_by_own_id) = *orders_of_pairs.entry((s, t)).or_insert_with(|| {
+            let (order, is_ordered_by_own_id) = *pair_orders.entry((s, t)).or_insert_with(|| {
                 types.take_has_ordered_by_own_id();
                 let order = self.compare_types_without_ids(s, t).then_with(|| types.creation_order(s, t));
                 (order, types.take_has_ordered_by_own_id())
@@ -2531,9 +2531,9 @@ impl<'p, 's> Checker<'p, 's> {
             }
             let members: Vec<SortedMember> = of_one_name.iter().map(|key| self.sorted_member(key.0, key.2)).collect();
             let mut order: smallvec::SmallVec<[u32; 16]> = (0..members.len() as u32).collect();
-            let mut orders_of_pairs = crate::util::FxHashMap::default();
-            let keeps_orders_of_pairs = members.len() >= 16;
-            let mut compare = |&a: &u32, &b: &u32| self.compare_sorted_members(&members[a as usize], &members[b as usize], keeps_orders_of_pairs.then_some(&mut orders_of_pairs));
+            let mut pair_orders = crate::util::FxHashMap::default();
+            let caches_pair_orders = members.len() >= 16;
+            let mut compare = |&a: &u32, &b: &u32| self.compare_sorted_members(&members[a as usize], &members[b as usize], caches_pair_orders.then_some(&mut pair_orders));
             merge_sort_by(&mut order, &mut compare, &mut buffer);
             let sorted: smallvec::SmallVec<[(u32, Option<&[u8]>, TypeId); 16]> = order.iter().map(|&at| of_one_name[at as usize]).collect();
             of_one_name.copy_from_slice(&sorted);

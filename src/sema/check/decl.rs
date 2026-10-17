@@ -358,7 +358,7 @@ fn exponentiate(base: f64, exponent: f64) -> f64 {
     pow(base, exponent)
 }
 
-fn exponentiate_as_the_engine(base: f64, exponent: f64) -> f64 {
+fn jsc_pow(base: f64, exponent: f64) -> f64 {
     if exponent.is_nan() || base.abs() == 1.0 && exponent.is_infinite() {
         return f64::NAN;
     }
@@ -397,7 +397,7 @@ pub(super) fn number_operation(op: BinOp, a: f64, b: f64, as_the_engine: bool) -
         BinOp::Add => a + b,
         BinOp::Sub => a - b,
         BinOp::Rem => a % b,
-        BinOp::Pow if as_the_engine => exponentiate_as_the_engine(a, b),
+        BinOp::Pow if as_the_engine => jsc_pow(a, b),
         BinOp::Pow => exponentiate(a, b),
         _ => return None,
     })
@@ -630,7 +630,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn evaluate_binary(&self, op: Option<BinOp>, l: Evaluated, r: Evaluated) -> Evaluated {
         let value = match (l.value, r.value, op) {
             (Some(EnumValue::Number(a)), Some(EnumValue::Number(b)), Some(op)) => {
-                number_operation(op, f64::from_bits(a), f64::from_bits(b), self.p.files.options.computes_as_the_engine)
+                number_operation(op, f64::from_bits(a), f64::from_bits(b), self.p.files.options.uses_engine_arithmetic)
                     .and_then(|n| Evaluated::number(n).value)
             }
             (Some(a), Some(b), Some(BinOp::Add)) => {

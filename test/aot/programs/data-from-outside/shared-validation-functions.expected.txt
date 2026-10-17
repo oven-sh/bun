@@ -1,0 +1,7 @@
+3 2 box 3 box
+TypeError: size.height: Invalid input: expected number, received undefined | TypeError: size.height: Invalid input: expected number, received undefined | TypeError: size.height: Invalid input: expected number, received undefined
+TypeError: size.height: Invalid input: expected number, received string | TypeError: size.height: Invalid input: expected number, received string | TypeError: size.height: Invalid input: expected number, received string
+SyntaxError: JSON Parse error: Unexpected EOF | SyntaxError: JSON Parse error: Unexpected EOF | SyntaxError: JSON Parse error: Unexpected EOF
+TypeError: Invalid input: expected object, received null | TypeError: Invalid input: expected object, received null | TypeError: Invalid input: expected object, received null
+TypeError: size.height: Invalid input: expected number, received undefined | size.height invalid_type,label invalid_type |  invalid_type
+{"value":{"size":{"width":2,"height":3},"label":"box"}} {"issues":[{"path":["size"],"code":"invalid_type","expected":"object","received":"number","message":"Invalid input: expected object, received number"},{"path":["label"],"code":"invalid_type","expected":"string","received":"undefined","message":"Invalid input: expected string, received undefined"}]}

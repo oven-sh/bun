@@ -76,8 +76,8 @@ impl MachoFile {
         let header = read_macho_header(obj_file)?;
 
         let size_with_blob = obj_file.len() + blob_to_embed_length;
-        let signature_room = MachoSigner::compute_signature_size(size_with_blob as u64) + (1 << 16);
-        let mut data: Vec<u8> = Vec::with_capacity(size_with_blob + signature_room);
+        let signature_capacity = MachoSigner::compute_signature_size(size_with_blob as u64) + (1 << 16);
+        let mut data: Vec<u8> = Vec::with_capacity(size_with_blob + signature_capacity);
         // SAFETY: the capacity holds `obj_file.len()` bytes, all of which are written before the length says so.
         unsafe {
             bun_core::copy_in_parallel(data.as_mut_ptr(), obj_file.as_ptr(), obj_file.len());
@@ -149,8 +149,8 @@ impl MachoFile {
         } else {
             dysymtab.indirectsymoff as usize
         };
-        let behind_strings = signature.map_or(length, |(_, command)| command.dataoff as usize);
-        let lies_as_ld_lays_it = dysymtab.ilocalsym == 0
+        let after_strings = signature.map_or(length, |(_, command)| command.dataoff as usize);
+        let matches_ld_layout = dysymtab.ilocalsym == 0
             && dysymtab.iextdefsym == dysymtab.nlocalsym
             && dysymtab.iundefsym as u64 == dysymtab.iextdefsym as u64 + dysymtab.nextdefsym as u64
             && symtab.nsyms as u64 == dysymtab.iundefsym as u64 + dysymtab.nundefsym as u64
@@ -161,12 +161,12 @@ impl MachoFile {
             && dysymtab.nextrefsyms == 0
             && symbols_at.checked_add(16 * symtab.nsyms as usize)? == indirect_at
             && indirect_at.checked_add(4 * dysymtab.nindirectsyms as usize)? == strings_at
-            && strings_end <= behind_strings
-            && behind_strings - strings_end < 16
-            && behind_strings <= length
+            && strings_end <= after_strings
+            && after_strings - strings_end < 16
+            && after_strings <= length
             && signature.is_none_or(|(_, command)| command.dataoff as u64 + command.datasize as u64 == length as u64)
             && linkedit.fileoff.checked_add(linkedit.filesize)? == length as u64;
-        if !lies_as_ld_lays_it {
+        if !matches_ld_layout {
             return None;
         }
 
@@ -203,13 +203,13 @@ impl MachoFile {
         while !(symbols_at + tail.len()).is_multiple_of(16) {
             tail.push(0);
         }
-        let new_behind_strings = symbols_at + tail.len();
-        tail.extend_from_slice(&self.data[behind_strings..]);
-        let growth = (new_behind_strings - behind_strings) as u64;
+        let new_after_strings = symbols_at + tail.len();
+        tail.extend_from_slice(&self.data[after_strings..]);
+        let growth = (new_after_strings - after_strings) as u64;
 
         symtab.nsyms = symtab.nsyms.checked_add(count)?;
         symtab.stroff = u32::try_from(new_strings_at).ok()?;
-        symtab.strsize = u32::try_from(new_behind_strings - new_strings_at).ok()?;
+        symtab.strsize = u32::try_from(new_after_strings - new_strings_at).ok()?;
         dysymtab.nlocalsym = dysymtab.nlocalsym.checked_add(count)?;
         dysymtab.iextdefsym = dysymtab.iextdefsym.checked_add(count)?;
         dysymtab.iundefsym = dysymtab.iundefsym.checked_add(count)?;
@@ -218,7 +218,7 @@ impl MachoFile {
         }
         let signature = match signature {
             Some((at, mut command)) => {
-                command.dataoff = u32::try_from(new_behind_strings).ok()?;
+                command.dataoff = u32::try_from(new_after_strings).ok()?;
                 Some((at, command))
             }
             None => None,
@@ -918,8 +918,8 @@ impl MachoSigner {
         let (hashed, hashes) = self.data.split_at_mut(hashes_start);
         let pages_per_thread = total_pages.div_ceil(usize::from(bun_core::get_thread_count()).clamp(1, 16)).max(1024);
         std::thread::scope(|scope| {
-            let runs_of_pages = hashed[..self.sig_off].chunks(pages_per_thread * PAGE_SIZE);
-            for (pages, hashes) in runs_of_pages.zip(hashes.chunks_mut(pages_per_thread * HASH_SIZE)) {
+            let page_runs = hashed[..self.sig_off].chunks(pages_per_thread * PAGE_SIZE);
+            for (pages, hashes) in page_runs.zip(hashes.chunks_mut(pages_per_thread * HASH_SIZE)) {
                 scope.spawn(move || {
                     // The last partial page is hashed unpadded, as codesign does.
                     for (page, hash) in pages.chunks(PAGE_SIZE).zip(hashes.chunks_exact_mut(HASH_SIZE)) {

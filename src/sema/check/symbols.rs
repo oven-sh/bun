@@ -1408,7 +1408,7 @@ impl<'p, 's> Checker<'p, 's> {
             .unwrap_or_else(|| files.module_value(module));
         // `getTypeWithSyntheticDefaultOnly`
         if files.is_only_importable_as_default(file, module)
-            || files.options.one_name_is_one_binding && self.every_type(ty, Self::is_primitive)
+            || files.options.uses_ecmascript_bindings && self.every_type(ty, Self::is_primitive)
         {
             return Some(self.intern(TypeData::Anon {
                 origin: Origin::Namespace {
@@ -2201,7 +2201,7 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             TypeId::UNDEFINED
         };
-        if self.p.files.options.undefined_properties_name_nobody {
+        if self.p.files.options.undefined_properties_have_no_declaration {
             return Prop {
                 name: prop.name,
                 flags: PropFlags::OPTIONAL,
@@ -3353,7 +3353,7 @@ impl<'p, 's> Checker<'p, 's> {
         // For anything else it is the iterated type of the whole, if the iteration gets that far
         // (`includeUndefinedInIndexSignature`).
         let element = self.iterated_type_of_destructuring(ty);
-        if self.may_miss_at_an_index(nodes.and_then(|nodes| nodes.1.file())) {
+        if self.index_may_be_missing(nodes.and_then(|nodes| nodes.1.file())) {
             self.optional(element)
         } else {
             element
@@ -5286,7 +5286,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     pub fn declares_method(&mut self, ty: TypeId, name: Atom) -> bool {
         let Some((method, false)) = self.declared_property(ty, name) else { return false };
-        self.function_of_type(method).is_some_and(|(file, func)| self.hir(file)[func].kind == FnKind::Method)
+        self.function_for_type(method).is_some_and(|(file, func)| self.hir(file)[func].kind == FnKind::Method)
     }
 
     pub fn iterated_type(&mut self, ty: TypeId, is_async: bool) -> TypeId {
@@ -5417,7 +5417,7 @@ impl<'p, 's> Checker<'p, 's> {
         let element = self.index_type_of_type(arrays, TypeId::NUMBER)?;
         Some(if !has_string {
             element
-        } else if self.is_string_like(element) && !self.may_miss_at_an_index(error_node.map(|at| at.0))
+        } else if self.is_string_like(element) && !self.index_may_be_missing(error_node.map(|at| at.0))
         {
             TypeId::STRING
         } else {

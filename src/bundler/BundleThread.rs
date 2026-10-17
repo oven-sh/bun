@@ -281,11 +281,11 @@ impl<C: CompletionStruct> BundleThread<C> {
         let transpiler = completion.create_and_configure_transpiler(bump)?;
 
         transpiler.resolver.generation = generation;
-        static BUILDS_AHEAD_OF_TIME: core::sync::atomic::AtomicUsize =
+        static IS_AOT_BUILD: core::sync::atomic::AtomicUsize =
             core::sync::atomic::AtomicUsize::new(0);
         let compiles_ahead_of_time = transpiler.options.aot;
         if compiles_ahead_of_time
-            && BUILDS_AHEAD_OF_TIME.fetch_add(1, core::sync::atomic::Ordering::AcqRel) == 0
+            && IS_AOT_BUILD.fetch_add(1, core::sync::atomic::Ordering::AcqRel) == 0
         {
             bun_alloc::mimalloc::mi_option_set_default(
                 bun_alloc::mimalloc::Option::hand_out_last_freed,
@@ -306,7 +306,7 @@ impl<C: CompletionStruct> BundleThread<C> {
             std::ptr::from_ref(bun_threading::work_pool::WorkPool::get()).cast_mut(),
         );
         if compiles_ahead_of_time
-            && BUILDS_AHEAD_OF_TIME.fetch_sub(1, core::sync::atomic::Ordering::AcqRel) == 1
+            && IS_AOT_BUILD.fetch_sub(1, core::sync::atomic::Ordering::AcqRel) == 1
         {
             bun_alloc::mimalloc::mi_option_set_default(
                 bun_alloc::mimalloc::Option::hand_out_last_freed,

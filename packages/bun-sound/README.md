@@ -186,7 +186,7 @@ To see which records lost their layout, print the compiler's intermediate form a
 ```sh
 cd out/rooms/fuse.born/typed && $SEMA cli wide.ts --snapshot=snapshot --aot > ir.txt && python3 tools/facts.py ir.txt fuse.js
 # facts fuse.js: 322 of 696 (46.3%) reads and stores are by offset · records 41, foreign 14
-$SEMA cli wide.ts --snapshot=snapshot --aot --aot-explain=alterations | grep given
+$SEMA cli wide.ts --snapshot=snapshot --aot --aot-explain=mutations | grep given
 ```
 
 ## Making a typed version of a new package
@@ -272,12 +272,12 @@ var request = new (RequestInstance as RequestConstructor)(state);
 again, counts as data from outside: JavaScript may store anything to an object it is handed. The compiler then gives the type up in the whole
 program: its objects are made as plain objects, and the typed code reads them by name too. seroval's `toJSON` and `toCrossJSON` said that they
 return a `SerovalNode`, and in a TanStack Start server no node had a layout. Written as `any`, the same object is merely let out and keeps its
-layout. `--aot-explain=alterations` counts such types under "given".
+layout. `--aot-explain=mutations` counts such types under "given".
 
 **Say what is frozen.** Of `Object.freeze(x)`, `Object.seal(x)` or `Object.preventExtensions(x)` with an `x` of type `any` the compiler has to
 assume that `x` may be any laid-out object of the whole program. Every layout then counts as one that may be frozen, and every store to a
 field tests for it: 807 of the 3,520 stores in a TanStack Start server, react-dom's among them, for one line of seroval. Give the operand the
-type of what really arrives. `--aot-explain=alterations` names the first such place under "integrity level".
+type of what really arrives. `--aot-explain=mutations` names the first such place under "integrity level".
 
 **Do not lean on the host project.** The text is checked under the user's tsconfig. Without `noImplicitAny`
 TypeScript has no evolving types (`var x;` and `var x = null` are plain `any`), and without `strictNullChecks` a union cannot be

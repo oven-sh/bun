@@ -1,3 +1,3 @@
 import { typednessOfPrograms } from "./run-typedness";
 
-typednessOfPrograms(3, 3);
+typednessOfPrograms(3, 10);

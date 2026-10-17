@@ -1,4 +1,4 @@
-use crate::bun_aot::{Change, NameSet, builtin_named_by, key_name, shown};
+use crate::bun_aot::{Change, NameSet, builtin_for_expr, key_name, shown};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint_oxlint::ast_util::is_import_from_module;
@@ -64,10 +64,10 @@ impl AotSpyOnBuiltin {
         let (Some(object), Some(key)) = (call.args().first(), call.args().get(1)) else {
             return;
         };
-        if let Some(builtin) = builtin_named_by(object, None)
+        if let Some(builtin) = builtin_for_expr(object, None)
             && let Some(name) = key_name(key)
-            && builtin.finds(&name)
-            && builtin.refuses(&name, Change::Define)
+            && builtin.has_property(&name)
+            && builtin.rejects_change(&name, Change::Define)
         {
             let is_clock = match builtin.name {
                 "" => *name == *b"Date",

@@ -1,22 +1,22 @@
 // `s === "literal"` inside and outside loops, for every length, every internal representation of the string and every kind of value.
 // In a loop the characters are compared in place and only the rarely taken arm for 16-bit strings calls out, handing over the literal's number.
 // Outside a loop the whole comparison is one call of the stub.
-// CALLS- is5L (?<!Typed)StringIsText
-// CALLS+ is5L operationAOTTypedStringIsText
+// CALLS- is5L (?<!Typed)StringEqualsLiteral
+// CALLS+ is5L operationAOTTypedStringEqualsLiteral
 // CALLS- is5L StringHasAt
-// CALLS- ofAnyL (?<!Typed)(String|Value)IsText
-// CALLS+ is5 (?<!Typed)StringIsText
+// CALLS- ofAnyL (?<!Typed)(String|Value)EqualsLiteral
+// CALLS+ is5 (?<!Typed)StringEqualsLiteral
 // CALLS- is5 (^|[ f])TypedString(;|$)
-// CALLS+ branch1 (?<!Typed)StringIsText
-// CALLS+ branch2 (?<!Typed)StringIsText
-// CALLS+ branch3 ShortTextOfValue
-// CALLS- branch3 (?<!Typed)(String|Value)IsText
-// CALLS+ switched (?<!Typed)StringIsText
+// CALLS+ branch1 (?<!Typed)StringEqualsLiteral
+// CALLS+ branch2 (?<!Typed)StringEqualsLiteral
+// CALLS+ branch3 ShortStringOfValue
+// CALLS- branch3 (?<!Typed)(String|Value)EqualsLiteral
+// CALLS+ switched (?<!Typed)StringEqualsLiteral
 // CALLS- branch3 StringHasAt|Flatten
-// CALLS- inLoop (?<!Typed)StringIsText
-// CALLS+ ofAny ValueIsText
-// CALLS- isEmpty StringIsText
-// CALLS- isAccented StringIsText
+// CALLS- inLoop (?<!Typed)StringEqualsLiteral
+// CALLS+ ofAny ValueEqualsLiteral
+// CALLS- isEmpty StringEqualsLiteral
+// CALLS- isAccented StringEqualsLiteral
 const print = (s: string) => console.log(s);
 function show(x: unknown): string {
     if (typeof x !== "string")

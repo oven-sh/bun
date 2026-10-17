@@ -195,7 +195,7 @@ pub(super) struct FlowMemo {
     /// Indexed by flow node of the same file, or empty. For a call from which a walk has passed many calls of which that
     /// is `None`: the node at which it arrived, and how many it passed. See `before_idle_calls`.
     idle_runs: Vec<(FlowId, u32)>,
-    quiet_of: Option<FileId>,
+    quiet_index_file: Option<FileId>,
     quiet_head: Vec<u32>,
     quiet_place: Vec<u32>,
     quiet_stop: Vec<u32>,
@@ -203,8 +203,8 @@ pub(super) struct FlowMemo {
     quiet_earlier_call: Vec<u32>,
     quiet_about: FxHashMap<u32, Vec<u32>>,
     quiet_about_members: FxHashMap<u32, Vec<u32>>,
-    ends_of_idle_runs: Vec<u32>,
-    ends_of_idle_runs_of: Option<FileId>,
+    idle_run_ends: Vec<u32>,
+    idle_run_ends_file: Option<FileId>,
     /// The subjects of each test of the file `tests_of`, indexed by the flow node of the test.
     tests: Vec<About>,
     tests_of: Option<FileId>,
@@ -371,7 +371,7 @@ impl SharedFlows {
 
     /// A node that is visited again while its type is computed has two entries. The search finds
     /// the first.
-    fn forget_what_is_incomplete(&mut self) {
+    fn drop_incomplete_entries(&mut self) {
         self.few.retain(|known| !known.1.incomplete);
         self.many.retain(|_, ty| !ty.incomplete);
     }
@@ -6613,7 +6613,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut shared_flow = FlowId::NONE;
         let (depth, crossed) = (walk.depth, walk.crossed);
         let mut incomplete = false;
-        let quiet_key = self.quiet_key_of(walk);
+        let quiet_key = self.quiet_key_for(walk);
         let mut ty = loop {
             walk.steps += 1;
             if walk.steps >= MAX_STEPS {
@@ -6633,7 +6633,7 @@ impl<'p, 's> Checker<'p, 's> {
                 shared_flow = flow;
             }
             if quiet_key != 0 && walk.steps > 64 {
-                if self.flow_memo.quiet_of != Some(file) {
+                if self.flow_memo.quiet_index_file != Some(file) {
                     self.index_quiet_nodes(file);
                 }
                 if let Some((arrived_at, passed)) = self.before_quiet_nodes(file, quiet_key, !walk.reference.path.is_empty(), flow) {
@@ -6914,8 +6914,8 @@ impl<'p, 's> Checker<'p, 's> {
                         walk.back_edges -= 1;
                         if let Some(cached) = restarted {
                             incomplete = false;
-                            if self.asks_out_of_order() {
-                                walk.shared_flows.forget_what_is_incomplete();
+                            if self.queries_out_of_order() {
+                                walk.shared_flows.drop_incomplete_entries();
                             }
                             break cached;
                         }
@@ -6934,8 +6934,8 @@ impl<'p, 's> Checker<'p, 's> {
                             .or_default()
                             .push((walk.reference.clone(), result.ty));
                         self.flow_memo.flow_loop_cached_at = self.work;
-                        if self.asks_out_of_order() {
-                            walk.shared_flows.forget_what_is_incomplete();
+                        if self.queries_out_of_order() {
+                            walk.shared_flows.drop_incomplete_entries();
                         }
                     }
                     break result.ty;
@@ -7056,7 +7056,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `GetNonNullableType`
-    pub fn non_nullable(&mut self, ty: TypeId) -> TypeId {
+    pub(super) fn compute_non_nullable(&mut self, ty: TypeId) -> TypeId {
         if self.p.files.options.strict_null_checks {
             self.adjusted_type_with_facts(ty, facts::NE_UNDEFINED_OR_NULL)
         } else {
@@ -7437,7 +7437,7 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         let undefined_like_type =
-            (self.may_miss_at_an_index(Some(file))).then_some(TypeId::UNDEFINED);
+            (self.index_may_be_missing(Some(file))).then_some(TypeId::UNDEFINED);
         Some(self.get_tuple_element_type_out_of_start_count(ty, index, undefined_like_type))
     }
 
@@ -7469,7 +7469,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `includeUndefinedInIndexSignature`
     fn include_undefined_in_index_signature(&mut self, file: FileId, ty: TypeId) -> TypeId {
-        if self.may_miss_at_an_index(Some(file)) {
+        if self.index_may_be_missing(Some(file)) {
             self.with_missing(ty)
         } else {
             ty
@@ -7976,7 +7976,7 @@ impl<'p, 's> Checker<'p, 's> {
         true
     }
 
-    fn quiet_key_of(&self, walk: &Walk) -> u32 {
+    fn quiet_key_for(&self, walk: &Walk) -> u32 {
         let reference = &walk.reference;
         if reference.unresolved.get() != 0
             || reference.assigned != usize::MAX
@@ -8045,7 +8045,7 @@ impl<'p, 's> Checker<'p, 's> {
                 Flow::Call { .. } => (earlier_call[i], call[i]) = (call[i], i as u32),
                 Flow::Assign { target, .. } => match self.quiet_subject(file, target) {
                     None => stop[i] = i as u32,
-                    Some(0) => match self.quiet_root_of_member(file, target) {
+                    Some(0) => match self.quiet_member_root(file, target) {
                         None => stop[i] = i as u32,
                         Some(0) => {}
                         Some(key) => about_members.entry(key).or_default().push(i as u32),
@@ -8056,13 +8056,13 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let memo = &mut self.flow_memo;
-        memo.quiet_of = Some(file);
+        memo.quiet_index_file = Some(file);
         (memo.quiet_head, memo.quiet_place, memo.quiet_stop) = (head, place, stop);
         (memo.quiet_call, memo.quiet_earlier_call, memo.quiet_about) = (call, earlier_call, about);
         memo.quiet_about_members = about_members;
     }
 
-    fn quiet_root_of_member(&self, file: FileId, target: FlowTarget) -> Option<u32> {
+    fn quiet_member_root(&self, file: FileId, target: FlowTarget) -> Option<u32> {
         let hir = self.hir(file);
         let FlowTarget::Expr(e) = target else { return Some(0) };
         let (mut at, mut is_member) = (e, false);
@@ -8158,11 +8158,11 @@ impl<'p, 's> Checker<'p, 's> {
         let memo = &mut self.flow_memo;
         if memo.settled_calls_of != Some(file) {
             memo.settled_calls_of = Some(file);
-            memo.ends_of_idle_runs_of = None;
+            memo.idle_run_ends_file = None;
             memo.settled_calls.clear();
             memo.settled_calls.resize(words, (0, 0));
             memo.idle_runs.clear();
-            memo.quiet_of = None;
+            memo.quiet_index_file = None;
         }
         let (word, bit) = (flow.idx() / 64, 1 << (flow.idx() % 64));
         memo.settled_calls[word].0 |= bit;
@@ -8275,7 +8275,7 @@ impl<'p, 's> Checker<'p, 's> {
         reachable
     }
 
-    fn end_of_straight_run(&mut self, file: FileId, from: FlowId) -> FlowId {
+    fn straight_run_end(&mut self, file: FileId, from: FlowId) -> FlowId {
         let bound = self.bound(file);
         let last = match self.last_flow_node.0 == file {
             true => self.last_flow_node.1,
@@ -8332,7 +8332,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 shared.push((flow, self.begin_memoizable()));
             }
-            flow = match self.end_of_idle_run(file, flow) {
+            flow = match self.idle_run_end(file, flow) {
                 Ok(end) => end,
                 Err(reachable) => break reachable,
             };
@@ -8340,7 +8340,7 @@ impl<'p, 's> Checker<'p, 's> {
                 Flow::Unreachable => break false,
                 Flow::Start { .. } | Flow::StartInvoked { .. } => break true,
                 Flow::Assign { .. } | Flow::Cond { .. } | Flow::ArrayMutation { .. } => {
-                    flow = self.end_of_straight_run(file, flow);
+                    flow = self.straight_run_end(file, flow);
                 }
                 Flow::Call { before, call } => {
                     let sig = if self.flow_memo.is_idle_call(file, flow) {
@@ -8409,7 +8409,7 @@ impl<'p, 's> Checker<'p, 's> {
         reachable
     }
 
-    fn end_of_idle_run(&mut self, file: FileId, flow: FlowId) -> Result<FlowId, bool> {
+    fn idle_run_end(&mut self, file: FileId, flow: FlowId) -> Result<FlowId, bool> {
         if self.task.file != Some(file) {
             return Ok(flow);
         }
@@ -8427,15 +8427,15 @@ impl<'p, 's> Checker<'p, 's> {
         if before(memo, flow).is_none() {
             return Ok(flow);
         }
-        if memo.ends_of_idle_runs_of != Some(file) {
-            memo.ends_of_idle_runs_of = Some(file);
-            memo.ends_of_idle_runs.clear();
-            memo.ends_of_idle_runs.resize(bound.flow.len(), u32::MAX);
+        if memo.idle_run_ends_file != Some(file) {
+            memo.idle_run_ends_file = Some(file);
+            memo.idle_run_ends.clear();
+            memo.idle_run_ends.resize(bound.flow.len(), u32::MAX);
         }
         let end_of = |memo: &mut FlowMemo, start: FlowId| {
             let mut at = start;
             let end = loop {
-                let known = memo.ends_of_idle_runs[at.idx()];
+                let known = memo.idle_run_ends[at.idx()];
                 if known != u32::MAX && known != at.0 {
                     at = FlowId(known);
                     continue;
@@ -8447,14 +8447,14 @@ impl<'p, 's> Checker<'p, 's> {
             };
             let mut at = start;
             while at != end {
-                let known = std::mem::replace(&mut memo.ends_of_idle_runs[at.idx()], end.0);
+                let known = std::mem::replace(&mut memo.idle_run_ends[at.idx()], end.0);
                 at = if known != u32::MAX && known != at.0 {
                     FlowId(known)
                 } else {
                     before(memo, at).unwrap_or(end)
                 };
             }
-            memo.ends_of_idle_runs[end.idx()] = end.0;
+            memo.idle_run_ends[end.idx()] = end.0;
             end
         };
         let end = end_of(memo, flow);

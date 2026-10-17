@@ -664,7 +664,7 @@ pub struct Config {
     /// [`LanguageOptions::infers_globals`]
     infers_globals: InferGlobals,
     /// `--aot`: the rules of `bun/aot` that the configuration says nothing about are warnings.
-    turns_on_rules_of_aot: bool,
+    enables_aot_rules: bool,
     /// `--no-ignore` of ESLint 8: a file that is named is linted, whatever ignores it. What is found in a directory is not.
     lints_all_that_is_named: bool,
     /// Which object has the patterns with which ESLint 8 ignores what starts with a dot.
@@ -975,8 +975,8 @@ impl Config {
         self.infers_globals = how;
     }
 
-    pub fn turn_on_rules_of_aot(&mut self, is_on: bool) {
-        self.turns_on_rules_of_aot = is_on;
+    pub fn enable_aot_rules(&mut self, is_on: bool) {
+        self.enables_aot_rules = is_on;
     }
 
     /// What the user may want to know, and nothing is wrong: a line for each.
@@ -1751,8 +1751,8 @@ impl Config {
                 .filter(|it| it.severity != Severity::Off && oxlint_lacks(it.reported_as()));
             config.language.rules_that_oxlint_lacks = lacking.map(|it| it.entry.meta).collect();
         }
-        if self.turns_on_rules_of_aot {
-            for name in presets::RULES_OF_AOT {
+        if self.enables_aot_rules {
+            for name in presets::AOT_RULES {
                 if let Some(entry) = registry.get(Plugin::Bun, name.as_bytes())
                     && !config.rules.iter().any(|it| std::ptr::eq(it.entry, entry))
                 {
@@ -1760,8 +1760,8 @@ impl Config {
                 }
             }
         }
-        config.language.twins_on =
-            crate::language::Twins::among(config.rules.iter().map(|it| (it.entry.meta, it.severity)));
+        config.language.active_rule_overlaps =
+            crate::language::RuleOverlaps::among(config.rules.iter().map(|it| (it.entry.meta, it.severity)));
         // oxlint looks up the severity of a tsgolint report by the rule's bare name, and finds ESLint's rule first if it's on.
         if self.prefers_typescript_rules {
             let is_on = |it: &ConfiguredRule, plugin: Plugin| {

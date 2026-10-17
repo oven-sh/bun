@@ -847,7 +847,7 @@ impl Checker<'_, '_> {
             self.report_conflicts_of_late_bound_members(file, container, false);
         }
         let mut seen: SmallVec<[(Atom, u8); 8]> = SmallVec::new();
-        let mut place_in_seen = crate::util::FxHashMap::<Atom, usize>::default();
+        let mut seen_index = crate::util::FxHashMap::<Atom, usize>::default();
         for p in properties.iter() {
             let prop = &hir[p];
             let current_kind = match prop.kind {
@@ -916,12 +916,12 @@ impl Checker<'_, '_> {
             };
             let has_many = properties.len() > 16;
             let place = match has_many {
-                true => place_in_seen.get(&effective_name).copied(),
+                true => seen_index.get(&effective_name).copied(),
                 false => seen.iter().position(|seen| seen.0 == effective_name),
             };
             let Some(place) = place else {
                 if has_many {
-                    place_in_seen.insert(effective_name, seen.len());
+                    seen_index.insert(effective_name, seen.len());
                 }
                 seen.push((effective_name, current_kind));
                 continue;

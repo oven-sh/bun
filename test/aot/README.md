@@ -7,7 +7,7 @@ groups of tests, the one command that runs each, what CI has to know, and where 
 
 | Group | Command | What it runs | What it needs |
 | --- | --- | --- | --- |
-| **Fast**: what CI runs | `bun test test/aot` | Every `*.test.ts` in this folder: each program under `programs/` is built, run and compared with plain Bun; of `packages/` one importer in ten; of `generated/` the part of each generator's programs that always runs | A Bun that includes the compiler (macOS arm64, Linux x64 with glibc). Elsewhere every file skips itself. `python3` for `generated-by-python`, `doors-to-typed-objects` and `made-cases-three-ways`; `python3` and a `jsc` shell beside the Bun for `generated-code` and `collector-stress/`. Each says on stderr what it lacks where it is skipped |
+| **Fast**: what CI runs | `bun test test/aot` | Every `*.test.ts` in this folder: each program under `programs/` is built, run and compared with plain Bun; of `packages/` one importer in ten; of `generated/` the part of each generator's programs that always runs | A Bun that includes the compiler (macOS arm64, Linux x64 with glibc). Elsewhere every file skips itself. `python3` for `generated-by-python`, `external-sources-of-typed-objects` and `made-cases-three-ways`; `python3` and a `jsc` shell beside the Bun for `generated-code` and `collector-stress/`. Each says on stderr what it lacks where it is skipped |
 | **A tenth of it** | `AOT_PROGRAMS=quick bun test test/aot` | One program in ten, the same ones every time. A debug or ASAN build of Bun chooses this by itself | The same |
 | **Slow**: everything | `AOT_PROGRAMS= AOT_GENERATED=all AOT_REPEATED_BUILDS=300 bun test test/aot` | All importers of `packages/`, every generated program, the long form of `repeated-builds` | The same, and hours |
 | **All of Bun's tests under `--aot`** | `bun test/aot/whole-suite.ts` | Every test file of the repository twice with `scripts/runner.node.ts`: as it is, and with `--aot` behind each `bun test` and `bun run`. It lists the files that pass only as they are | What the whole suite needs, twice the time |
@@ -35,7 +35,7 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
 - **Seven of the twelve lanes refuse `--aot`** (Linux arm64, musl, macOS x64, Windows), `bun run --aot` too. A test file that uses
   the flag skips itself there: `import { describe, test } from "./supported";` in place of the same names of `bun:test`, or
   `test.skipIf(!!unsupported)` with `unsupported` of `run-programs.ts` where only some of its tests use it. Never a list of
-  platforms: the Bun under test is asked. `test-files-skip-themselves.test.ts` reads every test file of the repository that is in
+  platforms: the Bun under test is asked. `test-files-self-skip.test.ts` reads every test file of the repository that is in
   this folder or whose text uses the flag, and is red if one does not ask.
 - **A skip says why on stderr**: `console.error("SKIPPED: <file>: <what it lacks, what switches it on>")`. Neither reporter prints the
   name of a skipped test, and CI's prints a dot.
@@ -79,6 +79,6 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
 | What the generated code must or must not contain | `// IR=`, `// CALLS-` .. lines in the program; the top of `shell/expectations.py` lists them |
 | Programs that import packages | a case in `packages/<topic>.ts` |
 | Programs written by a generator | `generated/<name>.ts` and `generated-<name>.test.ts`: a part that always runs, chosen because it has failed before, and the whole under `AOT_GENERATED=all`. A generator in Python: `generated/python/<name>.py`, which prints the program of the seed it is given, and a line in `generated/python-generators.ts`. `generated/python-random.ts` yields Python's random numbers, so a port to TypeScript can be compared with its original |
-| A table of cases of which some depart from plain Bun, on purpose or not yet mended | a test that records the verdict of each such case in a JSON file and fails when one changes, for better or for worse: `modules-three-ways`, `doors-to-typed-objects`, `kinds-of-files`. Where a script writes the cases, one folder each: `three-ways/made/<table>.py` with its verdicts in `<table>.json`, and a line in a `made-cases-three-ways-<n>.test.ts` |
+| A table of cases of which some depart from plain Bun, on purpose or not yet mended | a test that records the verdict of each such case in a JSON file and fails when one changes, for better or for worse: `modules-three-ways`, `external-sources-of-typed-objects`, `file-kinds`. Where a script writes the cases, one folder each: `three-ways/made/<table>.py` with its verdicts in `<table>.json`, and a line in a `made-cases-three-ways-<n>.test.ts` |
 | Anything that needs flags, several builds, a server, or looks into the executable | a `<what-it-tests>.test.ts` of its own |
 | Anything slow, or that needs more than a Bun | the same, skipped unless its `AOT_<GROUP>` variable is set, and a row in the first table of this page |

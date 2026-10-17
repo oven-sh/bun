@@ -731,7 +731,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `getReducedType`: an intersection that reduces to `never` is removed.
         let obj = self.reduced(obj);
         let index = self.key_into_string_index_only(obj, index);
-        if self.may_miss_at_an_index(access_node.file())
+        if self.index_may_be_missing(access_node.file())
             && access_flags.contains(AccessFlags::EXPRESSION_POSITION)
         {
             access_flags |= AccessFlags::INCLUDE_UNDEFINED;

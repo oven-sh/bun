@@ -162,7 +162,7 @@ impl Constant {
     }
 
     /// Two such are strictly equal where they are equal here.
-    pub fn is_primitive_but_nan(&self) -> bool {
+    pub fn is_non_nan_primitive(&self) -> bool {
         self.is_primitive() && !matches!(self, Constant::Number(value) if value.is_nan())
     }
 
@@ -222,7 +222,7 @@ impl Folded {
         }
     }
 
-    fn of_truthiness(is_truthy: bool) -> Folded {
+    fn from_truthiness(is_truthy: bool) -> Folded {
         if is_truthy { Folded::Truthy } else { Folded::Falsy }
     }
 }
@@ -345,7 +345,7 @@ impl<'a, 's> Folder<'a, 's> {
                 (BinOp::And, Some(left)) if !left.is_truthy() => Some(left),
                 (BinOp::Or, Some(left)) if left.is_truthy() => Some(left),
                 (BinOp::And | BinOp::Or, Some(_)) => self.fold(file, right),
-                (BinOp::And | BinOp::Or, None) => self.fold(file, right).filter(|right| right.is_truthy() == (op == BinOp::Or)).map(|right| Folded::of_truthiness(right.is_truthy())),
+                (BinOp::And | BinOp::Or, None) => self.fold(file, right).filter(|right| right.is_truthy() == (op == BinOp::Or)).map(|right| Folded::from_truthiness(right.is_truthy())),
                 (_, Some(left)) => match left.is_nullish() {
                     Some(true) => self.fold(file, right),
                     Some(false) => Some(left),
@@ -373,7 +373,7 @@ impl<'a, 's> Folder<'a, 's> {
     }
 
     fn fold_builtin(&self, file: FileId, e: ExprId) -> Option<Folded> {
-        self.known_builtin_value(file, e).map(|held| Folded::of_truthiness(held.is_truthy))
+        self.known_builtin_value(file, e).map(|held| Folded::from_truthiness(held.is_truthy))
     }
 
     fn known_builtin_value(&self, file: FileId, e: ExprId) -> Option<KnownValue> {
@@ -543,7 +543,7 @@ impl<'a, 's> Folder<'a, 's> {
         let folded = match declared.body {
             _ if declared.flags.intersects(Flags::ASYNC | Flags::GENERATOR | Flags::AMBIENT) => None,
             FnBody::Expr(returned) => self.fold(of, returned),
-            FnBody::Block(statements) => match self.completion_of(of, statements) {
+            FnBody::Block(statements) => match self.statements_completion(of, statements) {
                 Completion::Returns(returned) => Some(returned),
                 Completion::FallsThrough => Some(Folded::Value(Constant::Undefined)),
                 Completion::Unknown => None,
@@ -554,9 +554,9 @@ impl<'a, 's> Folder<'a, 's> {
         folded
     }
 
-    fn completion_of(&self, file: FileId, statements: IdList<StmtId>) -> Completion {
+    fn statements_completion(&self, file: FileId, statements: IdList<StmtId>) -> Completion {
         for statement in self.files.hir(file).ids(statements) {
-            let completion = self.completion_of_statement(file, statement);
+            let completion = self.statement_completion(file, statement);
             if !matches!(completion, Completion::FallsThrough) {
                 return completion;
             }
@@ -564,7 +564,7 @@ impl<'a, 's> Folder<'a, 's> {
         Completion::FallsThrough
     }
 
-    fn completion_of_statement(&self, file: FileId, statement: StmtId) -> Completion {
+    fn statement_completion(&self, file: FileId, statement: StmtId) -> Completion {
         if statement.is_none() {
             return Completion::FallsThrough;
         }
@@ -577,10 +577,10 @@ impl<'a, 's> Folder<'a, 's> {
             StmtKind::Return(returned) if returned.is_none() => Completion::Returns(Folded::Value(Constant::Undefined)),
             StmtKind::Return(returned) => self.fold(file, returned).map_or(Completion::Unknown, Completion::Returns),
             StmtKind::If { test, yes, no } => match self.fold(file, test) {
-                Some(test) => self.completion_of_statement(file, if test.is_truthy() { yes } else { no }),
+                Some(test) => self.statement_completion(file, if test.is_truthy() { yes } else { no }),
                 None => Completion::Unknown,
             },
-            StmtKind::Block(statements) if hir.with_bodies.is_empty() => self.completion_of(file, statements),
+            StmtKind::Block(statements) if hir.with_bodies.is_empty() => self.statements_completion(file, statements),
             StmtKind::Empty | StmtKind::Expr(_) | StmtKind::Var(_) | StmtKind::Fn(_) | StmtKind::Interface(_) | StmtKind::TypeAlias(_) => Completion::FallsThrough,
             _ => Completion::Unknown,
         };
@@ -664,7 +664,7 @@ impl<'a, 's> Folder<'a, 's> {
                     return None;
                 }
                 let found = self.symbol_of(file, hir[call].callee, name)?;
-                let is_of_the_bundler = self.files.decls(found).into_iter().any(|(of, decl)| match decl {
+                let is_bundler_constant = self.files.decls(found).into_iter().any(|(of, decl)| match decl {
                     Decl::ImportSpec(spec) => {
                         let hir = self.files.hir(of);
                         atoms.bytes(hir[hir[spec].import].spec) == b"bun:bundle"
@@ -672,7 +672,7 @@ impl<'a, 's> Folder<'a, 's> {
                     _ => false,
                 });
                 let ExprKind::String(flag) = hir[hir.id_at(hir[call].args, 0)].kind else { return None };
-                is_of_the_bundler.then(|| Constant::Bool(self.constants.features.contains(atoms.bytes(flag))))
+                is_bundler_constant.then(|| Constant::Bool(self.constants.features.contains(atoms.bytes(flag))))
             }
             _ => None,
         }
@@ -682,7 +682,7 @@ impl<'a, 's> Folder<'a, 's> {
         let hir = self.files.hir(file);
         let StmtKind::Switch { expr, cases } = hir[switch].kind else { return None };
         let primitive = |e: ExprId| match self.fold(file, e) {
-            Some(Folded::Value(constant)) if constant.is_primitive_but_nan() => Some(constant),
+            Some(Folded::Value(constant)) if constant.is_non_nan_primitive() => Some(constant),
             _ => None,
         };
         let switched_on = primitive(expr)?;
@@ -871,7 +871,7 @@ fn find_decision(decisions: &[(ExprId, Decision)], e: ExprId) -> Option<Decision
     Some(decisions[at].1)
 }
 
-fn cut_operand_of(kind: ExprKind, decisions: &[(ExprId, Decision)]) -> Option<ExprId> {
+fn dead_operand_of(kind: ExprKind, decisions: &[(ExprId, Decision)]) -> Option<ExprId> {
     match kind {
         ExprKind::Cond { test, yes, no } => find_decision(decisions, test).map(|decision| if decision.is_truthy { no } else { yes }),
         ExprKind::Binary { op: BinOp::And, left, right } => find_decision(decisions, left).filter(|decision| !decision.is_truthy).map(|_| right),
@@ -881,7 +881,7 @@ fn cut_operand_of(kind: ExprKind, decisions: &[(ExprId, Decision)]) -> Option<Ex
     }
 }
 
-fn yielded_operand_in(kind: ExprKind, decisions: &[(ExprId, Decision)]) -> Option<ExprId> {
+fn result_operand_in(kind: ExprKind, decisions: &[(ExprId, Decision)]) -> Option<ExprId> {
     match kind {
         ExprKind::Cond { test, yes, no } => find_decision(decisions, test).map(|decision| if decision.is_truthy { yes } else { no }),
         ExprKind::Binary { op: BinOp::And, left, right } => find_decision(decisions, left).map(|decision| if decision.is_truthy { right } else { left }),
@@ -929,20 +929,20 @@ impl<'s> Files<'s> {
         find_decision(self.module(file).decisions, e)
     }
 
-    pub fn cut_operand(&self, file: FileId, e: ExprId) -> Option<ExprId> {
+    pub fn dead_operand(&self, file: FileId, e: ExprId) -> Option<ExprId> {
         let decisions = self.module(file).decisions;
         if decisions.is_empty() {
             return None;
         }
-        cut_operand_of(self.hir(file)[e].kind, decisions)
+        dead_operand_of(self.hir(file)[e].kind, decisions)
     }
 
-    pub fn yielded_operand(&self, file: FileId, e: ExprId) -> Option<ExprId> {
+    pub fn result_operand(&self, file: FileId, e: ExprId) -> Option<ExprId> {
         let decisions = self.module(file).decisions;
         if decisions.is_empty() {
             return None;
         }
-        yielded_operand_in(self.hir(file)[e].kind, decisions)
+        result_operand_in(self.hir(file)[e].kind, decisions)
     }
 
     pub fn short_circuiting_root(&self, file: FileId, e: ExprId) -> Option<ExprId> {
@@ -953,17 +953,17 @@ impl<'s> Files<'s> {
         short_circuiting_root_in(self.hir(file), decisions, e)
     }
 
-    pub fn enclosing_cut_start(&self, file: FileId, pos: u32) -> Option<u32> {
+    pub fn enclosing_dead_range_start(&self, file: FileId, pos: u32) -> Option<u32> {
         let cut = self.module(file).cut;
         let after = cut.partition_point(|range| range.0 <= pos);
         (after != 0 && pos < cut[after - 1].1).then(|| cut[after - 1].0)
     }
 
-    pub fn is_cut_statement(&self, file: FileId, statement: StmtId) -> bool {
+    pub fn is_dead_statement(&self, file: FileId, statement: StmtId) -> bool {
         is_within(self.module(file).cut, self.hir(file)[statement].start)
     }
 
-    fn cut_ranges(&self, file: FileId, decisions: &[(ExprId, Decision)], entered_cases: &[(StmtId, usize)], decides_statements: bool) -> Vec<(u32, u32)> {
+    fn dead_ranges(&self, file: FileId, decisions: &[(ExprId, Decision)], entered_cases: &[(StmtId, usize)], decides_statements: bool) -> Vec<(u32, u32)> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut dead = DeadStatements { hir, decisions, entered_cases, found: Vec::new() };
         if decides_statements {
@@ -982,7 +982,7 @@ impl<'s> Files<'s> {
             .map(|statement| (statement.start, statement.loc.end));
         let operands = (hir.exprs.iter().enumerate())
             .filter(|&(at, _)| !decisions.is_empty() && !matches!(bound.expr_parent[at], Parent::None))
-            .filter_map(|(_, expr)| cut_operand_of(expr.kind, decisions))
+            .filter_map(|(_, expr)| dead_operand_of(expr.kind, decisions))
             .map(|cut| (hir[cut].pos, hir[cut].end));
         let chains = (hir.exprs.iter().enumerate())
             .filter(|&(at, _)| !decisions.is_empty() && !matches!(bound.expr_parent[at], Parent::None))
@@ -1015,7 +1015,7 @@ impl<'s> Files<'s> {
             }
         }
         let mut entered_cases = Vec::new();
-        let mut tests_of_statements = Vec::new();
+        let mut statement_tests = Vec::new();
         for (at, statement) in hir.stmts.iter().enumerate() {
             if matches!(bound.stmt_parent[at], Parent::None) {
                 continue;
@@ -1025,7 +1025,7 @@ impl<'s> Files<'s> {
                     if test.is_some() && !matches!(hir[test].kind, ExprKind::True | ExprKind::False) =>
                 {
                     deciding.push(test);
-                    tests_of_statements.push(test);
+                    statement_tests.push(test);
                 }
                 StmtKind::Switch { .. } => entered_cases.extend(folder.entered_case(file, StmtId(at as u32)).map(|entered| (StmtId(at as u32), entered))),
                 _ => {}
@@ -1034,7 +1034,7 @@ impl<'s> Files<'s> {
         deciding.sort_unstable();
         deciding.dedup();
         let decisions: Vec<(ExprId, Decision)> = deciding.into_iter().filter_map(|e| Some((e, folder.decide(file, e)?))).collect();
-        let decides_statements = !entered_cases.is_empty() || tests_of_statements.into_iter().any(|test| find_decision(&decisions, test).is_some());
+        let decides_statements = !entered_cases.is_empty() || statement_tests.into_iter().any(|test| find_decision(&decisions, test).is_some());
         (decisions, entered_cases, decides_statements)
     }
 
@@ -1056,7 +1056,7 @@ impl<'s> Files<'s> {
         for_each_mut(&mut folded, in_parallel, &|of_file| {
             let folder = Folder::new(files, &constants, is_bundled.as_deref());
             let (decisions, entered_cases, decides_statements) = files.decisions_in(&folder, of_file.file);
-            of_file.cut = files.cut_ranges(of_file.file, &decisions, &entered_cases, decides_statements);
+            of_file.cut = files.dead_ranges(of_file.file, &decisions, &entered_cases, decides_statements);
             of_file.decisions = decisions;
         });
         let arena = session.arena();

@@ -317,19 +317,19 @@ fn standalone_module_graph() -> Option<&'static bun_standalone_graph::Graph> {
     bun_standalone_graph::Graph::get_ref()
 }
 
-/// For a path that the disk does not have: `Graph::of_compiled_program`.
-fn is_of_compiled_program(path: &[u8]) -> bool {
-    standalone_module_graph().is_some_and(|graph| graph.of_compiled_program(path).is_some())
+/// For a path that the disk does not have: `Graph::compiled_program_files`.
+fn is_compiled_program_path(path: &[u8]) -> bool {
+    standalone_module_graph().is_some_and(|graph| graph.compiled_program_files(path).is_some())
 }
 
-fn stats_of_compiled_program(path: &[u8], big_int: bool) -> Option<StatOrNotFound> {
-    let result = standalone_module_graph()?.stat_of_compiled_program(path)?;
+fn compiled_program_stats(path: &[u8], big_int: bool) -> Option<StatOrNotFound> {
+    let result = standalone_module_graph()?.compiled_program_stat(path)?;
     Some(StatOrNotFound::Stats(Box::new(Stats::init(&PosixStat::init(&result), big_int))))
 }
 
 /// A file that the executable holds has no descriptor: its bytes are handed over in a file that has no name.
 #[cfg(unix)]
-fn open_file_of_the_executable(contents: &[u8], flags: i32, path: &[u8]) -> Maybe<FD> {
+fn open_embedded_file(contents: &[u8], flags: i32, path: &[u8]) -> Maybe<FD> {
     if flags & (sys::O::WRONLY | sys::O::RDWR | sys::O::TRUNC | sys::O::APPEND) != 0 {
         return Err(sys::Error::from_code(E::EROFS, sys::Tag::open).with_path(path));
     }
@@ -4733,7 +4733,7 @@ impl NodeFS {
             args.path.slice_z(&mut self.sync_error_buf)
         };
         match Syscall::access(path, args.mode.as_int()) {
-            Err(err) if err.get_errno() == E::ENOENT && (args.mode.as_int() & sys::posix::W_OK) == 0 && is_of_compiled_program(args.path.slice()) => Ok(Null),
+            Err(err) if err.get_errno() == E::ENOENT && (args.mode.as_int() & sys::posix::W_OK) == 0 && is_compiled_program_path(args.path.slice()) => Ok(Null),
             Err(err) => Err(err.with_path(args.path.slice())),
             Ok(_) => Ok(Null),
         }
@@ -5429,7 +5429,7 @@ impl NodeFS {
             }
         };
 
-        Ok(sys::exists_os_path(slice, false) || is_of_compiled_program(path.slice()))
+        Ok(sys::exists_os_path(slice, false) || is_compiled_program_path(path.slice()))
     }
 
     pub(crate) fn chown(&mut self, args: &args::Chown, _: Flavor) -> Maybe<ret::Chown> {
@@ -5646,7 +5646,7 @@ impl NodeFS {
                 )))),
                 Err(err) => {
                     if err.get_errno() == E::ENOENT
-                        && let Some(stats) = stats_of_compiled_program(args.path.slice(), args.big_int)
+                        && let Some(stats) = compiled_program_stats(args.path.slice(), args.big_int)
                     {
                         return Ok(stats);
                     }
@@ -5664,7 +5664,7 @@ impl NodeFS {
             )))),
             Err(err) => {
                 if err.get_errno() == E::ENOENT
-                    && let Some(stats) = stats_of_compiled_program(args.path.slice(), args.big_int)
+                    && let Some(stats) = compiled_program_stats(args.path.slice(), args.big_int)
                 {
                     return Ok(stats);
                 }
@@ -6053,7 +6053,7 @@ impl NodeFS {
         if let Some(graph) = standalone_module_graph()
             && let Some(file) = graph.find_ref(path.as_bytes())
         {
-            return open_file_of_the_executable(file.utf8_contents(), args.flags.as_int(), args.path.slice());
+            return open_embedded_file(file.utf8_contents(), args.flags.as_int(), args.path.slice());
         }
         match Syscall::open(path, args.flags.as_int(), args.mode) {
             Err(err) => Err(err.with_path(args.path.slice())),
@@ -7710,7 +7710,7 @@ impl NodeFS {
             let flags = sys::O::RDONLY | sys::O::NONBLOCK | sys::O::NOCTTY;
 
             let fd = match sys::open(path, flags, 0) {
-                Err(err) if err.get_errno() == E::ENOENT && is_of_compiled_program(path.as_bytes()) => {
+                Err(err) if err.get_errno() == E::ENOENT && is_compiled_program_path(path.as_bytes()) => {
                     return Ok(encode_path_result(path.as_bytes(), args.encoding));
                 }
                 Err(err) => return Err(err.with_path(path)),
@@ -7862,7 +7862,7 @@ impl NodeFS {
                 )))),
                 Err(err) => {
                     if err.get_errno() == E::ENOENT
-                        && let Some(stats) = stats_of_compiled_program(args.path.slice(), args.big_int)
+                        && let Some(stats) = compiled_program_stats(args.path.slice(), args.big_int)
                     {
                         return Ok(stats);
                     }
@@ -7880,7 +7880,7 @@ impl NodeFS {
             )))),
             Err(err) => {
                 if err.get_errno() == E::ENOENT
-                    && let Some(stats) = stats_of_compiled_program(args.path.slice(), args.big_int)
+                    && let Some(stats) = compiled_program_stats(args.path.slice(), args.big_int)
                 {
                     return Ok(stats);
                 }

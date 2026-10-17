@@ -1,6 +1,6 @@
-(function (describe, write, isProxy, workingDirectory, remember, tag, tagOf, kindOfCell, isAnyMockLaid, isPlainArray, fixPrototypeOfClass, guardInstancesOf, setGuard, describeValue, waitForTheWhole) {
-  const holdsWhatMocksSupply = true;
-  let judgesWhatIsUnsure = false;
+(function (describe, write, isProxy, workingDirectory, remember, tag, tagOf, cellKind, isAnyModuleMocked, isPlainArray, fixClassPrototype, guardInstancesOf, setGuard, describeValue, waitForWholeProgramAnalysis) {
+  const checksMockValues = true;
+  let reportsUncertain = false;
   "use strict";
   const UNDEFINED = 1, NULL = 2, FALSE = 4, TRUE = 8, NUMBER = 16, STRING = 32, SYMBOL = 64, BIGINT = 128;
   const global = globalThis;
@@ -9,9 +9,9 @@
   const { isInteger } = Number;
   const { parse, stringify } = JSON;
   const isJSON = describe("format") === "json";
-  const acts = describe("acts") === "true";
+  const isEnforcing = describe("isEnforcing") === "true";
   const logs = describe("logs") === "true";
-  let refusal, handedBack, hasHandedBack = false;
+  let refusal, handedBack, hasReturnedValue = false;
   const { apply, ownKeys } = Reflect;
   const ObjectPrototype = Object.prototype;
   const objectToString = ObjectPrototype.toString;
@@ -26,7 +26,7 @@
   const iterator = Symbol.iterator;
   const hasInstance = Function.prototype[Symbol.hasInstance];
   const ErrorConstructor = Error;
-  const prepareStackTraceAtFirst = Error.prepareStackTrace;
+  const originalPrepareStackTrace = Error.prepareStackTrace;
   const toString = String, toNumber = Number, toBoolean = Boolean, toBigInt = BigInt;
   const mapGet = Map.prototype.get, mapSet = Map.prototype.set, mapClear = Map.prototype.clear;
   const { hasOwn } = Object;
@@ -36,12 +36,12 @@
   let depth = 0, generation;
   const counts = new Map();
   const converted = new Map();
-  const resultsOfCasts = new Map();
-  let numberOfResultsOfCasts = 0;
+  const castResults = new Map();
+  let castResultCount = 0;
   const groups = [];
-  let lastValue, lastType = "", lastPlace = "", hasLast = false, hasSaidThatSomeWait = false;
-  const ENTERED = 0x40000000, keysOfEntered = [], numbersOfEntered = new Map();
-  let hasLookedAtMembers = false, numberLookedAt = 0;
+  let lastValue, lastType = "", lastPlace = "", hasLast = false, hasReportedPending = false;
+  const ENTERED = 0x40000000, enteredKeys = [], enteredIds = new Map();
+  let hasInspectedMembers = false, inspectedCount = 0;
 
   function cast(type, value) {
     const kind = typeof value;
@@ -51,9 +51,9 @@
     if (fits(type, result)) return result;
   }
 
-  function whatACastMadeOf(type, value) {
-    if (numberOfResultsOfCasts > 4096) return value === undefined || value === null ? undefined : cast(type, value);
-    const results = apply(mapGet, resultsOfCasts, [value]);
+  function castResultFor(type, value) {
+    if (castResultCount > 4096) return value === undefined || value === null ? undefined : cast(type, value);
+    const results = apply(mapGet, castResults, [value]);
     if (results !== undefined) for (let i = 0; i < results.length; i++) if (fits(type, results[i])) return results[i];
   }
 
@@ -69,29 +69,29 @@
         if (type.o || type.fn) return true;
         for (let i = 0; i < type.parts.length; i++) {
           const part = type.parts[i];
-          if (part.k === "global" && acts ? kindOfCell(part.name, value) !== false : part.k !== "array" && part.view === undefined) return true;
+          if (part.k === "global" && isEnforcing ? cellKind(part.name, value) !== false : part.k !== "array" && part.view === undefined) return true;
         }
         return under === undefined && mayStay(type, value);
     }
     if (value === null) return (type.p & NULL) !== 0;
     if (type.o) return true;
-    let isHeldToMembers = false;
+    let checksMembers = false;
     for (let i = 0; i < type.parts.length; i++) {
       const part = type.parts[i];
       if (part.k === "array") {
         if (isArray(value) && !isProxy(value)) return true;
-      } else if (part.k === "global" && acts) {
-        const kind = kindOfCell(part.name === "SharedArrayBuffer" ? "ArrayBuffer" : part.name, value);
+      } else if (part.k === "global" && isEnforcing) {
+        const kind = cellKind(part.name === "SharedArrayBuffer" ? "ArrayBuffer" : part.name, value);
         if (kind !== false) return true;
       } else if (part.k === "global") {
         const constructor = getOwnPropertyDescriptor(global, part.name)?.value;
         if (typeof constructor !== "function" || hasProxyAbove(value) || apply(hasInstance, constructor, [value])) return true;
         if (isOfKind(part.name, value)) return true;
-      } else if (part.view !== undefined) isHeldToMembers = true;
-      else if (part.members === undefined || isOfOneOf(part.members, value)) return true;
+      } else if (part.view !== undefined) checksMembers = true;
+      else if (part.members === undefined || matchesAnyOf(part.members, value)) return true;
       else if (under !== undefined && isInstanceOfSomeClass(value)) return true;
     }
-    return isHeldToMembers && canBeMade(type, value, under);
+    return checksMembers && canBeMade(type, value, under);
   }
 
   // Below a member, where a false word costs more than a missing one. The engine goes by the kind of the cell: a Date of another realm is a
@@ -106,25 +106,25 @@
     return prototype !== null && prototype !== ObjectPrototype && apply(objectToString, value, []) === "[object Object]";
   }
 
-  function isObjectPrototypeOfAnotherRealm(prototype) {
+  function isOtherRealmObjectPrototype(prototype) {
     if (getPrototypeOf(prototype) !== null) return false;
     const constructor = getOwnPropertyDescriptor(prototype, "constructor")?.value;
     return typeof constructor === "function" && getOwnPropertyDescriptor(constructor, "prototype")?.value === prototype && getOwnPropertyDescriptor(constructor, "name")?.value === "Object";
   }
 
   // The key of the shape that the object was made with by a literal of typed code, or that it has entered a record type as.
-  function keyOfShapeTagged(tagged) {
-    if (tagged >= ENTERED) return keysOfEntered[tagged - ENTERED];
+  function taggedShapeKey(tagged) {
+    if (tagged >= ENTERED) return enteredKeys[tagged - ENTERED];
     const steps = groupOf(tagged).steps;
     for (let i = 0; i < steps.length; i++) if (steps[i].kind === "made") return steps[i].shape;
   }
 
   function tagAsEntered(value, key) {
-    let number = apply(mapGet, numbersOfEntered, [key]);
+    let number = apply(mapGet, enteredIds, [key]);
     if (number === undefined) {
-      number = keysOfEntered.length;
-      keysOfEntered[number] = key;
-      apply(mapSet, numbersOfEntered, [key, number]);
+      number = enteredKeys.length;
+      enteredKeys[number] = key;
+      apply(mapSet, enteredIds, [key, number]);
     }
     tag(value, ENTERED + number);
   }
@@ -199,18 +199,18 @@
   function canBeCopied(type, value, under) {
     if (isProxy(value) || isArray(value)) return false;
     const tagged = tagOf(value), parts = type.parts;
-    if (tagged !== undefined && tagged < ENTERED && isMadeAsMember(parts, keyOfShapeTagged(tagged))) return true;
+    if (tagged !== undefined && tagged < ENTERED && isAllocatedAsMember(parts, taggedShapeKey(tagged))) return true;
     const prototype = getPrototypeOf(value);
     if (prototype !== null && prototype !== ObjectPrototype) {
       if (hasProxyAbove(prototype)) return true;
-      if (!isObjectPrototypeOfAnotherRealm(prototype)) {
+      if (!isOtherRealmObjectPrototype(prototype)) {
         const kind = apply(stringSlice, apply(objectToString, value, []), [8, -1]);
         return kind === "Object" || typeof getOwnPropertyDescriptor(global, kind)?.value !== "function";
       }
     }
-    const enteredAs = tagged !== undefined ? keysOfEntered[tagged - ENTERED] : undefined;
-    hasLookedAtMembers = true;
-    if (++numberLookedAt > 4096 || !isExtensible(value)) return true;
+    const enteredAs = tagged !== undefined ? enteredKeys[tagged - ENTERED] : undefined;
+    hasInspectedMembers = true;
+    if (++inspectedCount > 4096 || !isExtensible(value)) return true;
     for (let above = under; above !== undefined; above = above.under) if (above.value === value) return true;
     let names;
     const here = { value, under };
@@ -222,7 +222,7 @@
         if (view.made[j] === enteredAs) return true;
         const shape = shapeBy(view.made[j]);
         if (shape === null) return true;
-        if (isOfShape(shape, value, (names ??= ownKeys(value)), here)) {
+        if (matchesShape(shape, value, (names ??= ownKeys(value)), here)) {
           if (tagged === undefined) tagAsEntered(value, view.made[j]);
           return true;
         }
@@ -231,7 +231,7 @@
     return false;
   }
 
-  function isMadeAsMember(parts, key) {
+  function isAllocatedAsMember(parts, key) {
     if (key === undefined || key === "") return true;
     for (let i = 0; i < parts.length; i++) {
       if (parts[i].view === undefined) continue;
@@ -242,7 +242,7 @@
     return false;
   }
 
-  function isOfShape(shape, value, names, here) {
+  function matchesShape(shape, value, names, here) {
     const fields = shape.fields;
     let present = 0;
     for (let i = 0; i < names.length; i++) {
@@ -272,7 +272,7 @@
     }
     if (part === undefined || typeof value !== "object" || value === null || isArray(value)) return;
     const prototype = isProxy(value) ? undefined : getPrototypeOf(value);
-    if (prototype !== null && prototype !== ObjectPrototype && (prototype === undefined || hasProxyAbove(prototype) || !isObjectPrototypeOfAnotherRealm(prototype))) {
+    if (prototype !== null && prototype !== ObjectPrototype && (prototype === undefined || hasProxyAbove(prototype) || !isOtherRealmObjectPrototype(prototype))) {
       if (views !== 1 || path !== "") return;
       const got = classOf(value, type);
       return apply(stringStartsWith, got, ["native "]) ? "a native object cannot be used as " + part.name : undefined;
@@ -287,12 +287,12 @@
       if (descriptor.get !== undefined || descriptor.set !== undefined) return at(name) + " is an accessor";
       if (!descriptor.enumerable) return at(name) + " is not enumerable";
       if ((fields[name].optional && held === undefined) || fits(to, held, here)) continue;
-      let canBeLookedInto = typeof held === "object" && held !== null && !isArray(held) && !isProxy(held);
-      if (canBeLookedInto) {
-        canBeLookedInto = false;
-        for (let j = 0; j < to.parts.length; j++) if (to.parts[j].view !== undefined) canBeLookedInto = true;
+      let isInspectable = typeof held === "object" && held !== null && !isArray(held) && !isProxy(held);
+      if (isInspectable) {
+        isInspectable = false;
+        for (let j = 0; j < to.parts.length; j++) if (to.parts[j].view !== undefined) isInspectable = true;
       }
-      if (!canBeLookedInto) return at(name) + ": expected " + to.t + ", got " + (acts ? shown(held, to) : classOf(held, to));
+      if (!isInspectable) return at(name) + ": expected " + to.t + ", got " + (isEnforcing ? shown(held, to) : classOf(held, to));
     }
     const all = keys(fields);
     for (let i = 0; i < all.length; i++) if (!fields[all[i]].optional && !hasOwn(value, all[i])) return at(all[i]) + " is missing in " + classOf(value, type) + " but required in " + shape.name;
@@ -300,7 +300,7 @@
       const name = names[i];
       if (typeof name !== "string" || !hasOwn(fields, name)) continue;
       const held = getOwnPropertyDescriptor(value, name).value;
-      if (!(fields[name].optional && held === undefined) && !fits(fields[name].to, held, here)) return reasonOf(fields[name].to, held, path + name + ".", depth + 1) ?? at(name) + ": expected " + fields[name].to.t + ", got " + (acts ? shown(held, fields[name].to) : classOf(held, fields[name].to));
+      if (!(fields[name].optional && held === undefined) && !fits(fields[name].to, held, here)) return reasonOf(fields[name].to, held, path + name + ".", depth + 1) ?? at(name) + ": expected " + fields[name].to.t + ", got " + (isEnforcing ? shown(held, fields[name].to) : classOf(held, fields[name].to));
     }
   }
 
@@ -309,7 +309,7 @@
     return false;
   }
 
-  function isOfOneOf(names, value) {
+  function matchesAnyOf(names, value) {
     if (isProxy(value)) return true;
     for (let prototype = getPrototypeOf(value); prototype !== null; prototype = getPrototypeOf(prototype)) {
       if (isProxy(prototype)) return true;
@@ -343,7 +343,7 @@
   }
 
   function callers() {
-    if (ErrorConstructor.prepareStackTrace !== prepareStackTraceAtFirst) return "";
+    if (ErrorConstructor.prepareStackTrace !== originalPrepareStackTrace) return "";
     const stack = new ErrorConstructor().stack;
     if (typeof stack !== "string") return "";
     const lines = apply(stringSplit, stack, ["\n"]);
@@ -363,7 +363,7 @@
 
   function nameByTag(value) {
     const tagged = tagOf(value);
-    if (tagged !== undefined && tagged >= ENTERED) return shapeBy(keysOfEntered[tagged - ENTERED])?.name;
+    if (tagged !== undefined && tagged >= ENTERED) return shapeBy(enteredKeys[tagged - ENTERED])?.name;
     if (tagged !== undefined) {
       const steps = groupOf(tagged).steps;
       for (let i = 0; i < steps.length; i++) if (steps[i].kind === "made") return steps[i].named ?? shapeBy(steps[i].shape)?.name;
@@ -377,7 +377,7 @@
 
   function shown(value, type) {
     const kind = typeof value;
-    if (acts) {
+    if (isEnforcing) {
       if (kind === "function" && apply(stringStartsWith, apply(functionToString, value, []), ["class"])) {
         const name = getOwnPropertyDescriptor(value, "name")?.value;
         return "class " + (typeof name === "string" ? name : "");
@@ -395,14 +395,14 @@
   }
 
   function refuse(message, reason) {
-    if (!holdsWhatMocksSupply && isAnyMockLaid()) return;
+    if (!checksMockValues && isAnyModuleMocked()) return;
     if (refusal === undefined) refusal = message + " (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)" + (reason !== undefined ? "\n  " + reason : "");
   }
 
   function report(file, step, kind, type, value, action) {
-    if (acts) {
+    if (isEnforcing) {
       if (action !== "would-throw" || kind === "as-refuse") return;
-      if (logs && refusal === undefined && (holdsWhatMocksSupply || !isAnyMockLaid())) log(file, step, kind, type, value, "threw");
+      if (logs && refusal === undefined && (checksMockValues || !isAnyModuleMocked())) log(file, step, kind, type, value, "threw");
       if (kind === "array-not-plain" && isArray(value) && !isProxy(value) && value[iterator] !== arrayIterator) return refuse("Cannot iterate over the array: it has its own Symbol.iterator method, which is not called where the declared type is an array, a tuple or a typed array");
       if (kind === "array-not-plain") return refuse("Cannot read array element: the array or its prototype chain has accessors or a Proxy, which are not run for an array of a declared element type");
       if (step.what === "NonNull") return refuse("non-null assertion failed: " + (step.text !== undefined ? "`" + step.text + "`" : "value") + " is " + shown(value, type));
@@ -451,7 +451,7 @@
   function shapeOf(object) {
     const maker = tagOf(object);
     if (maker !== undefined) {
-      const key = keyOfShapeTagged(maker);
+      const key = taggedShapeKey(maker);
       return key !== undefined ? shapeBy(key) : null;
     }
     if (isProxy(object)) return null;
@@ -465,7 +465,7 @@
     return null;
   }
 
-  function refusalOfChange(object, change, name, given, value) {
+  function changeRejection(object, change, name, given, value) {
     const shape = shapeOf(object);
     if (shape === null || shape === undefined) return;
     if (change === 3) return shape.record && (value === null || value === ObjectPrototype || shape.otherPrototype) ? undefined : "Cannot set prototype of " + shape.name + ": objects of a declared type keep their prototype";
@@ -488,15 +488,15 @@
     return "Cannot redefine property '" + name + "' of " + shape.name + ": declared properties stay writable, enumerable and configurable data properties";
   }
 
-  if (acts) setGuard(refusalOfChange);
+  if (isEnforcing) setGuard(changeRejection);
 
-  function shapeOfPrototype(object) {
+  function prototypeShape(object) {
     const made = isProxy(object) ? undefined : tagOf(object);
     return made !== undefined && made < ENTERED && groupOf(made).parameter && groupOf(made).steps[0].shape !== undefined ? shapeBy(groupOf(made).steps[0].shape) : null;
   }
 
   function reportRule(file, step, kind, on, type, value) {
-    if (acts) return;
+    if (isEnforcing) return;
     const got = type === undefined ? "" : classOf(value, type);
     const id = kind === step.otherKind ? step.otherId : step.id;
     const count = (apply(mapGet, counts, [id + " " + on + " " + got]) ?? 0) + 1;
@@ -537,10 +537,10 @@
     }
     if (typeof value !== "object" && typeof value !== "function") return;
     if (value === null) return;
-    if (step.kind === "made") return tag(value, id, acts && shapeBy(step.shape) !== null);
+    if (step.kind === "made") return tag(value, id, isEnforcing && shapeBy(step.shape) !== null);
     if (step.validates) return validate(file, step, value);
     if (step.receives) {
-      const ofPrototype = typeof value === "object" ? shapeOfPrototype(value) : null;
+      const ofPrototype = typeof value === "object" ? prototypeShape(value) : null;
       if (ofPrototype !== null && !hasOwn(value, step.name)) reportRule(file, step, step.kind, ofPrototype.name + ".prototype");
       const shape = ofPrototype === null ? shapeOf(value) : null;
       receivers[depth++] = { pair: step.pair, shape: shape !== null && hasOwn(shape.fields, step.name) ? shape : null };
@@ -568,10 +568,10 @@
   }
 
   function waits(step, value) {
-    if (judgesWhatIsUnsure) return false;
+    if (reportsUncertain) return false;
     if (step.unsure !== 2 && (step.unsure !== 1 || (value !== null && value !== undefined))) return false;
-    if (!hasSaidThatSomeWait) {
-      hasSaidThatSomeWait = true;
+    if (!hasReportedPending) {
+      hasReportedPending = true;
       write("[aot] note: a file changed: some of its checks are paused until the whole program has been analyzed again in the background");
     }
     return true;
@@ -587,7 +587,7 @@
     if (group.unsure || group.step) return;
     const steps = group.steps;
     if (typeof value === "object" || typeof value === "function") {
-      if (hasLookedAtMembers && tagOf(value) === undefined) return;
+      if (hasInspectedMembers && tagOf(value) === undefined) return;
       for (let i = 0; i < steps.length; i++) if (steps[i].to === undefined) return;
       return 1;
     }
@@ -604,49 +604,49 @@
     remember(id, least, most);
   }
 
-  function keyOfType(type) {
+  function typeKey(type) {
     let key = type.t + "|" + type.p + "|" + type.o + "|" + type.fn + (type.i === undefined ? "" : "|" + type.i[0] + ".." + type.i[1]);
     for (let i = 0; i < type.parts.length; i++) {
       const part = type.parts[i];
-      key += "|" + part.k + ":" + part.name + ":" + part.view + (part.of === undefined ? "" : "<" + keyOfType(part.of) + ">");
+      key += "|" + part.k + ":" + part.name + ":" + part.view + (part.of === undefined ? "" : "<" + typeKey(part.of) + ">");
     }
     return key;
   }
 
-  function keyOfResult(id) {
+  function resultKey(id) {
     const group = groupOf(id), steps = group.steps;
     if (group.parameter || group.step || group.silent || group.unsure || steps.length === 0) return;
     let key = "";
     for (let i = 0; i < steps.length; i++) {
       const step = steps[i];
       if (step.to === undefined || step.unsure !== undefined || step.after !== undefined || step.what === "IteratorOpen") return;
-      key += (step.what === "Coerce" ? "as " : "") + keyOfType(step.to) + (step.result === undefined ? "" : ">" + keyOfType(step.result)) + ";";
+      key += (step.what === "Coerce" ? "as " : "") + typeKey(step.to) + (step.result === undefined ? "" : ">" + typeKey(step.result)) + ";";
     }
     return key;
   }
 
-  return acts ? function check(value, id, now, asksForKey) {
-    if (asksForKey) {
+  return isEnforcing ? function check(value, id, now, requestsKey) {
+    if (requestsKey) {
       if (now !== generation) {
         generation = now;
         groups.length = 0;
         apply(mapClear, shapes, []);
       }
-      return keyOfResult(id);
+      return resultKey(id);
     }
     refusal = undefined;
-    hasHandedBack = false;
-    judgesWhatIsUnsure = true;
+    hasReturnedValue = false;
+    reportsUncertain = true;
     let answer = judge(value, id, now);
-    judgesWhatIsUnsure = false;
+    reportsUncertain = false;
     if (refusal !== undefined) {
-      const later = waitForTheWhole();
+      const later = waitForWholeProgramAnalysis();
       refusal = handedBack = undefined;
-      hasHandedBack = false;
+      hasReturnedValue = false;
       answer = judge(value, id, later === undefined ? now : later);
       if (refusal !== undefined) return refusal;
     }
-    if (!hasHandedBack) return answer;
+    if (!hasReturnedValue) return answer;
     const list = [handedBack];
     handedBack = undefined;
     return list;
@@ -659,27 +659,27 @@
       apply(mapClear, shapes, []);
     }
     const group = groupOf(id), steps = group.steps, file = group.file;
-    hasLookedAtMembers = false;
-    numberLookedAt = 0;
+    hasInspectedMembers = false;
+    inspectedCount = 0;
     if (group.silent || steps.length === 0) return 4;
-    if (acts && !group.parameter) {
+    if (isEnforcing && !group.parameter) {
       let holds = false;
       for (let i = 0; i < steps.length; i++) if (steps[i].to !== undefined || steps[i].kind === "made") holds = true;
       if (!holds) return 4;
     }
-    if (steps.length === 1 && steps[0].kind === "made" && steps[0].unsure === undefined) return acts && shapeBy(steps[0].shape) !== null ? 6 : 3;
+    if (steps.length === 1 && steps[0].kind === "made" && steps[0].unsure === undefined) return isEnforcing && shapeBy(steps[0].shape) !== null ? 6 : 3;
     if (group.parameter) {
       const step = steps[0], type = step.to;
       if (step.kind === "class-made") {
         tag(getOwnPropertyDescriptor(value, "prototype")?.value, id);
-        if (!acts) return;
+        if (!isEnforcing) return;
         if (step.shape !== undefined && shapeBy(step.shape) !== null) guardInstancesOf(value);
-        return fixPrototypeOfClass(value, step.replaceable, step.constructorMayBeReplaced);
+        return fixClassPrototype(value, step.replaceable, step.constructorMayBeReplaced);
       }
       if (fits(type, value)) return passed(group, value, id);
-      if (step.second) return acts ? 5 : undefined;
+      if (step.second) return isEnforcing ? 5 : undefined;
       if ((typeof value === "object" || typeof value === "function") && (type.o || type.fn || type.parts.length) && !step.holds) return;
-      if (whatACastMadeOf(type, value) !== undefined) return;
+      if (castResultFor(type, value) !== undefined) return;
       if (waits(step, value)) return;
       if (hasLast && is(lastValue, value) && lastType === type.t) {
         hasLast = false;
@@ -694,7 +694,7 @@
     for (let i = 0; i < steps.length; i++) {
       const step = steps[i], type = step.to;
       if (type === undefined) {
-        if (step.unsure === undefined && (!acts || step.kind === "made")) rule(file, step, value, id);
+        if (step.unsure === undefined && (!isEnforcing || step.kind === "made")) rule(file, step, value, id);
         continue;
       }
       if (step.what === "IteratorOpen") {
@@ -712,7 +712,7 @@
         for (let j = 0; j < step.after.length; j++) if (apply(mapGet, converted, [file + ":" + step.after[j]])) return;
       }
       if (step.what !== "Coerce") {
-        const made = whatACastMadeOf(type, held);
+        const made = castResultFor(type, held);
         if (made !== undefined) {
           held = made;
           hasFailed = true;
@@ -729,20 +729,20 @@
       const result = cast(type, held);
       if (result === undefined) return report(file, step, "as-refuse", type, held, "would-throw");
       report(file, step, step.kind, type, held, "would-convert");
-      if (acts) {
+      if (isEnforcing) {
         handedBack = held = result;
-        hasHandedBack = hasFailed = true;
+        hasReturnedValue = hasFailed = true;
         continue;
       }
       apply(mapSet, converted, [file + ":" + step.line + ":" + step.col, true]);
-      const results = numberOfResultsOfCasts > 4096 ? null : apply(mapGet, resultsOfCasts, [held]);
+      const results = castResultCount > 4096 ? null : apply(mapGet, castResults, [held]);
       if (results === undefined) {
-        apply(mapSet, resultsOfCasts, [held, [result]]);
-        if (++numberOfResultsOfCasts > 4096) {
-          apply(mapClear, resultsOfCasts, []);
+        apply(mapSet, castResults, [held, [result]]);
+        if (++castResultCount > 4096) {
+          apply(mapClear, castResults, []);
           write("[aot] note: `as` has converted more than 4096 different values: from here on, a string, number or boolean that fails a check is not reported if a conversion would make it pass");
         }
-      } else if (results !== null && whatACastMadeOf(type, held) === undefined) results[results.length] = result;
+      } else if (results !== null && castResultFor(type, held) === undefined) results[results.length] = result;
       held = result;
       hasFailed = true;
     }

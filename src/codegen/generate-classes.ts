@@ -1504,13 +1504,13 @@ function generateCachedGetterTable(classes: ClassDefinition[]) {
 static_assert(${classes.length} <= JSC::AOT::Typed::maxNumberOfHostClasses);
 ${assertions.join("\n")}
 
-static constexpr JSC::AOT::Typed::CachedGetterOfHostClass cachedGettersOfGeneratedClasses[] = {
+static constexpr JSC::AOT::Typed::HostClassCachedGetter generatedClassCachedGetters[] = {
 ${rows.join("\n")}
 };
 
 extern "C" void Bun__AOT__setCachedGettersOfGeneratedClasses()
 {
-    JSC::AOT::Typed::setCachedGettersOfHostClasses(cachedGettersOfGeneratedClasses);
+    JSC::AOT::Typed::setHostClassCachedGetters(generatedClassCachedGetters);
 }
 #endif
 `;
@@ -2389,7 +2389,7 @@ ALWAYS_INLINE void GlobalObject::initGeneratedLazyClasses() {
             if (fns.createConstructor)
                 init.setConstructor(fns.createConstructor(init.vm, init.global, init.prototype));
 #if ENABLE(AOT)
-            JSC::AOT::Typed::didCreateStructureOfHostClass(globalObject, index, init.structure);
+            JSC::AOT::Typed::didCreateHostClassStructure(globalObject, index, init.structure);
             if (index == GeneratedLazyClassJSResponse)
                 JSC::AOT::Typed::didCreateReplaceableGlobal(init.global, "Response"_s, init.constructor);
 #endif

@@ -39,17 +39,30 @@ sends each to every server and shows where two answers part.
 `tracker.test.ts` is opt-in and needs Postgres. It builds `app/` with `--aot`, runs `by-hand/` without, and compares. Its first lines
 say how to run it, and how to have Go and Rust compared too.
 
-## The pieces
+## Microbenchmarks
 
-`pieces/` holds what one request computes, without a socket and without a database, in a loop: `page` (the tree of comments,
-Markdown, dates, escaping, the layout, UTF-8), `json`, `thread`, `markdown`, `dates`, `escape`. `main.ts` imports the modules of `app/`,
-`main.go` is built together with the files of `rivals/go` other than its `main.go`, and `main.rs` is the second binary of `rivals/rust`.
-Each prints how many bytes a round made, which is the same number in all three.
+`pieces/` runs what one request computes in a loop, with no socket and no database: `page` (comment tree, Markdown, dates,
+escaping, layout, UTF-8 encoding), `json`, `thread`, `markdown`, `dates`, `escape`. `main.ts` imports the modules of `app/`,
+`main.go` is built together with the files of `rivals/go` except its `main.go`, and `main.rs` is the second binary of `rivals/rust`.
+Each prints the number of bytes one round produced, which is the same in all three languages.
 
 ```sh
 psql "$DATABASE_URL" -tA -f pieces/export.sql > out/issues.txt          # twenty issues with their comments
 (cd pieces && bun build --compile --aot --target=bun ./main.ts --outfile ../out/pieces-aot)
 perf stat -e instructions:u,cycles:u out/pieces-aot page out/issues.txt 1000
+```
+
+`rows <issue id> <rounds>` is the one mode that uses the database: it fetches that issue's comments with the app's own query
+function, one query per round on one connection. Run it on issues with 3, 30 and 300 comments and fit a line to split the SQL
+driver's cost into a per-query and a per-row part.
+
+`pieces/loops/` has the inner loops of encoders, scanners and buffer writers (`copy`, `field`, `rare`, `escape`, `scan`, `scan32`,
+`closure`, `closure32`, `sum`) in TypeScript, Go and Rust. The pairs `copy`/`field` and `scan`/`closure` differ only in where the
+loop index comes from (a local initialized from a literal, or a field, call result or closure), and should cost the same.
+
+```sh
+(cd pieces/loops && bun build --compile --aot --target=bun ./main.ts --outfile ../../out/loops-aot)
+perf stat -e instructions:u out/loops-aot field 20000        # and 40000: the difference / (20000 * 4096) is instructions per character
 ```
 
 ## The benchmark

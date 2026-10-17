@@ -409,9 +409,9 @@ impl Manifest {
         let mut found: Vec<(u32, Reason)> = Vec::new();
         let mut is_found = vec![false; self.modules.len()];
         let mut follows_triggers = vec![false; self.modules.len()];
-        let of_native_code = native_roots.iter().map(|&root| (root, Reason::Root, false));
+        let from_native_code = native_roots.iter().map(|&root| (root, Reason::Root, false));
         let of_program = program_roots.iter().map(|&root| (root, Reason::Root, true));
-        let mut pending: std::collections::VecDeque<(u32, Reason, bool)> = of_native_code.chain(of_program).collect();
+        let mut pending: std::collections::VecDeque<(u32, Reason, bool)> = from_native_code.chain(of_program).collect();
         while let Some((id, reason, with_triggers)) = pending.pop_front() {
             let index = id as usize;
             if index >= is_found.len() {

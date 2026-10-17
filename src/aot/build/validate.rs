@@ -1,8 +1,8 @@
 use super::fit::Ty;
 use super::{FileBuild, Fx, Problem, Source};
 use crate::id::{BlockId, FuncId, GlobalId, TyId, V};
-use crate::ir::{self, Args, BinOp, Op, Operation, RelOp, Term, Why};
-use bun_sema::check::{Constant, OtherKeys, Planned, PlannedPrimitive, Rule, ValidationCall, ValidationPlan};
+use crate::ir::{self, Args, BinOp, Op, Operation, RelOp, Term, CoerceReason};
+use bun_sema::check::{Constant, OtherKeys, Placeholder, Planned, PlannedPrimitive, Rule, ValidationCall, ValidationPlan};
 use bun_sema::hir::{CallId, ExprId, ExprKind};
 use bun_sema::types::TypeId;
 use rustc_hash::FxHashMap;
@@ -12,28 +12,65 @@ use std::rc::Rc;
 mod parse;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
-enum Made {
+enum GeneratedFunction {
     Validator(u32, u32),
     Parser(u32, u32),
     SchemaValidator(u32),
-    Reporter(u32, u32),
-    IssueList(u32),
     Failure(u32),
     SchemaFailure(u32),
     Refusal(u32),
-    IssueAdder,
-    IssueThrower,
+    TemplateMatcher(u32),
+}
+
+const BIGINT_TEXT_PATTERN: &[u8] = b"^-?(?:0|[1-9][0-9]*|0[xX][0-9a-fA-F]+|0[oO][0-7]+|0[bB][01]+)$";
+
+fn discriminated_arms(plan: &ValidationPlan, arms: &[u32]) -> Option<(Vec<u8>, Vec<(Constant, u32)>)> {
+    let mut objects = Vec::new();
+    for &arm in arms {
+        match &plan.nodes[arm as usize].planned {
+            Planned::Object { members, .. } => objects.push((arm, members)),
+            Planned::Primitive(_) | Planned::Value(_) | Planned::Array { .. } | Planned::Tuple { .. } | Planned::Nothing => {}
+            _ => return None,
+        }
+    }
+    if objects.len() < 2 {
+        return None;
+    }
+    let constant_under = |members: &[bun_sema::check::PlannedMember], name: &[u8]| {
+        let member = members.iter().find(|member| member.name == name && !member.is_optional)?;
+        match &plan.nodes[member.node as usize] {
+            described if !described.rules.is_empty() || described.default.is_some() => None,
+            described => match &described.planned {
+                Planned::Value(constant) if *constant != Constant::Undefined => Some(constant.clone()),
+                _ => None,
+            },
+        }
+    };
+    objects[0].1.iter().find_map(|member| {
+        let tagged: Vec<(Constant, u32)> = objects.iter().map(|(arm, members)| Some((constant_under(members, &member.name)?, *arm))).collect::<Option<_>>()?;
+        let are_distinct = tagged.iter().enumerate().all(|(at, one)| !tagged[..at].iter().any(|other| other.0 == one.0));
+        are_distinct.then(|| (member.name.clone(), tagged))
+    })
+}
+
+fn utf16_length(text: &[u8]) -> i64 {
+    String::from_utf8_lossy(text).encode_utf16().count() as i64
 }
 
 #[derive(Default)]
 pub(crate) struct Validators {
     plans: Vec<Rc<ValidationPlan>>,
-    functions: FxHashMap<Made, FuncId>,
-    sources: Vec<Made>,
-    refusal_marker: Option<GlobalId>,
+    plan_numbers: FxHashMap<(TypeId, bool), u32>,
+    functions: FxHashMap<GeneratedFunction, FuncId>,
+    functions_by_type: FxHashMap<(TypeId, bool, bool, bool), GeneratedFunction>,
+    sources: Vec<GeneratedFunction>,
+    rejection_marker: Option<GlobalId>,
     is_building_recursive_node: bool,
-    is_at_the_call: bool,
+    is_at_call_site: bool,
+    plans_with_inlined_root: Vec<u32>,
     patterns: FxHashMap<Vec<u8>, GlobalId>,
+    templates: Vec<(Vec<Vec<u8>>, Vec<Placeholder>)>,
+    safe_result_types: FxHashMap<u32, TypeId>,
 }
 
 impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
@@ -45,63 +82,103 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let hir = self.hir(fx.file);
         let pos = hir[e].pos;
         let arguments: Vec<ExprId> = hir.ids(hir[call].args).collect();
-        let plan = Rc::new(self.c.validation_plan(ty, which == ValidationCall::Parse));
+        let is_parse = which == ValidationCall::Parse;
+        let number = match self.validators.plan_numbers.get(&(ty, is_parse)) {
+            Some(&known) => known,
+            None => {
+                let number = self.validators.plans.len() as u32;
+                let plan = Rc::new(self.c.validation_plan(ty, is_parse));
+                self.validators.plans.push(plan);
+                self.validators.plan_numbers.insert((ty, is_parse), number);
+                number
+            }
+        };
+        let plan = self.validators.plans[number as usize].clone();
         if let Some(first) = plan.unsupported.first() {
             self.problems.push(Problem { file: fx.file, pos, what: Cow::Owned(format!("a type that cannot be validated: {first}")) });
             return Some(self.emit(fx, Op::Undefined));
         }
-        let number = self.validators.plans.len() as u32;
-        self.validators.plans.push(plan.clone());
-        if self.shared.constants.notes_spans {
+        if self.shared.constants.records_spans {
             let mut noted = vec![b'0' + which as u8];
             noted.extend_from_slice(&plan.to_json());
             let value = self.emit_text(fx, &noted);
             fx.operand_spans.push(ir::Span { value, start: hir[e].pos, end: hir[e].end, step: crate::audit::VALIDATION });
         }
         let made = self.ty_of(ty);
-        let to = self.ty_of_cast_target(made);
-        self.note_cast(Ty { id: self.out.tys.anything, checked: TypeId::UNKNOWN }, to, Why::Coerce);
+        let to = self.cast_target_ty(made);
+        self.record_cast(Ty { id: self.out.tys.anything, checked: TypeId::UNKNOWN }, to, CoerceReason::Coerce);
         if which == ValidationCall::Schema {
             if !arguments.is_empty() {
-                return Some(self.unsupported(fx, pos, "a schema of a type that is handed a value"));
+                return Some(self.unsupported(fx, pos, "a schema call with an argument"));
             }
-            let validate = self.function_made(fx, Made::SchemaValidator(number), 1);
+            let validate = self.helper_function(fx, GeneratedFunction::SchemaValidator(number), 1);
             let validate = self.emit(fx, Op::FuncRef(validate));
             let version = self.emit(fx, Op::Int(1));
             let vendor = self.emit_text(fx, b"bun");
             let standard = self.emit_plain_object(fx, &[(b"version", version), (b"vendor", vendor), (b"validate", validate)]);
             return Some(self.emit_plain_object(fx, &[(b"~standard", standard)]));
         }
-        let [given] = arguments[..] else { return Some(self.unsupported(fx, pos, "a validation that is not handed exactly one value")) };
+        let [given] = arguments[..] else { return Some(self.unsupported(fx, pos, "a validation call without exactly one argument")) };
         if matches!(hir[given].kind, ExprKind::Spread(_)) {
-            return Some(self.unsupported(fx, pos, "a validation that is handed a spread"));
+            return Some(self.unsupported(fx, pos, "a validation call with a spread argument"));
         }
         let mut value = self.expr(fx, given);
         if which == ValidationCall::Parse && parse::is_parsed_by_type(&plan) {
-            return Some(self.emit_parse_by_type(fx, &plan, number, value));
+            return Some(self.emit_parse_by_type(fx, &plan, number, value, Ty { id: made, checked: ty }));
         }
         if which == ValidationCall::Parse {
             value = self.emit_global_method_call(fx, b"JSON", b"parse", &[value]);
         }
-        Some(self.emit_root_validation(fx, &plan, number, which == ValidationCall::SafeValidate, value))
+        if which == ValidationCall::SafeValidate {
+            let declared = self.c.type_of_expr(fx.file, e);
+            let result = Ty { id: self.ty_of(declared), checked: declared };
+            self.validators.safe_result_types.insert(number, declared);
+            return Some(self.emit_root_validation(fx, &plan, number, Some(result), value, true));
+        }
+        let validated = self.emit_root_validation(fx, &plan, number, None, value, which != ValidationCall::Parse);
+        Some(self.coerce_to(fx, validated, Ty { id: made, checked: ty }, CoerceReason::Cast))
     }
 
-    fn emit_root_validation(&mut self, fx: &mut Fx, plan: &Rc<ValidationPlan>, number: u32, is_safe: bool, value: V) -> V {
+    fn emit_safe_result(&mut self, fx: &mut Fx, declared: Option<TypeId>, is_success: bool, name: &[u8], value: V) -> V {
+        let success = self.emit(fx, Op::Bool(is_success));
+        let names = [self.out.strs.intern(b"success"), self.out.strs.intern(name)];
+        for member in declared.map(|declared| self.c.parts(declared).to_vec()).unwrap_or_default() {
+            if self.is_record_type(member)
+                && let Some(layout) = self.record_layout(member).filter(|&layout| self.fits(layout, &names))
+            {
+                return self.emit_typed_object(fx, layout, &names, &[success, value], None);
+            }
+        }
+        self.emit_plain_object(fx, &[(b"success", success), (name, value)])
+    }
+
+    fn emit_root_validation(&mut self, fx: &mut Fx, plan: &Rc<ValidationPlan>, number: u32, safe_result: Option<Ty>, value: V, is_hot: bool) -> V {
         let (fails, done) = (fx.b.new_block(), fx.b.new_block());
-        let result = self.new_temporary(fx);
-        self.validators.is_at_the_call = true;
+        self.validators.is_at_call_site = is_hot && !self.validators.plans_with_inlined_root.contains(&number);
+        if self.validators.is_at_call_site {
+            self.validators.plans_with_inlined_root.push(number);
+        }
         let checked = self.emit_validation(fx, plan, number, plan.root, value, fails);
-        let accepted = if is_safe {
-            let yes = self.emit(fx, Op::Bool(true));
-            self.emit_plain_object(fx, &[(b"success", yes), (b"data", checked)])
-        } else {
-            checked
+        let Some(safe_result) = safe_result else {
+            fx.b.jump(done);
+            fx.b.seal(fails);
+            fx.b.switch_to(fails);
+            let thrown = self.emit_rejection(fx, GeneratedFunction::Refusal(number), value);
+            let unwind = fx.handlers.last().map(|&handler| ir::Target::new(handler));
+            fx.b.terminate(Term::Throw { value: thrown, unwind, pos: 0 });
+            fx.b.seal(done);
+            fx.b.switch_to(done);
+            return checked;
         };
+        let result = fx.b.new_var(self.or_anything(safe_result.id));
+        let accepted = self.emit_safe_result(fx, Some(safe_result.checked), true, b"data", checked);
+        let accepted = self.coerce_to(fx, accepted, safe_result, CoerceReason::Cast);
         fx.b.write(result, accepted);
         fx.b.jump(done);
         fx.b.seal(fails);
         fx.b.switch_to(fails);
-        let refused = self.emit_refusal(fx, if is_safe { Made::Failure(number) } else { Made::Refusal(number) }, value);
+        let refused = self.emit_rejection(fx, GeneratedFunction::Failure(number), value);
+        let refused = self.claim_type(fx, refused, safe_result.id);
         fx.b.write(result, refused);
         fx.b.jump(done);
         fx.b.seal(done);
@@ -111,13 +188,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     fn hidden_variable(&mut self, fx: &Fx, name: &[u8]) -> GlobalId {
         let name = self.out.strs.intern(name);
-        let key = self.key_of_next_hidden_variable();
+        let key = self.next_hidden_variable_key();
         let variable = self.add_global(name, fx.file, Ty::NONE, key);
         self.out.globals[variable.idx()].initialization = ir::Initialization::Undefined;
         variable
     }
 
-    fn emit_made_once(&mut self, fx: &mut Fx, variable: GlobalId, make: impl FnOnce(&mut Self, &mut Fx) -> V) -> V {
+    fn emit_initialized_once(&mut self, fx: &mut Fx, variable: GlobalId, make: impl FnOnce(&mut Self, &mut Fx) -> V) -> V {
         let kept = self.new_temporary(fx);
         let known = self.emit(fx, Op::GlobalGet(variable));
         fx.b.write(kept, known);
@@ -200,16 +277,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.emit_throwing(fx, Op::PropGet { obj: object, name })
     }
 
-    fn emit_refusal_marker(&mut self, fx: &mut Fx) -> V {
-        let variable = match self.validators.refusal_marker {
+    fn emit_rejection_marker(&mut self, fx: &mut Fx) -> V {
+        let variable = match self.validators.rejection_marker {
             Some(known) => known,
             None => {
                 let variable = self.hidden_variable(fx, b"refused");
-                self.validators.refusal_marker = Some(variable);
+                self.validators.rejection_marker = Some(variable);
                 variable
             }
         };
-        self.emit_made_once(fx, variable, |build, fx| build.emit(fx, Op::NewObject))
+        self.emit_initialized_once(fx, variable, |build, fx| build.emit(fx, Op::NewObject))
     }
 
     fn continue_if_object(&mut self, fx: &mut Fx, value: V, refuses_arrays: bool, fails: BlockId) {
@@ -225,7 +302,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn claim_type(&mut self, fx: &mut Fx, value: V, to: TyId) -> V {
-        self.emit_throwing(fx, Op::Coerce { value, to, why: Why::Claim })
+        self.emit_throwing(fx, Op::Coerce { value, to, why: CoerceReason::Claim })
     }
 
     fn emit_loop(&mut self, fx: &mut Fx, list: V, mut body: impl FnMut(&mut Self, &mut Fx, V, V)) {
@@ -260,7 +337,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 variable
             }
         };
-        let expression = self.emit_made_once(fx, variable, |build, fx| {
+        let expression = self.emit_initialized_once(fx, variable, |build, fx| {
             let source = build.emit_text(fx, pattern);
             let flags = build.emit_text(fx, b"");
             build.operation(fx, Operation::RegExpLiteral, &[source, flags])
@@ -304,7 +381,107 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             Rule::Pattern(pattern) => self.emit_pattern_test(fx, pattern, value),
             Rule::Format { pattern, .. } if !pattern.is_empty() => self.emit_pattern_test(fx, pattern, value),
             Rule::Format { .. } => self.emit_global_method_call(fx, b"URL", b"canParse", &[value]),
+            Rule::Template { texts, placeholders, .. } => {
+                let matcher = self.template_matcher(fx, texts, placeholders);
+                let text = self.claim_type(fx, value, self.known.string);
+                self.emit_throwing(fx, Op::CallDirect { func: matcher, args: [text].into_iter().collect() })
+            }
         }
+    }
+
+    fn template_matcher(&mut self, fx: &Fx, texts: &[Vec<u8>], placeholders: &[Placeholder]) -> FuncId {
+        let index = match self.validators.templates.iter().position(|known| known.0 == texts && known.1 == placeholders) {
+            Some(index) => index,
+            None => {
+                self.validators.templates.push((texts.to_vec(), placeholders.to_vec()));
+                self.validators.templates.len() - 1
+            }
+        };
+        let function = self.helper_function(fx, GeneratedFunction::TemplateMatcher(index as u32), 1);
+        self.out.funcs[function.idx()].params = vec![self.known.string];
+        self.out.funcs[function.idx()].result = self.known.boolean;
+        function
+    }
+
+    fn emit_string_method_call(&mut self, fx: &mut Fx, text: V, name: &[u8], args: &[V], result: TyId) -> V {
+        let name = self.out.strs.intern(name);
+        let value = self.emit_throwing(fx, Op::CallMethod { obj: text, name, args: args.iter().copied().collect() });
+        fx.b.func.values[value.idx()].ty = result;
+        value
+    }
+
+    fn emit_index_sum(&mut self, fx: &mut Fx, op: BinOp, index: V, by: i64) -> V {
+        if by == 0 {
+            return index;
+        }
+        let by = self.emit(fx, Op::Int(by));
+        let moved = self.emit(fx, Op::Binary { op, a: index, b: by });
+        fx.b.func.values[moved.idx()].ty = self.known.int32;
+        moved
+    }
+
+    fn continue_if_compares(&mut self, fx: &mut Fx, op: RelOp, a: V, b: V, otherwise: BlockId) {
+        let holds = self.emit(fx, Op::Relational { op, a, b });
+        self.continue_if(fx, holds, otherwise);
+    }
+
+    fn emit_placeholder_test(&mut self, fx: &mut Fx, placeholder: Placeholder, text: V, start: V, end: V, fails: BlockId) {
+        if placeholder == Placeholder::Text {
+            return;
+        }
+        self.continue_if_compares(fx, RelOp::Lt, start, end, fails);
+        let part = self.emit_string_method_call(fx, text, b"slice", &[start, end], self.known.string);
+        let holds = match placeholder {
+            Placeholder::BigInt => self.emit_pattern_test(fx, BIGINT_TEXT_PATTERN, part),
+            _ => {
+                let number = self.emit_throwing(fx, Op::Unary { op: ir::UnOp::ToNumber, a: part });
+                self.emit_global_method_call(fx, b"Number", b"isFinite", &[number])
+            }
+        };
+        self.continue_if(fx, holds, fails);
+    }
+
+    fn emit_template_matcher(&mut self, fx: &mut Fx, index: u32) {
+        let (texts, placeholders) = self.validators.templates[index as usize].clone();
+        let text = self.add_entry_param(fx, Ty::of(self.known.string));
+        let fails = fx.b.new_block();
+        let (prefix, suffix) = (&texts[0], &texts[texts.len() - 1]);
+        let length = self.emit_member(fx, text, b"length");
+        fx.b.func.values[length.idx()].ty = self.known.int32;
+        let shortest = self.emit(fx, Op::Int(utf16_length(prefix) + utf16_length(suffix)));
+        self.continue_if_compares(fx, RelOp::Ge, length, shortest, fails);
+        for (name, affix) in [(b"startsWith".as_slice(), prefix), (b"endsWith".as_slice(), suffix)] {
+            if !affix.is_empty() {
+                let affix = self.emit_text(fx, affix);
+                let holds = self.emit_string_method_call(fx, text, name, &[affix], self.known.boolean);
+                self.continue_if(fx, holds, fails);
+            }
+        }
+        let end = self.emit_index_sum(fx, BinOp::Sub, length, utf16_length(suffix));
+        let mut position = self.emit(fx, Op::Int(utf16_length(prefix)));
+        for (delimiter, &placeholder) in texts[1..texts.len() - 1].iter().zip(&placeholders) {
+            let part_end = if delimiter.is_empty() {
+                self.continue_if_compares(fx, RelOp::Lt, position, end, fails);
+                self.emit_index_sum(fx, BinOp::Add, position, 1)
+            } else {
+                let wanted = self.emit_text(fx, delimiter);
+                let found = self.emit_string_method_call(fx, text, b"indexOf", &[wanted, position], self.known.int32);
+                let zero = self.emit(fx, Op::Int(0));
+                self.continue_if_compares(fx, RelOp::Ge, found, zero, fails);
+                found
+            };
+            let next = self.emit_index_sum(fx, BinOp::Add, part_end, utf16_length(delimiter));
+            self.continue_if_compares(fx, RelOp::Le, next, end, fails);
+            self.emit_placeholder_test(fx, placeholder, text, position, part_end, fails);
+            position = next;
+        }
+        self.emit_placeholder_test(fx, placeholders[placeholders.len() - 1], text, position, end, fails);
+        let yes = self.emit(fx, Op::Bool(true));
+        self.terminate_with_return(fx, yes);
+        fx.b.seal(fails);
+        fx.b.switch_to(fails);
+        let no = self.emit(fx, Op::Bool(false));
+        fx.b.terminate(Term::Return(no));
     }
 
     fn emit_with_default(&mut self, fx: &mut Fx, default: &Option<Constant>, input: V) -> V {
@@ -327,11 +504,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     fn emit_validation(&mut self, fx: &mut Fx, plan: &Rc<ValidationPlan>, number: u32, node: u32, input: V, fails: BlockId) -> V {
         let described = &plan.nodes[node as usize];
-        let is_at_the_call = std::mem::take(&mut self.validators.is_at_the_call);
+        let is_at_call_site = std::mem::take(&mut self.validators.is_at_call_site);
         if described.is_recursive && !std::mem::take(&mut self.validators.is_building_recursive_node) {
             let function = self.validator_for(fx, number, node, TypeId::UNRESOLVED);
             let made = self.emit_throwing(fx, Op::CallDirect { func: function, args: [input].into_iter().collect() });
-            let mark = self.emit_refusal_marker(fx);
+            let mark = self.emit_rejection_marker(fx);
             let is_refused = self.emit(fx, Op::StrictEq { a: made, b: mark });
             self.continue_unless(fx, is_refused, fails);
             return made;
@@ -378,7 +555,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 self.emit_rules(fx, &described.rules, input, fails);
                 let want = Ty { id: self.ty_of(*ty), checked: *ty };
                 let list = self.emit_throwing(fx, Op::NewArray(Args::new()));
-                let list = self.fit(fx, list, want, Why::Cast);
+                let list = self.coerce_to(fx, list, want, CoerceReason::Cast);
                 let (plan, element) = (plan.clone(), *element);
                 self.emit_loop(fx, input, |build, fx, _, item| {
                     let checked = build.emit_validation(fx, &plan, number, element, item, fails);
@@ -402,7 +579,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 }
                 let made = self.emit_list(fx, &checked);
                 let want = Ty { id: self.ty_of(*ty), checked: *ty };
-                self.fit(fx, made, want, Why::Cast)
+                self.coerce_to(fx, made, want, CoerceReason::Cast)
             }
             Planned::Dictionary { held, .. } => {
                 self.continue_if_object(fx, input, true, fails);
@@ -417,7 +594,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 });
                 made
             }
-            Planned::Object { .. } if is_at_the_call => self.emit_object(fx, plan, number, node, input, fails),
+            Planned::Object { .. } if is_at_call_site => self.emit_object(fx, plan, number, node, input, fails),
             Planned::Object { ty, .. } => {
                 let function = self.validator_for(fx, number, node, *ty);
                 let made = self.emit_throwing(fx, Op::CallDirect { func: function, args: [input].into_iter().collect() });
@@ -429,6 +606,32 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             Planned::Union { arms, .. } => {
                 let result = self.new_temporary(fx);
                 let done = fx.b.new_block();
+                let mut arms = arms.clone();
+                if let Some((name, tagged)) = discriminated_arms(plan, &arms) {
+                    let is_no_object = fx.b.new_block();
+                    self.continue_if_object(fx, input, true, is_no_object);
+                    let tag = self.emit_member(fx, input, &name);
+                    for (constant, arm) in &tagged {
+                        let (matches, differs) = (fx.b.new_block(), fx.b.new_block());
+                        let wanted = self.emit_planned_constant(fx, constant);
+                        let is_it = self.emit(fx, Op::StrictEq { a: tag, b: wanted });
+                        self.branch(fx, is_it, matches, differs);
+                        fx.b.seal(matches);
+                        fx.b.seal(differs);
+                        fx.b.switch_to(matches);
+                        let checked = self.emit_validation(fx, plan, number, *arm, input, fails);
+                        fx.b.write(result, checked);
+                        fx.b.jump(done);
+                        fx.b.switch_to(differs);
+                    }
+                    fx.b.jump(fails);
+                    fx.b.seal(is_no_object);
+                    fx.b.switch_to(is_no_object);
+                    arms.retain(|arm| !tagged.iter().any(|tagged| tagged.1 == *arm));
+                    if arms.is_empty() {
+                        fx.b.jump(fails);
+                    }
+                }
                 for (at, &arm) in arms.iter().enumerate() {
                     let is_last = at + 1 == arms.len();
                     let next = if is_last { fails } else { fx.b.new_block() };
@@ -450,7 +653,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn validator_for(&mut self, fx: &Fx, number: u32, node: u32, ty: TypeId) -> FuncId {
-        let function = self.function_made(fx, Made::Validator(number, node), 1);
+        let function = self.helper_function(fx, GeneratedFunction::Validator(number, node), 1);
         if ty != TypeId::UNRESOLVED {
             let made = self.ty_of(ty);
             self.out.funcs[function.idx()].result = self.or_undefined(made);
@@ -458,7 +661,20 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         function
     }
 
-    fn function_made(&mut self, fx: &Fx, made: Made, parameters: u16) -> FuncId {
+    fn first_emitted_for_same_type(&mut self, made: GeneratedFunction) -> GeneratedFunction {
+        let (number, node, is_parser) = match made {
+            GeneratedFunction::Validator(number, node) => (number, node, false),
+            GeneratedFunction::Parser(number, node) => (number, node, true),
+            _ => return made,
+        };
+        match self.validators.plans[number as usize].node_identity(node) {
+            Some((ty, is_strict, omits_members)) => *self.validators.functions_by_type.entry((ty, is_strict, omits_members, is_parser)).or_insert(made),
+            None => made,
+        }
+    }
+
+    fn helper_function(&mut self, fx: &Fx, made: GeneratedFunction, parameters: u16) -> FuncId {
+        let made = self.first_emitted_for_same_type(made);
         if let Some(&known) = self.validators.functions.get(&made) {
             return known;
         }
@@ -476,14 +692,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     pub(crate) fn emit_validator(&mut self, fx: &mut Fx, at: u32) {
         let (number, node) = match self.validators.sources[at as usize] {
-            Made::Validator(number, node) => (number, node),
-            Made::Parser(number, node) => return self.emit_parser(fx, number, node),
-            Made::SchemaValidator(number) => return self.emit_schema_validator(fx, number),
-            Made::Reporter(number, node) => return self.emit_reporter(fx, number, node),
-            Made::IssueList(number) => return self.emit_issue_list(fx, number),
-            made @ (Made::Failure(number) | Made::SchemaFailure(number) | Made::Refusal(number)) => return self.emit_answer_to_refused_value(fx, made, number),
-            Made::IssueAdder => return self.emit_issue_adder(fx),
-            Made::IssueThrower => return self.emit_issue_thrower(fx),
+            GeneratedFunction::Validator(number, node) => (number, node),
+            GeneratedFunction::Parser(number, node) => return self.emit_parser(fx, number, node),
+            GeneratedFunction::SchemaValidator(number) => return self.emit_schema_validator(fx, number),
+            made @ (GeneratedFunction::Failure(number) | GeneratedFunction::SchemaFailure(number) | GeneratedFunction::Refusal(number)) => return self.emit_type_mismatch_result(fx, made, number),
+            GeneratedFunction::TemplateMatcher(index) => return self.emit_template_matcher(fx, index),
         };
         let plan = self.validators.plans[number as usize].clone();
         let value = self.add_entry_param(fx, Ty::NONE);
@@ -494,7 +707,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             self.terminate_with_return(fx, checked);
             fx.b.seal(fails);
             fx.b.switch_to(fails);
-            let mark = self.emit_refusal_marker(fx);
+            let mark = self.emit_rejection_marker(fx);
             return fx.b.terminate(Term::Return(mark));
         }
         let made = self.emit_object(fx, &plan, number, node, value, fails);
@@ -529,19 +742,19 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             fx.b.switch_to(next);
             checked.push(fx.b.read(held));
         }
-        self.emit_object_of_checked_members(fx, plan, number, node, Some(value), &checked, fails)
+        self.emit_object_from_checked_members(fx, plan, number, node, Some(value), &checked, fails)
     }
 
-    fn emit_object_of_checked_members(&mut self, fx: &mut Fx, plan: &Rc<ValidationPlan>, number: u32, node: u32, source: Option<V>, checked: &[V], fails: BlockId) -> V {
+    fn emit_object_from_checked_members(&mut self, fx: &mut Fx, plan: &Rc<ValidationPlan>, number: u32, node: u32, source: Option<V>, checked: &[V], fails: BlockId) -> V {
         let Planned::Object { ty, members, others } = &plan.nodes[node as usize].planned else { return self.emit(fx, Op::Undefined) };
         let (mut names, mut values) = (Vec::new(), Vec::new());
         for (member, &checked) in members.iter().zip(checked).filter(|(member, _)| !member.is_optional) {
             names.push(self.out.strs.intern(&member.name));
             values.push(checked);
         }
-        let layout = if self.is_object_type_of_program(*ty) { self.record_layout(*ty).filter(|&layout| self.fits(layout, &names)) } else { None };
+        let layout = if self.is_record_type(*ty) { self.record_layout(*ty).filter(|&layout| self.fits(layout, &names)) } else { None };
         let made = match layout {
-            Some(layout) => self.emit_object_of_layout(fx, layout, &names, &values, None),
+            Some(layout) => self.emit_typed_object(fx, layout, &names, &values, None),
             None => {
                 let made = self.emit(fx, Op::NewObject);
                 for (&name, &value) in names.iter().zip(&values) {
@@ -569,8 +782,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let name = self.out.strs.intern(&member.name);
             let held = match layout.and_then(|layout| Some((layout, self.out.layouts[layout.idx()].field(name)?))) {
                 Some((layout, field)) => {
-                    let want = self.type_of_field(layout, field);
-                    self.fit(fx, checked, want, Why::Cast)
+                    let want = self.field_type(layout, field);
+                    self.coerce_to(fx, checked, want, CoerceReason::Cast)
                 }
                 None => checked,
             };
@@ -614,515 +827,53 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let plan = self.validators.plans[number as usize].clone();
         let value = self.add_entry_param(fx, Ty::NONE);
         let fails = fx.b.new_block();
-        self.validators.is_at_the_call = true;
+        self.validators.is_at_call_site = true;
         let checked = self.emit_validation(fx, &plan, number, plan.root, value, fails);
         let accepted = self.emit_plain_object(fx, &[(b"value", checked)]);
         self.terminate_with_return(fx, accepted);
         fx.b.seal(fails);
         fx.b.switch_to(fails);
-        let refused = self.emit_refusal(fx, Made::SchemaFailure(number), value);
+        let refused = self.emit_rejection(fx, GeneratedFunction::SchemaFailure(number), value);
         self.terminate_with_return(fx, refused);
     }
 
-    fn emit_refusal(&mut self, fx: &mut Fx, answer: Made, value: V) -> V {
-        let answer = self.function_made(fx, answer, 1);
+    fn emit_rejection(&mut self, fx: &mut Fx, answer: GeneratedFunction, value: V) -> V {
+        let answer = self.helper_function(fx, answer, 1);
         let answer = self.emit(fx, Op::FuncRef(answer));
         let undefined = self.emit(fx, Op::Undefined);
         self.operation(fx, Operation::CallNoInline, &[answer, undefined, value])
     }
 
-    fn emit_answer_to_refused_value(&mut self, fx: &mut Fx, made: Made, number: u32) {
+    fn call_validation_helper(&mut self, fx: &mut Fx, helper: &[u8], args: &[V]) -> V {
+        let helper = self.shared.validation_helpers().zip(self.c.atoms().lookup(helper));
+        let Some(helper) = helper.and_then(|(file, name)| self.exported_binding(file, name)) else {
+            return self.unsupported(fx, 0, "a validation in a program that was loaded without prelude/validation.ts");
+        };
+        let callee = self.read_sym(fx, helper, 0);
+        let this = self.emit(fx, Op::Undefined);
+        self.emit_throwing(fx, Op::Call { callee, this, args: args.iter().copied().collect() })
+    }
+
+    fn emit_type_mismatch_result(&mut self, fx: &mut Fx, made: GeneratedFunction, number: u32) {
         let value = self.add_entry_param(fx, Ty::NONE);
-        let list = self.function_made(fx, Made::IssueList(number), 1);
-        let issues = self.emit_throwing(fx, Op::CallDirect { func: list, args: [value].into_iter().collect() });
+        let text = self.validators.plans[number as usize].to_json();
+        let variable = self.hidden_variable(fx, b"plan");
+        let plan = self.emit_initialized_once(fx, variable, |build, fx| {
+            let text = build.emit_text(fx, &text);
+            build.emit_global_method_call(fx, b"JSON", b"parse", &[text])
+        });
         let answer = match made {
-            Made::Failure(_) => {
-                let no = self.emit(fx, Op::Bool(false));
-                self.emit_plain_object(fx, &[(b"success", no), (b"issues", issues)])
+            GeneratedFunction::Failure(_) => {
+                let issues = self.call_validation_helper(fx, b"issuesOf", &[plan, value]);
+                let declared = self.validators.safe_result_types.get(&number).copied();
+                self.emit_safe_result(fx, declared, false, b"issues", issues)
             }
-            Made::SchemaFailure(_) => self.emit_plain_object(fx, &[(b"issues", issues)]),
-            _ => {
-                let thrower = self.function_made(fx, Made::IssueThrower, 1);
-                self.emit_throwing(fx, Op::CallDirect { func: thrower, args: [issues].into_iter().collect() })
+            GeneratedFunction::SchemaFailure(_) => {
+                let issues = self.call_validation_helper(fx, b"issuesOf", &[plan, value]);
+                self.emit_plain_object(fx, &[(b"issues", issues)])
             }
+            _ => self.call_validation_helper(fx, b"throwIssues", &[plan, value]),
         };
         self.terminate_with_return(fx, answer);
-    }
-
-    fn emit_issue_list(&mut self, fx: &mut Fx, number: u32) {
-        let plan = self.validators.plans[number as usize].clone();
-        let value = self.add_entry_param(fx, Ty::NONE);
-        let issues = self.emit_list(fx, &[]);
-        let path = self.emit_list(fx, &[]);
-        self.emit_report(fx, &plan, number, plan.root, value, path, issues);
-        let length = self.emit_member(fx, issues, b"length");
-        let zero = self.emit(fx, Op::Int(0));
-        let is_empty = self.emit(fx, Op::StrictEq { a: length, b: zero });
-        let (none, some) = (fx.b.new_block(), fx.b.new_block());
-        self.branch(fx, is_empty, none, some);
-        fx.b.seal(none);
-        fx.b.seal(some);
-        fx.b.switch_to(none);
-        self.throw_error(fx, b"Error", b"Internal error: a value was refused by its type and no issue was found. This is a bug in Bun.");
-        fx.b.switch_to(some);
-        self.terminate_with_return(fx, issues);
-    }
-
-    fn emit_issue_thrower(&mut self, fx: &mut Fx) {
-        let issues = self.add_entry_param(fx, Ty::NONE);
-        let zero = self.emit(fx, Op::Int(0));
-        let first = self.emit_throwing(fx, Op::ElemGet { obj: issues, key: zero });
-        let path = self.emit_member(fx, first, b"path");
-        let length = self.emit_member(fx, path, b"length");
-        let place = self.new_temporary(fx);
-        let nowhere = self.emit_text(fx, b"");
-        fx.b.write(place, nowhere);
-        let (within, next) = (fx.b.new_block(), fx.b.new_block());
-        self.branch(fx, length, within, next);
-        fx.b.seal(within);
-        fx.b.switch_to(within);
-        let dot = self.emit_text(fx, b".");
-        let join = self.out.strs.intern(b"join");
-        let joined = self.emit_throwing(fx, Op::CallMethod { obj: path, name: join, args: [dot].into_iter().collect() });
-        let colon = self.emit_text(fx, b": ");
-        let joined = self.emit_joined(fx, &[joined, colon]);
-        fx.b.write(place, joined);
-        fx.b.jump(next);
-        fx.b.seal(next);
-        fx.b.switch_to(next);
-        let place = fx.b.read(place);
-        let message = self.emit_member(fx, first, b"message");
-        let text = self.emit_joined(fx, &[place, message]);
-        let class = self.out.strs.intern(b"TypeError");
-        let class = self.emit_throwing(fx, Op::FreeGet { name: class, is_typeof: false });
-        let error = self.emit_throwing(fx, Op::Construct { callee: class, args: [text].into_iter().collect() });
-        let name = self.out.strs.intern(b"issues");
-        self.emit_throwing(fx, Op::PropSet { obj: error, name, value: issues });
-        fx.b.terminate(Term::Throw { value: error, unwind: None, pos: 0 });
-    }
-
-    fn emit_joined(&mut self, fx: &mut Fx, parts: &[V]) -> V {
-        let mut joined = parts[0];
-        for &part in &parts[1..] {
-            joined = self.emit_throwing(fx, Op::Binary { op: BinOp::Add, a: joined, b: part });
-        }
-        joined
-    }
-
-    fn emit_issue_adder(&mut self, fx: &mut Fx) {
-        let [issues, path, code, expected, value, message] = std::array::from_fn(|_| self.add_entry_param(fx, Ty::NONE));
-        let received = self.new_temporary(fx);
-        let described = fx.b.new_block();
-        let says = |build: &mut Self, fx: &mut Fx, holds: V, text: &[u8]| {
-            let (yes, no) = (fx.b.new_block(), fx.b.new_block());
-            build.branch(fx, holds, yes, no);
-            fx.b.seal(yes);
-            fx.b.seal(no);
-            fx.b.switch_to(yes);
-            let text = build.emit_text(fx, text);
-            fx.b.write(received, text);
-            fx.b.jump(described);
-            fx.b.switch_to(no);
-        };
-        let null = self.emit(fx, Op::Null);
-        let is_null = self.emit(fx, Op::StrictEq { a: value, b: null });
-        says(self, fx, is_null, b"null");
-        let is_array = self.emit_global_method_call(fx, b"Array", b"isArray", &[value]);
-        says(self, fx, is_array, b"array");
-        let kind = self.emit(fx, Op::TypeOf(value));
-        fx.b.write(received, kind);
-        let is_number = self.emit_typeof_test(fx, value, b"number");
-        self.continue_if(fx, is_number, described);
-        let is_finite = self.emit_global_method_call(fx, b"Number", b"isFinite", &[value]);
-        self.continue_unless(fx, is_finite, described);
-        let is_nan = self.emit_global_method_call(fx, b"Number", b"isNaN", &[value]);
-        says(self, fx, is_nan, b"nan");
-        let infinity = self.emit_text(fx, b"infinity");
-        fx.b.write(received, infinity);
-        fx.b.jump(described);
-        fx.b.seal(described);
-        fx.b.switch_to(described);
-        let received = fx.b.read(received);
-
-        let text = self.new_temporary(fx);
-        fx.b.write(text, message);
-        let worded = fx.b.new_block();
-        let is_unwritten = self.emit(fx, Op::StrictEq { a: message, b: null });
-        self.continue_if(fx, is_unwritten, worded);
-        let (with_received, others) = (fx.b.new_block(), fx.b.new_block());
-        for name in [&b"invalid_type"[..], b"invalid_value", b"invalid_union"] {
-            let name = self.emit_text(fx, name);
-            let is_it = self.emit(fx, Op::StrictEq { a: code, b: name });
-            self.continue_unless(fx, is_it, with_received);
-        }
-        fx.b.jump(others);
-        fx.b.seal(with_received);
-        fx.b.seal(others);
-        fx.b.switch_to(with_received);
-        let head = self.emit_text(fx, b"Invalid input: expected ");
-        let middle = self.emit_text(fx, b", received ");
-        let written = self.emit_joined(fx, &[head, expected, middle, received]);
-        fx.b.write(text, written);
-        fx.b.jump(worded);
-        fx.b.switch_to(others);
-        let name = self.emit_text(fx, b"unrecognized_keys");
-        let is_key = self.emit(fx, Op::StrictEq { a: code, b: name });
-        let (key, rule) = (fx.b.new_block(), fx.b.new_block());
-        self.branch(fx, is_key, key, rule);
-        fx.b.seal(key);
-        fx.b.seal(rule);
-        fx.b.switch_to(key);
-        let head = self.emit_text(fx, b"Unrecognized key: ");
-        let written = self.emit_joined(fx, &[head, expected]);
-        fx.b.write(text, written);
-        fx.b.jump(worded);
-        fx.b.switch_to(rule);
-        let head = self.emit_text(fx, b"Invalid input: expected ");
-        let written = self.emit_joined(fx, &[head, expected]);
-        fx.b.write(text, written);
-        fx.b.jump(worded);
-        fx.b.seal(worded);
-        fx.b.switch_to(worded);
-        let text = fx.b.read(text);
-        let issue = self.emit_plain_object(fx, &[(b"path", path), (b"code", code), (b"expected", expected), (b"received", received), (b"message", text)]);
-        let push = self.out.strs.intern(b"push");
-        self.emit_throwing(fx, Op::CallMethod { obj: issues, name: push, args: [issue].into_iter().collect() });
-        self.terminate_with_return(fx, V::NONE);
-    }
-
-    fn emit_issue(&mut self, fx: &mut Fx, place: (V, V), code: &[u8], expected: V, value: V, message: &Option<Vec<u8>>) {
-        let adder = self.function_made(fx, Made::IssueAdder, 6);
-        let code = self.emit_text(fx, code);
-        let message = match message {
-            Some(message) => self.emit_text(fx, message),
-            None => self.emit(fx, Op::Null),
-        };
-        self.emit_throwing(fx, Op::CallDirect { func: adder, args: [place.1, place.0, code, expected, value, message].into_iter().collect() });
-    }
-
-    fn emit_issue_about(&mut self, fx: &mut Fx, place: (V, V), code: &[u8], expected: &[u8], value: V, message: &Option<Vec<u8>>) {
-        let expected = self.emit_text(fx, expected);
-        self.emit_issue(fx, place, code, expected, value, message);
-    }
-
-    fn emit_path_within(&mut self, fx: &mut Fx, path: V, key: V) -> V {
-        let longer = self.emit_list(fx, &[]);
-        self.operation(fx, Operation::AppendSpread, &[longer, path]);
-        let push = self.out.strs.intern(b"push");
-        self.emit_throwing(fx, Op::CallMethod { obj: longer, name: push, args: [key].into_iter().collect() });
-        longer
-    }
-
-    fn emit_shown_constant(&mut self, fx: &mut Fx, constant: &Constant) -> V {
-        if *constant == Constant::Undefined {
-            return self.emit_text(fx, b"undefined");
-        }
-        let constant = self.emit_planned_constant(fx, constant);
-        self.emit_global_method_call(fx, b"JSON", b"stringify", &[constant])
-    }
-
-    fn emit_expected(&mut self, fx: &mut Fx, plan: &ValidationPlan, node: u32) -> V {
-        let text: &[u8] = match &plan.nodes[node as usize].planned {
-            Planned::Anything => b"unknown",
-            Planned::Nothing => b"never",
-            Planned::Primitive(primitive) => name_of(*primitive),
-            Planned::Value(constant) => return self.emit_shown_constant(fx, constant),
-            Planned::Array { .. } => b"array",
-            Planned::Tuple { .. } => b"tuple",
-            Planned::AnyObject | Planned::Dictionary { .. } | Planned::Object { .. } => b"object",
-            Planned::Union { arms, .. } => {
-                let mut parts = Vec::with_capacity(arms.len() * 2);
-                for (at, &arm) in arms.iter().enumerate() {
-                    if at > 0 {
-                        parts.push(self.emit_text(fx, b" | "));
-                    }
-                    parts.push(self.emit_expected(fx, plan, arm));
-                }
-                return self.emit_joined(fx, &parts);
-            }
-        };
-        self.emit_text(fx, text)
-    }
-
-    fn emit_report_of_rules(&mut self, fx: &mut Fx, plan: &ValidationPlan, node: u32, value: V, place: (V, V)) {
-        let described = &plan.nodes[node as usize];
-        let counts_items = matches!(described.planned, Planned::Array { .. });
-        for rule in &described.rules {
-            let holds = self.emit_rule(fx, rule, value);
-            let (broken, next) = (fx.b.new_block(), fx.b.new_block());
-            self.branch(fx, holds, next, broken);
-            fx.b.seal(broken);
-            fx.b.switch_to(broken);
-            let (code, head, number, tail): (&[u8], &[u8], Option<f64>, &[u8]) = match rule {
-                Rule::Integer => (b"invalid_type", b"int", None, b""),
-                Rule::AtLeast(n) => (b"too_small", b"number to be >=", Some(*n), b""),
-                Rule::AtMost(n) => (b"too_big", b"number to be <=", Some(*n), b""),
-                Rule::Above(n) => (b"too_small", b"number to be >", Some(*n), b""),
-                Rule::Below(n) => (b"too_big", b"number to be <", Some(*n), b""),
-                Rule::MultipleOf(n) => (b"not_multiple_of", b"multiple of ", Some(*n), b""),
-                Rule::LengthAtLeast(n) if counts_items => (b"too_small", b"array to have >=", Some(*n), b" items"),
-                Rule::LengthAtLeast(n) => (b"too_small", b"string to have >=", Some(*n), b" characters"),
-                Rule::LengthAtMost(n) if counts_items => (b"too_big", b"array to have <=", Some(*n), b" items"),
-                Rule::LengthAtMost(n) => (b"too_big", b"string to have <=", Some(*n), b" characters"),
-                Rule::Pattern(pattern) => (b"invalid_format", b"string to match /", None, pattern),
-                Rule::Format { name, .. } => (b"invalid_format", name, None, b""),
-            };
-            let mut parts = vec![self.emit_text(fx, head)];
-            if let Some(number) = number {
-                parts.push(self.number(fx, number));
-            }
-            if !tail.is_empty() {
-                parts.push(self.emit_text(fx, tail));
-            }
-            if matches!(rule, Rule::Pattern(_)) {
-                parts.push(self.emit_text(fx, b"/"));
-            }
-            let expected = self.emit_joined(fx, &parts);
-            self.emit_issue(fx, place, code, expected, value, &described.message);
-            fx.b.jump(next);
-            fx.b.seal(next);
-            fx.b.switch_to(next);
-        }
-    }
-
-    fn emit_reporter(&mut self, fx: &mut Fx, number: u32, node: u32) {
-        let plan = self.validators.plans[number as usize].clone();
-        let [value, path, issues] = std::array::from_fn(|_| self.add_entry_param(fx, Ty::NONE));
-        self.validators.is_building_recursive_node = true;
-        self.emit_report(fx, &plan, number, node, value, path, issues);
-        self.terminate_with_return(fx, V::NONE);
-    }
-
-    fn emit_report(&mut self, fx: &mut Fx, plan: &Rc<ValidationPlan>, number: u32, node: u32, input: V, path: V, issues: V) {
-        let described = &plan.nodes[node as usize];
-        let is_apart = described.is_recursive || matches!(described.planned, Planned::Object { .. });
-        if is_apart && !std::mem::take(&mut self.validators.is_building_recursive_node) {
-            let reporter = self.function_made(fx, Made::Reporter(number, node), 3);
-            self.emit_throwing(fx, Op::CallDirect { func: reporter, args: [input, path, issues].into_iter().collect() });
-            return;
-        }
-        let input = self.emit_with_default(fx, &described.default, input);
-        let (place, message) = ((path, issues), &described.message);
-        let (wrong, done) = (fx.b.new_block(), fx.b.new_block());
-        let (code, expected): (&[u8], &[u8]) = match &described.planned {
-            Planned::Anything => (b"", b""),
-            Planned::Nothing => {
-                fx.b.jump(wrong);
-                let unreachable = fx.b.new_block();
-                fx.b.seal(unreachable);
-                fx.b.switch_to(unreachable);
-                (b"invalid_type", b"never")
-            }
-            Planned::Primitive(primitive) => {
-                let is_one = self.emit_typeof_test(fx, input, name_of(*primitive));
-                self.continue_if(fx, is_one, wrong);
-                if *primitive == PlannedPrimitive::Number {
-                    let is_finite = self.emit_global_method_call(fx, b"Number", b"isFinite", &[input]);
-                    self.continue_if(fx, is_finite, wrong);
-                }
-                self.emit_report_of_rules(fx, plan, node, input, place);
-                (b"invalid_type", name_of(*primitive))
-            }
-            Planned::Value(constant) => {
-                let wanted = self.emit_planned_constant(fx, constant);
-                let is_it = self.emit(fx, Op::StrictEq { a: input, b: wanted });
-                let (other, next) = (fx.b.new_block(), fx.b.new_block());
-                self.branch(fx, is_it, next, other);
-                fx.b.seal(other);
-                fx.b.switch_to(other);
-                let shown = self.emit_shown_constant(fx, constant);
-                self.emit_issue(fx, place, b"invalid_value", shown, input, message);
-                fx.b.jump(next);
-                fx.b.seal(next);
-                fx.b.switch_to(next);
-                (b"", b"")
-            }
-            Planned::AnyObject => {
-                self.continue_if_object(fx, input, false, wrong);
-                (b"invalid_type", b"object")
-            }
-            Planned::Array { element, .. } => {
-                let is_array = self.emit_global_method_call(fx, b"Array", b"isArray", &[input]);
-                self.continue_if(fx, is_array, wrong);
-                self.emit_report_of_rules(fx, plan, node, input, place);
-                let (plan, element) = (plan.clone(), *element);
-                self.emit_loop(fx, input, |build, fx, at, item| {
-                    let within = build.emit_path_within(fx, path, at);
-                    build.emit_report(fx, &plan, number, element, item, within, issues);
-                });
-                (b"invalid_type", b"array")
-            }
-            Planned::Tuple { elements, .. } => {
-                let is_array = self.emit_global_method_call(fx, b"Array", b"isArray", &[input]);
-                self.continue_if(fx, is_array, wrong);
-                let length = self.emit_member(fx, input, b"length");
-                let wanted = self.emit(fx, Op::Int(elements.len() as i64));
-                let is_whole = self.emit(fx, Op::StrictEq { a: length, b: wanted });
-                self.continue_if(fx, is_whole, wrong);
-                for (at, &element) in elements.iter().enumerate() {
-                    let key = self.emit(fx, Op::Int(at as i64));
-                    let item = self.emit_throwing(fx, Op::ElemGet { obj: input, key });
-                    let within = self.emit_path_within(fx, path, key);
-                    self.emit_report(fx, plan, number, element, item, within, issues);
-                }
-                (b"invalid_type", b"tuple")
-            }
-            Planned::Dictionary { held, .. } => {
-                self.continue_if_object(fx, input, true, wrong);
-                let keys = self.emit_global_method_call(fx, b"Object", b"keys", &[input]);
-                let (plan, held) = (plan.clone(), *held);
-                self.emit_loop(fx, keys, |build, fx, _, key| {
-                    let item = build.emit_throwing(fx, Op::ElemGet { obj: input, key });
-                    let within = build.emit_path_within(fx, path, key);
-                    build.emit_report(fx, &plan, number, held, item, within, issues);
-                });
-                (b"invalid_type", b"object")
-            }
-            Planned::Object { members, others, .. } => {
-                self.continue_if_object(fx, input, true, wrong);
-                for member in members.iter().filter(|member| !member.is_omitted_when_invalid) {
-                    let given = self.emit_member(fx, input, &member.name);
-                    let key = self.emit_text(fx, &member.name);
-                    let within = self.emit_path_within(fx, path, key);
-                    self.emit_report(fx, plan, number, member.node, given, within, issues);
-                }
-                if *others != OtherKeys::Omitted {
-                    let keys = self.emit_global_method_call(fx, b"Object", b"keys", &[input]);
-                    let (plan, others) = (plan.clone(), *others);
-                    self.emit_loop(fx, keys, |build, fx, _, key| {
-                        let is_declared = fx.b.new_block();
-                        let described = &plan.nodes[node as usize];
-                        let Planned::Object { members, .. } = &described.planned else { return };
-                        for member in members {
-                            let name = build.emit_text(fx, &member.name);
-                            let is_it = build.emit(fx, Op::StrictEq { a: key, b: name });
-                            build.continue_unless(fx, is_it, is_declared);
-                        }
-                        match others {
-                            OtherKeys::Kept(held) => {
-                                let item = build.emit_throwing(fx, Op::ElemGet { obj: input, key });
-                                let within = build.emit_path_within(fx, path, key);
-                                build.emit_report(fx, &plan, number, held, item, within, issues);
-                            }
-                            _ => {
-                                let shown = build.emit_global_method_call(fx, b"JSON", b"stringify", &[key]);
-                                build.emit_issue(fx, (path, issues), b"unrecognized_keys", shown, input, &described.message);
-                            }
-                        }
-                        fx.b.jump(is_declared);
-                        fx.b.seal(is_declared);
-                        fx.b.switch_to(is_declared);
-                    });
-                }
-                (b"invalid_type", b"object")
-            }
-            Planned::Union { arms, .. } => {
-                let refused = fx.b.new_block();
-                self.emit_validation(fx, plan, number, node, input, refused);
-                fx.b.jump(done);
-                fx.b.seal(refused);
-                fx.b.switch_to(refused);
-                let (near, count) = (self.new_selector(fx), self.new_selector(fx));
-                let none = self.emit(fx, Op::Int(0));
-                fx.b.write(near, none);
-                fx.b.write(count, none);
-                for (at, &arm) in arms.iter().enumerate() {
-                    let (is_far, is_near) = (fx.b.new_block(), fx.b.new_block());
-                    match &plan.nodes[arm as usize].planned {
-                        Planned::Primitive(primitive) => {
-                            let is_one = self.emit_typeof_test(fx, input, name_of(*primitive));
-                            self.continue_if(fx, is_one, is_far);
-                            if *primitive == PlannedPrimitive::Number {
-                                let is_finite = self.emit_global_method_call(fx, b"Number", b"isFinite", &[input]);
-                                self.continue_if(fx, is_finite, is_far);
-                            }
-                        }
-                        Planned::Array { .. } | Planned::Tuple { .. } => {
-                            let is_array = self.emit_global_method_call(fx, b"Array", b"isArray", &[input]);
-                            self.continue_if(fx, is_array, is_far);
-                        }
-                        Planned::Dictionary { .. } | Planned::Object { .. } => self.continue_if_object(fx, input, true, is_far),
-                        _ => {
-                            fx.b.jump(is_far);
-                            let unreachable = fx.b.new_block();
-                            fx.b.seal(unreachable);
-                            fx.b.switch_to(unreachable);
-                        }
-                    }
-                    fx.b.jump(is_near);
-                    fx.b.seal(is_near);
-                    fx.b.switch_to(is_near);
-                    let this = self.emit(fx, Op::Int(at as i64));
-                    fx.b.write(near, this);
-                    let so_far = fx.b.read(count);
-                    let one = self.emit(fx, Op::Int(1));
-                    let more = self.emit(fx, Op::Binary { op: BinOp::Add, a: so_far, b: one });
-                    fx.b.func.values[more.idx()].ty = self.known.int32;
-                    fx.b.write(count, more);
-                    fx.b.jump(is_far);
-                    fx.b.seal(is_far);
-                    fx.b.switch_to(is_far);
-                }
-                let (near, count) = (fx.b.read(near), fx.b.read(count));
-                let one = self.emit(fx, Op::Int(1));
-                let is_one = self.emit(fx, Op::StrictEq { a: count, b: one });
-                let (closely, broadly) = (fx.b.new_block(), fx.b.new_block());
-                self.branch(fx, is_one, closely, broadly);
-                fx.b.seal(closely);
-                fx.b.switch_to(closely);
-                let before = self.emit_member(fx, issues, b"length");
-                let reported = fx.b.new_block();
-                for (at, &arm) in arms.iter().enumerate() {
-                    let this = self.emit(fx, Op::Int(at as i64));
-                    let is_it = self.emit(fx, Op::StrictEq { a: near, b: this });
-                    let (it, other) = (fx.b.new_block(), fx.b.new_block());
-                    self.branch(fx, is_it, it, other);
-                    fx.b.seal(it);
-                    fx.b.seal(other);
-                    fx.b.switch_to(it);
-                    self.emit_report(fx, plan, number, arm, input, path, issues);
-                    fx.b.jump(reported);
-                    fx.b.switch_to(other);
-                }
-                fx.b.jump(reported);
-                fx.b.seal(reported);
-                fx.b.switch_to(reported);
-                let after = self.emit_member(fx, issues, b"length");
-                let has_said_it = self.emit_throwing(fx, Op::Relational { op: RelOp::Gt, a: after, b: before });
-                self.branch(fx, has_said_it, done, broadly);
-                fx.b.seal(broadly);
-                fx.b.switch_to(broadly);
-                let expected = self.emit_expected(fx, plan, node);
-                let is_several = self.emit_throwing(fx, Op::Relational { op: RelOp::Gt, a: count, b: one });
-                let (several, few) = (fx.b.new_block(), fx.b.new_block());
-                self.branch(fx, is_several, several, few);
-                fx.b.seal(several);
-                fx.b.seal(few);
-                fx.b.switch_to(several);
-                self.emit_issue(fx, place, b"invalid_union", expected, input, message);
-                fx.b.jump(done);
-                fx.b.switch_to(few);
-                self.emit_issue(fx, place, b"invalid_type", expected, input, message);
-                (b"", b"")
-            }
-        };
-        fx.b.jump(done);
-        fx.b.seal(wrong);
-        fx.b.switch_to(wrong);
-        if !code.is_empty() {
-            self.emit_issue_about(fx, place, code, expected, input, message);
-        }
-        fx.b.jump(done);
-        fx.b.seal(done);
-        fx.b.switch_to(done);
-    }
-}
-
-fn name_of(primitive: PlannedPrimitive) -> &'static [u8] {
-    match primitive {
-        PlannedPrimitive::Text => b"string",
-        PlannedPrimitive::Number => b"number",
-        PlannedPrimitive::Boolean => b"boolean",
-        PlannedPrimitive::BigInt => b"bigint",
     }
 }

@@ -15,7 +15,7 @@ pub(crate) use bun_sema::fold::Constant;
 
 pub(crate) struct DecidedOperand {
     pub(crate) yields: ExprId,
-    pub(crate) is_left_of_cut: bool,
+    pub(crate) is_cut_left: bool,
 }
 
 impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
@@ -51,7 +51,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let hir = self.hir(file);
         match hir[e].kind {
             ExprKind::Ident(name) => {
-                if let Some(found) = self.c.binding_of_identifier(file, e, name) {
+                if let Some(found) = self.ident_binding(file, e, name) {
                     let sym = self.value_symbol(found);
                     if !self.is_ambient(sym) || self.files.flags(found).contains(SymFlags::ALIAS) {
                         return None;
@@ -90,7 +90,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return None;
         }
         let (holder, name) = match self.hir(file)[e].kind {
-            ExprKind::Ident(name) if self.is_free_in(file, e, name) => (global_object(), name),
+            ExprKind::Ident(name) if self.is_unbound_in(file, e, name) => (global_object(), name),
             ExprKind::Dot { obj, name, chain: hir::Chain::No, .. } => (self.resolve_locked_builtin(file, obj)?, name),
             _ => return None,
         };
@@ -99,25 +99,25 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     fn resolve_locked_builtin(&mut self, file: FileId, e: ExprId) -> Option<&'static Builtin> {
         match self.hir(file)[e].kind {
-            ExprKind::Ident(name) if self.is_free_in(file, e, name) => global_object().object_at(self.c.atoms().bytes(name)),
+            ExprKind::Ident(name) if self.is_unbound_in(file, e, name) => global_object().object_at(self.c.atoms().bytes(name)),
             ExprKind::Dot { obj, name, chain: hir::Chain::No, .. } => self.resolve_locked_builtin(file, obj)?.object_at(self.c.atoms().bytes(name)),
             _ => None,
         }
     }
 
     /// The expression is not translated: see `Body::cut`.
-    pub(crate) fn cut_expr(&mut self, fx: &Fx, e: ExprId) {
-        self.cut_expr_in(fx.file, e);
+    pub(crate) fn mark_dead_expr(&mut self, fx: &Fx, e: ExprId) {
+        self.mark_dead_expr_in(fx.file, e);
     }
 
-    fn cut_expr_in(&mut self, file: FileId, e: ExprId) {
-        if e.is_some() && !self.only_asks {
+    fn mark_dead_expr_in(&mut self, file: FileId, e: ExprId) {
+        if e.is_some() && !self.is_query_only {
             let node = &self.hir(file)[e];
             self.cut.push((node.pos, node.end));
         }
     }
 
-    pub(crate) fn cut_stmt(&mut self, fx: &Fx, stmt: StmtId) {
+    pub(crate) fn mark_dead_stmt(&mut self, fx: &Fx, stmt: StmtId) {
         if stmt.is_some() {
             let node = &self.hir(fx.file)[stmt];
             self.cut.push((node.start, node.loc.end));
@@ -126,16 +126,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     /// The constant the bundler puts in the place of the expression.
     pub(crate) fn replacement(&mut self, fx: &Fx, e: ExprId) -> Option<Constant> {
-        self.replacement_in(fx.file, e)
+        self.define_replacement(fx.file, e)
     }
 
-    pub(crate) fn replacement_in(&mut self, file: FileId, e: ExprId) -> Option<Constant> {
+    pub(crate) fn define_replacement(&mut self, file: FileId, e: ExprId) -> Option<Constant> {
         // A define of `__filename` comes first, as in a bundle.
         let found = match self.replacement_of(file, e) {
             Some(found) => found,
-            None => self.constant_of_the_environment(file, e)?,
+            None => self.module_environment_constant(file, e)?,
         };
-        self.cut_expr_in(file, e);
+        self.mark_dead_expr_in(file, e);
         Some(found)
     }
 
@@ -153,10 +153,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     fn replacement_of(&mut self, file: FileId, e: ExprId) -> Option<Constant> {
         let hir = self.hir(file);
-        let defines = if self.is_builtin_file(file) { &self.shared.builtin_defines } else { &self.shared.defines };
+        let (defines, last_names) = if self.is_builtin_file(file) { (&self.shared.builtin_defines, &self.shared.last_names_of_builtin_defines) } else { (&self.shared.defines, &self.shared.last_names_of_defines) };
         match hir[e].kind {
             ExprKind::Ident(name) | ExprKind::Dot { name, .. } => {
-                if defines.last_names.contains(self.c.atoms().bytes(name)) {
+                if last_names.contains(&name) {
                     let path = self.global_path(file, e)?;
                     if let Some(found) = defines.values.get(&path) {
                         return Some(found.clone());
@@ -169,7 +169,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     root = obj;
                 }
                 let ExprKind::Ident(root) = hir[root].kind else { return None };
-                if !defines.last_names.contains(self.c.atoms().bytes(root)) {
+                if !last_names.contains(&root) {
                     return None;
                 }
                 let Constant::Object(members) = self.replacement_of(file, obj)? else { return None };
@@ -186,8 +186,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 if self.c.atoms().bytes(name) != b"feature" || hir[call].args.len() != 1 {
                     return None;
                 }
-                let found = self.c.binding_of_identifier(file, hir[call].callee, name)?;
-                let is_of_the_bundler = self.files.decls(found).into_iter().any(|(file, decl)| match decl {
+                let found = self.ident_binding(file, hir[call].callee, name)?;
+                let is_bundler_constant = self.files.decls_of(found).iter().copied().any(|(file, decl)| match decl {
                     Decl::ImportSpec(spec) => {
                         let hir = self.hir(file);
                         self.c.atoms().bytes(hir[hir[spec].import].spec) == b"bun:bundle"
@@ -195,13 +195,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     _ => false,
                 });
                 let ExprKind::String(flag) = hir[hir.id_at(hir[call].args, 0)].kind else { return None };
-                is_of_the_bundler.then(|| Constant::Bool(self.shared.features.contains(self.c.atoms().bytes(flag))))
+                is_bundler_constant.then(|| Constant::Bool(self.shared.features.contains(self.c.atoms().bytes(flag))))
             }
             _ => None,
         }
     }
 
-    pub(crate) fn constant_of(&self, value: Primitive) -> Constant {
+    pub(crate) fn primitive_constant(&self, value: Primitive) -> Constant {
         match value {
             Primitive::Undefined => Constant::Undefined,
             Primitive::Null => Constant::Null,
@@ -211,41 +211,41 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// What a `const` of the program holds that a reference stands for: `Checker::constant_held_by`.
-    fn constant_named(&mut self, file: FileId, e: ExprId, name: Atom) -> Option<Constant> {
+    /// What a `const` of the program holds that a reference stands for: `Checker::const_value`.
+    fn const_binding_value(&mut self, file: FileId, e: ExprId, name: Atom) -> Option<Constant> {
         let found = self.c.symbol_of_identifier(file, e, name)?;
         let sym = self.value_symbol(found);
         // What it holds is known. Where it may not hold it yet, the reference is translated, and throws.
-        if self.c.may_be_in_dead_zone(sym, file, e) {
+        if self.c.may_be_in_tdz(sym, file, e) {
             return None;
         }
-        let sym = self.export_copied_by(sym).unwrap_or(sym);
-        if let Some(value) = self.c.constant_held_by(sym) {
-            return Some(self.constant_of(value));
+        let sym = self.copied_export(sym).unwrap_or(sym);
+        if let Some(value) = self.c.const_value(sym) {
+            return Some(self.primitive_constant(value));
         }
-        if let Some(known) = self.constants_by_replacement.get(&sym) {
+        if let Some(known) = self.constants_after_defines.get(&sym) {
             return known.clone();
         }
         // For one that is initialized with itself by way of another.
-        self.constants_by_replacement.insert(sym, None);
+        self.constants_after_defines.insert(sym, None);
         let (file, init) = self.c.initializer_of_const(sym)?;
-        let outer = std::mem::replace(&mut self.only_asks, true);
+        let outer = std::mem::replace(&mut self.is_query_only, true);
         let found = self.constant_in(file, init).filter(|value| value.is_primitive() && !matches!(value, Constant::String(text) if text.len() > 64));
-        self.only_asks = outer;
-        self.constants_by_replacement.insert(sym, found.clone());
+        self.is_query_only = outer;
+        self.constants_after_defines.insert(sym, found.clone());
         found
     }
 
     /// What the checker calls a constant expression.
-    fn constant_of_the_checker(&mut self, file: FileId, e: ExprId) -> Option<Constant> {
+    fn checker_constant(&mut self, file: FileId, e: ExprId) -> Option<Constant> {
         let value = self.c.constant_value_of(file, e)?;
-        Some(self.constant_of(value))
+        Some(self.primitive_constant(value))
     }
 
     pub(crate) fn is_chain_short_circuited(&mut self, fx: &mut Fx, e: ExprId) -> bool {
         let Some(ended_by) = self.files.short_circuiting_root(fx.file, e) else { return false };
         self.expr_unused(fx, ended_by);
-        if !self.only_asks {
+        if !self.is_query_only {
             let hir = self.hir(fx.file);
             self.cut.push((hir[ended_by].end, hir[e].end));
         }
@@ -268,27 +268,27 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 false => (test, no, yes),
             },
             ExprKind::Binary { op: op @ (hir::BinOp::And | hir::BinOp::Or | hir::BinOp::Nullish), left, right } => {
-                let takes_right = match op {
+                let picks_right = match op {
                     hir::BinOp::And => decision(left)?.is_truthy,
                     hir::BinOp::Or => !decision(left)?.is_truthy,
                     _ => decision(left)?.is_nullish?,
                 };
-                if takes_right { (left, right, ExprId::NONE) } else { (ExprId::NONE, left, right) }
+                if picks_right { (left, right, ExprId::NONE) } else { (ExprId::NONE, left, right) }
             }
             _ => return None,
         };
         if for_effect.is_some() {
             self.expr_unused(fx, for_effect);
         }
-        self.cut_expr(fx, cut);
-        Some(DecidedOperand { yields, is_left_of_cut: for_effect.is_none() })
+        self.mark_dead_expr(fx, cut);
+        Some(DecidedOperand { yields, is_cut_left: for_effect.is_none() })
     }
 
     /// Whether the expression always yields something truthy, or always something falsy, though it may have to be evaluated for what it does: `live && false`.
     pub(crate) fn known_truthiness(&mut self, fx: &Fx, e: ExprId) -> Option<bool> {
-        let outer = std::mem::replace(&mut self.only_asks, true);
+        let outer = std::mem::replace(&mut self.is_query_only, true);
         let found = self.known_truthiness_in(fx.file, e);
-        self.only_asks = outer;
+        self.is_query_only = outer;
         found
     }
 
@@ -328,23 +328,23 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             ExprKind::False => Some(Constant::Bool(false)),
             ExprKind::Number(index) => Some(Constant::Number(hir.numbers[index as usize])),
             ExprKind::String(value) => Some(Constant::String(self.c.atoms().bytes(value).to_vec())),
-            ExprKind::Ident(name) => (self.replacement_in(file, e))
-                .or_else(|| self.constant_named(file, e, name))
-                .or_else(|| (self.c.atoms().bytes(name) == b"undefined" && self.is_free_in(file, e, name)).then_some(Constant::Undefined)),
-            ExprKind::Dot { .. } | ExprKind::Call(_) => self.replacement_in(file, e).or_else(|| self.constant_of_the_checker(file, e)),
+            ExprKind::Ident(name) => (self.define_replacement(file, e))
+                .or_else(|| self.const_binding_value(file, e, name))
+                .or_else(|| (self.c.atoms().bytes(name) == b"undefined" && self.is_unbound_in(file, e, name)).then_some(Constant::Undefined)),
+            ExprKind::Dot { .. } | ExprKind::Call(_) => self.define_replacement(file, e).or_else(|| self.checker_constant(file, e)),
             ExprKind::Unary { op: hir::UnOp::Not, operand } => match self.constant_in(file, operand) {
                 Some(constant) => Some(Constant::Bool(!constant.is_truthy())),
                 None => {
                     let held = self.known_builtin_value(file, operand)?;
-                    self.cut_expr_in(file, operand);
+                    self.mark_dead_expr_in(file, operand);
                     Some(Constant::Bool(!held.is_truthy))
                 }
             },
             // `typeof NAME`, where the bundler replaces the name.
             ExprKind::Unary { op: hir::UnOp::Typeof, operand } if matches!(hir[operand].kind, ExprKind::Ident(_) | ExprKind::Dot { .. }) => {
-                let Some(replaced) = self.replacement_in(file, operand) else {
+                let Some(replaced) = self.define_replacement(file, operand) else {
                     let held = self.known_builtin_value(file, operand)?;
-                    self.cut_expr_in(file, operand);
+                    self.mark_dead_expr_in(file, operand);
                     return Some(Constant::String(held.type_of.as_bytes().to_vec()));
                 };
                 let kind: &[u8] = match replaced {
@@ -357,21 +357,21 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 Some(Constant::String(kind.to_vec()))
             }
             ExprKind::Binary { op, left, right } => {
-                if let Some(found) = self.replacement_in(file, e) {
+                if let Some(found) = self.define_replacement(file, e) {
                     return Some(found);
                 }
                 let a = self.constant_in(file, left)?;
                 match op {
                     hir::BinOp::And | hir::BinOp::Or | hir::BinOp::Nullish => {
-                        let takes_right = match op {
+                        let picks_right = match op {
                             hir::BinOp::And => a.is_truthy(),
                             hir::BinOp::Or => !a.is_truthy(),
                             _ => a.is_nullish(),
                         };
-                        if takes_right {
+                        if picks_right {
                             return self.constant_in(file, right);
                         }
-                        self.cut_expr_in(file, right);
+                        self.mark_dead_expr_in(file, right);
                         return Some(a);
                     }
                     _ => {}
@@ -406,15 +406,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                             _ => a >= b,
                         }))
                     }
-                    _ => self.constant_of_the_checker(file, e),
+                    _ => self.checker_constant(file, e),
                 }
             }
             ExprKind::Cond { test, yes, no } => {
                 let (taken, left_out) = if self.constant_in(file, test)?.is_truthy() { (yes, no) } else { (no, yes) };
-                self.cut_expr_in(file, left_out);
+                self.mark_dead_expr_in(file, left_out);
                 self.constant_in(file, taken)
             }
-            _ => self.constant_of_the_checker(file, e),
+            _ => self.checker_constant(file, e),
         }
     }
 }

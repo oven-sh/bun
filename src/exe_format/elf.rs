@@ -783,12 +783,12 @@ pub fn symbols_tail(
     let count = word(0)? as usize;
     let rows_end = count.checked_mul(12)?.checked_add(16)?;
     let rows = table.get(16..rows_end)?;
-    let names_of_symbols = table.get(rows_end..rows_end.checked_add(word(4)? as usize)?)?;
+    let symbol_names = table.get(rows_end..rows_end.checked_add(word(4)? as usize)?)?;
     let code = bun_address
         .checked_add(size_of::<u64>() as u64)?
         .checked_add(image_in_payload)?
         .checked_add(word(8)? as u64)?;
-    let bytes_of_code = word(12)? as u64;
+    let code_bytes = word(12)? as u64;
 
     let offset = align_up(file_size, 8);
     let place = |bytes: &mut Vec<u8>| -> u64 {
@@ -796,7 +796,7 @@ pub fn symbols_tail(
         offset + bytes.len() as u64
     };
     let mut bytes: Vec<u8> = Vec::with_capacity(
-        names.len() + names_of_symbols.len() + 24 * (count + 1) + headers.len() + 512,
+        names.len() + symbol_names.len() + 24 * (count + 1) + headers.len() + 512,
     );
 
     names.extend_from_slice(b".symtab\0.strtab\0.debug_frame\0.bun.pointer\0");
@@ -810,7 +810,7 @@ pub fn symbols_tail(
 
     let strtab_offset = place(&mut bytes);
     bytes.push(0);
-    bytes.extend_from_slice(names_of_symbols);
+    bytes.extend_from_slice(symbol_names);
 
     let symtab_offset = place(&mut bytes);
     bytes.extend_from_slice(&[0u8; 24]);
@@ -847,7 +847,7 @@ pub fn symbols_tail(
     bytes.extend_from_slice(&20u32.to_le_bytes());
     bytes.extend_from_slice(&0u32.to_le_bytes());
     bytes.extend_from_slice(&code.to_le_bytes());
-    bytes.extend_from_slice(&bytes_of_code.to_le_bytes());
+    bytes.extend_from_slice(&code_bytes.to_le_bytes());
 
     let section_headers_offset = place(&mut bytes);
     bytes.extend_from_slice(&headers);
@@ -858,7 +858,7 @@ pub fn symbols_tail(
             sh_flags: 0,
             sh_addr: 0,
             sh_offset: strtab_offset,
-            sh_size: 1 + names_of_symbols.len() as u64,
+            sh_size: 1 + symbol_names.len() as u64,
             sh_link: 0,
             sh_info: 0,
             sh_addralign: 1,

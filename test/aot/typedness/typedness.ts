@@ -15,7 +15,7 @@ export type Typedness = { line: string; types: string[] };
 
 /** `types`: the ten named types that most properties are read through, each closed or open, and the declared types that are given. */
 export async function typednessOf(entryPoint: string): Promise<Typedness> {
-  const checked = await spawned([bunExe(), "check", "--aot", "--aot-explain=given", "--aot-explain=alterations", "--aot-explain=foreign", entryPoint], dirname(entryPoint), bunEnv);
+  const checked = await spawned([bunExe(), "check", "--aot", "--aot-explain=given", "--aot-explain=mutations", "--aot-explain=foreign", entryPoint], dirname(entryPoint), bunEnv);
   const said = checked.stdout + checked.stderr;
   const facts = /^aot: given: facts: (\d+) of (\d+) \([^)]*\) of the places, (\d+) of (\d+) /m.exec(said);
   if (checked.signal) return { line: `signal ${checked.signal}`, types: [] };
@@ -27,7 +27,7 @@ export async function typednessOf(entryPoint: string): Promise<Typedness> {
     line: `${layouts} layouts, ${given} given, ${open} open, places ${facts[1]} of ${facts[2]}, reads ${facts[3]} of ${facts[4]}`,
     types: [
       ...[...said.matchAll(/^aot: given: read through: (.*): (\d+) reads: (closed|open)$/gm)].map(([, name, reads, state]) => `${name}: ${state}, ${reads} reads`),
-      ...[...said.matchAll(/^aot: alterations: given: where: by what it is: (.*)$/gm)].map(([, name]) => `${name}: given`),
+      ...[...said.matchAll(/^aot: mutations: given: where: by what it is: (.*)$/gm)].map(([, name]) => `${name}: given`),
     ],
   };
 }

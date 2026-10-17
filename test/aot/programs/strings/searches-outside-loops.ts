@@ -1,19 +1,19 @@
 // `startsWith`, `endsWith`, `includes`, `indexOf` and `lastIndexOf` inside and outside loops.
-// CALLS- starts5L StringStartsWithText
-// CALLS- ends5L StringEndsWithText
+// CALLS- starts5L StringStartsWithLiteral
+// CALLS- ends5L StringEndsWithLiteral
 // CALLS+ indexOfTextL operationAOTTypedStringFind8
-// CALLS- indexOfTextL operationAOTTypedStringIndexOfText
+// CALLS- indexOfTextL operationAOTTypedStringIndexOfLiteral
 // CALLS+ indexOfCharacterL operationAOTTypedStringFindCharacter8
 // CALLS+ lastIndexOfTextL operationAOTTypedStringReverseFind8
 // CALLS+ lastIndexOfCharacterL operationAOTTypedStringReverseFindCharacter8
 // Outside a loop the sites of one method that look for the same text share one body, which holds the text and so goes by the operation for a text that is known, and a site is a short call of it. A site that is the only one with its text stays in place.
-// CALLS+ starts5 StringStartsWithText
+// CALLS+ starts5 StringStartsWithLiteral
 // CALLS- starts5 CallHostFunction|CallMethod|CallValue|f:;
 // SIZE< starts5 240
-// CALLS+ ends5 StringEndsWithText
+// CALLS+ ends5 StringEndsWithLiteral
 // CALLS- ends5 CallHostFunction|CallMethod|CallValue|f:;
 // SIZE< ends5 240
-// CALLS+ includesText operationAOTTypedStringFindText8
+// CALLS+ includesText operationAOTTypedStringFindLiteral8
 // CALLS- includesText CallHostFunction|CallMethod|CallValue
 // CALLS+ includesText f:;
 // SIZE< includesText 80
@@ -21,18 +21,18 @@
 // CALLS- indexOfCharacter CallHostFunction|CallMethod|CallValue
 // CALLS+ indexOfCharacter f:;
 // SIZE< indexOfCharacter 80
-// CALLS+ indexOfText operationAOTTypedStringFindText8
+// CALLS+ indexOfText operationAOTTypedStringFindLiteral8
 // CALLS- indexOfText CallHostFunction|CallMethod|CallValue
 // CALLS+ indexOfText f:;
 // SIZE< indexOfText 80
-// CALLS+ lastIndexOfText operationAOTTypedStringReverseFindText8
+// CALLS+ lastIndexOfText operationAOTTypedStringReverseFindLiteral8
 // CALLS- lastIndexOfText CallHostFunction|CallMethod|CallValue
 // CALLS+ lastIndexOfText f:;
 // SIZE< lastIndexOfText 80
-// CALLS- indexOfString operationAOTTypedStringIndexOfText
-// CALLS- startsInLoop StringStartsWithText
-// CALLS- startsAt StringStartsWithText
-// CALLS- startsAccented StringStartsWithText
+// CALLS- indexOfString operationAOTTypedStringIndexOfLiteral
+// CALLS- startsInLoop StringStartsWithLiteral
+// CALLS- startsAt StringStartsWithLiteral
+// CALLS- startsAccented StringStartsWithLiteral
 const print = (s: string) => console.log(s);
 function show(x: unknown): string {
     if (typeof x !== "string")

@@ -60,12 +60,12 @@ impl Program<'_> {
     /// The files whose trees are not what their texts say: the parser has reported an error and gone on, or it or the binder has run
     /// out of stack. For `Request::after_file`: nothing is made of such a tree, nor of a file that may look into one. It holds from
     /// when the program is loaded. Not every such file is reported: one that is only code is not checked.
-    pub fn files_without_whole_trees(&self) -> Vec<FileId> {
+    pub fn partially_parsed_files(&self) -> Vec<FileId> {
         (self.files.modules.iter().enumerate())
             .filter(|(_, module)| {
                 let mut reported = module.hir.diagnostics.iter().filter(|found| found.kind == crate::hir::DiagnosticKind::Parse).peekable();
-                let is_what_its_text_says = module.hir.is_js && reported.peek().is_some() && reported.all(|found| matches!(found.code, 18030 | 1121 | 1487 | 1488 | 1489) || crate::hir::is_in_comment(&module.hir, found.start));
-                module.hir.has_parse_diagnostics && !is_what_its_text_says || module.hir.has_errors || module.hir.ran_out_of_stack
+                let matches_source = module.hir.is_js && reported.peek().is_some() && reported.all(|found| matches!(found.code, 18030 | 1121 | 1487 | 1488 | 1489) || crate::hir::is_in_comment(&module.hir, found.start));
+                module.hir.has_parse_diagnostics && !matches_source || module.hir.has_errors || module.hir.ran_out_of_stack
             })
             .map(|(i, _)| FileId(i as u32))
             .collect()
@@ -425,7 +425,7 @@ impl Checker<'_, '_> {
         if !self.is_plain_js(d.file) {
             d.directive = directives.preceding(d.file, hir, d.start);
         } else if errors_js::PLAIN_JS_ERRORS.binary_search(&d.code).is_err()
-            || self.files().options.one_name_is_one_binding && matches!(d.code, 1100..=1102 | 1210 | 1212 | 1214 | 1215) && self.is_sloppy_function(d.file, FnId::NONE)
+            || self.files().options.uses_ecmascript_bindings && matches!(d.code, 1100..=1102 | 1210 | 1212 | 1214 | 1215) && self.is_sloppy_function(d.file, FnId::NONE)
         {
             return None;
         }
@@ -437,8 +437,8 @@ impl Checker<'_, '_> {
     /// Reports the HIR diagnostics of `file` whose kind is in `kinds`.
     fn report_hir_diagnostics(&mut self, file: FileId, kinds: &[DiagnosticKind]) {
         let diagnostics = self.hir(file).diagnostics.iter();
-        let is_left_to_the_bundler = self.files().options.one_name_is_one_binding && self.hir(file).is_js;
-        let diagnostics = diagnostics.filter(|d| kinds.contains(&d.kind) && !(is_left_to_the_bundler && d.kind == DiagnosticKind::Parse && matches!(d.code, 18030 | 1121 | 1487 | 1488 | 1489)));
+        let is_deferred_to_bundler = self.files().options.uses_ecmascript_bindings && self.hir(file).is_js;
+        let diagnostics = diagnostics.filter(|d| kinds.contains(&d.kind) && !(is_deferred_to_bundler && d.kind == DiagnosticKind::Parse && matches!(d.code, 18030 | 1121 | 1487 | 1488 | 1489)));
         self.reported
             .extend(diagnostics.map(|d| Reported::from_hir(file, d)));
     }
@@ -1903,6 +1903,9 @@ impl Checker<'_, '_> {
         if let Some(&lib) = SUGGESTED_LIBS.get(self.atoms().bytes(name)) {
             let args = [declaration_name, Arg::Bytes(lib)];
             return self.new_diagnostic(at, name_not_found_message, &args);
+        }
+        if self.is_after_check() {
+            return self.new_diagnostic(at, name_not_found_message, &[declaration_name]);
         }
         // `getSuggestedSymbolForNonexistentSymbol`
         let Some((suggestion, leads_to_export)) =

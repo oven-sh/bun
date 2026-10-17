@@ -2,30 +2,29 @@
 //!
 //! The type `Class(a)` stands for every subtype of `a`. A value of that type may reach a place of type `Class(b)` untested only if every
 //! subtype of `a` is a subtype of `b`. The closure sees to that for each upcast it is told of, so an upcast that nobody noted shows here.
-//! The engine's verifier makes the same comparison (`Type::isWithin`), after the build.
+//! The engine's verifier makes the same comparison (`Type::isSubsetOf`), after the build.
 
 use crate::declared::Part;
 use crate::id::{LayoutId, TyId};
 use crate::id::V;
-use crate::ir::{Func, Op, Program, Target, Term, Why, func_flags};
+use crate::ir::{Func, Op, Program, Target, Term, CoerceReason, func_flags};
 use bun_sema::util::{InParallel, for_each_mut};
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::borrow::Cow;
 
 /// The values of the block that are used, untested, as of a type that is given, each with that type and what it is used as.
-fn uses_in(program: &Program, func: &Func, block: usize, uses: &mut Vec<(V, TyId, &'static str)>) {
-    uses.clear();
+fn for_each_typed_use(program: &Program, func: &Func, block: usize, each: &mut impl FnMut(V, TyId, &'static str)) {
     for &v in &func.blocks[block].ops {
         match func.op(v) {
-            Some(&Op::Coerce { value, to, why: Why::Upcast }) => uses.push((value, to, "the operand of an upcast")),
-            Some(&Op::FieldSet { layout, field, value, .. }) => uses.push((value, program.layouts[layout.idx()].fields[field as usize].declared, "the value stored to a field")),
-            Some(&Op::GlobalSet(variable, value)) => uses.push((value, program.globals[variable.idx()].declared, "the value stored to a module variable")),
+            Some(&Op::Coerce { value, to, why: CoerceReason::Upcast }) => each(value, to, "the operand of an upcast"),
+            Some(&Op::FieldSet { layout, field, value, .. }) => each(value, program.layouts[layout.idx()].fields[field as usize].declared, "the value stored to a field"),
+            Some(&Op::GlobalSet(variable, value)) => each(value, program.globals[variable.idx()].declared, "the value stored to a module variable"),
             Some(Op::CallDirect { func: callee, args }) => {
                 let callee = &program.funcs[callee.idx()];
-                let receiver = callee.has(func_flags::HAS_THIS).then_some((callee.this_declared, "the receiver of a direct call"));
+                let receiver = callee.has(func_flags::HAS_THIS).then_some((callee.declared_this_type, "the receiver of a direct call"));
                 let wanted = (callee.captures.iter().map(|&ty| (ty, "a capture of a direct call"))).chain(receiver).chain(callee.params.iter().map(|&ty| (ty, "an argument of a direct call")));
-                uses.extend(args.iter().zip(wanted).map(|(&argument, (ty, what))| (argument, ty, what)));
+                args.iter().zip(wanted).for_each(|(&argument, (ty, what))| each(argument, ty, what));
             }
             _ => {}
         }
@@ -34,10 +33,10 @@ fn uses_in(program: &Program, func: &Func, block: usize, uses: &mut Vec<(V, TyId
     if let Some(&Term::Return(value)) = func.blocks[block].term.as_ref()
         && !func.has(func_flags::ASYNC | func_flags::GENERATOR)
     {
-        uses.push((value, func.result, "the result"));
+        each(value, func.result, "the result");
     }
-    for target in targets_of(func.blocks[block].term.as_ref()) {
-        uses.extend(target.args.iter().zip(&func.blocks[target.block.idx()].params).map(|(&argument, &parameter)| (argument, func.ty(parameter), "the argument for a block parameter")));
+    if let Some(term) = &func.blocks[block].term {
+        term.for_each_target(|target| target.args.iter().zip(&func.blocks[target.block.idx()].params).for_each(|(&argument, &parameter)| each(argument, func.ty(parameter), "the argument for a block parameter")));
     }
 }
 
@@ -49,7 +48,7 @@ pub(crate) struct UnsoundUse {
 }
 
 /// How many functions a task looks at.
-const FUNCTIONS_OF_A_TASK: usize = 1024;
+const FUNCTIONS_PER_TASK: usize = 1024;
 
 /// The first of them, at most `most`, each pair of types once, in the order of the program.
 pub(crate) fn unsound_uses(program: &Program, most: usize, in_parallel: InParallel<'_>) -> Vec<UnsoundUse> {
@@ -63,23 +62,33 @@ pub(crate) fn unsound_uses(program: &Program, most: usize, in_parallel: InParall
             Cow::Owned(sorted)
         })
         .collect();
-    let mut slices: Vec<(usize, Vec<UnsoundUse>)> = (0..program.funcs.len()).step_by(FUNCTIONS_OF_A_TASK).map(|first| (first, Vec::new())).collect();
+    let mut slices: Vec<(usize, Vec<UnsoundUse>)> = (0..program.funcs.len()).step_by(FUNCTIONS_PER_TASK).map(|first| (first, Vec::new())).collect();
     for_each_mut(&mut slices, in_parallel, &|(first, found)| {
-        let mut is_sound: FxHashMap<(TyId, TyId), bool> = FxHashMap::default();
-        let (mut is_reached, mut worklist, mut uses) = (Vec::new(), Vec::new(), Vec::new());
-        for (index, func) in program.funcs.iter().enumerate().skip(*first).take(FUNCTIONS_OF_A_TASK) {
-            find_reachable_blocks(func, &mut is_reached, &mut worklist);
-            for block in (0..func.blocks.len()).filter(|&block| is_reached[block]) {
-                uses_in(program, func, block, &mut uses);
-                // `return;`, a receiver that is not there.
-                for &(argument, want, what) in uses.iter().filter(|used| used.0.is_some()) {
-                    let have = func.ty(argument);
-                    if have == want || have.is_none() || want.is_none() || is_sound.contains_key(&(have, want)) {
-                        continue;
+        let mut is_settled: FxHashMap<(TyId, TyId), bool> = FxHashMap::default();
+        let (mut is_reached, mut worklist) = (Vec::new(), Vec::new());
+        for (index, func) in program.funcs.iter().enumerate().skip(*first).take(FUNCTIONS_PER_TASK) {
+            let mut has_reachability = false;
+            for block in 0..func.blocks.len() {
+                for_each_typed_use(program, func, block, &mut |argument, want, what| {
+                    // `return;`, a receiver that is not there.
+                    if argument.is_none() || found.len() == most {
+                        return;
                     }
-                    let lost = lost_subtype(program, &subtypes, have, want);
-                    is_sound.insert((have, want), lost.is_none());
-                    let Some((sub, lost)) = lost else { continue };
+                    let have = func.ty(argument);
+                    if have == want || have.is_none() || want.is_none() || is_settled.get(&(have, want)) == Some(&true) {
+                        return;
+                    }
+                    let Some((sub, lost)) = lost_subtype(program, &subtypes, have, want) else {
+                        is_settled.insert((have, want), true);
+                        return;
+                    };
+                    if !std::mem::replace(&mut has_reachability, true) {
+                        find_reachable_blocks(func, &mut is_reached, &mut worklist);
+                    }
+                    is_settled.insert((have, want), is_reached[block]);
+                    if !is_reached[block] {
+                        return;
+                    }
                     let supertypes: Vec<String> = layouts_in(program, want).map(|layout| name_of(program, layout)).collect();
                     let function = bstr::BStr::new(if func.name.is_none() { b"".as_slice() } else { program.strs.get(func.name) });
                     let what = format!(
@@ -89,10 +98,10 @@ pub(crate) fn unsound_uses(program: &Program, most: usize, in_parallel: InParall
                         if lost == sub { "it".to_owned() } else { format!("its subtype {}", name_of(program, lost)) },
                     );
                     found.push(UnsoundUse { what, types: (have, want) });
-                    if found.len() == most {
-                        return;
-                    }
-                }
+                });
+            }
+            if found.len() == most {
+                return;
             }
         }
     });
@@ -103,12 +112,12 @@ pub(crate) fn unsound_uses(program: &Program, most: usize, in_parallel: InParall
 /// A layout of `have` and the first of its subtypes that no layout of `want` has along with all the others.
 fn lost_subtype(program: &Program, subtypes: &[Cow<'_, [LayoutId]>], have: TyId, want: TyId) -> Option<(LayoutId, LayoutId)> {
     // Any object is within either.
-    if program.tys.get(want).any_object || layouts_in(program, want).any(|sup| program.layouts[sup.idx()].admits_foreign) {
+    if program.tys.get(want).any_object || layouts_in(program, want).any(|sup| program.layouts[sup.idx()].accepts_untyped) {
         return None;
     }
     for sub in layouts_in(program, have) {
         let is_subset_of = |sup: LayoutId| subtypes[sub.idx()].iter().all(|layout| subtypes[sup.idx()].binary_search(layout).is_ok());
-        if layouts_in(program, want).any(|sup| sup == sub || !program.layouts[sub.idx()].admits_foreign && is_subset_of(sup)) {
+        if layouts_in(program, want).any(|sup| sup == sub || !program.layouts[sub.idx()].accepts_untyped && is_subset_of(sup)) {
             continue;
         }
         let lost = layouts_in(program, want).next().and_then(|sup| subtypes[sub.idx()].iter().find(|layout| subtypes[sup.idx()].binary_search(layout).is_err()));

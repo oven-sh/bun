@@ -8,9 +8,9 @@ import { test } from "./supported";
 const programs = join(import.meta.dir, "programs");
 
 test.concurrent.each([
-  "arrays/reading-an-element-that-is-a-getter",
-  "arrays/reading-an-element-that-is-a-getter-says-why",
-  "arrays/reading-an-element-that-is-a-getter-where-undefined-is-allowed",
+  "arrays/element-getter-read",
+  "arrays/element-getter-read-message",
+  "arrays/element-getter-read-optional",
   "type-rules/out-of-bounds-array-reads",
 ])("%s", async name => {
   const file = existsSync(join(programs, name + ".ts")) ? join(programs, name + ".ts") : join(programs, name, "main.ts");

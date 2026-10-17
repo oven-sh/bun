@@ -262,7 +262,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) has_top_level_return: bool,
     pub(crate) latest_return_had_semicolon: bool,
     pub(crate) has_import_meta: bool,
-    pub(crate) is_es_module_by_its_own_syntax: bool,
+    pub(crate) has_esm_syntax: bool,
     pub(crate) has_es_module_syntax: bool,
     pub(crate) top_level_await_keyword: bun_ast::Range,
     pub(crate) fn_or_arrow_data_parse: FnOrArrowDataParse,
@@ -306,7 +306,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) create_require_refs: Vec<Ref>,
     pub(crate) node_module_refs: Vec<Ref>,
     pub(crate) own_require_refs: Vec<Ref>,
-    pub(crate) calls_of_identifiers_with_one_argument: Vec<(Ref, Expr)>,
+    pub(crate) single_argument_identifier_calls: Vec<(Ref, Expr)>,
     /// Set to true when visiting an if/ternary condition. feature() calls are only valid in this context.
     pub(crate) in_branch_condition: bool,
 
@@ -2227,7 +2227,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Run-time TypeError per spec; only hard-error when bundling (scope hoisting would hide it).
         if self.options.bundle
-            && !self.options.leaves_assignments_to_imports_to_run_time
+            && !self.options.defers_import_assignment_errors
             && (opts.assign_target() != js_ast::AssignTarget::None || opts.is_delete_target())
             && self.symbols[ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Import
         {
@@ -5676,14 +5676,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut part_stmts = bun_alloc::vec_from_iter_in(stmts.iter().copied(), arena);
 
         let was_after_jump = self.is_after_jump;
-        let declares_functions_alone = stmts.iter().all(|stmt| match stmt.data {
+        let declares_only_functions = stmts.iter().all(|stmt| match stmt.data {
             js_ast::StmtData::SFunction(_) => true,
             js_ast::StmtData::SExportDefault(default) => {
                 matches!(&default.value, js_ast::StmtOrExpr::Stmt(value) if matches!(value.data, js_ast::StmtData::SFunction(_)))
             }
             _ => false,
         });
-        if declares_functions_alone {
+        if declares_only_functions {
             self.is_after_jump = false;
         }
         self.visit_stmts_and_prepend_temp_refs(&mut part_stmts, &mut opts)?;
@@ -9572,7 +9572,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             commonjs_named_exports: core::mem::take(&mut self.commonjs_named_exports),
             has_commonjs_export_names: self.has_commonjs_export_names,
             has_import_meta: self.has_import_meta,
-            is_es_module_by_its_own_syntax: self.is_es_module_by_its_own_syntax,
+            has_esm_syntax: self.has_esm_syntax,
 
             hashbang: hashbang.into(),
             export_default_alias_of_import: self.export_default_alias_of_import,
@@ -9892,7 +9892,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_top_level_return: false,
             latest_return_had_semicolon: false,
             has_import_meta: false,
-            is_es_module_by_its_own_syntax: false,
+            has_esm_syntax: false,
             has_es_module_syntax: false,
             top_level_await_keyword: bun_ast::Range::NONE,
             fn_or_arrow_data_parse,
@@ -9917,7 +9917,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             create_require_refs: Vec::new(),
             node_module_refs: Vec::new(),
             own_require_refs: Vec::new(),
-            calls_of_identifiers_with_one_argument: Vec::new(),
+            single_argument_identifier_calls: Vec::new(),
             in_branch_condition: false,
             has_classic_runtime_warned: false,
             macro_call_count: 0,

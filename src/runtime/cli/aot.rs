@@ -4,7 +4,7 @@ use bun_options_types::compile_target::CompileTarget;
 
 use crate::cli::command::ContextData;
 
-pub(crate) fn why_unsupported(target: &CompileTarget) -> Option<&'static str> {
+pub(crate) fn unsupported_reason(target: &CompileTarget) -> Option<&'static str> {
     unsafe extern "C" {
         safe fn Bun__AOT__hasCompiler() -> bool;
     }
@@ -71,7 +71,7 @@ fn stamp_of(executable: &[u8]) -> Result<Vec<u8>, &'static [u8]> {
 
 pub(crate) fn why_cannot_be_carried(target: &CompileTarget, env: &mut bun_dotenv::Loader, executable_path: Option<&[u8]>) -> Option<Vec<u8>> {
     use bun_standalone_graph::StandaloneModuleGraph::{target_builtins, target_executable};
-    if let Some(why) = why_unsupported(target) {
+    if let Some(why) = unsupported_reason(target) {
         return Some(why.as_bytes().to_vec());
     }
     if executable_path.is_none() && target.is_default() {
@@ -159,12 +159,12 @@ pub(crate) fn is_only_comments(mut text: &[u8]) -> bool {
     }
 }
 
-const FLAGS_OF_BUILD: [&[u8]; 4] = [b"--aot", b"--aot-explain", b"--aot-huge-heap", b"--aot-type-errors"];
-const FLAGS_OF_RUN: [&[u8]; 4] = [b"--aot", b"--aot-audit", b"--aot-huge-heap", b"--aot-type-errors"];
-const INTERNAL_FLAGS_OF_RUN: [&[u8]; 3] = [b"--aot-decode-crash-report", b"--aot-graph-fd", b"--aot-stamp"];
-const INTERNAL_FLAGS_OF_BOTH: [&[u8]; 1] = [b"--aot-crash-if-interpreter-is-used"];
-pub(crate) const OPTIONS_OF_COMPILE: [&[u8]; 3] = [b"aot", b"aotExplain", b"aotTypeErrors"];
-pub(crate) const INTERNAL_OPTIONS_OF_COMPILE: [&[u8]; 1] = [b"aotCrashIfInterpreterIsUsed"];
+const BUILD_FLAGS: [&[u8]; 4] = [b"--aot", b"--aot-explain", b"--aot-huge-heap", b"--aot-type-errors"];
+const RUN_FLAGS: [&[u8]; 4] = [b"--aot", b"--aot-audit", b"--aot-huge-heap", b"--aot-type-errors"];
+const RUN_INTERNAL_FLAGS: [&[u8]; 3] = [b"--aot-decode-crash-report", b"--aot-graph-fd", b"--aot-stamp"];
+const SHARED_INTERNAL_FLAGS: [&[u8]; 1] = [b"--aot-crash-if-interpreter-is-used"];
+pub(crate) const COMPILE_OPTIONS: [&[u8]; 3] = [b"aot", b"aotExplain", b"aotTypeErrors"];
+pub(crate) const COMPILE_INTERNAL_OPTIONS: [&[u8]; 1] = [b"aotCrashIfInterpreterIsUsed"];
 
 pub(crate) fn did_you_mean(prefix: &str, known: &[&[u8]], written: &[u8]) -> String {
     let distance = |name: &[u8]| bun_core::strings::edit_distance(written.iter().copied(), name);
@@ -175,11 +175,11 @@ pub(crate) fn did_you_mean(prefix: &str, known: &[&[u8]], written: &[u8]) -> Str
     }
 }
 
-pub(crate) fn refuse_unknown_flags(is_build: bool, passed_through: usize) {
+pub(crate) fn reject_unknown_flags(is_build: bool, passed_through: usize) {
     let (known, of_others, others) = if is_build {
-        (FLAGS_OF_BUILD, FLAGS_OF_RUN, "bun run and bun test")
+        (BUILD_FLAGS, RUN_FLAGS, "bun run and bun test")
     } else {
-        (FLAGS_OF_RUN, FLAGS_OF_BUILD, "bun build")
+        (RUN_FLAGS, BUILD_FLAGS, "bun build")
     };
     let end_of_options = bun_core::argv().len().saturating_sub(passed_through);
     for (index, arg) in bun_core::argv().iter().enumerate().take(end_of_options).skip(1) {
@@ -188,15 +188,15 @@ pub(crate) fn refuse_unknown_flags(is_build: bool, passed_through: usize) {
             break;
         }
         let name = bun_core::strings::split(arg, b"=").next().unwrap_or(arg);
-        if !name.starts_with(b"--aot") || known.contains(&name) || INTERNAL_FLAGS_OF_BOTH.contains(&name) || (!is_build && INTERNAL_FLAGS_OF_RUN.contains(&name)) {
+        if !name.starts_with(b"--aot") || known.contains(&name) || SHARED_INTERNAL_FLAGS.contains(&name) || (!is_build && RUN_INTERNAL_FLAGS.contains(&name)) {
             continue;
         }
-        let is_of_others = of_others.contains(&name);
-        if is_of_others && index <= bun_core::bun_options_argc() {
+        let is_other_command_flag = of_others.contains(&name);
+        if is_other_command_flag && index <= bun_core::bun_options_argc() {
             continue;
         }
         let list = known.join(&b", "[..]);
-        if is_of_others {
+        if is_other_command_flag {
             pretty_errorln!(
                 "<r><red>error<r>: <b>{}<r> is only valid with {}. The --aot flags available here are {}",
                 bstr::BStr::new(name),
@@ -217,7 +217,7 @@ pub(crate) fn refuse_unknown_flags(is_build: bool, passed_through: usize) {
 
 #[cfg(unix)]
 pub(crate) fn exec_build(ctx: &ContextData, entry_points: &[&[u8]], for_tests: bool) -> ! {
-    if let Some(why) = why_unsupported(&CompileTarget::default()) {
+    if let Some(why) = unsupported_reason(&CompileTarget::default()) {
         pretty_errorln!("<r><red>error<r>: <b>--aot<r>: {}", why);
         Global::exit(1);
     }
@@ -361,15 +361,15 @@ pub(crate) fn exec_build(ctx: &ContextData, entry_points: &[&[u8]], for_tests: b
 
     let mut has_replaced_option = false;
     let end_of_options = bun_core::argv().len().saturating_sub(ctx.passthrough.len());
-    let mut is_value_of_cwd = false;
+    let mut is_cwd_value = false;
     for (index, arg) in bun_core::argv()
         .iter()
         .enumerate()
         .skip(1 + bun_core::bun_options_argc())
     {
         let arg: &[u8] = arg;
-        if index < end_of_options && (is_value_of_cwd || arg == b"--cwd" || arg.starts_with(b"--cwd=")) {
-            is_value_of_cwd = !is_value_of_cwd && arg == b"--cwd";
+        if index < end_of_options && (is_cwd_value || arg == b"--cwd" || arg.starts_with(b"--cwd=")) {
+            is_cwd_value = !is_cwd_value && arg == b"--cwd";
             continue;
         }
         if !has_replaced_option && (arg == b"--aot" || arg == b"--debug-aot") {

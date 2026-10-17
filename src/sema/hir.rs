@@ -1092,7 +1092,7 @@ pub mod rare {
     /// A list of variable declarations is empty or declares with `using`, a `const` or a pattern in it has no initializer and
     /// isn't ambient, or the head of a `for-in` / `for-of` doesn't declare exactly one variable.
     pub const ODD_DECLARATION: u32 = 1 << 26;
-    pub const TYPESCRIPT_UNDER_A_JAVASCRIPT_NAME: u32 = 1 << 27;
+    pub const TYPESCRIPT_WITH_JS_EXTENSION: u32 = 1 << 27;
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -2378,7 +2378,7 @@ pub const fn mention_bit_of(words: [u64; 2], len: usize) -> u32 {
 impl<S: Storage> FileIn<S> {
     #[inline]
     pub fn is_annotated_javascript(&self) -> bool {
-        self.rare_syntax & rare::TYPESCRIPT_UNDER_A_JAVASCRIPT_NAME != 0
+        self.rare_syntax & rare::TYPESCRIPT_WITH_JS_EXTENSION != 0
     }
     /// `node.Modifiers()` of the parameter `p`: keywords and decorators, in source order.
     #[inline]
@@ -2558,7 +2558,7 @@ impl<S: Storage> FileIn<S> {
         T::from(self.ids[list.start as usize + i])
     }
 
-    pub fn names_import_meta(&self) -> bool {
+    pub fn references_import_meta(&self) -> bool {
         self.exprs.iter().any(|e| matches!(e.kind, ExprKind::ImportMeta))
     }
 
@@ -2571,10 +2571,10 @@ impl<S: Storage> FileIn<S> {
         }
     }
 
-    pub fn choice_of_specifiers(&self, e: ExprId, found: &mut Vec<Atom>) -> bool {
+    pub fn specifier_choices(&self, e: ExprId, found: &mut Vec<Atom>) -> bool {
         match self[e].kind {
             ExprKind::Cond { yes, no, .. } => {
-                self.choice_of_specifiers(yes, found) && self.choice_of_specifiers(no, found)
+                self.specifier_choices(yes, found) && self.specifier_choices(no, found)
             }
             _ => match self.constant_specifier(e) {
                 Some(text) => {
@@ -2586,7 +2586,7 @@ impl<S: Storage> FileIn<S> {
         }
     }
 
-    pub fn is_written_as_require(&self, callee: ExprId) -> bool {
+    pub fn is_require_callee(&self, callee: ExprId) -> bool {
         use crate::atom::known;
         match self[callee].kind {
             ExprKind::Ident(known::require) => true,
@@ -2600,19 +2600,19 @@ impl<S: Storage> FileIn<S> {
         }
     }
 
-    pub fn specifiers_of_folded_require(&self, e: ExprId) -> Vec<Atom> {
+    pub fn folded_require_specifiers(&self, e: ExprId) -> Vec<Atom> {
         let ExprKind::Call(call) = self[e].kind else {
             return Vec::new();
         };
-        if self[call].args.len() != 1 || !self.is_written_as_require(self[call].callee) {
+        if self[call].args.len() != 1 || !self.is_require_callee(self[call].callee) {
             return Vec::new();
         }
-        self.folded_choice_of_specifiers(self.id_at(self[call].args, 0))
+        self.folded_specifier_choices(self.id_at(self[call].args, 0))
     }
 
-    pub fn folded_choice_of_specifiers(&self, e: ExprId) -> Vec<Atom> {
+    pub fn folded_specifier_choices(&self, e: ExprId) -> Vec<Atom> {
         let mut found = Vec::new();
-        if matches!(self[e].kind, ExprKind::String(_)) || !self.choice_of_specifiers(e, &mut found)
+        if matches!(self[e].kind, ExprKind::String(_)) || !self.specifier_choices(e, &mut found)
         {
             found.clear();
         }
@@ -3008,7 +3008,7 @@ pub fn is_private_name_at(hir: &File, pos: u32) -> bool {
 }
 
 #[inline]
-pub fn is_written_in_brackets(hir: &File, name_pos: u32) -> bool {
+pub fn is_bracket_access(hir: &File, name_pos: u32) -> bool {
     matches!(hir.text.get(name_pos as usize), Some(b'"' | b'\'' | b'`'))
 }
 

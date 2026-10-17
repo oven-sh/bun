@@ -51,6 +51,6 @@ console.log(snapshot, current(), counter.default, counter.current())
 console.log(typeof crypto2, crypto2 === (globalThis as any).Reflect, hasSubtle)
 console.log(fn(), named(), fn === named)
 
-// The deleted field is optional. `delete` of a required field: type-rules/delete-of-an-optional-field.
+// The deleted field is optional. `delete` of a required field: type-rules/delete-optional-field.
 const o: any = { a: { b: 1, c: 2 } as { b?: number; c?: number }, n: null }
 console.log(delete o.a?.b, delete o.n?.b, delete o.missing?.["x"], delete o.a?.["c"], JSON.stringify(o), delete (o as any).a, JSON.stringify(o))

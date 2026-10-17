@@ -64,7 +64,7 @@ JS_EXPORT_PRIVATE uint64_t imageStamp();
 #include <wtf/PageBlock.h>
 
 static thread_local JSC::AuditSites* s_pendingAuditSites = nullptr;
-static thread_local size_t s_lengthOfSourceOfPendingAuditSites = 0;
+static thread_local size_t s_pendingAuditSitesSourceLength = 0;
 
 namespace Zig {
 
@@ -188,7 +188,7 @@ Ref<SourceProvider> SourceProvider::create(
 
     if (s_pendingAuditSites) [[unlikely]] {
         RefPtr<JSC::AuditSites> sites = adoptRef(std::exchange(s_pendingAuditSites, nullptr));
-        if (provider->source().length() == s_lengthOfSourceOfPendingAuditSites)
+        if (provider->source().length() == s_pendingAuditSitesSourceLength)
             provider->setAuditSites(WTF::move(sites));
     }
 
@@ -262,7 +262,7 @@ extern "C" void Bun__destroyBytecodeCacheVM()
     vm->derefSuppressingSaferCPPChecking();
 }
 
-extern "C" bool Bun__checkSyntaxOfModuleText(const BunString* sourceURL, const BunString* text, bool isModule, BunString* message, uint32_t* offset)
+extern "C" bool Bun__checkModuleSyntax(const BunString* sourceURL, const BunString* text, bool isModule, BunString* message, uint32_t* offset)
 {
     JSC::VM& vm = vmForBytecodeCache();
     JSC::JSLockHolder locker(vm);
@@ -543,15 +543,15 @@ static std::optional<off_t> offsetInExecutableFile(const void* address)
 }
 #endif
 
-extern "C" bool Bun__AOT__textOfFunctionInFile(JSC::JSGlobalObject*, const BunString* path, uint32_t place, BunString* text);
+extern "C" bool Bun__AOT__functionSourceInFile(JSC::JSGlobalObject*, const BunString* path, uint32_t place, BunString* text);
 
 extern "C" void Bun__AOT__setImageCodec()
 {
 #if ENABLE(AOT)
-    JSC::AOT::setTextOfFunctionInFile([](JSC::JSGlobalObject* globalObject, const WTF::String& path, uint32_t place) -> WTF::String {
-        BunString pathOfFile = Bun::toString(path);
+    JSC::AOT::setFunctionSourceProvider([](JSC::JSGlobalObject* globalObject, const WTF::String& path, uint32_t place) -> WTF::String {
+        BunString filePath = Bun::toString(path);
         BunString text = BunStringEmpty;
-        return Bun__AOT__textOfFunctionInFile(globalObject, &pathOfFile, place, &text) ? text.transferToWTFString() : WTF::String();
+        return Bun__AOT__functionSourceInFile(globalObject, &filePath, place, &text) ? text.transferToWTFString() : WTF::String();
     });
     JSC::AOT::setCodec(
         [](const uint8_t* source, size_t sourceSize, uint8_t* destination, size_t capacity) -> size_t {
@@ -565,7 +565,7 @@ extern "C" void Bun__AOT__setImageCodec()
 }
 
 extern "C" void Bun__AOT__buildProgramData(const uint8_t* strings, size_t stringsSize, void* ctx, void (*reserve)(void* ctx, size_t size), void (*append)(void* ctx, const uint8_t* bytes, size_t size),
-    void* findCtx, bool (*find)(void* ctx, uint32_t moduleEntryOffset, uint32_t line, uint32_t column, const uint8_t** name, size_t* nameLength, uint32_t* lineInSource, uint32_t* columnInSource))
+    void* findCtx, bool (*find)(void* ctx, uint32_t moduleEntryOffset, uint32_t line, uint32_t column, const uint8_t** name, size_t* nameLength, uint32_t* sourceLine, uint32_t* sourceColumn))
 {
     Vector<JSC::FunctionReportableSites> reportableSites = std::exchange(s_lastLinkReportableSites, { });
     Vector<uint8_t> codeImage = std::exchange(s_aotImageForProgramData, { });
@@ -672,21 +672,21 @@ static bool keepsOnlyCodeExecutable(const uint8_t* bytes, size_t length)
     if (start > image || !(info.protection & VM_PROT_EXECUTE) || !range)
         return false;
     mach_vm_address_t code = image + range->first;
-    mach_vm_address_t endOfCode = mach_vm_round_page(code + range->second);
-    if (code != mach_vm_trunc_page(code) || endOfCode > start + size)
+    mach_vm_address_t codeEnd = mach_vm_round_page(code + range->second);
+    if (code != mach_vm_trunc_page(code) || codeEnd > start + size)
         return false;
     if (code > start)
         mach_vm_protect(mach_task_self(), start, code - start, true, VM_PROT_READ);
-    if (endOfCode < start + size)
-        mach_vm_protect(mach_task_self(), endOfCode, start + size - endOfCode, true, VM_PROT_READ);
+    if (codeEnd < start + size)
+        mach_vm_protect(mach_task_self(), codeEnd, start + size - codeEnd, true, VM_PROT_READ);
     return true;
 }
 #endif
 
-extern "C" bool Bun__AOT__symbolsOfImage(const uint8_t* image, size_t length, void* ctx, uint8_t* (*reserve)(void* ctx, size_t size))
+extern "C" bool Bun__AOT__imageSymbols(const uint8_t* image, size_t length, void* ctx, uint8_t* (*reserve)(void* ctx, size_t size))
 {
 #if ENABLE(AOT)
-    auto symbols = JSC::AOT::symbolsOfImage({ image, length });
+    auto symbols = JSC::AOT::imageSymbols({ image, length });
     if (symbols.isEmpty())
         return false;
     memcpy(reserve(ctx, symbols.size()), symbols.span().data(), symbols.size());
@@ -715,14 +715,14 @@ extern "C" void Bun__AOT__useImage(const uint8_t* bytes, size_t length, int file
     if (isInExecutable && keepsOnlyCodeExecutable(bytes, length))
         use = JSC::useAOTFileInLoadedSection({ bytes, length });
 #endif
-    bool isUsedWhereItLies = !!use.code;
-    if (isInExecutable && !isUsedWhereItLies) {
+    bool isUsedInPlace = !!use.code;
+    if (isInExecutable && !isUsedInPlace) {
         auto offset = offsetInExecutableFile(bytes);
         fileDescriptor = offset ? openExecutable() : -1;
         offsetInFile = offset.value_or(0);
     }
     const char* cannotOpen = "cannot find it in the executable's file";
-    if (!isUsedWhereItLies)
+    if (!isUsedInPlace)
         use = fileDescriptor >= 0 ? JSC::useAOTFile({ bytes, length }, fileDescriptor, offsetInFile) : JSC::AOTFileUse { cannotOpen, cannotOpen };
     if (isInExecutable && fileDescriptor >= 0)
         close(fileDescriptor);
@@ -768,7 +768,7 @@ extern "C" int64_t Bun__AOT__offsetInCode(const void* address)
 extern "C" uintptr_t Bun__AOT__addressOfOffsetInCode(size_t offset)
 {
 #if ENABLE(AOT)
-    return JSC::AOT::startOfImageCode() + offset;
+    return JSC::AOT::imageCodeStart() + offset;
 #else
     return offset;
 #endif
@@ -879,22 +879,22 @@ extern "C" void Bun__AOTAudit__describe(uint32_t id, BunString* out);
 extern "C" void Bun__AOTAudit__describeShape(const BunString* key, BunString* out);
 extern "C" void Bun__AOTAudit__write(const uint8_t* line, size_t length);
 
-extern "C" void Bun__AOTAudit__setPendingSites(size_t lengthOfSource, const uint32_t* expressions, size_t numberOfExpressions, const uint32_t* parameters, size_t numberOfParameters)
+extern "C" void Bun__AOTAudit__setPendingSites(size_t sourceLength, const uint32_t* expressions, size_t expressionCount, const uint32_t* parameters, size_t numberOfParameters)
 {
     if (auto* stale = std::exchange(s_pendingAuditSites, nullptr))
         stale->deref();
-    if (!numberOfExpressions && !numberOfParameters)
+    if (!expressionCount && !numberOfParameters)
         return;
     Vector<JSC::AuditedExpression> listedExpressions;
-    listedExpressions.reserveInitialCapacity(numberOfExpressions);
-    for (size_t i = 0; i < numberOfExpressions; ++i)
+    listedExpressions.reserveInitialCapacity(expressionCount);
+    for (size_t i = 0; i < expressionCount; ++i)
         listedExpressions.append(JSC::AuditedExpression { expressions[6 * i], expressions[6 * i + 1], expressions[6 * i + 2], expressions[6 * i + 3], static_cast<int32_t>(expressions[6 * i + 4]), static_cast<int32_t>(expressions[6 * i + 5]) });
     Vector<JSC::AuditedParameter> listedParameters;
     listedParameters.reserveInitialCapacity(numberOfParameters);
     for (size_t i = 0; i < numberOfParameters; ++i)
         listedParameters.append(JSC::AuditedParameter { parameters[6 * i], parameters[6 * i + 1], parameters[6 * i + 2], parameters[6 * i + 3], static_cast<int32_t>(parameters[6 * i + 4]), static_cast<int32_t>(parameters[6 * i + 5]) });
     s_pendingAuditSites = &JSC::AuditSites::create(WTF::move(listedExpressions), WTF::move(listedParameters)).leakRef();
-    s_lengthOfSourceOfPendingAuditSites = lengthOfSource;
+    s_pendingAuditSitesSourceLength = sourceLength;
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsAOTAuditDescribe, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -922,7 +922,7 @@ JSC_DEFINE_HOST_FUNCTION(jsAOTAuditIsProxy, (JSC::JSGlobalObject*, JSC::CallFram
     return JSC::JSValue::encode(JSC::jsBoolean(!!dynamicDowncast<JSC::ProxyObject>(callFrame->argument(0))));
 }
 
-static ASCIILiteral nameOfClassToldByCell(JSC::JSType type)
+static ASCIILiteral classNameFromCell(JSC::JSType type)
 {
     switch (type) {
     case JSC::ArrayBufferType: return "ArrayBuffer"_s;
@@ -951,7 +951,7 @@ static ASCIILiteral nameOfClassToldByCell(JSC::JSType type)
     }
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsAOTAuditKindOfCell, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsAOTAuditCellKind, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::JSValue name = callFrame->argument(0);
     JSC::JSValue value = callFrame->argument(1);
@@ -960,10 +960,10 @@ JSC_DEFINE_HOST_FUNCTION(jsAOTAuditKindOfCell, (JSC::JSGlobalObject * globalObje
     WTF::String asked = JSC::asString(name)->value(globalObject);
     bool isTold = false;
     for (unsigned type = 0; type <= JSC::LastJSCObjectType && !isTold; ++type)
-        isTold = asked == nameOfClassToldByCell(static_cast<JSC::JSType>(type));
+        isTold = asked == classNameFromCell(static_cast<JSC::JSType>(type));
     if (!isTold)
         return JSC::JSValue::encode(JSC::jsUndefined());
-    return JSC::JSValue::encode(JSC::jsBoolean(asked == nameOfClassToldByCell(value.asCell()->type())));
+    return JSC::JSValue::encode(JSC::jsBoolean(asked == classNameFromCell(value.asCell()->type())));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsAOTAuditIsPlainArray, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -991,7 +991,7 @@ JSC_DEFINE_HOST_FUNCTION(jsAOTAuditGuardInstancesOf, (JSC::JSGlobalObject * glob
 
 static thread_local UncheckedKeyHashMap<JSC::JSGlobalObject*, JSC::Strong<JSC::JSObject>>* s_auditGuards = nullptr;
 
-static WTF::String refusalOfChangeToDeclaredObject(JSC::JSGlobalObject*, JSC::JSObject* object, unsigned change, WTF::UniquedStringImpl* name, unsigned given, JSC::JSValue value)
+static WTF::String declaredObjectChangeRejection(JSC::JSGlobalObject*, JSC::JSObject* object, unsigned change, WTF::UniquedStringImpl* name, unsigned given, JSC::JSValue value)
 {
     JSC::JSGlobalObject* globalObject = object->globalObject();
     if (!s_auditGuards)
@@ -1025,12 +1025,12 @@ JSC_DEFINE_HOST_FUNCTION(jsAOTAuditSetGuard, (JSC::JSGlobalObject * globalObject
         if (!s_auditGuards)
             s_auditGuards = new UncheckedKeyHashMap<JSC::JSGlobalObject*, JSC::Strong<JSC::JSObject>>();
         s_auditGuards->set(globalObject, JSC::Strong<JSC::JSObject>(vm, guard));
-        vm.guardOfDeclaredObjects = refusalOfChangeToDeclaredObject;
+        vm.declaredObjectGuard = declaredObjectChangeRejection;
     }
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsAOTAuditFixPrototypeOfClass, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsAOTAuditFixClassPrototype, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1048,19 +1048,19 @@ JSC_DEFINE_HOST_FUNCTION(jsAOTAuditFixPrototypeOfClass, (JSC::JSGlobalObject * g
             replaceable.append(JSC::Identifier::fromString(vm, text));
         }
     }
-    JSC::asObject(prototype)->fixAsPrototypeOfClass(globalObject, replaceable.span(), callFrame->argument(2).isTrue());
+    JSC::asObject(prototype)->lockAsClassPrototype(globalObject, replaceable.span(), callFrame->argument(2).isTrue());
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-extern "C" uint32_t Bun__AOTAudit__waitForTheWhole();
+extern "C" uint32_t Bun__AOTAudit__waitForWholeProgramAnalysis();
 
-JSC_DEFINE_HOST_FUNCTION(jsAOTAuditWaitForTheWhole, (JSC::JSGlobalObject*, JSC::CallFrame*))
+JSC_DEFINE_HOST_FUNCTION(jsAOTAuditWaitForWholeProgramAnalysis, (JSC::JSGlobalObject*, JSC::CallFrame*))
 {
-    uint32_t generation = Bun__AOTAudit__waitForTheWhole();
+    uint32_t generation = Bun__AOTAudit__waitForWholeProgramAnalysis();
     return JSC::JSValue::encode(generation ? JSC::jsNumber(generation) : JSC::jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsAOTAuditIsAnyMockLaid, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame*))
+JSC_DEFINE_HOST_FUNCTION(jsAOTAuditIsAnyModuleMocked, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame*))
 {
     auto* globalObject = dynamicDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     if (!globalObject)
@@ -1079,13 +1079,13 @@ struct AOTAuditShortcut {
     bool guards { false };
     JSC::Strong<JSC::Structure> tagged;
     JSC::Strong<JSC::Structure> guarded;
-    bool hasKeyOfResult { false };
-    uint64_t keyOfResult { 0 };
+    bool hasResultKey { false };
+    uint64_t resultKey { 0 };
 };
 
-struct AOTAuditHeldResult {
+struct AOTAuditCheckedResult {
     JSC::CallFrame* frame;
-    unsigned askedAt;
+    unsigned requestedAt;
     uint64_t key;
 };
 
@@ -1142,13 +1142,13 @@ static void tagForAudit(JSC::VM& vm, JSC::JSValue value, uint32_t id, bool guard
     }
 }
 
-static thread_local Vector<AOTAuditHeldResult, 16>* s_auditHeldResults = nullptr;
+static thread_local Vector<AOTAuditCheckedResult, 16>* s_auditCheckedResults = nullptr;
 
-static uint64_t keyOfAuditedResult(JSC::JSGlobalObject* globalObject, uint32_t id)
+static uint64_t auditedResultKey(JSC::JSGlobalObject* globalObject, uint32_t id)
 {
     auto& shortcut = auditShortcut(id);
-    if (shortcut.hasKeyOfResult)
-        return shortcut.keyOfResult;
+    if (shortcut.hasResultKey)
+        return shortcut.resultKey;
     if (!s_auditHelpers)
         return 0;
     auto found = s_auditHelpers->find(globalObject);
@@ -1175,12 +1175,12 @@ static uint64_t keyOfAuditedResult(JSC::JSGlobalObject* globalObject, uint32_t i
         key |= 1;
     }
     auto& described = auditShortcut(id);
-    described.hasKeyOfResult = true;
-    described.keyOfResult = key;
+    described.hasResultKey = true;
+    described.resultKey = key;
     return key;
 }
 
-static bool resultOfPendingCallIsHeld(JSC::CallFrame* frame, unsigned askedAt)
+static bool isPendingCallResultChecked(JSC::CallFrame* frame, unsigned requestedAt)
 {
     JSC::CodeOrigin origin = frame->codeOrigin();
     while (auto* inlined = origin.inlineCallFrame()) {
@@ -1190,19 +1190,19 @@ static bool resultOfPendingCallIsHeld(JSC::CallFrame* frame, unsigned askedAt)
         origin = inlined->directCaller;
     }
     unsigned offset = origin.bytecodeIndex().offset();
-    return offset > askedAt && offset <= askedAt + 96;
+    return offset > requestedAt && offset <= requestedAt + 96;
 }
 
-static bool callerHoldsAuditedResult(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, uint32_t id)
+static bool callerChecksAuditedResult(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, uint32_t id)
 {
     auto& vm = JSC::getVM(globalObject);
-    if (!s_auditHeldResults)
-        s_auditHeldResults = new Vector<AOTAuditHeldResult, 16>();
-    auto& held = *s_auditHeldResults;
+    if (!s_auditCheckedResults)
+        s_auditCheckedResults = new Vector<AOTAuditCheckedResult, 16>();
+    auto& held = *s_auditCheckedResults;
     JSC::CallFrame* asking = callFrame->callerFrame();
     while (!held.isEmpty() && held.last().frame <= asking)
         held.removeLast();
-    uint64_t key = keyOfAuditedResult(globalObject, id);
+    uint64_t key = auditedResultKey(globalObject, id);
     JSC::CodeOrigin origin = asking->codeOrigin();
     if (auto* inlined = origin.inlineCallFrame()) {
         inlined->baselineCodeBlock->ownerExecutable()->setNeverInline(true);
@@ -1216,13 +1216,13 @@ static bool callerHoldsAuditedResult(JSC::JSGlobalObject* globalObject, JSC::Cal
         JSC::CallFrame* frame = held[i].frame;
         if (frame != returnsTo || returnsTo == vm.topEntryFrame || frame->isNativeCalleeFrame())
             break;
-        if (!resultOfPendingCallIsHeld(frame, held[i].askedAt))
+        if (!isPendingCallResultChecked(frame, held[i].requestedAt))
             break;
         if (held[i].key == key)
             return true;
         returnsTo = frame->callerFrameOrEntryFrame();
     }
-    held.append(AOTAuditHeldResult { asking, origin.bytecodeIndex().offset(), key });
+    held.append(AOTAuditCheckedResult { asking, origin.bytecodeIndex().offset(), key });
     return false;
 }
 
@@ -1249,7 +1249,7 @@ JSC_DEFINE_HOST_FUNCTION(jsAOTAuditCheck, (JSC::JSGlobalObject * globalObject, J
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
     if (callFrame->argumentCount() > 2)
-        return JSC::JSValue::encode(JSC::jsBoolean(callerHoldsAuditedResult(globalObject, callFrame, id)));
+        return JSC::JSValue::encode(JSC::jsBoolean(callerChecksAuditedResult(globalObject, callFrame, id)));
     auto& vm = JSC::getVM(globalObject);
     uint32_t generation = s_auditGeneration.load(std::memory_order_acquire);
     if (s_auditShortcuts && id < s_auditShortcuts->size()) [[likely]] {
@@ -1292,12 +1292,12 @@ JSC_DEFINE_HOST_FUNCTION(jsAOTAuditCheck, (JSC::JSGlobalObject * globalObject, J
             return JSC::JSValue::encode(value);
         }
         if (answer.isObject()) [[unlikely]] {
-            JSC::JSValue handedBack = JSC::asObject(answer)->getIndex(globalObject, 0);
+            JSC::JSValue returnedValue = JSC::asObject(answer)->getIndex(globalObject, 0);
             if (scope.exception()) [[unlikely]] {
                 (void)scope.tryClearException();
                 return JSC::JSValue::encode(value);
             }
-            return JSC::JSValue::encode(handedBack);
+            return JSC::JSValue::encode(returnedValue);
         }
     }
     if (answer.isString()) [[unlikely]] {
@@ -1352,7 +1352,7 @@ JSC_DEFINE_HOST_FUNCTION(jsAOTAuditTagOf, (JSC::JSGlobalObject * globalObject, J
     return JSC::JSValue::encode(tag ? tag : JSC::jsUndefined());
 }
 
-extern "C" void Bun__AOTAudit__install(Zig::GlobalObject* globalObject, const uint8_t* source, size_t length, const uint8_t* workingDirectory, size_t lengthOfWorkingDirectory)
+extern "C" void Bun__AOTAudit__install(Zig::GlobalObject* globalObject, const uint8_t* source, size_t length, const uint8_t* workingDirectory, size_t workingDirectoryLength)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -1368,18 +1368,18 @@ extern "C" void Bun__AOTAudit__install(Zig::GlobalObject* globalObject, const ui
     arguments.append(JSC::JSFunction::create(vm, globalObject, 1, "describe"_s, jsAOTAuditDescribe, JSC::ImplementationVisibility::Private));
     arguments.append(JSC::JSFunction::create(vm, globalObject, 1, "write"_s, jsAOTAuditWrite, JSC::ImplementationVisibility::Private));
     arguments.append(JSC::JSFunction::create(vm, globalObject, 1, "isProxy"_s, jsAOTAuditIsProxy, JSC::ImplementationVisibility::Private));
-    arguments.append(JSC::jsString(vm, WTF::String::fromUTF8(std::span { workingDirectory, lengthOfWorkingDirectory })));
+    arguments.append(JSC::jsString(vm, WTF::String::fromUTF8(std::span { workingDirectory, workingDirectoryLength })));
     arguments.append(JSC::JSFunction::create(vm, globalObject, 3, "remember"_s, jsAOTAuditRemember, JSC::ImplementationVisibility::Private));
     arguments.append(JSC::JSFunction::create(vm, globalObject, 2, "tag"_s, jsAOTAuditTag, JSC::ImplementationVisibility::Private));
     arguments.append(JSC::JSFunction::create(vm, globalObject, 1, "tagOf"_s, jsAOTAuditTagOf, JSC::ImplementationVisibility::Private));
-    arguments.append(JSC::JSFunction::create(vm, globalObject, 2, "kindOfCell"_s, jsAOTAuditKindOfCell, JSC::ImplementationVisibility::Private));
-    arguments.append(JSC::JSFunction::create(vm, globalObject, 0, "isAnyMockLaid"_s, jsAOTAuditIsAnyMockLaid, JSC::ImplementationVisibility::Private));
+    arguments.append(JSC::JSFunction::create(vm, globalObject, 2, "cellKind"_s, jsAOTAuditCellKind, JSC::ImplementationVisibility::Private));
+    arguments.append(JSC::JSFunction::create(vm, globalObject, 0, "isAnyModuleMocked"_s, jsAOTAuditIsAnyModuleMocked, JSC::ImplementationVisibility::Private));
     arguments.append(JSC::JSFunction::create(vm, globalObject, 1, "isPlainArray"_s, jsAOTAuditIsPlainArray, JSC::ImplementationVisibility::Private));
-    arguments.append(JSC::JSFunction::create(vm, globalObject, 3, "fixPrototypeOfClass"_s, jsAOTAuditFixPrototypeOfClass, JSC::ImplementationVisibility::Private));
+    arguments.append(JSC::JSFunction::create(vm, globalObject, 3, "fixClassPrototype"_s, jsAOTAuditFixClassPrototype, JSC::ImplementationVisibility::Private));
     arguments.append(JSC::JSFunction::create(vm, globalObject, 1, "guardInstancesOf"_s, jsAOTAuditGuardInstancesOf, JSC::ImplementationVisibility::Private));
     arguments.append(JSC::JSFunction::create(vm, globalObject, 1, "setGuard"_s, jsAOTAuditSetGuard, JSC::ImplementationVisibility::Private));
     arguments.append(JSC::JSFunction::create(vm, globalObject, 1, "describeValue"_s, jsAOTAuditDescribeValue, JSC::ImplementationVisibility::Private));
-    arguments.append(JSC::JSFunction::create(vm, globalObject, 0, "waitForTheWhole"_s, jsAOTAuditWaitForTheWhole, JSC::ImplementationVisibility::Private));
+    arguments.append(JSC::JSFunction::create(vm, globalObject, 0, "waitForWholeProgramAnalysis"_s, jsAOTAuditWaitForWholeProgramAnalysis, JSC::ImplementationVisibility::Private));
     JSC::JSValue check = JSC::call(globalObject, makeCheck, arguments, "bun:aot-audit"_s);
     if (scope.exception() || !check.isCallable()) [[unlikely]] {
         (void)scope.tryClearException();
@@ -1392,9 +1392,9 @@ extern "C" void Bun__AOTAudit__install(Zig::GlobalObject* globalObject, const ui
     globalObject->setAuditFunction(vm, JSC::JSFunction::create(vm, globalObject, 2, "check"_s, jsAOTAuditCheck, JSC::ImplementationVisibility::Private));
 }
 
-extern "C" void Bun__AOTAudit__writeRefusedChange(const uint8_t* kind, size_t lengthOfKind, const BunString* message, const BunString* functionName, const BunString* sourceURL, int32_t line, int32_t column);
+extern "C" void Bun__AOTAudit__writeRejectedChange(const uint8_t* kind, size_t kindLength, const BunString* message, const BunString* functionName, const BunString* sourceURL, int32_t line, int32_t column);
 
-void Bun__AOTAudit__reportRefusedChange(JSC::JSGlobalObject* globalObject, ASCIILiteral kind, const WTF::String& message, const WTF::String& functionName, const WTF::String& sourceURL, unsigned line, unsigned column)
+void Bun__AOTAudit__reportRejectedChange(JSC::JSGlobalObject* globalObject, ASCIILiteral kind, const WTF::String& message, const WTF::String& functionName, const WTF::String& sourceURL, unsigned line, unsigned column)
 {
     Bun::OwnedZigStackFrames frames(1);
     frames[0].function_name = Bun::toStringRef(functionName);
@@ -1404,5 +1404,5 @@ void Bun__AOTAudit__reportRefusedChange(JSC::JSGlobalObject* globalObject, ASCII
     frames[0].position.byte_position = -1;
     frames.remap(defaultGlobalObject(globalObject)->bunVM());
     BunString text = Bun::toString(message);
-    Bun__AOTAudit__writeRefusedChange(byteCast<uint8_t>(kind.characters()), kind.length(), &text, &frames[0].function_name, &frames[0].source_url, frames[0].position.line_zero_based + 1, frames[0].position.column_zero_based + 1);
+    Bun__AOTAudit__writeRejectedChange(byteCast<uint8_t>(kind.characters()), kind.length(), &text, &frames[0].function_name, &frames[0].source_url, frames[0].position.line_zero_based + 1, frames[0].position.column_zero_based + 1);
 }

@@ -4,6 +4,7 @@
 use crate::id::{LayoutId, StrId, TyId};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
+use std::sync::LazyLock;
 
 pub mod prim {
     pub const UNDEFINED: u32 = 1;
@@ -79,7 +80,7 @@ impl Declared {
         self.any_object || self.any_function || !self.parts.is_empty()
     }
     /// Primitives of more than one kind and no object: `boolean | number | string`. Nil is no kind. It is kept boxed: where it is kept there is room for any value.
-    pub fn is_of_several_kinds_of_primitives(&self) -> bool {
+    pub fn has_multiple_primitive_kinds(&self) -> bool {
         let kinds = [prim::BOOLEAN, prim::STRING, prim::SYMBOL, prim::BIGINT].iter().filter(|&&kind| self.prims & kind != 0).count();
         let numbers = usize::from(self.prims & prim::NUMBER != 0 || self.ints.is_some());
         !self.has_objects() && kinds + numbers > 1
@@ -91,7 +92,7 @@ impl Declared {
     /// A reference may be nil, whatever the source says: a field that nothing has been stored to yet, `undefined!`, the `parent` of a
     /// root. What cannot do with `undefined` or `null` tests for them, as the language has it. A number or a boolean is only what its
     /// type says.
-    pub fn nilable(mut self) -> Declared {
+    pub fn nullable(mut self) -> Declared {
         if self.has_cells() {
             self.prims |= prim::NULLISH;
         }
@@ -107,7 +108,7 @@ impl Declared {
         self
     }
     /// The layout, if it is objects of one type of the program, or nil, and nothing else.
-    pub fn only_layout(&self) -> Option<LayoutId> {
+    pub fn single_layout(&self) -> Option<LayoutId> {
         match self.parts[..] {
             [Part::Class(layout)] if self.prims & !prim::NULLISH == 0 && self.ints.is_none() && !self.any_object && !self.any_function => Some(layout),
             _ => None,
@@ -116,8 +117,8 @@ impl Declared {
 
     /// Whether the other description has room for all that this one has, going by the two alone: a layout is within itself only. What an
     /// array or an instance of a class of the engine holds makes no difference.
-    pub fn is_described_within(&self, other: &Declared) -> bool {
-        let is_part_within = |part: &Part| {
+    pub fn is_subset_of(&self, other: &Declared) -> bool {
+        let is_part_subset = |part: &Part| {
             other.parts.iter().any(|within| match (part, within) {
                 (Part::Array(_), Part::Array(_)) => true,
                 (Part::Global(name, _), Part::Global(same, _)) => name == same,
@@ -128,7 +129,7 @@ impl Declared {
             && (!self.any_object || other.any_object)
             && (!self.any_function || other.any_function)
             && self.ints.is_none_or(|(least, most)| other.prims & prim::NUMBER != 0 || other.ints.is_some_and(|within| within.0 <= least && most <= within.1))
-            && (other.any_object || self.parts.iter().all(is_part_within))
+            && (other.any_object || self.parts.iter().all(is_part_subset))
     }
 
     /// Either.
@@ -153,21 +154,55 @@ impl Declared {
         Declared { prims, ints, parts, any_object, any_function: self.any_function || other.any_function }.normalized()
     }
 
+    pub fn merge(&mut self, other: &Declared) {
+        self.prims |= other.prims;
+        self.ints = if self.prims & prim::NUMBER != 0 {
+            None
+        } else {
+            match (self.ints, other.ints) {
+                (Some(a), Some(b)) => Some((a.0.min(b.0), a.1.max(b.1))),
+                (a, b) => a.or(b),
+            }
+        };
+        self.any_object |= other.any_object;
+        self.any_function |= other.any_function;
+        if self.any_object {
+            self.parts.clear();
+        } else {
+            for part in &other.parts {
+                if let Err(index) = self.parts.binary_search(part) {
+                    self.parts.insert(index, part.clone());
+                }
+            }
+        }
+        if self.has_literal_string() && (self.prims & !(prim::LITERAL_STRING | prim::NULLISH) != 0 || self.ints.is_some() || self.has_objects()) {
+            self.prims = self.prims & !prim::LITERAL_STRING | prim::STRING;
+        }
+    }
+
+    const PLAIN_COUNT: usize = 1 << 11;
+
+    fn plain_index(&self) -> Option<usize> {
+        (self.parts.is_empty() && self.ints.is_none()).then_some(self.prims as usize | usize::from(self.any_object) << 9 | usize::from(self.any_function) << 10)
+    }
+
     pub fn normalized(self) -> Declared {
         if self.prims & !(prim::LITERAL_STRING | prim::NULLISH) != 0 || self.ints.is_some() || self.has_objects() { self.with_literal_string_widened() } else { self }
     }
 }
 
+static WIDENED_LITERAL_STRINGS: LazyLock<[Declared; 4]> = LazyLock::new(|| [0, 1, 2, 3].map(|nullish| Declared::prims(prim::STRING | nullish)));
+
 pub struct DeclaredTable {
     pub list: Vec<Declared>,
-    pub widened: Vec<Declared>,
     ids: FxHashMap<Declared, TyId>,
+    plain_ids: Vec<TyId>,
     pub anything: TyId,
 }
 
 impl Default for DeclaredTable {
     fn default() -> DeclaredTable {
-        let mut table = DeclaredTable { list: Vec::new(), widened: Vec::new(), ids: FxHashMap::default(), anything: TyId::NONE };
+        let mut table = DeclaredTable { list: Vec::new(), ids: FxHashMap::default(), plain_ids: Vec::new(), anything: TyId::NONE };
         table.anything = table.intern(Declared::anything());
         table
     }
@@ -176,25 +211,39 @@ impl Default for DeclaredTable {
 impl DeclaredTable {
     pub fn intern(&mut self, declared: Declared) -> TyId {
         let declared = declared.normalized();
-        if let Some(&id) = self.ids.get(&declared) {
+        let Some(place) = declared.plain_index() else {
+            if let Some(&id) = self.ids.get(&declared) {
+                return id;
+            }
+            let id = TyId::new(self.list.len());
+            self.list.push(declared.clone());
+            self.ids.insert(declared, id);
             return id;
+        };
+        if self.plain_ids.is_empty() {
+            self.plain_ids = vec![TyId::NONE; Declared::PLAIN_COUNT];
         }
-        let id = TyId::new(self.list.len());
-        self.list.push(declared.clone());
-        self.widened.push(declared.clone().with_literal_string_widened());
-        self.ids.insert(declared, id);
-        id
+        if self.plain_ids[place].is_none() {
+            self.plain_ids[place] = TyId::new(self.list.len());
+            self.list.push(declared);
+        }
+        self.plain_ids[place]
     }
     pub fn get(&self, id: TyId) -> &Declared {
         &self.list[id.idx()]
     }
     pub fn get_widened(&self, id: TyId) -> &Declared {
-        &self.widened[id.idx()]
+        let declared = &self.list[id.idx()];
+        if declared.has_literal_string() { &WIDENED_LITERAL_STRINGS[(declared.prims & prim::NULLISH) as usize] } else { declared }
     }
     pub fn find(&self, declared: &Declared) -> Option<TyId> {
-        self.ids.get(declared).copied()
+        match declared.plain_index() {
+            Some(place) => self.plain_ids.get(place).copied().filter(|id| id.is_some()),
+            None => self.ids.get(declared).copied(),
+        }
     }
     pub fn close(&mut self) {
         self.ids = FxHashMap::default();
+        self.plain_ids = Vec::new();
     }
 }

@@ -6,28 +6,28 @@
 
 use crate::declared::{Declared, DeclaredTable, Part, prim};
 use crate::id::{LayoutId, StrId, TyId, V};
-use crate::ir::{Def, Func, Layout, LayoutKind, Op, Operation, Prediction, Program, Strs, Why, class_flags, field_flags};
+use crate::ir::{Def, Func, Layout, LayoutKind, Op, Operation, Prediction, Program, Strs, CoerceReason, class_flags, field_flags};
 use bun_sema::util::{InParallel, for_each_mut};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-const FUNCTIONS_OF_A_SLICE: usize = 256;
-const KEYS_OF_A_SLICE: usize = 16;
+const FUNCTIONS_PER_SLICE: usize = 256;
+const KEYS_PER_SLICE: usize = 16;
 
 /// What the members of the view hold under the name. `None`: that says nothing, a member lacks the field, or an object that is not laid out may be looked at through the view.
-/// `looked_at_as`: of each layout, the views that have it for a member. `stored_through`: the views through which the program stores to which name: a view that is only read through puts nothing
+/// `supertypes_of`: of each layout, the views that have it for a member. `stored_through`: the views through which the program stores to which name: a view that is only read through puts nothing
 /// into a field, whatever it says of it.
-fn described_by_the_members(
+fn ty_from_subtypes(
     tys: &DeclaredTable,
     layouts: &[Layout],
-    looked_at_as: &[Vec<LayoutId>],
+    supertypes_of: &[Vec<LayoutId>],
     stored_through: &FxHashSet<(LayoutId, StrId)>,
     view: LayoutId,
     name: StrId,
     is_on_object_prototype: bool,
 ) -> Option<Declared> {
     let looked_at = &layouts[view.idx()];
-    if looked_at.admits_foreign || looked_at.field(name).is_none() {
+    if looked_at.accepts_untyped || looked_at.field(name).is_none() {
         return None;
     }
     let mut held = Declared::never();
@@ -36,11 +36,11 @@ fn described_by_the_members(
         // One that lacks the field may have been given a property of that name by untyped code: anything.
         let own = of_member.field(name)?;
         // What is absent is read from the prototype chain, and there anything may be found.
-        let is_always_there = of_member.fields[own as usize].flags & (field_flags::OPTIONAL | field_flags::ABSENT_AT_BIRTH | field_flags::NEVER_SEEN_ABSENT) == field_flags::NEVER_SEEN_ABSENT;
+        let is_always_there = of_member.fields[own as usize].flags & (field_flags::OPTIONAL | field_flags::ABSENT_AT_CREATION | field_flags::NEVER_OBSERVED_ABSENT) == field_flags::NEVER_OBSERVED_ABSENT;
         if !is_always_there && (is_on_object_prototype || of_member.kind != LayoutKind::Record || of_member.class_flags & class_flags::MAY_HAVE_OTHER_PROTOTYPE != 0) {
             return None;
         }
-        for &through in looked_at_as[member.idx()].iter().filter(|&&through| stored_through.contains(&(through, name))).chain([&member]) {
+        for &through in supertypes_of[member.idx()].iter().filter(|&&through| stored_through.contains(&(through, name))).chain([&member]) {
             let through = &layouts[through.idx()];
             let Some(field) = through.field(name) else { continue };
             let declared = through.fields[field as usize].declared;
@@ -54,12 +54,12 @@ fn described_by_the_members(
 }
 
 /// How many reads were given a type, and how many coercions were left with nothing to do.
-pub(super) fn type_by_the_members(program: &mut Program, in_parallel: InParallel<'_>) -> (usize, usize) {
+pub(super) fn retype_reads_from_subtypes(program: &mut Program, in_parallel: InParallel<'_>) -> (usize, usize) {
     let Program { tys, funcs, layouts, strs, .. } = program;
-    let mut looked_at_as: Vec<Vec<LayoutId>> = vec![Vec::new(); layouts.len()];
+    let mut supertypes_of: Vec<Vec<LayoutId>> = vec![Vec::new(); layouts.len()];
     for (view, layout) in layouts.iter().enumerate() {
         for member in &layout.members {
-            looked_at_as[member.idx()].push(LayoutId(view as u32));
+            supertypes_of[member.idx()].push(LayoutId(view as u32));
         }
     }
     let mut stored_through: FxHashSet<(LayoutId, StrId)> = FxHashSet::default();
@@ -67,7 +67,7 @@ pub(super) fn type_by_the_members(program: &mut Program, in_parallel: InParallel
     let mut described: FxHashMap<(LayoutId, StrId), Option<Declared>> = FxHashMap::default();
     {
         let (tys, layouts, strs) = (&*tys, &layouts[..], &*strs);
-        let mut stores: Vec<(&[Func], FxHashSet<(LayoutId, StrId)>, Vec<(LayoutId, StrId)>)> = funcs.chunks(FUNCTIONS_OF_A_SLICE).map(|funcs| (funcs, FxHashSet::default(), Vec::new())).collect();
+        let mut stores: Vec<(&[Func], FxHashSet<(LayoutId, StrId)>, Vec<(LayoutId, StrId)>)> = funcs.chunks(FUNCTIONS_PER_SLICE).map(|funcs| (funcs, FxHashSet::default(), Vec::new())).collect();
         for_each_mut(&mut stores, in_parallel, &|(funcs, stored_through, keys)| {
             let mut seen = FxHashSet::default();
             for func in funcs.iter() {
@@ -89,7 +89,7 @@ pub(super) fn type_by_the_members(program: &mut Program, in_parallel: InParallel
                         }
                         &Def::Op(Op::PropGet { obj, name }) if value.ty == tys.anything || value.prediction() != Prediction::None => {
                             let receiver = func.ty(obj);
-                            if let Some(view) = (if receiver.is_some() { tys.get(receiver).only_layout() } else { None })
+                            if let Some(view) = (if receiver.is_some() { tys.get(receiver).single_layout() } else { None })
                                 && seen.insert((view, name))
                             {
                                 keys.push((view, name));
@@ -106,9 +106,9 @@ pub(super) fn type_by_the_members(program: &mut Program, in_parallel: InParallel
             stored_through.extend(slice.1);
             all.extend(slice.2.into_iter().filter(|&key| seen.insert(key)));
         }
-        let mut made: Vec<(&[(LayoutId, StrId)], Vec<Option<Declared>>)> = all.chunks(KEYS_OF_A_SLICE).map(|keys| (keys, Vec::new())).collect();
+        let mut made: Vec<(&[(LayoutId, StrId)], Vec<Option<Declared>>)> = all.chunks(KEYS_PER_SLICE).map(|keys| (keys, Vec::new())).collect();
         for_each_mut(&mut made, in_parallel, &|(keys, found)| {
-            found.extend(keys.iter().map(|&(view, name)| described_by_the_members(tys, layouts, &looked_at_as, &stored_through, view, name, is_on_object_prototype(strs, name))));
+            found.extend(keys.iter().map(|&(view, name)| ty_from_subtypes(tys, layouts, &supertypes_of, &stored_through, view, name, is_on_object_prototype(strs, name))));
         });
         for (keys, found) in made {
             described.extend(keys.iter().copied().zip(found));
@@ -125,13 +125,13 @@ pub(super) fn type_by_the_members(program: &mut Program, in_parallel: InParallel
                 match func.values[number].def {
                     Def::Op(Op::PropGet { obj, name }) if func.values[number].ty == tys.anything || func.values[number].prediction() != Prediction::None => {
                         let receiver = func.ty(obj);
-                        let Some(view) = (if receiver.is_some() { tys.get(receiver).only_layout() } else { None }) else { continue };
+                        let Some(view) = (if receiver.is_some() { tys.get(receiver).single_layout() } else { None }) else { continue };
                         let held = match known.get(&(view, name)) {
                             Some(&held) => held,
                             None => {
                                 let held = match described.get(&(view, name)) {
                                     Some(held) => held.clone(),
-                                    None => described_by_the_members(tys.known(), layouts, &looked_at_as, &stored_through, view, name, is_on_object_prototype(strs, name)),
+                                    None => ty_from_subtypes(tys.known(), layouts, &supertypes_of, &stored_through, view, name, is_on_object_prototype(strs, name)),
                                 };
                                 let held = held.map_or(TyId::NONE, |held| tys.intern(held));
                                 known.insert((view, name), held);
@@ -140,17 +140,17 @@ pub(super) fn type_by_the_members(program: &mut Program, in_parallel: InParallel
                         };
                         // A read that is only looked at is left wider than the field, with a prediction: through such a view there is nothing to predict.
                         let own = func.values[number].ty;
-                        if held.is_some() && held != own && (own == tys.anything || own.is_some() && tys.get(held).is_described_within(tys.get(own))) {
+                        if held.is_some() && held != own && (own == tys.anything || own.is_some() && tys.get(held).is_subset_of(tys.get(own))) {
                             func.values[number].ty = held;
                             func.values[number].set_prediction(Prediction::None);
                             reads += 1;
                         }
                     }
                     // Values are numbered as they are made: the operand has its type by now.
-                    Def::Op(Op::Coerce { value, to, why: Why::Coerce }) => {
+                    Def::Op(Op::Coerce { value, to, why: CoerceReason::Coerce }) => {
                         let have = func.ty(value);
-                        if value.idx() < number && have.is_some() && have != tys.anything && to.is_some() && tys.get(have).is_described_within(tys.get(to)) {
-                            func.values[number].def = Def::Op(Op::Coerce { value, to: have, why: Why::Upcast });
+                        if value.idx() < number && have.is_some() && have != tys.anything && to.is_some() && tys.get(have).is_subset_of(tys.get(to)) {
+                            func.values[number].def = Def::Op(Op::Coerce { value, to: have, why: CoerceReason::Upcast });
                             func.values[number].ty = have;
                             coercions += 1;
                         }
@@ -172,8 +172,8 @@ fn defer_to_following_cast(tys: &super::nil::Overlay<'_>, func: &mut Func) -> us
     let mut uses: Vec<u32> = Vec::new();
     let mut left = 0;
     for number in 0..func.values.len() {
-        let Def::Op(Op::Coerce { value: coerced, to, why: Why::Cast }) = func.values[number].def else { continue };
-        let Some(&Op::Coerce { value, to: tried, why: Why::Coerce }) = func.op(coerced) else { continue };
+        let Def::Op(Op::Coerce { value: coerced, to, why: CoerceReason::Cast }) = func.values[number].def else { continue };
+        let Some(&Op::Coerce { value, to: tried, why: CoerceReason::Coerce }) = func.op(coerced) else { continue };
         let have = func.ty(value);
         if have.is_none() || have == tys.anything || tried.is_none() || to.is_none() {
             continue;
@@ -200,7 +200,7 @@ fn defer_to_following_cast(tys: &super::nil::Overlay<'_>, func: &mut Func) -> us
             continue;
         }
         let (had, tried, written) = (tys.get(have), tys.get(tried), tys.get(to));
-        let is_of_the_program = |described: &Declared| {
+        let is_program_defined = |described: &Declared| {
             !described.parts.is_empty()
                 && described.parts.iter().all(|part| matches!(part, Part::Class(_)))
                 && !described.any_object
@@ -208,9 +208,9 @@ fn defer_to_following_cast(tys: &super::nil::Overlay<'_>, func: &mut Func) -> us
                 && described.prims & !prim::NULLISH == 0
                 && described.ints.is_none()
         };
-        if is_of_the_program(had) && is_of_the_program(tried) && tried.parts == written.parts && is_of_the_program(written) {
-            func.values[number].def = Def::Op(Op::Coerce { value, to, why: Why::Cast });
-            func.values[coerced.idx()].def = Def::Op(Op::Coerce { value, to: have, why: Why::Upcast });
+        if is_program_defined(had) && is_program_defined(tried) && tried.parts == written.parts && is_program_defined(written) {
+            func.values[number].def = Def::Op(Op::Coerce { value, to, why: CoerceReason::Cast });
+            func.values[coerced.idx()].def = Def::Op(Op::Coerce { value, to: have, why: CoerceReason::Upcast });
             func.values[coerced.idx()].ty = have;
             left += 1;
         }

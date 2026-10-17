@@ -575,16 +575,16 @@ impl TranspilerJob {
         if bun_ast::audited::is_on() {
             unsafe extern "C" {
                 fn Bun__AOTAudit__setPendingSites(
-                    length_of_source: usize,
+                    source_len: usize,
                     expressions: *const [u32; 6],
-                    number_of_expressions: usize,
+                    expression_count: usize,
                     parameters: *const [u32; 6],
-                    number_of_parameters: usize,
+                    parameter_count: usize,
                 );
             }
             match audited {
                 // SAFETY: the two lists are valid for the call, and C++ copies them.
-                Some(it) => unsafe { Bun__AOTAudit__setPendingSites(it.length_of_what_is_written, it.expressions.as_ptr(), it.expressions.len(), it.parameters.as_ptr(), it.parameters.len()) },
+                Some(it) => unsafe { Bun__AOTAudit__setPendingSites(it.written_len, it.expressions.as_ptr(), it.expressions.len(), it.parameters.as_ptr(), it.parameters.len()) },
                 // SAFETY: C++ reads neither pointer when the counts are 0.
                 None => unsafe { Bun__AOTAudit__setPendingSites(0, core::ptr::null(), 0, core::ptr::null(), 0) },
             }

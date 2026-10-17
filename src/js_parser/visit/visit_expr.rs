@@ -1867,7 +1867,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             p.should_fold_typescript_constant_expressions =
                 prev_should_fold_typescript_constant_expressions;
-            *e = p.maybe_transpose_if_import(e_.expr, &state);
+            let specifier = p.with_dirname_folded(e_.expr);
+            *e = p.maybe_transpose_if_import(specifier, &state);
             return;
         }
         p.should_fold_typescript_constant_expressions =
@@ -1908,11 +1909,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // borrow doesn't overlap the `e_.can_be_unwrapped_if_unused = …` write below.
         match e_.target.data {
             Data::EIdentifier(ident) => {
-                if p.imports_what_makes_requires()
+                if p.imports_create_require()
                     && !p.is_unreachable()
                     && let [argument] = e_.args.slice()
                 {
-                    p.calls_of_identifiers_with_one_argument.push((ident.ref_, *argument));
+                    p.single_argument_identifier_calls.push((ident.ref_, *argument));
                 }
                 if ident.call_can_be_unwrapped_if_unused()
                     && e_.can_be_unwrapped_if_unused == E::CallUnwrap::Never
@@ -2219,7 +2220,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // the try/catch statement is there to handle the potential run-time
             // error from the unbundled require() call failing.
             if e_.args.len_u32() == 1 {
-                let first = e_.args.slice()[0];
+                let first = p.with_dirname_folded(e_.args.slice()[0]);
                 let state = TransposeState {
                     is_require_immediately_assigned_to_decl: in_.is_immediately_assigned_to_decl
                         && matches!(first.data, Data::EString(..)),
@@ -2279,7 +2280,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             if e_.args.len_u32() == 1 {
-                let first = e_.args.slice()[0];
+                let first = p.with_dirname_folded(e_.args.slice()[0]);
                 match &first.data {
                     Data::EString(..) => {
                         // require.resolve(FOO) => require.resolve(FOO)
@@ -2539,7 +2540,58 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub(crate) fn add_files_named_by(&mut self, specifier: &Expr) {
+    fn path_after_dirname(&self, e: &Expr) -> Option<Vec<u8>> {
+        let text_of = |string: &E::String| {
+            if !string.is_utf8() {
+                return None;
+            }
+            let mut text = string.slice8().to_vec();
+            let mut rest = string.next;
+            while let Some(part) = rest {
+                if !part.get().is_utf8() {
+                    return None;
+                }
+                text.extend_from_slice(part.get().slice8());
+                rest = part.get().next;
+            }
+            Some(text)
+        };
+        match e.data {
+            Data::EIdentifier(identifier) => identifier.ref_.eql(self.dirname_ref).then(Vec::new),
+            Data::EBinary(sum) if sum.op == Op::BinAdd => {
+                let mut text = self.path_after_dirname(&sum.left)?;
+                let Data::EString(more) = sum.right.data else { return None };
+                text.extend(text_of(&more)?);
+                Some(text)
+            }
+            Data::ETemplate(template) if template.tag.is_none() => {
+                let E::TemplateContents::Cooked(head) = &template.head else { return None };
+                let (first, rest) = template.parts().split_first()?;
+                if head.len() != 0 || !rest.is_empty() {
+                    return None;
+                }
+                let mut text = self.path_after_dirname(&first.value)?;
+                let E::TemplateContents::Cooked(tail) = &first.tail else { return None };
+                text.extend(text_of(tail)?);
+                Some(text)
+            }
+            _ => None,
+        }
+    }
+
+    pub(crate) fn with_dirname_folded(&mut self, specifier: Expr) -> Expr {
+        if !self.options.bundle || matches!(specifier.data, Data::EString(..) | Data::EIdentifier(..)) {
+            return specifier;
+        }
+        let Some(text) = self.path_after_dirname(&specifier).filter(|text| text.first() == Some(&b'/')) else {
+            return specifier;
+        };
+        self.ignore_usage(self.dirname_ref);
+        let folded: &'a [u8] = self.arena.alloc_slice_copy(&[b".".as_slice(), &text].concat());
+        self.new_expr(E::String { data: folded.into(), ..Default::default() }, specifier.loc)
+    }
+
+    pub(crate) fn add_referenced_files_in(&mut self, specifier: &Expr) {
         match specifier.data {
             Data::EString(string) => {
                 if let Ok(text) = string.string(self.arena) {
@@ -2550,18 +2602,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             Data::EIf(choice) => {
-                self.add_files_named_by(&choice.yes);
-                self.add_files_named_by(&choice.no);
+                self.add_referenced_files_in(&choice.yes);
+                self.add_referenced_files_in(&choice.no);
             }
             _ => {}
         }
     }
 
-    pub(crate) fn imports_what_makes_requires(&self) -> bool {
+    pub(crate) fn imports_create_require(&self) -> bool {
         !self.create_require_refs.is_empty() || !self.node_module_refs.is_empty()
     }
 
-    pub(crate) fn is_call_with_the_place_of_this_file_by_import_meta(value: &Expr) -> bool {
+    pub(crate) fn is_call_with_import_meta_path(value: &Expr) -> bool {
         let Data::ECall(call) = value.data else {
             return false;
         };
@@ -2582,7 +2634,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub(crate) fn is_require_made_for_this_file(&self, visited: &Expr, is_given_the_place_of_this_file: bool) -> bool {
+    pub(crate) fn is_own_create_require(&self, visited: &Expr, receives_own_file_path: bool) -> bool {
         let Data::ECall(call) = visited.data else {
             return false;
         };
@@ -2610,7 +2662,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return false;
         }
         let is_bound_to = |e: &Expr, wanted: Ref| matches!(e.data, Data::EIdentifier(identifier) if identifier.ref_.eql(wanted));
-        is_given_the_place_of_this_file
+        receives_own_file_path
             || match call.args.slice() {
                 [argument] => match argument.data {
                     Data::EBinary(sum) => {

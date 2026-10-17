@@ -12,9 +12,9 @@
 //! (`Constants::statements`). Its yes stands for the first of these conditions, for an expression statement too.
 
 use super::{FileBuild, Fx};
-use crate::fragment::{Mentioning, Mentions, ModulePart};
+use crate::fragment::{ReferenceCollector, ReferencedIds, ModulePart};
 use crate::id::{BlockId, GlobalId, V};
-use crate::ir::{Def, Func, Initialization, Op, Operation, Term, Why};
+use crate::ir::{Def, Func, Initialization, Op, Operation, Term, CoerceReason};
 use bun_sema::hir::{ExprKind, StmtId, StmtKind};
 use bun_sema::program::FileId;
 
@@ -41,7 +41,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     /// Whether the bundler has statements that start within the statement, and says of each that it may be left out.
     fn is_removable(&self, file: FileId, stmt: StmtId) -> bool {
         let (hir, path) = (self.hir(file), self.files.module(file).file_name());
-        let Some(statements) = self.shared.constants.statements.get(path).filter(|_| self.shared.constants.own_paths.is_none()) else { return false };
+        let Some(statements) = self.shared.constants.statements.get(path).filter(|_| self.shared.constants.source_path_to_url.is_none()) else { return false };
         let mut within = statements.iter().filter(|it| (hir[stmt].start..hir[stmt].loc.end).contains(&it.0)).peekable();
         within.peek().is_some() && within.all(|it| it.1)
     }
@@ -52,9 +52,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let is_removable = self.is_removable(fx.file, stmt);
         match hir[stmt].kind {
             StmtKind::Var(_) => {}
-            StmtKind::ExportDefault(e) if !self.binding_exported_as_default(fx.file, e).is_some_and(|sym| self.c.is_default_export_equivalent_to_binding(fx.file, e, sym)) => {}
+            StmtKind::ExportDefault(e) if !self.default_export_binding(fx.file, e).is_some_and(|sym| self.c.is_default_export_equivalent_to_binding(fx.file, e, sym)) => {}
             // `exports.name = value`, where that is a store to a variable.
-            StmtKind::Expr(e) if matches!(hir[e].kind, ExprKind::Assign { op: None, target, .. } if self.c.export_variable_named_by(fx.file, target).is_some()) => {}
+            StmtKind::Expr(e) if matches!(hir[e].kind, ExprKind::Assign { op: None, target, .. } if self.c.export_variable_for_expr(fx.file, target).is_some()) => {}
             _ => return None,
         }
         if !fx.b.is_open() {
@@ -77,13 +77,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.modules_touched.2.clear();
         let to = fx.b.block;
         self.marks.push(Mark { to, last: fx.b.func.blocks[to.idx()].ops.last().copied().unwrap_or(V::NONE), end_block: fx.b.func.blocks.len() as u32, ..mark });
-        if fx.found_initialized.is_empty() {
+        if fx.known_initialized.is_empty() {
             return;
         }
         if fx.false_value.is_none() {
             fx.false_value = fx.b.entry_constant(Op::Bool(false), self.known.no);
         }
-        let found: Vec<_> = fx.found_initialized.values().copied().collect();
+        let found: Vec<_> = fx.known_initialized.values().copied().collect();
         for is_known in found {
             fx.b.write(is_known, fx.false_value);
         }
@@ -91,15 +91,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     /// Whether the operation does nothing that can be told but by what it yields, by the variables it stores to and by the objects in `made`,
     /// which are those that the part has made so far.
-    fn only_creates_values(&self, func: &Func, op: &Op, made_by: &[u32], part: u32) -> bool {
+    fn has_no_observable_effects(&self, func: &Func, op: &Op, allocated_by: &[u32], part: u32) -> bool {
         let is_constant_key = |key: V| matches!(func.op(key), Some(Op::Str(_) | Op::Int(_)));
-        let is_made = |v: V| made_by.get(v.idx()) == Some(&part);
+        let is_made = |v: V| allocated_by.get(v.idx()) == Some(&part);
         match op {
             Op::Undefined | Op::Null | Op::Bool(_) | Op::Int(_) | Op::Double(_) | Op::Str(_) | Op::BigInt(_) | Op::FuncRef(_) | Op::Closure { .. } => true,
             Op::New(_) | Op::NewWith { .. } | Op::NewObject | Op::NewArray(_) | Op::GlobalSet(..) => true,
             Op::GlobalGet(global) => !matches!(self.out.globals[global.idx()].initialization, Initialization::Uninitialized),
             Op::FieldSet { obj, .. } | Op::PropSet { obj, .. } => is_made(*obj),
-            Op::Coerce { why: Why::Upcast, .. } => true,
+            Op::Coerce { why: CoerceReason::Upcast, .. } => true,
             Op::Operation { which: Operation::DefineField | Operation::DefineGetter | Operation::DefineSetter, args } => args.len() >= 3 && is_made(args[0]) && is_constant_key(args[1]),
             _ => false,
         }
@@ -107,8 +107,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     /// The statements that are kept apart, in their order.
     pub(crate) fn parts_of(&self, func: &Func, marks: Vec<Mark>) -> Vec<ModulePart> {
-        let values_looked_at = if marks.is_empty() { 0 } else { func.values.len() };
-        let mut place_of = vec![(u32::MAX, 0u32); values_looked_at];
+        let inspected_values = if marks.is_empty() { 0 } else { func.values.len() };
+        let mut place_of = vec![(u32::MAX, 0u32); inspected_values];
         if !marks.is_empty() {
             for (block, of_block) in func.blocks.iter().enumerate() {
                 for (at, &op) in of_block.ops.iter().enumerate().rev() {
@@ -120,7 +120,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             true => Some(0),
             false => place_of.get(v.idx()).filter(|place| place.0 == block.0).map(|place| place.1 + 1),
         };
-        let mut made_by = vec![0u32; values_looked_at];
+        let mut allocated_by = vec![0u32; inspected_values];
         // By value and by the end of a block: the candidate it is of, counted from 1.
         let mut owner = vec![0u32; func.values.len()];
         let mut owner_of_end = vec![0u32; func.blocks.len()];
@@ -133,7 +133,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             if if is_in_one_block { blocks.0 != blocks.1 || start >= end } else { !(blocks.0..blocks.1).contains(&mark.to.0) } {
                 continue;
             }
-            let mut part = ModulePart { from: (mark.from, start), to: (mark.to, end), blocks, stores: Vec::new(), only_stores: Vec::new(), mentions: Mentions::default(), handed_through: Vec::new() };
+            let mut part = ModulePart { from: (mark.from, start), to: (mark.to, end), blocks, stores: Vec::new(), write_only_globals: Vec::new(), mentions: ReferencedIds::default(), passed_through: Vec::new() };
             part.find_passed_through_values(func);
             // It goes on within itself, or to whatever catches what it throws.
             let stays = |block: BlockId| (blocks.0..blocks.1).contains(&block.0);
@@ -147,18 +147,18 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 _ => false,
             });
             let values = part.values(func);
-            let only_creates_values = mark.is_removable || values.iter().all(|&v| match &func.values[v.idx()].def {
+            let has_no_observable_effects = mark.is_removable || values.iter().all(|&v| match &func.values[v.idx()].def {
                     Def::Param(..) => true,
                     Def::Op(op) => {
-                        let is_fine = self.only_creates_values(func, op, &made_by, number);
+                        let is_fine = self.has_no_observable_effects(func, op, &allocated_by, number);
                         // What is looked at as another type is the same object.
-                        if matches!(op, Op::New(_) | Op::NewWith { .. } | Op::NewObject | Op::NewArray(_)) || matches!(op, Op::Coerce { value, .. } if made_by.get(value.idx()) == Some(&number)) {
-                            made_by[v.idx()] = number;
+                        if matches!(op, Op::New(_) | Op::NewWith { .. } | Op::NewObject | Op::NewArray(_)) || matches!(op, Op::Coerce { value, .. } if allocated_by.get(value.idx()) == Some(&number)) {
+                            allocated_by[v.idx()] = number;
                         }
                         is_fine
                     }
                 });
-            if !is_closed || !only_creates_values {
+            if !is_closed || !has_no_observable_effects {
                 continue;
             }
             candidates.push(Candidate { part, is_apart: true });
@@ -205,7 +205,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             stores.sort_unstable();
             stores.dedup();
             let values = part.values(func);
-            part.only_stores = stores.iter().copied().filter(|&stored| !values.iter().any(|&v| matches!(func.op(v), Some(&Op::GlobalGet(read)) if read == stored))).collect();
+            part.write_only_globals = stores.iter().copied().filter(|&stored| !values.iter().any(|&v| matches!(func.op(v), Some(&Op::GlobalGet(read)) if read == stored))).collect();
             part.stores = stores;
         }
         parts
@@ -213,7 +213,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 }
 
 /// Finds the mentions of each part, and yields those of the rest of the function.
-pub(crate) fn mentions_apart(mentioning: &mut Mentioning, func: &mut Func, parts: &mut [ModulePart]) -> Mentions {
+pub(crate) fn split_referenced_ids(mentioning: &mut ReferenceCollector, func: &mut Func, parts: &mut [ModulePart]) -> ReferencedIds {
     let mut owner = vec![0u32; func.values.len()];
     for (number, part) in parts.iter().enumerate() {
         for v in part.values(func) {

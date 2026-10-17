@@ -275,10 +275,10 @@ impl<'a> Expr<'a> {
     /// Whether the expression is what a `const` without an annotation starts with, inside a function, and under `--aot`
     /// the constant may hold `undefined` as in JavaScript: each mention of it is a test, a comparison or arithmetic on
     /// numbers, or stands behind a test that it is there. It is the compiler's own answer.
-    pub fn is_kept_only_where_undefined_has_an_answer(self) -> bool {
+    pub fn is_used_only_undefined_safely(self) -> bool {
         let node = self.ts_node().raw();
         self.file()
-            .query(|q| q.is_kept_only_where_undefined_has_an_answer(node))
+            .query(|q| q.is_used_only_undefined_safely(node))
     }
 
     /// The expression with its parentheses, as the `ParenthesizedExpression` that TypeScript has.

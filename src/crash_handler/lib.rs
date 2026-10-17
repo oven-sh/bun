@@ -798,7 +798,7 @@ mod draft {
                 PANIC_STAGE.with(|s| s.set(1));
                 let _ = PANICKING.fetch_add(1, Ordering::SeqCst);
                 let addresses_in_trace: [usize; 20];
-                let number_of_addresses_in_trace: usize;
+                let trace_address_count: usize;
 
                 {
                     let _panic_guard = PANIC_MUTEX.lock();
@@ -1050,7 +1050,7 @@ mod draft {
                         &trace_buf
                     };
                     addresses_in_trace = addr_buf;
-                    number_of_addresses_in_trace = trace.index.min(addr_buf.len());
+                    trace_address_count = trace.index.min(addr_buf.len());
 
                     if debug_trace {
                         // SAFETY: single-threaded mutation under panic_mutex
@@ -1203,7 +1203,7 @@ mod draft {
                         libc::alarm(2);
                         let len = Bun__AOT__describeAddresses(
                             addresses_in_trace.as_ptr(),
-                            number_of_addresses_in_trace,
+                            trace_address_count,
                             compiled_frames.as_mut_ptr(),
                             compiled_frames.len(),
                         );
@@ -1218,7 +1218,7 @@ mod draft {
                     }
                 }
                 #[cfg(not(unix))]
-                let _ = (addresses_in_trace, number_of_addresses_in_trace);
+                let _ = (addresses_in_trace, trace_address_count);
 
                 if bun_core::auto_reload_on_crash()
                 // Do not reload if the panic arose FROM the reload function.
@@ -2610,12 +2610,12 @@ mod draft {
         }
     }
 
-    pub fn compiled_frames_of_report(report: &[u8]) -> Vec<u8> {
-        const AHEAD_OF_OFFSET: &[u8] = b"CGaot";
+    pub fn report_compiled_frames(report: &[u8]) -> Vec<u8> {
+        const OFFSET_PREFIX: &[u8] = b"CGaot";
         let mut addresses: Vec<usize> = Vec::new();
         let mut at = 0;
-        while let Some(found) = strings::index_of(&report[at..], AHEAD_OF_OFFSET) {
-            at += found + AHEAD_OF_OFFSET.len();
+        while let Some(found) = strings::index_of(&report[at..], OFFSET_PREFIX) {
+            at += found + OFFSET_PREFIX.len();
             let offset = bun_base64::vlq::decode(report, at);
             if offset.start == at {
                 continue;

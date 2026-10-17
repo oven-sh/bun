@@ -274,13 +274,13 @@ impl<'s> Checker<'_, 's> {
         }
     }
 
-    pub fn begin_stack_budget_with(&mut self, more: usize) -> (usize, usize) {
+    pub fn extend_stack_budget(&mut self, more: usize) -> (usize, usize) {
         let before = (self.stack_base, self.stack_limit);
         self.set_stack_limit(TASK_STACK + more);
         before
     }
 
-    pub fn put_stack_budget_back(&mut self, (base, limit): (usize, usize)) {
+    pub fn restore_stack_budget(&mut self, (base, limit): (usize, usize)) {
         (self.stack_base, self.stack_limit) = (base, limit);
     }
 
@@ -297,8 +297,8 @@ impl<'s> Checker<'_, 's> {
 
     /// Called after `begin_task`. Nothing of what the task finds out about expressions goes to the barrier. For a task after which no
     /// file is checked, and whose types and declarations are still read: see `Checker::keep_type`.
-    pub fn withhold_tables_of_expressions(&mut self) {
-        self.task.withhold_tables_of_expressions();
+    pub fn withhold_expression_tables(&mut self) {
+        self.task.withhold_expression_tables();
     }
 
     /// Called on the thread of the task, after everything else this checker does.
@@ -1654,7 +1654,7 @@ impl<'s> Checker<'_, 's> {
         let save_within_unreachable_code = self.within_unreachable_code;
         let mut node = s;
         loop {
-            if self.files().is_cut_statement(file, node) {
+            if self.files().is_dead_statement(file, node) {
                 self.never_check(hir[node].start, hir[node].loc.end);
                 break;
             }
@@ -2203,7 +2203,7 @@ impl<'s> Checker<'_, 's> {
                     if std::mem::take(&mut is_innermost) {
                         self.check_expression(file, left);
                     }
-                    if self.files().cut_operand(file, e) == Some(right) {
+                    if self.files().dead_operand(file, e) == Some(right) {
                         self.never_check(self.start_of(file, right), self.end_of_expr(file, right));
                         continue;
                     }
@@ -2237,7 +2237,7 @@ impl<'s> Checker<'_, 's> {
             }
             ExprKind::Cond { test, yes, no } => {
                 self.check_expression(file, test);
-                if let Some(cut) = self.files().cut_operand(file, e) {
+                if let Some(cut) = self.files().dead_operand(file, e) {
                     self.never_check(self.start_of(file, cut), self.end_of_expr(file, cut));
                     return self.check_expression(file, if cut == yes { no } else { yes });
                 }

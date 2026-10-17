@@ -105,7 +105,7 @@ pub struct BundleV2<'a> {
     /// In-memory files that can be used as entrypoints or imported.
     /// This is a pointer to the FileMap in the completion config.
     pub file_map: Option<&'a FileMap>,
-    pub(crate) packages_met: bun_collections::HashMap<Box<[u8]>, ()>,
+    pub(crate) visited_packages: bun_collections::HashMap<Box<[u8]>, ()>,
     pub(crate) laid: FileMap,
     pub(crate) declaration_files: options::DeclarationFiles,
     pub(crate) module_types: Option<Box<dyn core::any::Any + Send>>,
@@ -125,7 +125,7 @@ pub struct BundleV2<'a> {
     pub(crate) dynamic_import_entry_points: ArrayHashMap<IndexInt, ()>,
     /// The files the compiled program refers to by path, which nothing in the bundle imports once its entry point is empty.
     pub(crate) assets_of_compiled_program: Vec<Index>,
-    pub(crate) early_source_paths: Option<std::sync::mpsc::Sender<Vec<u8>>>,
+    pub(crate) early_source_paths: Option<std::sync::mpsc::Sender<(Vec<u8>, &'static [u8])>>,
 
     pub(crate) finalizers: Vec<ExternalFreeFunction>,
 
@@ -155,6 +155,47 @@ pub struct BundleV2<'a> {
 
 bun_core::declare_scope!(Bundle, visible);
 bun_core::declare_scope!(scan_counter, visible);
+
+fn index_resolutions(lines: &[u8]) -> Vec<u8> {
+    fn package_of(specifier: &[u8]) -> &[u8] {
+        let mut slashes = specifier.iter().enumerate().filter(|(_, c)| **c == b'/').map(|(at, _)| at);
+        let end = if specifier.first() == Some(&b'@') { slashes.nth(1) } else { slashes.next() };
+        &specifier[..end.unwrap_or(specifier.len())]
+    }
+    let mut written: std::collections::BTreeMap<&[u8], &[u8]> = Default::default();
+    for line in lines.split(|&c| c == b'\n') {
+        let Some(line) = line.strip_suffix(&[0]) else { continue };
+        let Some(at) = line.iter().rposition(|&c| c == 0) else { continue };
+        written.insert(&line[..at], &line[at + 1..]);
+    }
+    let mut packages: std::collections::BTreeMap<Vec<u8>, &[u8]> = Default::default();
+    for (&key, &path) in &written {
+        let Some(end_of_folder) = key.iter().position(|&c| c == 0) else { continue };
+        let asked = &key[end_of_folder + 1..];
+        let specifier = &asked[..asked.len().saturating_sub(2)];
+        if specifier.is_empty() || matches!(specifier[0], b'.' | b'/') {
+            continue;
+        }
+        let inside = [b"/node_modules/".as_slice(), package_of(specifier), b"/"].concat();
+        let Some(at) = path.windows(inside.len()).rposition(|window| window == &inside[..]) else { continue };
+        packages.entry([&[1][..], &path[..at], b"\0", asked].concat()).or_insert(path);
+        let is_requested_by_application = !key[..end_of_folder].windows(14).any(|window| window == b"/node_modules/");
+        for store in [&b"/node_modules/.bun/"[..], b"/node_modules/.pnpm/"] {
+            if is_requested_by_application && let Some(at) = path.windows(store.len()).position(|window| window == store) {
+                packages.entry([&[1][..], &path[..at], b"\0", asked].concat()).or_insert(path);
+            }
+        }
+    }
+    let mut sorted = Vec::with_capacity(lines.len());
+    for (key, path) in packages.iter().map(|(key, path)| (&key[..], *path)).chain(written.iter().map(|(key, path)| (*key, *path))) {
+        for part in [key, path] {
+            sorted.extend_from_slice(part);
+            sorted.push(0);
+        }
+        sorted.push(b'\n');
+    }
+    sorted
+}
 
 /// Values are raw `*mut ParseTask` (arena-owned by `graph.heap`); the map only
 /// dedups by path during a single `on_parse_task_complete` pass.
@@ -1588,7 +1629,7 @@ pub mod bv2_impl {
             ) -> u32;
             /// `WTF::StringImpl::hash()` of the string with these WTF-8 contents.
             safe fn __bun_jsc_wtf_string_hash(wtf8: &[u8]) -> u32;
-            safe fn __bun_jsc_check_syntax_of_module_text(
+            safe fn __bun_jsc_check_module_syntax(
                 path: &[u8],
                 ascii_text: &[u8],
                 is_module: bool,
@@ -1596,8 +1637,8 @@ pub mod bv2_impl {
         }
 
         #[inline]
-        pub(crate) fn check_syntax_of_module_text(path: &[u8], ascii_text: &[u8], is_module: bool) -> Option<(Vec<u8>, u32)> {
-            __bun_jsc_check_syntax_of_module_text(path, ascii_text, is_module)
+        pub(crate) fn check_module_syntax(path: &[u8], ascii_text: &[u8], is_module: bool) -> Option<(Vec<u8>, u32)> {
+            __bun_jsc_check_module_syntax(path, ascii_text, is_module)
         }
 
         /// `WTF::StringImpl::hash()` of a WTF-8 string, as JSC hashes the atom it becomes at runtime.
@@ -2601,7 +2642,7 @@ pub mod bv2_impl {
             let (unmerged, said_nowhere) = (self.transpiler.options.jsx.clone(), crate::options::jsx::Pragma::default());
             let resolver = &mut self.transpiler.resolver;
             let mut by_directory: bun_collections::StringHashMap<Settings> = Default::default();
-            let mut settings_around = |source: &bun_ast::Source, is_for_bundler: bool| -> Settings {
+            let mut enclosing_settings = |source: &bun_ast::Source, is_for_bundler: bool| -> Settings {
                 let directory = source.path.name().dir;
                 if let Some(known) = by_directory.get(directory).filter(|_| is_for_bundler) {
                     return known.clone();
@@ -2620,9 +2661,9 @@ pub mod bv2_impl {
                 }
                 settings
             };
-            let expected = settings_around(&sources[first], false);
-            let mut classes_lowered_otherwise = Vec::new();
-            let mut lowered_otherwise = Vec::new();
+            let expected = enclosing_settings(&sources[first], false);
+            let mut classes_with_other_lowering = Vec::new();
+            let mut other_lowering = Vec::new();
             for (index, (source, loader)) in sources.iter().zip(loaders).enumerate() {
                 let is_jsx = matches!(source.path.name().ext, b".tsx" | b".jsx");
                 if !source.path.is_file() || !(loader.is_typescript() || is_jsx && loader.is_jsx()) {
@@ -2631,19 +2672,19 @@ pub mod bv2_impl {
                 if self.graph.input_files.items_flags()[index].contains(crate::Graph::InputFileFlags::IS_LEFT_TO_THE_HOST) {
                     continue;
                 }
-                let found = settings_around(source, true);
+                let found = enclosing_settings(source, true);
                 let classic = crate::options::jsx::Runtime::Classic;
                 // The factories count for the classic transform, the source of the import for the automatic one.
                 let counts = [found.1 == classic, found.1 == classic, found.1 != classic];
                 let classes = if self.laid.contains(source.path.text) { [true, false, false] } else { found.2 };
                 if loader.is_typescript() && classes != expected.2 {
-                    classes_lowered_otherwise.push((index, classes));
+                    classes_with_other_lowering.push((index, classes));
                 }
                 if is_jsx && (found.1 != expected.1 || (0..3).any(|at| counts[at] && found.0[at] != expected.0[at])) {
-                    lowered_otherwise.push((index, found.0, found.1 == classic));
+                    other_lowering.push((index, found.0, found.1 == classic));
                 }
             }
-            (lowered_otherwise, classes_lowered_otherwise)
+            (other_lowering, classes_with_other_lowering)
         }
 
         fn start_early_analysis(&mut self) -> Option<options::EarlyAnalysis> {
@@ -2654,7 +2695,7 @@ pub mod bv2_impl {
                     conditions: &[Box<[u8]>],
                     loaders: &bun_ast::LoaderHashTable,
                     entry_points: &[&[u8]],
-                ) -> (options::EarlyAnalysis, std::sync::mpsc::Sender<Vec<u8>>);
+                ) -> (options::EarlyAnalysis, std::sync::mpsc::Sender<(Vec<u8>, &'static [u8])>);
             }
             if self.transpiler.options.analyze.is_none() || !self.linker.options.aot || self.transpiler.options.rewrite_jest_for_tests {
                 return None;
@@ -2690,12 +2731,12 @@ pub mod bv2_impl {
             if type_check.is_none() && analyze.is_none() && emit_declarations.is_none() {
                 return Ok(());
             }
-            let is_left_to_the_host: Vec<bool> =
+            let is_resolved_by_host: Vec<bool> =
                 self.graph.input_files.items_flags().iter().map(|flags| flags.contains(crate::Graph::InputFileFlags::IS_LEFT_TO_THE_HOST)).collect();
-            if is_left_to_the_host.contains(&true) {
+            if is_resolved_by_host.contains(&true) {
                 for records in self.graph.ast.items_import_records_mut().iter_mut() {
                     for record in records.as_mut_slice().iter_mut() {
-                        if is_left_to_the_host.get(record.source_index.get() as usize).copied().unwrap_or(false) {
+                        if is_resolved_by_host.get(record.source_index.get() as usize).copied().unwrap_or(false) {
                             record.source_index = Index::INVALID;
                         }
                     }
@@ -2707,13 +2748,13 @@ pub mod bv2_impl {
                         self.transpiler.log_mut().add_range_error_fmt(Some(source), record.range, format_args!("--aot does not support macros"));
                     }
                 }
-                let is_the_table_of_bun = (self.transpiler.options.loaders.iter())
+                let is_bun_table = (self.transpiler.options.loaders.iter())
                     .all(|(extension, &loader)| (loader == Loader::Napi) == (&extension[..] == b".node") && loader != Loader::SqliteEmbedded);
                 let keys = self.graph.input_files.items_unique_key_for_additional_file();
                 let loaders = self.graph.input_files.items_loader();
                 for ((source, key), &loader) in self.graph.input_files.items_source().iter().zip(keys).zip(loaders) {
                     let is_such = matches!(loader, Loader::Napi | Loader::SqliteEmbedded) || source.path.text.ends_with(b".node");
-                    if !is_the_table_of_bun && !key.is_empty() && is_such {
+                    if !is_bun_table && !key.is_empty() && is_such {
                         self.transpiler.log_mut().add_range_error_fmt(Some(source), bun_ast::Range::NONE, format_args!("--aot does not support --loader for native addons or embedded databases"));
                     }
                 }
@@ -2723,16 +2764,16 @@ pub mod bv2_impl {
             }
             let mut react_compiler_candidates = if analyze.is_some() { self.react_compiler_candidates() } else { Vec::new() };
             let (printed_react_compiler_outputs, react_compiler_outputs) = std::sync::mpsc::channel();
-            let keeps_function_texts = analyze.is_some() && self.transpiler.options.compile_function_source && !self.transpiler.options.preserve_source_paths;
-            let mut function_texts_to_print = analyze.is_some().then(|| self.function_texts_to_print());
-            let kinds_as_run = match &mut function_texts_to_print {
+            let keeps_function_sources = analyze.is_some() && self.transpiler.options.compile_function_source && !self.transpiler.options.preserve_source_paths;
+            let mut function_sources_to_print = analyze.is_some().then(|| self.function_sources_to_print());
+            let kinds_as_run = match &mut function_sources_to_print {
                 Some((as_run, lists)) => self.kinds_as_run(as_run.as_deref_mut(), lists),
                 None => Vec::new(),
             };
-            let (printed_function_texts, function_texts) = std::sync::mpsc::channel::<options::FunctionTextsOfFiles>();
-            let function_texts = (function_texts_to_print.as_ref().filter(|_| keeps_function_texts))
-                .map(|(_, lists)| options::FunctionTextsLater { printed: function_texts, number_of_lists: lists.len() });
-            let (lowered_otherwise, classes_lowered_otherwise) = if analyze.is_some() { self.other_tsconfigs() } else { Default::default() };
+            let (printed_function_texts, function_sources) = std::sync::mpsc::channel::<options::FileFunctionSources>();
+            let function_sources = (function_sources_to_print.as_ref().filter(|_| keeps_function_sources))
+                .map(|(_, lists)| options::DeferredFunctionSources { printed: function_sources, list_count: lists.len() });
+            let (other_lowering, classes_with_other_lowering) = if analyze.is_some() { self.other_tsconfigs() } else { Default::default() };
             let sources = self.graph.input_files.items_source();
             let loaders = self.graph.input_files.items_loader();
             let import_records = self.graph.ast.items_import_records();
@@ -2741,7 +2782,7 @@ pub mod bv2_impl {
                 flags[index].contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
             };
             let redirects = self.graph.ast.items_redirect_import_record_index();
-            let behind_redirects = move |imported: Index| -> Index {
+            let after_redirects = move |imported: Index| -> Index {
                 let mut at = imported;
                 for _ in 0..ReachableFileVisitor::MAX_REDIRECTS {
                     let Some(redirect) = get_redirect_id(redirects[at.get() as usize]) else { break };
@@ -2756,7 +2797,7 @@ pub mod bv2_impl {
             let stable_order: Vec<usize> = {
                 let mut is_visited = vec![false; sources.len()];
                 let mut order = Vec::with_capacity(sources.len());
-                let mut stack: Vec<(usize, bool)> = self.graph.entry_points.iter().rev().map(|it| (behind_redirects(*it).get() as usize, false)).collect();
+                let mut stack: Vec<(usize, bool)> = self.graph.entry_points.iter().rev().map(|it| (after_redirects(*it).get() as usize, false)).collect();
                 while let Some((index, is_left)) = stack.pop() {
                     if is_left {
                         order.push(index);
@@ -2767,7 +2808,7 @@ pub mod bv2_impl {
                     }
                     stack.push((index, true));
                     let records = import_records[index].as_slice().iter().rev();
-                    stack.extend(records.map(|record| record.source_index).filter(|imported| imported.is_valid()).map(|imported| (behind_redirects(imported).get() as usize, false)));
+                    stack.extend(records.map(|record| record.source_index).filter(|imported| imported.is_valid()).map(|imported| (after_redirects(imported).get() as usize, false)));
                 }
                 let mut unreached: Vec<usize> = (0..sources.len()).filter(|&index| !is_visited[index]).collect();
                 unreached.sort_by(|&a, &b| (sources[a].path.namespace, sources[a].path.text).cmp(&(sources[b].path.namespace, sources[b].path.text)));
@@ -2922,7 +2963,7 @@ pub mod bv2_impl {
                     spec => spec,
                 })
             }
-            let mut required_otherwise: bun_collections::HashMap<(u32, u32), Box<[u8]>> = Default::default();
+            let mut require_resolutions: bun_collections::HashMap<(u32, u32), Box<[u8]>> = Default::default();
             if analyze.is_some() {
                 let is_required = |record: &bun_ast::ImportRecord| matches!(record.kind, ImportKind::Require | ImportKind::RequireResolve);
                 for ((source, records), loader) in all_sources.iter().zip(import_records).zip(loaders) {
@@ -2932,15 +2973,15 @@ pub mod bv2_impl {
                     let mut stands_for: [bun_collections::HashMap<&[u8], u32>; 2] = Default::default();
                     for record in records.as_slice().iter().filter(|record| record.source_index.is_valid()) {
                         let Some(specifier) = specifier_of(source, record) else { continue };
-                        let to = behind_redirects(record.source_index).get();
+                        let to = after_redirects(record.source_index).get();
                         if *stands_for[is_required(record) as usize].entry(specifier).or_insert_with(|| to) != to {
                             self.transpiler.log_mut().add_range_error_fmt(Some(source), record.range, format_args!("--aot does not support an import specifier that resolves to two different files within one module"));
                         }
                     }
                     for (at, record) in records.as_slice().iter().enumerate().filter(|(_, record)| record.source_index.is_valid() && is_required(record)) {
                         let Some(specifier) = specifier_of(source, record) else { continue };
-                        if stands_for[0].get(&specifier).is_some_and(|&imported| imported != behind_redirects(record.source_index).get()) {
-                            required_otherwise.insert((source.index.get(), at as u32), [b"\0require ".as_slice(), specifier].concat().into_boxed_slice());
+                        if stands_for[0].get(&specifier).is_some_and(|&imported| imported != after_redirects(record.source_index).get()) {
+                            require_resolutions.insert((source.index.get(), at as u32), [b"\0require ".as_slice(), specifier].concat().into_boxed_slice());
                         }
                     }
                 }
@@ -2948,17 +2989,17 @@ pub mod bv2_impl {
                     return Err(crate::Error::BuildFailed);
                 }
             }
-            let required_otherwise = &required_otherwise;
+            let require_resolutions = &require_resolutions;
             // Here, because what is compiled has no import records any more when the files of the executable are gathered.
             if self.transpiler.options.preserve_source_paths {
                 let mut resolutions: Vec<u8> = Vec::new();
-                let paths_of_the_program: std::collections::HashSet<&[u8]> = all_sources.iter().filter(|source| source.path.is_file()).map(|source| source.path.text).collect();
-                let mut asked_the_other_way: std::collections::HashSet<(&[u8], &[u8], bool)> = Default::default();
+                let program_paths: std::collections::HashSet<&[u8]> = all_sources.iter().filter(|source| source.path.is_file()).map(|source| source.path.text).collect();
+                let mut resolved_as_opposite_kind: std::collections::HashSet<(&[u8], &[u8], bool)> = Default::default();
                 for (source, records) in all_sources.iter().zip(import_records).filter(|(source, _)| source.path.is_file()) {
                     let folder = &source.path.text[..source.path.text.iter().rposition(|&c| c == b'/').unwrap_or(0)];
                     for record in records.as_slice().iter().filter(|record| record.source_index.is_valid()) {
                         let Some(specifier) = specifier_of(source, record) else { continue };
-                        let to = &all_sources[behind_redirects(record.source_index).get() as usize];
+                        let to = &all_sources[after_redirects(record.source_index).get() as usize];
                         if !to.path.is_file() {
                             continue;
                         }
@@ -2970,13 +3011,13 @@ pub mod bv2_impl {
                         resolutions.push(b'\n');
                         // The name of a package, the other way too: an application imports its driver, and the library that computes the name requires it.
                         let is_required = how == b"r";
-                        if matches!(specifier.first(), Some(b'.' | b'/') | None) || !asked_the_other_way.insert((folder, specifier, !is_required)) {
+                        if matches!(specifier.first(), Some(b'.' | b'/') | None) || !resolved_as_opposite_kind.insert((folder, specifier, !is_required)) {
                             continue;
                         }
-                        let the_other_way = if is_required { ImportKind::Stmt } else { ImportKind::Require };
-                        if let Ok(found) = self.transpiler.resolver.resolve(folder, specifier, the_other_way)
+                        let opposite_kind = if is_required { ImportKind::Stmt } else { ImportKind::Require };
+                        if let Ok(found) = self.transpiler.resolver.resolve(folder, specifier, opposite_kind)
                             && let Some(path) = found.path_const()
-                            && let Some(&path) = paths_of_the_program.get(path.text)
+                            && let Some(&path) = program_paths.get(path.text)
                         {
                             let how: &[u8] = if is_required { b"i" } else { b"r" };
                             for part in [folder, specifier, how, path] {
@@ -2987,11 +3028,11 @@ pub mod bv2_impl {
                         }
                     }
                 }
-                self.graph.resolutions_of_the_program = resolutions;
+                self.graph.program_resolutions = super::index_resolutions(&resolutions);
             } else if self.transpiler.options.compiles_ahead_of_time() && self.graph.entry_points.as_slice().len() > 1 {
-                let paths_of_entry_points = || self.graph.entry_points.as_slice().iter().map(|index| &all_sources[index.get() as usize]).filter(|source| source.path.is_file()).map(|source| source.path.text);
-                let entry_points: std::collections::HashSet<&[u8]> = paths_of_entry_points().collect();
-                let folder_of_the_application = paths_of_entry_points().next().map_or(&b""[..], |path| &path[..path.iter().rposition(|&c| c == b'/').unwrap_or(0)]);
+                let entry_point_paths = || self.graph.entry_points.as_slice().iter().map(|index| &all_sources[index.get() as usize]).filter(|source| source.path.is_file()).map(|source| source.path.text);
+                let entry_points: std::collections::HashSet<&[u8]> = entry_point_paths().collect();
+                let application_dir = entry_point_paths().next().map_or(&b""[..], |path| &path[..path.iter().rposition(|&c| c == b'/').unwrap_or(0)]);
                 let mut asked: std::collections::BTreeSet<(&[u8], &[u8])> = Default::default();
                 for &path in &entry_points {
                     let Some(at) = path.windows(14).rposition(|window| window == b"/node_modules/") else { continue };
@@ -2999,7 +3040,7 @@ pub mod bv2_impl {
                     let mut slashes = inside.iter().enumerate().filter(|(_, c)| **c == b'/').map(|(at, _)| at);
                     let Some(end) = (if inside.first() == Some(&b'@') { slashes.nth(1) } else { slashes.next() }) else { continue };
                     asked.insert((&path[..at], &inside[..end]));
-                    asked.insert((folder_of_the_application, &inside[..end]));
+                    asked.insert((application_dir, &inside[..end]));
                 }
                 let mut resolutions: Vec<u8> = Vec::new();
                 for (folder, package) in asked {
@@ -3016,15 +3057,15 @@ pub mod bv2_impl {
                         }
                     }
                 }
-                self.graph.resolutions_of_the_program = resolutions;
+                self.graph.program_resolutions = super::index_resolutions(&resolutions);
             }
             let mut imports = (all_sources.iter().zip(import_records)).flat_map(|(source, records)| {
                 records.as_slice().iter().enumerate().filter_map(move |(at, record)| {
                     if !record.source_index.is_valid() {
                         return None;
                     }
-                    let to = &all_sources[behind_redirects(record.source_index).get() as usize];
-                    let specifier = match required_otherwise.get(&(source.index.get(), at as u32)) {
+                    let to = &all_sources[after_redirects(record.source_index).get() as usize];
+                    let specifier = match require_resolutions.get(&(source.index.get(), at as u32)) {
                         Some(marked) => &**marked,
                         None => specifier_of(source, record)?,
                     };
@@ -3032,11 +3073,11 @@ pub mod bv2_impl {
                 })
             });
             let side_effects = self.graph.input_files.items_side_effects();
-            let drops_what_has_no_side_effects = !self.transpiler.options.preserve_source_paths && !self.transpiler.options.ignore_dce_annotations;
+            let drops_side_effect_free_imports = !self.transpiler.options.preserve_source_paths && !self.transpiler.options.ignore_dce_annotations;
             let (named_imports_of_files, symbols_of_files) = (self.graph.ast.items_named_imports(), self.graph.ast.items_symbols());
             let mut dropped_imports = (all_sources.iter().zip(import_records)).flat_map(|(source, records)| {
                 use bun_ast::import_record::Flags;
-                let brings_only_names_nobody_uses = |record: &bun_ast::ImportRecord| {
+                let imports_only_unused_names = |record: &bun_ast::ImportRecord| {
                     let Some(at) = records.as_slice().iter().position(|other| std::ptr::eq(other, record)) else { return false };
                     let (names, symbols) = (&named_imports_of_files[source.index.get() as usize], &symbols_of_files[source.index.get() as usize]);
                     let mut brought = names.keys().iter().zip(names.values()).filter(|(_, import)| import.import_record_index as usize == at).peekable();
@@ -3045,12 +3086,12 @@ pub mod bv2_impl {
                 };
                 let is_dropped = |record: &&bun_ast::ImportRecord| {
                     record.flags.intersects(Flags::IS_UNUSED | Flags::IS_BARREL_DEFERRED)
-                        || (drops_what_has_no_side_effects
+                        || (drops_side_effect_free_imports
                             && record.kind == ImportKind::Stmt
-                            && (record.flags.contains(Flags::WAS_ORIGINALLY_BARE_IMPORT) || brings_only_names_nobody_uses(*record))
+                            && (record.flags.contains(Flags::WAS_ORIGINALLY_BARE_IMPORT) || imports_only_unused_names(*record))
                             && record.source_index.is_valid()
                             && {
-                                let behind = behind_redirects(record.source_index).get() as usize;
+                                let behind = after_redirects(record.source_index).get() as usize;
                                 get_redirect_id(redirects[behind]).is_none() && side_effects[behind] != bun_ast::SideEffects::HasSideEffects
                             })
                 };
@@ -3066,9 +3107,9 @@ pub mod bv2_impl {
                     .map(|specifier| (path, specifier))
                     .collect()
             });
-            let heeds_what_packages_declare = !self.transpiler.options.ignore_dce_annotations;
-            let mut without_side_effects = (all_sources.iter().zip(side_effects))
-                .filter(|(_, verdict)| heeds_what_packages_declare && **verdict != bun_ast::SideEffects::HasSideEffects)
+            let respects_package_side_effects = !self.transpiler.options.ignore_dce_annotations;
+            let mut side_effect_free_files = (all_sources.iter().zip(side_effects))
+                .filter(|(_, verdict)| respects_package_side_effects && **verdict != bun_ast::SideEffects::HasSideEffects)
                 .filter_map(|(source, _)| path_of(source));
             let mut stays_lifted: Vec<bool> = (self.graph.ast.items_flags().iter().zip(self.graph.ast.items_exports_kind()))
                 .map(|(flags, kind)| {
@@ -3089,19 +3130,19 @@ pub mod bv2_impl {
                     let records = records.as_slice();
                     for (import_ref, import) in named_imports[id].keys().iter().zip(named_imports[id].values()) {
                         let Some(record) = records.get(import.import_record_index as usize) else { continue };
-                        let is_held_default = record.kind == ImportKind::Stmt
+                        let is_default_kept = record.kind == ImportKind::Stmt
                             && record.source_index.is_valid()
                             && !import.alias_is_star
                             && import.alias.is_some_and(|alias| alias.slice() == b"default")
                             && symbols[id].get(import_ref.inner_index() as usize).is_some_and(|symbol| {
                                 symbol.import_item_status != bun_ast::ImportItemStatus::Generated && (import.is_exported || symbol.import_used_as_value())
                             });
-                        if is_held_default {
-                            stays_lifted[behind_redirects(record.source_index).get() as usize] = false;
+                        if is_default_kept {
+                            stays_lifted[after_redirects(record.source_index).get() as usize] = false;
                         }
                     }
                     for record in records.iter().filter(|record| record.source_index.is_valid()) {
-                        let imported = behind_redirects(record.source_index).get() as usize;
+                        let imported = after_redirects(record.source_index).get() as usize;
                         let needs_wrapper = match record.kind {
                             ImportKind::Require | ImportKind::Dynamic => true,
                             ImportKind::Stmt => {
@@ -3147,7 +3188,7 @@ pub mod bv2_impl {
             let flags = self.transpiler.options.bundler_feature_flags.as_deref();
             let mut features = flags.into_iter().flat_map(|flags| flags.map.keys().iter().map(|flag| flag.as_ref()));
             let is_all_code_compiled = (self.graph.entry_points.iter().map(|it| it.get() as usize))
-                .all(|index| !loaders[index].is_javascript_like() || (all_sources[index].path.is_file() && !is_left_to_the_host[index]));
+                .all(|index| !loaders[index].is_javascript_like() || (all_sources[index].path.is_file() && !is_resolved_by_host[index]));
             let mut release_asts = move || {
                 if is_all_code_compiled {
                     // SAFETY: the analysis calls it when it has exhausted the iterators below, which alone read the syntax trees. This
@@ -3155,7 +3196,7 @@ pub mod bv2_impl {
                     unsafe { (*bundle).release_scan_arenas() };
                 }
             };
-            let printing_of_function_texts: std::sync::Arc<bun_threading::thread_pool::DeferredStart> = Default::default();
+            let function_source_printing: std::sync::Arc<bun_threading::thread_pool::DeferredStart> = Default::default();
             let checked = options::TypeChecked {
                 release_asts: &mut release_asts,
                 defines: &self.transpiler.options.define.user_inputs,
@@ -3169,7 +3210,7 @@ pub mod bv2_impl {
                 sources: &mut sources,
                 imports: &mut imports,
                 dropped_imports: &mut dropped_imports,
-                without_side_effects: &mut without_side_effects,
+                side_effect_free_files: &mut side_effect_free_files,
                 lifted_commonjs: &mut lifted_commonjs,
                 kinds: &mut kinds,
                 statements: &mut statements,
@@ -3180,22 +3221,22 @@ pub mod bv2_impl {
                 ignore_dce_annotations: self.transpiler.options.ignore_dce_annotations,
                 jsx_side_effects: self.transpiler.options.jsx.side_effects,
                 minify_syntax: self.transpiler.options.minify_syntax,
-                shortens_names: self.transpiler.options.minify_identifiers && !self.transpiler.options.keep_names,
+                minifies_identifiers: self.transpiler.options.minify_identifiers && !self.transpiler.options.keep_names,
                 preserve_source_paths: self.transpiler.options.preserve_source_paths,
-                react_compiler_outputs: options::ReactCompilerOutputsLater {
+                react_compiler_outputs: options::DeferredReactCompilerOutputs {
                     printed: react_compiler_outputs,
                     paths: react_compiler_candidates.iter().map(|candidate| all_sources[candidate.0].path.text).collect(),
                 },
-                jsx: &mut lowered_otherwise.iter().map(|(index, [factory, fragment, import_source], is_classic)| {
-                    (all_sources[*index].path.text, options::JsxOfFile { is_classic: *is_classic, factory, fragment, import_source })
+                jsx: &mut other_lowering.iter().map(|(index, [factory, fragment, import_source], is_classic)| {
+                    (all_sources[*index].path.text, options::FileJsxOptions { is_classic: *is_classic, factory, fragment, import_source })
                 }),
-                classes: &mut classes_lowered_otherwise.iter().map(|&(index, [use_define_for_class_fields, experimental_decorators, emit_decorator_metadata])| {
-                    (all_sources[index].path.text, options::ClassesOfFile { use_define_for_class_fields, experimental_decorators, emit_decorator_metadata })
+                classes: &mut classes_with_other_lowering.iter().map(|&(index, [use_define_for_class_fields, experimental_decorators, emit_decorator_metadata])| {
+                    (all_sources[index].path.text, options::FileClassOptions { use_define_for_class_fields, experimental_decorators, emit_decorator_metadata })
                 }),
-                function_texts,
-                printing_of_function_texts: std::sync::Arc::clone(&printing_of_function_texts),
+                function_sources,
+                function_source_printing: std::sync::Arc::clone(&function_source_printing),
                 explain: &self.transpiler.options.aot_explain,
-                explains_into_log: self.transpiler.options.aot_explains_into_log,
+                explain_to_log: self.transpiler.options.aot_explain_to_log,
                 logs_type_errors: self.transpiler.options.aot_logs_type_errors,
                 early_analysis,
             };
@@ -3203,10 +3244,10 @@ pub mod bv2_impl {
             if let Some(analyze) = analyze {
                 let mut facts = None;
                 self.print_react_compiler_outputs_while(&mut react_compiler_candidates, printed_react_compiler_outputs, || {
-                    facts = match &mut function_texts_to_print {
+                    facts = match &mut function_sources_to_print {
                         Some((as_run, lists)) => {
                             let mut facts = None;
-                            let syntax_errors = self.print_function_texts_while(as_run.as_deref(), lists, keeps_function_texts.then_some(printed_function_texts), &printing_of_function_texts, || {
+                            let syntax_errors = self.print_function_sources_while(as_run.as_deref(), lists, keeps_function_sources.then_some(printed_function_texts), &function_source_printing, || {
                                 facts = analyze(checked, self.transpiler.log_mut())
                             });
                             self.add_syntax_errors(syntax_errors);
@@ -3277,19 +3318,19 @@ pub mod bv2_impl {
                 let mut log = bun_ast::Log::init();
                 transpiler.set_log(&raw mut log);
                 // As the resolver says it for the parse of the bundle.
-                let tsconfig_around = (transpiler.resolver.read_dir_info(path.name().dir).ok().flatten())
+                let enclosing_tsconfig = (transpiler.resolver.read_dir_info(path.name().dir).ok().flatten())
                     .and_then(|dir| transpiler.resolver.enclosing_tsconfig_json(&dir));
                 let jsx = transpiler.options.jsx.clone();
-                let mut jsx = match &tsconfig_around {
+                let mut jsx = match &enclosing_tsconfig {
                     Some(tsconfig) => tsconfig.merge_jsx(jsx),
                     None => jsx,
                 };
                 jsx.development = transpiler.options.forced_jsx_development();
                 settings.push((
                     jsx,
-                    tsconfig_around.as_ref().is_some_and(|tsconfig| tsconfig.emit_decorator_metadata),
-                    tsconfig_around.as_ref().is_some_and(|tsconfig| tsconfig.experimental_decorators),
-                    tsconfig_around.as_ref().and_then(|tsconfig| tsconfig.use_define_for_class_fields).unwrap_or(true),
+                    enclosing_tsconfig.as_ref().is_some_and(|tsconfig| tsconfig.emit_decorator_metadata),
+                    enclosing_tsconfig.as_ref().is_some_and(|tsconfig| tsconfig.experimental_decorators),
+                    enclosing_tsconfig.as_ref().and_then(|tsconfig| tsconfig.use_define_for_class_fields).unwrap_or(true),
                 ));
                 transpiler.set_log(own_log);
             }
@@ -3387,7 +3428,7 @@ pub mod bv2_impl {
             );
         }
 
-        fn function_texts_to_print(&mut self) -> (Option<Box<Transpiler<'a>>>, Vec<Vec<(usize, options::ModuleType)>>) {
+        fn function_sources_to_print(&mut self) -> (Option<Box<Transpiler<'a>>>, Vec<Vec<(usize, options::ModuleType)>>) {
             use bun_options_types::schema::api;
             let log: &'a mut bun_ast::Log = self.arena_create(bun_ast::Log::init());
             let mut args = (*self.transpiler.options.transform_options).clone();
@@ -3430,21 +3471,21 @@ pub mod bv2_impl {
         fn kinds_as_run(&self, as_run: Option<&mut Transpiler<'a>>, lists: &mut [Vec<(usize, options::ModuleType)>]) -> Vec<(usize, bool)> {
             let Some(as_run) = as_run else { return Vec::new() };
             let sources = self.graph.input_files.items_source();
-            let mut is_served_by_the_concurrent_transpiler = vec![false; sources.len()];
+            let mut uses_concurrent_transpiler = vec![false; sources.len()];
             for records in self.graph.ast.items_import_records() {
                 for record in records.as_slice() {
                     if matches!(record.kind, ImportKind::Stmt | ImportKind::Dynamic) && record.source_index.is_valid() && !record.flags.contains(bun_ast::ImportRecordFlags::IS_UNUSED) {
-                        is_served_by_the_concurrent_transpiler[record.source_index.get() as usize] = true;
+                        uses_concurrent_transpiler[record.source_index.get() as usize] = true;
                     }
                 }
             }
             for entry_point in self.graph.entry_points.iter() {
-                is_served_by_the_concurrent_transpiler[entry_point.get() as usize] = false;
+                uses_concurrent_transpiler[entry_point.get() as usize] = false;
             }
             let flags = self.graph.ast.items_flags();
             for (index, module_type) in lists.iter_mut().flatten() {
                 let name = sources[*index].path.name();
-                if is_served_by_the_concurrent_transpiler[*index] && !flags[*index].contains(crate::bundled_ast::Flags::ES_MODULE_BY_ITS_OWN_SYNTAX) && matches!(name.ext, b".cjs" | b".cts" | b".mjs" | b".mts") {
+                if uses_concurrent_transpiler[*index] && !flags[*index].contains(crate::bundled_ast::Flags::ES_MODULE_BY_ITS_OWN_SYNTAX) && matches!(name.ext, b".cjs" | b".cts" | b".mjs" | b".mts") {
                     *module_type = (as_run.resolver.read_dir_info(name.dir).ok().flatten())
                         .and_then(|dir| dir.package_json().or(dir.enclosing_package_json).map(|package_json| package_json.module_type))
                         .unwrap_or(options::ModuleType::Unknown);
@@ -3543,11 +3584,11 @@ pub mod bv2_impl {
             found
         }
 
-        fn print_function_texts_while(
+        fn print_function_sources_while(
             &self,
             as_run: Option<&Transpiler<'a>>,
             lists: &mut [Vec<(usize, options::ModuleType)>],
-            printed: Option<std::sync::mpsc::Sender<options::FunctionTextsOfFiles>>,
+            printed: Option<std::sync::mpsc::Sender<options::FileFunctionSources>>,
             deferred: &bun_threading::thread_pool::DeferredStart,
             on_calling_thread: impl FnOnce(),
         ) -> Vec<(usize, Vec<u8>, Option<(i32, i32)>)> {
@@ -3558,7 +3599,7 @@ pub mod bv2_impl {
             struct Shared<'f, 'a, 't> {
                 bundle: &'f BundleV2<'a>,
                 as_run: &'f Transpiler<'t>,
-                printed: Option<std::sync::mpsc::Sender<options::FunctionTextsOfFiles>>,
+                printed: Option<std::sync::mpsc::Sender<options::FileFunctionSources>>,
                 syntax_errors: &'f bun_threading::Guarded<Vec<(usize, Vec<u8>, Option<(i32, i32)>)>>,
             }
             // SAFETY: the workers only read the bundle and `as_run`, and the `&self` of this
@@ -3577,7 +3618,7 @@ pub mod bv2_impl {
                 |shared: &Shared<'_, '_, '_>, list: *mut Vec<(usize, options::ModuleType)>, _: usize| {
                     // SAFETY: `each_ptr_while` hands each element of `lists` to exactly one call.
                     let files = unsafe { &*list };
-                    let mut printed: options::FunctionTextsOfFiles = Vec::new();
+                    let mut printed: options::FileFunctionSources = Vec::new();
                     let this = shared.bundle;
                     let worker = crate::Worker::get(this);
                     {
@@ -3590,7 +3631,7 @@ pub mod bv2_impl {
                         // dropped behind `transpiler`.
                         let mut transpiler = Box::new(unsafe { Transpiler::for_worker(shared.as_run, own_arena, &raw mut log) });
                         transpiler.wire_after_move();
-                        let shortens_names = transpiler.options.minify_identifiers;
+                        let minifies_identifiers = transpiler.options.minify_identifiers;
                         for &(index, module_type) in files.iter() {
                             let arena = ThreadLocalArena::new();
                             let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
@@ -3604,7 +3645,7 @@ pub mod bv2_impl {
                             let mut reported: Option<(Vec<u8>, u32)> = None;
                             let mut is_checked = false;
                             loop {
-                                transpiler.options.minify_identifiers = shortens_names && is_checked;
+                                transpiler.options.minify_identifiers = minifies_identifiers && is_checked;
                                 let parsed = transpiler.parse(
                                     crate::transpiler::ParseOptions {
                                         arena: arena_ref,
@@ -3642,7 +3683,7 @@ pub mod bv2_impl {
                                     let origin = bun_url::URL::default();
                                     transpiler.linker.link::<false, true>(&source.path, &mut parsed, &origin, options::ImportPathFormat::AbsolutePath).is_ok()
                                         && match reported {
-                                            None => transpiler.print_noting_function_texts(arena_ref, parsed, &mut printer, &mut ranges).is_ok(),
+                                            None => transpiler.print_recording_function_sources(arena_ref, parsed, &mut printer, &mut ranges).is_ok(),
                                             Some(_) => {
                                                 let handler = bun_js_printer::SourceMapHandler::for_(&mut source_map);
                                                 transpiler.print_with_source_map(arena_ref, parsed, &mut printer, bun_js_printer::Format::EsmAscii, handler, None).is_ok()
@@ -3671,17 +3712,17 @@ pub mod bv2_impl {
                                     break;
                                 }
                                 if !is_checked {
-                                    reported = crate::bundle_v2::dispatch::check_syntax_of_module_text(source.path.text, text, is_module);
+                                    reported = crate::bundle_v2::dispatch::check_module_syntax(source.path.text, text, is_module);
                                     if reported.is_some() {
                                         continue;
                                     }
                                     is_checked = true;
-                                    if shortens_names && shared.printed.is_some() {
+                                    if minifies_identifiers && shared.printed.is_some() {
                                         continue;
                                     }
                                 }
                                 if shared.printed.is_some() {
-                                    bun_js_printer::finish_function_texts(text, &mut ranges);
+                                    bun_js_printer::finish_function_sources(text, &mut ranges);
                                     printed.push((source.path.text.into(), text.into(), ranges));
                                 }
                                 break;
@@ -3876,7 +3917,7 @@ pub mod bv2_impl {
             }
         }
 
-        fn meet_the_package_of(&mut self, path: &[u8]) {
+        fn visit_package_of(&mut self, path: &[u8]) {
             let Some(typed_package) = self.transpiler.options.typed_package.filter(|_| self.linker.options.aot) else {
                 return;
             };
@@ -3894,10 +3935,10 @@ pub mod bv2_impl {
                 _ => first.len(),
             };
             let (directory, name) = (&path[..at + length], &path[at..at + length]);
-            if self.packages_met.contains_key(directory) {
+            if self.visited_packages.contains_key(directory) {
                 return;
             }
-            self.packages_met.insert(directory.into(), ());
+            self.visited_packages.insert(directory.into(), ());
             let (files, said) = typed_package(self.transpiler.fs().top_level_dir, &self.transpiler.options.define.user_inputs, directory, name);
             let is_used = !files.is_empty();
             for (path, text, is_typescript) in files {
@@ -4187,7 +4228,7 @@ pub mod bv2_impl {
             if resolve_result.flags.is_external() {
                 return;
             }
-            self.meet_the_package_of(path.text);
+            self.visit_package_of(path.text);
 
             if path.pretty.as_ptr() == path.text.as_ptr() {
                 // TODO: outbase
@@ -4417,11 +4458,11 @@ pub mod bv2_impl {
             self.increment_scan_counter();
             let source_index = Index::source(self.graph.input_files.len() as u32);
 
-            let is_main_file_of_no_known_kind = is_entry_point
+            let is_main_file_with_unknown_loader = is_entry_point
                 && loader.is_none()
                 && self.transpiler.options.aot
                 && path.loader(&self.transpiler.options.loaders).is_none();
-            let loader = if is_main_file_of_no_known_kind { Loader::Js } else { self.requested_file_loader(&path, loader) };
+            let loader = if is_main_file_with_unknown_loader { Loader::Js } else { self.requested_file_loader(&path, loader) };
 
             // SAFETY: `path_with_pretty_initialized` allocates into `self.graph.heap`, which
             // outlives the bundle pass; erase the arena lifetime back to the resolver's
@@ -4554,7 +4595,7 @@ pub mod bv2_impl {
                 plugin_context: bun_event_loop::ContextId::NONE,
                 dev_server: None,
                 file_map: None,
-                packages_met: Default::default(),
+                visited_packages: Default::default(),
                 laid: Default::default(),
                 declaration_files: Vec::new(),
                 module_types: None,
@@ -4686,7 +4727,7 @@ pub mod bv2_impl {
             this.linker.options.optimize_bytecode = this.transpiler.options.optimize_bytecode;
             this.linker.options.aot = this.transpiler.options.compiles_ahead_of_time();
             if this.transpiler.options.compile_mode.is_executable() {
-                for name in crate::options::environment_names_of_aot_without_effect() {
+                for name in crate::options::ineffective_aot_env_vars() {
                     this.transpiler.log_mut().add_warning_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
@@ -6190,12 +6231,15 @@ pub mod bv2_impl {
                 let is_compiled = |source: &&bun_ast::Source| {
                     source.path.is_file() && !flags[source.index.get() as usize].contains(crate::Graph::InputFileFlags::IS_LEFT_TO_THE_HOST)
                 };
-                for source in self.graph.input_files.items_source().iter().filter(is_compiled) {
-                    paths.extend_from_slice(source.path.text);
+                let mut sorted_paths: Vec<&[u8]> = self.graph.input_files.items_source().iter().filter(is_compiled).map(|source| source.path.text).collect();
+                sorted_paths.sort_unstable();
+                sorted_paths.dedup();
+                for path in sorted_paths {
+                    paths.extend_from_slice(path);
                     paths.push(b'\n');
                 }
                 // A JSON module is read by the host when it is asked for. The executable holds its text for the module loader alone
-                // (`StandaloneModuleGraph::find_text_of_module`): to node:fs the file is what lies on the disk, which the program may write.
+                // (`StandaloneModuleGraph::find_module_source`): to node:fs the file is what lies on the disk, which the program may write.
                 let mut data_files: Vec<options::OutputFile> = Vec::new();
                 for (source, loader) in self.graph.input_files.items_source().iter().zip(self.graph.input_files.items_loader()) {
                     if !matches!(loader, Loader::Json | Loader::Jsonc) || !source.path.is_file() {
@@ -6229,7 +6273,7 @@ pub mod bv2_impl {
                             ..Default::default()
                         }));
                     }
-                    let mut folders_of_packages: std::collections::BTreeSet<&[u8]> = Default::default();
+                    let mut package_dirs: std::collections::BTreeSet<&[u8]> = Default::default();
                     for source in self.graph.input_files.items_source().iter().filter(is_compiled) {
                         let path = source.path.text;
                         let mut from = 0;
@@ -6237,10 +6281,10 @@ pub mod bv2_impl {
                             from += at + 14;
                             let mut slashes = path[from..].iter().enumerate().filter(|(_, c)| **c == b'/').map(|(at, _)| at);
                             let Some(end) = (if path.get(from) == Some(&b'@') { slashes.nth(1) } else { slashes.next() }) else { break };
-                            folders_of_packages.insert(&path[..from + end]);
+                            package_dirs.insert(&path[..from + end]);
                         }
                     }
-                    for folder in folders_of_packages {
+                    for folder in package_dirs {
                         let path = [folder, b"/package.json"].concat();
                         let Ok(text) = std::fs::read(std::ffi::OsStr::from_bytes(&path)) else { continue };
                         data_files.push(options::OutputFile::init(crate::output_file::Options {
@@ -6255,7 +6299,7 @@ pub mod bv2_impl {
                     }
                 }
                 self.graph.additional_output_files.append(&mut data_files);
-                let resolutions = core::mem::take(&mut self.graph.resolutions_of_the_program);
+                let resolutions = core::mem::take(&mut self.graph.program_resolutions);
                 self.graph.additional_output_files.push(options::OutputFile::init(crate::output_file::Options {
                     data: crate::output_file::OptionsData::Buffer { data: resolutions.into_boxed_slice() },
                     output_path: Box::from(&b"resolutions-of-the-compiled-program"[..]),
@@ -6274,8 +6318,8 @@ pub mod bv2_impl {
                     side: Some(crate::options::Side::Server),
                     ..Default::default()
                 }));
-            } else if !self.graph.resolutions_of_the_program.is_empty() {
-                let resolutions = core::mem::take(&mut self.graph.resolutions_of_the_program);
+            } else if !self.graph.program_resolutions.is_empty() {
+                let resolutions = core::mem::take(&mut self.graph.program_resolutions);
                 self.graph.additional_output_files.push(options::OutputFile::init(crate::output_file::Options {
                     data: crate::output_file::OptionsData::Buffer { data: resolutions.into_boxed_slice() },
                     output_path: Box::from(&b"resolutions-of-the-compiled-program"[..]),
@@ -7237,8 +7281,8 @@ pub mod bv2_impl {
     impl<'a> BundleV2<'a> {
         fn add_sound_files(&mut self, output_files: &mut Vec<options::OutputFile>) -> Result<(), Error> {
             use bun_paths::resolve_path::{join_abs_string, platform::Auto};
-            if let Some(option) = self.transpiler.options.leaves_out_sound_files_for {
-                self.transpiler.log_mut().add_warning_fmt(None, bun_ast::Loc::EMPTY, format_args!("{}: it does not support {option} yet", options::SOUND_FILES_LEFT_OUT));
+            if let Some(option) = self.transpiler.options.skips_sound_files_for {
+                self.transpiler.log_mut().add_warning_fmt(None, bun_ast::Loc::EMPTY, format_args!("{}: it does not support {option} yet", options::SKIPPED_SOUND_FILES));
             }
             let Some(write_sound_files) = self.transpiler.options.write_sound_files else {
                 return Ok(());
@@ -7311,22 +7355,22 @@ pub mod bv2_impl {
             if !typed.declaration_files.is_empty() {
                 self.declaration_files.clear();
             }
-            let inside_the_outdir = |path: &[u8]| -> Box<[u8]> { path.strip_prefix(&outdir[..]).map_or(path, |inside| inside.strip_prefix(b"/").unwrap_or(inside)).into() };
+            let inside_outdir = |path: &[u8]| -> Box<[u8]> { path.strip_prefix(&outdir[..]).map_or(path, |inside| inside.strip_prefix(b"/").unwrap_or(inside)).into() };
             for file in typed.sound_files {
-                let beside = inside_the_outdir(&file.declaration_file);
+                let beside = inside_outdir(&file.declaration_file);
                 let root_dir = &self.transpiler.options.root_dir;
                 let declarations = self.declaration_files.iter_mut().find(|(source, _)| options::OutputFile::declaration_path(root_dir, source).is_some_and(|path| path == beside));
                 match declarations {
                     Some((_, text)) => *text = [&file.mark[..], &text[..]].concat().into_boxed_slice(),
                     None if file.mark.is_empty() => {}
                     None => {
-                        self.transpiler.log_mut().add_warning_fmt(None, bun_ast::Loc::EMPTY, format_args!("{}: no declaration file is written as {}", options::SOUND_FILES_LEFT_OUT, bstr::BStr::new(&beside)));
+                        self.transpiler.log_mut().add_warning_fmt(None, bun_ast::Loc::EMPTY, format_args!("{}: no declaration file is written as {}", options::SKIPPED_SOUND_FILES, bstr::BStr::new(&beside)));
                         continue;
                     }
                 }
-                output_files.push(options::OutputFile::sound(&file.path, inside_the_outdir(&file.path), file.text, false));
+                output_files.push(options::OutputFile::sound(&file.path, inside_outdir(&file.path), file.text, false));
             }
-            output_files.extend(typed.declaration_files.into_iter().map(|(path, text)| options::OutputFile::declaration(&path, inside_the_outdir(&path), text, false)));
+            output_files.extend(typed.declaration_files.into_iter().map(|(path, text)| options::OutputFile::declaration(&path, inside_outdir(&path), text, false)));
             if !relative_outdir.is_empty() {
                 let directory = bun_sys::Dir::cwd().make_open_path(&relative_outdir, Default::default())?;
                 for file in output_files.iter_mut().filter(|file| !matches!(file.value, options::OutputFileValue::Saved(_) | options::OutputFileValue::Noop)) {
@@ -8341,7 +8385,7 @@ pub mod bv2_impl {
                 // SAFETY: see note above — raw `*mut Transpiler` lives for `'a`.
                 let transpiler: &mut Transpiler<'a> = unsafe { &mut *transpiler_ptr };
 
-                let written_query: &'static [u8] = match strings::index_of_char(import_record.path.text, b'?') {
+                let explicit_query: &'static [u8] = match strings::index_of_char(import_record.path.text, b'?') {
                     Some(at)
                         if self.transpiler.options.preserve_source_paths
                             && self.transpiler.options.compiles_ahead_of_time()
@@ -8359,7 +8403,7 @@ pub mod bv2_impl {
                         .file_map
                         .and_then(|file_map| file_map.resolve(self.arena(), source.path.text, import_record.path.text))
                         .or_else(|| self.laid.resolve(self.arena(), source.path.text, import_record.path.text))
-                        .filter(|_| written_query.is_empty());
+                        .filter(|_| explicit_query.is_empty());
                     if let Some(_file_map_result) = in_memory {
                         let mut file_map_result = _file_map_result;
                         let mut path_primary = file_map_result.path_pair.primary;
@@ -8432,7 +8476,7 @@ pub mod bv2_impl {
                         } else {
                             source_dir
                         },
-                        &import_record.path.text[..import_record.path.text.len() - written_query.len()],
+                        &import_record.path.text[..import_record.path.text.len() - explicit_query.len()],
                         import_record.kind,
                     ) {
                         Ok(r) => break r,
@@ -8653,7 +8697,7 @@ pub mod bv2_impl {
                     );
                     continue;
                 }
-                self.meet_the_package_of(path.text);
+                self.visit_package_of(path.text);
 
                 if self.transpiler.options.preserve_source_paths
                     && import_record.loader.is_none()
@@ -8772,8 +8816,8 @@ pub mod bv2_impl {
                 };
                 import_record.loader = Some(import_record_loader);
 
-                if !written_query.is_empty() {
-                    let with_query = [path.text, written_query].concat();
+                if !explicit_query.is_empty() {
+                    let with_query = [path.text, explicit_query].concat();
                     let text = match self.laid.contains(&with_query) {
                         true => None,
                         false => bun_sys::File::read_from(bun_core::Fd::cwd(), path.text).ok(),
@@ -9327,7 +9371,11 @@ pub mod bv2_impl {
                         && this.graph.input_files.items_source()[result_source_index].path.is_file()
                         && !this.graph.input_files.items_flags()[result_source_index].contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
                     {
-                        let _ = early_source_paths.send(source_path_text.to_vec());
+                        let contents: &[u8] = &this.graph.input_files.items_source()[result_source_index].contents;
+                        // SAFETY: the graph keeps a source's contents in place, unchanged, until the bundle is dropped. Only the early
+                        // parse reads what is sent, and it is joined before `type_check` returns.
+                        let contents: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(contents) };
+                        let _ = early_source_paths.send((source_path_text.to_vec(), contents));
                     }
                     this.source_code_length += if result_source_index != 0 {
                         this.graph.input_files.items_source()[result_source_index]

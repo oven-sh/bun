@@ -33,6 +33,26 @@ function isPlainObject(value: any): boolean {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function fitsPlaceholder(kind: string, part: string): boolean {
+  if (kind === "s") return true;
+  if (kind === "n") return part !== "" && Number.isFinite(+part);
+  return /^-?(?:0|[1-9][0-9]*|0[xX][0-9a-fA-F]+|0[oO][0-7]+|0[bB][01]+)$/.test(part);
+}
+
+function matchesTemplate(texts: string[], kinds: string, value: string): boolean {
+  const last = texts.length - 1;
+  if (value.length < texts[0].length + texts[last].length || !value.startsWith(texts[0]) || !value.endsWith(texts[last])) return false;
+  const end = value.length - texts[last].length;
+  let position = texts[0].length;
+  for (let i = 1; i < last; i++) {
+    const partEnd = texts[i] === "" ? position + 1 : value.indexOf(texts[i], position);
+    const next = partEnd + texts[i].length;
+    if (partEnd < 0 || next > end || !fitsPlaceholder(kinds[i - 1], value.slice(position, partEnd))) return false;
+    position = next;
+  }
+  return fitsPlaceholder(kinds[last - 1], value.slice(position, end));
+}
+
 function holds(rule: any[], value: any): boolean {
   switch (rule[0]) {
     case "int":
@@ -53,6 +73,8 @@ function holds(rule: any[], value: any): boolean {
       return value.length <= rule[1];
     case "pattern":
       return new RegExp(rule[1]).test(value);
+    case "template":
+      return matchesTemplate(rule[1], rule[3], value);
     default:
       return rule[1] === "" ? (URL as any).canParse(value) : new RegExp(rule[1]).test(value);
   }
@@ -326,7 +348,7 @@ function report(nodes: any[], at: number, input: any, path: any[], issues: any[]
   }
 }
 
-function issuesOf(plan: any[], value: any): any[] {
+export function issuesOf(plan: any[], value: any): any[] {
   const issues: any[] = [];
   report(plan[1], plan[0], value, [], issues, {});
   if (issues.length === 0)

@@ -6,10 +6,10 @@ pub const SCOPE: &[u8] = b"@sound";
 const FOLDER: &[u8] = b".sound";
 const MANIFEST: &[u8] = b"sound.json";
 const REPLACEMENTS: &[u8] = b"lay";
-const INSTALLED: &[u8] = b"node_modules";
+const NODE_MODULES_DIR: &[u8] = b"node_modules";
 const PACKAGE_JSON: &[u8] = b"package.json";
 const MARK: &[u8] = b"// @sound ";
-const DEEPEST: usize = 8;
+const MAX_DEPTH: usize = 8;
 
 pub type Files = Vec<(Box<[u8]>, Box<[u8]>, bool)>;
 pub type Defines = [(Box<[u8]>, Box<[u8]>)];
@@ -20,12 +20,12 @@ pub fn typed_package(root: &[u8], defines: &Defines, directory: &[u8], name: &[u
         _ => root,
     };
     let name: Vec<u8> = name.iter().map(|&byte| if is_separator(byte) { b'/' } else { byte }).collect();
-    let Some((home, is_shipped_with_the_package)) = home_of(root, directory, &name) else {
+    let Some((home, is_shipped_with_the_package)) = typed_package_home(root, directory, &name) else {
         return (Vec::new(), None);
     };
     let shown = home.strip_prefix(root).map_or(&home[..], |inside| &inside[1..]);
     let found = match is_shipped_with_the_package {
-        true => files_shipped_in(directory),
+        true => shipped_files(directory),
         false => files_of(root, defines, &home, directory, &name, 0),
     };
     let (files, said) = match found {
@@ -42,7 +42,7 @@ pub fn typed_version_that_lays(root: &[u8], directory: &[u8], name: &[u8], path:
         _ => root,
     };
     let name: Vec<u8> = name.iter().map(|&byte| if is_separator(byte) { b'/' } else { byte }).collect();
-    let (home, _) = home_of(root, directory, &name).filter(|(_, is_shipped_with_the_package)| !is_shipped_with_the_package)?;
+    let (home, _) = typed_package_home(root, directory, &name).filter(|(_, is_shipped_with_the_package)| !is_shipped_with_the_package)?;
     let inside = match path.strip_prefix(directory)? {
         [first, inside @ ..] if is_separator(*first) => inside,
         _ => return None,
@@ -76,7 +76,7 @@ pub(crate) fn read_json(path: &[u8]) -> Option<Json> {
     parse(&read(path)?)
 }
 
-fn companion_of(name: &[u8]) -> Vec<u8> {
+fn companion_package_name(name: &[u8]) -> Vec<u8> {
     let flat = match name.strip_prefix(b"@") {
         Some(scoped) => bun_core::strings::split(scoped, b"/").collect::<Vec<_>>().join(&b"__"[..]),
         None => name.to_vec(),
@@ -88,21 +88,21 @@ pub(crate) fn mark(typed: &[u8], sha256_of_the_javascript: &[u8]) -> Vec<u8> {
     [MARK, typed, b" ", sha256_of_the_javascript, b"\n"].concat()
 }
 
-fn mark_in(declarations: &[u8]) -> Option<(&[u8], &[u8])> {
+fn parse_marker(declarations: &[u8]) -> Option<(&[u8], &[u8])> {
     let line = bun_core::strings::split(declarations, b"\n").next()?;
     let mut words = bun_core::strings::split(line.strip_suffix(b"\r").unwrap_or(line).strip_prefix(MARK)?, b" ");
     let found = (words.next()?, words.next()?);
     words.next().is_none().then_some(found)
 }
 
-fn javascript_files_named_by(package: &Json) -> Vec<Vec<u8>> {
+fn package_javascript_files(package: &Json) -> Vec<Vec<u8>> {
     fn add(value: &Json, depth: usize, found: &mut Vec<Vec<u8>>) {
         const NAMES: [(&[u8], &[u8]); 4] = [(b".d.ts", b".js"), (b".d.mts", b".mjs"), (b".js", b".js"), (b".mjs", b".mjs")];
         if let Some(path) = value.as_str() {
             let path = path.strip_prefix(b"./").unwrap_or(path);
             let javascript = NAMES.iter().find_map(|(from, to)| Some([path.strip_suffix(*from)?, *to].concat()));
-            found.extend(javascript.filter(|javascript| is_a_path_inside(javascript) && !found.contains(javascript)));
-        } else if depth < DEEPEST {
+            found.extend(javascript.filter(|javascript| is_relative_inner_path(javascript) && !found.contains(javascript)));
+        } else if depth < MAX_DEPTH {
             value.as_object().unwrap_or_default().iter().for_each(|(_, inner)| add(inner, depth + 1, found));
             value.as_array().unwrap_or_default().iter().for_each(|inner| add(inner, depth + 1, found));
         }
@@ -117,33 +117,33 @@ fn javascript_files_named_by(package: &Json) -> Vec<Vec<u8>> {
     found
 }
 
-fn marked_in(directory: &[u8], javascript: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
+fn read_marker(directory: &[u8], javascript: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
     let declarations = read(&join(&[directory, &declarations_path_beside(javascript)?]))?;
-    let (typed, sha256) = mark_in(&declarations)?;
+    let (typed, sha256) = parse_marker(&declarations)?;
     Some((typed.to_vec(), sha256.to_vec()))
 }
 
-fn home_in_the_package(directory: &[u8]) -> Option<Vec<u8>> {
+fn package_typed_home(directory: &[u8]) -> Option<Vec<u8>> {
     let package = read_json(&join(&[directory, PACKAGE_JSON]))?;
-    let marked = javascript_files_named_by(&package).into_iter().find(|javascript| marked_in(directory, javascript).is_some())?;
+    let marked = package_javascript_files(&package).into_iter().find(|javascript| read_marker(directory, javascript).is_some())?;
     Some(match bun_core::strings::last_index_of_char(&marked[..], b'/') {
         Some(slash) => join(&[directory, &marked[..slash]]),
         None => directory.to_vec(),
     })
 }
 
-fn files_shipped_in(directory: &[u8]) -> Result<(Files, Vec<u8>), String> {
+fn shipped_files(directory: &[u8]) -> Result<(Files, Vec<u8>), String> {
     let package = read_json(&join(&[directory, PACKAGE_JSON])).ok_or("the installed package.json is not JSON")?;
-    let mut waiting = javascript_files_named_by(&package);
+    let mut waiting = package_javascript_files(&package);
     let mut seen = waiting.clone();
     let mut files = Vec::new();
     while let Some(javascript) = waiting.pop() {
-        let Some((typed, wanted)) = marked_in(directory, &javascript) else { continue };
+        let Some((typed, wanted)) = read_marker(directory, &javascript) else { continue };
         let folder = bun_core::strings::last_index_of_char(&javascript[..], b'/').map_or(&b""[..], |slash| &javascript[..slash + 1]);
-        let (Some(beside), true) = (typed_path_beside(&javascript), is_a_path_inside(&typed)) else {
+        let (Some(beside), true) = (typed_path_beside(&javascript), is_relative_inner_path(&typed)) else {
             return Err(format!("the declaration file beside {} names no typed file inside the package", BStr::new(&javascript)));
         };
-        is_as_typed_on(directory, &javascript, &wanted)?;
+        verify_typed_against(directory, &javascript, &wanted)?;
         let typed = [folder, &typed[..]].concat();
         if typed != beside {
             return Err(format!("the typed file of {} is not {}", BStr::new(&javascript), BStr::new(&beside)));
@@ -168,7 +168,7 @@ fn files_shipped_in(directory: &[u8]) -> Result<(Files, Vec<u8>), String> {
             let imported = parts.join(&b'/');
             let candidates = [imported.clone(), [&imported[..], b".js"].concat(), [&imported[..], b".mjs"].concat(), [&imported[..], b"/index.js"].concat()];
             let imported = candidates.into_iter().find(|candidate| typed_path_beside(candidate).is_some() && crate::asked::exists(&join(&[directory, candidate])));
-            if let Some(imported) = imported.filter(|imported| !leaves && is_a_path_inside(imported) && !seen.contains(imported)) {
+            if let Some(imported) = imported.filter(|imported| !leaves && is_relative_inner_path(imported) && !seen.contains(imported)) {
                 seen.push(imported.clone());
                 waiting.push(imported);
             }
@@ -199,29 +199,29 @@ pub(crate) fn declarations_path_beside(javascript: &[u8]) -> Option<Vec<u8>> {
     EXTENSIONS.iter().find_map(|(from, to)| Some([javascript.strip_suffix(*from)?, *to].concat()))
 }
 
-fn home_of(root: &[u8], directory: &[u8], name: &[u8]) -> Option<(Vec<u8>, bool)> {
-    let has_a_manifest = |home: &Vec<u8>| crate::asked::exists(&join(&[home, MANIFEST]));
+fn typed_package_home(root: &[u8], directory: &[u8], name: &[u8]) -> Option<(Vec<u8>, bool)> {
+    let has_manifest = |home: &Vec<u8>| crate::asked::exists(&join(&[home, MANIFEST]));
     let own = join(&[root, FOLDER, name]);
-    if has_a_manifest(&own) {
+    if has_manifest(&own) {
         return Some((own, false));
     }
-    if let Some(shipped) = home_in_the_package(directory) {
+    if let Some(shipped) = package_typed_home(directory) {
         return Some((shipped, true));
     }
-    let companion = companion_of(name);
-    let home = ancestors(root).map(|at| join(&[at, INSTALLED, &companion])).find(has_a_manifest)?;
+    let companion = companion_package_name(name);
+    let home = ancestors(root).map(|at| join(&[at, NODE_MODULES_DIR, &companion])).find(has_manifest)?;
     let project = ancestors(root).find_map(|at| read(&join(&[at, PACKAGE_JSON])))?;
     let project = parse(&project)?;
     let lists_it = |field: &[u8]| project.get(field).is_some_and(|listed| listed.get(&companion).is_some());
     (lists_it(b"dependencies") || lists_it(b"devDependencies")).then_some((home, false))
 }
 
-fn is_a_path_inside(path: &[u8]) -> bool {
+fn is_relative_inner_path(path: &[u8]) -> bool {
     path != PACKAGE_JSON && bun_core::strings::index_of_any(path, b"\\\0").is_none() && bun_core::strings::split(path, b"/").all(|part| !matches!(part, b"" | b"." | b".."))
 }
 
-fn is_the_name_of_a_package(name: &[u8]) -> bool {
-    is_a_path_inside(name) && bun_core::strings::split(name, b"/").count() == if name.starts_with(b"@") { 2 } else { 1 }
+fn is_package_name(name: &[u8]) -> bool {
+    is_relative_inner_path(name) && bun_core::strings::split(name, b"/").count() == if name.starts_with(b"@") { 2 } else { 1 }
 }
 
 fn entries<'m>(manifest: &'m Json, field: &str) -> Result<Vec<(&'m [u8], &'m [u8])>, String> {
@@ -236,8 +236,8 @@ fn entries<'m>(manifest: &'m Json, field: &str) -> Result<Vec<(&'m [u8], &'m [u8
     Ok(found)
 }
 
-fn is_as_typed_on(directory: &[u8], path: &[u8], wanted: &[u8]) -> Result<(), String> {
-    if !is_a_path_inside(path) {
+fn verify_typed_against(directory: &[u8], path: &[u8], wanted: &[u8]) -> Result<(), String> {
+    if !is_relative_inner_path(path) {
         return Err(format!("\"{}\" in its sound.json is no path inside the package", BStr::new(path)));
     }
     let Some(installed) = read(&join(&[directory, path])) else {
@@ -251,8 +251,8 @@ fn is_as_typed_on(directory: &[u8], path: &[u8], wanted: &[u8]) -> Result<(), St
 
 fn files_of(root: &[u8], defines: &Defines, home: &[u8], directory: &[u8], name: &[u8], depth: usize) -> Result<(Files, Vec<u8>), String> {
     let manifest = read_json(&join(&[home, MANIFEST])).ok_or("its sound.json is not JSON")?;
-    let lays_typescript_under_javascript_names = manifest.get(b"sound") == Some(&Json::Number(2.0));
-    if !lays_typescript_under_javascript_names && manifest.get(b"sound") != Some(&Json::Number(1.0)) {
+    let ships_typescript_with_js_extension = manifest.get(b"sound") == Some(&Json::Number(2.0));
+    if !ships_typescript_with_js_extension && manifest.get(b"sound") != Some(&Json::Number(1.0)) {
         return Err("its sound.json is of a format that this Bun does not know".into());
     }
     let installed = read_json(&join(&[directory, PACKAGE_JSON])).ok_or("the installed package.json is not JSON")?;
@@ -271,16 +271,16 @@ fn files_of(root: &[u8], defines: &Defines, home: &[u8], directory: &[u8], name:
         }
     }
     for (path, wanted) in entries(&manifest, "basis")? {
-        is_as_typed_on(directory, path, wanted)?;
+        verify_typed_against(directory, path, wanted)?;
     }
     let mut files = Vec::new();
     for (path, wanted) in entries(&manifest, "lay")? {
         let mut at = join(&[directory, path]);
         match wanted {
-            b"new" if !is_a_path_inside(path) => return Err(format!("\"{}\" in its sound.json is no path inside the package", BStr::new(path))),
+            b"new" if !is_relative_inner_path(path) => return Err(format!("\"{}\" in its sound.json is no path inside the package", BStr::new(path))),
             b"new" if crate::asked::exists(&at) => return Err(format!("{} is installed, and it was not when the package was typed", BStr::new(path))),
             b"new" => {}
-            _ => is_as_typed_on(directory, path, wanted)?,
+            _ => verify_typed_against(directory, path, wanted)?,
         }
         let Some(text) = read(&join(&[home, REPLACEMENTS, path])) else {
             return Err(format!("it has no lay/{}", BStr::new(path)));
@@ -288,22 +288,22 @@ fn files_of(root: &[u8], defines: &Defines, home: &[u8], directory: &[u8], name:
         if cfg!(windows) {
             at.iter_mut().filter(|byte| **byte == b'\\').for_each(|byte| *byte = b'/');
         }
-        let is_typescript = lays_typescript_under_javascript_names && [&b".js"[..], b".cjs", b".mjs"].iter().any(|extension| path.ends_with(extension));
+        let is_typescript = ships_typescript_with_js_extension && [&b".js"[..], b".cjs", b".mjs"].iter().any(|extension| path.ends_with(extension));
         files.push((at.into_boxed_slice(), text.into_boxed_slice(), is_typescript));
     }
     if files.is_empty() {
         return Err("its sound.json lays nothing".into());
     }
     for needed in manifest.get(b"needs").and_then(Json::as_array).unwrap_or_default() {
-        let needed = needed.as_str().filter(|needed| is_the_name_of_a_package(needed)).ok_or("\"needs\" of its sound.json is not a list of packages' names")?;
-        let there = ancestors(directory).map(|at| join(&[at, INSTALLED, needed])).find(|there| crate::asked::exists(&join(&[there, PACKAGE_JSON])));
+        let needed = needed.as_str().filter(|needed| is_package_name(needed)).ok_or("\"needs\" of its sound.json is not a list of packages' names")?;
+        let there = ancestors(directory).map(|at| join(&[at, NODE_MODULES_DIR, needed])).find(|there| crate::asked::exists(&join(&[there, PACKAGE_JSON])));
         let fits = |there: Vec<u8>| {
-            home_of(root, &there, needed).is_some_and(|(home, is_shipped_with_the_package)| match is_shipped_with_the_package {
-                true => files_shipped_in(&there).is_ok(),
+            typed_package_home(root, &there, needed).is_some_and(|(home, is_shipped_with_the_package)| match is_shipped_with_the_package {
+                true => shipped_files(&there).is_ok(),
                 false => files_of(root, defines, &home, &there, needed, depth + 1).is_ok(),
             })
         };
-        if depth == DEEPEST || !there.is_some_and(fits) {
+        if depth == MAX_DEPTH || !there.is_some_and(fits) {
             return Err(format!("it needs the typed version of \"{}\", which is not used", BStr::new(needed)));
         }
     }

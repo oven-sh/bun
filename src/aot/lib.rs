@@ -27,7 +27,7 @@ use bun_sema::program::FileId;
 use bun_sema::util::{InParallel, for_each_mut};
 use fragment::Fragments;
 pub use link::Explain;
-use link::{Elsewhere, Errors, Linked};
+use link::{OutsideProgramReason, Errors, Linked};
 use bun_threading::RwLock;
 
 pub struct Translated {
@@ -39,42 +39,42 @@ pub struct Translated {
     /// What `Translation::explaining` has asked for, a line each.
     pub explained: Vec<String>,
     /// For each of the errors that `Translation::finish` was handed: whether it stands. If one does, the program is of no use.
-    pub errors_that_stand: Vec<bool>,
+    pub kept_errors: Vec<bool>,
     pub always_fails: bool,
     /// For each of those that do not stand, in their order: why not.
-    pub why_errors_do_not_stand: Vec<String>,
+    pub error_dismissal_reasons: Vec<String>,
     /// The modules of the runtime that are not in the program, by id: file, line and what could not be translated.
-    pub builtin_modules_left_out: Vec<(u32, String)>,
-    pub builtin_functions_left_out: Vec<(u32, String)>,
+    pub skipped_builtin_modules: Vec<(u32, String)>,
+    pub skipped_builtin_functions: Vec<(u32, String)>,
     pub times: link::Times,
     pub tokens: Option<Box<[u8]>>,
 }
 
-pub struct ForEngine {
+pub struct EngineProgram {
     pub written: Result<Box<[u8]>, Vec<String>>,
-    pub errors_that_stand: Vec<bool>,
+    pub kept_errors: Vec<bool>,
     pub explained: Vec<String>,
     pub tokens: Option<Box<[u8]>>,
 }
 
-pub const REQUIRED_OTHERWISE: &[u8] = b"\0require ";
+pub const REQUIRE_SPECIFIER_PREFIX: &[u8] = b"\0require ";
 
-pub const SECOND_FORM_SUFFIX: &[u8] = b"?required-again";
-pub const SPECIFIER_OF_SECOND_FORM: &[u8] = b"\0required again";
+pub const REQUIRED_AGAIN_SUFFIX: &[u8] = b"?required-again";
+pub const REQUIRED_AGAIN_SPECIFIER: &[u8] = b"\0required again";
 
-pub fn written_path(path: &[u8]) -> &[u8] {
-    path.strip_suffix(SECOND_FORM_SUFFIX).unwrap_or(path)
+pub fn original_path(path: &[u8]) -> &[u8] {
+    path.strip_suffix(REQUIRED_AGAIN_SUFFIX).unwrap_or(path)
 }
 
-const AHEAD_OF_SECOND_FORM: &[u8] = b"module.exports = function (exports, require, module, __filename, __dirname) {";
-const BEHIND_SECOND_FORM: &[u8] = b"\n}";
-pub const LENGTH_AHEAD_OF_SECOND_FORM: u32 = AHEAD_OF_SECOND_FORM.len() as u32;
+const REQUIRED_AGAIN_PROLOGUE: &[u8] = b"module.exports = function (exports, require, module, __filename, __dirname) {";
+const REQUIRED_AGAIN_EPILOGUE: &[u8] = b"\n}";
+pub const REQUIRED_AGAIN_PROLOGUE_LEN: u32 = REQUIRED_AGAIN_PROLOGUE.len() as u32;
 
-pub fn written_text<'a>(path: &[u8], text: &'a [u8]) -> &'a [u8] {
-    if !path.ends_with(SECOND_FORM_SUFFIX) {
+pub fn original_source<'a>(path: &[u8], text: &'a [u8]) -> &'a [u8] {
+    if !path.ends_with(REQUIRED_AGAIN_SUFFIX) {
         return text;
     }
-    text.strip_prefix(AHEAD_OF_SECOND_FORM).and_then(|rest| rest.strip_suffix(BEHIND_SECOND_FORM)).unwrap_or(text)
+    text.strip_prefix(REQUIRED_AGAIN_PROLOGUE).and_then(|rest| rest.strip_suffix(REQUIRED_AGAIN_EPILOGUE)).unwrap_or(text)
 }
 
 /// What the bundler has decided: what it replaces by constants, and which code each import stands for.
@@ -94,7 +94,7 @@ pub struct Constants {
     pub resolved: Option<ResolvedImports>,
     /// The imports the bundler has left out, by the importing file and the specifier: nothing is evaluated for them.
     pub dropped_imports: rustc_hash::FxHashSet<(Vec<u8>, Vec<u8>)>,
-    pub without_side_effects: rustc_hash::FxHashSet<Vec<u8>>,
+    pub side_effect_free_files: rustc_hash::FxHashSet<Vec<u8>>,
     pub lifted_commonjs: rustc_hash::FxHashSet<Vec<u8>>,
     /// By file: where each statement at its top level starts, as the bundler has them, and whether it may be left out if nothing uses what
     /// it declares. A file that is not here: the bundler has said nothing.
@@ -107,34 +107,34 @@ pub struct Constants {
     /// What is built is run in place of its sources (`bun run --aot`), so each module says of itself what it says when it is run from
     /// its file: `import.meta.url`, `__dirname`, what `require` is relative to. The function makes the `file:` URL of a path.
     /// `None`: all of that is the entry point's, as in any bundle.
-    pub own_paths: Option<fn(&[u8]) -> Vec<u8>>,
+    pub source_path_to_url: Option<fn(&[u8]) -> Vec<u8>>,
     /// What is built is run by `bun test`, which lets a file use `test`, `expect` and the like without importing them.
     pub has_test_globals: bool,
     pub ignores_dce_annotations: bool,
     pub jsx_has_side_effects: bool,
     pub minifies_syntax: bool,
-    pub shortens_names: bool,
-    pub function_texts: Option<Box<dyn Fn() -> FunctionTexts + Send + Sync>>,
+    pub minifies_identifiers: bool,
+    pub function_sources: Option<Box<dyn Fn() -> FunctionSources + Send + Sync>>,
     pub logs_type_errors: bool,
-    pub notes_spans: bool,
+    pub records_spans: bool,
     pub has_preloads: bool,
 }
 
-pub type FunctionTexts = rustc_hash::FxHashMap<Vec<u8>, (Vec<u8>, Vec<(u32, u32, u32)>)>;
+pub type FunctionSources = rustc_hash::FxHashMap<Vec<u8>, (Vec<u8>, Vec<(u32, u32, u32)>)>;
 
 #[derive(Clone, Copy)]
 struct ResolvedImport {
     from: u32,
     to: u32,
     specifier: (u32, u32),
-    earlier_of_importer: u32,
+    previous_import: u32,
 }
 
 #[derive(Default, Clone)]
 pub struct ResolvedImports {
     paths: Vec<Vec<u8>>,
     numbers: rustc_hash::FxHashMap<Vec<u8>, u32>,
-    latest_of_importer: Vec<u32>,
+    last_import_by_importer: Vec<u32>,
     specifiers: Vec<u8>,
     imports: Vec<ResolvedImport>,
 }
@@ -148,7 +148,7 @@ impl ResolvedImports {
         }
         let number = self.paths.len() as u32;
         self.paths.push(path.to_vec());
-        self.latest_of_importer.push(Self::NONE);
+        self.last_import_by_importer.push(Self::NONE);
         self.numbers.insert(path.to_vec(), number);
         number
     }
@@ -159,19 +159,19 @@ impl ResolvedImports {
     }
 
     pub fn insert(&mut self, from: u32, specifier: &[u8], to: u32) {
-        let mut place = self.latest_of_importer[from as usize];
+        let mut place = self.last_import_by_importer[from as usize];
         while place != Self::NONE {
             let import = self.imports[place as usize];
             if self.specifier_of(&import) == specifier {
                 self.imports[place as usize].to = to;
                 return;
             }
-            place = import.earlier_of_importer;
+            place = import.previous_import;
         }
         let start = self.specifiers.len() as u32;
         self.specifiers.extend_from_slice(specifier);
-        let earlier_of_importer = std::mem::replace(&mut self.latest_of_importer[from as usize], self.imports.len() as u32);
-        self.imports.push(ResolvedImport { from, to, specifier: (start, specifier.len() as u32), earlier_of_importer });
+        let previous_import = std::mem::replace(&mut self.last_import_by_importer[from as usize], self.imports.len() as u32);
+        self.imports.push(ResolvedImport { from, to, specifier: (start, specifier.len() as u32), previous_import });
     }
 
     pub fn path(&self, number: u32) -> &[u8] {
@@ -198,9 +198,9 @@ impl ResolvedImports {
         self.paths.iter().zip(is_target).filter(|it| it.1).map(|it| it.0.as_slice())
     }
 
-    pub fn retarget(&mut self, to_instead: &[Option<u32>]) {
+    pub fn retarget(&mut self, replacement_target: &[Option<u32>]) {
         for import in &mut self.imports {
-            if let Some(instead) = to_instead.get(import.to as usize).copied().flatten() {
+            if let Some(instead) = replacement_target.get(import.to as usize).copied().flatten() {
                 import.to = instead;
             }
         }
@@ -233,17 +233,17 @@ pub struct Translation<'a> {
     constants: &'a Constants,
     explain: Explain,
     /// `None`: `begin` has not been called.
-    begun: RwLock<Option<Begun<'a>>>,
+    begun: RwLock<Option<StartedTranslation<'a>>>,
 }
 
-struct Begun<'a> {
-    /// `Program::files_without_whole_trees`
-    without_whole_trees: Vec<FileId>,
+struct StartedTranslation<'a> {
+    /// `Program::partially_parsed_files`
+    partially_parsed: Vec<FileId>,
     /// `None` unless that is empty. Nothing is made of a tree that is not whole, and the translation of a file looks into the trees of
     /// others.
     translating: Option<(build::Shared<'a>, Fragments)>,
     refused_at: Option<(FileId, u32)>,
-    is_evidence_dropped: std::sync::OnceLock<bool>,
+    has_stale_escape_notes: std::sync::OnceLock<bool>,
 }
 
 impl<'a> Translation<'a> {
@@ -259,55 +259,60 @@ impl<'a> Translation<'a> {
     /// `Request::loaded`. `entry_points`: for each, the files that are run when the program is started with it, in order. What can run then,
     /// whichever it is started with, is translated. A program that is loaded again is begun again.
     pub fn begin(&self, program: &Checked<'_>, entry_points: &[Vec<FileId>], in_parallel: InParallel<'_>) {
-        let mut without_whole_trees = program.files_without_whole_trees();
-        without_whole_trees.retain(|&file| program.files.hir(file).kind != FileKind::Declaration);
-        if let Some(resolved) = self.constants.resolved.as_ref().filter(|_| !without_whole_trees.is_empty()) {
-            let of_the_bundle: rustc_hash::FxHashSet<FileId> = resolved.targets().filter_map(|path| program.files.by_path.get(path)).chain(entry_points.iter().flatten().copied()).collect();
-            without_whole_trees.retain(|file| of_the_bundle.contains(file));
+        let mut partially_parsed = program.partially_parsed_files();
+        partially_parsed.retain(|&file| program.files.hir(file).kind != FileKind::Declaration);
+        if let Some(resolved) = self.constants.resolved.as_ref().filter(|_| !partially_parsed.is_empty()) {
+            let files_in_bundle: rustc_hash::FxHashSet<FileId> = resolved.targets().filter_map(|path| program.files.by_path.get(path)).chain(entry_points.iter().flatten().copied()).collect();
+            partially_parsed.retain(|file| files_in_bundle.contains(file));
         }
-        let translating = without_whole_trees.is_empty().then(|| (build::Shared::new(program, entry_points, self.constants, in_parallel), Fragments::new(program.files.modules.len())));
+        let translating = partially_parsed.is_empty().then(|| (build::Shared::new(program, entry_points, self.constants, in_parallel), Fragments::new(program.files.modules.len())));
         let most = usize::from(u16::MAX);
         let mut suspects: Vec<(FileId, Option<u32>)> = match &translating {
-            Some((shared, _)) if !self.constants.notes_spans => {
+            Some((shared, _)) if !self.constants.records_spans => {
                 (0..program.files.modules.len() as u32).map(FileId).filter(|&file| program.files.modules[file.idx()].bound.symbols.len() > most && shared.is_compiled(file)).map(|file| (file, None)).collect()
             }
             _ => Vec::new(),
         };
-        for_each_mut(&mut suspects, in_parallel, &|(file, place)| *place = program.checker().place_of_environment_of_more_than(*file, most));
+        for_each_mut(&mut suspects, in_parallel, &|(file, place)| *place = program.checker().oversized_environment_pos(*file, most));
         let refused_at = suspects.into_iter().find_map(|(file, place)| Some((file, place?)));
         if refused_at.is_some() {
             program.give_up();
         }
         let translating = translating.filter(|_| refused_at.is_none());
-        *self.begun.write() = Some(Begun { without_whole_trees, translating, refused_at, is_evidence_dropped: Default::default() });
+        *self.begun.write() = Some(StartedTranslation { partially_parsed, translating, refused_at, has_stale_escape_notes: Default::default() });
+    }
+
+    /// Whether the file is a module of the program that was begun.
+    pub fn is_compiled(&self, file: FileId) -> bool {
+        self.begun.read().as_ref().and_then(|begun| begun.translating.as_ref()).is_some_and(|(shared, _)| shared.is_compiled(file))
     }
 
     /// `Request::before_visits`. What JavaScript is expected to do goes by how the whole program uses it. So the files that are
     /// visited are all looked at before the first of them is translated.
-    pub fn note_file(&self, c: &mut Checker<'_, '_>, file: FileId) {
+    pub fn record_file(&self, c: &mut Checker<'_, '_>, file: FileId) {
         let begun = self.begun.read();
-        let begun = begun.as_ref().expect(IS_BEGUN);
+        let begun = begun.as_ref().expect(NOT_STARTED_MESSAGE);
         if let Some((shared, fragments)) = &begun.translating
             && shared.is_compiled(file)
         {
-            let is_evidence_dropped = *begun.is_evidence_dropped.get_or_init(|| fragments.is_any_of(&|translated| c.are_escapes_noted_of(translated)));
-            c.while_translating_behind_the_check(|c| {
-                c.note_uses_of_functions_in(file);
-                if !is_evidence_dropped {
-                    c.note_evidence_of_strangers_in(file);
+            let has_stale_escape_notes = *begun.has_stale_escape_notes.get_or_init(|| fragments.is_any_of(&|translated| c.are_escapes_recorded_for(translated)));
+            c.during_translation_after_check(|c| {
+                c.record_function_uses_in(file);
+                if !has_stale_escape_notes {
+                    c.record_untyped_object_evidence(file);
                 }
             });
-            c.forget_answers_by_expression();
+            c.clear_expr_cache();
         }
     }
 
     /// `Request::all_visited_once`
     pub fn merge_notes(&self, program: &Checked<'_>) {
         let mut c = program.checker();
-        c.merge_noted_uses_of_functions();
+        c.merge_recorded_function_uses();
         let begun = self.begun.read();
-        if let Some((shared, _)) = &begun.as_ref().expect(IS_BEGUN).translating {
-            c.merge_noted_evidence_of_foreign_objects(&|file| shared.is_compiled(file));
+        if let Some((shared, _)) = &begun.as_ref().expect(NOT_STARTED_MESSAGE).translating {
+            c.merge_untyped_object_evidence(&|file| shared.is_compiled(file));
         }
     }
 
@@ -316,31 +321,31 @@ impl<'a> Translation<'a> {
     /// other, with `any` where the checker has no type: whether the errors matter is known in the end.
     pub fn translate_file(&self, c: &mut Checker<'_, '_>, file: FileId) {
         let begun = self.begun.read();
-        let Some((shared, fragments)) = &begun.as_ref().expect(IS_BEGUN).translating else { return };
+        let Some((shared, fragments)) = &begun.as_ref().expect(NOT_STARTED_MESSAGE).translating else { return };
         if !shared.is_compiled(file) {
             return;
         }
-        let fragment = match c.knows_uses_of_functions() {
-            true => c.while_translating_behind_the_check(|c| build::translate_file(c, shared, file)),
-            false => c.while_translating(|c| {
-                c.note_uses_of_functions_in(file);
+        let fragment = match c.has_merged_function_uses() {
+            true => c.during_translation_after_check(|c| build::translate_file(c, shared, file)),
+            false => c.during_translation(|c| {
+                c.record_function_uses_in(file);
                 build::translate_file(c, shared, file)
             }),
         };
         if !c.is_warming_up() {
             fragments.put(fragment);
         }
-        c.forget_answers_by_expression();
+        c.clear_expr_cache();
     }
 
-    pub fn take_programs_of_fragments(&self, program: &Checked<'_>) -> Vec<ir::Program> {
+    pub fn take_fragment_programs(&self, program: &Checked<'_>) -> Vec<ir::Program> {
         let begun = self.begun.read();
-        let fragments = begun.as_ref().expect(IS_BEGUN).translating.as_ref().map_or_else(Vec::new, |(_, fragments)| fragments.take());
+        let fragments = begun.as_ref().expect(NOT_STARTED_MESSAGE).translating.as_ref().map_or_else(Vec::new, |(_, fragments)| fragments.take(&|file| file.0, &|count, work| (0..count).for_each(work)));
         let line_table_of = |path: &[u8]| {
             let text = program.files.by_path.get(path).map_or(&[][..], |file| &program.files.hir(file).text[..]);
             format::line_table(text, &bun_sema::check::compute_ecma_line_starts(text))
         };
-        fragments.into_iter().map(|fragment| audit::program_of_fragment(fragment, &self.constants.root, program.files.is_case_sensitive, &line_table_of)).collect()
+        fragments.into_iter().map(|fragment| audit::fragment_program(fragment, &self.constants.root, program.files.is_case_sensitive, &line_table_of)).collect()
     }
 
     /// `Request::compile`. `errors`: where the checker has found errors. An error stands only if it lies in code that is in the
@@ -350,14 +355,14 @@ impl<'a> Translation<'a> {
     /// declaration file is no code at all, and says what the code is: an error there stands. So does one outside of functions in a
     /// file that is no module of the program and that a module of the program imports, be it through other such files.
     pub fn finish(&self, program: &Checked<'_>, in_parallel: InParallel<'_>, errors: &[(FileId, u32)]) -> Translated {
-        let (mut translated, said) = self.finish_ahead_of_the_tokens(program, in_parallel, errors);
+        let (mut translated, said) = self.finish_before_renaming(program, in_parallel, errors);
         translated.tokens = said.map(|said| names::as_json(&said).into_boxed_slice());
         translated
     }
 
-    fn finish_ahead_of_the_tokens(&self, program: &Checked<'_>, in_parallel: InParallel<'_>, errors: &[(FileId, u32)]) -> (Translated, Option<names::Said>) {
+    fn finish_before_renaming(&self, program: &Checked<'_>, in_parallel: InParallel<'_>, errors: &[(FileId, u32)]) -> (Translated, Option<names::Said>) {
         let begun = self.begun.read();
-        let begun = begun.as_ref().expect(IS_BEGUN);
+        let begun = begun.as_ref().expect(NOT_STARTED_MESSAGE);
         let mut linked = match &begun.translating {
             Some((shared, fragments)) => {
                 // Also in a file that is not compiled with the program, whose fragment would have said so.
@@ -373,19 +378,22 @@ impl<'a> Translation<'a> {
                 };
                 let in_dropped_imports: Vec<bool> = errors.iter().map(is_in_dropped_import).collect();
                 let errors = Errors { places: errors, in_dropped_imports: &in_dropped_imports, imported_by: &|c, file| build::files_imported_by(c, shared, file) };
-                let mut function_texts = self.constants.function_texts.as_ref().map(|later| later());
-                link::link(program, fragments.take(), &fragments.program_ids, shared.roots(), shared.entry_points(), shared.builtin_modules(), shared.prelude(), &self.constants.root, self.constants.own_paths.is_some(), function_texts.as_mut(), errors, in_parallel, self.explain, &|c, missing, is_defined| build::describe(c, shared, missing, is_defined))
+                let mut function_sources = self.constants.function_sources.as_ref().map(|later| later());
+                program.release_translation_caches();
+                link::link(program, fragments.take(&|file| program.files.rank_of_file(file), in_parallel), &fragments.program_ids, shared.roots(), shared.entry_points(), shared.builtin_modules(), shared.prelude(), &self.constants.root, self.constants.source_path_to_url.is_some(), function_sources.as_mut(), errors, in_parallel, self.explain, &|c, missing, is_defined| build::describe(c, shared, missing, is_defined))
             }
             // A file that is only code is not checked, so that nobody has reported it.
             None => {
-                let does_not_parse = |&file: &FileId| Problem { file, pos: program.files.hir(file).error_pos, what: "a file that does not parse".into() };
+                let parse_failure = |&file: &FileId| Problem { file, pos: program.files.hir(file).error_pos, what: "a file that does not parse".into() };
                 let refused = begun.refused_at.map(|(file, pos)| Problem { file, pos, what: "a function with more than 65,535 variables that inner functions use".into() });
-                Linked { problems: begun.without_whole_trees.iter().map(does_not_parse).chain(refused).collect(), errors: errors.iter().map(|_| None).collect(), ..Linked::default() }
+                Linked { problems: begun.partially_parsed.iter().map(parse_failure).chain(refused).collect(), errors: errors.iter().map(|_| None).collect(), ..Linked::default() }
             }
         };
         linked.program.logs_type_errors = self.constants.logs_type_errors;
-        webassembly::add_files_named_in(&mut linked.program);
-        let said = self.constants.shortens_names.then(|| names::shorten(&mut linked.program, in_parallel));
+        webassembly::add_referenced_files(&mut linked.program);
+        let tdz_names = self.constants.minifies_identifiers.then(|| names::intern_tdz_names(&mut linked.program.strs));
+        let name_uses = linked.find_always_failing_sites(program, in_parallel, |linked_program| tdz_names.as_ref().map(|tdz_names| names::count_uses(linked_program, tdz_names, in_parallel)));
+        let said = tdz_names.zip(name_uses).map(|(tdz_names, name_uses)| names::shorten(&mut linked.program, &tdz_names, name_uses, in_parallel));
         for (elsewhere, _) in linked.errors.iter_mut().zip(errors).filter(|(_, place)| program.files.hir(place.0).kind == FileKind::Declaration) {
             *elsewhere = None;
         }
@@ -403,19 +411,19 @@ impl<'a> Translation<'a> {
             let text = &program.files.hir(file).text;
             bun_core::strings::count_char(&text[..(pos as usize).min(text.len())], b'\n') + 1
         };
-        let why_errors_do_not_stand = (linked.errors.iter().zip(errors))
+        let error_dismissal_reasons = (linked.errors.iter().zip(errors))
             .filter_map(|(elsewhere, &(file, _))| {
                 Some(match elsewhere.as_ref()? {
-                    Elsewhere::Cut(start) => format!("cut by a constant at line {}", line_of(file, *start)),
-                    Elsewhere::DroppedImport => "in a dropped import".to_owned(),
-                    Elsewhere::NotReached(name) => format!("in `{name}`, which is not reached"),
-                    Elsewhere::NoModule => "the file is not in the program".to_owned(),
-                    Elsewhere::RegExpLiteral => "in a regular expression literal, which the engine parses".to_owned(),
-                    Elsewhere::PrivateNameInOptionalChain => "a private name in an optional chain of JavaScript, which ECMAScript has".to_owned(),
-                    Elsewhere::PrivateNameOfEnclosingClass => "a private name of JavaScript that an enclosing class declares, which ECMAScript looks for when it runs".to_owned(),
-                    Elsewhere::StaticMemberNamedConstructor => "a static member of JavaScript named `constructor`, which ECMAScript has".to_owned(),
-                    Elsewhere::CommentOfJavaScript => "in a JavaScript comment, which is not code".to_owned(),
-                    Elsewhere::DeclarationsOfPackage => "in a package's type declarations, which are not code".to_owned(),
+                    OutsideProgramReason::Cut(start) => format!("cut by a constant at line {}", line_of(file, *start)),
+                    OutsideProgramReason::DroppedImport => "in a dropped import".to_owned(),
+                    OutsideProgramReason::NotReached(name) => format!("in `{name}`, which is not reached"),
+                    OutsideProgramReason::NoModule => "the file is not in the program".to_owned(),
+                    OutsideProgramReason::RegExpLiteral => "in a regular expression literal, which the engine parses".to_owned(),
+                    OutsideProgramReason::PrivateNameInOptionalChain => "a private name in an optional chain of JavaScript, which ECMAScript has".to_owned(),
+                    OutsideProgramReason::PrivateNameOfEnclosingClass => "a private name of JavaScript that an enclosing class declares, which ECMAScript looks for when it runs".to_owned(),
+                    OutsideProgramReason::StaticMemberNamedConstructor => "a static member of JavaScript named `constructor`, which ECMAScript has".to_owned(),
+                    OutsideProgramReason::JsComment => "in a JavaScript comment, which is not code".to_owned(),
+                    OutsideProgramReason::PackageDeclarations => "in a package's type declarations, which are not code".to_owned(),
                 })
             })
             .collect();
@@ -424,18 +432,18 @@ impl<'a> Translation<'a> {
             format!("{}:{}: --aot does not support {}", bstr::BStr::new(module.file_name()), line_of(problem.file, problem.pos), problem.what)
         };
         let problems = linked.problems.iter().map(shown).collect();
-        let builtin_modules_left_out = linked.builtin_modules_left_out.iter().map(|(id, problem)| (*id, shown(problem))).collect();
-        let builtin_functions_left_out = linked.builtin_functions_left_out.iter().map(|(id, problem)| (*id, shown(problem))).collect();
+        let skipped_builtin_modules = linked.skipped_builtin_modules.iter().map(|(id, problem)| (*id, shown(problem))).collect();
+        let skipped_builtin_functions = linked.skipped_builtin_functions.iter().map(|(id, problem)| (*id, shown(problem))).collect();
         let always_fails = linked.found.iter().any(|found| !matches!(found.code, 100019 | 100020));
-        program.found_by_the_compiler.lock().extend(linked.found);
-        (Translated { program: linked.program, problems, members: linked.members, explained: linked.explained, errors_that_stand: linked.errors.iter().map(Option::is_none).collect(), always_fails, why_errors_do_not_stand, builtin_modules_left_out, builtin_functions_left_out, times: linked.times, tokens: None }, said)
+        program.compiler_diagnostics.lock().extend(linked.found);
+        (Translated { program: linked.program, problems, members: linked.members, explained: linked.explained, kept_errors: linked.errors.iter().map(Option::is_none).collect(), always_fails, error_dismissal_reasons, skipped_builtin_modules, skipped_builtin_functions, times: linked.times, tokens: None }, said)
     }
 
-    /// The same as what the engine reads, with `Translated::errors_that_stand`. `Err`: what could not be translated. Nothing, if an
+    /// The same as what the engine reads, with `Translated::kept_errors`. `Err`: what could not be translated. Nothing, if an
     /// error stands.
-    pub fn finish_for_engine(&self, program: &Checked<'_>, in_parallel: InParallel<'_>, errors: &[(FileId, u32)], on_written: &dyn Fn(&[u8])) -> ForEngine {
-        let (Translated { program: mut linked, problems, errors_that_stand, always_fails, explained, .. }, said) = self.finish_ahead_of_the_tokens(program, in_parallel, errors);
-        let written = if errors_that_stand.contains(&true) || always_fails {
+    pub fn finish_for_engine(&self, program: &Checked<'_>, in_parallel: InParallel<'_>, errors: &[(FileId, u32)], on_written: &dyn Fn(&[u8])) -> EngineProgram {
+        let (Translated { program: mut linked, problems, kept_errors, always_fails, explained, .. }, said) = self.finish_before_renaming(program, in_parallel, errors);
+        let written = if kept_errors.contains(&true) || always_fails {
             Err(Vec::new())
         } else if !problems.is_empty() {
             Err(problems)
@@ -446,19 +454,19 @@ impl<'a> Translation<'a> {
         };
         let tokens = said.map(|said| names::as_json(&said).into_boxed_slice());
         release(linked, in_parallel);
-        ForEngine { written, errors_that_stand, explained, tokens }
+        EngineProgram { written, kept_errors, explained, tokens }
     }
 }
 
 pub fn release(mut program: ir::Program, in_parallel: InParallel<'_>) {
-    const FUNCTIONS_OF_A_SLICE: usize = 256;
+    const FUNCTIONS_PER_SLICE: usize = 256;
     let mut funcs = std::mem::take(&mut program.funcs);
     let mut parts: Vec<ir::Program> = vec![program];
     while !funcs.is_empty() {
-        let slice = funcs.split_off(funcs.len().saturating_sub(FUNCTIONS_OF_A_SLICE));
+        let slice = funcs.split_off(funcs.len().saturating_sub(FUNCTIONS_PER_SLICE));
         parts.push(ir::Program { funcs: slice, ..Default::default() });
     }
     for_each_mut(&mut parts, in_parallel, &|part| drop(std::mem::take(part)));
 }
 
-const IS_BEGUN: &str = "`begin` comes first";
+const NOT_STARTED_MESSAGE: &str = "`begin` comes first";

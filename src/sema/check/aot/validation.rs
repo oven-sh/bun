@@ -29,6 +29,13 @@ pub enum PlannedPrimitive {
     BigInt,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Placeholder {
+    Text,
+    Number,
+    BigInt,
+}
+
 #[derive(Clone, PartialEq, Debug)]
 pub enum Rule {
     Integer,
@@ -41,6 +48,7 @@ pub enum Rule {
     LengthAtMost(f64),
     Pattern(Vec<u8>),
     Format { name: Vec<u8>, pattern: Vec<u8> },
+    Template { name: Vec<u8>, texts: Vec<Vec<u8>>, placeholders: Vec<Placeholder> },
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -86,6 +94,7 @@ pub struct ValidationPlan {
     pub nodes: Vec<PlanNode>,
     pub root: u32,
     pub unsupported: Vec<String>,
+    pub is_strict_everywhere: bool,
 }
 
 fn write_json_text(out: &mut Vec<u8>, text: &[u8]) {
@@ -189,6 +198,7 @@ impl ValidationPlan {
                     Rule::LengthAtMost(n) => ("maxLength", Some(n)),
                     Rule::Pattern(_) => ("pattern", None),
                     Rule::Format { .. } => ("format", None),
+                    Rule::Template { .. } => ("template", None),
                 };
                 out.extend_from_slice(format!("[\"{name}\",").as_bytes());
                 match (rule, number) {
@@ -201,6 +211,24 @@ impl ValidationPlan {
                         write_json_text(&mut out, pattern);
                         out.push(b',');
                         write_json_text(&mut out, name);
+                    }
+                    (Rule::Template { name, texts, placeholders }, _) => {
+                        out.push(b'[');
+                        for (at, text) in texts.iter().enumerate() {
+                            if at > 0 {
+                                out.push(b',');
+                            }
+                            write_json_text(&mut out, text);
+                        }
+                        out.extend_from_slice(b"],");
+                        write_json_text(&mut out, name);
+                        out.push(b',');
+                        let kinds: Vec<u8> = placeholders.iter().map(|placeholder| match placeholder {
+                            Placeholder::Text => b's',
+                            Placeholder::Number => b'n',
+                            Placeholder::BigInt => b'b',
+                        }).collect();
+                        write_json_text(&mut out, &kinds);
                     }
                     _ => out.extend_from_slice(b"null,null"),
                 }
@@ -217,6 +245,42 @@ impl ValidationPlan {
         }
         out.extend_from_slice(b"]]");
         out
+    }
+
+    fn children(&self, node: u32) -> Vec<u32> {
+        match &self.nodes[node as usize].planned {
+            Planned::Array { element: one, .. } | Planned::Dictionary { held: one, .. } => vec![*one],
+            Planned::Tuple { elements: several, .. } | Planned::Union { arms: several, .. } => several.clone(),
+            Planned::Object { members, others, .. } => members.iter().map(|member| member.node).chain(if let OtherKeys::Kept(held) = others { Some(*held) } else { None }).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    fn omits_members_below(&self, node: u32) -> bool {
+        let (mut seen, mut pending) = (vec![false; self.nodes.len()], vec![node]);
+        while let Some(next) = pending.pop() {
+            if std::mem::replace(&mut seen[next as usize], true) {
+                continue;
+            }
+            if matches!(&self.nodes[next as usize].planned, Planned::Object { members, .. } if members.iter().any(|member| member.is_omitted_when_invalid)) {
+                return true;
+            }
+            pending.extend(self.children(next));
+        }
+        false
+    }
+
+    pub fn node_identity(&self, node: u32) -> Option<(TypeId, bool, bool)> {
+        let described = &self.nodes[node as usize];
+        if self.is_strict_everywhere || !described.rules.is_empty() || described.message.is_some() || described.default.is_some() {
+            return None;
+        }
+        let (ty, is_strict) = match described.planned {
+            Planned::Object { ty, others, .. } => (ty, others == OtherKeys::Refused),
+            Planned::Array { ty, .. } | Planned::Tuple { ty, .. } | Planned::Dictionary { ty, .. } | Planned::Union { ty, .. } => (ty, false),
+            _ => return None,
+        };
+        Some((ty, is_strict, self.omits_members_below(node)))
     }
 
     fn reaches_inline(&self, from: u32, target: u32, seen: &mut Vec<u32>) -> bool {
@@ -268,7 +332,7 @@ impl Checker<'_, '_> {
             return None;
         }
         let whole = self.files().canonical(Sym { file: declared_in, id });
-        if !self.files().decls(whole).iter().any(|declaration| self.declares_module_bun(declaration.0)) {
+        if !self.files().decls(whole).iter().any(|declaration| self.declares_bun_module(declaration.0)) {
             return None;
         }
         let which = match self.atoms().bytes(self.files().symbol(whole).name) {
@@ -290,10 +354,11 @@ impl Checker<'_, '_> {
         for node in 0..planning.plan.nodes.len() as u32 {
             planning.plan.nodes[node as usize].is_recursive = planning.plan.reaches_inline(node, node, &mut Vec::new());
         }
+        planning.plan.is_strict_everywhere = planning.is_strict_everywhere;
         planning.plan
     }
 
-    fn constant_of(&self, ty: TypeId) -> Option<Constant> {
+    fn primitive_constant(&self, ty: TypeId) -> Option<Constant> {
         Some(match *self.data(ty) {
             TypeData::Intrinsic(Intrinsic::Void | Intrinsic::Undefined | Intrinsic::Missing | Intrinsic::UndefinedWidening) => Constant::Undefined,
             TypeData::Intrinsic(Intrinsic::Null | Intrinsic::NullWidening) => Constant::Null,
@@ -306,8 +371,8 @@ impl Checker<'_, '_> {
 
     fn read_tag(&mut self, planning: &mut Planning, part: TypeId, tags: &mut Tags, at: &str) -> bool {
         let Some((alias, arguments)) = self.alias_of_type(part) else { return false };
-        let Some(name) = self.intrinsic_of_bun(alias) else { return false };
-        let argument = arguments.first().and_then(|&argument| self.constant_of(argument));
+        let Some(name) = self.bun_intrinsic(alias) else { return false };
+        let argument = arguments.first().and_then(|&argument| self.primitive_constant(argument));
         let name = self.atoms().bytes(name);
         let rule = match (name, argument) {
             (b"Int", _) => Rule::Integer,
@@ -351,6 +416,21 @@ impl Checker<'_, '_> {
         true
     }
 
+    fn template_literal_rule(&mut self, ty: TypeId) -> Option<Rule> {
+        let TypeData::Template { ref texts, ref types } = *self.data(ty) else { return None };
+        let texts: Vec<Vec<u8>> = texts.iter().map(|&text| self.atoms().bytes(text).to_vec()).collect();
+        let placeholders = types
+            .iter()
+            .map(|&placeholder| match *self.data(placeholder) {
+                TypeData::Intrinsic(Intrinsic::String | Intrinsic::Any) => Some(Placeholder::Text),
+                TypeData::Intrinsic(Intrinsic::Number) => Some(Placeholder::Number),
+                TypeData::Intrinsic(Intrinsic::BigInt) => Some(Placeholder::BigInt),
+                _ => None,
+            })
+            .collect::<Option<Vec<Placeholder>>>()?;
+        Some(Rule::Template { name: self.type_to_string(ty).to_vec(), texts, placeholders })
+    }
+
     fn plan_type(&mut self, planning: &mut Planning, ty: TypeId, at: &str) -> u32 {
         let ty = self.reduced(ty);
         let mut tags = Tags::default();
@@ -372,13 +452,15 @@ impl Checker<'_, '_> {
         if !is_tagged {
             planning.known.insert((base, is_strict), node);
         }
-        let planned = self.plan_untagged(planning, base, is_strict, at);
-        planning.plan.nodes[node as usize] = PlanNode { planned, rules: tags.rules, message: tags.message, default: tags.default, is_recursive: false };
+        let template_rule = self.template_literal_rule(base);
+        let planned = if template_rule.is_some() { Planned::Primitive(PlannedPrimitive::Text) } else { self.plan_untagged(planning, base, is_strict, at) };
+        let rules = template_rule.into_iter().chain(tags.rules).collect();
+        planning.plan.nodes[node as usize] = PlanNode { planned, rules, message: tags.message, default: tags.default, is_recursive: false };
         node
     }
 
     fn plan_untagged(&mut self, planning: &mut Planning, ty: TypeId, is_strict: bool, at: &str) -> Planned {
-        if let Some(constant) = self.constant_of(ty) {
+        if let Some(constant) = self.primitive_constant(ty) {
             return Planned::Value(constant);
         }
         let unsupported = |checker: &mut Self, planning: &mut Planning| {
@@ -431,8 +513,8 @@ impl Checker<'_, '_> {
                 }
                 let kept = shape.index.iter().find(|info| info.key == TypeId::STRING).map(|info| info.value);
                 let props: Vec<_> = shape.props.iter().collect();
-                let is_declared_outside = matches!(*self.data(ty), TypeData::Ref { target, .. } if self.hir(target.file).kind == FileKind::Declaration);
-                if is_declared_outside && props.iter().any(|prop| prop.flags.contains(PropFlags::METHOD)) {
+                let is_declared_externally = matches!(*self.data(ty), TypeData::Ref { target, .. } if self.hir(target.file).kind == FileKind::Declaration);
+                if is_declared_externally && props.iter().any(|prop| prop.flags.contains(PropFlags::METHOD)) {
                     return unsupported(self, planning);
                 }
                 if let (true, Some(held)) = (props.is_empty(), kept) {

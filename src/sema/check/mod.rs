@@ -119,20 +119,20 @@ use symbols::{AliasTarget, ExcludedMeanings};
 use task::{Open, OrderDependent, Stored, Task};
 
 pub use aot::{ClassFacts, MethodStore, ReplacedMethods};
-pub use aot::CodeOfImport;
+pub use aot::ImportedCode;
 pub use aot::{AotCheck, AotCheckKind};
-pub use aot::{CommonJsExports, ExportsMention};
+pub use aot::{CommonJsExports, ExportsReference};
 pub use aot::Identity;
 pub use aot::given;
-pub use aot::{Contrary, FlowNode, FlowSource, Int32Verdict, NumberFlow, RunBy, expected_int32};
-pub use aot::{Answer, BuiltIn, Candidate, GaveUp, KindsDeclared, Literal, Meeting, Membership, Noted, OriginOfData, Place, Question, Reach, Share, WhyForeign};
-pub use aot::{Cause, FieldTypes, OpensForTheLog, Sizes, Subtypes};
+pub use aot::{NotInt32Reason, FlowNode, FlowSource, Int32Verdict, NumberFlow, CodeOwner, expected_int32};
+pub use aot::{Answer, BuiltIn, Candidate, TruncatedSearch, KindsDeclared, Literal, SearchBarrier, Membership, FlowNotes, DataOrigin, Place, Question, Reach, Share, UntypedReason};
+pub use aot::{Cause, FieldTypes, LoggingRelaxation, Sizes, Subtypes};
 pub use aot::{Evaluates, FirstStore, Primitive, ReferenceRead, Storage, kind};
-pub use aot::{Claim, is_global_of_the_engine};
-pub use aot::{Constant, OtherKeys, PlanNode, Planned, PlannedMember, PlannedPrimitive, Rule, ValidationCall, ValidationPlan};
+pub use aot::{Claim, is_engine_global};
+pub use aot::{Constant, OtherKeys, Placeholder, PlanNode, Planned, PlannedMember, PlannedPrimitive, Rule, ValidationCall, ValidationPlan};
 pub use aot::locked_builtins;
-pub use aot::{Callee, OnlyFunction};
-pub use aot::{Activation, Capture, CapturedVariable, DeclaredClosure, NotCopied, Receiver, argument_use};
+pub use aot::{Callee, SingleFunction};
+pub use aot::{Activation, Capture, CapturedVariable, DeclaredClosure, NotCopiedReason, Receiver, argument_use};
 pub use call::ResolvedCall;
 pub use shape::Members;
 pub use spans::compute_ecma_line_starts;
@@ -230,7 +230,7 @@ pub struct Program<'s> {
     /// What `check_external_emit_helpers_of_later_files` has reported, of all tasks. `finish_file`
     /// keeps the first of each. It does not depend on which task comes first.
     emit_helper_errors_of_earlier_files: Guarded<Vec<errors_emit_helpers::EarlierEmitHelperError>>,
-    pub found_by_the_compiler: Guarded<Vec<CompilerDiagnostic>>,
+    pub compiler_diagnostics: Guarded<Vec<CompilerDiagnostic>>,
     /// `autoArrayType`
     auto_array_type: TypeId,
     /// See `Services::file_info`. Made when it is first asked for.
@@ -301,7 +301,7 @@ pub struct Program<'s> {
     /// See `Checker::keep_type`.
     kept_types: ById<TypeId, (), Buffered, &'s Session>,
     /// What ahead-of-time compilation finds in a pass over all files and that holds for every checker.
-    aot: aot::Shared,
+    aot: core::mem::ManuallyDrop<aot::Shared>,
     /// `NodeCheckFlagsInitializerIsUndefinedComputed` and `NodeCheckFlagsInitializerIsUndefined`
     initializer_is_undefined: ByNode<(FileId, ParamId), bool, Buffered, &'s Session>,
     /// `links.resolvedType != nil` of the symbol of a parameter that `is_resolved_on_request`: the
@@ -509,7 +509,7 @@ impl<'s> Program<'s> {
             listings_are_not_compared: Guarded::new(false),
             properties_referenced_before: Default::default(),
             emit_helper_errors_of_earlier_files: Default::default(),
-            found_by_the_compiler: Default::default(),
+            compiler_diagnostics: Default::default(),
             auto_array_type,
             package_names_of_linked_files: Default::default(),
             types,
@@ -616,7 +616,8 @@ impl<'s> Program<'s> {
         self.diagnostics_of_re_resolved_calls = ByNodeIndirect::new_in(&no_nodes, session);
         self.key_properties = ByIdIndirect::new_in(session);
         self.distributed_intersections = ByKey::new_in(session);
-        self.aot = Default::default();
+        // SAFETY: the driver calls this once, as its last use of the program, and the arena that holds the program drops nothing.
+        unsafe { core::mem::ManuallyDrop::drop(&mut self.aot) };
     }
 
     /// `GetGlobalDiagnostics`: the errors found that belong to no file, once all files have been
@@ -782,7 +783,7 @@ impl<'s> Program<'s> {
             simplified: Default::default(),
             inherited_names: [0; 4],
             cond_distributive_memo: Default::default(),
-            identities_of_intersections: Default::default(),
+            intersection_identities: Default::default(),
             cond_constraint_instantiations: Default::default(),
             relation_too_complex: false,
             relation_too_deep: false,
@@ -818,7 +819,7 @@ impl<'s> Program<'s> {
             type_arguments_in_instantiation: Vec::new(),
             conditional_constraint_depth: 0,
             deepest_stack: std::cell::Cell::new(0),
-            times_half_of_stack_was_in_use: std::cell::Cell::new(0),
+            stack_half_used_count: std::cell::Cell::new(0),
             ran_out_of_stack: std::cell::Cell::new(false),
             scopes_of_what_is_in: Default::default(),
             spread_indices_of_many: Default::default(),
@@ -1501,7 +1502,7 @@ pub struct Checker<'p, 's> {
     pub(super) inherited_names: [u64; 4],
     /// `resolvedConstraintOfDistributive`. `None` is `noConstraintType`.
     cond_distributive_memo: FxHashMap<TypeId, Option<TypeId>>,
-    identities_of_intersections: FxHashMap<TypeId, Option<std::rc::Rc<relate::IdentitiesOfMembers>>>,
+    intersection_identities: FxHashMap<TypeId, Option<std::rc::Rc<relate::MemberIdentities>>>,
     cond_constraint_instantiations: FxHashMap<(FileId, TypeNodeId, MapperId), TypeId>,
     /// Set when a comparison exhausts `Relater::relation_count` (2859). The caller clears it before comparing.
     pub(super) relation_too_complex: bool,
@@ -1572,7 +1573,7 @@ pub struct Checker<'p, 's> {
     /// `conditionalConstraintDepth`
     conditional_constraint_depth: u32,
     deepest_stack: std::cell::Cell<usize>,
-    times_half_of_stack_was_in_use: std::cell::Cell<u32>,
+    stack_half_used_count: std::cell::Cell<u32>,
     ran_out_of_stack: std::cell::Cell<bool>,
     /// `enclosing_scope_of_expr` of what is in these expressions.
     scopes_of_what_is_in: std::cell::RefCell<FxHashMap<(FileId, ExprId), crate::bind::ScopeId>>,
@@ -2052,13 +2053,13 @@ impl<'p, 's> Checker<'p, 's> {
     pub(crate) fn is_half_of_stack_in_use(&self) -> bool {
         let is_in_use = self.stack_base.saturating_sub(stack_pointer()) > self.stack_limit / 2;
         if is_in_use {
-            self.times_half_of_stack_was_in_use.set(self.times_half_of_stack_was_in_use.get().wrapping_add(1));
+            self.stack_half_used_count.set(self.stack_half_used_count.get().wrapping_add(1));
         }
         is_in_use
     }
 
-    pub(crate) fn times_half_of_stack_was_in_use(&self) -> u32 {
-        self.times_half_of_stack_was_in_use.get()
+    pub(crate) fn stack_half_used_count(&self) -> u32 {
+        self.stack_half_used_count.get()
     }
 
     /// The maximum stack in use at any query.
@@ -2206,7 +2207,7 @@ impl<'p, 's> Checker<'p, 's> {
         let is_low = self.is_stack_low();
         // The frames are not those of one expression: see `MAX_DEPTH_IN_CONTEXT`.
         if is_low && self.stack.len() >= MAX_DEPTH {
-            self.unwind_to_the_bottom();
+            self.unwind_all_frames();
             return true;
         }
         if is_low {
@@ -2331,7 +2332,7 @@ impl<'p, 's> Checker<'p, 's> {
             &self.stack[self.stack.len() - 12..]
         );
         let Some((outermost, innermost)) = restart else {
-            self.unwind_to_the_bottom();
+            self.unwind_all_frames();
             self.refuse_outermost_in_flight(q);
             return true;
         };
@@ -2345,7 +2346,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// A query is refused for lack of capacity, and no frame can start over: every query is refused until `stack` is empty.
-    fn unwind_to_the_bottom(&mut self) {
+    fn unwind_all_frames(&mut self) {
         self.last_enter = EnterOutcome::Refused;
         self.unwind_work = self.work + 1;
         self.work_trap = self.work + 1;
@@ -3370,11 +3371,11 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn note_taint_event(&mut self, from: usize) {
-        Self::note_event(&mut self.taint_events, self.work, from);
+        Self::record_event(&mut self.taint_events, self.work, from);
     }
 
     /// Appends an event to `taint_events` or `flow_taint_events`.
-    fn note_event(events: &mut Vec<(u64, u32)>, work: u64, from: usize) {
+    fn record_event(events: &mut Vec<(u64, u32)>, work: u64, from: usize) {
         let is_covered = |event: &(u64, u32)| event.1 as usize >= from;
         while events.last().is_some_and(is_covered) {
             events.pop();
@@ -3741,7 +3742,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         self.lowest_taint = self.lowest_taint.min(depth);
         self.note_taint_event(depth);
-        Self::note_event(&mut self.flow_taint_events, self.work, depth);
+        Self::record_event(&mut self.flow_taint_events, self.work, depth);
         // `getTypeOfVariableOrParameterOrProperty` stores what `getQuickTypeOfExpression` returns,
         // which checks the callee with the loops visible, and the type of a `...rest`.
         // Not the type of a pattern around a binding element, which nothing stores: it is computed

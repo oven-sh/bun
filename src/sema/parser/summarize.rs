@@ -190,7 +190,7 @@ fn file_of(
     file_read_as(scratch, how, text, atoms, false)
 }
 
-const MODULES_OF_THE_RUNTIME: &[u8] = b"/$bun/js/";
+const RUNTIME_MODULES: &[u8] = b"/$bun/js/";
 
 /// `file_of`, in the dialect that `how` has. `refuses_await`: an `await` expression at the top level is an error.
 fn file_read_as(
@@ -215,7 +215,7 @@ fn file_read_as(
         is_jsx: is_js || is_json || script_kind == Some(ScriptKind::Tsx),
         is_javascript: is_js || is_json,
         is_json,
-        is_typescript_under_a_javascript_name: !is_js && !by_name && !path.starts_with(MODULES_OF_THE_RUNTIME) && ScriptKind::from_file_name(path).is_some_and(ScriptKind::is_javascript),
+        is_typescript_with_js_extension: !is_js && !by_name && !path.starts_with(RUNTIME_MODULES) && ScriptKind::from_file_name(path).is_some_and(ScriptKind::is_javascript),
         // `flow-parser` reads it as a name outside an async function, in a module too.
         await_is_a_name: is_json
             || (is_ecmascript || dialect.oxc) && dialect.script

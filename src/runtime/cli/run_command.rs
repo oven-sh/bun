@@ -792,7 +792,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     }
 
     fn audit_main(ctx: &ContextData, vm: &mut VirtualMachine) -> bool {
-        let preloads = cli::aot_audit::preloads_of(vm);
+        let preloads = cli::aot_audit::preload_paths(vm);
         let main = crate::cli::check_command::EntryPoint {
             path: vm.main(),
             loader: Some(Self::loader_of_main(ctx, vm.main(), None)),
@@ -979,7 +979,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         // The shell does not need to initialize JSC (saves 1-3ms).
         if strings::has_suffix_comptime(&entry_path, b".sh") {
-            if ctx.runtime_options.aot || cli::aot_audit::acts() {
+            if ctx.runtime_options.aot || cli::aot_audit::is_enforcing() {
                 pretty_errorln!(
                     "<r><red>error<r>: <b>--aot<r> does not apply to a shell script (<b>{}<r>). Run a JavaScript or TypeScript file.",
                     bstr::BStr::new(&entry_path),
@@ -1259,7 +1259,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // on this thread.
         let vm = unsafe { &mut *vm_ptr };
         if let Some(report) = ctx.runtime_options.aot_decode_crash_report.take() {
-            let frames = bun_crash_handler::compiled_frames_of_report(&report);
+            let frames = bun_crash_handler::report_compiled_frames(&report);
             if frames.is_empty() {
                 Output::err_generic("--aot-decode-crash-report: that report has no frames from this executable's compiled code", ());
                 Global::exit(1);
@@ -2491,7 +2491,7 @@ impl RunCommand {
             if let Some(package_json) = root_dir.enclosing_package_json {
                 if let Some(scripts) = package_json.scripts.as_deref() {
                     if let Some(&script_content) = scripts.get(target_name) {
-                        if ctx.runtime_options.aot || cli::aot_audit::acts() {
+                        if ctx.runtime_options.aot || cli::aot_audit::is_enforcing() {
                             pretty_errorln!(
                                 "<r><red>error<r>: <b>--aot<r> does not apply to a package.json script (<b>{}<r>). Add it to the command inside the script, or run a file.",
                                 bstr::BStr::new(target_name),
@@ -2743,7 +2743,7 @@ impl RunCommand {
                 if let Some(destination) =
                     which(&mut path_buf, path_for_which, top_level_dir, target_name)
                 {
-                    if ctx.runtime_options.aot || cli::aot_audit::acts() {
+                    if ctx.runtime_options.aot || cli::aot_audit::is_enforcing() {
                         pretty_errorln!(
                             "<r><red>error<r>: <b>--aot<r> does not apply to an executable (<b>{}<r>). Run a JavaScript or TypeScript file.",
                             bstr::BStr::new(destination.as_bytes()),

@@ -220,7 +220,7 @@ fn run(args: &[String]) {
                 }
                 constants.resolved = Some(resolved);
                 constants.dropped_imports = it.dropped_imports.iter().cloned().collect();
-                constants.without_side_effects = it.without_side_effects.iter().cloned().collect();
+                constants.side_effect_free_files = it.side_effect_free_files.iter().cloned().collect();
                 constants.lifted_commonjs = it.lifted_commonjs.iter().cloned().collect();
                 constants.statements = bun_aot::Constants::statements_by_file(it.statements.iter().cloned());
                 constants.texts = it.texts.iter().cloned().collect();
@@ -229,11 +229,11 @@ fn run(args: &[String]) {
             // `--test-globals`: as for `bun test --aot`.
             constants.has_test_globals = has("--test-globals");
             constants.logs_type_errors = has("--aot-type-errors=log");
-            constants.shortens_names = (has("--minify") || has("--minify-identifiers")) && !has("--keep-names");
-            constants.notes_spans = args.iter().any(|a| a.starts_with("--audit-sites-out="));
+            constants.minifies_identifiers = (has("--minify") || has("--minify-identifiers")) && !has("--keep-names");
+            constants.records_spans = args.iter().any(|a| a.starts_with("--audit-sites-out="));
             // `--own-paths`: as for `bun run --aot`, each module reports its own path.
             if has("--own-paths") || snapshot.as_ref().is_some_and(|it| it.preserve_source_paths) {
-                constants.own_paths = Some(|path| {
+                constants.source_path_to_url = Some(|path| {
                     let mut url = b"file://".to_vec();
                     for &byte in path {
                         match byte {
@@ -257,7 +257,7 @@ fn run(args: &[String]) {
             // ECMAScript-exact unless asked otherwise: a type annotation promises nothing, and nothing throws because one is wrong.
             constants.features.extend(args.iter().filter_map(|a| a.strip_prefix("--feature=")).map(|flag| flag.as_bytes().to_vec()));
             const OWN_FLAGS: [&str; 49] = ["--agent", "--all", "--aot", "--aot-explain", "--aot-out", "--aot-type-errors", "--audit-only", "--audit-sites-out", "--builtin-sources", "--checkers", "--chunk-bytes", "--declarations-out", "--define", "--error-types", "--every-stage", "--feature", "--file-cost", "--file-instructions", "--github", "--keep", "--keep-names", "--memory", "--min-tasks", "--minify", "--minify-identifiers", "--no-builtin-modules", "--no-color", "--only", "--order", "--own-paths", "--plain", "--progress", "--projects-at-once", "--removable", "--repeat", "--slices", "--snapshot", "--split-files", "--split-publishes-everything", "--split-tolerates", "--step-growth", "--task-instructions", "--test-globals", "--threads", "--timing", "--type-node-cost", "--warm-up-files", "--warm-up-max-bytes", "--width"];
-            const EXPLAINED: [&str; 16] = ["alterations", "builtins", "deferred", "errors", "fields", "foreign", "given", "integers", "progress", "react", "react-locations", "rows", "throws", "throws-all", "throws-all-json", "throws-json"];
+            const EXPLAINED: [&str; 16] = ["mutations", "builtins", "deferred", "errors", "fields", "foreign", "given", "integers", "progress", "react", "react-locations", "rows", "throws", "throws-all", "throws-all-json", "throws-json"];
             for rejected in &command_line.rejected {
                 let flag = text(&rejected.flag);
                 // A flag that is no compiler option is one of the tool's own, looked for below, or an error.
@@ -356,7 +356,7 @@ fn run(args: &[String]) {
             // `--aot-explain=integers`: by name of a field, whether the numbers stored under it are expected to be int32s, and if not, the first evidence to the contrary.
             // `--aot-explain=progress`: where the soundness closure of the link is, on stderr as it goes, with the sizes of its tables, and at the end what has grown, in numbers alone.
             // `--aot-explain=deferred`: how many modules and top-level statements may run at their first use, and what stands in the way for the others. Numbers alone.
-            let explain = bun_aot::Explain { throws: has("--aot-explain=throws") || has("--aot-explain=throws-all"), throws_json: has("--aot-explain=throws-json") || has("--aot-explain=throws-all-json"), throws_all: has("--aot-explain=throws-all") || has("--aot-explain=throws-all-json"), rows: has("--aot-explain=rows"), given: has("--aot-explain=given"), foreign: has("--aot-explain=foreign"), includes_builtin_modules: true, alterations: has("--aot-explain=alterations"), fields: has("--aot-explain=fields"), integers: has("--aot-explain=integers"), progress: has("--aot-explain=progress").then_some((|line: std::fmt::Arguments<'_>| eprintln!("{line}")) as fn(std::fmt::Arguments<'_>)), deferred: has("--aot-explain=deferred") };
+            let explain = bun_aot::Explain { throws: has("--aot-explain=throws") || has("--aot-explain=throws-all"), throws_json: has("--aot-explain=throws-json") || has("--aot-explain=throws-all-json"), throws_all: has("--aot-explain=throws-all") || has("--aot-explain=throws-all-json"), rows: has("--aot-explain=rows"), given: has("--aot-explain=given"), foreign: has("--aot-explain=foreign"), includes_builtin_modules: true, mutations: has("--aot-explain=mutations"), fields: has("--aot-explain=fields"), integers: has("--aot-explain=integers"), progress: has("--aot-explain=progress").then_some((|line: std::fmt::Arguments<'_>| eprintln!("{line}")) as fn(std::fmt::Arguments<'_>)), deferred: has("--aot-explain=deferred") };
             let translation = bun_aot::Translation::new(&constants).explaining(explain);
             // `--aot-explain=react`, with or without `--aot`: what the React Compiler makes of the checker's tree of each `.jsx` and `.tsx` file: the candidates, the compiled functions with their scopes and slots, the bail-outs with their reasons.
             // `--aot-explain=react-locations`: the same, and each function is compiled again with its locations renumbered, which is to make no difference.
@@ -421,16 +421,16 @@ fn run(args: &[String]) {
                     }
                     react.explain_file(checker, file);
                 };
-            let note_file =
+            let record_file =
                 |checker: &mut bun_sema::check::Checker<'_, '_>,
                  file: bun_sema::program::FileId| {
                     if !is_left_out(checker, file) {
-                        translation.note_file(checker, file);
+                        translation.record_file(checker, file);
                     }
                 };
             let merge_notes = |program: &bun_sema::check::Program| translation.merge_notes(program);
-            // By entry of `Report::not_in_program`.
-            let why_errors_do_not_stand: Guarded<Vec<String>> = Guarded::new(Vec::new());
+            // By entry of `Report::unreachable_diagnostics`.
+            let error_dismissal_reasons: Guarded<Vec<String>> = Guarded::new(Vec::new());
             // `--aot-out=<file>`, and the file is not written.
             let lacks_output = std::sync::atomic::AtomicBool::new(false);
             let translate = |program: &bun_sema::check::Program,
@@ -440,7 +440,7 @@ fn run(args: &[String]) {
                 let started = std::time::Instant::now();
                 if audited_alone.is_some() {
                     let path = args.iter().find_map(|a| a.strip_prefix("--audit-sites-out=")).expect("--audit-only goes with --audit-sites-out");
-                    let tables: Vec<String> = (translation.take_programs_of_fragments(program).iter())
+                    let tables: Vec<String> = (translation.take_fragment_programs(program).iter())
                         .map(|of_fragment| bun_aot::audit::to_json(&bun_aot::audit::table(of_fragment, false, &|path| program.files.by_path.get(&bun_sema_driver::host::from_native(std::path::Path::new(&cwd).join(bstr::BStr::new(path).to_string()).to_string_lossy().as_bytes())).map(|file| &program.files.hir(file).text[..]), in_parallel), &[]))
                         .collect();
                     let is_written = write_file(path, tables.join("\n").as_bytes()).is_ok();
@@ -449,9 +449,9 @@ fn run(args: &[String]) {
                     return vec![false; errors.len()];
                 }
                 let mut translated = translation.finish(program, in_parallel, errors);
-                *why_errors_do_not_stand.lock() = std::mem::take(&mut translated.why_errors_do_not_stand);
-                if translated.errors_that_stand.contains(&true) {
-                    return translated.errors_that_stand;
+                *error_dismissal_reasons.lock() = std::mem::take(&mut translated.error_dismissal_reasons);
+                if translated.kept_errors.contains(&true) {
+                    return translated.kept_errors;
                 }
                 for problem in &translated.problems {
                     error_line!("{problem}");
@@ -466,11 +466,11 @@ fn run(args: &[String]) {
                         error_line!("aot: {line}");
                     }
                 }
-                for (id, why) in translated.builtin_modules_left_out.iter().filter(|_| has("--aot-explain=builtins")) {
+                for (id, why) in translated.skipped_builtin_modules.iter().filter(|_| has("--aot-explain=builtins")) {
                     let module = bun_builtin_syntax::Archive::embedded().manifest().module(*id);
                     error_line!("aot: builtins: left out {id} \"{}\": {why}", module.map_or_else(String::new, |module| text(&module.name)));
                 }
-                for (id, why) in translated.builtin_functions_left_out.iter().filter(|_| has("--aot-explain=builtins")) {
+                for (id, why) in translated.skipped_builtin_functions.iter().filter(|_| has("--aot-explain=builtins")) {
                     error_line!("aot: builtins: left out the function {id}: {why}");
                 }
                 let steps: Vec<String> = (translated.times.steps.iter())
@@ -484,11 +484,11 @@ fn run(args: &[String]) {
                 );
                 if let Some(path) = args.iter().find_map(|a| a.strip_prefix("--audit-sites-out=")) {
                     let linked_in = started.elapsed().as_secs_f64();
-                    bun_aot::audit::let_any_object_pass_for_classes_without_a_layout(&mut translated.program);
+                    bun_aot::audit::widen_layoutless_classes_to_any_object(&mut translated.program);
                     let is_written = write_file(path, bun_aot::audit::to_json(&bun_aot::audit::table(&translated.program, true, &|path| program.files.by_path.get(&bun_sema_driver::host::from_native(std::path::Path::new(&cwd).join(bstr::BStr::new(path).to_string()).to_string_lossy().as_bytes())).map(|file| &program.files.hir(file).text[..]), in_parallel), &bun_aot::audit::shapes(&translated.program)).as_bytes()).is_ok();
                     lacks_output.store(!is_written, std::sync::atomic::Ordering::Relaxed);
                     error_line!("aot: linked in {:.3} s, sites written in {:.3} s", linked_in, started.elapsed().as_secs_f64() - linked_in);
-                    return translated.errors_that_stand;
+                    return translated.kept_errors;
                 }
                 if let Some(path) = args.iter().find_map(|a| a.strip_prefix("--aot-out=")) {
                     let linked_in = started.elapsed().as_secs_f64();
@@ -501,11 +501,11 @@ fn run(args: &[String]) {
                     let written_in = started.elapsed().as_secs_f64();
                     bun_aot::release(translated.program, in_parallel);
                     error_line!("aot: the linked program was released in {:.3} s", started.elapsed().as_secs_f64() - written_in);
-                    return translated.errors_that_stand;
+                    return translated.kept_errors;
                 }
                 output_line!("{}", translated.program.dump().trim_end());
                 error_line!("aot: {:.3} s", started.elapsed().as_secs_f64());
-                translated.errors_that_stand
+                translated.kept_errors
             };
             type AfterFile<'a> = &'a (
                     dyn Fn(&mut bun_sema::check::Checker<'_, '_>, bun_sema::program::FileId) + Sync
@@ -645,7 +645,7 @@ fn run(args: &[String]) {
                 ),
                 checked: is_timed.then_some(&list_largest_tables as &(dyn Fn(&bun_sema::check::Program) + Sync)),
                 after_file,
-                before_visits: has("--aot").then_some(&note_file as AfterFile<'_>),
+                before_visits: has("--aot").then_some(&record_file as AfterFile<'_>),
                 all_visited_once: has("--aot")
                     .then_some(&merge_notes as &(dyn Fn(&bun_sema::check::Program) + Sync)),
                 declaration_file_emitted: declarations_out
@@ -679,7 +679,7 @@ fn run(args: &[String]) {
             }
             let mut provided = snapshot.as_mut().map_or_else(Default::default, |it| bun_sema_driver::host::Provided {
                 already_read: std::mem::take(&mut it.already_read),
-                kinds_of_code: std::mem::take(&mut it.kinds_of_code).into_iter().collect(),
+                code_kinds: std::mem::take(&mut it.code_kinds).into_iter().collect(),
                 ..Default::default()
             });
             if has("--aot") {
@@ -690,7 +690,7 @@ fn run(args: &[String]) {
             }
             // `--no-builtin-modules`: for a program that is run where nothing runs the modules of the runtime, in the `jsc` shell.
             provided.without_builtin_modules = has("--no-builtin-modules");
-            provided.is_run_from_its_sources = constants.own_paths.is_some();
+            provided.preserves_source_paths = constants.source_path_to_url.is_some();
             // `--builtin-sources=<folder>`: a source of the runtime is read from `<folder>/<path under src/js>` if that file is there, else
             // from the archive. The ids, the names and what requires what stay the manifest's.
             if let Some(folder) = args.iter().find_map(|a| a.strip_prefix("--builtin-sources=")) {
@@ -738,7 +738,7 @@ fn run(args: &[String]) {
                 if has("--aot-explain=builtins")
                     && let Some(found) = &report.builtin_modules
                 {
-                    use bun_sema_driver::builtins::Why;
+                    use bun_sema_driver::builtins::InclusionReason;
                     let archive = bun_builtin_syntax::Archive::embedded();
                     let name_of = |id: u32| archive.manifest().module(id).map_or_else(String::new, |module| text(if module.specifier.is_empty() { &module.label } else { &module.specifier }));
                     let mut bytes = 0;
@@ -746,16 +746,16 @@ fn run(args: &[String]) {
                         let size = archive.source(module.id).len();
                         bytes += size;
                         let why = match &module.why {
-                            Why::Always => "native code requires it".to_owned(),
-                            Why::Named(specifier) => format!("the program names \"{}\"", text(specifier)),
-                            Why::Trigger(property) => format!("the program may read {}", text(property)),
-                            Why::AnyName(door) => format!("a name that is made at run time can reach the module loader: {door}"),
-                            Why::RequiredBy(by) => format!("{} can require it", name_of(*by)),
+                            InclusionReason::Always => "native code requires it".to_owned(),
+                            InclusionReason::Named(specifier) => format!("the program names \"{}\"", text(specifier)),
+                            InclusionReason::Trigger(property) => format!("the program may read {}", text(property)),
+                            InclusionReason::AnyName(loader_entry) => format!("a name that is made at run time can reach the module loader: {loader_entry}"),
+                            InclusionReason::RequiredBy(by) => format!("{} can require it", name_of(*by)),
                         };
                         error_line!("aot: builtins: included {} {} {} {size} bytes: {why}", module.id, name_of(module.id), text(archive.path(module.id)));
                     }
-                    for (door, path, position) in &found.doors {
-                        error_line!("aot: builtins: door: {door} at {}:{position}", text(path));
+                    for (loader_entry, path, position) in &found.loader_entries {
+                        error_line!("aot: builtins: loader entry: {loader_entry} at {}:{position}", text(path));
                     }
                     for file in archive.manifest().function_files() {
                         error_line!("aot: builtins: functions {}{}", text(bun_builtin_syntax::VIRTUAL_ROOT), text(file));
@@ -772,13 +772,13 @@ fn run(args: &[String]) {
                 }
                 // `--aot-explain=errors`: the errors that do not fail the build, and why each does not.
                 if has("--aot") {
-                    error_line!("aot: {} errors in code that is not in the program", report.not_in_program.len());
-                    if !report.not_judged.is_empty() {
-                        error_line!("aot: {} errors of which it is not known whether they lie in code that is in the program", report.not_judged.len());
+                    error_line!("aot: {} errors in code that is not in the program", report.unreachable_diagnostics.len());
+                    if !report.unjudged_diagnostics.is_empty() {
+                        error_line!("aot: {} errors of which it is not known whether they lie in code that is in the program", report.unjudged_diagnostics.len());
                     }
                 }
-                let why = why_errors_do_not_stand.lock();
-                for (d, why) in report.not_in_program.iter().zip(why.iter()).filter(|_| has("--aot-explain=errors")) {
+                let why = error_dismissal_reasons.lock();
+                for (d, why) in report.unreachable_diagnostics.iter().zip(why.iter()).filter(|_| has("--aot-explain=errors")) {
                     let message = bun_core::strings::split(&d.text, b"\n").next().unwrap_or_default();
                     error_line!("aot: {}({},{}): error TS{}: {} [{why}]", text(&d.path), d.line, d.column, d.code, text(message));
                 }

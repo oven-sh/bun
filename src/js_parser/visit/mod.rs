@@ -353,7 +353,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.react_compiler_candidate_name = Some(id.r#ref);
                     self.react_compiler_in_react_hoc = in_hoc;
                 }
-                let is_given_the_place_of_this_file = self.imports_what_makes_requires() && Self::is_call_with_the_place_of_this_file_by_import_meta(&val);
+                let receives_own_file_path = self.imports_create_require() && Self::is_call_with_import_meta_path(&val);
                 self.visit_expr_in_out(
                     &mut val,
                     ExprIn {
@@ -377,9 +377,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
                 }
-                if self.imports_what_makes_requires()
+                if self.imports_create_require()
                     && let BData::BIdentifier(id) = decl.binding.data
-                    && self.is_require_made_for_this_file(&val, is_given_the_place_of_this_file)
+                    && self.is_own_create_require(&val, receives_own_file_path)
                 {
                     self.own_require_refs.push(id.r#ref);
                 }
@@ -1990,11 +1990,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // Try to substitute the identifier with the initializer. This will
                     // fail if something with side effects is in between the declaration
                     // and the usage.
-                    let would_make_a_tail_call = p.options.features.audited.is_some()
+                    let would_be_tail_call = p.options.features.audited.is_some()
                         && matches!(stmt.data, StmtData::SReturn(_))
                         && matches!(bun_ast::audited::unmarked(replacement).data, ExprData::ECall(_));
                     if symbol.use_count_estimate == 1
-                        && !would_make_a_tail_call
+                        && !would_be_tail_call
                         && p.substitute_single_use_symbol_in_stmt(stmt, id, replacement)
                     {
                         // `const ns = await import(x); return ns` — the single use just

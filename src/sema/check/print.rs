@@ -164,7 +164,7 @@ impl Checker<'_, '_> {
 
     /// `getTypeNameForErrorDisplay`
     pub fn type_to_string_fully_qualified(&mut self, ty: TypeId) -> Vec<u8> {
-        if self.is_behind_the_check() {
+        if self.is_after_check() {
             return Vec::new();
         }
         self.printed(|c, out| c.write_type(out, ty, USE_FULLY_QUALIFIED_TYPE))
@@ -245,7 +245,7 @@ impl Checker<'_, '_> {
         left: TypeId,
         right: TypeId,
     ) -> (Vec<u8>, Vec<u8>) {
-        if self.is_behind_the_check() {
+        if self.is_after_check() {
             return (Vec::new(), Vec::new());
         }
         let (left_text, right_text) = (
@@ -3576,7 +3576,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                     end += 1;
                 }
                 if end - first > 1 {
-                    types[first..end].sort_by_cached_key(|&member| self.c.identity_of_type(member));
+                    types[first..end].sort_by_cached_key(|&member| self.c.type_identity(member));
                 }
                 first = end;
             }

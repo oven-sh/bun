@@ -388,7 +388,7 @@ public:
         Bun__HTTPRequestContextDebugTLS__onResolveStream,
         jsFunctionOnLoadObjectResultResolve,
         jsFunctionOnLoadObjectResultReject,
-        jsFunctionSourceOfCompiledNamespace,
+        jsFunctionCompiledNamespaceSource,
         jsFunctionMockModuleFactoryResolve,
         jsFunctionMockModuleFactoryReject,
         Bun__TestScope__Describe2__bunTestThen,

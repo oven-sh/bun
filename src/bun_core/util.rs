@@ -2840,8 +2840,8 @@ pub fn get_thread_count() -> u16 {
 }
 
 pub unsafe fn copy_in_parallel(to: *mut u8, from: *const u8, len: usize) {
-    const LEAST_OF_A_THREAD: usize = 16 << 20;
-    let threads = usize::from(get_thread_count()).min(len / LEAST_OF_A_THREAD).min(16);
+    const MIN_BYTES_PER_THREAD: usize = 16 << 20;
+    let threads = usize::from(get_thread_count()).min(len / MIN_BYTES_PER_THREAD).min(16);
     if threads < 2 {
         // SAFETY: the caller's contract is that of `copy_nonoverlapping`.
         return unsafe { core::ptr::copy_nonoverlapping(from, to, len) };
@@ -4341,14 +4341,14 @@ pub fn maybe_handle_panic_during_process_reload() {
 }
 
 static BEFORE_RELOAD: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
-static KEPT_OPEN_OVER_RELOAD: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(-1);
+static KEEP_OPEN_ACROSS_RELOAD: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(-1);
 
 pub fn before_reload(hook: fn()) {
     let _ = BEFORE_RELOAD.set(hook);
 }
 
-pub fn keep_open_over_reload(fd: i32) {
-    KEPT_OPEN_OVER_RELOAD.store(fd, AOrdering::SeqCst);
+pub fn keep_open_across_reload(fd: i32) {
+    KEEP_OPEN_ACROSS_RELOAD.store(fd, AOrdering::SeqCst);
 }
 
 /// Port of `bun.reloadProcess`. `may_return == true` → returns on failure; `false` → panics.
@@ -4418,7 +4418,7 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         if let Some(hook) = BEFORE_RELOAD.get() {
             hook();
         }
-        let kept_open = KEPT_OPEN_OVER_RELOAD.load(AOrdering::SeqCst);
+        let kept_open = KEEP_OPEN_ACROSS_RELOAD.load(AOrdering::SeqCst);
         let errno = execve_self(&dupe_argv, (kept_open >= 0).then(|| Fd::from_native(kept_open)), true);
         if may_return {
             crate::output::pretty_errorln(format_args!(

@@ -3,11 +3,11 @@ use crate::id::{FuncId, LayoutId, StrId, V};
 use crate::ir::{Field, FuncKind, Global, Initialization, LayoutKind, Op, Program, Term, class_flags, field_flags, func_flags};
 use smallvec::SmallVec;
 
-pub(super) fn mark_releases_of_environments(program: &mut Program, contents: &[u8], in_parallel: bun_sema::util::InParallel<'_>) -> usize {
-    const FUNCTIONS_OF_A_TASK: usize = 256;
+pub(super) fn mark_environment_releases(program: &mut Program, contents: &[u8], in_parallel: bun_sema::util::InParallel<'_>) -> usize {
+    const FUNCTIONS_PER_TASK: usize = 256;
     let is_candidate: Vec<bool> = program.layouts.iter().map(|layout| layout.kind == LayoutKind::Environment && layout.class_flags & class_flags::MAY_BE_REUSED != 0).collect();
     let mut births: Vec<SmallVec<[(usize, usize, V); 1]>> = vec![SmallVec::new(); program.layouts.len()];
-    let mut tasks: Vec<(usize, &[crate::ir::Func], Vec<(LayoutId, usize, usize, V)>)> = program.funcs.chunks(FUNCTIONS_OF_A_TASK).enumerate().map(|(number, funcs)| (number * FUNCTIONS_OF_A_TASK, funcs, Vec::new())).collect();
+    let mut tasks: Vec<(usize, &[crate::ir::Func], Vec<(LayoutId, usize, usize, V)>)> = program.funcs.chunks(FUNCTIONS_PER_TASK).enumerate().map(|(number, funcs)| (number * FUNCTIONS_PER_TASK, funcs, Vec::new())).collect();
     bun_sema::util::for_each_mut(&mut tasks, in_parallel, &|(first, funcs, found)| {
         for (function, func) in funcs.iter().enumerate().filter(|function| contents[*first + function.0] & super::has::NEW_OBJECTS != 0) {
             for (block, at) in func.blocks.iter().enumerate().flat_map(|(block, it)| it.ops.iter().map(move |&at| (block, at))) {
@@ -45,9 +45,9 @@ pub(super) fn mark_releases_of_environments(program: &mut Program, contents: &[u
         layout.class_flags |= class_flags::MAY_BE_REUSED;
         layout.environment = LayoutId::new(program.globals.len());
         let has_escaped = layout.fields.len() as u32;
-        layout.fields.push(Field::new(StrId::NONE, boolean, field_flags::NEVER_SEEN_UNINITIALIZED));
-        layout.fields.push(Field::new(StrId::NONE, boolean, field_flags::NEVER_SEEN_UNINITIALIZED));
-        program.globals.push(Global { name, module, declared: held, initialization: Initialization::Undefined, only_function: FuncId::NONE, only_function_flags: 0 });
+        layout.fields.push(Field::new(StrId::NONE, boolean, field_flags::NEVER_READ_UNINITIALIZED));
+        layout.fields.push(Field::new(StrId::NONE, boolean, field_flags::NEVER_READ_UNINITIALIZED));
+        program.globals.push(Global { name, module, declared: held, initialization: Initialization::Undefined, single_function: FuncId::NONE, single_function_flags: 0 });
         let func = &mut program.funcs[function];
         let pos = func.values[environment.idx()].pos;
         let value = func.add_value(Op::Bool(false), pos, no);

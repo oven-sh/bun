@@ -17,7 +17,7 @@
  "module-require-and-call": "all agree",
  "register-hooks": "all agree",
  "resolve-and-its-options": "as the bundle",
- "resolve-filename-is-replaced": "as the bundle",
+ "resolve-filename-replaced": "as the bundle",
  "the-cache-is-emptied": "as the bundle",
  "the-cache-is-written-to": "as the bundle",
  "the-cache-is-written-to-by-the-other-name": "as the bundle",

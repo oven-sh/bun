@@ -21,7 +21,7 @@ console.log(toText(list), count(list), hasCycle(list), JSON.stringify(list))
 list = reverse(list)
 console.log(toText(list), count(list), Object.keys(list!).join())
 
-// Nodes of a wider type, and nodes from untyped code, in one chain. (The link of a wider node, read with the wider type once it holds a narrower node: type-rules/field-covariance-in-a-linked-list.)
+// Nodes of a wider type, and nodes from untyped code, in one chain. (The link of a wider node, read with the wider type once it holds a narrower node: type-rules/field-covariance-linked-list.)
 const first: TwoWay = { prev: null, value: 10, next: null }
 const second: TwoWay = { value: 20, next: null, prev: first }
 first.next = second

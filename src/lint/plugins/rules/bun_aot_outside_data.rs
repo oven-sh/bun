@@ -21,7 +21,7 @@ impl Rule for AotOutsideData {
     }
 
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let Some(found) = node.ts_node().aot_check_where_outside_data_enters() else {
+        let Some(found) = node.ts_node().aot_check_external_data_inflow() else {
             return;
         };
         cx.report(node, ENTERS)

@@ -47,7 +47,7 @@ static bool isValidNamespaceString(String& namespaceString)
     return namespaceRegex->match(namespaceString) > -1;
 }
 
-extern "C" const uint8_t* Bun__standaloneSourcesOfCompiledProgram(size_t*);
+extern "C" const uint8_t* Bun__standaloneCompiledProgramSources(size_t*);
 
 static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target, BunPlugin::Base& plugin)
 {
@@ -97,7 +97,7 @@ static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject*
 
     if (namespaceString.isEmpty() || namespaceString == "file"_s) {
         size_t length = 0;
-        const uint8_t* paths = Bun__standaloneSourcesOfCompiledProgram(&length);
+        const uint8_t* paths = Bun__standaloneCompiledProgramSources(&length);
         std::span<const uint8_t> left { paths, length };
         while (!left.empty()) {
             size_t end = std::find(left.begin(), left.end(), '\n') - left.begin();
@@ -240,7 +240,7 @@ static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObje
     }
 
     size_t lengthOfCompiledSources = 0;
-    Bun__standaloneSourcesOfCompiledProgram(&lengthOfCompiledSources);
+    Bun__standaloneCompiledProgramSources(&lengthOfCompiledSources);
     if (lengthOfCompiledSources && (namespaceString.isEmpty() || namespaceString == "file"_s)) {
         JSValue main = JSValue::decode(BunObject_getter_main(defaultGlobalObject(globalObject)));
         RETURN_IF_EXCEPTION(scope, {});
@@ -746,7 +746,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
 
     bool isCompiledWithTheProgram = false;
     size_t lengthOfCompiledSources = 0;
-    const uint8_t* compiledSources = Bun__standaloneSourcesOfCompiledProgram(&lengthOfCompiledSources);
+    const uint8_t* compiledSources = Bun__standaloneCompiledProgramSources(&lengthOfCompiledSources);
     for (std::span<const uint8_t> left { compiledSources, lengthOfCompiledSources }; !left.empty();) {
         size_t end = std::find(left.begin(), left.end(), '\n') - left.begin();
         if (String::fromUTF8(left.first(end)) == specifier) {

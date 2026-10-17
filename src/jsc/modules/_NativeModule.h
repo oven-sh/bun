@@ -158,7 +158,7 @@ inline bool isBunDefinedGetter(JSC::JSObject *getter) {
   auto *function = dynamicDowncast<JSC::JSFunction>(getter);
 #if ENABLE(AOT)
   if (function && JSC::AOT::Typed::declaredAs(function) != JSC::AOT::Typed::DeclaredAs::NotCompiled)
-    return JSC::AOT::Typed::isOfBuiltinModule(function);
+    return JSC::AOT::Typed::belongsToBuiltinModule(function);
 #endif
   return function && (function->isNonBoundHostFunction() || function->isBuiltinFunction());
 }

@@ -134,7 +134,7 @@ pub struct TranspileExtra {
     /// `?*?*jsc.JSInternalPromise` — out-param for the async-module path.
     /// Null forbids async resolution.
     pub promise_ptr: *mut *mut JSInternalPromise,
-    pub function_texts: *mut Vec<bun_js_printer::FunctionText>,
+    pub function_sources: *mut Vec<bun_js_printer::FunctionSource>,
 }
 
 unsafe extern "Rust" {

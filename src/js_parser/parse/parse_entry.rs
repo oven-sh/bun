@@ -145,7 +145,7 @@ pub struct Options<'a> {
     pub import_meta_main_value: Option<bool>,
     pub lower_import_meta_main_for_node_js: bool,
     pub inline_import_meta_paths: bool,
-    pub leaves_assignments_to_imports_to_run_time: bool,
+    pub defers_import_assignment_errors: bool,
     pub compiles_ahead_of_time: bool,
     pub keeps_reexport_only_modules: bool,
 
@@ -199,7 +199,7 @@ impl<'a> Default for Options<'a> {
             import_meta_main_value: None,
             lower_import_meta_main_for_node_js: false,
             inline_import_meta_paths: false,
-            leaves_assignments_to_imports_to_run_time: false,
+            defers_import_assignment_errors: false,
             keeps_reexport_only_modules: false,
             compiles_ahead_of_time: false,
             framework: None,
@@ -293,7 +293,7 @@ impl<'a> Options<'a> {
             import_meta_main_value: self.import_meta_main_value,
             lower_import_meta_main_for_node_js: self.lower_import_meta_main_for_node_js,
             inline_import_meta_paths: self.inline_import_meta_paths,
-            leaves_assignments_to_imports_to_run_time: self.leaves_assignments_to_imports_to_run_time,
+            defers_import_assignment_errors: self.defers_import_assignment_errors,
             compiles_ahead_of_time: self.compiles_ahead_of_time,
             keeps_reexport_only_modules: self.keeps_reexport_only_modules,
             framework: self.framework,
@@ -373,7 +373,7 @@ impl<'a> Options<'a> {
             import_meta_main_value: None,
             lower_import_meta_main_for_node_js: false,
             inline_import_meta_paths: false,
-            leaves_assignments_to_imports_to_run_time: false,
+            defers_import_assignment_errors: false,
             keeps_reexport_only_modules: false,
             compiles_ahead_of_time: false,
             framework: None,
@@ -989,7 +989,7 @@ impl<'a> Parser<'a> {
         let _visit_action_guard =
             bun_crash_handler::scoped_action(bun_crash_handler::Action::Visit(source.path.text));
 
-        p.is_es_module_by_its_own_syntax = p.esm_export_keyword.len > 0 || p.top_level_await_keyword.len > 0;
+        p.has_esm_syntax = p.esm_export_keyword.len > 0 || p.top_level_await_keyword.len > 0;
         let mut visit_tracer = bun_core::perf::trace("JSParser::visit");
         p.prepare_for_visit_pass()?;
 
@@ -1250,9 +1250,9 @@ impl<'a> Parser<'a> {
         // `perf::Ctx` ends the span in its `Drop` impl — bind it for the rest of `_parse`.
         let _postvisit_tracer = bun_core::perf::trace("JSParser::postvisit");
 
-        for (callee, argument) in core::mem::take(&mut p.calls_of_identifiers_with_one_argument) {
+        for (callee, argument) in core::mem::take(&mut p.single_argument_identifier_calls) {
             if p.own_require_refs.iter().any(|own| own.eql(callee)) {
-                p.add_files_named_by(&argument);
+                p.add_referenced_files_in(&argument);
             }
         }
 

@@ -1240,7 +1240,7 @@ pub struct TypeChecked<'a, 'i> {
     /// The imports that are not in the bundle: the path of the file and the specifier. An import of TypeScript that turned out to be
     /// of types only, and what a barrel file re-exports and nothing asks it for.
     pub dropped_imports: &'i mut dyn Iterator<Item = (&'a [u8], &'a [u8])>,
-    pub without_side_effects: &'i mut dyn Iterator<Item = &'a [u8]>,
+    pub side_effect_free_files: &'i mut dyn Iterator<Item = &'a [u8]>,
     pub lifted_commonjs: &'i mut dyn Iterator<Item = &'a [u8]>,
     pub kinds: &'i mut dyn Iterator<Item = (&'a [u8], bool)>,
     /// The statements at the top level of those files, as the parser has left them: the path of the file, where the statement starts in
@@ -1261,19 +1261,19 @@ pub struct TypeChecked<'a, 'i> {
     pub ignore_dce_annotations: bool,
     pub jsx_side_effects: bool,
     pub minify_syntax: bool,
-    pub shortens_names: bool,
+    pub minifies_identifiers: bool,
     /// `BundleOptions::preserve_source_paths`
     pub preserve_source_paths: bool,
     /// The path of each of `sources` in which the React Compiler has given a function a cache, and the module as it leaves it, as
     /// JavaScript: the code that runs in the place of what is written. The types are those of what is written.
-    pub react_compiler_outputs: ReactCompilerOutputsLater<'a>,
+    pub react_compiler_outputs: DeferredReactCompilerOutputs<'a>,
     /// The path of each of `sources` whose JSX the tsconfig.json around it has lowered in another way than the one around the first entry point would, and how.
-    pub jsx: &'i mut dyn Iterator<Item = (&'a [u8], JsxOfFile<'a>)>,
-    pub classes: &'i mut dyn Iterator<Item = (&'a [u8], ClassesOfFile)>,
-    pub function_texts: Option<FunctionTextsLater>,
-    pub printing_of_function_texts: std::sync::Arc<bun_threading::thread_pool::DeferredStart>,
+    pub jsx: &'i mut dyn Iterator<Item = (&'a [u8], FileJsxOptions<'a>)>,
+    pub classes: &'i mut dyn Iterator<Item = (&'a [u8], FileClassOptions)>,
+    pub function_sources: Option<DeferredFunctionSources>,
+    pub function_source_printing: std::sync::Arc<bun_threading::thread_pool::DeferredStart>,
     pub explain: &'a [Box<[u8]>],
-    pub explains_into_log: bool,
+    pub explain_to_log: bool,
     pub logs_type_errors: bool,
     pub early_analysis: Option<EarlyAnalysis>,
     pub release_asts: &'i mut dyn FnMut(),
@@ -1281,19 +1281,19 @@ pub struct TypeChecked<'a, 'i> {
 
 pub type EarlyAnalysis = Box<dyn core::any::Any + Send>;
 
-pub type FunctionTextsOfFiles = Vec<(Box<[u8]>, Box<[u8]>, Vec<bun_js_printer::FunctionText>)>;
+pub type FileFunctionSources = Vec<(Box<[u8]>, Box<[u8]>, Vec<bun_js_printer::FunctionSource>)>;
 
-pub struct FunctionTextsLater {
-    pub printed: std::sync::mpsc::Receiver<FunctionTextsOfFiles>,
-    pub number_of_lists: usize,
+pub struct DeferredFunctionSources {
+    pub printed: std::sync::mpsc::Receiver<FileFunctionSources>,
+    pub list_count: usize,
 }
 
-pub struct ReactCompilerOutputsLater<'a> {
+pub struct DeferredReactCompilerOutputs<'a> {
     pub printed: std::sync::mpsc::Receiver<(usize, Option<Box<[u8]>>)>,
     pub paths: Vec<&'a [u8]>,
 }
 
-impl<'a> ReactCompilerOutputsLater<'a> {
+impl<'a> DeferredReactCompilerOutputs<'a> {
     pub fn none() -> Self {
         Self { printed: std::sync::mpsc::channel().1, paths: Vec::new() }
     }
@@ -1310,7 +1310,7 @@ impl<'a> ReactCompilerOutputsLater<'a> {
 
 /// `jsx`, `jsxFactory`, `jsxFragmentFactory` and `jsxImportSource` as they hold for a file.
 #[derive(Clone, Copy)]
-pub struct JsxOfFile<'a> {
+pub struct FileJsxOptions<'a> {
     pub is_classic: bool,
     pub factory: &'a [u8],
     pub fragment: &'a [u8],
@@ -1318,7 +1318,7 @@ pub struct JsxOfFile<'a> {
 }
 
 #[derive(Clone, Copy)]
-pub struct ClassesOfFile {
+pub struct FileClassOptions {
     pub use_define_for_class_fields: bool,
     pub experimental_decorators: bool,
     pub emit_decorator_metadata: bool,
@@ -1374,7 +1374,7 @@ pub struct TypedOutputs {
     pub declaration_files: DeclarationFiles,
 }
 
-pub const SOUND_FILES_LEFT_OUT: &str = "--dts: the typed JavaScript that --aot compiles a package from is left out";
+pub const SKIPPED_SOUND_FILES: &str = "--dts: the typed JavaScript that --aot compiles a package from is left out";
 
 pub type WriteSoundFiles = fn(request: SoundFilesRequest<'_>, log: &mut bun_ast::Log) -> TypedOutputs;
 
@@ -1520,7 +1520,7 @@ pub struct BundleOptions<'a> {
     pub type_check: Option<TypeCheck>,
     pub emit_declarations: Option<EmitDeclarations>,
     pub write_sound_files: Option<WriteSoundFiles>,
-    pub leaves_out_sound_files_for: Option<&'static str>,
+    pub skips_sound_files_for: Option<&'static str>,
     pub rolls_up_declarations: bool,
     pub drops_source_maps: bool,
     pub analyze: Option<Analyze>,
@@ -1541,7 +1541,7 @@ pub struct BundleOptions<'a> {
     pub optimize_bytecode: bool,
     pub aot: bool,
     pub aot_explain: Vec<Box<[u8]>>,
-    pub aot_explains_into_log: bool,
+    pub aot_explain_to_log: bool,
     pub aot_logs_type_errors: bool,
     pub preserve_source_paths: bool,
     pub compile_function_source: bool,
@@ -1615,22 +1615,22 @@ fn clone_macro_remap(src: &MacroRemap) -> MacroRemap {
     out
 }
 
-const ENVIRONMENT_NAMES_OF_AOT_WITH_EFFECT: [&[u8]; 5] = [
+const EFFECTIVE_AOT_ENV_VARS: [&[u8]; 5] = [
     b"BUN_AOT_TYPED_FILE",
     b"BUN_AOT_TYPED_SNAPSHOT",
     b"BUN_AOT_TYPE_ERROR_LOG",
     b"BUN_AOT_TYPE_ERROR_LOG_FORMAT",
     b"BUN_AOT_VERBOSE",
 ];
-const FAMILIES_OF_ENVIRONMENT_NAMES_OF_AOT: [&[u8]; 4] = [b"BUN_AOT", b"AOT_SWITCH_", b"AOT_X_", b"BUN_SOUND_"];
+const AOT_ENV_VAR_PREFIXES: [&[u8]; 4] = [b"BUN_AOT", b"AOT_SWITCH_", b"AOT_X_", b"BUN_SOUND_"];
 
-pub(crate) fn environment_names_of_aot_without_effect() -> impl Iterator<Item = &'static [u8]> {
+pub(crate) fn ineffective_aot_env_vars() -> impl Iterator<Item = &'static [u8]> {
     bun_sys::environ().iter().filter_map(|&entry| {
         // SAFETY: environ entries are NUL-terminated C strings from the OS
         let entry: &'static [u8] = unsafe { bun_core::ffi::cstr(entry) }.to_bytes();
         let name = bun_core::strings::split(entry, b"=").next().unwrap_or(entry);
-        let is_of_aot = FAMILIES_OF_ENVIRONMENT_NAMES_OF_AOT.iter().any(|family| name.starts_with(family));
-        (is_of_aot && !ENVIRONMENT_NAMES_OF_AOT_WITH_EFFECT.contains(&name)).then_some(name)
+        let is_aot_name = AOT_ENV_VAR_PREFIXES.iter().any(|family| name.starts_with(family));
+        (is_aot_name && !EFFECTIVE_AOT_ENV_VARS.contains(&name)).then_some(name)
     })
 }
 
@@ -1771,7 +1771,7 @@ impl<'a> BundleOptions<'a> {
             type_check: self.type_check,
             emit_declarations: self.emit_declarations,
             write_sound_files: self.write_sound_files,
-            leaves_out_sound_files_for: self.leaves_out_sound_files_for,
+            skips_sound_files_for: self.skips_sound_files_for,
             rolls_up_declarations: self.rolls_up_declarations,
             drops_source_maps: self.drops_source_maps,
             analyze: self.analyze,
@@ -1785,7 +1785,7 @@ impl<'a> BundleOptions<'a> {
             optimize_bytecode: self.optimize_bytecode,
             aot: self.aot,
             aot_explain: self.aot_explain.clone(),
-            aot_explains_into_log: self.aot_explains_into_log,
+            aot_explain_to_log: self.aot_explain_to_log,
             aot_logs_type_errors: self.aot_logs_type_errors,
             preserve_source_paths: self.preserve_source_paths,
             compile_function_source: self.compile_function_source,
@@ -1970,7 +1970,7 @@ impl<'a> BundleOptions<'a> {
             type_check: None,
             emit_declarations: None,
             write_sound_files: None,
-            leaves_out_sound_files_for: None,
+            skips_sound_files_for: None,
             rolls_up_declarations: false,
             drops_source_maps: false,
             analyze: None,
@@ -2049,7 +2049,7 @@ impl<'a> BundleOptions<'a> {
             bytecode: false,
             aot: false,
             aot_explain: Vec::new(),
-            aot_explains_into_log: false,
+            aot_explain_to_log: false,
             aot_logs_type_errors: false,
             preserve_source_paths: false,
             compile_function_source: true,

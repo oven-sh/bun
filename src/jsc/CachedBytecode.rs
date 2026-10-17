@@ -643,13 +643,13 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_take_build_errors(
 }
 
 #[unsafe(no_mangle)]
-pub(crate) fn __bun_jsc_check_syntax_of_module_text(
+pub(crate) fn __bun_jsc_check_module_syntax(
     path: &[u8],
     ascii_text: &[u8],
     is_module: bool,
 ) -> Option<(Vec<u8>, u32)> {
     unsafe extern "C" {
-        fn Bun__checkSyntaxOfModuleText(
+        fn Bun__checkModuleSyntax(
             source_url: &BunString,
             text: &BunString,
             is_module: bool,
@@ -666,7 +666,7 @@ pub(crate) fn __bun_jsc_check_syntax_of_module_text(
     // source it makes of `text` is gone when it returns. It writes `message` and `offset` only
     // where it returns false.
     let is_valid = unsafe {
-        Bun__checkSyntaxOfModuleText(&source_url, &text, is_module, &raw mut message, &raw mut offset)
+        Bun__checkModuleSyntax(&source_url, &text, is_module, &raw mut message, &raw mut offset)
     };
     (!is_valid).then(|| (message.to_owned_slice(), offset))
 }

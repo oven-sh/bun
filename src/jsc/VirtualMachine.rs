@@ -157,7 +157,7 @@ pub struct VirtualMachine {
     /// The entry point was compiled ahead of time, together with what `bun:main` does after it.
     pub main_is_compiled: bool,
     pub starts_server_natively: bool,
-    pub has_looked_for_server: bool,
+    pub did_look_for_server: bool,
     pub main_resolved_path: bun_core::String,
     pub main_hash: u32,
     /// Set if code overrides Bun.main to a custom value.
@@ -618,8 +618,8 @@ pub unsafe extern "C" fn Bun__standaloneModuleIsCompiled(name: *const u8, len: u
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__standaloneSourcesOfCompiledProgram(out_len: *mut usize) -> *const u8 {
-    let paths = standalone_module_graph().map_or(&[][..], |graph| graph.sources_of_compiled_program());
+pub unsafe extern "C" fn Bun__standaloneCompiledProgramSources(out_len: *mut usize) -> *const u8 {
+    let paths = standalone_module_graph().map_or(&[][..], |graph| graph.compiled_program_sources());
     // SAFETY: `out_len` is the caller's writable out-parameter.
     unsafe { *out_len = paths.len() };
     paths.as_ptr()
@@ -827,13 +827,13 @@ impl ExitHandler {
     }
 
     #[unsafe(no_mangle)]
-    pub(crate) extern "C" fn Bun__VM__hasToLookForServer(vm: &VirtualMachine) -> bool {
-        vm.starts_server_natively && !vm.has_looked_for_server
+    pub(crate) extern "C" fn Bun__VM__shouldLookForServer(vm: &VirtualMachine) -> bool {
+        vm.starts_server_natively && !vm.did_look_for_server
     }
 
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__VM__didLookForServer(vm: &mut VirtualMachine) {
-        vm.has_looked_for_server = true;
+        vm.did_look_for_server = true;
     }
 
     #[unsafe(no_mangle)]
@@ -3175,8 +3175,8 @@ unsafe extern "C" {
     // The returned cell pointer is GC-owned (caller checks before deref).
     safe fn Bun__loadHTMLEntryPoint(global: &JSGlobalObject) -> *mut JSInternalPromise;
     safe fn Bun__AOT__isCompiledEntryPoint(module: u32) -> bool;
-    fn Bun__lookForServerOnceEvaluated(global: &JSGlobalObject, promise: *mut JSInternalPromise);
-    safe fn Bun__isFileOfCompiledProgram(global: &JSGlobalObject, path: &bun_core::String) -> bool;
+    fn Bun__lookForServerAfterEvaluation(global: &JSGlobalObject, promise: *mut JSInternalPromise);
+    safe fn Bun__isCompiledProgramFile(global: &JSGlobalObject, path: &bun_core::String) -> bool;
     // safe: `ctx` is an opaque round-trip pointer C++ only forwards to `callback`
     // (never dereferenced as Rust data).
     safe fn JSC__VM__holdAPILock(
@@ -3340,7 +3340,7 @@ impl VirtualMachine {
                 let _ = STANDALONE_MODULE_GRAPH.set(graph);
             }
             addr_of_mut!((*vm).standalone_module_graph).write(opts.graph);
-            addr_of_mut!((*vm).finds_entry_points_by_path).write(opts.graph.is_some_and(|graph| graph.holds_paths_of_entry_points()));
+            addr_of_mut!((*vm).finds_entry_points_by_path).write(opts.graph.is_some_and(|graph| graph.has_entry_point_paths()));
             addr_of_mut!((*vm).initial_script_execution_context_identifier).write(context_id);
             // Mutex fields: zeroed atomics ARE valid-unlocked, but write the
             // canonical value so the invariant is explicit.
@@ -3575,8 +3575,8 @@ impl VirtualMachine {
             && !self.transpiler.options.disable_transpilation
             && self.preload.is_empty()
             && self.standalone_module_graph.is_some()
-            && Bun__isFileOfCompiledProgram(self.global(), &bun_core::String::from_bytes(entry_path));
-        self.has_looked_for_server = false;
+            && Bun__isCompiledProgramFile(self.global(), &bun_core::String::from_bytes(entry_path));
+        self.did_look_for_server = false;
 
         if !self.main_is_html_entrypoint && !self.main_is_compiled && !self.starts_server_natively {
             if let Some(hooks) = hooks {
@@ -3654,7 +3654,7 @@ impl VirtualMachine {
                     .ok_or(crate::CrateError::JSError)?;
                 if self.starts_server_natively {
                     // SAFETY: `promise` is a live JSC heap cell.
-                    unsafe { Bun__lookForServerOnceEvaluated(global_ref, promise) };
+                    unsafe { Bun__lookForServerAfterEvaluation(global_ref, promise) };
                 }
                 promise
             } else if !self.main_is_html_entrypoint {
@@ -5183,7 +5183,7 @@ impl VirtualMachine {
             source_code_printer: printer.as_ptr(),
             // `fetchWithoutOnLoadPlugins` forbids the async path.
             promise_ptr: core::ptr::null_mut(),
-            function_texts: core::ptr::null_mut(),
+            function_sources: core::ptr::null_mut(),
         };
         let args = ModuleLoader::TranspileArgs {
             specifier: lr.specifier,
@@ -5309,7 +5309,7 @@ impl VirtualMachine {
         // the first miss.
         let mut retry_on_not_found = bun_paths::is_absolute(source_to_use);
         let mut may_retry_from_source_path = is_a_file_path && !is_special_source;
-        let mut may_retry_from_the_root = self.finds_entry_points_by_path && !is_special_source;
+        let mut may_retry_from_root = self.finds_entry_points_by_path && !is_special_source;
         let result: bun_resolver::Result = loop {
             let import_kind = if is_esm {
                 bun_ast::ImportKind::Stmt
@@ -5336,7 +5336,7 @@ impl VirtualMachine {
                             continue;
                         }
                     }
-                    if core::mem::take(&mut may_retry_from_the_root)
+                    if core::mem::take(&mut may_retry_from_root)
                         && let Some(root) = self.standalone_module_graph.map(|graph| graph.base_public_path_with_default_suffix()).filter(|root| !source_to_use.starts_with(root))
                     {
                         source_to_use = root;

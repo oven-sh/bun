@@ -1,55 +1,53 @@
-// An opt-in test. Seven HTTP servers answer the same routes, each written the way a user of that framework would write it:
-// Bun.serve, Hono, Elysia, node:http, Express and Fastify (./app/<name>.ts over ./app/shared.ts), and TanStack Start
-// (./tanstack, built with vite first, over the same shared.ts). Each is built with `bun build --compile --aot`, started, and
-// asked for every route. ./answers.ts has the bytes that are right.
+// Opt-in test. Seven HTTP servers implement the same routes, each written the way a user of that framework would write it:
+// Bun.serve, Hono, Elysia, node:http, Express and Fastify (./app/<name>.ts on top of ./app/shared.ts), and TanStack Start
+// (./tanstack, built with vite first, using the same shared.ts). Each one is built with `bun build --compile --aot`, startServer,
+// and sent requests. ./answers.ts has the expected responses.
 //
-//   every route                       status 200, the media type and every byte of the body, first once and then a few thousand
-//                                     times over connections that are kept alive, so that whatever acts on heat has acted;
-//                                     and again with the compiler of regular expressions turned off, with the collector
-//                                     running all the time, and with a collection every few allocations that overwrites
-//                                     what is dead
-//   the two routes that validate      400 for each of the bad orders in ./answers.ts (one validates with zod, one by hand)
-//   the route that only casts         the status that plain Bun answers for the same bad order
-//   a path that no route matches      404
-//   a new array, behind all that      still has JavaScriptCore's fast storage
-//   requests that no route expects    the status, the headers and the body that the same executable built without --aot answers
-//   the pages of TanStack Start       what plain Bun answers
-// ./go (net/http) and ./rust (axum) answer six of the routes. ./measure compares with them, so they are held to the same bytes.
+//   every route                    status 200, the Content-Type and the exact body: once, then a few thousand times over
+//                                  keep-alive connections, then again with the RegExp JIT off, with the GC running
+//                                  continuously, and with a GC every few allocations that scribbles over dead cells
+//   the two validating routes      400 for every invalid order in ./answers.ts (one validates with zod, one by hand)
+//   the route that only casts      the same status as Bun without --aot for each invalid order
+//   an unknown path                404
+//   array storage                  a new array still has contiguous storage afterwards (the realm is not "having a bad time")
+//   edge-case requests             same status, headers and body as the same server compiled without --aot
+//   TanStack Start pages           same HTML as Bun without --aot
+// ./go (net/http) and ./rust (axum) implement six of the routes. ./measure compares against them, so they are checked too.
 //
-//   AOT_SERVERS=1 bun test test/aot/servers              all seven (about two minutes, most of it `bun install`)
+//   AOT_SERVERS=1 bun test test/aot/servers                 all seven (about two minutes, mostly `bun install`)
 //   AOT_SERVERS=express,fastify bun test test/aot/servers   only these
-//   AOT_SERVERS=go,rust bun test test/aot/servers        the two that are not JavaScript; `cargo build` downloads its crates
-//   AOT_SERVERS_MODULES=<a node_modules folder> ..       the packages are already installed there, and nothing is downloaded
+//   AOT_SERVERS=go,rust bun test test/aot/servers           the two native servers; `cargo build` downloads crates
+//   AOT_SERVERS_MODULES=<node_modules folder> ..            use packages that are already installPackages; nothing is downloaded
 //
-// Without AOT_SERVERS everything is skipped: the packages named in ./app/package.json and ./tanstack/package.json are
+// Everything is skipped unless AOT_SERVERS is set, because the packages in ./app/package.json and ./tanstack/package.json are
 // downloaded from npm.
-// ./measure has the tools that measure the same servers under load; the head of ./measure/measure.py says how.
+// ./measure has the load-testing tools for the same servers; see the docstring of ./measure/measure.py.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { cpSync, existsSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned, unsupported } from "../run-programs";
-import { badOrders, refusal, routes, type Route } from "./answers";
-import { installed, selected, started, wanted } from "./run-servers";
+import { invalidOrders, invalidOrderBody, routes, type Route } from "./answers";
+import { installPackages, filterRequested, startServer, requestedServers } from "./run-servers";
 
-const servers = selected(["bun", "hono", "elysia", "node", "express", "fastify", "tanstack"]);
+const servers = filterRequested(["bun", "hono", "elysia", "node", "express", "fastify", "tanstack"]);
 
-// Elysia declares the body of a request as `unknown`. Under --aot the cast from `unknown` to the type of an order is checked, and
-// an order that does not have that type throws a TypeError, which the route answers with 400. Plain Bun goes on with the order.
-// The other servers cast what JSON.parse or Request.json() returns, which is `any`, and that cast is not checked.
-const checkedCasts: Record<string, Record<string, number>> = {
+// Elysia types the request body as `unknown`. Under --aot a cast from `unknown` to the order type is checked at run time, so an
+// order of the wrong type throws a TypeError, which the route turns into a 400. Without --aot the handler continues with the order.
+// The other servers cast the result of JSON.parse or Request.json(), which is `any`; casts from `any` are not checked.
+const aotCastErrors: Record<string, Record<string, number>> = {
   elysia: { "typed: a name that is a number": 400 },
 };
 
-// Fastify's route declares that each member of the query is a string. A key that is repeated makes an array of it. Under --aot
-// the array is checked where it is passed on as a string, and the TypeError becomes Fastify's answer for an error in a handler.
-const checkedValues: Record<string, Record<string, number>> = {
+// The Fastify route types every query parameter as a string, but a repeated key produces an array. Under --aot the array fails
+// the type check where it is passed as a string, and Fastify turns the TypeError into its response for a handler error.
+const aotTypeErrors: Record<string, Record<string, number>> = {
   fastify: { "GET /users/42/posts/first?page=2&page=3&sort[]=top {} 0": 500 },
 };
 
 const json = { "Content-Type": "application/json" };
 const order = routes.find(route => route.name === "post")!.request!;
-const oddRequests: [method: string, path: string, init?: { headers?: Record<string, string>; body?: string }][] = [
+const edgeCaseRequests: [method: string, path: string, init?: { headers?: Record<string, string>; body?: string }][] = [
   ["HEAD", "/text"],
   ["HEAD", "/json"],
   ["HEAD", "/stream"],
@@ -101,7 +99,7 @@ const oddRequests: [method: string, path: string, init?: { headers?: Record<stri
   ["POST", "/shops/west/typed-orders", { headers: json, body: order.replace('"coupon":"TENOFF"', '"coupon":"tenoff"') }],
 ];
 
-async function asked(origin: string, route: Route, request = route.request) {
+async function sendRequest(origin: string, route: Route, request = route.request) {
   const response = await fetch(origin + route.path, {
     redirect: "manual",
     method: route.method,
@@ -111,23 +109,23 @@ async function asked(origin: string, route: Route, request = route.request) {
   return { status: response.status, type: response.headers.get("Content-Type")?.split(";")[0]!.trim().toLowerCase(), body: await response.text() };
 }
 
-if (!wanted) console.error("SKIPPED: test/aot/servers/servers.test.ts: it installs packages from npm. AOT_SERVERS=1 runs it");
+if (!requestedServers) console.error("SKIPPED: test/aot/servers/servers.test.ts: it installs packages from npm. Set AOT_SERVERS=1 to run it");
 
-describe.skipIf(!wanted || !!unsupported)("compile/aot/servers", () => {
+describe.skipIf(!requestedServers || !!unsupported)("compile/aot/servers", () => {
   const app = String(tempDir("aot-servers", {}));
   const tanstack = String(tempDir("aot-servers-tanstack", {}));
-  // Every executable is the size of Bun.
+  // Each executable is as large as Bun itself.
   afterAll(() => [app, tanstack].forEach(folder => rmSync(folder, { recursive: true, force: true })));
 
   beforeAll(async () => {
     if (servers.some(name => name !== "tanstack")) {
       cpSync(join(import.meta.dir, "app"), app, { recursive: true });
-      await installed(app);
+      await installPackages(app);
     }
     if (servers.includes("tanstack")) {
       cpSync(join(import.meta.dir, "tanstack"), tanstack, { recursive: true });
       cpSync(join(import.meta.dir, "app", "shared.ts"), join(tanstack, "src", "utils", "shared.ts"));
-      await installed(tanstack);
+      await installPackages(tanstack);
       const vite = await spawned([bunExe(), "node_modules/vite/bin/vite.js", "build"], tanstack, bunEnv);
       expect({ output: vite.stdout + vite.stderr, exitCode: vite.exitCode }).toEqual({ output: expect.any(String), exitCode: 0 });
     }
@@ -136,95 +134,94 @@ describe.skipIf(!wanted || !!unsupported)("compile/aot/servers", () => {
   describe.each(servers)("%s", name => {
     const folder = name === "tanstack" ? tanstack : app;
     const entry = name === "tanstack" ? "./serve.ts" : `./${name}.ts`;
-    // The bundler replaces process.env.NODE_ENV, and without this with "development": React would be its development build, and
-    // Express would answer an error with its stack.
+    // The bundler inlines process.env.NODE_ENV and defaults it to "development", which would select React's development build and
+    // make Express include stack traces in error responses.
     const flags = ["--define", 'process.env.NODE_ENV="production"'];
     const executable = join(folder, `${name}-compiled${isWindows ? ".exe" : ""}`);
-    const compiled = (env: Record<string, string> = {}) => started([executable], folder, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1", ...env });
+    const startCompiled = (env: Record<string, string> = {}) => startServer([executable], folder, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1", ...env });
 
     beforeAll(async () => {
       built(await spawned([bunExe(), "build", "--compile", "--aot", ...flags, "--target=bun", entry, "--outfile", executable], folder, bunEnv));
     }, 120_000);
 
-    test("answers every route", async () => {
-      using server = await compiled();
+    test("serves every route", async () => {
+      using server = await startCompiled();
       for (const route of routes) {
-        expect({ route: route.name, ...(await asked(server.origin, route)) }).toEqual({ route: route.name, status: 200, type: route.type, body: route.answer });
+        expect({ route: route.name, ...(await sendRequest(server.origin, route)) }).toEqual({ route: route.name, status: 200, type: route.type, body: route.expectedBody });
       }
       expect((await fetch(server.origin + "/nothing")).status).toBe(404);
     });
 
-    // Express and Hono match paths with regular expressions that they make at run time. Such a pattern starts in the interpreter
-    // of regular expressions and is compiled once it is hot, so each of the two must give the same answers.
+    // Express and Hono match paths with regular expressions created at run time, so both RegExp engines must agree.
     test.each([
-      ["answers the same after a few thousand requests", {}],
-      ["answers the same with regular expressions interpreted", { BUN_JSC_useRegExpJIT: "0" }],
-      ["answers the same while the collector runs all the time", { BUN_JSC_collectContinuously: "1" }],
-      ["answers the same with dead objects overwritten at once", { BUN_JSC_useZombieMode: "1", BUN_JSC_sweepSynchronously: "1", BUN_JSC_slowPathAllocsBetweenGCs: "50" }],
+      ["serves every route after a few thousand requests", {}],
+      ["serves every route with the RegExp JIT off", { BUN_JSC_useRegExpJIT: "0" }],
+      ["serves every route with the GC running continuously", { BUN_JSC_collectContinuously: "1" }],
+      ["serves every route in zombie mode", { BUN_JSC_useZombieMode: "1", BUN_JSC_sweepSynchronously: "1", BUN_JSC_slowPathAllocsBetweenGCs: "50" }],
     ])("%s", async (_, env) => {
-      using server = await compiled(env);
+      using server = await startCompiled(env);
       for (const route of routes) {
-        const right = { status: 200, type: route.type, body: route.answer };
-        let wrong: unknown;
+        const expected = { status: 200, type: route.type, body: route.expectedBody };
+        let mismatch: unknown;
         await Promise.all(
           Array.from({ length: 16 }, async () => {
-            for (let n = 0; n < 200 && !wrong; n++) {
-              const answer = await asked(server.origin, route);
-              if (!Bun.deepEquals(answer, right)) wrong = answer;
+            for (let n = 0; n < 200 && !mismatch; n++) {
+              const response = await sendRequest(server.origin, route);
+              if (!Bun.deepEquals(response, expected)) mismatch = response;
             }
           }),
         );
-        expect({ route: route.name, wrong }).toEqual({ route: route.name, wrong: undefined });
+        expect({ route: route.name, mismatch }).toEqual({ route: route.name, mismatch: undefined });
       }
     }, 240_000);
 
-    // When an object that may have indexed accessors gets into the prototype chain of arrays or of Object.prototype's heirs,
-    // JavaScriptCore moves every array of the realm to its slowest storage for good. Old-style inheritance between functions,
-    // as util.inherits and transpiled classes do it, must not look like that.
-    test("keeps the fast storage of its arrays", async () => {
-      const kind = join(folder, `${name}-array-kind.txt`);
+    // JSGlobalObject::haveABadTime() permanently switches every array in the realm to SlowPutArrayStorage. It fires when an object
+    // that may have indexed accessors enters a prototype chain. ES5-style inheritance between functions (util.inherits, transpiled
+    // classes) must not trigger it.
+    test("does not trigger haveABadTime", async () => {
+      const indexingTypePath = join(folder, `${name}-array-kind.txt`);
       writeFileSync(
-        join(folder, `${name}-watched.ts`),
+        join(folder, `${name}-probe.ts`),
         `${readFileSync(join(folder, entry), "utf8")}
 import { jscDescribe } from "bun:jsc";
 import { writeFileSync } from "node:fs";
-setInterval(() => writeFileSync(${JSON.stringify(kind)}, /ArrayWith[A-Za-z]+/.exec(jscDescribe([1, {}]))![0]), 20);
+setInterval(() => writeFileSync(${JSON.stringify(indexingTypePath)}, /ArrayWith[A-Za-z]+/.exec(jscDescribe([1, {}]))![0]), 20);
 `,
       );
-      const watched = join(folder, `${name}-watched${isWindows ? ".exe" : ""}`);
-      built(await spawned([bunExe(), "build", "--compile", "--aot", ...flags, "--target=bun", `./${name}-watched.ts`, "--outfile", watched], folder, bunEnv));
-      using server = await started([watched], folder, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
-      for (const route of routes) for (let n = 0; n < 20; n++) expect((await asked(server.origin, route)).status).toBe(200);
-      rmSync(kind, { force: true });
-      while (!existsSync(kind) || !readFileSync(kind, "utf8")) await Bun.sleep(5);
-      expect(readFileSync(kind, "utf8")).toBe("ArrayWithContiguous");
+      const probe = join(folder, `${name}-probe${isWindows ? ".exe" : ""}`);
+      built(await spawned([bunExe(), "build", "--compile", "--aot", ...flags, "--target=bun", `./${name}-probe.ts`, "--outfile", probe], folder, bunEnv));
+      using server = await startServer([probe], folder, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
+      for (const route of routes) for (let n = 0; n < 20; n++) expect((await sendRequest(server.origin, route)).status).toBe(200);
+      rmSync(indexingTypePath, { force: true });
+      while (!existsSync(indexingTypePath) || !readFileSync(indexingTypePath, "utf8")) await Bun.sleep(5);
+      expect(readFileSync(indexingTypePath, "utf8")).toBe("ArrayWithContiguous");
     }, 120_000);
 
-    test("refuses bad orders", async () => {
-      using server = await compiled();
-      using plain = await started([bunExe(), entry], folder, bunEnv);
-      const answered: Record<string, number> = {};
+    test("rejects invalid orders", async () => {
+      using server = await startCompiled();
+      using reference = await startServer([bunExe(), entry], folder, bunEnv);
+      const actual: Record<string, number> = {};
       const expected: Record<string, number> = {};
       for (const route of routes.filter(route => route.method === "POST")) {
-        for (const [what, request] of Object.entries(badOrders)) {
-          const { status, body } = await asked(server.origin, route, request);
-          answered[`${route.name}: ${what}`] = status;
-          expected[`${route.name}: ${what}`] = route.name === "typed" ? (await asked(plain.origin, route, request)).status : 400;
-          if (what === "a quantity of zero") expect(body).toBe(refusal);
+        for (const [description, request] of Object.entries(invalidOrders)) {
+          const { status, body } = await sendRequest(server.origin, route, request);
+          actual[`${route.name}: ${description}`] = status;
+          expected[`${route.name}: ${description}`] = route.name === "typed" ? (await sendRequest(reference.origin, route, request)).status : 400;
+          if (description === "a quantity of zero") expect(body).toBe(invalidOrderBody);
         }
-        expect({ route: route.name, ...(await asked(server.origin, route)) }).toEqual({ route: route.name, status: 200, type: route.type, body: route.answer });
+        expect({ route: route.name, ...(await sendRequest(server.origin, route)) }).toEqual({ route: route.name, status: 200, type: route.type, body: route.expectedBody });
       }
-      expect(answered).toEqual({ ...expected, ...checkedCasts[name] });
+      expect(actual).toEqual({ ...expected, ...aotCastErrors[name] });
     });
 
-    test("answers odd requests as without --aot", async () => {
-      const bundled = join(folder, `${name}-bundled${isWindows ? ".exe" : ""}`);
-      built(await spawned([bunExe(), "build", "--compile", ...flags, "--target=bun", entry, "--outfile", bundled], folder, bunEnv));
-      using server = await compiled();
-      using plain = await started([bundled], folder, bunEnv);
-      const answers = async (origin: string) => {
+    test("handles edge-case requests like a build without --aot", async () => {
+      const withoutAot = join(folder, `${name}-no-aot${isWindows ? ".exe" : ""}`);
+      built(await spawned([bunExe(), "build", "--compile", ...flags, "--target=bun", entry, "--outfile", withoutAot], folder, bunEnv));
+      using server = await startCompiled();
+      using reference = await startServer([withoutAot], folder, bunEnv);
+      const collectResponses = async (origin: string) => {
         const all: Record<string, { status: number; headers: string[][]; body: string }> = {};
-        for (const [method, path, init] of oddRequests) {
+        for (const [method, path, init] of edgeCaseRequests) {
           const response = await fetch(origin + path, { method, redirect: "manual", ...init });
           all[`${method} ${path} ${JSON.stringify(init?.headers ?? {})} ${String(init?.body ?? "").length}`] = {
             status: response.status,
@@ -234,32 +231,32 @@ setInterval(() => writeFileSync(${JSON.stringify(kind)}, /ArrayWith[A-Za-z]+/.ex
         }
         return all;
       };
-      const answered = await answers(server.origin);
-      const expected = await answers(plain.origin);
-      for (const [request, status] of Object.entries(checkedValues[name] ?? {})) {
-        expect({ request, status: answered[request].status }).toEqual({ request, status });
-        delete answered[request];
+      const actual = await collectResponses(server.origin);
+      const expected = await collectResponses(reference.origin);
+      for (const [request, status] of Object.entries(aotTypeErrors[name] ?? {})) {
+        expect({ request, status: actual[request].status }).toEqual({ request, status });
+        delete actual[request];
         delete expected[request];
       }
-      expect(answered).toEqual(expected);
+      expect(actual).toEqual(expected);
     });
 
-    test.skipIf(name !== "tanstack")("renders the pages as plain Bun does", async () => {
-      using server = await compiled();
-      using plain = await started([bunExe(), entry], folder, bunEnv);
+    test.skipIf(name !== "tanstack")("renders pages like Bun without --aot", async () => {
+      using server = await startCompiled();
+      using reference = await startServer([bunExe(), entry], folder, bunEnv);
       const statuses: Record<string, number> = {};
       for (const path of ["/", "/items", "/items/7", "/items/700", "/contacts", "/deferred", "/redirects", "/broken", "/search", "/search?page=2&word=Item", "/search?page=x"]) {
-        const page: Route = { name: path, method: "GET", path, type: "text/html", answer: "" };
-        // A page carries the time at which its data was loaded, in milliseconds.
-        const rendered = async (origin: string) => {
-          const answer = await asked(origin, page);
-          return { ...answer, body: answer.body.replace(/\b\d{13}\b/g, "<time>") };
+        const page: Route = { name: path, method: "GET", path, type: "text/html", expectedBody: "" };
+        // Pages embed the time their data was loaded, in milliseconds.
+        const fetchPage = async (origin: string) => {
+          const response = await sendRequest(origin, page);
+          return { ...response, body: response.body.replace(/\b\d{13}\b/g, "<time>") };
         };
-        const expected = await rendered(plain.origin);
+        const expected = await fetchPage(reference.origin);
         statuses[path] = expected.status;
-        for (let n = 0; n < 100; n++) expect(await rendered(server.origin)).toEqual(expected);
+        for (let n = 0; n < 100; n++) expect(await fetchPage(server.origin)).toEqual(expected);
       }
-      // The router sends a search that is not in its canonical form to the one that is.
+      // The router redirects non-canonical search params to their canonical form.
       expect(statuses).toEqual({
         "/": 200,
         "/items": 200,
@@ -276,21 +273,21 @@ setInterval(() => writeFileSync(${JSON.stringify(kind)}, /ArrayWith[A-Za-z]+/.ex
     }, 60_000);
   });
 
-  describe.each(["go", "rust"].filter(name => wanted?.split(",").includes(name)))("%s", name => {
-    test("answers as the others do", async () => {
+  describe.each(["go", "rust"].filter(name => requestedServers?.split(",").includes(name)))("%s", name => {
+    test("serves the shared routes", async () => {
       const source = join(app, name);
       cpSync(join(import.meta.dir, name), source, { recursive: true });
       const executable = join(app, name === "go" ? "go-native" : "release/servers");
       const build = name === "go" ? ["go", "build", "-o", executable, "."] : ["cargo", "build", "--release"];
       const { stderr, exitCode } = await spawned(build, source, { ...bunEnv, CARGO_TARGET_DIR: app });
       expect({ stderr, exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
-      using server = await started([executable], app, bunEnv);
+      using server = await startServer([executable], app, bunEnv);
       for (const route of routes.filter(route => route.name !== "hand" && route.name !== "typed")) {
-        expect({ route: route.name, ...(await asked(server.origin, route)) }).toEqual({ route: route.name, status: 200, type: route.type, body: route.answer });
+        expect({ route: route.name, ...(await sendRequest(server.origin, route)) }).toEqual({ route: route.name, status: 200, type: route.type, body: route.expectedBody });
         if (route.method !== "POST") continue;
-        for (const [what, request] of Object.entries(badOrders)) {
-          // To encoding/json and to serde, a member that is null is an optional member that is absent.
-          expect({ what, status: (await asked(server.origin, route, request)).status }).toEqual({ what, status: what === "a coupon that is null" ? 200 : 400 });
+        for (const [description, request] of Object.entries(invalidOrders)) {
+          // encoding/json and serde treat a null optional field like a missing one.
+          expect({ description, status: (await sendRequest(server.origin, route, request)).status }).toEqual({ description, status: description === "a coupon that is null" ? 200 : 400 });
         }
       }
     }, 300_000);

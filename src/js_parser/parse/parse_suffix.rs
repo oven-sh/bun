@@ -1500,7 +1500,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     #[cold]
     #[inline(never)]
-    fn hand_plan_to_validation(p: &mut Self, audited: &'static bun_ast::audited::AuditedFile, left: &mut Expr) {
+    fn attach_validation_plan(p: &mut Self, audited: &'static bun_ast::audited::AuditedFile, left: &mut Expr) {
         let ExprData::ECall(call) = left.data else { return };
         if left.loc.start < 0 || matches!(call.target.data, ExprData::EMissing(..)) {
             return;
@@ -1538,7 +1538,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loop {
             if let Some(audited) = p.options.features.audited {
                 if !audited.validations.is_empty() {
-                    Self::hand_plan_to_validation(p, audited, left);
+                    Self::attach_validation_plan(p, audited, left);
                 }
                 Self::mark_audited(p, audited, left, optional_chain.is_some());
             }

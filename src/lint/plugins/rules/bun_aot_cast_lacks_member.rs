@@ -98,7 +98,7 @@ fn kinds_of(ty: Type) -> u16 {
     }
 }
 
-fn in_words(kinds: u16) -> &'static str {
+fn describe_kinds(kinds: u16) -> &'static str {
     match kinds {
         kind::UNDEFINED => "`undefined`",
         kind::NULL => "`null`",
@@ -129,9 +129,9 @@ fn is_kept_bare(ty: Type) -> bool {
 /// Whether compiled code holds a value to the type. What a declaration file says about an object is only expected of it.
 /// `Readonly<T>` and the like are declared in one, and say what `T` says.
 fn is_held_to(part: Type) -> bool {
-    let is_object_by_its_members =
+    let is_object_structurally =
         part.has_flags(TypeFlags::OBJECT) && kinds_of(part) == kind::OBJECTS;
-    !is_object_by_its_members
+    !is_object_structurally
         || is_object_flag_set(part, ObjectFlags::MAPPED)
         || part.symbol().is_some_and(|symbol| {
             symbol
@@ -146,7 +146,7 @@ fn is_class(ty: Type) -> bool {
 }
 
 /// Why a value does not match a type.
-enum Misfit<'a> {
+enum Mismatch<'a> {
     /// The type that requires the member.
     Missing(Type<'a>),
     /// The type that has the member, the type of the member, what is there.
@@ -155,10 +155,10 @@ enum Misfit<'a> {
 }
 
 /// Where in the literal, as `a.b[0]`, and why.
-type Found<'a> = (Vec<u8>, Misfit<'a>);
+type Found<'a> = (Vec<u8>, Mismatch<'a>);
 
 fn wrong_value<'a>(found: impl Into<Vec<u8>>) -> Option<Found<'a>> {
-    Some((Vec::new(), Misfit::WrongValue(found.into())))
+    Some((Vec::new(), Mismatch::WrongValue(found.into())))
 }
 
 /// `found`, which is about the member `name` of an `owner`.
@@ -169,7 +169,7 @@ fn below<'a>(
     owner: Type<'a>,
     wanted: Type<'a>,
 ) -> Found<'a> {
-    let (rest, misfit) = found;
+    let (rest, mismatch) = found;
     let mut path = match is_index {
         true => [b"[", name, b"]"].concat(),
         false => name.to_vec(),
@@ -178,11 +178,11 @@ fn below<'a>(
         path.push(b'.');
     }
     path.extend_from_slice(&rest);
-    let misfit = match misfit {
-        Misfit::WrongValue(found) => Misfit::WrongMember(owner, wanted, found),
+    let mismatch = match mismatch {
+        Mismatch::WrongValue(found) => Mismatch::WrongMember(owner, wanted, found),
         other => other,
     };
-    (path, misfit)
+    (path, mismatch)
 }
 
 const LITERALS: &[ExprTag] = &[
@@ -198,16 +198,16 @@ const LITERALS: &[ExprTag] = &[
 ];
 
 /// The literal that is the value of `e`, whatever is asserted of it on the way: `e` itself, or what the constant `e` starts with.
-fn literal_behind(e: Expr) -> Option<Expr> {
+fn literal_under_casts(e: Expr) -> Option<Expr> {
     let value = e.skip_type_wrappers();
     if LITERALS.contains(&value.tag()) || value.is_ident("undefined") {
         return Some(value);
     }
-    let is_type_of_literal = |ty: Type| {
+    let is_literal_type = |ty: Type| {
         ty.symbol()
             .is_some_and(|it| it.has_flags(SymbolFlags::OBJECT_LITERAL))
     };
-    if value.tag() != ExprTag::Ident || !is_type_of_literal(value.ty()) {
+    if value.tag() != ExprTag::Ident || !is_literal_type(value.ty()) {
         return None;
     }
     let symbol = value.symbol()?;
@@ -226,7 +226,7 @@ fn literal_behind(e: Expr) -> Option<Expr> {
     declaration.ty().is_none().then_some(starts_with)
 }
 
-fn names_of_literals<'a>(file: &'a File<'a>) -> FxHashSet<Name<'a>> {
+fn literal_names<'a>(file: &'a File<'a>) -> FxHashSet<Name<'a>> {
     let literals = file.exprs_of_kind(ExprTag::Object);
     let names = literals.filter_map(|literal| match literal.parent() {
         Node::VarDecl(declaration) => match declaration.pat().kind() {
@@ -249,14 +249,14 @@ fn property_named<'a>(props: List<'a, Prop<'a>>, name: &[u8]) -> Option<Prop<'a>
 }
 
 /// Why the object literal does not match `wanted`, which is no union.
-fn misfit_of_object<'a>(
+fn object_mismatch<'a>(
     props: List<'a, Prop<'a>>,
     wanted: Type<'a>,
     depth: u32,
 ) -> Option<Found<'a>> {
     // The cast makes the literal under it an object of the type, with the members that are missing left blank. An instance of a
     // class is only made by `new`, and a literal inside the literal is made before the cast sees it.
-    let is_made_by_the_cast = depth == 0 && !is_class(wanted);
+    let is_allocated_by_cast = depth == 0 && !is_class(wanted);
     for member in wanted.get_properties().iter() {
         let name = member.name();
         // A key that is a symbol, `#private`.
@@ -268,11 +268,11 @@ fn misfit_of_object<'a>(
             if member.has_flags(SymbolFlags::OPTIONAL) {
                 continue;
             }
-            if !is_made_by_the_cast {
+            if !is_allocated_by_cast {
                 return wrong_value([b"an object literal without `", name, b"`"].concat());
             }
             if of_member.is_some_and(|it| is_kept_bare(it) && kinds_of(it) & kind::UNDEFINED == 0) {
-                return Some((name.to_vec(), Misfit::Missing(wanted)));
+                return Some((name.to_vec(), Mismatch::Missing(wanted)));
             }
             continue;
         };
@@ -281,10 +281,10 @@ fn misfit_of_object<'a>(
         };
         let found = match prop.kind() {
             PropKind::Init | PropKind::Shorthand => {
-                prop.value().and_then(|it| misfit(it, of_member, depth + 1))
+                prop.value().and_then(|it| mismatch(it, of_member, depth + 1))
             }
             PropKind::Method if kinds_of(of_member) & kind::FUNCTION == 0 => {
-                wrong_value(in_words(kind::FUNCTION))
+                wrong_value(describe_kinds(kind::FUNCTION))
             }
             _ => None,
         };
@@ -296,8 +296,8 @@ fn misfit_of_object<'a>(
 }
 
 /// Why the value of `e` does not match `wanted`. `None`: it does, or nothing here can tell, or it makes no difference.
-fn misfit<'a>(e: Expr<'a>, wanted: Type<'a>, depth: u32) -> Option<Found<'a>> {
-    let value = literal_behind(e)?;
+fn mismatch<'a>(e: Expr<'a>, wanted: Type<'a>, depth: u32) -> Option<Found<'a>> {
+    let value = literal_under_casts(e)?;
     let have = value.ty();
     if depth > 4 || have.has_flags(TypeFlags::ANY) || wanted.is_unresolved() {
         return None;
@@ -310,15 +310,15 @@ fn misfit<'a>(e: Expr<'a>, wanted: Type<'a>, depth: u32) -> Option<Found<'a>> {
         return None;
     }
     if kinds & taken == 0 {
-        let makes_no_difference = match kinds & !kind::MISSING == 0 {
+        let is_noop = match kinds & !kind::MISSING == 0 {
             // `null as unknown as T` stays `null`.
             true => depth == 0 || !is_kept_bare(wanted),
             false => depth == 0 && kinds & !kind::PRIMITIVES == 0 && taken & kind::PRIMITIVES != 0,
         };
-        return if makes_no_difference {
+        return if is_noop {
             None
         } else {
-            wrong_value(in_words(kinds))
+            wrong_value(describe_kinds(kinds))
         };
     }
     let is_open_type = |part: Type| {
@@ -343,7 +343,7 @@ fn misfit<'a>(e: Expr<'a>, wanted: Type<'a>, depth: u32) -> Option<Found<'a>> {
                 if is_open_type(part) {
                     return None;
                 }
-                let found = misfit_of_object(props, part, depth)?;
+                let found = object_mismatch(props, part, depth)?;
                 first = first.or(Some(found));
             }
             first
@@ -358,7 +358,7 @@ fn misfit<'a>(e: Expr<'a>, wanted: Type<'a>, depth: u32) -> Option<Found<'a>> {
             if only.is_array_type() {
                 let of_elements = only.get_number_index_type()?;
                 return elements.iter().enumerate().find_map(|(index, element)| {
-                    let found = misfit(element, of_elements, depth + 1)?;
+                    let found = mismatch(element, of_elements, depth + 1)?;
                     Some(below(
                         index.to_string().as_bytes(),
                         true,
@@ -368,10 +368,10 @@ fn misfit<'a>(e: Expr<'a>, wanted: Type<'a>, depth: u32) -> Option<Found<'a>> {
                     ))
                 });
             }
-            let is_object_by_its_members =
+            let is_object_structurally =
                 depth > 0 && !only.is_tuple_type() && !is_open_type(only);
-            if is_object_by_its_members {
-                wrong_value(in_words(kind::ARRAY))
+            if is_object_structurally {
+                wrong_value(describe_kinds(kind::ARRAY))
             } else {
                 None
             }
@@ -392,7 +392,7 @@ impl Rule for AotCastLacksMember {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        (!file.twins_on().contains(bun_lint::language::Twins::NO_UNSAFE_TYPE_ASSERTION)).then_some(None)
+        (!file.active_rule_overlaps().contains(bun_lint::language::RuleOverlaps::NO_UNSAFE_TYPE_ASSERTION)).then_some(None)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -402,12 +402,12 @@ impl Rule for AotCastLacksMember {
         // Most casts are of a name, and few names are of interest. No type is asked for the others.
         if let Some(name) = expr.skip_type_wrappers().as_ident() {
             let file = cx.file();
-            let known = cx.state.get_or_insert_with(|| names_of_literals(file));
+            let known = cx.state.get_or_insert_with(|| literal_names(file));
             if !known.contains(&name) && !name.is("undefined") {
                 return;
             }
         }
-        if literal_behind(expr).is_none() {
+        if literal_under_casts(expr).is_none() {
             return;
         }
         let asserted = ty.ty();
@@ -423,21 +423,21 @@ impl Rule for AotCastLacksMember {
         let Some(wanted) = wanted else {
             return;
         };
-        let Some((member, misfit)) = misfit(expr, wanted, 0) else {
+        let Some((member, mismatch)) = mismatch(expr, wanted, 0) else {
             return;
         };
-        match misfit {
-            Misfit::Missing(owner) => cx
+        match mismatch {
+            Mismatch::Missing(owner) => cx
                 .report(e, MISSING)
                 .data("member", member)
                 .data("type", owner.to_text()),
-            Misfit::WrongMember(owner, of_member, found) => cx
+            Mismatch::WrongMember(owner, of_member, found) => cx
                 .report(e, WRONG_MEMBER)
                 .data("member", member)
                 .data("wanted", of_member.to_text())
                 .data("type", owner.to_text())
                 .data("found", found),
-            Misfit::WrongValue(found) => {
+            Mismatch::WrongValue(found) => {
                 let mut found = found;
                 if let Some(first) = found.first_mut() {
                     first.make_ascii_uppercase();

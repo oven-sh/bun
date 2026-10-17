@@ -1,22 +1,22 @@
-// An opt-in test. ./features/<name> is a server that uses many features of Bun.serve, of node:http or of one framework: hooks and
-// middleware, routers with a prefix, schemas that validate, coerce and serialize, error handlers, cookies, redirects, content
-// negotiation, streams, bodies of every kind. Each is built with `bun build --compile`, once with --aot and once without, and
-// both are sent the same requests. The status, the headers and the body of every answer must be the same. The executable built
-// with --aot is asked once more with the compiler of regular expressions turned off (the frameworks make patterns at run time,
-// out of paths and schemas), and once more with a collection every few allocations that overwrites what is dead.
+// Opt-in test. Each ./features/<name> is a server that exercises many features of Bun.serve, node:http or one framework: hooks
+// and middleware, prefixed routers, schemas that validate, coerce and serialize, error handlers, cookies, redirects, content
+// negotiation, streams and every kind of request body. Each one is built with `bun build --compile`, with and without --aot,
+// and both builds receive the same requests. Status, headers and body of every response must match. The --aot build is also
+// run with the RegExp JIT off (the frameworks build patterns from paths and schemas at run time) and in zombie mode with a GC
+// every few allocations.
 //
 //   AOT_SERVERS=1 bun test test/aot/servers/features     all six
 //   AOT_SERVERS=hono bun test test/aot/servers/features  only this one
 //
-// ./servers.test.ts says what else AOT_SERVERS and AOT_SERVERS_MODULES do.
+// See ./servers.test.ts for AOT_SERVERS and AOT_SERVERS_MODULES.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { cpSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned, unsupported } from "../run-programs";
-import { installed, selected, started, wanted } from "./run-servers";
+import { installPackages, filterRequested, startServer, requestedServers } from "./run-servers";
 
-type Sent = [method: string, path: string, headers?: Record<string, string>, body?: string];
+type RequestSpec = [method: string, path: string, headers?: Record<string, string>, body?: string];
 
 const json = { "Content-Type": "application/json" };
 const form = { "Content-Type": "application/x-www-form-urlencoded" };
@@ -24,7 +24,7 @@ const item = JSON.stringify({ name: "kettle", tags: ["kitchen", "steel"], price:
 
 const multipart = "--line\r\n" + 'Content-Disposition: form-data; name="a"\r\n\r\n1\r\n--line\r\n' + 'Content-Disposition: form-data; name="file"; filename="a.txt"\r\nContent-Type: text/plain\r\n\r\nhello\r\n--line--\r\n';
 
-const requests: Record<string, Sent[]> = {
+const requests: Record<string, RequestSpec[]> = {
   "bun.ts": [
     ["GET", "/fixed"],
     ["HEAD", "/fixed"],
@@ -232,15 +232,15 @@ const requests: Record<string, Sent[]> = {
   ],
 };
 
-const servers = selected(Object.keys(requests));
+const servers = filterRequested(Object.keys(requests));
 
-async function answers(origin: string, sent: Sent[]) {
+async function collectResponses(origin: string, specs: RequestSpec[]) {
   const all: Record<string, unknown> = {};
-  // Twice, because a server may keep state and a second request takes other paths through its caches.
-  for (const turn of ["first", "second"]) {
-    for (const [method, path, headers, body] of sent) {
+  // Two passes: a server may keep state, and the second request hits warm caches.
+  for (const pass of ["first", "second"]) {
+    for (const [method, path, headers, body] of specs) {
       const response = await fetch(origin + path, { method, headers, body, redirect: "manual" });
-      all[`${turn} ${method} ${path} ${JSON.stringify(headers ?? {})} ${body ?? ""}`] = {
+      all[`${pass} ${method} ${path} ${JSON.stringify(headers ?? {})} ${body ?? ""}`] = {
         status: response.status,
         headers: [...response.headers]
           .filter(([header]) => header !== "date")
@@ -253,11 +253,11 @@ async function answers(origin: string, sent: Sent[]) {
   return all;
 }
 
-/** The status line and the header lines of every answer as they are on the wire: fetch() hides their order and their case. */
-async function heads(origin: string, sent: Sent[]) {
+/** Returns the raw status line and header lines of every response. fetch() hides their order and case. */
+async function collectRawHeaders(origin: string, specs: RequestSpec[]) {
   const all: Record<string, string[]> = {};
   const { hostname, port } = new URL(origin);
-  for (const [method, path, headers, body] of sent) {
+  for (const [method, path, headers, body] of specs) {
     const lines = [`${method} ${path} HTTP/1.1`, `Host: ${hostname}:${port}`, "Connection: close"];
     for (const [header, value] of Object.entries(headers ?? {})) lines.push(`${header}: ${value}`);
     if (body !== undefined) lines.push(`Content-Length: ${Buffer.byteLength(body)}`);
@@ -282,98 +282,98 @@ async function heads(origin: string, sent: Sent[]) {
   return all;
 }
 
-/** Two clients of the WebSocket of ./features/bun.ts. Returns what each of them heard. */
-async function conversation(origin: string) {
-  const heard: Record<string, string[]> = { ada: [], bob: [] };
-  const total = () => heard.ada.length + heard.bob.length;
-  const until = async (count: number) => {
-    for (let n = 0; total() < count; n++) {
-      if (n === 500) throw new Error(`heard only ${JSON.stringify(heard)}`);
+/** Connects two clients to the WebSocket endpoint of ./features/bun.ts and returns the messages each one received. */
+async function runWebSocketSession(origin: string) {
+  const messages: Record<string, string[]> = { ada: [], bob: [] };
+  const messageCount = () => messages.ada.length + messages.bob.length;
+  const waitForMessages = async (count: number) => {
+    for (let n = 0; messageCount() < count; n++) {
+      if (n === 500) throw new Error(`timed out waiting for ${count} messages: ${JSON.stringify(messages)}`);
       await Bun.sleep(10);
     }
   };
-  const connected = (name: string) => {
+  const connect = (name: string) => {
     const socket = new WebSocket(`${origin.replace("http", "ws")}/socket?name=${name}`);
     socket.binaryType = "arraybuffer";
-    socket.onmessage = event => heard[name].push(typeof event.data === "string" ? event.data : `bytes ${new Uint8Array(event.data)}`);
-    socket.onclose = event => heard[name].push(`closed: ${event.code} ${event.reason}`);
+    socket.onmessage = event => messages[name].push(typeof event.data === "string" ? event.data : `bytes ${new Uint8Array(event.data)}`);
+    socket.onclose = event => messages[name].push(`closed: ${event.code} ${event.reason}`);
     return socket;
   };
-  const ada = connected("ada");
-  await until(1);
-  const bob = connected("bob");
-  await until(2);
+  const ada = connect("ada");
+  await waitForMessages(1);
+  const bob = connect("bob");
+  await waitForMessages(2);
   ada.send("quiet");
-  await until(3);
+  await waitForMessages(3);
   ada.send(new Uint8Array([1, 2, 3]));
-  await until(4);
+  await waitForMessages(4);
   ada.send("all:good morning");
-  await until(5);
+  await waitForMessages(5);
   bob.send("x".repeat(100_000));
-  await until(6);
+  await waitForMessages(6);
   bob.send("bye");
-  await until(8);
+  await waitForMessages(8);
   ada.close(1000, "done");
-  await until(9);
-  return heard;
+  await waitForMessages(9);
+  return messages;
 }
 
-/** A client of the endless stream of ./features/bun.ts that goes away. Returns what it read and what the server noticed. */
-async function interrupted(origin: string) {
+/** Aborts a request to the endless event stream of ./features/bun.ts. Returns what the client read and the abort counters of the server. */
+async function abortEventStream(origin: string) {
   const controller = new AbortController();
   const response = await fetch(origin + "/events", { signal: controller.signal });
   const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
   let text = "";
   while (!text.includes("id: 5\n")) text += (await reader.read()).value;
   controller.abort();
-  let left = {};
-  for (let n = 0; n < 500 && !Bun.deepEquals(left, { aborted: 1, cancelled: 1 }); n++) {
+  let counters = {};
+  for (let n = 0; n < 500 && !Bun.deepEquals(counters, { aborted: 1, cancelled: 1 }); n++) {
     await Bun.sleep(10);
-    left = await (await fetch(origin + "/left")).json();
+    counters = await (await fetch(origin + "/left")).json();
   }
-  return { type: response.headers.get("Content-Type"), first: text.slice(0, text.indexOf("id: 5\n")), left };
+  return { type: response.headers.get("Content-Type"), first: text.slice(0, text.indexOf("id: 5\n")), counters };
 }
 
-if (!wanted) console.error("SKIPPED: test/aot/servers/features.test.ts: it installs packages from npm. AOT_SERVERS=1 runs it");
+if (!requestedServers) console.error("SKIPPED: test/aot/servers/features.test.ts: it installs packages from npm. Set AOT_SERVERS=1 to run it");
 
-describe.skipIf(!wanted || !!unsupported)("compile/aot/servers/features", () => {
+describe.skipIf(!requestedServers || !!unsupported)("compile/aot/servers/features", () => {
   const folder = String(tempDir("aot-servers-features", {}));
-  // Every executable is the size of Bun.
+  // Each executable is as large as Bun itself.
   afterAll(() => rmSync(folder, { recursive: true, force: true }));
 
   beforeAll(async () => {
     cpSync(join(import.meta.dir, "app"), folder, { recursive: true });
     cpSync(join(import.meta.dir, "features"), join(folder, "features"), { recursive: true });
-    await installed(folder);
+    await installPackages(folder);
   }, 120_000);
 
-  test.each(servers)("%s answers as without --aot", async file => {
+  test.each(servers)("%s matches the build without --aot", async file => {
     const executables = [];
     for (const flags of [["--aot"], []]) {
-      const executable = join(folder, `${file}${flags[0] ?? "--bundled"}${isWindows ? ".exe" : ""}`);
+      const executable = join(folder, `${file}${flags[0] ?? "--no-aot"}${isWindows ? ".exe" : ""}`);
       built(await spawned([bunExe(), "build", "--compile", ...flags, "--define", 'process.env.NODE_ENV="production"', "--target=bun", `./features/${file}`, "--outfile", executable], folder, bunEnv));
       executables.push(executable);
     }
-    using compiled = await started([executables[0]], folder, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
-    using interpreted = await started([executables[0]], folder, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1", BUN_JSC_useRegExpJIT: "0" });
-    using collecting = await started([executables[0]], folder, {
+    using aot = await startServer([executables[0]], folder, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
+    using aotWithoutRegExpJIT = await startServer([executables[0]], folder, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1", BUN_JSC_useRegExpJIT: "0" });
+    using aotZombieMode = await startServer([executables[0]], folder, {
       ...bunEnv,
       BUN_JSC_crashIfInterpreterIsUsed: "1",
       BUN_JSC_useZombieMode: "1",
       BUN_JSC_sweepSynchronously: "1",
       BUN_JSC_slowPathAllocsBetweenGCs: "50",
     });
-    using bundled = await started([executables[1]], folder, bunEnv);
-    const expected = await answers(bundled.origin, requests[file]);
-    expect(await answers(compiled.origin, requests[file])).toEqual(expected);
-    expect(await answers(interpreted.origin, requests[file])).toEqual(expected);
-    expect(await answers(collecting.origin, requests[file])).toEqual(expected);
-    expect(await heads(compiled.origin, requests[file])).toEqual(await heads(bundled.origin, requests[file]));
+    using reference = await startServer([executables[1]], folder, bunEnv);
+    const expected = await collectResponses(reference.origin, requests[file]);
+    expect(await collectResponses(aot.origin, requests[file])).toEqual(expected);
+    expect(await collectResponses(aotWithoutRegExpJIT.origin, requests[file])).toEqual(expected);
+    expect(await collectResponses(aotZombieMode.origin, requests[file])).toEqual(expected);
+    expect(await collectRawHeaders(aot.origin, requests[file])).toEqual(await collectRawHeaders(reference.origin, requests[file]));
     if (file === "bun.ts") {
-      const heard = await conversation(bundled.origin);
-      expect(heard.ada).toContain("bob left: 4001 said bye");
-      expect(await conversation(compiled.origin)).toEqual(heard);
-      expect(await interrupted(compiled.origin)).toEqual(await interrupted(bundled.origin));
+      const messages = await runWebSocketSession(reference.origin);
+      expect(messages.ada).toContain("bob left: 4001 said bye");
+      expect(await runWebSocketSession(aot.origin)).toEqual(messages);
+      expect(await abortEventStream(aot.origin)).toEqual(await abortEventStream(reference.origin));
     }
   }, 120_000);
 });

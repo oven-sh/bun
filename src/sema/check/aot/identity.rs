@@ -17,7 +17,7 @@ use crate::bind::{ScopeKind, SymFlags};
 use crate::hir::{Keyword, TypeNodeId, TypeNodeKind};
 use crate::local::MaybeLocal;
 use crate::types::{ComponentsId, Follow, Lanes, Literalness, MapperId, Origin, Prop, PropFlags, PropSource, Provenance, Shape, SigId, TypeData, TypeId, Types, UnionOrigin, Visitor, tf};
-use crate::util::FxHashMap;
+use crate::util::{FxHashMap, InParallel, for_each_mut};
 use crate::util::memory::Cells;
 use std::hash::Hash;
 use std::sync::OnceLock;
@@ -33,8 +33,8 @@ pub(super) struct State {
     sigs: FxHashMap<SigId, Identity>,
     mappers: FxHashMap<MapperId, Identity>,
     components: FxHashMap<ComponentsId, Identity>,
-    /// `Checker::type_parameters_named_within`
-    named_within: FxHashMap<(FileId, TypeNodeId), Option<Vec<Sym>>>,
+    /// `Checker::type_parameters_referenced_in`
+    referenced_type_parameters: FxHashMap<(FileId, TypeNodeId), Option<Vec<Sym>>>,
 }
 
 #[derive(Default)]
@@ -60,19 +60,19 @@ pub(super) struct Shared {
     sigs: Identities,
     mappers: Identities,
     components: Identities,
-    names_of_files: OnceLock<Vec<Identity>>,
+    file_identities: OnceLock<Vec<Identity>>,
 }
 
 impl Shared {
-    fn name_of_file(&self, file: FileId) -> Identity {
-        match self.names_of_files.get().and_then(|names| names.get(file.idx())) {
+    fn file_identity(&self, file: FileId) -> Identity {
+        match self.file_identities.get().and_then(|names| names.get(file.idx())) {
             Some(&name) => name,
             None => [u64::from(file.0), 0],
         }
     }
 }
 
-fn rest_within<'a>(name: &'a [u8], directory: &[u8], is_case_sensitive: bool) -> Option<&'a [u8]> {
+fn strip_directory_prefix<'a>(name: &'a [u8], directory: &[u8], is_case_sensitive: bool) -> Option<&'a [u8]> {
     let directory = directory.strip_suffix(b"/").unwrap_or(directory);
     if directory.is_empty() || name.len() <= directory.len() || name[directory.len()] != b'/' {
         return None;
@@ -84,13 +84,13 @@ fn rest_within<'a>(name: &'a [u8], directory: &[u8], is_case_sensitive: bool) ->
 
 /// What takes the checker to say: how a record would look to every task.
 trait Normalizer {
-    /// `Checker::members_of_intersection_once_resolved`
-    fn members_of_intersection(&mut self, members: &[TypeId]) -> Vec<TypeId>;
+    /// `Checker::resolved_intersection_members`
+    fn intersection_members(&mut self, members: &[TypeId]) -> Vec<TypeId>;
 
-    /// `Checker::pairs_of_named_type_parameters`
-    fn pairs_that_matter(&mut self, mapper: MapperId, file: FileId, node: TypeNodeId) -> Vec<(TypeId, TypeId)>;
+    /// `Checker::referenced_type_parameter_pairs`
+    fn relevant_mapper_pairs(&mut self, mapper: MapperId, file: FileId, node: TypeNodeId) -> Vec<(TypeId, TypeId)>;
 
-    fn structure_of_literal(&mut self, ty: TypeId) -> Option<Vec<(Atom, u8, TypeId)>>;
+    fn literal_structure(&mut self, ty: TypeId) -> Option<Vec<(Atom, u8, TypeId)>>;
 }
 
 /// What a walk has at hand besides the records.
@@ -98,7 +98,7 @@ struct Known<'a> {
     state: &'a mut State,
     checker: &'a mut dyn Normalizer,
     shared: &'a Shared,
-    times_checker_was_asked: u32,
+    checker_query_count: u32,
 }
 
 /// Which kind of record is hashed: no two kinds share an identity.
@@ -189,13 +189,13 @@ impl Walker for Identify<'_, '_, '_, '_> {
     }
 
     fn intersected(&mut self, members: &[TypeId]) {
-        self.known.times_checker_was_asked += 1;
-        let members = self.known.checker.members_of_intersection(members);
+        self.known.checker_query_count += 1;
+        let members = self.known.checker.intersection_members(members);
         self.distinct(&members);
     }
 
     fn applied(&mut self, mapper: MapperId, file: FileId, node: TypeNodeId) {
-        let pairs = self.known.checker.pairs_that_matter(mapper, file, node);
+        let pairs = self.known.checker.relevant_mapper_pairs(mapper, file, node);
         self.unordered(&pairs);
     }
 }
@@ -210,17 +210,17 @@ impl Visitor for Identify<'_, '_, '_, '_> {
     }
 
     fn components(&mut self, id: ComponentsId) {
-        let identity = self.records.of_components(self.known, id);
+        let identity = self.records.components_identity(self.known, id);
         self.add(identity);
     }
 
     fn mapper(&mut self, id: MapperId) {
-        let identity = self.records.of_mapper(self.known, id);
+        let identity = self.records.mapper_identity(self.known, id);
         self.add(identity);
     }
 
     fn sig(&mut self, id: SigId) {
-        let identity = self.records.of_sig(self.known, id);
+        let identity = self.records.sig_identity(self.known, id);
         self.add(identity);
     }
 
@@ -230,7 +230,7 @@ impl Visitor for Identify<'_, '_, '_, '_> {
     }
 
     fn file(&mut self, file: FileId) {
-        let name = self.known.shared.name_of_file(file);
+        let name = self.known.shared.file_identity(file);
         self.add(name);
     }
 
@@ -247,10 +247,10 @@ impl Records<'_, '_> {
     /// The checker leaves out a member of a union or an intersection that is there already, which it tells by the id. Two types of a task that
     /// become one when they are published have two ids until then. So the task has `A & A & B` where a later task makes `A & B` of the
     /// published parts. A member counts once here. And it leaves `{}` out of an intersection, which it does not always know for what it is:
-    /// see `Checker::members_of_intersection_once_resolved`.
+    /// see `Checker::resolved_intersection_members`.
     ///
     /// The mapper of an instantiation has pairs for type parameters that what is instantiated does not depend on: see
-    /// `Checker::pairs_of_named_type_parameters`.
+    /// `Checker::referenced_type_parameter_pairs`.
     fn walk_type<W: Walker>(self, ty: TypeId, it: &mut W) {
         match self.types.get(ty) {
             data @ TypeData::Union(members) => {
@@ -383,27 +383,27 @@ impl Records<'_, '_> {
             return identity;
         }
         if let Some(&identity) = known.state.types.get(&ty) {
-            known.times_checker_was_asked += 1;
+            known.checker_query_count += 1;
             return identity;
         }
-        let asked_before = known.times_checker_was_asked;
-        known.times_checker_was_asked += u32::from(matches!(self.types.get(ty), TypeData::Intersection(_) | TypeData::Anon { origin: Origin::ObjectLiteral(..), .. }));
+        let asked_before = known.checker_query_count;
+        known.checker_query_count += u32::from(matches!(self.types.get(ty), TypeData::Intersection(_) | TypeData::Anon { origin: Origin::ObjectLiteral(..), .. }));
         // `A & A` is `A` to whoever sees that they are one.
         let members = match self.types.get(ty) {
             TypeData::Union(members) => members.to_vec(),
-            TypeData::Intersection(members) => known.checker.members_of_intersection(members),
+            TypeData::Intersection(members) => known.checker.intersection_members(members),
             _ => Vec::new(),
         };
         if let Some((&first, rest)) = members.split_first() {
             let only = self.of_type(known, first);
             if rest.iter().all(|&member| self.of_type(known, member) == only) {
-                if ty.is_local() || known.times_checker_was_asked != asked_before || !known.shared.types.put(ty.0, only) {
+                if ty.is_local() || known.checker_query_count != asked_before || !known.shared.types.put(ty.0, only) {
                     known.state.types.insert(ty, only);
                 }
                 return only;
             }
         }
-        let structure = known.checker.structure_of_literal(ty);
+        let structure = known.checker.literal_structure(ty);
         let mut it = Identify::new(self, known, Of::Type);
         match structure {
             Some(fields) => {
@@ -418,34 +418,34 @@ impl Records<'_, '_> {
             None => self.walk_type(ty, &mut it),
         }
         let identity = it.lanes.0;
-        if ty.is_local() || known.times_checker_was_asked != asked_before || !known.shared.types.put(ty.0, identity) {
+        if ty.is_local() || known.checker_query_count != asked_before || !known.shared.types.put(ty.0, identity) {
             known.state.types.insert(ty, identity);
         }
         identity
     }
 
-    fn of_sig(self, known: &mut Known<'_>, sig: SigId) -> Identity {
+    fn sig_identity(self, known: &mut Known<'_>, sig: SigId) -> Identity {
         if !sig.is_local()
             && let Some(identity) = known.shared.sigs.get(sig.0)
         {
             return identity;
         }
         if let Some(&identity) = known.state.sigs.get(&sig) {
-            known.times_checker_was_asked += 1;
+            known.checker_query_count += 1;
             return identity;
         }
-        let asked_before = known.times_checker_was_asked;
+        let asked_before = known.checker_query_count;
         let mut it = Identify::new(self, known, Of::Sig);
         self.types.sig(sig).visit(&mut it);
         let identity = it.lanes.0;
-        if sig.is_local() || known.times_checker_was_asked != asked_before || !known.shared.sigs.put(sig.0, identity) {
+        if sig.is_local() || known.checker_query_count != asked_before || !known.shared.sigs.put(sig.0, identity) {
             known.state.sigs.insert(sig, identity);
         }
         identity
     }
 
     /// The pairs are in the order of the ids of the type parameters.
-    fn of_mapper(self, known: &mut Known<'_>, mapper: MapperId) -> Identity {
+    fn mapper_identity(self, known: &mut Known<'_>, mapper: MapperId) -> Identity {
         if mapper == MapperId::IDENTITY {
             return [Of::Mapper as u64, 0];
         }
@@ -455,20 +455,20 @@ impl Records<'_, '_> {
             return identity;
         }
         if let Some(&identity) = known.state.mappers.get(&mapper) {
-            known.times_checker_was_asked += 1;
+            known.checker_query_count += 1;
             return identity;
         }
-        let asked_before = known.times_checker_was_asked;
+        let asked_before = known.checker_query_count;
         let mut it = Identify::new(self, known, Of::Mapper);
         it.unordered(self.types.mapping(mapper));
         let identity = it.lanes.0;
-        if mapper.is_local() || known.times_checker_was_asked != asked_before || !known.shared.mappers.put(mapper.0, identity) {
+        if mapper.is_local() || known.checker_query_count != asked_before || !known.shared.mappers.put(mapper.0, identity) {
             known.state.mappers.insert(mapper, identity);
         }
         identity
     }
 
-    fn of_components(self, known: &mut Known<'_>, components: ComponentsId) -> Identity {
+    fn components_identity(self, known: &mut Known<'_>, components: ComponentsId) -> Identity {
         if components == ComponentsId::NONE {
             return [Of::Components as u64, 0];
         }
@@ -478,14 +478,14 @@ impl Records<'_, '_> {
             return identity;
         }
         if let Some(&identity) = known.state.components.get(&components) {
-            known.times_checker_was_asked += 1;
+            known.checker_query_count += 1;
             return identity;
         }
-        let asked_before = known.times_checker_was_asked;
+        let asked_before = known.checker_query_count;
         let mut it = Identify::new(self, known, Of::Components);
         self.types.components(components).visit(&mut it);
         let identity = it.lanes.0;
-        if components.is_local() || known.times_checker_was_asked != asked_before || !known.shared.components.put(components.0, identity) {
+        if components.is_local() || known.checker_query_count != asked_before || !known.shared.components.put(components.0, identity) {
             known.state.components.insert(components, identity);
         }
         identity
@@ -494,7 +494,7 @@ impl Records<'_, '_> {
 
 impl Checker<'_, '_> {
     /// What the type is called by what outlives the task.
-    pub fn identity_of_type(&mut self, ty: TypeId) -> Identity {
+    pub fn type_identity(&mut self, ty: TypeId) -> Identity {
         if !ty.is_local()
             && let Some(identity) = self.p.aot.identity.types.get(ty.0)
         {
@@ -510,15 +510,15 @@ impl Checker<'_, '_> {
         let records = Records { types: self.types(), atoms: self.atoms() };
         // The checker keeps what it looks up itself.
         let mut state = std::mem::take(&mut self.aot.identity);
-        self.aot.identity.named_within = std::mem::take(&mut state.named_within);
+        self.aot.identity.referenced_type_parameters = std::mem::take(&mut state.referenced_type_parameters);
         let program = self.p;
-        program.aot.identity.names_of_files.get_or_init(|| {
+        program.aot.identity.file_identities.get_or_init(|| {
             let files = &program.files;
             let directories = [&files.options.current_directory[..], &files.options.lib_dir[..]];
             (0..files.modules.len() as u32)
                 .map(|number| {
                     let name = files.module(FileId(number)).file_name();
-                    let within = (0..directories.len()).find_map(|which| Some((which, rest_within(name, directories[which], files.is_case_sensitive)?)));
+                    let within = (0..directories.len()).find_map(|which| Some((which, strip_directory_prefix(name, directories[which], files.is_case_sensitive)?)));
                     let (which, shown) = within.unwrap_or((directories.len(), name));
                     let mut lanes = Lanes::START;
                     lanes.add(which as u64);
@@ -527,8 +527,8 @@ impl Checker<'_, '_> {
                 })
                 .collect()
         });
-        let result = walk(records, &mut Known { state: &mut state, checker: self, shared: &program.aot.identity, times_checker_was_asked: 0 });
-        state.named_within = std::mem::take(&mut self.aot.identity.named_within);
+        let result = walk(records, &mut Known { state: &mut state, checker: self, shared: &program.aot.identity, checker_query_count: 0 });
+        state.referenced_type_parameters = std::mem::take(&mut self.aot.identity.referenced_type_parameters);
         self.aot.identity = state;
         result
     }
@@ -539,8 +539,8 @@ impl Checker<'_, '_> {
     /// created without its members counts as `{}` only once something has resolved them: `is_empty_anonymous_object_type`, which does as
     /// `tsgo` does. The task of a file finds that done or not, depending on what the files before it have looked at. So one task has
     /// `A & B & E` where a later one has `A & B`.
-    fn members_of_intersection_once_resolved(&mut self, members: &[TypeId]) -> Vec<TypeId> {
-        let is_empty: Vec<bool> = members.iter().map(|&member| self.is_empty_anonymous_object_type_once_resolved(member)).collect();
+    fn resolved_intersection_members(&mut self, members: &[TypeId]) -> Vec<TypeId> {
+        let is_empty: Vec<bool> = members.iter().map(|&member| self.is_resolved_empty_object_type(member)).collect();
         let Some(first) = is_empty.iter().position(|&is_empty| is_empty) else { return members.to_vec() };
         let is_non_nullable = (0..members.len()).any(|at| !is_empty[at] && self.flags(members[at]) & tf::DEFINITELY_NON_NULLABLE != 0);
         (0..members.len()).filter(|&at| !is_empty[at] || at == first && !is_non_nullable).map(|at| members[at]).collect()
@@ -553,12 +553,12 @@ impl Checker<'_, '_> {
     /// declared beyond a block, and those that a function around it has adopted from its contextual signature
     /// (`identity_mapper_of_mentioned_in_scope`, `adopted_type_params_in_scope`). What the others are mapped to depends on who has
     /// instantiated the type first, which differs from task to task, and makes no difference to the type.
-    fn pairs_of_named_type_parameters(&mut self, mapper: MapperId, file: FileId, node: TypeNodeId) -> Vec<(TypeId, TypeId)> {
+    fn referenced_type_parameter_pairs(&mut self, mapper: MapperId, file: FileId, node: TypeNodeId) -> Vec<(TypeId, TypeId)> {
         let pairs = self.types().mapping(mapper);
         if pairs.is_empty() {
             return Vec::new();
         }
-        let Some(named) = self.type_parameters_named_within(file, node) else { return pairs.to_vec() };
+        let Some(named) = self.type_parameters_referenced_in(file, node) else { return pairs.to_vec() };
         let matters = |source: TypeId| match *self.data(source) {
             TypeData::TypeParam(of, param, _) => named.contains(&self.files().sym(of, self.bound(of).type_param_symbol[param.idx()])),
             _ => true,
@@ -569,8 +569,8 @@ impl Checker<'_, '_> {
     /// The type parameters that the type node names, if the type it declares depends on no other. `None`: it may. It queries a value or `this`, or
     /// refers to a type that is declared within a function, a class or another type, which may depend on what is in scope there
     /// without the node saying so.
-    fn type_parameters_named_within(&mut self, file: FileId, node: TypeNodeId) -> Option<Vec<Sym>> {
-        if let Some(known) = self.aot.identity.named_within.get(&(file, node)) {
+    fn type_parameters_referenced_in(&mut self, file: FileId, node: TypeNodeId) -> Option<Vec<Sym>> {
+        if let Some(known) = self.aot.identity.referenced_type_parameters.get(&(file, node)) {
             return known.clone();
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -606,11 +606,11 @@ impl Checker<'_, '_> {
                 _ => {}
             }
         }
-        self.aot.identity.named_within.insert((file, node), named.clone());
+        self.aot.identity.referenced_type_parameters.insert((file, node), named.clone());
         named
     }
 
-    fn is_empty_anonymous_object_type_once_resolved(&mut self, ty: TypeId) -> bool {
+    fn is_resolved_empty_object_type(&mut self, ty: TypeId) -> bool {
         if matches!(ty, TypeId::EMPTY_OBJECT | TypeId::EMPTY_TYPE_LITERAL) {
             return true;
         }
@@ -638,22 +638,34 @@ impl Checker<'_, '_> {
     /// The published types that tasks have kept, in the order of their ids, which is a function of the program. A type can be kept
     /// long after it was published.
     pub fn kept_types(&self) -> Vec<TypeId> {
-        let published = (0..self.p.types.number_of_types()).map(TypeId);
+        let published = (0..self.p.types.type_count()).map(TypeId);
         published.filter(|ty| self.p.kept_types.get(&self.task, ty).is_some()).collect()
+    }
+
+    pub fn kept_types_on_pool(&self, in_parallel: InParallel<'_>) -> Vec<TypeId> {
+        const TYPES_PER_CHUNK: u32 = 1 << 16;
+        let count = self.p.types.type_count();
+        let mut chunks: Vec<(u32, Vec<TypeId>)> = (0..count).step_by(TYPES_PER_CHUNK as usize).map(|first| (first, Vec::new())).collect();
+        let program = self.p;
+        for_each_mut(&mut chunks, in_parallel, &|(first, kept)| {
+            let c = program.checker();
+            kept.extend((*first..count.min(*first + TYPES_PER_CHUNK)).map(TypeId).filter(|ty| program.kept_types.get(&c.task, ty).is_some()));
+        });
+        chunks.into_iter().flat_map(|chunk| chunk.1).collect()
     }
 }
 
 impl Normalizer for Checker<'_, '_> {
-    fn members_of_intersection(&mut self, members: &[TypeId]) -> Vec<TypeId> {
-        self.members_of_intersection_once_resolved(members)
+    fn intersection_members(&mut self, members: &[TypeId]) -> Vec<TypeId> {
+        self.resolved_intersection_members(members)
     }
 
-    fn pairs_that_matter(&mut self, mapper: MapperId, file: FileId, node: TypeNodeId) -> Vec<(TypeId, TypeId)> {
-        self.pairs_of_named_type_parameters(mapper, file, node)
+    fn relevant_mapper_pairs(&mut self, mapper: MapperId, file: FileId, node: TypeNodeId) -> Vec<(TypeId, TypeId)> {
+        self.referenced_type_parameter_pairs(mapper, file, node)
     }
 
-    fn structure_of_literal(&mut self, ty: TypeId) -> Option<Vec<(Atom, u8, TypeId)>> {
-        self.structure_of_plain_literal(ty)
+    fn literal_structure(&mut self, ty: TypeId) -> Option<Vec<(Atom, u8, TypeId)>> {
+        self.plain_literal_structure(ty)
     }
 }
 
@@ -669,24 +681,24 @@ mod tests {
     const FILE: FileId = FileId(3);
 
     /// Takes every record as it is.
-    struct AsItIs<'p, 's>(Types<'p, 's>);
+    struct Verbatim<'p, 's>(Types<'p, 's>);
 
-    impl Normalizer for AsItIs<'_, '_> {
-        fn members_of_intersection(&mut self, members: &[TypeId]) -> Vec<TypeId> {
+    impl Normalizer for Verbatim<'_, '_> {
+        fn intersection_members(&mut self, members: &[TypeId]) -> Vec<TypeId> {
             members.to_vec()
         }
 
-        fn pairs_that_matter(&mut self, mapper: MapperId, _: FileId, _: TypeNodeId) -> Vec<(TypeId, TypeId)> {
+        fn relevant_mapper_pairs(&mut self, mapper: MapperId, _: FileId, _: TypeNodeId) -> Vec<(TypeId, TypeId)> {
             self.0.mapping(mapper).to_vec()
         }
 
-        fn structure_of_literal(&mut self, _: TypeId) -> Option<Vec<(Atom, u8, TypeId)>> {
+        fn literal_structure(&mut self, _: TypeId) -> Option<Vec<(Atom, u8, TypeId)>> {
             None
         }
     }
 
     fn with<T>(records: Records<'_, '_>, state: &mut State, walk: impl FnOnce(&mut Known<'_>) -> T) -> T {
-        walk(&mut Known { state, checker: &mut AsItIs(records.types), shared: &super::Shared::default(), times_checker_was_asked: 0 })
+        walk(&mut Known { state, checker: &mut Verbatim(records.types), shared: &super::Shared::default(), checker_query_count: 0 })
     }
 
     fn forwards(count: usize, work: &(dyn Fn(usize) + Sync)) {
@@ -756,7 +768,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn number_of_a_file_does_not_matter() {
+    fn file_number_is_irrelevant() {
         let session = Session::new();
         let shared = Shared { atoms: Interner::new_in(&session), types: TypeStore::new_in(&session) };
         let own = OwnStore::new_in(session.arena());
@@ -764,8 +776,8 @@ mod tests {
         let literal_in = |file: u32| records.types.intern(TypeData::Anon { origin: Origin::TypeLiteral(FileId(file), TypeNodeId(5)), mapper: MapperId::IDENTITY });
         let of = |names: Vec<Identity>, ty: TypeId| {
             let named = super::Shared::default();
-            named.names_of_files.set(names).unwrap();
-            records.of_type(&mut Known { state: &mut State::default(), checker: &mut AsItIs(records.types), shared: &named, times_checker_was_asked: 0 }, ty)
+            named.file_identities.set(names).unwrap();
+            records.of_type(&mut Known { state: &mut State::default(), checker: &mut Verbatim(records.types), shared: &named, checker_query_count: 0 }, ty)
         };
         let (name, other) = ([7, 8], [9, 10]);
         assert_eq!(of(vec![name, other], literal_in(0)), of(vec![other, name], literal_in(1)));
@@ -774,7 +786,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn a_member_counts_once() {
+    fn duplicate_members_count_once() {
         let session = Session::new();
         let shared = Shared { atoms: Interner::new_in(&session), types: TypeStore::new_in(&session) };
         let own = OwnStore::new_in(session.arena());

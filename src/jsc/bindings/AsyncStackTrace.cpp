@@ -121,7 +121,7 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         gen = JSC::Interpreter::appendDirectAsyncCallers(vm, owner, results, gen, maxStackSize);
         if (!gen)
             break;
-        JSC::JSPromise* returnPromise = JSC::Interpreter::promiseOfAsyncFunction(gen);
+        JSC::JSPromise* returnPromise = JSC::Interpreter::asyncFunctionPromise(gen);
         if (!returnPromise)
             break;
 #else

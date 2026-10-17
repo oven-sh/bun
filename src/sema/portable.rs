@@ -63,7 +63,7 @@ macro_rules! bound_fields {
         $with! {
             plain: [
                 ran_out_of_stack file_symbol commonjs_indicator
-                module_exports_property flow_places one_name_is_one_binding is_non_utf8 class_options
+                module_exports_property flow_places uses_ecmascript_bindings is_non_utf8 class_options
             ]
             lists: [
                 scopes tables entries ids specifiers expr_symbol expr_parent

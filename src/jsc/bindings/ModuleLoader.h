@@ -102,13 +102,13 @@ JSValue fetchESMSourceCodeAsync(
 
 bool hasFilesOfCompiledProgram(JSC::JSGlobalObject*);
 JSC::JSObject* compiledRuntimeHelpers(JSC::JSGlobalObject*, const String& key);
-JSC::JSPromise* importFileOfCompiledProgram(Zig::GlobalObject*, JSC::JSModuleLoader*, const String& name, const String& referrer);
-JSC::JSSourceCode* sourceOfFileOfCompiledProgram(Zig::GlobalObject*, const String& key);
-JSC::JSPromise* sourceOfFileOfCompiledProgramThatAwaits(Zig::GlobalObject*, const String& key);
-JSC_DECLARE_HOST_FUNCTION(jsFunctionSourceOfCompiledNamespace);
+JSC::JSPromise* importCompiledProgramFile(Zig::GlobalObject*, JSC::JSModuleLoader*, const String& name, const String& referrer);
+JSC::JSSourceCode* compiledProgramFileSource(Zig::GlobalObject*, const String& key);
+JSC::JSPromise* asyncCompiledProgramFileSource(Zig::GlobalObject*, const String& key);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionCompiledNamespaceSource);
 void noteThatRequireCacheIsRead(Zig::GlobalObject*);
 void evictCompiledModule(Zig::GlobalObject*, const String& path);
-JSC::JSObject* namespaceOfEvaluatedCompiledModule(Zig::GlobalObject*, const String& path);
+JSC::JSObject* evaluatedCompiledModuleNamespace(Zig::GlobalObject*, const String& path);
 void appendEvaluatedCompiledModules(Zig::GlobalObject*, JSC::MarkedArgumentBuffer& keys, const WTF::Function<bool(const JSC::Identifier&)>& isAlreadyListed);
 bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject*, JSCommonJSModule* target, const String& path, bool isTypeScriptLoader);
 

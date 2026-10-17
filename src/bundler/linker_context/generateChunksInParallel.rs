@@ -1053,7 +1053,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         .expect("Failed to allocate memory for external source map");
                     let tokens = c.facts.as_ref().and_then(|facts| facts.tokens.as_deref());
                     let output_source_map = match tokens.filter(|_| chunk.entry_point.is_entry_point()) {
-                        Some(tokens) => with_tokens_of_aot(&output_source_map, tokens),
+                        Some(tokens) => with_aot_tokens(&output_source_map, tokens),
                         None => output_source_map,
                     };
                     let mut source_map_final_rel_path: Vec<u8> =
@@ -1805,7 +1805,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     Ok(result)
 }
 
-fn with_tokens_of_aot(source_map: &[u8], tokens: &[u8]) -> Box<[u8]> {
+fn with_aot_tokens(source_map: &[u8], tokens: &[u8]) -> Box<[u8]> {
     let end = strings::last_index_of_char(source_map, b'}').unwrap_or(source_map.len());
     let body = source_map[..end].trim_ascii_end();
     [body, b",\n  \"x_bun_aot\": ", tokens, b"\n", &source_map[end..]].concat().into_boxed_slice()

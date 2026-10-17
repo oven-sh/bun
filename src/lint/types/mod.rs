@@ -270,8 +270,8 @@ queries! {
     /// `checker.getAccessedPropertyName(node)`: the name of a property access as it is written, and of an
     /// element access what `tryGetElementAccessExpressionName` finds for its key.
     fn accessed_property_name(node: NodeRef) -> Option<&'a [u8]>;
-    /// [`Expr::is_kept_only_where_undefined_has_an_answer`](crate::ast::Expr::is_kept_only_where_undefined_has_an_answer)
-    fn is_kept_only_where_undefined_has_an_answer(node: NodeRef) -> bool;
+    /// [`Expr::is_used_only_undefined_safely`](crate::ast::Expr::is_used_only_undefined_safely)
+    fn is_used_only_undefined_safely(node: NodeRef) -> bool;
     fn type_from_type_node(node: NodeRef) -> TypeId;
     fn contextual_type(node: NodeRef) -> Option<TypeId>;
     fn apparent_type_of_contextual_type(node: NodeRef) -> Option<TypeId>;
@@ -329,9 +329,9 @@ queries! {
     fn signature_to_string(signature: SigId) -> Vec<u8>;
 
     // ── what `--aot` checks when the program runs ──
-    fn aot_check_where_any_enters(node: NodeRef) -> Option<bun_sema::check::AotCheck>;
-    fn aot_check_where_outside_data_enters(node: NodeRef) -> Option<bun_sema::check::AotCheck>;
-    fn aot_where_an_any_comes_from(node: NodeRef) -> Vec<u8>;
+    fn aot_check_any_inflow(node: NodeRef) -> Option<bun_sema::check::AotCheck>;
+    fn aot_check_external_data_inflow(node: NodeRef) -> Option<bun_sema::check::AotCheck>;
+    fn aot_describe_any_origin(node: NodeRef) -> Vec<u8>;
 }
 
 /// The answers for a file that is not part of a checked program.

@@ -1762,15 +1762,15 @@ Process::~Process()
 extern "C" bool Bun__NODE_NO_WARNINGS();
 
 #if !OS(WINDOWS)
-static bool takesBytesWithoutWaiting(int descriptor)
+static bool acceptsBytesWithoutBlocking(int descriptor)
 {
     struct pollfd polled = { descriptor, POLLOUT, 0 };
     int ready;
     do {
         ready = ::poll(&polled, 1, 0);
     } while (ready < 0 && errno == EINTR);
-    bool mayBeDeviceThatPollDoesNotSupport = ready == 1 && polled.revents == POLLNVAL;
-    if (!mayBeDeviceThatPollDoesNotSupport)
+    bool mayBeUnpollableDevice = ready == 1 && polled.revents == POLLNVAL;
+    if (!mayBeUnpollableDevice)
         return ready == 1 && polled.revents == POLLOUT;
     do {
         fd_set writable;
@@ -1830,10 +1830,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteToUntouchedStderr, (JSC::JSGlobalO
     struct stat status;
     bool isRegularFile = !::fstat(STDERR_FILENO, &status) && S_ISREG(status.st_mode);
 #if OS(DARWIN)
-    bool raisedNoSIGPIPEBefore = ::fcntl(STDERR_FILENO, F_GETNOSIGPIPE) > 0;
+    bool hadNoSIGPIPE = ::fcntl(STDERR_FILENO, F_GETNOSIGPIPE) > 0;
     ::fcntl(STDERR_FILENO, F_SETNOSIGPIPE, 1);
 #endif
-    while (remaining && takesBytesWithoutWaiting(STDERR_FILENO)) {
+    while (remaining && acceptsBytesWithoutBlocking(STDERR_FILENO)) {
         ssize_t written = ::write(STDERR_FILENO, next, isRegularFile ? remaining : std::min<size_t>(remaining, PIPE_BUF));
         if (written < 0 && errno == EINTR)
             continue;
@@ -1843,7 +1843,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteToUntouchedStderr, (JSC::JSGlobalO
         remaining -= static_cast<size_t>(written);
     }
 #if OS(DARWIN)
-    ::fcntl(STDERR_FILENO, F_SETNOSIGPIPE, raisedNoSIGPIPEBefore ? 1 : 0);
+    ::fcntl(STDERR_FILENO, F_SETNOSIGPIPE, hadNoSIGPIPE ? 1 : 0);
 #endif
     if (!remaining)
         return JSValue::encode(jsUndefined());

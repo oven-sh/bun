@@ -1267,7 +1267,7 @@ pub(crate) mod command {
         // Scripts have no entry point to start from: the project is checked, as by `bun check`.
         let runs_several =
             ctx.parallel || ctx.sequential || !ctx.filters.is_empty() || ctx.workspaces;
-        if runs_several && (ctx.runtime_options.aot || super::aot_audit::acts()) {
+        if runs_several && (ctx.runtime_options.aot || super::aot_audit::is_enforcing()) {
             pretty_errorln!(
                 "<r><red>error<r>: <b>--aot<r> does not apply to the processes that <b>--filter<r>, <b>--workspaces<r>, <b>--parallel<r> and <b>--sequential<r> start: each one is a separate process. Add <b>--aot<r> to the command inside the script."
             );

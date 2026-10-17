@@ -11,7 +11,7 @@ async function later(a: number) { return a + 1 }
 function* gen(a: number) { yield a; yield a + 1 }
 const bound = plain.bind(null, "B")
 const table: any[] = [plain, rest, args, usesThis, withProps, arrow, bound, K.s, new K().m, Math.max, String, (x: any) => x, parseInt]
-// Without an argument these get `undefined` for a `number`: type-rules/typed-functions-called-through-any-with-missing-arguments.
+// Without an argument these get `undefined` for a `number`: type-rules/typed-functions-via-any-missing-arguments.
 const needAnArgument = new Set<unknown>([usesThis, withProps, K.s])
 function callAll(fs: any[]) {
   const out: string[] = []

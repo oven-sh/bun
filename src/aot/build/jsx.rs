@@ -22,8 +22,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let key_name = self.c.atoms().lookup(b"key");
         let is_key = |p: hir::PropId| hir[p].kind != PropKind::Spread && matches!(hir[p].key, PropKey::Name(name) if Some(name) == key_name);
         let first_spread = element.attrs.iter().position(|p| hir[p].kind == PropKind::Spread);
-        let has_key_behind_spread = first_spread.is_some_and(|first| element.attrs.iter().skip(first).any(is_key));
-        let is_automatic = self.jsx_runtime(fx.file).is_some() && !has_key_behind_spread;
+        let has_key_after_spread = first_spread.is_some_and(|first| element.attrs.iter().skip(first).any(is_key));
+        let is_automatic = self.jsx_runtime(fx.file).is_some() && !has_key_after_spread;
         let (mut filled, mut key) = (V::NONE, ExprId::NONE);
         for p in element.attrs.iter() {
             let value = hir[p].value;
@@ -57,8 +57,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let has_value = |p: hir::PropId| hir[p].value.is_some() && !matches!(hir[hir[p].value].kind, ExprKind::Missing);
         let is_key = |p: hir::PropId| is_named_key(p) && has_value(p);
         let first_spread = element.attrs.iter().position(|p| hir[p].kind == PropKind::Spread);
-        let has_key_behind_spread = first_spread.is_some_and(|first| element.attrs.iter().skip(first).any(is_key));
-        let automatic = runtime.filter(|_| !has_key_behind_spread);
+        let has_key_after_spread = first_spread.is_some_and(|first| element.attrs.iter().skip(first).any(is_key));
+        let automatic = runtime.filter(|_| !has_key_after_spread);
 
         let mut is_component = false;
         let tag = if element.tag.is_none() {
@@ -85,7 +85,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
         // With a spread the object is filled as it goes. Else it is made once the values of its properties are there.
         let has_spread = element.attrs.iter().any(|p| hir[p].kind == PropKind::Spread);
-        let cloned_as = if has_spread && is_component && automatic.is_some() { self.layout_of_cloned_jsx_props(fx, e, jsx) } else { None };
+        let cloned_as = if has_spread && is_component && automatic.is_some() { self.cloned_jsx_props_layout(fx, e, jsx) } else { None };
         let is_cloned = cloned_as.is_some();
         let mut filled = if has_spread && !is_cloned { self.emit(fx, Op::NewObject) } else { V::NONE };
         let mut copied = TypeId::UNRESOLVED;
@@ -120,7 +120,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                             let name = self.out.strs.intern(b"children");
                             operands.push(self.emit(fx, Op::Str(name)));
                         }
-                        self.note_allocation(layout);
+                        self.record_allocation(layout);
                         filled = self.operation(fx, Operation::CloneObjectWith, &operands);
                     }
                     fx.checked.insert(filled, copied);
@@ -177,7 +177,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             };
             let args = [tag, props].into_iter().chain(children).collect();
             let value = self.emit_throwing(fx, Op::Call { callee, this, args });
-            return self.fit_to_expression(fx, value, e);
+            return self.coerce_to_expr_type(fx, value, e);
         };
         let is_static = children.len() > 1;
         if !children.is_empty() {
@@ -194,11 +194,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
         }
         let props = if is_cloned {
-            self.fit_fresh(fx, filled, copied)
+            self.coerce_fresh(fx, filled, copied)
         } else if has_spread {
             filled
         } else {
-            let layout = if is_component { self.layout_of_jsx_props(fx, e) } else { None };
+            let layout = if is_component { self.jsx_props_layout(fx, e) } else { None };
             self.emit_jsx_props(fx, layout, &names, &values)
         };
 
@@ -217,7 +217,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             args.push(self.emit(fx, Op::Bool(is_static)));
         }
         let value = self.emit_throwing(fx, Op::Call { callee, this, args: args.into_iter().collect() });
-        self.fit_to_expression(fx, value, e)
+        self.coerce_to_expr_type(fx, value, e)
     }
 
     /// `<a b />` is `<a b={true} />`.
@@ -239,37 +239,37 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     /// The layout of the type a component declares its properties with: of the first parameter of what the checker has the element
     /// call. What is in between, which hands the object to the component, has no types for it: only an object that is made with that
     /// very layout is found to be of it there.
-    fn layout_of_jsx_props(&mut self, fx: &Fx, e: ExprId) -> Option<LayoutId> {
+    fn jsx_props_layout(&mut self, fx: &Fx, e: ExprId) -> Option<LayoutId> {
         if !fx.is_typed || self.is_untyped_file(fx.file) {
             return None;
         }
         let sig = self.c.resolved_signature(fx.file, e).sig?;
         let props = self.c.sig_params(sig).first()?.ty;
-        if !self.is_object_type_of_program(props) {
+        if !self.is_record_type(props) {
             return None;
         }
         self.record_layout(props)
     }
 
-    /// The layout of `layout_of_jsx_props`, if the attributes but a `key` ahead of them start with their only spread, of an object whose properties are all fields of it, and the others and the children
+    /// The layout of `jsx_props_layout`, if the attributes but a `key` ahead of them start with their only spread, of an object whose properties are all fields of it, and the others and the children
     /// are fields of it. The checker has held them to the types of those properties.
-    fn layout_of_cloned_jsx_props(&mut self, fx: &Fx, e: ExprId, jsx: JsxId) -> Option<LayoutId> {
+    fn cloned_jsx_props_layout(&mut self, fx: &Fx, e: ExprId, jsx: JsxId) -> Option<LayoutId> {
         let hir = self.hir(fx.file);
         let element = &hir[jsx];
-        let keys_ahead = element.attrs.iter().take_while(|&p| matches!(hir[p].key, PropKey::Name(name) if hir[p].kind != PropKind::Spread && self.c.atoms().bytes(name) == b"key")).count();
-        let mut written = element.attrs.iter().skip(keys_ahead);
+        let preceding_keys = element.attrs.iter().take_while(|&p| matches!(hir[p].key, PropKey::Name(name) if hir[p].kind != PropKind::Spread && self.c.atoms().bytes(name) == b"key")).count();
+        let mut written = element.attrs.iter().skip(preceding_keys);
         let spread = written.next().filter(|&first| hir[first].kind == PropKind::Spread)?;
         let copied = self.c.type_of_expr(fx.file, hir[spread].value);
-        if !fx.is_typed || !self.is_object_type_of_program(copied) {
+        if !fx.is_typed || !self.is_record_type(copied) {
             return None;
         }
-        let (layout, declared) = (self.record_layout(copied)?, self.layout_of_jsx_props(fx, e)?);
+        let (layout, declared) = (self.record_layout(copied)?, self.jsx_props_layout(fx, e)?);
         let base = *self.layout_types.get(&declared)?;
         let is_field = |this: &mut Self, name: Atom| {
             let field = this.str(name);
             this.out.layouts[declared.idx()].field(field).is_some() && !this.c.is_immutable_discriminant(base, name)
         };
-        let is_filled = (layout == declared || (self.ty_of(copied) != self.out.tys.anything && self.is_spread_held_by_but(declared, base, copied, &[])))
+        let is_filled = (layout == declared || (self.ty_of(copied) != self.out.tys.anything && self.does_spread_fit_layout_except(declared, base, copied, &[])))
             && written.all(|p| match hir[p].key {
                 PropKey::Name(name) if hir[p].kind != PropKind::Spread => is_field(self, name),
                 _ => false,
@@ -290,7 +290,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     /// The object with the properties of an element: of the layout if it fits, else an ordinary one.
     fn emit_jsx_props(&mut self, fx: &mut Fx, layout: Option<LayoutId>, names: &[StrId], values: &[V]) -> V {
         if let Some(layout) = layout.filter(|&layout| self.fits(layout, names)) {
-            return self.emit_object_of_layout(fx, layout, names, values, None);
+            return self.emit_typed_object(fx, layout, names, values, None);
         }
         let props = self.emit(fx, Op::NewObject);
         for (&name, &value) in names.iter().zip(values) {
@@ -308,7 +308,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let sym = self.value_symbol(named);
             let is_at_hand = fx.locals.contains_key(&sym)
                 || match self.places.get(&sym) {
-                    Some(&super::Place::Env(layout, _)) => self.reaches_env(fx, layout),
+                    Some(&super::Place::Env(layout, _)) => self.can_reach_env(fx, layout),
                     Some(super::Place::Global(_)) => true,
                     None => false,
                 };
@@ -337,13 +337,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     /// The export `name` of the module `specifier` as the file being built resolves it.
     pub(crate) fn module_binding(&mut self, fx: &mut Fx, specifier: Atom, name: &[u8], pos: u32) -> V {
         if let Some(imported) = self.imported_file(fx.file, specifier)
-            && self.exports_an_object(imported)
+            && self.has_exports_object(imported)
         {
-            return self.member_of_exported_object(fx, fx.file, imported, name);
+            return self.exported_object_member(fx, fx.file, imported, name);
         }
         if let Some(imported) = self.imported_file(fx.file, specifier)
             && let Some(name) = self.c.atoms().lookup(name)
-            && let Some(member) = self.binding_exported_as(imported, name)
+            && let Some(member) = self.exported_binding(imported, name)
         {
             return self.read_sym(fx, member, pos);
         }

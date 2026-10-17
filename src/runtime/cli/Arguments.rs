@@ -1107,7 +1107,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             | CommandTag::BuildCommand
             | CommandTag::TestCommand
     ) {
-        crate::cli::aot::refuse_unknown_flags(cmd == CommandTag::BuildCommand, ctx.passthrough.len());
+        crate::cli::aot::reject_unknown_flags(cmd == CommandTag::BuildCommand, ctx.passthrough.len());
         if !args.options(b"--conditions").is_empty() {
             opts.conditions = slice_to_owned(args.options(b"--conditions"));
         }
@@ -1329,9 +1329,9 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         ctx.runtime_options.if_present = args.flag(b"--if-present");
         ctx.runtime_options.smol = args.flag(b"--smol");
         ctx.runtime_options.aot = args.flag(b"--debug-aot");
-        let follows_rules_of_aot = args.flag(b"--aot") && !ctx.runtime_options.aot;
-        ctx.runtime_options.aot_crash_if_interpreter_is_used = args.flag(b"--aot-crash-if-interpreter-is-used") && !follows_rules_of_aot;
-        ctx.runtime_options.aot_huge_heap = args.flag(b"--aot-huge-heap") && !follows_rules_of_aot;
+        let enforces_aot_rules = args.flag(b"--aot") && !ctx.runtime_options.aot;
+        ctx.runtime_options.aot_crash_if_interpreter_is_used = args.flag(b"--aot-crash-if-interpreter-is-used") && !enforces_aot_rules;
+        ctx.runtime_options.aot_huge_heap = args.flag(b"--aot-huge-heap") && !enforces_aot_rules;
         if ctx.runtime_options.aot_huge_heap && !ctx.runtime_options.aot && args.option(b"--aot-graph-fd").is_none() {
             Output::err_generic("--aot-huge-heap requires --aot", ());
             Global::crash();
@@ -1347,11 +1347,11 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 Global::exit(1);
             }
         };
-        ctx.runtime_options.aot_audit = args.flag(b"--aot-audit") || follows_rules_of_aot;
+        ctx.runtime_options.aot_audit = args.flag(b"--aot-audit") || enforces_aot_rules;
         if ctx.runtime_options.aot_audit {
-            crate::cli::aot_audit::want();
-            if follows_rules_of_aot && !ctx.runtime_options.aot_logs_type_errors {
-                crate::cli::aot_audit::act();
+            crate::cli::aot_audit::enable();
+            if enforces_aot_rules && !ctx.runtime_options.aot_logs_type_errors {
+                crate::cli::aot_audit::enforce();
             }
         }
         ctx.runtime_options.aot_graph_fd = args
@@ -2639,22 +2639,22 @@ fn parse_build_command_options(
         };
     }
     if ctx.bundler_options.aot {
-        if let Some(why) = crate::cli::aot::why_unsupported(&ctx.bundler_options.compile_target) {
+        if let Some(why) = crate::cli::aot::unsupported_reason(&ctx.bundler_options.compile_target) {
             Output::err_generic("--aot: {}", format_args!("{}", why));
             Global::crash();
         }
-        let not_honoured = [
+        let ignored_flags = [
             ("--banner with code", args.option(b"--banner").is_some_and(|text| !crate::cli::aot::is_only_comments(text))),
             ("--footer with code", args.option(b"--footer").is_some_and(|text| !crate::cli::aot::is_only_comments(text))),
             ("--bytecode-depth", args.option(b"--bytecode-depth").is_some()),
             ("--bytecode-order", !args.options(b"--bytecode-order").is_empty()),
         ];
-        if let Some((option, _)) = not_honoured.iter().find(|option| option.1) {
+        if let Some((option, _)) = ignored_flags.iter().find(|option| option.1) {
             Output::err_generic("--aot does not support {}", format_args!("{}", option));
             Global::crash();
         }
-        let shortens_names = ctx.bundler_options.minify_identifiers && !ctx.bundler_options.keep_names;
-        if args.option(b"--sourcemap").is_some_and(|setting| setting != b"none") && !args.flag(b"--compile-run") && !shortens_names {
+        let minifies_identifiers = ctx.bundler_options.minify_identifiers && !ctx.bundler_options.keep_names;
+        if args.option(b"--sourcemap").is_some_and(|setting| setting != b"none") && !args.flag(b"--compile-run") && !minifies_identifiers {
             bun_core::note!("--sourcemap has no effect with --aot: stack traces from compiled code already show the original file, line and column, and any source map that is written is empty");
         }
     }

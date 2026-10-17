@@ -2361,7 +2361,7 @@ impl TestCommand {
 
         if ctx.runtime_options.aot_audit && !has_type_errors {
             use crate::cli::check_command::{EntryPoint, watching};
-            let preloads = crate::cli::aot_audit::preloads_of(vm);
+            let preloads = crate::cli::aot_audit::preload_paths(vm);
             let paths = test_files.iter().map(|path| EntryPoint::file(path)).chain(preloads.iter().map(|path| EntryPoint::file(path)));
             if !crate::cli::aot_audit::prepare(&paths.collect::<Vec<_>>(), watching(vm), true) {
                 // No test is run.
@@ -2369,7 +2369,7 @@ impl TestCommand {
                 // SAFETY: as where `--check` has found type errors, above.
                 vm.run_with_api_lock(|| Self::run_event_loop_for_watch(unsafe { &mut *vm_ptr }));
             }
-            if preloads.iter().any(|path| crate::cli::aot_audit::is_left_out_for_type_errors(path)) {
+            if preloads.iter().any(|path| crate::cli::aot_audit::is_skipped_for_type_errors(path)) {
                 Global::exit(1);
             }
         }
@@ -2994,7 +2994,7 @@ impl TestCommand {
             }
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
             vm.wakeup();
-            let promise = if crate::cli::aot_audit::is_left_out_for_type_errors(file_name) {
+            let promise = if crate::cli::aot_audit::is_skipped_for_type_errors(file_name) {
                 None
             } else {
                 Some(vm.load_entry_point_for_test_runner(

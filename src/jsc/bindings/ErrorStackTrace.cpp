@@ -168,7 +168,7 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
             break;
         }
 #if ENABLE(AOT)
-        if (frame.isTypedAOTFrame() && JSC::AOT::isClosureOfTypedFunction(callerObject, frame.typedAOTFunction())) {
+        if (frame.isTypedAOTFrame() && JSC::AOT::isTypedFunctionClosure(callerObject, frame.typedAOTFunction())) {
             removeCount = i + 1;
             break;
         }
@@ -224,7 +224,7 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
         m_isWasmFrame = true;
 #if ENABLE(AOT)
     } else if (auto reported = frame.reportedPosition(JSC::AOT::FunctionRef::ConstructPosition::AtStart)) {
-        m_isCompiledAheadOfTime = true;
+        m_isAOTCompiled = true;
         if (frame.hasLineAndColumnInfo()) {
             m_sourcePositions = { OrdinalNumber::fromOneBasedInt(reported->lineColumn.line), OrdinalNumber::fromOneBasedInt(reported->lineColumn.column) };
             m_sourcePositionsState = SourcePositionsState::Calculated;
@@ -244,7 +244,7 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
         }
     }
 
-    if (!m_codeBlock && !m_isCompiledAheadOfTime && frame.hasLineAndColumnInfo()) {
+    if (!m_codeBlock && !m_isAOTCompiled && frame.hasLineAndColumnInfo()) {
         auto lineColumn = frame.computeLineAndColumn();
         m_sourcePositions = { OrdinalNumber::fromOneBasedInt(lineColumn.line), OrdinalNumber::fromOneBasedInt(lineColumn.column) };
         m_sourcePositionsState = SourcePositionsState::Calculated;
@@ -257,7 +257,7 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
 
 intptr_t JSCStackFrame::sourceID() const
 {
-    if (m_isCompiledAheadOfTime) {
+    if (m_isAOTCompiled) {
         auto* executable = m_stackFrame->ownerExecutable();
         return executable ? executable->sourceID() : JSC::noSourceID;
     }
@@ -299,7 +299,7 @@ ALWAYS_INLINE String JSCStackFrame::retrieveSourceURL()
         return String(sourceURLWasmString);
     }
 
-    auto url = m_isCompiledAheadOfTime && (!m_stackFrame->isBuiltinFunction() || !m_stackFrame->ownerExecutable() || !Zig::sourceURL(m_stackFrame->ownerExecutable()->source()).isEmpty()) ? Zig::sourceURL(m_vm, *m_stackFrame) : Zig::sourceURL(m_codeBlock);
+    auto url = m_isAOTCompiled && (!m_stackFrame->isBuiltinFunction() || !m_stackFrame->ownerExecutable() || !Zig::sourceURL(m_stackFrame->ownerExecutable()->source()).isEmpty()) ? Zig::sourceURL(m_vm, *m_stackFrame) : Zig::sourceURL(m_codeBlock);
     if (!url.isEmpty()) {
         return url;
     }
@@ -352,7 +352,7 @@ ALWAYS_INLINE String JSCStackFrame::retrieveFunctionName()
         }
     }
 
-    if (m_isCompiledAheadOfTime)
+    if (m_isAOTCompiled)
         return Zig::functionName(m_vm, *m_stackFrame, nullptr);
 
     return emptyString();

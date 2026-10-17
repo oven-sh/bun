@@ -1,9 +1,9 @@
 // A single character read from a string is compared with one-character literals, ASCII or not.
 // CALLS- wideCases TypedString|StringsAreEqual|StringHasAt|StringEq
 // CALLS+ wideCases equality with .*\b233\b
-// CALLS- byCharAt TypedString|StringsAreEqual|StringHasAt|StringEq|StringIsText
-// CALLS- byAt TypedString|StringsAreEqual|StringHasAt|StringEq|StringIsText
-// CALLS- byIndex TypedString|StringsAreEqual|StringHasAt|StringEq|StringIsText
+// CALLS- byCharAt TypedString|StringsAreEqual|StringHasAt|StringEq|StringEqualsLiteral
+// CALLS- byAt TypedString|StringsAreEqual|StringHasAt|StringEq|StringEqualsLiteral
+// CALLS- byIndex TypedString|StringsAreEqual|StringHasAt|StringEq|StringEqualsLiteral
 // CALLS+ twoUnits TypedString|StringsAreEqual|StringHasAt|StringEq
 // CALLS+ unknownCases : [1-6][0-9][0-9] instructions
 // JSCALLS+ unknownCases : [1-6][0-9][0-9] instructions

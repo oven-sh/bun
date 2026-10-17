@@ -3434,7 +3434,7 @@ where
     }
 
     /// False: 416 has been sent.
-    fn honor_range_of_an_embedded_file(&self) -> bool {
+    fn honor_embedded_file_range(&self) -> bool {
         let AnyBlob::Blob(blob) = self.blob.get() else { return true };
         let Some(store) = blob.store() else { return true };
         let crate::webcore::blob::store::Data::Bytes(bytes) = &store.data else { return true };
@@ -3483,7 +3483,7 @@ where
     }
 
     pub(crate) fn do_render_blob(&self) {
-        if self.range != RangeRequest::Raw::None && !self.honor_range_of_an_embedded_file() {
+        if self.range != RangeRequest::Raw::None && !self.honor_embedded_file_range() {
             return;
         }
         // We are not corked

@@ -1,7 +1,7 @@
 //! Escape analysis: what a function does with what it is handed.
 
 use super::ByFile;
-use super::callees::{Callee, Yielded};
+use super::callees::{Callee, ResultCallees};
 use super::storage::Query;
 use crate::bind::{Decl, Parent, PatParent, SymbolId};
 use crate::check::Checker;
@@ -24,25 +24,25 @@ pub(super) struct Shared {
 
 #[derive(Default)]
 pub(super) struct State {
-    of_parameters: FxHashMap<(FileId, ParamId), u8>,
+    parameter_uses: FxHashMap<(FileId, ParamId), u8>,
 }
 
 /// What one pass over the identifiers of a file finds.
 #[derive(Default)]
 struct FileUses {
     /// By parameter or variable that is a plain name with one declaration: the references to it, in the order of the source.
-    of_parameters: FxHashMap<SymbolId, Vec<ExprId>>,
+    parameter_uses: FxHashMap<SymbolId, Vec<ExprId>>,
     /// The functions that refer to their `arguments` object, also from within an arrow function.
     using_arguments: FxHashSet<FnId>,
 }
 
 impl<'p, 's> Checker<'p, 's> {
-    fn uses_in_file(&self, file: FileId) -> &'p FileUses {
+    fn file_uses(&self, file: FileId) -> &'p FileUses {
         let program = self.p;
         program.aot.escape.by_file.get_or_init(program.files.modules.len(), file, || {
             let (hir, bound) = (self.hir(file), self.bound(file));
             let mut found = FileUses::default();
-            for &e in self.exprs_by_kind_of(file).of(ExprTag::Ident) {
+            for &e in self.file_exprs_by_kind(file).of(ExprTag::Ident) {
                 if bound.expr_parent[e.idx()] == Parent::None || bound.is_in_type_query(e) {
                     continue;
                 }
@@ -59,7 +59,7 @@ impl<'p, 's> Checker<'p, 's> {
                     && let [Decl::Param(pat) | Decl::Var(pat)] = *declared.decls.as_slice()
                     && matches!(bound.pat_parent[pat.idx()], PatParent::Param(_) | PatParent::Var(_))
                 {
-                    found.of_parameters.entry(symbol).or_default().push(e);
+                    found.parameter_uses.entry(symbol).or_default().push(e);
                 }
             }
             found
@@ -69,20 +69,20 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn references_to(&self, file: FileId, symbol: SymbolId) -> Option<&'p [ExprId]> {
         let bound = self.bound(file);
         let [Decl::Param(pat) | Decl::Var(pat)] = *bound.symbols.get(symbol.idx())?.decls.as_slice() else { return None };
-        matches!(bound.pat_parent[pat.idx()], PatParent::Param(_) | PatParent::Var(_)).then(|| self.uses_in_file(file).of_parameters.get(&symbol).map_or(&[][..], Vec::as_slice))
+        matches!(bound.pat_parent[pat.idx()], PatParent::Param(_) | PatParent::Var(_)).then(|| self.file_uses(file).parameter_uses.get(&symbol).map_or(&[][..], Vec::as_slice))
     }
 
-    pub fn element_read_kept_unasserted(&mut self, file: FileId, pat: PatId) -> Option<ExprId> {
+    pub fn unasserted_element_read(&mut self, file: FileId, pat: PatId) -> Option<ExprId> {
         let PatParent::Var(d) = self.bound(file).pat_parent[pat.idx()] else { return None };
         let init = self.hir(file)[d].init;
         if init.is_none() {
             return None;
         }
-        let read = self.element_read_of_no_known_integers(file, init)?;
-        self.is_constant_used_only_where_undefined_has_an_answer(file, pat).then_some(read)
+        let read = self.element_read_without_integer_range(file, init)?;
+        self.is_const_used_only_undefined_safely(file, pat).then_some(read)
     }
 
-    pub fn is_constant_used_only_where_undefined_has_an_answer(&mut self, file: FileId, pat: PatId) -> bool {
+    pub fn is_const_used_only_undefined_safely(&mut self, file: FileId, pat: PatId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let PatParent::Var(d) = bound.pat_parent[pat.idx()] else { return false };
         let decl = &hir[d];
@@ -94,28 +94,28 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let Some(references) = self.references_to(file, bound.pat_symbol[pat.idx()]) else { return false };
         let mut known = FxHashMap::default();
-        references.iter().all(|&mention| self.is_used_where_undefined_has_an_answer(file, mention) || self.is_mentioned_where_it_is_shown_to_be_there(file, mention, &mut known))
+        references.iter().all(|&mention| self.is_undefined_safe_use(file, mention) || self.is_reference_guarded_by_defined_check(file, mention, &mut known))
     }
 
-    pub fn use_of_argument(&mut self, file: FileId, p: ParamId) -> u8 {
-        if let Some(&known) = self.aot.escape.of_parameters.get(&(file, p)) {
+    pub fn argument_use_flags(&mut self, file: FileId, p: ParamId) -> u8 {
+        if let Some(&known) = self.aot.escape.parameter_uses.get(&(file, p)) {
             return known;
         }
         // A function that hands the argument on to itself, by way of others or not, does no more with it for that.
         if let Some(assumed) = self.assumption(Query::ArgumentUse(file, p)) {
             return assumed as u8;
         }
-        let (found, is_final) = self.solve(Query::ArgumentUse(file, p), 0, u64::from(argument_use::ALL), |c| u64::from(c.find_use_of_argument(file, p)));
+        let (found, is_final) = self.solve(Query::ArgumentUse(file, p), 0, u64::from(argument_use::ALL), |c| u64::from(c.find_argument_use_flags(file, p)));
         if is_final {
-            self.aot.escape.of_parameters.insert((file, p), found as u8);
+            self.aot.escape.parameter_uses.insert((file, p), found as u8);
         }
         found as u8
     }
 
-    fn find_use_of_argument(&mut self, file: FileId, p: ParamId) -> u8 {
+    fn find_argument_use_flags(&mut self, file: FileId, p: ParamId) -> u8 {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let (func, pat) = (bound.param_fn[p.idx()], hir[p].pat);
-        let uses = self.uses_in_file(file);
+        let uses = self.file_uses(file);
         let symbol = bound.pat_symbol[pat.idx()];
         let is_plain = matches!(hir[pat].kind, PatKind::Ident(_)) && !hir[p].flags.contains(Flags::REST) && func.is_some() && symbol.is_some();
         // What is stored to the parameter is read like the argument. The `arguments` object is another way to the argument.
@@ -123,14 +123,14 @@ impl<'p, 's> Checker<'p, 's> {
             return argument_use::ALL;
         }
         let is_coroutine = hir[func].flags.contains(Flags::ASYNC) || hir[func].flags.contains(Flags::GENERATOR);
-        self.use_of_binding(file, symbol, func, 0) | if is_coroutine { argument_use::ESCAPES } else { 0 }
+        self.binding_use_flags(file, symbol, func, 0) | if is_coroutine { argument_use::ESCAPES } else { 0 }
     }
 
-    fn use_of_binding(&mut self, file: FileId, symbol: SymbolId, func: FnId, alias_depth: u32) -> u8 {
+    fn binding_use_flags(&mut self, file: FileId, symbol: SymbolId, func: FnId, alias_depth: u32) -> u8 {
         let Some(references) = self.references_to(file, symbol) else { return argument_use::ALL };
         let mut found = 0;
         for &e in references {
-            found |= self.use_of_value_at_depth(file, e, alias_depth);
+            found |= self.value_use_flags_at_depth(file, e, alias_depth);
             if self.enclosing_fn_of_expr(file, e).unwrap_or(FnId::NONE) != func {
                 found |= argument_use::ESCAPES;
             }
@@ -142,11 +142,11 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// What is done with the value of the expression where it stands.
-    pub(super) fn use_of_value(&mut self, file: FileId, e: ExprId) -> u8 {
-        self.use_of_value_at_depth(file, e, 0)
+    pub(super) fn value_use_flags(&mut self, file: FileId, e: ExprId) -> u8 {
+        self.value_use_flags_at_depth(file, e, 0)
     }
 
-    fn use_of_value_at_depth(&mut self, file: FileId, mut e: ExprId, alias_depth: u32) -> u8 {
+    fn value_use_flags_at_depth(&mut self, file: FileId, mut e: ExprId, alias_depth: u32) -> u8 {
         const MAX_ALIAS_DEPTH: u32 = 4;
         let (hir, bound) = (self.hir(file), self.bound(file));
         loop {
@@ -161,7 +161,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 Parent::VarInit(d) if hir[d].kind == VarKind::Const && matches!(hir[hir[d].pat].kind, PatKind::Ident(_)) && alias_depth < MAX_ALIAS_DEPTH && !self.has_direct_eval(file) => {
                     let func = self.enclosing_fn_of_expr(file, e).unwrap_or(FnId::NONE);
-                    return argument_use::OBSERVED | self.use_of_binding(file, bound.pat_symbol[hir[d].pat.idx()], func, alias_depth + 1);
+                    return argument_use::OBSERVED | self.binding_use_flags(file, bound.pat_symbol[hir[d].pat.idx()], func, alias_depth + 1);
                 }
                 _ => return argument_use::ALL,
             };
@@ -180,7 +180,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 ExprKind::Unary { op: UnOp::Not | UnOp::Typeof | UnOp::Void, .. } => return 0,
                 ExprKind::Call(call) if hir[call].callee == e => return 0,
-                ExprKind::Call(call) => return self.use_of_argument_at(file, call, e),
+                ExprKind::Call(call) => return self.call_argument_use_flags(file, call, e),
                 _ => return argument_use::ALL,
             }
             e = parent;
@@ -196,7 +196,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// What the call does with its argument `e`.
-    fn use_of_argument_at(&mut self, file: FileId, call: CallId, e: ExprId) -> u8 {
+    fn call_argument_use_flags(&mut self, file: FileId, call: CallId, e: ExprId) -> u8 {
         let hir = self.hir(file);
         let mut index = None;
         for (i, argument) in hir.ids(hir[call].args).enumerate() {
@@ -210,12 +210,12 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let Some(index) = index else { return argument_use::ALL };
-        if let Yielded { callee: Callee::One(of, func), is_predicted: false, .. } = self.callee_yielded_by(file, hir[call].callee, 0) {
+        if let ResultCallees { callee: Callee::One(of, func), is_predicted: false, .. } = self.result_callees_of(file, hir[call].callee, 0) {
             let params = self.hir(of)[func].params;
             return match params.iter().nth(index) {
-                Some(p) => self.use_of_argument(of, p),
+                Some(p) => self.argument_use_flags(of, p),
                 // Nothing names it.
-                None if !self.uses_in_file(of).using_arguments.contains(&func) && !params.iter().next_back().is_some_and(|last| self.hir(of)[last].flags.contains(Flags::REST)) => 0,
+                None if !self.file_uses(of).using_arguments.contains(&func) && !params.iter().next_back().is_some_and(|last| self.hir(of)[last].flags.contains(Flags::REST)) => 0,
                 None => argument_use::ALL,
             };
         }
@@ -239,7 +239,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.parts(receiver).iter().all(|&part| {
             part.is_undefined()
                 || part.is_null()
-                || if is_string_method { self.is_string_like(part) } else { self.is_array_or_tuple(part) || self.is_instance_of_global(part, &[b"Map", b"Set", b"ReadonlyMap", b"ReadonlySet"]) }
+                || if is_string_method { self.is_string_like(part) } else { self.is_array_or_tuple(part) || self.is_global_instance(part, &[b"Map", b"Set", b"ReadonlyMap", b"ReadonlySet"]) }
         })
     }
 }

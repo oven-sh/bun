@@ -1623,7 +1623,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn type_of_link(&mut self, file: FileId, e: ExprId) -> (TypeId, bool) {
         let hir = self.hir(file);
         match hir[e].kind {
-            ExprKind::Dot { name_pos, .. } if !is_written_in_brackets(hir, name_pos) => self.type_of_property_access(file, e),
+            ExprKind::Dot { name_pos, .. } if !is_bracket_access(hir, name_pos) => self.type_of_property_access(file, e),
             ExprKind::Dot { .. } | ExprKind::Index { .. } => {
                 let (ty, stops) = self.type_of_element_access_unchecked(file, e);
                 // Its source position is only computed when there is something to check.
@@ -1637,8 +1637,8 @@ impl<'p, 's> Checker<'p, 's> {
                 )
             }
             // In a builtin file `require("m")` yields the value of the builtin module `m`.
-            ExprKind::Call(_) if self.builtin_module_required_by(file, e).is_some() => {
-                let required = self.builtin_module_required_by(file, e).unwrap_or(file);
+            ExprKind::Call(_) if self.required_builtin_module(file, e).is_some() => {
+                let required = self.required_builtin_module(file, e).unwrap_or(file);
                 let module = self.files().file_symbol(required);
                 let value = self.files().module_export(module, known::default).unwrap_or_else(|| self.files().module_value(module));
                 (self.type_of_symbol(value), false)
@@ -2113,7 +2113,7 @@ impl<'p, 's> Checker<'p, 's> {
         files.resolve_name(file, scope, name, SymFlags::VALUE).filter(|&found| files.means(found, SymFlags::VALUE) && files.type_only_alias_declaration_ex(found, SymFlags::VALUE).is_none())
     }
 
-    pub fn values_named_by_decorators(&self, file: FileId) -> Vec<Sym> {
+    pub fn decorator_referenced_values(&self, file: FileId) -> Vec<Sym> {
         let files = self.files();
         if !files.lowers_decorators(file) {
             return Vec::new();
@@ -2124,7 +2124,7 @@ impl<'p, 's> Checker<'p, 's> {
             let (class, members): (crate::hir::ClassId, Vec<crate::hir::MemberId>) = match owner {
                 crate::hir::DecoratorOwner::Class(class) => (class, hir[class].members.iter().filter(|&member| hir[member].kind == crate::hir::MemberKind::Constructor).collect()),
                 _ => {
-                    let Some(member) = files.member_decorated_by(file, owner) else { continue };
+                    let Some(member) = files.decorated_member(file, owner) else { continue };
                     let crate::bind::MemberOwner::Class(class) = bound.member_owner[member.idx()] else { continue };
                     (class, vec![member])
                 }
@@ -2160,14 +2160,14 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getResolvedSymbol`: the symbol an identifier resolves to as a value. `None`: `unknownSymbol` or `argumentsSymbol`.
     pub fn symbol_of_identifier(&mut self, file: FileId, e: ExprId, name: Atom) -> Option<Sym> {
-        if let Some(known) = self.symbol_kept_for(file, e, name) {
+        if let Some(known) = self.cached_symbol_for(file, e, name) {
             return known;
         }
         let found = match self.resolve_identifier(file, e, name, false) {
             Ok(Some(found)) => self.value_symbol_of_identifier(file, e, name, found),
             _ => None,
         };
-        self.keep_symbol_for(file, e, name, found);
+        self.cache_symbol_for(file, e, name, found);
         found
     }
 
@@ -2553,7 +2553,7 @@ impl<'p, 's> Checker<'p, 's> {
             )
         };
         let is_for_direct_eval = matches!(self.bound(file).expr_parent[e.idx()], Parent::Prop(p)
-            if matches!(hir[p].key, PropKey::Name(key) if self.atoms().bytes(key) == crate::direct_eval::KEY_OF_SCOPE));
+            if matches!(hir[p].key, PropKey::Name(key) if self.atoms().bytes(key) == crate::direct_eval::SCOPE_KEY));
         let Some(t) = self.try_get_this_type_at_ex(file, this, container) else {
             if !self.p.files.options.no_implicit_this || is_for_direct_eval {
                 return TypeId::ANY;

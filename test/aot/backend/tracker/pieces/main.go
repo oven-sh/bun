@@ -3,12 +3,16 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type loaded struct {
@@ -120,7 +124,38 @@ var pieces = map[string]func(*loaded) int{
 	},
 }
 
+// rows fetches one issue's comments, one query per round.
+func rows(issueID int32, rounds int) int {
+	config, err := pgxpool.ParseConfig(os.Getenv("DATABASE_URL"))
+	if err != nil {
+		panic(err)
+	}
+	config.MaxConns = 1
+	ctx := context.Background()
+	if pool, err = pgxpool.NewWithConfig(ctx, config); err != nil {
+		panic(err)
+	}
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		panic(err)
+	}
+	var comments []comment
+	for ; rounds > 0; rounds-- {
+		batch := &pgx.Batch{}
+		queueCommentsOf(batch, issueID, int32(len(comments)), &comments)
+		if err := run(ctx, conn, batch); err != nil {
+			panic(err)
+		}
+	}
+	return len(comments)
+}
+
 func main() {
+	if os.Args[1] == "rows" {
+		rounds, _ := strconv.Atoi(os.Args[3])
+		fmt.Println("rows", rows(number(os.Args[2]), rounds))
+		return
+	}
 	piece := pieces[os.Args[1]]
 	text, err := os.ReadFile(os.Args[2])
 	if err != nil {

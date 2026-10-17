@@ -25,7 +25,7 @@ enum Kept {
 /// What `--aot` does with the `!`, by where it is written.
 enum Place<'a> {
     /// It asserts nothing there, or JavaScript throws there too.
-    AsInJavaScript,
+    JavaScriptSemantics,
     Asserted,
     /// These assert nothing if the operand is `a[i]`: an operand of a comparison or of arithmetic, which is the
     /// expression. The left side of `||`. What a `switch` is about. What a variable starts with.
@@ -35,7 +35,7 @@ enum Place<'a> {
     Variable,
 }
 
-const ARRAYS_OF_INTEGERS: [&str; 7] = [
+const INTEGER_ARRAYS: [&str; 7] = [
     "Int8Array",
     "Uint8Array",
     "Uint8ClampedArray",
@@ -90,21 +90,21 @@ fn is_missing_as_written(operand: Expr) -> bool {
         || operand.is_ident("undefined")
 }
 
-fn place_in_expression<'a>(top: Expr<'a>, parent: Expr<'a>, is_operand_itself: bool) -> Place<'a> {
+fn destination_in_expression<'a>(top: Expr<'a>, parent: Expr<'a>, is_operand_itself: bool) -> Place<'a> {
     // These only look at their operands. What `&&`, `||` or `?:` yields for one is a value like any other.
     let looked_at = match is_operand_itself {
-        true => Place::AsInJavaScript,
+        true => Place::JavaScriptSemantics,
         false => Place::Asserted,
     };
     match parent.kind() {
         ExprKind::Dot { .. } | ExprKind::Spread(_) | ExprKind::Yield { star: true, .. } => {
-            Place::AsInJavaScript
+            Place::JavaScriptSemantics
         }
-        ExprKind::Index { obj, .. } if obj == top => Place::AsInJavaScript,
+        ExprKind::Index { obj, .. } if obj == top => Place::JavaScriptSemantics,
         ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call)
             if call.callee() == top =>
         {
-            Place::AsInJavaScript
+            Place::JavaScriptSemantics
         }
         ExprKind::Unary {
             op: UnOp::Minus | UnOp::Plus | UnOp::BitNot,
@@ -115,7 +115,7 @@ fn place_in_expression<'a>(top: Expr<'a>, parent: Expr<'a>, is_operand_itself: b
         } => looked_at,
         ExprKind::Unary {
             op: UnOp::Delete, ..
-        } => Place::AsInJavaScript,
+        } => Place::JavaScriptSemantics,
         ExprKind::Binary { op, left, right } => match op {
             BinOp::EqEqEq | BinOp::NotEqEq | BinOp::In | BinOp::Instanceof => looked_at,
             BinOp::EqEq | BinOp::NotEq if is_literal(if left == top { right } else { left }) => {
@@ -128,7 +128,7 @@ fn place_in_expression<'a>(top: Expr<'a>, parent: Expr<'a>, is_operand_itself: b
         ExprKind::Assign {
             op: None, target, ..
         } if target == top || matches!(target.tag(), ExprTag::Array | ExprTag::Object) => {
-            Place::AsInJavaScript
+            Place::JavaScriptSemantics
         }
         ExprKind::Assign { target, .. } if target == top => Place::Asserted,
         ExprKind::Assign { op: Some(op), .. } if is_arithmetic(op) => Place::Operand(parent),
@@ -151,9 +151,9 @@ fn place(e: Expr) -> Place {
         match around.kind() {
             ExprKind::Satisfies { .. } | ExprKind::AsConst(_) | ExprKind::Instantiation { .. } => {}
             ExprKind::As { .. } | ExprKind::NonNull(_) => is_bare = false,
-            ExprKind::Unary { op: UnOp::Not, .. } => return Place::AsInJavaScript,
-            ExprKind::Call(call) if is_boolean_of(call) => return Place::AsInJavaScript,
-            ExprKind::Cond { test, .. } if test == top => return Place::AsInJavaScript,
+            ExprKind::Unary { op: UnOp::Not, .. } => return Place::JavaScriptSemantics,
+            ExprKind::Call(call) if is_boolean_of(call) => return Place::JavaScriptSemantics,
+            ExprKind::Cond { test, .. } if test == top => return Place::JavaScriptSemantics,
             ExprKind::Cond { .. } => is_operand_itself = false,
             ExprKind::Binary {
                 op: BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma,
@@ -173,7 +173,7 @@ fn place(e: Expr) -> Place {
                     Kept::IfTruthy
                 };
                 if kept != Kept::Always && kept != decides {
-                    return Place::AsInJavaScript;
+                    return Place::JavaScriptSemantics;
                 }
                 (kept, is_operand_itself) = (decides, false);
             }
@@ -190,7 +190,7 @@ fn place(e: Expr) -> Place {
             _ => None,
         };
         if test == Some(top) {
-            return Place::AsInJavaScript;
+            return Place::JavaScriptSemantics;
         }
     }
     match kept {
@@ -200,7 +200,7 @@ fn place(e: Expr) -> Place {
     }
     let destructures = |pat: Pat| !matches!(pat.kind(), PatKind::Ident(_));
     match parent {
-        Node::Expr(parent) => match place_in_expression(top, parent, is_operand_itself) {
+        Node::Expr(parent) => match destination_in_expression(top, parent, is_operand_itself) {
             Place::Operand(_) if top != e => Place::Asserted,
             place => place,
         },
@@ -208,15 +208,15 @@ fn place(e: Expr) -> Place {
             StmtKind::Switch { .. } if top == e => Place::Switch,
             // These throw in JavaScript too.
             StmtKind::Throw(_) | StmtKind::ForOf { .. } | StmtKind::With { .. } => {
-                Place::AsInJavaScript
+                Place::JavaScriptSemantics
             }
             _ => Place::Asserted,
         },
         // JavaScript throws for `const { a } = undefined`.
-        Node::VarDecl(declaration) if destructures(declaration.pat()) => Place::AsInJavaScript,
-        Node::Param(param) if destructures(param.pat()) => Place::AsInJavaScript,
+        Node::VarDecl(declaration) if destructures(declaration.pat()) => Place::JavaScriptSemantics,
+        Node::Param(param) if destructures(param.pat()) => Place::JavaScriptSemantics,
         Node::VarDecl(_) if top == e => Place::Variable,
-        Node::Class(_) | Node::File(_) => Place::AsInJavaScript,
+        Node::Class(_) | Node::File(_) => Place::JavaScriptSemantics,
         _ => Place::Asserted,
     }
 }
@@ -225,14 +225,14 @@ fn every_part(ty: Type, mut test: impl FnMut(Type) -> bool) -> bool {
     !ty.has_flags(TypeFlags::NEVER) && union_constituents(ty).iter().all(&mut test)
 }
 
-fn is_type_of_numbers(ty: Type) -> bool {
+fn is_number_type(ty: Type) -> bool {
     every_part(ty, |part| part.has_flags(TypeFlags::NUMBER_LIKE))
 }
 
 fn is_array_of_integers(ty: Type) -> bool {
     intersection_constituents(ty).iter().any(|part| {
         let is_named = |symbol: bun_lint::types::TsSymbol| {
-            ARRAYS_OF_INTEGERS
+            INTEGER_ARRAYS
                 .iter()
                 .any(|name| symbol.name() == name.as_bytes())
         };
@@ -243,18 +243,18 @@ fn is_array_of_integers(ty: Type) -> bool {
 
 /// Whether the compiler keeps the elements as integers: those of an `Int32Array` and the like, and the members of a numeric
 /// enum. There `undefined` has no room, and the `!` stays.
-fn are_integers_known_of(read: Expr, obj: Expr, index: Expr) -> bool {
+fn has_known_integer_range(read: Expr, obj: Expr, index: Expr) -> bool {
     let object = obj.ty().get_non_nullable_type();
-    if is_type_of_numbers(index.ty()) && every_part(object, is_array_of_integers) {
+    if is_number_type(index.ty()) && every_part(object, is_array_of_integers) {
         return true;
     }
-    let is_member_of_enum = |part: Type| {
+    let is_enum_member = |part: Type| {
         part.has_flags(TypeFlags::ENUM_LITERAL) && part.has_flags(TypeFlags::NUMBER_LITERAL)
     };
     let element = read.ty();
-    let is_beside_enum = union_constituents(element).iter().any(is_member_of_enum);
+    let is_next_to_enum = union_constituents(element).iter().any(is_enum_member);
     // Nothing holds what is stored in a `(1 | 2)[]` to the numbers.
-    let forgets_literals = every_part(object, |part| {
+    let widens_literals = every_part(object, |part| {
         part.symbol().is_some_and(|it| it.name() == b"Array")
     });
     every_part(element, |part| {
@@ -264,19 +264,19 @@ fn are_integers_known_of(read: Expr, obj: Expr, index: Expr) -> bool {
         };
         if part.has_flags(TypeFlags::NULLABLE) {
             true
-        } else if is_member_of_enum(part) {
+        } else if is_enum_member(part) {
             is_integer(f64::from(i32::MIN), f64::from(i32::MAX))
         } else {
-            !forgets_literals
+            !widens_literals
                 && part.has_flags(TypeFlags::NUMBER_LITERAL)
                 && is_integer(-9_007_199_254_740_991.0, 9_007_199_254_740_991.0)
-                && (is_beside_enum || part.number_value() != Some(0.0))
+                && (is_next_to_enum || part.number_value() != Some(0.0))
         }
     })
 }
 
 /// What `a?.b` is where `a` is there: where it is not, the `!` of `a?.b!` is not reached.
-fn type_without_the_chain(operand: Expr) -> Option<Type> {
+fn type_without_optional_chain(operand: Expr) -> Option<Type> {
     match operand.kind() {
         ExprKind::Dot { obj, name, .. } => obj
             .ty()
@@ -294,7 +294,7 @@ impl Rule for AotNonNullEscapes {
     type State<'a> = ();
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        (!file.twins_on().contains(bun_lint::language::Twins::NO_NON_NULL_ASSERTION)).then_some(())
+        (!file.active_rule_overlaps().contains(bun_lint::language::RuleOverlaps::NO_NON_NULL_ASSERTION)).then_some(())
     }
 
     fn new(_: &Options) -> Self {
@@ -306,12 +306,12 @@ impl Rule for AotNonNullEscapes {
             return;
         };
         let place = place(e);
-        if matches!(place, Place::AsInJavaScript) || is_missing_as_written(operand) {
+        if matches!(place, Place::JavaScriptSemantics) || is_missing_as_written(operand) {
             return;
         }
-        let is_link_of_chain = operand.is_in_optional_chain() && !operand.is_parenthesized();
-        let held = match is_link_of_chain {
-            true => type_without_the_chain(operand),
+        let is_optional_chain_link = operand.is_in_optional_chain() && !operand.is_parenthesized();
+        let held = match is_optional_chain_link {
+            true => type_without_optional_chain(operand),
             false => Some(operand.ty()),
         };
         let Some(flags) = held.map(get_type_flags) else {
@@ -334,15 +334,15 @@ impl Rule for AotNonNullEscapes {
                         around.binary_op(),
                         Some(BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge)
                     );
-                    (compares || is_type_of_numbers(e.ty()) && is_type_of_numbers(around.ty()))
-                        && !are_integers_known_of(operand, obj, index)
+                    (compares || is_number_type(e.ty()) && is_number_type(around.ty()))
+                        && !has_known_integer_range(operand, obj, index)
                 }
-                Place::Switch => !are_integers_known_of(operand, obj, index),
+                Place::Switch => !has_known_integer_range(operand, obj, index),
                 Place::Variable => {
-                    !are_integers_known_of(operand, obj, index)
-                        && e.is_kept_only_where_undefined_has_an_answer()
+                    !has_known_integer_range(operand, obj, index)
+                        && e.is_used_only_undefined_safely()
                 }
-                Place::Asserted | Place::AsInJavaScript => false,
+                Place::Asserted | Place::JavaScriptSemantics => false,
             };
             if is_left_alone {
                 return;

@@ -1,4 +1,4 @@
-//! Which fields of an object nobody ever sees absent: `field_flags::NEVER_SEEN_ABSENT`.
+//! Which fields of an object nobody ever sees absent: `field_flags::NEVER_OBSERVED_ABSENT`.
 //!
 //! A FACT. The engine keeps such a field without a marker for "absent" and reads it without a test: an int32 is four raw bytes. So
 //! what is not shown to hold is not answered.
@@ -6,16 +6,16 @@
 //! An object comes to have a layout `L` in one of four ways.
 //!
 //! * AN OBJECT LITERAL, A COPY OF PLAIN DATA. It has every required field from the start.
-//! * A CLASS. Every field is defined while the object is constructed, but for `field_flags::ABSENT_AT_BIRTH`, which is optional. Whether one
+//! * A CLASS. Every field is defined while the object is constructed, but for `field_flags::ABSENT_AT_CREATION`, which is optional. Whether one
 //!   is seen before it is initialized is in its type (`Checker::field_starts_undefined`).
 //! * A CONSTRUCTOR FUNCTION, `function Node(this: Node, kind: SyntaxKind) { this.kind = kind; .. }`. `new callee(..)` allocates the object, in
 //!   compiled code or in the run time, and hands it to whatever `callee` is. A callee that is no function of the program with a declared
 //!   `this` never gets it. One that is tests it on entry against the subtypes of the type of its `this`. The FIRST STORES of `F` are the
-//!   statements `this.name = value` that its body starts with: see `first_stores_of`. Nothing else runs while they do, so nobody sees
+//!   statements `this.name = value` that its body starts with: see `first_stores_for`. Nothing else runs while they do, so nobody sees
 //!   the object before the last. AND THE ENGINE HANDS `F` A FRESH `L` ONLY IF `F` STORES FIRST ALL THAT IS NEVER SEEN ABSENT IN `L`: any other `F` makes
 //!   its own object, of the layout of its `this`. So which `F` are gone by is a choice, and no answer hangs on it: those that are meant to
 //!   get an `L`. The run time makes for `F` what `F` declares `this` to be. A `new` that makes an `L` expects one function
-//!   (`Checker::function_produced_by`), or nobody in particular: then every `F` with `L` among the subtypes of `this`. What all of them store
+//!   (`Checker::function_for_value_expr`), or nobody in particular: then every `F` with `L` among the subtypes of `this`. What all of them store
 //!   first is never seen absent. (`SourceFile` is a subtype of `SourceMapSource`; no `new` that makes one expects `function SourceMapSource`.)
 //! * A SHAPE TRANSITION from a layout `B`, at a cast. The run time makes transitions at casts that no source has, so none is looked at: a
 //!   field that `L` has and `B` lacks may be seen absent.
@@ -36,13 +36,13 @@ use crate::program::FileId;
 use crate::types::TypeId;
 use crate::util::FxHashMap;
 
-/// What has been noted of constructor functions. `T`: what a type is called by. The types are `laid_out_as`.
+/// What has been noted of constructor functions. `T`: what a type is called by. The types are `layout_defining_type`.
 pub(crate) struct Constructions<T = TypeId> {
     /// For each constructor function, and each layout in the type of its `this`: its first stores, and `has_mutable_prototype`.
     constructors: Vec<(T, (FileId, FnId), Vec<Atom>, bool)>,
     /// For each `new callee(..)` that makes the object itself: its layout, and the one function that `callee` is expected to be.
     created_by_new: Vec<(T, Option<(FileId, FnId)>)>,
-    /// The layouts that an allocation makes with a discriminant: `Checker::discriminant_of_new`, `discriminant_of_object_literal`.
+    /// The layouts that an allocation makes with a discriminant: `Checker::new_discriminant`, `object_literal_discriminant`.
     created_with_discriminant: Vec<T>,
     /// One has been left out, so nothing is known.
     is_incomplete: bool,
@@ -82,30 +82,30 @@ impl<T: Copy> Constructions<T> {
 }
 
 impl Constructions<TypeId> {
-    pub(super) fn by_view(&self, index_of: &FxHashMap<TypeId, u32>) -> ConstructionsByView {
+    pub(super) fn by_layout_index(&self, index_of: &FxHashMap<TypeId, u32>) -> IndexedConstructions {
         let constructors: Vec<(u32, (FileId, FnId), Vec<Atom>, bool)> =
             (self.constructors.iter()).filter_map(|(view, function, stores, has_mutable_prototype)| Some((*index_of.get(view)?, *function, stores.clone(), *has_mutable_prototype))).collect();
         let created_by_new: Vec<(u32, Option<(FileId, FnId)>)> = self.created_by_new.iter().filter_map(|(layout, expected)| Some((*index_of.get(layout)?, *expected))).collect();
         let is_incomplete = self.is_incomplete || constructors.len() < self.constructors.len() || created_by_new.len() < self.created_by_new.len();
         let created_with_discriminant = self.created_with_discriminant.iter().filter_map(|layout| index_of.get(layout).copied()).collect();
-        ConstructionsByView { constructors, created_by_new, created_with_discriminant, is_incomplete }
+        IndexedConstructions { constructors, created_by_new, created_with_discriminant, is_incomplete }
     }
 }
 
 /// `Constructions`, with the index of a view in the place of its type.
-pub(crate) struct ConstructionsByView {
+pub(crate) struct IndexedConstructions {
     constructors: Vec<(u32, (FileId, FnId), Vec<Atom>, bool)>,
     created_by_new: Vec<(u32, Option<(FileId, FnId)>)>,
     created_with_discriminant: Vec<u32>,
     is_incomplete: bool,
 }
 
-impl ConstructionsByView {
+impl IndexedConstructions {
     pub(super) fn is_incomplete(&self) -> bool {
         self.is_incomplete
     }
 
-    /// Fills in `Reach::never_seen_absent`. All by view. `becomes`: what a cast may turn a layout into.
+    /// Fills in `Reach::never_observed_absent`. All by view. `becomes`: what a cast may turn a layout into.
     ///
     /// Whatever the order of what has been noted, it comes out the same: an intersection does not depend on it.
     pub(super) fn apply(self, views: &mut [Reach], facts: &[Facts], becomes: &[Vec<u32>]) {
@@ -126,11 +126,11 @@ impl ConstructionsByView {
         }
         for (view, function, stores, _) in &self.constructors {
             let this = &views[*view as usize];
-            let is_had_by_all = |name: &&Atom| this.members.iter().all(|&layout| facts[layout as usize].declared.binary_search(&name.0).is_ok());
+            let is_on_every_instance = |name: &&Atom| this.members.iter().all(|&layout| facts[layout as usize].declared.binary_search(&name.0).is_ok());
             let is_general = this.members.iter().any(|&layout| may_inherit[layout as usize]);
-            let stores = if is_general { &[][..] } else { &stores[..stores.iter().take_while(is_had_by_all).count()] };
-            let is_meant_to_get = |layout: &&u32| *layout == view || expected_by_new[**layout as usize].iter().any(|expected| expected.is_none_or(|expected| expected == *function));
-            for &layout in this.members.iter().chain([view]).filter(is_meant_to_get) {
+            let stores = if is_general { &[][..] } else { &stores[..stores.iter().take_while(is_on_every_instance).count()] };
+            let is_expected_to_receive = |layout: &&u32| *layout == view || expected_by_new[**layout as usize].iter().any(|expected| expected.is_none_or(|expected| expected == *function));
+            for &layout in this.members.iter().chain([view]).filter(is_expected_to_receive) {
                 match &mut stored_first[layout as usize] {
                     Some(by_all) => by_all.retain(|name| stores.contains(name)),
                     none => *none = Some(stores.to_vec()),
@@ -161,8 +161,8 @@ impl ConstructionsByView {
             for from in 0..views.len() {
                 for &to in becomes[from].iter().filter(|&&to| is_in_family[from] || !is_in_family[to as usize]) {
                     // A method is required of an object of a class and is no field of it: the names say nothing across the two kinds.
-                    let is_of_one_kind = is_instance(from as u32) == is_instance(to);
-                    let both: Vec<u32> = present[from].iter().copied().filter(|name| is_of_one_kind && present[to as usize].binary_search(name).is_ok()).collect();
+                    let has_single_kind = is_instance(from as u32) == is_instance(to);
+                    let both: Vec<u32> = present[from].iter().copied().filter(|name| has_single_kind && present[to as usize].binary_search(name).is_ok()).collect();
                     for layout in [from, to as usize] {
                         if present[layout].len() != both.len() {
                             present[layout].clone_from(&both);
@@ -176,13 +176,13 @@ impl ConstructionsByView {
             }
         }
         for (reach, names) in views.iter_mut().zip(present) {
-            reach.never_seen_absent = names.into_iter().map(Atom).collect();
+            reach.never_observed_absent = names.into_iter().map(Atom).collect();
         }
     }
 }
 
 /// What `Object.prototype` has, to which nothing can be added.
-const ON_OBJECT_PROTOTYPE: [&[u8]; 12] = [
+const OBJECT_PROTOTYPE_KEYS: [&[u8]; 12] = [
     b"constructor",
     b"hasOwnProperty",
     b"isPrototypeOf",
@@ -210,37 +210,37 @@ pub struct FirstStore {
 
 impl<'p, 's> Checker<'p, 's> {
     /// The function declares its `this` and can be constructed with. `views`: the layouts in the type of `this`, as the IR has it. `stores`:
-    /// those of `first_stores_of` that are translated as first stores, all or none.
-    pub fn note_constructor_function(&mut self, views: &[TypeId], file: FileId, func: FnId, stores: &[FirstStore]) {
+    /// those of `first_stores_for` that are translated as first stores, all or none.
+    pub fn record_constructor_function(&mut self, views: &[TypeId], file: FileId, func: FnId, stores: &[FirstStore]) {
         let stores: Vec<Atom> = stores.iter().map(|store| store.name).collect();
         let has_mutable_prototype = self.has_mutable_prototype(file, func);
         for &view in views {
-            let view = self.laid_out_as(view);
-            self.noted_constructions().constructors.push((view, (file, func), stores.clone(), has_mutable_prototype));
+            let view = self.layout_defining_type(view);
+            self.recorded_constructions().constructors.push((view, (file, func), stores.clone(), has_mutable_prototype));
         }
     }
 
     /// An allocation makes an object of the layout of the type with a discriminant.
-    pub fn note_object_created_with_discriminant(&mut self, made: TypeId) {
-        let made = self.laid_out_as(made);
-        self.noted_constructions().created_with_discriminant.push(made);
+    pub fn record_object_created_with_discriminant(&mut self, made: TypeId) {
+        let made = self.layout_defining_type(made);
+        self.recorded_constructions().created_with_discriminant.push(made);
     }
 
     /// An object of the layout of the type `made` is made with none of its fields, and whoever can get at it may before they are stored
     /// to: that of a namespace.
-    pub fn note_object_allocated_empty(&mut self, made: TypeId, file: FileId) {
-        let made = self.laid_out_as(made);
-        self.noted_constructions().constructors.push((made, (file, FnId::NONE), Vec::new(), false));
+    pub fn record_object_allocated_empty(&mut self, made: TypeId, file: FileId) {
+        let made = self.layout_defining_type(made);
+        self.recorded_constructions().constructors.push((made, (file, FnId::NONE), Vec::new(), false));
     }
 
     /// `new callee(..)` makes the object itself, of the layout of the type `made`, and hands it to what `callee` turns out to be. `None`: of a layout that no type stands for.
-    pub fn note_object_created_by_new(&mut self, made: Option<TypeId>, file: FileId, callee: ExprId) {
+    pub fn record_object_created_by_new(&mut self, made: Option<TypeId>, file: FileId, callee: ExprId) {
         let Some(made) = made else {
-            self.noted_constructions().is_incomplete = true;
+            self.recorded_constructions().is_incomplete = true;
             return;
         };
-        let (made, expected) = (self.laid_out_as(made), self.function_produced_by(file, callee));
-        self.noted_constructions().created_by_new.push((made, expected));
+        let (made, expected) = (self.layout_defining_type(made), self.function_for_value_expr(file, callee));
+        self.recorded_constructions().created_by_new.push((made, expected));
     }
 
     /// The statements `this.name = value` that the body of the function starts with, up to one that repeats a name.
@@ -255,8 +255,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// `prototype_property_names_in`, `has_mutable_prototype`.
     ///
     /// `(this as any).name = value` is one of them where the layout has a field for the name: `undeclared_fields.rs`.
-    pub fn first_stores_of(&mut self, file: FileId, func: FnId) -> Vec<FirstStore> {
-        let mut stores = self.first_stores_written_in(file, func);
+    pub fn first_stores_for(&mut self, file: FileId, func: FnId) -> Vec<FirstStore> {
+        let mut stores = self.syntactic_first_stores(file, func);
         let mut count = self.count_first_stores_to_fields(file, func, &stores);
         while count > 0 && count < stores.len() && stores[count].stmt == stores[count - 1].stmt {
             count -= 1;
@@ -265,7 +265,7 @@ impl<'p, 's> Checker<'p, 's> {
         stores
     }
 
-    pub(super) fn explain_first_stores_ended_by_listed_names(&mut self) -> (usize, usize) {
+    pub(super) fn explain_first_stores_cut_by_prototype_names(&mut self) -> (usize, usize) {
         let listed = self.prototype_property_names();
         let all = self.constructor_functions();
         let mut ended = 0;
@@ -275,7 +275,7 @@ impl<'p, 's> Checker<'p, 's> {
             if self.has_mutable_prototype(file, func) {
                 continue;
             }
-            let last = self.first_stores_written_in(file, func).last().map(|store| store.stmt);
+            let last = self.syntactic_first_stores(file, func).last().map(|store| store.stmt);
             let next = hir.ids(body).skip_while(|&stmt| last.is_some_and(|last| stmt != last)).nth(last.is_some() as usize);
             let Some(StmtKind::Expr(mut e)) = next.map(|stmt| hir[stmt].kind) else { continue };
             while let ExprKind::Assign { op: None, target, value } = hir[e].kind {
@@ -290,7 +290,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Whether or not there is a field for what is stored through `any`.
-    pub(super) fn first_stores_written_in(&mut self, file: FileId, func: FnId) -> Vec<FirstStore> {
+    pub(super) fn syntactic_first_stores(&mut self, file: FileId, func: FnId) -> Vec<FirstStore> {
         let hir = self.hir(file);
         let mut stores: Vec<FirstStore> = Vec::new();
         let has_plain_parameters = hir[func].params.iter().all(|p| hir[p].default.is_none() && !hir[p].flags.contains(Flags::REST) && matches!(hir[hir[p].pat].kind, PatKind::Ident(_)));
@@ -299,7 +299,7 @@ impl<'p, 's> Checker<'p, 's> {
             return stores;
         }
         let on_prototypes = self.prototype_property_names();
-        let keeps_them_off = self.has_no_field_names_on_prototype(file, func);
+        let blocks_first_stores = self.has_no_field_names_on_prototype(file, func);
         for stmt in hir.ids(body) {
             let StmtKind::Expr(e) = hir[stmt].kind else { break };
             // A directive.
@@ -314,14 +314,14 @@ impl<'p, 's> Checker<'p, 's> {
             }
             let has_no_operand = matches!(hir[value].kind, ExprKind::Null | ExprKind::True | ExprKind::False | ExprKind::Number(_) | ExprKind::String(_) | ExprKind::Ident(_));
             let evaluates_to_primitive = (targets.len() == 1 || has_no_operand) && self.evaluates_to_primitive(file, value);
-            if targets.is_empty() || !(self.names_parameter_of(file, func, value) || self.is_plain_nullish(file, value) || self.is_enum_constant(file, value) || evaluates_to_primitive) {
+            if targets.is_empty() || !(self.is_parameter_ref_of(file, func, value) || self.is_plain_nullish(file, value) || self.is_enum_constant(file, value) || evaluates_to_primitive) {
                 break;
             }
             let before = stores.len();
             for &target in targets.iter().rev() {
                 let ExprKind::Dot { obj, name, chain: Chain::No, .. } = hir[target].kind else { break };
                 let this = self.this_cast_to_any(file, obj).unwrap_or(obj);
-                let is_inherited = (!keeps_them_off && on_prototypes.contains(&name)) || ON_OBJECT_PROTOTYPE.contains(&self.atoms().bytes(name));
+                let is_inherited = (!blocks_first_stores && on_prototypes.contains(&name)) || OBJECT_PROTOTYPE_KEYS.contains(&self.atoms().bytes(name));
                 if !matches!(hir[this].kind, ExprKind::This) || is_inherited || stores.iter().any(|store| store.name == name) {
                     break;
                 }
@@ -341,7 +341,7 @@ impl<'p, 's> Checker<'p, 's> {
         let hir = self.hir(file);
         let ExprKind::Dot { obj, name, chain: Chain::No, .. } = hir[e].kind else { return false };
         let ExprKind::Ident(written) = hir[obj].kind else { return false };
-        let Some(declared) = self.symbol_named_by(file, obj, written).filter(|&declared| self.files().flags(declared).intersects(SymFlags::ENUM)) else { return false };
+        let Some(declared) = self.resolved_symbol_for(file, obj, written).filter(|&declared| self.files().flags(declared).intersects(SymFlags::ENUM)) else { return false };
         let Some(member) = self.files().export(declared, name) else { return false };
         matches!(self.files().value_declaration(member), Some((of, Decl::EnumMember(member))) if self.enum_member_value(of, member).is_some() && !self.is_enum_member_read_from_object(file, of, member))
     }
@@ -357,7 +357,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    pub fn is_nullish_by_its_text(&self, file: FileId, mut e: ExprId) -> bool {
+    pub fn is_syntactically_nullish(&self, file: FileId, mut e: ExprId) -> bool {
         let hir = self.hir(file);
         while let ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) = hir[e].kind {
             e = expr;
@@ -370,7 +370,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    fn names_parameter_of(&self, file: FileId, func: FnId, e: ExprId) -> bool {
+    fn is_parameter_ref_of(&self, file: FileId, func: FnId, e: ExprId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let symbol = bound.expr_symbol[e.idx()];
         matches!(hir[e].kind, ExprKind::Ident(_)) && symbol.is_some() && hir[func].params.iter().any(|p| bound.pat_symbol[hir[p].pat.idx()] == symbol)

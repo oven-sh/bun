@@ -1380,18 +1380,18 @@ pub struct Options<'a> {
     pub line_offset_tables: Option<&'a SourceMap::line_offset_table::List<bun_alloc::AstAlloc>>,
 
     pub mangled_props: Option<&'a crate::MangledProps>,
-    pub function_texts: Option<&'a mut Vec<FunctionText>>,
+    pub function_sources: Option<&'a mut Vec<FunctionSource>>,
     pub audited: Option<&'static bun_ast::audited::AuditedFile>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct FunctionText {
+pub struct FunctionSource {
     pub key: i32,
     pub start: i32,
     pub end: i32,
 }
 
-pub fn finish_function_texts(printed: &[u8], texts: &mut Vec<FunctionText>) {
+pub fn finish_function_sources(printed: &[u8], texts: &mut Vec<FunctionSource>) {
     for text in texts.iter_mut() {
         while text.start < text.end && printed.get(text.start as usize) == Some(&b' ') {
             text.start += 1;
@@ -1456,7 +1456,7 @@ impl<'a> Default for Options<'a> {
             has_dynamic_import_items: false,
             line_offset_tables: None,
             mangled_props: None,
-            function_texts: None,
+            function_sources: None,
             audited: None,
         }
     }
@@ -2484,10 +2484,10 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        fn note_audited_parameters(&mut self, function: bun_ast::Loc) {
+        fn record_audited_parameters(&mut self, function: bun_ast::Loc) {
             if let Some(audited) = self.options.audited {
                 for parameter in audited.parameters_of(function.start as u32) {
-                    bun_ast::audited::note_printed_parameter(self.writer.written() as u32, parameter.index, parameter.id);
+                    bun_ast::audited::record_printed_parameter(self.writer.written() as u32, parameter.index, parameter.id);
                 }
             }
         }
@@ -2505,7 +2505,7 @@ pub(crate) mod __gated_printer {
             if wrap {
                 if let Some(loc) = open_paren_loc {
                     self.add_source_mapping(loc);
-                    self.note_audited_parameters(loc);
+                    self.record_audited_parameters(loc);
                 }
                 self.print(b"(");
             }
@@ -2534,9 +2534,9 @@ pub(crate) mod __gated_printer {
         }
 
         #[inline]
-        fn did_print_function_text(&mut self, key: bun_ast::Loc, start: i32) {
-            if let Some(texts) = self.options.function_texts.as_deref_mut() {
-                texts.push(FunctionText {
+        fn did_print_function_source(&mut self, key: bun_ast::Loc, start: i32) {
+            if let Some(texts) = self.options.function_sources.as_deref_mut() {
+                texts.push(FunctionSource {
                     key: key.start,
                     start,
                     end: self.writer.written(),
@@ -2553,13 +2553,13 @@ pub(crate) mod __gated_printer {
             );
             self.print_space();
             self.print_block(func.body.loc, slice_of(func.body.stmts), None);
-            self.did_print_function_text(func.open_parens_loc, text_start);
+            self.did_print_function_source(func.open_parens_loc, text_start);
         }
 
         pub(crate) fn print_class(&mut self, class: &G::Class, text_start: i32) {
             if let Some(audited) = self.options.audited {
                 for parameter in audited.parameters_of(class.body_loc.start as u32) {
-                    bun_ast::audited::note_printed_parameter(text_start as u32, parameter.index, parameter.id);
+                    bun_ast::audited::record_printed_parameter(text_start as u32, parameter.index, parameter.id);
                 }
             }
             if let Some(extends) = &class.extends {
@@ -2604,7 +2604,7 @@ pub(crate) mod __gated_printer {
                 self.add_source_mapping(class.close_brace_loc);
             }
             self.print(b"}");
-            self.did_print_function_text(class.body_loc, text_start);
+            self.did_print_function_source(class.body_loc, text_start);
         }
 
         pub(crate) fn best_quote_char_for_e_string(str: &E::String, allow_backtick: bool) -> u8 {
@@ -3536,7 +3536,7 @@ pub(crate) mod __gated_printer {
                 ExprData::ECall(e) if matches!(e.target.data, ExprData::EMissing(..)) => {
                     let start = self.writer.written();
                     self.print_expr(e.args[0], level, flags);
-                    bun_ast::audited::note_printed_expression(start as u32, self.writer.written() as u32, e.close_paren_loc.start as u32);
+                    bun_ast::audited::record_printed_expression(start as u32, self.writer.written() as u32, e.close_paren_loc.start as u32);
                 }
                 ExprData::ECall(e) => {
                     let mut wrap = level.gte(Level::New) || flags.contains(ExprFlag::ForbidCall);
@@ -3882,7 +3882,7 @@ pub(crate) mod __gated_printer {
                         text_start = self.writer.written();
                         self.print(b"async");
                         self.print_space();
-                        self.note_audited_parameters(expr.loc);
+                        self.record_audited_parameters(expr.loc);
                     }
 
                     self.print_fn_args(
@@ -3907,7 +3907,7 @@ pub(crate) mod __gated_printer {
                     if !was_printed {
                         self.print_block(e.body.loc, slice_of(e.body.stmts), None);
                     }
-                    self.did_print_function_text(expr.loc, text_start);
+                    self.did_print_function_source(expr.loc, text_start);
 
                     if wrap {
                         self.print(b")");

@@ -199,7 +199,7 @@ function withEscapedKeys(text: string): string {
 }
 type Spelling = { comma?: string; colon?: string; isTurned?: boolean; isDoubled?: boolean; escapesText?: boolean; number?: string; isPadded?: boolean; broken?: string };
 const sameAnswer: Spelling[] = [{ comma: ", ", colon: ": " }, { comma: " ,", colon: " :" }, { isDoubled: true }, { escapesText: true }, { number: ".0" }, { number: "e0" }, { number: "E+00" }, { number: ".00e-0" }, { isPadded: true }];
-const ownAnswer: Spelling[] = [{ isTurned: true }, { isTurned: true, comma: ",\n", colon: ": " }, { broken: "," }, { broken: "0" }, { broken: "\u0000" }, { broken: "}" }];
+const judgedAgainstEscapedKeys: Spelling[] = [{ isTurned: true }, { isTurned: true, comma: ",\n", colon: ": " }, { broken: "," }, { broken: "0" }, { broken: "\u0000" }, { broken: "}" }];
 function spell(value: any, how: Spelling): string {
   const comma = how.comma ?? ",";
   if (typeof value === "string") return how.escapesText && value.length ? '"\\u' + value.charCodeAt(0).toString(16).padStart(4, "0") + JSON.stringify(value.slice(1)).slice(1) : JSON.stringify(value);
@@ -248,7 +248,7 @@ for (const [name, compiled, schema, said, samples, parse] of cases) {
           const answer = attempt(parse, other);
           if (answer !== direct && disagreements++ < 20) console.log("Bun.parse DISAGREES WITH ITSELF", name, other.slice(0, 200), "|", direct.slice(0, 200), "|", answer.slice(0, 200));
         }
-        for (const how of ownAnswer) {
+        for (const how of judgedAgainstEscapedKeys) {
           const other = spell(plain, how);
           const [answer, byEscapedKeys] = [attempt(parse, other), attempt(parse, withEscapedKeys(other))];
           if (answer !== byEscapedKeys && disagreements++ < 20) console.log("Bun.parse DISAGREES WITH ITSELF", name, other.slice(0, 200), "|", byEscapedKeys.slice(0, 200), "|", answer.slice(0, 200));

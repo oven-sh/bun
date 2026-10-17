@@ -675,13 +675,13 @@ impl<S: RuleSet> Linter<S> {
                 runs
             });
         }
-        file.twins_on.set(match is_plain {
-            true => config.language.twins_on,
-            false => crate::language::Twins::among(running.iter().map(|it| (it.entry.meta, it.severity))),
+        file.active_rule_overlaps.set(match is_plain {
+            true => config.language.active_rule_overlaps,
+            false => crate::language::RuleOverlaps::among(running.iter().map(|it| (it.entry.meta, it.severity))),
         });
         // Nor is a comment for a rule that has left its report to another.
-        let leaves_reports = |it: &&ConfiguredRule| it.severity != Severity::Off && file.twins_on().leaves_reports(it.entry.meta);
-        rules_to_ignore.extend(config.rules.iter().filter(leaves_reports).map(|it| RuleId::Known(it.entry.meta)));
+        let defers_reports = |it: &&ConfiguredRule| it.severity != Severity::Off && file.active_rule_overlaps().defers_reports(it.entry.meta);
+        rules_to_ignore.extend(config.rules.iter().filter(defers_reports).map(|it| RuleId::Known(it.entry.meta)));
         // ESLint makes the rules that run, and one of them throws.
         let mut refusals = (running.iter().filter(|it| it.severity != Severity::Off))
             .filter_map(|it| it.refusal.as_deref());

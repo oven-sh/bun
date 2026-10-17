@@ -1,7 +1,7 @@
 // `indexOf`, `includes`, `lastIndexOf`, `startsWith` and `endsWith`.
-// CALLS+ indexOfCharacter operationAOTTypedStringFindCharacter8|operationAOTTypedStringIndexOfText
-// CALLS+ includesCharacter operationAOTTypedStringFindCharacter8|operationAOTTypedStringIndexOfText
-// CALLS+ lastIndexOfCharacter operationAOTTypedStringReverseFindCharacter8|operationAOTTypedStringLastIndexOfText
+// CALLS+ indexOfCharacter operationAOTTypedStringFindCharacter8|operationAOTTypedStringIndexOfLiteral
+// CALLS+ includesCharacter operationAOTTypedStringFindCharacter8|operationAOTTypedStringIndexOfLiteral
+// CALLS+ lastIndexOfCharacter operationAOTTypedStringReverseFindCharacter8|operationAOTTypedStringLastIndexOfLiteral
 // CALLS+ indexOf1 operationAOTTypedStringFind8|operationAOTTypedStringIndexOf
 // CALLS+ includes1 operationAOTTypedStringFind8|operationAOTTypedStringIndexOf
 // CALLS+ lastIndexOf1 operationAOTTypedStringReverseFind8|operationAOTTypedStringLastIndexOf

@@ -5,7 +5,7 @@
 //! a number, spread it or hand it to `apply`, and store to no parameter. For those nothing changes.
 //!
 //! For the others the object is the engine's own mapped one, the parameters live in it, and whoever refers to a parameter, an inner
-//! function too, goes through the object. Nothing follows the stores to such a parameter: see `find_told_of_variable`.
+//! function too, goes through the object. Nothing follows the stores to such a parameter: see `find_variable_flow_coverage`.
 //!
 //! It goes by the trees and the symbols of one file, and by `kinds.rs`, which does: every task finds the same.
 
@@ -28,57 +28,57 @@ pub(super) struct Mapped {
     pub(super) functions: FxHashMap<FnId, ExprId>,
     /// By parameter of such a function: the function, and which of its parameters it is.
     parameters: FxHashMap<SymbolId, (FnId, u32)>,
-    pub(super) shown_on_demand: FxHashMap<FnId, ExprId>,
-    reads_by_any_key: FxHashSet<ExprId>,
+    pub(super) materialized_on_demand: FxHashMap<FnId, ExprId>,
+    dynamic_key_reads: FxHashSet<ExprId>,
 }
 
-enum UseOfArguments {
+enum ArgumentsUse {
     Harmless,
     Reads,
-    ReadsByAnyKey(ExprId),
+    DynamicKeyRead(ExprId),
     Tells,
 }
 
 impl<'p, 's> Checker<'p, 's> {
-    pub(super) fn mapped_arguments_of_file(&mut self, file: FileId) -> Rc<Mapped> {
+    pub(super) fn file_mapped_arguments(&mut self, file: FileId) -> Rc<Mapped> {
         if let Some(known) = self.aot.mapped_arguments.by_file.get(&file) {
             return known.clone();
         }
-        let found = Rc::new(self.find_mapped_arguments_of_file(file));
+        let found = Rc::new(self.find_file_mapped_arguments(file));
         self.aot.mapped_arguments.by_file.insert(file, found.clone());
         found
     }
 
-    fn find_mapped_arguments_of_file(&mut self, file: FileId) -> Mapped {
+    fn find_file_mapped_arguments(&mut self, file: FileId) -> Mapped {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut found = Mapped::default();
         if !hir.is_js || bound.ran_out_of_stack {
             return found;
         }
         // Those that read what the parameters hold now, and those that can tell whatever the parameters do.
-        let (mut reading, mut telling): (FxHashMap<FnId, ExprId>, FxHashMap<FnId, ExprId>) = Default::default();
-        let mut by_any_key: Vec<(FnId, ExprId)> = Vec::new();
+        let (mut reading, mut informative_type): (FxHashMap<FnId, ExprId>, FxHashMap<FnId, ExprId>) = Default::default();
+        let mut by_dynamic_key: Vec<(FnId, ExprId)> = Vec::new();
         for &e in bound.arguments_objects.iter() {
-            let owner = self.owner_of_arguments(file, e);
+            let owner = self.arguments_owner(file, e);
             if owner.is_none() || !self.has_mapped_arguments(file, owner) {
                 continue;
             }
             let aliases = match bound.expr_parent[e.idx()] {
-                Parent::VarInit(declaration) => self.references_to_alias_of_arguments(file, owner, declaration),
+                Parent::VarInit(declaration) => self.arguments_alias_references(file, owner, declaration),
                 _ => None,
             };
             for &mention in aliases.unwrap_or(&[e]) {
-                match self.use_of_arguments(file, owner, mention) {
-                    UseOfArguments::Harmless => {}
-                    UseOfArguments::Reads => {
+                match self.arguments_use(file, owner, mention) {
+                    ArgumentsUse::Harmless => {}
+                    ArgumentsUse::Reads => {
                         reading.entry(owner).or_insert(e);
                     }
-                    UseOfArguments::ReadsByAnyKey(read) => {
+                    ArgumentsUse::DynamicKeyRead(read) => {
                         reading.entry(owner).or_insert(e);
-                        by_any_key.push((owner, read));
+                        by_dynamic_key.push((owner, read));
                     }
-                    UseOfArguments::Tells => {
-                        telling.entry(owner).or_insert(e);
+                    ArgumentsUse::Tells => {
+                        informative_type.entry(owner).or_insert(e);
                     }
                 }
             }
@@ -89,27 +89,27 @@ impl<'p, 's> Checker<'p, 's> {
                 bound.pat_symbol[hir[p].pat.idx()].some().is_some_and(|symbol| !bound.assignments_to(symbol).is_empty() || bound.symbols[symbol.idx()].decls.len() != 1)
             });
             if is_stored_to {
-                telling.entry(func).or_insert(e);
+                informative_type.entry(func).or_insert(e);
             }
         }
-        for &func in telling.keys() {
+        for &func in informative_type.keys() {
             for (i, p) in hir[func].params.iter().enumerate() {
                 if let Some(symbol) = bound.pat_symbol[hir[p].pat.idx()].some() {
                     found.parameters.insert(symbol, (func, i as u32));
                 }
             }
         }
-        for (func, read) in by_any_key {
-            if !telling.contains_key(&func) {
-                found.shown_on_demand.entry(func).or_insert(read);
-                found.reads_by_any_key.insert(read);
+        for (func, read) in by_dynamic_key {
+            if !informative_type.contains_key(&func) {
+                found.materialized_on_demand.entry(func).or_insert(read);
+                found.dynamic_key_reads.insert(read);
             }
         }
-        found.functions = telling;
+        found.functions = informative_type;
         found
     }
 
-    fn references_to_alias_of_arguments(&self, file: FileId, owner: FnId, declaration: VarDeclId) -> Option<&'p [ExprId]> {
+    fn arguments_alias_references(&self, file: FileId, owner: FnId, declaration: VarDeclId) -> Option<&'p [ExprId]> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let pat = hir[declaration].pat;
         let symbol = bound.pat_symbol[pat.idx()];
@@ -120,15 +120,15 @@ impl<'p, 's> Checker<'p, 's> {
         references.iter().all(|&reference| self.enclosing_fn_of_expr(file, reference) == Some(owner)).then_some(references)
     }
 
-    fn use_of_arguments(&mut self, file: FileId, owner: FnId, e: ExprId) -> UseOfArguments {
+    fn arguments_use(&mut self, file: FileId, owner: FnId, e: ExprId) -> ArgumentsUse {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let parent = match bound.expr_parent[e.idx()] {
-            Parent::None => return UseOfArguments::Harmless,
+            Parent::None => return ArgumentsUse::Harmless,
             Parent::Expr(parent) if parent.is_some() => parent,
-            _ => return UseOfArguments::Tells,
+            _ => return ArgumentsUse::Tells,
         };
         let only_reads = match hir[parent].kind {
-            ExprKind::Dot { obj, name, .. } if obj == e && self.atoms().bytes(name) == b"length" => return UseOfArguments::Harmless,
+            ExprKind::Dot { obj, name, .. } if obj == e && self.atoms().bytes(name) == b"length" => return ArgumentsUse::Harmless,
             ExprKind::Index { obj, index, .. } if obj == e => {
                 let is_read = match bound.expr_parent[parent.idx()] {
                     Parent::Expr(user) if user.is_some() => match hir[user].kind {
@@ -144,26 +144,26 @@ impl<'p, 's> Checker<'p, 's> {
                     _ => false,
                 };
                 // By a number: under any other key there may be `callee`.
-                if is_read && self.kinds_yielded_by(file, index) != kind::NUMBER && self.enclosing_fn_of_expr(file, parent) == Some(owner) {
-                    return UseOfArguments::ReadsByAnyKey(parent);
+                if is_read && self.result_kinds_of(file, index) != kind::NUMBER && self.enclosing_fn_of_expr(file, parent) == Some(owner) {
+                    return ArgumentsUse::DynamicKeyRead(parent);
                 }
-                is_read && self.kinds_yielded_by(file, index) == kind::NUMBER
+                is_read && self.result_kinds_of(file, index) == kind::NUMBER
             }
             ExprKind::Spread(_) => true,
             // `f.apply(x, arguments)`.
             ExprKind::Call(call) => hir[call].callee != e && matches!(hir[hir[call].callee].kind, ExprKind::Dot { name, .. } if self.atoms().bytes(name) == b"apply"),
             _ => false,
         };
-        if only_reads { UseOfArguments::Reads } else { UseOfArguments::Tells }
+        if only_reads { ArgumentsUse::Reads } else { ArgumentsUse::Tells }
     }
 
-    pub fn reads_sloppy_arguments_by_any_key(&mut self, file: FileId, e: ExprId) -> bool {
-        self.hir(file).is_js && self.mapped_arguments_of_file(file).reads_by_any_key.contains(&e)
+    pub fn reads_sloppy_arguments_dynamically(&mut self, file: FileId, e: ExprId) -> bool {
+        self.hir(file).is_js && self.file_mapped_arguments(file).dynamic_key_reads.contains(&e)
     }
 
     /// Whether the parameters of the function live in its `arguments` object, which is the mapped one of the language.
     pub fn keeps_parameters_in_arguments(&mut self, file: FileId, func: FnId) -> bool {
-        self.mapped_arguments_of_file(file).functions.contains_key(&func)
+        self.file_mapped_arguments(file).functions.contains_key(&func)
     }
 
     /// Of a parameter of such a function: the function, and which of its parameters it is.
@@ -171,6 +171,6 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.hir(sym.file).is_js {
             return None;
         }
-        self.mapped_arguments_of_file(sym.file).parameters.get(&sym.id).copied()
+        self.file_mapped_arguments(sym.file).parameters.get(&sym.id).copied()
     }
 }

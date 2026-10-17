@@ -140,7 +140,7 @@ fn is_in_list_of_type(text: &[u8], end: usize) -> bool {
 /// The operator that a compound assignment combines with. `None` for `=`.
 /// A name or a member that is not part of an optional chain.
 #[inline(always)]
-fn is_written_as_a_name(key: &[u8]) -> bool {
+fn is_identifier_like(key: &[u8]) -> bool {
     !matches!(key.first(), None | Some(b'0'..=b'9' | b'-' | b'#')) && key != b"Infinity" && key != b"NaN"
 }
 
@@ -1525,6 +1525,38 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
+    pub(crate) fn starts_with_dirname(&self, mut e: ExprId) -> bool {
+        loop {
+            match self.f.exprs.get(e.idx()).map(|it| it.kind) {
+                Some(ExprKind::Ident(name)) => return self.lx.text_of(name) == b"__dirname",
+                Some(ExprKind::Binary { op: BinOp::Add, left, .. }) => e = left,
+                Some(ExprKind::Template { exprs }) if exprs.len() == 1 && self.lx.text_of(self.f.id_at(self.f.template_texts(exprs), 0)).is_empty() => e = self.f.id_at(exprs, 0),
+                _ => return false,
+            }
+        }
+    }
+
+    fn source_path_after_dirname(&mut self, e: ExprId, depth: u32) -> Option<Vec<u8>> {
+        if self.is_too_deep() || depth > 64 {
+            return None;
+        }
+        match self.f.exprs.get(e.idx())?.kind {
+            ExprKind::Ident(_) => Some(Vec::new()),
+            ExprKind::Binary { left, right, .. } => {
+                let mut text = self.source_path_after_dirname(left, depth + 1)?;
+                let ExprKind::String(more) = self.f.exprs.get(right.idx())?.kind else { return None };
+                text.extend_from_slice(self.lx.text_of(more));
+                Some(text)
+            }
+            ExprKind::Template { exprs } => {
+                let mut text = self.source_path_after_dirname(self.f.id_at(exprs, 0), depth + 1)?;
+                text.extend_from_slice(self.lx.text_of(self.f.id_at(self.f.template_texts(exprs), 1)));
+                Some(text)
+            }
+            _ => None,
+        }
+    }
+
     fn note_folded_specifiers(&mut self, argument: ExprId, depth: u32) {
         if self.is_too_deep() {
             return;
@@ -1536,6 +1568,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             ExprKind::Cond { yes, no, .. } if depth < 64 => {
                 self.note_folded_specifiers(yes, depth + 1);
                 self.note_folded_specifiers(no, depth + 1);
+            }
+            ExprKind::Binary { op: BinOp::Add, .. } | ExprKind::Template { .. } if self.starts_with_dirname(argument) => {
+                if let Some(text) = self.source_path_after_dirname(argument, 0).filter(|text| text.first() == Some(&b'/')) {
+                    let folded = self.atom(&[b".".as_slice(), &text].concat());
+                    self.f.folded_specifiers.push((argument, folded));
+                }
             }
             ExprKind::Binary { op: BinOp::Add, .. } | ExprKind::Template { .. } => {
                 if let Some(folded) = self.folded_text(argument, 0) {
@@ -1893,7 +1931,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if self.options.constant_keys_are_names
             && index.idx() + 1 == self.f.exprs.len()
             && let Some(&Expr { kind: ExprKind::String(name), pos, end }) = self.f.exprs.get(index.idx())
-            && is_written_as_a_name(self.lx.text_of(name))
+            && is_identifier_like(self.lx.text_of(name))
         {
             self.f.parens.truncate(parens);
             self.drop_last_expr(index);
@@ -1960,7 +1998,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         chain: Chain,
     ) -> ExprId {
         // `IsRequireCall`
-        let is_require = (self.options.is_javascript || self.options.is_typescript_under_a_javascript_name)
+        let is_require = (self.options.is_javascript || self.options.is_typescript_with_js_extension)
             && matches!(
                 self.f.exprs.get(callee.idx()),
                 Some(Expr {

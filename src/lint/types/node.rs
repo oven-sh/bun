@@ -294,29 +294,29 @@ impl<'a> TsNode<'a> {
     }
 
     /// The check that `--aot` makes of this expression when the program runs, because its type is `any` and it goes into a place that has a type.
-    pub fn aot_check_where_any_enters(self) -> Option<bun_sema::check::AotCheck> {
-        self.file.query(|q| q.aot_check_where_any_enters(self.raw))
+    pub fn aot_check_any_inflow(self) -> Option<bun_sema::check::AotCheck> {
+        self.file.query(|q| q.aot_check_any_inflow(self.raw))
     }
 
     /// Whether the rule that has the bit `pair` leaves this expression to `bun/aot-no-any-to-typed`, which reports it, or what
     /// is in it: an element of an array literal, in an arm of `?:`.
-    pub fn is_left_to_aot_no_any_to_typed(self, pair: crate::language::Twins) -> bool {
+    pub fn is_deferred_to_aot_no_any_to_typed(self, pair: crate::language::RuleOverlaps) -> bool {
         use crate::ast::{Expr, ExprKind, Node};
         fn is_reported(e: Expr) -> bool {
-            e.ts_node().aot_check_where_any_enters().is_some()
+            e.ts_node().aot_check_any_inflow().is_some()
                 || match e.kind() {
                     ExprKind::Array(elements) => elements.iter().any(is_reported),
                     ExprKind::Cond { yes, no, .. } => is_reported(yes) || is_reported(no),
                     _ => false,
                 }
         }
-        self.file.twins_on().contains(pair) && matches!(self.to_ast(), Some(Node::Expr(e)) if is_reported(e))
+        self.file.active_rule_overlaps().contains(pair) && matches!(self.to_ast(), Some(Node::Expr(e)) if is_reported(e))
     }
 
     /// Whether `no-unsafe-type-assertion` leaves this cast to `bun/aot-outside-data`, which reports it, or the last of `a as B as C`.
-    pub fn is_left_to_aot_outside_data(self) -> bool {
+    pub fn is_deferred_to_aot_outside_data(self) -> bool {
         use crate::ast::{ExprTag, Node};
-        if !self.file.twins_on().contains(crate::language::Twins::NO_UNSAFE_TYPE_ASSERTION_LEAVES) {
+        if !self.file.active_rule_overlaps().contains(crate::language::RuleOverlaps::NO_UNSAFE_TYPE_ASSERTION_LEAVES) {
             return false;
         }
         let Some(Node::Expr(mut cast)) = self.to_ast() else {
@@ -327,17 +327,17 @@ impl<'a> TsNode<'a> {
         {
             cast = parent;
         }
-        cast.ts_node().aot_check_where_outside_data_enters().is_some()
+        cast.ts_node().aot_check_external_data_inflow().is_some()
     }
 
     /// Where the value of this expression of type `any` comes from, in words. Empty: it is not known.
-    pub fn aot_where_an_any_comes_from(self) -> Vec<u8> {
-        self.file.query(|q| q.aot_where_an_any_comes_from(self.raw))
+    pub fn aot_describe_any_origin(self) -> Vec<u8> {
+        self.file.query(|q| q.aot_describe_any_origin(self.raw))
     }
 
     /// For `x as T`, where `x` is `any` or `unknown` and does not come from typed code of the program.
-    pub fn aot_check_where_outside_data_enters(self) -> Option<bun_sema::check::AotCheck> {
-        self.file.query(|q| q.aot_check_where_outside_data_enters(self.raw))
+    pub fn aot_check_external_data_inflow(self) -> Option<bun_sema::check::AotCheck> {
+        self.file.query(|q| q.aot_check_external_data_inflow(self.raw))
     }
 
     /// `checker.getContextualTypeForArgumentAtIndex(node, index)`

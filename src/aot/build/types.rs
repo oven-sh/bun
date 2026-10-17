@@ -3,9 +3,9 @@
 use super::FileBuild;
 use super::fit::Ty;
 use crate::declared::{Declared, Part, prim};
-use crate::fragment::LayoutKey;
+use crate::fragment::{LayoutKey, NO_FILE};
 use crate::id::{FuncId, LayoutId, StrId, TyId};
-use crate::ir::{Field, Layout, LayoutKind, Literal, Why, field_flags};
+use crate::ir::{Field, Layout, LayoutKind, Literal, CoerceReason, field_flags};
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Decl, SymFlags};
 use bun_sema::check::{self, BuiltIn, Storage, kind};
@@ -15,13 +15,31 @@ use bun_sema::types::{EnumValue, Intrinsic, Literalness, MapperId, Origin, Prop,
 
 /// A union of more object types of the program than this is described by what they have in common. Whether one type is within another
 /// is asked for every pair of their parts, over and over, and a program has unions of hundreds of object types. The target of a cast
-/// names the parts all the same: see `ty_of_cast_target`.
-const MOST_LAYOUTS_IN_UNION: usize = 4;
+/// names the parts all the same: see `cast_target_ty`.
+const MAX_LAYOUTS_IN_UNION: usize = 4;
 /// A description says what an array holds, what that holds if it is an array again, and so on, this many times. After that it says
 /// `anything`. A type may hold itself, `type Json = string | Json[]`, and a description cannot. Where it stops is counted from the type
 /// that is described, so that a description follows from the type and from nothing that was described before. A layout is named and
 /// not looked into, so it needs no end.
-pub(super) const MOST_HELD_WITHIN_EACH_OTHER: u8 = 4;
+pub(super) const MAX_DESCRIPTION_DEPTH: u8 = 4;
+
+mod cached {
+    use crate::declared::Declared;
+
+    pub(super) const ANY: u16 = 1;
+    pub(super) const RECORD: u16 = 2;
+    pub(super) const OTHER: u16 = 4;
+    pub(super) const PLAIN: u16 = 8;
+    pub(super) const LEAF: u16 = 16;
+
+    pub(super) fn pack(kind: u16, described: &Declared) -> u16 {
+        kind | (described.prims as u16) << 5 | u16::from(described.any_object) << 14 | u16::from(described.any_function) << 15
+    }
+
+    pub(super) fn unpack(packed: u16) -> Declared {
+        Declared { prims: u32::from(packed >> 5 & 0x1FF), any_object: packed >> 14 & 1 != 0, any_function: packed >> 15 & 1 != 0, ..Declared::default() }
+    }
+}
 
 /// Where the types of the fields of a layout are to be had.
 pub(crate) enum FieldTypes {
@@ -35,13 +53,13 @@ pub(crate) enum FieldTypes {
 impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     /// Everything a value of the checker's type can be, as far as a description tells.
     pub(crate) fn ty_of(&mut self, ty: TypeId) -> TyId {
-        self.ty_within(ty, 0)
+        self.ty_at_depth(ty, 0)
     }
 
     /// The same for a type that the type that is described holds, `depth` times over: what the elements of its elements are. What a type
     /// parameter is bounded by counts like what an array holds: `T extends T[]`.
-    fn ty_within(&mut self, ty: TypeId, depth: u8) -> TyId {
-        if depth > MOST_HELD_WITHIN_EACH_OTHER {
+    fn ty_at_depth(&mut self, ty: TypeId, depth: u8) -> TyId {
+        if depth > MAX_DESCRIPTION_DEPTH {
             return self.out.tys.anything;
         }
         if let Some(&known) = self.tys.get(&(ty, depth)) {
@@ -50,40 +68,114 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.describe(ty, depth)
     }
 
+    fn describe_nested(&mut self, ty: TypeId, depth: u8) -> TyId {
+        let id = self.ty_at_depth(ty, depth);
+        self.description_is_layout_free &= self.cached_description(ty) & (cached::ANY | cached::PLAIN) != 0;
+        self.description_is_leaf &= self.is_always_describable(ty);
+        id
+    }
+
+    pub(crate) fn is_always_describable(&self, ty: TypeId) -> bool {
+        matches!(
+            self.c.data(ty),
+            TypeData::Intrinsic(_) | TypeData::StringLit { .. } | TypeData::BigIntLit { .. } | TypeData::BoolLit { .. } | TypeData::NumberLit { .. } | TypeData::EnumLit { .. } | TypeData::Enum { .. } | TypeData::UniqueSymbol { .. } | TypeData::Fns { .. }
+        )
+    }
+
+    fn cached_description(&self, ty: TypeId) -> u16 {
+        if self.file == NO_FILE { 0 } else { self.c.cached_description(ty) }
+    }
+
+    fn publish_description(&self, ty: TypeId, description: u16) {
+        if self.file != NO_FILE {
+            self.c.publish_description(ty, description);
+        }
+    }
+
     fn describe(&mut self, ty: TypeId, depth: u8) -> TyId {
-        // `Identifier & BinaryExpression`: nothing is both, going by `kind`, so it is `never`, which narrowing comes up with all the time.
-        let reduced = self.c.reduced(ty);
-        if reduced != ty {
-            let id = self.ty_within(reduced, depth);
+        let known = self.cached_description(ty);
+        let described = if known & cached::ANY != 0 {
+            Some(self.out.tys.anything)
+        } else if known & cached::PLAIN != 0 {
+            if known & cached::LEAF == 0
+                && depth == 0
+                && let TypeData::Union(parts) = self.c.data(ty)
+            {
+                for &part in parts.iter() {
+                    if !self.is_always_describable(part) {
+                        self.ty_at_depth(part, depth);
+                    }
+                }
+            }
+            let described = cached::unpack(known);
+            Some(self.out.tys.intern(if depth > 0 { described.with_literal_string_widened() } else { described }))
+        } else if known & cached::RECORD != 0 {
+            self.record_layout(ty).map(|layout| self.out.tys.intern(Declared { parts: Declared::part(Part::Class(layout)).parts, ..cached::unpack(known) }))
+        } else {
+            None
+        };
+        if let Some(id) = described {
             self.tys.insert((ty, depth), id);
             return id;
         }
-        if self.c.admits_primitives(ty) {
-            self.tys.insert((ty, depth), self.out.tys.anything);
-            return self.out.tys.anything;
+        if known & cached::OTHER == 0 {
+            // `Identifier & BinaryExpression`: nothing is both, going by `kind`, so it is `never`, which narrowing comes up with all the time.
+            let reduced = self.c.reduced(ty);
+            if reduced != ty {
+                let id = self.ty_at_depth(reduced, depth);
+                self.tys.insert((ty, depth), id);
+                return id;
+            }
+            if self.c.accepts_primitives(ty) {
+                self.publish_description(ty, cached::ANY);
+                self.tys.insert((ty, depth), self.out.tys.anything);
+                return self.out.tys.anything;
+            }
+            // An object type is its layout, which is named and not looked into: a type that mentions itself finds it.
+            if self.is_record_type(ty)
+                && let Some(layout) = self.record_layout(ty)
+            {
+                // Nobody has declared the view that a coercion makes, so no primitive is of it.
+                let described = Declared::part(Part::Class(layout));
+                let around = std::mem::replace(&mut self.description_is_leaf, true);
+                let described = if self.c.is_coercion_result_type(ty) { described } else { self.with_primitives(ty, described) };
+                let is_alone = std::mem::replace(&mut self.description_is_leaf, around);
+                let described = described.nullable();
+                if is_alone {
+                    self.publish_description(ty, cached::pack(cached::RECORD, &described));
+                }
+                let id = self.out.tys.intern(described);
+                self.tys.insert((ty, depth), id);
+                return id;
+            }
         }
-        // An object type is its layout, which is named and not looked into: a type that mentions itself finds it.
-        if self.is_object_type_of_program(ty)
-            && let Some(layout) = self.record_layout(ty)
-        {
-            // Nobody has declared the view that a coercion makes, so no primitive is of it.
-            let described = Declared::part(Part::Class(layout));
-            let described = if self.c.is_view_made_by_coercion(ty) { described } else { self.with_primitives(ty, described) };
-            let id = self.out.tys.intern(described.nilable());
-            self.tys.insert((ty, depth), id);
-            return id;
+        let around = (std::mem::replace(&mut self.description_is_layout_free, true), std::mem::replace(&mut self.description_is_leaf, true));
+        let id = self.describe_non_record(ty, depth);
+        let (is_plain, is_alone) = (std::mem::replace(&mut self.description_is_layout_free, around.0), std::mem::replace(&mut self.description_is_leaf, around.1));
+        let described = self.out.tys.get(id);
+        let is_plain = is_plain && described.parts.is_empty() && described.ints.is_none() && (depth == 0 || described.prims & prim::STRING == 0);
+        if is_plain && is_alone {
+            self.publish_description(ty, cached::pack(cached::OTHER | cached::PLAIN | cached::LEAF, described));
+        } else if is_plain && matches!(self.c.data(ty), TypeData::Union(_)) {
+            self.publish_description(ty, cached::pack(cached::OTHER | cached::PLAIN, described));
+        } else if known & cached::OTHER == 0 {
+            self.publish_description(ty, cached::OTHER);
         }
-        let mut result = self.ty_of_uncached(ty, depth);
+        id
+    }
+
+    fn describe_non_record(&mut self, ty: TypeId, depth: u8) -> TyId {
+        let mut result = self.ty_at_depth_uncached(ty, depth);
         if matches!(self.c.data(ty), TypeData::Ref { .. }) && !self.c.is_array(ty) && result.has_objects() {
             result = self.with_primitives(ty, result);
         }
         // `value as Attr`, with `type Attr = boolean | number | string`, lets an object through as it is. Whoever hands it on, stores it, compares it or asks for its `typeof` sees it so: no
-        // parameter, field, element or result of such a type turns it away. What needs the primitive asserts it: `used_as_its_type`.
-        if result.is_of_several_kinds_of_primitives() {
+        // parameter, field, element or result of such a type turns it away. What needs the primitive asserts it: `as_checked_primitive`.
+        if result.has_multiple_primitive_kinds() {
             result = result.or(&Declared::any_object());
         }
-        let mut result = result.nilable();
-        if !result.is_never() && self.c.admits_nil(ty) {
+        let mut result = result.nullable();
+        if !result.is_never() && self.c.accepts_nullish(ty) {
             result.prims |= prim::NULLISH;
         }
         if depth > 0 {
@@ -96,7 +188,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     /// A primitive that has what an object type says is of the type as well: a string is a `{ length: number }` and an `Iterable<string>`.
     fn with_primitives(&mut self, ty: TypeId, mut described: Declared) -> Declared {
-        for primitive in self.c.primitives_of_type(ty) {
+        for primitive in self.c.assignable_primitives(ty) {
+            self.description_is_leaf = false;
             let primitive = self.ty_of(primitive);
             described = described.or(self.out.tys.get(primitive));
         }
@@ -112,7 +205,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     /// The description of the kinds (`check::kind`). `NONE`: they say nothing, or there is an object among them. In JavaScript an object
     /// is looked at as anything, with a prediction: see `predict_expression`.
-    pub(crate) fn ty_of_kinds(&mut self, kinds: u16) -> TyId {
+    pub(crate) fn kinds_ty(&mut self, kinds: u16) -> TyId {
         if kinds & kind::OBJECTS != 0 || kinds == kind::NOTHING {
             return TyId::NONE;
         }
@@ -131,66 +224,66 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     /// The description, unless it has numbers of which no range is known. Such a number is kept as a raw double, whatever it is expected to be, and most of what untyped code does with a
     /// number wants it as it is handed around there, an int32 in a boxed value: an index, a compare with a counter, a store to a property, an argument. So it stays anything, with its
     /// prediction. (The TypeScript compiler as plain JavaScript: 1,759 M instructions a check; with such numbers said to be numbers 1,920 M; without 1,728 M.)
-    pub(crate) fn unless_plain_number(&self, ty: TyId) -> TyId {
+    pub(crate) fn none_if_unranged_number(&self, ty: TyId) -> TyId {
         if ty.is_some() && self.out.tys.get(ty).prims & prim::NUMBER != 0 { TyId::NONE } else { ty }
     }
 
     /// What a variable or a parameter of an untyped file holds over its whole life, going by what is stored to it and by no type.
-    /// A place is blank before anything is stored to it. There is no symbol to stand in for that: see `blank_of`.
-    fn ty_by_stores(&mut self, sym: Sym) -> Ty {
-        let kinds = self.ask(|c| c.kinds_held_by(sym));
-        let described = self.ty_of_kinds(if kinds & kind::SYMBOL != 0 { kinds | kind::UNDEFINED } else { kinds });
+    /// A place is blank before anything is stored to it. There is no symbol to stand in for that: see `default_value_op`.
+    fn ty_from_stores(&mut self, sym: Sym) -> Ty {
+        let kinds = self.query(|c| c.symbol_kinds(sym));
+        let described = self.kinds_ty(if kinds & kind::SYMBOL != 0 { kinds | kind::UNDEFINED } else { kinds });
         // Not `bigint | integers 0..9`, which no typed code has ever come up with.
-        let integers = if kinds & (kind::NUMBER | kind::BIGINT) == kind::NUMBER { self.ask(|c| c.integers_of_symbol(sym)) } else { None };
+        let integers = if kinds & (kind::NUMBER | kind::BIGINT) == kind::NUMBER { self.query(|c| c.symbol_integer_range(sym)) } else { None };
         let described = self.with_integers(described, integers);
-        Ty::of(self.unless_plain_number(described))
+        Ty::of(self.none_if_unranged_number(described))
     }
 
     /// What the checker has a variable, a parameter or a static field hold over its whole life.
-    pub(crate) fn ty_of_symbol(&mut self, sym: Sym) -> Ty {
+    pub(crate) fn symbol_ty(&mut self, sym: Sym) -> Ty {
         let file = self.value_declaration(sym).map_or(sym.file, |(file, _)| file);
         if self.is_untyped_file(file) {
-            return self.ty_by_stores(sym);
+            return self.ty_from_stores(sym);
         }
-        let storage = self.c.storage_of_symbol(sym);
-        self.ty_of_storage(storage, Some(sym))
+        let storage = self.c.symbol_storage(sym);
+        self.storage_ty(storage, Some(sym))
     }
 
     /// What a store to the variable holds the value to: its type, without the room for the `undefined` that it holds at first. That room is
     /// for the blank start and for `a = undefined!`. Whether there is any depends on what is found out about the reads, and whether a
     /// store throws must not.
-    pub(crate) fn ty_held_by_symbol(&mut self, sym: Sym) -> Ty {
-        let Some((file, Decl::Var(_))) = self.value_declaration(sym) else { return self.ty_of_symbol(sym) };
+    pub(crate) fn symbol_store_ty(&mut self, sym: Sym) -> Ty {
+        let Some((file, Decl::Var(_))) = self.value_declaration(sym) else { return self.symbol_ty(sym) };
         if self.is_untyped_file(file) {
             return Ty::NONE;
         }
-        let storage = self.c.storage_of_symbol(sym);
-        self.ty_of_storage(Storage { starts_undefined: false, ..storage }, Some(sym))
+        let storage = self.c.symbol_storage(sym);
+        self.storage_ty(Storage { starts_undefined: false, ..storage }, Some(sym))
     }
 
     /// Written down or taken from where the function is used, it is the type the checker has held the body to.
-    pub(crate) fn ty_of_param(&mut self, file: FileId, p: ParamId) -> Ty {
+    pub(crate) fn param_ty(&mut self, file: FileId, p: ParamId) -> Ty {
         let hir = self.hir(file);
         let name = self.c.bound(file).pat_symbol[hir[p].pat.idx()].some().map(|name| self.files.sym(file, name));
         if self.is_untyped_file(file) {
-            return name.map_or(Ty::NONE, |name| self.ty_by_stores(name));
+            return name.map_or(Ty::NONE, |name| self.ty_from_stores(name));
         }
-        let storage = self.ask(|c| c.storage_of_param(file, p));
-        self.ty_of_storage(storage, name)
+        let storage = self.query(|c| c.param_storage(file, p));
+        self.storage_ty(storage, name)
     }
 
-    /// Why an argument for the parameter is held to its type.
-    pub(crate) fn why_of_param(&mut self, file: FileId, p: ParamId) -> Why {
-        if self.ask(|c| c.is_param_annotated(file, p)) { Why::Cast } else { Why::Store }
+    /// CoerceReason an argument for the parameter is held to its type.
+    pub(crate) fn param_cast_reason(&mut self, file: FileId, p: ParamId) -> CoerceReason {
+        if self.query(|c| c.is_param_annotated(file, p)) { CoerceReason::Cast } else { CoerceReason::Store }
     }
 
     /// `sym`: the place, if it has a name of its own.
-    fn ty_of_storage(&mut self, storage: Storage, sym: Option<Sym>) -> Ty {
+    fn storage_ty(&mut self, storage: Storage, sym: Option<Sym>) -> Ty {
         let mut id = self.declared(storage.ty);
         if id.is_none()
             && let Some(sym) = sym
             && let Some((file, initializer)) = self.c.initializer_of_const(sym)
-            && let Some(made) = self.ty_made_by(file, initializer)
+            && let Some(made) = self.allocation_ty(file, initializer)
         {
             id = made;
         }
@@ -198,7 +291,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             && id.is_some()
             && self.out.tys.get(id).prims & prim::NUMBER != 0
         {
-            let integers = self.ask(|c| c.integers_of_symbol(sym));
+            let integers = self.query(|c| c.symbol_integer_range(sym));
             id = self.with_integers(id, integers);
         }
         if id.is_some() && storage.starts_undefined {
@@ -208,11 +301,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     /// The classes that the class with the layout extends, the nearest first. None: not all of them are known.
-    fn classes_extended_by(&self, layout: LayoutId) -> Vec<(FileId, ClassId)> {
+    fn base_classes(&self, layout: LayoutId) -> Vec<(FileId, ClassId)> {
         let mut extended = Vec::new();
         let mut at = self.out.layouts[layout.idx()].base;
         while at.is_some() {
-            let Some(&class) = self.laid_out_classes.get(&at) else { return Vec::new() };
+            let Some(&class) = self.fixed_layout_classes.get(&at) else { return Vec::new() };
             extended.push(class);
             at = self.out.layouts[at.idx()].base;
         }
@@ -222,45 +315,45 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     /// Whether the instance field `sym` of the class with the layout may be found to hold `undefined` that nothing has stored to it.
     /// If not, its type may have no room for that.
     pub(crate) fn field_starts_undefined(&mut self, layout: LayoutId, sym: Sym) -> bool {
-        let extended = self.classes_extended_by(layout);
+        let extended = self.base_classes(layout);
         self.c.field_starts_undefined(sym, &extended)
     }
 
-    pub(crate) fn is_let_go_of_by_extended_classes(&mut self, layout: LayoutId) -> bool {
-        let extended = self.classes_extended_by(layout);
-        extended.is_empty() || self.c.is_let_go_of_while_constructed_by(&extended)
+    pub(crate) fn this_escapes_in_base_classes(&mut self, layout: LayoutId) -> bool {
+        let extended = self.base_classes(layout);
+        extended.is_empty() || self.c.this_escapes_during_construction(&extended)
     }
 
-    pub(crate) fn initializers_that_let_go_of_this(&mut self, layout: LayoutId, file: FileId, class: ClassId) -> Vec<bun_sema::hir::MemberId> {
-        let extended = self.classes_extended_by(layout);
-        self.c.initializers_that_let_go_of_this(file, class, &extended)
+    pub(crate) fn initializers_where_this_escapes(&mut self, layout: LayoutId, file: FileId, class: ClassId) -> Vec<bun_sema::hir::MemberId> {
+        let extended = self.base_classes(layout);
+        self.c.initializers_where_this_escapes(file, class, &extended)
     }
 
     /// The type as what a cast makes of plain data. No object is made as what the parts of a union have in common: it is made as one of
     /// the parts, so where that layout stands for the union, here the parts are named, also for the elements of an array.
-    pub(crate) fn ty_of_cast_target(&mut self, ty: TyId) -> TyId {
+    pub(crate) fn cast_target_ty(&mut self, ty: TyId) -> TyId {
         if let Some(&(grown, known)) = self.cast_targets.get(&ty)
-            && grown == self.views_grown
+            && grown == self.layout_growth_epoch
         {
             return known;
         }
-        let found = self.find_ty_of_cast_target(ty);
-        self.cast_targets.insert(ty, (self.views_grown, found));
+        let found = self.find_cast_target_ty(ty);
+        self.cast_targets.insert(ty, (self.layout_growth_epoch, found));
         found
     }
 
-    fn find_ty_of_cast_target(&mut self, ty: TyId) -> TyId {
+    fn find_cast_target_ty(&mut self, ty: TyId) -> TyId {
         let described = self.out.tys.get(ty).clone();
         let mut target = Declared { parts: Default::default(), ..described.clone() };
         for part in &described.parts {
             match part {
-                Part::Class(view) if self.parts_of_views.contains_key(view) => {
-                    for &layout in &self.parts_of_views[view] {
+                Part::Class(view) if self.union_part_layouts.contains_key(view) => {
+                    for &layout in &self.union_part_layouts[view] {
                         target = target.or(&Declared::part(Part::Class(layout)));
                     }
                 }
                 &Part::Array(elements) if elements != ty => {
-                    let elements = self.ty_of_cast_target(elements);
+                    let elements = self.cast_target_ty(elements);
                     target = target.or(&Declared::part(Part::Array(elements)));
                 }
                 part => target = target.or(&Declared::part(part.clone())),
@@ -279,7 +372,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.out.tys.intern(widened)
     }
 
-    fn ty_of_uncached(&mut self, ty: TypeId, depth: u8) -> Declared {
+    fn ty_at_depth_uncached(&mut self, ty: TypeId, depth: u8) -> Declared {
         match self.c.data(ty) {
             TypeData::Intrinsic(intrinsic) => match intrinsic {
                 Intrinsic::Never | Intrinsic::SilentNever | Intrinsic::UnreachableNever | Intrinsic::ImplicitNever | Intrinsic::UniqueLiteral => Declared::never(),
@@ -298,7 +391,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             TypeData::BoolLit { value, .. } => Declared::prims(if *value { prim::TRUE } else { prim::FALSE }),
             TypeData::EnumLit { value: EnumValue::String(_), .. } => Declared::prims(prim::LITERAL_STRING),
             // Which integers a value of such a type is, if it is one, the checker says.
-            TypeData::NumberLit { .. } | TypeData::EnumLit { value: EnumValue::Number(_), .. } => match self.c.integers_of_type(ty) {
+            TypeData::NumberLit { .. } | TypeData::EnumLit { value: EnumValue::Number(_), .. } => match self.c.type_integer_range(ty) {
                 Some((least, most)) => Declared::ints(least, most),
                 None => Declared::prims(prim::NUMBER),
             },
@@ -308,71 +401,73 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             TypeData::Union(parts) => {
                 let mut result = Declared::never();
                 let mut objects: Vec<TypeId> = Vec::new();
+                let is_next_to_enum = self.c.has_numeric_enum_member(ty);
                 for &part in parts.iter() {
                     // What `0` says depends on what it stands beside.
                     if matches!(self.c.data(part), TypeData::NumberLit { .. })
-                        && let Some((least, most)) = self.c.integers_of_part(part, ty)
+                        && let Some((least, most)) = self.c.union_part_integer_range(part, is_next_to_enum)
                     {
-                        result = result.or(&Declared::ints(least, most));
+                        result.merge(&Declared::ints(least, most));
                         continue;
                     }
-                    let described = self.ty_within(part, depth);
+                    let described = self.describe_nested(part, depth);
                     let described = self.out.tys.get(described);
-                    if described.only_layout().is_some() {
+                    if described.single_layout().is_some() {
                         objects.push(part);
                     } else {
-                        result = result.or(described);
+                        result.merge(described);
                     }
                 }
-                let common = if objects.len() > MOST_LAYOUTS_IN_UNION { self.layout_in_common(&objects) } else { None };
+                let common = if objects.len() > MAX_LAYOUTS_IN_UNION { self.common_layout(&objects) } else { None };
                 match common {
                     Some(layout) => {
+                        let mut known_parts: bun_sema::util::FxHashSet<LayoutId> = self.union_part_layouts.get(&layout).into_iter().flatten().copied().collect();
                         for &part in &objects {
                             let described = self.ty_of(part);
-                            let Some(part) = self.out.tys.get(described).only_layout() else { continue };
-                            let parts = self.parts_of_views.entry(layout).or_default();
-                            if !parts.contains(&part) {
-                                parts.push(part);
-                                self.views_grown += 1;
+                            let Some(part) = self.out.tys.get(described).single_layout() else { continue };
+                            if known_parts.insert(part) {
+                                self.union_part_layouts.entry(layout).or_default().push(part);
+                                self.layout_growth_epoch += 1;
                             }
                         }
                         result = result.or(&Declared::part(Part::Class(layout)));
                     }
                     None => {
                         for part in objects {
-                            let described = self.ty_within(part, depth);
-                            result = result.or(self.out.tys.get(described));
+                            let described = self.ty_at_depth(part, depth);
+                            result.merge(self.out.tys.get(described));
                         }
                     }
                 }
-                self.with_one_array_part(result)
+                self.merge_array_parts(result)
             }
             // Not of object types of the program alone, which has a layout.
             TypeData::Intersection(parts) => {
                 // `T & Identifier`, which narrowing makes of a `T extends Node` all the time: what is known of `T` is what it is bounded by.
                 let bound = self.c.base_constraint(ty);
                 if bound != ty {
-                    let bound = self.ty_within(bound, depth + 1);
+                    self.description_is_layout_free = false;
+                    let bound = self.ty_at_depth(bound, depth + 1);
                     return self.out.tys.get(bound).clone();
                 }
                 // An array, a function or an object of a class of the engine of whose properties more is said: `Int32Array & { 0: number }`.
-                if let Some(element) = self.c.element_of_array_subtype(ty) {
-                    return Declared::part(Part::Array(self.ty_within(element, depth + 1)));
+                if let Some(element) = self.c.array_subtype_element(ty) {
+                    return Declared::part(Part::Array(self.ty_at_depth(element, depth + 1)));
                 }
-                if let Some(extended) = self.c.built_in_extended_by(ty) {
-                    return self.ty_of_built_in_that_may_say_more(ty, extended, depth);
+                if let Some(extended) = self.c.extended_built_in(ty) {
+                    return self.refined_built_in_ty(ty, extended, depth);
                 }
                 let mut object = None;
                 for &part in parts.iter() {
                     if matches!(self.c.data(part), TypeData::Intrinsic(Intrinsic::Void)) {
                         return Declared::prims(prim::UNDEFINED);
                     }
-                    let part = self.ty_within(part, depth);
+                    let part = self.describe_nested(part, depth);
                     let part = self.out.tys.get(part);
                     // A primitive with a brand is the primitive. What wraps one is an object.
                     if !part.has_objects() && !part.is_never() {
                         let primitive = part.clone();
-                        return if self.c.is_wrapper_of_primitive(ty) { primitive.or(&Declared::any_object()) } else { primitive };
+                        return if self.c.is_primitive_wrapper(ty) { primitive.or(&Declared::any_object()) } else { primitive };
                     }
                     if object.is_none() && !part.parts.is_empty() && part.prims == 0 {
                         object = Some(part.clone());
@@ -382,11 +477,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
             TypeData::Ref { target, .. } => {
                 let target = *target;
-                self.ty_of_reference(ty, target, depth)
+                self.reference_ty(ty, target, depth)
             }
             TypeData::ThisParam(sym) if self.files.flags(*sym).contains(SymFlags::CLASS) => {
                 let sym = *sym;
-                self.ty_of_reference(ty, sym, depth)
+                self.reference_ty(ty, sym, depth)
             }
             TypeData::Tuple { .. } | TypeData::EvolvingArray(_) => self.array_of(ty, depth),
             TypeData::Fns { .. } => Declared::any_function(),
@@ -398,7 +493,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 if bound == ty {
                     return Declared::anything();
                 }
-                let bound = self.ty_within(bound, depth + 1);
+                self.description_is_layout_free = false;
+                let bound = self.ty_at_depth(bound, depth + 1);
                 self.out.tys.get(bound).clone()
             }
             TypeData::Keyof(_) => Declared::prims(prim::STRING | prim::NUMBER | prim::SYMBOL),
@@ -416,37 +512,38 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     /// out, and nothing is held to that. A type literal or an alias of a declaration file counts: `const o: FromADts = { .. }` is the
     /// program's own claim, checked against its literal. Not so for `lib.*.d.ts`: the engine's own code yields ordinary objects that are
     /// typed by what is written there.
-    pub(crate) fn is_object_type_of_program(&mut self, ty: TypeId) -> bool {
+    pub(crate) fn is_record_type(&mut self, ty: TypeId) -> bool {
         match self.c.data(ty) {
             TypeData::Ref { target, .. } => {
                 let target = *target;
                 if self.c.is_array(ty) || self.files.flags(target).contains(SymFlags::CLASS) {
                     return false;
                 }
-                self.declares_records(target.file) && !self.c.is_ambient_interface(target) && self.c.element_of_array_subtype(ty).is_none() && self.c.built_in_extended_by(ty).is_none()
+                self.declares_records(target.file) && !self.c.is_ambient_interface(target) && self.c.array_subtype_element(ty).is_none() && self.c.extended_built_in(ty).is_none()
             }
             TypeData::Anon { origin, .. } => match *origin {
-                Origin::TypeLiteral(file, _) | Origin::ObjectLiteral(file, ..) | Origin::WidenedLiteral(file, ..) => self.declares_records(file),
+                Origin::TypeLiteral(file, literal) => self.declares_records(file) || self.c.is_safe_validate_result(file, literal),
+                Origin::ObjectLiteral(file, ..) | Origin::WidenedLiteral(file, ..) => self.declares_records(file),
                 // `Readonly<T>`, `Pick<T, K>`, `Partial<T>` are written in the standard library. Whose objects they describe depends on
                 // what they are applied to.
                 Origin::Mapped(file, _) => match self.c.alias_of_type(ty) {
                     _ if self.is_untyped_file(file) => false,
                     // `Record<"code", unknown>`, which `"code" in e` narrows to: any object that has the property is one.
                     Some((_, arguments)) if self.files.module(file).is_lib && arguments.iter().any(|&argument| argument.is_any() || argument == TypeId::UNKNOWN) => false,
-                    Some((_, arguments)) => arguments.into_iter().all(|argument| !self.c.is_object_type(argument) || self.is_object_type_of_program(argument) || self.is_class_of_program(argument)),
+                    Some((_, arguments)) => arguments.into_iter().all(|argument| !self.c.is_object_type(argument) || self.is_record_type(argument) || self.is_program_class(argument)),
                     None => self.is_written_in_typescript(file),
                 },
                 Origin::Module(namespace) => self.c.is_reified_namespace(namespace) && self.declares_records(namespace.file),
                 _ => false,
             },
-            TypeData::Intersection(parts) => parts.iter().all(|&part| self.is_object_type_of_program(part)),
+            TypeData::Intersection(parts) => parts.iter().all(|&part| self.is_record_type(part)),
             TypeData::Synth(shape) => shape.literal != Literalness::SyntheticDefault,
             TypeData::ReverseMapped { .. } => true,
             _ => false,
         }
     }
 
-    fn is_class_of_program(&self, ty: TypeId) -> bool {
+    fn is_program_class(&self, ty: TypeId) -> bool {
         matches!(self.c.data(ty), TypeData::Ref { target, .. } if self.files.flags(*target).contains(SymFlags::CLASS) && self.is_written_in_typescript(target.file) && self.shared.is_compiled(target.file))
     }
 
@@ -461,28 +558,28 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     fn is_written_in_typescript(&self, file: FileId) -> bool {
         let hir = self.hir(file);
-        !self.is_untyped_file(file) && hir.kind != FileKind::Json && !self.only_declares(file)
+        !self.is_untyped_file(file) && hir.kind != FileKind::Json && !self.is_declaration_only(file)
     }
 
-    pub(crate) fn is_declared_by_declaration_files_alone(&mut self, ty: TypeId) -> bool {
-        if ty == TypeId::UNRESOLVED || self.c.says_nothing(ty) {
+    pub(crate) fn is_ambient_only(&mut self, ty: TypeId) -> bool {
+        if ty == TypeId::UNRESOLVED || self.c.is_uninformative(ty) {
             return false;
         }
         self.c.parts(ty).to_vec().into_iter().any(|part| match *self.c.data(part) {
-            TypeData::Ref { target, .. } => self.only_declares(target.file) && (!self.files.module(target.file).is_lib || self.ty_of(part) == self.out.tys.anything),
+            TypeData::Ref { target, .. } => self.is_declaration_only(target.file) && (!self.files.module(target.file).is_lib || self.ty_of(part) == self.out.tys.anything),
             _ => false,
         })
     }
 
-    fn ty_made_by(&mut self, file: FileId, e: bun_sema::hir::ExprId) -> Option<TyId> {
+    fn allocation_ty(&mut self, file: FileId, e: bun_sema::hir::ExprId) -> Option<TyId> {
         match self.hir(file)[e].kind {
-            bun_sema::hir::ExprKind::New(_) => self.ty_made_by_new(file, e),
-            bun_sema::hir::ExprKind::Call(_) => self.ty_made_by_call(file, e),
+            bun_sema::hir::ExprKind::New(_) => self.new_result_ty(file, e),
+            bun_sema::hir::ExprKind::Call(_) => self.call_result_ty(file, e),
             _ => None,
         }
     }
 
-    pub(crate) fn ty_made_by_call(&mut self, file: FileId, e: bun_sema::hir::ExprId) -> Option<TyId> {
+    pub(crate) fn call_result_ty(&mut self, file: FileId, e: bun_sema::hir::ExprId) -> Option<TyId> {
         if !self.c.has_declared_type(file, e) {
             return None;
         }
@@ -492,13 +589,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         let TypeData::Ref { target, .. } = *self.c.data(made) else { return None };
         let name = self.files.symbol(target).name;
-        if self.c.global_type_symbol(name) != Some(target) || !self.files.module(target.file).is_lib || !self.c.calls_static_of_global_object(file, e, name) {
+        if self.c.global_type_symbol(name) != Some(target) || !self.files.module(target.file).is_lib || !self.c.calls_global_static_method(file, e, name) {
             return None;
         }
         Some(self.out.tys.intern(Declared::any_object()))
     }
 
-    pub(crate) fn ty_made_by_new(&mut self, file: FileId, e: bun_sema::hir::ExprId) -> Option<TyId> {
+    pub(crate) fn new_result_ty(&mut self, file: FileId, e: bun_sema::hir::ExprId) -> Option<TyId> {
         if !self.c.has_declared_type(file, e) {
             return None;
         }
@@ -506,7 +603,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if self.ty_of(made) != self.out.tys.anything {
             return None;
         }
-        let root = match self.c.built_in_extended_by(made) {
+        let root = match self.c.extended_built_in(made) {
             Some(BuiltIn::Instance(root)) => root,
             _ => made,
         };
@@ -522,20 +619,21 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         Some(self.out.tys.intern(Declared::any_object()))
     }
 
-    fn ty_of_reference(&mut self, ty: TypeId, target: Sym, depth: u8) -> Declared {
+    fn reference_ty(&mut self, ty: TypeId, target: Sym, depth: u8) -> Declared {
         if self.c.is_array(ty) {
             return self.array_of(ty, depth);
         }
-        if let Some(element) = self.c.element_of_array_subtype(ty) {
-            return Declared::part(Part::Array(self.ty_within(element, depth + 1)));
+        if let Some(element) = self.c.array_subtype_element(ty) {
+            return Declared::part(Part::Array(self.ty_at_depth(element, depth + 1)));
         }
-        if let Some(extended) = self.c.built_in_extended_by(ty) {
-            return self.ty_of_built_in_that_may_say_more(ty, extended, depth);
+        if let Some(extended) = self.c.extended_built_in(ty) {
+            return self.refined_built_in_ty(ty, extended, depth);
         }
         if self.files.flags(target).contains(SymFlags::CLASS)
             && let Some((file, Decl::Class(class))) = self.value_declaration(target)
             && !self.is_ambient(target)
         {
+            self.description_is_layout_free = false;
             return match self.instance_layout(file, class) {
                 Some(layout) => Declared::part(Part::Class(layout)),
                 None => Declared::any_object(),
@@ -566,33 +664,33 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 return Declared::anything();
             }
             let is_only_predicted = matches!(self.c.atoms().bytes(name), b"ArrayBuffer" | b"SharedArrayBuffer" | b"DataView" | b"WeakMap" | b"WeakSet" | b"WeakRef" | b"FinalizationRegistry");
-            if self.only_declares(target.file) && (is_only_predicted || !self.files.module(target.file).is_lib) {
+            if self.is_declaration_only(target.file) && (is_only_predicted || !self.files.module(target.file).is_lib) {
                 return Declared::anything();
             }
             let arguments: Vec<TypeId> = self.c.type_arguments(ty).to_vec();
-            let arguments = arguments.into_iter().map(|argument| self.ty_within(argument, depth + 1)).collect();
+            let arguments = arguments.into_iter().map(|argument| self.ty_at_depth(argument, depth + 1)).collect();
             let name = self.str(name);
             return Declared::part(Part::Global(name, arguments));
         }
-        if self.only_declares(target.file) {
+        if self.is_declaration_only(target.file) {
             return Declared::anything();
         }
         Declared::any_object()
     }
 
-    fn ty_of_built_in_that_may_say_more(&mut self, ty: TypeId, built_in: BuiltIn, depth: u8) -> Declared {
-        let is_called_and_says_more = matches!(built_in, BuiltIn::Function)
+    fn refined_built_in_ty(&mut self, ty: TypeId, built_in: BuiltIn, depth: u8) -> Declared {
+        let is_call_with_narrower_type = matches!(built_in, BuiltIn::Function)
             && (!self.c.signatures(ty, false).is_empty() || !self.c.signatures(ty, true).is_empty())
             && self.c.members(ty).is_some_and(|members| !members.shape().props.is_empty());
-        if is_called_and_says_more { Declared::any_object() } else { self.ty_of_built_in(built_in, depth) }
+        if is_call_with_narrower_type { Declared::any_object() } else { self.built_in_ty(built_in, depth) }
     }
 
-    fn ty_of_built_in(&mut self, built_in: BuiltIn, depth: u8) -> Declared {
+    fn built_in_ty(&mut self, built_in: BuiltIn, depth: u8) -> Declared {
         match built_in {
             BuiltIn::Function => Declared::any_function(),
             BuiltIn::Claimed => Declared::anything(),
             BuiltIn::Instance(class) => {
-                let class = self.ty_within(class, depth);
+                let class = self.describe_nested(class, depth);
                 self.out.tys.get(class).clone()
             }
         }
@@ -601,13 +699,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     /// The checker's type of an array or a tuple.
     fn array_of(&mut self, ty: TypeId, depth: u8) -> Declared {
         let element = match self.c.array_element(ty) {
-            Some(element) => self.ty_within(element, depth + 1),
+            Some(element) => self.ty_at_depth(element, depth + 1),
             None => {
                 let mut result = Declared::never();
                 let arguments: Vec<TypeId> = self.c.type_arguments(ty).to_vec();
                 for argument in arguments {
-                    let argument = self.ty_within(argument, depth + 1);
-                    result = result.or(self.out.tys.get(argument));
+                    let argument = self.ty_at_depth(argument, depth + 1);
+                    result.merge(self.out.tys.get(argument));
                 }
                 self.out.tys.intern(result)
             }
@@ -630,11 +728,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             static_fields: Vec::new(),
             is_allocated: false,
             may_be_frozen: false,
-            admits_foreign: false,
-            is_opened_for_the_log: false,
-            admits_only_other_layouts: false,
+            accepts_untyped: false,
+            is_relaxed_for_logging: false,
+            accepts_only_other_layouts: false,
             members: Vec::new(),
-            members_by_fit: Vec::new(),
+            structural_subtypes: Vec::new(),
             specializations: Vec::new(),
             declared_path: StrId::NONE,
             declared_line: 0,
@@ -643,18 +741,18 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     /// The layout of the objects of this type: a field for each of its properties, in the order of their declaration, of the type the
-    /// property is declared with: see `type_fields_of`. One per type. `None`: the type does not say which properties its objects have.
+    /// property is declared with: see `resolve_field_types`. One per type. `None`: the type does not say which properties its objects have.
     /// `A[] | B[]` as `(A | B)[]`. A type has one element type in the engine.
-    fn with_one_array_part(&mut self, mut described: Declared) -> Declared {
+    fn merge_array_parts(&mut self, mut described: Declared) -> Declared {
         let elements: Vec<TyId> = described.parts.iter().filter_map(|part| if let Part::Array(element) = part { Some(*element) } else { None }).collect();
         if elements.len() < 2 {
             return described;
         }
         let mut merged = Declared::never();
         for element in elements {
-            merged = merged.or(self.out.tys.get(element));
+            merged.merge(self.out.tys.get(element));
         }
-        let merged = self.with_one_array_part(merged);
+        let merged = self.merge_array_parts(merged);
         let merged = self.out.tys.intern(merged);
         described.parts.retain(|part| !matches!(part, Part::Array(_)));
         described.parts.push(Part::Array(merged));
@@ -663,7 +761,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     pub(crate) fn record_layout(&mut self, ty: TypeId) -> Option<LayoutId> {
-        let ty = self.c.laid_out_as(ty);
+        let ty = self.c.layout_defining_type(ty);
         if let Some(&known) = self.records.get(&ty) {
             return known;
         }
@@ -672,9 +770,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     /// What all of the object types have, which is what the program can get at without knowing which of them an object is of: the
     /// discriminant above all. No object is made with this layout.
-    fn layout_in_common(&mut self, objects: &[TypeId]) -> Option<LayoutId> {
+    fn common_layout(&mut self, objects: &[TypeId]) -> Option<LayoutId> {
         let union = self.c.union(objects);
-        let common = self.c.view_of_union(union);
+        let common = self.c.common_supertype_of_union(union);
         self.record_layout(common)
     }
 
@@ -682,8 +780,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         // The type of the objects of a class stands for the layout of the class. A literal that is checked against it is made as what it is
         // by itself, and looked at as the class says. A generic type whose fields are of ever larger instantiations of itself is laid
         // out so far and no further.
-        let gets_no_fields = self.c.members(ty).is_none_or(|members| !members.shape().call.is_empty() || !members.shape().construct.is_empty() || members.shape().props.is_empty());
-        let fields = if gets_no_fields || self.c.is_type_of_instances(ty) || self.c.is_nested_too_deeply(ty) || self.c.is_redefined_somewhere(ty) { None } else { self.fields_of(ty) };
+        let has_no_fields = self.c.members(ty).is_none_or(|members| !members.shape().call.is_empty() || !members.shape().construct.is_empty() || members.shape().props.is_empty());
+        let fields = if has_no_fields || self.c.is_instance_type(ty) || self.c.is_nested_too_deeply(ty) || self.c.may_be_redefined(ty) { None } else { self.declare_fields(ty) };
         let Some(fields) = fields else {
             self.records.insert(ty, None);
             return None;
@@ -698,16 +796,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let key = LayoutKey::Record(self.keep(ty));
         let id = self.add_layout(LayoutKind::Record, name, key);
         self.out.layouts[id.idx()].fields = fields;
-        self.out.layouts[id.idx()].methods = self.accessors_of_literal(ty);
+        self.out.layouts[id.idx()].methods = self.literal_accessors(ty);
         self.records.insert(ty, Some(id));
         self.layout_types.insert(id, ty);
-        self.untyped_layouts.insert(id, FieldTypes::Properties(ty));
+        self.layouts_pending_field_types.insert(id, FieldTypes::Properties(ty));
         Some(id)
     }
 
-    fn accessors_of_literal(&mut self, ty: TypeId) -> Vec<crate::ir::Method> {
+    fn literal_accessors(&mut self, ty: TypeId) -> Vec<crate::ir::Method> {
         let TypeData::Anon { origin: Origin::ObjectLiteral(file, literal, ..) | Origin::WidenedLiteral(file, literal, ..), .. } = *self.c.data(ty) else { return Vec::new() };
-        if self.only_declares(file) {
+        if self.is_declaration_only(file) {
             return Vec::new();
         }
         let hir = self.hir(file);
@@ -720,19 +818,19 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 _ => continue,
             };
             let (bun_sema::hir::PropKey::Name(name), bun_sema::hir::ExprKind::Fn(accessor)) = (hir[p].key, hir[hir[p].value].kind) else { continue };
-            let (name, func) = (self.str(name), self.name_function(file, accessor));
+            let (name, func) = (self.str(name), self.forward_declare_function(file, accessor));
             accessors.push(crate::ir::Method { name, func, kind, flags: 0, key: crate::ir::NO_VARIABLE });
         }
         accessors
     }
 
     /// Where the fields of the layout of the class `class` get their types from.
-    pub(crate) fn set_field_types_of_class(&mut self, layout: LayoutId, class: Sym, base: LayoutId, declared_by: Vec<(u32, Sym)>, implemented: Vec<(u32, TypeId, Atom)>) {
+    pub(crate) fn set_class_field_types(&mut self, layout: LayoutId, class: Sym, base: LayoutId, declared_by: Vec<(u32, Sym)>, implemented: Vec<(u32, TypeId, Atom)>) {
         let declarations = &self.c.bound(class.file).symbols[class.id.idx()].decls;
         if let Some(&Decl::Class(declaration)) = declarations.iter().find(|decl| matches!(decl, Decl::Class(_))) {
-            self.laid_out_classes.insert(layout, (class.file, declaration));
+            self.fixed_layout_classes.insert(layout, (class.file, declaration));
         }
-        self.untyped_layouts.insert(layout, FieldTypes::Members { base, declared_by, implemented });
+        self.layouts_pending_field_types.insert(layout, FieldTypes::Members { base, declared_by, implemented });
     }
 
     /// Whether a layout can have a field by the name: no index, which has its place among the keys by its number, nor the empty name.
@@ -741,7 +839,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     /// A field for each property, without its type.
-    fn fields_of(&mut self, ty: TypeId) -> Option<Vec<Field>> {
+    fn declare_fields(&mut self, ty: TypeId) -> Option<Vec<Field>> {
         let members = self.c.members(ty)?;
         let shape = members.shape();
         // With an index signature besides, as `CompilerOptions` has: what is accessed by a name that is written down has a field, and
@@ -772,15 +870,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
             fields.push(Field::new(self.out.strs.intern(bytes), TyId::NONE, flags));
         }
-        for &(name, _) in self.c.undeclared_fields_of(ty).iter() {
+        for &(name, _) in self.c.undeclared_fields_for(ty).iter() {
             fields.push(Field::new(self.str(name), TyId::NONE, field_flags::OPTIONAL));
         }
         Some(fields)
     }
 
     /// `Field::literals` of a field of the type.
-    fn literals_of(&mut self, checked: TypeId) -> Vec<Literal> {
-        let literals = self.c.literals_of_type(checked);
+    fn field_literals(&mut self, checked: TypeId) -> Vec<Literal> {
+        let literals = self.c.type_literals(checked);
         (literals.into_iter())
             .map(|literal| match literal {
                 check::Literal::String(text) => Literal::Str(self.str(text)),
@@ -793,21 +891,21 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     /// layout that the file does not look into stays without: it is only named, and whoever looks into it says what its fields hold.
     /// The layouts that the types of the fields name are not looked into here, so that this ends: the types of a program refer to each
     /// other through long chains, and to themselves.
-    pub(crate) fn type_fields_of(&mut self, layout: LayoutId) {
-        match self.untyped_layouts.remove(&layout) {
+    pub(crate) fn resolve_field_types(&mut self, layout: LayoutId) {
+        match self.layouts_pending_field_types.remove(&layout) {
             None => {}
             Some(FieldTypes::Properties(ty)) => {
                 let Some(members) = self.c.members(ty) else { return };
-                // As `fields_of` has it.
+                // As `declare_fields` has it.
                 let own = members.shape().props.iter().filter(|prop| !prop.flags.contains(PropFlags::ACCESSOR));
                 for (i, prop) in own.clone().enumerate() {
-                    self.type_field_as_property(layout, i as u32, prop, members.mapper, ty);
+                    self.set_field_type_from_property(layout, i as u32, prop, members.mapper, ty);
                 }
-                for (i, &(name, declaring)) in self.c.undeclared_fields_of(ty).iter().enumerate() {
+                for (i, &(name, declaring)) in self.c.undeclared_fields_for(ty).iter().enumerate() {
                     let field = (own.clone().count() + i) as u32;
                     let Some(declared_by) = self.c.members(declaring) else { continue };
                     let Some(prop) = declared_by.shape().props.iter().find(|prop| prop.name == name) else { continue };
-                    self.type_field_as_property(layout, field, prop, declared_by.mapper, declaring);
+                    self.set_field_type_from_property(layout, field, prop, declared_by.mapper, declaring);
                     // It is optional here.
                     let checked = self.c.union(&[self.checked_fields[&(layout, field)], TypeId::UNDEFINED]);
                     self.checked_fields.insert((layout, field), checked);
@@ -820,7 +918,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 }
             }
             Some(FieldTypes::Members { base, declared_by, implemented }) => {
-                self.type_fields_of(base);
+                self.resolve_field_types(base);
                 let inherited = if base.is_some() { self.out.layouts[base.idx()].fields.len() } else { 0 };
                 for i in 0..inherited {
                     self.out.layouts[layout.idx()].fields[i].declared = self.out.layouts[base.idx()].fields[i].declared;
@@ -832,18 +930,18 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                         self.annotated_fields.insert((layout, i as u32));
                     }
                 }
-                let extended = self.classes_extended_by(layout);
+                let extended = self.base_classes(layout);
                 for (field, sym) in declared_by {
-                    let storage = self.c.storage_of_field(sym, &extended);
-                    let declared = self.ty_of_storage(storage, Some(sym));
+                    let storage = self.c.field_storage(sym, &extended);
+                    let declared = self.storage_ty(storage, Some(sym));
                     let name = self.files.symbol(sym).name;
-                    let is_stored_to_as_more = self.laid_out_classes.get(&layout).copied().is_some_and(|(file, class)| {
-                        let instances = self.c.type_of_instances(file, class);
-                        self.c.is_stored_to_as_more_by_a_checked_text(instances, name)
+                    let is_widened_by_store = self.fixed_layout_classes.get(&layout).copied().is_some_and(|(file, class)| {
+                        let instances = self.c.class_instance_type(file, class);
+                        self.c.is_widened_by_checked_source_store(instances, name)
                     });
-                    let declared = if is_stored_to_as_more { Ty { id: self.out.tys.anything, checked: TypeId::UNKNOWN } } else { declared };
+                    let declared = if is_widened_by_store { Ty { id: self.out.tys.anything, checked: TypeId::UNKNOWN } } else { declared };
                     self.out.layouts[layout.idx()].fields[field as usize].declared = declared.id;
-                    self.out.layouts[layout.idx()].fields[field as usize].literals = self.literals_of(declared.checked);
+                    self.out.layouts[layout.idx()].fields[field as usize].literals = self.field_literals(declared.checked);
                     self.checked_fields.insert((layout, field), declared.checked);
                     if self.c.is_annotated(sym) {
                         self.annotated_fields.insert((layout, field));
@@ -858,7 +956,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     if prop.flags.contains(PropFlags::METHOD) {
                         self.out.layouts[layout.idx()].fields[field as usize].flags |= field_flags::METHOD;
                     }
-                    self.type_field_as_property(layout, field, prop, members.mapper, interface);
+                    self.set_field_type_from_property(layout, field, prop, members.mapper, interface);
                     // `declare x: T`: it is absent until it is stored to, whatever `T` says.
                     if !prop.flags.contains(PropFlags::OPTIONAL) {
                         let declared = self.out.layouts[layout.idx()].fields[field as usize].declared;
@@ -877,23 +975,23 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             TypeData::Union(parts) => parts.to_vec(),
             _ => vec![checked],
         };
-        let is_nil = |data: &TypeData| matches!(data, TypeData::Intrinsic(Intrinsic::Undefined | Intrinsic::Missing | Intrinsic::UndefinedWidening | Intrinsic::Null | Intrinsic::NullWidening));
-        parts.iter().all(|&part| is_nil(self.c.data(part))) || parts.len() == 1 && matches!(self.c.data(parts[0]), TypeData::BoolLit { .. } | TypeData::NumberLit { .. } | TypeData::StringLit { .. } | TypeData::BigIntLit { .. })
+        let is_nullish = |data: &TypeData| matches!(data, TypeData::Intrinsic(Intrinsic::Undefined | Intrinsic::Missing | Intrinsic::UndefinedWidening | Intrinsic::Null | Intrinsic::NullWidening));
+        parts.iter().all(|&part| is_nullish(self.c.data(part))) || parts.len() == 1 && matches!(self.c.data(parts[0]), TypeData::BoolLit { .. } | TypeData::NumberLit { .. } | TypeData::StringLit { .. } | TypeData::BigIntLit { .. })
     }
 
     /// Gives the field the type of the property, which was found in a type whose mapper is `mapper`.
-    fn type_field_as_property(&mut self, layout: LayoutId, field: u32, prop: &Prop, mapper: MapperId, found_in: TypeId) {
-        let is_predicted = self.c.is_prop_predicted(prop) || self.c.is_predicted_through_spread(found_in, prop.name) || self.c.is_stored_to_as_more_by_a_checked_text(found_in, prop.name);
-        let checked = if is_predicted { TypeId::UNKNOWN } else { self.c.type_held_by_prop(prop, mapper) };
+    fn set_field_type_from_property(&mut self, layout: LayoutId, field: u32, prop: &Prop, mapper: MapperId, found_in: TypeId) {
+        let is_predicted = self.c.is_prop_predicted(prop) || self.c.is_predicted_through_spread(found_in, prop.name) || self.c.is_widened_by_checked_source_store(found_in, prop.name);
+        let checked = if is_predicted { TypeId::UNKNOWN } else { self.c.prop_storage_type(prop, mapper) };
         let checked = if self.is_inferred_only_from_first_value(prop, found_in, checked) { TypeId::UNKNOWN } else { checked };
         let may_be_absent = prop.flags.contains(PropFlags::OPTIONAL) || self.out.layouts[layout.idx()].fields[field as usize].flags & field_flags::OPTIONAL != 0;
-        let checked = if may_be_absent && !self.c.admits_undefined(checked) { self.c.union(&[checked, TypeId::UNDEFINED]) } else { checked };
+        let checked = if may_be_absent && !self.c.accepts_undefined(checked) { self.c.union(&[checked, TypeId::UNDEFINED]) } else { checked };
         let declared = self.declared(checked);
-        let written = self.c.integers_written_for_prop(prop);
+        let written = self.c.annotated_prop_integer_range(prop);
         let declared = self.with_integers(declared, written);
         self.out.layouts[layout.idx()].fields[field as usize].declared = self.or_anything(declared);
-        self.out.layouts[layout.idx()].fields[field as usize].literals = self.literals_of(checked);
-        if !self.c.admits_undefined(checked) {
+        self.out.layouts[layout.idx()].fields[field as usize].literals = self.field_literals(checked);
+        if !self.c.accepts_undefined(checked) {
             self.out.layouts[layout.idx()].fields[field as usize].flags |= field_flags::DECLARED_WITHOUT_UNDEFINED;
         }
         self.checked_fields.insert((layout, field), checked);
@@ -903,7 +1001,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     /// Whether the fields of the layout have their types.
-    pub(crate) fn has_typed_fields(&self, layout: LayoutId) -> bool {
-        !self.untyped_layouts.contains_key(&layout)
+    pub(crate) fn has_resolved_field_types(&self, layout: LayoutId) -> bool {
+        !self.layouts_pending_field_types.contains_key(&layout)
     }
 }

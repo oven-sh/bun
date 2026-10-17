@@ -18,10 +18,11 @@ pub(crate) enum Said {
     Integers(Option<(i64, i64)>),
 }
 
-pub(crate) enum Tape {
+pub(crate) enum Tape<'c> {
     Off,
     Written(Vec<Said>),
-    Read(Vec<Said>, usize),
+    ReadShared(&'c [Said], usize),
+    ReadLocal(Rc<[Said]>, usize),
 }
 
 pub(crate) trait Answer: Copy {
@@ -84,27 +85,31 @@ impl Answer for Option<(i64, i64)> {
 }
 
 #[derive(Default)]
-pub(crate) struct KeptForTask {
-    said_of_functions: FxHashMap<(FileId, FnId), Rc<[Said]>>,
+pub(crate) struct TaskCache {
+    function_facts: FxHashMap<(FileId, FnId), Rc<[Said]>>,
 }
 
 impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
-    fn kept_for_task(&mut self) -> &mut KeptForTask {
-        if !self.c.translator.as_ref().is_some_and(|kept| kept.is::<KeptForTask>()) {
-            self.c.translator = Some(Box::<KeptForTask>::default());
+    fn task_cache(&mut self) -> &mut TaskCache {
+        if !self.c.translator.as_ref().is_some_and(|kept| kept.is::<TaskCache>()) {
+            self.c.translator = Some(Box::<TaskCache>::default());
         }
         self.c.translator.as_mut().and_then(|kept| kept.downcast_mut()).expect("it was put there above")
     }
 
-    fn shares_with_other_tasks(&self) -> bool {
+    fn shares_across_tasks(&self) -> bool {
         self.file != NO_FILE && !self.c.is_warming_up()
     }
 
-    pub(super) fn ask<T: Answer>(&mut self, question: impl FnOnce(&mut Checker<'p, 's>) -> T) -> T {
-        if let Tape::Read(said, at) = &mut self.tape {
-            let answer = said.get(*at).copied().and_then(T::of);
+    pub(super) fn query<T: Answer>(&mut self, question: impl FnOnce(&mut Checker<'p, 's>) -> T) -> T {
+        let told = match &mut self.tape {
+            Tape::ReadShared(said, at) => Some((said.get(*at).copied(), at)),
+            Tape::ReadLocal(said, at) => Some((said.get(*at).copied(), at)),
+            _ => None,
+        };
+        if let Some((said, at)) = told {
             *at += 1;
-            if let Some(answer) = answer {
+            if let Some(answer) = said.and_then(T::of) {
                 return answer;
             }
         }
@@ -115,27 +120,26 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         answer
     }
 
-    pub(super) fn declare_function_of_another_file(&mut self, file: FileId, func: FnId, class: Option<(FileId, ClassId)>) -> FuncId {
-        let (shared, shares, knows_uses) = (self.shared, self.shares_with_other_tasks(), self.c.knows_uses_of_functions());
-        let known: Option<Vec<Said>> = match shared.said_of_functions.get_ref(&(file, func, knows_uses)).filter(|_| shares) {
-            Some(said) => Some(said.to_vec()),
-            None => self.kept_for_task().said_of_functions.get(&(file, func)).map(|said| said.to_vec()),
-        };
-        let tape = match known {
-            Some(said) => Tape::Read(said, 0),
-            None => Tape::Written(Vec::new()),
+    pub(super) fn declare_imported_function(&mut self, file: FileId, func: FnId, class: Option<(FileId, ClassId)>) -> FuncId {
+        let (shared, shares, knows_uses) = (self.shared, self.shares_across_tasks(), self.c.has_merged_function_uses());
+        let tape = match shared.function_facts.get_ref(&(file, func, knows_uses)).filter(|_| shares) {
+            Some(said) => Tape::ReadShared(said, 0),
+            None => match self.task_cache().function_facts.get(&(file, func)) {
+                Some(said) => Tape::ReadLocal(Rc::clone(said), 0),
+                None => Tape::Written(Vec::new()),
+            },
         };
         let around = std::mem::replace(&mut self.tape, tape);
-        let id = self.declare_function_anew(file, func, class);
+        let id = self.redeclare_function(file, func, class);
         if let Tape::Written(said) = std::mem::replace(&mut self.tape, around) {
-            let mentions_published_types_alone = said.iter().all(|said| match *said {
+            let references_only_published_types = said.iter().all(|said| match *said {
                 Said::Type(Some(ty)) | Said::TypeAndFlag(ty, _) => !ty.is_local(),
                 _ => true,
             });
-            if mentions_published_types_alone && shares && !self.c.has_answers_that_depend_on_order() {
-                shared.said_of_functions.insert_ref((file, func, knows_uses), said.into_boxed_slice());
+            if references_only_published_types && shares && !self.c.has_order_dependent_results() {
+                shared.function_facts.insert_ref((file, func, knows_uses), said.into_boxed_slice());
             } else {
-                self.kept_for_task().said_of_functions.insert((file, func), said.into());
+                self.task_cache().function_facts.insert((file, func), said.into());
             }
         }
         id

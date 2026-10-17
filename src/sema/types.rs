@@ -2096,7 +2096,7 @@ impl<'s> TypeStore<'s> {
     }
 
     /// How many types are published. Their ids are the numbers below that.
-    pub fn number_of_types(&self) -> u32 {
+    pub fn type_count(&self) -> u32 {
         self.types.items.len()
     }
 }
@@ -3992,13 +3992,13 @@ const HASH_PARTS: usize = 64;
 const FEW_RECORDS: usize = 4096;
 
 /// One thread links or stores this many records of a task at a time.
-const RECORDS_OF_A_PIECE: usize = 1 << 12;
+const RECORDS_PER_PIECE: usize = 1 << 12;
 
 /// The published records of one kind and one task.
 struct Taken<V> {
     /// The number of records of the kind the task had, which is the length of its `Link` array.
     len: usize,
-    /// The index in the task's store, the record. In creation order, in pieces of `RECORDS_OF_A_PIECE`.
+    /// The index in the task's store, the record. In creation order, in pieces of `RECORDS_PER_PIECE`.
     records: Vec<Vec<(u32, V)>>,
     /// The positions among all of `records`, grouped by hash part, in order within a part.
     positions: Vec<u32>,
@@ -4065,12 +4065,12 @@ fn take<V>(own: &mut Own<V>, marks: &Bits, hashes: &[ContentHash]) -> Taken<V> {
         ..Taken::default()
     };
     let count = marks.count();
-    let pieces = (0..count).step_by(RECORDS_OF_A_PIECE);
-    taken.records = pieces.map(|first| Vec::with_capacity(RECORDS_OF_A_PIECE.min(count - first))).collect();
+    let pieces = (0..count).step_by(RECORDS_PER_PIECE);
+    taken.records = pieces.map(|first| Vec::with_capacity(RECORDS_PER_PIECE.min(count - first))).collect();
     let mut position = 0;
     own.records.drain(|index, record| {
         if marks.has(index as usize) {
-            taken.records[position / RECORDS_OF_A_PIECE].push((index, record));
+            taken.records[position / RECORDS_PER_PIECE].push((index, record));
             position += 1;
         }
     });
@@ -4287,7 +4287,7 @@ fn number<V: Send + Sync>(
         joined.push(&mut task.joined);
         pieces.extend(task.records.iter_mut().enumerate().map(|(piece, records)| Piece {
             task: t,
-            first: piece * RECORDS_OF_A_PIECE,
+            first: piece * RECORDS_PER_PIECE,
             records,
             joined: Vec::new(),
         }));

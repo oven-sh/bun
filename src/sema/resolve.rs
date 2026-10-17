@@ -139,14 +139,20 @@ pub trait Host: Sync {
     fn class_options(&self, _path: &[u8]) -> Option<ClassOptions> {
         None
     }
+    fn file_timestamps(&self, _path: &[u8]) -> Option<[i64; 4]> {
+        None
+    }
+    fn has_bundler_source(&self, _path: &[u8]) -> bool {
+        false
+    }
     fn is_early_parse_cancelled(&self) -> bool {
         false
     }
     fn next_early_paths(&self) -> Option<Vec<Vec<u8>>> {
         None
     }
-    /// Called once, when the program and `Options::roots_for_code` are loaded, with every file so far. The sources of the runtime
-    /// that are compiled with them: they are loaded like `Options::roots_for_code`. Each with its `Module::builtin`.
+    /// Called once, when the program and `Options::code_roots` are loaded, with every file so far. The sources of the runtime
+    /// that are compiled with them: they are loaded like `Options::code_roots`. Each with its `Module::builtin`.
     fn builtin_files(
         &self,
         _loaded: &[Option<Box<crate::program::Module<'_>>>],
@@ -154,13 +160,13 @@ pub trait Host: Sync {
     ) -> Vec<(Vec<u8>, crate::program::Builtin)> {
         Vec::new()
     }
-    fn doors_to_the_loader(&self) -> Vec<(u32, crate::hir::ExprId)> {
+    fn loader_entry_points(&self) -> Vec<(u32, crate::hir::ExprId)> {
         Vec::new()
     }
-    fn doors_to_files(&self) -> Vec<(u32, crate::hir::ExprId)> {
+    fn file_loader_entry_points(&self) -> Vec<(u32, crate::hir::ExprId)> {
         Vec::new()
     }
-    fn is_commonjs_to_the_runtime(&self, _path: &[u8]) -> Option<bool> {
+    fn is_runtime_commonjs(&self, _path: &[u8]) -> Option<bool> {
         None
     }
     /// `None`: `importer` is none of `builtin_files`. Else the file that `specifier` stands for there, as a specifier that resolves to
@@ -568,7 +574,7 @@ pub struct ParseOptions {
     /// The source text of TypeScript's own libraries is only consulted where they are checked. With `libReplacement` a
     /// library can be any file.
     pub keeps_the_text_of_libraries: bool,
-    pub gives_direct_evals_their_scopes: bool,
+    pub attaches_direct_eval_scopes: bool,
     pub bind: crate::bind::BindOptions,
 }
 
@@ -582,10 +588,10 @@ pub struct Options {
     /// `PathsBasePath`: the directory of the configuration file that specifies `paths`, which they
     /// are relative to.
     pub paths_base_dir: Vec<u8>,
-    pub takes_paths_from_the_nearest_config: bool,
+    pub uses_nearest_config_paths: bool,
     /// `baseUrl`, which TypeScript has removed. Absolute. Empty: there is none. See `tolerate_removed_options`.
     pub removed_base_url: Vec<u8>,
-    /// See `ignore_paths_of`.
+    /// See `ignore_paths_for_host_modules`.
     pub host_modules_without_paths: Vec<Vec<u8>>,
     /// `skipLibCheck`: declaration files are not checked. `skipDefaultLibCheck`: TypeScript's own are not.
     pub skip_lib_check: bool,
@@ -597,7 +603,7 @@ pub struct Options {
     /// file afterwards leaves it off.
     pub drops_unreferenced: bool,
     pub early_parse_only: bool,
-    pub gives_direct_evals_their_scopes: bool,
+    pub attaches_direct_eval_scopes: bool,
     /// `GetSuggestionDiagnostics` are reported as well. Not a TypeScript option: its tests use
     /// `@captureSuggestions`.
     pub captures_suggestions: bool,
@@ -611,8 +617,8 @@ pub struct Options {
     /// The `N` of each `lib.N.d.ts` to start from: the entries of `compilerOptions.lib`, or the
     /// default for the target.
     pub libs: Vec<Vec<u8>>,
-    pub intrinsics_of_bun: Option<Vec<u8>>,
-    pub global_of_bun: Option<Vec<u8>>,
+    pub bun_intrinsics: Option<Vec<u8>>,
+    pub bun_global: Option<Vec<u8>>,
     /// `noLib`: no libraries are loaded, and `/// <reference lib>` is ignored.
     pub no_lib: bool,
     /// `libReplacement`: `lib.dom.d.ts` is replaced by the package `@typescript/lib-dom`, if it
@@ -666,16 +672,16 @@ pub struct Options {
     pub strict_property_initialization: bool,
     /// JavaScript without imports and exports that names `exports` or `module` is a CommonJS module, as it is for the runtime. TypeScript wants `require(..)`, `module.exports = ..` or
     /// `exports.a = ..`, and takes a file with `var util = exports;` for a script. Not a TypeScript option. The driver says: it is on for a program that is compiled.
-    pub names_make_commonjs: bool,
-    pub computes_as_the_engine: bool,
-    pub one_name_is_one_binding: bool,
+    pub detects_commonjs_by_free_names: bool,
+    pub uses_engine_arithmetic: bool,
+    pub uses_ecmascript_bindings: bool,
     pub build_constants: Option<std::sync::Arc<crate::fold::BuildConstants>>,
     /// What `getUndefinedProperty` makes has no declaration and is not readonly. TypeScript makes one for a name from the first property it is asked for, whose declarations it keeps: which
     /// that is goes by the order of the check, so here by the files that share a task. Not a TypeScript option. The driver says: it is on for a program that is compiled, where a type
     /// has to be the same in every task.
-    pub undefined_properties_name_nobody: bool,
+    pub undefined_properties_have_no_declaration: bool,
     pub pops_every_type_resolution: bool,
-    pub follows_javascript_only_as_code: bool,
+    pub resolves_js_imports_as_code_only: bool,
     pub no_implicit_this: bool,
     pub allow_unreachable_code: Option<bool>,
     pub allow_unused_labels: Option<bool>,
@@ -735,8 +741,8 @@ pub struct Options {
     pub own_roots: Option<usize>,
     /// The root files from this one on are the files of a bundle. An import is resolved here for its types, and by the bundler for the
     /// code that runs, often to another file: `@types/react/index.d.ts` and `react/index.js`. Those of them that the program does not
-    /// have anyway are loaded for whoever compiles it, see `Module::is_only_code`. `None`: there are none.
-    pub roots_for_code: Option<usize>,
+    /// have anyway are loaded for whoever compiles it, see `Module::is_code_only`. `None`: there are none.
+    pub code_roots: Option<usize>,
     /// `validatedFilesSpecBeforeSubstitution`, each paired with the corresponding entry of
     /// `validatedFilesSpec` as an absolute path.
     pub file_specs: Vec<(Vec<u8>, Vec<u8>)>,
@@ -851,14 +857,14 @@ impl Options {
             jsx_imports_its_factory: matches!(self.jsx, JsxEmit::ReactJsx | JsxEmit::ReactJsxDev),
             keeps_the_text_of_libraries: self.lib_replacement
                 || !(self.skip_lib_check || self.skip_default_lib_check),
-            gives_direct_evals_their_scopes: self.gives_direct_evals_their_scopes,
+            attaches_direct_eval_scopes: self.attaches_direct_eval_scopes,
             bind: crate::bind::BindOptions {
                 emit_standard_class_fields: self.emit_standard_class_fields,
                 before_es2020: is_before(ScriptTarget::ES2020),
                 before_es2017: is_before(ScriptTarget::ES2017),
-                names_make_commonjs: self.names_make_commonjs,
-                one_name_is_one_binding: self.one_name_is_one_binding,
-                is_commonjs_by_decree: None,
+                detects_commonjs_by_free_names: self.detects_commonjs_by_free_names,
+                uses_ecmascript_bindings: self.uses_ecmascript_bindings,
+                is_forced_commonjs: None,
             },
         }
     }
@@ -1247,7 +1253,7 @@ impl Options {
     /// For a program that is compiled. A specifier that names a module of the host is that module when the program runs, whatever
     /// `paths` says, so the file that `paths` has for it is no part of the program. Nothing is known of such a module unless something
     /// declares it.
-    pub fn ignore_paths_of(&mut self, is_host_module: impl Fn(&[u8]) -> bool) {
+    pub fn ignore_paths_for_host_modules(&mut self, is_host_module: impl Fn(&[u8]) -> bool) {
         let (of_host, others): (Paths, Paths) = self.paths.iter().cloned().partition(|path| is_host_module(&path.0));
         self.paths = std::sync::Arc::new(others);
         self.host_modules_without_paths = of_host.into_iter().map(|path| path.0).collect();
@@ -2029,7 +2035,7 @@ pub struct ResolvedModule<'h> {
     pub package_id: Option<PackageId<'h>>,
 }
 
-struct PathsOfConfig {
+struct ConfigPaths {
     paths: std::sync::Arc<Paths>,
     base_dir: Vec<u8>,
     base_url: Vec<u8>,
@@ -2108,7 +2114,7 @@ pub struct Resolver<'h> {
     /// `None`: it is not a symlink.
     linked_packages: Memo<&'h [u8], Option<&'h [u8]>>,
     config_by_folder: Memo<&'h [u8], Option<&'h [u8]>>,
-    paths_by_config: Memo<&'h [u8], Option<PathsOfConfig>>,
+    paths_by_config: Memo<&'h [u8], Option<ConfigPaths>>,
     /// `GetCompilerOptionsWithRedirect`: one for each of `options.referenced_options`, made when a file of that project is
     /// first resolved from: the empty maps of a resolver are five times 64 shards, and a project of a monorepo references
     /// hundreds.
@@ -3029,7 +3035,7 @@ impl<'h> Resolver<'h> {
         // `tryLoadModuleUsingBaseUrl`
         let base_urls = match is_relative(spec) {
             true => [&[][..], &[][..]],
-            false => [self.paths_of_another_config(from_dir).map_or(&[][..], |other| &other.base_url[..]), &self.options.base_url[..]],
+            false => [self.nearest_config_paths(from_dir).map_or(&[][..], |other| &other.base_url[..]), &self.options.base_url[..]],
         };
         for base_url in base_urls.into_iter().filter(|base_url| !base_url.is_empty()) {
             let candidate = resolve_path(base_url, spec);
@@ -3160,9 +3166,9 @@ impl<'h> Resolver<'h> {
     }
 
     pub fn package_directory<'d>(&self, path: &'d [u8]) -> Option<&'d [u8]> {
-        let says_more_than_the_module_type = |package: &Package<'h>| !matches!(package.json.as_object(), Some([only]) if only.0 == b"type");
+        let is_narrower_than_module_type = |package: &Package<'h>| !matches!(package.json.as_object(), Some([only]) if only.0 == b"type");
         let directory = dirname::<Posix>(path);
-        ancestors(directory).find(|at| self.package(at).is_some_and(says_more_than_the_module_type)).or_else(|| Some(self.package_scope(directory)?.0))
+        ancestors(directory).find(|at| self.package(at).is_some_and(is_narrower_than_module_type)).or_else(|| Some(self.package_scope(directory)?.0))
     }
 
     /// `loadSourceFileMetaData`: the `package.json` nearest to the file at `path`
@@ -3405,12 +3411,12 @@ impl<'h> Resolver<'h> {
     /// `tryLoadModuleUsingPathsIfEligible`: `tryLoadModuleUsingPaths` with `compilerOptions.paths`.
     fn through_paths(&self, spec: &[u8], from_dir: &[u8], look: Look) -> Option<Vec<u8>> {
         let own_base = if self.options.paths_base_dir.is_empty() { &self.options.base_dir } else { &self.options.paths_base_dir };
-        self.paths_of_another_config(from_dir)
-            .and_then(|other| self.through_paths_of(&other.paths, &other.base_dir, spec, look))
-            .or_else(|| self.through_paths_of(&self.options.paths, own_base, spec, look))
+        self.nearest_config_paths(from_dir)
+            .and_then(|other| self.resolve_through_paths(&other.paths, &other.base_dir, spec, look))
+            .or_else(|| self.resolve_through_paths(&self.options.paths, own_base, spec, look))
     }
 
-    fn through_paths_of(&self, paths: &Paths, base: &[u8], spec: &[u8], look: Look) -> Option<Vec<u8>> {
+    fn resolve_through_paths(&self, paths: &Paths, base: &[u8], spec: &[u8], look: Look) -> Option<Vec<u8>> {
         if paths.is_empty() {
             return None;
         }
@@ -3430,7 +3436,7 @@ impl<'h> Resolver<'h> {
         })
     }
 
-    fn config_governing(&self, folder: &[u8]) -> Option<&'h [u8]> {
+    fn governing_config(&self, folder: &[u8]) -> Option<&'h [u8]> {
         if let Some(&known) = self.config_by_folder.get_ref(folder) {
             return known;
         }
@@ -3439,20 +3445,20 @@ impl<'h> Resolver<'h> {
         let found = match own {
             Some(own) => Some(self.keep(&own)),
             None if parent == folder || parent.is_empty() || folder.ends_with(b"/node_modules") => None,
-            None => self.config_governing(parent),
+            None => self.governing_config(parent),
         };
         *self.config_by_folder.insert_ref(self.keep(folder), found)
     }
 
-    fn paths_of_another_config(&self, from_dir: &[u8]) -> Option<&PathsOfConfig> {
-        if !self.options.takes_paths_from_the_nearest_config || strings::contains(from_dir, b"/node_modules/") {
+    fn nearest_config_paths(&self, from_dir: &[u8]) -> Option<&ConfigPaths> {
+        if !self.options.uses_nearest_config_paths || strings::contains(from_dir, b"/node_modules/") {
             return None;
         }
-        let config = self.config_governing(from_dir).filter(|config| dirname::<Posix>(config) != &self.options.base_dir[..])?;
+        let config = self.governing_config(from_dir).filter(|config| dirname::<Posix>(config) != &self.options.base_dir[..])?;
         if let Some(known) = self.paths_by_config.get_ref(config) {
             return known.as_ref();
         }
-        let found = crate::config::options_for_resolution(self.host, config).map(|options| PathsOfConfig {
+        let found = crate::config::options_for_resolution(self.host, config).map(|options| ConfigPaths {
             base_dir: if options.paths_base_dir.is_empty() { options.base_dir } else { options.paths_base_dir },
             paths: options.paths,
             base_url: options.base_url,
@@ -3565,7 +3571,7 @@ impl<'h> Resolver<'h> {
     /// Resolves the relative specifier `spec` from `from_dir`.
     fn relative(&self, spec: &[u8], from_dir: &[u8], look: Look) -> Option<Vec<u8>> {
         let candidate = normalize_path_for_cjs_resolution(from_dir, spec);
-        let code = if look.typescript { self.typescript_under_a_javascript_name(&candidate, look) } else { None };
+        let code = if look.typescript { self.typescript_with_js_extension(&candidate, look) } else { None };
         code.or_else(|| self.file_or_directory(&candidate, look))
     }
 
@@ -3858,7 +3864,7 @@ impl<'h> Resolver<'h> {
         is_json.then(|| self.try_file(&[stem, b".json"].concat(), look))?
     }
 
-    fn typescript_under_a_javascript_name(&self, candidate: &[u8], look: Look) -> Option<Vec<u8>> {
+    fn typescript_with_js_extension(&self, candidate: &[u8], look: Look) -> Option<Vec<u8>> {
         [&b""[..], b".js", b".cjs", b".mjs", b"/index.js"].iter().find_map(|ending| {
             let path = [candidate, *ending].concat();
             ScriptKind::from_file_name(&path).filter(|kind| kind.is_javascript())?;

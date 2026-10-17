@@ -89,7 +89,7 @@ impl BuildCommand {
         }
 
         if ctx.bundler_options.compile && ctx.bundler_options.aot && !ctx.bundler_options.compile_run {
-            match entry_points_of_patterns(&ctx.args.entry_points) {
+            match expand_entry_point_patterns(&ctx.args.entry_points) {
                 Ok(entry_points) => ctx.args.entry_points = entry_points,
                 Err(message) => {
                     Output::err_generic("{}", (message.as_str(),));
@@ -172,7 +172,7 @@ impl BuildCommand {
             Output::err_generic("--dts requires --outdir, and cannot be used with --compile", ());
             Global::exit(1);
         }
-        let leaves_out_sound_files_for = {
+        let skips_sound_files_for = {
             let options = &ctx.bundler_options;
             let unsupported = [
                 (options.minify_syntax || options.minify_whitespace || options.minify_identifiers, "--minify"),
@@ -182,8 +182,8 @@ impl BuildCommand {
             ];
             unsupported.iter().find(|(is_set, _)| *is_set && options.dts).map(|(_, option)| *option)
         };
-        let writes_sound_files = ctx.bundler_options.dts && leaves_out_sound_files_for.is_none();
-        this_transpiler.options.leaves_out_sound_files_for = leaves_out_sound_files_for;
+        let writes_sound_files = ctx.bundler_options.dts && skips_sound_files_for.is_none();
+        this_transpiler.options.skips_sound_files_for = skips_sound_files_for;
         let mut declaration_files: options::DeclarationFiles = Vec::new();
         let mut module_types = None;
         if (ctx.bundler_options.check || ctx.bundler_options.dts) && ctx.bundler_options.transform_only {
@@ -193,7 +193,7 @@ impl BuildCommand {
                 defines: &[],
                 features: &mut std::iter::empty(),
                 dropped_imports: &mut std::iter::empty(),
-                without_side_effects: &mut std::iter::empty(),
+                side_effect_free_files: &mut std::iter::empty(),
                 lifted_commonjs: &mut std::iter::empty(),
                 kinds: &mut std::iter::empty(),
                 statements: &mut std::iter::empty(),
@@ -212,15 +212,15 @@ impl BuildCommand {
                 ignore_dce_annotations: false,
                 jsx_side_effects: false,
                 minify_syntax: false,
-                shortens_names: false,
+                minifies_identifiers: false,
                 preserve_source_paths: false,
-                react_compiler_outputs: bun_bundler::options::ReactCompilerOutputsLater::none(),
+                react_compiler_outputs: bun_bundler::options::DeferredReactCompilerOutputs::none(),
                 jsx: &mut core::iter::empty(),
                 classes: &mut core::iter::empty(),
-                function_texts: None,
-                printing_of_function_texts: Default::default(),
+                function_sources: None,
+                function_source_printing: Default::default(),
                 explain: &[],
-                explains_into_log: false,
+                explain_to_log: false,
                 logs_type_errors: false,
                 early_analysis: None,
                 release_asts: &mut || {},
@@ -787,8 +787,8 @@ impl BuildCommand {
                         output_files.push(options::OutputFile::declaration(&source, path, text, false));
                     }
                 }
-                if let Some(option) = leaves_out_sound_files_for {
-                    log_ref.add_warning_fmt(None, bun_ast::Loc::EMPTY, format_args!("{}: it does not support {option} yet", options::SOUND_FILES_LEFT_OUT));
+                if let Some(option) = skips_sound_files_for {
+                    log_ref.add_warning_fmt(None, bun_ast::Loc::EMPTY, format_args!("{}: it does not support {option} yet", options::SKIPPED_SOUND_FILES));
                 }
                 if let Some(write_sound_files) = this_transpiler.options.write_sound_files {
                     use bun_paths::resolve_path::{join_abs_string, platform::Auto};
@@ -818,13 +818,13 @@ impl BuildCommand {
                         file.source_map_index = u32::MAX;
                     }
                     output_files.retain(|file| file.output_kind != options::OutputKind::Sourcemap);
-                    let inside_the_outdir = |path: &[u8]| -> Box<[u8]> { path.strip_prefix(&outdir[..]).map_or(path, |inside| inside.strip_prefix(b"/").unwrap_or(inside)).into() };
+                    let inside_outdir = |path: &[u8]| -> Box<[u8]> { path.strip_prefix(&outdir[..]).map_or(path, |inside| inside.strip_prefix(b"/").unwrap_or(inside)).into() };
                     for file in typed.sound_files {
-                        let beside = inside_the_outdir(&file.declaration_file);
+                        let beside = inside_outdir(&file.declaration_file);
                         let declarations = output_files.iter_mut().find(|written| written.output_kind == options::OutputKind::Declaration && written.dest_path == beside);
                         let Some(options::OutputFileValue::Buffer { bytes }) = declarations.map(|written| &mut written.value) else { continue };
                         *bytes = [&file.mark[..], &bytes[..]].concat().into_boxed_slice();
-                        output_files.push(options::OutputFile::sound(&file.path, inside_the_outdir(&file.path), file.text, false));
+                        output_files.push(options::OutputFile::sound(&file.path, inside_outdir(&file.path), file.text, false));
                     }
                 }
                 break 'brk output_files;
@@ -1527,7 +1527,7 @@ fn print_summary(
 }
 
 /// With `--compile --aot` an entry point may be a pattern, as of `Bun.Glob`, from the working directory: `.next/server/**/*.js`.
-fn entry_points_of_patterns(written: &[Box<[u8]>]) -> Result<Vec<Box<[u8]>>, String> {
+fn expand_entry_point_patterns(written: &[Box<[u8]>]) -> Result<Vec<Box<[u8]>>, String> {
     use bun_glob::{BunGlobWalker, walk};
     let mut cwd_buf = bun_paths::path_buffer_pool::get();
     let Ok(working_directory) = bun_core::getcwd(&mut cwd_buf) else {
@@ -1579,7 +1579,7 @@ pub(crate) fn collect_compile_assets(
     let entry_name = bun_paths::basename(outfile);
 
     #[cfg(unix)]
-    let at_their_real_paths_too: Vec<Box<[u8]>>;
+    let also_at_real_paths: Vec<Box<[u8]>>;
     #[cfg(unix)]
     let assets = if in_place {
         let mut all = assets.to_vec();
@@ -1595,8 +1595,8 @@ pub(crate) fn collect_compile_assets(
                 }
             }
         }
-        at_their_real_paths_too = all;
-        &at_their_real_paths_too[..]
+        also_at_real_paths = all;
+        &also_at_real_paths[..]
     } else {
         assets
     };
@@ -1653,7 +1653,7 @@ pub(crate) fn collect_compile_assets(
                 bun_sys::Error::from_code(bun_sys::E::EINVAL, bun_sys::Tag::open).with_path(asset),
             );
         }
-        // In place a file is held at the path it has: `StandaloneModuleGraph::held_as`.
+        // In place a file is held at the path it has: `StandaloneModuleGraph::embedded_name`.
         let mut absolute_buf = bun_paths::path_buffer_pool::get();
         let mut cwd_buf = bun_paths::path_buffer_pool::get();
         let held: Vec<u8>;

@@ -707,14 +707,14 @@ impl Checker<'_, '_> {
         }
         let error_at =
             |start: u32, code: u32, modifier| GrammarError::some(start, 0, code, [modifier, ""]);
-        let is_static_constructor_of_javascript = seen.contains(Flags::STATIC)
+        let is_js_static_constructor = seen.contains(Flags::STATIC)
             && matches!(node, NodeData::Member(m) if hir.is_js
                 && hir[m].kind == MemberKind::Method
                 && hir[m].key == PropKey::Name(known::constructor)
                 && !hir[m].flags.contains(Flags::COMPUTED_NAME)
                 && hir[m].func.is_some()
                 && !hir[hir[m].func].flags.contains(Flags::GENERATOR));
-        if kind == Kind::Constructor || is_static_constructor_of_javascript {
+        if kind == Kind::Constructor || is_js_static_constructor {
             return if seen.contains(Flags::STATIC) {
                 error_at(last_static, 1089, "static")
             } else if seen.contains(Flags::OVERRIDE) {

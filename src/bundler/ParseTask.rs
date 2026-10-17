@@ -2526,7 +2526,7 @@ pub mod parse_worker {
         };
         opts.inline_import_meta_paths = topts.preserve_source_paths;
         opts.keeps_reexport_only_modules = topts.preserve_source_paths;
-        opts.leaves_assignments_to_imports_to_run_time = topts.preserve_source_paths && topts.compiles_ahead_of_time();
+        opts.defers_import_assignment_errors = topts.preserve_source_paths && topts.compiles_ahead_of_time();
         opts.compiles_ahead_of_time = topts.compiles_ahead_of_time();
         opts.features.inject_jest_globals = topts.rewrite_jest_for_tests;
         opts.features.minify_syntax = topts.minify_syntax;
@@ -2830,15 +2830,15 @@ pub mod parse_worker {
                     ParseTaskStage::NeedsSourceCode => unreachable!(),
                 };
             let bundle_options = &ctx.transpiler().options;
-            let is_parsed_for_the_analysis_alone = bundle_options.compiles_ahead_of_time()
+            let is_parsed_for_analysis_only = bundle_options.compiles_ahead_of_time()
                 && !this.source_index.is_runtime()
                 && this.known_target != options::Target::Browser
                 && this.loader.or_else(|| this.path.loader(&bundle_options.loaders)).is_some_and(|loader| loader.is_javascript_like());
-            if is_parsed_for_the_analysis_alone {
+            if is_parsed_for_analysis_only {
                 worker.enter_scan_arena();
             }
             let parsed = run_with_source_code(this, worker, &mut step, &mut log, &mut entry);
-            if is_parsed_for_the_analysis_alone {
+            if is_parsed_for_analysis_only {
                 worker.leave_scan_arena();
             }
             this.stage = ParseTaskStage::NeedsParse(entry);

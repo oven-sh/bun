@@ -1,10 +1,11 @@
 use super::super::fit::Ty;
 use super::super::{FileBuild, Fx};
-use super::Made;
+use super::GeneratedFunction;
 use crate::builder::Var;
 use crate::id::{BlockId, FuncId, TyId, V};
-use crate::ir::{Args, BinOp, Op, Operation, RelOp, Target, Term, Why};
-use bun_sema::check::{Constant, OtherKeys, Planned, PlannedMember, PlannedPrimitive, ValidationPlan};
+use crate::ir::{Args, BinOp, Op, Operation, RelOp, Target, Term, CoerceReason};
+use crate::declared::Declared;
+use bun_sema::check::{Constant, OtherKeys, Planned, PlannedMember, PlannedPrimitive, Rule, ValidationPlan};
 use bun_sema::types::TypeId;
 use std::rc::Rc;
 
@@ -27,7 +28,7 @@ fn is_parsed_in_place(plan: &ValidationPlan, node: u32) -> bool {
     }
 }
 
-fn opener_of(plan: &ValidationPlan, node: u32) -> Option<u8> {
+fn opening_byte(plan: &ValidationPlan, node: u32) -> Option<u8> {
     match plan.nodes[node as usize].planned {
         Planned::Primitive(PlannedPrimitive::Text) => Some(b'"'),
         Planned::Dictionary { .. } => Some(b'{'),
@@ -58,7 +59,7 @@ fn discriminating_prefixes(plan: &ValidationPlan, arms: &[u32]) -> Option<Vec<Ve
         Planned::Object { members, .. } if is_parsed_in_place(plan, arm) => Some(members),
         _ => None,
     };
-    let text_under = |arm: u32, name: &[u8]| {
+    let source_slice = |arm: u32, name: &[u8]| {
         let member = members_of(arm)?.iter().find(|member| member.name == name && !member.is_optional)?;
         match &plan.nodes[member.node as usize] {
             described if !described.rules.is_empty() || described.default.is_some() => None,
@@ -69,7 +70,7 @@ fn discriminating_prefixes(plan: &ValidationPlan, arms: &[u32]) -> Option<Vec<Ve
         }
     };
     members_of(*arms.first()?)?.iter().find_map(|member| {
-        let texts: Vec<&Vec<u8>> = arms.iter().map(|&arm| text_under(arm, &member.name)).collect::<Option<_>>()?;
+        let texts: Vec<&Vec<u8>> = arms.iter().map(|&arm| source_slice(arm, &member.name)).collect::<Option<_>>()?;
         let are_distinct = texts.iter().enumerate().all(|(at, text)| !texts[..at].contains(text));
         are_distinct.then(|| texts.iter().map(|text| [b"{\"", &member.name[..], b"\":\"", &text[..], b"\""].concat()).collect())
     })
@@ -170,6 +171,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         cursor
     }
 
+    fn exact_integer(&mut self) -> TyId {
+        self.out.tys.intern(Declared::ints(-(1 << 53), 1 << 53))
+    }
+
     fn emit_parsed_number(&mut self, fx: &mut Fx, cursor: V, fails: BlockId) -> (V, V) {
         let end = self.emit_parser_operation(fx, Operation::JSONNumberAt, &[cursor], self.known.counter);
         self.continue_if_parsed(fx, end, fails);
@@ -237,9 +242,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.switch_to(unreachable);
     }
 
-    pub(super) fn emit_parse_by_type(&mut self, fx: &mut Fx, plan: &Rc<ValidationPlan>, number: u32, text: V) -> V {
+    pub(super) fn emit_parse_by_type(&mut self, fx: &mut Fx, plan: &Rc<ValidationPlan>, number: u32, text: V, made: Ty) -> V {
         let (general_path, done) = (fx.b.new_block(), fx.b.new_block());
-        let result = self.new_temporary(fx);
+        let result = fx.b.new_var(self.or_anything(made.id));
         let opened = self.emit_parser_operation(fx, Operation::JSONOpen, &[text], self.known.counter);
         self.continue_if_parsed(fx, opened, general_path);
         let start = self.skip_whitespace(fx, opened);
@@ -249,14 +254,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.branch(is_complete, complete, general_path);
         fx.b.seal(complete);
         fx.b.switch_to(complete);
+        let value = self.coerce_to(fx, value, made, CoerceReason::Cast);
         fx.b.write(result, value);
         fx.b.jump(done);
         fx.b.seal(general_path);
         fx.b.switch_to(general_path);
         self.emit_parser_operation(fx, Operation::JSONAbandon, &[], self.known.undefined);
-        let text = self.emit_parser_operation(fx, Operation::JSONTextOf, &[text], self.out.tys.anything);
+        let text = self.emit_parser_operation(fx, Operation::JSONDecodeSource, &[text], self.out.tys.anything);
         let parsed = self.emit_global_method_call(fx, b"JSON", b"parse", &[text]);
-        let validated = self.emit_root_validation(fx, plan, number, false, parsed);
+        let validated = self.emit_root_validation(fx, plan, number, None, parsed, false);
+        let validated = self.coerce_to(fx, validated, made, CoerceReason::Cast);
         fx.b.write(result, validated);
         fx.b.jump(done);
         fx.b.seal(done);
@@ -265,7 +272,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn parser_for(&mut self, fx: &Fx, number: u32, node: u32, ty: TypeId) -> FuncId {
-        let function = self.function_made(fx, Made::Parser(number, node), 1);
+        let function = self.helper_function(fx, GeneratedFunction::Parser(number, node), 1);
         self.out.funcs[function.idx()].params = vec![self.known.counter];
         if ty != TypeId::UNRESOLVED {
             let made = self.ty_of(ty);
@@ -281,7 +288,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let end = self.continue_after_parsed_value(fx, fails);
             return (self.emit_validation(fx, plan, number, node, value, fails), end);
         }
-        let cursor = match opener_of(plan, node) {
+        let cursor = match opening_byte(plan, node) {
             Some(opener) if found != Found::Opened => self.continue_after_text(fx, cursor, &[opener], found == Found::Expected, fails),
             _ => cursor,
         };
@@ -289,6 +296,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             Planned::Primitive(PlannedPrimitive::Text) => {
                 let text = self.emit_parser_operation(fx, Operation::JSONStringAt, &[cursor], self.known.string);
                 (text, self.continue_after_parsed_value(fx, fails))
+            }
+            Planned::Primitive(PlannedPrimitive::Number) if described.rules.contains(&Rule::Integer) => {
+                let end = self.emit_parser_operation(fx, Operation::JSONIntegerAt, &[cursor], self.known.counter);
+                self.continue_if_parsed(fx, end, fails);
+                let exact_integer = self.exact_integer();
+                let integer = self.emit_parser_operation(fx, Operation::JSONInteger, &[], exact_integer);
+                let others: Vec<Rule> = described.rules.iter().filter(|&rule| *rule != Rule::Integer).cloned().collect();
+                self.emit_rules(fx, &others, integer, fails);
+                return (integer, end);
             }
             Planned::Primitive(PlannedPrimitive::Number) => self.emit_parsed_number(fx, cursor, fails),
             Planned::Primitive(PlannedPrimitive::Boolean) => {
@@ -431,7 +447,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     fn emit_array_parser(&mut self, fx: &mut Fx, plan: &Rc<ValidationPlan>, number: u32, node: u32, ty: TypeId, element: u32, start: V, fails: BlockId) {
         let want = Ty { id: self.ty_of(ty), checked: ty };
         let list = self.emit_throwing(fx, Op::NewArray(Args::new()));
-        let list = self.fit(fx, list, want, Why::Cast);
+        let list = self.coerce_to(fx, list, want, CoerceReason::Cast);
         let cursor = fx.b.new_var(self.known.counter);
         let (is_empty, turn, done) = (fx.b.new_block(), fx.b.new_block(), fx.b.new_block());
         let first = self.skip_whitespace(fx, start);
@@ -510,7 +526,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let end = self.continue_after_text(fx, cursor, b"]", true, fails);
         let made = self.emit_list(fx, &items);
         let want = Ty { id: self.ty_of(ty), checked: ty };
-        let made = self.fit(fx, made, want, Why::Cast);
+        let made = self.coerce_to(fx, made, want, CoerceReason::Cast);
         self.return_parsed(fx, made, end);
     }
 
@@ -522,6 +538,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let is_always_present = is_always_present(plan, member);
             let (ty, blank) = match plan.nodes[member.node as usize].planned {
                 Planned::Primitive(PlannedPrimitive::Text) if is_always_present => (self.known.string, self.emit_text(fx, b"")),
+                Planned::Primitive(PlannedPrimitive::Number) if is_always_present && plan.nodes[member.node as usize].rules.contains(&Rule::Integer) => (self.exact_integer(), self.emit(fx, Op::Int(0))),
                 Planned::Primitive(PlannedPrimitive::Number) if is_always_present => (self.known.number, self.emit(fx, Op::Double(0f64.to_bits()))),
                 Planned::Primitive(PlannedPrimitive::Boolean) if is_always_present => (self.known.boolean, self.emit(fx, Op::Bool(false))),
                 _ => (self.out.tys.anything, self.emit(fx, Op::Undefined)),
@@ -581,7 +598,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         leaves
     }
 
-    fn refuse_member(&mut self, fx: &mut Fx, parsed: &ObjectParse, value_start: V, name: &[u8]) -> BlockId {
+    fn reject_member(&mut self, fx: &mut Fx, parsed: &ObjectParse, value_start: V, name: &[u8]) -> BlockId {
         let (here, refuses) = (fx.b.block, fx.b.new_block());
         fx.b.switch_to(refuses);
         let name = self.emit_text(fx, name);
@@ -617,7 +634,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 has_exited_early = true;
                 break;
             }
-            let opener = opener_of(plan, member.node);
+            let opener = opening_byte(plan, member.node);
             let leaves = if member.is_optional && opener.is_some() { fails } else { self.exit_to_general_path(fx, &parsed, cursor, &seen, if at == 0 { after_brace } else { after_value }) };
             let mut prefix = Vec::with_capacity(member.name.len() + 5);
             if at > 0 {
@@ -630,7 +647,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let (absent, next) = (fx.b.new_block(), fx.b.new_block());
             let within = self.continue_after_text(fx, cursor, &prefix, !member.is_optional, if member.is_optional { absent } else { leaves });
             let value_start = if opener.is_some() { self.advance(fx, cursor, prefix.len() - 1) } else { within };
-            let invalid = if member.is_omitted_when_invalid { fx.b.new_block() } else { self.refuse_member(fx, &parsed, value_start, &member.name) };
+            let invalid = if member.is_omitted_when_invalid { fx.b.new_block() } else { self.reject_member(fx, &parsed, value_start, &member.name) };
             let unsure = if opener.is_some() { invalid } else { fx.b.new_block() };
             let (value, after) = self.emit_parsed(fx, plan, number, member.node, within, Found::Opened, unsure);
             fx.b.write(parsed.held[at], value);
@@ -671,7 +688,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let end = self.continue_after_text(fx, cursor, b"}", true, leaves);
             fx.b.seal(leaves);
             let values = self.resolve_absent_members(fx, plan, number, members, &parsed, fails);
-            let made = self.emit_object_of_checked_members(fx, plan, number, node, None, &values, fails);
+            let made = self.emit_object_from_checked_members(fx, plan, number, node, None, &values, fails);
             self.return_parsed(fx, made, end);
         }
 
@@ -704,7 +721,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             fx.b.switch_to(arms[index]);
             let after_key = self.advance(fx, at, member.name.len() + 2);
             let within = self.continue_after_text_and_whitespace(fx, after_key, b":", fails);
-            let invalid = if member.is_omitted_when_invalid { fx.b.new_block() } else { self.refuse_member(fx, &parsed, within, &member.name) };
+            let invalid = if member.is_omitted_when_invalid { fx.b.new_block() } else { self.reject_member(fx, &parsed, within, &member.name) };
             let (value, after) = self.emit_parsed(fx, plan, number, member.node, within, Found::Expected, invalid);
             fx.b.write(parsed.held[index], value);
             fx.b.write(parsed.cursor, after);
@@ -793,7 +810,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             fx.b.switch_to(next);
         }
         let values = self.resolve_absent_members(fx, plan, number, members, &parsed, fails);
-        let made = self.emit_object_of_checked_members(fx, plan, number, node, None, &values, fails);
+        let made = self.emit_object_from_checked_members(fx, plan, number, node, None, &values, fails);
         if matches!(others, OtherKeys::Kept(_)) {
             let keys = fx.b.read(parsed.kept_keys);
             let values = fx.b.read(parsed.kept_values);

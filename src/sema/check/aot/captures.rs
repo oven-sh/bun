@@ -9,7 +9,7 @@
 //! **Any other captured variable lives in an environment**, which is made when its scope is entered: a call of a function, an iteration of a
 //! loop, a block. The captured variables of a scope are partitioned by their retainers: the closures, classes and coroutines that can outlive
 //! the activation and refer to them, directly or through what they create or call. If one variable of a partition needs an environment, or
-//! the partition has more than `MOST_COPIES`, the whole partition lives in one environment of its own, so a closure retains only what it can
+//! the partition has more than `MAX_COPIES`, the whole partition lives in one environment of its own, so a closure retains only what it can
 //! reach. A block that is in no loop of its own is entered at most once each time the scope around it is, and shares the environment that
 //! the scope has for the same retainers.
 //!
@@ -17,7 +17,7 @@
 //! retainer adds nothing. Closures passed to the same call or stored in the same literal count as one retainer. A closure that is only called
 //! before the activation ends is no retainer, except in an async function or a generator, where every function the body creates or calls
 //! counts. Elsewhere, what a function that is called directly needs stays in one partition, because a direct call passes each capture as an
-//! argument. Everywhere, so does what a function needs that would otherwise have more than `MOST_COPIES` captures: a closure with few captures
+//! argument. Everywhere, so does what a function needs that would otherwise have more than `MAX_COPIES` captures: a closure with few captures
 //! is smaller.
 //! The closure of a function declaration is kept in the partition the function needs, if it needs just one. A partition of numbers, booleans
 //! and closures without captures joins a partition that has at least the same retainers. An async function or a generator may itself hold an
@@ -34,6 +34,7 @@
 //! All of it goes by the trees and the symbols of one file, and by which functions of the program the callees in it are: every task finds
 //! the same.
 
+use super::ByFile;
 use super::escape::argument_use;
 use super::storage::Site;
 use crate::atom::Atom;
@@ -43,11 +44,10 @@ use crate::check::errors_names_and_exports::root_declaration;
 use crate::hir::{Chain, ClassId, ExprId, ExprKind, ExprTag, Flags, FnBody, FnId, FnKind, MemberId, PatId, PropKey, StmtId, StmtKind, VarKind};
 use crate::program::{FileId, Sym};
 use crate::util::{FxHashMap, FxHashSet};
-use std::sync::Arc;
 
 /// An activation with more captured variables than this keeps them in an environment, whether or not they could be copied. A direct call
 /// passes each copy as an argument.
-const MOST_COPIES: usize = 4;
+const MAX_COPIES: usize = 4;
 
 /// What has variables of its own each time it is entered.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
@@ -102,7 +102,7 @@ pub enum CapturedVariable {
 /// How the closure of a function declaration that captures something comes about where the name is used as a value.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum DeclaredClosure {
-    /// Wherever it is used, nothing observes which object it is: `Checker::use_of_value`. One is made at each use.
+    /// Wherever it is used, nothing observes which object it is: `Checker::value_use_flags`. One is made at each use.
     Unobserved,
     /// It is used in one place, which is evaluated at most once for each time the declaration is instantiated: it is made there.
     CreatedAtUse,
@@ -114,13 +114,13 @@ pub enum DeclaredClosure {
 
 /// Why a captured variable is not copied.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum NotCopied {
+pub enum NotCopiedReason {
     /// It is stored to there.
     Stored(ExprId),
     /// `(a as T) = value`
     StoredThroughCast,
     /// The reference, in an inner function, may be evaluated or the function made before the variable is bound.
-    SeenEarly(ExprId),
+    ReferencedInTdz(ExprId),
     /// A loop or a `catch` clause binds it, and an inner function that is not in the body refers to it here: in the initializer, the test or the
     /// update of a `for` statement, where the binding is another than the body's or is stored to afterwards; in what a `for-of` iterates
     /// over, where it is never bound.
@@ -163,16 +163,15 @@ enum Need {
     Class(ClassId),
 }
 
-/// It is found again by each checker that asks: which function a callee is may take the checker's own tables to say.
 #[derive(Default)]
-pub(super) struct State {
-    by_file: FxHashMap<FileId, Arc<FileCaptures>>,
+pub(super) struct Shared {
+    by_file: ByFile<FileCaptures>,
 }
 
 #[derive(Default)]
 struct FileCaptures {
     variables: FxHashMap<Sym, CapturedVariable>,
-    not_copied: FxHashMap<Sym, NotCopied>,
+    uncopied: FxHashMap<Sym, NotCopiedReason>,
     /// By activation that has an environment: the variables in it, in the order of their declarations.
     environments: FxHashMap<Activation, Vec<Sym>>,
     environments_by_activation: FxHashMap<Activation, Vec<Activation>>,
@@ -189,8 +188,8 @@ struct FileCaptures {
     captured_before_iterations: FxHashSet<StmtId>,
     receivers: FxHashMap<FnId, Receiver>,
     /// By function expression whose one closure per environment that environment keeps: the index of the field, behind the variables.
-    kept_expressions: FxHashMap<FnId, (Activation, u32)>,
-    expressions_kept: FxHashMap<Activation, Vec<FnId>>,
+    cached_function_expressions: FxHashMap<FnId, (Activation, u32)>,
+    cached_expressions_by_activation: FxHashMap<Activation, Vec<FnId>>,
     generators_called_through_closures: FxHashSet<ExprId>,
 }
 
@@ -203,8 +202,20 @@ enum Retainer {
 struct CaptureGroup {
     retainers: Vec<Retainer>,
     variables: Vec<Sym>,
-    closures_kept_if_environment_exists: Vec<(Sym, FnId, ExprId)>,
+    closures_cached_if_environment_exists: Vec<(Sym, FnId, ExprId)>,
     is_in_coroutine: bool,
+}
+
+struct EnclosingCode {
+    of_exprs: Vec<Option<Code>>,
+    of_stmts: Vec<Option<Code>>,
+    visited: Vec<Parent>,
+}
+
+impl EnclosingCode {
+    fn new(exprs: usize, stmts: usize) -> EnclosingCode {
+        EnclosingCode { of_exprs: vec![None; exprs], of_stmts: vec![None; stmts], visited: Vec::new() }
+    }
 }
 
 /// A reference to something that is not there once and for all.
@@ -218,65 +229,66 @@ struct Reference {
 }
 
 impl<'p, 's> Checker<'p, 's> {
-    fn captures_of_file(&mut self, file: FileId) -> Arc<FileCaptures> {
-        if let Some(known) = self.aot.captures.by_file.get(&file) {
-            return known.clone();
+    fn file_captures(&mut self, file: FileId) -> &'p FileCaptures {
+        let program = self.p;
+        let files = program.files.modules.len();
+        if let Some(known) = program.aot.captures.by_file.get(files, file) {
+            return known;
         }
-        let found = Arc::new(self.find_captures_of_file(file));
-        self.aot.captures.by_file.insert(file, found.clone());
-        found
+        let found = self.find_file_captures(file);
+        program.aot.captures.by_file.get_or_init(files, file, || found)
     }
 
     /// What the function is handed ahead of `this` and its arguments, in order. Of a member of a class that is not evaluated once: the
     /// environment of the class, or nothing.
-    pub fn captures_of_fn(&mut self, file: FileId, func: FnId) -> Vec<Capture> {
-        self.captures_of_file(file).of_functions.get(&func).cloned().unwrap_or_default()
+    pub fn fn_captures(&mut self, file: FileId, func: FnId) -> Vec<Capture> {
+        self.file_captures(file).of_functions.get(&func).cloned().unwrap_or_default()
     }
 
     /// Whether the function needs anything that is not there once and for all: it, or a function within it, refers to a variable, a function
     /// or a class of an activation around it, or to `super` or a `#name`, which are kept with the class. One that does not can be called by
     /// whoever knows it, without its closure.
     pub fn function_captures(&mut self, file: FileId, func: FnId) -> bool {
-        self.captures_of_file(file).capturing.contains(&func)
+        self.file_captures(file).capturing.contains(&func)
     }
 
     /// Whether the constructor of the class, declared or not, is handed the environment of the class: for its body, the initializers of the
     /// instance fields, the definition of what has a name that is kept with the class, or the constructor of what the class extends.
     pub fn constructor_captures(&mut self, file: FileId, class: ClassId) -> bool {
-        self.captures_of_file(file).capturing_constructors.contains(&class)
+        self.file_captures(file).capturing_constructors.contains(&class)
     }
 
     /// What the members of a class that is not evaluated once need from outside the class, in order. It is stored to the environment of
     /// the class when the class is evaluated.
-    pub fn imports_of_class(&mut self, file: FileId, class: ClassId) -> Vec<Capture> {
-        self.captures_of_file(file).imports.get(&class).cloned().unwrap_or_default()
+    pub fn class_imports(&mut self, file: FileId, class: ClassId) -> Vec<Capture> {
+        self.file_captures(file).imports.get(&class).cloned().unwrap_or_default()
     }
 
     /// The variables that live in the environment of the activation, in order. Empty: it has none.
     pub fn environment_of(&mut self, file: FileId, activation: Activation) -> Vec<Sym> {
-        self.captures_of_file(file).environments.get(&activation).cloned().unwrap_or_default()
+        self.file_captures(file).environments.get(&activation).cloned().unwrap_or_default()
     }
 
     /// Whether what is evaluated before the first iteration of the loop makes a function that refers to a variable the loop binds. In the
     /// initializer of a `for` statement: that function has the bindings as the initializer left them for good, and each iteration, the
     /// first too, has copies. In what a `for-in` or `for-of` statement iterates over: it has bindings that are never initialized.
     pub fn is_captured_before_iterations(&mut self, file: FileId, statement: StmtId) -> bool {
-        self.captures_of_file(file).captured_before_iterations.contains(&statement)
+        self.file_captures(file).captured_before_iterations.contains(&statement)
     }
 
-    pub fn place_of_environment_of_more_than(&mut self, file: FileId, most: usize) -> Option<u32> {
+    pub fn oversized_environment_pos(&mut self, file: FileId, most: usize) -> Option<u32> {
         let bound = self.bound(file);
         let (mut around, mut declared): (Vec<usize>, Vec<usize>) = (Vec::with_capacity(bound.scopes.len()), vec![0; bound.scopes.len()]);
         for (index, scope) in bound.scopes.iter().enumerate() {
             let is_counted_alone = matches!(scope.kind, crate::bind::ScopeKind::File | crate::bind::ScopeKind::Module(_) | crate::bind::ScopeKind::Fn(_)) || scope.parent.is_none() || scope.parent.idx() >= index;
             around.push(if is_counted_alone { index } else { around[scope.parent.idx()] });
-            let is_held_once = matches!(scope.kind, crate::bind::ScopeKind::File | crate::bind::ScopeKind::Module(_));
-            declared[around[index]] += if is_held_once { 0 } else { bound.table(scope.locals).len() };
+            let is_initialized_once = matches!(scope.kind, crate::bind::ScopeKind::File | crate::bind::ScopeKind::Module(_));
+            declared[around[index]] += if is_initialized_once { 0 } else { bound.table(scope.locals).len() };
         }
         if declared.iter().all(|&names| names <= most) {
             return None;
         }
-        let captures = self.captures_of_file(file);
+        let captures = self.file_captures(file);
         let first = captures.environments.iter().filter(|(_, variables)| variables.len() > most).map(|(&activation, _)| captures.partition_owner.get(&activation).copied().unwrap_or(activation)).min()?;
         let hir = self.hir(file);
         Some(match first {
@@ -287,40 +299,40 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    pub fn environments_of_activation(&mut self, file: FileId, activation: Activation) -> Vec<Activation> {
-        self.captures_of_file(file).environments_by_activation.get(&activation).cloned().unwrap_or_default()
+    pub fn activation_environments(&mut self, file: FileId, activation: Activation) -> Vec<Activation> {
+        self.file_captures(file).environments_by_activation.get(&activation).cloned().unwrap_or_default()
     }
 
-    pub fn activation_of_environment(&mut self, file: FileId, environment: Activation) -> Activation {
-        self.captures_of_file(file).partition_owner.get(&environment).copied().unwrap_or(environment)
+    pub fn environment_activation(&mut self, file: FileId, environment: Activation) -> Activation {
+        self.file_captures(file).partition_owner.get(&environment).copied().unwrap_or(environment)
     }
 
     /// `None`: only the code that declares the variable refers to it, or there is one of it for as long as the program runs.
     pub fn captured_variable(&mut self, sym: Sym) -> Option<CapturedVariable> {
-        self.captures_of_file(sym.file).variables.get(&sym).copied()
+        self.file_captures(sym.file).variables.get(&sym).copied()
     }
 
     /// Of a function expression: the environment that keeps its closure, which is made when the expression is first evaluated, and the field.
-    pub fn kept_function_expression(&mut self, file: FileId, func: FnId) -> Option<(Activation, u32)> {
-        self.captures_of_file(file).kept_expressions.get(&func).copied()
+    pub fn cached_function_expression(&mut self, file: FileId, func: FnId) -> Option<(Activation, u32)> {
+        self.file_captures(file).cached_function_expressions.get(&func).copied()
     }
 
     /// In the order of their fields, which come behind `environment_of`.
-    pub fn function_expressions_kept_in(&mut self, file: FileId, activation: Activation) -> Vec<FnId> {
-        self.captures_of_file(file).expressions_kept.get(&activation).cloned().unwrap_or_default()
+    pub fn cached_function_expressions_in(&mut self, file: FileId, activation: Activation) -> Vec<FnId> {
+        self.file_captures(file).cached_expressions_by_activation.get(&activation).cloned().unwrap_or_default()
     }
 
     /// `None`: the function is no declaration, is assigned to, is never used as a value, or is declared once and for all.
-    pub fn is_generator_called_through_its_closure(&mut self, file: FileId, callee: ExprId) -> bool {
-        self.captures_of_file(file).generators_called_through_closures.contains(&callee)
+    pub fn is_generator_called_through_closure(&mut self, file: FileId, callee: ExprId) -> bool {
+        self.file_captures(file).generators_called_through_closures.contains(&callee)
     }
 
     pub fn declared_closure(&mut self, file: FileId, func: FnId) -> Option<DeclaredClosure> {
-        self.captures_of_file(file).declared_closures.get(&func).copied()
+        self.file_captures(file).declared_closures.get(&func).copied()
     }
 
     /// `(a as T) = value`, which the binder does not take for an assignment to `a`.
-    pub fn is_stored_to_through_cast(&self, sym: Sym) -> bool {
+    pub fn is_assigned_through_cast(&self, sym: Sym) -> bool {
         self.files.value_declaration(sym).is_some_and(|(file, decl)| {
             let local = self.bound(file).symbol_of_declaration(decl);
             local.is_some() && (self.is_stored_through_casts(file, local) || self.is_stored_through_assertions(file, local))
@@ -328,15 +340,15 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Whose `this` the arrow function sees.
-    pub fn receiver_of_arrow(&mut self, file: FileId, func: FnId) -> Receiver {
-        self.captures_of_file(file).receivers.get(&func).copied().unwrap_or(Receiver::None)
+    pub fn arrow_receiver(&mut self, file: FileId, func: FnId) -> Receiver {
+        self.file_captures(file).receivers.get(&func).copied().unwrap_or(Receiver::None)
     }
 
     /// The function that the variable holds a closure of whenever it is read, where that closure is made by the activation that declares the
     /// variable: `const f = () => ..`, with nothing ever stored to `f`. Whoever sees the variable sees the same instances of what the
     /// function captures, and can call it with those. Not so for what the initializer of a `for` statement binds: each iteration has a copy
     /// of the variable, and the closure in it is over the bindings of the initializer.
-    pub fn callee_with_captures_at_hand(&mut self, sym: Sym) -> Option<FnId> {
+    pub fn callee_with_available_captures(&mut self, sym: Sym) -> Option<FnId> {
         let (file, Decl::Var(pat)) = self.files.value_declaration(sym)? else { return None };
         if file != sym.file {
             return None;
@@ -344,7 +356,7 @@ impl<'p, 's> Checker<'p, 's> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let PatParent::Var(d) = bound.pat_parent[pat.idx()] else { return None };
         let local = bound.pat_symbol[pat.idx()];
-        if hir[d].kind == VarKind::Var || hir[d].flags.contains(Flags::AMBIENT) || self.store_to(file, sym, Decl::Var(pat)).is_some() || self.files.sym(file, local) != sym {
+        if hir[d].kind == VarKind::Var || hir[d].flags.contains(Flags::AMBIENT) || self.reassignment_of(file, sym, Decl::Var(pat)).is_some() || self.files.sym(file, local) != sym {
             return None;
         }
         if self.for_statement_binding(file, Decl::Var(pat)).is_some() {
@@ -357,14 +369,14 @@ impl<'p, 's> Checker<'p, 's> {
             init = expr;
         }
         match hir.exprs.get(init.idx())?.kind {
-            ExprKind::Fn(func) if !self.has_dead_zone(sym) || self.is_never_captured_uninitialized(sym) => Some(func),
+            ExprKind::Fn(func) if !self.has_tdz(sym) || self.is_never_captured_uninitialized(sym) => Some(func),
             _ => None,
         }
     }
 
     // ───────────────────────────── who evaluates what ─────────────────────────────
 
-    fn code_of_fn(&self, file: FileId, func: FnId) -> Code {
+    fn fn_code(&self, file: FileId, func: FnId) -> Code {
         let bound = self.bound(file);
         if self.hir(file)[func].kind == FnKind::Constructor
             && let FnOwner::Member(member) = bound.fns[func.idx()].owner
@@ -384,8 +396,8 @@ impl<'p, 's> Checker<'p, 's> {
                 Parent::None | Parent::File => return Code::Module,
                 Parent::Expr(e) if e.is_some() => bound.expr_parent[e.idx()],
                 Parent::Stmt(s) if s.is_some() => bound.stmt_parent[s.idx()],
-                Parent::FnBody(func) => return self.code_of_fn(file, func),
-                Parent::ParamDefault(p) => return self.code_of_fn(file, bound.param_fn[p.idx()]),
+                Parent::FnBody(func) => return self.fn_code(file, func),
+                Parent::ParamDefault(p) => return self.fn_code(file, bound.param_fn[p.idx()]),
                 Parent::MemberInit(member) if !hir[member].flags.contains(Flags::STATIC) => match bound.member_owner[member.idx()] {
                     MemberOwner::Class(class) => return Code::Constructor(class),
                     _ => self.parent_of_node(file, at),
@@ -393,6 +405,53 @@ impl<'p, 's> Checker<'p, 's> {
                 _ => self.parent_by_evaluation(file, at),
             };
         }
+    }
+
+    fn cached_code_at(&self, file: FileId, mut at: Parent, cache: &mut EnclosingCode) -> Code {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let found = loop {
+            at = match at {
+                Parent::None | Parent::File => break Code::Module,
+                Parent::Expr(e) if e.is_some() => {
+                    if let Some(known) = cache.of_exprs[e.idx()] {
+                        break known;
+                    }
+                    cache.visited.push(at);
+                    bound.expr_parent[e.idx()]
+                }
+                Parent::Stmt(s) if s.is_some() => {
+                    if let Some(known) = cache.of_stmts[s.idx()] {
+                        break known;
+                    }
+                    cache.visited.push(at);
+                    bound.stmt_parent[s.idx()]
+                }
+                Parent::FnBody(func) => break self.fn_code(file, func),
+                Parent::ParamDefault(p) => break self.fn_code(file, bound.param_fn[p.idx()]),
+                Parent::MemberInit(member) if !hir[member].flags.contains(Flags::STATIC) => match bound.member_owner[member.idx()] {
+                    MemberOwner::Class(class) => break Code::Constructor(class),
+                    _ => self.parent_of_node(file, at),
+                },
+                _ => self.parent_by_evaluation(file, at),
+            };
+        };
+        for visited in cache.visited.drain(..) {
+            match visited {
+                Parent::Expr(e) => cache.of_exprs[e.idx()] = Some(found),
+                Parent::Stmt(s) => cache.of_stmts[s.idx()] = Some(found),
+                _ => {}
+            }
+        }
+        found
+    }
+
+    fn local_binding(&self, file: FileId, sym: Sym) -> Option<(Sym, Decl, Code)> {
+        let (declared_in, decl) = self.variable_declaration(sym)?;
+        if declared_in != file {
+            return None;
+        }
+        let holder = self.activation_binding(file, decl)?.map_or(Code::Module, |func| self.fn_code(file, func));
+        Some((self.files.sym(file, self.bound(file).symbol_of_declaration(decl)), decl, holder))
     }
 
     /// The innermost scope that a direct child of `at` is in. `None`: that of the module.
@@ -417,7 +476,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The scope around a scope that is entered at most once each time that one is. `None`: a call and an iteration are entered any number
     /// of times.
-    fn scope_around(&self, file: FileId, scope: Activation) -> Option<Activation> {
+    fn enclosing_scope(&self, file: FileId, scope: Activation) -> Option<Activation> {
         match scope {
             Activation::Block(stmt) => self.scope_at(file, self.bound(file).stmt_parent[stmt.idx()]),
             Activation::Call(_) | Activation::Iteration(_) | Activation::Class(_) | Activation::Expression(_) | Activation::Partition(_) => None,
@@ -425,7 +484,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The scope that has its own of what the declaration binds each time it is entered. `holder`: `activation_binding`.
-    fn scope_declaring(&self, file: FileId, decl: Decl, holder: Option<FnId>) -> Option<Activation> {
+    fn declaring_scope(&self, file: FileId, decl: Decl, holder: Option<FnId>) -> Option<Activation> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let of_function = holder.map(Activation::Call);
         let stmt = match decl {
@@ -435,7 +494,7 @@ impl<'p, 's> Checker<'p, 's> {
             },
             Decl::Fn(func) => match bound.fns[func.idx()].owner {
                 FnOwner::Stmt(stmt) => stmt,
-                FnOwner::Expr(_) if self.names_its_closure(file, func) => return Some(Activation::Expression(func)),
+                FnOwner::Expr(_) if self.is_self_named_function_expression(file, func) => return Some(Activation::Expression(func)),
                 _ => return of_function,
             },
             Decl::Class(class) => match bound.class_owner[class.idx()].to_parent() {
@@ -456,7 +515,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Whether the function expression has a name, which stands for its closure wherever it is read. Nothing can be stored to it: an assignment throws or does nothing, see
     /// `FileBuild::assign_sym`.
-    fn names_its_closure(&self, file: FileId, func: FnId) -> bool {
+    fn is_self_named_function_expression(&self, file: FileId, func: FnId) -> bool {
         self.bound(file).fn_symbol[func.idx()].is_some()
     }
 
@@ -468,7 +527,7 @@ impl<'p, 's> Checker<'p, 's> {
             if inner == scope {
                 return true;
             }
-            around = self.scope_around(file, inner);
+            around = self.enclosing_scope(file, inner);
         }
         false
     }
@@ -599,15 +658,15 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// A store to the variable other than the one that binds it. The `update` of the `for` statement that declares it stores to the
     /// binding of the next iteration, which nothing has seen yet.
-    fn store_to(&self, file: FileId, sym: Sym, decl: Decl) -> Option<NotCopied> {
+    fn reassignment_of(&self, file: FileId, sym: Sym, decl: Decl) -> Option<NotCopiedReason> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let local = bound.symbol_of_declaration(decl);
         let symbol = bound.symbols.get(local.idx())?;
         if symbol.flags.contains(SymFlags::MERGED) || symbol.decls.as_slice().len() != 1 || self.files.sym(file, local) != sym {
-            return Some(NotCopied::Declaration);
+            return Some(NotCopiedReason::Declaration);
         }
         if self.is_stored_through_casts(file, local) || self.is_stored_through_assertions(file, local) {
-            return Some(NotCopied::StoredThroughCast);
+            return Some(NotCopiedReason::StoredThroughCast);
         }
         let update = match decl {
             Decl::Var(pat) => match root_declaration(bound, pat) {
@@ -626,7 +685,7 @@ impl<'p, 's> Checker<'p, 's> {
         let is_in_update = |target: ExprId| {
             update.is_some() && hir[update].pos <= hir[target].pos && hir[target].end <= hir[update].end && self.code_at(file, bound.expr_parent[target.idx()]) == holder
         };
-        bound.assignments_to(local).iter().map(|&(_, target)| target).find(|&target| !is_in_update(target)).map(NotCopied::Stored)
+        bound.assignments_to(local).iter().map(|&(_, target)| target).find(|&target| !is_in_update(target)).map(NotCopiedReason::Stored)
     }
 
     /// Whether the inner function that the reference `e` to the parameter is in is made once the parameter is bound: in the body of the function,
@@ -666,13 +725,13 @@ impl<'p, 's> Checker<'p, 's> {
         let bound = self.bound(file);
         let (mut pos, mut parent) = (self.hir(file)[e].pos, bound.expr_parent[e.idx()]);
         loop {
-            let at = match self.site_of(file, parent) {
+            let at = match self.enclosing_site(file, parent) {
                 Some(at) if at == site => return pos >= end,
                 Some(Site::Parameter(p)) if site == Site::Body(bound.param_fn[p.idx()]) => return false,
                 Some(at) => at,
                 None => return false,
             };
-            if let Some(made) = self.where_created(file, at) {
+            if let Some(made) = self.creation_site(file, at) {
                 (pos, parent) = made;
                 continue;
             }
@@ -746,14 +805,14 @@ impl<'p, 's> Checker<'p, 's> {
                 _ => return None,
             },
             Decl::Var(pat) => match root_declaration(bound, pat) {
-                PatParent::Var(d) if hir[d].kind == VarKind::Let => (self.dead_zone_of(file, decl)?.0, hir[d].loc.end),
+                PatParent::Var(d) if hir[d].kind == VarKind::Let => (self.tdz_of(file, decl)?.0, hir[d].loc.end),
                 _ => return None,
             },
             _ => return None,
         };
         let mut end = 0;
         for &(_, target) in bound.assignments_to(bound.symbol_of_declaration(decl)) {
-            if self.site_of(file, bound.expr_parent[target.idx()]) != Some(site) {
+            if self.enclosing_site(file, bound.expr_parent[target.idx()]) != Some(site) {
                 return None;
             }
             let (mut at, mut is_in_statement) = (bound.expr_parent[target.idx()], false);
@@ -777,7 +836,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `references`: those to the variable from code other than the code that declares it.
-    fn why_not_copied(
+    fn not_copied_reason(
         &mut self,
         file: FileId,
         sym: Sym,
@@ -785,25 +844,25 @@ impl<'p, 's> Checker<'p, 's> {
         references: &[ExprId],
         mentions: &FxHashMap<FnId, Vec<ExprId>>,
         closures: &FxHashMap<FnId, DeclaredClosure>,
-    ) -> Option<NotCopied> {
-        if let Some(stored) = self.store_to(file, sym, decl) {
+    ) -> Option<NotCopiedReason> {
+        if let Some(stored) = self.reassignment_of(file, sym, decl) {
             let is_captured_later = |(site, end)| references.iter().all(|&e| self.is_evaluated_once_bound(file, e, site, end, mentions, closures, &mut FxHashSet::default()));
-            if !matches!(stored, NotCopied::Stored(_)) || self.has_direct_eval(file) || !self.last_store_end(file, decl).is_some_and(is_captured_later) {
+            if !matches!(stored, NotCopiedReason::Stored(_)) || self.has_direct_eval(file) || !self.last_store_end(file, decl).is_some_and(is_captured_later) {
                 return Some(stored);
             }
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
         match decl {
-            Decl::Param(pat) => references.iter().copied().find(|&e| !self.is_created_after_parameter(file, pat, e)).map(NotCopied::SeenEarly),
-            Decl::Class(_) => (!self.is_never_captured_uninitialized(sym)).then(|| NotCopied::SeenEarly(references[0])),
+            Decl::Param(pat) => references.iter().copied().find(|&e| !self.is_created_after_parameter(file, pat, e)).map(NotCopiedReason::ReferencedInTdz),
+            Decl::Class(_) => (!self.is_never_captured_uninitialized(sym)).then(|| NotCopiedReason::ReferencedInTdz(references[0])),
             Decl::Var(pat) => {
-                let PatParent::Var(d) = root_declaration(bound, pat) else { return Some(NotCopied::Declaration) };
+                let PatParent::Var(d) = root_declaration(bound, pat) else { return Some(NotCopiedReason::Declaration) };
                 let stmt = bound.var_stmt[d.idx()];
                 if hir[d].kind == VarKind::Var && stmt.is_some() && hir[d].init.is_some() && !hir.is_js && !self.has_direct_eval(file) {
-                    return references.iter().any(|&e| !self.is_created_after_statement(file, stmt, e)).then_some(NotCopied::Declaration);
+                    return references.iter().any(|&e| !self.is_created_after_statement(file, stmt, e)).then_some(NotCopiedReason::Declaration);
                 }
                 if !matches!(hir[d].kind, VarKind::Let | VarKind::Const) || stmt.is_none() {
-                    return Some(NotCopied::Declaration);
+                    return Some(NotCopiedReason::Declaration);
                 }
                 // What is bound before the statement runs that alone can refer to it.
                 let bound_before = match (hir[stmt].kind, bound.stmt_parent[stmt.idx()]) {
@@ -817,11 +876,11 @@ impl<'p, 's> Checker<'p, 's> {
                 };
                 if bound_before.is_some() {
                     let within = hir[bound_before].start..hir[bound_before].loc.end;
-                    return references.iter().copied().find(|&e| !within.contains(&hir[e].pos)).map(NotCopied::OutsideBody);
+                    return references.iter().copied().find(|&e| !within.contains(&hir[e].pos)).map(NotCopiedReason::OutsideBody);
                 }
-                (!self.is_never_captured_uninitialized(sym)).then(|| NotCopied::SeenEarly(references[0]))
+                (!self.is_never_captured_uninitialized(sym)).then(|| NotCopiedReason::ReferencedInTdz(references[0]))
             }
-            _ => Some(NotCopied::Declaration),
+            _ => Some(NotCopiedReason::Declaration),
         }
     }
 
@@ -835,7 +894,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             let is_non_escaping = !is_coroutine(func)
                 && match bound.fns[func.idx()].owner {
-                    FnOwner::Expr(e) => self.use_of_value(file, e) & argument_use::ESCAPES == 0,
+                    FnOwner::Expr(e) => self.value_use_flags(file, e) & argument_use::ESCAPES == 0,
                     FnOwner::Stmt(_) => {
                         let name = bound.fn_symbol[func.idx()];
                         name.is_some()
@@ -843,7 +902,7 @@ impl<'p, 's> Checker<'p, 's> {
                             && !bound.symbols[name.idx()].flags.contains(SymFlags::ASSIGNED)
                             && bound.assignments_to(name).is_empty()
                             && !self.is_stored_through_casts(file, name)
-                            && uses_as_value.get(&func).is_some_and(|uses| uses.iter().all(|used| self.use_of_value(file, used.0) & argument_use::ESCAPES == 0))
+                            && uses_as_value.get(&func).is_some_and(|uses| uses.iter().all(|used| self.value_use_flags(file, used.0) & argument_use::ESCAPES == 0))
                     }
                     _ => false,
                 };
@@ -852,7 +911,7 @@ impl<'p, 's> Checker<'p, 's> {
         });
     }
 
-    fn aggregate_holding(&self, file: FileId, e: ExprId) -> Option<ExprId> {
+    fn enclosing_aggregate(&self, file: FileId, e: ExprId) -> Option<ExprId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let (mut child, mut at, mut found) = (e, bound.expr_parent[e.idx()], None);
         loop {
@@ -873,12 +932,12 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    fn retainer_of(&self, file: FileId, node: Node, uses_as_value: &FxHashMap<FnId, Vec<(ExprId, Code, Code)>>) -> Retainer {
+    fn find_retainer(&self, file: FileId, node: Node, uses_as_value: &FxHashMap<FnId, Vec<(ExprId, Code, Code)>>) -> Retainer {
         let Node::Code(Code::Function(func)) = node else { return Retainer::Node(node) };
         let aggregate = match self.bound(file).fns[func.idx()].owner {
-            FnOwner::Expr(e) => self.aggregate_holding(file, e),
+            FnOwner::Expr(e) => self.enclosing_aggregate(file, e),
             FnOwner::Stmt(_) => match uses_as_value.get(&func).map(Vec::as_slice) {
-                Some([first, rest @ ..]) => self.aggregate_holding(file, first.0).filter(|&aggregate| rest.iter().all(|used| self.aggregate_holding(file, used.0) == Some(aggregate))),
+                Some([first, rest @ ..]) => self.enclosing_aggregate(file, first.0).filter(|&aggregate| rest.iter().all(|used| self.enclosing_aggregate(file, used.0) == Some(aggregate))),
                 _ => None,
             },
             _ => None,
@@ -893,8 +952,8 @@ impl<'p, 's> Checker<'p, 's> {
 
     // ───────────────────────────── the pass over a file ─────────────────────────────
 
-    fn find_captures_of_file(&mut self, file: FileId) -> FileCaptures {
-        let index = self.exprs_by_kind_of(file);
+    fn find_file_captures(&mut self, file: FileId) -> FileCaptures {
+        let index = self.file_exprs_by_kind(file);
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut found = FileCaptures::default();
         let mut raw: FxHashMap<Node, FxHashSet<Need>> = FxHashMap::default();
@@ -902,6 +961,8 @@ impl<'p, 's> Checker<'p, 's> {
 
         // What is referred to by name.
         let mut references: Vec<Reference> = Vec::new();
+        let mut enclosing_code = EnclosingCode::new(bound.expr_parent.len(), bound.stmt_parent.len());
+        let mut bindings: Vec<Option<Option<(Sym, Decl, Code)>>> = vec![None; bound.symbols.len()];
         for &e in index.of(ExprTag::Ident) {
             let ExprKind::Ident(name) = hir[e].kind else { continue };
             let parent = bound.expr_parent[e.idx()];
@@ -917,16 +978,23 @@ impl<'p, 's> Checker<'p, 's> {
                 continue;
             }
             // What another file declares, which may take types to find, is of no interest here.
-            let resolved = self.resolve_identifier(file, e, name, true).ok().flatten();
-            let Some(sym) = resolved else { continue };
-            let Some((declared_in, decl)) = self.declaration_of_variable(sym) else { continue };
-            if declared_in != file {
-                continue;
-            }
-            let Some(holder) = self.activation_binding(file, decl) else { continue };
-            let holder = holder.map_or(Code::Module, |func| self.code_of_fn(file, func));
-            let sym = self.files.sym(file, bound.symbol_of_declaration(decl));
-            references.push(Reference { e, sym, decl, code: self.code_at(file, parent), holder });
+            let local = bound.expr_symbol[e.idx()];
+            let binding = match bindings.get(local.idx()).copied().flatten() {
+                Some(known) => known,
+                None => {
+                    let Some(sym) = self.resolve_identifier(file, e, name, true).ok().flatten() else { continue };
+                    let found = self.local_binding(file, sym);
+                    if local.is_some() {
+                        let own = self.files.sym(file, local);
+                        if self.files.flags(own).intersects(SymFlags::VALUE) || self.files.means(own, SymFlags::VALUE) {
+                            bindings[local.idx()] = Some(found);
+                        }
+                    }
+                    found
+                }
+            };
+            let Some((sym, decl, holder)) = binding else { continue };
+            references.push(Reference { e, sym, decl, code: self.cached_code_at(file, parent, &mut enclosing_code), holder });
         }
 
         // A function declaration that nothing is stored to stands for its function.
@@ -970,15 +1038,15 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let is_callee = |e: ExprId| matches!(bound.expr_parent[e.idx()], Parent::Expr(parent) if matches!(hir[parent].kind, ExprKind::Call(call) if hir[call].callee == e && hir[call].chain == Chain::No));
         let mut through_closures: FxHashSet<ExprId> = FxHashSet::default();
-        let mut names_itself: FxHashSet<FnId> = (references.iter())
+        let mut references_itself: FxHashSet<FnId> = (references.iter())
             .filter_map(|reference| declared_function(self, reference).filter(|&func| !is_called_directly(reference.e) || returns_a_generator(func, reference.e)))
             .filter(|func| matches!(bound.fns[func.idx()].owner, FnOwner::Expr(_)))
             .collect();
         // So may one whose `arguments` object shows it: `arguments.callee`.
-        let mapped = self.mapped_arguments_of_file(file);
-        let mut showing_themselves: Vec<FnId> = mapped.functions.keys().chain(mapped.shown_on_demand.keys()).copied().collect();
-        showing_themselves.sort_unstable();
-        names_itself.extend(showing_themselves.iter().copied().filter(|func| matches!(bound.fns[func.idx()].owner, FnOwner::Expr(_))));
+        let mapped = self.file_mapped_arguments(file);
+        let mut self_exposing: Vec<FnId> = mapped.functions.keys().chain(mapped.materialized_on_demand.keys()).copied().collect();
+        self_exposing.sort_unstable();
+        references_itself.extend(self_exposing.iter().copied().filter(|func| matches!(bound.fns[func.idx()].owner, FnOwner::Expr(_))));
         let mut captured: FxHashMap<Sym, (Decl, Vec<ExprId>)> = FxHashMap::default();
         let mut uses_as_value: FxHashMap<FnId, Vec<(ExprId, Code, Code)>> = FxHashMap::default();
         let mut symbol_of_function: FxHashMap<FnId, (Sym, Decl)> = FxHashMap::default();
@@ -1003,7 +1071,7 @@ impl<'p, 's> Checker<'p, 's> {
                 continue;
             }
             if let Some(func) = declared_function(self, reference) {
-                edges.insert((node, Node::Code(self.code_of_fn(file, func))));
+                edges.insert((node, Node::Code(self.fn_code(file, func))));
                 mentions.entry(func).or_default().push(reference.e);
                 if is_called_directly(reference.e) {
                     called_directly.insert(func);
@@ -1023,8 +1091,8 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // Whoever calls it needs what it captures, and not its closure.
             if is_called_directly(reference.e)
-                && let Some(func) = self.callee_with_captures_at_hand(reference.sym)
-                && !names_itself.contains(&func)
+                && let Some(func) = self.callee_with_available_captures(reference.sym)
+                && !references_itself.contains(&func)
             {
                 if !returns_a_generator(func, reference.e) {
                     edges.insert((node, Node::Code(Code::Function(func))));
@@ -1040,7 +1108,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
 
         // The `arguments` object of a declaration shows its closure: as good as its name used as a value within it.
-        for &func in &showing_themselves {
+        for &func in &self_exposing {
             let name = bound.fn_symbol[func.idx()];
             if !matches!(bound.fns[func.idx()].owner, FnOwner::Stmt(_))
                 || name.is_none()
@@ -1051,10 +1119,10 @@ impl<'p, 's> Checker<'p, 's> {
                 continue;
             }
             let Some(holder) = self.activation_binding(file, Decl::Fn(func)) else { continue };
-            let holder = holder.map_or(Code::Module, |around| self.code_of_fn(file, around));
-            let code = self.code_of_fn(file, func);
-            let shown_at = mapped.functions.get(&func).unwrap_or_else(|| &mapped.shown_on_demand[&func]);
-            uses_as_value.entry(func).or_default().push((*shown_at, code, holder));
+            let holder = holder.map_or(Code::Module, |around| self.fn_code(file, around));
+            let code = self.fn_code(file, func);
+            let exposed_at = mapped.functions.get(&func).unwrap_or_else(|| &mapped.materialized_on_demand[&func]);
+            uses_as_value.entry(func).or_default().push((*exposed_at, code, holder));
             symbol_of_function.insert(func, (self.files.sym(file, name), Decl::Fn(func)));
             raw.entry(Node::Code(code)).or_default().insert(Need::Closure(func));
         }
@@ -1062,7 +1130,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `this`, `super`, `#name`.
         for &e in index.of(ExprTag::This) {
             let parent = bound.expr_parent[e.idx()];
-            let Code::Function(func) = self.code_at(file, parent) else { continue };
+            let Code::Function(func) = self.cached_code_at(file, parent, &mut enclosing_code) else { continue };
             if hir[func].kind != FnKind::Arrow {
                 continue;
             }
@@ -1079,7 +1147,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         for &e in index.of(ExprTag::Super) {
             let parent = bound.expr_parent[e.idx()];
-            let code = self.code_at(file, parent);
+            let code = self.cached_code_at(file, parent, &mut enclosing_code);
             let method_of_literal = match self.receiver_at(file, parent) {
                 Receiver::Function(func) if matches!(hir[func].kind, FnKind::Method | FnKind::Getter | FnKind::Setter) && matches!(bound.fns[func.idx()].owner, FnOwner::Expr(_)) => Some(func),
                 _ => None,
@@ -1107,7 +1175,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         for &e in index.of(ExprTag::NewTarget) {
             let parent = bound.expr_parent[e.idx()];
-            if let Code::Function(func) = self.code_at(file, parent)
+            if let Code::Function(func) = self.cached_code_at(file, parent, &mut enclosing_code)
                 && hir[func].kind == FnKind::Arrow
                 && let Receiver::Function(owner) = self.receiver_at(file, parent)
             {
@@ -1117,7 +1185,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut private_names: Vec<(ExprId, ClassId)> = bound.private_class.iter().map(|(&e, &class)| (e, class)).collect();
         private_names.sort_unstable();
         for (e, class) in private_names {
-            raw.entry(Node::Code(self.code_at(file, bound.expr_parent[e.idx()]))).or_default().insert(Need::Class(class));
+            raw.entry(Node::Code(self.cached_code_at(file, bound.expr_parent[e.idx()], &mut enclosing_code))).or_default().insert(Need::Class(class));
         }
 
         // Who makes what.
@@ -1127,7 +1195,7 @@ impl<'p, 's> Checker<'p, 's> {
             if parent == Parent::None {
                 continue;
             }
-            edges.insert((Node::Code(self.code_at(file, parent)), Node::Code(Code::Function(func))));
+            edges.insert((Node::Code(self.cached_code_at(file, parent, &mut enclosing_code)), Node::Code(Code::Function(func))));
             if is_callee(e) {
                 called_directly.insert(func);
             }
@@ -1145,7 +1213,7 @@ impl<'p, 's> Checker<'p, 's> {
             let symbol = &bound.symbols[name.idx()];
             let is_variable = symbol.decls.iter().any(|decl| matches!(decl, Decl::Var(_) | Decl::Param(_)));
             if is_variable || symbol.flags.contains(SymFlags::ASSIGNED) || !bound.assignments_to(name).is_empty() || self.is_stored_through_casts(file, name) {
-                edges.insert((Node::Code(self.code_at(file, bound.stmt_parent[stmt.idx()])), Node::Code(self.code_of_fn(file, func))));
+                edges.insert((Node::Code(self.code_at(file, bound.stmt_parent[stmt.idx()])), Node::Code(self.fn_code(file, func))));
             }
         }
         let mut classes: Vec<ClassId> = Vec::new();
@@ -1164,7 +1232,7 @@ impl<'p, 's> Checker<'p, 's> {
             for member in hir[class].members.iter() {
                 let func = hir[member].func;
                 if func.is_some() && !matches!(hir[func].body, FnBody::None) {
-                    edges.insert((Node::Class(class), Node::Code(self.code_of_fn(file, func))));
+                    edges.insert((Node::Class(class), Node::Code(self.fn_code(file, func))));
                 }
             }
         }
@@ -1178,9 +1246,9 @@ impl<'p, 's> Checker<'p, 's> {
         for func in functions {
             let (sym, decl) = symbol_of_function[&func];
             let Some(holder) = self.activation_binding(file, decl) else { continue };
-            let Some(activation) = self.scope_declaring(file, decl, holder) else { continue };
+            let Some(activation) = self.declaring_scope(file, decl, holder) else { continue };
             let uses = &uses_as_value[&func];
-            if !mapped.functions.contains_key(&func) && !self.hir(file)[func].flags.contains(Flags::GENERATOR) && uses.iter().all(|used| self.use_of_value(file, used.0) & argument_use::OBSERVED == 0) {
+            if !mapped.functions.contains_key(&func) && !self.hir(file)[func].flags.contains(Flags::GENERATOR) && uses.iter().all(|used| self.value_use_flags(file, used.0) & argument_use::OBSERVED == 0) {
                 found.declared_closures.insert(func, DeclaredClosure::Unobserved);
                 if let Activation::Call(outermost) = activation
                     && bound.fns[outermost.idx()].enclosing.is_none()
@@ -1205,26 +1273,26 @@ impl<'p, 's> Checker<'p, 's> {
         variables.sort_unstable();
         for sym in variables {
             let (decl, inner) = &captured[&sym];
-            let Some(activation) = self.activation_binding(file, *decl).and_then(|holder| self.scope_declaring(file, *decl, holder)) else { continue };
+            let Some(activation) = self.activation_binding(file, *decl).and_then(|holder| self.declaring_scope(file, *decl, holder)) else { continue };
             by_activation.entry(activation).or_default().push(sym);
             if let Some((statement, ahead)) = self.loop_binding(file, *decl)
                 && inner.iter().any(|&e| ahead.contains(&hir[e].pos))
             {
                 found.captured_before_iterations.insert(statement);
             }
-            if let Some(why) = self.why_not_copied(file, sym, *decl, inner, &mentions, &found.declared_closures) {
-                found.not_copied.insert(sym, why);
+            if let Some(why) = self.not_copied_reason(file, sym, *decl, inner, &mentions, &found.declared_closures) {
+                found.uncopied.insert(sym, why);
             }
         }
         for (&activation, closures) in &kept {
             for &(sym, _, inner) in closures {
                 by_activation.entry(activation).or_default().push(sym);
-                found.not_copied.insert(sym, NotCopied::KeepsClosure(inner));
+                found.uncopied.insert(sym, NotCopiedReason::KeepsClosure(inner));
             }
         }
         let member_of: FxHashMap<Code, ClassId> = (classes.iter())
             .flat_map(|&class| {
-                let members = hir[class].members.iter().map(|member| hir[member].func).filter(|func| func.is_some()).map(|func| self.code_of_fn(file, func));
+                let members = hir[class].members.iter().map(|member| hir[member].func).filter(|func| func.is_some()).map(|func| self.fn_code(file, func));
                 members.chain([Code::Constructor(class)]).map(move |code| (code, class)).collect::<Vec<_>>()
             })
             .collect();
@@ -1260,7 +1328,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             Node::Code(Code::Constructor(_) | Code::Module) => false,
         };
-        let owner_of_declaration = |this: &Self, decl: Decl| Node::Code(this.activation_binding(file, decl).flatten().map_or(Code::Module, |func| this.code_of_fn(file, func)));
+        let owner_of_declaration = |this: &Self, decl: Decl| Node::Code(this.activation_binding(file, decl).flatten().map_or(Code::Module, |func| this.fn_code(file, func)));
         let mut variables_by_owner: FxHashMap<Node, Vec<(Activation, Sym, Option<(FnId, ExprId)>)>> = FxHashMap::default();
         for (&scope, held) in &by_activation {
             for &sym in held {
@@ -1277,8 +1345,8 @@ impl<'p, 's> Checker<'p, 's> {
         for of_owner in &mut variables_by_owner {
             of_owner.1.sort_unstable();
         }
-        let function_kept_in: FxHashMap<Sym, FnId> = symbol_of_function.iter().map(|(&func, kept_in)| (kept_in.0, func)).collect();
-        let mut keeps_closure_without_captures: FxHashSet<Sym> = FxHashSet::default();
+        let function_stored_in: FxHashMap<Sym, FnId> = symbol_of_function.iter().map(|(&func, kept_in)| (kept_in.0, func)).collect();
+        let mut keeps_captureless_closure: FxHashSet<Sym> = FxHashSet::default();
         let mut non_escaping: FxHashMap<FnId, bool> = FxHashMap::default();
         let mut groups_by_scope: FxHashMap<Activation, Vec<CaptureGroup>> = FxHashMap::default();
         let mut has_too_many_captures: FxHashSet<Node> = FxHashSet::default();
@@ -1410,20 +1478,20 @@ impl<'p, 's> Checker<'p, 's> {
                 for &united in &united_of {
                     united_sizes[united] += 1;
                 }
-                let mut kept_closures: Vec<(usize, usize)> = Vec::new();
+                let mut cached_closures: Vec<(usize, usize)> = Vec::new();
                 for (index, variable) in variables.iter().enumerate() {
-                    let Some(&func) = function_kept_in.get(&variable.1) else { continue };
-                    match local_index.get(&Node::Code(self.code_of_fn(file, func))) {
-                        Some(&node) if united_sizes[united_of[index]] == 1 => kept_closures.push((index, node)),
+                    let Some(&func) = function_stored_in.get(&variable.1) else { continue };
+                    match local_index.get(&Node::Code(self.fn_code(file, func))) {
+                        Some(&node) if united_sizes[united_of[index]] == 1 => cached_closures.push((index, node)),
                         Some(_) => {}
                         None => {
-                            keeps_closure_without_captures.insert(variable.1);
+                            keeps_captureless_closure.insert(variable.1);
                         }
                     }
                 }
                 loop {
-                    let before = kept_closures.len();
-                    kept_closures.retain(|&(index, node)| {
+                    let before = cached_closures.len();
+                    cached_closures.retain(|&(index, node)| {
                         let own = find_root(&mut merged_into, united_of[index]);
                         let others: Vec<usize> = set_bits(&needed[node * word_count..(node + 1) * word_count]).into_iter().map(|united| find_root(&mut merged_into, united)).filter(|&united| united != own).collect();
                         match others.first() {
@@ -1434,7 +1502,7 @@ impl<'p, 's> Checker<'p, 's> {
                             _ => true,
                         }
                     });
-                    if kept_closures.len() == before {
+                    if cached_closures.len() == before {
                         break;
                     }
                 }
@@ -1455,7 +1523,7 @@ impl<'p, 's> Checker<'p, 's> {
                         pending.extend(callees[node].iter().copied());
                         continue;
                     }
-                    let retainer = self.retainer_of(file, nodes[node], &uses_as_value);
+                    let retainer = self.find_retainer(file, nodes[node], &uses_as_value);
                     for united in set_bits(&needed[node * word_count..(node + 1) * word_count]) {
                         retainers_of[find_root(&mut merged_into, united)].push(retainer);
                     }
@@ -1477,14 +1545,14 @@ impl<'p, 's> Checker<'p, 's> {
                     let group = match groups.iter().position(|group| group.retainers == retainers) {
                         Some(position) => &mut groups[position],
                         None => {
-                            groups.push(CaptureGroup { retainers, variables: Vec::new(), closures_kept_if_environment_exists: Vec::new(), is_in_coroutine: is_owner_coroutine });
+                            groups.push(CaptureGroup { retainers, variables: Vec::new(), closures_cached_if_environment_exists: Vec::new(), is_in_coroutine: is_owner_coroutine });
                             groups.last_mut().unwrap()
                         }
                     };
                     for index in members {
                         match variables[index].2 {
                             None => group.variables.push(variables[index].1),
-                            Some((func, inner)) => group.closures_kept_if_environment_exists.push((variables[index].1, func, inner)),
+                            Some((func, inner)) => group.closures_cached_if_environment_exists.push((variables[index].1, func, inner)),
                         }
                     }
                 }
@@ -1497,11 +1565,11 @@ impl<'p, 's> Checker<'p, 's> {
                         let is_subset = |of: &CaptureGroup| groups[index].retainers.iter().all(|retainer| of.retainers.binary_search(retainer).is_ok());
                         let target = (0..groups.len()).filter(|&other| other != index && is_subset(&groups[other])).min_by_key(|&other| groups[other].retainers.len());
                         match target {
-                            Some(target) if groups[index].variables.clone().into_iter().all(|sym| keeps_closure_without_captures.contains(&sym) || captured.contains_key(&sym) && self.holds_no_cells(sym)) => {
+                            Some(target) if groups[index].variables.clone().into_iter().all(|sym| keeps_captureless_closure.contains(&sym) || captured.contains_key(&sym) && self.holds_no_cells(sym)) => {
                                 let merged = groups.remove(index);
                                 let target = &mut groups[target - usize::from(target > index)];
                                 target.variables.extend(merged.variables);
-                                target.closures_kept_if_environment_exists.extend(merged.closures_kept_if_environment_exists);
+                                target.closures_cached_if_environment_exists.extend(merged.closures_cached_if_environment_exists);
                             }
                             _ => index += 1,
                         }
@@ -1515,18 +1583,18 @@ impl<'p, 's> Checker<'p, 's> {
                 let mut environments_of: Vec<Vec<usize>> = vec![Vec::new(); united_count];
                 let mut copies_of: Vec<usize> = vec![0; united_count];
                 for (environment, group) in scopes_of_owner.iter().flat_map(|scope| &groups_by_scope[scope]).enumerate() {
-                    let copyable = group.variables.iter().filter(|sym| !found.not_copied.contains_key(sym)).count();
-                    let has_environment = group.variables.len() > MOST_COPIES || copyable < group.variables.len();
-                    let copies_what_it_can = !has_environment || group.is_in_coroutine && copyable <= MOST_COPIES;
+                    let copyable = group.variables.iter().filter(|sym| !found.uncopied.contains_key(sym)).count();
+                    let has_environment = group.variables.len() > MAX_COPIES || copyable < group.variables.len();
+                    let copies_when_possible = !has_environment || group.is_in_coroutine && copyable <= MAX_COPIES;
                     for sym in &group.variables {
                         let united = find_root(&mut merged_into, united_of[index_of[sym]]);
-                        if copies_what_it_can && !found.not_copied.contains_key(sym) {
+                        if copies_when_possible && !found.uncopied.contains_key(sym) {
                             copies_of[united] += 1;
                         } else if environments_of[united].last() != Some(&environment) {
                             environments_of[united].push(environment);
                         }
                     }
-                    for kept in group.closures_kept_if_environment_exists.iter().filter(|_| has_environment) {
+                    for kept in group.closures_cached_if_environment_exists.iter().filter(|_| has_environment) {
                         let united = find_root(&mut merged_into, united_of[index_of[&kept.0]]);
                         if environments_of[united].last() != Some(&environment) {
                             environments_of[united].push(environment);
@@ -1547,38 +1615,38 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
             let before = has_too_many_captures.len();
-            has_too_many_captures.extend(capture_counts.into_iter().filter(|count| count.1 > MOST_COPIES && matches!(count.0, Node::Code(Code::Function(_)))).map(|count| count.0));
+            has_too_many_captures.extend(capture_counts.into_iter().filter(|count| count.1 > MAX_COPIES && matches!(count.0, Node::Code(Code::Function(_)))).map(|count| count.0));
             if has_too_many_captures.len() == before {
                 break;
             }
         }
         let mut scopes: Vec<Activation> = groups_by_scope.keys().copied().collect();
         scopes.sort_unstable();
-        for held in groups_by_scope.values().flatten().map(|group| &group.variables).filter(|held| held.len() <= MOST_COPIES) {
-            if !held.iter().all(|sym| matches!(found.not_copied.get(sym), None | Some(NotCopied::SeenEarly(_)))) {
+        for held in groups_by_scope.values().flatten().map(|group| &group.variables).filter(|held| held.len() <= MAX_COPIES) {
+            if !held.iter().all(|sym| matches!(found.uncopied.get(sym), None | Some(NotCopiedReason::ReferencedInTdz(_)))) {
                 continue;
             }
             for sym in held {
                 let Some((decl @ (Decl::Var(_) | Decl::Class(_)), inner)) = captured.get(sym) else { continue };
-                if found.not_copied.contains_key(sym)
-                    && let Some((site, end)) = self.dead_zone_of(file, *decl)
+                if found.uncopied.contains_key(sym)
+                    && let Some((site, end)) = self.tdz_of(file, *decl)
                     && inner.iter().all(|&e| self.is_evaluated_once_bound(file, e, site, end, &mentions, &found.declared_closures, &mut FxHashSet::default()))
                 {
-                    found.not_copied.remove(sym);
+                    found.uncopied.remove(sym);
                 }
             }
         }
         for scope in &scopes {
             for group in groups_by_scope.get_mut(scope).unwrap() {
-                let closures = std::mem::take(&mut group.closures_kept_if_environment_exists);
-                if group.variables.len() <= MOST_COPIES && !group.variables.iter().any(|sym| found.not_copied.contains_key(sym)) {
+                let closures = std::mem::take(&mut group.closures_cached_if_environment_exists);
+                if group.variables.len() <= MAX_COPIES && !group.variables.iter().any(|sym| found.uncopied.contains_key(sym)) {
                     continue;
                 }
                 for (sym, func, inner) in closures {
                     group.variables.push(sym);
                     found.declared_closures.remove(&func);
                     kept.entry(*scope).or_default().push((sym, func, inner));
-                    found.not_copied.insert(sym, NotCopied::KeepsClosure(inner));
+                    found.uncopied.insert(sym, NotCopiedReason::KeepsClosure(inner));
                 }
             }
         }
@@ -1595,20 +1663,20 @@ impl<'p, 's> Checker<'p, 's> {
             init.is_some() && matches!(hir[init].kind, ExprKind::Object(_))
         };
         let lives_in_environment = |group: &CaptureGroup, sym: &Sym| {
-            let copyable = group.variables.iter().filter(|sym| !found.not_copied.contains_key(sym)).count();
-            (group.variables.len() > MOST_COPIES || copyable < group.variables.len())
-                && (found.not_copied.contains_key(sym) || !is_bound_to_literal(sym) && !(group.is_in_coroutine && copyable <= MOST_COPIES))
+            let copyable = group.variables.iter().filter(|sym| !found.uncopied.contains_key(sym)).count();
+            (group.variables.len() > MAX_COPIES || copyable < group.variables.len())
+                && (found.uncopied.contains_key(sym) || !is_bound_to_literal(sym) && !(group.is_in_coroutine && copyable <= MAX_COPIES))
         };
         let needs_environment = |group: &CaptureGroup| group.variables.iter().any(|sym| lives_in_environment(group, sym));
         for (&scope, groups) in &groups_by_scope {
             for group in groups.iter().filter(|group| needs_environment(group)) {
-                let (mut root, mut around) = ((scope, &group.retainers), self.scope_around(file, scope));
+                let (mut root, mut around) = ((scope, &group.retainers), self.enclosing_scope(file, scope));
                 while let Some(outer) = around {
                     let has_same_retainers = |other: &&CaptureGroup| needs_environment(other) && other.retainers == group.retainers;
                     if let Some(shared) = groups_by_scope.get(&outer).into_iter().flatten().find(has_same_retainers) {
                         root = (outer, &shared.retainers);
                     }
-                    around = self.scope_around(file, outer);
+                    around = self.enclosing_scope(file, outer);
                 }
                 by_root.entry((root.0, root.1.clone())).or_default().extend(group.variables.iter().filter(|sym| lives_in_environment(group, sym)));
             }
@@ -1643,7 +1711,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // A function expression whose `arguments` object shows it finds its closure in a scope of its own, as one that names itself does. Without a name there is no variable in it.
         // So does a declaration whose name is stored to: the name is a variable, which is given the closure where its scope is entered and may hold anything later.
-        for &func in &showing_themselves {
+        for &func in &self_exposing {
             let name = bound.fn_symbol[func.idx()];
             let has_own_scope = match bound.fns[func.idx()].owner {
                 FnOwner::Expr(_) => true,
@@ -1659,10 +1727,10 @@ impl<'p, 's> Checker<'p, 's> {
             if !matches!(found.declared_closures.get(&func), Some(DeclaredClosure::KeptInEnvironment(..))) {
                 found.environments.insert(activation, Vec::new());
                 found.environments_by_activation.insert(activation, vec![activation]);
-                found.expressions_kept.insert(activation, vec![func]);
-                found.kept_expressions.insert(func, (activation, 0));
+                found.cached_expressions_by_activation.insert(activation, vec![func]);
+                found.cached_function_expressions.insert(func, (activation, 0));
             }
-            raw.entry(Node::Code(self.code_of_fn(file, func))).or_default().insert(Need::Environment(activation, Sym { file, id: name }));
+            raw.entry(Node::Code(self.fn_code(file, func))).or_default().insert(Need::Environment(activation, Sym { file, id: name }));
             if name.is_some() && matches!(bound.fns[func.idx()].owner, FnOwner::Expr(_)) && self.activation_binding(file, Decl::Fn(func)).is_none() {
                 for &mention in index.of(ExprTag::Ident) {
                     let parent = bound.expr_parent[mention.idx()];
@@ -1697,10 +1765,10 @@ impl<'p, 's> Checker<'p, 's> {
                 Need::Environment(Activation::Expression(func), _) => this.code_at(file, this.parent_of_node(file, Parent::FnBody(func))),
                 Need::Variable(sym) | Need::Environment(_, sym) => {
                     let decl = captured.get(&sym).map(|it| it.0).or_else(|| symbol_of_function.values().find(|it| it.0 == sym).map(|it| it.1));
-                    decl.and_then(|decl| this.activation_binding(file, decl)).flatten().map_or(Code::Module, |func| this.code_of_fn(file, func))
+                    decl.and_then(|decl| this.activation_binding(file, decl)).flatten().map_or(Code::Module, |func| this.fn_code(file, func))
                 }
                 Need::Closure(func) | Need::HomeObject(func) => this.code_at(file, this.parent_of_node(file, Parent::FnBody(func))),
-                Need::This(Receiver::Function(func)) | Need::Arguments(func) | Need::NewTarget(func) => this.code_of_fn(file, func),
+                Need::This(Receiver::Function(func)) | Need::Arguments(func) | Need::NewTarget(func) => this.fn_code(file, func),
                 Need::This(Receiver::Instance(class)) => Code::Constructor(class),
                 Need::This(Receiver::Static(class)) | Need::Class(class) => this.code_at(file, bound.class_owner[class.idx()].to_parent()),
                 Need::This(Receiver::None) => Code::Module,
@@ -1784,7 +1852,7 @@ impl<'p, 's> Checker<'p, 's> {
                     match code {
                         Code::Constructor(class) => {
                             found.capturing_constructors.insert(class);
-                            if let Some(func) = self.constructor_of_class(file, class) {
+                            if let Some(func) = self.class_constructor(file, class) {
                                 found.of_functions.insert(func, captures);
                             }
                         }
@@ -1805,10 +1873,10 @@ impl<'p, 's> Checker<'p, 's> {
                 && bound.fns[outermost.idx()].enclosing.is_none()
                 && bound.fns[func.idx()].enclosing != outermost
                 && !self.hir(file)[func].flags.contains(Flags::GENERATOR)
-                && self.use_of_value(file, e) & argument_use::OBSERVED == 0
+                && self.value_use_flags(file, e) & argument_use::OBSERVED == 0
             {
-                let kept = found.expressions_kept.entry(activation).or_default();
-                found.kept_expressions.insert(func, (activation, (found.environments[&activation].len() + kept.len()) as u32));
+                let kept = found.cached_expressions_by_activation.entry(activation).or_default();
+                found.cached_function_expressions.insert(func, (activation, (found.environments[&activation].len() + kept.len()) as u32));
                 kept.push(func);
             }
         }

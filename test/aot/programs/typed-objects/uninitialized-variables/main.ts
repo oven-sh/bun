@@ -32,7 +32,7 @@ console.log(readLater())
 // The dead zone is a ReferenceError, not undefined.
 function readConst(): number { return tooEarly }
 console.log(attempt(readConst), attempt(() => tooEarlyLet))
-// Not a constant expression: those are compile-time constants, see type-rules/constant-dead-zone.
+// Not a constant expression: those are compile-time constants, see type-rules/constant-tdz.
 const tooEarly: number = Math.abs(-5)
 let tooEarlyLet: string = "x"
 console.log(readConst(), tooEarlyLet)

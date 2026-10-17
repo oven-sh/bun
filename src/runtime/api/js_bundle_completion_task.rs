@@ -1049,7 +1049,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.bytecode = config.bytecode;
         transpiler.options.aot = config.compile.as_ref().is_some_and(|compile| compile.aot);
         transpiler.options.aot_explain = (config.compile.as_ref()).map_or_else(Vec::new, |compile| compile.aot_explain.clone());
-        transpiler.options.aot_explains_into_log = true;
+        transpiler.options.aot_explain_to_log = true;
         transpiler.options.aot_logs_type_errors = (config.compile.as_ref()).is_some_and(|compile| compile.logs_type_errors);
         transpiler.options.compile_function_source =
             (config.compile.as_ref()).is_none_or(|compile| compile.function_source);
@@ -1124,8 +1124,8 @@ impl CompletionStruct for JSBundleCompletionTask {
             (transpiler.options.source_map == options::SourceMapOption::Inline, "an inline source map"),
         ];
         let emits_declarations = config.dts && config.compile.is_none();
-        transpiler.options.leaves_out_sound_files_for = unsupported.iter().find(|(is_set, _)| *is_set && emits_declarations).map(|(_, option)| *option);
-        if emits_declarations && transpiler.options.leaves_out_sound_files_for.is_none() {
+        transpiler.options.skips_sound_files_for = unsupported.iter().find(|(is_set, _)| *is_set && emits_declarations).map(|(_, option)| *option);
+        if emits_declarations && transpiler.options.skips_sound_files_for.is_none() {
             transpiler.options.emit_declarations = Some(crate::cli::check_command::sound_declarations_for_build);
             transpiler.options.write_sound_files = Some(crate::cli::check_command::sound_files_for_build);
             transpiler.options.rolls_up_declarations = !config.is_root_given;

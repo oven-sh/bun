@@ -282,11 +282,11 @@ pub struct Strs {
 }
 
 impl Strs {
-    pub fn with_room_for(strings: usize) -> Strs {
+    pub fn with_capacity(strings: usize) -> Strs {
         Strs { bytes: Vec::new(), ends: Vec::with_capacity(strings), hashes: Vec::with_capacity(strings), ids: hashbrown::HashTable::with_capacity(strings) }
     }
-    pub fn with_room_for_bytes(strings: usize, bytes: usize) -> Strs {
-        Strs { bytes: Vec::with_capacity(bytes), ..Strs::with_room_for(strings) }
+    pub fn with_capacities(strings: usize, bytes: usize) -> Strs {
+        Strs { bytes: Vec::with_capacity(bytes), ..Strs::with_capacity(strings) }
     }
     pub fn hash_of(bytes: &[u8]) -> u64 {
         std::hash::BuildHasher::hash_one(&rustc_hash::FxBuildHasher, bytes)
@@ -310,7 +310,7 @@ impl Strs {
         self.ids.insert_unique(hash, id, |&id| hashes[id.idx()]);
         id
     }
-    pub fn make_room_for_bytes(&mut self, bytes: usize) {
+    pub fn reserve_bytes(&mut self, bytes: usize) {
         self.bytes.reserve_exact(bytes);
     }
     pub fn add_all(&mut self, bytes: &[u8], lengths: &[u32], hashes: &[u64]) {
@@ -372,7 +372,7 @@ pub mod field_flags {
     /// Its type is written down: what is stored to it is held to the type as `as` holds it.
     pub const ANNOTATED: u16 = 1 << 4;
     /// A variable in an environment: no read comes before the first store.
-    pub const NEVER_SEEN_UNINITIALIZED: u16 = 1 << 5;
+    pub const NEVER_READ_UNINITIALIZED: u16 = 1 << 5;
     /// A variable in an environment: there is one store, that of its declaration.
     pub const STORED_ONCE: u16 = 1 << 6;
     /// No code of the program stores a property by its name, in whatever object. So no object has it, unless by a computed key, and it
@@ -387,13 +387,13 @@ pub mod field_flags {
     pub const MAY_BE_SET_AT_CREATION: u16 = 1 << 9;
     /// Of a class: no constructor defines it. The object has no such property until one is stored. Every other field of a class is
     /// defined while the object is constructed, an optional one as `undefined`. A fact.
-    pub const ABSENT_AT_BIRTH: u16 = 1 << 10;
+    pub const ABSENT_AT_CREATION: u16 = 1 << 10;
     /// Of a required field of a layout that is allocated: between the moment an object has the layout and the first store to the field,
     /// nobody reads the field, asks whether it is there, or gets hold of the object. A FACT, by layout and not by name: the field is kept
     /// without a marker for "absent". It rests on `bun_sema::check`, first_stores.rs: literals and classes have it from the start, a
     /// constructor function stores it first (the operation `Initialize`), and no shape transition adds it. It takes the whole program
     /// to say so: the link sets it, and no code that is translated depends on it.
-    pub const NEVER_SEEN_ABSENT: u16 = 1 << 11;
+    pub const NEVER_OBSERVED_ABSENT: u16 = 1 << 11;
     /// `undefined` is not of the type that is declared for it: `s: string`, `inner: Flat`, and not `x: T | undefined`, `brand: any`, `unknown`, `void`. The type of
     /// the field does not tell: a reference may be nil as it is kept. So an object that is not laid out and lacks the property lacks what
     /// the layout requires. A fact about the declaration, not about what the field holds.
@@ -419,22 +419,22 @@ pub struct Field {
     /// every fragment: the link puts it there.
     pub type_text: StrId,
     /// The one function whose closures are stored to it. `NONE`: nothing is known.
-    pub only_function: FuncId,
-    /// `only_function_flags`
-    pub only_function_flags: u8,
+    pub single_function: FuncId,
+    /// `single_function_flags`
+    pub single_function_flags: u8,
 }
 
 impl Field {
     pub fn new(name: StrId, declared: TyId, flags: u16) -> Field {
-        Field { name, declared, flags, literals: Vec::new(), type_text: StrId::NONE, only_function: FuncId::NONE, only_function_flags: 0 }
+        Field { name, declared, flags, literals: Vec::new(), type_text: StrId::NONE, single_function: FuncId::NONE, single_function_flags: 0 }
     }
 }
 
-pub mod only_function_flags {
+pub mod single_function_flags {
     /// It holds a closure of the function whenever it is read. Otherwise that is a prediction.
-    pub const IS_FACT: u8 = 1;
+    pub const IS_PROVEN: u8 = 1;
     /// Of a variable, of a module or in an environment: every store to it is seen, and it holds a closure of the function, `undefined` or
-    /// `null` whenever it is read. A fact. Not together with `IS_FACT`.
+    /// `null` whenever it is read. A fact. Not together with `IS_PROVEN`.
     pub const OR_NULLISH: u8 = 1 << 2;
 }
 
@@ -473,12 +473,12 @@ pub const NO_VARIABLE: u32 = u32::MAX;
 pub mod class_flags {
     /// The objects of the class have the layout. Otherwise they are ordinary objects, or what a class makes that is not of the program:
     /// the layout has no fields, nothing is allocated with it, and no type names it.
-    pub const IS_LAID_OUT: u32 = 1 << 2;
+    pub const HAS_FIXED_LAYOUT: u32 = 1 << 2;
     /// The declaration is evaluated at most once, so there is one class object.
     pub const IS_EVALUATED_ONCE: u32 = 1 << 3;
     /// It is not laid out and extends something, which makes the object: a class that is not of the program, one that is not laid out,
     /// `null`. What that is, is evaluated at the declaration.
-    pub const HAS_FOREIGN_ROOT: u32 = 1 << 4;
+    pub const HAS_UNTYPED_BASE: u32 = 1 << 4;
     /// Written in TypeScript. The static methods and accessors it declares cannot be replaced, redefined or deleted, the class object
     /// keeps its prototype, and gets no property of its own by the name of a static method or accessor it inherits.
     pub const HAS_FIXED_MEMBERS: u32 = 1 << 5;
@@ -486,7 +486,7 @@ pub mod class_flags {
     /// class, which may have anything by the name of a method.
     pub const MAY_HAVE_OTHER_PROTOTYPE: u32 = 1 << 6;
     /// It declares a static member whose name is computed and may be any string. A field of that kind is in no list of the layout.
-    pub const HAS_STATIC_MEMBER_OF_UNKNOWN_NAME: u32 = 1 << 8;
+    pub const HAS_COMPUTED_STATIC_MEMBER: u32 = 1 << 8;
     pub const CONSTRUCTOR_MAY_BE_REPLACED: u32 = 1 << 9;
     pub const MAY_BE_REUSED: u32 = 1 << 10;
 }
@@ -515,13 +515,13 @@ pub struct Layout {
     pub may_be_frozen: bool,
     /// The layout as a way to look at objects: a place of this type may also hold an object that is not laid out, an array, a function,
     /// what the host or a package has made.
-    pub admits_foreign: bool,
-    pub is_opened_for_the_log: bool,
-    pub admits_only_other_layouts: bool,
+    pub accepts_untyped: bool,
+    pub is_relaxed_for_logging: bool,
+    pub accepts_only_other_layouts: bool,
     /// The layout as a way to look at objects: the allocated layouts whose type is assignable to this type, itself among them if it is
     /// allocated. No other object of the program is in a place of this type. Sorted.
     pub members: Vec<LayoutId>,
-    pub members_by_fit: Vec<LayoutId>,
+    pub structural_subtypes: Vec<LayoutId>,
     /// What a cast may turn an object into that was allocated with this layout: layouts that have all its fields. Sorted.
     pub specializations: Vec<LayoutId>,
     /// Where the type or the class is declared, for messages: the path, as `Module::display_path` has it, and the line, from 1. `NONE` and
@@ -542,14 +542,14 @@ impl FieldsByName {
 }
 
 impl Layout {
-    pub const MANY_FIELDS: usize = 32;
+    pub const FIELD_INDEX_THRESHOLD: usize = 32;
 
     pub fn field(&self, name: StrId) -> Option<u32> {
         self.fields.iter().position(|f| f.name == name).map(|i| i as u32)
     }
 
     pub fn fields_by_name(&self) -> FieldsByName {
-        if self.fields.len() < Layout::MANY_FIELDS {
+        if self.fields.len() < Layout::FIELD_INDEX_THRESHOLD {
             return FieldsByName(None);
         }
         let mut by_name = rustc_hash::FxHashMap::with_capacity_and_hasher(self.fields.len(), Default::default());
@@ -559,8 +559,8 @@ impl Layout {
         FieldsByName(Some(by_name))
     }
 
-    pub fn admits_unchecked_objects(&self) -> bool {
-        self.admits_foreign && !self.admits_only_other_layouts
+    pub fn accepts_unchecked_objects(&self) -> bool {
+        self.accepts_untyped && !self.accepts_only_other_layouts
     }
 }
 
@@ -569,9 +569,9 @@ pub struct Global {
     pub module: ModuleId,
     pub declared: TyId,
     pub initialization: Initialization,
-    /// As `Field::only_function`.
-    pub only_function: FuncId,
-    pub only_function_flags: u8,
+    /// As `Field::single_function`.
+    pub single_function: FuncId,
+    pub single_function_flags: u8,
 }
 
 /// What a module variable holds before anything is stored to it.
@@ -583,9 +583,9 @@ pub enum Initialization {
     /// `undefined`, from before any code runs: a `var`, and what the compiler keeps to itself and makes on first use.
     Undefined = 1,
     /// Nothing, and no read comes before the first store: none has to test for that.
-    NeverSeen = 2,
+    NeverReadUninitialized = 2,
     /// The same, and there is one store, that of its declaration: a read yields the same whenever it is made.
-    NeverSeenAndStoredOnce = 3,
+    NeverReadUninitializedStoredOnce = 3,
     Lazy = 4,
 }
 
@@ -630,13 +630,13 @@ pub mod func_flags {
     /// Of the prelude: it implements a built-in.
     pub const IS_BUILTIN: u16 = 1 << 8;
     /// Written in a builtin module.
-    pub const IS_OF_BUILTIN_MODULE: u16 = 1 << 9;
+    pub const IS_IN_BUILTIN_MODULE: u16 = 1 << 9;
     /// Its frames only exist because of how the code is compiled. Stack traces leave them out.
     pub const IS_HIDDEN_IN_STACK_TRACES: u16 = 1 << 10;
-    pub const NAME_IS_GIVEN: u16 = 1 << 11;
-    pub const IS_CODE_OF_MODULE: u16 = 1 << 12;
+    pub const HAS_EXPLICIT_NAME: u16 = 1 << 11;
+    pub const IS_MODULE_BODY: u16 = 1 << 12;
     pub const IS_SLOPPY: u16 = 1 << 13;
-    pub const IS_GENERAL_ENTRY: u16 = 1 << 14;
+    pub const IS_GENERIC_ENTRYPOINT: u16 = 1 << 14;
     pub const HAS_NO_FIELD_NAMES_ON_PROTOTYPE: u16 = 1 << 15;
 }
 
@@ -674,10 +674,10 @@ pub enum RelOp {
     Ge,
 }
 
-/// Why a value is held to a type. One that does not fit is turned into one that does if the source names the type, with `as` or the
+/// CoerceReason a value is held to a type. One that does not fit is turned into one that does if the source names the type, with `as` or the
 /// annotation of the place that the value enters, and it can be done. Otherwise a TypeError is thrown, but by `as`.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-pub enum Why {
+pub enum CoerceReason {
     /// It enters a place whose type nobody has written down.
     Store,
     /// What enters a place whose type is written down: `const a: T = x`, a parameter, a result, a field. Plain data is made what the type
@@ -698,7 +698,7 @@ pub enum Why {
     /// `T`: `to` is `T`, and the type of the value is what is known of it afterwards.
     Coerce,
     Forced,
-    /// The same of what nobody else can hold, nor anything below it: `JSON.parse(text) as T`: plain data is made what `T` says, all the way down. `Checker::is_fresh_graph_by_text`.
+    /// The same of what nobody else can hold, nor anything below it: `JSON.parse(text) as T`: plain data is made what `T` says, all the way down. `Checker::is_syntactically_fresh_graph`.
     CoerceFreshGraph,
     CastFresh,
     ArgumentClaim(u8),
@@ -725,8 +725,8 @@ pub enum Op {
     /// An object of a shape, with nothing stored in it yet.
     New(LayoutId),
     /// The same, with its discriminant: whoever initializes it stores `value` to the property `name` before anybody else sees it, and no
-    /// code of the program stores to the property by its name after that. See `Checker::discriminant_of_new` and
-    /// `Checker::discriminant_of_object_literal` for what is not ruled out. What the object is made as may go by the value.
+    /// code of the program stores to the property by its name after that. See `Checker::new_discriminant` and
+    /// `Checker::object_literal_discriminant` for what is not ruled out. What the object is made as may go by the value.
     NewWith { layout: LayoutId, name: StrId, value: V },
     /// Of an environment only. What the language sees as an object is read by name.
     FieldGet { obj: V, layout: LayoutId, field: u32 },
@@ -786,7 +786,7 @@ pub enum Op {
     CallDirect { func: FuncId, args: Args },
 
     /// The value, held to a type.
-    Coerce { value: V, to: TyId, why: Why },
+    Coerce { value: V, to: TyId, why: CoerceReason },
     /// What was thrown and is being handled; or the exception itself, which nothing looks at but the `Throw` that passes it on. The first in a handler that catches.
     Caught,
     CaughtException,
@@ -868,7 +868,7 @@ const _: () = assert!(size_of::<Value>() == 40);
 
 impl Value {
     const INDEX_BITS: u32 = 27;
-    const FINDS_INITIALIZED: u32 = 1 << 30;
+    const IS_KNOWN_INITIALIZED: u32 = 1 << 30;
     const IS_IN_TAIL_POSITION: u32 = 1 << 31;
 
     #[inline]
@@ -898,17 +898,17 @@ impl Value {
             Prediction::Field(ty) => (4, ty.0),
         };
         let packed = if index < 1 << Self::INDEX_BITS { kind << Self::INDEX_BITS | index } else { 0 };
-        self.prediction_and_flags = self.prediction_and_flags & (Self::FINDS_INITIALIZED | Self::IS_IN_TAIL_POSITION) | packed;
+        self.prediction_and_flags = self.prediction_and_flags & (Self::IS_KNOWN_INITIALIZED | Self::IS_IN_TAIL_POSITION) | packed;
     }
 
     #[inline]
-    pub fn finds_initialized(&self) -> bool {
-        self.prediction_and_flags & Self::FINDS_INITIALIZED != 0
+    pub fn is_known_initialized(&self) -> bool {
+        self.prediction_and_flags & Self::IS_KNOWN_INITIALIZED != 0
     }
 
     #[inline]
-    pub fn set_finds_initialized(&mut self, finds_initialized: bool) {
-        self.prediction_and_flags = self.prediction_and_flags & !Self::FINDS_INITIALIZED | if finds_initialized { Self::FINDS_INITIALIZED } else { 0 };
+    pub fn set_is_known_initialized(&mut self, is_known_initialized: bool) {
+        self.prediction_and_flags = self.prediction_and_flags & !Self::IS_KNOWN_INITIALIZED | if is_known_initialized { Self::IS_KNOWN_INITIALIZED } else { 0 };
     }
 
     #[inline]
@@ -941,8 +941,8 @@ pub struct Func {
     pub name: StrId,
     pub module: ModuleId,
     pub pos: u32,
-    pub place_of_text: u32,
-    pub end_of_text: u32,
+    pub source_start: u32,
+    pub source_end: u32,
     pub kind: FuncKind,
     pub flags: u16,
     /// Its `length` property: the parameters before the first one with an initializer or the rest parameter.
@@ -951,7 +951,7 @@ pub struct Func {
     /// stores to once an inner function can have seen it.
     pub captures: Vec<TyId>,
     /// The checker's type of `this` in it: for a method, an object of its class. `NONE`: it says nothing.
-    pub this_declared: TyId,
+    pub declared_this_type: TyId,
     /// The checker's type of each parameter. `NONE`: it says nothing.
     pub params: Vec<TyId>,
     /// By parameter: its type is written down, so an argument is held to it as by `as`. Where this ends, none is.
@@ -976,9 +976,9 @@ impl Func {
     pub fn has(&self, flag: u16) -> bool {
         self.flags & flag != 0
     }
-    /// Why an argument for the parameter is held to its type.
-    pub fn why_of_param(&self, index: usize) -> Why {
-        if self.annotated.get(index) == Some(&true) { Why::Cast } else { Why::Store }
+    /// CoerceReason an argument for the parameter is held to its type.
+    pub fn param_cast_reason(&self, index: usize) -> CoerceReason {
+        if self.annotated.get(index) == Some(&true) { CoerceReason::Cast } else { CoerceReason::Store }
     }
     #[inline]
     pub fn ty(&self, v: V) -> TyId {
@@ -1168,10 +1168,10 @@ pub struct Program {
     /// The run time lets no other name of a field be defined on the `prototype` object of a function. Sorted.
     pub prototype_property_names: Vec<StrId>,
     pub regexp_literals: Vec<(StrId, StrId)>,
-    /// The bytes of the modules of WebAssembly that the program may load, for the engine to compile. See `webassembly::add_files_named_in`.
+    /// The bytes of the modules of WebAssembly that the program may load, for the engine to compile. See `webassembly::add_referenced_files`.
     pub webassembly_modules: Vec<Vec<u8>>,
     pub logs_type_errors: bool,
-    pub marked_values: Vec<Vec<V>>,
+    pub flagged_values: Vec<Vec<V>>,
     /// By registry id, ascending: the function that evaluates a builtin module and returns its value.
     pub builtin_modules: Vec<(u32, FuncId)>,
     /// By id, ascending: a builtin function of the runtime that is compiled with the program, and its `ImplementationVisibility` as a number.
@@ -1179,10 +1179,10 @@ pub struct Program {
     /// A property, a key, and the one function of the program whose closures are stored under the key in the dictionaries that are held under the property: `e.on("x", listener)`. Ascending.
     /// A prediction.
     pub functions_by_key: Vec<(StrId, StrId, FuncId)>,
-    pub accesses_of_one_row: Vec<(FuncId, V)>,
-    pub parameters_as_written: rustc_hash::FxHashMap<u32, Vec<TyId>>,
-    pub may_be_handed_what_says_nothing: rustc_hash::FxHashSet<u32>,
-    pub known_places: Vec<(FuncId, V, u32)>,
+    pub single_structure_accesses: Vec<(FuncId, V)>,
+    pub declared_parameter_types: rustc_hash::FxHashMap<u32, Vec<TyId>>,
+    pub may_receive_untyped_arguments: rustc_hash::FxHashSet<u32>,
+    pub known_slots: Vec<(FuncId, V, u32)>,
     /// Runs the program.
     /// What is run first, by entry point, in their order. The first is that of the executable itself. One of them is run in an instance of the program, once.
     pub entries: Vec<FuncId>,

@@ -120,7 +120,7 @@ public:
         JSC::JSString* key,
         JSValue exportsObject, bool hasEvaluated, JSValue parent);
 
-    static JSObject* createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString, JSModuleGraph* = nullptr, JSCommonJSModule* askingModule = nullptr);
+    static JSObject* createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString, JSModuleGraph* = nullptr, JSCommonJSModule* requestingModule = nullptr);
     JSModuleGraph* moduleGraph() const { return m_moduleGraph.get(); }
     void setModuleGraph(JSC::VM&, JSModuleGraph*);
 
@@ -172,7 +172,7 @@ JSC::JSValue createRequireCacheObject(JSC::JSGlobalObject*, JSC::JSMap* requireM
 
 // `graph`: the Bun.ModuleGraph whose loader is importing the file (the module goes in
 // its require cache), or null for the global object's loader.
-JSC::JSSourceCode* sourceOfLoadedCommonJSModule(Zig::GlobalObject*, const WTF::String& key, bool ignoreESModuleAnnotation);
+JSC::JSSourceCode* loadedCommonJSModuleSource(Zig::GlobalObject*, const WTF::String& key, bool ignoreESModuleAnnotation);
 
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,

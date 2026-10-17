@@ -1,15 +1,15 @@
 // A one-character string that was just read from a string, in a loop or where the read stands in place, is compared with a one-character literal or with another such string.
-// CALLS+ slashAt ValueIsTextOfLength1
+// CALLS+ slashAt ValueEqualsLiteralOfLength1
 // CALLS+ slashCharAt tests for equality with [0-9 ]*\b47\b
 // CALLS+ slashByAt tests for equality with [0-9 ]*\b47\b
-// CALLS- kept StringHasAt|StringIsText
-// CALLS- keptInLoop StringHasAt|StringIsText
+// CALLS- kept StringHasAt|StringEqualsLiteral
+// CALLS- keptInLoop StringHasAt|StringEqualsLiteral
 // CALLS- samePlace StringEq|StringsAreEqual
 // CALLS+ samePlaceHandled StringEq|StringsAreEqual
-// CALLS+ slashHandled StringHasAt|StringIsText
-// CALLS+ twoCharacters ValueIsTextOfLength2
+// CALLS+ slashHandled StringHasAt|StringEqualsLiteral
+// CALLS+ twoCharacters ValueEqualsLiteralOfLength2
 // CALLS+ notASCII StringEq|StringsAreEqual
-// CALLS+ oneArmOnly StringHasAt|StringIsText
+// CALLS+ oneArmOnly StringHasAt|StringEqualsLiteral
 const print = (s: string) => console.log(s);
 function show(x: unknown): string {
     if (typeof x !== "string")

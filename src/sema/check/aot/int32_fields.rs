@@ -12,7 +12,7 @@
 //! how, in flows between nodes that are the same whoever names them. A flow belongs to the code that runs it, and counts if that code is in
 //! the linked program. `expected_int32` puts the flows together.
 //!
-//! Evidence for an int32: an integer literal that is one; an expression that is shown to be one (`integers_of_expr`: operators on 32
+//! Evidence for an int32: an integer literal that is one; an expression that is shown to be one (`expr_integer_range`: operators on 32
 //! bits, values of enum types, masks); `.length`, `.size`, `.index` and the like; `charCodeAt`, `indexOf` and the like; `parseInt`;
 //! what `Math.floor`, `ceil`, `round` and `trunc` yield; `++` and `--`. Sums, differences, products and remainders are what their
 //! operands are, and so are `Math.min`, `max` and `abs`.
@@ -81,8 +81,8 @@ const SMALL_METHODS: [&[u8]; 32] = [
     b"getInt32",
 ];
 
-const ARRAYS_OF_FLOATS: [&[u8]; 2] = [b"Float32Array", b"Float64Array"];
-const ARRAYS_OF_UINT32: [&[u8]; 1] = [b"Uint32Array"];
+const FLOAT_ARRAYS: [&[u8]; 2] = [b"Float32Array", b"Float64Array"];
+const UINT32_ARRAYS: [&[u8]; 1] = [b"Uint32Array"];
 
 /// Something that numbers get into and come out of. `N`: what a name is called by.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -94,9 +94,9 @@ pub enum FlowNode<N = Atom> {
     /// What the function returns.
     Result(FileId, FnId),
     /// What a call `object.name(..)` yields, whatever the object.
-    ResultNamed(N),
+    NamedResult(N),
     /// What such a call passes for the parameter of that number.
-    ArgumentNamed(N, u32),
+    NamedArgument(N, u32),
 }
 
 impl<N> FlowNode<N> {
@@ -105,15 +105,15 @@ impl<N> FlowNode<N> {
             FlowNode::Property(name) => FlowNode::Property(rename(name)),
             FlowNode::Variable(file, symbol) => FlowNode::Variable(file, symbol),
             FlowNode::Result(file, func) => FlowNode::Result(file, func),
-            FlowNode::ResultNamed(name) => FlowNode::ResultNamed(rename(name)),
-            FlowNode::ArgumentNamed(name, index) => FlowNode::ArgumentNamed(rename(name), index),
+            FlowNode::NamedResult(name) => FlowNode::NamedResult(rename(name)),
+            FlowNode::NamedArgument(name, index) => FlowNode::NamedArgument(rename(name), index),
         }
     }
 }
 
 /// Why a number is not expected to be an int32.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub enum Contrary {
+pub enum NotInt32Reason {
     Fraction,
     Large,
     Division,
@@ -123,27 +123,27 @@ pub enum Contrary {
     Clock,
     ParsedFraction,
     FloatArray,
-    OnlyDeclared,
+    DeclaredOnly,
 }
 
-impl Contrary {
+impl NotInt32Reason {
     /// Whether rounding does away with it.
     fn is_fraction(self) -> bool {
-        matches!(self, Contrary::Fraction | Contrary::Division | Contrary::MathFunction | Contrary::ParsedFraction | Contrary::FloatArray)
+        matches!(self, NotInt32Reason::Fraction | NotInt32Reason::Division | NotInt32Reason::MathFunction | NotInt32Reason::ParsedFraction | NotInt32Reason::FloatArray)
     }
 
     pub fn text(self) -> &'static str {
         match self {
-            Contrary::Fraction => "a literal with a fraction",
-            Contrary::Large => "a literal that is not an int32",
-            Contrary::Division => "a division",
-            Contrary::Power => "`**`",
-            Contrary::Unsigned => "an unsigned number of 32 bits",
-            Contrary::MathFunction => "a function of `Math` that returns fractions",
-            Contrary::Clock => "a time",
-            Contrary::ParsedFraction => "`parseFloat`",
-            Contrary::FloatArray => "an element of an array of floats",
-            Contrary::OnlyDeclared => "a `number` of code that is only declared",
+            NotInt32Reason::Fraction => "a literal with a fraction",
+            NotInt32Reason::Large => "a literal that is not an int32",
+            NotInt32Reason::Division => "a division",
+            NotInt32Reason::Power => "`**`",
+            NotInt32Reason::Unsigned => "an unsigned number of 32 bits",
+            NotInt32Reason::MathFunction => "a function of `Math` that returns fractions",
+            NotInt32Reason::Clock => "a time",
+            NotInt32Reason::ParsedFraction => "`parseFloat`",
+            NotInt32Reason::FloatArray => "an element of an array of floats",
+            NotInt32Reason::DeclaredOnly => "a `number` of code that is only declared",
         }
     }
 }
@@ -155,11 +155,11 @@ pub enum FlowSource<N = Atom> {
     Int32,
     Constant,
     Unknown,
-    Not(Contrary),
+    Not(NotInt32Reason),
     Node(FlowNode<N>),
-    /// From `FlowNode::ResultNamed`, where the type of the call says that it yields a number. If no function of the program is a property
+    /// From `FlowNode::NamedResult`, where the type of the call says that it yields a number. If no function of the program is a property
     /// of the name, code that is only declared yields it.
-    NumberNamed(N),
+    NamedNumber(N),
 }
 
 /// Numbers get from `from` to `to`.
@@ -180,7 +180,7 @@ impl<N> NumberFlow<N> {
             FlowSource::Unknown => FlowSource::Unknown,
             FlowSource::Not(why) => FlowSource::Not(why),
             FlowSource::Node(node) => FlowSource::Node(node.renamed(&mut rename)),
-            FlowSource::NumberNamed(name) => FlowSource::NumberNamed(rename(name)),
+            FlowSource::NamedNumber(name) => FlowSource::NamedNumber(rename(name)),
         };
         NumberFlow { to: self.to.renamed(&mut rename), from, pos: self.pos }
     }
@@ -188,12 +188,12 @@ impl<N> NumberFlow<N> {
 
 /// The code of a file that runs something.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum RunBy {
+pub enum CodeOwner {
     /// What evaluates the module.
     Module,
     Function(FnId),
     /// The constructor of the class, declared or not: it initializes the fields of the objects.
-    ConstructorOf(ClassId),
+    ClassConstructor(ClassId),
 }
 
 /// What is found of the properties of one name.
@@ -203,7 +203,7 @@ pub struct Int32Verdict<N> {
     /// Something that yields int32s gets there.
     pub is_reached_by_int32: bool,
     /// The first evidence to the contrary that gets there, in the order of the program.
-    pub contrary: Option<(Place, Contrary)>,
+    pub contrary: Option<(Place, NotInt32Reason)>,
 }
 
 impl<N> Int32Verdict<N> {
@@ -229,9 +229,9 @@ pub fn expected_int32<N: Copy + Eq + Hash>(flows: &[(FileId, NumberFlow<N>)], ra
     let mut constants: Vec<u32> = Vec::new();
     let mut unknown: Vec<u32> = Vec::new();
     // In the order of the program, each with the node it gets to.
-    let mut contrary: Vec<((u32, u32, Contrary), FileId, u32)> = Vec::new();
-    // `FlowSource::NumberNamed`: the edge, and where it is written.
-    let mut numbers_named: Vec<((u32, u32), FileId, u32)> = Vec::new();
+    let mut contrary: Vec<((u32, u32, NotInt32Reason), FileId, u32)> = Vec::new();
+    // `FlowSource::NamedNumber`: the edge, and where it is written.
+    let mut named_numbers: Vec<((u32, u32), FileId, u32)> = Vec::new();
     for &(file, flow) in flows {
         let to = number_of(flow.to);
         match flow.from {
@@ -240,26 +240,26 @@ pub fn expected_int32<N: Copy + Eq + Hash>(flows: &[(FileId, NumberFlow<N>)], ra
             FlowSource::Unknown => unknown.push(to),
             FlowSource::Not(why) => contrary.push(((rank_of_file(file), flow.pos, why), file, to)),
             FlowSource::Node(from) => edges.push((number_of(from), to)),
-            FlowSource::NumberNamed(name) => {
-                let edge = (number_of(FlowNode::ResultNamed(name)), to);
+            FlowSource::NamedNumber(name) => {
+                let edge = (number_of(FlowNode::NamedResult(name)), to);
                 edges.push(edge);
-                numbers_named.push((edge, file, flow.pos));
+                named_numbers.push((edge, file, flow.pos));
             }
         }
     }
-    let mut is_led_to = vec![false; nodes.len()];
+    let mut has_predecessor = vec![false; nodes.len()];
     for &(_, to) in &edges {
-        is_led_to[to as usize] = true;
+        has_predecessor[to as usize] = true;
     }
-    for ((from, to), file, pos) in numbers_named {
-        if !is_led_to[from as usize] {
-            contrary.push(((rank_of_file(file), pos, Contrary::OnlyDeclared), file, to));
+    for ((from, to), file, pos) in named_numbers {
+        if !has_predecessor[from as usize] {
+            contrary.push(((rank_of_file(file), pos, NotInt32Reason::DeclaredOnly), file, to));
         }
     }
     for &node in pending.iter().chain(&constants).chain(&unknown).chain(contrary.iter().map(|evidence| &evidence.2)) {
-        is_led_to[node as usize] = true;
+        has_predecessor[node as usize] = true;
     }
-    unknown.extend((0..nodes.len() as u32).filter(|&node| !is_led_to[node as usize]));
+    unknown.extend((0..nodes.len() as u32).filter(|&node| !has_predecessor[node as usize]));
     edges.sort_unstable();
     edges.dedup();
     // By node: where its edges start.
@@ -301,7 +301,7 @@ pub fn expected_int32<N: Copy + Eq + Hash>(flows: &[(FileId, NumberFlow<N>)], ra
     nodes.iter().enumerate().filter_map(verdict_of).collect()
 }
 
-type Flows = Vec<(RunBy, NumberFlow)>;
+type Flows = Vec<(CodeOwner, NumberFlow)>;
 /// Each with where it is written.
 type Sources = SmallVec<[(FlowSource, u32); 4]>;
 
@@ -310,7 +310,7 @@ type Sources = SmallVec<[(FlowSource, u32); 4]>;
 enum Accessed {
     Node(FlowNode),
     /// A property of objects that the program does not make. Whether it is declared as `number`.
-    OnlyDeclared(bool),
+    DeclaredOnly(bool),
 }
 
 /// What a call runs.
@@ -319,7 +319,7 @@ enum Called {
     /// It is not known, or not followed.
     Unknown,
     /// Code that is only declared. Whether it is declared to return `number`.
-    OnlyDeclared(bool),
+    DeclaredOnly(bool),
     Function(FileId, FnId),
     /// Whatever function is a property of that name.
     Named(Atom),
@@ -360,50 +360,50 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// How numbers get from place to place in the code of the file, each flow with the code that runs it. In an order that follows from
     /// the file.
-    pub fn number_flows_in(&mut self, file: FileId) -> Vec<(RunBy, NumberFlow)> {
+    pub fn number_flows_in(&mut self, file: FileId) -> Vec<(CodeOwner, NumberFlow)> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut out = Flows::new();
         if matches!(hir.kind, FileKind::Declaration | FileKind::Json) || bound.ran_out_of_stack {
             return out;
         }
-        let by_kind = self.exprs_by_kind_of(file);
+        let by_kind = self.file_exprs_by_kind(file);
         for &e in by_kind.of(ExprTag::Assign) {
-            self.add_flows_of_assignment(file, e, &mut out);
+            self.add_assignment_flows(file, e, &mut out);
         }
         for &e in by_kind.of(ExprTag::Unary) {
-            self.add_flows_of_update(file, e, &mut out);
+            self.add_update_flows(file, e, &mut out);
         }
         for tag in [ExprTag::Call, ExprTag::New] {
             for &e in by_kind.of(tag) {
-                self.add_flows_of_arguments(file, e, &mut out);
+                self.add_argument_flows(file, e, &mut out);
             }
         }
         for prop in (0..hir.props.len() as u32).map(PropId) {
-            self.add_flows_of_property(file, prop, &mut out);
+            self.add_property_flows(file, prop, &mut out);
         }
         for declaration in (0..hir.var_decls.len() as u32).map(VarDeclId) {
-            self.add_flows_of_variable(file, declaration, &mut out);
+            self.add_variable_flows(file, declaration, &mut out);
         }
         for prop in (0..hir.pat_props.len() as u32).map(PatPropId) {
-            self.add_flows_of_pattern(file, prop, &mut out);
+            self.add_pattern_flows(file, prop, &mut out);
         }
         for param in (0..hir.params.len() as u32).map(ParamId) {
-            self.add_flows_of_parameter(file, param, &mut out);
+            self.add_parameter_flows(file, param, &mut out);
         }
         for stmt in (0..hir.stmts.len() as u32).map(StmtId) {
             if let StmtKind::Return(value) = hir[stmt].kind
-                && let Some(RunBy::Function(func)) = self.code_running(file, bound.stmt_parent[stmt.idx()])
+                && let Some(CodeOwner::Function(func)) = self.owning_code(file, bound.stmt_parent[stmt.idx()])
             {
-                self.add_flows_of_result(file, func, value, &mut out);
+                self.add_result_flows(file, func, value, &mut out);
             }
         }
         for func in (0..hir.fns.len() as u32).map(FnId) {
             if let FnBody::Expr(value) = hir[func].body {
-                self.add_flows_of_result(file, func, value, &mut out);
+                self.add_result_flows(file, func, value, &mut out);
             }
         }
         for member in (0..hir.members.len() as u32).map(MemberId) {
-            self.add_flows_of_member(file, member, &mut out);
+            self.add_member_flows(file, member, &mut out);
         }
         out
     }
@@ -413,7 +413,7 @@ impl<'p, 's> Checker<'p, 's> {
         let line_of = |verdict: &Int32Verdict<&[u8]>| {
             let name = bstr::BStr::new(verdict.name);
             match verdict.contrary {
-                Some((at, why)) => format!("integers: `{name}`: not expected to hold int32s: {} at {}", why.text(), self.place_for_people(at)),
+                Some((at, why)) => format!("integers: `{name}`: not expected to hold int32s: {} at {}", why.text(), self.display_location(at)),
                 None if verdict.is_reached_by_int32 => format!("integers: `{name}`: expected to hold int32s"),
                 None => format!("integers: `{name}`: nothing is known of the numbers it holds"),
             }
@@ -424,20 +424,20 @@ impl<'p, 's> Checker<'p, 's> {
     // ───────────────────────────── the code that runs something ─────────────────────────────
 
     /// What runs a direct child of `parent`. `None`: nothing does.
-    pub(super) fn code_running(&self, file: FileId, mut parent: Parent) -> Option<RunBy> {
+    pub(super) fn owning_code(&self, file: FileId, mut parent: Parent) -> Option<CodeOwner> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         loop {
             parent = match parent {
                 Parent::Expr(e) if e.is_some() => bound.expr_parent[e.idx()],
                 Parent::Stmt(s) if s.is_some() => bound.stmt_parent[s.idx()],
-                Parent::FnBody(func) => return Some(RunBy::Function(func)),
-                Parent::ParamDefault(p) => return Some(RunBy::Function(bound.param_fn[p.idx()])),
+                Parent::FnBody(func) => return Some(CodeOwner::Function(func)),
+                Parent::ParamDefault(p) => return Some(CodeOwner::Function(bound.param_fn[p.idx()])),
                 // What initializes a static field is run by what evaluates the declaration of the class.
                 Parent::MemberInit(member) if !hir[member].flags.contains(Flags::STATIC) => {
                     let MemberOwner::Class(class) = bound.member_owner[member.idx()] else { return None };
-                    return Some(RunBy::ConstructorOf(class));
+                    return Some(CodeOwner::ClassConstructor(class));
                 }
-                Parent::File => return Some(RunBy::Module),
+                Parent::File => return Some(CodeOwner::Module),
                 Parent::None => return None,
                 _ => self.parent_of_node(file, parent),
             };
@@ -447,77 +447,77 @@ impl<'p, 's> Checker<'p, 's> {
     // ───────────────────────────── where numbers get to ─────────────────────────────
 
     /// What the expression yields gets to `to`.
-    fn add_flows_to(&mut self, file: FileId, to: FlowNode, value: ExprId, by: RunBy, out: &mut Flows) {
+    fn add_flows_into(&mut self, file: FileId, to: FlowNode, value: ExprId, by: CodeOwner, out: &mut Flows) {
         if self.bound(file).is_unchecked(value.idx()) {
             return;
         }
         let mut sources = Sources::new();
-        self.add_sources_of(file, value, false, &mut sources);
+        self.add_number_sources(file, value, false, &mut sources);
         out.extend(sources.into_iter().filter(|source| source.0 != FlowSource::Node(to)).map(|(from, pos)| (by, NumberFlow { to, from, pos })));
     }
 
     /// `target = value`, `target op= value`
-    fn add_flows_of_assignment(&mut self, file: FileId, e: ExprId, out: &mut Flows) {
+    fn add_assignment_flows(&mut self, file: FileId, e: ExprId, out: &mut Flows) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let ExprKind::Assign { op, target, value } = hir[e].kind else { return };
         // Not what a pattern falls back on: `[target = 1] = list`, `({ target = 1 } = object)`.
         if bound.is_unchecked(e.idx()) || bound.is_shorthand_property_assignment(hir, e) || bound.get_assignment_target(hir, e).is_some() {
             return;
         }
-        let Some(by) = self.code_running(file, bound.expr_parent[e.idx()]) else { return };
-        let Some(to) = self.node_stored_to(file, target) else { return };
+        let Some(by) = self.owning_code(file, bound.expr_parent[e.idx()]) else { return };
+        let Some(to) = self.store_target_node(file, target) else { return };
         match op {
             None | Some(BinOp::And | BinOp::Or | BinOp::Nullish) => {
-                self.add_flows_to(file, to, value, by, out);
+                self.add_flows_into(file, to, value, by, out);
                 if let FlowNode::Property(name) = to
-                    && let Some(function) = self.function_denoted_by(file, value)
+                    && let Some(function) = self.function_for_syntax(file, value)
                 {
-                    self.add_flows_of_function_named(name, function, hir[value].pos, by, out);
+                    self.add_named_function_flows(name, function, hir[value].pos, by, out);
                 }
             }
-            Some(_) => self.add_flows_to(file, to, e, by, out),
+            Some(_) => self.add_flows_into(file, to, e, by, out),
         }
     }
 
     /// `target++` and the like: whoever counts, counts in small integers.
-    fn add_flows_of_update(&mut self, file: FileId, e: ExprId, out: &mut Flows) {
+    fn add_update_flows(&mut self, file: FileId, e: ExprId, out: &mut Flows) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let ExprKind::Unary { op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec, operand } = hir[e].kind else { return };
         if bound.is_unchecked(e.idx()) {
             return;
         }
-        let Some(by) = self.code_running(file, bound.expr_parent[e.idx()]) else { return };
-        let Some(to) = self.node_stored_to(file, operand) else { return };
+        let Some(by) = self.owning_code(file, bound.expr_parent[e.idx()]) else { return };
+        let Some(to) = self.store_target_node(file, operand) else { return };
         out.push((by, NumberFlow { to, from: FlowSource::Int32, pos: hir[e].pos }));
     }
 
     /// Where what is stored to `target` gets. `None`: nowhere that is followed, as with a pattern.
-    fn node_stored_to(&mut self, file: FileId, mut target: ExprId) -> Option<FlowNode> {
+    fn store_target_node(&mut self, file: FileId, mut target: ExprId) -> Option<FlowNode> {
         let hir = self.hir(file);
         let accessed = loop {
             match hir[target].kind {
                 ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) => target = expr,
                 ExprKind::Ident(name) => {
-                    let sym = self.value_named_by(file, target, name)?;
+                    let sym = self.value_symbol_for(file, target, name)?;
                     let (of, decl @ (Decl::Var(_) | Decl::Param(_))) = self.files().value_declaration(sym)? else { return None };
-                    return (!self.is_only_declared_at(of, decl)).then_some(FlowNode::Variable(sym.file, sym.id));
+                    return (!self.is_declaration_only_at(of, decl)).then_some(FlowNode::Variable(sym.file, sym.id));
                 }
-                ExprKind::Dot { obj, name, .. } => break self.property_accessed(file, obj, name),
+                ExprKind::Dot { obj, name, .. } => break self.classify_property_access(file, obj, name),
                 ExprKind::Index { obj, index, .. } => {
                     let ExprKind::String(name) = hir[index].kind else { return None };
-                    break self.property_accessed(file, obj, name);
+                    break self.classify_property_access(file, obj, name);
                 }
                 _ => return None,
             }
         };
         match accessed {
             Accessed::Node(node) => Some(node),
-            Accessed::OnlyDeclared(_) => None,
+            Accessed::DeclaredOnly(_) => None,
         }
     }
 
     /// The arguments of a call or a `new` get to the parameters.
-    fn add_flows_of_arguments(&mut self, file: FileId, e: ExprId, out: &mut Flows) {
+    fn add_argument_flows(&mut self, file: FileId, e: ExprId, out: &mut Flows) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let (ExprKind::Call(call) | ExprKind::New(call)) = hir[e].kind else { return };
         if bound.is_unchecked(e.idx()) {
@@ -530,7 +530,7 @@ impl<'p, 's> Checker<'p, 's> {
                 break;
             }
             let mut sources = Sources::new();
-            self.add_sources_of(file, argument, false, &mut sources);
+            self.add_number_sources(file, argument, false, &mut sources);
             if !sources.is_empty() {
                 given.push((index, sources));
             }
@@ -538,13 +538,13 @@ impl<'p, 's> Checker<'p, 's> {
         if given.is_empty() {
             return;
         }
-        let Some(by) = self.code_running(file, bound.expr_parent[e.idx()]) else { return };
-        let called = self.function_called(file, e);
+        let Some(by) = self.owning_code(file, bound.expr_parent[e.idx()]) else { return };
+        let called = self.classify_callee(file, e);
         for (index, sources) in given {
             let to = match called {
                 Called::Function(of, func) => self.parameter_at((of, func), index),
-                Called::Named(name) => Some(FlowNode::ArgumentNamed(name, index as u32)),
-                Called::Unknown | Called::OnlyDeclared(_) => None,
+                Called::Named(name) => Some(FlowNode::NamedArgument(name, index as u32)),
+                Called::Unknown | Called::DeclaredOnly(_) => None,
             };
             let Some(to) = to else { continue };
             out.extend(sources.into_iter().filter(|source| source.0 != FlowSource::Node(to)).map(|(from, pos)| (by, NumberFlow { to, from, pos })));
@@ -552,7 +552,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// A property of an object literal, or an attribute of a JSX element.
-    fn add_flows_of_property(&mut self, file: FileId, prop: PropId, out: &mut Flows) {
+    fn add_property_flows(&mut self, file: FileId, prop: PropId, out: &mut Flows) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let (p, owner) = (&hir[prop], bound.prop_owner[prop.idx()]);
         let PropKey::Name(name) = p.key else { return };
@@ -563,17 +563,17 @@ impl<'p, 's> Checker<'p, 's> {
         let to = FlowNode::Property(name);
         match (p.kind, hir[p.value].kind) {
             (PropKind::Init | PropKind::Shorthand, _) => {
-                let Some(by) = self.code_running(file, Parent::Prop(prop)) else { return };
-                self.add_flows_to(file, to, p.value, by, out);
-                if let Some(function) = self.function_denoted_by(file, p.value) {
-                    self.add_flows_of_function_named(name, function, p.pos, by, out);
+                let Some(by) = self.owning_code(file, Parent::Prop(prop)) else { return };
+                self.add_flows_into(file, to, p.value, by, out);
+                if let Some(function) = self.function_for_syntax(file, p.value) {
+                    self.add_named_function_flows(name, function, p.pos, by, out);
                 }
             }
-            (PropKind::Method, ExprKind::Fn(func)) => self.add_flows_of_function_named(name, (file, func), p.pos, RunBy::Function(func), out),
-            (PropKind::Getter, ExprKind::Fn(func)) => out.push((RunBy::Function(func), NumberFlow { to, from: FlowSource::Node(FlowNode::Result(file, func)), pos: p.pos })),
+            (PropKind::Method, ExprKind::Fn(func)) => self.add_named_function_flows(name, (file, func), p.pos, CodeOwner::Function(func), out),
+            (PropKind::Getter, ExprKind::Fn(func)) => out.push((CodeOwner::Function(func), NumberFlow { to, from: FlowSource::Node(FlowNode::Result(file, func)), pos: p.pos })),
             (PropKind::Setter, ExprKind::Fn(func)) => {
                 if let Some(parameter) = self.parameter_at((file, func), 0) {
-                    out.push((RunBy::Function(func), NumberFlow { to: parameter, from: FlowSource::Node(to), pos: p.pos }));
+                    out.push((CodeOwner::Function(func), NumberFlow { to: parameter, from: FlowSource::Node(to), pos: p.pos }));
                 }
             }
             _ => {}
@@ -581,20 +581,20 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `let name = value`
-    fn add_flows_of_variable(&mut self, file: FileId, declaration: VarDeclId, out: &mut Flows) {
+    fn add_variable_flows(&mut self, file: FileId, declaration: VarDeclId, out: &mut Flows) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let d = &hir[declaration];
         if d.init.is_none() || d.pat.is_none() || d.flags.contains(Flags::AMBIENT) || !matches!(hir[d.pat].kind, PatKind::Ident(_)) || !may_annotate_number(hir, d.ty) {
             return;
         }
         let Some(symbol) = bound.pat_symbol[d.pat.idx()].some() else { return };
-        let Some(by) = self.code_running(file, Parent::VarInit(declaration)) else { return };
+        let Some(by) = self.owning_code(file, Parent::VarInit(declaration)) else { return };
         let sym = self.files().sym(file, symbol);
-        self.add_flows_to(file, FlowNode::Variable(sym.file, sym.id), d.init, by, out);
+        self.add_flows_into(file, FlowNode::Variable(sym.file, sym.id), d.init, by, out);
     }
 
     /// `{ key: name = value }` in a declaration or a parameter: the variable gets what the properties of that name hold.
-    fn add_flows_of_pattern(&mut self, file: FileId, prop: PatPropId, out: &mut Flows) {
+    fn add_pattern_flows(&mut self, file: FileId, prop: PatPropId, out: &mut Flows) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let p = &hir[prop];
         let PropKey::Name(key) = p.key else { return };
@@ -602,17 +602,17 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         }
         let Some(symbol) = bound.pat_symbol[p.value.idx()].some() else { return };
-        let Some(by) = self.code_running(file, Parent::PatPropDefault(prop)) else { return };
+        let Some(by) = self.owning_code(file, Parent::PatPropDefault(prop)) else { return };
         let sym = self.files().sym(file, symbol);
         let to = FlowNode::Variable(sym.file, sym.id);
         out.push((by, NumberFlow { to, from: FlowSource::Node(FlowNode::Property(key)), pos: p.pos }));
         if p.default.is_some() {
-            self.add_flows_to(file, to, p.default, by, out);
+            self.add_flows_into(file, to, p.default, by, out);
         }
     }
 
     /// What a parameter falls back on, and `constructor(public name: number)`.
-    fn add_flows_of_parameter(&mut self, file: FileId, param: ParamId, out: &mut Flows) {
+    fn add_parameter_flows(&mut self, file: FileId, param: ParamId, out: &mut Flows) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let (p, func) = (&hir[param], bound.param_fn[param.idx()]);
         if p.pat.is_none() || !has_body(hir, func) || !may_annotate_number(hir, p.ty) {
@@ -623,25 +623,25 @@ impl<'p, 's> Checker<'p, 's> {
         let sym = self.files().sym(file, symbol);
         let parameter = FlowNode::Variable(sym.file, sym.id);
         if p.default.is_some() {
-            self.add_flows_to(file, parameter, p.default, RunBy::Function(func), out);
+            self.add_flows_into(file, parameter, p.default, CodeOwner::Function(func), out);
         }
         if p.flags.contains(Flags::PARAMETER_PROPERTY) {
-            out.push((RunBy::Function(func), NumberFlow { to: FlowNode::Property(name), from: FlowSource::Node(parameter), pos: p.pos }));
+            out.push((CodeOwner::Function(func), NumberFlow { to: FlowNode::Property(name), from: FlowSource::Node(parameter), pos: p.pos }));
         }
     }
 
     /// `return value`, and the body of `() => value`.
-    fn add_flows_of_result(&mut self, file: FileId, func: FnId, value: ExprId, out: &mut Flows) {
+    fn add_result_flows(&mut self, file: FileId, func: FnId, value: ExprId, out: &mut Flows) {
         let f = &self.hir(file)[func];
         // What such a function returns is not what a call of it yields.
         if value.is_none() || f.flags.intersects(Flags::ASYNC | Flags::GENERATOR) || !may_annotate_number(self.hir(file), f.ret) {
             return;
         }
-        self.add_flows_to(file, FlowNode::Result(file, func), value, RunBy::Function(func), out);
+        self.add_flows_into(file, FlowNode::Result(file, func), value, CodeOwner::Function(func), out);
     }
 
     /// A member of a class.
-    fn add_flows_of_member(&mut self, file: FileId, member: MemberId, out: &mut Flows) {
+    fn add_member_flows(&mut self, file: FileId, member: MemberId, out: &mut Flows) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let m = &hir[member];
         let MemberOwner::Class(class) = bound.member_owner[member.idx()] else { return };
@@ -652,19 +652,19 @@ impl<'p, 's> Checker<'p, 's> {
         let to = FlowNode::Property(name);
         match m.kind {
             MemberKind::Property if m.init.is_some() && may_annotate_number(hir, m.ty) => {
-                let Some(by) = self.code_running(file, Parent::MemberInit(member)) else { return };
-                self.add_flows_to(file, to, m.init, by, out);
-                if let Some(function) = self.function_denoted_by(file, m.init) {
-                    self.add_flows_of_function_named(name, function, m.name_pos, by, out);
+                let Some(by) = self.owning_code(file, Parent::MemberInit(member)) else { return };
+                self.add_flows_into(file, to, m.init, by, out);
+                if let Some(function) = self.function_for_syntax(file, m.init) {
+                    self.add_named_function_flows(name, function, m.name_pos, by, out);
                 }
             }
-            MemberKind::Method if has_body(hir, m.func) => self.add_flows_of_function_named(name, (file, m.func), m.name_pos, RunBy::Function(m.func), out),
+            MemberKind::Method if has_body(hir, m.func) => self.add_named_function_flows(name, (file, m.func), m.name_pos, CodeOwner::Function(m.func), out),
             MemberKind::Getter if has_body(hir, m.func) => {
-                out.push((RunBy::Function(m.func), NumberFlow { to, from: FlowSource::Node(FlowNode::Result(file, m.func)), pos: m.name_pos }));
+                out.push((CodeOwner::Function(m.func), NumberFlow { to, from: FlowSource::Node(FlowNode::Result(file, m.func)), pos: m.name_pos }));
             }
             MemberKind::Setter if has_body(hir, m.func) => {
                 if let Some(parameter) = self.parameter_at((file, m.func), 0) {
-                    out.push((RunBy::Function(m.func), NumberFlow { to: parameter, from: FlowSource::Node(to), pos: m.name_pos }));
+                    out.push((CodeOwner::Function(m.func), NumberFlow { to: parameter, from: FlowSource::Node(to), pos: m.name_pos }));
                 }
             }
             _ => {}
@@ -672,17 +672,17 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The function is a property of the name: `object.name(..)` may call it.
-    fn add_flows_of_function_named(&mut self, name: Atom, function: (FileId, FnId), pos: u32, by: RunBy, out: &mut Flows) {
+    fn add_named_function_flows(&mut self, name: Atom, function: (FileId, FnId), pos: u32, by: CodeOwner, out: &mut Flows) {
         let hir = self.hir(function.0);
         let f = &hir[function.1];
         if may_annotate_number(hir, f.ret) && !f.flags.intersects(Flags::ASYNC | Flags::GENERATOR) {
-            out.push((by, NumberFlow { to: FlowNode::ResultNamed(name), from: FlowSource::Node(FlowNode::Result(function.0, function.1)), pos }));
+            out.push((by, NumberFlow { to: FlowNode::NamedResult(name), from: FlowSource::Node(FlowNode::Result(function.0, function.1)), pos }));
         }
         for index in 0..f.params.len() {
             if may_annotate_number(hir, hir[f.params.at(index)].ty)
                 && let Some(parameter) = self.parameter_at(function, index)
             {
-                out.push((by, NumberFlow { to: parameter, from: FlowSource::Node(FlowNode::ArgumentNamed(name, index as u32)), pos }));
+                out.push((by, NumberFlow { to: parameter, from: FlowSource::Node(FlowNode::NamedArgument(name, index as u32)), pos }));
             }
         }
     }
@@ -690,13 +690,13 @@ impl<'p, 's> Checker<'p, 's> {
     // ───────────────────────────── names, properties, functions ─────────────────────────────
 
     /// What the name stands for as a value, through imports.
-    fn value_named_by(&mut self, file: FileId, e: ExprId, name: Atom) -> Option<Sym> {
+    fn value_symbol_for(&mut self, file: FileId, e: ExprId, name: Atom) -> Option<Sym> {
         let sym = self.symbol_of_identifier(file, e, name)?;
         if self.files().flags(sym).contains(SymFlags::ALIAS) { self.files().resolve_alias(sym) } else { Some(sym) }
     }
 
     /// Whether no code of the program stands behind the declaration.
-    fn is_only_declared_at(&self, of: FileId, decl: Decl) -> bool {
+    fn is_declaration_only_at(&self, of: FileId, decl: Decl) -> bool {
         let hir = self.hir(of);
         !self.is_compiled(of) || self.bound(of).modifier_flags(hir, decl).contains(Flags::AMBIENT)
     }
@@ -717,7 +717,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `obj.name`
-    fn property_accessed(&mut self, file: FileId, obj: ExprId, name: Atom) -> Accessed {
+    fn classify_property_access(&mut self, file: FileId, obj: ExprId, name: Atom) -> Accessed {
         if self.is_untyped_file(file) {
             return Accessed::Node(FlowNode::Property(name));
         }
@@ -727,7 +727,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             let sym = if self.files().flags(*sym).contains(SymFlags::ALIAS) { self.files().resolve_alias(*sym) } else { Some(*sym) };
             match sym.and_then(|sym| Some((sym, self.files().value_declaration(sym)?))) {
-                Some((_, (of, decl))) if self.is_only_declared_at(of, decl) => return Accessed::OnlyDeclared(self.is_declared_number(of, decl)),
+                Some((_, (of, decl))) if self.is_declaration_only_at(of, decl) => return Accessed::DeclaredOnly(self.is_declared_number(of, decl)),
                 // What a module or a namespace exports.
                 Some((sym, (_, Decl::Var(_)))) => return Accessed::Node(FlowNode::Variable(sym.file, sym.id)),
                 _ => {}
@@ -737,7 +737,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The declaration with the body that runs where `func` is called, which may be an overload.
-    pub(super) fn implementation_of(&self, of: FileId, func: FnId) -> Option<(FileId, FnId)> {
+    pub(super) fn implementation_for(&self, of: FileId, func: FnId) -> Option<(FileId, FnId)> {
         let (hir, bound) = (self.hir(of), self.bound(of));
         if has_body(hir, func) {
             return Some((of, func));
@@ -767,16 +767,16 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The function of the program that the expression is, for all that the syntax tells: a function expression, the name of a function
     /// declaration, of a class that declares a constructor, or of a `const` that is initialized with a function expression.
-    fn function_denoted_by(&mut self, file: FileId, mut e: ExprId) -> Option<(FileId, FnId)> {
+    fn function_for_syntax(&mut self, file: FileId, mut e: ExprId) -> Option<(FileId, FnId)> {
         let hir = self.hir(file);
         loop {
             match hir[e].kind {
                 ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) => e = expr,
                 ExprKind::Fn(func) => return Some((file, func)),
                 ExprKind::Ident(name) => {
-                    let sym = self.value_named_by(file, e, name)?;
+                    let sym = self.value_symbol_for(file, e, name)?;
                     return match self.files().value_declaration(sym)? {
-                        (of, Decl::Fn(func)) => self.implementation_of(of, func),
+                        (of, Decl::Fn(func)) => self.implementation_for(of, func),
                         (of, Decl::Class(class)) => {
                             let hir = self.hir(of);
                             hir[class].members.iter().map(|member| &hir[member]).find(|m| m.kind == MemberKind::Constructor && has_body(hir, m.func)).map(|m| (of, m.func))
@@ -813,7 +813,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `e`: a call or a `new`.
-    fn function_called(&mut self, file: FileId, e: ExprId) -> Called {
+    fn classify_callee(&mut self, file: FileId, e: ExprId) -> Called {
         let hir = self.hir(file);
         let (call, is_new) = match hir[e].kind {
             ExprKind::Call(call) => (call, false),
@@ -825,7 +825,7 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Dot { name, .. } if !is_new => Called::Named(name),
             _ => Called::Unknown,
         };
-        let denoted = |c: &mut Self| c.function_denoted_by(file, callee).map_or(Called::Unknown, |(of, func)| Called::Function(of, func));
+        let denoted = |c: &mut Self| c.function_for_syntax(file, callee).map_or(Called::Unknown, |(of, func)| Called::Function(of, func));
         if self.is_untyped_file(file) {
             return if let Called::Named(_) = named { named } else { denoted(self) };
         }
@@ -834,9 +834,9 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let declared_in = self.hir(of);
         if !self.is_compiled(of) || declared_in[func].flags.contains(Flags::AMBIENT) {
-            return Called::OnlyDeclared(is_number_keyword(declared_in, declared_in[func].ret));
+            return Called::DeclaredOnly(is_number_keyword(declared_in, declared_in[func].ret));
         }
-        let implementation = |c: &Self| c.implementation_of(of, func).map_or(Called::Unknown, |(of, func)| Called::Function(of, func));
+        let implementation = |c: &Self| c.implementation_for(of, func).map_or(Called::Unknown, |(of, func)| Called::Function(of, func));
         match self.bound(of).fns[func.idx()].owner {
             FnOwner::Stmt(_) => implementation(self),
             FnOwner::Member(member) if declared_in[member].kind == MemberKind::Constructor => implementation(self),
@@ -854,9 +854,9 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Where the numbers come from that the expression yields. `is_rounded`: what comes after the point is dropped from what it yields.
-    fn add_sources_of(&mut self, file: FileId, e: ExprId, is_rounded: bool, out: &mut Sources) {
+    fn add_number_sources(&mut self, file: FileId, e: ExprId, is_rounded: bool, out: &mut Sources) {
         let before = out.len();
-        self.add_followed_sources_of(file, e, is_rounded, out);
+        self.add_number_sources_uncached(file, e, is_rounded, out);
         if out.len() != before || e.is_none() {
             return;
         }
@@ -877,7 +877,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    fn add_followed_sources_of(&mut self, file: FileId, e: ExprId, is_rounded: bool, out: &mut Sources) {
+    fn add_number_sources_uncached(&mut self, file: FileId, e: ExprId, is_rounded: bool, out: &mut Sources) {
         if e.is_none() || self.is_half_of_stack_in_use() {
             return;
         }
@@ -895,11 +895,11 @@ impl<'p, 's> Checker<'p, 's> {
         };
         if operands[0].is_some() {
             for operand in operands {
-                self.add_sources_of(file, operand, is_rounded, out);
+                self.add_number_sources(file, operand, is_rounded, out);
             }
             return;
         }
-        let add_contrary = |why: Contrary, out: &mut Sources| {
+        let add_contrary = |why: NotInt32Reason, out: &mut Sources| {
             if !(is_rounded && why.is_fraction()) {
                 out.push((FlowSource::Not(why), pos));
             }
@@ -909,7 +909,7 @@ impl<'p, 's> Checker<'p, 's> {
             if is_int32(value) {
                 out.push((FlowSource::Constant, pos));
             } else {
-                add_contrary(if value.fract() != 0.0 { Contrary::Fraction } else { Contrary::Large }, out);
+                add_contrary(if value.fract() != 0.0 { NotInt32Reason::Fraction } else { NotInt32Reason::Large }, out);
             }
             return;
         }
@@ -918,7 +918,7 @@ impl<'p, 's> Checker<'p, 's> {
             if !self.may_be_number(ty) {
                 return;
             }
-            if let Some((least, most)) = self.integers_of_expr(file, e)
+            if let Some((least, most)) = self.expr_integer_range(file, e)
                 && least >= INT32.0
                 && most <= INT32.1
             {
@@ -935,60 +935,60 @@ impl<'p, 's> Checker<'p, 's> {
             match op {
                 BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Rem => {}
                 BinOp::Div if is_rounded => {}
-                BinOp::Div => return add_contrary(Contrary::Division, out),
-                BinOp::Pow => return add_contrary(Contrary::Power, out),
+                BinOp::Div => return add_contrary(NotInt32Reason::Division, out),
+                BinOp::Pow => return add_contrary(NotInt32Reason::Power, out),
                 BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => return out.push((FlowSource::Int32, pos)),
-                BinOp::UShr => return add_contrary(Contrary::Unsigned, out),
+                BinOp::UShr => return add_contrary(NotInt32Reason::Unsigned, out),
                 _ => return,
             }
-            self.add_sources_of(file, left, is_rounded, out);
-            self.add_sources_of(file, right, is_rounded, out);
+            self.add_number_sources(file, left, is_rounded, out);
+            self.add_number_sources(file, right, is_rounded, out);
             return;
         }
         match kind {
             ExprKind::Ident(name) => {
-                let Some(sym) = self.value_named_by(file, e, name) else { return };
+                let Some(sym) = self.value_symbol_for(file, e, name) else { return };
                 let Some((of, decl @ (Decl::Var(_) | Decl::Param(_)))) = self.files().value_declaration(sym) else { return };
-                if !self.is_only_declared_at(of, decl) {
+                if !self.is_declaration_only_at(of, decl) {
                     out.push((FlowSource::Node(FlowNode::Variable(sym.file, sym.id)), pos));
                 // `NaN`, `Infinity`
                 } else if self.is_declared_number(of, decl) {
-                    add_contrary(Contrary::OnlyDeclared, out);
+                    add_contrary(NotInt32Reason::DeclaredOnly, out);
                 }
             }
             ExprKind::Unary { op, operand } => match op {
-                UnOp::Minus | UnOp::Plus => self.add_sources_of(file, operand, is_rounded, out),
+                UnOp::Minus | UnOp::Plus => self.add_number_sources(file, operand, is_rounded, out),
                 UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec => {
                     out.push((FlowSource::Int32, pos));
-                    self.add_sources_of(file, operand, is_rounded, out);
+                    self.add_number_sources(file, operand, is_rounded, out);
                 }
                 UnOp::BitNot => out.push((FlowSource::Int32, pos)),
                 UnOp::Not | UnOp::Typeof | UnOp::Void | UnOp::Delete => {}
             },
-            ExprKind::Dot { obj, name, .. } => self.add_sources_of_access(file, obj, name, pos, out),
+            ExprKind::Dot { obj, name, .. } => self.add_access_sources(file, obj, name, pos, out),
             ExprKind::Index { obj, index, .. } => {
                 if let ExprKind::String(name) = hir[index].kind {
-                    return self.add_sources_of_access(file, obj, name, pos, out);
+                    return self.add_access_sources(file, obj, name, pos, out);
                 }
                 if self.is_untyped_file(file) {
                     return;
                 }
                 let ty = self.type_of_expr(file, obj);
-                if !ty.is_never() && self.every_type(ty, |c, part| c.is_instance_of_global(part, &ARRAYS_OF_FLOATS)) {
-                    add_contrary(Contrary::FloatArray, out);
-                } else if !ty.is_never() && self.every_type(ty, |c, part| c.is_instance_of_global(part, &ARRAYS_OF_UINT32)) {
-                    add_contrary(Contrary::Unsigned, out);
+                if !ty.is_never() && self.every_type(ty, |c, part| c.is_global_instance(part, &FLOAT_ARRAYS)) {
+                    add_contrary(NotInt32Reason::FloatArray, out);
+                } else if !ty.is_never() && self.every_type(ty, |c, part| c.is_global_instance(part, &UINT32_ARRAYS)) {
+                    add_contrary(NotInt32Reason::Unsigned, out);
                 }
             }
-            ExprKind::Call(_) => self.add_sources_of_call(file, e, is_rounded, out),
+            ExprKind::Call(_) => self.add_call_sources(file, e, is_rounded, out),
             _ => {}
         }
     }
 
     /// `obj.name`, which is written at `pos`.
-    fn add_sources_of_access(&mut self, file: FileId, obj: ExprId, name: Atom, pos: u32, out: &mut Sources) {
+    fn add_access_sources(&mut self, file: FileId, obj: ExprId, name: Atom, pos: u32, out: &mut Sources) {
         let is_small = SMALL_PROPERTIES.contains(&self.atoms().bytes(name));
-        match self.property_accessed(file, obj, name) {
+        match self.classify_property_access(file, obj, name) {
             Accessed::Node(node) => {
                 // Whether the program makes the object is not known there.
                 if is_small && self.is_untyped_file(file) {
@@ -996,19 +996,19 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 out.push((FlowSource::Node(node), pos));
             }
-            Accessed::OnlyDeclared(_) if is_small => out.push((FlowSource::Int32, pos)),
-            Accessed::OnlyDeclared(_) if matches!(self.atoms().bytes(name), b"MAX_VALUE" | b"MAX_SAFE_INTEGER" | b"MIN_SAFE_INTEGER" | b"POSITIVE_INFINITY" | b"NEGATIVE_INFINITY") => {}
-            Accessed::OnlyDeclared(true) => out.push((FlowSource::Not(Contrary::OnlyDeclared), pos)),
-            Accessed::OnlyDeclared(false) => {}
+            Accessed::DeclaredOnly(_) if is_small => out.push((FlowSource::Int32, pos)),
+            Accessed::DeclaredOnly(_) if matches!(self.atoms().bytes(name), b"MAX_VALUE" | b"MAX_SAFE_INTEGER" | b"MIN_SAFE_INTEGER" | b"POSITIVE_INFINITY" | b"NEGATIVE_INFINITY") => {}
+            Accessed::DeclaredOnly(true) => out.push((FlowSource::Not(NotInt32Reason::DeclaredOnly), pos)),
+            Accessed::DeclaredOnly(false) => {}
         }
     }
 
     /// `e`: a call.
-    fn add_sources_of_call(&mut self, file: FileId, e: ExprId, is_rounded: bool, out: &mut Sources) {
+    fn add_call_sources(&mut self, file: FileId, e: ExprId, is_rounded: bool, out: &mut Sources) {
         let hir = self.hir(file);
         let ExprKind::Call(call) = hir[e].kind else { return };
         let (callee, args, pos) = (hir[call].callee, hir[call].args, hir[e].pos);
-        let add_contrary = |why: Contrary, out: &mut Sources| {
+        let add_contrary = |why: NotInt32Reason, out: &mut Sources| {
             if !(is_rounded && why.is_fraction()) {
                 out.push((FlowSource::Not(why), pos));
             }
@@ -1017,72 +1017,72 @@ impl<'p, 's> Checker<'p, 's> {
         match hir[callee].kind {
             ExprKind::Dot { obj, name, .. } => {
                 method = self.atoms().bytes(name);
-                if self.names_global_object(file, obj, b"Math") {
+                if self.refers_to_global_object(file, obj, b"Math") {
                     let is_rounding = matches!(method, b"floor" | b"ceil" | b"round" | b"trunc");
                     match method {
                         b"floor" | b"ceil" | b"round" | b"trunc" | b"sign" | b"imul" | b"clz32" => out.push((FlowSource::Int32, pos)),
                         b"min" | b"max" | b"abs" => {}
-                        _ => return add_contrary(Contrary::MathFunction, out),
+                        _ => return add_contrary(NotInt32Reason::MathFunction, out),
                     }
                     if !matches!(method, b"sign" | b"imul" | b"clz32") {
                         for argument in hir.ids(args) {
-                            self.add_sources_of(file, argument, is_rounded || is_rounding, out);
+                            self.add_number_sources(file, argument, is_rounded || is_rounding, out);
                         }
                     }
                     return;
                 }
-                if method == b"now" && (self.names_global_object(file, obj, b"Date") || self.names_global_object(file, obj, b"performance")) {
-                    return add_contrary(Contrary::Clock, out);
+                if method == b"now" && (self.refers_to_global_object(file, obj, b"Date") || self.refers_to_global_object(file, obj, b"performance")) {
+                    return add_contrary(NotInt32Reason::Clock, out);
                 }
-                if self.names_global_object(file, obj, b"Number") {
+                if self.refers_to_global_object(file, obj, b"Number") {
                     match method {
                         b"parseInt" => out.push((FlowSource::Int32, pos)),
-                        b"parseFloat" => add_contrary(Contrary::ParsedFraction, out),
+                        b"parseFloat" => add_contrary(NotInt32Reason::ParsedFraction, out),
                         _ => {}
                     }
                     return;
                 }
             }
             ExprKind::Ident(name) => {
-                if self.names_global_object(file, callee, b"parseInt") {
+                if self.refers_to_global_object(file, callee, b"parseInt") {
                     return out.push((FlowSource::Int32, pos));
                 }
-                if self.names_global_object(file, callee, b"parseFloat") {
-                    return add_contrary(Contrary::ParsedFraction, out);
+                if self.refers_to_global_object(file, callee, b"parseFloat") {
+                    return add_contrary(NotInt32Reason::ParsedFraction, out);
                 }
-                if self.names_global_object(file, callee, b"Number") {
+                if self.refers_to_global_object(file, callee, b"Number") {
                     return;
                 }
                 // The type of a variable says how it can be called, not which of the functions it is initialized with is.
-                if let Some(sym) = self.value_named_by(file, callee, name)
+                if let Some(sym) = self.value_symbol_for(file, callee, name)
                     && let Some((_, Decl::Var(_))) = self.files().value_declaration(sym)
                 {
-                    return self.add_sources_of_calling(file, callee, pos, 0, out);
+                    return self.add_callee_result_sources(file, callee, pos, 0, out);
                 }
             }
             _ => {}
         }
         let (is_small, is_clock) = (SMALL_METHODS.contains(&method), matches!(method, b"now" | b"getTime"));
-        match self.function_called(file, e) {
-            Called::Unknown => self.add_sources_of_calling(file, callee, pos, 0, out),
-            Called::OnlyDeclared(_) if is_small => out.push((FlowSource::Int32, pos)),
-            Called::OnlyDeclared(_) if is_clock => add_contrary(Contrary::Clock, out),
-            Called::OnlyDeclared(is_number) => {
+        match self.classify_callee(file, e) {
+            Called::Unknown => self.add_callee_result_sources(file, callee, pos, 0, out),
+            Called::DeclaredOnly(_) if is_small => out.push((FlowSource::Int32, pos)),
+            Called::DeclaredOnly(_) if is_clock => add_contrary(NotInt32Reason::Clock, out),
+            Called::DeclaredOnly(is_number) => {
                 if is_number {
-                    add_contrary(Contrary::OnlyDeclared, out);
+                    add_contrary(NotInt32Reason::DeclaredOnly, out);
                 }
             }
             Called::Function(of, func) => out.push((FlowSource::Node(FlowNode::Result(of, func)), pos)),
             Called::Named(name) => {
                 // An interface of the program may stand for an object that the program does not make.
                 if is_clock {
-                    add_contrary(Contrary::Clock, out);
+                    add_contrary(NotInt32Reason::Clock, out);
                 }
                 if self.is_untyped_file(file) {
                     if is_small {
                         out.push((FlowSource::Int32, pos));
                     }
-                    return out.push((FlowSource::Node(FlowNode::ResultNamed(name)), pos));
+                    return out.push((FlowSource::Node(FlowNode::NamedResult(name)), pos));
                 }
                 let ty = self.type_of_expr(file, e);
                 let is_number = !ty.is_never() && self.every_type(ty, |c, part| c.is_number_like(part) || part.is_undefined() || part.is_null());
@@ -1097,16 +1097,16 @@ impl<'p, 's> Checker<'p, 's> {
                         }
                         _ => false,
                     };
-                out.push((if is_number && !is_optional { FlowSource::NumberNamed(name) } else { FlowSource::Node(FlowNode::ResultNamed(name)) }, pos));
+                out.push((if is_number && !is_optional { FlowSource::NamedNumber(name) } else { FlowSource::Node(FlowNode::NamedResult(name)) }, pos));
             }
         }
     }
 
     /// Where the numbers come from that a call of what `callee` yields, yields: `const now = fast ? () => clock.now() : Date.now; now()`. The
     /// call is written at `pos`. `depth`: how many names of constants have been followed.
-    fn add_sources_of_calling(&mut self, file: FileId, callee: ExprId, pos: u32, depth: u32, out: &mut Sources) {
+    fn add_callee_result_sources(&mut self, file: FileId, callee: ExprId, pos: u32, depth: u32, out: &mut Sources) {
         /// Beyond that nothing is found.
-        const DEEPEST: u32 = 4;
+        const MAX_DEPTH: u32 = 4;
         if callee.is_none() || self.is_half_of_stack_in_use() {
             return;
         }
@@ -1116,14 +1116,14 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, left, right } => [left, right],
             ExprKind::Fn(func) => return out.push((FlowSource::Node(FlowNode::Result(file, func)), pos)),
             ExprKind::Ident(name) => {
-                let Some(sym) = self.value_named_by(file, callee, name) else { return };
+                let Some(sym) = self.value_symbol_for(file, callee, name) else { return };
                 match self.files().value_declaration(sym) {
-                    Some((of, Decl::Fn(func))) => out.extend(self.implementation_of(of, func).map(|(of, func)| (FlowSource::Node(FlowNode::Result(of, func)), pos))),
-                    Some((of, Decl::Var(pat))) if depth < DEEPEST => {
+                    Some((of, Decl::Fn(func))) => out.extend(self.implementation_for(of, func).map(|(of, func)| (FlowSource::Node(FlowNode::Result(of, func)), pos))),
+                    Some((of, Decl::Var(pat))) if depth < MAX_DEPTH => {
                         let PatParent::Var(declaration) = self.bound(of).pat_parent[pat.idx()] else { return };
                         let d = &self.hir(of)[declaration];
                         if d.kind == VarKind::Const {
-                            self.add_sources_of_calling(of, d.init, pos, depth + 1, out);
+                            self.add_callee_result_sources(of, d.init, pos, depth + 1, out);
                         }
                     }
                     _ => {}
@@ -1132,10 +1132,10 @@ impl<'p, 's> Checker<'p, 's> {
             }
             ExprKind::Dot { obj, name, .. } => {
                 let is_clock = matches!(self.atoms().bytes(name), b"now" | b"getTime");
-                match self.property_accessed(file, obj, name) {
-                    _ if is_clock => out.push((FlowSource::Not(Contrary::Clock), pos)),
-                    Accessed::OnlyDeclared(true) => out.push((FlowSource::Not(Contrary::OnlyDeclared), pos)),
-                    Accessed::Node(FlowNode::Property(name)) => out.push((FlowSource::Node(FlowNode::ResultNamed(name)), pos)),
+                match self.classify_property_access(file, obj, name) {
+                    _ if is_clock => out.push((FlowSource::Not(NotInt32Reason::Clock), pos)),
+                    Accessed::DeclaredOnly(true) => out.push((FlowSource::Not(NotInt32Reason::DeclaredOnly), pos)),
+                    Accessed::Node(FlowNode::Property(name)) => out.push((FlowSource::Node(FlowNode::NamedResult(name)), pos)),
                     _ => {}
                 }
                 return;
@@ -1143,7 +1143,7 @@ impl<'p, 's> Checker<'p, 's> {
             _ => return,
         };
         for operand in operands {
-            self.add_sources_of_calling(file, operand, pos, depth, out);
+            self.add_callee_result_sources(file, operand, pos, depth, out);
         }
     }
 }

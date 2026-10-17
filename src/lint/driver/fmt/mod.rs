@@ -396,9 +396,9 @@ fn with_file<R>(
             emit_standard_class_fields: true,
             before_es2020: false,
             before_es2017: false,
-            names_make_commonjs: false,
-            one_name_is_one_binding: false,
-            is_commonjs_by_decree: None,
+            detects_commonjs_by_free_names: false,
+            uses_ecmascript_bindings: false,
+            is_forced_commonjs: None,
         };
         let program = how.verifies.then(|| Program::new(&hir, text, atoms));
         if needs_symbols {

@@ -148,7 +148,7 @@ func seed() {
 	}
 }
 
-func answer(w http.ResponseWriter, status int, value any) {
+func writeJSON(w http.ResponseWriter, status int, value any) {
 	body, err := json.Marshal(value)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -188,7 +188,7 @@ func catalog(w http.ResponseWriter, r *http.Request) {
 	for _, product := range products {
 		result.Items = append(result.Items, CatalogItem{ID: product.ID, Title: product.Title, PriceCents: product.PriceCents, InStock: product.Stock > 0})
 	}
-	answer(w, http.StatusOK, result)
+	writeJSON(w, http.StatusOK, result)
 }
 
 func positive(text string, fallback int64) int64 {
@@ -210,7 +210,7 @@ func postPage(w http.ResponseWriter, r *http.Request) {
 	if sort == "" {
 		sort = "new"
 	}
-	answer(w, http.StatusOK, PostPage{
+	writeJSON(w, http.StatusOK, PostPage{
 		UserID: userID,
 		PostID: r.PathValue("postId"),
 		Page:   positive(query.Get("page"), 1),
@@ -242,7 +242,7 @@ func (o *Order) valid() bool {
 }
 
 func invalid(w http.ResponseWriter) {
-	answer(w, http.StatusBadRequest, map[string]string{"error": "invalid order"})
+	writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid order"})
 }
 
 func orders(w http.ResponseWriter, r *http.Request) {
@@ -269,7 +269,7 @@ func orders(w http.ResponseWriter, r *http.Request) {
 	}
 	receipt.TaxCents = (receipt.SubtotalCents - receipt.DiscountCents) * 8 / 100
 	receipt.TotalCents = receipt.SubtotalCents - receipt.DiscountCents + receipt.TaxCents
-	answer(w, http.StatusOK, receipt)
+	writeJSON(w, http.StatusOK, receipt)
 }
 
 func findUser(id int64) (*UserRow, error) {
@@ -313,7 +313,7 @@ func summarize(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	answer(w, http.StatusOK, Summary{ID: user.ID, Name: user.Name, Orders: len(orders), TotalCents: totalCents})
+	writeJSON(w, http.StatusOK, Summary{ID: user.ID, Name: user.Name, Orders: len(orders), TotalCents: totalCents})
 }
 
 func findProducts(offset, limit int) []ProductRow {

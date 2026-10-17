@@ -115,7 +115,7 @@ struct CastChain {
 struct Context {
     required: Vec<Level>,
     parent: Vec<ExprId>,
-    is_before_an_operator: Vec<bool>,
+    is_before_operator: Vec<bool>,
 }
 
 struct Syntax<'a, 's> {
@@ -629,7 +629,7 @@ impl<'a, 's> Syntax<'a, 's> {
     fn context(&self) -> Context {
         let file = self.file;
         let count = file.exprs.len();
-        let mut context = Context { required: vec![Level::Assign; count], parent: vec![ExprId::NONE; count], is_before_an_operator: vec![false; count] };
+        let mut context = Context { required: vec![Level::Assign; count], parent: vec![ExprId::NONE; count], is_before_operator: vec![false; count] };
         for (index, expr) in file.exprs.iter().enumerate() {
             let parent = ExprId(index as u32);
             let mut set = |child: ExprId, level: Level| {
@@ -671,7 +671,7 @@ impl<'a, 's> Syntax<'a, 's> {
                 _ => {}
             }
             if let ExprKind::Binary { left: first, .. } | ExprKind::Cond { test: first, .. } = expr.kind
-                && let Some(is_before) = context.is_before_an_operator.get_mut(first.idx())
+                && let Some(is_before) = context.is_before_operator.get_mut(first.idx())
             {
                 *is_before = true;
             }
@@ -1945,7 +1945,7 @@ impl<'a> Transfer<'_, 'a, '_> {
                     }
                     level = syntax.level(cast);
                 }
-                let is_loose = level == Level::Compare && (output_context.is_before_an_operator[operand.idx()] || output.next_token_extends_type(end));
+                let is_loose = level == Level::Compare && (output_context.is_before_operator[operand.idx()] || output.next_token_extends_type(end));
                 if level < output_context.required[operand.idx()] || is_loose {
                     opens += 1;
                     suffix.push(b')');

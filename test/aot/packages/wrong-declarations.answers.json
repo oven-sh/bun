@@ -9,7 +9,7 @@
     "output": "A 10\nB 21\n"
   },
   "commonjs.each.ts": {
-    "output": "x THROWS TypeError [--aot: expected number, got string]\ntypeof [6,9,6]\narity THROWS TypeError [--aot: expected number | undefined, got string \"1\"]\nnamed THROWS TypeError [--aot: expected number | undefined, got string \"1\"]\ndirect 4\n"
+    "output": "x [\"10\",null,3]\ntypeof [6,9,6]\narity [2,0,3]\nnamed THROWS TypeError [--aot: expected number | undefined, got string \"1\"]\ndirect 4\n"
   },
   "commonjs.ident.ts": {
     "output": "number THROWS TypeError [--aot: expected number, got string \"11\"]\nstring 1\nobject undefined\nisArray true\n"
@@ -26,25 +26,19 @@
     "output": "x THROWS TypeError [--aot: expected number, got string]\n"
   },
   "commonjs.num_is_string.ts": {
-    "output": "+ THROWS TypeError [--aot: expected number, got string]\n* 10\ntypeof \"string\"\n=== false\n< true\ntpl \"5\"\n|0 5\nmax 5\nf THROWS TypeError [--aot: expected number, got string \"5\"]\narr THROWS TypeError [--aot: expected number, got string \"5\"]\nexit code 1\nTypeError: expected number, got string \"5\" (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)\n"
+    "output": "+ THROWS TypeError [--aot: expected number, got string]\n* 10\ntypeof \"string\"\n=== false\n< true\ntpl \"5\"\n|0 5\nmax 5\nf THROWS TypeError [--aot: expected number, got string \"5\"]\narr THROWS TypeError [--aot: expected number | undefined, got string \"5\"]\nexit code 1\nTypeError: expected number, got string \"5\" (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)\n"
   },
   "commonjs.over.ts": {
     "output": "string \"1!\"\nnumber THROWS TypeError [--aot: expected number, got string]\nlen undefined\nn null\n"
   },
-  "commonjs.ret_arr_mixed.ts": {
-    "output": "map [\"number\",\"string\",\"object\",\"undefined\",\"object\"]\nsum THROWS TypeError [--aot: expected number, got string]\nfilter [1,\"2\"]\njson \"[1,\\\"2\\\",null,null,{\\\"x\\\":1}]\"\nof number\nof string\nof object\nof undefined\nof object\n"
-  },
   "commonjs.ret_arr_strings.ts": {
-    "output": "0 THROWS TypeError [--aot: expected number, got string]\nmap THROWS TypeError [--aot: expected number, got string]\nreduce THROWS TypeError [--aot: expected number, got string]\nexit code 1\nTypeError: expected number, got string (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)\n"
+    "output": "0 THROWS TypeError [--aot: expected number, got string]\nmap [\"11\",\"21\"]\nreduce \"012\"\nfor of \"012\"\nsort [\"1\",\"2\"]\nincludes false\njoin \"1,2\"\nmax 2\n"
   },
   "commonjs.ret_fn_wrong.ts": {
     "output": "call THROWS TypeError [--aot: expected number, got string]\nmap [\"1!\",\"2!\"]\ntypeof \"string\"\n"
   },
   "commonjs.ret_iter.ts": {
-    "output": "exit code 1\nTypeError: expected number, got string (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)\n"
-  },
-  "commonjs.ret_map_wrong.ts": {
-    "output": "get undefined\nany \"one\"\nentries [[1,\"one\"]]\nexit code 1\nTypeError: expected number, got string (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)\n"
+    "output": "of \"001\"\nspread [\"0\",\"1\"]\nfrom THROWS TypeError [--aot: expected number | undefined, got string \"0\"]\ndestructured [\"0\",\"1\"]\n"
   },
   "commonjs.ret_num.ts": {
     "errors": "error: TS100013: This always throws a TypeError under --aot: the type of the expression expects 'number' and always gets string.\n"
@@ -59,13 +53,13 @@
     "output": "await THROWS TypeError [--aot: expected number, got string]\nthen 10\ntypeof \"string\"\n"
   },
   "commonjs.ret_record.ts": {
-    "output": "a THROWS TypeError [--aot: expected number, got string]\ninherited 9\nkeys [\"a\"]\nin a\nin inherited\nnone undefined\nvalues THROWS TypeError [--aot: expected number, got string]\n"
+    "output": "a THROWS TypeError [--aot: expected number, got string]\ninherited 9\nkeys [\"a\"]\nin a\nin inherited\nnone undefined\nvalues [\"11\"]\n"
   },
   "commonjs.str_is_number.ts": {
     "output": "+ THROWS TypeError [--aot: expected string, got number 8]\nlength undefined\ntypeof \"number\"\n=== false\ntpl \"7!\"\nupper THROWS TypeError\nswitch \"default\"\nkey 1\n"
   },
   "commonjs.takes_arr.ts": {
-    "output": "len 7\n3 \"pushed\"\njson \"[1,2,3,\\\"pushed\\\",null,1,null]\"\nsum THROWS TypeError [--aot: expected number | undefined, got string \"pushed\"]\nexit code 1\nTypeError: expected number, got string \"pushed\" (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)\n"
+    "output": "len 7\n3 \"pushed\"\njson \"[1,2,3,\\\"pushed\\\",null,1,null]\"\nsum THROWS TypeError [--aot: expected number | undefined, got string \"pushed\"]\nexit code 1\nTypeError: expected number | undefined, got string \"pushed\" (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)\n"
   },
   "commonjs.takes_obj.ts": {
     "output": "exit code 1\nTypeError: Cannot assign to 'a' of { a, b }: expected number, got string \"written by the package\" (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)\n"
@@ -83,7 +77,7 @@
     "output": "A 10\nB 21\n"
   },
   "esm.each.ts": {
-    "output": "x THROWS TypeError [--aot: expected number, got string]\ntypeof [6,9,6]\narity THROWS TypeError [--aot: expected number | undefined, got string \"1\"]\nnamed THROWS TypeError [--aot: expected number | undefined, got string \"1\"]\ndirect 4\n"
+    "output": "x [\"10\",null,3]\ntypeof [6,9,6]\narity [2,0,3]\nnamed THROWS TypeError [--aot: expected number | undefined, got string \"1\"]\ndirect 4\n"
   },
   "esm.ident.ts": {
     "output": "number THROWS TypeError [--aot: expected number, got string \"11\"]\nstring 1\nobject undefined\nisArray true\n"
@@ -109,20 +103,14 @@
   "esm.over.ts": {
     "output": "string \"1!\"\nnumber THROWS TypeError [--aot: expected number, got string]\nlen undefined\nn null\n"
   },
-  "esm.ret_arr_mixed.ts": {
-    "output": "map [\"number\",\"string\",\"object\",\"undefined\",\"object\"]\nsum THROWS TypeError [--aot: expected number, got string]\nfilter [1,\"2\"]\njson \"[1,\\\"2\\\",null,null,{\\\"x\\\":1}]\"\nof number\nof string\nof object\nof undefined\nof object\n"
-  },
   "esm.ret_arr_strings.ts": {
-    "output": "0 THROWS TypeError [--aot: expected number, got string]\nmap THROWS TypeError [--aot: expected number, got string]\nreduce THROWS TypeError [--aot: expected number, got string]\nexit code 1\nTypeError: expected number, got string (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)\n"
+    "output": "0 THROWS TypeError [--aot: expected number, got string]\nmap [\"11\",\"21\"]\nreduce \"012\"\nfor of \"012\"\nsort [\"1\",\"2\"]\nincludes false\njoin \"1,2\"\nmax 2\n"
   },
   "esm.ret_fn_wrong.ts": {
     "output": "call THROWS TypeError [--aot: expected number, got string]\nmap [\"1!\",\"2!\"]\ntypeof \"string\"\n"
   },
   "esm.ret_iter.ts": {
-    "output": "exit code 1\nTypeError: expected number, got string (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)\n"
-  },
-  "esm.ret_map_wrong.ts": {
-    "output": "get undefined\nany \"one\"\nentries [[1,\"one\"]]\nexit code 1\nTypeError: expected number, got string (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)\n"
+    "output": "of \"001\"\nspread [\"0\",\"1\"]\nfrom THROWS TypeError [--aot: expected number | undefined, got string \"0\"]\ndestructured [\"0\",\"1\"]\n"
   },
   "esm.ret_num.ts": {
     "errors": "error: TS100013: This always throws a TypeError under --aot: the type of the expression expects 'number' and always gets string.\n"
@@ -137,7 +125,7 @@
     "output": "await THROWS TypeError [--aot: expected number, got string]\nthen 10\ntypeof \"string\"\n"
   },
   "esm.ret_record.ts": {
-    "output": "a THROWS TypeError [--aot: expected number, got string]\ninherited 9\nkeys [\"a\"]\nin a\nin inherited\nnone undefined\nvalues THROWS TypeError [--aot: expected number, got string]\n"
+    "output": "a THROWS TypeError [--aot: expected number, got string]\ninherited 9\nkeys [\"a\"]\nin a\nin inherited\nnone undefined\nvalues [\"11\"]\n"
   },
   "esm.str_is_number.ts": {
     "errors": "error: TS100013: This always throws a TypeError under --aot: the type of the expression expects 'string' and always gets number.\n"

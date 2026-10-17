@@ -33,9 +33,9 @@ pub struct Snapshot {
     pub entry_functions: Vec<[Vec<u8>; 2]>,
     /// `TypeChecked::statements`. A snapshot that ends before it was written without.
     pub statements: Vec<(Vec<u8>, u32, bool)>,
-    pub without_side_effects: Vec<Vec<u8>>,
+    pub side_effect_free_files: Vec<Vec<u8>>,
     pub lifted_commonjs: Vec<Vec<u8>>,
-    pub kinds_of_code: Vec<(Vec<u8>, bool)>,
+    pub code_kinds: Vec<(Vec<u8>, bool)>,
 }
 
 const MAGIC: &[u8] = b"bun aot snapshot 4\n";
@@ -167,10 +167,10 @@ impl Snapshot {
             put(&mut out, path);
             put_count(&mut out, (*start as usize) << 1 | usize::from(*verdict));
         }
-        let mut without_side_effects: Vec<_> = self.without_side_effects.iter().collect();
-        without_side_effects.sort();
-        put_count(&mut out, without_side_effects.len());
-        for path in without_side_effects {
+        let mut side_effect_free_files: Vec<_> = self.side_effect_free_files.iter().collect();
+        side_effect_free_files.sort();
+        put_count(&mut out, side_effect_free_files.len());
+        for path in side_effect_free_files {
             put(&mut out, path);
         }
         let mut lifted_commonjs: Vec<_> = self.lifted_commonjs.iter().collect();
@@ -179,10 +179,10 @@ impl Snapshot {
         for path in lifted_commonjs {
             put(&mut out, path);
         }
-        let mut kinds_of_code: Vec<_> = self.kinds_of_code.iter().collect();
-        kinds_of_code.sort();
-        put_count(&mut out, kinds_of_code.len());
-        for (path, is_commonjs) in kinds_of_code {
+        let mut code_kinds: Vec<_> = self.code_kinds.iter().collect();
+        code_kinds.sort();
+        put_count(&mut out, code_kinds.len());
+        for (path, is_commonjs) in code_kinds {
             put(&mut out, path);
             put_count(&mut out, usize::from(*is_commonjs));
         }
@@ -210,18 +210,18 @@ impl Snapshot {
         let entry_functions = (0..reader.count().unwrap_or(0)).map(|_| Some([reader.bytes()?, reader.bytes()?])).collect::<Option<_>>()?;
         let statements = (0..reader.count().unwrap_or(0)).map(|_| Some((reader.bytes()?, reader.count()?))).collect::<Option<Vec<_>>>()?;
         let statements = statements.into_iter().map(|(path, word)| (path, (word >> 1) as u32, word & 1 != 0)).collect();
-        let without_side_effects = (0..reader.count().unwrap_or(0)).map(|_| reader.bytes()).collect::<Option<_>>()?;
+        let side_effect_free_files = (0..reader.count().unwrap_or(0)).map(|_| reader.bytes()).collect::<Option<_>>()?;
         let lifted_commonjs = (0..reader.count().unwrap_or(0)).map(|_| reader.bytes()).collect::<Option<_>>()?;
-        let kinds_of_code = (0..reader.count().unwrap_or(0)).map(|_| Some((reader.bytes()?, reader.count()? != 0))).collect::<Option<_>>()?;
+        let code_kinds = (0..reader.count().unwrap_or(0)).map(|_| Some((reader.bytes()?, reader.count()? != 0))).collect::<Option<_>>()?;
         Some(Snapshot {
             entry_functions,
             defines,
             features,
             preserve_source_paths,
             statements,
-            without_side_effects,
+            side_effect_free_files,
             lifted_commonjs,
-            kinds_of_code,
+            code_kinds,
             cwd,
             tsconfig: has_tsconfig.then_some(tsconfig),
             conditions,

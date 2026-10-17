@@ -4,7 +4,7 @@ use crate::hir::{BinOp, Chain, ClassId, ExprId, ExprKind, File, FnBody, FnKind, 
 use crate::util::FxHashSet;
 use std::cell::RefCell;
 
-pub const KEY_OF_SCOPE: &[u8] = b"\0eval";
+pub const SCOPE_KEY: &[u8] = b"\0eval";
 
 pub fn position_in_source(inserted: &[(u32, u32)], pos: u32) -> u32 {
     locate_in_source(inserted, pos).0
@@ -43,7 +43,7 @@ struct Rewriting<'a, 's> {
     hir: &'a File<'s>,
     bound: &'a Bound<'s>,
     atoms: &'a Interner<'s>,
-    classes_stored_to_by_evals: RefCell<FxHashSet<ClassId>>,
+    classes_reassigned_by_evals: RefCell<FxHashSet<ClassId>>,
     insertions: Vec<(u32, Vec<u8>)>,
 }
 
@@ -54,13 +54,13 @@ struct ClassDeclaration {
     end: u32,
 }
 
-pub fn give_direct_evals_their_scopes<'s>(hir: &File<'s>, bound: &Bound<'s>, atoms: &Interner<'s>) -> Option<(Vec<u8>, Vec<(u32, u32)>)> {
+pub fn attach_direct_eval_scopes<'s>(hir: &File<'s>, bound: &Bound<'s>, atoms: &Interner<'s>) -> Option<(Vec<u8>, Vec<(u32, u32)>)> {
     if hir.has_errors || hir.text.is_empty() {
         return None;
     }
-    let mut it = Rewriting { hir, bound, atoms, classes_stored_to_by_evals: RefCell::default(), insertions: Vec::new() };
-    it.add_scopes_of_direct_evals();
-    it.add_variables_of_classes_that_are_stored_to();
+    let mut it = Rewriting { hir, bound, atoms, classes_reassigned_by_evals: RefCell::default(), insertions: Vec::new() };
+    it.add_direct_eval_scopes();
+    it.add_reassigned_class_bindings();
     if it.insertions.is_empty() {
         return None;
     }
@@ -81,7 +81,7 @@ pub fn give_direct_evals_their_scopes<'s>(hir: &File<'s>, bound: &Bound<'s>, ato
 
 impl<'a, 's> Rewriting<'a, 's> {
 
-    fn add_scopes_of_direct_evals(&mut self) {
+    fn add_direct_eval_scopes(&mut self) {
         let (hir, bound) = (self.hir, self.bound);
         for (i, e) in hir.exprs.iter().enumerate() {
             let ExprKind::Call(call) = e.kind else { continue };
@@ -101,12 +101,12 @@ impl<'a, 's> Rewriting<'a, 's> {
         }
     }
 
-    fn is_named_freely(&self, name: &[u8]) -> bool {
+    fn is_free_name(&self, name: &[u8]) -> bool {
         let named = |(i, e): (usize, &crate::hir::Expr)| matches!(e.kind, ExprKind::Ident(it) if self.atoms.bytes(it) == name) && self.bound.expr_symbol[i].is_none();
         self.hir.exprs.iter().enumerate().any(named)
     }
 
-    fn is_named_by_an_expression(&self, symbol: SymbolId) -> bool {
+    fn is_referenced_by_expression(&self, symbol: SymbolId) -> bool {
         self.hir.exprs.iter().enumerate().any(|(i, e)| matches!(e.kind, ExprKind::Ident(_)) && self.bound.expr_symbol[i] == symbol)
     }
 
@@ -132,9 +132,9 @@ impl<'a, 's> Rewriting<'a, 's> {
         Some(ClassDeclaration { class, start, keyword: start + keyword as u32, end })
     }
 
-    fn add_variables_of_classes_that_are_stored_to(&mut self) {
+    fn add_reassigned_class_bindings(&mut self) {
         let (hir, bound) = (self.hir, self.bound);
-        let by_evals = self.classes_stored_to_by_evals.take();
+        let by_evals = self.classes_reassigned_by_evals.take();
         for stmt in hir.stmts.iter() {
             let StmtKind::Class(class) = stmt.kind else { continue };
             let symbol = bound.class_symbol[class.idx()];
@@ -165,7 +165,7 @@ impl<'a, 's> Rewriting<'a, 's> {
                 return of.flags.contains(SymFlags::FUNCTION);
             }
             let Some(declaration) = self.class_declaration(symbol).filter(|it| !(it.start <= from && from < it.end)) else { return false };
-            self.classes_stored_to_by_evals.borrow_mut().insert(declaration.class);
+            self.classes_reassigned_by_evals.borrow_mut().insert(declaration.class);
             return true;
         }
         of.decls.iter().all(|decl| match *decl {
@@ -221,7 +221,7 @@ impl<'a, 's> Rewriting<'a, 's> {
             for &(name, symbol) in bound.table(at.locals) {
                 let symbol = bound.export_symbol_of_value_symbol_if_exported(symbol);
                 let flags = bound.symbols[symbol.idx()].flags;
-                let is_value = flags.intersects(SymFlags::VALUE) || flags.contains(SymFlags::ALIAS) && (hir.is_js || self.is_named_by_an_expression(symbol));
+                let is_value = flags.intersects(SymFlags::VALUE) || flags.contains(SymFlags::ALIAS) && (hir.is_js || self.is_referenced_by_expression(symbol));
                 if is_value && seen.insert(name) && is_name_of_variable(self.atoms.bytes(name)) {
                     names.push((name, symbol));
                 }
@@ -281,8 +281,8 @@ impl<'a, 's> Rewriting<'a, 's> {
         while names.iter().any(|it| self.atoms.bytes(it.0) == &parameter[..]) {
             parameter.push(b'_');
         }
-        let is_this_of_module = has_arguments.is_none() && bound.commonjs_indicator.is_none();
-        let mut text = if is_this_of_module {
+        let is_module_this = has_arguments.is_none() && bound.commonjs_indicator.is_none();
+        let mut text = if is_module_this {
             b"(void{\"\\u0000eval\":void 0,__proto__:null".to_vec()
         } else if may_lack_this {
             b"(void{\"\\u0000eval\":(()=>{try{return this}catch{}})(),__proto__:null".to_vec()
@@ -313,7 +313,7 @@ impl<'a, 's> Rewriting<'a, 's> {
         if bound.commonjs_indicator.is_some() {
             for (name, is_in_bundles) in [(&b"module"[..], true), (b"exports", true), (b"require", false), (b"__filename", false), (b"__dirname", false)] {
                 if !names.iter().any(|it| self.atoms.bytes(it.0) == name) {
-                    let is_in_bundles = is_in_bundles || name.starts_with(b"__") && self.is_named_freely(name);
+                    let is_in_bundles = is_in_bundles || name.starts_with(b"__") && self.is_free_name(name);
                     let (before, behind) = if is_in_bundles { (&b",get "[..], &b"(){return "[..]) } else { (&b",get \"\\u0000"[..], &b"\"(){return "[..]) };
                     for part in [before, name, behind, name, b"}"] {
                         text.extend_from_slice(part);
@@ -322,7 +322,7 @@ impl<'a, 's> Rewriting<'a, 's> {
             }
         } else {
             for name in [&b"__filename"[..], b"__dirname"] {
-                if !names.iter().any(|it| self.atoms.bytes(it.0) == name) && self.is_named_freely(name) {
+                if !names.iter().any(|it| self.atoms.bytes(it.0) == name) && self.is_free_name(name) {
                     for part in [&b",get "[..], name, b"(){return ", name, b"}"] {
                         text.extend_from_slice(part);
                     }

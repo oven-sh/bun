@@ -3,5 +3,5 @@
 6 n2 once2 r01,r25
 TypeError
 TypeError
-TypeError
+only [object Object]1
 7 n5 once2 r01,r25,r511

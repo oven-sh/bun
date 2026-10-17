@@ -1,4 +1,5 @@
-// What every server under ./app and ./tanstack must answer, computed from the rules alone. No server is asked.
+// The routes that every server under ./app and ./tanstack implements, with the expected response bodies.
+// The bodies are computed here, independently of any server.
 
 const cities = ["Lisbon", "Osaka", "Denver", "Nairobi", "Oslo"];
 
@@ -48,17 +49,17 @@ export interface Route {
   path: string;
   type: string;
   request?: string;
-  answer: string;
+  expectedBody: string;
 }
 
 export const routes: Route[] = [
-  { name: "text", method: "GET", path: "/text", type: "text/plain", answer: "Hello, World!" },
+  { name: "text", method: "GET", path: "/text", type: "text/plain", expectedBody: "Hello, World!" },
   {
     name: "json",
     method: "GET",
     path: "/json",
     type: "application/json",
-    answer: JSON.stringify({
+    expectedBody: JSON.stringify({
       profile: profile(42),
       items: products.map(({ id, title, priceCents, stock }) => ({ id, title, priceCents, inStock: stock > 0 })),
     }),
@@ -68,36 +69,36 @@ export const routes: Route[] = [
     method: "GET",
     path: "/users/42/posts/hello-world?page=2&limit=10&sort=top",
     type: "application/json",
-    answer: JSON.stringify({ userId: 42, postId: "hello-world", page: 2, limit: 10, sort: "top" }),
+    expectedBody: JSON.stringify({ userId: 42, postId: "hello-world", page: 2, limit: 10, sort: "top" }),
   },
   {
     name: "async",
     method: "GET",
     path: "/async/42",
     type: "application/json",
-    answer: JSON.stringify({ id: 42, name: "User 42", orders: 5, totalCents: [0, 1, 2, 3, 4].reduce((sum, n) => sum + 1000 + n * 250 + 42, 0) }),
+    expectedBody: JSON.stringify({ id: 42, name: "User 42", orders: 5, totalCents: [0, 1, 2, 3, 4].reduce((sum, n) => sum + 1000 + n * 250 + 42, 0) }),
   },
   {
     name: "stream",
     method: "GET",
     path: "/stream",
     type: "text/csv",
-    answer: products.map(({ id, title, priceCents }) => `${id},${title},${priceCents}\n`).join(""),
+    expectedBody: products.map(({ id, title, priceCents }) => `${id},${title},${priceCents}\n`).join(""),
   },
   // The order is validated with zod.
-  { name: "post", method: "POST", path: "/shops/west/orders", type: "application/json", request: JSON.stringify(order), answer: receipt },
-  // The order is validated by hand: a typeof test for every member, and no other key is allowed.
-  { name: "hand", method: "POST", path: "/shops/west/checked-orders", type: "application/json", request: JSON.stringify(order), answer: receipt },
-  // The order is parsed and cast to its type. Only the ranges of its values are checked.
-  { name: "typed", method: "POST", path: "/shops/west/typed-orders", type: "application/json", request: JSON.stringify(order), answer: receipt },
+  { name: "post", method: "POST", path: "/shops/west/orders", type: "application/json", request: JSON.stringify(order), expectedBody: receipt },
+  // The order is validated by hand: a typeof check for every property, and unknown keys are rejected.
+  { name: "hand", method: "POST", path: "/shops/west/checked-orders", type: "application/json", request: JSON.stringify(order), expectedBody: receipt },
+  // The order is parsed and cast to its type without validation. Only value ranges are checked.
+  { name: "typed", method: "POST", path: "/shops/west/typed-orders", type: "application/json", request: JSON.stringify(order), expectedBody: receipt },
 ];
 
-export const refusal = JSON.stringify({ error: "invalid order" });
+export const invalidOrderBody = JSON.stringify({ error: "invalid order" });
 
 const [first, ...rest] = order.items;
 
-/** The routes that validate must answer each of these with 400. The route that only casts must answer as plain Bun does. */
-export const badOrders: Record<string, string> = {
+/** The validating routes must respond to each of these with 400. The route that only casts must respond like Bun without --aot. */
+export const invalidOrders: Record<string, string> = {
   "a quantity of zero": JSON.stringify({ ...order, items: [{ ...first, quantity: 0 }] }),
   "a name that is a number": JSON.stringify({ ...order, customer: { ...order.customer, name: 5 } }),
   "an unknown key": JSON.stringify({ ...order, note: "leave at the door" }),
@@ -109,5 +110,5 @@ export const badOrders: Record<string, string> = {
   "text that is not JSON": '{"customer":',
 };
 
-// For ./measure/measure.py.
-if (import.meta.main) console.log(JSON.stringify({ routes, badOrders, refusal }));
+// Used by ./measure/measure.py.
+if (import.meta.main) console.log(JSON.stringify({ routes, invalidOrders, invalidOrderBody }));

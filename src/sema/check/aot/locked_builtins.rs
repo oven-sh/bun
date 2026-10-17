@@ -19,13 +19,13 @@ pub struct Builtin {
     /// The `name` of its prototype. Empty if it has none, `%` if its prototype is not in this table.
     pub inherits: &'static str,
     /// All but the prototypes.
-    pub takes_new_properties: bool,
+    pub is_extensible: bool,
     /// All its own properties, separated by spaces. For the global object, only the ones that cannot be replaced.
     /// `@@iterator` is `Symbol.iterator`. Before the name:
-    /// - nothing: a program can assign to it, define it again and delete it, and `--aot` refuses all three;
-    /// - `~`: an accessor, or read-only. JavaScript decides what an assignment does, and `--aot` refuses the other two;
-    /// - `=`: writable but not configurable, and `--aot` refuses the assignment;
-    /// - `!`: JavaScript itself refuses all three;
+    /// - nothing: a program can assign to it, define it again and delete it, and `--aot` rejects_change all three;
+    /// - `~`: an accessor, or read-only. JavaScript decides what an assignment does, and `--aot` rejects_change the other two;
+    /// - `=`: writable but not configurable, and `--aot` rejects_change the assignment;
+    /// - `!`: JavaScript itself rejects_change all three;
     /// - `-`: `--aot` lets it be, like the `name` of a function.
     ///
     /// After the name, unless the value is a function: `:accessor`, or `:` and the `typeof` of the value, followed by `?` if the
@@ -50,7 +50,7 @@ enum Property {
     Configurable,
     Writable,
     Fixed,
-    LetBe,
+    Unlocked,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -95,7 +95,7 @@ impl Builtin {
                 Some((b'~', rest)) => (Property::Configurable, rest),
                 Some((b'=', rest)) => (Property::Writable, rest),
                 Some((b'!', rest)) => (Property::Fixed, rest),
-                Some((b'-', rest)) => (Property::LetBe, rest),
+                Some((b'-', rest)) => (Property::Unlocked, rest),
                 _ => (Property::Replaceable, it),
             };
             let holds = rest.strip_prefix(name)?;
@@ -129,12 +129,12 @@ impl Builtin {
     }
 
     /// Whether it has a property `name`, of its own or inherited from another of them.
-    pub fn finds(&self, name: &[u8]) -> bool {
-        self.has(name) || self.parent().is_some_and(|it| it.finds(name))
+    pub fn has_property(&self, name: &[u8]) -> bool {
+        self.has(name) || self.parent().is_some_and(|it| it.has_property(name))
     }
 
     fn can_never_have(&self, name: &[u8]) -> bool {
-        !self.takes_new_properties
+        !self.is_extensible
             && !self.has(name)
             && match self.parent() {
                 Some(parent) => parent.can_never_have(name),
@@ -144,7 +144,7 @@ impl Builtin {
 
     pub fn known_value(&self, name: &[u8]) -> Option<KnownValue> {
         match self.own(name) {
-            Some((Property::LetBe, _)) | Some((_, b"accessor")) => None,
+            Some((Property::Unlocked, _)) | Some((_, b"accessor")) => None,
             Some((_, holds)) => {
                 let (type_of, is_truthy) = match holds.split_last() {
                     Some((b'?', type_of)) => (type_of, false),
@@ -160,14 +160,14 @@ impl Builtin {
         self.known_value(name).or_else(|| self.can_never_have(name).then_some(KnownValue { type_of: "undefined", is_truthy: false }))
     }
 
-    /// Whether `--aot` refuses this change to the property `name`, and JavaScript does not.
-    pub fn refuses(&self, name: &[u8], change: Change) -> bool {
+    /// Whether `--aot` rejects_change this change to the property `name`, and JavaScript does not.
+    pub fn rejects_change(&self, name: &[u8], change: Change) -> bool {
         if let Some((own, _)) = self.own(name) {
             return match own {
                 Property::Replaceable => true,
                 Property::Configurable => change != Change::Assign,
                 Property::Writable => change == Change::Assign,
-                Property::Fixed | Property::LetBe => false,
+                Property::Fixed | Property::Unlocked => false,
             };
         }
         if change == Change::Delete {
@@ -175,7 +175,7 @@ impl Builtin {
         }
         match self.inherited(name) {
             Some((_, inherited)) => inherited == Property::Replaceable || change == Change::Define,
-            None => !self.takes_new_properties,
+            None => !self.is_extensible,
         }
     }
 
@@ -183,7 +183,7 @@ impl Builtin {
         let mut ancestor = self.parent();
         while let Some(it) = ancestor {
             match it.own(name) {
-                None | Some((Property::LetBe, _)) => ancestor = it.parent(),
+                None | Some((Property::Unlocked, _)) => ancestor = it.parent(),
                 Some((property, _)) => return Some((it, property)),
             }
         }
@@ -200,8 +200,8 @@ impl Builtin {
         shadowed.map(|(it, _)| it)
     }
 
-    /// Whether `--aot` refuses it another prototype, and JavaScript does not.
-    pub fn refuses_another_prototype(&self) -> bool {
+    /// Whether `--aot` rejects_change it another prototype, and JavaScript does not.
+    pub fn has_immutable_prototype(&self) -> bool {
         !self.is_global_object() && self.name != "Object.prototype"
     }
 

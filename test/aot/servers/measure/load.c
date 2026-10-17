@@ -1,19 +1,19 @@
 // load <port> <connections> <requests> <threads> <request file> <expected file> [<request file> <expected file> ..]
 //
-// A fixed HTTP/1.1 keep-alive client for a closed loop: every connection always has exactly one request
-// outstanding, so a server that is the limit stays saturated. The request file holds the raw bytes to send.
-// The expected file holds the status, the media type ("-": any) and "exact" or "length", one per line, then
-// the body. Every response is checked: the status, the media type, and every byte of the body ("exact") or
-// its length alone ("length": pages that carry a time stamp). The first difference ends the run with exit code 1.
-// With more than one pair of files the requests are dealt round-robin over the pairs.
-// Connections and requests are dealt evenly over the threads; each thread has an epoll of its own.
+// A minimal HTTP/1.1 keep-alive load generator. By default it runs a closed loop: every connection always has exactly one
+// request in flight, so a server that is the bottleneck stays saturated. The request file holds the raw bytes to send.
+// The expected file holds the status, the content type ("-" for any) and "exact" or "length", one per line, followed by
+// the body. Every response is checked: status, content type, and either the whole body ("exact") or only its length
+// ("length", for pages that embed a timestamp). The first mismatch ends the run with exit code 1.
+// With more than one pair of files, requests cycle through the pairs round-robin.
+// Connections and requests are split evenly across the threads; each thread has its own epoll instance.
 //
-// LOAD_RATE=<requests a second>: an open loop instead: requests are due at fixed intervals, whatever the server does; each goes
-// out on a connection that is free, or waits for one; its latency is counted from the moment it was due, so a stall of the
-// server is charged to every request that fell into it. LOAD_SKIP=<requests>: that many at the head of the run are sent and
-// checked but not counted: the connections are new, the server may have stood still, its caches are cold.
+// LOAD_RATE=<requests per second> switches to an open loop: requests are scheduled at fixed intervals regardless of how fast the
+// server responds. Each one uses a free connection or waits for one, and its latency is measured from its scheduled time, so a
+// server stall is charged to every request scheduled during it (no coordinated omission). LOAD_SKIP=<requests> excludes that
+// many requests at the start from the statistics; they are still sent and checked.
 //
-// Prints one line: requests, seconds, response header bytes per request, mean, p50, p90, p99, p99.9 and the longest latency.
+// Prints one line: requests, seconds, response header bytes per request, and mean, p50, p90, p99, p99.9 and maximum latency.
 #define _GNU_SOURCE
 #include <arpa/inet.h>
 #include <errno.h>
@@ -94,7 +94,7 @@ static char* readFile(const char* path, size_t* length)
     return data;
 }
 
-static char* takeLine(char** cursor)
+static char* nextLine(char** cursor)
 {
     char* line = *cursor;
     char* end = strchr(line, '\n');
@@ -172,7 +172,7 @@ static long decodeChunked(const char* data, size_t length, char* out)
     }
 }
 
-// Returns 1 when a whole response has been read and checked.
+// Returns 1 once a complete response has been read and checked.
 static int checkResponse(Worker* w, Connection* c)
 {
     const char* headEnd = memmem(c->buffer, c->length, "\r\n\r\n", 4);
@@ -214,7 +214,7 @@ static int checkResponse(Worker* w, Connection* c)
     return 1;
 }
 
-static void* work(void* argument)
+static void* runClientThread(void* argument)
 {
     Worker* w = argument;
     int epoll = epoll_create1(0);
@@ -315,9 +315,9 @@ int main(int argc, char** argv)
         size_t length;
         char* expected = readFile(argv[6 + 2 * i], &length);
         char* cursor = expected;
-        e->status = atoi(takeLine(&cursor));
-        snprintf(e->mediaType, sizeof e->mediaType, "%s", takeLine(&cursor));
-        e->compareBytes = !strcmp(takeLine(&cursor), "exact");
+        e->status = atoi(nextLine(&cursor));
+        snprintf(e->mediaType, sizeof e->mediaType, "%s", nextLine(&cursor));
+        e->compareBytes = !strcmp(nextLine(&cursor), "exact");
         e->body = cursor;
         e->bodyLength = length - (cursor - expected);
     }
@@ -339,7 +339,7 @@ int main(int argc, char** argv)
         w->share = threadCount;
         w->offset = (double)i / threadCount;
         dealt += w->requests;
-        if (pthread_create(&w->thread, NULL, work, w))
+        if (pthread_create(&w->thread, NULL, runClientThread, w))
             fail("cannot start a thread", "");
     }
     double begin = now();

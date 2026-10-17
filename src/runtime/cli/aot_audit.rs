@@ -3,7 +3,7 @@ use bun_sema_driver::FxHashMap as HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use bun_threading::Guarded;
 
-use crate::cli::check_command::{Audited, EntryPoint, audit_before};
+use crate::cli::check_command::{Audited, EntryPoint, MoreCode, audit_before};
 
 struct Described {
     passes: u32,
@@ -24,7 +24,7 @@ struct State {
     described: Vec<Described>,
     shapes: HashMap<String, Box<str>>,
     generation: u32,
-    waits_for_the_whole: bool,
+    awaits_whole_program_analysis: bool,
     entry_points: Vec<Vec<u8>>,
     code: Vec<Vec<u8>>,
     is_for_tests: bool,
@@ -48,44 +48,44 @@ impl Trust {
 }
 
 static STATE: Guarded<Option<State>> = Guarded::new(None);
-static IS_LOOKING_AT_THE_WHOLE: AtomicBool = AtomicBool::new(false);
-static IS_WANTED: AtomicBool = AtomicBool::new(false);
-static ACTS: AtomicBool = AtomicBool::new(false);
-static LAST_ASKED: AtomicU64 = AtomicU64::new(0);
-static SEEN_BY_OTHERS: Guarded<Vec<(Vec<u8>, u64, Vec<u8>)>> = Guarded::new(Vec::new());
-static BEGINS_AT_ONCE: AtomicBool = AtomicBool::new(false);
-static STOPS_A_BUILD: AtomicBool = AtomicBool::new(false);
+static IS_ANALYZING_WHOLE_PROGRAM: AtomicBool = AtomicBool::new(false);
+static IS_ENABLED: AtomicBool = AtomicBool::new(false);
+static IS_ENFORCING: AtomicBool = AtomicBool::new(false);
+static LAST_REQUEST_MS: AtomicU64 = AtomicU64::new(0);
+static PUBLIC_DECLARATIONS: Guarded<Vec<(Vec<u8>, u64, Vec<u8>)>> = Guarded::new(Vec::new());
+static STARTS_IMMEDIATELY: AtomicBool = AtomicBool::new(false);
+static HAS_BUILD_BLOCKING_ERROR: AtomicBool = AtomicBool::new(false);
 #[cfg(unix)]
 const STOPS: &[u8] = b"what stops a build\0";
 
-fn say_which_road(text: &str) {
+fn log_verbose(text: &str) {
     // SAFETY: getenv only reads, and the name is NUL-terminated.
     if unsafe { libc::getenv(c"BUN_AOT_VERBOSE".as_ptr()) }.is_null() {
         return;
     }
-    let line = format!("[aot] look: {text}\n");
+    let line = format!("[aot] type check: {text}\n");
     bun_core::Output::flush();
     // SAFETY: `line` is readable for `line.len()` bytes.
     unsafe { libc::write(2, line.as_ptr().cast(), line.len()) };
 }
-static SAID: Guarded<Vec<u8>> = Guarded::new(Vec::new());
+static RENDERED_DIAGNOSTICS: Guarded<Vec<u8>> = Guarded::new(Vec::new());
 /// The test files that `bun test --aot` does not run: a file with a type error is reached from them.
-static LEFT_OUT: Guarded<Vec<Vec<u8>>> = Guarded::new(Vec::new());
+static SKIPPED_TEST_FILES: Guarded<Vec<Vec<u8>>> = Guarded::new(Vec::new());
 
-pub(crate) fn is_left_out_for_type_errors(entry_point: &[u8]) -> bool {
-    LEFT_OUT.lock().iter().any(|path| path == entry_point)
+pub(crate) fn is_skipped_for_type_errors(entry_point: &[u8]) -> bool {
+    SKIPPED_TEST_FILES.lock().iter().any(|path| path == entry_point)
 }
-static IS_WATCHED: AtomicBool = AtomicBool::new(false);
+static IS_WATCH_MODE: AtomicBool = AtomicBool::new(false);
 static IS_STOPPED: AtomicBool = AtomicBool::new(false);
-static LOOKED_AT_ALONE: Guarded<std::collections::BTreeSet<Vec<u8>>> = Guarded::new(std::collections::BTreeSet::new());
-static IS_LOOKED_AT: bun_threading::Condvar = bun_threading::Condvar::new();
+static SINGLE_FILE_ANALYSES_IN_FLIGHT: Guarded<std::collections::BTreeSet<Vec<u8>>> = Guarded::new(std::collections::BTreeSet::new());
+static SINGLE_FILE_ANALYSIS_DONE: bun_threading::Condvar = bun_threading::Condvar::new();
 #[cfg(unix)]
 static CHILD: Guarded<i32> = Guarded::new(0);
 
 const HELPER: &str = include_str!("aot_audit.js");
-const HANDED_OVER: &core::ffi::CStr = c"BUN_INTERNAL_AOT_AUDIT_FD";
+const AUDIT_FD_ENV: &core::ffi::CStr = c"BUN_INTERNAL_AOT_AUDIT_FD";
 #[cfg(unix)]
-const LOOKS_FOR_ANOTHER: &core::ffi::CStr = c"BUN_INTERNAL_AOT_AUDIT_PASS_FD";
+const AUDIT_PASS_FD_ENV: &core::ffi::CStr = c"BUN_INTERNAL_AOT_AUDIT_PASS_FD";
 
 unsafe extern "C" {
     fn Bun__AOTAudit__install(
@@ -93,20 +93,20 @@ unsafe extern "C" {
         source: *const u8,
         length: usize,
         cwd: *const u8,
-        length_of_cwd: usize,
+        cwd_len: usize,
     );
     fn Bun__AOTAudit__setPendingSites(
-        length_of_source: usize,
+        source_len: usize,
         expressions: *const [u32; 6],
-        number_of_expressions: usize,
+        expression_count: usize,
         parameters: *const [u32; 6],
-        number_of_parameters: usize,
+        parameter_count: usize,
     );
     fn Bun__AOTAudit__setGeneration(generation: u32);
 }
 
 fn note(text: &str) {
-    if acts() {
+    if is_enforcing() {
         return;
     }
     let line = format!("[aot] note: {text}\n");
@@ -126,7 +126,7 @@ fn log() -> (i32, bool) {
             (!value.is_null()).then(|| unsafe { core::ffi::CStr::from_ptr(value) }).filter(|value| !value.is_empty())
         };
         let (descriptor, is_file) = match said(c"BUN_AOT_TYPE_ERROR_LOG") {
-            None if ACTS.load(Ordering::Acquire) => (-1, false),
+            None if IS_ENFORCING.load(Ordering::Acquire) => (-1, false),
             None => (2, false),
             Some(to) if to == c"stderr" => (2, false),
             Some(to) if to == c"off" => (-1, false),
@@ -180,22 +180,22 @@ fn native_path(cwd: &[u8], shown: &[u8]) -> Vec<u8> {
     bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(cwd, &[bun_sema_driver::host::to_native(shown)]).to_vec()
 }
 
-fn text_of_group(shown: &str, trust: Trust, group: &bun_aot::audit::Group) -> Box<str> {
+fn group_json(shown: &str, trust: Trust, group: &bun_aot::audit::Group) -> Box<str> {
     let unsure = trust.text();
     format!("{{\"file\":{shown},{unsure}\"step\":{},\"steps\":[{}]}}", group.step, group.steps).into_boxed_str()
 }
 
-fn text_of_parameter(shown: &str, trust: Trust, parameter: &bun_aot::audit::Parameter) -> Box<str> {
+fn parameter_json(shown: &str, trust: Trust, parameter: &bun_aot::audit::Parameter) -> Box<str> {
     let unsure = trust.text();
     format!("{{\"file\":{shown},{unsure}\"parameter\":true,\"steps\":[{}]}}", parameter.step).into_boxed_str()
 }
 
 impl State {
     fn add(&mut self, cwd: &[u8], module: &bun_aot::audit::Module, text: &[u8], trust: Trust) -> &'static AuditedFile {
-        self.waits_for_the_whole |= trust != Trust::Sure;
+        self.awaits_whole_program_analysis |= trust != Trust::Sure;
         let shown = bun_aot::audit::quoted_text(&module.path);
         let mut audited = AuditedFile {
-            hash_of_text: hash_of(text),
+            source_hash: hash_of(text),
             ..Default::default()
         };
         let (mut groups, mut parameters) = (HashMap::default(), HashMap::default());
@@ -205,7 +205,7 @@ impl State {
                 passes: if group.step != 0 { 0 } else { group.passes },
                 least: group.least,
                 most: group.most,
-                text: text_of_group(&shown, trust, group),
+                text: group_json(&shown, trust, group),
             });
             groups.insert((group.start, group.end, group.step), id);
             audited.expressions.push(AuditedExpression {
@@ -220,7 +220,7 @@ impl State {
                 passes: parameter.passes,
                 least: parameter.least,
                 most: parameter.most,
-                text: text_of_parameter(&shown, trust, parameter),
+                text: parameter_json(&shown, trust, parameter),
             });
             parameters.insert((parameter.function, parameter.index), id);
             audited.parameters.push(AuditedParameter {
@@ -246,11 +246,11 @@ impl State {
         audited
     }
 
-    fn add_without_sites(&mut self, path: &[u8], hash_of_text: u64) -> &'static AuditedFile {
+    fn add_without_sites(&mut self, path: &[u8], source_hash: u64) -> &'static AuditedFile {
         // SAFETY: as in `add`.
         let audited: &'static AuditedFile = unsafe {
             &*bun_core::heap::alloc(AuditedFile {
-                hash_of_text,
+                source_hash,
                 ..Default::default()
             })
         };
@@ -269,7 +269,7 @@ impl State {
         }
         for (path, theirs) in files {
             let ours = self.files.get(&path);
-            if ours.is_some_and(|ours| ours.audited.hash_of_text == theirs.audited.hash_of_text) {
+            if ours.is_some_and(|ours| ours.audited.source_hash == theirs.audited.source_hash) {
                 let ours = ours.expect("it was asked");
                 let mut texts: HashMap<u32, &str> = ours.groups.values().chain(ours.parameters.values()).map(|&id| (id, "{\"steps\":[]}")).collect();
                 for (key, &id) in &theirs.groups {
@@ -295,7 +295,7 @@ impl State {
                     self.described.push(Described { passes: it.passes, least: it.least, most: it.most, text: it.text.clone() });
                 }
                 let mut audited = AuditedFile {
-                    hash_of_text: theirs.audited.hash_of_text,
+                    source_hash: theirs.audited.source_hash,
                     ..Default::default()
                 };
                 audited.expressions.extend(theirs.audited.expressions.iter().map(|it| AuditedExpression { next: it.next, start: it.start, id: renumbered(it.id) }));
@@ -313,10 +313,10 @@ impl State {
             drop(unsafe { bun_core::heap::take(core::ptr::from_ref(theirs.audited).cast_mut()) });
         }
         self.shapes = shapes;
-        self.is_renewed();
+        self.bump_generation();
     }
 
-    fn is_renewed(&mut self) {
+    fn bump_generation(&mut self) {
         self.generation += 1;
         // SAFETY: it stores the number.
         unsafe { Bun__AOTAudit__setGeneration(self.generation) };
@@ -327,7 +327,7 @@ impl State {
             self.add(cwd, module, text, Trust::Sure);
             return;
         };
-        if file.audited.hash_of_text != hash_of(text) {
+        if file.audited.source_hash != hash_of(text) {
             return;
         }
         let shown = bun_aot::audit::quoted_text(&module.path);
@@ -337,12 +337,12 @@ impl State {
         }
         for group in &module.groups {
             if let Some(&id) = file.groups.get(&(group.start, group.end, group.step)) {
-                texts.insert(id, text_of_group(&shown, Trust::Sure, group));
+                texts.insert(id, group_json(&shown, Trust::Sure, group));
             }
         }
         for parameter in &module.parameters {
             if let Some(&id) = file.parameters.get(&(parameter.function, parameter.index)) {
-                texts.insert(id, text_of_parameter(&shown, Trust::Sure, parameter));
+                texts.insert(id, parameter_json(&shown, Trust::Sure, parameter));
             }
         }
         for (id, text) in texts {
@@ -351,7 +351,7 @@ impl State {
     }
 }
 
-fn on_a_thread_of_its_own<T: Send>(run: impl FnOnce() -> T + Send) -> T {
+fn run_on_new_thread<T: Send>(run: impl FnOnce() -> T + Send) -> T {
     std::thread::scope(|scope| {
         let thread = std::thread::Builder::new().stack_size(64 << 20).spawn_scoped(scope, move || {
             bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Audit"));
@@ -366,7 +366,7 @@ fn on_a_thread_of_its_own<T: Send>(run: impl FnOnce() -> T + Send) -> T {
     })
 }
 
-fn look_at_the_whole(entry_points: &[Vec<u8>], code: &[Vec<u8>], hinted: &[Vec<u8>], is_for_tests: bool, before_read: Option<bun_sema_driver::host::BeforeRead>, audited: Audited<'_>) -> bool {
+fn analyze_whole_program(entry_points: &[Vec<u8>], code: &[Vec<u8>], hinted: &[Vec<u8>], is_for_tests: bool, before_read: Option<bun_sema_driver::host::BeforeRead>, audited: Audited<'_>) -> bool {
     let cwd = crate::cli::check_command::working_directory();
     let mut entry_points = entry_points.to_vec();
     let (mut code, mut before_read) = (code.to_vec(), before_read);
@@ -374,37 +374,30 @@ fn look_at_the_whole(entry_points: &[Vec<u8>], code: &[Vec<u8>], hinted: &[Vec<u
     code.extend_from_slice(hinted);
     let found = loop {
         let entries: Vec<EntryPoint> = entry_points.iter().map(|path| EntryPoint::file(path)).collect();
-        let mut found = audit_before(&entries, before_read.take(), is_for_tests, audited, &code, None).unwrap_or_default();
-        if !found.not_in_the_program.is_empty() && code.len() > given {
-            code.retain(|path| !found.not_in_the_program.contains(path));
-            taken_out.append(&mut found.not_in_the_program);
-            continue;
-        }
-        if !found.never_visited.is_empty() {
+        let more_code = MoreCode { paths: &code, fixed: given, taken_out: &taken_out };
+        let mut found = audit_before(&entries, before_read.take(), is_for_tests, audited, more_code, None).unwrap_or_default();
+        if !found.unlinked_files.is_empty() || !found.never_visited.is_empty() {
+            code.retain(|path| !found.unlinked_files.contains(path));
+            taken_out.append(&mut found.unlinked_files);
             code.append(&mut found.never_visited);
-            for path in found.may_be_visited {
-                if !code.contains(&path) && !taken_out.contains(&path) {
-                    code.push(path);
-                }
-            }
             continue;
         }
-        if found.reach_errors.is_empty() || found.reach_errors.len() == entry_points.len() || !matches!(audited, Audited::Whole) || !ACTS.load(Ordering::Acquire) || IS_WATCHED.load(Ordering::Acquire) {
+        if found.entry_points_reaching_errors.is_empty() || found.entry_points_reaching_errors.len() == entry_points.len() || !matches!(audited, Audited::Whole) || !IS_ENFORCING.load(Ordering::Acquire) || IS_WATCH_MODE.load(Ordering::Acquire) {
             break found;
         }
-        entry_points.retain(|path| !found.reach_errors.contains(path));
-        LEFT_OUT.lock().append(&mut found.reach_errors);
+        entry_points.retain(|path| !found.entry_points_reaching_errors.contains(path));
+        SKIPPED_TEST_FILES.lock().append(&mut found.entry_points_reaching_errors);
     };
-    if found.stops_a_build && matches!(audited, Audited::Whole) && ACTS.load(Ordering::Acquire) {
+    if found.has_build_blocking_error && matches!(audited, Audited::Whole) && IS_ENFORCING.load(Ordering::Acquire) {
         bun_core::Output::flush();
-        if !IS_WATCHED.load(Ordering::Acquire) {
+        if !IS_WATCH_MODE.load(Ordering::Acquire) {
             bun_core::Global::exit(1);
         }
         IS_STOPPED.store(true, Ordering::Release);
     }
     let mut state = STATE.lock();
     let state = state.get_or_insert_with(State::default);
-    state.entry_points.retain(|path| !is_left_out_for_type_errors(path));
+    state.entry_points.retain(|path| !is_skipped_for_type_errors(path));
     for path in code {
         if !state.code.contains(&path) {
             state.code.push(path);
@@ -414,11 +407,11 @@ fn look_at_the_whole(entry_points: &[Vec<u8>], code: &[Vec<u8>], hinted: &[Vec<u
         state.refine(&cwd, module, text);
     }
     state.shapes = found.shapes.into_iter().map(|(key, text)| (key, text.into_boxed_str())).collect();
-    state.is_renewed();
-    *SAID.lock() = found.said;
-    STOPS_A_BUILD.store(found.stops_a_build, Ordering::Release);
-    *SEEN_BY_OTHERS.lock() = found.seen_by_others;
-    !found.stops_a_build && !found.has_errors && LEFT_OUT.lock().is_empty()
+    state.bump_generation();
+    *RENDERED_DIAGNOSTICS.lock() = found.said;
+    HAS_BUILD_BLOCKING_ERROR.store(found.has_build_blocking_error, Ordering::Release);
+    *PUBLIC_DECLARATIONS.lock() = found.public_declarations;
+    !found.has_build_blocking_error && !found.has_errors && SKIPPED_TEST_FILES.lock().is_empty()
 }
 
 /// A look that is kept from one start to the next, see `bun_sema_driver::asked`.
@@ -427,9 +420,9 @@ mod kept {
     use bun_sema_driver::asked::{Kind, Question};
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    const MAGIC: &[u8; 8] = b"bunlook3";
+    const MAGIC: &[u8; 8] = b"bunlook4";
 
-    const MOST_KEPT: u64 = 1 << 30;
+    const MAX_CACHE_BYTES: u64 = 1 << 30;
     static IS_WRITING: AtomicBool = AtomicBool::new(false);
 
     pub(super) struct Taken {
@@ -440,7 +433,7 @@ mod kept {
         pub(super) changed: Vec<Vec<u8>>,
         /// Nothing is answered otherwise but the texts of TypeScript files of the program itself.
         pub(super) holds: bool,
-        pub(super) seen_by_others: Vec<(Vec<u8>, u64, Vec<u8>)>,
+        pub(super) public_declarations: Vec<(Vec<u8>, u64, Vec<u8>)>,
     }
 
     pub(super) fn hash(bytes: &[u8]) -> u64 {
@@ -468,7 +461,7 @@ mod kept {
     }
 
     impl Start {
-        pub(super) fn of(entry_points: &[Vec<u8>], is_for_tests: bool, acts: bool) -> Option<Start> {
+        pub(super) fn of(entry_points: &[Vec<u8>], is_for_tests: bool, is_enforcing: bool) -> Option<Start> {
             let folder = folder()?;
             let executable = bun_core::self_exe_path().ok()?;
             // SAFETY: `stat` is plain data for which all zeros is a valid value.
@@ -478,20 +471,21 @@ mod kept {
                 return None;
             }
             let cwd = crate::cli::check_command::working_directory();
-            let form = crate::cli::check_command::form_of_what_is_said();
-            let mut key = format!("{} {} {} {} {is_for_tests} {acts} {form:?}\0", bun_core::Global::package_json_version_with_sha, found.st_size, found.st_mtime, found.st_mtime_nsec).into_bytes();
+            bun_sema_driver::asked::set_working_directory(&bun_sema_driver::host::from_native(&cwd));
+            let form = crate::cli::check_command::diagnostic_format_key();
+            let mut key = format!("{} {} {} {} {is_for_tests} {is_enforcing} {form:?}\0", bun_core::Global::package_json_version_with_sha, found.st_size, found.st_mtime, found.st_mtime_nsec).into_bytes();
             for part in [executable.as_bytes(), &cwd[..]] {
                 key.extend_from_slice(part);
                 key.push(0);
             }
-            let names_the_entry = |argument: &[u8]| {
+            let is_entry_name = |argument: &[u8]| {
                 let written = argument.strip_prefix(b"./").unwrap_or(argument);
                 !argument.starts_with(b"-") && !written.is_empty() && entry_points.iter().any(|path| path.ends_with(written))
             };
             for argument in bun_core::argv().into_iter().skip(1).filter(|it| !matches!(*it, b"--watch" | b"--hot")) {
                 key.extend_from_slice(argument);
                 key.push(0);
-                if names_the_entry(argument) {
+                if is_entry_name(argument) {
                     break;
                 }
             }
@@ -537,26 +531,26 @@ mod kept {
                 questions.push(Question { kind, path: bytes(&mut rest)?, answer });
             }
             let count = usize::try_from(number(&mut rest)?).ok()?;
-            let mut seen_by_others = Vec::new();
+            let mut public_declarations = Vec::new();
             for _ in 0..count {
                 let seen = number(&mut rest)?;
                 let path = bytes(&mut rest)?;
-                seen_by_others.push((path, seen, bytes(&mut rest)?));
+                public_declarations.push((path, seen, bytes(&mut rest)?));
             }
             let said = bytes(&mut rest)?;
             let threads = usize::from(bun_core::get_thread_count()).min(16);
             let mut holds = true;
             let mut changed = Vec::new();
-            for at in bun_sema_driver::asked::answered_otherwise(&questions, hash, threads) {
+            for at in bun_sema_driver::asked::changed_answers(&questions, hash, threads) {
                 let path = bun_sema_driver::host::to_native(&questions[at].path).to_vec();
-                holds &= questions[at].kind == Kind::Text && seen_by_others.iter().any(|it| it.0 == path);
+                holds &= questions[at].kind == Kind::Text && public_declarations.iter().any(|it| it.0 == path);
                 changed.push(path);
             }
             let read = questions.into_iter().filter(|question| question.kind == Kind::Text).map(|question| question.path).collect();
-            Some(Taken { read, said, tables: rest.to_vec(), changed, seen_by_others, holds })
+            Some(Taken { read, said, tables: rest.to_vec(), changed, public_declarations, holds })
         }
 
-        pub(super) fn note_settings(&self) {
+        pub(super) fn record_settings(&self) {
             for path in &self.settings {
                 let text = bun_sys::File::read_from(bun_sys::Fd::cwd(), path).ok();
                 bun_sema_driver::asked::note(Kind::NativeText, path, |hash| bun_sema_driver::asked::of_text(hash, text.as_deref()));
@@ -584,7 +578,7 @@ mod kept {
         }
 
         /// Ends the process as soon as another ticket is written.
-        pub(super) fn end_at_another_ticket(&self) {
+        pub(super) fn exit_when_superseded(&self) {
             let path = self.ticket_path();
             let read = move || bun_sys::File::read_from(bun_sys::Fd::cwd(), &path).ok();
             let mine = read();
@@ -606,7 +600,7 @@ mod kept {
             }
         }
 
-        pub(super) fn put(&self, questions: &[Question], seen_by_others: &[(Vec<u8>, u64, Vec<u8>)], said: &[u8], tables: &[u8]) {
+        pub(super) fn put(&self, questions: &[Question], public_declarations: &[(Vec<u8>, u64, Vec<u8>)], said: &[u8], tables: &[u8]) {
             let mut rest = Vec::with_capacity(tables.len() + questions.len() * 96);
             let bytes = |rest: &mut Vec<u8>, value: &[u8]| {
                 rest.extend_from_slice(&(value.len() as u64).to_le_bytes());
@@ -619,8 +613,8 @@ mod kept {
                 rest.extend_from_slice(&question.answer.to_le_bytes());
                 bytes(&mut rest, &question.path);
             }
-            rest.extend_from_slice(&(seen_by_others.len() as u64).to_le_bytes());
-            for (path, seen, declarations) in seen_by_others {
+            rest.extend_from_slice(&(public_declarations.len() as u64).to_le_bytes());
+            for (path, seen, declarations) in public_declarations {
                 rest.extend_from_slice(&seen.to_le_bytes());
                 bytes(&mut rest, path);
                 bytes(&mut rest, declarations);
@@ -659,11 +653,11 @@ mod kept {
                 }
             }
             IS_WRITING.store(false, Ordering::Release);
-            self.make_room();
+            self.evict_old_entries();
         }
 
-        /// The kept looks take `MOST_KEPT` bytes at most: the oldest go first, this one never. So does what a writer that died left behind.
-        fn make_room(&self) {
+        /// The kept looks take `MAX_CACHE_BYTES` bytes at most: the oldest go first, this one never. So does what a writer that died left behind.
+        fn evict_old_entries(&self) {
             let Some(slash) = self.path.iter().rposition(|&byte| byte == b'/') else { return };
             let Ok(folder) = std::ffi::CString::new(&self.path[..slash]) else { return };
             // SAFETY: the path is NUL-terminated.
@@ -705,7 +699,7 @@ mod kept {
             kept.sort();
             let mut all: u64 = kept.iter().map(|it| it.1).sum();
             for (_, size, path) in kept {
-                if all <= MOST_KEPT {
+                if all <= MAX_CACHE_BYTES {
                     break;
                 }
                 if path.as_bytes() != &self.path[..] {
@@ -719,11 +713,11 @@ mod kept {
 }
 
 #[cfg(unix)]
-fn look_at_the_whole_in_a_child(entry_points: &[Vec<u8>], code: &[Vec<u8>]) -> Option<State> {
+fn analyze_whole_program_in_child(entry_points: &[Vec<u8>], code: &[Vec<u8>]) -> Option<State> {
     use std::os::unix::ffi::OsStrExt;
     use std::os::unix::process::CommandExt;
     let asked: Vec<Vec<u8>> = (entry_points.iter().map(|it| [&b"E"[..], &it[..]].concat())).chain(code.iter().map(|it| [&b"C"[..], &it[..]].concat())).collect();
-    let fd = unlinked_file_with(&asked.join(&0u8))?;
+    let fd = anonymous_file_with(&asked.join(&0u8))?;
     let found = (|| {
         let executable = bun_core::self_exe_path().ok()?;
         #[allow(clippy::disallowed_types)]
@@ -731,8 +725,8 @@ fn look_at_the_whole_in_a_child(entry_points: &[Vec<u8>], code: &[Vec<u8>]) -> O
         for argument in bun_core::argv().into_iter().skip(1).filter(|it| !matches!(*it, b"--watch" | b"--hot")) {
             command.arg(std::ffi::OsStr::from_bytes(argument));
         }
-        command.env(std::ffi::OsStr::from_bytes(LOOKS_FOR_ANOTHER.to_bytes()), fd.to_string());
-        command.env_remove(std::ffi::OsStr::from_bytes(HANDED_OVER.to_bytes()));
+        command.env(std::ffi::OsStr::from_bytes(AUDIT_PASS_FD_ENV.to_bytes()), fd.to_string());
+        command.env_remove(std::ffi::OsStr::from_bytes(AUDIT_FD_ENV.to_bytes()));
         command.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
         // SAFETY: between fork and exec the closure only calls nice(2), which is async-signal-safe.
         unsafe {
@@ -752,12 +746,12 @@ fn look_at_the_whole_in_a_child(entry_points: &[Vec<u8>], code: &[Vec<u8>]) -> O
             *running = 0;
             let _ = child.wait();
         }
-        let bytes = read_whole(fd)?;
+        let bytes = read_fd_to_end(fd)?;
         if let Some(said) = bytes.strip_prefix(STOPS) {
-            if acts() {
+            if is_enforcing() {
                 let _ = bun_core::Output::error_writer().write_all(said);
                 bun_core::Output::flush();
-                if !IS_WATCHED.load(Ordering::Acquire) {
+                if !IS_WATCH_MODE.load(Ordering::Acquire) {
                     bun_core::Global::exit(1);
                 }
             }
@@ -765,13 +759,13 @@ fn look_at_the_whole_in_a_child(entry_points: &[Vec<u8>], code: &[Vec<u8>]) -> O
         }
         State::from_bytes(&bytes)
     })();
-    // SAFETY: `fd` is ours, from `unlinked_file_with`, and is not used again.
+    // SAFETY: `fd` is ours, from `anonymous_file_with`, and is not used again.
     unsafe { libc::close(fd) };
     found
 }
 
 #[cfg(unix)]
-fn stop_the_child() {
+fn kill_child() {
     let mut running = CHILD.lock();
     if *running > 0 {
         // SAFETY: kill(2) takes no pointers. `CHILD` holds the id only while the child has not been
@@ -782,22 +776,22 @@ fn stop_the_child() {
 }
 
 #[cfg(not(unix))]
-fn stop_the_child() {}
+fn kill_child() {}
 
-fn look_at_the_whole_in_the_background() {
-    stop_the_child();
-    if IS_LOOKING_AT_THE_WHOLE.swap(true, Ordering::AcqRel) {
+fn analyze_whole_program_in_background() {
+    kill_child();
+    if IS_ANALYZING_WHOLE_PROGRAM.swap(true, Ordering::AcqRel) {
         return;
     }
-    let still_waits = || STATE.lock().as_ref().is_some_and(|state| state.waits_for_the_whole);
+    let still_waits = || STATE.lock().as_ref().is_some_and(|state| state.awaits_whole_program_analysis);
     let thread = std::thread::Builder::new().stack_size(64 << 20).spawn(move || {
         bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Audit"));
         while still_waits() {
-            while !BEGINS_AT_ONCE.load(Ordering::Acquire) && milliseconds().saturating_sub(LAST_ASKED.load(Ordering::Acquire)) < 300 {
+            while !STARTS_IMMEDIATELY.load(Ordering::Acquire) && milliseconds().saturating_sub(LAST_REQUEST_MS.load(Ordering::Acquire)) < 300 {
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }
             let Some((entry_points, code, is_for_tests)) = STATE.lock().as_mut().map(|state| {
-                state.waits_for_the_whole = false;
+                state.awaits_whole_program_analysis = false;
                 (state.entry_points.clone(), state.code.clone(), state.is_for_tests)
             }) else {
                 break;
@@ -805,22 +799,22 @@ fn look_at_the_whole_in_the_background() {
             #[cfg(unix)]
             {
                 let _ = is_for_tests;
-                let found = look_at_the_whole_in_a_child(&entry_points, &code);
+                let found = analyze_whole_program_in_child(&entry_points, &code);
                 if let (Some(found), Some(state)) = (found, STATE.lock().as_mut()) {
                     state.merge(found);
                 }
             }
             #[cfg(not(unix))]
-            look_at_the_whole(&entry_points, &code, &[], is_for_tests, None, Audited::WholeInTheBackground);
+            analyze_whole_program(&entry_points, &code, &[], is_for_tests, None, Audited::WholeProgramInBackground);
         }
         bun_core::Output::flush();
-        IS_LOOKING_AT_THE_WHOLE.store(false, Ordering::Release);
+        IS_ANALYZING_WHOLE_PROGRAM.store(false, Ordering::Release);
         if still_waits() {
-            look_at_the_whole_in_the_background();
+            analyze_whole_program_in_background();
         }
     });
     if thread.is_err() {
-        IS_LOOKING_AT_THE_WHOLE.store(false, Ordering::Release);
+        IS_ANALYZING_WHOLE_PROGRAM.store(false, Ordering::Release);
     }
 }
 
@@ -829,24 +823,24 @@ fn hash_of(text: &[u8]) -> u64 {
 }
 
 fn milliseconds() -> u64 {
-    static BEGUN: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-    BEGUN.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64
+    static START_TIME: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    START_TIME.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64
 }
 
 fn known(path: &[u8], hash: u64) -> Option<Option<&'static AuditedFile>> {
     let state = STATE.lock();
     let Some(state) = state.as_ref() else { return Some(None) };
     match state.files.get(path) {
-        Some(file) if file.audited.hash_of_text == hash => Some(Some(file.audited)),
+        Some(file) if file.audited.source_hash == hash => Some(Some(file.audited)),
         Some(_) => None,
-        None if !State::may_have_a_table(path) => Some(None),
+        None if !State::may_have_audit_table(path) => Some(None),
         None => None,
     }
 }
 
-fn look_at_it_alone(path: &[u8], text: &[u8]) -> Option<&'static AuditedFile> {
+fn analyze_single_file(path: &[u8], text: &[u8]) -> Option<&'static AuditedFile> {
     let hash = hash_of(text);
-    let mut looked_at = LOOKED_AT_ALONE.lock();
+    let mut looked_at = SINGLE_FILE_ANALYSES_IN_FLIGHT.lock();
     loop {
         if let Some(found) = known(path, hash) {
             return found;
@@ -855,7 +849,7 @@ fn look_at_it_alone(path: &[u8], text: &[u8]) -> Option<&'static AuditedFile> {
             let (its_path, its_text) = (path.to_vec(), text.to_vec());
             let thread = std::thread::Builder::new().stack_size(64 << 20).spawn(move || {
                 bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Audit"));
-                look_at_this_alone(&its_path, &its_text, hash);
+                analyze_single_file_now(&its_path, &its_text, hash);
                 bun_core::Output::flush();
             });
             if thread.is_err() {
@@ -863,18 +857,18 @@ fn look_at_it_alone(path: &[u8], text: &[u8]) -> Option<&'static AuditedFile> {
                 return None;
             }
         }
-        IS_LOOKED_AT.wait_guarded(&mut looked_at);
+        SINGLE_FILE_ANALYSIS_DONE.wait_guarded(&mut looked_at);
     }
 }
 
-fn look_at_this_alone(path: &[u8], text: &[u8], hash: u64) {
-    stop_the_child();
+fn analyze_single_file_now(path: &[u8], text: &[u8], hash: u64) {
+    kill_child();
     let (mut entry_points, is_for_tests, is_known_to_the_whole) = {
         let state = STATE.lock();
         state.as_ref().map_or_else(Default::default, |state| (state.entry_points.clone(), state.is_for_tests, state.files.contains_key(path)))
     };
-    static NEVER_SEEN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-    let is_looked_at = is_known_to_the_whole || NEVER_SEEN.fetch_add(1, Ordering::AcqRel) < 8;
+    static UNKNOWN_FILE_COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let is_looked_at = is_known_to_the_whole || UNKNOWN_FILE_COUNT.fetch_add(1, Ordering::AcqRel) < 8;
     if !is_known_to_the_whole {
         entry_points.push(path.to_vec());
     }
@@ -890,7 +884,7 @@ fn look_at_this_alone(path: &[u8], text: &[u8], hash: u64) {
             let falls = !is_known_to_the_whole && found.has_errors;
             for (module, text) in found.modules.iter().filter(|(module, _)| !falls && native_path(&cwd, &module.path) == path) {
                 let trust = if is_known_to_the_whole || !is_of_a_package { Trust::Unsure } else { Trust::Silent };
-                is_added = state.add(&cwd, module, text, trust).hash_of_text == hash;
+                is_added = state.add(&cwd, module, text, trust).source_hash == hash;
                 if !is_added {
                     note(&format!("{} is not audited: the analysis read a different text of this file than the one that runs (a direct eval(), a loader plugin, or an edit while it loaded)", bstr::BStr::new(&module.path)));
                 }
@@ -900,40 +894,40 @@ fn look_at_this_alone(path: &[u8], text: &[u8], hash: u64) {
             }
             if !is_known_to_the_whole && !state.code.iter().any(|known| known == path) {
                 state.code.push(path.to_vec());
-                state.waits_for_the_whole = true;
+                state.awaits_whole_program_analysis = true;
             }
         }
-        LOOKED_AT_ALONE.lock().remove(path);
-        IS_LOOKED_AT.notify_all();
+        SINGLE_FILE_ANALYSES_IN_FLIGHT.lock().remove(path);
+        SINGLE_FILE_ANALYSIS_DONE.notify_all();
     };
     let entries: Vec<EntryPoint> = entry_points.iter().map(|path| EntryPoint::file(path)).collect();
-    struct TellsAtLast<'a>(&'a (dyn Fn(crate::cli::check_command::AuditFound) + Sync));
-    impl Drop for TellsAtLast<'_> {
+    struct NotifyOnDrop<'a>(&'a (dyn Fn(crate::cli::check_command::AuditFound) + Sync));
+    impl Drop for NotifyOnDrop<'_> {
         fn drop(&mut self) {
             (self.0)(Default::default());
         }
     }
-    let at_last = TellsAtLast(&tell);
+    let at_last = NotifyOnDrop(&tell);
     if is_looked_at {
-        let _ = audit_before(&entries, None, is_for_tests, Audited::Alone { path, text, is_quiet: !is_known_to_the_whole }, &[], Some(&tell));
+        let _ = audit_before(&entries, None, is_for_tests, Audited::Alone { path, text, is_quiet: !is_known_to_the_whole }, MoreCode::default(), Some(&tell));
     }
     drop(at_last);
-    look_at_the_whole_in_the_background();
+    analyze_whole_program_in_background();
 }
 
 fn table_for(path: &[u8], text: &[u8]) -> Option<&'static AuditedFile> {
-    LAST_ASKED.store(milliseconds(), Ordering::Release);
+    LAST_REQUEST_MS.store(milliseconds(), Ordering::Release);
     match known(path, hash_of(text)) {
         Some(found) => found,
-        None if acts() => None,
-        None => look_at_it_alone(path, text),
+        None if is_enforcing() => None,
+        None => analyze_single_file(path, text),
     }
 }
 
-fn look_at_what_has_changed() {
+fn reanalyze_changed_files() {
     let files: Vec<(Vec<u8>, u64)> = {
         let state = STATE.lock();
-        state.as_ref().map_or_else(Vec::new, |state| state.files.iter().map(|(path, file)| (path.clone(), file.audited.hash_of_text)).collect())
+        state.as_ref().map_or_else(Vec::new, |state| state.files.iter().map(|(path, file)| (path.clone(), file.audited.source_hash)).collect())
     };
     let _ = std::thread::Builder::new().spawn(move || {
         bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Audit"));
@@ -941,7 +935,7 @@ fn look_at_what_has_changed() {
             if let Ok(text) = bun_sys::File::read_from(bun_sys::Fd::cwd(), &path)
                 && hash_of(&text) != hash
             {
-                look_at_it_alone(&path, &text);
+                analyze_single_file(&path, &text);
             }
         }
         bun_core::Output::flush();
@@ -949,7 +943,7 @@ fn look_at_what_has_changed() {
 }
 
 impl State {
-    fn may_have_a_table(path: &[u8]) -> bool {
+    fn may_have_audit_table(path: &[u8]) -> bool {
         matches!(bun_paths::extension(path), b".ts" | b".tsx" | b".mts" | b".cts")
     }
 
@@ -966,7 +960,7 @@ impl State {
             number(&mut out, u64::from(described.least as u32) << 32 | u64::from(described.most as u32));
             bytes(&mut out, described.text.as_bytes());
         }
-        number(&mut out, u64::from(self.waits_for_the_whole || IS_LOOKING_AT_THE_WHOLE.load(Ordering::Acquire)));
+        number(&mut out, u64::from(self.awaits_whole_program_analysis || IS_ANALYZING_WHOLE_PROGRAM.load(Ordering::Acquire)));
         number(&mut out, self.code.len() as u64);
         for path in &self.code {
             bytes(&mut out, path);
@@ -979,7 +973,7 @@ impl State {
         number(&mut out, self.files.len() as u64);
         for (path, file) in &self.files {
             bytes(&mut out, path);
-            number(&mut out, file.audited.hash_of_text);
+            number(&mut out, file.audited.source_hash);
             number(&mut out, file.audited.expressions.len() as u64);
             for it in &file.audited.expressions {
                 number(&mut out, u64::from(it.next) << 32 | u64::from(it.start));
@@ -1025,7 +1019,7 @@ impl State {
             let text = core::str::from_utf8(bytes(input)?).ok()?;
             state.described.push(Described { passes, least: (range >> 32) as u32 as i32, most: range as u32 as i32, text: Box::from(text) });
         }
-        state.waits_for_the_whole = number(input)? != 0;
+        state.awaits_whole_program_analysis = number(input)? != 0;
         for _ in 0..number(input)? {
             state.code.push(bytes(input)?.to_vec());
         }
@@ -1038,7 +1032,7 @@ impl State {
         for _ in 0..number(input)? {
             let path = bytes(input)?.to_vec();
             let mut audited = AuditedFile {
-                hash_of_text: number(input)?,
+                source_hash: number(input)?,
                 ..Default::default()
             };
             for _ in 0..number(input)? {
@@ -1082,7 +1076,7 @@ impl State {
 }
 
 #[cfg(unix)]
-fn unlinked_file_with(bytes: &[u8]) -> Option<i32> {
+fn anonymous_file_with(bytes: &[u8]) -> Option<i32> {
     let mut name = bun_bundler::bun_fs::RealFS::tmpdir_path().to_vec();
     name.extend_from_slice(b"/bun-aot-audit-XXXXXX\0");
     // SAFETY: `name` is writable and ends with "XXXXXX" and a NUL.
@@ -1107,36 +1101,36 @@ fn unlinked_file_with(bytes: &[u8]) -> Option<i32> {
 }
 
 #[cfg(unix)]
-fn hand_over() {
-    stop_the_child();
+fn pass_state_to_child() {
+    kill_child();
     let state = STATE.lock();
     let Some(state) = state.as_ref() else { return };
-    let Some(fd) = unlinked_file_with(&state.to_bytes()) else { return };
-    bun_core::keep_open_over_reload(fd);
+    let Some(fd) = anonymous_file_with(&state.to_bytes()) else { return };
+    bun_core::keep_open_across_reload(fd);
     let number = std::ffi::CString::new(fd.to_string()).expect("digits");
     // SAFETY: both strings are NUL-terminated; setenv copies them into libc env storage.
-    unsafe { libc::setenv(HANDED_OVER.as_ptr(), number.as_ptr(), 1) };
+    unsafe { libc::setenv(AUDIT_FD_ENV.as_ptr(), number.as_ptr(), 1) };
 }
 
 #[cfg(unix)]
-fn take_what_was_handed_over() -> Option<State> {
+fn take_inherited_state() -> Option<State> {
     // SAFETY: getenv only reads, and the name is NUL-terminated.
-    let number = unsafe { libc::getenv(HANDED_OVER.as_ptr()) };
+    let number = unsafe { libc::getenv(AUDIT_FD_ENV.as_ptr()) };
     if number.is_null() {
         return None;
     }
     // SAFETY: not null, so a NUL-terminated string. It is read before the variable is unset below.
     let fd: i32 = unsafe { core::ffi::CStr::from_ptr(number) }.to_str().ok()?.parse().ok()?;
     // SAFETY: the name is NUL-terminated.
-    unsafe { libc::unsetenv(HANDED_OVER.as_ptr()) };
-    let bytes = read_whole(fd);
+    unsafe { libc::unsetenv(AUDIT_FD_ENV.as_ptr()) };
+    let bytes = read_fd_to_end(fd);
     // SAFETY: `fd` was kept open over the reload for this read and is not used again.
     unsafe { libc::close(fd) };
     State::from_bytes(&bytes?)
 }
 
 #[cfg(unix)]
-fn read_whole(fd: i32) -> Option<Vec<u8>> {
+fn read_fd_to_end(fd: i32) -> Option<Vec<u8>> {
     // SAFETY: lseek(2) takes no pointers.
     let length = unsafe { libc::lseek(fd, 0, libc::SEEK_END) };
     let mut bytes = vec![0u8; usize::try_from(length).unwrap_or(0)];
@@ -1153,36 +1147,36 @@ fn read_whole(fd: i32) -> Option<Vec<u8>> {
 }
 
 #[cfg(unix)]
-fn look_for_another(is_for_tests: bool) {
+fn analyze_for_parent_process(is_for_tests: bool) {
     // SAFETY: getenv only reads, and the name is NUL-terminated.
-    let number = unsafe { libc::getenv(LOOKS_FOR_ANOTHER.as_ptr()) };
+    let number = unsafe { libc::getenv(AUDIT_PASS_FD_ENV.as_ptr()) };
     if number.is_null() {
         return;
     }
     // SAFETY: not null, so a NUL-terminated string, which nothing changes.
     let Some(fd) = unsafe { core::ffi::CStr::from_ptr(number) }.to_str().ok().and_then(|it| it.parse::<i32>().ok()) else { return };
-    let asked = read_whole(fd).unwrap_or_default();
+    let asked = read_fd_to_end(fd).unwrap_or_default();
     let of_kind = |kind: u8| -> Vec<Vec<u8>> { bun_core::strings::split(&asked, b"\0").filter(|it| it.first() == Some(&kind)).map(|it| it[1..].to_vec()).collect() };
     let (entry_points, code) = (of_kind(b'E'), of_kind(b'C'));
-    let start = kept::Start::of(&entry_points, is_for_tests, acts());
+    let start = kept::Start::of(&entry_points, is_for_tests, is_enforcing());
     if let Some(start) = &start {
-        start.end_at_another_ticket();
+        start.exit_when_superseded();
         bun_sema_driver::asked::begin(kept::hash);
-        start.note_settings();
+        start.record_settings();
     }
-    let (given, hinted) = if acts() { (&[][..], &code[..]) } else { (&code[..], &[][..]) };
-    let may_be_kept = on_a_thread_of_its_own(|| look_at_the_whole(&entry_points, given, hinted, is_for_tests, None, Audited::WholeInTheBackground));
+    let (given, hinted) = if is_enforcing() { (&[][..], &code[..]) } else { (&code[..], &[][..]) };
+    let is_result_cacheable = run_on_new_thread(|| analyze_whole_program(&entry_points, given, hinted, is_for_tests, None, Audited::WholeProgramInBackground));
     let bytes = STATE.lock().as_ref().map_or_else(Vec::new, State::to_bytes);
     let questions = bun_sema_driver::asked::end();
     let bytes = match (&start, questions) {
-        (Some(start), _) if STOPS_A_BUILD.load(Ordering::Acquire) => {
+        (Some(start), _) if HAS_BUILD_BLOCKING_ERROR.load(Ordering::Acquire) => {
             start.forget();
-            [&STOPS[..], &SAID.lock()[..]].concat()
+            [&STOPS[..], &RENDERED_DIAGNOSTICS.lock()[..]].concat()
         }
-        (Some(start), Some(questions)) if may_be_kept => {
+        (Some(start), Some(questions)) if is_result_cacheable => {
             let threads = usize::from(bun_core::get_thread_count()).min(16);
-            if bun_sema_driver::asked::answered_otherwise(&questions, kept::hash, threads).is_empty() {
-                start.put(&questions, &SEEN_BY_OTHERS.lock(), &SAID.lock(), &bytes);
+            if bun_sema_driver::asked::changed_answers(&questions, kept::hash, threads).is_empty() {
+                start.put(&questions, &PUBLIC_DECLARATIONS.lock(), &RENDERED_DIAGNOSTICS.lock(), &bytes);
             }
             bytes
         }
@@ -1205,11 +1199,11 @@ fn look_for_another(is_for_tests: bool) {
 }
 
 #[cfg(not(unix))]
-fn take_what_was_handed_over() -> Option<State> {
+fn take_inherited_state() -> Option<State> {
     None
 }
 
-pub(crate) fn preloads_of(vm: &mut bun_jsc::virtual_machine::VirtualMachine) -> Vec<Vec<u8>> {
+pub(crate) fn preload_paths(vm: &mut bun_jsc::virtual_machine::VirtualMachine) -> Vec<Vec<u8>> {
     let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
     let named = vm.preload.clone();
     (named.iter())
@@ -1228,15 +1222,15 @@ pub(crate) fn preloads_of(vm: &mut bun_jsc::virtual_machine::VirtualMachine) -> 
 
 /// Whether the program may start. Type errors end the process, unless a file watcher is there to start it again.
 pub(crate) fn prepare(entry_points: &[EntryPoint], before_read: Option<bun_sema_driver::host::BeforeRead>, is_for_tests: bool) -> bool {
-    IS_WATCHED.store(before_read.is_some(), Ordering::Release);
+    IS_WATCH_MODE.store(before_read.is_some(), Ordering::Release);
     #[cfg(unix)]
-    look_for_another(is_for_tests);
+    analyze_for_parent_process(is_for_tests);
     let paths: Vec<Vec<u8>> = entry_points.iter().map(|it| it.path.to_vec()).collect();
-    let handed_over = take_what_was_handed_over().filter(|_| !acts());
-    let is_handed_over = handed_over.is_some();
-    let mut waits_for_the_whole = false;
+    let handed_over = take_inherited_state().filter(|_| !is_enforcing());
+    let is_inherited = handed_over.is_some();
+    let mut awaits_whole_program_analysis = false;
     #[cfg(unix)]
-    let start = kept::Start::of(&paths, is_for_tests, acts());
+    let start = kept::Start::of(&paths, is_for_tests, is_enforcing());
     #[cfg(unix)]
     let taken = start.as_ref().and_then(kept::Start::take);
     #[cfg(unix)]
@@ -1252,10 +1246,11 @@ pub(crate) fn prepare(entry_points: &[EntryPoint], before_read: Option<bun_sema_
         && !taken.changed.is_empty()
     {
         let entries: Vec<EntryPoint> = paths.iter().chain(taken.changed.iter().filter(|path| !paths.contains(path))).map(|path| EntryPoint::file(path)).collect();
-        let changed = Audited::Changed { paths: &taken.changed, seen_by_others: &taken.seen_by_others };
-        let found = on_a_thread_of_its_own(|| audit_before(&entries, None, is_for_tests, changed, &state.code, None)).unwrap_or_default();
-        if found.is_seen_otherwise || found.stops_a_build {
-            say_which_road(if found.stops_a_build { "what has changed has errors: the whole look decides whether they stand" } else { "what has changed looks otherwise to other files" });
+        let changed = Audited::Changed { paths: &taken.changed, public_declarations: &taken.public_declarations };
+        let more_code = MoreCode { paths: &state.code, ..Default::default() };
+        let found = run_on_new_thread(|| audit_before(&entries, None, is_for_tests, changed, more_code, None)).unwrap_or_default();
+        if found.public_declarations_changed || found.has_build_blocking_error {
+            log_verbose(if found.has_build_blocking_error { "type errors in changed files: falling back to a full check" } else { "exported types changed: falling back to a full check" });
             hinted = core::mem::take(&mut state.code);
             kept = None;
         } else {
@@ -1263,9 +1258,9 @@ pub(crate) fn prepare(entry_points: &[EntryPoint], before_read: Option<bun_sema_
             for (module, text) in &found.modules {
                 state.add(&cwd, module, text, Trust::Unsure);
             }
-            state.waits_for_the_whole = true;
-            waits_for_the_whole = true;
-            say_which_road(&format!("{} changed in a way that no other file can see", taken.changed.len()));
+            state.awaits_whole_program_analysis = true;
+            awaits_whole_program_analysis = true;
+            log_verbose(&format!("incremental check: {} changed, exported types unchanged", taken.changed.len()));
         }
     }
     #[cfg(not(unix))]
@@ -1279,47 +1274,47 @@ pub(crate) fn prepare(entry_points: &[EntryPoint], before_read: Option<bun_sema_
         let _ = bun_core::Output::error_writer().write_all(&taken.said);
         bun_core::Output::flush();
     }
-    if !waits_for_the_whole {
-        say_which_road(if is_kept { "nothing has changed" } else { "a fresh look" });
+    if !awaits_whole_program_analysis {
+        log_verbose(if is_kept { "cache hit" } else { "full check" });
     }
-    let (handed_over, is_handed_over) = if is_kept { (None, false) } else { (handed_over, is_handed_over) };
-    waits_for_the_whole |= handed_over.as_ref().is_some_and(|state| state.waits_for_the_whole);
+    let (handed_over, is_inherited) = if is_kept { (None, false) } else { (handed_over, is_inherited) };
+    awaits_whole_program_analysis |= handed_over.as_ref().is_some_and(|state| state.awaits_whole_program_analysis);
     *STATE.lock() = Some(State {
         entry_points: paths.clone(),
         is_for_tests,
         ..handed_over.or(kept).unwrap_or_default()
     });
-    if !is_handed_over && !is_kept {
+    if !is_inherited && !is_kept {
         #[cfg(unix)]
         if let Some(start) = &start {
             bun_sema_driver::asked::begin(kept::hash);
-            start.note_settings();
+            start.record_settings();
         }
-        let may_be_kept = on_a_thread_of_its_own(|| look_at_the_whole(&paths, &[], &hinted, is_for_tests, before_read, Audited::Whole));
+        let is_result_cacheable = run_on_new_thread(|| analyze_whole_program(&paths, &[], &hinted, is_for_tests, before_read, Audited::Whole));
         #[cfg(unix)]
         if let Some(start) = &start
             && let Some(questions) = bun_sema_driver::asked::end()
-            && may_be_kept
-            && let Some(tables) = STATE.lock().as_ref().filter(|state| !state.waits_for_the_whole).map(State::to_bytes)
+            && is_result_cacheable
+            && let Some(tables) = STATE.lock().as_ref().filter(|state| !state.awaits_whole_program_analysis).map(State::to_bytes)
         {
-            start.put(&questions, &SEEN_BY_OTHERS.lock(), &SAID.lock(), &tables);
+            start.put(&questions, &PUBLIC_DECLARATIONS.lock(), &RENDERED_DIAGNOSTICS.lock(), &tables);
         }
         #[cfg(not(unix))]
-        let _ = may_be_kept;
+        let _ = is_result_cacheable;
     }
-    LAST_ASKED.store(milliseconds(), Ordering::Release);
+    LAST_REQUEST_MS.store(milliseconds(), Ordering::Release);
     bun_ast::audited::set_finish(finish);
-    bun_ast::audited::set_source_of_tables(table_for);
-    if is_handed_over {
-        look_at_what_has_changed();
+    bun_ast::audited::set_table_source(table_for);
+    if is_inherited {
+        reanalyze_changed_files();
     }
-    if waits_for_the_whole {
-        BEGINS_AT_ONCE.store(is_kept, Ordering::Release);
+    if awaits_whole_program_analysis {
+        STARTS_IMMEDIATELY.store(is_kept, Ordering::Release);
         #[cfg(unix)]
         if let Some(start) = &start {
             start.write_ticket();
         }
-        look_at_the_whole_in_the_background();
+        analyze_whole_program_in_background();
         #[cfg(unix)]
         for _ in 0..200 {
             if !is_kept || *CHILD.lock() != 0 {
@@ -1329,7 +1324,7 @@ pub(crate) fn prepare(entry_points: &[EntryPoint], before_read: Option<bun_sema_
         }
     }
     #[cfg(unix)]
-    bun_core::before_reload(hand_over);
+    bun_core::before_reload(pass_state_to_child);
     !IS_STOPPED.load(Ordering::Acquire)
 }
 
@@ -1338,17 +1333,17 @@ pub(crate) fn is_on() -> bool {
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn Bun__AOTAudit__waitForTheWhole() -> u32 {
-    let is_under_way = || IS_LOOKING_AT_THE_WHOLE.load(Ordering::Acquire) || STATE.lock().as_ref().is_some_and(|state| state.waits_for_the_whole);
-    if !is_under_way() {
+extern "C" fn Bun__AOTAudit__waitForWholeProgramAnalysis() -> u32 {
+    let is_in_progress = || IS_ANALYZING_WHOLE_PROGRAM.load(Ordering::Acquire) || STATE.lock().as_ref().is_some_and(|state| state.awaits_whole_program_analysis);
+    if !is_in_progress() {
         return 0;
     }
     let begun = milliseconds();
-    while is_under_way() {
-        LAST_ASKED.store(0, Ordering::Release);
+    while is_in_progress() {
+        LAST_REQUEST_MS.store(0, Ordering::Release);
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
-    say_which_road(&format!("a check failed and waited {} ms for the whole look", milliseconds() - begun));
+    log_verbose(&format!("a runtime type check failed and waited {} ms for the background full check", milliseconds() - begun));
     STATE.lock().as_ref().map_or(0, |state| state.generation)
 }
 
@@ -1365,8 +1360,8 @@ fn finish(written: &[u8]) -> Option<Box<bun_ast::audited::Finished>> {
     bun_ast::audited::set_current(None);
     let state = STATE.lock();
     let state = state.as_ref()?;
-    let acts = u32::from(ACTS.load(Ordering::Acquire)) << 11;
-    let of = |id: u32| state.described.get(id as usize).map_or([0, 1, 0], |it| [it.passes | acts, it.least as u32, it.most as u32]);
+    let is_enforcing = u32::from(IS_ENFORCING.load(Ordering::Acquire)) << 11;
+    let of = |id: u32| state.described.get(id as usize).map_or([0, 1, 0], |it| [it.passes | is_enforcing, it.least as u32, it.most as u32]);
     let expressions: Vec<[u32; 6]> = (expressions.iter())
         .map(|&[mut start, mut end, id]| {
             while start < end && written.get(start as usize).is_some_and(u8::is_ascii_whitespace) {
@@ -1386,7 +1381,7 @@ fn finish(written: &[u8]) -> Option<Box<bun_ast::audited::Finished>> {
         })
         .collect();
     Some(Box::new(bun_ast::audited::Finished {
-        length_of_what_is_written: written.len(),
+        written_len: written.len(),
         expressions,
         parameters,
     }))
@@ -1395,7 +1390,7 @@ fn finish(written: &[u8]) -> Option<Box<bun_ast::audited::Finished>> {
 pub(crate) fn end_file(written: &[u8]) {
     match finish(written) {
         // SAFETY: the two lists are valid for the call, and C++ copies them.
-        Some(it) => unsafe { Bun__AOTAudit__setPendingSites(it.length_of_what_is_written, it.expressions.as_ptr(), it.expressions.len(), it.parameters.as_ptr(), it.parameters.len()) },
+        Some(it) => unsafe { Bun__AOTAudit__setPendingSites(it.written_len, it.expressions.as_ptr(), it.expressions.len(), it.parameters.as_ptr(), it.parameters.len()) },
         // SAFETY: C++ reads neither pointer when the counts are 0.
         None if is_on() => unsafe { Bun__AOTAudit__setPendingSites(0, core::ptr::null(), 0, core::ptr::null(), 0) },
         None => {}
@@ -1410,41 +1405,41 @@ pub(crate) extern "C" fn Bun__AOTAudit__describe(id: u32, out: *mut bun_core::St
     unsafe { out.write(bun_core::String::clone_utf8(text.as_bytes())) };
 }
 
-pub(crate) fn want() {
-    IS_WANTED.store(true, Ordering::Release);
+pub(crate) fn enable() {
+    IS_ENABLED.store(true, Ordering::Release);
 }
 
-pub(crate) fn act() {
-    ACTS.store(true, Ordering::Release);
+pub(crate) fn enforce() {
+    IS_ENFORCING.store(true, Ordering::Release);
     bun_ast::audited::keep_directives();
 }
 
-pub(crate) fn acts() -> bool {
-    ACTS.load(Ordering::Acquire)
+pub(crate) fn is_enforcing() -> bool {
+    IS_ENFORCING.load(Ordering::Acquire)
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__AOTAudit__acts() -> bool {
-    ACTS.load(Ordering::Acquire)
+pub(crate) extern "C" fn Bun__AOTAudit__isEnforcing() -> bool {
+    IS_ENFORCING.load(Ordering::Acquire)
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__AOTAudit__isWanted() -> bool {
-    IS_WANTED.load(Ordering::Acquire)
+pub(crate) extern "C" fn Bun__AOTAudit__isEnabled() -> bool {
+    IS_ENABLED.load(Ordering::Acquire)
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__AOTAudit__writeRefusedChange(
+pub(crate) extern "C" fn Bun__AOTAudit__writeRejectedChange(
     kind: *const u8,
-    length_of_kind: usize,
+    kind_len: usize,
     message: &bun_core::String,
     function_name: &bun_core::String,
     source_url: &bun_core::String,
     line: i32,
     column: i32,
 ) {
-    // SAFETY: `kind[..length_of_kind]` is the caller's live buffer.
-    let kind = core::str::from_utf8(unsafe { core::slice::from_raw_parts(kind, length_of_kind) }).unwrap_or_default();
+    // SAFETY: `kind[..kind_len]` is the caller's live buffer.
+    let kind = core::str::from_utf8(unsafe { core::slice::from_raw_parts(kind, kind_len) }).unwrap_or_default();
     let cwd = crate::cli::check_command::working_directory();
     let path = source_url.to_owned_slice();
     let shown = path.strip_prefix(&cwd[..]).and_then(|rest| rest.strip_prefix(b"/")).unwrap_or(&path);
@@ -1474,7 +1469,7 @@ pub(crate) extern "C" fn Bun__AOTAudit__describeShape(key: &bun_core::String, ou
     let text = match (state.as_ref(), core::str::from_utf8(&key)) {
         (Some(state), Ok("")) => state.generation.to_string(),
         (_, Ok("format")) => String::from(if log().1 { "json" } else { "text" }),
-        (_, Ok("acts")) => ACTS.load(Ordering::Acquire).to_string(),
+        (_, Ok("isEnforcing")) => IS_ENFORCING.load(Ordering::Acquire).to_string(),
         (_, Ok("logs")) => (log().0 >= 0).to_string(),
         (Some(state), Ok(key)) => state.shapes.get(key).map_or_else(|| String::from("null"), |text| text.to_string()),
         _ => String::from("null"),

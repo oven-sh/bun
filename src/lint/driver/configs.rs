@@ -1248,7 +1248,7 @@ impl<'l> Loader<'l> {
             config.follow_eslint(9);
         }
         config.infer_globals(self.infers_globals_besides());
-        config.turn_on_rules_of_aot(self.options.aot);
+        config.enable_aot_rules(self.options.aot);
         Ok(config)
     }
 
@@ -1420,7 +1420,7 @@ impl<'l> Loader<'l> {
         })?;
         self.advise_about_js_plugins(&config, &sources);
         config.infer_globals(self.infers_globals_besides());
-        config.turn_on_rules_of_aot(self.options.aot);
+        config.enable_aot_rules(self.options.aot);
         Ok(config)
     }
 
@@ -2466,7 +2466,7 @@ impl<'l> Loader<'l> {
         }
         self.warn_about_unknown_rules(&config, b"your .eslintrc config");
         config.infer_globals(self.infers_globals_besides());
-        config.turn_on_rules_of_aot(self.options.aot);
+        config.enable_aot_rules(self.options.aot);
         Ok(Arc::new(Loaded {
             config,
             flavor: Flavor::EslintRc,

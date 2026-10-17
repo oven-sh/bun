@@ -199,7 +199,7 @@ private:
             Vector<JSC::Identifier, 8> identifiers;
             JSC::MarkedArgumentBuffer fieldValues;
             bool hasOnlyPrimitives = true;
-            bool isCompiledObject = JSC::AOT::Typed::forEachOwnPropertyOfCompiledObject(object, [&](UniquedStringImpl& name, JSC::JSValue fieldValue) {
+            bool isCompiledObject = JSC::AOT::Typed::forEachCompiledObjectOwnProperty(object, [&](UniquedStringImpl& name, JSC::JSValue fieldValue) {
                 identifiers.append(JSC::Identifier::fromUid(vm, &name));
                 fieldValues.appendWithCrashOnOverflow(fieldValue);
                 hasOnlyPrimitives &= !fieldValue.isObject();

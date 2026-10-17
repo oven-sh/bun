@@ -27,9 +27,9 @@ impl<'p, 's> Checker<'p, 's> {
         false
     }
 
-    fn is_commonjs_by_its_name(&self, file: FileId) -> bool {
+    fn is_commonjs_by_extension(&self, file: FileId) -> bool {
         let hir = self.hir(file);
-        if self.files().module(file).is_commonjs_to_the_runtime.is_some() || !hir.is_js || hir.has_module_syntax && !hir.is_module_by_decree {
+        if self.files().module(file).is_runtime_commonjs.is_some() || !hir.is_js || hir.has_module_syntax && !hir.is_module_by_decree {
             return false;
         }
         let name = self.files().module(file).file_name();
@@ -41,7 +41,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     pub fn is_unmarked_commonjs(&self, file: FileId) -> bool {
         let hir = self.hir(file);
-        if self.files().module(file).is_commonjs_to_the_runtime.is_some() || !hir.is_js || hir.has_module_syntax && !hir.is_module_by_decree || !self.files().module(file).file_name().ends_with(b".js") {
+        if self.files().module(file).is_runtime_commonjs.is_some() || !hir.is_js || hir.has_module_syntax && !hir.is_module_by_decree || !self.files().module(file).file_name().ends_with(b".js") {
             return false;
         }
         self.is_in_commonjs_package(file) || self.starts_with_use_strict(file, hir.body) && !self.is_in_module_package(file)
@@ -51,17 +51,17 @@ impl<'p, 's> Checker<'p, 's> {
     pub fn is_sloppy_function(&self, file: FileId, func: FnId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // JavaScript that is no CommonJS module is an ES module to the bundler and to the runtime, whether or not it imports or exports anything: strict.
-        if !(self.files().module(file).is_commonjs() || self.is_commonjs_by_its_name(file)) || self.starts_with_use_strict(file, hir.body) {
+        if !(self.files().module(file).is_commonjs() || self.is_commonjs_by_extension(file)) || self.starts_with_use_strict(file, hir.body) {
             return false;
         }
         let mut at = func;
-        let mut is_known_to_stand_in_no_class = false;
+        let mut is_outside_any_class = false;
         while at.is_some() {
             if matches!(bound.fns[at.idx()].owner, FnOwner::Member(_)) || matches!(hir[at].kind, FnKind::Constructor | FnKind::StaticBlock) {
                 return false;
             }
             if let FnOwner::Expr(e) = bound.fns[at.idx()].owner
-                && !std::mem::replace(&mut is_known_to_stand_in_no_class, true)
+                && !std::mem::replace(&mut is_outside_any_class, true)
                 && hir.get_containing_class(hir.node(e)).is_some()
             {
                 return false;
@@ -83,7 +83,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The function whose `arguments` object the expression names: an arrow function sees that of the function around it.
-    pub(super) fn owner_of_arguments(&self, file: FileId, e: ExprId) -> FnId {
+    pub(super) fn arguments_owner(&self, file: FileId, e: ExprId) -> FnId {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut at = self.enclosing_fn_of_expr(file, e).unwrap_or(FnId::NONE);
         while at.is_some() && hir[at].kind == FnKind::Arrow {

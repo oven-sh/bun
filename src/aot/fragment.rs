@@ -14,12 +14,15 @@
 use crate::build::Problem;
 use crate::declared::{Declared, DeclaredTable, Part};
 use crate::id::{BlockId, FuncId, GlobalId, LayoutId, ModuleId, StrId, TyId, V};
-use crate::ir::{Block, Def, Field, Func, FuncKind, Global, Layout, Literal, Method, NO_VARIABLE, Op, Operation, Prediction, Strs, Value, Why};
+use crate::ir::{Block, Def, Field, Func, FuncKind, Global, Layout, Literal, Method, NO_VARIABLE, Op, Operation, Prediction, Strs, Value, CoerceReason};
 use bun_sema::bind::SymbolId;
-use bun_sema::check::{Identity, MethodStore, Noted, NumberFlow};
+use bun_sema::check::{Identity, MethodStore, FlowNotes, NumberFlow};
 use bun_sema::hir::{ClassId, FnId};
 use bun_sema::program::FileId;
+use bun_sema::util::{InParallel, for_each_mut};
 use std::hash::{BuildHasher, Hash};
+use std::mem::MaybeUninit;
+use std::sync::atomic::{AtomicU32, Ordering};
 use bun_threading::Guarded;
 
 // ───────────────────────────── keys ─────────────────────────────
@@ -43,8 +46,8 @@ pub enum FuncKey {
     Initializer(FileId, SymbolId),
     Function(FileId, FnId),
     TypedBody(FileId, FnId),
-    EntryBeside(FileId, FnId),
-    SecondBody(FileId, FnId, FnId),
+    GenericEntrypoint(FileId, FnId),
+    UntypedClone(FileId, FnId, FnId),
     /// The constructor of a class that declares none.
     DefaultConstructor(FileId, ClassId),
     /// Yields the object an enum is as a value.
@@ -54,11 +57,11 @@ pub enum FuncKey {
     /// Yields what the export of a number is now: see `MakeModuleNamespace`.
     ModuleNamespaceReader(FileId),
     /// What an ES module reads from a CommonJS module, as long as what that exports is not remembered: a name it is handed; `default`, as Node.js has it or not.
-    MemberOfExportedObject(FileId),
-    DefaultOfExportedObject(FileId, bool),
+    ExportedObjectMember(FileId),
+    ExportedObjectDefault(FileId, bool),
     FilesByPath(FileId),
-    EvaluationByNumber(FileId),
-    EvaluationOfOneFile(FileId, FileId),
+    EvaluateByIndex(FileId),
+    EvaluateSingleFile(FileId, FileId),
     ExportVariablesReader(FileId),
     NamespaceForHost(FileId),
     Validator(FileId, u32),
@@ -80,17 +83,17 @@ impl FuncKey {
             | FuncKey::Initializer(file, _)
             | FuncKey::Function(file, _)
             | FuncKey::TypedBody(file, _)
-            | FuncKey::EntryBeside(file, _)
-            | FuncKey::SecondBody(file, _, _)
+            | FuncKey::GenericEntrypoint(file, _)
+            | FuncKey::UntypedClone(file, _, _)
             | FuncKey::DefaultConstructor(file, _)
             | FuncKey::EnumObject(file, _)
             | FuncKey::NamespaceObject(file, _)
             | FuncKey::ModuleNamespaceReader(file)
-            | FuncKey::MemberOfExportedObject(file)
-            | FuncKey::DefaultOfExportedObject(file, _)
+            | FuncKey::ExportedObjectMember(file)
+            | FuncKey::ExportedObjectDefault(file, _)
             | FuncKey::FilesByPath(file)
-            | FuncKey::EvaluationByNumber(file)
-            | FuncKey::EvaluationOfOneFile(file, _)
+            | FuncKey::EvaluateByIndex(file)
+            | FuncKey::EvaluateSingleFile(file, _)
             | FuncKey::ExportVariablesReader(file)
             | FuncKey::NamespaceForHost(file)
             | FuncKey::Validator(file, _) => file,
@@ -100,7 +103,7 @@ impl FuncKey {
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum LayoutKey {
-    /// `LayoutKind::Record`, by the type that says how the objects are laid out (`Checker::laid_out_as`).
+    /// `LayoutKind::Record`, by the type that says how the objects are laid out (`Checker::layout_defining_type`).
     Record(Identity),
     /// `LayoutKind::Instance`
     Instance(FileId, ClassId),
@@ -133,13 +136,13 @@ pub enum GlobalKey {
     /// declaration gives rise to them.
     ClassVariable(FileId, ClassId, u32),
     /// What the compiler keeps for a module, by the name it has for it: `module`, `exports`, `evaluated`.
-    OfModule(FileId, &'static str),
+    ModuleInternal(FileId, &'static str),
     /// What a CommonJS module exports under the name, where it keeps that in variables.
     Export(FileId, Box<[u8]>),
     /// What the compiler keeps for one place in the code of the file, by its number among those of the file: a template object. Only
     /// the fragment of the file mentions it.
     Hidden(FileId, u32),
-    StateOfLazyVariable(FileId, SymbolId),
+    LazyVariableState(FileId, SymbolId),
     /// The namespace object of a module that is not compiled with the program, by its specifier.
     ExternalModule(Box<[u8]>),
 }
@@ -148,7 +151,7 @@ impl GlobalKey {
     /// As `LayoutKey::file`.
     pub fn file(&self) -> Option<FileId> {
         match *self {
-            GlobalKey::Symbol(file, _) | GlobalKey::Enum(file, _) | GlobalKey::Namespace(file, _) | GlobalKey::ClassVariable(file, ..) | GlobalKey::OfModule(file, _) | GlobalKey::Export(file, _) | GlobalKey::Hidden(file, _) | GlobalKey::StateOfLazyVariable(file, _) => Some(file),
+            GlobalKey::Symbol(file, _) | GlobalKey::Enum(file, _) | GlobalKey::Namespace(file, _) | GlobalKey::ClassVariable(file, ..) | GlobalKey::ModuleInternal(file, _) | GlobalKey::Export(file, _) | GlobalKey::Hidden(file, _) | GlobalKey::LazyVariableState(file, _) => Some(file),
             GlobalKey::ExternalModule(_) => None,
         }
     }
@@ -156,21 +159,21 @@ impl GlobalKey {
 
 // ───────────────────────────── what the checker has noted ─────────────────────────────
 
-/// What the checker has noted while something was translated (`Checker::take_noted`), with identities in the place of types
-/// (`Noted::renamed`). Every type in it is kept (`Checker::keep_type`). It counts only if what it comes from is reached, which is known
+/// What the checker has noted while something was translated (`Checker::take_notes_recorded`), with identities in the place of types
+/// (`FlowNotes::renamed`). Every type in it is kept (`Checker::keep_type`). It counts only if what it comes from is reached, which is known
 /// when all tasks have ended.
-pub type Notes = Noted<Identity>;
+pub type Notes = FlowNotes<Identity>;
 
 // ───────────────────────────── the parts of a fragment ─────────────────────────────
 
 /// The numbers in a function or a layout that count in the tables of its fragment, each once, in the order they are first come by.
 #[derive(Default)]
-pub struct Mentions {
+pub struct ReferencedIds {
     all: Vec<u32>,
     ends: [u32; 5],
 }
 
-impl Mentions {
+impl ReferencedIds {
     #[inline]
     fn part(&self, index: usize) -> &[u32] {
         let start = if index == 0 { 0 } else { self.ends[index - 1] as usize };
@@ -217,11 +220,11 @@ pub struct ModulePart {
     pub blocks: (u32, u32),
     pub stores: Vec<GlobalId>,
     /// Those of them that it does not read.
-    pub only_stores: Vec<GlobalId>,
-    pub mentions: Mentions,
+    pub write_only_globals: Vec<GlobalId>,
+    pub mentions: ReferencedIds,
     /// By parameter of the block it ends in, if that is not the one it begins in: the value from before the part that every way through the part
     /// hands it. `NONE`: it is what the statement yields. The front end hands a local that lives across a join through the join.
-    pub handed_through: Vec<V>,
+    pub passed_through: Vec<V>,
 }
 
 impl ModulePart {
@@ -236,10 +239,10 @@ impl ModulePart {
         let mut seen: rustc_hash::FxHashMap<V, V> = Default::default();
         let own_operations = own_blocks().flat_map(|block| &func.blocks[block.idx()].ops);
         seen.extend(func.blocks[from.idx()].ops[start as usize..].iter().chain(own_operations).map(|&v| (v, V::NONE)));
-        let mut handed_to: rustc_hash::FxHashMap<BlockId, Vec<crate::ir::Args>> = Default::default();
+        let mut args_by_target: rustc_hash::FxHashMap<BlockId, Vec<crate::ir::Args>> = Default::default();
         for source in std::iter::once(from).chain(own_blocks()) {
             if let Some(term) = &func.blocks[source.idx()].term {
-                term.for_each_target(|target| handed_to.entry(target.block).or_default().push(target.args.clone()));
+                term.for_each_target(|target| args_by_target.entry(target.block).or_default().push(target.args.clone()));
             }
         }
         let mut is_asked: rustc_hash::FxHashSet<V> = Default::default();
@@ -252,7 +255,7 @@ impl ModulePart {
             }
             is_asked.insert(param);
             let (mut found, mut agree, mut waits_for) = (V::NONE, true, V::NONE);
-            for args in handed_to.get(&block).map_or(&[][..], |list| &list[..]) {
+            for args in args_by_target.get(&block).map_or(&[][..], |list| &list[..]) {
                 let arg = args.get(index as usize).copied().unwrap_or(V::NONE);
                 let handed = match (seen.get(&arg), arg.is_some().then(|| &func.values[arg.idx()].def)) {
                     (Some(&answer), _) => answer,
@@ -273,7 +276,7 @@ impl ModulePart {
             seen.insert(param, if agree { found } else { V::NONE });
             asked.pop();
         }
-        self.handed_through = func.blocks[to.idx()].params.iter().map(|param| seen[param]).collect();
+        self.passed_through = func.blocks[to.idx()].params.iter().map(|param| seen[param]).collect();
     }
 
     /// Its operations and the parameters of its blocks.
@@ -286,7 +289,7 @@ impl ModulePart {
         for block in (self.blocks.0..self.blocks.1).map(BlockId) {
             let Block { params, ops, term: _ } = &func.blocks[block.idx()];
             if block == to {
-                values.extend(params.iter().zip(&self.handed_through).filter(|(_, handed)| handed.is_none()).map(|(&param, _)| param));
+                values.extend(params.iter().zip(&self.passed_through).filter(|(_, handed)| handed.is_none()).map(|(&param, _)| param));
                 values.extend_from_slice(&ops[..end as usize]);
             } else {
                 values.extend_from_slice(params);
@@ -307,12 +310,12 @@ pub struct Body {
     pub classes_as_values: Vec<LayoutId>,
     /// The names of the properties that the function makes and that none of its operations stores: a field of a class that starts as
     /// `undefined`.
-    pub stored_besides: Vec<StrId>,
+    pub implicit_stores: Vec<StrId>,
     /// `Checker::number_flows_in`: those that the function runs, with strings of the fragment in the place of names.
     pub number_flows: Vec<NumberFlow<StrId>>,
     pub notes: Notes,
     /// What holds besides if someone calls the function who does not know it, and hands it anything.
-    pub notes_if_called_unknown: Notes,
+    pub notes_for_unknown_callers: Notes,
     /// What could not be translated.
     pub problems: Vec<Problem>,
     /// Where the code of the function is in the text of its file, from where to where. Of a constructor also the fields of the objects
@@ -326,7 +329,7 @@ pub struct Body {
     /// Of the function that evaluates a module, in their order. The link takes them out or leaves them in, and then there are none.
     pub parts: Vec<ModulePart>,
     /// Without those of `parts`.
-    pub mentions: Mentions,
+    pub mentions: ReferencedIds,
 }
 
 pub struct Function {
@@ -343,7 +346,7 @@ pub struct Definition {
     /// Without members and specializations, which the link finds.
     pub layout: Layout,
     /// Of `layout`.
-    pub mentions: Mentions,
+    pub mentions: ReferencedIds,
     /// Of a class that is not laid out: the class it extends, if that is laid out, which it constructs by its value. `NONE`: none.
     pub constructs: LayoutId,
     /// What holds if the layout is of any use: of what is stored to its fields by whoever does not know it. `None`: nothing.
@@ -383,20 +386,19 @@ pub struct Fragment {
     pub layouts: Vec<Shape>,
     /// By `FuncId`. Those that the fragment defines are in an order that follows from the file.
     pub funcs: Vec<Function>,
-    /// `Checker::globals_altered_in`
-    pub altered_globals: Vec<StrId>,
+    /// `Checker::mutated_globals_in`
+    pub mutated_globals: Vec<StrId>,
     /// `Checker::prototype_property_names_in`
     pub prototype_property_names: Vec<StrId>,
     pub regexp_literals: Vec<(StrId, StrId)>,
-    /// `Checker::stores_to_methods_in`, with identities in the place of types. Every type in it is kept.
-    pub stores_to_methods: Vec<MethodStore<Identity>>,
+    /// `Checker::method_stores_in`, with identities in the place of types. Every type in it is kept.
+    pub method_stores: Vec<MethodStore<Identity>>,
     /// Of a file of builtin functions: what native code asks for a function by, the function, its `ImplementationVisibility` as a number.
     pub builtin_functions: Vec<(u32, FuncKey, u32)>,
     /// How many times the file has been translated, this time included: more than once if a task was invalid.
-    pub times_translated: u32,
+    pub translation_count: u32,
     pub program_ids: LocalToProgram,
     pub summary: Summary,
-    pub outline: Outline,
 }
 
 /// In the place of the file of a fragment.
@@ -434,7 +436,7 @@ macro_rules! pass {
     };
 }
 
-pub fn for_each_id_of_op(op: &mut Op, ids: &mut impl Ids) {
+pub fn for_each_op_id(op: &mut Op, ids: &mut impl Ids) {
     match op {
         Op::Str(text) | Op::BigInt(text) | Op::ExternalModule(text) => pass!(ids.str(text)),
         Op::FreeGet { name, is_typeof: _ }
@@ -457,7 +459,7 @@ pub fn for_each_id_of_op(op: &mut Op, ids: &mut impl Ids) {
         }
         Op::Coerce { value: _, to, why } => {
             pass!(ids.ty(to));
-            if let Why::NonNull(text) = why {
+            if let CoerceReason::NonNull(text) = why {
                 pass!(ids.str(text));
             }
         }
@@ -503,28 +505,28 @@ pub fn for_each_id_of_op(op: &mut Op, ids: &mut impl Ids) {
 }
 
 /// First what whoever calls the function has to know, then the values in their order. Blocks hold numbers of the function alone.
-pub fn for_each_id_of_func(func: &mut Func, ids: &mut impl Ids) {
-    for_each_id_of_header(func, ids);
+pub fn for_each_func_id(func: &mut Func, ids: &mut impl Ids) {
+    for_each_header_id(func, ids);
     for value in &mut func.values {
-        for_each_id_of_value(value, ids);
+        for_each_value_id(value, ids);
     }
 }
 
-fn for_each_id_of_header(func: &mut Func, ids: &mut impl Ids) {
-    let Func { name, module, pos: _, place_of_text: _, end_of_text: _, kind: _, flags: _, length: _, captures, this_declared, params, annotated: _, result, blocks: _, values: _, spans: _ } = func;
+fn for_each_header_id(func: &mut Func, ids: &mut impl Ids) {
+    let Func { name, module, pos: _, source_start: _, source_end: _, kind: _, flags: _, length: _, captures, declared_this_type, params, annotated: _, result, blocks: _, values: _, spans: _ } = func;
     pass!(ids.str(name));
     pass!(ids.module(module));
     for capture in captures {
         pass!(ids.ty(capture));
     }
-    pass!(ids.ty(this_declared));
+    pass!(ids.ty(declared_this_type));
     for param in params {
         pass!(ids.ty(param));
     }
     pass!(ids.ty(result));
 }
 
-fn for_each_id_of_value(value: &mut Value, ids: &mut impl Ids) {
+fn for_each_value_id(value: &mut Value, ids: &mut impl Ids) {
     pass!(ids.ty(&mut value.ty));
     pass!(ids.ty(&mut value.signature));
     let mut prediction = value.prediction();
@@ -537,12 +539,12 @@ fn for_each_id_of_value(value: &mut Value, ids: &mut impl Ids) {
     value.set_prediction(prediction);
     match &mut value.def {
         Def::Param(..) => {}
-        Def::Op(op) => for_each_id_of_op(op, ids),
+        Def::Op(op) => for_each_op_id(op, ids),
     }
 }
 
 /// A variable of a class, which is a module variable: see `Layout::environment`.
-fn pass_variable(variable: &mut u32, ids: &mut impl Ids) {
+fn visit_class_variable(variable: &mut u32, ids: &mut impl Ids) {
     if *variable == NO_VARIABLE {
         return;
     }
@@ -551,7 +553,7 @@ fn pass_variable(variable: &mut u32, ids: &mut impl Ids) {
     *variable = global.0;
 }
 
-pub fn for_each_id_of_layout(layout: &mut Layout, ids: &mut impl Ids) {
+pub fn for_each_layout_id(layout: &mut Layout, ids: &mut impl Ids) {
     let Layout {
         kind: _,
         name,
@@ -564,11 +566,11 @@ pub fn for_each_id_of_layout(layout: &mut Layout, ids: &mut impl Ids) {
         static_fields,
         is_allocated: _,
         may_be_frozen: _,
-        admits_foreign: _,
-        is_opened_for_the_log: _,
-        admits_only_other_layouts: _,
+        accepts_untyped: _,
+        is_relaxed_for_logging: _,
+        accepts_only_other_layouts: _,
         members,
-        members_by_fit,
+        structural_subtypes,
         specializations,
         declared_path,
         declared_line: _,
@@ -577,11 +579,11 @@ pub fn for_each_id_of_layout(layout: &mut Layout, ids: &mut impl Ids) {
     pass!(ids.str(name));
     pass!(ids.layout(base));
     for field in fields {
-        let Field { name, declared, flags: _, literals, type_text, only_function, only_function_flags: _ } = field;
+        let Field { name, declared, flags: _, literals, type_text, single_function, single_function_flags: _ } = field;
         pass!(ids.str(name));
         pass!(ids.ty(declared));
         pass!(ids.str(type_text));
-        pass!(ids.func(only_function, Used::Expected));
+        pass!(ids.func(single_function, Used::Expected));
         for literal in literals {
             match literal {
                 Literal::Str(text) => pass!(ids.str(text)),
@@ -595,7 +597,7 @@ pub fn for_each_id_of_layout(layout: &mut Layout, ids: &mut impl Ids) {
         pass!(ids.str(name));
         pass!(ids.func(func, Used::AsMember));
         if has_module_variables {
-            pass_variable(key, ids);
+            visit_class_variable(key, ids);
         }
     }
     pass!(ids.layout(environment));
@@ -603,23 +605,23 @@ pub fn for_each_id_of_layout(layout: &mut Layout, ids: &mut impl Ids) {
         pass!(ids.str(name));
         pass!(ids.ty(declared));
     }
-    for other in members.iter_mut().chain(members_by_fit).chain(specializations) {
+    for other in members.iter_mut().chain(structural_subtypes).chain(specializations) {
         pass!(ids.layout(other));
     }
     pass!(ids.str(declared_path));
 }
 
-pub fn for_each_id_of_global(global: &mut Global, ids: &mut impl Ids) {
-    let Global { name, module, declared, initialization: _, only_function, only_function_flags: _ } = global;
+pub fn for_each_global_id(global: &mut Global, ids: &mut impl Ids) {
+    let Global { name, module, declared, initialization: _, single_function, single_function_flags: _ } = global;
     pass!(ids.str(name));
     pass!(ids.module(module));
     pass!(ids.ty(declared));
-    pass!(ids.func(only_function, Used::Expected));
+    pass!(ids.func(single_function, Used::Expected));
 }
 
 /// Finds the mentions of the functions and the layouts of one fragment, one after the other.
 #[derive(Default)]
-pub struct Mentioning {
+pub struct ReferenceCollector {
     /// Goes up with each function or layout.
     round: u32,
     /// By number, for each table: the last round that came by it.
@@ -640,7 +642,7 @@ fn is_first(seen: &mut Vec<u32>, number: usize, round: u32) -> bool {
     std::mem::replace(&mut seen[number], round) != round
 }
 
-impl Ids for Mentioning {
+impl Ids for ReferenceCollector {
     fn str(&mut self, id: &mut StrId) {
         if is_first(&mut self.strs, id.idx(), self.round) {
             self.found[0].push(id.0);
@@ -680,9 +682,9 @@ impl Ids for Mentioning {
     }
 }
 
-impl Mentioning {
-    fn take_found(&mut self) -> Mentions {
-        let mut mentions = Mentions { all: Vec::with_capacity(self.found.iter().map(Vec::len).sum()), ends: [0; 5] };
+impl ReferenceCollector {
+    fn take_referenced_ids(&mut self) -> ReferencedIds {
+        let mut mentions = ReferencedIds { all: Vec::with_capacity(self.found.iter().map(Vec::len).sum()), ends: [0; 5] };
         for (index, part) in self.found.iter_mut().enumerate() {
             mentions.all.extend_from_slice(part);
             part.clear();
@@ -694,31 +696,31 @@ impl Mentioning {
     }
 
     /// Nothing of the function is changed.
-    pub fn of_func(&mut self, func: &mut Func) -> Mentions {
+    pub fn collect_func(&mut self, func: &mut Func) -> ReferencedIds {
         self.round += 1;
-        for_each_id_of_func(func, self);
-        self.take_found()
+        for_each_func_id(func, self);
+        self.take_referenced_ids()
     }
 
     /// The same for the values that are meant, by their numbers. `with_header`: and for what whoever calls the function has to know.
-    pub fn of_values(&mut self, func: &mut Func, with_header: bool, is_meant: impl Fn(usize) -> bool) -> Mentions {
+    pub fn of_values(&mut self, func: &mut Func, with_header: bool, is_meant: impl Fn(usize) -> bool) -> ReferencedIds {
         self.round += 1;
         if with_header {
-            for_each_id_of_header(func, self);
+            for_each_header_id(func, self);
         }
         for (index, value) in func.values.iter_mut().enumerate() {
             if is_meant(index) {
-                for_each_id_of_value(value, self);
+                for_each_value_id(value, self);
             }
         }
-        self.take_found()
+        self.take_referenced_ids()
     }
 
     /// Nothing of the layout is changed.
-    pub fn of_layout(&mut self, layout: &mut Layout) -> Mentions {
+    pub fn of_layout(&mut self, layout: &mut Layout) -> ReferencedIds {
         self.round += 1;
-        for_each_id_of_layout(layout, self);
-        self.take_found()
+        for_each_layout_id(layout, self);
+        self.take_referenced_ids()
     }
 }
 
@@ -740,13 +742,18 @@ pub mod outline_flags {
     pub const HAS_PARTS: u8 = 1 << 3;
     pub const EVALUATES_MODULE: u8 = 1 << 4;
     pub const RUNS_AT_START: u8 = 1 << 5;
+    pub const REQUESTS_RUNTIME_MODULES: u8 = 1 << 6;
 }
 
 #[derive(Copy, Clone)]
 pub struct FunctionOutline {
     start: u32,
     ends: [u32; Outline::LISTS],
+    pub fragment: u32,
+    pub index: u32,
+    pub id: u32,
     pub class: LayoutId,
+    pub class_id: u32,
     pub module: ModuleId,
     pub name: StrId,
     pub file: FileId,
@@ -764,11 +771,146 @@ impl FunctionOutline {
     }
 }
 
+#[derive(Copy, Clone)]
+pub struct LayoutOutline {
+    start: u32,
+    ends: [u32; Outline::LAYOUT_LISTS],
+    pub fragment: u32,
+    pub index: u32,
+    pub base: LayoutId,
+    pub constructs: LayoutId,
+    pub constructs_id: u32,
+}
+
+impl LayoutOutline {
+    pub fn list(&self, list: usize) -> std::ops::Range<usize> {
+        (if list == 0 { self.start } else { self.ends[list - 1] }) as usize..self.ends[list] as usize
+    }
+}
+
+#[derive(Copy, Clone)]
+pub struct VariableOutline {
+    pub fragment: u32,
+    pub index: u32,
+    pub declared: TyId,
+    pub declared_id: u32,
+}
+
 #[derive(Default)]
 pub struct Outline {
     pub funcs: Vec<FunctionOutline>,
+    pub layouts: Vec<LayoutOutline>,
+    pub variables: Vec<VariableOutline>,
     pub local: Vec<u32>,
     pub program: Vec<u32>,
+    pub funcs_with_parts: Vec<u32>,
+    func_slots: Vec<AtomicU32>,
+    layout_slots: Vec<AtomicU32>,
+    variable_slots: Vec<AtomicU32>,
+}
+
+pub struct OutlineBatch<'a> {
+    pub fragment: u32,
+    pub file: FileId,
+    pub ids: &'a LocalToProgram,
+    pub summary: &'a Summary,
+    pub first: [u32; 3],
+    pub functions: &'a mut [Function],
+    pub shapes: &'a mut [Shape],
+    pub variables: &'a [Variable],
+    is_preferred: [Vec<bool>; 3],
+    list_len: usize,
+    rebuilt_list_len: usize,
+}
+
+impl<'a> OutlineBatch<'a> {
+    pub fn new(fragment: u32, file: FileId, ids: &'a LocalToProgram, summary: &'a Summary, first: [u32; 3], functions: &'a mut [Function], shapes: &'a mut [Shape], variables: &'a [Variable]) -> OutlineBatch<'a> {
+        OutlineBatch { fragment, file, ids, summary, first, functions, shapes, variables, is_preferred: Default::default(), list_len: 0, rebuilt_list_len: 0 }
+    }
+}
+
+struct ListWriter<'a> {
+    local: &'a mut [MaybeUninit<u32>],
+    program: &'a mut [MaybeUninit<u32>],
+    written: usize,
+    start: u32,
+}
+
+impl ListWriter<'_> {
+    fn extend(&mut self, locals: impl Iterator<Item = u32>, ids: &[u32]) -> u32 {
+        for local in locals {
+            self.local[self.written].write(local);
+            self.program[self.written].write(if local == u32::MAX { local } else { ids[local as usize] });
+            self.written += 1;
+        }
+        self.start + self.written as u32
+    }
+}
+
+fn function_list_len(function: &Function) -> usize {
+    let header_len = function.func.as_ref().map_or(0, |func| 2 + func.captures.len() + func.params.len());
+    let body_len = function.body.as_ref().map_or(0, |body| body.mentions.all.len() + body.classes_as_values.len() + body.declares.len());
+    header_len + body_len
+}
+
+fn outline_function(function: &Function, fragment: u32, index: u32, fragment_file: FileId, ids: &LocalToProgram, lists: &mut ListWriter<'_>) -> FunctionOutline {
+    use outline_flags::{EVALUATES_MODULE, HAS_BODY, HAS_HEADER, HAS_PARTS, IS_CONSTRUCTOR};
+    let start = lists.start + lists.written as u32;
+    let runs_at_start = matches!(function.key, FuncKey::Module(_) | FuncKey::ModuleBody(_) | FuncKey::ModuleTouch(_) | FuncKey::ModuleSettling(_));
+    let mut outline = FunctionOutline {
+        start,
+        ends: [start; Outline::LISTS],
+        fragment,
+        index,
+        id: ids.funcs[index as usize],
+        class: LayoutId::NONE,
+        class_id: u32::MAX,
+        module: ModuleId::NONE,
+        name: StrId::NONE,
+        file: function.key.file(),
+        captures: 0,
+        flags: if runs_at_start { outline_flags::RUNS_AT_START } else { 0 },
+    };
+    if let Some(func) = &function.func {
+        outline.flags |= HAS_HEADER | if func.kind == FuncKind::Constructor { IS_CONSTRUCTOR } else { 0 };
+        (outline.module, outline.name, outline.captures) = (func.module, func.name, func.captures.len() as u32);
+        outline.ends[Outline::HEADER_TYS] = lists.extend([func.declared_this_type, func.result].into_iter().chain(func.captures.iter().copied()).chain(func.params.iter().copied()).map(|ty| ty.0), &ids.tys);
+    }
+    let header_end = outline.ends[Outline::HEADER_TYS];
+    outline.ends[Outline::STRS..].fill(header_end);
+    if let Some(body) = &function.body {
+        outline.flags |= HAS_BODY | if body.parts.is_empty() { 0 } else { HAS_PARTS } | if function.key == FuncKey::Module(fragment_file) { EVALUATES_MODULE } else { 0 };
+        outline.class = body.class;
+        outline.class_id = if body.class.is_none() { u32::MAX } else { ids.layouts[body.class.idx()] };
+        outline.ends[Outline::STRS] = lists.extend(body.mentions.strs().map(|id| id.0), &ids.strs);
+        outline.ends[Outline::TYS] = lists.extend(body.mentions.tys().map(|id| id.0), &ids.tys);
+        outline.ends[Outline::LAYOUTS] = lists.extend(body.mentions.layouts().map(|id| id.0), &ids.layouts);
+        outline.ends[Outline::GLOBALS] = lists.extend(body.mentions.globals().map(|id| id.0), &ids.globals);
+        outline.ends[Outline::CALLED] = lists.extend(body.mentions.called().map(|id| id.0), &ids.funcs);
+        outline.ends[Outline::VALUES] = lists.extend(body.mentions.values().map(|id| id.0), &ids.funcs);
+        outline.ends[Outline::CLASSES_AS_VALUES] = lists.extend(body.classes_as_values.iter().map(|id| id.0), &ids.layouts);
+        outline.ends[Outline::DECLARES] = lists.extend(body.declares.iter().map(|id| id.0), &ids.layouts);
+    }
+    outline
+}
+
+fn outline_layout(definition: &Definition, fragment: u32, index: u32, ids: &LocalToProgram, lists: &mut ListWriter<'_>) -> LayoutOutline {
+    let start = lists.start + lists.written as u32;
+    let mentions = &definition.mentions;
+    let ends = [
+        lists.extend(mentions.strs().map(|id| id.0), &ids.strs),
+        lists.extend(mentions.tys().map(|id| id.0), &ids.tys),
+        lists.extend(mentions.layouts().map(|id| id.0), &ids.layouts),
+        lists.extend(mentions.globals().map(|id| id.0), &ids.globals),
+        lists.extend(mentions.called().map(|id| id.0), &ids.funcs),
+        lists.extend(mentions.values().map(|id| id.0), &ids.funcs),
+    ];
+    let constructs = definition.constructs;
+    LayoutOutline { start, ends, fragment, index, base: definition.layout.base, constructs, constructs_id: if constructs.is_none() { u32::MAX } else { ids.layouts[constructs.idx()] } }
+}
+
+fn slot_at(slots: &[AtomicU32], id: u32) -> Option<usize> {
+    Some(slots.get(id as usize)?.load(Ordering::Relaxed)).filter(|&slot| slot != u32::MAX).map(|slot| slot as usize)
 }
 
 impl Outline {
@@ -782,49 +924,170 @@ impl Outline {
     pub const CLASSES_AS_VALUES: usize = 7;
     pub const DECLARES: usize = 8;
     const LISTS: usize = 9;
+    pub const LAYOUT_LISTS: usize = 6;
 
-    fn add(&mut self, locals: impl Iterator<Item = u32>, ids: &[u32]) -> u32 {
-        for local in locals {
-            self.local.push(local);
-            self.program.push(if local == u32::MAX { local } else { ids[local as usize] });
-        }
-        self.local.len() as u32
+    pub fn grow(&mut self, ids: &ProgramIds) {
+        self.func_slots.resize_with(ids.funcs.bound(), || AtomicU32::new(u32::MAX));
+        self.layout_slots.resize_with(ids.layouts.bound(), || AtomicU32::new(u32::MAX));
+        self.variable_slots.resize_with(ids.globals.bound(), || AtomicU32::new(u32::MAX));
     }
 
-    fn make_room<'a>(&mut self, functions: impl Iterator<Item = &'a Function>) {
-        let of_header = |function: &Function| function.func.as_ref().map_or(0, |func| 2 + func.captures.len() + func.params.len());
-        let of_body = |function: &Function| function.body.as_ref().map_or(0, |body| body.mentions.all.len() + body.classes_as_values.len() + body.declares.len());
-        let room: usize = functions.map(|function| of_header(function) + of_body(function)).sum();
-        self.local.reserve_exact(room);
-        self.program.reserve_exact(room);
+    #[inline]
+    pub fn func_slot(&self, id: u32) -> Option<usize> {
+        slot_at(&self.func_slots, id)
     }
 
-    pub fn of_function(&mut self, function: &Function, file_of_fragment: FileId, ids: &LocalToProgram) -> FunctionOutline {
-        use outline_flags::{EVALUATES_MODULE, HAS_BODY, HAS_HEADER, HAS_PARTS, IS_CONSTRUCTOR};
-        self.make_room(std::iter::once(function));
-        let start = self.local.len() as u32;
-        let runs_at_start = matches!(function.key, FuncKey::Module(_) | FuncKey::ModuleBody(_) | FuncKey::ModuleTouch(_) | FuncKey::ModuleSettling(_));
-        let mut outline = FunctionOutline { start, ends: [start; Outline::LISTS], class: LayoutId::NONE, module: ModuleId::NONE, name: StrId::NONE, file: function.key.file(), captures: 0, flags: if runs_at_start { outline_flags::RUNS_AT_START } else { 0 } };
-        if let Some(func) = &function.func {
-            outline.flags |= HAS_HEADER | if func.kind == FuncKind::Constructor { IS_CONSTRUCTOR } else { 0 };
-            (outline.module, outline.name, outline.captures) = (func.module, func.name, func.captures.len() as u32);
-            outline.ends[Outline::HEADER_TYS] = self.add([func.this_declared, func.result].into_iter().chain(func.captures.iter().copied()).chain(func.params.iter().copied()).map(|ty| ty.0), &ids.tys);
+    #[inline]
+    pub fn func(&self, id: u32) -> Option<&FunctionOutline> {
+        slot_at(&self.func_slots, id).map(|slot| &self.funcs[slot])
+    }
+
+    #[inline]
+    pub fn layout(&self, id: u32) -> Option<&LayoutOutline> {
+        slot_at(&self.layout_slots, id).map(|slot| &self.layouts[slot])
+    }
+
+    #[inline]
+    pub fn variable(&self, id: u32) -> Option<&VariableOutline> {
+        slot_at(&self.variable_slots, id).map(|slot| &self.variables[slot])
+    }
+
+    pub fn add(&mut self, batches: &mut [OutlineBatch<'_>], is_preferred: &(dyn Fn(usize, u32, u32, u32) -> bool + Sync), in_parallel: InParallel<'_>) {
+        for_each_mut(batches, in_parallel, &|batch| {
+            let preferred_flags = |kind: usize, ids: &[u32], count: usize| -> Vec<bool> { (0..count as u32).map(|offset| is_preferred(kind, batch.fragment, batch.first[kind] + offset, ids[(batch.first[kind] + offset) as usize])).collect() };
+            batch.is_preferred = [preferred_flags(0, &batch.ids.funcs, batch.functions.len()), preferred_flags(1, &batch.ids.layouts, batch.shapes.len()), preferred_flags(2, &batch.ids.globals, batch.variables.len())];
+            let function_lists_len: usize = batch.functions.iter().zip(&batch.is_preferred[0]).filter(|function| *function.1).map(|function| function_list_len(function.0)).sum();
+            let layout_lists_len: usize = batch.shapes.iter().zip(&batch.is_preferred[1]).filter(|shape| *shape.1).filter_map(|shape| shape.0.definition.as_ref()).map(|definition| definition.mentions.all.len()).sum();
+            batch.list_len = function_lists_len + layout_lists_len;
+            let with_parts = batch.functions.iter().zip(&batch.is_preferred[0]).filter(|function| *function.1).map(|function| function.0).filter(|function| function.body.as_ref().is_some_and(|body| !body.parts.is_empty()));
+            batch.rebuilt_list_len = with_parts.map(|function| function_list_len(function) + function.body.iter().flat_map(|body| &body.parts).map(|part| part.mentions.all.len()).sum::<usize>()).sum();
+        });
+        let count = |kind: usize| -> usize { batches.iter().map(|batch| batch.is_preferred[kind].iter().filter(|is_preferred| **is_preferred).count()).sum() };
+        let (functions, layouts, variables, list_len) = (count(0), count(1), count(2), batches.iter().map(|batch| batch.list_len).sum::<usize>());
+        let before = [self.funcs.len(), self.layouts.len(), self.variables.len(), self.local.len()];
+        self.funcs.reserve_exact(functions);
+        self.layouts.reserve_exact(layouts);
+        self.variables.reserve_exact(variables);
+        if self.local.capacity() - self.local.len() < list_len {
+            let spare = batches.iter().map(|batch| batch.rebuilt_list_len).sum::<usize>() + list_len / 16;
+            self.local.reserve_exact(list_len + spare);
+            self.program.reserve_exact(list_len + spare);
         }
-        let end_of_header = outline.ends[Outline::HEADER_TYS];
-        outline.ends[Outline::STRS..].fill(end_of_header);
-        if let Some(body) = &function.body {
-            outline.flags |= HAS_BODY | if body.parts.is_empty() { 0 } else { HAS_PARTS } | if function.key == FuncKey::Module(file_of_fragment) { EVALUATES_MODULE } else { 0 };
-            outline.class = body.class;
-            outline.ends[Outline::STRS] = self.add(body.mentions.strs().map(|id| id.0), &ids.strs);
-            outline.ends[Outline::TYS] = self.add(body.mentions.tys().map(|id| id.0), &ids.tys);
-            outline.ends[Outline::LAYOUTS] = self.add(body.mentions.layouts().map(|id| id.0), &ids.layouts);
-            outline.ends[Outline::GLOBALS] = self.add(body.mentions.globals().map(|id| id.0), &ids.globals);
-            outline.ends[Outline::CALLED] = self.add(body.mentions.called().map(|id| id.0), &ids.funcs);
-            outline.ends[Outline::VALUES] = self.add(body.mentions.values().map(|id| id.0), &ids.funcs);
-            outline.ends[Outline::CLASSES_AS_VALUES] = self.add(body.classes_as_values.iter().map(|id| id.0), &ids.layouts);
-            outline.ends[Outline::DECLARES] = self.add(body.declares.iter().map(|id| id.0), &ids.layouts);
+        struct BatchOutput<'a, 'b> {
+            batch: &'a mut OutlineBatch<'b>,
+            first_slots: [u32; 3],
+            funcs: &'a mut [MaybeUninit<FunctionOutline>],
+            layouts: &'a mut [MaybeUninit<LayoutOutline>],
+            variables: &'a mut [MaybeUninit<VariableOutline>],
+            lists: ListWriter<'a>,
+            funcs_with_parts: Vec<u32>,
         }
-        outline
+        let Outline { funcs, layouts: all_layouts, variables: all_variables, local, program, func_slots, layout_slots, variable_slots, funcs_with_parts } = self;
+        let mut funcs_rest = &mut funcs.spare_capacity_mut()[..functions];
+        let mut layouts_rest = &mut all_layouts.spare_capacity_mut()[..layouts];
+        let mut variables_rest = &mut all_variables.spare_capacity_mut()[..variables];
+        let mut local_rest = &mut local.spare_capacity_mut()[..list_len];
+        let mut program_rest = &mut program.spare_capacity_mut()[..list_len];
+        let mut next = before;
+        let mut outputs: Vec<BatchOutput<'_, '_>> = Vec::with_capacity(batches.len());
+        for batch in batches.iter_mut() {
+            let counts = [0, 1, 2].map(|kind| batch.is_preferred[kind].iter().filter(|is_preferred| **is_preferred).count());
+            let (funcs_chunk, layouts_chunk, variables_chunk, local_chunk, program_chunk);
+            (funcs_chunk, funcs_rest) = std::mem::take(&mut funcs_rest).split_at_mut(counts[0]);
+            (layouts_chunk, layouts_rest) = std::mem::take(&mut layouts_rest).split_at_mut(counts[1]);
+            (variables_chunk, variables_rest) = std::mem::take(&mut variables_rest).split_at_mut(counts[2]);
+            (local_chunk, local_rest) = std::mem::take(&mut local_rest).split_at_mut(batch.list_len);
+            (program_chunk, program_rest) = std::mem::take(&mut program_rest).split_at_mut(batch.list_len);
+            let lists = ListWriter { local: local_chunk, program: program_chunk, written: 0, start: next[3] as u32 };
+            let first_slots = [next[0] as u32, next[1] as u32, next[2] as u32];
+            next = [next[0] + counts[0], next[1] + counts[1], next[2] + counts[2], next[3] + batch.list_len];
+            outputs.push(BatchOutput { batch, first_slots, funcs: funcs_chunk, layouts: layouts_chunk, variables: variables_chunk, lists, funcs_with_parts: Vec::new() });
+        }
+        for_each_mut(&mut outputs, in_parallel, &|BatchOutput { batch, first_slots, funcs, layouts, variables, lists, funcs_with_parts }| {
+            let OutlineBatch { fragment, file, ids, summary, first, functions, shapes, variables: fragment_variables, is_preferred, list_len, .. } = &mut **batch;
+            let ids: &LocalToProgram = ids;
+            let mut count = 0;
+            for (offset, function) in functions.iter_mut().enumerate().filter(|function| is_preferred[0][function.0]) {
+                let mut outline = outline_function(function, *fragment, first[0] + offset as u32, *file, ids, lists);
+                if summary.runtime_modules.binary_search_by_key(&outline.index, |found| found.0).is_ok() {
+                    outline.flags |= outline_flags::REQUESTS_RUNTIME_MODULES;
+                }
+                if outline.has(outline_flags::HAS_PARTS) {
+                    funcs_with_parts.push(first_slots[0] + count as u32);
+                }
+                func_slots[outline.id as usize].store(first_slots[0] + count as u32, Ordering::Relaxed);
+                funcs[count].write(outline);
+                count += 1;
+            }
+            for body in functions.iter_mut().filter_map(|function| function.body.as_mut()) {
+                body.mentions = ReferencedIds::default();
+            }
+            let mut count = 0;
+            for (offset, shape) in shapes.iter_mut().enumerate().filter(|shape| is_preferred[1][shape.0]) {
+                let index = first[1] + offset as u32;
+                let definition = shape.definition.as_mut().expect("the index preferred_flags no shape that is only named");
+                layouts[count].write(outline_layout(definition, *fragment, index, ids, lists));
+                definition.mentions = ReferencedIds::default();
+                layout_slots[ids.layouts[index as usize] as usize].store(first_slots[1] + count as u32, Ordering::Relaxed);
+                count += 1;
+            }
+            let mut count = 0;
+            for (offset, variable) in fragment_variables.iter().enumerate().filter(|variable| is_preferred[2][variable.0]) {
+                let (index, declared) = (first[2] + offset as u32, variable.global.declared);
+                variables[count].write(VariableOutline { fragment: *fragment, index, declared, declared_id: if declared.is_none() { u32::MAX } else { ids.tys[declared.idx()] } });
+                variable_slots[ids.globals[index as usize] as usize].store(first_slots[2] + count as u32, Ordering::Relaxed);
+                count += 1;
+            }
+            assert_eq!(lists.written, *list_len, "the lists are as long as computed");
+        });
+        for output in &mut outputs {
+            funcs_with_parts.append(&mut output.funcs_with_parts);
+        }
+        drop(outputs);
+        // SAFETY: the batches partition the reserved capacity, and each one initialized its whole chunk.
+        unsafe {
+            funcs.set_len(before[0] + functions);
+            all_layouts.set_len(before[1] + layouts);
+            all_variables.set_len(before[2] + variables);
+            local.set_len(before[3] + list_len);
+            program.set_len(before[3] + list_len);
+        }
+    }
+
+    pub fn rebuild_functions(&mut self, functions: &mut [(u32, &mut Function, &LocalToProgram, FileId)], in_parallel: InParallel<'_>) {
+        let list_len: usize = functions.iter().map(|function| function_list_len(&*function.1)).sum();
+        let before = self.local.len();
+        self.local.reserve_exact(list_len);
+        self.program.reserve_exact(list_len);
+        let mut local_rest = &mut self.local.spare_capacity_mut()[..list_len];
+        let mut program_rest = &mut self.program.spare_capacity_mut()[..list_len];
+        let mut start = before;
+        let mut rebuilt: Vec<(&mut (u32, &mut Function, &LocalToProgram, FileId), ListWriter<'_>, Option<FunctionOutline>, (u32, u32, u8))> = Vec::with_capacity(functions.len());
+        for function in functions.iter_mut() {
+            let (list_len, previous) = (function_list_len(&*function.1), &self.funcs[function.0 as usize]);
+            let (local_chunk, program_chunk);
+            (local_chunk, local_rest) = std::mem::take(&mut local_rest).split_at_mut(list_len);
+            (program_chunk, program_rest) = std::mem::take(&mut program_rest).split_at_mut(list_len);
+            rebuilt.push((function, ListWriter { local: local_chunk, program: program_chunk, written: 0, start: start as u32 }, None, (previous.fragment, previous.index, previous.flags & outline_flags::REQUESTS_RUNTIME_MODULES)));
+            start += list_len;
+        }
+        for_each_mut(&mut rebuilt, in_parallel, &|(function, lists, outline, (fragment, index, flags))| {
+            let rebuilt = outline_function(&*function.1, *fragment, *index, function.3, function.2, lists);
+            *outline = Some(FunctionOutline { flags: rebuilt.flags | *flags, ..rebuilt });
+            if let Some(body) = &mut function.1.body {
+                body.mentions = ReferencedIds::default();
+            }
+        });
+        let outlines: Vec<(u32, FunctionOutline)> = rebuilt.into_iter().filter_map(|(function, _, outline, _)| Some((function.0, outline?))).collect();
+        // SAFETY: the functions partition the reserved capacity, and each one initialized its whole chunk.
+        unsafe {
+            self.local.set_len(before + list_len);
+            self.program.set_len(before + list_len);
+        }
+        for (slot, outline) in outlines {
+            self.funcs[slot as usize] = outline;
+        }
+        self.funcs_with_parts.retain(|&slot| self.funcs[slot as usize].has(outline_flags::HAS_PARTS));
     }
 }
 
@@ -837,9 +1100,9 @@ pub enum RuntimeModule {
 #[derive(Default)]
 pub struct Summary {
     pub runtime_modules: Vec<(u32, RuntimeModule)>,
-    pub entries_and_second_bodies: Vec<u32>,
+    pub entrypoints_and_clones: Vec<u32>,
     pub run_at_evaluation: Vec<u32>,
-    pub with_alterations: Vec<u32>,
+    pub with_mutations: Vec<u32>,
 }
 
 impl Summary {
@@ -851,11 +1114,11 @@ impl Summary {
                 summary.run_at_evaluation.push(index);
             }
             let (Some(func), Some(body)) = (&function.func, &function.body) else { continue };
-            if matches!(function.key, FuncKey::EntryBeside(..) | FuncKey::SecondBody(..)) {
-                summary.entries_and_second_bodies.push(index);
+            if matches!(function.key, FuncKey::GenericEntrypoint(..) | FuncKey::UntypedClone(..)) {
+                summary.entrypoints_and_clones.push(index);
             }
-            if body.notes.has_alterations() {
-                summary.with_alterations.push(index);
+            if body.notes.has_mutations() {
+                summary.with_mutations.push(index);
             }
             for value in &func.values {
                 let found = match &value.def {
@@ -947,11 +1210,11 @@ impl ProgramIds {
         self.strs[shard_number].lock().intern_hashed(hash, bytes).0 * SHARDS as u32 + shard_number as u32
     }
 
-    pub fn bound_of_strs(&self) -> usize {
+    pub fn strs_upper_bound(&self) -> usize {
         SHARDS * self.strs.iter().map(|shard| shard.lock().len()).max().unwrap_or(0)
     }
 
-    pub fn bound_of_tys(&self) -> usize {
+    pub fn tys_upper_bound(&self) -> usize {
         self.tys.bound()
     }
 
@@ -979,47 +1242,6 @@ impl ProgramIds {
     }
 }
 
-impl Outline {
-    pub fn of_functions(functions: &mut [Function], first: usize, file_of_fragment: FileId, ids: &LocalToProgram, is_in_the_index: &dyn Fn(usize, u32) -> bool) -> Outline {
-        let is_in_the_index: Vec<bool> = ids.funcs[first..first + functions.len()].iter().enumerate().map(|(index, &id)| is_in_the_index(first + index, id)).collect();
-        let mut outline = Outline::default();
-        outline.make_room(functions.iter().zip(&is_in_the_index).filter(|function| *function.1).map(|function| function.0));
-        outline.funcs = (functions.iter().zip(&is_in_the_index))
-            .map(|(function, &is_in_the_index)| match is_in_the_index {
-                true => outline.of_function(function, file_of_fragment, ids),
-                false => outline.of_function(&Function { key: function.key, func: None, body: None }, file_of_fragment, ids),
-            })
-            .collect();
-        for body in functions.iter_mut().filter_map(|function| function.body.as_mut()) {
-            body.mentions = Mentions::default();
-        }
-        outline
-    }
-
-    pub fn append(&mut self, mut following: Outline) {
-        if self.funcs.is_empty() {
-            return *self = following;
-        }
-        let before = self.local.len() as u32;
-        for function in &mut following.funcs {
-            function.start += before;
-            function.ends.iter_mut().for_each(|end| *end += before);
-        }
-        self.funcs.reserve_exact(following.funcs.len());
-        self.funcs.append(&mut following.funcs);
-        self.local.reserve_exact(following.local.len());
-        self.local.append(&mut following.local);
-        self.program.reserve_exact(following.program.len());
-        self.program.append(&mut following.program);
-    }
-}
-
-impl Fragment {
-    pub fn make_outline(&mut self) {
-        self.outline = Outline::of_functions(&mut self.funcs, 0, self.file, &self.program_ids, &|_, _| true);
-    }
-}
-
 // ───────────────────────────── handing them in ─────────────────────────────
 
 /// Where the tasks of a check put the fragments. An invalid task is retried, and its files are translated again: the last fragment of
@@ -1039,7 +1261,7 @@ impl Fragments {
     pub fn put(&self, mut fragment: Box<Fragment>) {
         self.program_ids.assign(&mut fragment);
         let mut place = self.by_file[fragment.file.idx()].lock();
-        fragment.times_translated += place.as_ref().map_or(0, |earlier| earlier.times_translated);
+        fragment.translation_count += place.as_ref().map_or(0, |earlier| earlier.translation_count);
         *place = Some(fragment);
     }
 
@@ -1048,8 +1270,20 @@ impl Fragments {
     }
 
     /// Once every task has ended.
-    pub fn take(&self) -> Vec<Fragment> {
-        let boxes: Vec<Box<Fragment>> = self.by_file.iter().filter_map(|place| place.lock().take()).collect();
-        boxes.into_iter().map(|fragment| *fragment).collect()
+    pub fn take(&self, rank_of_file: &dyn Fn(FileId) -> u32, in_parallel: InParallel<'_>) -> Vec<Fragment> {
+        const FRAGMENTS_PER_RUN: usize = 128;
+        let mut boxes: Vec<Option<Box<Fragment>>> = self.by_file.iter().map(|place| place.lock().take()).filter(Option::is_some).collect();
+        boxes.sort_by_cached_key(|fragment| fragment.as_ref().map(|fragment| rank_of_file(fragment.file)));
+        let mut fragments: Vec<Fragment> = Vec::with_capacity(boxes.len());
+        let mut runs: Vec<(&mut [Option<Box<Fragment>>], &mut [MaybeUninit<Fragment>])> = boxes.chunks_mut(FRAGMENTS_PER_RUN).zip(fragments.spare_capacity_mut().chunks_mut(FRAGMENTS_PER_RUN)).collect();
+        for_each_mut(&mut runs, in_parallel, &|(boxes, places)| {
+            for (fragment, place) in boxes.iter_mut().zip(places.iter_mut()) {
+                place.write(*fragment.take().expect("only fragments that are there are listed"));
+            }
+        });
+        drop(runs);
+        // SAFETY: the runs are all of the first `boxes.len()` places, and each has been written.
+        unsafe { fragments.set_len(boxes.len()) };
+        fragments
     }
 }

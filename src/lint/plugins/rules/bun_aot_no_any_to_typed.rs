@@ -16,10 +16,10 @@ const STORED: Message = Message::new(
 
 fn check<'a>(value: Option<Expr<'a>>, cx: &Cx<'a, AotNoAnyToTyped>) {
     let Some(value) = value else { return };
-    let Some(found) = value.ts_node().aot_check_where_any_enters() else {
+    let Some(found) = value.ts_node().aot_check_any_inflow() else {
         return;
     };
-    let message = if found.kind == AotCheckKind::AnyIsStored {
+    let message = if found.kind == AotCheckKind::AnyStored {
         STORED
     } else {
         CHECKED
@@ -27,7 +27,7 @@ fn check<'a>(value: Option<Expr<'a>>, cx: &Cx<'a, AotNoAnyToTyped>) {
     cx.report(value, message)
         .data("type", found.type_text)
         .hint_with(|| {
-            let from = value.ts_node().aot_where_an_any_comes_from();
+            let from = value.ts_node().aot_describe_any_origin();
             let from = bstr::BStr::new(&from);
             Some(match from.is_empty() {
                 true => "Give the value a type, or validate it where it comes in.".to_owned(),

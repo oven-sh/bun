@@ -771,7 +771,7 @@ static void NodeHTTPServer__writeHead(
 
                 return true;
             });
-        } else if (!JSC::AOT::Typed::forEachOwnPropertyOfCompiledObject(headersObject, writeField)) {
+        } else if (!JSC::AOT::Typed::forEachCompiledObjectOwnProperty(headersObject, writeField)) {
             PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
             headersObject->methodTable()->getOwnPropertyNames(headersObject, globalObject, propertyNames, DontEnumPropertiesMode::Exclude);
             RETURN_IF_EXCEPTION(scope, void());

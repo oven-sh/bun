@@ -35,7 +35,7 @@ pub fn text(bytes: &[u8]) -> String {
 /// The category and the text of the message with `code`. `{0}`, `{1}`, ... are placeholders for its
 /// arguments.
 pub fn message(code: u32) -> Option<(Category, &'static str)> {
-    if code > LAST_OF_TYPESCRIPT {
+    if code > LAST_TYPESCRIPT_MESSAGE {
         let at = OWN_MESSAGES.binary_search_by_key(&code, |m| m.0).ok()?;
         return OWN_MESSAGES.get(at).map(|m| (m.1, m.2));
     }
@@ -69,7 +69,7 @@ fn parse() -> Vec<(u32, Category, &'static str)> {
 }
 
 /// The greatest code that TypeScript uses.
-const LAST_OF_TYPESCRIPT: u32 = 100000;
+const LAST_TYPESCRIPT_MESSAGE: u32 = 100000;
 
 /// The messages that TypeScript does not have, sorted by code.
 static OWN_MESSAGES: &[(u32, Category, &str)] = &[

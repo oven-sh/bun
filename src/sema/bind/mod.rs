@@ -958,7 +958,7 @@ pub struct BoundIn<S: Storage> {
     /// `requiresScopeChange` is true for some parameter, indexed by function: names in its parameters then
     /// resolve to variables of its body.
     pub requires_scope_change: S::List<bool>,
-    pub one_name_is_one_binding: bool,
+    pub uses_ecmascript_bindings: bool,
     pub inserted: S::Few<(u32, u32)>,
     pub is_non_utf8: bool,
     pub class_options: Option<crate::resolve::ClassOptions>,
@@ -1319,7 +1319,7 @@ impl<S: Storage> BoundIn<S> {
         if flags.contains(SymFlags::TYPE_PARAMETER) && !meaning.intersects(SymFlags::TYPE) {
             return false;
         }
-        if self.one_name_is_one_binding && matches!(from, ScopeKind::Param(_)) && ((meaning & flags).contains(SymFlags::FUNCTION) || flags.contains(SymFlags::ALIAS)) && !flags.contains(SymFlags::PARAMETER) {
+        if self.uses_ecmascript_bindings && matches!(from, ScopeKind::Param(_)) && ((meaning & flags).contains(SymFlags::FUNCTION) || flags.contains(SymFlags::ALIAS)) && !flags.contains(SymFlags::PARAMETER) {
             return false;
         }
         let f = match from {
@@ -1891,7 +1891,7 @@ impl BoundBuilder {
             type_param_scope,
             fns,
             requires_scope_change,
-            one_name_is_one_binding,
+            uses_ecmascript_bindings,
             inserted,
             is_non_utf8,
             class_options,
@@ -1987,7 +1987,7 @@ impl BoundBuilder {
         type_param_scope.clear();
         fns.clear();
         requires_scope_change.clear();
-        *one_name_is_one_binding = Default::default();
+        *uses_ecmascript_bindings = Default::default();
         inserted.clear();
         *is_non_utf8 = Default::default();
         *class_options = Default::default();
@@ -2108,7 +2108,7 @@ impl BoundBuilder {
             type_param_scope: copy_to_arena(&mut self.type_param_scope, arena),
             fns: copy_to_arena(&mut self.fns, arena),
             requires_scope_change: copy_to_arena(&mut self.requires_scope_change, arena),
-            one_name_is_one_binding: self.one_name_is_one_binding,
+            uses_ecmascript_bindings: self.uses_ecmascript_bindings,
             inserted: few_to_arena(std::mem::take(&mut self.inserted), arena),
             is_non_utf8: self.is_non_utf8,
             class_options: self.class_options,
@@ -2194,7 +2194,7 @@ impl Bound<'_> {
     pub fn share<'s>(&'s self, arena: &'s Arena) -> Bound<'s> {
         Bound {
             ran_out_of_stack: self.ran_out_of_stack,
-            one_name_is_one_binding: self.one_name_is_one_binding,
+            uses_ecmascript_bindings: self.uses_ecmascript_bindings,
             inserted: ArenaFew::from_iter_in(self.inserted.iter().cloned(), arena),
             is_non_utf8: self.is_non_utf8,
             class_options: self.class_options,
@@ -2391,10 +2391,10 @@ pub struct BindOptions {
     /// `GetEmitScriptTarget` is older than that.
     pub before_es2020: bool,
     pub before_es2017: bool,
-    /// `Options::names_make_commonjs`
-    pub names_make_commonjs: bool,
-    pub one_name_is_one_binding: bool,
-    pub is_commonjs_by_decree: Option<bool>,
+    /// `Options::detects_commonjs_by_free_names`
+    pub detects_commonjs_by_free_names: bool,
+    pub uses_ecmascript_bindings: bool,
+    pub is_forced_commonjs: Option<bool>,
 }
 
 /// `bindSourceFile`

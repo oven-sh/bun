@@ -1,0 +1,8 @@
+texts of 64 bytes: 2904 so far, 24 accepted, c8d68107
+texts of 192 bytes: 7536 so far, 82 accepted, 95e8a997
+texts of 448 bytes: 13080 so far, 144 accepted, 3a68686b
+texts of 960 bytes: 18624 so far, 206 accepted, 62684eaf
+texts of 1984 bytes: 24168 so far, 268 accepted, 8ad10643
+texts of 4032 bytes: 29712 so far, 330 accepted, a273d767
+texts of 8128 bytes: 35256 so far, 392 accepted, 60a906fb
+texts of 16320 bytes: 40800 so far, 454 accepted, 573c9c7f

@@ -1484,7 +1484,7 @@ impl<'a> Transpiler<'a> {
                     import_meta_main_value: None,
                     lower_import_meta_main_for_node_js: false,
                     inline_import_meta_paths: false,
-                    leaves_assignments_to_imports_to_run_time: false,
+                    defers_import_assignment_errors: false,
                     compiles_ahead_of_time: false,
                     keeps_reexport_only_modules: false,
                     framework: None,
@@ -2230,7 +2230,7 @@ impl<'a> Transpiler<'a> {
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
         runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
         module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
-        function_texts: Option<&mut Vec<js_printer::FunctionText>>,
+        function_sources: Option<&mut Vec<js_printer::FunctionSource>>,
     ) -> crate::Result<usize> {
         // Routed through the T0 ftrace subset like the
         // other bundler spans (`Bundler.computeChunks` etc.) —
@@ -2305,7 +2305,7 @@ impl<'a> Transpiler<'a> {
                         exports_kind,
                         runtime_transpiler_cache,
                         module_info,
-                        function_texts,
+                        function_sources,
                     )
                 } else {
                     self.print_ast_esm_ascii_not_bun_cold::<ENABLE_SOURCE_MAP>(
@@ -2318,7 +2318,7 @@ impl<'a> Transpiler<'a> {
                         exports_kind,
                         runtime_transpiler_cache,
                         module_info,
-                        function_texts,
+                        function_sources,
                     )
                 }
             }
@@ -2384,7 +2384,7 @@ impl<'a> Transpiler<'a> {
         exports_kind: bun_ast::ExportsKind,
         runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
         module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
-        function_texts: Option<&mut Vec<js_printer::FunctionText>>,
+        function_sources: Option<&mut Vec<js_printer::FunctionSource>>,
     ) -> crate::Result<usize> {
         self.print_ast_esm_ascii::<ENABLE_SOURCE_MAP, false>(
             print_arena,
@@ -2396,7 +2396,7 @@ impl<'a> Transpiler<'a> {
             exports_kind,
             runtime_transpiler_cache,
             module_info,
-            function_texts,
+            function_sources,
         )
     }
 
@@ -2414,7 +2414,7 @@ impl<'a> Transpiler<'a> {
         exports_kind: bun_ast::ExportsKind,
         runtime_transpiler_cache: Option<js_printer::RuntimeTranspilerCacheRef>,
         module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
-        function_texts: Option<&mut Vec<js_printer::FunctionText>>,
+        function_sources: Option<&mut Vec<js_printer::FunctionSource>>,
     ) -> crate::Result<usize> {
         // Both set on this (EsmAscii) arm only.
         // SAFETY: `module_info` is `ModuleInfo::create`'s `heap::alloc` (or
@@ -2449,7 +2449,7 @@ impl<'a> Transpiler<'a> {
             // hoist on `Target::Bun` — defaulting to `Browser` here regressed
             // oven-sh/bun#15738.
             target: to_bundle_enums_target(self.options.target),
-            function_texts,
+            function_sources,
             audited: bun_ast::audited::current(),
             ..Default::default()
         };
@@ -2495,12 +2495,12 @@ impl<'a> Transpiler<'a> {
     }
 
     #[inline(never)]
-    pub fn print_noting_function_texts(
+    pub fn print_recording_function_sources(
         &mut self,
         print_arena: &Arena,
         result: ParseResult,
         writer: &mut js_printer::BufferPrinter,
-        function_texts: &mut Vec<js_printer::FunctionText>,
+        function_sources: &mut Vec<js_printer::FunctionSource>,
     ) -> crate::Result<usize> {
         self.print_with_source_map_maybe::<false>(
             print_arena,
@@ -2511,7 +2511,7 @@ impl<'a> Transpiler<'a> {
             None,
             None,
             None,
-            Some(function_texts),
+            Some(function_sources),
         )
     }
 

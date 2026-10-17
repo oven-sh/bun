@@ -296,7 +296,7 @@ public:
         auto scope = DECLARE_THROW_SCOPE(vm);
         WTF::String nameToUse;
         if (auto* fn = dynamicDowncast<JSFunction>(value)) {
-            nameToUse = JSC::AOT::writtenNameOfClosure(fn);
+            nameToUse = JSC::AOT::closureDeclaredName(fn);
             if (nameToUse.isNull())
                 nameToUse = fn->name(vm);
             JSValue lengthJSValue = fn->get(global, vm.propertyNames->length);
@@ -306,7 +306,7 @@ public:
             }
         } else if (value.isCell() && isSlimClosureType(value.asCell()->type())) {
             JSObject* fn = asObject(value);
-            nameToUse = JSC::AOT::writtenNameOfClosure(fn);
+            nameToUse = JSC::AOT::closureDeclaredName(fn);
             JSValue lengthJSValue = fn->get(global, vm.propertyNames->length);
             RETURN_IF_EXCEPTION(scope, );
             if (lengthJSValue.isNumber())

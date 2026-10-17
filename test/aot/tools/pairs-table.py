@@ -100,7 +100,7 @@ def family(s):
     if re.match(r'Typed(String|BuiltinCell|Closure|Cell)', s): return 'constant'
     if re.match(r'(New|Allocate|ArrayLiteral|Make|Create|Copy|Clone)', s): return 'allocate'
     if re.match(r'ValueIsTruthy|ToBoolean', s): return 'is truthy'
-    if re.match(r'(StrictEqual|StrictNotEqual|ValueIsText|LooseEqual|Equal|StringIsText)', s): return '=== | =='
+    if re.match(r'(StrictEqual|StrictNotEqual|ValueEqualsLiteral|LooseEqual|Equal|StringEqualsLiteral)', s): return '=== | =='
     if re.match(r'TypeOf', s): return 'typeof'
     if re.match(r'InstanceOf', s): return 'instanceof'
     if re.match(r'(Add|Sub|Mul|Div|Mod|Bit|Shift|Less|Greater|Negate|Inc|Dec|To[A-Z]|Concat|Template)', s): return 'arithmetic | compare | convert'

@@ -27,7 +27,7 @@
 // that shares its tail with every other capture.
 //
 const setAsyncHooksEnabled = $newCppFunction("NodeAsyncHooks.cpp", "jsSetAsyncHooksEnabled", 1);
-const noteAsyncLocalStorage = $newCppFunction("NodeAsyncHooks.cpp", "jsNoteAsyncLocalStorage", 3);
+const registerAsyncLocalStorage = $newCppFunction("NodeAsyncHooks.cpp", "jsRegisterAsyncLocalStorage", 3);
 let numberOfStoragesNoted = 0;
 let sampleFrame: Frame | undefined;
 const { validateFunction, validateString, validateObject } = require("internal/validators");
@@ -228,7 +228,7 @@ class AsyncLocalStorage<T = any> {
         sampleFrame = newFrame(undefined!, undefined, undefined, undefined);
         new AsyncLocalStorage({ defaultValue: sampleFrame });
       }
-      noteAsyncLocalStorage(this, sampleFrame, originalGetStore);
+      registerAsyncLocalStorage(this, sampleFrame, originalGetStore);
     }
 
     // In debug mode assign every AsyncLocalStorage a unique ID

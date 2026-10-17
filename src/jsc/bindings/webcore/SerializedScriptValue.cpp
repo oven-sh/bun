@@ -4072,7 +4072,7 @@ DeserializationResult CloneDeserializer::deserialize()
                 JSObject* outObject = outputObjectStack.last();
                 if (m_finishesObjects) {
                     if (auto place = m_placeInObjectPoolOfOpenObject.takeOptional(outObject); place && !m_isReferencedInObjectPool.get(*place)) {
-                        JSObject* finished = JSC::AOT::withEveryPropertyInLine(m_globalObject, outObject);
+                        JSObject* finished = JSC::AOT::withAllPropertiesInline(m_globalObject, outObject);
                         if (finished != outObject) {
                             m_gcBuffer.appendWithCrashOnOverflow(finished);
                             m_finishedInObjectPool.set(*place, finished);
@@ -4554,7 +4554,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
 
         auto collectFieldsOfCompiledObject = [&](JSObject* compiledObject, WTF::Vector<SimpleInMemoryPropertyTableEntry>& properties) -> bool {
             bool isSimple = true;
-            bool isCompiledObject = JSC::AOT::Typed::forEachOwnPropertyOfCompiledObject(compiledObject, [&](UniquedStringImpl& name, JSValue fieldValue) {
+            bool isCompiledObject = JSC::AOT::Typed::forEachCompiledObjectOwnProperty(compiledObject, [&](UniquedStringImpl& name, JSValue fieldValue) {
                 if (name.isSymbol())
                     return true;
                 if (!fieldValue.isCell()) {

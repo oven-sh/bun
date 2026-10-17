@@ -298,7 +298,7 @@ impl<'arena> BundledAst<'arena> {
             ast.directive.is_some_and(|d| d == b"use strict"),
         );
         flags.set(Flags::HAS_IMPORT_META, ast.has_import_meta);
-        flags.set(Flags::ES_MODULE_BY_ITS_OWN_SYNTAX, ast.is_es_module_by_its_own_syntax);
+        flags.set(Flags::ES_MODULE_BY_ITS_OWN_SYNTAX, ast.has_esm_syntax);
 
         Self {
             approximate_newline_count: ast.approximate_newline_count as u32,

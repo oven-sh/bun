@@ -14,11 +14,14 @@ pub use crate::builtins_generated::{PRELUDE_FILES as GENERATED_FILES, PRELUDE_FU
 
 pub const DECORATORS: (&str, &str) = ("decorators.ts", include_str!("prelude/decorators.ts"));
 
+pub const VALIDATION: (&str, &str) = ("validation.ts", include_str!("../js/internal/validation.ts"));
+
 pub const RUNTIME_HELPERS: (&str, &str) = ("bun-wrap.js", include_str!(concat!(env!("BUN_CODEGEN_DIR"), "/runtime.out.js")));
 
 const fn with_helpers<const N: usize>(generated: &[(&'static str, &'static str)]) -> [(&'static str, &'static str); N] {
     let mut files = [DECORATORS; N];
     files[N - 1] = RUNTIME_HELPERS;
+    files[N - 2] = VALIDATION;
     let mut i = 0;
     while i < generated.len() {
         files[i] = generated[i];
@@ -27,7 +30,7 @@ const fn with_helpers<const N: usize>(generated: &[(&'static str, &'static str)]
     files
 }
 
-pub const FILES: &[(&str, &str)] = &with_helpers::<{ GENERATED_FILES.len() + 2 }>(GENERATED_FILES);
+pub const FILES: &[(&str, &str)] = &with_helpers::<{ GENERATED_FILES.len() + 3 }>(GENERATED_FILES);
 
 /// Where the file of that name is to the checker, given the directory the program is built in. In the format of `root`, native or the
 /// checker's. For `Request::code` and `Provided::already_read` of the driver.

@@ -24,13 +24,13 @@ declare module "bun" {
    * ```
    */
   function validate<T>(value: unknown): T;
-  /** {@link validate}, but returns the issues instead of throwing them. */
   /**
    * Parses `text` as JSON and checks the result against the TypeScript type `T`, as {@link validate} does, with one difference:
    * an optional property whose value does not match its type is left out instead of being an issue.
    * Throws a `SyntaxError` for text that is not JSON.
    */
   function parse<T>(text: string): T;
+  /** {@link validate}, but returns the issues instead of throwing them. */
   function safeValidate<T>(value: unknown): { success: true; data: T } | { success: false; issues: ValidationIssue[] };
   /** What {@link schema} returns: a [Standard Schema](https://standardschema.dev). */
   interface Schema<T> {

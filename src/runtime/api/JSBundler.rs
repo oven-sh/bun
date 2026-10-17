@@ -494,8 +494,8 @@ pub(crate) mod js_bundler {
                 )?;
                 while let Some((key, _)) = keys.next()? {
                     let key = key.to_owned_slice();
-                    let known = crate::cli::aot::OPTIONS_OF_COMPILE;
-                    if key.starts_with(b"aot") && !known.contains(&&key[..]) && !crate::cli::aot::INTERNAL_OPTIONS_OF_COMPILE.contains(&&key[..]) {
+                    let known = crate::cli::aot::COMPILE_OPTIONS;
+                    if key.starts_with(b"aot") && !known.contains(&&key[..]) && !crate::cli::aot::COMPILE_INTERNAL_OPTIONS.contains(&&key[..]) {
                         return Err(global_this.throw_invalid_arguments(format_args!(
                             "compile.{} is not an option.{} The options that start with aot are {}",
                             bstr::BStr::new(&key[..]),
@@ -1508,22 +1508,22 @@ pub(crate) mod js_bundler {
             }
 
             if let Some(compile) = this.compile.as_ref().filter(|compile| compile.aot) {
-                if jsc::virtual_machine::standalone_module_graph().is_some_and(|graph| !graph.aot_image().is_empty() && graph.sources_of_compiled_program().is_empty()) {
+                if jsc::virtual_machine::standalone_module_graph().is_some_and(|graph| !graph.aot_image().is_empty() && graph.compiled_program_sources().is_empty()) {
                     return Err(global_this.throw_invalid_arguments(format_args!("compile.aot is not available in an executable that was itself compiled with --aot. Run the build script with bun.")));
                 }
-                if let Some(why) = crate::cli::aot::why_unsupported(&compile.compile_target) {
+                if let Some(why) = crate::cli::aot::unsupported_reason(&compile.compile_target) {
                     return Err(global_this.throw_invalid_arguments(format_args!("compile.aot: {why}")));
                 }
                 if this.format != options::Format::Esm {
                     return Err(global_this.throw_invalid_arguments(format_args!("compile.aot requires format: 'esm'")));
                 }
-                let not_honoured = [
+                let ignored_flags = [
                     ("banner with code", !crate::cli::aot::is_only_comments(&this.banner.list)),
                     ("footer with code", !crate::cli::aot::is_only_comments(&this.footer.list)),
                     ("bytecodeDepth", this.bytecode_depth != u32::MAX),
                     ("compile.bytecodeOrder", !compile.bytecode_order.is_empty()),
                 ];
-                if let Some((option, _)) = not_honoured.iter().find(|option| option.1) {
+                if let Some((option, _)) = ignored_flags.iter().find(|option| option.1) {
                     return Err(global_this.throw_invalid_arguments(format_args!("compile.aot does not support {option}")));
                 }
                 this.bytecode = true;

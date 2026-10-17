@@ -20,17 +20,17 @@ impl<'p, 's> Checker<'p, 's> {
     /// evaluated, runs no code and does not throw: it stands for a reference to the constant.
     ///
     /// It goes by the tree and the symbols alone: every task finds the same.
-    pub fn builtin_held_by(&mut self, sym: Sym) -> Option<(FileId, ExprId)> {
-        if let Some(&known) = self.aot.storage.builtins_held.get(&sym) {
+    pub fn builtin_for_const(&mut self, sym: Sym) -> Option<(FileId, ExprId)> {
+        if let Some(&known) = self.aot.storage.builtin_bindings.get(&sym) {
             return known;
         }
-        let found = self.find_builtin_held_by(sym);
-        self.aot.storage.builtins_held.insert(sym, found);
+        let found = self.find_builtin_for_const(sym);
+        self.aot.storage.builtin_bindings.insert(sym, found);
         found
     }
 
-    fn find_builtin_held_by(&mut self, sym: Sym) -> Option<(FileId, ExprId)> {
-        let (file, Decl::Var(pat)) = self.declaration_of_variable(sym)? else { return None };
+    fn find_builtin_for_const(&mut self, sym: Sym) -> Option<(FileId, ExprId)> {
+        let (file, Decl::Var(pat)) = self.variable_declaration(sym)? else { return None };
         let hir = self.hir(file);
         let PatParent::Var(d) = root_declaration(self.bound(file), pat) else { return None };
         let is_code = self.is_compiled(file) && !hir[d].flags.contains(Flags::AMBIENT);
@@ -38,22 +38,22 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         let path = hir[d].init;
-        (self.is_path_to_builtin_function(file, path) && self.is_never_seen_uninitialized(sym)).then_some((file, path))
+        (self.is_path_to_builtin_function(file, path) && self.is_never_read_uninitialized(sym)).then_some((file, path))
     }
 
     /// The same for a variable of any kind that nothing is ever stored to but by its own declaration, whoever may read it before that has run: it holds `undefined` until then (or
     /// is in its dead zone), and the function from then on. The path. The initializer may be `typeof P === "function" ? P : q`, `P || q` or `P ?? q`, which come to `P`.
-    pub fn builtin_or_undefined_in_variable(&mut self, sym: Sym) -> Option<(FileId, ExprId)> {
-        if let Some(&known) = self.aot.storage.builtins_held_or_undefined.get(&sym) {
+    pub fn builtin_or_undefined_for_variable(&mut self, sym: Sym) -> Option<(FileId, ExprId)> {
+        if let Some(&known) = self.aot.storage.builtin_or_undefined_bindings.get(&sym) {
             return known;
         }
-        let found = self.find_builtin_or_undefined_in_variable(sym);
-        self.aot.storage.builtins_held_or_undefined.insert(sym, found);
+        let found = self.find_builtin_or_undefined_for_variable(sym);
+        self.aot.storage.builtin_or_undefined_bindings.insert(sym, found);
         found
     }
 
-    fn find_builtin_or_undefined_in_variable(&mut self, sym: Sym) -> Option<(FileId, ExprId)> {
-        let (file, Decl::Var(pat)) = self.declaration_of_variable(sym)? else { return None };
+    fn find_builtin_or_undefined_for_variable(&mut self, sym: Sym) -> Option<(FileId, ExprId)> {
+        let (file, Decl::Var(pat)) = self.variable_declaration(sym)? else { return None };
         let (hir, bound) = (self.hir(file), self.bound(file));
         let PatParent::Var(d) = root_declaration(bound, pat) else { return None };
         if !self.is_compiled(file) || hir[d].flags.intersects(Flags::AMBIENT | Flags::EXPORT) || hir[d].pat != pat || hir[d].init.is_none() {
@@ -61,15 +61,15 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let local = bound.pat_symbol[pat.idx()];
         let symbol = bound.symbols.get(local.idx())?;
-        let is_seen_elsewhere = symbol.flags.contains(SymFlags::MERGED) || self.files().sym(file, local) != sym || !self.files().module(file).is_module() && matches!(bound.stmt_parent[bound.var_stmt[d.idx()].idx()], Parent::File);
-        if is_seen_elsewhere || symbol.decls.len() != 1 || !bound.assignments_to(local).is_empty() || self.has_direct_eval(file) {
+        let is_visible_elsewhere = symbol.flags.contains(SymFlags::MERGED) || self.files().sym(file, local) != sym || !self.files().module(file).is_module() && matches!(bound.stmt_parent[bound.var_stmt[d.idx()].idx()], Parent::File);
+        if is_visible_elsewhere || symbol.decls.len() != 1 || !bound.assignments_to(local).is_empty() || self.has_direct_eval(file) {
             return None;
         }
-        let path = self.path_of_initializer(file, hir[d].init)?;
+        let path = self.initializer_path(file, hir[d].init)?;
         Some((file, path))
     }
 
-    pub fn is_number_parameter_of_builtin_at(&self, file: FileId, path: ExprId) -> Vec<Option<bool>> {
+    pub fn builtin_number_parameters(&self, file: FileId, path: ExprId) -> Vec<Option<bool>> {
         let hir = self.hir(file);
         let ExprKind::Dot { obj, name, chain: Chain::No, .. } = hir[path].kind else { return Vec::new() };
         let ExprKind::Ident(holder) = hir[obj].kind else { return Vec::new() };
@@ -91,7 +91,7 @@ impl<'p, 's> Checker<'p, 's> {
         taken
     }
 
-    fn path_of_initializer(&mut self, file: FileId, init: ExprId) -> Option<ExprId> {
+    fn initializer_path(&mut self, file: FileId, init: ExprId) -> Option<ExprId> {
         let hir = self.hir(file);
         let path = match hir[init].kind {
             ExprKind::Binary { op: BinOp::Or | BinOp::Nullish, left, .. } => left,
@@ -134,7 +134,7 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Index { obj, index, chain: Chain::No } => {
                 let ExprKind::Dot { obj: symbol, name, chain: Chain::No, .. } = hir[index].kind else { return false };
                 let ExprKind::Ident(global) = hir[symbol].kind else { return false };
-                if self.atoms().bytes(global) != b"Symbol" || !self.names_global(file, symbol, global) {
+                if self.atoms().bytes(global) != b"Symbol" || !self.refers_to_global(file, symbol, global) {
                     return false;
                 }
                 (obj, [b"@@", self.atoms().bytes(name)].concat())
@@ -149,6 +149,6 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let ExprKind::Ident(global) = hir[holder].kind else { return false };
         let is_replaceable = REPLACEABLE_GLOBALS.iter().any(|replaceable| replaceable.as_bytes() == self.atoms().bytes(global));
-        !is_replaceable && has_function(is_method, self.atoms().bytes(global), &name) && self.names_global(file, holder, global)
+        !is_replaceable && has_function(is_method, self.atoms().bytes(global), &name) && self.refers_to_global(file, holder, global)
     }
 }

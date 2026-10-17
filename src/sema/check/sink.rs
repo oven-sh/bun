@@ -313,7 +313,7 @@ impl super::Program<'_> {
         }
     }
 
-    pub fn outside_the_report<R>(&self, run: impl FnOnce() -> R) -> R {
+    pub fn unreported<R>(&self, run: impl FnOnce() -> R) -> R {
         let lengths: Vec<usize> = self.sink.by_file.iter().map(|buffer| buffer.lock().len()).collect();
         let global_errors = self.global_errors.lock().clone();
         let result = run();
@@ -377,7 +377,7 @@ impl super::Program<'_> {
 impl Checker<'_, '_> {
     /// `StringifyArgs`. They are printed eagerly, as in tsgo: printing runs queries.
     pub(super) fn stringify_args(&mut self, args: &[Arg<'_>]) -> Args {
-        let is_dropped = self.is_behind_the_check();
+        let is_dropped = self.is_after_check();
         args.iter()
             .map(|arg| {
                 let mut out = Vec::new();
@@ -493,7 +493,7 @@ impl Checker<'_, '_> {
             return self.discarded.insert(diagnostic);
         }
         if self.is_reported_too_late(None, diagnostic.file) {
-            if !self.is_behind_the_check() {
+            if !self.is_after_check() {
                 self.mark_tainted_from(0);
             }
             return self.discarded.insert(diagnostic);
@@ -726,7 +726,7 @@ impl Checker<'_, '_> {
         if self.is_type_checked && diagnostic.file == NOWHERE.0
             || self.is_reported_too_late(owner, diagnostic.file)
         {
-            if diagnostic.file != NOWHERE.0 && self.is_behind_the_check() {
+            if diagnostic.file != NOWHERE.0 && self.is_after_check() {
                 return;
             }
             return self.mark_tainted_from(0);

@@ -4,8 +4,9 @@
 
 use crate::declared::Part;
 use crate::id::{FuncId, V};
-use crate::ir::{BinOp, Def, Func, Literal, Op, Prediction, Program, RelOp, Target, Term, UnOp, Why};
+use crate::ir::{BinOp, Def, Func, Literal, Op, Prediction, Program, RelOp, Target, Term, UnOp, CoerceReason};
 use bun_sema::util::{InParallel, for_each_mut};
+use smallvec::SmallVec;
 use std::mem::MaybeUninit;
 
 pub const MAGIC: u32 = 0x5249_5442;
@@ -15,7 +16,7 @@ pub const NONE: u32 = u32::MAX;
 /// In the prediction of a value: the other bits number a function, which the value is expected to be a closure of, and not a type.
 pub const PREDICTION_IS_CLOSURE: u32 = 1 << 31;
 pub const PREDICTION_IS_BY_KEY: u32 = 1 << 30;
-pub const RECEIVER_IS_OF_ONE_ROW: u32 = 1 << 29;
+pub const RECEIVER_HAS_SINGLE_STRUCTURE: u32 = 1 << 29;
 pub const VARIABLE_IS_INITIALIZED: u32 = 1;
 pub const CALL_IS_IN_TAIL_POSITION: u32 = 1;
 /// In the type of a parameter of a function: it is written down. The other bits number the type. Not in `NONE`.
@@ -114,7 +115,7 @@ opcodes! {
 
 /// Of the names of the operations in their order, each followed by a line feed: FNV-1a. The engine turns away a program whose
 /// operations are numbered another way than its own.
-fn hash_of_opcode_names() -> u32 {
+fn opcode_names_hash() -> u32 {
     let mut hash = 2_166_136_261u32;
     for name in OPCODE_NAMES {
         for &byte in name.as_bytes().iter().chain(b"\n") {
@@ -229,19 +230,19 @@ pub fn record(def: &Def) -> Record<'_> {
         Op::CallDirect { func, args } => (r.opcode, r.immediates[0], r.args) = (Opcode::CallDirect, func.0, args),
         Op::Coerce { value, to, why: asserted } => {
             let why = match asserted {
-                Why::Store => 0,
-                Why::Cast => 1,
-                Why::CastFresh => 1 | 1 << 8,
-                Why::NonNull(_) => 2,
-                Why::Claim => 3,
-                Why::ArgumentClaim(number) => 3 | 1 << 10 | u32::from(*number) << 11,
-                Why::Flow => 4,
-                Why::Upcast | Why::Forced => 5,
-                Why::Coerce => 6,
-                Why::CoerceFreshGraph => 6 | 2 << 8,
+                CoerceReason::Store => 0,
+                CoerceReason::Cast => 1,
+                CoerceReason::CastFresh => 1 | 1 << 8,
+                CoerceReason::NonNull(_) => 2,
+                CoerceReason::Claim => 3,
+                CoerceReason::ArgumentClaim(number) => 3 | 1 << 10 | u32::from(*number) << 11,
+                CoerceReason::Flow => 4,
+                CoerceReason::Upcast | CoerceReason::Forced => 5,
+                CoerceReason::Coerce => 6,
+                CoerceReason::CoerceFreshGraph => 6 | 2 << 8,
             };
-            // The type is that of the value, but for `Why::Coerce`.
-            let first = if let Why::NonNull(text) = asserted { text.0 } else { to.0 };
+            // The type is that of the value, but for `CoerceReason::Coerce`.
+            let first = if let CoerceReason::NonNull(text) = asserted { text.0 } else { to.0 };
             (r.opcode, r.children[0], r.immediates) = (Opcode::Cast, *value, [first, why]);
         }
         Op::Caught => r.opcode = Opcode::CatchValue,
@@ -257,19 +258,19 @@ pub fn record(def: &Def) -> Record<'_> {
 }
 
 /// The end of a block as the format has it: its kind, its value, its targets in order, and the cases of a switch.
-pub fn end_of(term: &Term) -> (u32, V, Vec<&Target>, Vec<i64>) {
+pub fn end_of(term: &Term) -> (u32, V, SmallVec<[&Target; 2]>, SmallVec<[i64; 1]>) {
     match term {
-        Term::Jump(t) => (0, V::NONE, vec![t], Vec::new()),
-        Term::Branch { cond, then, otherwise } => (1, *cond, vec![then, otherwise], Vec::new()),
+        Term::Jump(t) => (0, V::NONE, SmallVec::from_iter([t]), SmallVec::new()),
+        Term::Branch { cond, then, otherwise } => (1, *cond, SmallVec::from_buf([then, otherwise]), SmallVec::new()),
         Term::Switch { value, cases, default } => {
-            let mut targets: Vec<&Target> = cases.iter().map(|(_, t)| t).collect();
+            let mut targets: SmallVec<[&Target; 2]> = cases.iter().map(|(_, t)| t).collect();
             targets.push(default);
             (2, *value, targets, cases.iter().map(|(case, _)| *case).collect())
         }
-        Term::Return(v) => (3, *v, Vec::new(), Vec::new()),
-        Term::Throw { value, unwind, pos } => (4, *value, unwind.iter().collect(), if *pos == 0 { Vec::new() } else { vec![i64::from(*pos)] }),
-        Term::Invoke { normal, unwind } => (5, V::NONE, vec![normal, unwind], Vec::new()),
-        Term::Unreachable => (6, V::NONE, Vec::new(), Vec::new()),
+        Term::Return(v) => (3, *v, SmallVec::new(), SmallVec::new()),
+        Term::Throw { value, unwind, pos } => (4, *value, unwind.iter().collect(), if *pos == 0 { SmallVec::new() } else { SmallVec::from_buf([i64::from(*pos)]) }),
+        Term::Invoke { normal, unwind } => (5, V::NONE, SmallVec::from_buf([normal, unwind]), SmallVec::new()),
+        Term::Unreachable => (6, V::NONE, SmallVec::new(), SmallVec::new()),
     }
 }
 
@@ -289,7 +290,7 @@ fn write_uleb128(out: &mut Vec<u8>, mut value: u32) {
 ///   counting from line 0; how many such characters it has; and for each of those `gap << 2 | length - 2`. `gap`: the bytes between the
 ///   end of the one before it, or the start of the line, and this one. `length`: the bytes it takes, 2 to 4.
 pub fn line_table(text: &[u8], line_starts: &[u32]) -> Vec<u8> {
-    let mut table = Vec::new();
+    let mut table = Vec::with_capacity(line_starts.len() + 16);
     write_uleb128(&mut table, line_starts.len() as u32);
     for (start, next) in line_starts.iter().zip(line_starts.iter().skip(1)) {
         write_uleb128(&mut table, next - start);
@@ -350,13 +351,13 @@ struct Writer {
     webassembly_modules: Vec<u32>,
 }
 
-struct Room<'a>(&'a mut [MaybeUninit<u8>]);
+struct OutputSlice<'a>(&'a mut [MaybeUninit<u8>]);
 
-impl<'a> Room<'a> {
-    fn take(&mut self, bytes: usize) -> Room<'a> {
+impl<'a> OutputSlice<'a> {
+    fn take(&mut self, bytes: usize) -> OutputSlice<'a> {
         let (here, behind) = std::mem::take(&mut self.0).split_at_mut(bytes);
         self.0 = behind;
-        Room(here)
+        OutputSlice(here)
     }
 
     fn put<const N: usize>(&mut self, words: [u32; N]) {
@@ -367,18 +368,18 @@ impl<'a> Room<'a> {
 }
 
 struct FunctionWriter<'a> {
-    words: Room<'a>,
-    functions: Room<'a>,
-    blocks: Room<'a>,
-    values: Room<'a>,
-    targets: Room<'a>,
+    words: OutputSlice<'a>,
+    functions: OutputSlice<'a>,
+    blocks: OutputSlice<'a>,
+    values: OutputSlice<'a>,
+    targets: OutputSlice<'a>,
     next_word: u32,
     next_block: u32,
     next_value: u32,
     next_target: u32,
 }
 
-fn lengths_of(funcs: &[Func]) -> [u32; 4] {
+fn table_lengths(funcs: &[Func]) -> [u32; 4] {
     let (mut words, mut blocks, mut values, mut targets) = (0usize, 0usize, 0usize, 0usize);
     for func in funcs {
         words += func.params.len() + func.captures.len();
@@ -449,28 +450,31 @@ impl FunctionWriter<'_> {
         [start, self.next_word - start]
     }
 
-    fn functions(&mut self, funcs: &[Func], first: usize, accesses_of_one_row: &[(FuncId, V)], marked_values: &[Vec<V>], known_places: &[(FuncId, V, u32)]) {
+    fn functions(&mut self, funcs: &[Func], first: usize, single_structure_accesses: &[(FuncId, V)], flagged_values: &[Vec<V>], known_slots: &[(FuncId, V, u32)]) {
+        let (first_id, end_id) = (FuncId::new(first), FuncId::new(first + funcs.len()));
+        let known_slots = &known_slots[known_slots.partition_point(|access| access.0 < first_id)..known_slots.partition_point(|access| access.0 < end_id)];
+        let single_structure_accesses = &single_structure_accesses[single_structure_accesses.partition_point(|access| access.0 < first_id)..single_structure_accesses.partition_point(|access| access.0 < end_id)];
         let mut is_marked: Vec<bool> = Vec::new();
         for (index, func) in funcs.iter().enumerate() {
             let id = FuncId::new(first + index);
-            let mut placed = known_places[known_places.partition_point(|access| access.0 < id)..].iter().take_while(|access| access.0 == id).peekable();
-            let marked_values = &marked_values[first + index];
+            let mut placed = known_slots[known_slots.partition_point(|access| access.0 < id)..].iter().take_while(|access| access.0 == id).peekable();
+            let flagged_values = &flagged_values[first + index];
             is_marked.clear();
-            if !marked_values.is_empty() {
+            if !flagged_values.is_empty() {
                 is_marked.resize(func.values.len(), false);
             }
-            for v in marked_values {
+            for v in flagged_values {
                 if let Some(mark) = is_marked.get_mut(v.idx()) {
                     *mark = true;
                 }
             }
-            let mut labelled = accesses_of_one_row[accesses_of_one_row.partition_point(|access| access.0 < id)..].iter().take_while(|access| access.0 == id).peekable();
-            let parameters = self.list(func.params.iter().enumerate().map(|(i, t)| if t.is_some() && func.why_of_param(i) == Why::Cast { t.0 | PARAMETER_IS_ANNOTATED } else { t.0 }));
+            let mut labelled = single_structure_accesses[single_structure_accesses.partition_point(|access| access.0 < id)..].iter().take_while(|access| access.0 == id).peekable();
+            let parameters = self.list(func.params.iter().enumerate().map(|(i, t)| if t.is_some() && func.param_cast_reason(i) == CoerceReason::Cast { t.0 | PARAMETER_IS_ANNOTATED } else { t.0 }));
             let captures = self.list(func.captures.iter().map(|ty| ty.0));
             let (blocks, values) = (self.next_block, self.next_value);
             for (number, value) in func.values.iter().enumerate() {
                 let mut r = record(&value.def);
-                if value.finds_initialized() && matches!(r.opcode, Opcode::GetModuleVariable) {
+                if value.is_known_initialized() && matches!(r.opcode, Opcode::GetModuleVariable) {
                     r.immediates[1] = VARIABLE_IS_INITIALIZED;
                 }
                 if value.is_in_tail_position() && matches!(r.opcode, Opcode::Call | Opcode::CallMethod | Opcode::CallDirect | Opcode::Operation) {
@@ -502,7 +506,7 @@ impl FunctionWriter<'_> {
                     r.children[1].0,
                     r.children[2].0,
                     r.immediates[0],
-                    place.unwrap_or(if is_labeled { RECEIVER_IS_OF_ONE_ROW } else { r.immediates[1] }),
+                    place.unwrap_or(if is_labeled { RECEIVER_HAS_SINGLE_STRUCTURE } else { r.immediates[1] }),
                     arguments[0],
                     arguments[1],
                     value.ty.0,
@@ -531,7 +535,7 @@ impl FunctionWriter<'_> {
                 func.flags as u32,
                 captures[0],
                 captures[1],
-                func.this_declared.0,
+                func.declared_this_type.0,
                 parameters[0],
                 parameters[1],
                 blocks,
@@ -540,8 +544,8 @@ impl FunctionWriter<'_> {
                 func.values.len() as u32,
                 func.length as u32,
                 func.result.0,
-                func.place_of_text,
-                func.end_of_text,
+                func.source_start,
+                func.source_end,
             ]);
         }
         assert!([&self.words, &self.functions, &self.blocks, &self.values, &self.targets].iter().all(|room| room.0.is_empty()), "the functions take as much room as was counted");
@@ -549,7 +553,7 @@ impl FunctionWriter<'_> {
 }
 
 /// How many functions are written at a time. The number does not show in what is written.
-const FUNCTIONS_OF_A_SLICE: usize = 256;
+const FUNCTIONS_PER_SLICE: usize = 256;
 
 fn site_table(p: &Program, in_parallel: InParallel<'_>) -> Vec<u32> {
     const REASONS: [&str; 7] = ["As", "Store", "Claim", "Flow", "NonNull", "Coerce", "IteratorOpen"];
@@ -617,30 +621,30 @@ impl Slice<'_> {
 
 enum Piece<'a, 'f> {
     Functions(usize, &'a mut Slice<'f>, FunctionWriter<'a>),
-    Words(Room<'a>, &'a [u32]),
-    Bytes(Room<'a>, &'a [u8]),
-    Modules(Room<'a>, &'a [crate::ir::Module]),
+    Words(OutputSlice<'a>, &'a [u32]),
+    Bytes(OutputSlice<'a>, &'a [u8]),
+    Modules(OutputSlice<'a>, &'a [crate::ir::Module]),
 }
 
-fn copy_words<'a, 'f>(room: &mut Room<'a>, words: &'a [u32], pieces: &mut Vec<Piece<'a, 'f>>) {
-    const WORDS_OF_A_PIECE: usize = 1 << 18;
-    pieces.extend(words.chunks(WORDS_OF_A_PIECE).map(|piece| Piece::Words(room.take(4 * piece.len()), piece)));
+fn copy_words<'a, 'f>(room: &mut OutputSlice<'a>, words: &'a [u32], pieces: &mut Vec<Piece<'a, 'f>>) {
+    const WORDS_PER_PIECE: usize = 1 << 18;
+    pieces.extend(words.chunks(WORDS_PER_PIECE).map(|piece| Piece::Words(room.take(4 * piece.len()), piece)));
 }
 
 pub fn write(p: &Program, in_parallel: InParallel<'_>) -> Vec<u8> {
-    let table_of_sites = if p.logs_type_errors { site_table(p, in_parallel) } else { Vec::new() };
-    write_slices(p, p.funcs.len(), p.funcs.chunks(FUNCTIONS_OF_A_SLICE).map(Slice::Lent).collect(), table_of_sites, in_parallel)
+    let site_table_words = if p.logs_type_errors { site_table(p, in_parallel) } else { Vec::new() };
+    write_slices(p, p.funcs.len(), p.funcs.chunks(FUNCTIONS_PER_SLICE).map(Slice::Lent).collect(), site_table_words, in_parallel)
 }
 
 pub fn write_releasing(p: &mut Program, in_parallel: InParallel<'_>) -> Vec<u8> {
-    let table_of_sites = if p.logs_type_errors { site_table(p, in_parallel) } else { Vec::new() };
+    let site_table_words = if p.logs_type_errors { site_table(p, in_parallel) } else { Vec::new() };
     let mut funcs = std::mem::take(&mut p.funcs);
     let number = funcs.len();
-    let slices = funcs.chunks_mut(FUNCTIONS_OF_A_SLICE).map(Slice::Released).collect();
-    write_slices(p, number, slices, table_of_sites, in_parallel)
+    let slices = funcs.chunks_mut(FUNCTIONS_PER_SLICE).map(Slice::Released).collect();
+    write_slices(p, number, slices, site_table_words, in_parallel)
 }
 
-fn write_slices(p: &Program, number_of_funcs: usize, funcs: Vec<Slice<'_>>, table_of_sites: Vec<u32>, in_parallel: InParallel<'_>) -> Vec<u8> {
+fn write_slices(p: &Program, func_count: usize, funcs: Vec<Slice<'_>>, site_table_words: Vec<u32>, in_parallel: InParallel<'_>) -> Vec<u8> {
     let write_tables = || {
     let mut w = Writer::default();
     for i in 0..p.strs.len() {
@@ -673,13 +677,13 @@ fn write_slices(p: &Program, number_of_funcs: usize, funcs: Vec<Slice<'_>>, tabl
                 Literal::Str(text) => [0, text.0, 0],
                 Literal::Num(value) => [1, value.to_bits() as u32, (value.to_bits() >> 32) as u32],
             }));
-            w.fields.extend([field.name.0, field.declared.0, field.flags as u32, literals[0], literals[1], field.type_text.0, field.only_function.0, field.only_function_flags as u32]);
+            w.fields.extend([field.name.0, field.declared.0, field.flags as u32, literals[0], literals[1], field.type_text.0, field.single_function.0, field.single_function_flags as u32]);
         }
         for method in &layout.methods {
             w.methods.extend([method.name.0, method.func.0, method.kind as u32, method.flags as u32, method.key]);
         }
         let members = w.list(layout.members.iter().map(|member| member.0));
-        let members_by_fit = w.list(layout.members_by_fit.iter().map(|member| member.0));
+        let structural_subtypes = w.list(layout.structural_subtypes.iter().map(|member| member.0));
         let specializations = w.list(layout.specializations.iter().map(|specialization| specialization.0));
         let static_fields = w.list(layout.static_fields.iter().flat_map(|&(name, declared)| [name.0, declared.0]));
         w.shapes.extend([
@@ -691,11 +695,11 @@ fn write_slices(p: &Program, number_of_funcs: usize, funcs: Vec<Slice<'_>>, tabl
             methods,
             layout.methods.len() as u32,
             layout.constructor.0,
-            u32::from(layout.is_allocated) | u32::from(layout.may_be_frozen) << 1 | layout.class_flags | u32::from(layout.admits_foreign) << 7 | u32::from(layout.is_opened_for_the_log) << 11 | u32::from(layout.admits_only_other_layouts) << 12,
+            u32::from(layout.is_allocated) | u32::from(layout.may_be_frozen) << 1 | layout.class_flags | u32::from(layout.accepts_untyped) << 7 | u32::from(layout.is_relaxed_for_logging) << 11 | u32::from(layout.accepts_only_other_layouts) << 12,
             members[0],
             members[1],
-            members_by_fit[0],
-            members_by_fit[1],
+            structural_subtypes[0],
+            structural_subtypes[1],
             specializations[0],
             specializations[1],
             layout.environment.0,
@@ -706,7 +710,7 @@ fn write_slices(p: &Program, number_of_funcs: usize, funcs: Vec<Slice<'_>>, tabl
         ]);
     }
     for global in &p.globals {
-        w.variables.extend([global.name.0, global.module.0, global.declared.0, if global.initialization == crate::ir::Initialization::Lazy { crate::ir::Initialization::Undefined as u32 } else { global.initialization as u32 }, global.only_function.0, global.only_function_flags as u32]);
+        w.variables.extend([global.name.0, global.module.0, global.declared.0, if global.initialization == crate::ir::Initialization::Lazy { crate::ir::Initialization::Undefined as u32 } else { global.initialization as u32 }, global.single_function.0, global.single_function_flags as u32]);
     }
     let mut end = w.bytes.len();
     for module in &p.modules {
@@ -718,11 +722,11 @@ fn write_slices(p: &Program, number_of_funcs: usize, funcs: Vec<Slice<'_>>, tabl
     w
     };
     let mut slices: Vec<(Slice<'_>, [u32; 4])> = funcs.into_iter().map(|funcs| (funcs, [0; 4])).collect();
-    let none_is_marked: Vec<Vec<V>> = if p.marked_values.len() == number_of_funcs { Vec::new() } else { vec![Vec::new(); number_of_funcs] };
-    let marked_values = if p.marked_values.len() == number_of_funcs { &p.marked_values } else { &none_is_marked };
+    let no_flagged_values: Vec<Vec<V>> = if p.flagged_values.len() == func_count { Vec::new() } else { vec![Vec::new(); func_count] };
+    let flagged_values = if p.flagged_values.len() == func_count { &p.flagged_values } else { &no_flagged_values };
     let mut w = std::thread::scope(|scope| {
         let tables = scope.spawn(write_tables);
-        for_each_mut(&mut slices, in_parallel, &|(funcs, lengths)| *lengths = lengths_of(funcs.funcs()));
+        for_each_mut(&mut slices, in_parallel, &|(funcs, lengths)| *lengths = table_lengths(funcs.funcs()));
         tables.join().expect("the table writer thread panicked")
     });
     let mut before = [w.words.len() as u32, 0, 0, 0];
@@ -747,7 +751,7 @@ fn write_slices(p: &Program, number_of_funcs: usize, funcs: Vec<Slice<'_>>, tabl
     let functions_by_key = list(&mut p.functions_by_key.iter().flat_map(|&(property, key, func)| [property.0, key.0, func.0]));
     let entries = list(&mut p.entries.iter().map(|func| func.0));
     let regexp_literals = list(&mut p.regexp_literals.iter().flat_map(|&(pattern, flags)| [pattern.0, flags.0]));
-    let sites = list(&mut table_of_sites.into_iter());
+    let sites = list(&mut site_table_words.into_iter());
     let webassembly_modules = list(&mut webassembly_modules.into_iter());
 
     let bytes_of = |modules: &[crate::ir::Module]| modules.iter().map(|module| module.line_table.len() + module.printed.len()).sum::<usize>();
@@ -765,12 +769,12 @@ fn write_slices(p: &Program, number_of_funcs: usize, funcs: Vec<Slice<'_>>, tabl
         w.methods.len(),
         w.variables.len(),
         w.modules.len(),
-        number_of_funcs * SIZES[8] as usize,
+        func_count * SIZES[8] as usize,
         before[1] as usize * SIZES[9] as usize,
         before[2] as usize * SIZES[10] as usize,
         before[3] as usize * SIZES[11] as usize,
     ];
-    let mut header: Vec<u32> = vec![MAGIC, VERSION, 0, hash_of_opcode_names(), crate::builtins_generated::BUILTINS_HASH, if p.logs_type_errors { PROGRAM_LOGS_TYPE_ERRORS } else { 0 }];
+    let mut header: Vec<u32> = vec![MAGIC, VERSION, 0, opcode_names_hash(), crate::builtins_generated::BUILTINS_HASH, if p.logs_type_errors { PROGRAM_LOGS_TYPE_ERRORS } else { 0 }];
     let mut offset = HEADER_WORDS * 4;
     header.extend([offset as u32, number_of_bytes]);
     offset += number_of_bytes as usize + padding.len();
@@ -791,35 +795,37 @@ fn write_slices(p: &Program, number_of_funcs: usize, funcs: Vec<Slice<'_>>, tabl
     header[2] = offset as u32;
     debug_assert_eq!(header.len(), HEADER_WORDS);
     let mut out = Vec::with_capacity(offset);
-    let mut room = Room(&mut out.spare_capacity_mut()[..offset]);
+    let mut room = OutputSlice(&mut out.spare_capacity_mut()[..offset]);
     let mut copied: Vec<Piece<'_, '_>> = Vec::new();
     copy_words(&mut room, &header, &mut copied);
-    const MODULES_OF_A_PIECE: usize = 64;
-    copied.push(Piece::Bytes(room.take(w.bytes.len()), &w.bytes));
-    copied.extend(p.modules.chunks(MODULES_OF_A_PIECE).map(|modules| Piece::Modules(room.take(bytes_of(modules)), modules)));
+    const MODULES_PER_PIECE: usize = 64;
+    const BYTES_PER_PIECE: usize = 1 << 20;
+    copied.extend(w.bytes.chunks(BYTES_PER_PIECE).map(|piece| Piece::Bytes(room.take(piece.len()), piece)));
+    copied.extend(p.modules.chunks(MODULES_PER_PIECE).map(|modules| Piece::Modules(room.take(bytes_of(modules)), modules)));
     copied.push(Piece::Bytes(room.take(padding.len()), padding));
     copy_words(&mut room, &head, &mut copied);
-    let mut rooms: [Vec<Room<'_>>; 5] = Default::default();
-    rooms[0] = slices.iter().map(|slice| room.take(4 * slice.1[0] as usize)).collect();
+    let mut capacities: [Vec<OutputSlice<'_>>; 5] = Default::default();
+    capacities[0] = slices.iter().map(|slice| room.take(4 * slice.1[0] as usize)).collect();
     copy_words(&mut room, &w.words, &mut copied);
     for table in small_tables {
         copy_words(&mut room, table, &mut copied);
     }
-    rooms[1] = slices.iter().map(|slice| room.take(4 * SIZES[8] as usize * slice.0.funcs().len())).collect();
+    capacities[1] = slices.iter().map(|slice| room.take(4 * SIZES[8] as usize * slice.0.funcs().len())).collect();
     for table in 1..4 {
-        rooms[table + 1] = slices.iter().map(|slice| room.take(4 * SIZES[8 + table] as usize * slice.1[table] as usize)).collect();
+        capacities[table + 1] = slices.iter().map(|slice| room.take(4 * SIZES[8 + table] as usize * slice.1[table] as usize)).collect();
     }
     assert!(room.0.is_empty());
-    let [words, functions, blocks, values, targets] = rooms.map(Vec::into_iter);
+    let [words, functions, blocks, values, targets] = capacities.map(Vec::into_iter);
     let mut pieces: Vec<Piece<'_, '_>> = (slices.iter_mut().zip(starts).zip(words).zip(functions).zip(blocks).zip(values).zip(targets).enumerate())
         .map(|(number, (((((((funcs, _), [next_word, next_block, next_value, next_target]), words), functions), blocks), values), targets))| {
-            Piece::Functions(number * FUNCTIONS_OF_A_SLICE, funcs, FunctionWriter { words, functions, blocks, values, targets, next_word, next_block, next_value, next_target })
+            Piece::Functions(number * FUNCTIONS_PER_SLICE, funcs, FunctionWriter { words, functions, blocks, values, targets, next_word, next_block, next_value, next_target })
         })
         .collect();
-    pieces.append(&mut copied);
+    copied.append(&mut pieces);
+    let mut pieces = copied;
     for_each_mut(&mut pieces, in_parallel, &|piece| match piece {
         Piece::Functions(first, funcs, writer) => {
-            writer.functions(funcs.funcs(), *first, &p.accesses_of_one_row, marked_values, &p.known_places);
+            writer.functions(funcs.funcs(), *first, &p.single_structure_accesses, flagged_values, &p.known_slots);
             funcs.release();
         }
         Piece::Words(room, words) if cfg!(target_endian = "little") => {
@@ -847,7 +853,7 @@ mod tests {
     use super::line_table;
 
     #[test]
-    fn line_table_of_ascii() {
+    fn line_table_ascii() {
         assert_eq!(line_table(b"", &[0]), [1, 0]);
         assert_eq!(line_table(b"a\nbc\r\nd", &[0, 2, 6]), [3, 2, 4, 0]);
         let long = [&[b'x'; 199][..], b"\ny"].concat();
@@ -855,7 +861,7 @@ mod tests {
     }
 
     #[test]
-    fn line_table_lists_non_ascii() {
+    fn line_table_non_ascii() {
         // Line 1 starts with a character of two bytes, line 2 with one of four.
         assert_eq!(line_table("a\n\u{e9}=1\n\u{1f600}x".as_bytes(), &[0, 2, 7]), [3, 2, 5, 2, 1, 1, 0, 1, 1, 2]);
         // Two of three bytes, after two bytes and after one.

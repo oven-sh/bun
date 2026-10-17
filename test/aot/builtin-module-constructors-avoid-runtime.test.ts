@@ -1,0 +1,58 @@
+import { expect } from "bun:test";
+import { test } from "./supported";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+const files = {
+  "main.mjs": `
+    import { EventEmitter } from "node:events";
+    import { Duplex, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
+    const rounds = Number(process.argv[2]);
+    const makers = {
+      EventEmitter: () => new EventEmitter(),
+      Stream: () => new Stream(),
+      Readable: () => new Readable({ read() {} }),
+      Writable: () => new Writable({ write(chunk, encoding, callback) { callback(); } }),
+      Duplex: () => new Duplex({ read() {}, write(chunk, encoding, callback) { callback(); } }),
+      Transform: () => new Transform({ transform(chunk, encoding, callback) { callback(null, chunk); } }),
+      PassThrough: () => new PassThrough(),
+    };
+    let listeners = 0;
+    for (const name of Object.keys(makers)) {
+      const make = makers[name];
+      for (let round = 0; round < rounds; round++) listeners += make().listenerCount("data");
+    }
+    console.log(Object.keys(makers).join(), listeners);
+  `,
+};
+
+const operations = ["operationAOTPutByNameAndCache", "operationAOTGetByNameAndCache", "operationAOTPutByValAndCache", "operationAOTGetByValAndCache", "operationAOTPutById", "operationAOTGetById"];
+
+async function run(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
+  await using ran = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+test("making an EventEmitter or a stream stops asking the run time for its properties", async () => {
+  using dir = tempDir("aot-constructors-of-builtin-modules", files);
+  const executable = join(String(dir), "main" + (isWindows ? ".exe" : ""));
+  const built = await run([bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", executable], String(dir), bunEnv);
+  expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  const counted = async (rounds: number) => {
+    const path = join(String(dir), "counts" + rounds);
+    const env = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1", BUN_JSC_useAOTOperationCounters: "1", BUN_JSC_aotTypeCoverageCountsPath: path };
+    expect(await run([executable, String(rounds)], String(dir), env)).toEqual({ stdout: "EventEmitter,Stream,Readable,Writable,Duplex,Transform,PassThrough 0\n", stderr: "", exitCode: 0 });
+    const counts: Record<string, number> = Object.fromEntries(operations.map(name => [name, 0]));
+    for (const line of readFileSync(path + ".operations", "utf8").split("\n")) {
+      const [count, name] = line.split("\t");
+      if (name !== undefined && name in counts) counts[name] = Number(count);
+    }
+    return counts;
+  };
+  const few = await counted(500);
+  const many = await counted(2500);
+  const more = Object.fromEntries(operations.map(name => [name, many[name]! - few[name]! > 200 ? many[name]! - few[name]! : "level"]));
+  expect(more).toEqual(Object.fromEntries(operations.map(name => [name, "level"])));
+}, 240_000);

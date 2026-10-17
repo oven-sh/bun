@@ -1,22 +1,22 @@
 use crate::declared::{DeclaredTable, Part};
-use crate::fragment::{Ids, Used, for_each_id_of_func, for_each_id_of_global, for_each_id_of_layout};
+use crate::fragment::{Ids, Used, for_each_func_id, for_each_global_id, for_each_layout_id};
 use crate::id::{FuncId, GlobalId, LayoutId, ModuleId, StrId, TyId, V};
-use crate::ir::{Def, FuncKind, LayoutKind, Op, Operation, Prediction, Program, Strs, Why, field_flags, func_flags};
+use crate::ir::{Def, FuncKind, LayoutKind, Op, Operation, Prediction, Program, Strs, CoerceReason, field_flags, func_flags};
 use bun_sema::atom::PRIVATE_NAME_PREFIX;
 use bun_sema::util::{InParallel, for_each_mut};
 use rustc_hash::FxHashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-const FUNCTIONS_OF_A_SLICE: usize = 256;
+const FUNCTIONS_PER_SLICE: usize = 256;
 
-pub(crate) const MARK_OF_DEAD_ZONE: u8 = 0xfc;
-const MARK_OF_MEMBER: u8 = 1;
+pub(crate) const TDZ_MARKER: u8 = 0xfc;
+const MEMBER_MARKER: u8 = 1;
 
-pub(crate) fn message_of_dead_zone(name: &[u8]) -> Vec<u8> {
+pub(crate) fn tdz_error_message(name: &[u8]) -> Vec<u8> {
     [b"Cannot access '", name, b"' before initialization."].concat()
 }
 
-fn text_numbered(mut number: usize) -> Vec<u8> {
+fn token_for_index(mut number: usize) -> Vec<u8> {
     const FIRST: &[u8; 26] = b"abcdefghijklmnopqrstuvwxyz";
     const REST: &[u8; 62] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
     let (mut length, mut count) = (1, FIRST.len() * REST.len());
@@ -34,7 +34,7 @@ fn text_numbered(mut number: usize) -> Vec<u8> {
     text
 }
 
-fn has_four_letters_in_a_row(text: &[u8]) -> bool {
+fn has_four_letter_run(text: &[u8]) -> bool {
     let mut letters = 0;
     text.iter().any(|character| {
         letters = if character.is_ascii_alphabetic() { letters + 1 } else { 0 };
@@ -48,26 +48,71 @@ struct Tokens {
     said: Vec<(Vec<u8>, Vec<u8>)>,
 }
 
+#[derive(Default)]
+struct FreeTokens {
+    bytes: Vec<u8>,
+    lengths: Vec<u32>,
+    hashes: Vec<u64>,
+    numbers: Vec<usize>,
+}
+
+fn is_free_token(strs: &Strs, text: &[u8]) -> bool {
+    text[1..].iter().any(u8::is_ascii_uppercase) && !has_four_letter_run(text) && strs.find(text).is_none()
+}
+
 impl Tokens {
     fn take(&mut self, strs: &Strs, original: &[u8]) -> Vec<u8> {
         loop {
-            let text = text_numbered(self.next);
+            let text = token_for_index(self.next);
             self.next += 1;
-            if text[1..].iter().any(u8::is_ascii_uppercase) && !has_four_letters_in_a_row(&text) && strs.find(&text).is_none() {
+            if is_free_token(strs, &text) {
                 self.said.push((text.clone(), original.to_vec()));
                 return text;
             }
         }
     }
+
+    fn take_many(&mut self, strs: &Strs, count: usize, in_parallel: InParallel<'_>) -> FreeTokens {
+        const NUMBERS_PER_RUN: usize = 4096;
+        let mut taken = FreeTokens::default();
+        while taken.lengths.len() < count {
+            let first = self.next;
+            let mut runs: Vec<(usize, FreeTokens)> = (0..(2 * (count - taken.lengths.len())).div_ceil(NUMBERS_PER_RUN)).map(|run| (first + run * NUMBERS_PER_RUN, FreeTokens::default())).collect();
+            for_each_mut(&mut runs, in_parallel, &|(first, free)| {
+                for number in *first..*first + NUMBERS_PER_RUN {
+                    let text = token_for_index(number);
+                    if is_free_token(strs, &text) {
+                        free.bytes.extend_from_slice(&text);
+                        free.lengths.push(text.len() as u32);
+                        free.hashes.push(Strs::hash_of(&text));
+                        free.numbers.push(number);
+                    }
+                }
+            });
+            for (first, free) in runs {
+                let wanted = free.lengths.len().min(count - taken.lengths.len());
+                let bytes: usize = free.lengths[..wanted].iter().map(|&length| length as usize).sum();
+                taken.bytes.extend_from_slice(&free.bytes[..bytes]);
+                taken.lengths.extend_from_slice(&free.lengths[..wanted]);
+                taken.hashes.extend_from_slice(&free.hashes[..wanted]);
+                self.next = if wanted == free.lengths.len() { first + NUMBERS_PER_RUN } else { free.numbers[wanted - 1] + 1 };
+                if taken.lengths.len() == count {
+                    break;
+                }
+            }
+        }
+        taken
+    }
 }
 
 pub(crate) struct Said {
+    short_names: Vec<(StrId, StrId)>,
     tokens: Vec<(Vec<u8>, Vec<u8>)>,
-    types: Vec<SaidOfType>,
+    types: Vec<TypeNames>,
     strs: Strs,
 }
 
-struct SaidOfType {
+struct TypeNames {
     name: StrId,
     declared_at: Option<(StrId, u32)>,
     members: Vec<(StrId, StrId)>,
@@ -92,7 +137,8 @@ fn push_quoted(json: &mut String, text: &[u8]) {
 
 pub(crate) fn as_json(said: &Said) -> Vec<u8> {
     let mut json = String::from("{\n    \"positions\": \"original\",\n    \"tokens\": {");
-    for (number, (short, original)) in said.tokens.iter().enumerate() {
+    let short_names = said.short_names.iter().map(|&(short, original)| (said.strs.get(short), said.strs.get(original)));
+    for (number, (short, original)) in short_names.chain(said.tokens.iter().map(|(short, original)| (&short[..], &original[..]))).enumerate() {
         json.push_str(if number == 0 { "\n      " } else { ",\n      " });
         push_quoted(&mut json, short);
         json.push_str(": ");
@@ -135,52 +181,31 @@ impl<F: Fn(&mut StrId)> Ids for Strings<F> {
 
 fn for_each_string(program: &mut Program, changes_names: bool, in_parallel: InParallel<'_>, each: &(impl Fn(&mut StrId) + Sync)) {
     let mut funcs = std::mem::take(&mut program.funcs);
+    let mut tys = std::mem::take(&mut program.tys);
     std::thread::scope(|scope| {
-        scope.spawn(|| for_each_string_outside_functions(program, changes_names, each));
-        let mut slices: Vec<&mut [crate::ir::Func]> = funcs.chunks_mut(FUNCTIONS_OF_A_SLICE).collect();
+        scope.spawn(|| for_each_type_string(&mut tys, changes_names, each));
+        scope.spawn(|| for_each_table_string(program, each));
+        let mut slices: Vec<&mut [crate::ir::Func]> = funcs.chunks_mut(FUNCTIONS_PER_SLICE).collect();
         for_each_mut(&mut slices, in_parallel, &|funcs| {
             for func in funcs.iter_mut() {
-                for_each_id_of_func(func, &mut Strings(|id: &mut StrId| each(id)));
+                for_each_func_id(func, &mut Strings(|id: &mut StrId| each(id)));
             }
         });
     });
     program.funcs = funcs;
+    program.tys = tys;
 }
 
-fn for_each_string_outside_functions(program: &mut Program, changes_names: bool, each: &impl Fn(&mut StrId)) {
-    let Program {
-        strs: _,
-        tys,
-        layouts,
-        funcs: _,
-        globals,
-        modules,
-        extended_globals,
-        prototype_property_names,
-        regexp_literals,
-        webassembly_modules: _,
-        logs_type_errors: _,
-        marked_values: _,
-        builtin_modules: _,
-        builtin_functions: _,
-        functions_by_key,
-        accesses_of_one_row: _,
-        parameters_as_written: _,
-        may_be_handed_what_says_nothing: _,
-        known_places: _,
-        entries: _,
-    } = program;
-    let mut strings = Strings(|id: &mut StrId| each(id));
-    for layout in layouts {
-        for_each_id_of_layout(layout, &mut strings);
-    }
-    for global in globals {
-        for_each_id_of_global(global, &mut strings);
-    }
+fn for_each_non_function_string(program: &mut Program, changes_names: bool, each: &impl Fn(&mut StrId)) {
+    for_each_type_string(&mut program.tys, changes_names, each);
+    for_each_table_string(program, each);
+}
+
+fn for_each_type_string(tys: &mut DeclaredTable, changes_names: bool, each: &impl Fn(&mut StrId)) {
     let mut list = std::mem::take(&mut tys.list);
     for part in list.iter_mut().flat_map(|declared| &mut declared.parts) {
         if let Part::Global(name, _) = part {
-            strings.str(name);
+            each(name);
         }
     }
     if changes_names {
@@ -191,6 +216,38 @@ fn for_each_string_outside_functions(program: &mut Program, changes_names: bool,
         *tys = renumbered;
     } else {
         tys.list = list;
+    }
+}
+
+fn for_each_table_string(program: &mut Program, each: &impl Fn(&mut StrId)) {
+    let Program {
+        strs: _,
+        tys: _,
+        layouts,
+        funcs: _,
+        globals,
+        modules,
+        extended_globals,
+        prototype_property_names,
+        regexp_literals,
+        webassembly_modules: _,
+        logs_type_errors: _,
+        flagged_values: _,
+        builtin_modules: _,
+        builtin_functions: _,
+        functions_by_key,
+        single_structure_accesses: _,
+        declared_parameter_types: _,
+        may_receive_untyped_arguments: _,
+        known_slots: _,
+        entries: _,
+    } = program;
+    let mut strings = Strings(|id: &mut StrId| each(id));
+    for layout in layouts {
+        for_each_layout_id(layout, &mut strings);
+    }
+    for global in globals {
+        for_each_global_id(global, &mut strings);
     }
     for module in modules {
         for id in [&mut module.path, &mut module.display_path] {
@@ -239,50 +296,66 @@ fn find_private_names(strs: &mut Strs, tokens: &mut Tokens) -> PrivateNames {
     PrivateNames { short, whole }
 }
 
-pub(crate) fn shorten(program: &mut Program, in_parallel: InParallel<'_>) -> Said {
-    const OF_RUNTIME: u16 = func_flags::IS_BUILTIN | func_flags::IS_OF_BUILTIN_MODULE;
-    let messages: Vec<(StrId, StrId)> = (0..program.strs.len())
+const RUNTIME_FLAGS: u16 = func_flags::IS_BUILTIN | func_flags::IS_IN_BUILTIN_MODULE;
+
+fn keeps_name(func: &crate::ir::Func) -> bool {
+    func.flags & RUNTIME_FLAGS != 0 || func.kind == FuncKind::Method || func.module.is_none()
+}
+
+pub(crate) fn intern_tdz_names(strs: &mut Strs) -> Vec<(StrId, StrId)> {
+    (0..strs.len())
         .map(StrId::new)
-        .filter(|&id| program.strs.get(id).first() == Some(&MARK_OF_DEAD_ZONE))
+        .filter(|&id| strs.get(id).first() == Some(&TDZ_MARKER))
         .collect::<Vec<StrId>>()
         .into_iter()
         .map(|id| {
-            let name = program.strs.get(id)[1..].to_vec();
-            (id, program.strs.intern(&name))
+            let name = strs.get(id)[1..].to_vec();
+            (id, strs.intern(&name))
         })
-        .collect();
+        .collect()
+}
 
-    let mut is_module_of_runtime = vec![false; program.modules.len()];
-    for func in program.funcs.iter().filter(|func| func.flags & OF_RUNTIME != 0 && func.module.is_some()) {
-        is_module_of_runtime[func.module.idx()] = true;
+pub(crate) struct NameUses {
+    is_runtime_module: Vec<bool>,
+    is_runtime_layout: Vec<bool>,
+    is_name_used: Vec<bool>,
+    is_never_stored_member: Vec<bool>,
+    bearers: Vec<(u32, u64, StrId)>,
+    tokens: Tokens,
+    free: FreeTokens,
+}
+
+pub(crate) fn count_uses(program: &Program, messages: &[(StrId, StrId)], in_parallel: InParallel<'_>) -> NameUses {
+    let mut is_runtime_module = vec![false; program.modules.len()];
+    for func in program.funcs.iter().filter(|func| func.flags & RUNTIME_FLAGS != 0 && func.module.is_some()) {
+        is_runtime_module[func.module.idx()] = true;
     }
-    let mut is_path_of_runtime = vec![false; program.strs.len()];
-    for (module, _) in program.modules.iter().zip(&is_module_of_runtime).filter(|(_, is_of_runtime)| **is_of_runtime) {
+    let mut is_runtime_path = vec![false; program.strs.len()];
+    for (module, _) in program.modules.iter().zip(&is_runtime_module).filter(|(_, is_runtime)| **is_runtime) {
         for path in [module.path, module.display_path].into_iter().filter(|path| path.is_some()) {
-            is_path_of_runtime[path.idx()] = true;
+            is_runtime_path[path.idx()] = true;
         }
     }
-    let keeps_name = |func: &crate::ir::Func| func.flags & OF_RUNTIME != 0 || func.kind == FuncKind::Method || func.module.is_none();
-    let is_layout_of_runtime: Vec<bool> = (program.layouts.iter())
+    let is_runtime_layout: Vec<bool> = (program.layouts.iter())
         .map(|layout| {
-            (layout.constructor.is_some() && program.funcs[layout.constructor.idx()].flags & OF_RUNTIME != 0) || (layout.declared_path.is_some() && (is_path_of_runtime[layout.declared_path.idx()] || program.strs.get(layout.declared_path).starts_with(bun_builtin_syntax::VIRTUAL_ROOT)))
+            (layout.constructor.is_some() && program.funcs[layout.constructor.idx()].flags & RUNTIME_FLAGS != 0) || (layout.declared_path.is_some() && (is_runtime_path[layout.declared_path.idx()] || program.strs.get(layout.declared_path).starts_with(bun_builtin_syntax::VIRTUAL_ROOT)))
         })
         .collect();
 
-    let is_spelled: Vec<AtomicBool> = (0..program.strs.len()).map(|_| AtomicBool::new(false)).collect();
-    let times_borne: Vec<AtomicU32> = (0..program.strs.len()).map(|_| AtomicU32::new(0)).collect();
-    let mut is_member_nothing_stores = vec![false; program.strs.len()];
+    let is_name_used: Vec<AtomicBool> = (0..program.strs.len()).map(|_| AtomicBool::new(false)).collect();
+    let bearer_count: Vec<AtomicU32> = (0..program.strs.len()).map(|_| AtomicU32::new(0)).collect();
+    let mut is_never_stored_member = vec![false; program.strs.len()];
     let spell = |id: StrId| {
-        if id.is_some() && !is_spelled[id.idx()].load(Ordering::Relaxed) {
-            is_spelled[id.idx()].store(true, Ordering::Relaxed);
+        if id.is_some() && !is_name_used[id.idx()].load(Ordering::Relaxed) {
+            is_name_used[id.idx()].store(true, Ordering::Relaxed);
         }
     };
     let bear = |id: StrId| {
         if id.is_some() {
-            times_borne[id.idx()].fetch_add(1, Ordering::Relaxed);
+            bearer_count[id.idx()].fetch_add(1, Ordering::Relaxed);
         }
     };
-    let mut slices: Vec<&[crate::ir::Func]> = program.funcs.chunks(FUNCTIONS_OF_A_SLICE).collect();
+    let mut slices: Vec<&[crate::ir::Func]> = program.funcs.chunks(FUNCTIONS_PER_SLICE).collect();
     for_each_mut(&mut slices, in_parallel, &|funcs| {
       for func in funcs.iter() {
         if keeps_name(func) { spell(func.name) } else { bear(func.name) }
@@ -302,25 +375,25 @@ pub(crate) fn shorten(program: &mut Program, in_parallel: InParallel<'_>) -> Sai
                 | Op::CallMethod { name, .. }
                 | Op::NewWith { name, .. } => spell(name),
                 Op::FieldGet { layout, field, .. } | Op::FieldSet { layout, field, .. } if program.layouts[layout.idx()].kind != LayoutKind::Environment => spell(program.layouts[layout.idx()].fields[field as usize].name),
-                Op::Coerce { why: Why::NonNull(text), .. } => {
-                    if func.flags & OF_RUNTIME != 0 { spell(text) } else { bear(text) }
+                Op::Coerce { why: CoerceReason::NonNull(text), .. } => {
+                    if func.flags & RUNTIME_FLAGS != 0 { spell(text) } else { bear(text) }
                 }
                 _ => {}
             }
         }
       }
     });
-    for (layout, &is_of_runtime) in program.layouts.iter().zip(&is_layout_of_runtime) {
-        if is_of_runtime { spell(layout.name) } else { bear(layout.name) }
+    for (layout, &is_runtime) in program.layouts.iter().zip(&is_runtime_layout) {
+        if is_runtime { spell(layout.name) } else { bear(layout.name) }
         for field in &layout.fields {
             if layout.kind == LayoutKind::Environment {
                 bear(field.name);
-            } else if is_of_runtime || field.flags & field_flags::NEVER_STORED == 0 || field.name.is_none() {
+            } else if is_runtime || field.flags & field_flags::NEVER_STORED == 0 || field.name.is_none() {
                 spell(field.name);
             } else {
-                is_member_nothing_stores[field.name.idx()] = true;
+                is_never_stored_member[field.name.idx()] = true;
             }
-            if is_of_runtime {
+            if is_runtime {
                 spell(field.type_text);
             }
         }
@@ -332,7 +405,7 @@ pub(crate) fn shorten(program: &mut Program, in_parallel: InParallel<'_>) -> Sai
         }
     }
     for global in &program.globals {
-        if global.module.is_some() && is_module_of_runtime[global.module.idx()] { spell(global.name) } else { bear(global.name) }
+        if global.module.is_some() && is_runtime_module[global.module.idx()] { spell(global.name) } else { bear(global.name) }
     }
     for part in program.tys.list.iter().flat_map(|declared| &declared.parts) {
         if let Part::Global(name, _) = *part {
@@ -346,21 +419,21 @@ pub(crate) fn shorten(program: &mut Program, in_parallel: InParallel<'_>) -> Sai
         spell(property);
         spell(key);
     }
-    for &(_, name) in &messages {
+    for &(_, name) in messages {
         bear(name);
     }
-    for (module, _) in program.modules.iter().zip(&is_module_of_runtime).filter(|(_, is_of_runtime)| !**is_of_runtime) {
+    for (module, _) in program.modules.iter().zip(&is_runtime_module).filter(|(_, is_runtime)| !**is_runtime) {
         bear(module.path);
         bear(module.display_path);
     }
-    for (path, _) in is_path_of_runtime.iter().enumerate().filter(|(_, is_of_runtime)| **is_of_runtime) {
+    for (path, _) in is_runtime_path.iter().enumerate().filter(|(_, is_runtime)| **is_runtime) {
         spell(StrId::new(path));
     }
-    let is_spelled: Vec<bool> = is_spelled.into_iter().map(AtomicBool::into_inner).collect();
-    let times_borne: Vec<u32> = times_borne.into_iter().map(AtomicU32::into_inner).collect();
+    let is_name_used: Vec<bool> = is_name_used.into_iter().map(AtomicBool::into_inner).collect();
+    let bearer_count: Vec<u32> = bearer_count.into_iter().map(AtomicU32::into_inner).collect();
     let is_path: Vec<bool> = {
         let mut is_path = vec![false; program.strs.len()];
-        for path in program.modules.iter().flat_map(|module| [module.path, module.display_path]).filter(|path| path.is_some() && !is_path_of_runtime[path.idx()]) {
+        for path in program.modules.iter().flat_map(|module| [module.path, module.display_path]).filter(|path| path.is_some() && !is_runtime_path[path.idx()]) {
             is_path[path.idx()] = true;
         }
         is_path
@@ -372,18 +445,26 @@ pub(crate) fn shorten(program: &mut Program, in_parallel: InParallel<'_>) -> Sai
         first[..length].copy_from_slice(&text[..length]);
         u64::from_be_bytes(first)
     };
-    let mut borne: Vec<(u32, u64, StrId)> = (0..program.strs.len()).map(StrId::new).filter(|id| times_borne[id.idx()] != 0 && (!is_spelled[id.idx()] || is_path[id.idx()]) && !program.strs.get(*id).is_empty() && !program.strs.get(*id).starts_with(PRIVATE_NAME_PREFIX)).map(|id| (times_borne[id.idx()], first_bytes(id), id)).collect();
-    borne.sort_unstable_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)).then_with(|| program.strs.get(a.2).cmp(program.strs.get(b.2))));
-    let mut short = vec![StrId::NONE; program.strs.len()];
+    let mut bearers: Vec<(u32, u64, StrId)> = (0..program.strs.len()).map(StrId::new).filter(|id| bearer_count[id.idx()] != 0 && (!is_name_used[id.idx()] || is_path[id.idx()]) && !program.strs.get(*id).is_empty() && !program.strs.get(*id).starts_with(PRIVATE_NAME_PREFIX)).map(|id| (bearer_count[id.idx()], first_bytes(id), id)).collect();
+    bearers.sort_unstable_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)).then_with(|| program.strs.get(a.2).cmp(program.strs.get(b.2))));
     let mut tokens = Tokens::default();
-    for (_, _, original) in borne {
-        let text = tokens.take(&program.strs, &program.strs.get(original).to_vec());
-        short[original.idx()] = program.strs.intern(&text);
+    let free = tokens.take_many(&program.strs, bearers.len(), in_parallel);
+    NameUses { is_runtime_module, is_runtime_layout, is_name_used, is_never_stored_member, bearers, tokens, free }
+}
+
+pub(crate) fn shorten(program: &mut Program, messages: &[(StrId, StrId)], uses: NameUses, in_parallel: InParallel<'_>) -> Said {
+    let NameUses { is_runtime_module, is_runtime_layout, is_name_used, is_never_stored_member, bearers, mut tokens, free } = uses;
+    let mut short = vec![StrId::NONE; program.strs.len()];
+    let first_token = program.strs.len();
+    program.strs.add_all(&free.bytes, &free.lengths, &free.hashes);
+    let short_names: Vec<(StrId, StrId)> = bearers.iter().enumerate().map(|(place, &(_, _, original))| (StrId::new(first_token + place), original)).collect();
+    for &(token, original) in &short_names {
+        short[original.idx()] = token;
     }
     let mut short_members: FxHashMap<StrId, StrId> = FxHashMap::default();
-    let members: Vec<StrId> = (0..is_member_nothing_stores.len()).map(StrId::new).filter(|id| is_member_nothing_stores[id.idx()] && !is_spelled[id.idx()] && !program.strs.get(*id).starts_with(PRIVATE_NAME_PREFIX)).collect();
+    let members: Vec<StrId> = (0..is_never_stored_member.len()).map(StrId::new).filter(|id| is_never_stored_member[id.idx()] && !is_name_used[id.idx()] && !program.strs.get(*id).starts_with(PRIVATE_NAME_PREFIX)).collect();
     for (number, &original) in members.iter().enumerate() {
-        let text = [&[MARK_OF_MEMBER][..], &text_numbered(number)].concat();
+        let text = [&[MEMBER_MARKER][..], &token_for_index(number)].concat();
         short_members.insert(original, program.strs.intern(&text));
     }
     let short_of = |id: StrId| short.get(id.idx()).copied().filter(|short| short.is_some());
@@ -391,14 +472,14 @@ pub(crate) fn shorten(program: &mut Program, in_parallel: InParallel<'_>) -> Sai
 
     let final_messages: FxHashMap<StrId, StrId> = (messages.iter())
         .map(|&(message, name)| {
-            let text = message_of_dead_zone(&program.strs.get(shortened(name)).to_vec());
+            let text = tdz_error_message(&program.strs.get(shortened(name)).to_vec());
             (message, program.strs.intern(&text))
         })
         .collect();
     let private = find_private_names(&mut program.strs, &mut tokens);
-    let mut times_named_by_private_methods: FxHashMap<usize, u32> = FxHashMap::default();
+    let mut private_method_name_counts: FxHashMap<usize, u32> = FxHashMap::default();
     for method in program.layouts.iter().flat_map(|layout| &layout.methods).filter(|method| method.func.is_some() && private.whole.contains_key(&method.name)) {
-        *times_named_by_private_methods.entry(method.func.idx()).or_default() += 1;
+        *private_method_name_counts.entry(method.func.idx()).or_default() += 1;
     }
     let strs = std::mem::take(&mut program.strs);
     let mut funcs = std::mem::take(&mut program.funcs);
@@ -408,22 +489,22 @@ pub(crate) fn shorten(program: &mut Program, in_parallel: InParallel<'_>) -> Sai
             is_mentioned[id.idx()].store(true, Ordering::Relaxed);
         }
     };
-    let put_in_whole_private_name = |id: &mut StrId| {
+    let insert_private_name = |id: &mut StrId| {
         if let Some(&short) = private.whole.get(id) {
             *id = short;
         }
     };
-    let mut types: Vec<SaidOfType> = Vec::new();
+    let mut types: Vec<TypeNames> = Vec::new();
     let mut patterns = Vec::new();
     std::thread::scope(|scope| {
         scope.spawn(|| {
-            for (layout, &is_of_runtime) in program.layouts.iter_mut().zip(&is_layout_of_runtime) {
-                if is_of_runtime {
+            for (layout, &is_runtime) in program.layouts.iter_mut().zip(&is_runtime_layout) {
+                if is_runtime {
                     continue;
                 }
                 layout.name = shortened(layout.name);
                 if layout.declared_path.is_some() || layout.fields.iter().any(|field| field.type_text.is_some()) {
-                    types.push(SaidOfType {
+                    types.push(TypeNames {
                         name: layout.name,
                         declared_at: layout.declared_path.is_some().then_some((layout.declared_path, layout.declared_line)),
                         members: layout.fields.iter().filter(|field| field.type_text.is_some() && field.name.is_some()).map(|field| (field.name, field.type_text)).collect(),
@@ -441,24 +522,24 @@ pub(crate) fn shorten(program: &mut Program, in_parallel: InParallel<'_>) -> Sai
                 }
             }
             for global in &mut program.globals {
-                if !(global.module.is_some() && is_module_of_runtime[global.module.idx()]) {
+                if !(global.module.is_some() && is_runtime_module[global.module.idx()]) {
                     global.name = shortened(global.name);
                 }
             }
-            for (module, _) in program.modules.iter_mut().zip(&is_module_of_runtime).filter(|(_, is_of_runtime)| !**is_of_runtime) {
+            for (module, _) in program.modules.iter_mut().zip(&is_runtime_module).filter(|(_, is_runtime)| !**is_runtime) {
                 module.path = shortened(module.path);
                 module.display_path = shortened(module.display_path);
             }
             if !private.whole.is_empty() {
-                for_each_string_outside_functions(program, false, &put_in_whole_private_name);
+                for_each_non_function_string(program, false, &insert_private_name);
             }
             patterns = std::mem::take(&mut program.regexp_literals);
-            for_each_string_outside_functions(program, false, &mention);
+            for_each_non_function_string(program, false, &mention);
         });
-        let mut slices: Vec<(usize, &mut [crate::ir::Func])> = funcs.chunks_mut(FUNCTIONS_OF_A_SLICE).enumerate().collect();
+        let mut slices: Vec<(usize, &mut [crate::ir::Func])> = funcs.chunks_mut(FUNCTIONS_PER_SLICE).enumerate().collect();
         for_each_mut(&mut slices, in_parallel, &|(slice, funcs)| {
             for (place, func) in funcs.iter_mut().enumerate() {
-                let is_of_runtime = func.flags & OF_RUNTIME != 0;
+                let is_runtime = func.flags & RUNTIME_FLAGS != 0;
                 if !keeps_name(func) {
                     func.name = shortened(func.name);
                 }
@@ -469,12 +550,12 @@ pub(crate) fn shorten(program: &mut Program, in_parallel: InParallel<'_>) -> Sai
                                 *text = message;
                             }
                         }
-                        Def::Op(Op::Coerce { why: Why::NonNull(text), .. }) if !is_of_runtime => *text = shortened(*text),
+                        Def::Op(Op::Coerce { why: CoerceReason::NonNull(text), .. }) if !is_runtime => *text = shortened(*text),
                         _ => {}
                     }
                 }
                 if !private.whole.is_empty() {
-                    for _ in 0..times_named_by_private_methods.get(&(*slice * FUNCTIONS_OF_A_SLICE + place)).copied().unwrap_or(0) {
+                    for _ in 0..private_method_name_counts.get(&(*slice * FUNCTIONS_PER_SLICE + place)).copied().unwrap_or(0) {
                         if let Some(&token) = Some(func.name).filter(|name| name.is_some()).and_then(|name| private.short.get(strs.get(name))) {
                             func.name = token;
                         }
@@ -493,8 +574,8 @@ pub(crate) fn shorten(program: &mut Program, in_parallel: InParallel<'_>) -> Sai
                         }
                     }
                 }
-                for_each_id_of_func(func, &mut Strings(|id: &mut StrId| {
-                    put_in_whole_private_name(id);
+                for_each_func_id(func, &mut Strings(|id: &mut StrId| {
+                    insert_private_name(id);
                     mention(id);
                 }));
             }
@@ -503,30 +584,39 @@ pub(crate) fn shorten(program: &mut Program, in_parallel: InParallel<'_>) -> Sai
     program.funcs = funcs;
     let is_mentioned: Vec<bool> = is_mentioned.into_iter().map(AtomicBool::into_inner).collect();
     program.regexp_literals = patterns.into_iter().filter(|&(pattern, flags)| is_mentioned[pattern.idx()] && is_mentioned[flags.idx()]).collect();
-    let kept_ids = || (0..strs.len()).map(StrId::new).filter(|id| is_mentioned[id.idx()]);
-    let mut kept = Strs::with_room_for_bytes(kept_ids().count(), kept_ids().map(|id| strs.get(id).len()).sum());
+    let mut kept_ids: Vec<StrId> = Vec::with_capacity(is_mentioned.iter().filter(|is_mentioned| **is_mentioned).count());
     let mut numbers = vec![StrId::NONE; strs.len()];
     for original in (0..strs.len()).map(StrId::new) {
         for id in [Some(original), short_of(original)].into_iter().flatten() {
             if is_mentioned[id.idx()] && numbers[id.idx()].is_none() {
-                numbers[id.idx()] = kept.add(strs.hash(id), strs.get(id));
+                numbers[id.idx()] = StrId::new(kept_ids.len());
+                kept_ids.push(id);
             }
         }
     }
-    for_each_string(program, true, in_parallel, &|id| *id = numbers[id.idx()]);
-    program.strs = kept;
-    Said { tokens: tokens.said, types, strs }
+    program.strs = std::thread::scope(|scope| {
+        let kept = scope.spawn(|| {
+            let mut kept = Strs::with_capacities(kept_ids.len(), kept_ids.iter().map(|&id| strs.get(id).len()).sum());
+            for &id in &kept_ids {
+                kept.add(strs.hash(id), strs.get(id));
+            }
+            kept
+        });
+        for_each_string(program, true, in_parallel, &|id| *id = numbers[id.idx()]);
+        kept.join().expect("the thread that lays the strings that are kept panicked")
+    });
+    Said { short_names, tokens: tokens.said, types, strs }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Strs, Tokens, has_four_letters_in_a_row};
+    use super::{Strs, Tokens, has_four_letter_run};
 
     #[test]
-    fn no_token_has_four_letters_in_a_row() {
+    fn tokens_have_no_four_letter_run() {
         let (strs, mut tokens) = (Strs::default(), Tokens::default());
         let taken: Vec<Vec<u8>> = (0..200_000).map(|_| tokens.take(&strs, b"name")).collect();
-        assert!(taken.iter().all(|token| !has_four_letters_in_a_row(token)));
+        assert!(taken.iter().all(|token| !has_four_letter_run(token)));
         assert_eq!([2, 3, 4].map(|length| taken.iter().filter(|token| token.len() == length).count()), [676, 66_248, 133_076]);
     }
 }

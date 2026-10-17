@@ -86,7 +86,7 @@ impl<'a> Written<'a> {
 }
 
 /// The built-in object that `e` looks like: `Array`, `Array.prototype`, `globalThis.Array`, `(Intl as any)["Collator"]`.
-pub(crate) fn builtin_written_as<'a>(e: Expr<'a>, alias: Alias<'a>) -> Option<Written<'a>> {
+pub(crate) fn builtin_for_syntax<'a>(e: Expr<'a>, alias: Alias<'a>) -> Option<Written<'a>> {
     // Nearly always it is something else, which what it starts with tells.
     let mut start = e.skip_type_wrappers();
     while let Some(object) = start.object() {
@@ -121,8 +121,8 @@ fn object_from(first: &'static Builtin, e: Expr<'_>) -> Option<&'static Builtin>
 }
 
 /// The built-in object that `e` names.
-pub(crate) fn builtin_named_by<'a>(e: Expr<'a>, alias: Alias<'a>) -> Option<&'static Builtin> {
-    let written = builtin_written_as(e, alias).filter(|it| it.is_builtin());
+pub(crate) fn builtin_for_expr<'a>(e: Expr<'a>, alias: Alias<'a>) -> Option<&'static Builtin> {
+    let written = builtin_for_syntax(e, alias).filter(|it| it.is_builtin());
     written.map(|it| it.builtin)
 }
 
@@ -135,7 +135,7 @@ pub(crate) fn property_name(e: Expr<'_>) -> Option<Cow<'_, [u8]>> {
 }
 
 /// The same for a property of an object literal.
-pub(crate) fn written_key(property: Prop<'_>) -> Option<Cow<'_, [u8]>> {
+pub(crate) fn literal_key(property: Prop<'_>) -> Option<Cow<'_, [u8]>> {
     match property.key()?.kind() {
         KeyKind::Computed(key) => key_name(key),
         _ => ast_utils::get_static_property_name(property).filter(|it| !it.starts_with(b"@@")),

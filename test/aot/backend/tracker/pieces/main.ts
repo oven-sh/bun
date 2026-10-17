@@ -1,6 +1,7 @@
 // Parts of the tracker without a socket and without a database: what one request computes, over and over.
 //
 //   main.ts <page | json | thread | markdown | dates | escape> <issues.txt> <rounds>
+//   main.ts rows <issue id> <rounds>             uses the database ($DATABASE_URL): fetches that issue's comments, one query per round
 //
 // A round goes once through the twenty issues of issues.txt (export.sql makes it). The last line says how many bytes a round made,
 // which must be the same in main.go and main.rs.
@@ -110,6 +111,13 @@ const pieces: Record<string, (loaded: Loaded) => number> = {
 };
 
 const [name = "", file = "", rounds = "1"] = process.argv.slice(2);
+if (name === "rows") {
+  const { commentsOf } = await import("../app/queries/issues");
+  let rows = 0;
+  for (let round = Number(rounds); round > 0; round--) rows = (await commentsOf(Number(file))).length;
+  console.log(name, rows);
+  process.exit(0);
+}
 const piece = pieces[name];
 if (!piece) throw new Error(`There is no piece ${name}`);
 const loaded = load(await Bun.file(file).text());

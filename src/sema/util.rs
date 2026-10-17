@@ -248,7 +248,7 @@ impl<'a, T> IntoIterator for &'a List<'_, T> {
 }
 
 /// `in_parallel(count, work)` runs `work(i)` exactly once for every `i` below `count`, on the pool, and returns when all have returned.
-pub type InParallel<'a> = &'a dyn Fn(usize, &(dyn Fn(usize) + Sync));
+pub type InParallel<'a> = &'a (dyn Fn(usize, &(dyn Fn(usize) + Sync)) + Sync);
 
 /// Runs `work(&mut items[i])` for every item, on the pool. The first items are started first.
 pub fn for_each_mut<T: Send>(

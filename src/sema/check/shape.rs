@@ -327,6 +327,9 @@ enum BaseMembers {
     Inherited,
 }
 
+const FIRST_PARAM_PREFILTER_MIN_MEMBERS: usize = 16;
+const LINEAR_SEARCH_LIMIT: usize = 16;
+
 /// `partialMatch` of `compareSignaturesIdentical`: a target with no fewer required parameters than
 /// the source matches too.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -7454,7 +7457,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `noUncheckedIndexedAccess`: a value read through an index signature may be missing.
         let may_be_missing = how == Found::ByIndex
             && access == Access::Read
-            && self.may_miss_at_an_index(within);
+            && self.index_may_be_missing(within);
         let found = if may_be_missing {
             self.with_missing(found)
         } else {
@@ -7668,6 +7671,8 @@ impl<'p, 's> Checker<'p, 's> {
         // `prop != singleProp`, `propSet.Add(prop)`: a symbol that many members inherit is
         // considered once.
         let mut symbols: SmallVec<[(*const Prop<'p>, MapperId); 8]> = SmallVec::new();
+        let mut symbol_set: crate::util::FxHashSet<(*const Prop<'p>, MapperId)> = Default::default();
+        let mut prop_indices_by_hash: crate::util::FxHashMap<u64, SmallVec<[u32; 1]>> = Default::default();
         let mut merged_instantiations = false;
         let (mut flags, mut is_public, mut first_owner) =
             (PropFlags::empty(), false, containing_type);
@@ -7684,10 +7689,19 @@ impl<'p, 's> Checker<'p, 's> {
             let holder = self.apparent_type_or_type_variable(current, t);
             if let Some((prop, mapper)) = self.get_property_of_type_ex(holder, name, skips) {
                 let symbol = (std::ptr::from_ref(prop), mapper);
-                if symbols.contains(&symbol) {
-                    continue;
+                if symbols.len() < LINEAR_SEARCH_LIMIT {
+                    if symbols.contains(&symbol) {
+                        continue;
+                    }
+                    symbols.push(symbol);
+                } else {
+                    if symbol_set.is_empty() {
+                        symbol_set.extend(symbols.iter().copied());
+                    }
+                    if !symbol_set.insert(symbol) {
+                        continue;
+                    }
                 }
-                symbols.push(symbol);
                 let mut prop = prop.clone_in(self.arena);
                 self.instantiate_prop(&mut prop, mapper);
                 // `prop.Flags&SymbolFlagsClassMember`: a variable of a module or of `globalThis` is
@@ -7721,8 +7735,22 @@ impl<'p, 's> Checker<'p, 's> {
                             if (self.files().parent_of_symbol(symbol)).is_some_and(|parent| {
                                 !self.local_type_params_of_symbol(parent).is_empty()
                             }));
-                        } else if !prop_set.contains(&prop) {
-                            prop_set.push(prop);
+                        } else if prop_set.len() < LINEAR_SEARCH_LIMIT {
+                            if !prop_set.contains(&prop) {
+                                prop_set.push(prop);
+                            }
+                        } else {
+                            let hash_of = |prop: &Prop<'s>| std::hash::BuildHasher::hash_one(&crate::util::FxBuild::default(), prop);
+                            if prop_indices_by_hash.is_empty() {
+                                for (index, known) in prop_set.iter().enumerate() {
+                                    prop_indices_by_hash.entry(hash_of(known)).or_default().push(index as u32);
+                                }
+                            }
+                            let indices = prop_indices_by_hash.entry(hash_of(&prop)).or_default();
+                            if !indices.iter().any(|&index| prop_set[index as usize] == prop) {
+                                indices.push(prop_set.len() as u32);
+                                prop_set.push(prop);
+                            }
                         }
                     }
                 }
@@ -8195,6 +8223,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut index_with_overloads = 0;
         let mut count_with_overloads = 0;
         let mut lists_without_match: SmallVec<[usize; 4]> = SmallVec::new();
+        let mut first_param_mismatches: FxHashMap<TypeId, bool> = FxHashMap::default();
         for (i, list) in lists.iter().enumerate() {
             if list.len() > 1 {
                 index_with_overloads = i;
@@ -8211,7 +8240,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if earlier.is_some() {
                     continue;
                 }
-                let Some(matching) = self.find_matching_signatures(lists, sig, i, &mut lists_without_match) else {
+                let Some(matching) = self.find_matching_signatures(lists, sig, i, &mut lists_without_match, &mut first_param_mismatches) else {
                     continue;
                 };
                 if let [_] = matching[..] {
@@ -8286,6 +8315,7 @@ impl<'p, 's> Checker<'p, 's> {
         sig: SigId,
         list_index: usize,
         lists_without_match: &mut SmallVec<[usize; 4]>,
+        first_param_mismatches: &mut FxHashMap<TypeId, bool>,
     ) -> Option<Vec<SigId>> {
         if !self.sig_type_params(sig).is_empty() {
             // For a generic signature only an identical one matches, and it is taken from the first
@@ -8298,7 +8328,14 @@ impl<'p, 's> Checker<'p, 's> {
             }
             return Some(vec![sig]);
         }
-        if !lists_without_match.is_empty() && self.fuel.get() == u64::MAX && !self.are_compared_pairs_noted() {
+        if lists.len() >= FIRST_PARAM_PREFILTER_MIN_MEMBERS
+            && self.fuel.get() == u64::MAX
+            && !self.are_compared_pairs_recorded()
+            && self.first_param_mismatches_some_member(lists, sig, first_param_mismatches)
+        {
+            return None;
+        }
+        if !lists_without_match.is_empty() && self.fuel.get() == u64::MAX && !self.are_compared_pairs_recorded() {
             for &i in lists_without_match.iter() {
                 if i != list_index
                     && self.find_matching_signature(&lists[i], sig, PartialMatch::No, IgnoreReturnTypes::Yes).is_none()
@@ -8335,6 +8372,61 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         Some(result)
+    }
+
+    fn first_param_mismatches_some_member(
+        &mut self,
+        lists: &[Vec<SigId>],
+        sig: SigId,
+        cache: &mut FxHashMap<TypeId, bool>,
+    ) -> bool {
+        let List::Kept(params) = self.sig_params(sig) else {
+            return false;
+        };
+        if self.parameter_count(params) == 0 {
+            return false;
+        }
+        let Some(first) = self.param_type_at(params, 0) else {
+            return false;
+        };
+        if let Some(&cached) = cache.get(&first) {
+            return cached;
+        }
+        let mut compared: SmallVec<[(TypeId, bool); 4]> = SmallVec::new();
+        let mut found_mismatch = false;
+        for list in lists {
+            let mut can_match = list.is_empty();
+            for &other in list {
+                let List::Kept(other_params) = self.sig_params(other) else {
+                    can_match = true;
+                    break;
+                };
+                let Some(other_first) = self.param_type_at(other_params, 0) else {
+                    can_match = true;
+                    break;
+                };
+                let is_related = match compared.iter().find(|entry| entry.0 == other_first) {
+                    Some(entry) => entry.1,
+                    None => {
+                        let is_related = first == other_first
+                            || self.is_identical(first, other_first)
+                            || self.is_subtype(first, other_first);
+                        compared.push((other_first, is_related));
+                        is_related
+                    }
+                };
+                if is_related {
+                    can_match = true;
+                    break;
+                }
+            }
+            if !can_match {
+                found_mismatch = true;
+                break;
+            }
+        }
+        cache.insert(first, found_mismatch);
+        found_mismatch
     }
 
     /// `findMatchingSignature`

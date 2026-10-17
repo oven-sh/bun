@@ -1,8 +1,8 @@
 use crate::bun_aot::{
-    Alias, Builtin, Change, KnownValue, NameSet, Written, builtin_written_as, global_object,
-    is_global_object_name, key_name, property_name, root_names, shown, written_key,
+    Alias, Builtin, Change, KnownValue, NameSet, Written, builtin_for_syntax, global_object,
+    is_global_object_name, key_name, property_name, root_names, shown, literal_key,
 };
-use bun_lint::language::Twins;
+use bun_lint::language::RuleOverlaps;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::source::mention_bit;
@@ -37,7 +37,7 @@ const SET_PROTOTYPE: Message = Message::new(
     "This gives `{{object}}` another prototype, which {{fails}} under `--aot`: built-in objects are immutable there.",
 );
 
-/// What `--aot` does with a change that it refuses.
+/// What `--aot` does with a change that it rejects_change.
 #[derive(Copy, Clone)]
 enum Refusal {
     Throws,
@@ -69,7 +69,7 @@ impl<'a> Place<'_, 'a> {
         // It starts as what is written to does.
         let is_this = |object: Expr<'a>| {
             property_name(e).is_some_and(|it| *it == *self.name)
-                && builtin_written_as(object, self.alias)
+                && builtin_for_syntax(object, self.alias)
                     .is_some_and(|it| std::ptr::eq(it.builtin, self.builtin))
         };
         match e.as_ident() {
@@ -97,7 +97,7 @@ impl<'a> Place<'_, 'a> {
                     Node::VarDecl(it) if is_this && property.default().is_none() => it.init(),
                     _ => None,
                 };
-                (from.and_then(|it| builtin_written_as(it, self.alias)))
+                (from.and_then(|it| builtin_for_syntax(it, self.alias)))
                     .is_some_and(|it| std::ptr::eq(it.builtin, self.builtin))
             }
             _ => false,
@@ -136,7 +136,7 @@ impl<'a> Tests<'a> {
         let (builtin, name) = match e.as_ident() {
             Some(name) => (Some(global_object()), Some(name.bytes().into())),
             None => {
-                let object = e.object().and_then(|it| builtin_written_as(it, self.alias));
+                let object = e.object().and_then(|it| builtin_for_syntax(it, self.alias));
                 (object.map(|it| it.builtin), property_name(e))
             }
         };
@@ -145,7 +145,7 @@ impl<'a> Tests<'a> {
 
     /// `"at"` and `Array.prototype`
     fn has_key(self, key: Expr<'a>, object: Expr<'a>) -> bool {
-        (builtin_written_as(object, self.alias).zip(key_name(key)))
+        (builtin_for_syntax(object, self.alias).zip(key_name(key)))
             .is_some_and(|(object, name)| object.builtin.has(&name))
     }
 
@@ -198,10 +198,10 @@ impl<'a> Tests<'a> {
                 right,
             } => {
                 let found = |(object, name): (Written, Cow<[u8]>)| {
-                    let is_found = object.builtin.finds(&name);
+                    let is_found = object.builtin.has_property(&name);
                     (is_found || object.builtin.known_read_result(&name).is_some()).then_some(is_found)
                 };
-                (builtin_written_as(right, self.alias).zip(key_name(left))).and_then(found)
+                (builtin_for_syntax(right, self.alias).zip(key_name(left))).and_then(found)
                     == Some(answer)
             }
             ExprKind::Binary { op, left, right } => {
@@ -288,13 +288,13 @@ fn is_no_prototype(value: Expr) -> bool {
 }
 
 fn is_current_prototype<'a>(builtin: &Builtin, value: Expr<'a>, alias: Alias<'a>) -> bool {
-    builtin_written_as(value, alias).is_some_and(|it| it.builtin.name == builtin.inherits)
+    builtin_for_syntax(value, alias).is_some_and(|it| it.builtin.name == builtin.inherits)
 }
 
 /// The keys of an object literal, each with where it is. `None`: not all of them are to be seen.
 fn written_keys<'a>(e: Expr<'a>) -> Option<impl Iterator<Item = Prop<'a>>> {
     let properties = e.skip_type_wrappers().as_object()?;
-    let is_plain = |it: Prop| it.kind() != PropKind::Spread && written_key(it).is_some();
+    let is_plain = |it: Prop| it.kind() != PropKind::Spread && literal_key(it).is_some();
     properties.iter().all(is_plain).then(|| properties.iter())
 }
 
@@ -334,7 +334,7 @@ impl Write<'_> {
 }
 
 impl AotLockedBuiltinWrite {
-    /// Reports at `at` that `write` makes `change` to the property `name` of `builtin`, if `--aot` refuses that.
+    /// Reports at `at` that `write` makes `change` to the property `name` of `builtin`, if `--aot` rejects_change that.
     fn check_property<'a>(
         at: impl Spanned,
         write: &Write<'a>,
@@ -343,12 +343,12 @@ impl AotLockedBuiltinWrite {
         refusal: Refusal,
         cx: &mut Cx<'a, Self>,
     ) {
-        if !builtin.refuses(name, change) || !write.is_one() {
+        if !builtin.rejects_change(name, change) || !write.is_one() {
             return;
         }
         let message = match change {
             Change::Delete => DELETE,
-            _ if builtin.finds(name) => REPLACE,
+            _ if builtin.has_property(name) => REPLACE,
             _ => ADD,
         };
         cx.report(at, message)
@@ -382,7 +382,7 @@ impl AotLockedBuiltinWrite {
         let (change, op, value) = written_as;
         let target = target.skip_type_wrappers();
         let (written, name) = match target.object() {
-            Some(object) => match builtin_written_as(object, alias) {
+            Some(object) => match builtin_for_syntax(object, alias) {
                 Some(written) => (written, property_name(target)),
                 None => return,
             },
@@ -396,7 +396,7 @@ impl AotLockedBuiltinWrite {
                         .file()
                         .global(name.bytes())
                         .is_some_and(|it| !it.is_writable);
-                    if is_read_only && cx.state.twins.contains(Twins::NO_GLOBAL_ASSIGN) {
+                    if is_read_only && cx.state.twins.contains(RuleOverlaps::NO_GLOBAL_ASSIGN) {
                         return;
                     }
                     (Written::global_variable(target), Some(name.bytes().into()))
@@ -404,7 +404,7 @@ impl AotLockedBuiltinWrite {
                 _ => return,
             },
         };
-        if cx.state.twins.contains(Twins::NO_EXTEND_NATIVE)
+        if cx.state.twins.contains(RuleOverlaps::NO_EXTEND_NATIVE)
             && whole
                 .left()
                 .and_then(Expr::object)
@@ -422,13 +422,13 @@ impl AotLockedBuiltinWrite {
         );
         let Some(name) = name else {
             // Whatever the key is, a prototype does not take it.
-            if change == Change::Assign && !builtin.takes_new_properties {
+            if change == Change::Assign && !builtin.is_extensible {
                 Self::report_object(target, &write, (CHANGE, builtin), Refusal::Throws, cx);
             }
             return;
         };
         if *name == *b"__proto__" && change == Change::Assign {
-            if builtin.refuses_another_prototype()
+            if builtin.has_immutable_prototype()
                 && op.is_none()
                 && !value.is_some_and(|it| is_no_prototype(it) || is_current_prototype(builtin, it, alias))
             {
@@ -442,7 +442,7 @@ impl AotLockedBuiltinWrite {
             }
             return;
         }
-        if !builtin.refuses(&name, change) {
+        if !builtin.rejects_change(&name, change) {
             return;
         }
         // `a ||= b` stores nothing over what is there, `a &&= b` nothing where nothing is.
@@ -478,7 +478,7 @@ impl AotLockedBuiltinWrite {
         let (Some(holder), Some(called)) = (callee.object(), callee.member_name()) else {
             return;
         };
-        let Some(of) = builtin_written_as(holder, None) else {
+        let Some(of) = builtin_for_syntax(holder, None) else {
             return;
         };
         let refusal = match of.builtin.name {
@@ -489,10 +489,10 @@ impl AotLockedBuiltinWrite {
         let (Some(target), second) = (call.args().first(), call.args().get(1)) else {
             return;
         };
-        let Some(written) = builtin_written_as(target, alias) else {
+        let Some(written) = builtin_for_syntax(target, alias) else {
             return;
         };
-        if cx.state.twins.contains(Twins::NO_EXTEND_NATIVE)
+        if cx.state.twins.contains(RuleOverlaps::NO_EXTEND_NATIVE)
             && holder.is_ident("Object")
             && matches!(called.bytes(), b"defineProperty" | b"defineProperties")
             && is_prototype_for_eslint(target)
@@ -513,7 +513,7 @@ impl AotLockedBuiltinWrite {
             }
             None if second.is_some()
                 && change != Change::Delete
-                && !builtin.takes_new_properties =>
+                && !builtin.is_extensible =>
             {
                 Self::report_object(callee, &write, (CHANGE, builtin), refusal, cx);
             }
@@ -539,7 +539,7 @@ impl AotLockedBuiltinWrite {
             }
             b"deleteProperty" if !is_object => return one(Change::Delete, cx),
             b"setPrototypeOf"
-                if builtin.refuses_another_prototype()
+                if builtin.has_immutable_prototype()
                     && second.is_some_and(|it| !is_current_prototype(builtin, it, alias)) =>
             {
                 return Self::report_object(callee, &write, (SET_PROTOTYPE, builtin), refusal, cx);
@@ -550,14 +550,14 @@ impl AotLockedBuiltinWrite {
         };
         for source in call.args().iter().skip(1) {
             let Some(keys) = written_keys(source) else {
-                if !builtin.takes_new_properties {
+                if !builtin.is_extensible {
                     return Self::report_object(callee, &write, (CHANGE, builtin), refusal, cx);
                 }
                 continue;
             };
             if let Some(name) = keys
-                .filter_map(written_key)
-                .find(|it| builtin.refuses(it, change))
+                .filter_map(literal_key)
+                .find(|it| builtin.rejects_change(it, change))
             {
                 return Self::check_property(callee, &write, (builtin, &name), change, refusal, cx);
             }
@@ -590,7 +590,7 @@ impl AotLockedBuiltinWrite {
 
 pub struct State<'a> {
     /// The rules of ESLint that are on and report some of the same places. There this rule says nothing.
-    twins: Twins,
+    twins: RuleOverlaps,
     prototype: Option<Name<'a>>,
     /// The `P` of `const P = Array.prototype;`, by what is written.
     aliases: SmallVec<[(VarDecl<'a>, Name<'a>, Written<'a>); 4]>,
@@ -700,7 +700,7 @@ impl Rule for AotLockedBuiltinWrite {
         let mentioned = self.root_names.iter().filter(|it| file.mentions_bit(it.0));
         let root_names: NameSet = mentioned.filter_map(|it| file.find_name(it.1)).collect();
         (!root_names.is_empty()).then(|| State {
-            twins: file.twins_on(),
+            twins: file.active_rule_overlaps(),
             prototype: file.find_name("prototype"),
             aliases: SmallVec::new(),
             root_names,
@@ -746,7 +746,7 @@ impl Rule for AotLockedBuiltinWrite {
         if cx.state.prototype.is_some()
             && init.member_name().map(Ident::name) == cx.state.prototype
             && let Some(name) = declaration.pat().as_ident()
-            && let Some(written) = builtin_written_as(init, None)
+            && let Some(written) = builtin_for_syntax(init, None)
         {
             cx.state.aliases.push((declaration, name, written));
         }

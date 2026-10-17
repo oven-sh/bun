@@ -666,15 +666,15 @@ pub const ERASE_LINE: &[u8] = "\r\u{1b}[2K".as_bytes();
 
 /// Whether any diagnostic is about a global or module that `@types/bun` declares.
 fn is_missing_bun_types(report: &Report) -> bool {
-    report.lacks_members_of_bun || report.diagnostics.iter().any(is_about_bun_types)
+    report.is_missing_bun_members || report.diagnostics.iter().any(is_about_bun_types)
 }
 
-pub fn note_on_bun_types(report: &Report) -> Option<(usize, &'static [u8])> {
+pub fn bun_types_hint(report: &Report) -> Option<(usize, &'static [u8])> {
     let mut names = report.not_installed.iter().flat_map(|it| &it.names);
     if names.any(|name| name == b"@types/bun") {
         return None;
     }
-    let last = report.diagnostics.iter().rposition(is_about_bun_types).or_else(|| report.diagnostics.len().checked_sub(1).filter(|_| report.lacks_members_of_bun))?;
+    let last = report.diagnostics.iter().rposition(is_about_bun_types).or_else(|| report.diagnostics.len().checked_sub(1).filter(|_| report.is_missing_bun_members))?;
     let note: &'static [u8] = if report.has_bun_types_installed {
         b"Bun's type definitions (console, fetch, Bun, bun:test) are installed, but tsconfig.json does not include them. Add to compilerOptions: \"types\": [\"bun\"]"
     } else {

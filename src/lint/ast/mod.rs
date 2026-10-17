@@ -224,8 +224,8 @@ pub struct File<'a> {
     pub(crate) inferred_from: Cell<Option<&'a dyn crate::linter::globals::InferredGlobals>>,
     pub(crate) inferred_globals: OnceCell<Option<crate::linter::globals::ProgramGlobals<'a>>>,
     is_later_script: Cell<bool>,
-    /// [`File::twins_on`]
-    pub(crate) twins_on: Cell<crate::language::Twins>,
+    /// [`File::active_rule_overlaps`]
+    pub(crate) active_rule_overlaps: Cell<crate::language::RuleOverlaps>,
     language: &'a LanguageOptions,
     body: hir::IdList<hir::StmtId>,
     path: &'a [u8],
@@ -255,7 +255,7 @@ impl<'a> File<'a> {
         debug_assert!(hir.import_attributes.is_sorted_by_key(|it| it.0));
         File {
             language,
-            twins_on: Cell::new(language.twins_on),
+            active_rule_overlaps: Cell::new(language.active_rule_overlaps),
             body: hir.body,
             kind: hir.kind,
             is_js: hir.is_js,
@@ -354,10 +354,10 @@ impl<'a> File<'a> {
         self.language
     }
 
-    /// [`LanguageOptions::twins_on`], for the rules that run on this file: comments in it and `--quiet` change which do.
+    /// [`LanguageOptions::active_rule_overlaps`], for the rules that run on this file: comments in it and `--quiet` change which do.
     #[inline]
-    pub fn twins_on(&self) -> crate::language::Twins {
-        self.twins_on.get()
+    pub fn active_rule_overlaps(&self) -> crate::language::RuleOverlaps {
+        self.active_rule_overlaps.get()
     }
 
     /// ESLint's `context.settings`.

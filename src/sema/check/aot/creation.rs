@@ -26,7 +26,7 @@ use crate::util::{FxHashMap, FxHashSet};
 use std::hash::Hash;
 use std::rc::Rc;
 
-/// What has been noted of creation points. `T`: what a type is called by. The types are `laid_out_as`.
+/// What has been noted of creation points. `T`: what a type is called by. The types are `layout_defining_type`.
 pub(crate) struct Creations<T = TypeId> {
     /// By layout, and whether it is the constructor that stands in: the number of creation points.
     points: FxHashMap<(T, bool), u32>,
@@ -68,9 +68,9 @@ impl<T: Copy + Eq + Hash> Creations<T> {
 }
 
 impl Creations<TypeId> {
-    /// In no order: `CreationsByView::apply` sorts.
-    pub(super) fn by_view(&self, index_of: &FxHashMap<TypeId, u32>) -> CreationsByView {
-        CreationsByView {
+    /// In no order: `IndexedCreations::apply` sorts.
+    pub(super) fn by_layout_index(&self, index_of: &FxHashMap<TypeId, u32>) -> IndexedCreations {
+        IndexedCreations {
             points: self.points.iter().filter_map(|(&(layout, by_constructor), &count)| Some((*index_of.get(&layout)?, by_constructor, count))).collect(),
             set: self.set.iter().filter_map(|(&(layout, by_constructor, name), &count)| Some((*index_of.get(&layout)?, by_constructor, name, count))).collect(),
         }
@@ -78,23 +78,23 @@ impl Creations<TypeId> {
 }
 
 /// `Creations`, with the index of a view in the place of its type.
-pub(crate) struct CreationsByView {
+pub(crate) struct IndexedCreations {
     points: Vec<(u32, bool, u32)>,
     set: Vec<(u32, bool, Atom, u32)>,
 }
 
-impl CreationsByView {
+impl IndexedCreations {
     /// `views`: a row for each view. A type that is frozen and no view is numbered after them. It has no layout, so nothing is kept of it.
     pub(super) fn apply(self, views: &mut [Reach]) {
-        let number_of_views = views.len() as u32;
+        let layout_count = views.len() as u32;
         let mut points = vec![[0u32; 2]; views.len()];
-        for (view, by_constructor, count) in self.points.into_iter().filter(|of| of.0 < number_of_views) {
+        for (view, by_constructor, count) in self.points.into_iter().filter(|of| of.0 < layout_count) {
             points[view as usize][usize::from(by_constructor)] = count;
         }
-        for (view, by_constructor, name, on_every_path) in self.set.into_iter().filter(|of| of.0 < number_of_views) {
-            let of_view = points[view as usize];
-            if by_constructor == (of_view[0] == 0) {
-                views[view as usize].set_at_creation.push((name, on_every_path == of_view[usize::from(by_constructor)]));
+        for (view, by_constructor, name, on_every_path) in self.set.into_iter().filter(|of| of.0 < layout_count) {
+            let layout_entry = points[view as usize];
+            if by_constructor == (layout_entry[0] == 0) {
+                views[view as usize].set_at_creation.push((name, on_every_path == layout_entry[usize::from(by_constructor)]));
             }
         }
         for reach in views.iter_mut() {
@@ -106,7 +106,7 @@ impl CreationsByView {
 /// An object since its allocation.
 #[derive(Clone, Default)]
 struct Fresh {
-    /// `laid_out_as` of the static types it has had.
+    /// `layout_defining_type` of the static types it has had.
     types: Vec<TypeId>,
     /// The fields that are set on every path, and those that are set on some path only.
     always: Vec<Atom>,
@@ -185,7 +185,7 @@ pub(super) struct State {
     /// By function: what it returns, if it is a factory.
     returned: FxHashMap<(FileId, FnId), Option<Rc<Fresh>>>,
     /// By constructor or constructor function: what it does to `this`.
-    stored_to_this: FxHashMap<(FileId, FnId), Rc<Fresh>>,
+    constructor_effects: FxHashMap<(FileId, FnId), Rc<Fresh>>,
     /// By class: what `new` does to the object, with the field initializers and the classes it extends.
     constructed: FxHashMap<(FileId, ClassId), Rc<Fresh>>,
     functions_in_progress: Vec<(FileId, FnId)>,
@@ -207,8 +207,8 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Notes the creation points and the allocation sites in the body of the function, nested functions aside. `NONE`: in the top level
     /// of the file.
-    pub fn note_creations_in(&mut self, file: FileId, func: FnId) {
-        let notes = self.creation_notes_of(file);
+    pub fn record_creations_in(&mut self, file: FileId, func: FnId) {
+        let notes = self.creation_notes_for(file);
         let from = notes.partition_point(|note| note.0.0 < func.0);
         for (_, note) in notes[from..].iter().take_while(|note| note.0 == func) {
             self.add_creation_note(note);
@@ -216,9 +216,9 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Notes what the constructor of the class does, declared or not, for a layout without creation points.
-    pub fn note_construction_of(&mut self, file: FileId, class: ClassId) {
-        let mut fresh = (*self.constructed_by_class(file, class)).clone();
-        let instances = self.type_of_instances(file, class);
+    pub fn record_construction_of(&mut self, file: FileId, class: ClassId) {
+        let mut fresh = (*self.fresh_from_class_constructor(file, class)).clone();
+        let instances = self.class_instance_type(file, class);
         fresh.types.push(instances);
         let mut notes = Vec::new();
         add_points(&fresh, true, FnId::NONE, &mut notes);
@@ -228,7 +228,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn add_creation_note(&mut self, point: &Point) {
-        let noted = self.noted_creations();
+        let noted = self.recorded_creations();
         *noted.points.entry((point.ty, point.by_constructor)).or_default() += 1;
         for &name in &point.always {
             *noted.set.entry((point.ty, point.by_constructor, name)).or_default() += 1;
@@ -238,24 +238,24 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    fn creation_notes_of(&mut self, file: FileId) -> Rc<Vec<(FnId, Point)>> {
+    fn creation_notes_for(&mut self, file: FileId) -> Rc<Vec<(FnId, Point)>> {
         if let Some(known) = self.aot.creation.notes.get(&file) {
             return known.clone();
         }
-        let mut notes = self.find_creation_notes_of(file);
+        let mut notes = self.find_creation_notes_for(file);
         notes.sort_by_key(|note| note.0.0);
         let notes = Rc::new(notes);
         self.aot.creation.notes.insert(file, notes.clone());
         notes
     }
 
-    fn find_creation_notes_of(&mut self, file: FileId) -> Vec<(FnId, Point)> {
+    fn find_creation_notes_for(&mut self, file: FileId) -> Vec<(FnId, Point)> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut notes = Vec::new();
         if self.is_untyped_file(file) || matches!(hir.kind, FileKind::Declaration | FileKind::Json) {
             return notes;
         }
-        let index = self.exprs_by_kind_of(file);
+        let index = self.file_exprs_by_kind(file);
         // The allocations and factory calls that are followed from somewhere else.
         let mut followed: FxHashSet<ExprId> = FxHashSet::default();
         for (func, f) in hir.fns.iter().enumerate() {
@@ -318,8 +318,8 @@ impl<'p, 's> Checker<'p, 's> {
                     // It is followed with the literal, with the object of the class.
                     Parent::Prop(prop) => hir[prop].kind == PropKind::Init && bound.prop_owner[prop.idx()].is_some() && matches!(hir[bound.prop_owner[prop.idx()]].kind, ExprKind::Object(_)),
                     Parent::MemberInit(_) => true,
-                    Parent::FnBody(_) => func.is_some() && self.returned_by(file, func).is_some(),
-                    Parent::Stmt(stmt) => stmt.is_some() && matches!(hir[stmt].kind, StmtKind::Return(_)) && func.is_some() && self.returned_by(file, func).is_some(),
+                    Parent::FnBody(_) => func.is_some() && self.factory_result(file, func).is_some(),
+                    Parent::Stmt(stmt) => stmt.is_some() && matches!(hir[stmt].kind, StmtKind::Return(_)) && func.is_some() && self.factory_result(file, func).is_some(),
                     _ => false,
                 };
                 if !goes_on && let Some(fresh) = self.fresh_from(file, outer) {
@@ -332,13 +332,13 @@ impl<'p, 's> Checker<'p, 's> {
 
     // ───────────────────────────── fresh expressions ─────────────────────────────
 
-    /// `laid_out_as` of the type, if it says which properties its objects have.
+    /// `layout_defining_type` of the type, if it says which properties its objects have.
     pub(super) fn layout_type_of(&mut self, ty: TypeId) -> Option<TypeId> {
         let ty = self.non_nullable(ty);
-        if self.says_nothing(ty) || self.is_union(ty) || !self.says_properties(ty) {
+        if self.is_uninformative(ty) || self.is_union(ty) || !self.declares_properties(ty) {
             return None;
         }
-        Some(self.laid_out_as(ty))
+        Some(self.layout_defining_type(ty))
     }
 
     fn add_static_type(&mut self, fresh: &mut Fresh, ty: TypeId) {
@@ -379,11 +379,11 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 fresh
             }
-            ExprKind::New(_) => self.constructed_by(file, e),
+            ExprKind::New(_) => self.fresh_from_new(file, e),
             ExprKind::Call(call) if hir[call].chain == Chain::No => {
                 let sig = self.resolved_signature(file, e).sig?;
                 let (of, func, _) = self.sig_decl(sig)?;
-                (*self.returned_by(of, func)?).clone()
+                (*self.factory_result(of, func)?).clone()
             }
             _ => return None,
         };
@@ -393,13 +393,13 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// What `new` has done to the object when the expression `e` yields it.
-    fn constructed_by(&mut self, file: FileId, e: ExprId) -> Fresh {
+    fn fresh_from_new(&mut self, file: FileId, e: ExprId) -> Fresh {
         let made = self.type_of_expr(file, e);
         let made = self.non_nullable(made);
-        if let Some((of, class)) = self.class_of_type(made, false) {
-            return (*self.constructed_by_class(of, class)).clone();
+        if let Some((of, class)) = self.class_for_type(made, false) {
+            return (*self.fresh_from_class_constructor(of, class)).clone();
         }
-        if self.says_nothing(made) {
+        if self.is_uninformative(made) {
             return Fresh::default();
         }
         // Which function is called is not known. It declares a `this` that the object is of.
@@ -408,7 +408,7 @@ impl<'p, 's> Checker<'p, 's> {
             if !self.may_construct((of, func), made) {
                 continue;
             }
-            let stored = (*self.stored_to_this_by(of, func)).clone();
+            let stored = (*self.constructor_effects_of(of, func)).clone();
             found = Some(match found {
                 Some(so_far) => so_far.either(stored),
                 None => stored,
@@ -417,7 +417,7 @@ impl<'p, 's> Checker<'p, 's> {
         found.unwrap_or_default()
     }
 
-    fn constructed_by_class(&mut self, file: FileId, class: ClassId) -> Rc<Fresh> {
+    fn fresh_from_class_constructor(&mut self, file: FileId, class: ClassId) -> Rc<Fresh> {
         if let Some(known) = self.aot.creation.constructed.get(&(file, class)) {
             return known.clone();
         }
@@ -430,8 +430,8 @@ impl<'p, 's> Checker<'p, 's> {
         let mut fresh = Fresh::default();
         if hir[class].extends.is_some() {
             let extended = self.type_of_expr(file, hir[class].extends);
-            if let Some((of, extended)) = self.class_of_type(extended, true) {
-                fresh = (*self.constructed_by_class(of, extended)).clone();
+            if let Some((of, extended)) = self.class_for_type(extended, true) {
+                fresh = (*self.fresh_from_class_constructor(of, extended)).clone();
             }
         }
         for m in hir[class].members.iter() {
@@ -446,7 +446,7 @@ impl<'p, 's> Checker<'p, 's> {
                 fresh.parts.push((name, part));
             }
         }
-        if let Some(constructor) = self.constructor_of_class(file, class) {
+        if let Some(constructor) = self.class_constructor(file, class) {
             for p in hir[constructor].params.iter() {
                 if hir[p].flags.contains(Flags::PARAMETER_PROPERTY)
                     && let PatKind::Ident(name) = hir[hir[p].pat].kind
@@ -454,7 +454,7 @@ impl<'p, 's> Checker<'p, 's> {
                     fresh.set(name, true);
                 }
             }
-            let stored = self.stored_to_this_by(file, constructor);
+            let stored = self.constructor_effects_of(file, constructor);
             fresh.extend(&stored);
         }
         self.aot.creation.classes_in_progress.pop();
@@ -464,8 +464,8 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// What the body of a constructor or a constructor function does to `this`.
-    fn stored_to_this_by(&mut self, file: FileId, func: FnId) -> Rc<Fresh> {
-        if let Some(known) = self.aot.creation.stored_to_this.get(&(file, func)) {
+    fn constructor_effects_of(&mut self, file: FileId, func: FnId) -> Rc<Fresh> {
+        if let Some(known) = self.aot.creation.constructor_effects.get(&(file, func)) {
             return known.clone();
         }
         if self.aot.creation.functions_in_progress.contains(&(file, func)) {
@@ -480,14 +480,14 @@ impl<'p, 's> Checker<'p, 's> {
         }
         self.aot.creation.functions_in_progress.pop();
         let fresh = Rc::new(fresh);
-        self.aot.creation.stored_to_this.insert((file, func), fresh.clone());
+        self.aot.creation.constructor_effects.insert((file, func), fresh.clone());
         fresh
     }
 
     // ───────────────────────────── factories ─────────────────────────────
 
     /// What a call of the function yields, if it is a factory. A function that returns what it yields itself is none.
-    fn returned_by(&mut self, file: FileId, func: FnId) -> Option<Rc<Fresh>> {
+    fn factory_result(&mut self, file: FileId, func: FnId) -> Option<Rc<Fresh>> {
         if let Some(known) = self.aot.creation.returned.get(&(file, func)) {
             return known.clone();
         }
@@ -495,14 +495,14 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         self.aot.creation.functions_in_progress.push((file, func));
-        let found = self.find_returned_by(file, func).map(Rc::new);
+        let found = self.find_fresh_returned_by(file, func).map(Rc::new);
         self.aot.creation.functions_in_progress.pop();
         self.aot.creation.returned.insert((file, func), found.clone());
         found
     }
 
     /// The values of the `return`s. `NONE` for one without a value.
-    pub(super) fn values_returned_by(&self, file: FileId, func: FnId) -> Vec<ExprId> {
+    pub(super) fn returned_values(&self, file: FileId, func: FnId) -> Vec<ExprId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         match hir[func].body {
             FnBody::None => Vec::new(),
@@ -516,13 +516,13 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    fn find_returned_by(&mut self, file: FileId, func: FnId) -> Option<Fresh> {
+    fn find_fresh_returned_by(&mut self, file: FileId, func: FnId) -> Option<Fresh> {
         let hir = self.hir(file);
         if self.is_untyped_file(file) || hir.kind == FileKind::Declaration || hir[func].flags.intersects(Flags::ASYNC | Flags::GENERATOR) {
             return None;
         }
         let mut found: Option<Fresh> = None;
-        for value in self.values_returned_by(file, func) {
+        for value in self.returned_values(file, func) {
             if value.is_none() {
                 return None;
             }
@@ -562,11 +562,11 @@ impl<'p, 's> Checker<'p, 's> {
     /// Whether the function is a factory and the local is what one of its `return`s yields: the object is followed in the callers.
     fn is_returned_by_factory(&mut self, file: FileId, func: FnId, symbol: SymbolId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let is_returned = self.values_returned_by(file, func).into_iter().any(|value| {
+        let is_returned = self.returned_values(file, func).into_iter().any(|value| {
             let value = if value.is_some() { unwrapped(hir, value) } else { value };
             value.is_some() && matches!(hir[value].kind, ExprKind::Ident(_)) && bound.expr_symbol[value.idx()] == symbol
         });
-        is_returned && self.returned_by(file, func).is_some()
+        is_returned && self.factory_result(file, func).is_some()
     }
 
     // ───────────────────────────── following an object ─────────────────────────────
@@ -677,9 +677,9 @@ impl<'p, 's> Checker<'p, 's> {
                 followed.insert(unwrapped(hir, value));
                 fresh.parts.push((name, part));
             }
-        } else if let ExprKind::Dot { obj: holder, name: held_in, chain: Chain::No, .. } = hir[obj].kind
+        } else if let ExprKind::Dot { obj: holder, name: find_stored_values, chain: Chain::No, .. } = hir[obj].kind
             && self.is_root(file, unwrapped(hir, holder), root)
-            && let Some(part) = fresh.parts.iter_mut().find(|part| part.0 == held_in)
+            && let Some(part) = fresh.parts.iter_mut().find(|part| part.0 == find_stored_values)
         {
             part.1.set(name, is_on_every_path);
         }

@@ -110,7 +110,7 @@ function sort(logs: { of: string; text: string }[], which: keyof typeof kinds) {
         key.push(`${head.replace("Previous ", "").toLowerCase()}: ${frames[0]?.slice(0, 90)}${first > 0 ? " <- " + frames[first].slice(0, 120) : ""}`);
       }
       key.sort();
-      if (key.length === 2 && key[0].startsWith("atomic write of size 4") && key[1].startsWith("read of size 4") && key.every(side => /findLongestThatMayRepeat|FastBitVector|compare_exchange/.test(side)))
+      if (key.length === 2 && key[0].startsWith("atomic write of size 4") && key[1].startsWith("read of size 4") && key.every(side => /findLongestRepeatCandidates|FastBitVector|compare_exchange/.test(side)))
         excuse = "FastBitVector::atomicSetAndCheck reads the word plainly ahead of its compare-and-swap";
       excuse ??= isOurs ? undefined : "no frame of ours is the first behind the plumbing";
       if (excuse) {

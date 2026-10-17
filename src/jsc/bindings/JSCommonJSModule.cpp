@@ -1765,7 +1765,7 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
             sourceURL));
 }
 
-JSC::JSSourceCode* sourceOfLoadedCommonJSModule(Zig::GlobalObject* globalObject, const WTF::String& key, bool ignoreESModuleAnnotation)
+JSC::JSSourceCode* loadedCommonJSModuleSource(Zig::GlobalObject* globalObject, const WTF::String& key, bool ignoreESModuleAnnotation)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1833,7 +1833,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL, graph);
 }
 
-JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString, JSModuleGraph* graph, JSCommonJSModule* askingModule)
+JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString, JSModuleGraph* graph, JSCommonJSModule* requestingModule)
 {
     ASSERT(!pathString.startsWith("file://"_s));
 
@@ -1850,7 +1850,7 @@ JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* l
         dirname = jsEmptyString(vm);
     }
 
-    auto moduleObject = askingModule ? askingModule : Bun::JSCommonJSModule::create(vm, globalObject->CommonJSModuleObjectStructure(), filename, filename, dirname, SourceCode(), graph);
+    auto moduleObject = requestingModule ? requestingModule : Bun::JSCommonJSModule::create(vm, globalObject->CommonJSModuleObjectStructure(), filename, filename, dirname, SourceCode(), graph);
 
     SourceCode requireSourceCode = makeSource("require"_s, SourceOrigin(), SourceTaintedOrigin::Untainted);
 

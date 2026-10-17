@@ -24,7 +24,7 @@ pub struct AuditedValidation {
 
 #[derive(Default)]
 pub struct AuditedFile {
-    pub hash_of_text: u64,
+    pub source_hash: u64,
     pub expressions: Vec<AuditedExpression>,
     pub parameters: Vec<AuditedParameter>,
     pub validations: Vec<AuditedValidation>,
@@ -85,16 +85,16 @@ pub fn current() -> Option<&'static AuditedFile> {
     CURRENT.with(Cell::get)
 }
 
-type SourceOfTables = fn(&[u8], &[u8]) -> Option<&'static AuditedFile>;
+type TableSource = fn(&[u8], &[u8]) -> Option<&'static AuditedFile>;
 
-static SOURCE_OF_TABLES: std::sync::OnceLock<SourceOfTables> = std::sync::OnceLock::new();
+static TABLE_SOURCE: std::sync::OnceLock<TableSource> = std::sync::OnceLock::new();
 
-pub fn set_source_of_tables(source: SourceOfTables) {
-    let _ = SOURCE_OF_TABLES.set(source);
+pub fn set_table_source(source: TableSource) {
+    let _ = TABLE_SOURCE.set(source);
 }
 
 pub fn is_on() -> bool {
-    SOURCE_OF_TABLES.get().is_some()
+    TABLE_SOURCE.get().is_some()
 }
 
 static KEEPS_DIRECTIVES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -108,13 +108,13 @@ pub fn keeps_directives() -> bool {
 }
 
 pub fn table_for(path: &[u8], text: &[u8]) -> Option<&'static AuditedFile> {
-    let file = SOURCE_OF_TABLES.get()?(path, text);
+    let file = TABLE_SOURCE.get()?(path, text);
     set_current(file);
     file
 }
 
 pub struct Finished {
-    pub length_of_what_is_written: usize,
+    pub written_len: usize,
     pub expressions: Vec<[u32; 6]>,
     pub parameters: Vec<[u32; 6]>,
 }
@@ -131,11 +131,11 @@ pub fn finish(written: &[u8]) -> Option<Box<Finished>> {
     FINISH.get()?(written)
 }
 
-pub fn note_printed_expression(start: u32, end: u32, id: u32) {
+pub fn record_printed_expression(start: u32, end: u32, id: u32) {
     PRINTED.with(|printed| printed.borrow_mut().expressions.push([start, end, id]));
 }
 
-pub fn note_printed_parameter(function: u32, index: u32, id: u32) {
+pub fn record_printed_parameter(function: u32, index: u32, id: u32) {
     PRINTED.with(|printed| printed.borrow_mut().parameters.push([function, index, id]));
 }
 

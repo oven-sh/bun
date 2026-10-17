@@ -1,6 +1,0 @@
-{
- "builtins-kept-in-variables": "all agree",
- "equality-any": "all agree",
- "equality-untyped": "all agree",
- "legacy-regexp-properties": "all agree"
-}

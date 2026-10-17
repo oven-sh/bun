@@ -97,7 +97,7 @@ def identifier(name):
     number = name * 571 % 2048 if name < 2048 else name
     return I.get(number, '#%d' % number)
 def fold(s):
-    s = re.sub(r' of \d+$', ' of N', s); s = re.sub(r' with arguments$', '', s); s = re.sub(r'WithReceiverInR\w+', '', s); s = re.sub(r'KeepingTwo|BelowNumberOfColumns', '', s)
+    s = re.sub(r' of \d+$', ' of N', s); s = re.sub(r' with arguments$', '', s); s = re.sub(r'WithReceiverInR\w+', '', s); s = re.sub(r'PreservingTwo|WithDirectColumn', '', s)
     return s
 doors = {}
 for l in open(prefix + '.doors', errors='replace'):

@@ -2185,7 +2185,7 @@ fn transpile_source_code_of_any_provenance(
         unsafe { ((*extra).loader, (*extra).module_type) };
 
     // SAFETY: per fn contract: `extra` is live for the call (see above).
-    let function_texts = unsafe { (*extra).function_texts };
+    let function_sources = unsafe { (*extra).function_sources };
     let disable_transpilying = args.flags.disable_transpiling();
     let specifier = args.specifier;
     let referrer = args.referrer;
@@ -2622,7 +2622,7 @@ fn transpile_source_code_of_any_provenance(
                     allow_bytecode_cache: true,
                     set_breakpoint_on_first_line,
                     runtime_transpiler_cache: if !disable_transpilying
-                        && function_texts.is_null()
+                        && function_sources.is_null()
                         && !crate::cli::aot_audit::is_on()
                         && !<RuntimeTranspilerCache as bun_bundler::RuntimeTranspilerCacheExt>::disabled()
                     {
@@ -2733,7 +2733,7 @@ fn transpile_source_code_of_any_provenance(
 
                 // Set before the early returns below (cache hit, `// @bun`, async queue):
                 // every later module load is gated on this flag.
-                if is_main && !disable_transpilying && function_texts.is_null() {
+                if is_main && !disable_transpilying && function_sources.is_null() {
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                     unsafe { (*jsc_vm).has_loaded = true };
                 }
@@ -3103,16 +3103,16 @@ fn transpile_source_code_of_any_provenance(
                 // `writer: &mut BufferPrinter` live inside `print_ast`. After
                 // this block returns, the `printer` binding is rederived from
                 // the raw pointer below — any earlier Unique tag is dead.
-                if !function_texts.is_null() {
+                if !function_sources.is_null() {
                     // SAFETY: per fn contract: `jsc_vm` and `extra.source_code_printer` are live.
-                    // `function_texts` is not null here, and whoever set it keeps the list until
+                    // `function_sources` is not null here, and whoever set it keeps the list until
                     // the call returns.
                     unsafe {
-                        (*jsc_vm).transpiler.print_noting_function_texts(
+                        (*jsc_vm).transpiler.print_recording_function_sources(
                             &arena_guard.1,
                             parse_result,
                             &mut *(*extra).source_code_printer,
-                            &mut *function_texts,
+                            &mut *function_sources,
                         )
                     }?;
                 } else {
@@ -4054,7 +4054,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
             None => return Err(crate::Error::BlobNotFound),
         }
     } else if virtual_source.is_none()
-        && let Some(file) = bun_standalone_graph::Graph::get_ref().and_then(|graph| graph.find_text_of_module(path.text))
+        && let Some(file) = bun_standalone_graph::Graph::get_ref().and_then(|graph| graph.find_module_source(path.text))
         && !bun_sys::exists(path.text)
     {
         // What an executable that runs in place holds for this path is the module's text, where the disk has no such file: a JSON
@@ -4458,7 +4458,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
         } else {
             ptr::null_mut()
         },
-        function_texts: ptr::null_mut(),
+        function_sources: ptr::null_mut(),
     };
     let args = TranspileArgs {
         specifier: lr.specifier,
@@ -4519,17 +4519,17 @@ fn transpile_error_value(
     }
 }
 
-type PrintedFunctionTexts = (Box<[u8]>, Vec<bun_js_printer::FunctionText>);
+type PrintedFunctionSources = (Box<[u8]>, Vec<bun_js_printer::FunctionSource>);
 
 thread_local! {
-    static FUNCTION_TEXTS_BY_PATH: core::cell::RefCell<bun_sema_driver::FxHashMap<Box<[u8]>, Option<PrintedFunctionTexts>>> =
+    static FUNCTION_SOURCES_BY_PATH: core::cell::RefCell<bun_sema_driver::FxHashMap<Box<[u8]>, Option<PrintedFunctionSources>>> =
         Default::default();
 }
 
-fn print_noting_function_texts(
+fn print_recording_function_sources(
     global: &JSGlobalObject,
     specifier_str: &bun_core::String,
-) -> JsResult<Option<PrintedFunctionTexts>> {
+) -> JsResult<Option<PrintedFunctionSources>> {
     let jsc_vm: *mut VirtualMachine = global.bun_vm_ptr();
     let specifier = specifier_str.to_utf8();
     let mut log = bun_ast::Log::init();
@@ -4570,7 +4570,7 @@ fn print_noting_function_texts(
         }
         p
     });
-    let mut function_texts = Vec::new();
+    let mut function_sources = Vec::new();
     let mut extra = TranspileExtra {
         // SAFETY: `TranspileExtra::path` is typed `'static`; the borrow lives only for the call
         // below. Same erasure as in `Bun__transpileFile`.
@@ -4579,7 +4579,7 @@ fn print_noting_function_texts(
         module_type,
         source_code_printer: printer_ptr,
         promise_ptr: ptr::null_mut(),
-        function_texts: &raw mut function_texts,
+        function_sources: &raw mut function_sources,
     };
     let args = TranspileArgs {
         specifier: lr.specifier,
@@ -4601,26 +4601,26 @@ fn print_noting_function_texts(
         Err(_) => return Ok(None),
     };
     let printed: Box<[u8]> = resolved.source_code.byte_slice().into();
-    bun_js_printer::finish_function_texts(&printed, &mut function_texts);
-    Ok(Some((printed, function_texts)))
+    bun_js_printer::finish_function_sources(&printed, &mut function_sources);
+    Ok(Some((printed, function_sources)))
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__AOT__textOfFunctionInFile(
+pub(crate) extern "C" fn Bun__AOT__functionSourceInFile(
     global: &JSGlobalObject,
     path: &bun_core::String,
     place: u32,
     text: &mut bun_core::String,
 ) -> bool {
     let key = path.to_utf8();
-    let is_known = FUNCTION_TEXTS_BY_PATH.with_borrow(|known| known.contains_key(key.slice()));
+    let is_known = FUNCTION_SOURCES_BY_PATH.with_borrow(|known| known.contains_key(key.slice()));
     if !is_known {
-        let Ok(printed) = print_noting_function_texts(global, path) else {
+        let Ok(printed) = print_recording_function_sources(global, path) else {
             return false;
         };
-        FUNCTION_TEXTS_BY_PATH.with_borrow_mut(|known| known.insert(key.slice().into(), printed));
+        FUNCTION_SOURCES_BY_PATH.with_borrow_mut(|known| known.insert(key.slice().into(), printed));
     }
-    FUNCTION_TEXTS_BY_PATH.with_borrow(|known| {
+    FUNCTION_SOURCES_BY_PATH.with_borrow(|known| {
         let Some(Some((printed, texts))) = known.get(key.slice()) else {
             return false;
         };
@@ -4711,7 +4711,7 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
         module_type: ModuleType::Unknown,
         source_code_printer: printer_ptr,
         promise_ptr: ptr::null_mut(), // null forbids async resolution
-        function_texts: ptr::null_mut(),
+        function_sources: ptr::null_mut(),
     };
     let args = TranspileArgs {
         specifier,
@@ -4863,7 +4863,7 @@ fn write_out_beside_its_libraries(addon_path: &[u8]) -> Option<Vec<u8>> {
 
     let graph = bun_standalone_graph::Graph::get_ref()?;
     let addon = graph.find_ref(addon_path)?.contents.as_bytes();
-    let mut files: Vec<(&[u8], &[u8])> = graph.held_shared_libraries().collect();
+    let mut files: Vec<(&[u8], &[u8])> = graph.preserved_shared_libraries().collect();
     if files.is_empty() {
         return None;
     }

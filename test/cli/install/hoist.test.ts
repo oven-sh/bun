@@ -2261,11 +2261,15 @@ describe.concurrent("a folder that no bun.lock placed stays", () => {
   });
 
   // The registry's metadata does not say that `ships` bundles `dep`, so bun.lock places `dep` at the root alone.
-  test("below a package that bundles it: bun prune", async () => {
+  test.each([
+    ["", {}],
+    // The root's other@2.0.0 is at the top, so bun.lock has the key "ships/other".
+    [", next to a copy that bun.lock places there", { other: "2.0.0" }],
+  ])("below a package that bundles it%s: bun prune", async (_, more) => {
     const own = JSON.stringify({ name: "dep", version: "1.0.0", from: "the tarball" });
-    const dependencies = { dep: "^1.0.0" };
+    const dependencies = { dep: "^1.0.0", other: "^1.0.0" };
     using server = await serveGraph(
-      { dep: { "1.0.0": {} }, ships: { "1.0.0": { dependencies } } },
+      { dep: { "1.0.0": {} }, other: { "1.0.0": {}, "2.0.0": {} }, ships: { "1.0.0": { dependencies } } },
       {
         "ships-1.0.0": {
           "package.json": JSON.stringify({
@@ -2280,7 +2284,7 @@ describe.concurrent("a folder that no bun.lock placed stays", () => {
     );
     using tmp = tempDir("hoist-own-folder-prune", {
       "bunfig.toml": bunfig(server),
-      "package.json": JSON.stringify({ name: "root", dependencies: { ships: "1.0.0" } }),
+      "package.json": JSON.stringify({ name: "root", dependencies: { ships: "1.0.0", ...more } }),
     });
     const dir = String(tmp);
     await run(dir, "install");

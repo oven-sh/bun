@@ -1233,10 +1233,27 @@ fn plan_hoisted(
         None => Vec::new(),
     };
 
+    // Not every bun.lock says which dependencies are bundled. The package's own package.json does.
+    let bundles = |package: &Dir| {
+        crate::initialize_store();
+        crate::git_runner::bundles_dependencies(package)
+    };
+    // The parent tree and the folder name of each such package that has a tree of its own. A tree
+    // comes after its parent.
+    let mut bundlers: Vec<(tree::Id, &[u8])> = Vec::new();
+
     let mut visited = handle_oom(DynamicBitSet::init_empty(pkg_res.len()));
     for tree_idx in 0..hoisted.folders.len() {
         let folder_path = hoisted.path(tree_idx);
         if folder_path.is_empty() {
+            continue;
+        }
+        if tree_idx != 0
+            && bundlers.contains(&(
+                trees[tree_idx].parent,
+                trees[tree_idx].folder_name(deps, buf),
+            ))
+        {
             continue;
         }
         let importer = tree_importer.get(tree_idx).copied().unwrap_or(0);
@@ -1265,22 +1282,24 @@ fn plan_hoisted(
 
         for &(alias, pkg_id) in expected {
             if (pkg_id as usize) >= pkg_res.len()
-                || nested_trees.binary_search(&(tree_id, alias)).is_ok()
+                || !extracted(pkg_res[pkg_id as usize].tag)
+                || has_bundled_deps(lockfile, pkg_id)
             {
-                continue;
-            }
-            if !extracted(pkg_res[pkg_id as usize].tag) || has_bundled_deps(lockfile, pkg_id) {
                 continue;
             }
             let Some(package) = descend(&dir, alias) else {
                 continue;
             };
+            if nested_trees.binary_search(&(tree_id, alias)).is_ok() {
+                if bundles(&package) {
+                    bundlers.push((tree_id, alias));
+                }
+                continue;
+            }
             let Some(nested) = open_real_subdir(&package, b"node_modules") else {
                 continue;
             };
-            // Not every bun.lock says which dependencies are bundled. The package itself does.
-            crate::initialize_store();
-            if crate::git_runner::bundles_dependencies(&package) {
+            if bundles(&package) {
                 continue;
             }
             let nested_path = join(&join(folder_path, alias), b"node_modules");

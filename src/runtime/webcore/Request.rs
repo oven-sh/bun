@@ -102,7 +102,12 @@ pub(crate) struct Request {
     pub(crate) weak_ptr_data: WeakPtrData,
     // We must report a consistent value for this
     reported_estimated_size: Cell<usize>,
+    /// The `integrity` member of the init, when it is not the empty string. Boxed: few requests have one.
+    integrity: Option<Box<BunString>>,
 }
+
+// 112 bytes is the mimalloc size class that a Request without `integrity` (104 bytes) was already in.
+const _: () = assert!(core::mem::size_of::<Request>() <= 112);
 
 // A `#[repr(C)]` 4-byte struct for direct
 // field access — `Request` is only ever passed to C++ by **pointer** with size
@@ -370,6 +375,7 @@ impl Request {
         core::mem::size_of::<Request>()
             + self.request_context.memory_cost()
             + self.url.get().byte_slice().len()
+            + self.size_of_integrity()
             + self.body_value().memory_cost()
     }
 
@@ -431,6 +437,7 @@ impl Request {
             request_context: AnyRequestContext::NULL,
             weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: Cell::new(0),
+            integrity: None,
         }
     }
 
@@ -458,6 +465,7 @@ impl Request {
         self.reported_estimated_size.set(
             self.body_value().estimated_size()
                 + self.size_of_url()
+                + self.size_of_integrity()
                 + core::mem::size_of::<Request>(),
         );
     }
@@ -675,8 +683,11 @@ impl Request {
         JSValue::js_empty_string(global_this)
     }
 
-    pub(crate) fn get_integrity(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
-        JSValue::js_empty_string(global_this)
+    pub(crate) fn get_integrity(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+        match self.integrity() {
+            Some(integrity) => integrity.to_js(global_this),
+            None => Ok(JSValue::js_empty_string(global_this)),
+        }
     }
 
     /// The `AbortSignal` this request was constructed with or lazily created
@@ -713,6 +724,7 @@ impl Request {
         self.headers.set(None);
 
         self.url.set(BunString::EMPTY);
+        self.integrity = None;
 
         // AbortSignalRef::Drop unrefs the C++ handle.
         self.signal.set(None);
@@ -766,6 +778,21 @@ impl Request {
     pub(crate) fn get_url(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         self.ensure_url()?;
         self.url.get().to_js(global_object)
+    }
+
+    /// The `integrity` that `fetch()` checks the response body against. `None`: no check.
+    pub(crate) fn integrity(&self) -> Option<&BunString> {
+        self.integrity.as_deref()
+    }
+
+    fn set_integrity(&mut self, integrity: BunString) {
+        self.integrity = (!integrity.is_empty()).then(|| Box::new(integrity));
+    }
+
+    fn size_of_integrity(&self) -> usize {
+        self.integrity.as_ref().map_or(0, |integrity| {
+            core::mem::size_of::<BunString>() + integrity.byte_slice().len()
+        })
     }
 
     pub(crate) fn size_of_url(&self) -> usize {
@@ -962,7 +989,7 @@ enum Fields {
     // Credentials,
     Redirect,
     Cache,
-    // Integrity,
+    Integrity,
     // Keepalive,
     Signal,
     // Proxy,
@@ -998,6 +1025,7 @@ impl Request {
             request_context: AnyRequestContext::NULL,
             weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: Cell::new(0),
+            integrity: None,
         };
         // A scopeguard cannot capture `&mut req` while the
         // fn body also uses it. Cleanup is invoked at each early-return site via `bail!`.
@@ -1124,6 +1152,11 @@ impl Request {
                         fields.insert(Fields::Mode);
                     }
 
+                    if !fields.contains(Fields::Integrity) {
+                        req.integrity.clone_from(&request.integrity);
+                        fields.insert(Fields::Integrity);
+                    }
+
                     if !fields.contains(Fields::Headers) {
                         match request.clone_headers(cx.global()) {
                             Ok(Some(headers)) => {
@@ -1196,6 +1229,34 @@ impl Request {
                                 fields.insert(Fields::Body);
                             }
                         }
+                    }
+                }
+            }
+
+            // "integrity": a DOMString, so every value but undefined is a string.
+            if !fields.contains(Fields::Integrity) {
+                // A Request that is the input gives the value that it stores. A property of the object, its own or a subclass getter, does not replace it.
+                let input_request = if !is_first_argument_a_url && value == url_or_object {
+                    value.as_class_ref::<Request>()
+                } else {
+                    None
+                };
+                if let Some(request) = input_request {
+                    req.integrity.clone_from(&request.integrity);
+                    fields.insert(Fields::Integrity);
+                } else {
+                    match value
+                        .get_common_string(cx.global(), bun_jsc::CommonString::FetchOptionIntegrity)
+                    {
+                        Ok(Some(integrity)) => {
+                            match BunString::from_js(integrity, cx.global()) {
+                                Ok(integrity) => req.set_integrity(integrity),
+                                Err(e) => bail!(Err(e)),
+                            }
+                            fields.insert(Fields::Integrity);
+                        }
+                        Ok(None) => {}
+                        Err(e) => bail!(Err(e)),
                     }
                 }
             }
@@ -1341,7 +1402,11 @@ impl Request {
 
             // Extract redirect option
             if !fields.contains(Fields::Redirect) {
-                match value.get_optional_enum::<FetchRedirect>(cx.global(), "redirect") {
+                match value.get_optional_enum_common_string::<FetchRedirect>(
+                    cx.global(),
+                    bun_jsc::CommonString::FetchOptionRedirect,
+                    "redirect",
+                ) {
                     Ok(Some(redirect_value)) => {
                         req.flags.redirect = redirect_value;
                         fields.insert(Fields::Redirect);
@@ -1353,7 +1418,11 @@ impl Request {
 
             // Extract cache option
             if !fields.contains(Fields::Cache) {
-                match value.get_optional_enum::<FetchCacheMode>(cx.global(), "cache") {
+                match value.get_optional_enum_common_string::<FetchCacheMode>(
+                    cx.global(),
+                    bun_jsc::CommonString::FetchOptionCache,
+                    "cache",
+                ) {
                     Ok(Some(cache_value)) => {
                         req.flags.cache = cache_value;
                         fields.insert(Fields::Cache);
@@ -1365,7 +1434,11 @@ impl Request {
 
             // Extract mode option
             if !fields.contains(Fields::Mode) {
-                match value.get_optional_enum::<FetchRequestMode>(cx.global(), "mode") {
+                match value.get_optional_enum_common_string::<FetchRequestMode>(
+                    cx.global(),
+                    bun_jsc::CommonString::FetchOptionMode,
+                    "mode",
+                ) {
                     Ok(Some(mode_value)) => {
                         req.flags.mode = mode_value;
                         fields.insert(Fields::Mode);
@@ -1484,6 +1557,7 @@ impl Request {
         } else {
             self.url.get().clone()
         };
+        let integrity = self.integrity.clone();
 
         // `ptr::write` is a raw bit-overwrite — no destructors run on the old
         // `*req`, so the Drop impl on `JsRef` doesn't fire on the caller's
@@ -1509,6 +1583,7 @@ impl Request {
                     request_context: AnyRequestContext::NULL,
                     weak_ptr_data: WeakPtrData::EMPTY,
                     reported_estimated_size: Cell::new(0),
+                    integrity,
                 },
             );
         }
@@ -1541,6 +1616,7 @@ impl Request {
             request_context: AnyRequestContext::NULL,
             weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: Cell::new(0),
+            integrity: None,
         });
         // Box<Request> drops on the error path automatically
         self.clone_into(&mut req, cx, false)?;
@@ -1570,6 +1646,7 @@ impl Request {
             request_context,
             weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: Cell::new(0),
+            integrity: None,
         }
     }
 }

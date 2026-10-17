@@ -31,12 +31,16 @@
     macro(envHttpProxy, "http_proxy") \
     macro(envNO_PROXY, "NO_PROXY") \
     macro(envNoProxy, "no_proxy") \
+    macro(fetchOptionCache, "cache") \
     macro(fetchOptionCompress, "compress") \
     macro(fetchOptionDecompress, "decompress") \
+    macro(fetchOptionIntegrity, "integrity") \
     macro(fetchOptionKeepalive, "keepalive") \
     macro(fetchOptionMaxRedirects, "maxRedirects") \
+    macro(fetchOptionMode, "mode") \
     macro(fetchOptionProtocol, "protocol") \
     macro(fetchOptionProxy, "proxy") \
+    macro(fetchOptionRedirect, "redirect") \
     macro(fetchOptionS3, "s3") \
     macro(fetchOptionSession, "session") \
     macro(fetchOptionTimeout, "timeout") \

@@ -1213,6 +1213,19 @@ impl<'a> SelectorParser<'a> {
         Some(unsafe { crate::arena_str(prefix.v) })
     }
 
+    /// Warn that the parser does not know the pseudo-class or pseudo-element
+    /// `name`. The selector is kept as written.
+    fn warn_unsupported_pseudo(&self, at: bun_ast::Loc, name: Str) {
+        self.options.warn_at(
+            at,
+            format_args!(
+                "{}",
+                SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name)
+                    .into_default_parser_error()
+            ),
+        );
+    }
+
     pub(crate) fn parse_functional_pseudo_element(
         &mut self,
         name: Str,
@@ -1277,12 +1290,7 @@ impl<'a> SelectorParser<'a> {
             _ => {}
         }
         if !strings::starts_with(name, b"-") {
-            self.options.warn(
-                &input.new_custom_error(
-                    SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name)
-                        .into_default_parser_error(),
-                ),
-            );
+            self.warn_unsupported_pseudo(input.loc(), name);
         }
 
         let mut args: Vec<css::css_properties::custom::TokenOrValue> = Vec::new();
@@ -1307,9 +1315,12 @@ impl<'a> SelectorParser<'a> {
         }}
     }
 
+    /// `loc` and `position` are where the pseudo-class starts: the line and
+    /// column for an error, the byte offset for a warning.
     pub(crate) fn parse_non_ts_pseudo_class(
         &mut self,
         loc: css::SourceLocation,
+        position: usize,
         name: Str,
     ) -> CResult<PseudoClass> {
         // @compileError(css.todo_stuff.match_ignore_ascii_case);
@@ -1318,9 +1329,7 @@ impl<'a> SelectorParser<'a> {
                 break 'pseudo_class pseudo;
             }
             if strings::starts_with_char(name, b'_') {
-                self.options.warn(&loc.new_custom_error(
-                    SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name),
-                ));
+                self.warn_unsupported_pseudo(bun_ast::usize2loc(position), name);
             } else if (self.options.css_modules.is_some()
                 && strings::eql_case_insensitive_ascii_check_length(name, b"local"))
                 || strings::eql_case_insensitive_ascii_check_length(name, b"global")
@@ -1371,12 +1380,7 @@ impl<'a> SelectorParser<'a> {
             },
             _ => {
                 if !strings::starts_with_char(name, b'-') {
-                    self.options.warn(
-                        &parser.new_custom_error(
-                            SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name)
-                                .into_default_parser_error(),
-                        ),
-                    );
+                    self.warn_unsupported_pseudo(parser.loc(), name);
                 }
                 let mut args: Vec<css::css_properties::custom::TokenOrValue> = Vec::new();
                 css::TokenListFns::parse_raw(parser, &mut args, self.options, 0)?;
@@ -1423,16 +1427,15 @@ impl<'a> SelectorParser<'a> {
         ParseErrorRecovery::IgnoreInvalidSelector
     }
 
+    /// `position` is the byte offset where the pseudo-element starts.
     pub(crate) fn parse_pseudo_element(
         &mut self,
-        loc: css::SourceLocation,
+        position: usize,
         name: Str,
     ) -> CResult<PseudoElement> {
         let pseudo_element = lookup_pseudo_element(name).unwrap_or_else(|| {
             if !strings::starts_with_char(name, b'-') {
-                self.options.warn(&loc.new_custom_error(
-                    SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name),
-                ));
+                self.warn_unsupported_pseudo(bun_ast::usize2loc(position), name);
             }
             PseudoElement::Custom { name }
         });
@@ -3257,6 +3260,7 @@ pub(crate) fn parse_one_simple_selector<Impl: BunSelectorImpl>(
         }
         Token::Colon => {
             let location = input.current_source_location();
+            let position = input.position();
             let (is_single_colon, next_token): (bool, Token) =
                 match *input.next_including_whitespace()? {
                     Token::Colon => (false, *input.next_including_whitespace()?),
@@ -3327,7 +3331,7 @@ pub(crate) fn parse_one_simple_selector<Impl: BunSelectorImpl>(
                         parser.parse_functional_pseudo_element(name, i)
                     })?
                 } else {
-                    parser.parse_pseudo_element(location, name)?
+                    parser.parse_pseudo_element(position, name)?
                 };
 
                 if state.contains(SelectorParsingState::AFTER_SLOTTED)
@@ -3343,7 +3347,7 @@ pub(crate) fn parse_one_simple_selector<Impl: BunSelectorImpl>(
                         parse_functional_pseudo_class::<Impl>(parser, input2, name, state)
                     })?
                 } else {
-                    parse_simple_pseudo_class::<Impl>(parser, location, name, *state)?
+                    parse_simple_pseudo_class::<Impl>(parser, location, position, name, *state)?
                 };
                 return Ok(Some(S::SimpleSelector(pseudo_class)));
             }
@@ -3639,6 +3643,7 @@ pub(crate) fn parse_functional_pseudo_class<Impl: BunSelectorImpl>(
 pub(crate) fn parse_simple_pseudo_class<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     location: css::SourceLocation,
+    position: usize,
     name: Str,
     state: SelectorParsingState,
 ) -> CResult<GenericComponent<Impl>> {
@@ -3673,7 +3678,7 @@ pub(crate) fn parse_simple_pseudo_class<Impl: BunSelectorImpl>(
         }
     }
 
-    let pseudo_class = parser.parse_non_ts_pseudo_class(location, name)?;
+    let pseudo_class = parser.parse_non_ts_pseudo_class(location, position, name)?;
     if state.contains(SelectorParsingState::AFTER_WEBKIT_SCROLLBAR) {
         if !pseudo_class.is_valid_after_webkit_scrollbar() {
             return Err(location.new_custom_error(

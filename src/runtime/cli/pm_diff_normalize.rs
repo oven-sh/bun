@@ -928,9 +928,10 @@ fn normalize_css(path: &[u8], bytes: &[u8]) -> Option<Normalized> {
     let mut opts = bun_css::ParserOptions::default(None);
     opts.filename = alloc.alloc_slice_copy(path);
     let mut import_records = Vec::<bun_ast::ImportRecord>::default();
+    let source = bun_ast::Source::init_path_string(path, bytes);
     let (sheet, _extra) = bun_css::StyleSheet::<bun_css::DefaultAtRule>::parse(
         alloc,
-        bytes,
+        &source,
         opts,
         Some(&mut import_records),
         bun_ast::Index::INVALID,

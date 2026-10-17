@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import http from "node:http";
@@ -401,6 +401,14 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
   // fits the tail exactly, those few bytes grow the queue a second time and
   // copy the whole tail, so the server holds two copies of the body at once.
   // VmHWM is Linux only, and the test reads the peak of a child of its own.
+  // 32 MiB keeps the transfer under the default timeout on a debug build.
+  const PEAK_CHUNK_SIZE = 32 * 1024 * 1024;
+  // The body of the response: a chunk size line, the chunk, its CRLF, and the
+  // terminating chunk.
+  const PEAK_FRAMED_SIZE = PEAK_CHUNK_SIZE.toString(16).length + 2 + PEAK_CHUNK_SIZE + 2 + 5;
+  // Measured with the fix: 1.05 on a release build, 1.13 on a debug ASAN
+  // build. Without it: 2.07 and 2.17. The sanitizer allocator adds the slack.
+  const PEAK_RATIO_BOUND = isASAN || isDebug ? 1.5 : 1.3;
   test.skipIf(!isLinux)("the framing behind a spilled tail does not copy the tail again", async () => {
     using dir = tempDir("pinned-write-peak", {});
     const socketPath = `${dir}/s`;
@@ -413,7 +421,7 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
         const http = require("node:http");
         const net = require("node:net");
         const { once } = require("node:events");
-        const CHUNK_SIZE = ${CHUNK_SIZE};
+        const CHUNK_SIZE = ${PEAK_CHUNK_SIZE};
         // A unix socket takes about 200 KB, so the rest of the body waits.
         const SOCKET = ${JSON.stringify(socketPath)};
         const peakBytes = () => Number(/VmHWM:\\s+(\\d+)/.exec(fs.readFileSync("/proc/self/status", "utf8"))[1]) * 1024;
@@ -446,12 +454,20 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
         socket.write("llo");
         await ended.promise;
 
-        let bodyBytes = -4;
-        socket.on("data", chunk => { bodyBytes += chunk.length; });
+        let head = Buffer.alloc(0);
+        let framedBytes = 0;
+        socket.on("data", chunk => {
+          if (head === undefined) return void (framedBytes += chunk.length);
+          head = Buffer.concat([head, chunk]);
+          const i = head.indexOf("\\r\\n\\r\\n");
+          if (i === -1) return;
+          framedBytes = head.length - (i + 4);
+          head = undefined;
+        });
         socket.resume();
         await once(socket, "close");
         server.close();
-        console.log(JSON.stringify({ bodyBytes, ratio: Math.round((peakOverBaseline / CHUNK_SIZE) * 100) / 100 }));
+        console.log(JSON.stringify({ framedBytes, ratio: Math.round((peakOverBaseline / CHUNK_SIZE) * 100) / 100 }));
         `,
       ],
       env: bunEnv,
@@ -462,12 +478,13 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
-    const { bodyBytes, ratio } = JSON.parse(stdout.trim());
-    // The head, the chunk size lines and the terminating chunk ride along.
-    expect(bodyBytes).toBeGreaterThan(CHUNK_SIZE);
-    // One copy of the tail is 1.0. Two copies, which is what an exact fit
-    // costs, measure 2.0 and 2.2 under the sanitizer.
-    expect(ratio).toBeLessThan(1.5);
+    const { framedBytes, ratio } = JSON.parse(stdout.trim());
+    // One copy of the tail is a ratio of 1.0, two copies 2.0.
+    expect({ framedBytes, peakUnderBound: ratio < PEAK_RATIO_BOUND, ratio }).toEqual({
+      framedBytes: PEAK_FRAMED_SIZE,
+      peakUnderBound: true,
+      ratio: expect.any(Number),
+    });
   });
 
   test("a second write before drain releases the pin on the first buffer", async () => {

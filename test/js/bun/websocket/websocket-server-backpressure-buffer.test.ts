@@ -280,11 +280,12 @@ describe("BackPressure buffer", () => {
     const queued = ws.getBufferedAmount();
     const capacityBefore = estimateShallowMemoryUsageOf(ws);
     ws.send("x");
-    expect({
-      queuedAtLeastHalf: queued > SIZE / 2,
-      capacityGrew: estimateShallowMemoryUsageOf(ws) > capacityBefore,
-    }).toEqual({ queuedAtLeastHalf: true, capacityGrew: false });
+    const capacityAfter = estimateShallowMemoryUsageOf(ws);
     sock.destroy();
+    expect({ queuedAtLeastHalf: queued > SIZE / 2, capacityGrew: capacityAfter > capacityBefore }).toEqual({
+      queuedAtLeastHalf: true,
+      capacityGrew: false,
+    });
   });
 });
 

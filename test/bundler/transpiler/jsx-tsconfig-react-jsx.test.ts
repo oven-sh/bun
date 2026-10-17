@@ -28,6 +28,57 @@ const shimFiles = {
   "m.jsx": `const a = <div p="1">x</div>;\nglobalThis.s = a;\n`,
 };
 
+// `NODE_ENV` in the environment overrides tsconfig dev/prod for `bun run` in
+// both directions; `--define process.env.NODE_ENV` overrides both.
+describe.each(["NODE_ENV", "BUN_ENV"])("bun run: env %s overrides tsconfig jsx dev/prod", envVar => {
+  test.concurrent.each([
+    // [tsconfig jsx,   env value,      expected runtime]
+    ["react-jsx", "development", "dev jsxDEV"], // env wins
+    ["react-jsx", "production", "prod jsx"], // both agree
+    ["react-jsxdev", "development", "dev jsxDEV"], // both agree
+    ["react-jsxdev", "production", "prod jsx"], // env wins
+  ] as const)(`tsconfig "%s" + ${envVar}=%s -> %s`, async (jsx, envValue, expected) => {
+    using dir = tempDir("jsx-tsconfig-env", {
+      ...shimFiles,
+      "tsconfig.json": JSON.stringify({ compilerOptions: { jsx, jsxImportSource: "shim" } }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "m.jsx"],
+      env: { ...bunEnv, NODE_ENV: undefined, BUN_ENV: undefined, [envVar]: envValue },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, stdout: stdout.trim(), exitCode }).toEqual({ stderr: "", stdout: expected, exitCode: 0 });
+  });
+});
+
+describe("bun run: --define process.env.NODE_ENV overrides env NODE_ENV for jsx dev/prod", () => {
+  test.concurrent.each([
+    // [env NODE_ENV,   --define value,   tsconfig jsx,     expected]
+    ["development", '"production"', "react-jsxdev", "prod jsx"], // --define > env > tsconfig
+    ["production", '"development"', "react-jsx", "dev jsxDEV"], // --define > env > tsconfig
+  ] as const)(
+    "env NODE_ENV=%s + --define process.env.NODE_ENV=%s (tsconfig %s) -> %s",
+    async (envValue, defineValue, jsx, expected) => {
+      using dir = tempDir("jsx-tsconfig-define", {
+        ...shimFiles,
+        "tsconfig.json": JSON.stringify({ compilerOptions: { jsx, jsxImportSource: "shim" } }),
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "--define", `process.env.NODE_ENV=${defineValue}`, "m.jsx"],
+        env: { ...bunEnv, NODE_ENV: envValue, BUN_ENV: undefined },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, stdout: stdout.trim(), exitCode }).toEqual({ stderr: "", stdout: expected, exitCode: 0 });
+    },
+  );
+});
+
 describe("tsconfig compilerOptions.jsx", () => {
   test.each([
     ["react-jsx", "prod jsx", "shim/jsx-runtime"],

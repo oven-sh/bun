@@ -39,7 +39,7 @@ public:
     ~JSPerformanceObserverCallback() final;
 
     // Functions
-    CallbackResult<typename IDLUndefined::ImplementationType> handleEvent(typename IDLInterface<PerformanceObserver>::ParameterType thisObject, typename IDLInterface<PerformanceObserverEntryList>::ParameterType entries, typename IDLInterface<PerformanceObserver>::ParameterType observer) override;
+    CallbackResult<typename IDLUndefined::ImplementationType> handleEvent(typename IDLInterface<PerformanceObserver>::ParameterType thisObject, JSC::JSArray& entries, typename IDLInterface<PerformanceObserver>::ParameterType observer) override;
 
 private:
     JSPerformanceObserverCallback(JSC::JSObject*, JSDOMGlobalObject*);

@@ -33,10 +33,27 @@
 
 #include "Performance.h"
 #include "ScriptWrappable.h"
+#include <bit>
+#include <wtf/OptionSet.h>
 #include <wtf/RefCounted.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
+
+enum class PerformanceEntryType : uint16_t {
+    Navigation = 1 << 0,
+    Mark = 1 << 1,
+    Measure = 1 << 2,
+    Resource = 1 << 3,
+    // Node's entry types. An entry of one of them is a JS object (internal/shared's PerformanceNodeEntry), never a PerformanceEntry.
+    Gc = 1 << 4,
+    Http = 1 << 5,
+    Http2 = 1 << 6,
+    Net = 1 << 7,
+    Dns = 1 << 8,
+    Quic = 1 << 9,
+    Function = 1 << 10,
+};
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(PerformanceEntry);
 class PerformanceEntry : public ScriptWrappable, public RefCounted<PerformanceEntry> {
@@ -49,12 +66,22 @@ public:
     const double startTime() const { return m_startTime; }
     const double duration() const { return m_duration; }
 
-    enum class Type : uint8_t {
-        Navigation = 1 << 0,
-        Mark = 1 << 1,
-        Measure = 1 << 2,
-        Resource = 1 << 3
-    };
+    using Type = PerformanceEntryType;
+
+    static constexpr OptionSet<Type> nodeTypes()
+    {
+        return { Type::Gc, Type::Http, Type::Http2, Type::Net, Type::Dns, Type::Quic, Type::Function };
+    }
+    static constexpr unsigned numberOfNodeTypes = 7;
+    // internal/shared's kEntryType* constants: node's https://github.com/nodejs/node/blob/v26.3.0/src/node_perf_common.h#L37-L43, then 'function'.
+    static constexpr unsigned nodeTypeIndex(Type type)
+    {
+        return std::countr_zero(static_cast<uint16_t>(type)) - std::countr_zero(static_cast<uint16_t>(Type::Gc));
+    }
+    static constexpr Type nodeTypeAtIndex(unsigned index)
+    {
+        return static_cast<Type>(static_cast<uint16_t>(Type::Gc) << index);
+    }
 
     virtual Type performanceEntryType() const = 0;
     virtual ASCIILiteral entryType() const = 0;

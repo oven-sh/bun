@@ -49,6 +49,17 @@
 #include "ScriptExecutionContext.h"
 #include <wtf/TZoneMallocInlines.h>
 #include "BunClientData.h"
+#include "InternalModuleRegistry.h"
+#include "JSPerformance.h"
+#include "JSPerformanceEntry.h"
+#include "JSPerformanceMark.h"
+#include "JSPerformanceMeasure.h"
+#include "JSPerformanceObserver.h"
+#include "JSPerformanceObserverEntryList.h"
+#include "JSPerformanceResourceTiming.h"
+#include "headers.h"
+#include <JavaScriptCore/JSArray.h>
+#include <JavaScriptCore/JSCInlines.h>
 
 namespace WebCore {
 
@@ -210,12 +221,7 @@ ExceptionOr<Ref<PerformanceMark>> Performance::mark(JSC::JSGlobalObject& globalO
     if (!m_userTiming)
         m_userTiming = makeUnique<PerformanceUserTiming>(*this);
 
-    auto mark = m_userTiming->mark(globalObject, markName, WTF::move(markOptions));
-    if (mark.hasException())
-        return mark.releaseException();
-
-    queueEntry(mark.returnValue().get());
-    return mark.releaseReturnValue();
+    return m_userTiming->mark(globalObject, markName, WTF::move(markOptions));
 }
 
 void Performance::clearMarks(const String& markName)
@@ -230,12 +236,7 @@ ExceptionOr<Ref<PerformanceMeasure>> Performance::measure(JSC::JSGlobalObject& g
     if (!m_userTiming)
         m_userTiming = makeUnique<PerformanceUserTiming>(*this);
 
-    auto measure = m_userTiming->measure(globalObject, measureName, WTF::move(startOrMeasureOptions), endMark);
-    if (measure.hasException())
-        return measure.releaseException();
-
-    queueEntry(measure.returnValue().get());
-    return measure.releaseReturnValue();
+    return m_userTiming->measure(globalObject, measureName, WTF::move(startOrMeasureOptions), endMark);
 }
 
 void Performance::clearMeasures(const String& measureName)
@@ -250,6 +251,8 @@ void Performance::removeAllObservers()
     for (auto& observer : m_observers)
         observer->disassociate();
     m_observers.clear();
+    m_observersPendingOnImmediate.clear();
+    m_nodeObserverCounts.fill(0);
 }
 
 void Performance::registerPerformanceObserver(PerformanceObserver& observer)
@@ -260,6 +263,7 @@ void Performance::registerPerformanceObserver(PerformanceObserver& observer)
 void Performance::unregisterPerformanceObserver(PerformanceObserver& observer)
 {
     m_observers.remove(&observer);
+    m_observersPendingOnImmediate.remove(&observer);
 }
 
 void Performance::disconnectObserversOf(const ScriptExecutionContext& context)
@@ -270,20 +274,83 @@ void Performance::disconnectObserversOf(const ScriptExecutionContext& context)
     }
 }
 
-void Performance::queueEntry(PerformanceEntry& entry)
+void Performance::willObserveNodeTypes(JSDOMGlobalObject& globalObject)
 {
-    bool shouldScheduleTask = false;
-    for (auto& observer : m_observers) {
-        if (observer->typeFilter().contains(entry.performanceEntryType())) {
-            observer->queueEntry(entry);
-            shouldScheduleTask = true;
-        }
-    }
-
-    if (!shouldScheduleTask)
+    if (m_nodeObserverCountsForScript)
         return;
 
-    scheduleTaskIfNeeded();
+    auto& vm = globalObject.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSValue shared = globalObject.internalModuleRegistry()->requireId(&globalObject, vm, Bun::InternalModuleRegistry::Field::InternalShared);
+    RETURN_IF_EXCEPTION(scope, );
+    auto* exports = shared.getObject();
+    JSC::JSValue counts = exports->get(&globalObject, JSC::Identifier::fromString(vm, "observerCounts"_s));
+    RETURN_IF_EXCEPTION(scope, );
+    JSC::JSValue nodeEntry = exports->get(&globalObject, JSC::Identifier::fromString(vm, "PerformanceNodeEntry"_s));
+    RETURN_IF_EXCEPTION(scope, );
+    JSC::JSValue nodeEntryPrototype = nodeEntry.get(&globalObject, vm.propertyNames->prototype);
+    RETURN_IF_EXCEPTION(scope, );
+
+    // Linked here, not at module load: that would create the PerformanceEntry constructor in every process that loads a node: module.
+    asObject(nodeEntryPrototype)->setPrototypeDirect(vm, JSPerformanceEntry::prototype(vm, globalObject));
+    asObject(nodeEntry)->setPrototypeDirect(vm, JSPerformanceEntry::getConstructor(vm, &globalObject));
+    m_nodeObserverCountsForScript = JSC::Weak<JSC::JSArray>(JSC::asArray(counts));
+}
+
+void Performance::observedTypesDidChange(OptionSet<PerformanceEntry::Type> before, OptionSet<PerformanceEntry::Type> after)
+{
+    auto changed = (before ^ after) & PerformanceEntry::nodeTypes();
+    if (changed.isEmpty())
+        return;
+
+    auto* context = scriptExecutionContext();
+    auto* countsForScript = context ? m_nodeObserverCountsForScript.get() : nullptr;
+    for (auto type : changed) {
+        auto index = PerformanceEntry::nodeTypeIndex(type);
+        auto& count = m_nodeObserverCounts[index];
+        if (after.contains(type))
+            ++count;
+        else
+            --count;
+        if (!countsForScript)
+            continue;
+        auto* globalObject = context->globalObject();
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
+        countsForScript->putDirectIndex(globalObject, index, JSC::jsNumber(count));
+        if (scope.exception()) [[unlikely]]
+            (void)scope.tryClearException();
+    }
+}
+
+void Performance::queueEntryForObservers(JSC::VM& vm, JSC::JSObject& entry, PerformanceEntry::Type type)
+{
+    bool hasQueuedForTask = false;
+    for (auto& observer : m_observers) {
+        if (!observer->typeFilter().contains(type))
+            continue;
+        observer->queueEntry(vm, entry);
+        if (observer->deliversOnImmediate())
+            scheduleImmediateDelivery(*observer);
+        else
+            hasQueuedForTask = true;
+    }
+    if (hasQueuedForTask && !m_hasScheduledTimingBufferDeliveryTask)
+        scheduleTaskIfNeeded();
+}
+
+// Out of line, to keep small what an observer of marks adds to each performance.mark().
+NEVER_INLINE void Performance::scheduleImmediateDelivery(PerformanceObserver& observer)
+{
+    m_observersPendingOnImmediate.add(&observer);
+    scheduleImmediateIfNeeded();
+}
+
+void Performance::scheduleDelivery(PerformanceObserver& observer)
+{
+    if (observer.deliversOnImmediate())
+        scheduleImmediateDelivery(observer);
+    else
+        scheduleTaskIfNeeded();
 }
 
 void Performance::scheduleTaskIfNeeded()
@@ -298,9 +365,115 @@ void Performance::scheduleTaskIfNeeded()
     m_hasScheduledTimingBufferDeliveryTask = true;
     context->postTask([protectedThis = Ref { *this }, this](ScriptExecutionContext& context) {
         m_hasScheduledTimingBufferDeliveryTask = false;
-        for (auto& observer : copyToVector(m_observers))
-            observer->deliver();
+        for (auto& observer : copyToVector(m_observers)) {
+            if (!observer->deliversOnImmediate())
+                observer->deliver();
+        }
     });
+}
+
+// With a Bun.ModuleGraph in the realm, no graph owns the immediate (dispose() does not drop it) and no callback sees a graph's AsyncLocalStorage stores.
+class NoAsyncContextInRealmWithModuleGraphs {
+    WTF_MAKE_NONCOPYABLE(NoAsyncContextInRealmWithModuleGraphs);
+    WTF_FORBID_HEAP_ALLOCATION;
+
+public:
+    explicit NoAsyncContextInRealmWithModuleGraphs(Zig::GlobalObject& globalObject)
+    {
+        if (!globalObject.hasModuleGraphs()) [[likely]]
+            return;
+        m_globalObject = &globalObject;
+        auto* asyncContextData = globalObject.m_asyncContextData.get();
+        m_previous = asyncContextData->getInternalField(0);
+        asyncContextData->putInternalField(globalObject.vm(), 0, JSC::jsUndefined());
+    }
+
+    ~NoAsyncContextInRealmWithModuleGraphs()
+    {
+        if (m_globalObject)
+            m_globalObject->m_asyncContextData.get()->putInternalField(m_globalObject->vm(), 0, m_previous);
+    }
+
+private:
+    Zig::GlobalObject* m_globalObject { nullptr };
+    JSC::JSValue m_previous;
+};
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionDeliverPerformanceEntries, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame*))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (RefPtr performance = defaultGlobalObject(lexicalGlobalObject)->existingPerformance())
+        performance->deliverOnImmediate();
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+// Node's one setImmediate() for every pending observer: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/observe.js#L117-L127
+void Performance::scheduleImmediateIfNeeded()
+{
+    if (m_hasScheduledImmediateDelivery)
+        return;
+
+    auto* context = scriptExecutionContext();
+    if (!context || context->isJSExecutionForbidden())
+        return;
+
+    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(context->globalObject());
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    {
+        NoAsyncContextInRealmWithModuleGraphs noAsyncContext(*globalObject);
+        auto* deliver = JSC::JSFunction::create(vm, globalObject, 0, String(), jsFunctionDeliverPerformanceEntries, JSC::ImplementationVisibility::Private);
+        Bun__Timer__setImmediate(globalObject, JSC::JSValue::encode(deliver), JSC::JSValue::encode(JSC::jsUndefined()));
+    }
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return;
+    }
+    m_hasScheduledImmediateDelivery = true;
+}
+
+void Performance::deliverOnImmediate()
+{
+    m_hasScheduledImmediateDelivery = false;
+    auto* context = scriptExecutionContext();
+    if (!context)
+        return;
+    // Also for an immediate that was set before the realm had its first graph.
+    NoAsyncContextInRealmWithModuleGraphs noAsyncContext(*uncheckedDowncast<Zig::GlobalObject>(context->globalObject()));
+    // An observer that observes web types only by now has a task to deliver it.
+    for (auto& observer : std::exchange(m_observersPendingOnImmediate, {})) {
+        if (observer->deliversOnImmediate())
+            observer->deliver();
+    }
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionQueueNodePerformanceEntry, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    RefPtr performance = defaultGlobalObject(lexicalGlobalObject)->existingPerformance();
+    auto* entry = callFrame->argument(0).getObject();
+    JSC::JSValue typeIndex = callFrame->argument(1);
+    if (!performance || !entry || !typeIndex.isUInt32() || typeIndex.asUInt32() >= PerformanceEntry::numberOfNodeTypes) [[unlikely]]
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    auto type = PerformanceEntry::nodeTypeAtIndex(typeIndex.asUInt32());
+    performance->queueEntry(JSC::getVM(lexicalGlobalObject), *entry, type);
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+JSC::JSValue createNodePerfHooksBinding(Zig::GlobalObject* globalObject)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::MarkedArgumentBuffer classes;
+    classes.append(JSPerformance::getConstructor(vm, globalObject));
+    classes.append(JSPerformanceEntry::getConstructor(vm, globalObject));
+    classes.append(JSPerformanceMark::getConstructor(vm, globalObject));
+    classes.append(JSPerformanceMeasure::getConstructor(vm, globalObject));
+    classes.append(JSPerformanceObserver::getConstructor(vm, globalObject));
+    classes.append(JSPerformanceObserverEntryList::getConstructor(vm, globalObject));
+    classes.append(JSPerformanceResourceTiming::getConstructor(vm, globalObject));
+    RELEASE_AND_RETURN(scope, JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), classes));
 }
 
 } // namespace WebCore

@@ -275,7 +275,7 @@ static JSModuleGraph* moduleGraphOfFrame(Zig::GlobalObject* globalObject, JSValu
 }
 
 // For built-ins that keep something long-lived of whoever made it (an http.Agent, a Bun.SQL, a
-// PerformanceObserver), given the async context they are in: the Bun.ModuleGraph it is inside
+// StatWatcher), given the async context they are in: the Bun.ModuleGraph it is inside
 // of, and the frame that entered that graph's context (what they `run()` their later work in,
 // without keeping the AsyncLocalStorage stores of whoever made them).
 JSC_DEFINE_HOST_FUNCTION(jsFunctionModuleGraphOfFrame, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -297,8 +297,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionModuleGraphFrameOfFrame, (JSGlobalObject * gl
     return JSValue::encode(enteredWith ? JSValue(enteredWith) : jsUndefined());
 }
 
-// For built-ins that keep something of a graph's in a registry of the realm's (node:perf_hooks'
-// observers): whether `frame`, the async context it was made in, is of a disposed graph.
+// For internal/shared's isStoppedModuleGraphRunning(): whether the async context `frame` is of a disposed graph.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsFrameOfStoppedModuleGraph, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     return JSValue::encode(jsBoolean(shouldDropCallbackOfStoppedModuleGraph(defaultGlobalObject(globalObject), callFrame->argument(0))));

@@ -68,6 +68,8 @@ function internalBinding(name: string) {
       return $processBindingConstants;
     case "quic":
       return require("internal/quic/binding");
+    case "performance":
+      return { observerCounts: require("internal/shared").observerCounts };
     case "uv": {
       // Add getErrorMessage (which node's uv binding exposes) derived from the same native uv_e
       // table so messages can never diverge. Cached: node returns a stable object.

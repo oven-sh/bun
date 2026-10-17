@@ -27,7 +27,13 @@
  * Modifications were made to the original code.
  */
 const { isTypedArray } = require("node:util/types");
-const { hideFromStack, hasObserver, enqueueNodeEntry, PerformanceNodeEntry } = require("internal/shared");
+const {
+  hideFromStack,
+  hasObserver,
+  enqueueNodeEntry,
+  kEntryTypeHttp2,
+  PerformanceNodeEntry,
+} = require("internal/shared");
 const { STATUS_CODES, utcDate } = require("internal/http");
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const tls = require("node:tls");
@@ -2132,7 +2138,7 @@ const kPerfState = Symbol("http2PerfState");
 // All tracking is armed at construction only while an 'http2' observer exists, so
 // unobserved sessions pay a single hasObserver() check.
 function initHttp2SessionPerf(session, type: "server" | "client") {
-  if (!hasObserver("http2")) return;
+  if (!hasObserver(kEntryTypeHttp2)) return;
   session[kPerfStats] = {
     type,
     start: performance.now(),
@@ -2182,6 +2188,7 @@ function emitHttp2StreamPerf(stream) {
       bytesWritten: state.bytesWritten,
       bytesRead: state.bytesRead,
     }),
+    kEntryTypeHttp2,
   );
 }
 
@@ -2213,6 +2220,7 @@ function emitHttp2SessionPerf(session, parser, socket) {
       streamCount: stats.streamCount,
       type: stats.type,
     }),
+    kEntryTypeHttp2,
   );
 }
 

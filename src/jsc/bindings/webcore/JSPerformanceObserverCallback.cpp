@@ -54,7 +54,7 @@ JSPerformanceObserverCallback::~JSPerformanceObserverCallback()
 #endif
 }
 
-CallbackResult<typename IDLUndefined::ImplementationType> JSPerformanceObserverCallback::handleEvent(typename IDLInterface<PerformanceObserver>::ParameterType thisObject, typename IDLInterface<PerformanceObserverEntryList>::ParameterType entries, typename IDLInterface<PerformanceObserver>::ParameterType observer)
+CallbackResult<typename IDLUndefined::ImplementationType> JSPerformanceObserverCallback::handleEvent(typename IDLInterface<PerformanceObserver>::ParameterType thisObject, JSC::JSArray& entries, typename IDLInterface<PerformanceObserver>::ParameterType observer)
 {
     if (!canInvokeCallback())
         return CallbackResultType::UnableToExecute;
@@ -70,16 +70,23 @@ CallbackResult<typename IDLUndefined::ImplementationType> JSPerformanceObserverC
     JSLockHolder lock(vm);
     auto& lexicalGlobalObject = globalObject;
     JSValue thisValue = toJS<IDLInterface<PerformanceObserver>>(lexicalGlobalObject, globalObject, thisObject);
+    // Sorting reads the startTime of Node's entries, a property that script can have redefined.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto* list = JSPerformanceObserverEntryList::create(globalObject, entries);
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        if (scope.tryClearException())
+            reportException(&globalObject, exception);
+        return CallbackResultType::ExceptionThrown;
+    }
     MarkedArgumentBuffer args;
-    args.append(toJS<IDLInterface<PerformanceObserverEntryList>>(lexicalGlobalObject, globalObject, entries));
+    args.append(list);
     args.append(&observer == &thisObject ? thisValue : toJS<IDLInterface<PerformanceObserver>>(lexicalGlobalObject, globalObject, observer));
     ASSERT(!args.hasOverflowed());
 
     NakedPtr<JSC::Exception> returnedException;
     m_data->invokeCallback(vm, thisValue, args, JSCallbackData::CallbackType::Function, Identifier(), returnedException);
     if (returnedException) {
-        UNUSED_PARAM(lexicalGlobalObject);
-        reportException(m_data->callback()->globalObject(), returnedException);
+        reportException(&globalObject, returnedException);
         return CallbackResultType::ExceptionThrown;
     }
 

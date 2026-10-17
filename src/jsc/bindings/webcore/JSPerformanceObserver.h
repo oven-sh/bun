@@ -23,6 +23,8 @@
 #include "JSDOMConvertDictionary.h"
 #include "JSDOMWrapper.h"
 #include "PerformanceObserver.h"
+#include "ScriptWrappableInlines.h"
+#include <JavaScriptCore/JSArrayInlines.h>
 #include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
@@ -63,6 +65,9 @@ public:
     template<typename Visitor> static void visitOutputConstraints(JSCell*, Visitor&);
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
+    // The queue, in the order entries were queued: wrappers of marks and measures, and entries of Node's types. Null when empty.
+    mutable JSC::WriteBarrier<JSC::JSArray> m_pendingEntries;
+
 protected:
     JSPerformanceObserver(JSC::Structure*, JSDOMGlobalObject&, Ref<PerformanceObserver>&&);
 
@@ -91,5 +96,31 @@ template<> struct JSDOMWrapperConverterTraits<PerformanceObserver> {
     using ToWrappedReturnType = PerformanceObserver*;
 };
 template<> PerformanceObserver::Init convertDictionary<PerformanceObserver::Init>(JSC::JSGlobalObject&, JSC::JSValue);
+
+// Appends without allocating or running script, or returns false: the caller then uses putDirectIndex(), never push().
+inline bool tryAppendToArrayQuickly(JSC::VM& vm, JSC::JSArray* array, JSC::JSValue value)
+{
+    if (array->indexingMode() != JSC::ArrayWithContiguous) [[unlikely]]
+        return false;
+    auto* butterfly = array->butterfly();
+    unsigned length = butterfly->publicLength();
+    if (length >= butterfly->vectorLength()) [[unlikely]]
+        return false;
+    butterfly->contiguous().at(array, length).setWithoutWriteBarrier(value);
+    butterfly->setPublicLength(length + 1);
+    vm.writeBarrier(array, value);
+    return true;
+}
+
+inline void PerformanceObserver::queueEntry(JSC::VM& vm, JSC::JSObject& entry)
+{
+    // A registered observer has its wrapper (JSPerformanceObserverOwner::isReachableFromOpaqueRoots).
+    auto* wrapper = static_cast<JSPerformanceObserver*>(this->wrapper());
+    if (!wrapper) [[unlikely]]
+        return;
+    if (auto* pending = wrapper->m_pendingEntries.get(); pending && tryAppendToArrayQuickly(vm, pending, &entry)) [[likely]]
+        return;
+    queueEntrySlow(vm, *wrapper, entry);
+}
 
 } // namespace WebCore

@@ -25,8 +25,6 @@
 #include "ExtendedDOMIsoSubspaces.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConstructorNotConstructable.h"
-#include "JSDOMConvertInterface.h"
-#include "JSDOMConvertSequences.h"
 #include "JSDOMConvertStrings.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObject.h"
@@ -34,10 +32,9 @@
 #include "JSDOMOperation.h"
 #include "JSDOMWrapperCache.h"
 #include "JSPerformanceEntry.h"
-#include "ScriptExecutionContext.h"
+#include "JSPerformanceObserver.h"
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/FunctionPrototype.h>
-#include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
@@ -45,7 +42,6 @@
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
-#include <wtf/URL.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -127,12 +123,74 @@ void JSPerformanceObserverEntryListPrototype::finishCreation(VM& vm)
 
 const ClassInfo JSPerformanceObserverEntryList::s_info = { "PerformanceObserverEntryList"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceObserverEntryList) };
 
-JSPerformanceObserverEntryList::JSPerformanceObserverEntryList(Structure* structure, JSDOMGlobalObject& globalObject, Ref<PerformanceObserverEntryList>&& impl)
-    : JSDOMWrapper<PerformanceObserverEntryList>(structure, globalObject, WTF::move(impl))
+JSPerformanceObserverEntryList::JSPerformanceObserverEntryList(Structure* structure, JSDOMGlobalObject& globalObject)
+    : JSDOMObject(structure, globalObject)
 {
 }
 
-// static_assert(!std::is_base_of<ActiveDOMObject, PerformanceObserverEntryList>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
+void JSPerformanceObserverEntryList::finishCreation(VM& vm, JSArray* entries, bool hasOnlyPerformanceEntries)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+    m_entries.set(vm, this, entries);
+    m_hasOnlyPerformanceEntries = hasOnlyPerformanceEntries;
+}
+
+JSPerformanceObserverEntryList* JSPerformanceObserverEntryList::create(JSDOMGlobalObject& globalObject, JSArray& queued)
+{
+    auto& vm = globalObject.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // In startTime order, as node's list: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/observe.js#L170-L181
+    unsigned length = queued.length();
+    Vector<std::pair<double, unsigned>, 16> order;
+    order.reserveInitialCapacity(length);
+    auto startTimeName = Identifier::fromString(vm, "startTime"_s);
+    bool isSorted = true;
+    bool hasOnlyPerformanceEntries = true;
+    for (unsigned index = 0; index < length; ++index) {
+        JSValue entry = queued.getIndex(&globalObject, index);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        double startTime;
+        if (auto* wrapper = dynamicDowncast<JSPerformanceEntry>(entry))
+            startTime = wrapper->wrapped().startTime();
+        else {
+            hasOnlyPerformanceEntries = false;
+            JSValue value = entry.get(&globalObject, startTimeName);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            startTime = value.toNumber(&globalObject);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            // Script can have stored anything: keep what std::sort compares ordered.
+            if (std::isnan(startTime))
+                startTime = 0;
+        }
+        if (index && startTime < order.last().first)
+            isSorted = false;
+        order.append({ startTime, index });
+    }
+
+    JSArray* entries = &queued;
+    if (!isSorted) {
+        // Entries that started together stay in queue order: the index is the second key.
+        std::sort(order.begin(), order.end());
+        MarkedArgumentBuffer sorted;
+        for (auto& position : order) {
+            sorted.append(queued.getIndex(&globalObject, position.second));
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        }
+        if (sorted.hasOverflowed()) [[unlikely]] {
+            throwOutOfMemoryError(&globalObject, scope);
+            return nullptr;
+        }
+        entries = constructArray(&globalObject, static_cast<ArrayAllocationProfile*>(nullptr), sorted);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+
+    auto* structure = getDOMStructure<JSPerformanceObserverEntryList>(vm, globalObject);
+    auto* list = new (NotNull, JSC::allocateCell<JSPerformanceObserverEntryList>(vm)) JSPerformanceObserverEntryList(structure, globalObject);
+    list->finishCreation(vm, entries, hasOnlyPerformanceEntries);
+    return list;
+}
 
 JSObject* JSPerformanceObserverEntryList::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
@@ -167,14 +225,100 @@ JSC_DEFINE_CUSTOM_GETTER(jsPerformanceObserverEntryListConstructor, (JSGlobalObj
     return JSValue::encode(JSPerformanceObserverEntryList::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
 
+// An entry that a node: module built holds its name and its entryType as properties.
+static bool performanceNodeEntryPropertyEquals(JSGlobalObject& lexicalGlobalObject, JSValue entry, PropertyName propertyName, const String& expected)
+{
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue value = entry.get(&lexicalGlobalObject, propertyName);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!value.isString())
+        return false;
+    auto string = value.toWTFString(&lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    return string == expected;
+}
+
+// A new array of the entries with this name and this entryType. A null string matches every entry.
+static JSArray* performanceObserverEntryListEntries(JSGlobalObject& lexicalGlobalObject, JSPerformanceObserverEntryList& list, const String& name, const String& entryType)
+{
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = list.globalObject();
+    JSArray* entries = list.entries();
+    unsigned length = entries->length();
+
+    if (name.isNull() && entryType.isNull()) {
+        if (auto* copy = JSArray::fastSlice(globalObject, entries, 0, length))
+            return copy;
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+
+    auto* matching = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), 0, length);
+    if (!matching) [[unlikely]] {
+        throwOutOfMemoryError(&lexicalGlobalObject, scope);
+        return nullptr;
+    }
+    // No PerformanceEntry has the type 0: an entryType that is not a type matches no mark or measure.
+    bool filtersByName = !name.isNull();
+    bool filtersByType = !entryType.isNull();
+    auto type = filtersByType ? PerformanceEntry::parseEntryTypeString(entryType).value_or(static_cast<PerformanceEntry::Type>(0)) : static_cast<PerformanceEntry::Type>(0);
+    auto matches = [&](PerformanceEntry& performanceEntry) {
+        return (!filtersByName || performanceEntry.name() == name) && (!filtersByType || performanceEntry.performanceEntryType() == type);
+    };
+    auto append = [&](JSValue entry) {
+        if (tryAppendToArrayQuickly(vm, matching, entry)) [[likely]]
+            return true;
+        matching->putDirectIndex(&lexicalGlobalObject, matching->length(), entry);
+        return !scope.exception();
+    };
+
+    // Marks and measures only: nothing in this loop runs script, so the elements stay where they are.
+    if (list.hasOnlyPerformanceEntries() && entries->indexingMode() == ArrayWithContiguous) {
+        auto* contiguous = entries->butterfly()->contiguous().data();
+        for (unsigned index = 0; index < length; ++index) {
+            JSValue entry = contiguous[index].get();
+            if (matches(uncheckedDowncast<JSPerformanceEntry>(entry)->wrapped()) && !append(entry)) [[unlikely]]
+                return nullptr;
+        }
+        return matching;
+    }
+
+    Identifier entryTypeName;
+    for (unsigned index = 0; index < length; ++index) {
+        ASSERT(entries->canGetIndexQuickly(index));
+        JSValue entry = entries->getIndexQuickly(index);
+        if (auto* wrapper = dynamicDowncast<JSPerformanceEntry>(entry)) {
+            if (!matches(wrapper->wrapped()))
+                continue;
+        } else {
+            if (filtersByName) {
+                bool hasName = performanceNodeEntryPropertyEquals(lexicalGlobalObject, entry, vm.propertyNames->name, name);
+                RETURN_IF_EXCEPTION(scope, nullptr);
+                if (!hasName)
+                    continue;
+            }
+            if (filtersByType) {
+                if (entryTypeName.isNull())
+                    entryTypeName = Identifier::fromString(vm, "entryType"_s);
+                bool hasEntryType = performanceNodeEntryPropertyEquals(lexicalGlobalObject, entry, entryTypeName, entryType);
+                RETURN_IF_EXCEPTION(scope, nullptr);
+                if (!hasEntryType)
+                    continue;
+            }
+        }
+        if (!append(entry)) [[unlikely]]
+            return nullptr;
+    }
+    return matching;
+}
+
 static inline JSC::EncodedJSValue jsPerformanceObserverEntryListPrototypeFunction_getEntriesBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSPerformanceObserverEntryList>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
-    auto& impl = castedThis->wrapped();
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLSequence<IDLInterface<PerformanceEntry>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.getEntries())));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(performanceObserverEntryListEntries(*lexicalGlobalObject, *castedThis, String(), String())));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsPerformanceObserverEntryListPrototypeFunction_getEntries, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -186,15 +330,12 @@ static inline JSC::EncodedJSValue jsPerformanceObserverEntryListPrototypeFunctio
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    UNUSED_PARAM(throwScope);
-    UNUSED_PARAM(callFrame);
-    auto& impl = castedThis->wrapped();
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto type = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLSequence<IDLInterface<PerformanceEntry>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.getEntriesByType(WTF::move(type)))));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(performanceObserverEntryListEntries(*lexicalGlobalObject, *castedThis, String(), type)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsPerformanceObserverEntryListPrototypeFunction_getEntriesByType, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -206,18 +347,18 @@ static inline JSC::EncodedJSValue jsPerformanceObserverEntryListPrototypeFunctio
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    UNUSED_PARAM(throwScope);
-    UNUSED_PARAM(callFrame);
-    auto& impl = castedThis->wrapped();
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    EnsureStillAliveScope argument1 = callFrame->argument(1);
-    auto type = argument1.value().isUndefined() ? String() : convert<IDLDOMString>(*lexicalGlobalObject, argument1.value());
+    // Node compares this `type` as it is: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/observe.js#L199-L213
+    JSValue typeValue = callFrame->argument(1);
+    if (!typeValue.isUndefinedOrNull() && !typeValue.isString())
+        RELEASE_AND_RETURN(throwScope, JSValue::encode(constructEmptyArray(castedThis->globalObject(), nullptr)));
+    auto type = typeValue.isUndefinedOrNull() ? String() : convert<IDLDOMString>(*lexicalGlobalObject, typeValue);
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLSequence<IDLInterface<PerformanceEntry>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.getEntriesByName(WTF::move(name), WTF::move(type)))));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(performanceObserverEntryListEntries(*lexicalGlobalObject, *castedThis, name, type)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsPerformanceObserverEntryListPrototypeFunction_getEntriesByName, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -230,30 +371,15 @@ JSC::GCClient::IsoSubspace* JSPerformanceObserverEntryList::subspaceForImpl(JSC:
     return WebCore::subspaceForImpl<JSPerformanceObserverEntryList, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForPerformanceObserverEntryList, m_subspaceForPerformanceObserverEntryList));
 }
 
-void JSPerformanceObserverEntryList::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+template<typename Visitor>
+void JSPerformanceObserverEntryList::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
     auto* thisObject = uncheckedDowncast<JSPerformanceObserverEntryList>(cell);
-    analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
-    if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
-    Base::analyzeHeap(cell, analyzer);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_entries);
 }
 
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<PerformanceObserverEntryList>&& impl)
-{
-    return createWrapper<PerformanceObserverEntryList>(globalObject, WTF::move(impl));
-}
-
-JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, PerformanceObserverEntryList& impl)
-{
-    return wrap(lexicalGlobalObject, globalObject, impl);
-}
-
-PerformanceObserverEntryList* JSPerformanceObserverEntryList::toWrapped(JSC::VM&, JSC::JSValue value)
-{
-    if (auto* wrapper = dynamicDowncast<JSPerformanceObserverEntryList>(value))
-        return &wrapper->wrapped();
-    return nullptr;
-}
+DEFINE_VISIT_CHILDREN(JSPerformanceObserverEntryList);
 
 }

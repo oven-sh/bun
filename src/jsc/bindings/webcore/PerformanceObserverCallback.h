@@ -29,10 +29,13 @@
 #include "CallbackResult.h"
 #include <wtf/RefCounted.h>
 
+namespace JSC {
+class JSArray;
+}
+
 namespace WebCore {
 
 class PerformanceObserver;
-class PerformanceObserverEntryList;
 
 class PerformanceObserverCallback : public RefCounted<PerformanceObserverCallback>, public ActiveDOMCallback {
 public:
@@ -42,7 +45,8 @@ public:
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
 
-    virtual CallbackResult<void> handleEvent(PerformanceObserver&, PerformanceObserverEntryList&, PerformanceObserver&) = 0;
+    // `entries` is the observer's queue. The callback gets a PerformanceObserverEntryList of it.
+    virtual CallbackResult<void> handleEvent(PerformanceObserver&, JSC::JSArray& entries, PerformanceObserver&) = 0;
 };
 
 } // namespace WebCore

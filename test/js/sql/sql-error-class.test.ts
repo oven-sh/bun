@@ -14,7 +14,7 @@
 // today and not a promise: the two "the stack of a native error" blocks
 // are the only tests of this file that depend on it.
 import { SQL } from "bun";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, onTestFinished, test } from "bun:test";
 import { bunEnv, bunExe, describeWithContainer } from "harness";
 
 type Run = (sql: SQL, query: string, values?: unknown[]) => Promise<unknown>;
@@ -423,6 +423,10 @@ async function withPrepareStackTrace<T>(onError: (error: Error) => void, body: (
     if (error instanceof SQL.SQLError) onError(error);
     return String(error) + frames.map(frame => "\n    at " + frame).join("");
   };
+  // For a `body` that does not settle: the test then ends at its timeout.
+  onTestFinished(() => {
+    Error.prepareStackTrace = original;
+  });
   try {
     return await body();
   } finally {

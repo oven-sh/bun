@@ -9,7 +9,7 @@
     "stats": {
       "dirs": 250,
       "files": 1513,
-      "excluded": 366
+      "excluded": 368
     }
   },
   "dirs": [
@@ -343,6 +343,7 @@
     "internal/build-debug-info-flags.test.ts",
     "internal/build-post-link-ordering.test.ts",
     "internal/build-rust-toolchain-probe.test.ts",
+    "internal/harness-max-rss.test.ts",
     "internal/internal-module-blob.test.ts",
     "internal/linear-fifo.test.ts",
     "internal/macos-cross-config.test.ts",
@@ -432,6 +433,7 @@
     "js/bun/util/inspect.test.js",
     "js/bun/util/password.test.ts",
     "js/bun/util/text-loader.test.ts",
+    "js/bun/wasm/compile-rss.test.ts",
     "js/bun/websocket/websocket-server-rsv-frames.test.ts",
     "js/bun/webview/webview-chrome.test.ts",
     "js/bun/xml/xml-test-suite.test.ts",
@@ -497,8 +499,6 @@
     "js/node/worker_threads/worker_threads.test.ts",
     "js/node/zlib/leak.test.ts",
     "js/sql/local-sql.test.ts",
-    "js/sql/postgres-binary-numeric-digit-range.test.ts",
-    "js/sql/postgres-binary-numeric.test.ts",
     "js/sql/postgres-datestyle.test.ts",
     "js/sql/postgres-listen-notify.test.ts",
     "js/sql/postgres-multi-statement-fields.test.ts",

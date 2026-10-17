@@ -11,15 +11,23 @@
 // connect-phase timer. libpq rejects a second AuthenticationSASL with
 // "duplicate SASL authentication request".
 import { SQL } from "bun";
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { isASAN, isDebug } from "harness";
 import {
   listeningServer,
   pgAuthenticationCleartextPassword,
   pgAuthenticationMD5Password,
   pgAuthenticationOk,
   pgAuthenticationSASL,
+  pgAuthenticationSASLContinue,
+  pgErrorResponse,
+  pgInt32,
+  pgParseSASLInitialResponse,
+  pgParseStartupMessage,
   pgRaw,
+  pgReadFrontendMessages,
   pgReadyForQuery,
+  pgScramServer,
 } from "./wire-frames";
 
 /**
@@ -204,4 +212,99 @@ test("postgres: connectionTimeout bounds the whole handshake, not per packet", a
     for (const s of sockets) s.destroy();
     await new Promise<void>(r => server.close(() => r()));
   }
+});
+
+/** Connects to a `pgScramServer`. Resolves to what connect() rejected with and whether the client sent a proof. */
+async function handshake(options: Parameters<typeof pgScramServer>[0]) {
+  await using server = await pgScramServer(options);
+  const db = new SQL({
+    url: `postgres://u:${options.password}@127.0.0.1:${server.port}/db?sslmode=disable`,
+    max: 1,
+    connectionTimeout: 30,
+  });
+  try {
+    const error = await db.connect().then(
+      () => null,
+      (e: any) => ({ name: e.name, code: e.code, message: e.message }),
+    );
+    return { error, proofOk: server.exchanges[0].proofOk };
+  } finally {
+    await db.close({ timeout: 0 });
+  }
+}
+
+// The server picks the iteration count.
+describe.concurrent("postgres: SCRAM-SHA-256 iteration count", () => {
+  test("4096 is accepted", async () => {
+    expect(await handshake({ password: "pw", iterations: 4096 })).toEqual({ error: null, proofOk: true });
+  });
+
+  test.each([0, 1, 4095, 10_000_001])("%d is refused before any proof is computed", async iterations => {
+    expect(await handshake({ password: "pw", iterations })).toEqual({
+      error: {
+        name: "PostgresError",
+        code: "ERR_POSTGRES_SASL_ITERATION_COUNT_OUT_OF_RANGE",
+        message: `SCRAM-SHA-256 iteration count ${iterations} is out of range: it must be between 4096 and 10000000`,
+      },
+      proofOk: null,
+    });
+  });
+});
+
+// PBKDF2 with 10,000,000 iterations holds the thread for over a second on a release build and for half a minute on a
+// debug one, so nothing runs next to this test and the mock does not compute the proof a second time to check it.
+test.skipIf(isDebug || isASAN)("postgres: SCRAM-SHA-256 iteration count 10000000 is accepted", async () => {
+  const proof = Promise.withResolvers<string>();
+  const { port, server } = await listeningServer(socket => {
+    let buffered = Buffer.alloc(0);
+    let state: "startup" | "first" | "final" = "startup";
+    socket.on("error", () => {});
+    socket.on("data", chunk => {
+      buffered = Buffer.concat([buffered, chunk]);
+      if (state === "startup") {
+        const startup = pgParseStartupMessage(buffered);
+        if (!startup) return;
+        buffered = startup.rest;
+        state = "first";
+        socket.write(pgAuthenticationSASL());
+      }
+      buffered = pgReadFrontendMessages(buffered, (type, body) => {
+        if (type !== 0x70 /* 'p' */) return;
+        if (state === "final") {
+          proof.resolve(body.toString());
+          socket.end(pgErrorResponse({ S: "FATAL", C: "28P01", M: "the mock verifies nothing" }));
+          return;
+        }
+        state = "final";
+        const nonce = pgParseSASLInitialResponse(body)
+          .clientFirstMessage.split(",")
+          .find(attribute => attribute.startsWith("r="));
+        socket.write(pgAuthenticationSASLContinue(`${nonce}server,s=${btoa("salt")},i=10000000`));
+      });
+    });
+  });
+  const db = new SQL({ url: `postgres://u:pw@127.0.0.1:${port}/db?sslmode=disable`, max: 1, connectionTimeout: 30 });
+  try {
+    db.connect().catch(() => {});
+    expect(await proof.promise).toMatch(/,p=[A-Za-z0-9+/]{43}=$/);
+  } finally {
+    await db.close({ timeout: 0 });
+    server.close();
+  }
+});
+
+// §55.7: AuthenticationKerberosV5 is Int32(2), AuthenticationGSS Int32(7), AuthenticationSSPI Int32(9).
+test.concurrent.each([
+  [2, "Kerberos V5"],
+  [7, "GSSAPI"],
+  [9, "SSPI"],
+])("postgres: the error for authentication request %d names the method", async (request, method) => {
+  expect(await handshake({ password: "pw", first: pgRaw("R", pgInt32(request)) })).toEqual({
+    error: {
+      name: "PostgresError",
+      code: "ERR_POSTGRES_UNSUPPORTED_AUTHENTICATION_METHOD",
+      message: `${method} authentication is not supported`,
+    },
+    proofOk: null,
+  });
 });

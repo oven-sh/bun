@@ -3,8 +3,8 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::bindgen::{
-    self, BufferSource, IntoError as _, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper,
-    JsWrapperStrong, WithValue,
+    self, BufferSource, IntoError as _, JsBytes, JsHeap, JsLocal, JsPayload as _, JsScope,
+    JsWrapper, JsWrapperStrong, PinnedBytes, StringOrJsBytes,
 };
 use crate::generated_bindgen::bindgen_test::{
     TestAnything, TestChoice, TestColor, TestColorOrRest, TestCounterClass,
@@ -202,10 +202,6 @@ pub(crate) fn sum_bytes(bytes: &[u8]) -> u32 {
     sum(bytes)
 }
 
-pub(crate) fn sum_bytes_optional(bytes: Option<&[u8]>) -> Option<u32> {
-    bytes.map(sum)
-}
-
 pub(crate) fn sum_bytes_then_text(bytes: &[u8], text: &[u8]) -> u32 {
     sum(bytes) + sum(text)
 }
@@ -216,20 +212,72 @@ pub(crate) fn sum_before_and_after_callback<'a>(
     callback: JsLocal<'a>,
 ) -> bindgen::Result<'a, [u32; 2]> {
     let before = buffer.with_bytes(&cx.heap, sum);
+    call(cx, callback)?;
+    Ok([before, buffer.with_bytes(&cx.heap, sum)])
+}
+
+pub(crate) fn bytes_of(data: &[u8]) -> Vec<u8> {
+    data.to_vec()
+}
+
+pub(crate) fn bytes_of_then(data: &[u8], _: f64) -> Vec<u8> {
+    data.to_vec()
+}
+
+pub(crate) fn bytes_of_then_copied(data: Vec<u8>, _: f64) -> Vec<u8> {
+    data
+}
+
+fn call<'a>(cx: &mut JsScope<'a>, callback: JsLocal<'a>) -> bindgen::Result<'a, ()> {
     let Some(callback) = callback.as_callable() else {
         return Err(cx
             .heap
             .type_error(format_args!("callback must be a function")));
     };
     callback.call(cx, JsLocal::UNDEFINED, &[])?;
-    Ok([before, buffer.with_bytes(&cx.heap, sum)])
+    Ok(())
 }
 
-pub(crate) fn with_value_echo<'a>(_: &JsHeap<'a>, text: WithValue<'a, &'a [u8]>) -> JsLocal<'a> {
-    if text.converted.is_empty() {
-        return JsLocal::UNDEFINED;
+pub(crate) fn bytes_before_and_after_callback<'a>(
+    cx: &mut JsScope<'a>,
+    data: JsBytes<'a>,
+    callback: JsLocal<'a>,
+) -> bindgen::Result<'a, [Vec<u8>; 2]> {
+    let before = data.get(&cx.heap).to_vec();
+    call(cx, callback)?;
+    Ok([before, data.get(&cx.heap).to_vec()])
+}
+
+pub(crate) fn pinned_bytes_after_callback<'a>(
+    cx: &mut JsScope<'a>,
+    data: PinnedBytes,
+    callback: JsLocal<'a>,
+) -> bindgen::Result<'a, Vec<u8>> {
+    call(cx, callback)?;
+    let (bytes, data) = std::thread::scope(|scope| {
+        scope
+            .spawn(move || (data.to_vec(), data))
+            .join()
+            .expect("the thread does not panic")
+    });
+    drop(data);
+    Ok(bytes)
+}
+
+pub(crate) fn string_as_is_or_bytes<'a>(heap: &JsHeap<'a>, data: StringOrJsBytes<'a>) -> Vec<u8> {
+    match data {
+        StringOrJsBytes::Bytes(bytes) => [&[0], bytes.get(heap)].concat(),
+        StringOrJsBytes::String(text) if text.is_8bit() => [&[1], text.latin1()].concat(),
+        StringOrJsBytes::String(text) => [&[2], bytemuck::cast_slice(text.utf16())].concat(),
     }
-    text.value
+}
+
+pub(crate) fn bytes_of_are_same_memory(data: &[u8], again: &[u8]) -> bool {
+    core::ptr::eq(data, again)
+}
+
+pub(crate) fn as_big_int(value: u64) -> u64 {
+    value
 }
 
 pub(crate) fn fail<'a>(
@@ -241,6 +289,11 @@ pub(crate) fn fail<'a>(
         TestFailure::Type => heap.type_error(format_args!("a type error")),
         TestFailure::Range => heap.range_error(format_args!("a range error")),
         TestFailure::Plain => heap.error(format_args!("an error")),
+        TestFailure::Code => heap.error_with_code(
+            crate::ErrorCode::INVALID_ARG_VALUE,
+            format_args!("an error with a code"),
+        ),
+        TestFailure::OutOfMemory => bun_alloc::AllocError.into(),
         TestFailure::Syscall => {
             bun_sys::Error::from_code(bun_sys::E::ENOENT, bun_sys::Tag::open).into_error(heap)
         }
@@ -364,4 +417,24 @@ impl TestTokenClass for TestToken {
 
 pub(crate) fn make_token<'a>(heap: &JsHeap<'a>, id: u32) -> JsWrapper<'a, TestToken> {
     TestToken { id }.into_js(heap)
+}
+
+pub(crate) fn integer_or_big_int(value: u32) -> u32 {
+    value
+}
+
+pub(crate) fn loose_integer(value: u16) -> u16 {
+    value
+}
+
+pub(crate) fn loose_integer_or_big_int(value: u16) -> u16 {
+    value
+}
+
+pub(crate) fn loose_double_or_big_int(value: f64) -> f64 {
+    value
+}
+
+pub(crate) fn wide_integer_or_big_int(value: u64) -> String {
+    value.to_string()
 }

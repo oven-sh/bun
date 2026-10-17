@@ -737,6 +737,8 @@ sortPackageJson = true
 
 `sortPackageJson = { sortScripts = true }` sorts `scripts` by name too.
 
+Next to a `.prettierrc` that lists `prettier-plugin-packagejson`, the keys are sorted in that plugin's order. The key overrides that: `true` sorts in Bun's order, `false` doesn't sort.
+
 ### `format.jsdoc`
 
 [Format JSDoc comments](/format#format-jsdoc-comments). Default `false`.
@@ -775,7 +777,7 @@ sortOrder = "scripts-markup-styles-options"
 | `allowShorthand`       | `true`                            | Print `a={a}` as `{a}`                                                                      |
 | `indentScriptAndStyle` | `true`                            | Indent the code in `<script>` and `<style>`                                                 |
 
-Next to a `.prettierrc` or an `.oxfmtrc.json`, the default is what that file says: Prettier formats `.svelte` files if it lists `prettier-plugin-svelte`, and oxfmt if it has `svelte`. The key overrides the file either way. With `svelte = true`, Bun formats the files whichever version of the plugin is installed.
+Next to a `.prettierrc` or an `.oxfmtrc.json`, the default is what that file says: Prettier formats `.svelte` files if it lists `prettier-plugin-svelte`, and oxfmt if it has `svelte`. The key overrides the file either way.
 
 ### `format.ignorePatterns`
 

@@ -613,24 +613,18 @@ let a = 1;
 
   test("counts for more than a .prettierrc, like every key", async () => {
     const files = { "a.svelte": input };
-    const [without, on, named, off, other, byBun] = await Promise.all([
+    const [without, on, named, off, other, otherOff] = await Promise.all([
       format({ ".prettierrc": "{}\n", ...files }),
       format({ ".prettierrc": "{}\n", ...bunfig("svelte = true"), ...files }),
       format({ ...withPlugin, ...files }),
       format({ ...withPlugin, ...bunfig("svelte = false"), ...files }),
-      // Another version than the one that is built in. Nothing can format the file, since Prettier isn't installed.
-      format({ ...withPlugin, ...installed("3.4.0"), ...files }, ["--allow-unsupported", "."]),
-      format({ ...withPlugin, ...installed("3.4.0"), ...bunfig("svelte = true"), ...files }),
+      // Which version of the plugin is installed makes no difference.
+      format({ ...withPlugin, ...installed("3.4.0"), ...files }),
+      format({ ...withPlugin, ...installed("3.4.0"), ...bunfig("svelte = false"), ...files }),
     ]);
-    expect([without, on, named, off, other, byBun].map(it => it.files["a.svelte"])).toEqual([
-      input,
-      formatted,
-      formatted,
-      input,
-      input,
-      formatted,
-    ]);
-    expect([without, on, named, off, byBun].map(it => [it.stderr, it.exitCode])).toEqual(Array(5).fill(["", 0]));
+    const results = [without, on, named, off, other, otherOff];
+    expect(results.map(it => it.files["a.svelte"])).toEqual([input, formatted, formatted, input, formatted, input]);
+    expect(results.map(it => [it.stderr, it.exitCode])).toEqual(results.map(() => ["", 0]));
     // In the file itself it is still an unknown option.
     const inFile = await format({ ".prettierrc": `{ "svelte": true }`, ...files, "a.js": "a  ;\n" });
     expect(inFile.stderr).toBe("warn: Ignored unknown option { svelte: true }.\n");

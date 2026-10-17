@@ -179,7 +179,7 @@ Not checked:    other tools' configs, CI files, Git hooks
       "a.svelte": "<p>a</p>\n",
     });
 
-    test.each([undefined, "4.1.1"])("is built in: %s installed", async version => {
+    test.each([undefined, "4.1.1", "4.1.0", "3.4.0", "5.0.0"])("is built in: %s installed", async version => {
       const { stdout, exitCode } = await doctor(project(version));
       expect(stdout).toBe(`Using .prettierrc.json (Prettier config)
 
@@ -193,32 +193,10 @@ Not checked:    other tools' configs, CI files, Git hooks
       expect(exitCode).toBe(0);
     });
 
-    test("another version prints some components differently, so it stays in use", async () => {
-      const { stdout, exitCode } = await doctor(project("3.4.0"));
-      expect(stdout).toBe(`Using .prettierrc.json (Prettier config)
-
-    2 files are formatted natively
-    1 file goes to your installed Prettier: 1 *.svelte
-
-Plugins that use your installed Prettier: prettier-plugin-svelte
-
-Still needed:   prettier, prettier-plugin-svelte (some files go to them)
-`);
-      expect(exitCode).toBe(0);
-    });
-
-    test("with `svelte = true` in [fmt], another version is not in use", async () => {
-      const { stdout, exitCode } = await doctor({ ...project("3.4.0"), "bunfig.toml": "[fmt]\nsvelte = true\n" });
-      expect(stdout).toBe(`Using .prettierrc.json (Prettier config)
-Using bunfig.toml ([fmt])
-
-    3 files are formatted natively
-
-Built-in plugins: prettier-plugin-svelte
-
-You can remove: prettier, prettier-plugin-svelte
-Not checked:    other tools' configs, CI files, Git hooks
-`);
+    test.each(["--range-start=1", "--range-end=2", "--cursor-offset=1"])("also with %s", async flag => {
+      const { stdout, exitCode } = await doctor(project("4.1.1"), [flag]);
+      expect(stdout).toContain("    3 files are formatted natively\n\nBuilt-in plugins: prettier-plugin-svelte\n");
+      expect(stdout).toContain("You can remove: prettier, prettier-plugin-svelte\n");
       expect(exitCode).toBe(0);
     });
 
@@ -293,6 +271,51 @@ note: Some Svelte files are not formatted (svelte = false in an override)
       expect(await Promise.all(precedences.map(it => says(files, it)))).toEqual([true, true, true]);
       expect(await Promise.all(precedences.map(it => says(inFile, it)))).toEqual([true, false, false]);
     });
+  });
+
+  test.each([[{ ...installed("prettier"), ...installed("prettier-plugin-packagejson") }], [{}]])(
+    "prettier-plugin-packagejson is built in, installed or not",
+    async packages => {
+      const { stdout, exitCode } = await doctor({
+        ...packages,
+        "package.json": dependencies("prettier", "prettier-plugin-packagejson"),
+        ".prettierrc.json": JSON.stringify({ plugins: ["prettier-plugin-packagejson"], packageSortOrder: ["version"] }),
+        "packages/a/package.json": "{}\n",
+        "a.js": ugly,
+      });
+      expect(stdout).toBe(`Using .prettierrc.json (Prettier config)
+
+    4 files are formatted natively
+
+Built-in plugins: prettier-plugin-packagejson
+
+You can remove: prettier, prettier-plugin-packagejson
+Not checked:    other tools' configs, CI files, Git hooks
+`);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test("the built-in plugins stay installed for the Prettier that formats another language", async () => {
+    const plugins = ["prettier-plugin-astro", "prettier-plugin-packagejson", "prettier-plugin-svelte"];
+    const { stdout, exitCode } = await doctor({
+      ...Object.assign({}, ...["prettier", ...plugins].map(installed)),
+      "package.json": dependencies("prettier", ...plugins),
+      ".prettierrc.json": JSON.stringify({ plugins }),
+      "a.astro": "<p>a</p>\n",
+      "b.svelte": "<p>b</p>\n",
+    });
+    expect(stdout).toBe(`Using .prettierrc.json (Prettier config)
+
+    3 files are formatted natively
+    1 file goes to your installed Prettier: 1 *.astro
+
+Built-in plugins: prettier-plugin-packagejson, prettier-plugin-svelte
+Plugins that use your installed Prettier: prettier-plugin-astro
+
+Still needed:   prettier, prettier-plugin-astro, prettier-plugin-packagejson, prettier-plugin-svelte (some files go to them)
+`);
+    expect(exitCode).toBe(0);
   });
 
   test("lists unsupported plugins and plugins that aren't installed", async () => {

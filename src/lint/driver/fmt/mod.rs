@@ -10,6 +10,7 @@ mod doctor;
 mod editorconfig;
 mod files;
 mod for_rules;
+mod package_json;
 mod prettier;
 mod tailwind;
 
@@ -603,6 +604,26 @@ fn is_same_toml(before: &[u8], after: &[u8]) -> bool {
     }
 }
 
+/// How `prettier-plugin-packagejson` sorts the keys of `text`, or `None` if it doesn't. The plugin runs as part of the
+/// `json-stringify` parser. Prettier doesn't parse blank text, or text without a pragma comment under `requirePragma`.
+///
+/// With a range the plugin still sorts, and Prettier then applies the offsets to the sorted text. Here the offsets refer to the
+/// text as written, so nothing is sorted.
+fn sort_of_plugin<'r>(
+    resolved: &'r Resolved,
+    parser: bun_format::json::Parser,
+    text: &[u8],
+) -> Option<&'r package_json::Sort> {
+    let options = &resolved.options;
+    let is_whole = options.range_start.unwrap_or(0) == 0
+        && (options.range_end).is_none_or(|end| end >= strings::wtf8_len_utf16(text));
+    let is_read = parser == bun_format::json::Parser::JsonStringify
+        && is_whole
+        && !options.require_pragma
+        && !strings::is_all_js_whitespace(strings::without_utf8_bom(text));
+    resolved.package_json.as_ref().filter(|_| is_read)
+}
+
 /// The formatted text, and where the cursor is in it, if `cursorOffset` says where it was.
 type Formatted = (Vec<u8>, Option<u32>);
 
@@ -657,6 +678,18 @@ fn format(
     match kind {
         Some(Kind::Script) | None => {}
         Some(Kind::Json(parser)) => {
+            if let Some(sort) = sort_of_plugin(resolved, parser, text) {
+                let sorted = package_json::sorted(text, sort)
+                    .map_err(|(message, at)| Failure::Syntax(Problem::at(text, &message, at)))?;
+                let whole = FormatOptions {
+                    range_start: None,
+                    range_end: None,
+                    ..options.clone()
+                };
+                let json = &mut scratch.json;
+                let done = bun_format::json::format(&sorted, parser, &whole, json, &mut out);
+                return finish(done, out, "JSON");
+            }
             let mut sorted = Vec::new();
             let text = match options
                 .sort_package_json
@@ -1042,12 +1075,11 @@ pub fn is_same_svelte_for_tests(before: &[u8], after: &[u8]) -> bool {
     bun_format::svelte::has_same_content(before, after, &options, None)
 }
 
-/// Why the file at `path`, which has `scope`, is in no language that is known.
-fn has_no_parser(configs: &Configs, scope: &config::Scope, path: Vec<u8>) -> Vec<u8> {
-    let is_off = || configs.asks_for_parser_of_svelte() && configs.turns_svelte_off_for(&path);
-    let reason: &[u8] = match configs.leaves_svelte_for_part(scope, &path) {
-        true => b"A range or a cursor offset cannot be used with a Svelte file: \"",
-        false if is_off() => b"Cannot use --parser svelte, because Svelte is off for \"",
+/// Why the file at `path` is in no language that is known.
+fn has_no_parser(configs: &Configs, path: Vec<u8>) -> Vec<u8> {
+    let is_off = configs.asks_for_parser_of_svelte() && configs.turns_svelte_off_for(&path);
+    let reason: &[u8] = match is_off {
+        true => b"Cannot use --parser svelte, because Svelte is off for \"",
         false => b"No parser could be inferred for file \"",
     };
     [reason, &paths::to_native(path)[..], b"\"."].concat()
@@ -1100,7 +1132,6 @@ fn language_of(configs: &Configs, scope: &config::Scope, path: &[u8]) -> Languag
                 Language::Supported
             }
             Language::Unknown if configs.is_read_by_plugin(scope, path) => Language::Other,
-            Language::Supported if configs.is_read_by_plugin(scope, path) => Language::Other,
             Language::Unknown if files::is_toml(path) && configs.is_native_in(scope) => {
                 Language::Supported
             }
@@ -1332,7 +1363,7 @@ impl Run<'_> {
         };
         let language = language_of(configs, &scope, &path);
         let is_ignored = ignored.ignores_file(&path, configs.ignores_of(&scope));
-        let is_of_plugin = configs.plugin_that_reads(&scope, &path).is_some();
+        let is_of_plugin = configs.is_read_by_plugin(&scope, &path);
         let not_installed = match language == Language::Other && is_of_plugin {
             true => self.not_installed(configs, &scope, Some(&path)),
             false => Vec::new(),
@@ -1355,16 +1386,7 @@ impl Run<'_> {
         }
         // As for a file. Who gets the text back with 0 takes it for formatted.
         let allows = self.options.allow_unsupported;
-        // It is the plugin that is missing, not the language.
-        let plugin = (configs.plugin_that_reads(&scope, &path))
-            .filter(|_| files::language_of(&path) == Language::Supported);
-        if let (Language::Other, Some(plugin)) = (language, plugin) {
-            self.say_not_installed(&not_installed);
-            if !allows {
-                self.say_left_for_plugins(1, &[plugin]);
-                return self.out;
-            }
-        } else if language == Language::Other {
+        if language == Language::Other {
             self.say_unsupported(&mut [(ending_of(&path), 1)], &not_installed);
             if allows && !only_looks {
                 self.out.stdout = text;
@@ -1382,7 +1404,7 @@ impl Run<'_> {
             if configs.flavor == Flavor::Prettier && self.options.ignore_unknown && !only_looks {
                 return self.out;
             }
-            let mut out = self.fail_to_start(configs.flavor, &has_no_parser(configs, &scope, path));
+            let mut out = self.fail_to_start(configs.flavor, &has_no_parser(configs, path));
             if forgives {
                 out.exit_code = 0;
             }
@@ -1432,7 +1454,8 @@ impl Run<'_> {
         };
         let is_formatted = |kind: &Kind| *kind != Kind::Svelte || options.options.svelte.is_on;
         let Some(kind) = Kind::of_parser(&parser).filter(is_formatted) else {
-            if !configs.names_other_plugins(&scope, None) {
+            // Prettier has no `svelte` parser without the plugin either.
+            if &*parser == b"svelte" || !configs.names_other_plugins(&scope, None) {
                 self.error(&cannot_resolve_parser(&parser));
                 self.out.exit_code = match (self.is_native, forgives) {
                     (true, _) => 2,
@@ -1719,7 +1742,7 @@ impl Run<'_> {
                 }
                 Language::Supported => work.push((index, target)),
                 Language::Other
-                    if (configs.plugin_that_reads(&target.scope, &target.path)).is_some()
+                    if configs.is_read_by_plugin(&target.scope, &target.path)
                         && [&b"prettier"[..]]
                             .into_iter()
                             .chain(configs.packages_of_plugins(&target.scope, Some(&target.path)))
@@ -1728,8 +1751,7 @@ impl Run<'_> {
                     handed_over.push((index, target));
                 }
                 Language::Other => {
-                    let plugin = configs.plugin_that_reads(&target.scope, &target.path);
-                    if plugin.is_some() {
+                    if configs.is_read_by_plugin(&target.scope, &target.path) {
                         for package in [&b"prettier"[..]]
                             .into_iter()
                             .chain(configs.packages_of_plugins(&target.scope, Some(&target.path)))
@@ -1738,20 +1760,6 @@ impl Run<'_> {
                                 not_installed.push(package);
                             }
                         }
-                    }
-                    // It is the plugin that is missing, not the language.
-                    if let Some(plugin) = plugin
-                        && files::language_of(&target.path) == Language::Supported
-                    {
-                        if options.allow_unsupported {
-                            work.push((index, target));
-                        } else {
-                            left_for_plugins.0 += 1;
-                            if !left_for_plugins.1.contains(&plugin) {
-                                left_for_plugins.1.push(plugin);
-                            }
-                        }
-                        continue;
                     }
                     let kind = ending_of(&target.path);
                     match others.iter_mut().find(|it| it.0 == kind) {
@@ -1762,7 +1770,7 @@ impl Run<'_> {
                 Language::Unknown if target.ignores_unknown || options.ignore_unknown => {}
                 Language::Unknown => {
                     let path = target.path.clone();
-                    done[index] = Some(Done::Failed(has_no_parser(configs, &target.scope, path)));
+                    done[index] = Some(Done::Failed(has_no_parser(configs, path)));
                 }
             }
         }
@@ -2132,8 +2140,6 @@ impl Run<'_> {
         // The tool that this stands in for would have formatted or checked them, so this comes last and is an error.
         if !others.is_empty() {
             self.say_unsupported(&mut others, &not_installed);
-        } else {
-            self.say_not_installed(&not_installed);
         }
         self.out
     }
@@ -2224,7 +2230,7 @@ impl Run<'_> {
                 .concat(),
             );
         }
-        if !(options.plugins.iter()).all(|it| configs.is_built_in(it)) {
+        if !(options.plugins.iter()).all(|it| config::is_built_in_plugin(it)) {
             self.warn(b"--plugin has no effect because bun fmt does not load Prettier plugins");
         }
         if configs.asks_for_parser_of_svelte()

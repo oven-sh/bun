@@ -227,6 +227,17 @@ function validateSecureContextOptions(options) {
       }
     }
   }
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/secure-context.js#L254-L259 (BoringSSL has no SSL_CTX_set_dh_auto)
+  if (dhparam === "auto") {
+    throw $ERR_CRYPTO_UNSUPPORTED_OPERATION("Automatic DH parameter selection is not supported");
+  } else if (dhparam !== undefined && dhparam !== null) {
+    if (typeof dhparam !== "string" && !isArrayBufferView(dhparam)) {
+      throw $ERR_INVALID_ARG_TYPE("options.dhparam", ["string", "Buffer", "TypedArray", "DataView"], dhparam);
+    }
+    NativeSecureContext ??= $rust("SecureContext.rs", "js.getConstructor");
+    const warning = NativeSecureContext.validateDHParam(dhparam);
+    if (warning) process.emitWarning(warning, "SecurityWarning");
+  }
   // clientCertEngine must be a string (engine name); a provided engine then
   // fails because BoringSSL (which Bun always uses) has no OpenSSL ENGINE
   // support, matching Node's setClientCertEngine. Node:
@@ -236,12 +247,6 @@ function validateSecureContextOptions(options) {
       throw $ERR_INVALID_ARG_TYPE("options.clientCertEngine", ["string", "null", "undefined"], clientCertEngine);
     }
     throw $ERR_CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED("Custom engines not supported by this OpenSSL");
-  }
-  // BoringSSL (always used by Bun) has no automatic DH parameter selection.
-  // Matches Node's setDHParam('auto') throwing ERR_CRYPTO_UNSUPPORTED_OPERATION.
-  // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/internal/tls/secure-context.js#L254
-  if (dhparam === "auto") {
-    throw $ERR_CRYPTO_UNSUPPORTED_OPERATION("Automatic DH parameter selection is not supported");
   }
   if (minVersion != null && !VALID_TLS_VERSIONS.has(minVersion))
     throw $ERR_TLS_INVALID_PROTOCOL_VERSION(JSON.stringify(minVersion), "minimum");
@@ -403,8 +408,8 @@ const nodeClientTlsKeys = [
 
 // `options` of tls.connect(), as a null-prototype copy, to the `tls` option of fetch() and WebSocket.
 function nodeClientTlsToNative(options) {
-  // BoringSSL has no DHE suites to apply it to.
-  options.dhparam = undefined;
+  // BoringSSL has no DHE suites to apply it to; the size check still runs as in Node.
+  if (options.dhparam === "auto") options.dhparam = undefined;
   validateSecureContextOptions(options);
   if (options.ciphers) {
     // BoringSSL has no security levels to set.

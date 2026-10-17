@@ -16,6 +16,8 @@ export default [
       // Parses a PKCS#12 (`pfx`) blob into { key, cert, ca } PEM strings so
       // the regular key/cert/ca option plumbing can consume it.
       parsePkcs12: { fn: "parse_pkcs12", length: 2 },
+      // Node's SecureContext::SetDHParam size policy for the `dhparam` option.
+      validateDHParam: { fn: "validate_dh_param", length: 1 },
     },
     // node:tls hands out the SecureContext object itself as `.context`. We
     // deliberately do NOT expose the underlying SSL_CTX* to JS: a Number

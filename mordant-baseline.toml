@@ -116,7 +116,6 @@
 "reimplemented_helper:src/libuv_sys/libuv.rs" = 1
 "unused_pub:src/libuv_sys/lib.rs" = 2
 "unused_pub:src/libuv_sys/libuv.rs" = 41
-"unused_pub:src/libuv_sys/open_handles.rs" = 1
 
 [bun_lint]
 "bool_cluster:src/lint/estree/schema.rs" = 1

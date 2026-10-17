@@ -41,9 +41,7 @@ pub fn GetStdHandle(std_handle: DWORD) -> Option<HANDLE> {
 // `bun_windows_sys` leaf and are re-exported here for the
 // `crate::windows_sys::*` path used by callers.
 // ──────────────────────────────────────────────────────────────────────────
-pub use bun_windows_sys::{
-    CURDIR, PEB, ProcessParameters, RTL_USER_PROCESS_PARAMETERS, TEB, peb, teb,
-};
+pub use bun_windows_sys::{CURDIR, PEB, RTL_USER_PROCESS_PARAMETERS, TEB, peb, teb};
 
 // SAFETY: nested `i16`/`u16` POD; all-zero is the documented pre-call state
 // for `GetConsoleScreenBufferInfo` out-params. Impl lives here (not in

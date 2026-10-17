@@ -769,7 +769,10 @@ impl JSBundleCompletionTask {
 
                 let mut to_assign_on_sourcemap = JSValue::ZERO;
                 for (i, output_file) in output_files.iter_mut().enumerate() {
-                    let path: Box<[u8]> = if !outdir.is_empty() {
+                    // An absolute `dest_path` is the path the file was written to.
+                    let is_under_outdir =
+                        !outdir.is_empty() && !bun_paths::is_absolute(&output_file.dest_path);
+                    let path: Box<[u8]> = if is_under_outdir {
                         if outdir_is_abs {
                             Box::from(join_abs_string::<platform::Auto>(
                                 &outdir,
@@ -811,26 +814,14 @@ impl JSBundleCompletionTask {
                     Err(e) => return promise.reject(global_this, Err(e)),
                 };
 
-                // metafile: { json: <lazy parsed>, markdown?: string }
+                // `result.metafile` parses this string on first access.
                 if let Some(metafile) = &build.metafile {
                     let metafile_js_str =
                         match bun_string_jsc::create_utf8_for_js(global_this, metafile) {
                             Ok(v) => v,
                             Err(e) => return promise.reject(global_this, Err(e)),
                         };
-                    let metafile_md_str = match &build.metafile_markdown {
-                        Some(md) => match bun_string_jsc::create_utf8_for_js(global_this, md) {
-                            Ok(v) => v,
-                            Err(e) => return promise.reject(global_this, Err(e)),
-                        },
-                        None => JSValue::UNDEFINED,
-                    };
-                    Bun__setupLazyMetafile(
-                        global_this,
-                        build_output,
-                        metafile_js_str,
-                        metafile_md_str,
-                    );
+                    Bun__setupLazyMetafile(global_this, build_output, metafile_js_str);
                 }
 
                 let did_handle_callbacks = if let Some(plugin) = this.plugins_mut() {
@@ -873,7 +864,6 @@ bun_jsc::jsc_abi_extern! {
         global_this: &JSGlobalObject,
         build_output: JSValue,
         metafile_json_string: JSValue,
-        metafile_markdown_string: JSValue,
     );
 }
 

@@ -24,7 +24,7 @@ pub struct OutputFile {
     pub bytecode_index: u32,
     pub module_info_index: u32,
     pub output_kind: OutputKind,
-    /// Relative
+    /// Relative to the outdir, or absolute (a compiled executable, a metafile that was written).
     pub dest_path: Box<[u8]>,
     pub side: Option<Side>,
     /// This is only set for the JS bundle, and not files associated with an

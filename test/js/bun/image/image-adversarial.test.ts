@@ -9,8 +9,9 @@
 //
 // Kept in its own file so the happy-path image.test.ts stays readable.
 
+import { quantizeRoute } from "bun:internal-for-testing";
 import { afterEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, gcTick, isASAN, rss, tempDir } from "harness";
+import { bunEnv, bunExe, gcTick, isASAN, isDebug, rss, tempDir } from "harness";
 import { join } from "node:path";
 import zlib from "node:zlib";
 
@@ -1260,4 +1261,126 @@ describe("random-byte fuzz", () => {
       }
     });
   }
+});
+
+// ─── 11. palette: colours built to share slots of the colour table ───────────
+
+// `png({ palette: true })` counts the colours of an image in a hash table
+// (`Counts` in quantize.rs). The hash is fixed: the slot of a colour is the
+// top bits of key × 0x9e3779b1, where key is the pixel as a little-endian
+// u32. So an image can hold colours that all start at one slot, and each
+// probe then walks past the others. The table gives up when its probes have
+// passed more than 4 slots per pixel, and the boxes then hold the pixels.
+describe("palette PNG of colours built to share slots of the colour table", () => {
+  // The key whose product is `x`, or the next one that is not fully
+  // transparent: every fully transparent pixel counts as one colour.
+  const withHash = (() => {
+    // 0x9e3779b1 × inverse = 1 (mod 2^32)
+    let inverse = 1;
+    for (let i = 0; i < 5; i++) inverse = Math.imul(inverse, 2 - Math.imul(0x9e3779b1, inverse));
+    return (x: number) => {
+      while (Math.imul(x, inverse) >>> 24 === 0) x++;
+      return Math.imul(x, inverse);
+    };
+  })();
+  // Colour number `i` of a set that the hash spreads over the table.
+  const spread = (i: number) => i | 0xff000000;
+  const pixelsOf = (keys: Uint32Array) => new Uint8Array(keys.buffer);
+  const pngOf = (w: number, h: number, keys: Uint32Array) =>
+    makePng(w, h, (x, y) => {
+      const key = keys[y * w + x];
+      return [key & 255, (key >>> 8) & 255, (key >>> 16) & 255, key >>> 24];
+    });
+  // How many times the processor time of `control` the palette encode of
+  // `hostile` takes. A child process measures it: on a busy machine the
+  // clock says little.
+  const slowdown = async (w: number, h: number, hostile: Uint32Array, control: Uint32Array, colors: number) => {
+    using dir = tempDir("palette-colour-table", {
+      "hostile.png": Buffer.from(pngOf(w, h, hostile)),
+      "control.png": Buffer.from(pngOf(w, h, control)),
+    });
+    const script = `
+      const [hostile, control] = [await Bun.file("hostile.png").bytes(), await Bun.file("control.png").bytes()];
+      const time = async png => {
+        const before = process.cpuUsage();
+        for (let i = 0; i < ${isDebug ? 1 : 20}; i++) {
+          await new Bun.Image(png).png({ palette: true, colors: ${colors} }).bytes();
+        }
+        const { user, system } = process.cpuUsage(before);
+        return user + system;
+      };
+      await time(control);
+      console.log((await time(hostile)) / (await time(control)));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    return Number(stdout);
+  };
+
+  test("every colour starts at the same slot: the table gives up", async () => {
+    // 32,768 colours on eight pixels each, with the hash values
+    // 0x5a5a0000 | j. Their top 16 bits are equal, so at every size of the
+    // table each colour walks past all the colours before it: 537 million
+    // slots to count them, and as many again to look them up.
+    const [w, h, colors] = [512, 512, 2];
+    const hostile = Uint32Array.from({ length: w * h }, (_, i) => withHash(0x5a5a0000 | (i >> 3)));
+    const control = Uint32Array.from({ length: w * h }, (_, i) => spread(i >> 3));
+    expect([quantizeRoute(pixelsOf(hostile), colors), quantizeRoute(pixelsOf(control), colors)]).toEqual([
+      "pixels",
+      "table",
+    ]);
+    expect(await slowdown(w, h, hostile, control, colors)).toBeLessThan(12);
+  });
+
+  test("two colours behind a chain of 500, looked up at every pixel: the table gives up", async () => {
+    // 500 colours that start at slots 100 to 599 of the 1024, one each. Then
+    // two colours that start at slots 100 and 101, alternating to the end.
+    // They are behind the 500, so each lookup walks 500 slots. No insert is
+    // slow here: the budget has to count the lookups too.
+    const [w, h, colors, chain] = [512, 512, 2, 500];
+    const fill = (slot: number) =>
+      Uint32Array.from({ length: w * h }, (_, i) =>
+        i < chain ? withHash(((100 + i) << 22) | 0x1234) : withHash(((slot + (i & 1)) << 22) | 0x4321),
+      );
+    // In the control the two colours start at free slots.
+    const [hostile, control] = [fill(100), fill(700)];
+    expect([quantizeRoute(pixelsOf(hostile), colors), quantizeRoute(pixelsOf(control), colors)]).toEqual([
+      "pixels",
+      "table",
+    ]);
+    expect(await slowdown(w, h, hostile, control, colors)).toBeLessThan(12);
+  });
+
+  test("a chain that wraps the end of the table keeps its order when the table grows", async () => {
+    // 1025 spread colours make the table 4096 slots. Two colours that start
+    // at its last two slots alternate on most of the image. 1020 more colours
+    // start at the first of those slots too, so they go round to slots 0, 1,
+    // 2 and so on. The last pixel is the colour that makes the table grow, so
+    // the count is over before it can see what the growth did. If growth
+    // moved the colours in slot order from slot 0, the 1020 would go first
+    // and the two would land behind them: every lookup of the mapping pass,
+    // which has no budget of its own, would walk 1020 slots.
+    const [w, h, colors, grown, chain] = [512, 512, 16, 1025, 1020];
+    const alternating = w * h - grown - chain - 2;
+    const fill = (hostile: boolean) =>
+      Uint32Array.from({ length: w * h }, (_, i) => {
+        if (i < grown) return spread(i);
+        if ((i -= grown) < alternating) return withHash(((4094 + (i & 1)) << 20) | (i & 1));
+        if ((i -= alternating) < chain) return hostile ? withHash((4094 << 20) | (0x100 + 2 * i)) : spread(0x10000 + i);
+        return spread(grown + i - chain);
+      });
+    const [hostile, control] = [fill(true), fill(false)];
+    expect([quantizeRoute(pixelsOf(hostile), colors), quantizeRoute(pixelsOf(control), colors)]).toEqual([
+      "table",
+      "table",
+    ]);
+    expect(await slowdown(w, h, hostile, control, colors)).toBeLessThan(12);
+  });
 });

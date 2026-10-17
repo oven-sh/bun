@@ -49,19 +49,36 @@ pub(crate) fn quantize(
     let want: usize = usize::from(opts.max_colors.clamp(1, 256));
 
     let mut indices: Vec<u8> = try_filled(n)?;
-    let palette: Vec<u8> = match exact_palette(pixels, want, &mut indices) {
+    let palette: Vec<u8> = match route(pixels, want, &mut indices)? {
         // Every pixel has its own entry, so there is no error to diffuse.
-        Some(palette) => palette,
-        None => {
+        Route::Exact(palette) => palette,
+        more => {
             // At most `want` entries: fewer when transparent pixels hid the colours over the limit.
-            let palette = split_boxes(pixels, want)?;
+            let (palette, table) = match more {
+                Route::Table(table) => (split_boxes(&mut table.bins()?, want)?, Some(table)),
+                _ => (split_boxes(&mut copy_shown(pixels)?, want)?, None),
+            };
             let k: u16 = u16::try_from(palette.len() / 4).expect("int cast");
+            // The table moves no byte: the boxes of pixels give the same palette.
+            #[cfg(debug_assertions)]
+            assert!(table.is_none() || palette == split_boxes(&mut copy_shown(pixels)?, want)?);
             if opts.dither {
+                drop(table);
                 map_floyd_steinberg(rgba, w, h, &palette, k, &mut indices)?;
+            } else if let Some(table) = table {
+                table.map(pixels, &palette, k, &mut indices);
+                // And a search per run gives the same indices.
+                #[cfg(debug_assertions)]
+                {
+                    let mut searched: Vec<u8> = try_filled(n)?;
+                    map_runs(pixels, &mut searched, |key| {
+                        nearest(&palette, k, shown_key(key))
+                    });
+                    assert!(indices == searched);
+                }
             } else {
-                // Alpha is the top byte of a key: a transparent pixel is searched as `[0; 4]`.
                 map_runs(pixels, &mut indices, |key| {
-                    nearest(&palette, k, if key >> 24 == 0 { 0 } else { key })
+                    nearest(&palette, k, shown_key(key))
                 });
             }
             palette
@@ -93,7 +110,34 @@ fn shown(pixel: [u8; 4]) -> [u8; 4] {
     if pixel[3] == 0 { [0; 4] } else { pixel }
 }
 
-/// One slot of an open-addressing table from a colour to its palette index plus 1.
+/// `shown` for a pixel as a key: alpha is the top byte.
+fn shown_key(key: u32) -> u32 {
+    if key >> 24 == 0 { 0 } else { key }
+}
+
+/// How the palette is built. The passes that count the colours decide it.
+pub(crate) enum Route {
+    /// At most `want` colours: the palette, in order of first appearance. `indices` is complete.
+    Exact(Vec<u8>),
+    /// More colours, counted in a table: the boxes hold each colour once.
+    Table(Counts),
+    /// More colours than a table pays for: the boxes hold a copy of the pixels.
+    Pixels,
+}
+
+/// Count the colours of `pixels` as far as it pays. `want` is the palette size, 1 to 256.
+pub(crate) fn route(
+    pixels: &[[u8; 4]],
+    want: usize,
+    indices: &mut [u8],
+) -> Result<Route, AllocError> {
+    if let Some(palette) = exact_palette(pixels, want, indices) {
+        return Ok(Route::Exact(palette));
+    }
+    Ok(count_colors(pixels, want)?.map_or(Route::Pixels, Route::Table))
+}
+
+/// One slot of an open-addressing table from a colour to a non-zero number.
 #[derive(Clone, Copy, Default)]
 struct Slot {
     /// The pixel's four bytes, little-endian on every target.
@@ -139,6 +183,158 @@ fn exact_palette(pixels: &[[u8; 4]], want: usize, indices: &mut [u8]) -> Option<
     Some(seen)
 }
 
+/// Slots that the probes of the count may pass, per pixel. Colours built to share a slot pass more.
+const PROBE_BUDGET: usize = 4;
+/// Colours per palette entry that the count table takes before it asks whether they repeat.
+const TABLE_COLORS_PER_ENTRY: usize = 1024;
+/// Past that, it takes a new colour while the colours so far cover this many pixels each.
+const TABLE_PIXELS_PER_COLOR: usize = 8;
+/// Pixels per slot, at least: the table and the bins take no more bytes than a copy of the pixels.
+const TABLE_PIXELS_PER_SLOT: usize = 3;
+/// An image of at most this many pixels is not counted: its boxes of pixels cost less than a table.
+const UNCOUNTED_PIXELS: usize = 4096;
+
+/// The slot of `key` or the empty one for it, and the slots the probe passed. `slots.len()` is 2^n.
+#[inline]
+fn probe(slots: &[Slot], key: u32) -> (usize, usize) {
+    let mask = slots.len() - 1;
+    // The same hash as the first pass, with as many top bits as the table has slots.
+    let mut i = (key.wrapping_mul(0x9E37_79B1) >> (32 - slots.len().trailing_zeros())) as usize;
+    let mut passed: usize = 0;
+    // A table is never full, so the walk ends.
+    while slots[i].val != 0 && slots[i].key != key {
+        i = (i + 1) & mask;
+        passed += 1;
+    }
+    (i, passed)
+}
+
+/// Pixel counts by colour. A photo has too many colours for a table to pay: it gives up.
+pub(crate) struct Counts {
+    /// Each `val` is the pixel count of `key`. At most half full.
+    slots: Vec<Slot>,
+    distinct: usize,
+    /// Pixels counted so far.
+    pixels: usize,
+    /// Slots that the probes of `add` passed so far.
+    probed: usize,
+    /// Slots that the moves of `grow` passed so far.
+    moved: usize,
+    /// Colours it takes whatever they are.
+    room: usize,
+    /// Colours it takes at most.
+    most: usize,
+}
+
+impl Counts {
+    /// Count `count` pixels of one colour. False when the table gives up.
+    fn add(&mut self, key: u32, count: u32) -> Result<bool, AllocError> {
+        self.pixels += count as usize;
+        let (i, passed) = probe(&self.slots, key);
+        self.probed += passed;
+        if self.probed + self.moved > PROBE_BUDGET * self.pixels {
+            return Ok(false);
+        }
+        let slot = &mut self.slots[i];
+        if slot.val != 0 {
+            slot.val += count;
+            return Ok(true);
+        }
+        let repeat = self.pixels >= TABLE_PIXELS_PER_COLOR * self.distinct;
+        if self.distinct >= self.most || (self.distinct >= self.room && !repeat) {
+            return Ok(false);
+        }
+        *slot = Slot { key, val: count };
+        self.distinct += 1;
+        if self.distinct * 2 > self.slots.len() {
+            self.grow()?;
+        }
+        Ok(true)
+    }
+
+    /// Twice the slots. No colour ends further from its first slot than it was.
+    fn grow(&mut self) -> Result<(), AllocError> {
+        let mut grown: Vec<Slot> = try_filled(self.slots.len() * 2)?;
+        // From an empty slot, going round: a chain that wraps the end is moved from its start.
+        let gap = self
+            .slots
+            .iter()
+            .position(|slot| slot.val == 0)
+            .unwrap_or(0);
+        let (wrapped, rest) = self.slots.split_at(gap);
+        for slot in rest.iter().chain(wrapped).filter(|slot| slot.val != 0) {
+            let (i, passed) = probe(&grown, slot.key);
+            grown[i] = *slot;
+            self.moved += passed;
+        }
+        self.slots = grown;
+        Ok(())
+    }
+
+    /// Every colour once, with its pixel count.
+    fn bins(&self) -> Result<Elements, AllocError> {
+        let mut bins: Vec<Bin> = Vec::new();
+        bins.try_reserve_exact(self.distinct)
+            .map_err(|_| AllocError)?;
+        let counted = self.slots.iter().filter(|slot| slot.val != 0);
+        bins.extend(counted.map(|slot| Bin {
+            rgba: slot.key.to_le_bytes(),
+            count: slot.val,
+        }));
+        Ok(Elements::Bins(bins))
+    }
+
+    /// Write every pixel's palette index: one search per colour, then one lookup per run.
+    fn map(mut self, pixels: &[[u8; 4]], palette: &[u8], k: u16, indices: &mut [u8]) {
+        // Each count becomes the index of the nearest entry, plus 1.
+        for slot in self.slots.iter_mut().filter(|slot| slot.val != 0) {
+            slot.val = u32::from(nearest(palette, k, slot.key)) + 1;
+        }
+        let mut passed: usize = 0;
+        map_runs(pixels, indices, |key| {
+            let (i, steps) = probe(&self.slots, shown_key(key));
+            passed += steps;
+            u8::try_from(self.slots[i].val - 1).expect("int cast")
+        });
+        // No lookup passes more slots than the count's probe for its run: the budget holds here.
+        debug_assert!(passed <= self.probed);
+    }
+}
+
+/// Count every colour. `None` when there are more than a table pays for.
+fn count_colors(pixels: &[[u8; 4]], want: usize) -> Result<Option<Counts>, AllocError> {
+    if pixels.len() <= UNCOUNTED_PIXELS {
+        return Ok(None);
+    }
+    // The largest table is a power of two of slots, and at most half full.
+    let slots = 1usize << (pixels.len() / TABLE_PIXELS_PER_SLOT).ilog2();
+    let mut table = Counts {
+        slots: try_filled(1024)?,
+        distinct: 0,
+        pixels: 0,
+        probed: 0,
+        moved: 0,
+        room: TABLE_COLORS_PER_ENTRY * want,
+        most: slots / 2,
+    };
+    for run in pixels.chunk_by(|a, b| a == b) {
+        let count = u32::try_from(run.len()).expect("int cast");
+        if !table.add(u32::from_le_bytes(shown(run[0])), count)? {
+            return Ok(None);
+        }
+    }
+    Ok(Some(table))
+}
+
+/// A copy of the pixels as they are shown, for the boxes.
+fn copy_shown(pixels: &[[u8; 4]]) -> Result<Elements, AllocError> {
+    let mut copy = Vec::new();
+    copy.try_reserve_exact(pixels.len())
+        .map_err(|_| AllocError)?;
+    copy.extend(pixels.iter().map(|&pixel| shown(pixel)));
+    Ok(Elements::Pixels(copy))
+}
+
 /// Count, sums and sums of squares of a set of pixels: enough for its mean and squared error.
 #[derive(Clone, Copy, Default)]
 struct Moments {
@@ -148,12 +344,14 @@ struct Moments {
 }
 
 impl Moments {
-    fn add(&mut self, pixel: [u8; 4]) {
-        self.n += 1;
+    /// Add `count` pixels of one colour.
+    #[inline]
+    fn add(&mut self, pixel: [u8; 4], count: u64) {
+        self.n += count;
         for c in 0..4usize {
             let v = u64::from(pixel[c]);
-            self.sum[c] += v;
-            self.sq[c] += v * v;
+            self.sum[c] += count * v;
+            self.sq[c] += count * v * v;
         }
     }
 
@@ -198,9 +396,153 @@ impl Moments {
     }
 }
 
+/// Pixel count and channel sums of the pixels that have one value of a channel.
+#[derive(Clone, Copy, Default)]
+struct Sums {
+    n: u64,
+    sum: [u64; 4],
+}
+
+/// The sums of a box per value of its split channel, and one bit per value that the box has.
+struct ByValue<'a> {
+    ch: usize,
+    at_value: &'a mut [Sums],
+    has: [u64; 4],
+}
+
+impl ByValue<'_> {
+    /// Add `count` pixels of one colour.
+    #[inline]
+    fn add(&mut self, pixel: [u8; 4], count: u64) {
+        let value = usize::from(pixel[self.ch]);
+        self.has[value >> 6] |= 1 << (value & 63);
+        let sums = &mut self.at_value[value];
+        sums.n += count;
+        for c in 0..4usize {
+            sums.sum[c] += count * u64::from(pixel[c]);
+        }
+    }
+}
+
+/// A colour and the number of pixels that have it.
+#[derive(Clone, Copy)]
+struct Bin {
+    rgba: [u8; 4],
+    count: u32,
+}
+
+/// What the boxes divide: a copy of the pixels, or every colour once with its pixel count.
+enum Elements {
+    Pixels(Vec<[u8; 4]>),
+    Bins(Vec<Bin>),
+}
+
+impl Elements {
+    fn len(&self) -> usize {
+        match self {
+            Elements::Pixels(pixels) => pixels.len(),
+            Elements::Bins(bins) => bins.len(),
+        }
+    }
+
+    /// The moments of all of them.
+    fn moments(&self) -> Moments {
+        let mut all = Moments::default();
+        match self {
+            Elements::Pixels(pixels) => {
+                for &pixel in pixels {
+                    all.add(pixel, 1);
+                }
+            }
+            Elements::Bins(bins) => {
+                for bin in bins {
+                    all.add(bin.rgba, u64::from(bin.count));
+                }
+            }
+        }
+        all
+    }
+
+    /// Add the pixels of `lo..hi` to the sums of their value of the split channel.
+    fn add_by_value(&self, lo: usize, hi: usize, sums: &mut ByValue) {
+        match self {
+            // One step per run of equal pixels: a flat area would write its sums once per pixel.
+            Elements::Pixels(pixels) => {
+                for run in pixels[lo..hi].chunk_by(|a, b| a == b) {
+                    sums.add(run[0], run.len() as u64);
+                }
+            }
+            Elements::Bins(bins) => {
+                for bin in &bins[lo..hi] {
+                    sums.add(bin.rgba, u64::from(bin.count));
+                }
+            }
+        }
+    }
+
+    /// Move the elements of `lo..hi` below `value` in `ch` to the front: their number and moments.
+    fn partition(&mut self, lo: usize, hi: usize, ch: usize, value: u8) -> (usize, Moments) {
+        let mut at: usize = 0;
+        let mut left = Moments::default();
+        match self {
+            Elements::Pixels(pixels) => {
+                let slice = &mut pixels[lo..hi];
+                for i in 0..slice.len() {
+                    if slice[i][ch] < value {
+                        left.add(slice[i], 1);
+                        slice.swap(at, i);
+                        at += 1;
+                    }
+                }
+            }
+            Elements::Bins(bins) => {
+                let slice = &mut bins[lo..hi];
+                for i in 0..slice.len() {
+                    if slice[i].rgba[ch] < value {
+                        left.add(slice[i].rgba, u64::from(slice[i].count));
+                        slice.swap(at, i);
+                        at += 1;
+                    }
+                }
+            }
+        }
+        (at, left)
+    }
+
+    /// The colour on more than half of the pixels of `lo..hi`: a flat background stays exact.
+    fn majority(&self, lo: usize, hi: usize) -> Option<[u8; 4]> {
+        match self {
+            Elements::Pixels(pixels) => {
+                let pixels = &pixels[lo..hi];
+                // One vote per pixel finds the only colour that can have more than half.
+                let (mut colour, mut votes) = ([0u8; 4], 0usize);
+                for &pixel in pixels {
+                    if votes == 0 {
+                        colour = pixel;
+                    }
+                    if pixel == colour {
+                        votes += 1;
+                    } else {
+                        votes -= 1;
+                    }
+                }
+                // A count confirms it.
+                let count = pixels.iter().filter(|&&pixel| pixel == colour).count();
+                (count * 2 > pixels.len()).then_some(colour)
+            }
+            Elements::Bins(bins) => {
+                let bins = &bins[lo..hi];
+                let pixels: u64 = bins.iter().map(|bin| u64::from(bin.count)).sum();
+                let most = bins.iter().find(|bin| u64::from(bin.count) * 2 > pixels);
+                most.map(|bin| bin.rgba)
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct ColorBox {
-    /// Slice into the copy of the pixels.
+    /// Range of the elements.
     lo: usize,
     hi: usize,
     moments: Moments,
@@ -219,24 +561,12 @@ impl ColorBox {
     }
 }
 
-/// Split the pixels into `want` boxes (fewer if each is one colour). Each box gives one entry.
-fn split_boxes(pixels: &[[u8; 4]], want: usize) -> Result<Vec<u8>, AllocError> {
-    // The boxes are ranges of a copy. A cut is a value of a channel: equal colours stay together.
-    let mut pixels: Vec<[u8; 4]> = {
-        let mut copy = Vec::new();
-        copy.try_reserve_exact(pixels.len())
-            .map_err(|_| AllocError)?;
-        copy.extend(pixels.iter().map(|&pixel| shown(pixel)));
-        copy
-    };
+/// Split the elements into `want` boxes (fewer if each is one colour). Each box gives one entry.
+fn split_boxes(elements: &mut Elements, want: usize) -> Result<Vec<u8>, AllocError> {
     // Sums per value of the split channel. `cut` leaves it zero.
     let mut at_value: Vec<Sums> = try_filled(256)?;
-    let mut all = Moments::default();
-    for &pixel in &pixels {
-        all.add(pixel);
-    }
     let mut boxes: Vec<ColorBox> = Vec::with_capacity(want);
-    boxes.push(ColorBox::new(0, pixels.len(), &all));
+    boxes.push(ColorBox::new(0, elements.len(), &elements.moments()));
     while boxes.len() < want {
         // The box with the most squared error: its index, `error_times_n` and `n`.
         let mut pick: Option<(usize, u128, u64)> = None;
@@ -254,73 +584,36 @@ fn split_boxes(pixels: &[[u8; 4]], want: usize) -> Result<Vec<u8>, AllocError> {
         let Some((pick, _, _)) = pick else { break };
         let b = boxes[pick];
         let ch = b.moments.channel_to_split();
-        let slice = &mut pixels[b.lo..b.hi];
         // A box of one colour has no cut, and then no other box has error.
-        let Some(value) = cut(slice, ch, &b.moments, &mut at_value) else {
+        let Some(value) = cut(elements, &b, ch, &mut at_value) else {
             break;
         };
-        // The pixels below `value` go first.
-        let mut at: usize = 0;
-        let mut left = Moments::default();
-        for i in 0..slice.len() {
-            if slice[i][ch] < value {
-                left.add(slice[i]);
-                slice.swap(at, i);
-                at += 1;
-            }
-        }
-        boxes[pick] = ColorBox::new(b.lo, b.lo + at, &left);
-        boxes.push(ColorBox::new(b.lo + at, b.hi, &b.moments.minus(&left)));
+        // The elements below `value` go first. A cut is a value: equal colours stay together.
+        let (below, left) = elements.partition(b.lo, b.hi, ch, value);
+        boxes[pick] = ColorBox::new(b.lo, b.lo + below, &left);
+        boxes.push(ColorBox::new(b.lo + below, b.hi, &b.moments.minus(&left)));
     }
     let mut palette: Vec<u8> = Vec::with_capacity(boxes.len() * 4);
     for b in &boxes {
-        let entry = majority(&pixels[b.lo..b.hi]).unwrap_or_else(|| b.moments.mean());
+        let entry = elements
+            .majority(b.lo, b.hi)
+            .unwrap_or_else(|| b.moments.mean());
         palette.extend_from_slice(&entry);
     }
     Ok(palette)
 }
 
-/// The colour that more than half of `pixels` have: a flat background stays exact.
-fn majority(pixels: &[[u8; 4]]) -> Option<[u8; 4]> {
-    // One vote per pixel finds the only colour that can have more than half. A count confirms it.
-    let (mut colour, mut votes) = ([0u8; 4], 0usize);
-    for &pixel in pixels {
-        if votes == 0 {
-            colour = pixel;
-        }
-        if pixel == colour {
-            votes += 1;
-        } else {
-            votes -= 1;
-        }
-    }
-    let count = pixels.iter().filter(|&&pixel| pixel == colour).count();
-    (count * 2 > pixels.len()).then_some(colour)
-}
-
-/// Pixel count and channel sums of the pixels that have one value of a channel.
-#[derive(Clone, Copy, Default)]
-struct Sums {
-    n: u64,
-    sum: [u64; 4],
-}
-
-/// The cut of `pixels` along `ch` with the least squared error, as the value that starts part two.
-fn cut(pixels: &[[u8; 4]], ch: usize, total: &Moments, at_value: &mut [Sums]) -> Option<u8> {
-    // One bit per value of `ch` that the box has: a box of a few pixels has few of the 256.
-    let mut has = [0u64; 4];
-    // One step per run of equal pixels: a flat area would write the same sums once per pixel.
-    for run in pixels.chunk_by(|a, b| a == b) {
-        let pixel = run[0];
-        let count = run.len() as u64;
-        let value = usize::from(pixel[ch]);
-        has[value >> 6] |= 1 << (value & 63);
-        let sums = &mut at_value[value];
-        sums.n += count;
-        for c in 0..4usize {
-            sums.sum[c] += count * u64::from(pixel[c]);
-        }
-    }
+/// The cut of a box along `ch` with the least squared error, as the value that starts part two.
+fn cut(elements: &Elements, b: &ColorBox, ch: usize, at_value: &mut [Sums]) -> Option<u8> {
+    let total = &b.moments;
+    // A box of a few pixels has few of the 256 values: `has` names them.
+    let mut by_value = ByValue {
+        ch,
+        at_value,
+        has: [0u64; 4],
+    };
+    elements.add_by_value(b.lo, b.hi, &mut by_value);
+    let ByValue { at_value, has, .. } = by_value;
     // The sum of squares is fixed: least error is the largest L²/nL + R²/nR over the parts' sums.
     let mut left = Sums::default();
     let mut best: Option<(u128, u8)> = None;

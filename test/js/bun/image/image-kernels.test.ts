@@ -4,6 +4,7 @@
 // width, ringing vs. softness, dither error distribution) rather than the
 // pipeline glue. Kept separate so a kernel regression points straight here.
 
+import { quantizeRoute } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import zlib from "node:zlib";
 
@@ -864,6 +865,283 @@ describe("png({palette:true}) keeps the colours that fit and splits the rest by 
       return { palette, pixels: indices.map(i => palette[i]) };
     });
     expect(got).toEqual(want);
+  });
+
+  // An image with more colours than `colors` takes one of two routes (`route`
+  // in quantize.rs). A table counts the colours when they repeat, and the
+  // boxes then hold each colour once. When the table gives up, the boxes hold
+  // the pixels. Both routes write the same bytes.
+  describe("the colour table", () => {
+    test("exact: an image that fits the palette does not reach the table", () => {
+      const rgba = whiteThenDark(128 * 128, 16000, 16);
+      expect([quantizeRoute(rgba, 16), quantizeRoute(rgba, 15)]).toEqual(["exact", "table"]);
+    });
+
+    // [name, width, height, white pixels, distinct colours, colors, route].
+    test.each([
+      ["table: 2,000 colours", 128, 128, 8192, 2000, 16, "table"],
+      ["table: more than 1024 colours per entry, and they repeat", 512, 400, 180000, 17000, 16, "table"],
+      ["pixels: more than 1024 colours per entry, and they do not repeat", 512, 400, 25600, 20000, 16, "pixels"],
+      ["pixels: more colours than a table of a third of the pixels holds", 128, 128, 8192, 4000, 16, "pixels"],
+    ] as const)("%s", async (_name, w, h, white, distinct, colors, route) => {
+      const rgba = whiteThenDark(w * h, white, distinct);
+      expect(quantizeRoute(rgba, colors)).toBe(route);
+      const out = await new Bun.Image(pngFromRgba(w, h, rgba)).png({ palette: true, colors }).bytes();
+      const palette = pngPlte(out).entries;
+      expect(new Set(palette.map(e => e.join())).size).toBe(colors);
+      expect(countNotNearest(rgba, palette, (await decode(out)).data)).toBe(0);
+    });
+
+    test("table and pixels: the same pixels in reverse take the other route and give the same palette", async () => {
+      // With most of the white first the colours repeat from the start, and
+      // the table counts them. With most of it last they do not.
+      const [w, h] = [512, 400];
+      const whiteFirst = whiteThenDark(w * h, 180000, 17000);
+      const whiteLast = whiteFirst.slice();
+      new Uint32Array(whiteLast.buffer).reverse();
+      expect([quantizeRoute(whiteFirst, 16), quantizeRoute(whiteLast, 16)]).toEqual(["table", "pixels"]);
+      const [first, last] = await Promise.all(
+        [whiteFirst, whiteLast].map(rgba =>
+          new Bun.Image(pngFromRgba(w, h, rgba)).png({ palette: true, colors: 16 }).bytes(),
+        ),
+      );
+      expect(pngPlte(last).entries).toEqual(pngPlte(first).entries);
+      // Every pixel has the same entry in both.
+      const reversed = new Uint32Array((await decode(first)).data.buffer).reverse();
+      expect(new Uint32Array((await decode(last)).data.buffer)).toEqual(reversed);
+    });
+
+    test("table: the palette with dither is the palette without it", async () => {
+      const rgba = whiteThenDark(128 * 128, 8192, 2000);
+      expect(quantizeRoute(rgba, 16)).toBe("table");
+      const [plain, dithered] = await Promise.all(
+        [false, true].map(dither =>
+          new Bun.Image(pngFromRgba(128, 128, rgba)).png({ palette: true, colors: 16, dither }).bytes(),
+        ),
+      );
+      expect(pngPlte(dithered).entries).toEqual(pngPlte(plain).entries);
+    });
+
+    // `model` with every colour once and its pixel count in place of the
+    // pixels, so that 4,000 pixels cost what 40 do. The products that choose
+    // a box pass 2^53 at that size and are BigInts.
+    const countedModel = (pixels: Rgba[], colors: number): { palette: Rgba[]; indices: number[] } => {
+      const channels = [0, 1, 2, 3];
+      type Bin = { colour: Rgba; count: number };
+      type Box = { bins: Bin[]; n: number; sums: number[]; error: number[] };
+      const keyOf = (p: Rgba) => p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24);
+      const binsOf = (pixels: Rgba[]) => {
+        const bins = new Map<number, Bin>();
+        for (const p of pixels) {
+          const bin = bins.get(keyOf(p));
+          if (bin) bin.count++;
+          else bins.set(keyOf(p), { colour: p, count: 1 });
+        }
+        return [...bins.values()];
+      };
+      const boxOf = (bins: Bin[]): Box => {
+        const n = bins.reduce((s, b) => s + b.count, 0);
+        const sums = channels.map(c => bins.reduce((s, b) => s + b.count * b.colour[c], 0));
+        const error = channels.map(c => n * bins.reduce((s, b) => s + b.count * b.colour[c] ** 2, 0) - sums[c] ** 2);
+        return { bins, n, sums, error };
+      };
+      const total = (box: Box) => BigInt(box.error.reduce((s, e) => s + e, 0));
+      const sumsSquared = (box: Box) => BigInt(box.sums.reduce((s, v) => s + v * v, 0));
+
+      let palette = binsOf(pixels).map(bin => bin.colour);
+      if (palette.length > colors) {
+        pixels = pixels.map((p): Rgba => (p[3] === 0 ? [0, 0, 0, 0] : p));
+        const boxes = [boxOf(binsOf(pixels))];
+        while (boxes.length < colors) {
+          let pick: Box | undefined;
+          for (const box of boxes) {
+            if (box.n < 2) continue;
+            if (!pick || total(box) * BigInt(pick.n) > total(pick) * BigInt(box.n)) pick = box;
+          }
+          if (!pick) break;
+          const box = pick;
+          let ch = 0;
+          for (const c of channels) if (box.error[c] > box.error[ch]) ch = c;
+          const values = [...new Set(box.bins.map(b => b.colour[ch]))].sort((a, b) => a - b);
+          let best: { score: bigint; parts: [Box, Box] } | undefined;
+          for (const value of values.slice(1)) {
+            const parts: [Box, Box] = [
+              boxOf(box.bins.filter(b => b.colour[ch] < value)),
+              boxOf(box.bins.filter(b => b.colour[ch] >= value)),
+            ];
+            const [below, rest] = parts;
+            const score = (sumsSquared(below) << 32n) / BigInt(below.n) + (sumsSquared(rest) << 32n) / BigInt(rest.n);
+            if (!best || score > best.score) best = { score, parts };
+          }
+          if (!best) break;
+          boxes[boxes.indexOf(box)] = best.parts[0];
+          boxes.push(best.parts[1]);
+        }
+        palette = boxes.map(box => {
+          const most = box.bins.find(b => b.count * 2 > box.n);
+          return most ? most.colour : (box.sums.map(sum => Math.floor((sum + (box.n >> 1)) / box.n)) as Rgba);
+        });
+      }
+      // One search per colour.
+      const nearest = new Map<number, number>();
+      for (const { colour } of binsOf(pixels)) {
+        const distances = palette.map(e => channels.reduce((s, c) => s + (colour[c] - e[c]) ** 2, 0));
+        nearest.set(keyOf(colour), distances.indexOf(Math.min(...distances)));
+      }
+      return { palette, indices: pixels.map(p => nearest.get(keyOf(p))!) };
+    };
+
+    test("table: random images that the table counts match a model of the rules", async () => {
+      let state = 0x51a7e;
+      const next = (below: number) => {
+        state = (Math.imul(state, 1103515245) + 12345) >>> 0;
+        return (state >>> 16) % below;
+      };
+      // A few levels per channel. Every third image has alpha, with fully
+      // transparent pixels that hide colours.
+      const image = (w: number, h: number) => {
+        const [levels, withAlpha] = [3 + next(2), next(3) === 0];
+        const level = () => next(levels) * 85;
+        return Array.from({ length: w * h }, (): Rgba => [level(), level(), level(), withAlpha ? level() : 255]);
+      };
+      // On images of a few pixels the model of colours is the model of pixels.
+      for (let i = 0; i < 12; i++) {
+        const [pixels, colors] = [image(1 + next(8), 1 + next(8)), 2 + next(8)];
+        expect(countedModel(pixels, colors)).toEqual(model(pixels, colors));
+      }
+      // A table needs more than 4096 pixels: 65x64 to 72x64.
+      const cases: { w: number; colors: number; pixels: Rgba[] }[] = [];
+      while (cases.length < 6) {
+        const [w, colors] = [65 + next(8), 2 + next(8)];
+        const pixels = image(w, 64);
+        if (quantizeRoute(new Uint8Array(pixels.flat()), colors) === "table") cases.push({ w, colors, pixels });
+      }
+      const got = await Promise.all(
+        cases.map(async ({ w, colors, pixels }) => {
+          const out = await new Bun.Image(makePng(w, 64, (x, y) => pixels[y * w + x]))
+            .png({ palette: true, colors })
+            .bytes();
+          return { palette: pngPlte(out).entries, pixels: (await decode(out)).data };
+        }),
+      );
+      const want = cases.map(({ colors, pixels }) => {
+        const { palette, indices } = countedModel(pixels, colors);
+        return { palette, pixels: new Uint8Array(indices.flatMap(i => palette[i])) };
+      });
+      expect(got).toEqual(want);
+    });
+
+    // The rules of the count, each at its limit and one past it. The slot of
+    // a colour is the top bits of key × 0x9e3779b1, where key is the pixel as
+    // a little-endian u32, and the table starts at 1024 slots.
+    describe("the rules of the count", () => {
+      // 0x9e3779b1 × inverse = 1 (mod 2^32)
+      let inverse = 1;
+      for (let i = 0; i < 5; i++) inverse = Math.imul(inverse, 2 - Math.imul(0x9e3779b1, inverse));
+      // Colour number `i` of a set that the hash spreads over the table.
+      const spread = (i: number) => i | 0xff000000;
+      // Colour number `j` of those that start at slot `home` of the 1024. None
+      // is fully transparent.
+      const homed = (home: number, j: number) => {
+        for (let low = j * 64; ; low++) {
+          const key = Math.imul((home << 22) | low, inverse);
+          if (key >>> 24) return key;
+        }
+      };
+      const route = (length: number, colors: number, keyAt: (i: number) => number) =>
+        quantizeRoute(new Uint8Array(Uint32Array.from({ length }, (_, i) => keyAt(i)).buffer), colors);
+
+      test("an image of at most 4096 pixels is not counted", () => {
+        const seventeen = (i: number) => spread(i < 17 ? i : 0);
+        expect([route(4096, 16, seventeen), route(4097, 16, seventeen)]).toEqual(["pixels", "table"]);
+      });
+
+      test("the table has at most one slot per three pixels and is at most half full", () => {
+        // 6144 pixels allow 2048 slots and 1024 colours. 6143 allow half of that.
+        const first = (colours: number) => (i: number) => spread(i < colours ? i : 0);
+        expect([
+          route(6144, 2, first(1024)),
+          route(6144, 2, first(1025)),
+          route(6143, 2, first(512)),
+          route(6143, 2, first(513)),
+        ]).toEqual(["table", "pixels", "table", "pixels"]);
+      });
+
+      test("probes pass at most 4 slots per pixel", () => {
+        // 200 colours that start at one slot pass 0 + 1 + ... + 199 = 19,900
+        // slots: 4 for each of 4975 pixels.
+        const chain = (flat: number) => (i: number) => (i < flat ? homed(900, 0) : homed(300, i - flat));
+        expect([route(4975, 16, chain(4775)), route(4974, 16, chain(4774))]).toEqual(["table", "pixels"]);
+      });
+
+      test("a run of equal pixels is one probe", () => {
+        // The sixth colour of a slot is 5 slots from it. As one run it is
+        // probed once. Pixel by pixel that is 5 slots per pixel.
+        expect(route(4505, 2, i => homed(300, Math.min(i, 5)))).toBe("table");
+      });
+
+      test("fully transparent pixels are one colour, and each run of them is one probe", () => {
+        // Five colours start at slot 0, so the transparent colour, key 0, is 5
+        // slots from it. The pixels that hide two colours in turn pass 5
+        // slots each: 10 + 5 × 3278 = 4 × 4100.
+        const hidden = (i: number) => (i < 817 ? spread(7) : i < 822 ? homed(0, i - 817) : 1 + (i & 1));
+        expect([route(4100, 2, hidden), route(4101, 2, hidden)]).toEqual(["table", "pixels"]);
+      });
+
+      test("1024 colours per palette entry are taken whatever they are", () => {
+        const first = (colours: number) => (i: number) => spread(i < colours ? i : 0);
+        expect([route(24576, 2, first(2048)), route(24576, 2, first(2049))]).toEqual(["table", "pixels"]);
+      });
+
+      test("past them a colour is taken while the colours so far cover 8 pixels each", () => {
+        // Colour 2049 arrives as pixel 16,384 = 8 × 2048, or one pixel sooner.
+        const late = (at: number) => (i: number) => spread(i < 2048 ? i : i === at ? 2048 : 0);
+        expect([route(24576, 2, late(16383)), route(24576, 2, late(16382))]).toEqual(["table", "pixels"]);
+      });
+
+      // 5000 lookups of two colours, 60 colours that start where `head` says,
+      // 451 more that make the table grow, then 1200 lookups of the two.
+      const growth = (hot: (i: number) => number, head: number) => (i: number) => {
+        if (i < 5000) return hot(i);
+        if ((i -= 5000) < 60) return homed(head, 1 + i);
+        if ((i -= 60) < 451) return homed(100 + i, 3);
+        return hot(i);
+      };
+
+      test("growth keeps the order of a chain that wraps the end of the table", () => {
+        // The two colours have the last two slots and the 60 go round to
+        // slot 0. Moved in slot order from slot 0, the 60 would go first and
+        // the two would land behind them: the lookups after the growth would
+        // pass 60 slots each and the table would give up.
+        expect(
+          route(
+            6711,
+            16,
+            growth(i => homed(1022 + (i & 1), 0), 1022),
+          ),
+        ).toBe("table");
+      });
+
+      test("growth keeps the order of a chain in the middle of the table", () => {
+        expect(
+          route(
+            6711,
+            16,
+            growth(i => homed(i & 1 ? 80 : 10, 0), 10),
+          ),
+        ).toBe("table");
+      });
+
+      test("the slots that growth passes count too", () => {
+        // 400 colours that start at one slot pass 79,800 slots when they are
+        // counted and 79,800 more when the table grows.
+        const chain = (flat: number) => (i: number) => {
+          if (i < flat || i === flat + 512) return spread(0);
+          return (i -= flat) < 400 ? homed(300, i) : homed(400 + i, 1);
+        };
+        expect([route(40088, 16, chain(39575)), route(40087, 16, chain(39574))]).toEqual(["table", "pixels"]);
+      });
+    });
   });
 });
 

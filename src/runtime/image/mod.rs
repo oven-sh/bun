@@ -44,6 +44,8 @@ pub(crate) mod backend_wic;
 pub(crate) mod exif;
 #[path = "quantize.rs"]
 pub(crate) mod quantize;
+#[path = "quantize_testing.rs"]
+pub(crate) mod quantize_testing;
 #[path = "thumbhash.rs"]
 pub(crate) mod thumbhash;
 

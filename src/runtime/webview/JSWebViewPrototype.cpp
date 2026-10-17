@@ -137,7 +137,11 @@ static JSWebView* unwrapThis(JSGlobalObject* globalObject, ThrowScope& scope, Ca
         return nullptr;
     }
     if (thisObject->m_closed) {
-        Bun::ERR::INVALID_STATE(scope, globalObject, makeString("WebView."_s, method, ": view is closed"_s));
+        const auto& reason = thisObject->m_closedReason;
+        Bun::ERR::INVALID_STATE(scope, globalObject,
+            reason.isEmpty()
+                ? makeString("WebView."_s, method, ": view is closed"_s)
+                : makeString("WebView."_s, method, ": "_s, reason));
         return nullptr;
     }
     return thisObject;
@@ -509,7 +513,10 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncPress, (JSGlobalObject * globalObject
     }
 
     VirtualKey vk = virtualKeyFromName(key);
-    if (vk == VirtualKey::Character && key.length() != 1) {
+    // One code point: one BMP unit, or one surrogate pair (an emoji).
+    bool singleCodePoint = (key.length() == 1 && !U16_IS_SURROGATE(key[0]))
+        || (key.length() == 2 && U16_IS_LEAD(key[0]) && U16_IS_TRAIL(key[1]));
+    if (vk == VirtualKey::Character && !singleCodePoint) {
         return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "key"_s, keyArg,
             "must be a virtual key name (Enter, Tab, Escape, Arrow*, etc.) or a single character"_s);
     }

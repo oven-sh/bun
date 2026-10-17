@@ -223,7 +223,7 @@ fn create_parsed_shell_script_impl(
     // `shargs`'s arena (it later moves into `ParsedShellScript`).
     let mut jsobjs: Vec<JSValue> = Vec::new();
     let mut script: Vec<u8> = Vec::new();
-    shell_cmd_from_js(
+    let array_ranges = shell_cmd_from_js(
         global,
         string_args,
         &mut template_args,
@@ -250,6 +250,7 @@ fn create_parsed_shell_script_impl(
             &script[..],
             &mut jsobjs[..],
             &jsstrings[..],
+            &array_ranges,
             &mut out_parser,
             &mut out_lex_result,
         ) {

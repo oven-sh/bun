@@ -25,6 +25,41 @@ describe("shell sentinel character hardening", () => {
     expect(result).toBe(str + "\n");
   });
 
+  test("string matching the internal array separator round-trips through interpolation", async () => {
+    // A value with the sentinel byte is stored out-of-band, so its bytes are
+    // data also next to a real array separator.
+    const str = "a\x08" + "0b";
+    expect(await $`echo ${str}`.text()).toBe(str + "\n");
+    expect(await $`A=${[str, "c"]}; echo "[$A]"`.text()).toBe(`[${str} c]\n`);
+  });
+
+  test("array separator bytes are text where no interpolated array wrote them", async () => {
+    // The lexer reads a separator only in the source range that an array wrote.
+    const bytes = "\x08" + "0";
+    expect(await $`A=a${{ raw: bytes }}echo${{ raw: bytes }}INJECTED; echo "[$A]"`.text()).toBe(
+      `[a${bytes}echo${bytes}INJECTED]\n`,
+    );
+    expect(await $`A=a${{ raw: bytes }}echo${{ raw: bytes }}INJECTED; echo "[$A]" ${["p", "q"]}`.text()).toBe(
+      `[a${bytes}echo${bytes}INJECTED] p q\n`,
+    );
+    expect(await $`echo ${["p", "q"]} ${{ raw: "x\x08" }}${"0foo"}`.text()).toBe("p q x\x08" + "0foo\n");
+
+    using dir = tempDir("sentinel-array-separator", {
+      "script.sh": `A=a${bytes}echo${bytes}INJECTED\necho "[$A]"\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "script.sh"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(`[a${bytes}echo${bytes}INJECTED]\n`);
+    expect(exitCode).toBe(0);
+  });
+
   test("raw sentinel injection with out-of-bounds index does not crash", async () => {
     // { raw: ... } bypasses string escaping, allowing injection of a sentinel
     // pattern with a digit suffix into the script buffer. The old

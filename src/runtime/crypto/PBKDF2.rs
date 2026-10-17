@@ -88,12 +88,12 @@ impl PBKDF2 {
         }
 
         if keylen_num < 0.0 || keylen_num > i32::MAX as f64 {
+            // Node spells this range with "&&" (lib/internal/validators.js validateInt32).
             return Err(global_this.throw_range_error(
                 keylen_num,
                 bun_jsc::RangeErrorOptions {
                     field_name: b"keylen",
-                    min: 0,
-                    max: i32::MAX as i64,
+                    msg: b">= 0 && <= 2147483647",
                     ..Default::default()
                 },
             ));
@@ -128,8 +128,7 @@ impl PBKDF2 {
                 iterations_num,
                 bun_jsc::RangeErrorOptions {
                     field_name: b"iterations",
-                    min: 1,
-                    max: i32::MAX as i64,
+                    msg: b">= 1 && <= 2147483647",
                     ..Default::default()
                 },
             ));

@@ -1640,7 +1640,9 @@ describe("multipart upload primitives", () => {
     try {
       // Unescaped, `<&>` would not parse as XML (MalformedXML). Escaped, the
       // server reads it and reports the mismatch.
-      await expect(client.completeMultipartUpload(key, uploadId, [{ partNumber: 1, etag: '"<&>"' }])).rejects.toMatchObject({
+      await expect(
+        client.completeMultipartUpload(key, uploadId, [{ partNumber: 1, etag: '"<&>"' }]),
+      ).rejects.toMatchObject({
         code: "InvalidPart",
       });
     } finally {
@@ -1651,14 +1653,19 @@ describe("multipart upload primitives", () => {
   it("static forms take the credentials as the last argument", async () => {
     const key = `multipart/${randomUUIDv7()}.bin`;
     const { uploadId } = await S3Client.createMultipartUpload(key, credentials);
-    const etag = await putPart(S3Client.presign(key, { ...credentials, method: "PUT", uploadId, partNumber: 1 }), partTwo);
+    const etag = await putPart(
+      S3Client.presign(key, { ...credentials, method: "PUT", uploadId, partNumber: 1 }),
+      partTwo,
+    );
     await S3Client.completeMultipartUpload(key, uploadId, [{ partNumber: 1, etag }], credentials);
     expect(await S3Client.file(key, credentials).text()).toBe(partTwo.toString());
     await S3Client.unlink(key, credentials);
 
     const { uploadId: other } = await S3Client.createMultipartUpload(key, credentials);
     await S3Client.abortMultipartUpload(key, other, credentials);
-    await expect(S3Client.abortMultipartUpload(key, other, credentials)).rejects.toMatchObject({ code: "NoSuchUpload" });
+    await expect(S3Client.abortMultipartUpload(key, other, credentials)).rejects.toMatchObject({
+      code: "NoSuchUpload",
+    });
   });
 
   it("S3File.presign and S3Client.presign take uploadId and partNumber", () => {

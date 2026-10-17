@@ -110,13 +110,13 @@ use bun_s3_signing::storage_class::StorageClass;
 // File-level mods are declared flat in `webcore.rs` via `#[path]`, so `super`
 // here is `crate::webcore`, not the `s3` directory. Route through the `s3`
 // re-export hub instead.
+pub(crate) use crate::webcore::s3::multipart_ops::UploadPartResult;
+use crate::webcore::s3::multipart_ops::{self, UploadId};
 use crate::webcore::s3::multipart_options::MultiPartUploadOptions;
 use crate::webcore::s3::simple_request::{
     self as s3_simple_request, S3CommitResult, S3DeleteResult, S3DownloadResult, S3PartResult,
     S3UploadResult, execute_simple_s3_request,
 };
-use crate::webcore::s3::multipart_ops::{self, UploadId};
-pub(crate) use crate::webcore::s3::multipart_ops::UploadPartResult;
 
 declare_scope!(S3MultiPartUpload, hidden);
 
@@ -362,10 +362,10 @@ impl UploadPart {
     fn perform(&self) -> bun_jsc::JsResult<()> {
         let ctx = self.ctx.get();
         let mut query = [0u8; multipart_ops::QUERY_BUFFER_LEN];
-        let search_params = ctx
-            .upload_id
-            .get()
-            .part_query(&mut query, self.part_number.get(), true);
+        let search_params =
+            ctx.upload_id
+                .get()
+                .part_query(&mut query, self.part_number.get(), true);
         execute_simple_s3_request(
             &ctx.credentials,
             ctx.context(),
@@ -690,8 +690,7 @@ impl MultiPartUpload {
                 self_.fail(err)
             }
             S3DownloadResult::Success(response) => {
-                let upload_id =
-                    multipart_ops::parse_initiate_result(response.body.list.as_slice());
+                let upload_id = multipart_ops::parse_initiate_result(response.body.list.as_slice());
                 let valid = upload_id.is_some();
                 if let Some(upload_id) = upload_id {
                     self_.upload_id.set(upload_id);

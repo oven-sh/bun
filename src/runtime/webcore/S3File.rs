@@ -2,8 +2,8 @@ use crate::node::{PathLike, PathOrBlob};
 use crate::webcore::blob::store::{S3Ext as _, Store, StoreExt as _};
 use crate::webcore::blob::{self, Blob, BlobExt};
 use crate::webcore::s3::client as s3;
-use crate::webcore::s3::multipart_ops::{MAX_PART_NUMBER, UploadId, UploadPartResult};
 use crate::webcore::s3::client::error_jsc::s3_error_to_js_with_async_stack;
+use crate::webcore::s3::multipart_ops::{MAX_PART_NUMBER, UploadId, UploadPartResult};
 use crate::webcore::s3_client::S3CredentialsExt as _;
 use bstr::BStr;
 use bun_core::strings;
@@ -318,7 +318,8 @@ pub(crate) fn parts_from_js(
         }
         let number = part_number_from_js(
             global,
-            part.get(global, "partNumber")?.unwrap_or(JSValue::UNDEFINED),
+            part.get(global, "partNumber")?
+                .unwrap_or(JSValue::UNDEFINED),
             b"partNumber",
         )?;
         let etag = part.get(global, "etag")?.unwrap_or(JSValue::UNDEFINED);

@@ -20,11 +20,11 @@ use crate::webcore::s3::client::{
 };
 use crate::webcore::s3::multipart_ops::{self, UploadId, UploadPartResult};
 use crate::webcore::s3::simple_request::{S3CommitResult, S3DownloadResult};
-use bun_jsc::bun_string_jsc;
-use bun_s3_signing::error::S3Error;
 use bun_core::strings;
 use bun_http_types::MimeType::MimeType;
+use bun_jsc::bun_string_jsc;
 use bun_ptr::RefPtr;
+use bun_s3_signing::error::S3Error;
 
 #[cfg(unix)]
 use super::SizeType;

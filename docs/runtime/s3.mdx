@@ -282,9 +282,7 @@ const key = "uploads/video.mp4";
 const { uploadId } = await s3.createMultipartUpload(key, { type: "video/mp4" });
 
 // 2. Presign one URL per part and hand them to the client.
-const urls = [1, 2, 3].map(partNumber =>
-  s3.presign(key, { method: "PUT", expiresIn: 3600, uploadId, partNumber }),
-);
+const urls = [1, 2, 3].map(partNumber => s3.presign(key, { method: "PUT", expiresIn: 3600, uploadId, partNumber }));
 
 // 3. The client PUTs each part and reports the `ETag` response header.
 //    Assemble the file from them.

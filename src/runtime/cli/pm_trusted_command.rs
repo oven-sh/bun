@@ -666,6 +666,7 @@ impl TrustCommand {
         }
 
         let new_package_json_contents = match package_json_text::print(
+            root_package_json_path.as_bytes(),
             &package_json_contents,
             package_json,
             bun_parsers::json::guess_indentation(&package_json_contents),

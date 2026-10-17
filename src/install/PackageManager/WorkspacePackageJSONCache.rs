@@ -49,6 +49,7 @@ impl MapEntry {
     pub fn save(&mut self, root: Expr, log: &mut Log) -> Result<(), Error> {
         let loaded = self.stale_contents.first().unwrap_or(&self.source.contents);
         let (text, read) = package_json_text::print_and_read(
+            self.source.path.text,
             loaded,
             root,
             self.indentation,

@@ -409,12 +409,14 @@ impl ParsedJson {
     }
 
     /// With the options as given, for a caller that reads one text in more than one dialect.
+    /// `is_document`: nothing but whitespace and comments may follow the value.
     pub fn parse_with_opts(
         opts: JSONOptions,
+        is_document: bool,
         source: &bun_ast::Source,
         log: &mut bun_ast::Log,
     ) -> crate::Result<ParsedJson> {
-        parse_to_rows(source, log, opts, false)
+        parse_to_rows(source, log, opts, is_document)
     }
 
     /// A document fetched from an npm registry: strict JSON with no duplicate-key warnings.

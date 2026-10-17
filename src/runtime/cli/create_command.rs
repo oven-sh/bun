@@ -774,6 +774,8 @@ impl CreateCommand {
                         }
                         #[cfg(windows)]
                         pkg.seek_to(prev_file_pos)?;
+                        // The printer doesn't truncate, so we must do so manually
+                        let _ = bun_sys::ftruncate(pkg.handle(), 0);
 
                         bun_ast::initialize_store();
                     }
@@ -1010,6 +1012,7 @@ impl CreateCommand {
                 }
 
                 let mut written = match package_json_text::print(
+                    b"package.json",
                     package_json_contents.list.as_slice(),
                     package_json_expr,
                     indentation,
@@ -1024,7 +1027,7 @@ impl CreateCommand {
                     }
                 };
                 if written.last() != Some(&b'\n') {
-                    written.push(b'\n');
+                    written.extend_from_slice(package_json_text::line_break(&written));
                 }
                 let written = written.as_slice();
                 if let Err(err) = package_json_file.write_all(written).and_then(|()| {

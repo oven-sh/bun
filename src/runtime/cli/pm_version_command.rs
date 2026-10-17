@@ -328,14 +328,18 @@ impl PmVersionCommand {
             .expect("checked e_object above")
             .put_string(&json_bump, b"version", &new_version_str)?;
 
-        let new_package_json_contents =
-            match package_json_text::print(&package_json_contents, json, json_result.indentation) {
-                Ok(contents) => contents,
-                Err(err) => {
-                    Output::err_generic("Failed to save package.json: {}", (err.name(),));
-                    Global::exit(1);
-                }
-            };
+        let new_package_json_contents = match package_json_text::print(
+            package_json_path.as_bytes(),
+            &package_json_contents,
+            json,
+            json_result.indentation,
+        ) {
+            Ok(contents) => contents,
+            Err(err) => {
+                Output::err_generic("Failed to save package.json: {}", (err.name(),));
+                Global::exit(1);
+            }
+        };
 
         if let Err(err) =
             bun_sys::File::write_file(Fd::cwd(), package_json_path, &new_package_json_contents)

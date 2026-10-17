@@ -815,6 +815,7 @@ impl InitCommand {
                 b""
             };
             let mut written = match package_json_text::print(
+                b"package.json",
                 old_package_json,
                 bun_ast::Expr {
                     data: bun_ast::ExprData::EObject(fields.object.unwrap()),
@@ -833,7 +834,7 @@ impl InitCommand {
                 }
             };
             if written.last() != Some(&b'\n') {
-                written.push(b'\n');
+                written.extend_from_slice(package_json_text::line_break(&written));
             }
             let written = written.as_slice();
             if let Err(err) = bun_sys::File::borrow(&fd).write_all(written) {

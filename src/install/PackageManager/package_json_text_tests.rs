@@ -7,6 +7,8 @@ use super::*;
 // The native symbols that Bun's C and C++ side provides to `bun_core`.
 use bun_sema_standalone as _;
 
+const PATH: &[u8] = b"package.json";
+
 /// The tree of `text`, as a command has it when it has loaded a package.json.
 fn parse(text: &[u8], bump: &bun_alloc::Arena) -> Expr {
     let source = Source::init_path_string(b"package.json", text);
@@ -25,7 +27,7 @@ fn saved(old: &str, now: &str) -> String {
         text.document(&root).is_ok(),
         "{old:?} is a text that is not written over"
     );
-    let printed = print(old.as_bytes(), root, indentation).expect("prints");
+    let printed = print(PATH, old.as_bytes(), root, indentation).expect("prints");
     assert_eq!(bstr::BStr::new(&printed), bstr::BStr::new(&text.out.list));
     String::from_utf8(printed).expect("UTF-8")
 }
@@ -35,7 +37,7 @@ fn unchanged(text: &[u8]) -> Vec<u8> {
     bun_ast::initialize_store_or_reset();
     let bump = bun_alloc::Arena::new();
     let root = parse(text, &bump);
-    print(text, root, json::guess_indentation(text)).expect("prints")
+    print(PATH, text, root, json::guess_indentation(text)).expect("prints")
 }
 
 #[track_caller]
@@ -79,7 +81,7 @@ fn an_empty_file_stays_empty_until_its_tree_has_a_member() {
     bun_ast::initialize_store_or_reset();
     let bump = bun_alloc::Arena::new();
     let root = parse(b"{\"name\": \"app\"}", &bump);
-    let printed = print(b"", root, Indentation::default()).expect("prints");
+    let printed = print(PATH, b"", root, Indentation::default()).expect("prints");
     assert_eq!(bstr::BStr::new(&printed), "{\n  \"name\": \"app\"\n}");
 }
 
@@ -259,6 +261,17 @@ fn a_key_that_is_there_twice_keeps_both_members() {
     );
 }
 
+#[test]
+fn a_key_that_is_there_twice_is_the_first_one_first() {
+    assert_eq!(
+        saved(
+            "{\n  \"a\": 1, // first\n  \"b\": 2, // b\n  \"a\": 3 // second\n}\n",
+            r#"{"b": 2, "a": 1, "a": 3}"#
+        ),
+        "{\n  \"b\": 2, // b\n  \"a\": 1, // first\n  \"a\": 3 // second\n}\n"
+    );
+}
+
 // ───── arrays ─────
 
 #[test]
@@ -273,10 +286,10 @@ fn an_item_of_an_array_is_the_item_with_its_value() {
     );
     assert_eq!(
         saved(
-            "{\n  \"n\": [1 /* one */, 2 /* two */, 3 /* three */]\n}\n",
+            "{\n  \"n\": [\n    1, // one\n    2, // two\n    3 // three\n  ]\n}\n",
             r#"{"n": [2, 3]}"#
         ),
-        "{\n  \"n\": [2 /* two */, 3 /* three */]\n}\n"
+        "{\n  \"n\": [\n    2, // two\n    3 // three\n  ]\n}\n"
     );
     // A number that changes is the number that the text has there.
     assert_eq!(
@@ -289,10 +302,10 @@ fn an_item_of_an_array_is_the_item_with_its_value() {
     // Items that change places take their comments along.
     assert_eq!(
         saved(
-            "{\n  \"s\": [\"b\" /* b */, \"a\" /* a */]\n}\n",
+            "{\n  \"s\": [\n    \"b\", // b\n    \"a\" // a\n  ]\n}\n",
             r#"{"s": ["a", "b"]}"#
         ),
-        "{\n  \"s\": [\"a\" /* a */, \"b\" /* b */]\n}\n"
+        "{\n  \"s\": [\n    \"a\", // a\n    \"b\" // b\n  ]\n}\n"
     );
 }
 
@@ -329,30 +342,62 @@ fn an_object_and_an_array_in_an_array_are_the_ones_that_the_text_has_there() {
     );
 }
 
+#[test]
+fn an_object_in_an_array_is_the_item_that_says_all_of_it() {
+    let old = "{\n  \"contributors\": [\n    { \"name\": \"Ann\" }, // founder\n    { \"name\": \"Bob\" }, // maintainer\n    { \"name\": \"Carol\" } // docs\n  ]\n}\n";
+    // The first one goes: the others keep their lines.
+    assert_eq!(
+        saved(
+            old,
+            r#"{"contributors": [{"name": "Bob"}, {"name": "Carol"}]}"#
+        ),
+        "{\n  \"contributors\": [\n    { \"name\": \"Bob\" }, // maintainer\n    { \"name\": \"Carol\" } // docs\n  ]\n}\n"
+    );
+    // An item that no item of the text says is read as one that changed: the next one of
+    // its kind that is left. Here that is the line of Ann.
+    assert_eq!(
+        saved(
+            old,
+            r#"{"contributors": [{"name": "Bob"}, {"name": "Carol"}, {"name": "Dan"}]}"#
+        ),
+        "{\n  \"contributors\": [\n    { \"name\": \"Bob\" }, // maintainer\n    { \"name\": \"Carol\" }, // docs\n    { \"name\": \"Dan\" } // founder\n  ]\n}\n"
+    );
+    // One that changes is the one that the text has there.
+    assert_eq!(
+        saved(
+            old,
+            r#"{"contributors": [{"name": "Ann"}, {"name": "Rob"}, {"name": "Carol"}]}"#
+        ),
+        old.replace("Bob", "Rob")
+    );
+}
+
 // ───── a container on one line ─────
 
 #[test]
-fn a_container_on_one_line_that_gets_or_loses_a_member_is_laid_out_with_its_own_tokens() {
+fn a_container_on_one_line_that_gets_or_loses_a_member_is_printed() {
+    // It has no layout to keep. What is in it is printed: its comments and spellings go.
     assert_eq!(
         saved(
             "{\n  \"config\": { \"retries\": 1.50, \"caf\\u00e9\": true },\n  \"files\": [\"a\", \"b\"]\n}\n",
             "{\"config\": {\"retries\": 1.5, \"caf\u{e9}\": true, \"timeout\": 5}, \"files\": [\"a\", \"b\", \"c\"]}"
         ),
-        "{\n  \"config\": {\n    \"retries\": 1.50,\n    \"caf\\u00e9\": true,\n    \"timeout\": 5\n  },\n  \"files\": [\"a\", \"b\", \"c\"]\n}\n"
+        "{\n  \"config\": {\n    \"retries\": 1.5,\n    \"caf\u{e9}\": true,\n    \"timeout\": 5\n  },\n  \"files\": [\"a\", \"b\", \"c\"]\n}\n"
     );
     assert_eq!(
         saved(
-            "{\"name\":\"app\",/* why */\"config\":{\"n\":1.50,'s':'t'},\"files\":[\"a\"]}",
-            r#"{"name": "app", "config": {"n": 1.5, "s": "t"}, "files": ["a"], "version": "1.0.0"}"#
+            "{\n  // outside\n  \"files\": [\"a\" /* inside */, \"b\"] // beside\n}\n",
+            r#"{"files": ["a", "b", "c"]}"#
         ),
-        "{\n  \"name\": \"app\",\n  /* why */ \"config\": {\n    \"n\": 1.50,\n    's': 't'\n  },\n  \"files\": [\"a\"],\n  \"version\": \"1.0.0\"\n}"
+        "{\n  // outside\n  \"files\": [\"a\", \"b\", \"c\"] // beside\n}\n"
     );
+    // A value that changes in it is not a member that it gets or loses.
     assert_eq!(
         saved(
-            "{ \"name\": // the name\n\"app\", \"n\": 1 }",
-            r#"{"name": "app", "n": 1, "version": "1.0.0"}"#
+            "{\n  \"config\": { \"retries\": 1.50 /* why */, 's': 't' }\n}\n",
+            r#"{"config": {"retries": 1.5, "s": "u"}}"#
         ),
-        "{\n  \"name\": // the name\n  \"app\",\n  \"n\": 1,\n  \"version\": \"1.0.0\"\n}"
+        "{\n  \"config\": { \"retries\": 1.50 /* why */, 's': \"u\" }\n}\n"
     );
 }
 
@@ -368,19 +413,12 @@ fn a_container_that_loses_every_member_is_empty_and_has_no_byte_of_a_string_in_i
     );
     assert_eq!(
         saved(
-            "{ \"name\": \"app\", \"c\": [ \"//x\", \"/* y */\" ], \"a\": true }",
-            r#"{"name": "app", "c": [], "a": true}"#
-        ),
-        "{\n  \"name\": \"app\",\n  \"c\": [],\n  \"a\": true\n}"
-    );
-    assert_eq!(
-        saved(
-            "{\n  \"c\": [ \"//x\" ], // beside c\n  \"d\": { \"u\": \"a//b\" /* u */ }\n}\n",
+            "{\n  \"c\": [ \"//x\", \"/* y */\" ], // beside c\n  \"d\": { \"u\": \"a//b\" /* u */ }\n}\n",
             r#"{"c": [], "d": {}}"#
         ),
         "{\n  \"c\": [], // beside c\n  \"d\": {}\n}\n"
     );
-    // A comment in a container that was empty is its own.
+    // A container that was empty and stays empty is as written.
     assert_eq!(
         saved(
             "{\n  \"a\": { /* none yet */ }, \"b\": 1\n}\n",
@@ -388,17 +426,10 @@ fn a_container_that_loses_every_member_is_empty_and_has_no_byte_of_a_string_in_i
         ),
         "{\n  \"a\": { /* none yet */ }, \"b\": 2\n}\n"
     );
-    assert_eq!(
-        saved(
-            "{\"a\": { /* none yet */ }, \"b\": 1}",
-            r#"{"a": {}, "b": 1, "c": 2}"#
-        ),
-        "{\n  \"a\": { /* none yet */ },\n  \"b\": 1,\n  \"c\": 2\n}"
-    );
 }
 
 #[test]
-fn a_file_on_one_line_is_laid_out_by_its_first_edit() {
+fn a_file_on_one_line_is_printed_by_its_first_edit() {
     // A file that is written on one line has no layout to keep. Main printed it like this.
     assert_eq!(
         saved("{\"name\":\"app\"}", r#"{"name": "lib"}"#),
@@ -406,12 +437,74 @@ fn a_file_on_one_line_is_laid_out_by_its_first_edit() {
     );
     assert_eq!(
         saved(
-            "{ \"name\" /* a */ : /* b */ \"app\" /* c */ , \"n\": 1 }",
-            r#"{"name": "lib", "n": 1}"#
+            "// before\n{ \"name\" /* a */ : \"app\", \"n\": 1.50 } // after\n",
+            r#"{"name": "lib", "n": 1.5}"#
         ),
-        "{\n  \"name\": /* a */ /* b */ \"lib\" /* c */,\n  \"n\": 1\n}"
+        "// before\n{\n  \"name\": \"lib\",\n  \"n\": 1.5\n} // after\n"
     );
     assert_unchanged("{\"name\":\"app\"}");
+}
+
+// ───── what is not the file that the tree is of ─────
+
+#[test]
+fn what_follows_the_root_is_not_written_back() {
+    // The parser stops at the end of the root. A print of the whole file drops the rest.
+    for old in [
+        "{\n  \"name\": \"app\"\n}\n}\n",
+        "{\n  \"name\": \"app\"\n}\n{\"second\": 1}\n",
+    ] {
+        assert_unchanged(old);
+        bun_ast::initialize_store_or_reset();
+        let bump = bun_alloc::Arena::new();
+        let root = parse(b"{\"name\": \"app\", \"license\": \"MIT\"}", &bump);
+        let printed = print(PATH, old.as_bytes(), root, Indentation::default()).expect("prints");
+        assert_eq!(
+            bstr::BStr::new(&printed),
+            "{\n  \"name\": \"app\",\n  \"license\": \"MIT\"\n}\n"
+        );
+    }
+    // Blanks and comments are written back.
+    assert_eq!(
+        saved(
+            "{\n  \"name\": \"app\"\n}\n// the end\n",
+            r#"{"name": "lib"}"#
+        ),
+        "{\n  \"name\": \"lib\"\n}\n// the end\n"
+    );
+}
+
+#[test]
+fn a_root_that_is_not_an_object_or_an_array_is_left_alone_by_a_command_that_changes_nothing() {
+    // The parser reads the first value of a broken file as its root.
+    for old in [
+        "\"name\": \"app\",\n  \"version\": \"1.0.0\"\n}\n",
+        "// todo\nnull\n",
+        "1 // one\n",
+        "true",
+        "'s'\n",
+    ] {
+        assert_unchanged(old);
+    }
+}
+
+#[test]
+fn an_edit_takes_the_byte_order_mark() {
+    let text = "\u{feff}{\n  \"name\": \"app\"\n}\n";
+    assert_unchanged(text);
+    assert_eq!(
+        saved(text, r#"{"name": "lib"}"#),
+        "{\n  \"name\": \"lib\"\n}\n"
+    );
+}
+
+#[test]
+fn a_comment_that_ends_its_line_is_ended_before_what_follows_it() {
+    // A `//` comment can end at U+2028. What is written after it starts a line.
+    assert_eq!(
+        saved("[\n  1, // c\u{2028}[\n    2\n  ]\n]\n", "[1, [], 4]"),
+        "[\n  1,\n  // c\n  [],\n  4\n]\n"
+    );
 }
 
 // ───── what the parser reads back ─────
@@ -421,7 +514,8 @@ fn a_text_that_the_tree_was_not_parsed_from_is_printed_as_a_new_file() {
     bun_ast::initialize_store_or_reset();
     let bump = bun_alloc::Arena::new();
     let root = parse(b"{\"name\": \"app\"}", &bump);
-    let printed = print(b"[1, 2] // not this\n", root, Indentation::default()).expect("prints");
+    let printed =
+        print(PATH, b"[1, 2] // not this\n", root, Indentation::default()).expect("prints");
     assert_eq!(bstr::BStr::new(&printed), "{\n  \"name\": \"app\"\n}\n");
 }
 
@@ -433,7 +527,7 @@ fn the_tree_that_is_read_back_is_the_tree_that_was_saved() {
     let root = parse(b"{\"a\": 1, \"b\": [true, null, \"s\"]}", &bump);
     let mut old_is_jsonc = None;
     let (text, read) =
-        print_and_read(old, root, Indentation::default(), &mut old_is_jsonc).expect("prints");
+        print_and_read(PATH, old, root, Indentation::default(), &mut old_is_jsonc).expect("prints");
     // The old text looks like a text with a comment, and the parser said that it is one.
     assert_eq!(old_is_jsonc, Some(true));
     assert_eq!(
@@ -454,7 +548,7 @@ fn the_tree_that_is_read_back_is_the_tree_that_was_saved() {
         b"{\"a\": 1, \"b\": [true, null]}",
         b"[1]",
     ] {
-        let other = super::read(other, json::PACKAGE_JSON_OPTS, false).expect("reads");
+        let other = super::read(other, json::PACKAGE_JSON_OPTS, true, false).expect("reads");
         assert!(!is_tree(&other.root, &root, StackCheck::init()));
     }
 }
@@ -692,7 +786,16 @@ fn gap(random: &mut Random, jsonc: bool, line_break: &str, out: &mut String) {
     }
 }
 
-fn text_of(random: &mut Random, value: &Value, jsonc: bool, line_break: &str, out: &mut String) {
+/// `value` as a text. `on_lines`: a line ends after every opening bracket, so that every
+/// container has its members on lines.
+fn text_of(
+    random: &mut Random,
+    value: &Value,
+    jsonc: bool,
+    on_lines: bool,
+    line_break: &str,
+    out: &mut String,
+) {
     match value {
         Value::Null => out.push_str(if random.one_in(16) {
             "\\u006eull"
@@ -709,9 +812,12 @@ fn text_of(random: &mut Random, value: &Value, jsonc: bool, line_break: &str, ou
         Value::String(string) => string_token(random, string, out),
         Value::Array(items) => {
             out.push('[');
+            if on_lines {
+                out.push_str(line_break);
+            }
             for (index, item) in items.iter().enumerate() {
                 gap(random, jsonc, line_break, out);
-                text_of(random, item, jsonc, line_break, out);
+                text_of(random, item, jsonc, on_lines, line_break, out);
                 gap(random, jsonc, line_break, out);
                 if index + 1 < items.len() || (jsonc && random.one_in(3)) {
                     out.push(',');
@@ -722,13 +828,16 @@ fn text_of(random: &mut Random, value: &Value, jsonc: bool, line_break: &str, ou
         }
         Value::Object(members) => {
             out.push('{');
+            if on_lines {
+                out.push_str(line_break);
+            }
             for (index, (key, member)) in members.iter().enumerate() {
                 gap(random, jsonc, line_break, out);
                 string_token(random, key, out);
                 gap(random, jsonc, line_break, out);
                 out.push(':');
                 gap(random, jsonc, line_break, out);
-                text_of(random, member, jsonc, line_break, out);
+                text_of(random, member, jsonc, on_lines, line_break, out);
                 gap(random, jsonc, line_break, out);
                 if index + 1 < members.len() || (jsonc && random.one_in(3)) {
                     out.push(',');
@@ -868,6 +977,37 @@ fn edit(random: &mut Random, value: &mut Value, depth: usize) {
     }
 }
 
+/// One edit of `value` that takes nothing away and moves nothing: a new member, a new item,
+/// or another value for a member that is not an object or an array.
+fn grow(random: &mut Random, value: &mut Value, added: &mut usize) {
+    match value {
+        Value::Array(items) if !items.is_empty() && random.one_in(2) => {
+            let index = random.below(items.len());
+            if matches!(items[index], Value::Array(_) | Value::Object(_)) {
+                grow(random, &mut items[index], added);
+            }
+        }
+        Value::Object(members) if !members.is_empty() && random.one_in(2) => {
+            let index = random.below(members.len());
+            match &mut members[index].1 {
+                member @ (Value::Array(_) | Value::Object(_)) => grow(random, member, added),
+                member => *member = Value::Number(NUMBERS[random.below(NUMBERS.len())]),
+            }
+        }
+        Value::Array(items) => {
+            *added += 1;
+            let index = random.below(items.len() + 1);
+            items.insert(index, Value::String(format!("new item {added}")));
+        }
+        Value::Object(members) => {
+            *added += 1;
+            let index = random.below(members.len() + 1);
+            members.insert(index, (format!("new key {added}"), self::value(random, 2)));
+        }
+        _ => {}
+    }
+}
+
 /// The comments of `text`, in the order of the text.
 fn comments_of(text: &[u8]) -> Vec<&[u8]> {
     let mut comments = Vec::new();
@@ -887,9 +1027,11 @@ fn comments_of(text: &[u8]) -> Vec<&[u8]> {
 }
 
 /// Makes a text from `seed`, edits its tree `edits` times and checks what is written.
-fn check(seed: u64, edits: usize) {
+/// `grows`: the text has every container on lines and no edit takes anything away. Then no
+/// comment is lost.
+fn check(seed: u64, edits: usize, grows: bool) {
     let mut random = Random(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
-    let jsonc = random.one_in(2);
+    let jsonc = grows || random.one_in(2);
     let line_break = if random.one_in(3) { "\r\n" } else { "\n" };
     let mut value = match self::value(&mut random, 0) {
         value @ (Value::Array(_) | Value::Object(_)) => value,
@@ -899,7 +1041,8 @@ fn check(seed: u64, edits: usize) {
     if jsonc {
         gap(&mut random, jsonc, line_break, &mut old);
     }
-    text_of(&mut random, &value, jsonc, line_break, &mut old);
+    text_of(&mut random, &value, jsonc, grows, line_break, &mut old);
+    gap(&mut random, jsonc, line_break, &mut old);
     if random.one_in(2) {
         old.push_str(line_break);
     }
@@ -914,15 +1057,20 @@ fn check(seed: u64, edits: usize) {
         value,
         "seed {seed}: the text is its value"
     );
-    let is_strict = read(old, json::JSONOptions::DEFAULT, false).is_some();
+    let is_strict = read(old, json::JSONOptions::DEFAULT, true, false).is_some();
     assert!(jsonc || is_strict, "seed {seed}: strict JSON");
     assert!(
         !is_strict || comments_of(old).is_empty(),
         "seed {seed}: comments"
     );
 
+    let mut added = 0;
     for _ in 0..edits {
-        edit(&mut random, &mut value, 0);
+        if grows {
+            grow(&mut random, &mut value, &mut added);
+        } else {
+            edit(&mut random, &mut value, 0);
+        }
     }
     let mut now = String::new();
     json_of(&value, &mut now);
@@ -936,7 +1084,7 @@ fn check(seed: u64, edits: usize) {
         "seed {seed}: not written over"
     );
     // A wrong text stops here, in `print_and_read`.
-    let printed = print(old, root, indentation).expect("prints");
+    let printed = print(PATH, old, root, indentation).expect("prints");
     let context = || {
         format!(
             "seed {seed}\n old: {:?}\n now: {now}\n new: {:?}",
@@ -980,8 +1128,18 @@ fn check(seed: u64, edits: usize) {
         };
         left.remove(index);
     }
+    if grows {
+        assert!(
+            left.is_empty(),
+            "comments that are lost: {:?}\n{}",
+            left.iter()
+                .map(|comment| bstr::BStr::new(comment))
+                .collect::<Vec<_>>(),
+            context()
+        );
+    }
     // A second save of the same tree changes nothing.
-    let again = print(&printed, root, indentation).expect("prints");
+    let again = print(PATH, &printed, root, indentation).expect("prints");
     assert_eq!(
         bstr::BStr::new(&again),
         bstr::BStr::new(&printed),
@@ -993,21 +1151,28 @@ fn check(seed: u64, edits: usize) {
 #[test]
 fn texts_that_no_edit_changed_are_the_same_bytes() {
     for seed in 0..4000 {
-        check(seed, 0);
+        check(seed, 0, false);
     }
 }
 
 #[test]
 fn texts_with_one_edit_read_back_as_their_tree() {
     for seed in 0..8000 {
-        check(seed, 1);
+        check(seed, 1, false);
     }
 }
 
 #[test]
 fn texts_with_many_edits_read_back_as_their_tree() {
     for seed in 0..4000 {
-        check(seed, 2 + (seed % 5) as usize);
+        check(seed, 2 + (seed % 5) as usize, false);
+    }
+}
+
+#[test]
+fn texts_that_only_grow_keep_every_comment() {
+    for seed in 0..8000 {
+        check(seed, 1 + (seed % 4) as usize, true);
     }
 }
 
@@ -1024,6 +1189,6 @@ fn more_texts_read_back_as_their_tree() {
     };
     let from = number("PJT_FROM", 0);
     for seed in from..from + number("PJT_COUNT", 100_000) {
-        check(seed, (seed % 7) as usize);
+        check(seed, (seed % 7) as usize, seed % 3 == 0);
     }
 }

@@ -712,13 +712,14 @@ impl PmPkgCommand {
     fn save_package_json(root: Expr, pkg: &PackageJson, dry_run: bool) {
         let preserve_newline = pkg.contents.last() == Some(&b'\n');
 
-        let content = match package_json_text::print(&pkg.contents, root, pkg.indentation) {
-            Ok(content) => content,
-            Err(e) => {
-                Output::err_generic("Failed to serialize package.json: {s}", (e.name(),));
-                Global::exit(1);
-            }
-        };
+        let content =
+            match package_json_text::print(&pkg.path, &pkg.contents, root, pkg.indentation) {
+                Ok(content) => content,
+                Err(e) => {
+                    Output::err_generic("Failed to serialize package.json: {s}", (e.name(),));
+                    Global::exit(1);
+                }
+            };
         let content = content.as_slice();
         if dry_run {
             let _ = Output::writer().write_all(content);

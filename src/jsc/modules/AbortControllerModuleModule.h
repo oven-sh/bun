@@ -8,7 +8,7 @@ using namespace WebCore;
 
 namespace Zig {
 
-inline void generateNativeModule_AbortControllerModule(
+void generateNativeModule_AbortControllerModule(
     JSC::JSGlobalObject* lexicalGlobalObject, JSC::Identifier moduleKey,
     Vector<JSC::Identifier, 4>& exportNames,
     JSC::MarkedArgumentBuffer& exportValues)

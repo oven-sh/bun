@@ -303,7 +303,8 @@ async function serverWithSession() {
 export async function session() {
   const { server, port, session, connected } = await serverWithSession();
   const host = "127.0.0.1";
-  const options = { session, rejectUnauthorized: false };
+  const sessionEnvelopePrefix = Buffer.from("\0nodejs:tls:session:1\0");
+  const options = { host, session, rejectUnauthorized: false };
   // The listener is attached in the turn that makes the socket: a wrap starts its handshake at once.
   async function reused(socket, event, prepare) {
     try {
@@ -317,6 +318,7 @@ export async function session() {
   }
   try {
     return {
+      boundSession: session.subarray(0, sessionEnvelopePrefix.length).equals(sessionEnvelopePrefix),
       "tls.connect({ port, session })": await reused(tls.connect({ port, host, ...options }), "secureConnect"),
       "tls.connect({ socket, session })": await reused(
         tls.connect({ socket: await connected(), ...options }),

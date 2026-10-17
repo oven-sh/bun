@@ -852,13 +852,6 @@ describe("a bun.lock written by Bun 1.4", () => {
       packages: () => [["no-deps-tags", "no-deps-tags@1.0.0-rc.1"]],
       held: "no-deps-tags@1.0.0-rc.1",
     },
-    {
-      // A rule for `no-deps` is the rule of an alias of a tag of `no-deps`.
-      title: "the entry of an alias of a tag of the package that the rule names",
-      pkg: () => ({ dependencies: { "my-alias": "npm:no-deps@latest" }, overrides: { "no-deps": "1.0.0" } }),
-      packages: () => [["my-alias", "no-deps@2.0.0"]],
-      held: "no-deps@2.0.0",
-    },
   ])("$title", saved => {
     const held = async () => {
       const lock = savedBy14(saved);
@@ -881,8 +874,7 @@ describe("a bun.lock written by Bun 1.4", () => {
       expect(stderr).toBe("Saved lockfile");
       expect(exitCode).toBe(0);
       const name = saved.held.slice(0, saved.held.indexOf("@"));
-      const [key] = saved.packages().find(([, id]) => id === saved.held)!;
-      expect(nodeModulesPackages(dir)).toContain(`node_modules/${key}/${name}@1.0.0`);
+      expect(nodeModulesPackages(dir)).toContain(`node_modules/${name}/${name}@1.0.0`);
       const repaired = await lockfile(dir);
       expect(repaired).not.toContain(saved.held);
       await expectLockfileStable(dir, repaired);
@@ -908,8 +900,9 @@ describe("a rule for a tarball or git dependency", () => {
     "registry-a": { name: "a", version: "3.0.0", dependencies: { b: "^3.0.0" } },
   };
   type Id = keyof typeof packages;
-  const kinds = ["tarball", "git"] as const;
-  type Kind = (typeof kinds)[number];
+  type Kind = "tarball" | "git";
+  // The git cells need the `git` program.
+  const kinds: Kind[] = Bun.which("git") ? ["tarball", "git"] : ["tarball"];
   // Tarballs that depend on other packages of their test.
   const dependents: Record<string, (spec: ReturnType<typeof at>) => object> = {
     // The registry's `b`, then the tarball `other`, then the tarball `v`.
@@ -957,7 +950,7 @@ describe("a rule for a tarball or git dependency", () => {
   beforeAll(async () => {
     repos = tempDir("override-git-", {});
     await Promise.all(
-      (Object.keys(packages) as Id[]).map(async id => {
+      (kinds.includes("git") ? (Object.keys(packages) as Id[]) : []).map(async id => {
         const repo = join(String(repos), id);
         mkdirSync(repo);
         writeFileSync(join(repo, "package.json"), JSON.stringify(packages[id]));
@@ -1022,8 +1015,8 @@ describe("a rule for a tarball or git dependency", () => {
   });
 
   afterAll(async () => {
-    await server.stop(true);
-    repos[Symbol.dispose]();
+    await server?.stop(true);
+    repos?.[Symbol.dispose]();
   });
 
   /** The specifiers of the test `test`. Its URLs have a folder of their own, so `requested` counts its requests only. */
@@ -1129,33 +1122,30 @@ describe("a rule for a tarball or git dependency", () => {
 
   // `b` and `a` come from the registry here, as in most projects: `a@3.0.0` depends on `b@^3.0.0`.
   describe.each(["the project", "the registry package a"])("%s declares b as a range", declarer => {
-    test.concurrent.each(["tarball", "git", "github"] as const)(
-      "and the rule names a %s that calls itself bee",
-      async to => {
-        const spec = at();
-        const dependencies = declarer === "the project" ? { b: "^3.0.0" } : { a: "3.0.0" };
-        const dir = await project({ name: "foo", dependencies, overrides: { b: spec[to]("fork-bee") } });
+    test.concurrent.each([...kinds, "github"] as const)("and the rule names a %s that calls itself bee", async to => {
+      const spec = at();
+      const dependencies = declarer === "the project" ? { b: "^3.0.0" } : { a: "3.0.0" };
+      const dir = await project({ name: "foo", dependencies, overrides: { b: spec[to]("fork-bee") } });
 
-        const { stderr, exitCode } = await bunWith(spec.registry, dir, "install");
+      const { stderr, exitCode } = await bunWith(spec.registry, dir, "install");
 
-        expect(stderr).toBe("Saved lockfile");
-        expect(installed(dir, "b")).toBe("bee@2.0.0");
-        // Neither the manifest nor the tarball of the package that the rule replaces is asked for.
-        expect({ manifest: spec.requested("b"), tarball: spec.requested("registry-b") }).toEqual({
-          manifest: 0,
-          tarball: 0,
-        });
-        expect(exitCode).toBe(0);
+      expect(stderr).toBe("Saved lockfile");
+      expect(installed(dir, "b")).toBe("bee@2.0.0");
+      // Neither the manifest nor the tarball of the package that the rule replaces is asked for.
+      expect({ manifest: spec.requested("b"), tarball: spec.requested("registry-b") }).toEqual({
+        manifest: 0,
+        tarball: 0,
+      });
+      expect(exitCode).toBe(0);
 
-        // a machine that has bun.lock and nothing else
-        rmSync(join(dir, "node_modules"), { recursive: true, force: true });
-        rmSync(join(dir, ".bun-cache"), { recursive: true, force: true });
-        const frozen = await bunWith(spec.registry, dir, "install", "--frozen-lockfile");
-        expect(frozen.stderr).toBe("");
-        expect(installed(dir, "b")).toBe("bee@2.0.0");
-        expect(frozen.exitCode).toBe(0);
-      },
-    );
+      // a machine that has bun.lock and nothing else
+      rmSync(join(dir, "node_modules"), { recursive: true, force: true });
+      rmSync(join(dir, ".bun-cache"), { recursive: true, force: true });
+      const frozen = await bunWith(spec.registry, dir, "install", "--frozen-lockfile");
+      expect(frozen.stderr).toBe("");
+      expect(installed(dir, "b")).toBe("bee@2.0.0");
+      expect(frozen.exitCode).toBe(0);
+    });
   });
 
   describe.each(cells.filter(cell => cell.named === "bee"))(
@@ -1662,16 +1652,18 @@ describe("a rule for a tarball or git dependency", () => {
   });
 
   describe("an import that installs its package", () => {
-    /** Runs `script` in a project without node_modules. `attempt(name)` is the version that `require(name)` finds. */
-    async function autoInstall(spec: ReturnType<typeof at>, packageJson: object, script: string) {
+    /**
+     * Runs `script` in a project without node_modules. `attempt(name)` is the version that `require(name)` finds, and
+     * `turn()` asks for `turn`: a failed lookup stands until the event loop has gone around.
+     */
+    async function autoInstall(env: Record<string, string>, turn: string, packageJson: object, script: string) {
       using dir = tempDir("override-autoinstall", {
         "package.json": JSON.stringify(packageJson),
         "index.js": `
           const attempt = name => {
             try { return require(name).version; } catch (e) { return e.code; }
           };
-          // a failed lookup stands until the event loop has gone around
-          const turn = () => fetch(${JSON.stringify(spec.heal)});
+          const turn = () => fetch(${JSON.stringify(turn)});
           ${script}`,
       });
       await using proc = Bun.spawn({
@@ -1682,7 +1674,7 @@ describe("a rule for a tarball or git dependency", () => {
           BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache"),
           // A 500 is tried again once: one lookup is then two requests.
           BUN_CONFIG_HTTP_RETRY_COUNT: "1",
-          ...spec.registry,
+          ...env,
         },
         stdin: "ignore",
         stdout: "pipe",
@@ -1691,7 +1683,7 @@ describe("a rule for a tarball or git dependency", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       return { stdout: stdout.trim(), stderr, exitCode };
     }
-    const declared = ["tarball", "git", "github"] as const;
+    const declared = [...kinds, "github"] as const;
 
     // The rule sends `b` to the registry, so the lookup that fails is the manifest of `b`.
     test.concurrent.each(declared)("asks again for the manifest that a rule for a %s needs", async kind => {
@@ -1699,7 +1691,8 @@ describe("a rule for a tarball or git dependency", () => {
       spec.fail("b");
 
       const { stdout, stderr, exitCode } = await autoInstall(
-        spec,
+        spec.registry,
+        spec.heal,
         { name: "foo", dependencies: { b: spec[kind]("original") }, overrides: { b: "3.0.0" } },
         `const results = [attempt("b")];
          await turn(); // the registry answers from here on
@@ -1720,7 +1713,8 @@ describe("a rule for a tarball or git dependency", () => {
       const spec = at();
 
       const { stdout, stderr, exitCode } = await autoInstall(
-        spec,
+        spec.registry,
+        spec.heal,
         { name: "foo", dependencies: { b: spec[kind]("gone") } },
         `const results = [attempt("b@3.0.0")];
          await turn();
@@ -1735,6 +1729,45 @@ describe("a rule for a tarball or git dependency", () => {
         stderr: "",
       });
       expect(spec.requested("b")).toBe(1);
+      expect(exitCode).toBe(0);
+    });
+
+    // The manifest that the registry sent has no 2.0.0. The next import asks again, and 2.0.0 is out by then.
+    test.concurrent("asks again for a manifest that did not have the version", async () => {
+      let versions = ["1.0.0"];
+      let manifests = 0;
+      const json = (version: string) => ({ name: "late", version, main: "package.json" });
+      using registry = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          const { pathname, origin } = new URL(req.url);
+          if (pathname === "/publish") return ((versions = ["1.0.0", "2.0.0"]), new Response("ok"));
+          const tarball = /^\/late-(.+)\.tgz$/.exec(pathname);
+          if (tarball) {
+            return new Response(await githubTarball("package", { "package.json": JSON.stringify(json(tarball[1])) }));
+          }
+          manifests++;
+          const dist = (version: string) => ({ tarball: `${origin}/late-${version}.tgz` });
+          return Response.json({
+            name: "late",
+            "dist-tags": { latest: versions.at(-1) },
+            versions: Object.fromEntries(versions.map(v => [v, { ...json(v), dist: dist(v) }])),
+          });
+        },
+      });
+
+      const { stdout, stderr, exitCode } = await autoInstall(
+        { BUN_CONFIG_REGISTRY: registry.url.href },
+        `${registry.url.href}publish`,
+        { name: "foo" },
+        `const results = [attempt("late@2.0.0")];
+         await turn(); // publishes 2.0.0
+         results.push(attempt("late@2.0.0"));
+         console.log(JSON.stringify(results));`,
+      );
+
+      expect({ stdout, stderr }).toEqual({ stdout: JSON.stringify(["MODULE_NOT_FOUND", "2.0.0"]), stderr: "" });
+      expect(manifests).toBe(2);
       expect(exitCode).toBe(0);
     });
   });
@@ -1785,6 +1818,27 @@ test.concurrent.each([
     expect(exitCode).toBe(0);
   },
 );
+
+// The lockfile check goes by that name too. This bun.lock is what a merge leaves: the rule of one branch, and the entry
+// of the other.
+test.concurrent("bun.lock has another version for a tag alias than the rule for its package allows", async () => {
+  const dir = await project({ name: "foo", dependencies: { "my-alias": "npm:no-deps@latest" } });
+  expect((await bun(dir, "install")).stderr).toBe("Saved lockfile");
+  await editPackageJson(dir, pkg => (pkg.overrides = { "no-deps": "1.0.0" }));
+  const rule = '  "overrides": {\n    "no-deps": "1.0.0",\n  },\n';
+  await write(join(dir, "bun.lock"), (await lockfile(dir)).replace('  "packages": {', `${rule}  "packages": {`));
+
+  const frozen = await bun(dir, "install", "--frozen-lockfile");
+  expect(frozen.stderr).toBe(
+    "error: lockfile had changes, but lockfile is frozen\nnote: bun.lock has no-deps@2.0.0, overrides in package.json wants 1.0.0\nnote: try re-running without --frozen-lockfile and commit the updated lockfile",
+  );
+  expect(frozen.exitCode).toBe(1);
+
+  const { stderr, exitCode } = await bun(dir, "install");
+  expect(stderr).toBe("Saved lockfile");
+  expect(nodeModulesPackages(dir)).toBe("node_modules/my-alias/no-deps@1.0.0");
+  expect(exitCode).toBe(0);
+});
 
 // The name that `bun add npm:<name>@<tag>` asks the registry for is the key of its rule before the dependency has one.
 test.concurrent("bun add npm:no-deps@latest gets the version that the rule for no-deps names", async () => {

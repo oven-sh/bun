@@ -666,7 +666,26 @@ pub fn enqueue_dependency_to_root(
         // `buffers.dependencies` and would invalidate a pointer taken directly into it.
         let dependency = this.lockfile.buffers.dependencies[dep_id as usize].clone();
         let (install_peer, is_root) = (false, true);
-        match bind_row(
+
+        // A rule can send the import to the manifest of another name, or to none.
+        let mut replacement = None;
+        let registry_name =
+            match asked_version(this, dep_id, &dependency, is_root, &mut replacement) {
+                Ok(asked) => asked.version.tag.is_npm().then_some(asked.name),
+                Err(_) => Some(dependency.realname()),
+            };
+        manifest_task_id =
+            registry_name.map(|name| Task::Id::for_manifest(this.lockfile.str(&name)));
+        if let Some(manifest_task_id) = manifest_task_id
+            && (this.network_dedupe_map.get(&manifest_task_id)).is_some_and(|entry| {
+                entry.missed_in.is_some_and(|missed_in| missed_in != turn)
+                    && i64::from(entry.missing_until) <= bun_core::time::timestamp()
+            })
+        {
+            let _ = this.network_dedupe_map.remove(&manifest_task_id);
+        }
+
+        if let Err(err) = bind_row(
             this,
             dep_id,
             &dependency,
@@ -675,9 +694,7 @@ pub fn enqueue_dependency_to_root(
             PackageManager::assign_root_resolution,
             is_root,
         ) {
-            Ok(Row::Waiting(task_id)) => manifest_task_id = Some(task_id),
-            Ok(Row::Done) => {}
-            Err(err) => return DependencyToEnqueue::Failure(err),
+            return DependencyToEnqueue::Failure(err);
         }
     }
 
@@ -1878,11 +1895,6 @@ pub(crate) fn bind_row(
                     let task_id = Task::Id::for_manifest(&name_str);
 
                     debug_assert!(task_id.get() != 0);
-
-                    // Auto-install asks again for a lookup that failed in an earlier turn.
-                    if is_root {
-                        this.forget_stale_miss(task_id);
-                    }
 
                     if this.has_created_network_task(task_id, dependency.behavior.is_required()) {
                         if this.manifest_failures.contains_key(&task_id) {

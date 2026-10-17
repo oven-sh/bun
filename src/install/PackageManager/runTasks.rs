@@ -2283,19 +2283,6 @@ impl PackageManager {
         }
     }
 
-    /// Forgets a failed lookup once the event loop has gone around, and a 404 once it expires.
-    #[cold]
-    #[inline(never)]
-    pub(crate) fn forget_stale_miss(&mut self, task_id: Task::Id) {
-        let turn = self.event_loop.iteration_number();
-        if (self.network_dedupe_map.get(&task_id)).is_some_and(|entry| {
-            entry.missed_in.is_some_and(|missed_in| missed_in != turn)
-                && i64::from(entry.missing_until) <= bun_core::time::timestamp()
-        }) {
-            let _ = self.network_dedupe_map.remove(&task_id);
-        }
-    }
-
     pub(crate) fn mark_network_task_failed(&mut self, task_id: Task::Id) {
         let turn = self.event_loop.iteration_number();
         if let Some(entry) = self.network_dedupe_map.get_mut(&task_id) {

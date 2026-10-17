@@ -86,7 +86,7 @@ pub use crate::utils::ts_utils::{
     type_node_requires_parentheses,
 };
 
-use super::{Locate, NameOf, TsNode};
+use super::{Locate, NameOf, TsNode, Type};
 use crate::ast::{
     Alias, Case, Class, Enum, EnumMember, Export, ExportSpec, Expr, File, Func, Import,
     ImportEquals, ImportSpec, Interface, Member, Module, Node, Param, Pat, PatElem, PatProp, Prop,
@@ -108,6 +108,12 @@ pub(crate) fn has_room_on_the_stack() -> bool {
 pub trait Located<'a>: Copy {
     /// `services.esTreeNodeToTSNodeMap.get(node)`
     fn to_ts_node(self) -> TsNode<'a>;
+
+    /// `services.getTypeAtLocation(node)`
+    #[inline]
+    fn to_type(self) -> Type<'a> {
+        self.to_ts_node().get_type_at_location()
+    }
 }
 
 impl<'a> Located<'a> for TsNode<'a> {
@@ -129,6 +135,10 @@ impl<'a> Located<'a> for Node<'a> {
     fn to_ts_node(self) -> TsNode<'a> {
         self.ts_node()
     }
+    #[inline]
+    fn to_type(self) -> Type<'a> {
+        self.ty()
+    }
 }
 
 impl<'a> Located<'a> for NameOf<Node<'a>> {
@@ -144,6 +154,10 @@ macro_rules! located {
             #[inline]
             fn to_ts_node(self) -> TsNode<'a> {
                 self.ts_node()
+            }
+            #[inline]
+            fn to_type(self) -> Type<'a> {
+                self.type_at_location()
             }
         }
 

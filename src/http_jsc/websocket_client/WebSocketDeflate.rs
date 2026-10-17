@@ -2,7 +2,7 @@
 
 use core::ffi::c_int;
 
-use bun_core::feature_flag;
+use bun_core::{feature_flag, handle_oom};
 use bun_libdeflate_sys::libdeflate as libdeflate_sys;
 use bun_zlib as zlib;
 
@@ -44,13 +44,18 @@ pub(crate) type Error = DecompressError;
 pub struct PerMessageDeflate {
     pub(crate) compress_stream: zlib::DeflateEncoder,
     pub(crate) decompress_stream: zlib::InflateDecoder,
-    pub(crate) params: Params,
+    compress_no_context_takeover: bool,
+    decompress_no_context_takeover: bool,
 }
 
 // Constants from zlib.h
 const Z_DEFAULT_COMPRESSION: c_int = 6;
 const Z_DEFAULT_STRATEGY: c_int = 0;
 const Z_DEFAULT_MEM_LEVEL: c_int = 8;
+
+/// zlib rejects an 8-bit window for raw deflate. A peer that negotiated 8 bits can still decode
+/// 9-bit output, because match distances stay <= 512 - MIN_LOOKAHEAD = 250.
+const ZLIB_MIN_RAW_DEFLATE_WINDOW_BITS: u8 = 9;
 
 // Buffer size for compression/decompression operations
 const COMPRESSION_BUFFER_SIZE: usize = 4096;
@@ -60,11 +65,10 @@ const COMPRESSION_BUFFER_SIZE: usize = 4096;
 /// least this large: their output would not fit either.
 const INFLATE_BUFFER_SIZE: usize = 128 * 1024;
 
-// Maximum decompressed message size (128 MB)
-const MAX_DECOMPRESSED_SIZE: usize = 128 * 1024 * 1024;
-
 // DEFLATE trailer bytes added by Z_SYNC_FLUSH
 const DEFLATE_TRAILER: [u8; 4] = [0x00, 0x00, 0xff, 0xff];
+/// An empty stored block with BFINAL set.
+const FINAL_EMPTY_BLOCK: [u8; 5] = [0x01, 0x00, 0x00, 0xff, 0xff];
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
 pub enum DecompressError {
@@ -85,27 +89,46 @@ pub enum CompressError {
 }
 
 impl PerMessageDeflate {
-    pub(crate) fn init(params: Params) -> crate::Result<Box<Self>> {
-        // Initialize compressor (deflate)
-        // We use negative window bits for raw DEFLATE, as required by RFC 7692.
-        let compress_stream = zlib::DeflateEncoder::new(
+    /// RFC 7692 names each parameter after the side whose compressor it limits: `server_*`
+    /// configures the server's compressor and the client's decompressor.
+    pub(crate) fn init(params: Params, is_server: bool) -> Box<Self> {
+        let server = (
+            params.server_max_window_bits,
+            params.server_no_context_takeover == 1,
+        );
+        let client = (
+            params.client_max_window_bits,
+            params.client_no_context_takeover == 1,
+        );
+        let (ours, theirs) = if is_server {
+            (server, client)
+        } else {
+            (client, server)
+        };
+
+        // Negative window bits select raw DEFLATE, as required by RFC 7692.
+        let compress_window_bits = ours
+            .0
+            .clamp(ZLIB_MIN_RAW_DEFLATE_WINDOW_BITS, Params::MAX_WINDOW_BITS);
+        let decompress_window_bits = theirs
+            .0
+            .clamp(Params::MIN_WINDOW_BITS, Params::MAX_WINDOW_BITS);
+        let compress_stream = handle_oom(zlib::DeflateEncoder::new(
             Z_DEFAULT_COMPRESSION,
-            -(params.client_max_window_bits as c_int),
+            -(compress_window_bits as c_int),
             Z_DEFAULT_MEM_LEVEL,
             Z_DEFAULT_STRATEGY,
-        )
-        .map_err(|_| crate::Error::DeflateInitFailed)?;
+        ));
+        let decompress_stream = handle_oom(zlib::InflateDecoder::new(
+            -(decompress_window_bits as c_int),
+        ));
 
-        // Initialize decompressor (inflate)
-        let decompress_stream =
-            zlib::InflateDecoder::new(-(params.server_max_window_bits as c_int))
-                .map_err(|_| crate::Error::InflateInitFailed)?;
-
-        Ok(Box::new(Self {
-            params,
+        Box::new(Self {
             compress_stream,
             decompress_stream,
-        }))
+            compress_no_context_takeover: ours.1,
+            decompress_no_context_takeover: theirs.1,
+        })
     }
 
     fn can_use_libdeflate(len: usize) -> bool {
@@ -116,38 +139,50 @@ impl PerMessageDeflate {
         len < INFLATE_BUFFER_SIZE
     }
 
-    /// Inflate one message onto `out`. `decompressor` is the thread's shared
-    /// libdeflate handle (`None` when it could not be allocated).
+    /// Inflate one message onto `out`, failing if it exceeds `max_len` bytes. `decompressor`
+    /// is the thread's shared libdeflate handle (`None` when it could not be allocated).
     pub(crate) fn decompress(
         &mut self,
         decompressor: Option<&mut libdeflate_sys::Decompressor>,
         in_buf: &[u8],
         out: &mut Vec<u8>,
+        max_len: usize,
     ) -> Result<(), DecompressError> {
         let initial_len = out.len();
         out.try_reserve_exact(INFLATE_BUFFER_SIZE)
             .map_err(|_| DecompressError::OutOfMemory)?;
 
-        // First we try with libdeflate, which is both faster and doesn't need the trailing deflate bytes
-        if Self::can_use_libdeflate(in_buf.len()) {
-            if let Some(decompressor) = decompressor {
-                let result =
-                    decompressor.decompress_to_vec(in_buf, out, libdeflate_sys::Encoding::Deflate);
-                if result.status == libdeflate_sys::Status::Success {
-                    if out.len() - initial_len > MAX_DECOMPRESSED_SIZE {
-                        return Err(DecompressError::TooLarge);
-                    }
-                    return Ok(());
-                }
-            }
-        }
-
         let mut in_with_trailer: Vec<u8> = Vec::new();
         in_with_trailer
-            .try_reserve_exact(in_buf.len() + DEFLATE_TRAILER.len())
+            .try_reserve_exact(in_buf.len() + DEFLATE_TRAILER.len() + FINAL_EMPTY_BLOCK.len())
             .map_err(|_| DecompressError::OutOfMemory)?;
         in_with_trailer.extend_from_slice(in_buf);
         in_with_trailer.extend_from_slice(&DEFLATE_TRAILER);
+
+        // libdeflate is faster than zlib, but it only inflates a finished stream, so it needs a final
+        // block. It also can't see earlier messages, so it only works without context takeover.
+        if self.decompress_no_context_takeover && Self::can_use_libdeflate(in_buf.len()) {
+            if let Some(decompressor) = decompressor {
+                in_with_trailer.extend_from_slice(&FINAL_EMPTY_BLOCK);
+                let result = decompressor.decompress_to_vec(
+                    &in_with_trailer,
+                    out,
+                    libdeflate_sys::Encoding::Deflate,
+                );
+                if result.status == libdeflate_sys::Status::Success {
+                    // Stopping before the appended block means the peer sent a final block of its own.
+                    // Leave that case to zlib.
+                    if result.read == in_with_trailer.len() {
+                        if out.len() - initial_len > max_len {
+                            return Err(DecompressError::TooLarge);
+                        }
+                        return Ok(());
+                    }
+                    out.truncate(initial_len);
+                }
+                in_with_trailer.truncate(in_buf.len() + DEFLATE_TRAILER.len());
+            }
+        }
 
         let mut remaining = in_with_trailer.as_slice();
         let mut saw_stream_end = false;
@@ -161,7 +196,7 @@ impl PerMessageDeflate {
             remaining = &remaining[consumed..];
 
             // Check for decompression bomb
-            if out.len() - initial_len > MAX_DECOMPRESSED_SIZE {
+            if out.len() - initial_len > max_len {
                 return Err(DecompressError::TooLarge);
             }
 
@@ -189,7 +224,7 @@ impl PerMessageDeflate {
         // begin a fresh one for the next message. Without a reset here the
         // finished inflater returns Z_STREAM_END with 0 bytes on every later
         // message, silently delivering empty payloads.
-        if saw_stream_end || self.params.server_no_context_takeover == 1 {
+        if saw_stream_end || self.decompress_no_context_takeover {
             self.decompress_stream.reset();
         }
 
@@ -228,7 +263,7 @@ impl PerMessageDeflate {
             out.truncate(out.len() - 4);
         }
 
-        if self.params.client_no_context_takeover == 1 {
+        if self.compress_no_context_takeover {
             self.compress_stream.reset();
         }
 

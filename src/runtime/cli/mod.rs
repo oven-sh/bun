@@ -723,15 +723,19 @@ pub(crate) mod command {
         if is_bun_x(argv0) {
             if let Some(next) = argv.get(1) {
                 let next_bytes = next.as_bytes();
-                if next_bytes == b"add"
-                    && bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL.get()
-                        == Some(true)
-                {
-                    return Tag::AddCommand;
+                // To install a package, `bunx` runs its own executable again as `bunx add`, with
+                // the directory it installs into as the working directory.
+                if next_bytes == b"add" {
+                    use bun_install::package_manager_real::run_tasks::is_bunx_tree;
+                    let mut cwd = bun_paths::path_buffer_pool::get();
+                    if bun_sys::getcwd(&mut *cwd).is_ok_and(|len| is_bunx_tree(&cwd[..len])) {
+                        return Tag::AddCommand;
+                    }
                 }
+                // Without a POSIX shell, that install runs each lifecycle script by running this
+                // executable again as `bunx exec --no-env-file`. See `ScriptArgv`.
                 if next_bytes == b"exec"
-                    && bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL.get()
-                        == Some(true)
+                    && (argv.get(2)).is_some_and(|flag| flag.as_bytes() == b"--no-env-file")
                 {
                     return Tag::ExecCommand;
                 }
@@ -1896,7 +1900,7 @@ To create a project with the official Next.js scaffolding tool, run
         use crate::cli::script_or_command::{Runs, runs};
         if runs(command.as_bytes()) == Runs::Script {
             pretty!(
-                "\n<blue>note<r><d>:<r> package.json has a \"{}\" script, so <b>bun {}<r> runs that script\n  Change the script to <b>\"bun {}\"<r> to use the built-in command\n",
+                "\n<blue>note<r><d>:<r> package.json has a \"{}\" script, so <b>bun {}<r> runs that script\n  Change the script to <b>\"bun {}\"<r> to use the built-in command, or pass <b>--no-script<r>\n",
                 command,
                 command,
                 command,

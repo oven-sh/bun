@@ -31,7 +31,7 @@ use bun_sema::program::{FileId, Files};
 use bun_sema::resolve::{inside, to_file_name_lower_case};
 use bun_sema::util::{FxHashMap, FxHashSet};
 use bun_sema_driver::host::{AlreadyRead, Provided, from_native, is_bundled, to_native};
-use bun_sema_driver::{Category, Diagnostic, Libs, Refused};
+use bun_sema_driver::{Category, Diagnostic, Libs, Refused, WithoutInclude};
 use bun_threading::Guarded;
 use std::sync::{Arc, OnceLock};
 
@@ -54,8 +54,9 @@ fn check_and_lint(
     files: &[Typed],
     indices: &[usize],
     already_read: AlreadyRead,
+    is_first_pass: bool,
 ) -> Vec<Option<Linted>> {
-    // `--tsconfig` of oxlint is the project of the files that it includes, not of all files as `-p` is.
+    // tsgolint chooses the project of each file itself: oxlint does not tell it about `--tsconfig`.
     let (like_oxlint, others): (Vec<usize>, Vec<usize>) =
         (0..indices.len()).partition(|&at| files[indices[at]].config.language.is_oxlint);
     if like_oxlint.is_empty() {
@@ -66,14 +67,22 @@ fn check_and_lint(
             indices,
             already_read,
             Project::Nearest,
+            is_first_pass,
         )
         .0;
     }
     let mut linted: Vec<Option<Linted>> = indices.iter().map(|_| None).collect();
     let mut check = |positions: &[usize], already_read: AlreadyRead, project: Project<'_>| {
         let some: Vec<usize> = positions.iter().map(|&at| indices[at]).collect();
-        let (of_some, is_refused) =
-            check_and_lint_in(context, environment, files, &some, already_read, project);
+        let (of_some, is_refused) = check_and_lint_in(
+            context,
+            environment,
+            files,
+            &some,
+            already_read,
+            project,
+            is_first_pass,
+        );
         let mut left = Vec::new();
         for ((&at, of_one), is_refused) in positions.iter().zip(of_some).zip(is_refused) {
             if of_one.is_none() && !is_refused {
@@ -318,6 +327,7 @@ fn check_and_lint_in(
     indices: &[usize],
     already_read: AlreadyRead,
     project: Project<'_>,
+    is_first_pass: bool,
 ) -> (Vec<Option<Linted>>, Vec<bool>) {
     let by_path = ByPath {
         exact: indices
@@ -430,7 +440,8 @@ fn check_and_lint_in(
         cwd: &environment.cwd,
         project: match project {
             Project::This(config) => Some(config),
-            Project::Nearest | Project::Including => context.options.tsconfig.as_deref(),
+            Project::Nearest => context.options.tsconfig.as_deref(),
+            Project::Including => None,
         },
         listed_projects: (listed.as_ref()).map(|it| it as &dyn bun_sema_driver::ListedProjects),
         build: false,
@@ -477,7 +488,7 @@ fn check_and_lint_in(
         keeps_byte_order_marks: true,
         ..Default::default()
     };
-    let (is_case_sensitive, unreadable, diagnostics, incomplete, refused) =
+    let (is_case_sensitive, unreadable, diagnostics, incomplete, refused, without_include) =
         bun_sema_driver::check_provided_then(&request, provided, |report| {
             (
                 report.is_case_sensitive,
@@ -485,8 +496,32 @@ fn check_and_lint_in(
                 report.diagnostics,
                 report.incomplete,
                 report.refused,
+                report.without_include,
             )
         });
+    // The later passes of `--fix` lint some of the same files again.
+    if is_first_pass {
+        let mut noted = context.without_include.lock();
+        for program in without_include {
+            let config_path = to_native(&program.config_path).to_vec();
+            // Each kind of configuration loads it for its own files.
+            match noted.iter_mut().find(|it| it.config_path == config_path) {
+                Some(known) => {
+                    known.asked_for += program.asked_for;
+                    known.load_time += program.load_time;
+                }
+                None => noted.push(WithoutInclude {
+                    config_path,
+                    // As it is spelled by who named it.
+                    example: match by_path.get(&program.example, is_case_sensitive) {
+                        Some(at) => files[indices[at]].path.to_vec(),
+                        None => to_native(&program.example).to_vec(),
+                    },
+                    ..program
+                }),
+            }
+        }
+    }
     // They are of a project, so they are not of the program of those that no project includes. They are linted without types.
     let mut is_refused = vec![false; indices.len()];
     for refused in &refused {
@@ -499,7 +534,7 @@ fn check_and_lint_in(
     }
     // Of code that is nested too deeply for the parser the linter says so itself.
     let out_of_stack = incomplete.into_iter().filter(|it| !it.is_nested_too_deeply);
-    (context.out_of_stack.lock()).extend(out_of_stack.map(|it| it.path));
+    (context.out_of_stack.lock()).extend(out_of_stack.map(|it| to_native(&it.path).to_vec()));
     let mut results = std::mem::take(results.get_mut());
     // Each was checked, and linted, as an empty file. Who lints it without types says why it cannot be read.
     for path in &unreadable {
@@ -523,6 +558,12 @@ fn check_and_lint_in(
         }
     }
     (results, is_refused)
+}
+
+/// Whether nearly all of the time went into files that nobody asked about: a thousand or more, and a hundred for each
+/// that was linted. A `tsconfig.json` at the top of a repository is like that for a file that its own package leaves out.
+pub(crate) fn is_out_of_proportion(program: &WithoutInclude) -> bool {
+    program.included >= 1000 && program.included >= 100 * program.asked_for
 }
 
 /// What oxlint makes of each error for which tsgolint makes no program (`CreateProgram`): "Invalid tsconfig", with TypeScript's
@@ -673,12 +714,22 @@ pub(crate) fn lint(
     };
     let mut states: Vec<Fixing> = files.iter().map(state).collect();
     let mut pending: Vec<usize> = (0..files.len()).collect();
+    let mut is_first_pass = true;
     while !pending.is_empty() {
         let changed = states
             .iter()
             .zip(files)
             .filter_map(|(state, file)| Some((from_native(file.path), state.current.clone()?)));
-        let linted = check_and_lint(context, environment, files, &pending, changed.collect());
+        let changed = changed.collect();
+        let linted = check_and_lint(
+            context,
+            environment,
+            files,
+            &pending,
+            changed,
+            is_first_pass,
+        );
+        is_first_pass = false;
         let mut next = Vec::new();
         for (index, linted) in pending.iter().copied().zip(linted) {
             let (file, state) = (&files[index], &mut states[index]);

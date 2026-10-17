@@ -27,6 +27,8 @@ export type Case = {
   args?: string[];
   /** How many lines of `-f unix` name each rule, or what else the output is to match. */
   reports?: Record<string, number>;
+  /** Or else the output matches this: how much fits on the stack decides which of the two. */
+  orWarns?: RegExp;
   matches?: RegExp;
   lacks?: RegExp;
   /** How often the file matches this when the command has run. */
@@ -529,6 +531,20 @@ export const cases: Case[] = [
       },
     ];
   })(),
+
+  // ── the type checker runs out of stack while it answers a rule, and no file is checked before it is linted ──
+  {
+    name: "3,000 generic calls in each other: the promise is reported, or it says that it gave up",
+    file: "a.ts",
+    text: () =>
+      `declare function f<T>(x: T): T;\ndeclare const p: Promise<void>;\n${rep("f(", 3_000)}p${rep(")", 3_000)};\n`,
+    rules: { "typescript/no-floating-promises": "error" },
+    args: typed,
+    reports: { "@typescript-eslint/no-floating-promises": 1 },
+    orWarns: /^warn: The type checker ran out of stack in a\.ts$/m,
+    exitCode: [0, 1],
+    isHeavy: true,
+  },
 
   // ── time that doubles with each line ──
   // Seven times as long for each alternative. Yarn's release bundle, which many repositories commit, has such a parser.

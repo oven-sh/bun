@@ -4510,11 +4510,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             );
         }
         if let Some(star) = stmt.star_name_loc.to_nullable() {
-            let notes: Box<[bun_ast::Data]> = Box::new([bun_ast::range_data(
+            let mut notes = vec![bun_ast::range_data(
                 None,
                 bun_ast::Range::NONE,
                 b"\"bun:bundle\" does not exist at runtime. Use a named import: import { feature } from \"bun:bundle\"",
-            )]);
+            )];
+            if TYPESCRIPT {
+                let mut type_only = Vec::<u8>::new();
+                let _ = write!(
+                    &mut type_only,
+                    "To use only its types, write: import type * as {} from \"bun:bundle\"",
+                    bstr::BStr::new(self.load_name_from_ref(stmt.namespace_ref))
+                );
+                notes.push(bun_ast::range_data(None, bun_ast::Range::NONE, type_only));
+            }
             self.log().add_range_error_with_notes(
                 Some(self.source),
                 bun_ast::Range {
@@ -4522,7 +4531,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     ..Default::default()
                 },
                 b"\"bun:bundle\" cannot be imported as a namespace",
-                notes,
+                notes.into_boxed_slice(),
             );
         }
     }

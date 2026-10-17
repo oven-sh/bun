@@ -640,6 +640,24 @@ console.log(x);
     expect(build.success).toBe(false);
   });
 
+  test("the namespace error names the import to write instead", async () => {
+    using dir = tempDir("bundler-feature-flag", {
+      "namespace.js": `import * as flags from "bun:bundle"; console.log(flags);`,
+      "namespace.ts": `import * as B from "bun:bundle"; const r: B.Registry = {}; console.log(r);`,
+    });
+    const logsOf = async (file: string) => {
+      const build = await Bun.build({ entrypoints: [`${dir}/${file}`], throw: false });
+      return build.logs.map(log => ({ message: log.message, notes: log.notes.map(note => note.message) }));
+    };
+    const named = `"bun:bundle" does not exist at runtime. Use a named import: import { feature } from "bun:bundle"`;
+
+    expect(await logsOf("namespace.js")).toEqual([{ message: NAMESPACE, notes: [named] }]);
+    // In TypeScript the namespace can be there for its types alone.
+    expect(await logsOf("namespace.ts")).toEqual([
+      { message: NAMESPACE, notes: [named, `To use only its types, write: import type * as B from "bun:bundle"`] },
+    ]);
+  });
+
   async function spawnBun(cwd: string, ...args: string[]) {
     await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -757,6 +775,8 @@ console.log(x);
     });
     const prelude = `import { feature } from "bun:bundle"; function dec(...a: any[]): any {}`;
     const call = `console.log(feature("FLAG") ? "on" : "off");`;
+    // The two dotted types also cover the refs of a dotted metadata type, which
+    // leaked. LeakSanitizer checks this file on the ASAN lane.
     const types = {
       "namespace member": `namespace Flags { export type feature = string } class K { @dec p: Flags.feature = "x"; }`,
       "type parameter": `class K<feature> { @dec p: feature | undefined; }`,

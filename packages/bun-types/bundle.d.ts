@@ -60,8 +60,8 @@ declare module "bun:bundle" {
    * At bundle time, Bun replaces each call with a boolean literal (`true` or `false`)
    * and removes the unreachable branch.
    *
-   * `feature` can only be called directly. Any other use of it, such as
-   * `const f = feature`, is a build error.
+   * `feature` has no value at runtime, so it can only be called directly. A use
+   * such as `const f = feature` is a build error.
    *
    * @param flag Name of the feature flag to check
    * @returns `true` if the flag was passed with `--feature=FLAG`, `false` otherwise

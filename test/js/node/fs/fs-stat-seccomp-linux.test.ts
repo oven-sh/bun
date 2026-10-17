@@ -458,26 +458,26 @@ describe.skipIf(!isLinux || isASAN)("bun build when prlimit64 is blocked by secc
 describe.skipIf(!isLinux)("node:fs errno outside the SystemErrno table", () => {
   const helperBin = tryBuildHelper("__NR_fsync");
 
-  const snippet = `
+  const snippet = (call: string) => `
     const fs = require("node:fs");
     const fd = fs.openSync(process.argv[1], "r");
     try {
-      fs.fsyncSync(fd);
+      ${call};
       console.log(JSON.stringify({ threw: false }));
     } catch (e) {
       console.log(JSON.stringify({ threw: true, errno: e.errno, code: e.code, syscall: e.syscall, message: e.message }));
     }
   `;
 
-  // fs.fsyncSync in a bun subprocess whose fsync(2) fails with `errno`.
-  // Returns the parsed result line, or null on an environment skip.
-  async function fsyncWithErrno(errno: number) {
+  // `call` (fs.fsyncSync by default) in a bun subprocess whose fsync(2) fails
+  // with `errno`. Returns the parsed result line, or null on an environment skip.
+  async function fsyncWithErrno(errno: number, call = "fs.fsyncSync(fd)") {
     if (helperBin == null) {
       console.warn("SKIP fsync seccomp: cc or seccomp headers not available");
       return null;
     }
     using dir = tempDir("fsync-seccomp-target", { "file.txt": "hello" });
-    const out = await runUnderSeccomp(helperBin, errno, snippet, [join(String(dir), "file.txt")]);
+    const out = await runUnderSeccomp(helperBin, errno, snippet(call), [join(String(dir), "file.txt")]);
     if (out == null) {
       console.warn("SKIP fsync seccomp: seccomp not permitted in this environment");
       return null;
@@ -512,6 +512,19 @@ describe.skipIf(!isLinux)("node:fs errno outside the SystemErrno table", () => {
       code: "EACCES",
       syscall: "fsync",
       message: "EACCES: permission denied, fsync",
+    });
+  });
+
+  // The fsync of `{ flush: true }` reports its error as fs.fsyncSync does.
+  test.concurrent.each(["writeFileSync", "appendFileSync"])("%s with { flush: true } reports EUNKNOWN", async fn => {
+    const result = await fsyncWithErrno(ENOTSUPP, `fs.${fn}(process.argv[1], "x", { flush: true })`);
+    if (result == null) return;
+    expect(result).toEqual({
+      threw: true,
+      errno: expect.any(Number),
+      code: "EUNKNOWN",
+      syscall: "fsync",
+      message: "EUNKNOWN: unknown error, fsync",
     });
   });
 });

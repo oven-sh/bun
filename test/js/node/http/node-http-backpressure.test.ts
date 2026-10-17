@@ -15,7 +15,7 @@ import https from "node:https";
 import type { AddressInfo } from "node:net";
 import net from "node:net";
 import path from "node:path";
-import { Duplex, duplexPair, finished, Readable } from "node:stream";
+import { Duplex, duplexPair, finished, pipeline, Readable, Writable } from "node:stream";
 import nodeTls from "node:tls";
 import { Worker } from "node:worker_threads";
 
@@ -1453,27 +1453,123 @@ describe("backpressure", () => {
       key: readFileSync(path.join(keysDir, "agent1-key.pem")),
     };
     type RequestListener = (req: http.IncomingMessage, res: http.ServerResponse) => void;
-    const transports = {
+    // A server with a 'request' listener. connect() gives it one connection and resolves with the client's end.
+    type Door = {
+      // The server accepts the connection itself and parses it natively. Every other door is served from JS.
+      native?: true;
+      // Why the tests whose client sends its FIN right behind the request body leave this door out.
+      noFinBehindBody?: string;
+      // Why the tests with pipelined requests leave this door out.
+      noPipelining?: string;
+      // Why the tests of the socket timeout leave this door out.
+      noSocketTimeout?: string;
+      open(
+        listener: RequestListener,
+        options?: http.ServerOptions,
+      ): Promise<{ connect(): Promise<Duplex>; close(): void }>;
+    };
+
+    async function tcpClient(port: number) {
+      const sock = net.connect(port, "127.0.0.1");
+      sock.on("error", () => {});
+      await once(sock, "connect");
+      return sock;
+    }
+    async function tlsClient(port: number) {
+      const sock = nodeTls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+      sock.on("error", () => {});
+      await once(sock, "secureConnect");
+      return sock;
+    }
+    // `acceptor` listens, and the door decides how its connections get to the server with the listener.
+    async function listening(acceptor: net.Server, client: (port: number) => Promise<Duplex>) {
+      await once(acceptor.listen(0, "127.0.0.1"), "listening");
+      const port = (acceptor.address() as AddressInfo).port;
+      return { connect: () => client(port), close: () => void acceptor.close() };
+    }
+
+    const doors: Record<string, Door> = {
       http: {
-        createServer: (listener: RequestListener) => http.createServer(listener),
-        async connect(port: number) {
-          const sock = net.connect(port, "127.0.0.1");
-          sock.on("error", () => {});
-          await once(sock, "connect");
-          return sock;
-        },
+        native: true,
+        open: (listener, options = {}) => listening(http.createServer(options, listener), tcpClient),
       },
       https: {
-        createServer: (listener: RequestListener) => https.createServer(tlsOptions, listener),
-        async connect(port: number) {
-          const sock = nodeTls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
-          sock.on("error", () => {});
-          await once(sock, "secureConnect");
-          return sock;
+        native: true,
+        open: (listener, options = {}) =>
+          listening(https.createServer({ ...tlsOptions, ...options }, listener), tlsClient),
+      },
+      // The http.Server of the next five never listens: something else accepts its connections.
+      "server.emit('connection', socket) with a net.Socket": {
+        open(listener, options = {}) {
+          const server = http.createServer(options, listener);
+          return listening(
+            net.createServer(socket => void server.emit("connection", socket)),
+            tcpClient,
+          );
+        },
+      },
+      "server.emit('connection', socket) with a tls.TLSSocket": {
+        open(listener, options = {}) {
+          const server = http.createServer(options, listener);
+          return listening(
+            nodeTls.createServer(tlsOptions, socket => void server.emit("connection", socket)),
+            tlsClient,
+          );
+        },
+      },
+      "server.emit('connection', duplex) with a stream.duplexPair() side": {
+        noFinBehindBody: "Node ends this connection at the client's FIN too, before the response is written",
+        noSocketTimeout: "a Duplex has no setTimeout(), so Node arms no timeout on it either",
+        async open(listener, options = {}) {
+          const server = http.createServer(options, listener);
+          return {
+            async connect() {
+              const [client, serverSide] = duplexPair();
+              server.emit("connection", serverSide);
+              return client;
+            },
+            close() {},
+          };
+        },
+      },
+      // The socket that a server handed to its 'connect' listener, given to another server.
+      "server.emit('connection', socket) with the socket of a CONNECT tunnel": {
+        noPipelining: "a response that waits behind another one is destroyed on this socket, with or without a body",
+        open(listener, options = {}) {
+          const server = http.createServer(options, listener);
+          const proxy = http.createServer().on("connect", (req, socket) => {
+            socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+            server.emit("connection", socket);
+          });
+          return listening(proxy, async port => {
+            const sock = await tcpClient(port);
+            sock.write("CONNECT localhost:80 HTTP/1.1\r\nHost: localhost:80\r\n\r\n");
+            let established = "";
+            while (!established.endsWith("\r\n\r\n")) established += (await once(sock, "data"))[0].toString("latin1");
+            return sock;
+          });
+        },
+      },
+      "http2.createSecureServer({ allowHTTP1: true }) with an HTTP/1.1 client": {
+        open: (listener, options = {}) =>
+          listening(
+            http2.createSecureServer({ ...tlsOptions, allowHTTP1: true, ...options }, listener as never),
+            tlsClient,
+          ),
+      },
+      "http2.createSecureServer({ allowHTTP1: true }).emit('connection', socket)": {
+        noFinBehindBody: "the response is lost when the client's FIN follows the body, with or without a stop",
+        noSocketTimeout: "Bun serves this socket through a Duplex that has no setTimeout() (Node: a TLSSocket)",
+        open(listener, options = {}) {
+          const server = http2.createSecureServer({ ...tlsOptions, allowHTTP1: true, ...options }, listener as never);
+          return listening(
+            net.createServer(socket => void server.emit("connection", socket)),
+            tlsClient,
+          );
         },
       },
     };
-    type Transport = (typeof transports)[keyof typeof transports];
+    const doorsWhere = (include: (door: Door) => boolean) => Object.keys(doors).filter(name => include(doors[name]));
 
     // Raw client: sends the request head, then pumps TOTAL body bytes, parking
     // on 'drain' whenever the kernel send buffer is full, and FINs after the
@@ -1481,8 +1577,7 @@ describe("backpressure", () => {
     // 25 ms polls (the upload is stalled) or the whole body has been handed to
     // the kernel (nothing ever pushed back). The response is collected so the
     // caller can check the server still answered after draining the body.
-    async function uploadUntilStalled(transport: Transport, port: number) {
-      const sock = await transport.connect(port);
+    async function uploadUntilStalled(sock: Duplex) {
       let response = "";
       sock.on("data", chunk => (response += chunk.toString("latin1")));
       const closed = once(sock, "close");
@@ -1537,19 +1632,17 @@ describe("backpressure", () => {
       return promise;
     }
 
-    describe.each(Object.keys(transports) as (keyof typeof transports)[])("%s", name => {
-      const transport = transports[name];
+    describe.each(doorsWhere(door => !door.noFinBehindBody))("%s", name => {
+      const door = doors[name];
 
       it("stalls the client while the handler has req.pause()d, and delivers the rest after req.resume()", async () => {
         const arrived = Promise.withResolvers<{ req: http.IncomingMessage; received: Promise<number> }>();
-        await using server = transport.createServer((req, res) => {
+        const server = await door.open((req, res) => {
           const received = countBody(req, res);
           req.pause();
           arrived.resolve({ req, received });
         });
-        await once(server.listen(0, "127.0.0.1"), "listening");
-
-        const upload = await uploadUntilStalled(transport, (server.address() as AddressInfo).port);
+        const upload = await uploadUntilStalled(await server.connect());
         try {
           const { req, received } = await arrived.promise;
           // Without TCP backpressure the client hands the kernel the whole body
@@ -1561,6 +1654,7 @@ describe("backpressure", () => {
           expect(await upload.finish()).toStartWith("HTTP/1.1 200 ");
         } finally {
           upload.sock.destroy();
+          server.close();
         }
       });
 
@@ -1569,10 +1663,8 @@ describe("backpressure", () => {
         // highWaterMark and the socket must be read-stopped from there (Node's
         // readStop in parserOnBody), not only when user code pauses explicitly.
         const arrived = Promise.withResolvers<{ req: http.IncomingMessage; res: http.ServerResponse }>();
-        await using server = transport.createServer((req, res) => arrived.resolve({ req, res }));
-        await once(server.listen(0, "127.0.0.1"), "listening");
-
-        const upload = await uploadUntilStalled(transport, (server.address() as AddressInfo).port);
+        const server = await door.open((req, res) => arrived.resolve({ req, res }));
+        const upload = await uploadUntilStalled(await server.connect());
         try {
           const { req, res } = await arrived.promise;
           expect(upload.sentWhileStalled).toBeLessThan(TOTAL);
@@ -1583,6 +1675,7 @@ describe("backpressure", () => {
           expect(await upload.finish()).toStartWith("HTTP/1.1 200 ");
         } finally {
           upload.sock.destroy();
+          server.close();
         }
       });
     });
@@ -1607,7 +1700,7 @@ describe("backpressure", () => {
       await once(server.listen(0, "127.0.0.1"), "listening");
       const port = (server.address() as AddressInfo).port;
 
-      const sock = await transports.http.connect(port);
+      const sock = await tcpClient(port);
       let response = "";
       sock.on("data", chunk => (response += chunk.toString("latin1")));
       const closed = once(sock, "close");
@@ -1622,7 +1715,7 @@ describe("backpressure", () => {
         // A full exchange on a second connection takes several turns of the
         // server's event loop, so the loop polls while the FIN waits on the
         // paused connection. The connection must not react to it yet.
-        const ping = await transports.http.connect(port);
+        const ping = await tcpClient(port);
         ping.write("GET /ping HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
         ping.resume();
         await once(ping, "close");
@@ -1669,7 +1762,7 @@ describe("backpressure", () => {
       });
       await once(server.listen(0, "127.0.0.1"), "listening");
 
-      const sock = await transports.http.connect((server.address() as AddressInfo).port);
+      const sock = await tcpClient((server.address() as AddressInfo).port);
       sock.resume();
       try {
         sock.write("POST / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n");
@@ -1712,7 +1805,7 @@ describe("backpressure", () => {
       });
       await once(server.listen(0, "127.0.0.1"), "listening");
 
-      const sock = await transports.http.connect((server.address() as AddressInfo).port);
+      const sock = await tcpClient((server.address() as AddressInfo).port);
       try {
         let received = 0;
         let tail = "";
@@ -1736,6 +1829,733 @@ describe("backpressure", () => {
       } finally {
         sock.destroy();
       }
+    });
+
+    // A connection that the server did not accept itself is served from JS: a socket given to
+    // server.emit("connection"), and an HTTP/1.1 connection of an http2 server with allowHTTP1.
+    describe("on a connection that the server is given", () => {
+      const BODY = 4 * 1024 * 1024;
+      // One chunk of a chunked body, as large as the default highWaterMark.
+      const FRAME = Buffer.concat([Buffer.from("10000\r\n"), Buffer.alloc(0x10000, "d"), Buffer.from("\r\n")]);
+      const NET_SOCKET = "server.emit('connection', socket) with a net.Socket";
+      const ALLOW_HTTP1 = "http2.createSecureServer({ allowHTTP1: true }) with an HTTP/1.1 client";
+      const withSocketTimeout = doorsWhere(door => !door.native && !door.noSocketTimeout);
+
+      const turn = () => new Promise<void>(resolve => setImmediate(resolve));
+      // Resolves with `promise`, or after ten turns of the event loop when what it waits for does not come.
+      async function withinTenTurns(promise: Promise<unknown>) {
+        let pending = true;
+        promise.then(() => (pending = false));
+        for (let turns = 0; pending && turns < 10; turns++) await turn();
+      }
+
+      // One connection to a server of that door. close() also destroys the server's end of it: a socket that a
+      // request body keeps stopped does not get to the client's FIN.
+      async function connectTo(door: string, listener: RequestListener, options?: http.ServerOptions) {
+        let serverSide: Duplex | undefined;
+        const server = await doors[door].open((req, res) => {
+          serverSide = req.socket;
+          listener(req, res);
+        }, options);
+        const client = await server.connect();
+        let received = "";
+        const waiting: { marker: string; resolve(): void; reject(error: Error): void }[] = [];
+        const closed = Promise.withResolvers<void>();
+        const closedBefore = (what: string) =>
+          new Error(`the connection closed before ${what}, after ${JSON.stringify(received.slice(0, 200))}`);
+        client.on("error", () => {});
+        client.on("data", (chunk: Buffer) => {
+          received += chunk.toString("latin1");
+          for (let i = 0; i < waiting.length;) {
+            if (received.includes(waiting[i].marker)) waiting.splice(i, 1)[0].resolve();
+            else i++;
+          }
+        });
+        client.on("close", () => {
+          for (const { marker, reject } of waiting.splice(0)) reject(closedBefore(JSON.stringify(marker)));
+          closed.resolve();
+        });
+        return {
+          client,
+          closed: closed.promise,
+          serverSide: () => serverSide,
+          statuses: () => received.match(/HTTP\/1\.1 \d+/g) ?? [],
+          // Resolves once the response bytes contain `marker`.
+          receive(marker: string) {
+            const { promise, resolve, reject } = Promise.withResolvers<void>();
+            if (received.includes(marker)) resolve();
+            else if (client.destroyed) reject(closedBefore(JSON.stringify(marker)));
+            else waiting.push({ marker, resolve, reject });
+            return promise;
+          },
+          // `promise`, or an error with what the client got when the connection closes first.
+          until<T>(promise: Promise<T>, what: string) {
+            return Promise.race([
+              promise,
+              closed.promise.then(() => {
+                throw closedBefore(what);
+              }),
+            ]);
+          },
+          close() {
+            client.destroy();
+            serverSide?.destroy();
+            server.close();
+          },
+        };
+      }
+
+      function writeBody(client: Duplex, path: string, headers = "") {
+        client.write(`POST ${path} HTTP/1.1\r\nHost: localhost\r\n${headers}Content-Length: ${BODY}\r\n\r\n`);
+        for (let sent = 0; sent < BODY; sent += BLOCK.byteLength) client.write(BLOCK);
+      }
+      const GET = (path: string) => `GET ${path} HTTP/1.1\r\nHost: localhost\r\n\r\n`;
+
+      describe.each(doorsWhere(door => !door.native && !door.noPipelining))("%s", door => {
+        // The three requests are written at once. Each is parsed only once the body ahead of it has
+        // been, so without a stop the last one is dispatched while nothing has read the first body.
+        it("stops the socket for each request body that nothing reads, and serves the requests behind them", async () => {
+          const events: string[] = [];
+          let held = -1;
+          const last = Promise.withResolvers<void>();
+          const connection = await connectTo(door, (req, res) => {
+            events.push(req.url!);
+            if (req.url === "/last") {
+              last.resolve();
+              return void res.end("last;");
+            }
+            req.socket.once("pause", () => {
+              events.push(`pause ${req.url}`);
+              // The response to /dump ends with its body unread.
+              if (req.url === "/dump") return void res.end("dump;");
+              // The parser is still inside the read that filled the buffer. Sample once it is through.
+              process.nextTick(() => {
+                held = req.readableLength;
+                let received = 0;
+                req.on("data", (chunk: Buffer) => (received += chunk.byteLength));
+                req.on("end", () => res.end(`late=${received};`));
+              });
+            });
+          });
+          try {
+            writeBody(connection.client, "/late");
+            connection.client.write("POST /dump HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n");
+            for (let frames = 0; frames < 16; frames++) connection.client.write(FRAME);
+            connection.client.write("0\r\n\r\n" + GET("/last"));
+            await connection.until(last.promise, "the last request");
+            expect(events).toEqual(["/late", "pause /late", "/dump", "pause /dump", "/last"]);
+            expect(held).toBeGreaterThan(0);
+            // One highWaterMark plus one socket read stays far below this.
+            expect(held).toBeLessThan(BODY / 4);
+            await connection.receive(`late=${BODY};`);
+            await connection.receive("dump;");
+            await connection.receive("last;");
+          } finally {
+            connection.close();
+          }
+        });
+      });
+
+      // A Duplex in the place of the socket: the server gets exactly the chunks that the test pushes.
+      function scriptedSocket(readableHighWaterMark?: number) {
+        return new Duplex({ readableHighWaterMark, read() {}, write: (chunk, encoding, callback) => callback() });
+      }
+
+      it("reads the next request while a complete body that nothing reads is still buffered", async () => {
+        const socket = scriptedSocket(1024);
+        const events: string[] = [];
+        const next = Promise.withResolvers<void>();
+        const closed = Promise.withResolvers<void>();
+        const server = http.createServer((req, res) => {
+          if (req.url !== "/unread") {
+            events.push(req.url!);
+            return void next.resolve();
+          }
+          req.socket.once("pause", () => events.push("pause"));
+          res.on("close", () => {
+            events.push("close");
+            closed.resolve();
+          });
+        });
+        server.emit("connection", socket);
+        try {
+          // One chunk holds the whole request, and its body alone overflows the 1 KiB buffer.
+          socket.push(
+            `POST /unread HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4096\r\n\r\n${Buffer.alloc(4096, "x")}`,
+          );
+          socket.push(GET("/next"));
+          await withinTenTurns(next.promise);
+          expect(events).toEqual(["pause", "/next"]);
+          // The client goes away while both responses are pending. A socket that stayed stopped would not see it.
+          socket.push(null);
+          await withinTenTurns(closed.promise);
+          expect(events).toEqual(["pause", "/next", "close"]);
+        } finally {
+          socket.destroy();
+        }
+      });
+
+      it("reads the next request after a listener paused the socket of a complete request", async () => {
+        const socket = scriptedSocket();
+        const seen: unknown[] = [];
+        const finished = Promise.withResolvers<void>();
+        const second = Promise.withResolvers<void>();
+        const server = http.createServer((req, res) => {
+          seen.push(req.url);
+          if (req.url !== "/first") return void second.resolve();
+          req.socket.pause();
+          res.on("finish", () => {
+            seen.push(`finish, socket paused: ${socket.isPaused()}`);
+            finished.resolve();
+          });
+          res.end("first;");
+        });
+        server.emit("connection", socket);
+        try {
+          socket.push(GET("/first"));
+          await finished.promise;
+          socket.push(GET("/second"));
+          await withinTenTurns(second.promise);
+          // The end of the message restarts the socket, after the listener returned.
+          expect(seen).toEqual(["/first", "finish, socket paused: false", "/second"]);
+        } finally {
+          socket.destroy();
+        }
+      });
+
+      it("stays stopped for the next request when a request that had stopped the socket closes after its end", async () => {
+        const HWM = 64 * 1024;
+        const socket = scriptedSocket();
+        let unread: http.IncomingMessage | undefined;
+        const firstClosed = Promise.withResolvers<void>();
+        const server = http.createServer((req, res) => {
+          // Nothing reads or answers /second.
+          if (req.url !== "/first") return void (unread = req);
+          // /first is read once its body has stopped the socket.
+          req.socket.once("pause", () => {
+            req.resume();
+            req.on("end", () => res.end("first;"));
+            req.on("close", () => firstClosed.resolve());
+          });
+        });
+        server.emit("connection", socket);
+        try {
+          socket.push(`POST /first HTTP/1.1\r\nHost: localhost\r\nContent-Length: ${2 * HWM}\r\n\r\n`);
+          socket.push(Buffer.alloc(HWM, "a"));
+          // The rest of /first, and /second with two highWaterMarks of its body: /second stops the socket in turn.
+          socket.push(
+            Buffer.concat([
+              Buffer.alloc(HWM, "a"),
+              Buffer.from(`POST /second HTTP/1.1\r\nHost: localhost\r\nContent-Length: ${8 * HWM}\r\n\r\n`),
+              Buffer.alloc(2 * HWM, "b"),
+            ]),
+          );
+          await withinTenTurns(firstClosed.promise);
+          // One more chunk of /second. A socket that the 'close' of /first restarted hands it to /second.
+          socket.push(Buffer.alloc(HWM, "b"));
+          await turn();
+          expect({ paused: socket.isPaused(), second: unread?.readableLength, socket: socket.readableLength }).toEqual({
+            paused: true,
+            second: 2 * HWM,
+            socket: HWM,
+          });
+        } finally {
+          socket.destroy();
+        }
+      });
+
+      describe("the async context", () => {
+        const UPGRADE = "GET /upgrade HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: test\r\n\r\n";
+
+        // Node's parser is an async resource that is made when the server gets the connection, and its callbacks
+        // run in the context of that moment. What follows the parser does too when the parser consumes the socket,
+        // which it does for a socket with a handle. For any other stream it runs in the context of the 'data' event.
+        it("of a request is that of the connection, also when a reader with a context of its own restarted the socket", async () => {
+          const storage = new AsyncLocalStorage<string>();
+          const stores: string[] = [];
+          const second = Promise.withResolvers<void>();
+          const third = Promise.withResolvers<void>();
+          const upgraded = Promise.withResolvers<void>();
+          const server = http.createServer(req => {
+            stores.push(`${req.url} in ${storage.getStore()}`);
+            if (req.url === "/second") return void second.resolve();
+            if (req.url === "/third") return void third.resolve();
+            // The body stops the socket. This reader then restarts it from a context of its own.
+            req.socket.once("pause", () => storage.run("reader", () => void req.resume()));
+          });
+          server.on("upgrade", req => {
+            stores.push(`${req.url} in ${storage.getStore()}`);
+            upgraded.resolve();
+          });
+          const [client, serverSide] = duplexPair();
+          client.on("error", () => {});
+          storage.run("connection", () => void server.emit("connection", serverSide));
+          try {
+            writeBody(client, "/first");
+            client.write(GET("/second"));
+            await withinTenTurns(second.promise);
+            // The server's side flows again, and a duplexPair() side hands a write over in the context of the writer.
+            storage.run("client", () => void client.write(GET("/third")));
+            await withinTenTurns(third.promise);
+            storage.run("client", () => void client.write(UPGRADE));
+            await withinTenTurns(upgraded.promise);
+            expect(stores).toEqual([
+              "/first in connection",
+              "/second in connection",
+              "/third in connection",
+              "/upgrade in client",
+            ]);
+          } finally {
+            client.destroy();
+            serverSide.destroy();
+          }
+        });
+
+        it("of 'upgrade' is that of the connection on a socket with a handle", async () => {
+          const storage = new AsyncLocalStorage<string>();
+          const stores: string[] = [];
+          const upgraded = Promise.withResolvers<void>();
+          const server = http.createServer(req => void stores.push(`${req.url} in ${storage.getStore()}`));
+          server.on("upgrade", (req, socket) => {
+            stores.push(`${req.url} in ${storage.getStore()}`);
+            socket.destroy();
+            upgraded.resolve();
+          });
+          const acceptor = net.createServer(
+            socket => void storage.run("connection", () => server.emit("connection", socket)),
+          );
+          await once(acceptor.listen(0, "127.0.0.1"), "listening");
+          const client = await tcpClient((acceptor.address() as AddressInfo).port);
+          try {
+            client.write(GET("/first") + UPGRADE);
+            await upgraded.promise;
+            expect(stores).toEqual(["/first in connection", "/upgrade in connection"]);
+          } finally {
+            client.destroy();
+            acceptor.close();
+          }
+        });
+
+        it("of what the end of the socket leads to is not that of the reader that restarted the socket", async () => {
+          const FILL = 64 * 1024;
+          const storage = new AsyncLocalStorage<string>();
+          const stores: string[] = [];
+          let first: http.IncomingMessage | undefined;
+          const closed = Promise.withResolvers<void>();
+          const server = http.createServer((req, res) => {
+            if (req.url === "/ping") return void res.end("pong");
+            // Nothing reads /first yet: its body fills the buffer and stops the socket.
+            if (req.url === "/first") return void (first = req);
+            // The body of /second is cut short by the client's FIN.
+            req.on("error", () => {});
+            req.on("aborted", () => stores.push(`aborted in ${storage.getStore()}`));
+            req.on("close", () => {
+              stores.push(`close in ${storage.getStore()}`);
+              closed.resolve();
+            });
+          });
+          server.on("clientError", (error, socket) => {
+            stores.push(`clientError in ${storage.getStore()}`);
+            socket.destroy();
+          });
+          const sockets: net.Socket[] = [];
+          const acceptor = net.createServer(
+            socket => void server.emit("connection", sockets[sockets.push(socket) - 1]),
+          );
+          await once(acceptor.listen(0, "127.0.0.1"), "listening");
+          const port = (acceptor.address() as AddressInfo).port;
+          // A whole exchange on a connection of its own: the server has then polled everything that was sent before.
+          async function roundTrip() {
+            const ping = await tcpClient(port);
+            ping.write("GET /ping HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+            ping.resume();
+            await once(ping, "close");
+          }
+          const client = await tcpClient(port);
+          try {
+            client.write(`POST /first HTTP/1.1\r\nHost: localhost\r\nContent-Length: ${FILL + 5}\r\n\r\n`);
+            client.write(Buffer.alloc(FILL, "a"));
+            await roundTrip();
+            // The end of /first, a /second whose body is cut short, and the FIN. A socket that is stopped holds them
+            // until a reader restarts it, and then emits its 'end' from the tick of that reader.
+            client.end("aaaaaPOST /second HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10\r\n\r\n12345");
+            await once(client, "finish");
+            await roundTrip();
+            storage.run("reader", () => void first!.resume());
+            await closed.promise;
+            expect(stores).toEqual(["clientError in undefined", "aborted in undefined", "close in undefined"]);
+          } finally {
+            client.destroy();
+            for (const socket of sockets) socket.destroy();
+            acceptor.close();
+          }
+        });
+      });
+
+      // Node's resOnFinish arms the keep-alive timeout of the socket. For a request body that its listener
+      // abandoned, that timeout is what ends the connection: the body keeps the socket stopped, and a stopped
+      // socket does not get to the client's FIN.
+      describe("the keep-alive timeout behind a response that is out before its request body", () => {
+        const TIMEOUTS = { keepAliveTimeout: 100, keepAliveTimeoutBuffer: 50 };
+
+        // What a body parser over its limit does: it stops reading for good, and answers.
+        function abandonBody(req: http.IncomingMessage, res: http.ServerResponse) {
+          req.once("data", () => {
+            req.pause();
+            res.writeHead(413).end("too large;");
+          });
+        }
+
+        // Resolves with the timeout of the socket at the end of the response, and whether the socket is destroyed
+        // once a timeout of the socket has run its listeners. Resolves at the end of the response when no timeout is set.
+        function afterTimeout(req: http.IncomingMessage, res: http.ServerResponse) {
+          const { promise, resolve } = Promise.withResolvers<{ timeoutAtFinish?: number; destroyed?: boolean }>();
+          const socket = req.socket;
+          res.on("finish", () => {
+            const timeoutAtFinish = socket.timeout;
+            if (!timeoutAtFinish) return resolve({ timeoutAtFinish });
+            socket.once("timeout", () =>
+              process.nextTick(() => resolve({ timeoutAtFinish, destroyed: socket.destroyed })),
+            );
+          });
+          return promise;
+        }
+
+        it.each(withSocketTimeout)("closes a connection that an abandoned body keeps stopped: %s", async door => {
+          const seen = { stopped: false, next: false };
+          const result = Promise.withResolvers<object>();
+          const connection = await connectTo(
+            door,
+            (req, res) => {
+              if (req.url !== "/abandoned") {
+                // Behind the body: it is parsed only if nothing stopped the socket.
+                seen.next = true;
+                return void result.resolve({});
+              }
+              req.socket.once("pause", () => (seen.stopped = true));
+              afterTimeout(req, res).then(result.resolve);
+              abandonBody(req, res);
+            },
+            TIMEOUTS,
+          );
+          try {
+            writeBody(connection.client, "/abandoned");
+            connection.client.write(GET("/next"));
+            expect({ ...(await result.promise), ...seen }).toEqual({
+              timeoutAtFinish: 150,
+              destroyed: true,
+              stopped: true,
+              next: false,
+            });
+            await connection.closed;
+            expect(connection.statuses()).toEqual(["HTTP/1.1 413"]);
+          } finally {
+            connection.close();
+          }
+        });
+
+        it.each([NET_SOCKET, ALLOW_HTTP1])("asks the request first, as Node does: %s", async door => {
+          let asked = 0;
+          let abandoned: http.IncomingMessage | undefined;
+          const result = Promise.withResolvers<object>();
+          const connection = await connectTo(
+            door,
+            (req, res) => {
+              if (req.url !== "/abandoned") return void res.end("next;");
+              abandoned = req;
+              req.on("timeout", () => asked++);
+              afterTimeout(req, res).then(result.resolve);
+              abandonBody(req, res);
+            },
+            TIMEOUTS,
+          );
+          try {
+            writeBody(connection.client, "/abandoned");
+            connection.client.write(GET("/next"));
+            expect({ ...(await result.promise), asked }).toEqual({ timeoutAtFinish: 150, destroyed: false, asked: 1 });
+            // The request has kept its connection: the rest of its body arrives, and the next request is served.
+            abandoned!.resume();
+            await connection.receive("next;");
+          } finally {
+            connection.close();
+          }
+        });
+
+        it.each([
+          [NET_SOCKET, "keeps", false],
+          [NET_SOCKET, "destroys", true],
+          [ALLOW_HTTP1, "keeps", false],
+          [ALLOW_HTTP1, "destroys", true],
+        ] as const)("asks the server last: %s, a 'timeout' listener that %s the socket", async (door, _, destroys) => {
+          let listenerGot: unknown;
+          const result = Promise.withResolvers<object>();
+          const connection = await connectTo(
+            door,
+            (req, res) => {
+              if (req.url !== "/abandoned") return;
+              const socket = req.socket as net.Socket & { server: http.Server };
+              socket.server.once("timeout", (got: net.Socket) => {
+                listenerGot = got === socket ? "the socket" : got;
+                if (destroys) got.destroy();
+              });
+              afterTimeout(req, res).then(result.resolve);
+              abandonBody(req, res);
+            },
+            TIMEOUTS,
+          );
+          try {
+            writeBody(connection.client, "/abandoned");
+            expect({ ...(await result.promise), listenerGot }).toEqual({
+              timeoutAtFinish: 150,
+              destroyed: destroys,
+              listenerGot: "the socket",
+            });
+          } finally {
+            connection.close();
+          }
+        });
+
+        it("waits for a reader that takes longer than the timeout to come back for the next read of the socket", async () => {
+          // One read of the socket is up to 512 KiB in Bun and 64 KiB in Node. At this rate the reader is busy with
+          // a read of Bun's for 125 ms, which is longer than the timeout, and with a read of Node's for 16 ms.
+          const RATE = 4 * 1024 * 1024;
+          const read = Promise.withResolvers<number>();
+          const connection = await connectTo(
+            NET_SOCKET,
+            async (req, res) => {
+              if (req.url !== "/slow") return void res.end("next;");
+              res.writeHead(202).end("accepted;");
+              let received = 0;
+              for await (const chunk of req) {
+                received += chunk.length;
+                await new Promise(resolve => setTimeout(resolve, (chunk.length / RATE) * 1000));
+              }
+              read.resolve(received);
+            },
+            { keepAliveTimeout: 50, keepAliveTimeoutBuffer: 0 },
+          );
+          try {
+            writeBody(connection.client, "/slow");
+            connection.client.write(GET("/next"));
+            expect(await connection.until(read.promise, "the end of the body")).toBe(BODY);
+            await connection.receive("next;");
+          } finally {
+            connection.close();
+          }
+        });
+
+        it("is armed again for a reader, and closes the connection once that reader has gone", async () => {
+          let closed = false;
+          const connection = await connectTo(
+            NET_SOCKET,
+            (req, res) => {
+              const socket = req.socket;
+              // A reader that takes nothing: the body fills the buffer behind it.
+              const reader = () => {};
+              req.on("readable", reader);
+              socket.once("close", () => (closed = true));
+              // At the first timeout after the response, the reader gives the request up.
+              res.on("finish", () => {
+                socket.once("timeout", () => {
+                  req.removeListener("readable", reader);
+                  req.pause();
+                });
+              });
+              res.writeHead(202).end("accepted;");
+            },
+            TIMEOUTS,
+          );
+          try {
+            writeBody(connection.client, "/abandoned-later");
+            // Two timeouts of 150 ms. Without the second one, no event ever comes: wait for it in a bounded loop.
+            for (let waited = 0; !closed && waited < 3000; waited += 25)
+              await new Promise(resolve => setTimeout(resolve, 25));
+            expect(closed).toBe(true);
+          } finally {
+            connection.close();
+          }
+        });
+
+        it("ends when the request is complete, and the socket gets its own timeout back", async () => {
+          const seen: { atFinish?: number; atNextRequest?: number; listenersLeft?: number } = {};
+          const connection = await connectTo(
+            NET_SOCKET,
+            (req, res) => {
+              const socket = req.socket;
+              if (req.url !== "/first") {
+                seen.atNextRequest = socket.timeout;
+                seen.listenersLeft! += socket.listenerCount("timeout");
+                return void res.end("second;");
+              }
+              socket.setTimeout(30_000);
+              seen.listenersLeft = -socket.listenerCount("timeout");
+              // The response is out while the listener still reads the body.
+              req.resume();
+              res.on("finish", () => (seen.atFinish = socket.timeout));
+              res.end("first;");
+            },
+            { keepAliveTimeout: 60_000, keepAliveTimeoutBuffer: 1000 },
+          );
+          try {
+            writeBody(connection.client, "/first");
+            connection.client.write(GET("/second"));
+            await connection.receive("second;");
+            // Node keeps the keep-alive timeout until the next request and then sets server.timeout, which is 0.
+            expect(seen).toEqual({
+              atFinish: 61_000,
+              atNextRequest: process.versions.bun ? 30_000 : 0,
+              listenersLeft: 0,
+            });
+          } finally {
+            connection.close();
+          }
+        });
+
+        // Node destroys the socket behind every `Connection: close` response. Bun does that only when nothing takes
+        // the rest of the request off the connection, so that a client that sends its body first still gets the response.
+        it("is not needed behind a `Connection: close` response to a body that nothing reads: the body is dropped as it arrives", async () => {
+          const closed = Promise.withResolvers<boolean>();
+          const connection = await connectTo(
+            NET_SOCKET,
+            (req, res) => {
+              req.socket.on("close", () => closed.resolve(req.complete));
+              res.writeHead(413).end("too large;");
+            },
+            { keepAliveTimeout: 0 },
+          );
+          try {
+            writeBody(connection.client, "/unread", "Connection: close\r\n");
+            expect(await closed.promise).toBe(!!process.versions.bun);
+            await connection.closed;
+            expect(connection.statuses()).toEqual(["HTTP/1.1 413"]);
+          } finally {
+            connection.close();
+          }
+        });
+
+        it.each([
+          ["stopped reading it for good", abandonBody],
+          [
+            "left a `for await` over it",
+            async (req: http.IncomingMessage, res: http.ServerResponse) => {
+              for await (const _ of req) break;
+              res.writeHead(413).end("too large;");
+            },
+          ],
+        ] as const)(
+          "is not needed behind a `Connection: close` response when the listener %s: the socket is destroyed at once",
+          async (_, abandon) => {
+            const connection = await connectTo(NET_SOCKET, abandon, { keepAliveTimeout: 0 });
+            try {
+              writeBody(connection.client, "/abandoned", "Connection: close\r\n");
+              // The client closes when it gets the FIN behind the response. A socket that the body still kept
+              // stopped would be open then.
+              await connection.closed;
+              expect({ statuses: connection.statuses(), destroyed: connection.serverSide()?.destroyed }).toEqual({
+                statuses: ["HTTP/1.1 413"],
+                destroyed: true,
+              });
+            } finally {
+              connection.close();
+            }
+          },
+        );
+      });
+
+      it("does not keep the process alive for a request whose body has stopped the socket, as in Node", async () => {
+        // The child closes its acceptor at the first connection, and its listener neither reads nor answers.
+        // A socket that is stopped does not hold the event loop, so the child has nothing left to do.
+        const child = spawn(
+          process.execPath,
+          [
+            "-e",
+            `const server = require("node:http").createServer(() => {});
+            const acceptor = require("node:net").createServer(socket => {
+              acceptor.close();
+              server.emit("connection", socket);
+            });
+            acceptor.listen(0, "127.0.0.1", () => console.log(acceptor.address().port));`,
+          ],
+          { stdio: ["ignore", "pipe", "inherit"] },
+        );
+        let client: net.Socket | undefined;
+        try {
+          const exited = once(child, "exit");
+          const [portLine] = await Promise.race([
+            once(child.stdout!, "data"),
+            exited.then(([code, signal]) => {
+              throw new Error(`server exited before listening: code ${code}, signal ${signal}`);
+            }),
+          ]);
+          client = await tcpClient(Number(portLine.toString()));
+          writeBody(client, "/unread");
+          expect(await exited).toEqual([0, null]);
+        } finally {
+          client?.destroy();
+          child.kill();
+        }
+      });
+
+      // The stream destroyer keeps the connection of a request that it destroys. Such a request takes no more
+      // bytes and never reads again. Bun drops the rest of its body, as a server that listens does, and goes on
+      // to the next request. Node stops the socket for it, and the keep-alive timeout then ends the connection.
+      describe.each(withSocketTimeout)("a request that the stream destroyer destroyed: %s", door => {
+        it.each([
+          [
+            "the sink of a pipeline fails while the body has the socket stopped",
+            (req: http.IncomingMessage) => {
+              const { promise, resolve } = Promise.withResolvers<void>();
+              // The sink holds its first chunk. The request fills up behind it and stops the socket.
+              let held: ((error: Error) => void) | undefined;
+              const sink = new Writable({ write: (chunk, encoding, callback) => void (held = callback) });
+              req.socket.on("pause", () => {
+                const fail = held;
+                held = undefined;
+                fail?.(new Error("sink"));
+              });
+              pipeline(req, sink, () => resolve());
+              return promise;
+            },
+          ],
+          [
+            "a `for await` over the request leaves its loop",
+            async (req: http.IncomingMessage) => {
+              for await (const _ of req) break;
+            },
+          ],
+        ] as const)("does not stop the connection after %s", async (_, abandon) => {
+          let answered = false;
+          const unanswered = Promise.withResolvers<string>();
+          const connection = await connectTo(
+            door,
+            async (req, res) => {
+              if (req.url !== "/first") {
+                // Parsed only once the whole body has been. Without a stop that is before the first response.
+                if (!answered) unanswered.resolve("dispatched before the first response");
+                return void res.end("second;");
+              }
+              await abandon(req);
+              answered = true;
+              res.end("first;");
+            },
+            { keepAliveTimeout: 1000, keepAliveTimeoutBuffer: 0 },
+          );
+          try {
+            writeBody(connection.client, "/first");
+            connection.client.write(GET("/second"));
+            const outcome = await Promise.race([
+              unanswered.promise,
+              connection.receive("second;").then(
+                () => "served",
+                () => "closed",
+              ),
+            ]);
+            expect(outcome).toBe(process.versions.bun ? "served" : "closed");
+          } finally {
+            connection.close();
+          }
+        });
+      });
     });
   });
 

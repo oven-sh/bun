@@ -4314,7 +4314,9 @@ http1ServerPipeline.lastPipelinedResponse = lastPipelinedResponse;
 http1ServerPipeline.maybePauseFallbackReads = maybePauseFallbackReads;
 http1ServerPipeline.resumeFallbackReadsOnDrain = resumeFallbackReadsOnDrain;
 http1ServerPipeline.finishDrainedResponse = finishDrainedResponse;
+http1ServerPipeline.onResponseFinishHandleSocket = onResponseFinishHandleSocket;
 http1ServerPipeline.kMustCloseConnection = kMustCloseConnection;
+http1ServerPipeline.kKeepAliveTimeoutSet = kKeepAliveTimeoutSet;
 
 export default {
   Server,

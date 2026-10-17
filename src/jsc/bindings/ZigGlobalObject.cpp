@@ -1275,8 +1275,6 @@ static Zig::GlobalObject* globalObjectForEventHandler(JSC::JSGlobalObject* lexic
     return defaultGlobalObject(lexicalGlobalObject);
 }
 
-// The on* event handler attributes of the global scope (onmessage, onerror, ...). Each one maps to
-// the listener slot of one event name on the global event target.
 #define BUN_DEFINE_GLOBAL_EVENT_HANDLER_ATTRIBUTE(getterName, setterName, eventName)                                                     \
     JSC_DEFINE_CUSTOM_GETTER(getterName, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))  \
     {                                                                                                                                    \

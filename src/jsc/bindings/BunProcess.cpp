@@ -1483,10 +1483,7 @@ extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject
     CLEAR_IF_EXCEPTION(scope);
 }
 
-// The web channel of the two promise rejection hooks below (HTML "notify about rejected promises").
-// Dispatches a trusted PromiseRejectionEvent on the global scope when a listener is registered for
-// `type`. Returns null when nothing was dispatched. A non-promise `promise` (a direct caller that
-// has none) gets no event: the attribute is typed Promise<any>.
+// Null when nothing was dispatched. A non-promise `promise` gets no event: the attribute is typed Promise<any>.
 static RefPtr<WebCore::PromiseRejectionEvent> dispatchPromiseRejectionEvent(Zig::GlobalObject* globalObject, const AtomString& type, JSC::JSValue promise, JSC::JSValue reason, bool cancelable)
 {
     auto& eventTarget = globalObject->globalEventScope.get();
@@ -1516,8 +1513,7 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
     // As in Bun__handleUncaughtException.
     Bun::ErrorHandlerContextScope inRealmsContext(globalObject, nullptr);
 
-    // A cancelled web event counts as handled, the same as an installed process listener. The
-    // process listener still runs after it, so both channels see every rejection.
+    // A cancelled web event counts as handled, the same as an installed process listener.
     auto event = dispatchPromiseRejectionEvent(globalObject, WebCore::eventNames().unhandledrejectionEvent, promise, reason, true);
     if (vm.hasPendingTerminationException()) [[unlikely]]
         return true;

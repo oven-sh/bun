@@ -550,6 +550,23 @@ mod tests {
         SERIAL.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// Runs `body` on its own thread and joins it, which tears down that thread's pool.
+    fn in_pool_thread(body: impl FnOnce() + Send + 'static) {
+        let name = std::thread::current()
+            .name()
+            .unwrap_or("pool test")
+            .to_owned();
+        let joined = std::thread::Builder::new()
+            .name(name)
+            .spawn(body)
+            .expect("spawn pool test thread")
+            // Not `thread::scope`: its implicit join does not wait for TLS destructors.
+            .join();
+        if let Err(panic) = joined {
+            std::panic::resume_unwind(panic);
+        }
+    }
+
     fn drops() -> usize {
         DROPS.load(Ordering::SeqCst)
     }
@@ -646,23 +663,28 @@ mod tests {
             let before = drops();
             let resets_before = resets();
 
-            let first_ptr = {
+            in_pool_thread(move || {
+                let first_ptr = {
+                    let mut guard = Pool::get();
+                    *guard.0 = 11;
+                    ptr::from_ref::<Tracked>(&*guard)
+                }; // guard drop → node returns to the free list
+
+                // Reuse: same allocation, `reset()` ran, value cleared.
                 let mut guard = Pool::get();
-                *guard.0 = 11;
-                ptr::from_ref::<Tracked>(&*guard)
-            }; // guard drop → node returns to the free list
+                assert_eq!(ptr::from_ref::<Tracked>(&*guard), first_ptr);
+                assert_eq!(resets(), resets_before + 1);
+                assert_eq!(*guard.0, 0);
+                *guard.0 = 22;
+                assert_eq!(*guard.0, 22);
+                drop(guard);
 
-            // Reuse: same allocation, `reset()` ran, value cleared.
-            let mut guard = Pool::get();
-            assert_eq!(ptr::from_ref::<Tracked>(&*guard), first_ptr);
-            assert_eq!(resets(), resets_before + 1);
-            assert_eq!(*guard.0, 0);
-            *guard.0 = 22;
-            assert_eq!(*guard.0, 22);
-            drop(guard);
+                // Nothing was destroyed: the free list still owns the node.
+                assert_eq!(drops(), before);
+            });
 
-            // Nothing was destroyed: the free list still owns the node.
-            assert_eq!(drops(), before);
+            // Thread exit dropped the free list and the node it still held.
+            assert_eq!(drops(), before + 1);
         }
     }
 
@@ -680,17 +702,22 @@ mod tests {
             let _serial = serial();
             let before = drops();
 
-            let a = Pool::get();
-            let b = Pool::get();
-            assert_ne!(ptr::from_ref::<Tracked>(&*a), ptr::from_ref::<Tracked>(&*b));
-            assert!(!Pool::full());
+            in_pool_thread(move || {
+                let a = Pool::get();
+                let b = Pool::get();
+                assert_ne!(ptr::from_ref::<Tracked>(&*a), ptr::from_ref::<Tracked>(&*b));
+                assert!(!Pool::full());
 
-            drop(a); // cached (count 0 → 1)
-            assert!(Pool::full());
-            assert_eq!(drops(), before);
+                drop(a); // cached (count 0 → 1)
+                assert!(Pool::full());
+                assert_eq!(drops(), before);
 
-            drop(b); // pool full → destroyed
-            assert_eq!(drops(), before + 1);
+                drop(b); // pool full → destroyed
+                assert_eq!(drops(), before + 1);
+            });
+
+            // `a` stayed cached until the thread's free list was dropped.
+            assert_eq!(drops(), before + 2);
         }
     }
 
@@ -707,21 +734,27 @@ mod tests {
         fn push_then_get_if_exists() {
             let _serial = serial();
             let before = drops();
-            // Nothing cached yet: `get_if_exists` must not allocate.
-            assert!(Pool::get_if_exists().is_none());
 
-            Pool::push(Tracked(Box::new(5)));
-            let node = Pool::get_if_exists().expect("pushed node");
-            // SAFETY: `node` was just popped; `push` initialized `data`, and
-            // `get_if_exists` already ran `reset()` on it.
-            assert_eq!(unsafe { *(*node).data.assume_init_ref().0 }, 0);
-            // The pool is empty again — the node is ours.
-            assert!(Pool::get_if_exists().is_none());
+            in_pool_thread(move || {
+                // Nothing cached yet: `get_if_exists` must not allocate.
+                assert!(Pool::get_if_exists().is_none());
 
-            // Hand it back.
-            // SAFETY: `node` came from this pool and `data` is initialized.
-            unsafe { Pool::release(node) };
-            assert_eq!(drops(), before);
+                Pool::push(Tracked(Box::new(5)));
+                let node = Pool::get_if_exists().expect("pushed node");
+                // SAFETY: `node` was just popped; `push` initialized `data`, and
+                // `get_if_exists` already ran `reset()` on it.
+                assert_eq!(unsafe { *(*node).data.assume_init_ref().0 }, 0);
+                // The pool is empty again — the node is ours.
+                assert!(Pool::get_if_exists().is_none());
+
+                // Hand it back.
+                // SAFETY: `node` came from this pool and `data` is initialized.
+                unsafe { Pool::release(node) };
+                assert_eq!(drops(), before);
+            });
+
+            // Thread exit dropped the free list and the released node in it.
+            assert_eq!(drops(), before + 1);
         }
     }
 }

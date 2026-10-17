@@ -68,8 +68,7 @@ describe.skipIf(isWindows || isRoot)("resolver with unreadable ancestor", () => 
 // every open() of one directory with ENOENT and leaves its children alone.
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
-// OPEN_ENOENT_DIR=<dir>   every open()/openat() of <dir> (with or without a trailing slash) fails
-// OPEN_ENOENT_ERRNO=<n>   the errno to return (default ENOENT)
+// OPEN_ENOENT_DIR=<dir>: every open()/openat() of <dir> (with or without a trailing slash) fails with ENOENT.
 // A seccomp filter stops the tracee only for open syscalls, so the rest of the program runs at speed.
 // Exit 90 means the tracer could not set itself up (ptrace or seccomp is not available).
 const TRACER_C = /* c */ `
@@ -168,8 +167,6 @@ int main(int argc, char **argv) {
   target = getenv("OPEN_ENOENT_DIR");
   if (!target || argc < 2) return 90;
   target_len = strlen(target);
-  const char *errno_env = getenv("OPEN_ENOENT_ERRNO");
-  long inject_errno = errno_env ? atol(errno_env) : ENOENT;
 
   pid_t child = fork();
   if (child < 0) return 90;
@@ -222,7 +219,7 @@ int main(int argc, char **argv) {
       if (n > 0 && info.op == PTRACE_SYSCALL_INFO_ENTRY) {
         request = PTRACE_SYSCALL;
       } else {
-        set_return(tid, -inject_errno);
+        set_return(tid, -ENOENT);
       }
     } else if (sig == SIGTRAP || sig == SIGSTOP) {
       // exec, a new traced thread or child, or a clone/fork event
@@ -235,9 +232,9 @@ int main(int argc, char **argv) {
 }
 `;
 
-// Compile the tracer once and check that this machine lets it trace. A runner
-// that denies PTRACE_TRACEME or PR_SET_SECCOMP makes the tracer exit 90, and
-// then the tests below skip instead of failing.
+// Compile the tracer once and check that it hides a directory on this machine.
+// A runner that denies ptrace or seccomp, or whose kernel lacks
+// PTRACE_GET_SYSCALL_INFO (Linux 5.3), cannot inject, and the tests below skip.
 function buildTracer(): { dir: ReturnType<typeof tempDir>; tracer: string } | undefined {
   if (!isLinux || !cc || !(process.arch === "x64" || isArm64)) return undefined;
   const dir = tempDir("enoent-ancestor", {
@@ -257,15 +254,23 @@ function buildTracer(): { dir: ReturnType<typeof tempDir>; tracer: string } | un
     stderr: "pipe",
   });
   if (compile.exitCode !== 0) {
-    throw new Error(`tracer compile failed: ${compile.stderr.toString() || compile.stdout.toString()}`);
+    console.warn(`tracer compile failed, skipping: ${compile.stderr.toString() || compile.stdout.toString()}`);
+    dir[Symbol.dispose]();
+    return undefined;
   }
+  const hidden = join(String(dir), "storage", "emulated");
   const probe = Bun.spawnSync({
-    cmd: [tracer, bunExe(), "-e", "0"],
-    env: { ...bunEnv, OPEN_ENOENT_DIR: "/nonexistent", ...tracedSanitizerEnv() },
+    cmd: [
+      tracer,
+      bunExe(),
+      "-e",
+      `try { require("fs").openSync(${JSON.stringify(hidden)}, "r"); } catch (e) { console.log(e.code); }`,
+    ],
+    env: { ...bunEnv, OPEN_ENOENT_DIR: hidden, ...tracedSanitizerEnv() },
     stdout: "pipe",
     stderr: "pipe",
   });
-  if (probe.exitCode === 90) {
+  if (probe.stdout.toString() !== "ENOENT\n") {
     dir[Symbol.dispose]();
     return undefined;
   }
@@ -284,7 +289,9 @@ function tracedSanitizerEnv() {
 const traced = buildTracer();
 
 describe.skipIf(!traced)("resolver with an ancestor that opens as ENOENT", () => {
-  const { dir, tracer } = traced!;
+  // A skipped describe still runs its body to collect the tests.
+  if (!traced) return;
+  const { dir, tracer } = traced;
   const project = join(String(dir), "storage", "emulated", "0", "project");
   const hidden = join(String(dir), "storage", "emulated");
 
@@ -304,7 +311,7 @@ describe.skipIf(!traced)("resolver with an ancestor that opens as ENOENT", () =>
     return { stdout, stderr, exitCode };
   }
 
-  test("the tracer hides the ancestor and nothing else", async () => {
+  test.concurrent("the tracer hides the ancestor and nothing else", async () => {
     const probe = await runTraced([
       "-e",
       `
@@ -324,21 +331,21 @@ describe.skipIf(!traced)("resolver with an ancestor that opens as ENOENT", () =>
     expect(probe.exitCode).toBe(0);
   });
 
-  test("bun run finds the package.json below the hidden ancestor", async () => {
+  test.concurrent("bun run finds the package.json below the hidden ancestor", async () => {
     const { stdout, stderr, exitCode } = await runTraced(["run", "start"]);
     expect(stderr).toBe("$ bun index.js\n");
     expect(stdout).toBe("ENOENT-ANCESTOR-OK 42\n");
     expect(exitCode).toBe(0);
   });
 
-  test("a script name alone works too", async () => {
+  test.concurrent("a script name alone works too", async () => {
     const { stdout, stderr, exitCode } = await runTraced(["start"]);
     expect(stderr).toBe("$ bun index.js\n");
     expect(stdout).toBe("ENOENT-ANCESTOR-OK 42\n");
     expect(exitCode).toBe(0);
   });
 
-  test("the requested directory itself stays fatal", async () => {
+  test.concurrent("the requested directory itself stays fatal", async () => {
     const { stdout, stderr, exitCode } = await runTraced(["run", "start"], { OPEN_ENOENT_DIR: project });
     expect(stderr).toContain("error loading current directory");
     expect(stdout).toBe("");

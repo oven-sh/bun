@@ -4583,16 +4583,14 @@ impl<'a> Resolver<'a> {
                                 }
                             }
 
-                            if queue_slice_len == 0 {
+                            if queue_slice_len == 0
+                                || err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
+                            {
                                 return Ok(None);
                             }
-                            // An ancestor that does not open says nothing about the
-                            // requested directory: on Android, `/storage/emulated/`
-                            // is ENOENT while `/storage/emulated/0/<project>` is not.
-                            // Keep walking from here, with the ancestor cached as not
-                            // found and no parent. The next lookup of the same path
-                            // starts this way anyway, because the queue stops at a
-                            // not-found ancestor.
+                            // An ENOENT ancestor can still have an accessible child
+                            // (Android `/storage/emulated/`, #44565): keep walking
+                            // without a parent, as a repeated lookup already does.
                             top_parent = allocators::Result {
                                 index: allocators::NOT_FOUND,
                                 hash: queue_top.result.hash,

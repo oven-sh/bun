@@ -37,7 +37,7 @@ fn is_line_separated<'a>(file: &'a File<'a>, document: Document<'a>, gap: Span) 
 }
 
 /// Whether the token before `member`, or the one after it and its comma, is a comment.
-fn has_adjacent_comment(document: Document, member: Member) -> bool {
+fn has_adjacent_comment(document: Document, member: &Member) -> bool {
     let (text, span, comments) = (document.text(), member.span(), document.comments());
     let before = text.get(..span.start as usize).unwrap_or_default();
     let previous_end = strings::trim_js_whitespace_end(before).len() as u32;
@@ -115,8 +115,8 @@ impl Rule for SortKeys {
                     .data("sortName", if self.is_natural { "natural" } else { "alphanumeric" })
                     .listened_on(object)
                     .fix(|fixer| {
-                        if has_adjacent_comment(document, member)
-                            || has_adjacent_comment(document, before)
+                        if has_adjacent_comment(document, &member)
+                            || has_adjacent_comment(document, &before)
                         {
                             return None;
                         }

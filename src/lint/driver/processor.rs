@@ -302,7 +302,16 @@ impl Context<'_, '_> {
         // ESLint reads a file as UTF-8: what is not becomes U+FFFD.
         let is_read_here = loaded.routes(config, path_to_verify) == Route::Language;
         let text = match is_read_here && !bun_core::strings::is_valid_utf8(&text) {
-            true => String::from_utf8_lossy(&text).into_owned().into_bytes(),
+            true => {
+                let mut read = Vec::with_capacity(text.len());
+                for chunk in text.utf8_chunks() {
+                    read.extend_from_slice(chunk.valid().as_bytes());
+                    if !chunk.invalid().is_empty() {
+                        read.extend_from_slice("\u{FFFD}".as_bytes());
+                    }
+                }
+                read
+            }
             false => text,
         };
         let mut verify = |text: &[u8]| {

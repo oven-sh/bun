@@ -1794,6 +1794,75 @@ function foo() {}
       );
     });
 
+    it("holes in array binding patterns of function types and method signatures", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+
+      // A hole after the first element
+      exp("let x: ([a, , b]: number[]) => void = y", "let x = y;\n");
+      exp("let x: ([a, , , b]: number[]) => void = y", "let x = y;\n");
+      exp("let x: ([a, b, ,]: number[]) => void = y", "let x = y;\n");
+      exp("let x: ([a,,]: number[]) => void = y", "let x = y;\n");
+      exp("let x: ([a, , ...b]: number[]) => void = y", "let x = y;\n");
+      exp("let x: ([a, , b]?: number[]) => void = y", "let x = y;\n");
+      exp("let x: ([a, , b], [c, , d]) => void = y", "let x = y;\n");
+      exp("let x: (y, ...[a, , b]: number[]) => void = y", "let x = y;\n");
+      exp("type G = ([\n  a,\n  ,\n  b,\n]: number[]) => void\nz", "z;\n");
+
+      // Nested patterns
+      exp("let x: ([[a, , b], , c]: number[][]) => void = y", "let x = y;\n");
+      exp("let x: ([a, , ...[b, , c]]: number[]) => void = y", "let x = y;\n");
+      exp("let x: ({ p: [a, , b] }: T) => void = y", "let x = y;\n");
+      exp("let x: ([{ p }, , { q }]: T[]) => void = y", "let x = y;\n");
+
+      // Function and constructor types
+      exp("let x: new ([a, , b]: number[]) => void = y", "let x = y;\n");
+      exp("let x: abstract new ([a, , b]: number[]) => void = y", "let x = y;\n");
+      exp("let x: <T>([a, , b]: T[]) => void = y", "let x = y;\n");
+      exp("let x: ([a, , b]: T) => ([c, , d]: T) => void = y", "let x = y;\n");
+      exp("type F = ([a, , b]: number[]) => void; z", "z;\n");
+      exp("function f(): ([a, , b]: number[]) => void {}", "function f() {}");
+      exp("let x = y as ([a, , b]: number[]) => void", "let x = y;\n");
+      exp("y = <T extends ([a, , b]) => void>(x: T) => x", "y = (x) => x;\n");
+
+      // Method, call and construct signatures
+      exp("type T = { foo([b, , c]: number[]): void }; z", "z;\n");
+      exp("let x: { m([a, , b]: number[]): void } = y", "let x = y;\n");
+      exp("interface I { m([a, , b]: number[]): void }", "");
+      exp("interface I { ([a, , b]: number[]): void }", "");
+      exp("interface I { new ([a, , b]: number[]): I }", "");
+
+      // In type arguments, the function type makes this a call, exactly like
+      // "f<([a, b]: T) => c>(x)" already is. It is not a "<" and ">" comparison.
+      exp("f<([a, b]: number[]) => void>(x)", "f(x);\n");
+      exp("f<([a, , b]: number[]) => void>(x)", "f(x);\n");
+      exp("f<T, ([a, , b]: T) => c>(x)", "f(x);\n");
+      exp("useState<(([a, , b]: number[]) => number) | null>(null)", "useState(null);\n");
+
+      // In a return type, "([a, , b]) => c" is a function type, exactly like
+      // "([a, b]) => c" already is. It is not a parenthesized tuple type
+      // followed by the arrow body.
+      exp("y = (p): ([a, b]) => c => e", "y = (p) => e;\n");
+      exp("y = (p): ([a, , b]) => c => e", "y = (p) => e;\n");
+      exp("y = (p): ({ q: [a, , b] }) => c => e", "y = (p) => e;\n");
+      exp("y = (p): p is ([a, , b]) => c => e", "y = (p) => e;\n");
+      exp("y = async (p): ([a, , b]) => c => e", "y = async (p) => e;\n");
+      exp("y = a ? (p): ([a, , b]) => c => e : f", "y = a ? (p) => e : f;\n");
+      err("y = (p): ([a, b]) => c", 'Expected ";" but found ":"');
+      err("y = (p): ([a, , b]) => c", 'Expected ";" but found ":"');
+
+      // Holes that the type skipper already accepted, and patterns in value positions
+      exp("let x: ([, , b]: number[]) => void = y", "let x = y;\n");
+      exp("let x: ([,]: number[]) => void = y", "let x = y;\n");
+      exp("let x: ([]: number[]) => void = y", "let x = y;\n");
+      exp("declare function f([a, , b]: number[]): void; z", "z;\n");
+      exp("function f([a, , b]: number[]): void {}", "function f([a, , b]) {}");
+
+      // The hole is part of the binding grammar only. These are tuple types.
+      err("let x: [a, , b] = y", "Unexpected ,");
+      err("let x: ([a, , b]) = y", "Unexpected ,");
+    });
+
     it("modifiers", () => {
       const exp = ts.expectPrinted_;
 

@@ -74,8 +74,9 @@ impl Angle {
         Angle::parse_internal(input, true)
     }
 
-    pub(crate) fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        let (value, unit): (f32, &'static str) = match self {
+    /// The value and the unit that `to_css` prints.
+    pub(crate) fn to_unit_value(self) -> (f32, &'static str) {
+        match self {
             Angle::Deg(val) => (val, "deg"),
             Angle::Grad(val) => (val, "grad"),
             Angle::Rad(val) => 'brk: {
@@ -90,7 +91,11 @@ impl Angle {
                 }
             }
             Angle::Turn(val) => (val, "turn"),
-        };
+        }
+    }
+
+    pub(crate) fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        let (value, unit) = self.to_unit_value();
         css::serializer::serialize_dimension(value, unit.as_bytes(), dest)
     }
 

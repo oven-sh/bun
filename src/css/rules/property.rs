@@ -138,7 +138,16 @@ impl PropertyRule {
                 };
                 let mut i = ParserInput::new(val, bump);
                 let mut p2 = css::Parser::new(&mut i, None, ParserOpts::default(), None);
-                Some(syntax.parse_value(&mut p2)?)
+                match syntax.parse_value(&mut p2) {
+                    Ok(value) => Some(value),
+                    // A relative color that is left for the browser is valid. It is kept as tokens.
+                    Err(_) if p2.unresolved_relative_colors() > 0 => {
+                        let mut i = ParserInput::new(val, bump);
+                        let mut p2 = css::Parser::new(&mut i, None, ParserOpts::default(), None);
+                        Some(SyntaxString::Universal.parse_value(&mut p2)?)
+                    }
+                    Err(e) => return Err(e),
+                }
             }
         };
 

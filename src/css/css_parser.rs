@@ -2982,12 +2982,19 @@ bitflags::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq, Default)]
     pub struct ParserOpts: u8 {
         const CSS_MODULES = 0b1;
+        /// The caller cannot keep a color as written. A relative `rgb()` reads its origin with no gamut mapping, and a channel outside its range is clipped, as a browser paints it.
+        const CLIP_RELATIVE_COLOR = 0b10;
     }
 }
 impl ParserOpts {
     #[inline]
     pub(crate) fn css_modules(self) -> bool {
         self.contains(Self::CSS_MODULES)
+    }
+
+    #[inline]
+    pub(crate) fn clip_relative_color(self) -> bool {
+        self.contains(Self::CLIP_RELATIVE_COLOR)
     }
 }
 
@@ -3256,6 +3263,18 @@ impl<'a> Parser<'a> {
     #[inline]
     pub(crate) fn note_token_list_parse_failure(&mut self) {
         self.input.token_list_parse_failures += 1;
+    }
+
+    /// See `ParserInput::unresolved_relative_colors`.
+    #[inline]
+    pub(crate) fn unresolved_relative_colors(&self) -> u64 {
+        self.input.unresolved_relative_colors.get()
+    }
+
+    #[inline]
+    pub(crate) fn note_unresolved_relative_color(&self) {
+        let count = &self.input.unresolved_relative_colors;
+        count.set(count.get() + 1);
     }
 
     pub(crate) fn is_exhausted(&mut self) -> bool {
@@ -3802,6 +3821,8 @@ pub struct ParserInput<'a> {
     /// alternative is guaranteed to fail again, so they propagate the error
     /// instead of retrying (which is exponential in the nesting depth).
     token_list_parse_failures: u64,
+    /// Count of relative colors that are valid and left for the browser to compute. A reader with no unparsed form samples it to tell such a color from an invalid value.
+    unresolved_relative_colors: core::cell::Cell<u64>,
 }
 
 /// See `ParserInput::unclosed_block_at_eof`.
@@ -3830,6 +3851,7 @@ impl<'a> ParserInput<'a> {
             unclosed_block_at_eof: None,
             math_fn_parse_failures: 0,
             token_list_parse_failures: 0,
+            unresolved_relative_colors: core::cell::Cell::new(0),
         }
     }
 }
@@ -5358,6 +5380,130 @@ impl Token {
             _ => self
                 .to_css_generic(dest)
                 .map_err(|_| PrintErr::CSSPrintError),
+        }
+    }
+
+    pub(crate) fn serialization_type(&self) -> TokenSerializationType {
+        use TokenSerializationType::*;
+        match self {
+            Token::Ident(_) => Ident,
+            Token::AtKeyword(_) | Token::UnrestrictedHash(_) | Token::IdHash(_) => AtKeywordOrHash,
+            Token::UnquotedUrl(_) | Token::BadUrl(_) => UrlOrBadUrl,
+            Token::Function(_) => Function,
+            Token::Number(_) => Number,
+            Token::Percentage { .. } => Percentage,
+            Token::Dimension(_) => Dimension,
+            Token::Whitespace(_) => WhiteSpace,
+            Token::Cdc => Cdc,
+            Token::SubstringMatch => SubstringMatch,
+            Token::OpenParen => OpenParen,
+            Token::Delim(c) => match u8::try_from(*c).unwrap_or(0) {
+                b'#' => DelimHash,
+                b'@' => DelimAt,
+                b'.' => DelimDot,
+                b'+' => DelimPlus,
+                b'-' => DelimMinus,
+                b'$' | b'^' | b'~' | b'|' => DelimAssorted,
+                b'%' => DelimPercent,
+                b'=' => DelimEquals,
+                b'/' => DelimSlash,
+                b'*' => DelimAsterisk,
+                _ => Other,
+            },
+            _ => Other,
+        }
+    }
+}
+
+/// A category of token for `needs_separator_when_before`, as in rust-cssparser.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TokenSerializationType {
+    /// The start of a list.
+    Nothing,
+    WhiteSpace,
+    AtKeywordOrHash,
+    /// The end of a number, and the start of a number that is printed with a digit first.
+    Number,
+    /// The start of a number or a dimension that is printed with its decimal point first, as `.5`. Not in rust-cssparser.
+    LeadingDot,
+    Dimension,
+    Percentage,
+    UrlOrBadUrl,
+    Function,
+    Ident,
+    Cdc,
+    SubstringMatch,
+    OpenParen,
+    DelimHash,
+    DelimAt,
+    DelimDot,
+    DelimPlus,
+    /// A `-`, also as the start of a negative number.
+    DelimMinus,
+    /// `$`, `^`, `~` or `|`: each makes one token with a `=` after it.
+    DelimAssorted,
+    DelimEquals,
+    DelimSlash,
+    DelimAsterisk,
+    DelimPercent,
+    Other,
+}
+
+impl TokenSerializationType {
+    /// Whether `self` printed directly before `other` reads back as other tokens: https://drafts.csswg.org/css-syntax/#serialization
+    pub(crate) fn needs_separator_when_before(self, other: Self) -> bool {
+        use TokenSerializationType::*;
+        match self {
+            Ident => matches!(
+                other,
+                Ident
+                    | Function
+                    | UrlOrBadUrl
+                    | DelimMinus
+                    | Number
+                    | Percentage
+                    | Dimension
+                    | Cdc
+                    | OpenParen
+            ),
+            AtKeywordOrHash | Dimension | DelimHash => matches!(
+                other,
+                Ident | Function | UrlOrBadUrl | DelimMinus | Number | Percentage | Dimension | Cdc
+            ),
+            DelimMinus => matches!(
+                other,
+                Ident
+                    | Function
+                    | UrlOrBadUrl
+                    | DelimMinus
+                    | Number
+                    | Percentage
+                    | Dimension
+                    | Cdc
+                    | LeadingDot
+            ),
+            // `1` before `.5` reads back as `1.5`. `1.2` before `.5` does not: `TokenList::to_css_after` looks at the number.
+            Number => matches!(
+                other,
+                Ident
+                    | Function
+                    | UrlOrBadUrl
+                    | Number
+                    | Percentage
+                    | Dimension
+                    | Cdc
+                    | DelimPercent
+                    | LeadingDot
+            ),
+            DelimAt => matches!(other, Ident | Function | UrlOrBadUrl | DelimMinus | Cdc),
+            DelimDot => matches!(other, Number | Percentage | Dimension),
+            DelimPlus => matches!(other, Number | Percentage | Dimension | LeadingDot),
+            DelimAssorted => matches!(other, DelimEquals),
+            // `*` before `/` reads back the same. A separator keeps `*/` out of the output.
+            DelimAsterisk => matches!(other, DelimEquals | DelimSlash),
+            DelimSlash => matches!(other, DelimAsterisk | SubstringMatch),
+            Nothing | WhiteSpace | LeadingDot | Percentage | UrlOrBadUrl | Function | Cdc
+            | OpenParen | SubstringMatch | DelimEquals | DelimPercent | Other => false,
         }
     }
 }

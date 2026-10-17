@@ -123,6 +123,7 @@ impl NoFloatingPromises {
     /// `node`: the range of the statement, or of the expression if it is the body of an arrow
     /// function.
     fn check_node<'a>(&self, node: Span, expression: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let expression = expression.with_jsdoc_cast();
         if self.is_known_safe_promise_call(expression) {
             return;
         }
@@ -196,7 +197,7 @@ impl NoFloatingPromises {
         is_statement_expression: bool,
         known: &mut State<'a>,
     ) -> Option<(Unhandled, Expr<'a>)> {
-        let is_oxlint = node.file().language().is_oxlint;
+        let (node, is_oxlint) = (node.with_jsdoc_cast(), node.file().language().is_oxlint);
         // tsgolint skips the parentheses of the statement's expression only. Any other
         // `ParenthesizedExpression` is none of the kinds that it looks into.
         let is_parenthesized_expression = is_oxlint && !is_statement_expression && node.is_parenthesized();

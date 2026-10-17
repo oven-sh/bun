@@ -2403,6 +2403,9 @@ void GlobalObject::finishCreation(VM& vm)
         { OBJECT_OFFSETOF(GlobalObject, m_JSSQLStatementStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              init.set(WebCore::createJSSQLStatementStructure(init.owner));
          } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSSQLDatabaseStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+             init.set(WebCore::createJSSQLDatabaseStructure(init.owner));
+         } },
         { OBJECT_OFFSETOF(GlobalObject, m_memoryFootprintStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              init.set(
                  createMemoryFootprintStructure(

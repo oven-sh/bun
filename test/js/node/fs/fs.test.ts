@@ -11,6 +11,7 @@ import {
   isLinux,
   isPosix,
   isWindows,
+  nodeExe,
   tempDir,
   tempDirWithFiles,
   tmpdirSync,
@@ -66,6 +67,7 @@ import { join } from "node:path";
 
 import { spawnSync } from "bun";
 import { mkfifo } from "mkfifo";
+import { dupPathDestinationRows, opensAsDup, type EmptyWriter, type Writer } from "../../bun/io/dup-path-destination";
 import { ReadStream as ReadStream_, WriteStream as WriteStream_ } from "./export-from.js";
 import { ReadStream as ReadStreamStar_, WriteStream as WriteStreamStar_ } from "./export-star-from.js";
 
@@ -865,6 +867,32 @@ describe.skipIf(!isLinux)("writeFileSync when the write fails partway", () => {
     const path = join(tmpdirSync(), "write-error-in-place.bin");
     const { code, size, written, stale } = await runUnderFileSizeLimit(path, "r+");
     expect({ code, size, written, stale }).toEqual({ code: "EFBIG", size: 2000, written: 512, stale: 1488 });
+  });
+});
+
+// See dup-path-destination.ts.
+describe.skipIf(!opensAsDup)("writeFile to a path that opens as a dup of a descriptor", () => {
+  const writers: Writer[] = [
+    {
+      title: "fs.writeFileSync(path, string)",
+      write: dest => `fs.writeFileSync(${dest}, Buffer.alloc(100, "S").toString())`,
+      size: 100,
+      result: "undefined",
+    },
+    {
+      title: "fs.promises.writeFile(path, string)",
+      write: dest => `await fs.promises.writeFile(${dest}, Buffer.alloc(100, "S").toString())`,
+      size: 100,
+      result: "undefined",
+    },
+  ];
+  const emptyWriters: EmptyWriter[] = [
+    { title: `fs.writeFileSync(path, "")`, write: `fs.writeFileSync("/dev/stdout", "")`, result: "undefined" },
+  ];
+  dupPathDestinationRows(writers, emptyWriters);
+
+  describe.skipIf(!nodeExe())("node gives the same rows", () => {
+    dupPathDestinationRows(writers, emptyWriters, nodeExe()!);
   });
 });
 

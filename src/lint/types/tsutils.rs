@@ -312,8 +312,7 @@ pub fn is_thenable_type<'a>(node: impl Locate<'a>, ty: Type<'a>) -> bool {
 
 /// `isThenableType(typeChecker, node)`
 pub fn is_thenable<'a>(file: &'a crate::ast::File<'a>, node: impl Locate<'a>) -> bool {
-    let node = node.locate(file);
-    is_thenable_type(node, node.get_type_at_location())
+    is_thenable_type(node, node.locate_for_type(file).get_type_at_location())
 }
 
 fn is_callback<'a>(param: TsSymbol<'a>, node: TsNode<'a>) -> bool {

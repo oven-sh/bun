@@ -123,7 +123,8 @@ pub struct DedupeMapEntry {
     /// re-scheduling the entire network task (and its retry cycle) a second time.
     pub(crate) failed: bool,
     pub(crate) manifest: ManifestOrigin,
-    /// The event loop iteration in which a runtime lookup of this manifest found nothing.
+    /// The event loop iteration in which a runtime lookup of this manifest found nothing, or in
+    /// which the task failed.
     pub(crate) missed_in: Option<u64>,
     /// `Registry::manifest_expiry` of a 404: a runtime lookup does not ask again before.
     pub(crate) missing_until: u32,
@@ -638,7 +639,7 @@ impl NetworkTask {
                         log,
                         !is_optional,
                         format_args!(
-                            "Invalid package name {}: manifest URL {} is not on registry {}",
+                            "invalid package name {}: manifest URL {} is not on registry {}",
                             quote(name),
                             quote(&redacted_url(&url_bytes)),
                             quote(&redacted_url(scope.url.href())),
@@ -745,6 +746,8 @@ impl NetworkTask {
             http::FetchRedirect::Follow,
             AsyncHTTPOptions {
                 http_proxy,
+                proxy_settings: pm.proxy_settings(),
+                idle_timeout_seconds: pm.idle_timeout_seconds(),
                 ..Default::default()
             },
         );
@@ -866,7 +869,7 @@ impl NetworkTask {
                 bun_ast::Loc::EMPTY,
                 format_args!(
                     "Expected tarball URL to start with https:// or http://, got {} while fetching package {}",
-                    quote(&redacted_tarball_url),
+                    bun_core::fmt::EscapeControlChars(quote(&redacted_tarball_url)),
                     quote(tarball.name.slice()),
                 ),
             );
@@ -935,6 +938,8 @@ impl NetworkTask {
 
         let mut http_options = AsyncHTTPOptions {
             http_proxy: pm.http_proxy(&url),
+            proxy_settings: pm.proxy_settings(),
+            idle_timeout_seconds: pm.idle_timeout_seconds(),
             ..Default::default()
         };
 
@@ -985,6 +990,8 @@ impl NetworkTask {
         self.http_mut().client.flags.reject_unauthorized = pm.tls_reject_unauthorized();
         self.http_mut().client.flags.redirect_credentials =
             http::RedirectCredentialsPolicy::HttpsUpgrade;
+        // A manifest says what else has to be fetched, so a burst of tarballs must not hold it up.
+        self.http_mut().client.flags.yields_to_other_requests = true;
         if PackageManager::verbose_install() {
             self.http_mut().client.verbose = HTTPVerboseLevel::Headers;
         }

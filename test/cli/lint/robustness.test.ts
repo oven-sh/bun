@@ -49,7 +49,12 @@ describe.concurrent("bun lint", () => {
       else if (it.length !== undefined) expect(Buffer.byteLength(text)).toBe(it.length);
       // Not the whole output in a failure message: it has megabytes.
       if (it.lacks) expect(stdout.match(it.lacks)?.[0]).toBeUndefined();
-      if (it.reports) expect(countByRule(stdout)).toEqual(it.reports);
+      if (it.reports && !it.orWarns?.test(stdout + stderr)) {
+        const found = countByRule(stdout);
+        const isAsExpected = Bun.deepEquals(found, it.reports);
+        // With what it said in place of the warning.
+        expect(it.orWarns && !isAsExpected ? [found, (stdout + stderr).slice(-500)] : found).toEqual(it.reports);
+      }
       if (it.matches) expect(it.matches.test(stdout)).toBe(true);
       const allowed = [it.exitCode].flat();
       const isAllowed = allowed.includes(exitCode);

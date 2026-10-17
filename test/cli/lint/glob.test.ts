@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { relative } from "node:path";
+import { join, relative } from "node:path";
 import { endChildren, spawn } from "../children";
 
 afterAll(endChildren);
@@ -43,12 +43,14 @@ x = new Object();
 x;
 `;
 
-/** Uses each pattern as `files` in an `eslint.config.mjs` and returns the files it matched. */
-async function filesOf(patterns: string[], files: string[], more: object[] = []) {
+/** Uses each pattern as `files` in an `eslint.config.mjs`, or in the `overrides` of an `.oxlintrc.json`, and returns the files it matched. */
+async function filesOf(patterns: string[], files: string[], more: object[] | "oxlint" = []) {
   const objects = patterns.map((pattern, index) => ({ files: [pattern], rules: { [rules[index]]: "error" } }));
   using dir = tempDir("bun-lint-glob", {
     ...Object.fromEntries(files.map(file => [file, code])),
-    "eslint.config.mjs": `export default ${JSON.stringify([...more, ...objects])};\n`,
+    ...(more === "oxlint"
+      ? { ".oxlintrc.json": JSON.stringify({ plugins: [], categories: { correctness: "off" }, overrides: objects }) }
+      : { "eslint.config.mjs": `export default ${JSON.stringify([...more, ...objects])};\n` }),
   });
   await using proc = spawn({
     cmd: [bunExe(), "lint", "-f", "json", "."],
@@ -58,8 +60,15 @@ async function filesOf(patterns: string[], files: string[], more: object[] = [])
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  if (!stdout.startsWith("[")) throw new Error(`exit code ${exitCode}\n${stdout}\n${stderr}`);
-  const results: { filePath: string; messages: { ruleId: string }[] }[] = JSON.parse(stdout);
+  if (!/^[[{]/.test(stdout)) throw new Error(`exit code ${exitCode}\n${stdout}\n${stderr}`);
+  const json = JSON.parse(stdout);
+  const results: { filePath: string; messages: { ruleId: string }[] }[] =
+    more === "oxlint"
+      ? json.diagnostics.map((it: { filename: string; code: string }) => ({
+          filePath: join(String(dir), it.filename),
+          messages: [{ ruleId: it.code.slice("eslint(".length, -1) }],
+        }))
+      : json;
   return patterns.map((pattern, index) => [
     pattern,
     results
@@ -100,54 +109,131 @@ const js =
 const all = [...files].sort().join(" ");
 
 // The expected files come from ESLint 10.12.
+const extglobs = [
+  ["**/*.?(c|m)js", ["a.cjs", "a.mjs", ...js.split(" ")].sort().join(" ")],
+  ["**/*.@(js|ts)", [...js.split(" "), "a.test.ts", "a.ts", "src/a.test.ts", "src/x/y.ts"].sort().join(" ")],
+  ["src/+(a|b).js", "src/a.js src/aab.js src/ab.js src/b.js"],
+  ["src/*(a|b).js", "src/.js src/a.js src/aab.js src/ab.js src/b.js"],
+  ["**/!(*.test).ts", "a.ts src/x/y.ts"],
+  ["**/*.?([cm])[jt]s?(x)", all],
+  [
+    "@(src|lib)/**/*.js",
+    js
+      .split(" ")
+      .filter(it => /^(src|lib)\//.test(it))
+      .join(" "),
+  ],
+  // Nested groups, and groups mixed with braces
+  ["src/@(a|{b,c}).js", "src/a.js src/b.js src/c.js"],
+  [
+    "**/+(a|*(b)c).js",
+    "a.js app/(group)/a.js app/group/a.js lib/a.js lib/x/a.js src/a.js src/abc.js src/bbc.js src/c.js src/x/a.js",
+  ],
+  // Parentheses without a prefix are literal.
+  ["app/(group)/*.js", "app/(group)/a.js"],
+  [
+    "**/*.{js,?(m)ts}",
+    [...js.split(" "), "a.mts", "a.test.ts", "a.ts", "src/a.test.ts", "src/x/y.ts"].sort().join(" "),
+  ],
+  // `**` at the end of an alternative that ends the pattern
+  [
+    "{lib/*.js,src/**}",
+    all
+      .split(" ")
+      .filter(it => it === "lib/a.js" || it.startsWith("src/"))
+      .join(" "),
+  ],
+  // `!(a|b)` only rejects a name if the rest of the pattern matches after `a` or `b`.
+  ["src/!(a|b)*.js", "src/.js src/c.js"],
+  // For ESLint a leading `!` always negates the pattern, even before `(`.
+  ["!(src)/**/*.js", all],
+  ["**/@(a|b).!(js)", "a.cjs a.css.js a.mjs a.mts a.test.ts a.ts a.tsx src/a.test.ts"],
+  ["src/?(a)?(b).js", "src/.js src/a.js src/ab.js src/b.js"],
+];
+
 test.concurrent("extglob patterns in `files` match the same files as ESLint", async () => {
-  const expected = [
-    ["**/*.?(c|m)js", ["a.cjs", "a.mjs", ...js.split(" ")].sort().join(" ")],
-    ["**/*.@(js|ts)", [...js.split(" "), "a.test.ts", "a.ts", "src/a.test.ts", "src/x/y.ts"].sort().join(" ")],
-    ["src/+(a|b).js", "src/a.js src/aab.js src/ab.js src/b.js"],
-    ["src/*(a|b).js", "src/.js src/a.js src/aab.js src/ab.js src/b.js"],
-    ["**/!(*.test).ts", "a.ts src/x/y.ts"],
-    ["**/*.?([cm])[jt]s?(x)", all],
-    [
-      "@(src|lib)/**/*.js",
-      js
-        .split(" ")
-        .filter(it => /^(src|lib)\//.test(it))
-        .join(" "),
-    ],
-    // Nested groups, and groups mixed with braces
-    ["src/@(a|{b,c}).js", "src/a.js src/b.js src/c.js"],
-    [
-      "**/+(a|*(b)c).js",
-      "a.js app/(group)/a.js app/group/a.js lib/a.js lib/x/a.js src/a.js src/abc.js src/bbc.js src/c.js src/x/a.js",
-    ],
-    // Parentheses without a prefix are literal.
-    ["app/(group)/*.js", "app/(group)/a.js"],
-    [
-      "**/*.{js,?(m)ts}",
-      [...js.split(" "), "a.mts", "a.test.ts", "a.ts", "src/a.test.ts", "src/x/y.ts"].sort().join(" "),
-    ],
-    // `**` at the end of an alternative that ends the pattern
-    [
-      "{lib/*.js,src/**}",
-      all
-        .split(" ")
-        .filter(it => it === "lib/a.js" || it.startsWith("src/"))
-        .join(" "),
-    ],
-    // `!(a|b)` only rejects a name if the rest of the pattern matches after `a` or `b`.
-    ["src/!(a|b)*.js", "src/.js src/c.js"],
-    // For ESLint a leading `!` always negates the pattern, even before `(`.
-    ["!(src)/**/*.js", all],
-    ["**/@(a|b).!(js)", "a.cjs a.css.js a.mjs a.mts a.test.ts a.ts a.tsx src/a.test.ts"],
-    ["src/?(a)?(b).js", "src/.js src/a.js src/ab.js src/b.js"],
-  ];
   expect(
     await filesOf(
-      expected.map(it => it[0]),
+      extglobs.map(it => it[0]),
       files,
     ),
-  ).toEqual(expected);
+  ).toEqual(extglobs);
+});
+
+// oxlint 1.87 takes the parentheses literally, so there `**/*.?(c|m)js` matches none of these files.
+test.concurrent("extglob patterns in `files` of an .oxlintrc.json match the same files as ESLint", async () => {
+  expect(
+    await filesOf(
+      extglobs.map(it => it[0]),
+      files,
+      "oxlint",
+    ),
+  ).toEqual(extglobs);
+});
+
+test.concurrent(
+  "the rest of a pattern with extglob groups in an .oxlintrc.json is read like oxlint reads it",
+  async () => {
+    const files = ["a.js", "b.js", "src/a.js", "src/b.js", "lib/a.js", "p/@(a).js", "p/+(a.js", "p/+(a).js", "f2.js"];
+    const all = [...files].sort().join(" ");
+    const expected = [
+      // A pattern without a slash matches in any directory. oxlint puts `**/` in front of it, so its `!` isn't at the start.
+      ["@(a|c).js", "a.js lib/a.js src/a.js"],
+      ["!(a).js", "b.js f2.js p/+(a).js p/+(a.js p/@(a).js src/b.js"],
+      ["./@(src|lib)/*.js", "lib/a.js src/a.js src/b.js"],
+      // A `!` at the start negates the pattern, even before `(`.
+      ["!@(src|lib)/**", "a.js b.js f2.js p/+(a).js p/+(a.js p/@(a).js"],
+      ["./!(src)/*.js", all],
+      // An escaped `(` or prefix is literal, and so is a group that isn't closed, or isn't closed in its braces.
+      ["p/\\@(a).js", "p/@(a).js"],
+      ["p/@\\(a).js", "p/@(a).js"],
+      ["p/[@](a).js", "p/@(a).js"],
+      ["p/+(a.js", "p/+(a.js"],
+      ["p/{+(a,b}.js", "p/+(a.js"],
+      ["p/{+(a,b}).js", "p/+(a).js"],
+      // No sequences, in a group or not
+      ["f@({1..3}).js", ""],
+    ];
+    expect(
+      await filesOf(
+        expected.map(it => it[0]),
+        files,
+        "oxlint",
+      ),
+    ).toEqual(expected);
+  },
+);
+
+// With an ESLint config these options are minimatch patterns. oxlint 1.87 reports all three imports and both elements.
+test.concurrent("extglob patterns in rule options work with an .oxlintrc.json", async () => {
+  using dir = tempDir("bun-lint-glob", {
+    "a.jsx":
+      'import "./a.css";\nimport "./a.scss";\nimport "./a.less";\nexport const a = [<FOO_BAR />, <BAZ_QUX />];\n',
+    ".oxlintrc.json": JSON.stringify({
+      plugins: ["import", "react"],
+      categories: { correctness: "off" },
+      rules: {
+        "import/no-unassigned-import": ["error", { allow: ["**/*.@(css|scss)"] }],
+        "react/jsx-pascal-case": ["error", { ignore: ["+(FOO|_)BAR"] }],
+      },
+    }),
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "lint", "-f", "unix", "a.jsx"],
+    env,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(
+    stdout.split("\n").filter(line => line.startsWith("a.jsx")),
+    stderr,
+  ).toEqual([
+    "a.jsx:3:1: Imported module should be assigned [Error/import(no-unassigned-import)]",
+    "a.jsx:4:32: JSX component BAZ_QUX must be in PascalCase [Error/react(jsx-pascal-case)]",
+  ]);
+  expect(exitCode).toBe(1);
 });
 
 test.concurrent("`ignores` handles `a`, `a/`, `a/*`, `a/**` and `!` like ESLint", async () => {

@@ -160,9 +160,21 @@ impl StaticRoute {
             // Let's let them do that.
             let body_value = response.get_body_value();
             let was_string = body_value.was_string();
-            body_value.to_blob_if_possible();
+            // Share a payload behind an unread `.body` stream: a lift would spend the stream of a Response that stays unused.
+            let shared = match body_value {
+                BodyValue::Locked(locked) => locked
+                    .peek_blob_of_unread_stream()
+                    .filter(|blob| !blob.needs_to_read_file()),
+                _ => None,
+            };
+            if shared.is_none() {
+                body_value.to_blob_if_possible();
+            }
 
             let blob: AnyBlob = 'brk: {
+                if let Some(blob) = shared {
+                    break 'brk AnyBlob::Blob(blob);
+                }
                 match body_value {
                     BodyValue::Used => {
                         return Err(global_this.throw_invalid_arguments(format_args!(

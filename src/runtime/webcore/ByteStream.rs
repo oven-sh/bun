@@ -108,6 +108,11 @@ impl Buffered {
         bytes
     }
 
+    /// A copy of the untaken bytes. The buffer keeps them.
+    fn to_vec(&self) -> Vec<u8> {
+        self.bytes.get()[self.consumed.get()..].to_vec()
+    }
+
     fn extend(&self, chunk: &[u8]) {
         self.bytes.with_mut(|b| b.extend_from_slice(chunk));
     }
@@ -981,6 +986,12 @@ impl ByteStream {
         }
 
         None
+    }
+
+    /// A copy of what [`Self::to_any_blob`] would take. The stream keeps its bytes.
+    pub(crate) fn peek_bytes(&self) -> Option<Vec<u8>> {
+        (self.has_received_last_chunk.get() && !self.has_pending_error())
+            .then(|| self.buffered.to_vec())
     }
 
     fn to_buffered_value(

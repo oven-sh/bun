@@ -59,6 +59,20 @@ fn sp_slice<'a>(ptr: StringPointer, buf: &'a [u8]) -> &'a [u8] {
     &buf[ptr.offset as usize..][..ptr.length as usize]
 }
 
+/// `blob` is a file (`needs_to_read_file()`), so its `store` is Some and its `data` is `File`.
+fn refuse_file_descriptor(global: &JSGlobalObject, blob: &Blob) -> JsResult<()> {
+    let is_fd = matches!(
+        blob.store.get().as_ref().unwrap().data,
+        StoreData::File(ref f) if matches!(f.pathlike, PathOrFileDescriptor::Fd(_))
+    );
+    if is_fd {
+        return Err(global.throw_todo(
+            b"Support serving files from a file descriptor. Please pass a path instead.",
+        ));
+    }
+    Ok(())
+}
+
 /// What `FileRoute::serve` left for `on()` to do with the open fd.
 enum Serve {
     /// The response is finished; close the fd and complete.
@@ -138,43 +152,52 @@ impl FileRoute {
         // `status_code` all take `&self`.
         if let Some(response) = argument.as_class_ref::<Response>() {
             let body_value = response.get_body_value();
-            body_value.to_blob_if_possible();
-            let needs_read = matches!(body_value, BodyValue::Blob(b) if b.needs_to_read_file());
-            if needs_read {
-                // `needs_to_read_file()` ⇒ `store` is Some and `data` is `File`.
-                let is_fd = matches!(
-                    body_value,
-                    BodyValue::Blob(b)
-                        if matches!(
-                            b.store.get().as_ref().unwrap().data,
-                            StoreData::File(ref f)
-                                if matches!(f.pathlike, PathOrFileDescriptor::Fd(_))
-                        )
-                );
-                if is_fd {
-                    return Err(global.throw_todo(
-                        b"Support serving files from a file descriptor. Please pass a path instead.",
-                    ));
+            // Share a file behind an unread `.body` stream: a lift would spend the stream of a Response that stays unused.
+            let peeked = match body_value {
+                BodyValue::Locked(locked) => locked.peek_blob_of_unread_stream(),
+                _ => None,
+            };
+            let blob = 'blob: {
+                if let Some(blob) = peeked {
+                    if !blob.needs_to_read_file() {
+                        // In memory: `StaticRoute` shares it the same way.
+                        return Ok(None);
+                    }
+                    refuse_file_descriptor(global, &blob)?;
+                    // A second reader of a pipe would compete with the stream, so that is lifted.
+                    if !crate::webcore::blob::store_yields_bytes_once(
+                        blob.store.get().as_ref().unwrap(),
+                    ) {
+                        break 'blob blob;
+                    }
                 }
+                body_value.to_blob_if_possible();
+                let BodyValue::Blob(file) = &*body_value else {
+                    return Ok(None);
+                };
+                if !file.needs_to_read_file() {
+                    return Ok(None);
+                }
+                refuse_file_descriptor(global, file)?;
 
                 let blob = body_value.use_();
-
-                blob.global_this.set(std::ptr::from_ref(global));
                 debug_assert!(
                     !blob.is_heap_allocated(),
                     "expected blob not to be heap-allocated"
                 );
                 *body_value = BodyValue::Blob(blob.dupe());
-                let headers = headers_from(response.get_init_headers(), &blob);
-                let status_code = response.status_code();
+                blob
+            };
+            blob.global_this.set(std::ptr::from_ref(global));
+            let headers = headers_from(response.get_init_headers(), &blob);
+            let status_code = response.status_code();
 
-                return Ok(Some(RefPtr::new(FileRoute::new(
-                    blob,
-                    headers,
-                    None,
-                    status_code,
-                ))));
-            }
+            return Ok(Some(RefPtr::new(FileRoute::new(
+                blob,
+                headers,
+                None,
+                status_code,
+            ))));
         }
         if let Some(blob) = argument.as_class_ref::<Blob>() {
             if blob.needs_to_read_file() {

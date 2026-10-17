@@ -398,6 +398,14 @@ impl PendingValue {
         Some(blob)
     }
 
+    /// What [`Self::to_any_blob`] would lift, as a Blob of its own. Nothing is taken: the stream stays the body.
+    pub(crate) fn peek_blob_of_unread_stream(&self) -> Option<Blob> {
+        if self.promise.is_some() || self.on_receive_value.is_some() {
+            return None;
+        }
+        self.readable.get()?.peek_blob(self.global())
+    }
+
     fn set_promise(
         &mut self,
         global_this: &JSGlobalObject,

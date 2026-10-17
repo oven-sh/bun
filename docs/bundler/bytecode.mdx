@@ -166,11 +166,13 @@ RUN bun install --frozen-lockfile
 COPY . .
 RUN bun build --bytecode --minify --sourcemap \
   --target=bun \
+  --production \
   --compile \
   ./src/server.ts --outfile=./dist/server
 
 FROM oven/bun:1 AS runner
 WORKDIR /app
+ENV NODE_ENV=production
 COPY --from=builder /app/dist/server /app/server
 CMD ["./server"]
 ```

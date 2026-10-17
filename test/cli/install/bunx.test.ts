@@ -2522,23 +2522,44 @@ describe("a package in node_modules", () => {
       );
       const PATH = [join(elsewhere, "node_modules", ".bin"), box.env.PATH ?? process.env.PATH].join(delimiter);
       const env = { ...box.env, PATH };
-      if (process.env.DIAG_FIX && where === "$PATH") {
-        const set = Bun.spawnSync({ cmd: [process.env.ComSpec!, "/d", "/c", "set", "PATH"], env, stderr: "ignore" });
-        const found = set.stdout
-          .toString()
-          .split(/\r?\n/)
-          .filter(line => line.slice(0, line.indexOf("=")).toUpperCase() === "PATH");
-        console.error("DIAG_ORDER=" + (found.length === 1 ? "1" : found.at(-1)!.startsWith("PATH=") ? "L" : "f"));
-      }
 
-      const ran = { stdout: "caller got lint 1.0.0\n", exitCode: 0 };
-      expect(await box.run(["-p", "mypkg", "caller"], { env })).toMatchObject(ran);
-      expect(await box.run(["-p", "mypkg", "caller"], { env })).toMatchObject({ ...ran, stderr: "", requests: [] });
-      expect(await box.run(["-p", "mypkg", "nowhere"], { env })).toMatchObject({
-        stderr: expect.stringContaining("error: Package mypkg does not provide a binary named nowhere"),
-        exitCode: 1,
-      });
+      // Diagnostic, not for merging.
+      if (isWindows && where === "$PATH") {
+        const order = (env: Record<string, string | undefined>) => {
+          const set = Bun.spawnSync({ cmd: [process.env.ComSpec!, "/d", "/c", "set", "PATH"], env, stderr: "ignore" });
+          const found = set.stdout
+            .toString()
+            .split(/\r?\n/)
+            .filter(line => line.slice(0, line.indexOf("=")).toUpperCase() === "PATH");
+          return found.length === 1 ? "one key" : found.at(-1)!.startsWith("PATH=") ? "PATH later" : "Path later";
+        };
+        const spellings = Object.keys(box.env).filter(key => key.toUpperCase() === "PATH");
+        const lines = [`box.env spells it ${JSON.stringify(spellings)}`];
+        for (const oneKey of [false, true]) {
+          const tally = new Map<string, number>();
+          for (let extra = 0; extra <= 40; extra++) {
+            const varied = { ...box.env };
+            for (let i = 0; i < extra; i++) varied["A_DIAG_EXTRA_" + i] = "x";
+            if (oneKey) delete varied.Path;
+            varied.PATH = PATH;
+            const { exitCode, stdout, stderr } = await box.run(["-p", "mypkg", "caller"], { env: varied });
+            const result =
+              exitCode === 0 && stdout === "caller got lint 1.0.0\n"
+                ? "runs caller"
+                : stderr.includes("does not provide a binary named caller")
+                  ? "no binary named caller"
+                  : "fails otherwise";
+            const key = order(varied) + ": " + result;
+            tally.set(key, (tally.get(key) ?? 0) + 1);
+          }
+          lines.push(
+            `${oneKey ? "Path deleted" : "as on main "}, 0..40 more variables: ${JSON.stringify([...tally].sort())}`,
+          );
+        }
+        expect(lines.join("\n")).toBe("");
+      }
     },
+    600_000,
   );
 
   it.concurrent("-p takes the package of the project", async () => {

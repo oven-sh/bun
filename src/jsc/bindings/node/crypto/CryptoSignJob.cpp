@@ -123,6 +123,11 @@ void SignJobCtx::runTask(JSGlobalObject* globalObject)
         return;
     }
 
+    if (!m_context.isEmpty() && !EVP_PKEY_CTX_set1_signature_context_string(*ctx, m_context.begin(), m_context.size())) {
+        m_opensslError = ERR_get_error();
+        return;
+    }
+
     int32_t padding = m_padding.value_or(key.getDefaultSignPadding());
 
     if (key.isRsaVariant()) {
@@ -303,17 +308,18 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
     auto dsaSigEnc = getDSASigEnc(globalObject, scope, keyValue);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // The `context` signing option only applies to Ed448 signatures, which BoringSSL does not
-    // provide, so a provided context always makes the operation itself fail (after input
-    // validation, like Node).
-    bool unsupportedContext = false;
+    // The `context` signing option applies to ML-DSA (FIPS 204) and Ed448. BoringSSL has no
+    // Ed448, so for every other key type a provided context fails the operation itself (after
+    // input validation, like Node).
+    std::optional<Vector<uint8_t>> context;
     if (JSObject* keyOptions = keyValue.getObject()) {
         JSValue contextValue = keyOptions->get(globalObject, Identifier::fromString(globalObject->vm(), "context"_s));
         RETURN_IF_EXCEPTION(scope, {});
         if (!contextValue.isUndefined()) {
-            getArrayBufferOrView2(globalObject, scope, contextValue, "context"_s, jsUndefined());
+            auto contextView = getArrayBufferOrView2(globalObject, scope, contextValue, "context"_s, jsUndefined());
             RETURN_IF_EXCEPTION(scope, {});
-            unsupportedContext = true;
+            context.emplace();
+            context->append(std::span { contextView->data(), contextView->size() });
         }
     }
 
@@ -350,6 +356,12 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
             prepareResult.cipher,
             WTF::move(prepareResult.passphrase));
         RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    bool unsupportedContext = context && !isMlDsaNid(keyObject.asymmetricKey().id());
+    if (context && !unsupportedContext && context->size() > 255) {
+        ERR::OUT_OF_RANGE(scope, globalObject, "context string must be at most 255 bytes"_s);
+        return {};
     }
 
     Digest digest = {};
@@ -438,6 +450,7 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
             pssSaltLength,
             dsaSigEnc,
             unsupportedContext,
+            context ? WTF::move(*context) : Vector<uint8_t> {},
             WTF::move(signature));
     }
 
@@ -449,7 +462,8 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
         padding,
         pssSaltLength,
         dsaSigEnc,
-        unsupportedContext);
+        unsupportedContext,
+        context ? WTF::move(*context) : Vector<uint8_t> {});
 }
 
 } // namespace Bun

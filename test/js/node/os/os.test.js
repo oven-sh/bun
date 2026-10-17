@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { realpathSync } from "fs";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { isIPv4, isIPv6 } from "node:net";
 import * as os from "node:os";
 
@@ -277,6 +277,49 @@ describe("toString works like node", () => {
     });
   }
 });
+
+it("os.constants.signals is frozen", () => {
+  expect(Object.isFrozen(os.constants.signals)).toBe(true);
+  expect(() => {
+    os.constants.signals.SIGTERM = 9;
+  }).toThrow(TypeError);
+  expect(os.constants.signals.SIGTERM).toBe(15);
+});
+
+it.skipIf(isWindows)(
+  "child_process signal name resolution is not affected by mutating os.constants.signals",
+  async () => {
+    const script = `
+    const os = require("node:os");
+    const { spawn } = require("node:child_process");
+    try { os.constants.signals.SIGTERM = 9; } catch {}
+    const kid = spawn(process.execPath, ["-e", 'process.on("SIGTERM",()=>{console.log("CAUGHT-SIGTERM");process.exit(42)});setInterval(()=>{},1000);console.log("READY")']);
+    let out = "", sent = false;
+    kid.stdout.setEncoding("utf8");
+    kid.stdout.on("data", d => {
+      out += d;
+      if (!sent && out.includes("READY")) { sent = true; kid.kill("SIGTERM"); }
+    });
+    kid.on("close", (code, sig) => {
+      console.log(JSON.stringify({ out: out.trim().split("\\n"), code, sig }));
+    });
+  `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({
+      out: ["READY", "CAUGHT-SIGTERM"],
+      code: 42,
+      sig: null,
+    });
+    expect(exitCode).toBe(0);
+  },
+);
 
 it("getPriority system error object", () => {
   try {

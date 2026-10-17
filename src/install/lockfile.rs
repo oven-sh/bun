@@ -986,22 +986,26 @@ impl Lockfile {
             || (self.linked_members.get(path)).is_some_and(|member| member.is_outside)
     }
 
-    /// The workspace (or root, 0) package that owns tree `id`: walk up until a
-    /// workspace/root tree is reached and return the package it stands for.
-    pub(crate) fn owning_workspace_of_tree(&self, mut id: tree::Id) -> PackageID {
-        while id != 0 && (id as usize) < self.buffers.trees.len() {
-            let t = &self.buffers.trees[id as usize];
-            let dep_id = t.dependency_id;
-            if (dep_id as usize) < self.buffers.dependencies.len()
-                && self.buffers.dependencies[dep_id as usize]
-                    .behavior
-                    .is_workspace()
-            {
-                return self.buffers.resolutions[dep_id as usize];
-            }
-            id = t.parent;
+    /// The trees whose packages are real copies: a self-contained workspace's, and those below.
+    pub(crate) fn trees_below_self_contained_workspaces(
+        &self,
+    ) -> Result<DynamicBitSet, AllocError> {
+        let trees = self.buffers.trees.as_slice();
+        let mut below = DynamicBitSet::init_empty(trees.len())?;
+        let self_contained = self.self_contained_workspace_ids();
+        if self_contained.is_empty() {
+            return Ok(below);
         }
-        0
+        // A parent tree comes before its children.
+        for tree in trees.iter().skip(1) {
+            let owner = tree.owner(&self.buffers.resolutions);
+            if below.is_set(tree.parent as usize)
+                || owner.is_some_and(|owner| self_contained.contains(&owner))
+            {
+                below.set(tree.id as usize);
+            }
+        }
+        Ok(below)
     }
 
     /// Does the root or a workspace depend on package `id` directly?
@@ -1091,12 +1095,12 @@ impl Lockfile {
     }
 
     /// Does this tree id belong to a workspace (including workspace root)?
-    /// TODO(dylan-conway) fix!
     pub(crate) fn is_workspace_tree_id(&self, id: tree::Id) -> bool {
         id == 0
-            || self.buffers.dependencies[self.buffers.trees[id as usize].dependency_id as usize]
-                .behavior
-                .is_workspace()
+            || matches!(
+                self.tree_owner_tag(id),
+                Some(ResolutionTag::Workspace | ResolutionTag::Root)
+            )
     }
 
     /// The folder dependencies of a `file:` folder are relative to the project root, not to the
@@ -1105,20 +1109,12 @@ impl Lockfile {
         self.tree_owner_tag(id) == Some(ResolutionTag::Folder)
     }
 
-    /// Returns true if tree `id` is the `node_modules` of the project or of a workspace. Users
-    /// sometimes make that folder a symlink to another volume or to a store.
-    pub(crate) fn is_importer_tree_id(&self, id: tree::Id) -> bool {
-        id == 0 || self.tree_owner_tag(id) == Some(ResolutionTag::Workspace)
-    }
-
     fn tree_owner_tag(&self, id: tree::Id) -> Option<ResolutionTag> {
         if id == 0 {
             return None;
         }
-        let dependency_id = self.buffers.trees[id as usize].dependency_id;
-        let package_id = self.buffers.resolutions[dependency_id as usize];
-        (package_id != invalid_package_id)
-            .then(|| self.packages.slice().items_resolution()[package_id as usize].tag)
+        let owner = self.buffers.trees[id as usize].owner(&self.buffers.resolutions)?;
+        Some(self.packages.items_resolution()[owner as usize].tag)
     }
 
     /// A folder's `node_modules` isn't copied, so the linkers link these to
@@ -1694,6 +1690,7 @@ impl Lockfile {
             older_layout: layout == tree::Layout::Older,
             places: Vec::new(),
             linked: Default::default(),
+            shared_folder: false,
         };
 
         Tree::default().process_subtree(tree::ROOT_DEP_ID, tree::INVALID_ID, &mut builder)?;
@@ -1716,6 +1713,7 @@ impl Lockfile {
         let hoisted = tree::Hoisted {
             late_bound_peer: builder.late_bound_peer,
             places: core::mem::take(&mut builder.places),
+            shared_folder: builder.shared_folder,
         };
         self.buffers.trees = cleaned.trees;
         self.buffers.hoisted_dependencies = cleaned.dep_ids;

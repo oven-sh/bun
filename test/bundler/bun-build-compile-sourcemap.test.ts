@@ -305,4 +305,83 @@ main();`,
     // Verify it failed (the error was thrown)
     expect(exitCode).not.toBe(0);
   });
+
+  // The input of the second step is the output of a first `bun build` with
+  // its own linked map. The trace must go through that map to the original.
+  const twoStepFiles = {
+    "src/x.ts": `type T = { n: number }
+const pad: T = { n: 1 }
+
+export function boom(): never {
+  // the throw is on line 6 of the source
+  throw new Error('boom ' + pad.n)
+}
+boom()
+`,
+  };
+
+  async function buildStep1(dir: string) {
+    const step1 = await Bun.build({
+      entrypoints: [join(dir, "src/x.ts")],
+      outdir: join(dir, "step1"),
+      target: "bun",
+      sourcemap: "linked",
+    });
+    expect(step1.success).toBe(true);
+    expect(await Bun.file(join(dir, "step1/x.js.map")).exists()).toBe(true);
+    return join(dir, "step1/x.js");
+  }
+
+  test.concurrent("bundling the output of a previous build composes its source map", async () => {
+    using dir = tempDir("build-two-step-sourcemap", twoStepFiles);
+    const input = await buildStep1(String(dir));
+
+    const step2 = await Bun.build({
+      entrypoints: [input],
+      outdir: join(String(dir), "step2"),
+      target: "bun",
+      sourcemap: "linked",
+    });
+    expect(step2.success).toBe(true);
+    const map = JSON.parse(await Bun.file(join(String(dir), "step2/x.js.map")).text());
+    expect(map.sources).toEqual(["../src/x.ts"]);
+    expect(map.sourcesContent).toEqual([twoStepFiles["src/x.ts"]]);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "step2/x.js")],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [_stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("error: boom 1");
+    expect(stderr).toMatch(/at boom \(.*src[\\/]x\.ts:6:9\)/);
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("compiling the output of a previous build composes its source map", async () => {
+    using dir = tempDir("build-compile-two-step-sourcemap", twoStepFiles);
+    const input = await buildStep1(String(dir));
+
+    const app = await Bun.build({
+      entrypoints: [input],
+      compile: { outfile: join(String(dir), "app") },
+      sourcemap: true,
+    });
+    expect(app.success).toBe(true);
+
+    await using proc = Bun.spawn({
+      cmd: [app.outputs.find(o => o.kind === "entry-point")!.path],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [_stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("error: boom 1");
+    expect(stderr).toMatch(/at boom \(.*src[\\/]x\.ts:6:9\)/);
+    expect(stderr).not.toContain("step1");
+    expect(exitCode).toBe(1);
+  });
 });

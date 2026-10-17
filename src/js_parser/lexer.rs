@@ -3467,19 +3467,24 @@ impl PragmaArg {
         const PREFIX: u32 = " sourceMappingURL=".len() as u32;
         let url_and_rest_of_code = &chunk[PREFIX as usize..]; // Slice containing only the potential argument
 
-        let url_len: usize = 'brk: {
-            if let Some(delimiter_pos_in_arg) =
-                strings::index_of_space_or_newline_or_non_ascii(url_and_rest_of_code, 0)
-            {
-                // SIMD found the delimiter at index 'delimiter_pos_in_arg' relative to url start.
-                // The argument's length is exactly this index.
-                break 'brk delimiter_pos_in_arg as usize;
-            } else {
-                // SIMD found no delimiter in the entire url.
-                // The argument is the whole chunk.
-                break 'brk url_and_rest_of_code.len();
+        // The URL ends at whitespace. A non-ASCII code point (`ünï.js.map`) is part of it unless it is whitespace.
+        let mut url_len: usize = url_and_rest_of_code.len();
+        let mut from: u32 = 0;
+        while let Some(pos) =
+            strings::index_of_space_or_newline_or_non_ascii(url_and_rest_of_code, from)
+        {
+            let pos = pos as usize;
+            if url_and_rest_of_code[pos] < 0x80 {
+                url_len = pos;
+                break;
             }
-        };
+            let (c, width) = bun_core::lexer::char_and_size(url_and_rest_of_code, pos);
+            if is_whitespace(c) || Self::is_newline(c) {
+                url_len = pos;
+                break;
+            }
+            from = (pos + width) as u32;
+        }
 
         // Now we have the correct argument length (url_len) and the argument text.
         let url = &url_and_rest_of_code[0..url_len];

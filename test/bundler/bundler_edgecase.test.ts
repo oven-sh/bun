@@ -1690,6 +1690,69 @@ describe("bundler", () => {
       },
     },
   });
+  itBundled("edgecase/InputSourceMapNonASCIIName", {
+    files: {
+      "/lib/ünï.js": inputSourceMapFixture.js + `//# sourceMappingURL=ünï.js.map\n`,
+      "/lib/ünï.js.map": inputSourceMapFixture.map(),
+      "/entry.js": `import { f } from "./lib/ünï.js";\nf({ x: 1 });\n`,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    sourceMap: "external",
+    async onAfterBundle(api) {
+      const map = JSON.parse(api.readFile("/out/entry.js.map"));
+      expect(map.sources).toEqual(["../src/lib.ts", "../entry.js"]);
+      expect(await originalPositionsFor(api, "/out/entry.js", [`"MARK"`])).toEqual({
+        '"MARK"': "../src/lib.ts:6:18",
+      });
+    },
+  });
+  itBundled("edgecase/InputSourceMapPluginNamespace", {
+    files: {
+      "/entry.ts": `import { f } from "virtual:lib";\nf({ x: 1 });\n`,
+    },
+    entryPoints: ["/entry.ts"],
+    outdir: "/out",
+    sourceMap: "external",
+    plugins(builder) {
+      builder.onResolve({ filter: /^virtual:/ }, args => ({
+        path: args.path.slice("virtual:".length),
+        namespace: "virtual",
+      }));
+      builder.onLoad({ filter: /.*/, namespace: "virtual" }, () => ({
+        // The common `;charset=utf-8;base64,` form. A virtual module has no
+        // directory, so the map's `sources` are kept as written.
+        contents:
+          inputSourceMapFixture.js +
+          `//# sourceMappingURL=data:application/json;charset=utf-8;base64,${Buffer.from(
+            inputSourceMapFixture.map({ sources: ["src/lib.ts"] }),
+          ).toString("base64")}\n`,
+        loader: "js",
+      }));
+    },
+    async onAfterBundle(api) {
+      const map = JSON.parse(api.readFile("/out/entry.js.map"));
+      expect(map.sources).toEqual(["src/lib.ts", "../entry.ts"]);
+      expect(map.sourcesContent[0]).toBe(inputSourceMapFixture.ts);
+      expect(await originalPositionsFor(api, "/out/entry.js", [`"MARK"`, "f({"])).toEqual({
+        '"MARK"': "src/lib.ts:6:18",
+        "f({": "../entry.ts:2:0",
+      });
+    },
+  });
+  itBundled("edgecase/InputSourceMapNotReadWithoutSourceMap", {
+    files: {
+      // Without `--sourcemap` the sidecar is never read: a broken one is not a warning.
+      "/lib/lib.js": inputSourceMapFixture.js + `//# sourceMappingURL=lib.js.map\n`,
+      "/lib/lib.js.map": "{oops",
+      "/entry.js": `import { f } from "./lib/lib.js";\nf({ x: 1 });\n`,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(api.readFile("/out/entry.js")).not.toInclude("sourceMappingURL");
+    },
+  });
   itBundled("edgecase/NoUselessConstructorTS", {
     files: {
       "/entry.ts": `

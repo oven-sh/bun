@@ -63,6 +63,10 @@ pub struct Class {
     pub properties: StoreSlice<Property>,
     pub has_decorators: bool,
     pub should_lower_standard_decorators: bool,
+    /// What the body reads the class name as when standard (TC39) class
+    /// decorators are lowered: the lowering assigns the decorated class to it.
+    /// `Ref::NONE` otherwise, including for TypeScript experimental decorators.
+    pub inner_class_ref: Ref,
 }
 
 impl Default for Class {
@@ -77,6 +81,7 @@ impl Default for Class {
             properties: StoreSlice::EMPTY,
             has_decorators: false,
             should_lower_standard_decorators: false,
+            inner_class_ref: Ref::NONE,
         }
     }
 }

@@ -17,7 +17,8 @@ pub(crate) mod assert {
 pub(crate) mod types;
 pub(crate) use types::{
     BlobOrStringOrBuffer, Dirent, Encoding, FileBlobs, Flavor, PathLike, PathOrBlob,
-    PathOrFileDescriptor, StringObjects, StringOrBuffer, ThreadIsolated, ThreadIsolatedArg,
+    PathOrFileDescriptor, StringObjects, StringOrBuffer, StringOrBufferKind, ThreadIsolated,
+    ThreadIsolatedArg,
 };
 
 #[path = "node/path.rs"]

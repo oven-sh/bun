@@ -23,7 +23,7 @@ use crate::lexer::T;
 use crate::p::P;
 use crate::parser::{
     AwaitOrYield, DeferredArrowArgErrors, DeferredErrors, ExprListLoc, ExprOrLetStmt,
-    FnOrArrowDataParse, LexicalDecl, LocList, ParenExprOpts, ParseBindingOptions,
+    FnOrArrowDataParse, InvalidLocTag, LexicalDecl, LocList, ParenExprOpts, ParseBindingOptions,
     ParseClassOptions, ParseStatementOptions, ParsedPath, PropertyOpts, SkipTypeParameterResult,
     StmtList, TypeParameterFlag,
 };
@@ -417,6 +417,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// Parentheses with a rest argument that has an initializer are still a parameter list, with an error.
+    #[cold]
+    fn has_only_rest_initializers(invalid_log: &LocList) -> bool {
+        invalid_log
+            .iter()
+            .all(|invalid| invalid.kind == InvalidLocTag::RestInitializer)
+    }
+
     /// This assumes that the open parenthesis has already been parsed by the caller
     pub(crate) fn parse_paren_expr(
         &mut self,
@@ -467,7 +475,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.parse_expr_or_bindings(Level::Comma, Some(&mut errors), &mut item)?;
 
             if is_spread {
-                item = p.new_expr(E::Spread { value: item }, loc);
+                item = p.new_expr(E::Spread { value: item }, spread_range.loc);
             }
 
             // Skip over types
@@ -501,7 +509,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Eat the comma token
             p.lexer.next()?;
         }
-        let items: &'a mut [Expr] = items_list.into_bump_slice_mut();
+        let items: &'a [Expr] = items_list.into_bump_slice();
 
         // The parenthetical construct must end with a close parenthesis
         p.lexer.expect(T::TCloseParen)?;
@@ -516,7 +524,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut is_arrow_fn = p.lexer.token == T::TEqualsGreaterThan;
         if is_arrow_fn
             || opts.force_arrow_fn
-            || (Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon)
+            || (Self::IS_TYPESCRIPT_ENABLED
+                && p.lexer.token == T::TColon
+                && level.lte(Level::Assign))
         {
             // Arrow functions are not allowed inside certain expressions
             if level.gt(Level::Assign) {
@@ -532,15 +542,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             // First, try converting the expressions to bindings
-            for i in 0..items.len() {
+            for mut item in items.iter().copied() {
                 let mut is_spread = false;
-                if let js_ast::expr::Data::ESpread(v) = &items[i].data {
+                if let js_ast::expr::Data::ESpread(spread) = &item.data {
                     is_spread = true;
-                    let inner = v.value;
-                    items[i] = inner;
+                    item = spread.value;
                 }
 
-                let mut item = items[i];
                 let tuple = p.convert_expr_to_binding_and_initializer(
                     &mut item,
                     &mut invalid_log,
@@ -571,7 +579,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // attempt to convert the expressions to bindings first before deciding
             // whether this is an arrow function, and only pick an arrow function if
             // there were no conversion errors.
-            if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon && invalid_log.is_empty() {
+            if Self::IS_TYPESCRIPT_ENABLED
+                && p.lexer.token == T::TColon
+                && (invalid_log.is_empty() || Self::has_only_rest_initializers(&invalid_log))
+            {
                 if opts.is_after_question_and_before_colon {
                     // Only do this very expensive check if we must
                     is_arrow_fn = p

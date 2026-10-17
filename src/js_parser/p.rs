@@ -565,6 +565,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) is_inside_single_stmt_body: bool,
 
     /// We must be careful to avoid revisiting nodes that have scopes.
+    /// A revisit can be inside a `define` value, which other parses share.
     pub(crate) is_revisit_for_substitution: bool,
 
     pub(crate) method_call_must_be_replaced_with_undefined: bool,

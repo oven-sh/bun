@@ -769,6 +769,8 @@ int us_socket_set_tos(us_socket_r s, int tos);
 int us_socket_get_tos(us_socket_r s);
 void us_socket_resume(us_socket_r s);
 void us_socket_pause(us_socket_r s);
+/* us_socket_pause for an owner that never reads: until us_socket_resume, an error event closes the socket without draining the receive queue into on_data. */
+void us_socket_pause_no_reader(us_socket_r s);
 
 #ifdef __cplusplus
 }

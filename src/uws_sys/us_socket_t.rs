@@ -79,6 +79,11 @@ impl us_socket_t {
         c::us_socket_pause(self);
     }
 
+    pub(crate) fn pause_no_reader(&mut self) {
+        bun_core::scoped_log!(uws, "us_socket_pause_no_reader({:p})", self);
+        c::us_socket_pause_no_reader(self);
+    }
+
     pub fn resume(&mut self) {
         bun_core::scoped_log!(uws, "us_socket_resume({:p})", self);
         c::us_socket_resume(self);
@@ -568,6 +573,7 @@ mod c {
         pub(super) safe fn us_socket_flush(s: &mut us_socket_t);
 
         pub(super) safe fn us_socket_pause(s: &mut us_socket_t);
+        pub(super) safe fn us_socket_pause_no_reader(s: &mut us_socket_t);
         pub(super) safe fn us_socket_resume(s: &mut us_socket_t);
         pub(super) fn us_socket_close(
             s: *mut us_socket_t,

@@ -453,6 +453,7 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     s->unclassified_send_failures = 0;
     s->read_eof = 0;
     s->hangup_closes_unsent = 0;
+    s->no_reader = 0;
     s->connect_state = NULL;
 
     /* We always use nodelay */
@@ -872,9 +873,15 @@ void us_socket_pause(struct us_socket_t *s) {
     s->flags.is_paused = 1;
 }
 
+void us_socket_pause_no_reader(struct us_socket_t *s) {
+    us_socket_pause(s);
+    s->no_reader = s->flags.is_paused;
+}
+
 void us_socket_resume(struct us_socket_t *s) {
     if (!s->flags.is_paused) return;
     s->flags.is_paused = 0;
+    s->no_reader = 0;
     // closed cannot be resumed
     if (us_socket_is_closed(s)) return;
 

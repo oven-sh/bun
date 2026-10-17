@@ -955,6 +955,13 @@ function readStop(self, handle) {
   if (!self[kwriteCallback]) handle?.unref?.();
 }
 
+let pauseNoReader;
+// A socket that never reads (`readable: false`, no `onread` buffer) also leaves a reset's unread bytes in the kernel: libuv reads only while UV_HANDLE_READING, https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L1043-L1045
+function readStopNoReader(self, handle) {
+  (pauseNoReader ??= $newRustFunction("runtime/socket/socket.rs", "jsPauseNoReader", 1))(handle);
+  readStop(self, handle);
+}
+
 // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L494-L498
 function pauseOnCreate(self, handle) {
   readStop(self, handle);
@@ -2324,6 +2331,7 @@ Socket.prototype.connect = function connect(...args) {
           this.emit("close", true);
         }
       });
+      if (this.readableEnded && this[kOnreadBuffer] === undefined) readStopNoReader(this, this._handle);
     }
     if (pauseOnConnect) {
       // An fd is open already; a dial is paused when it opens, and afterConnect releases its hold.
@@ -3608,8 +3616,12 @@ function afterConnect(status, handle, req, readable, writable) {
 
     // Ours already reads, Node's starts at read(): stop a paused plain socket now, and after the listeners unless one asked for a read.
     // A socket built with `readable: false` never reads: read() cannot reach _read once the readable side has ended.
-    const pausedBeforeConnect = self.isPaused() || (self.readableEnded && self[kOnreadBuffer] === undefined);
-    if (pausedBeforeConnect && !self.encrypted) readStop(self, self._handle);
+    const neverReads = self.readableEnded && self[kOnreadBuffer] === undefined;
+    const pausedBeforeConnect = neverReads || self.isPaused();
+    if (pausedBeforeConnect && !self.encrypted) {
+      if (neverReads) readStopNoReader(self, self._handle);
+      else readStop(self, self._handle);
+    }
 
     self.emit("connect");
     self.emit("ready");

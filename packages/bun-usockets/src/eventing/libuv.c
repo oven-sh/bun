@@ -95,8 +95,9 @@ static void poll_cb(uv_poll_t *p, int status, int events) {
        * the same EOF and busy-loop on_end; keeping DISCONNECT armed would
        * complete instantly forever. A dead peer surfaces via SO_ERROR or the
        * zero-byte send probe and goes through the shared error path (which
-       * reads off whatever is still queued and closes); a FIN, fresh on a
-       * paused socket or re-reported on a half-open one, quiesces with only
+       * reads off whatever is still queued, unless the socket is no_reader,
+       * and closes); a FIN, fresh on a paused socket or re-reported on a
+       * half-open one, quiesces with only
        * the ABORT-only subscription (UV_PRIORITIZED) kept armed so a later
        * RST still has an event to ride, and a paused socket meets the FIN
        * again through recv() once resume() re-arms READABLE. Non-SOCKET kinds

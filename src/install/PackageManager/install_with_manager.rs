@@ -2389,15 +2389,13 @@ fn rows_outside_overrides(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)>
 fn is_as_yarn_resolves(lockfile: &Lockfile, row: DependencyID, package_id: PackageID) -> bool {
     let buf = lockfile.buffers.string_bytes.as_slice();
     let dependency = &lockfile.buffers.dependencies[row as usize];
-    (lockfile.overrides)
-        .lookup_as_yarn(lockfile, row, dependency.name_hash)
-        .map_or(&dependency.version, |rule| rule.version())
-        .try_npm()
-        .is_some_and(|npm| {
+    crate::dedupe::effective_version_as_yarn(lockfile, row, dependency).is_some_and(|version| {
+        version.try_npm().is_some_and(|npm| {
             let resolved = lockfile.packages.items_resolution()[package_id as usize].npm();
             npm.name.slice(buf) == lockfile.packages.items_name()[package_id as usize].slice(buf)
                 && npm.version.satisfies(resolved.version, buf, buf)
         })
+    })
 }
 
 /// Resolves the rows in `outside` again and returns the packages that they now resolve to. If the
@@ -2460,11 +2458,18 @@ fn reresolve_rows_outside_overrides(
     };
     if let Some(lockfile_name) = frozen {
         if log_level != Options::LogLevel::Silent {
-            let field = overrides_field(manager, root_package_json_path).json_name();
+            let field = overrides_field(manager, root_package_json_path);
             let lockfile: &Lockfile = &manager.lockfile;
             let dependency = &lockfile.buffers.dependencies[first_row as usize];
-            let wanted = crate::dedupe::effective_version(lockfile, first_row, dependency)
-                .map_or(dependency.version.literal, |version| version.literal);
+            let wanted = match field {
+                lockfile::override_map::Field::Overrides => {
+                    crate::dedupe::effective_version(lockfile, first_row, dependency)
+                }
+                lockfile::override_map::Field::Resolutions => {
+                    crate::dedupe::effective_version_as_yarn(lockfile, first_row, dependency)
+                }
+            }
+            .map_or(dependency.version.literal, |version| version.literal);
             bun_core::pretty_errorln!(
                 "<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen"
             );
@@ -2472,7 +2477,7 @@ fn reresolve_rows_outside_overrides(
                 "{} has {}, {} in package.json wants {}",
                 lockfile_name,
                 bstr::BStr::new(&crate::dedupe::label(lockfile, first_package)),
-                field,
+                field.json_name(),
                 bun_core::fmt::for_terminal(wanted.fmt(lockfile.buffers.string_bytes.as_slice())),
             );
             bun_core::note!(

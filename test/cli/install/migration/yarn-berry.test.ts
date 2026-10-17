@@ -624,20 +624,27 @@ describe("yarn berry migration", () => {
     const row = (bunLock: string, version: string) =>
       bunLock.match(new RegExp(`\\["no-deps@${version.replaceAll(".", "\\.")}"[^\\]]*\\]`))![0];
 
+    async function expectToPass(dir: string, ...args: string[]) {
+      const { stderr, exitCode } = await run(dir, ...args);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    }
+
     /** Puts no-deps@1.1.0, which every range below allows, where bun.lock has no-deps@`version`. */
     async function lockAt110(dir: string, version: string) {
       const { packageDir: scratch } = await testRegistry.createTestDir({
         files: { "package.json": JSON.stringify({ name: "scratch", dependencies: { "no-deps": "1.1.0" } }) },
       });
-      expect((await run(scratch, "install", "--lockfile-only")).exitCode).toBe(0);
+      await expectToPass(scratch, "install", "--lockfile-only");
       const [bunLock, other] = await Promise.all([dir, scratch].map(at => Bun.file(join(at, "bun.lock")).text()));
       await Bun.write(join(dir, "bun.lock"), bunLock.replace(row(bunLock, version), row(other, "1.1.0")));
     }
 
-    async function expectFrozenInstallToFail(dir: string) {
+    async function expectFrozenInstallToFail(dir: string, wanted: string, field = "resolutions") {
       const { stderr, exitCode } = await run(dir, "install", "--frozen-lockfile");
       expect(stderr).toContain(
-        "error: lockfile had changes, but lockfile is frozen\nnote: bun.lock has no-deps@1.1.0, ",
+        "error: lockfile had changes, but lockfile is frozen\n" +
+          `note: bun.lock has no-deps@1.1.0, ${field} in package.json wants ${wanted}\n`,
       );
       expect(exitCode).toBe(1);
     }
@@ -675,12 +682,12 @@ describe("yarn berry migration", () => {
           }),
         },
       });
-      expect((await run(dir, "pm", "migrate")).exitCode).toBe(0);
+      await expectToPass(dir, "pm", "migrate");
       expect(lockedVersions(await bunLockOf(dir))).toEqual(["no-deps@1.0.0", "no-deps@1.0.1", "one-range-dep@1.0.0"]);
       await expectFrozenInstall(dir);
 
       await lockAt110(dir, "1.0.1");
-      await expectFrozenInstallToFail(dir);
+      await expectFrozenInstallToFail(dir, "1.0.1");
     });
 
     // `npm:^1.0.0` and `^1.0.0` are one range to yarn.
@@ -694,12 +701,38 @@ describe("yarn berry migration", () => {
           }),
         },
       });
-      expect((await run(dir, "install", "--lockfile-only")).exitCode).toBe(0);
+      await expectToPass(dir, "install", "--lockfile-only");
       expect(lockedVersions(await bunLockOf(dir))).toEqual(["no-deps@1.0.0"]);
       await expectFrozenInstall(dir);
 
       await lockAt110(dir, "1.0.0");
-      await expectFrozenInstallToFail(dir);
+      await expectFrozenInstallToFail(dir, "1.0.0");
+    });
+
+    // ^1.1.0 overlaps with the key's ^1.0.0 and is another range. npm and pnpm apply the rule to it, yarn does not.
+    test.concurrent.each(["overrides", "resolutions"])("in %s, with another range that overlaps", async field => {
+      const { packageDir: dir } = await testRegistry.createTestDir({
+        files: {
+          "package.json": JSON.stringify({
+            name: "range-rule",
+            dependencies: { "no-deps": "^1.1.0" },
+            [field]: { "no-deps@^1.0.0": "1.0.0" },
+          }),
+        },
+      });
+      await expectToPass(dir, "install", "--lockfile-only");
+      expect(lockedVersions(await bunLockOf(dir))).toEqual(["no-deps@1.0.0"]);
+      await lockAt110(dir, "1.0.0");
+
+      if (field === "resolutions") {
+        await expectFrozenInstall(dir);
+      } else {
+        await expectFrozenInstallToFail(dir, "1.0.0", field);
+      }
+      await expectToPass(dir, "install", "--lockfile-only");
+      expect(lockedVersions(await bunLockOf(dir))).toEqual([
+        field === "resolutions" ? "no-deps@1.1.0" : "no-deps@1.0.0",
+      ]);
     });
   });
 

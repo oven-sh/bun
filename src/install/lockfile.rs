@@ -614,9 +614,7 @@ pub(crate) fn resolve_node_linker(
 // Lockfile impl — load / clone / hoist / etc.
 // ────────────────────────────────────────────────────────────────────────────
 
-/// `<name>@<resolution>`, escaped for the terminal: how a diagnostic names the
-/// package that declared a dependency. `Lockfile::package_label` builds one for
-/// a package in the lockfile.
+/// `<name>@<resolution>`, escaped for the terminal: how a diagnostic names a package.
 pub(crate) struct PackageLabel<'a> {
     pub buf: &'a [u8],
     pub name: SemverString,

@@ -17,9 +17,7 @@ use super::PackageManager;
 use super::add_remove_with_filter::root_package_json_path;
 use super::options::LogLevel;
 
-/// ` (declared by <name>@<resolution>)` after a `verify_resolutions` error, so
-/// a failure below the root names the package that asked for the version.
-/// Prints nothing for a dependency of the root.
+/// ` (declared by <name>@<resolution>)`, or nothing for a dependency of the root.
 struct DeclaredBy<'a> {
     lockfile: &'a Lockfile,
     parent_id: PackageID,

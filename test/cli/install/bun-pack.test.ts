@@ -241,6 +241,36 @@ test.concurrent.skipIf(!isWindows)("in the root of a drive", async () => {
   expect(exitCode).toBe(0);
 });
 
+// `--bun` and `run.bun` make the scripts run `node` as bun, like `bun run --bun`.
+test.concurrent.skipIf(!Bun.which("node"))("--bun makes the scripts run node as bun", async () => {
+  const files = {
+    "package.json": JSON.stringify({
+      name: "pack-bun",
+      version: "1.2.3",
+      scripts: { prepack: `node -e "console.log('Bun is ' + typeof Bun)"` },
+    }),
+    "index.js": indexJs,
+  };
+  {
+    using dir = tempDir("pack-bun", files);
+    const { stdout, exitCode } = await runPack(dir, ["--dry-run"]);
+    expect(stdout).toContain("\nBun is undefined\n");
+    expect(exitCode).toBe(0);
+  }
+  {
+    using dir = tempDir("pack-bun", files);
+    const { stdout, exitCode } = await runPack(dir, ["--dry-run", "--bun"]);
+    expect(stdout).toContain("\nBun is object\n");
+    expect(exitCode).toBe(0);
+  }
+  {
+    using dir = tempDir("pack-bun", { ...files, "bunfig.toml": "[run]\nbun = true\n" });
+    const { stdout, exitCode } = await runPack(dir, ["--dry-run"]);
+    expect(stdout).toContain("\nBun is object\n");
+    expect(exitCode).toBe(0);
+  }
+});
+
 describe.concurrent("package.json names and versions", () => {
   test("rejects name and version containing parent directory components", async () => {
     using dir = tempDir("pack-traversal", {

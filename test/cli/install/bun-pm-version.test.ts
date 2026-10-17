@@ -1055,6 +1055,34 @@ describe.concurrent("bun pm version", () => {
       expect(code).toBe(0);
     });
 
+    // `--bun` makes the scripts run `node` as bun, like `bun run --bun`.
+    it.skipIf(!Bun.which("node"))("run node as bun with --bun", async () => {
+      const script = `node -e "require('fs').appendFileSync('seen.txt', process.env.npm_lifecycle_event + ': Bun is ' + typeof Bun + '\\n')"`;
+      using dir = tempDir(`version-${i++}`, {
+        "package.json": JSON.stringify({
+          name: "test",
+          version: "1.0.0",
+          scripts: { preversion: script, postversion: script },
+        }),
+      });
+
+      const plain = await runCommand([bunExe(), "pm", "version", "patch", "--no-git-tag-version"], String(dir));
+      expect(plain.code).toBe(0);
+      const withBun = await runCommand(
+        [bunExe(), "pm", "version", "patch", "--no-git-tag-version", "--bun"],
+        String(dir),
+      );
+      expect(withBun.code).toBe(0);
+
+      expect((await Bun.file(join(String(dir), "seen.txt")).text()).split("\n")).toEqual([
+        "preversion: Bun is undefined",
+        "postversion: Bun is undefined",
+        "preversion: Bun is object",
+        "postversion: Bun is object",
+        "",
+      ]);
+    });
+
     // The default case: git runs before the first script and between the scripts.
     it.each([
       ["default", ""],

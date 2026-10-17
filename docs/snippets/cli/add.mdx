@@ -100,6 +100,11 @@ bun add <package> <@version>
   Skip lifecycle scripts for all packages, including the project's <code>package.json</code> and trusted dependencies
 </ParamField>
 
+<ParamField path="--bun" type="boolean">
+  Run lifecycle scripts with bun as <code>node</code>, like <code>bun run --bun</code> and <code>run.bun</code> in{" "}
+  <code>bunfig.toml</code>. Alias: <code>-b</code>
+</ParamField>
+
 <ParamField path="--analyze" type="boolean">
   Recursively analyze &amp; install dependencies of files passed as arguments (using Bun's bundler). Alias:{" "}
   <code>-a</code>

@@ -625,3 +625,127 @@ describe("--no-macros", () => {
     expect(existsSync(path.join(String(dir), "MACRO_RAN"))).toBe(true);
   });
 });
+
+// With a registered plugin or the Node compile cache, `import` transpiles a module on the JS thread,
+// inside the module loader's fetch hook. A macro call there has to be replaced by its result, like
+// it is when the module is transpiled off the JS thread: the program's own queued work (the loader's
+// pending jobs, microtasks) must not run in the middle of that transpile, and no module of the
+// program may be transpiled as a module of the macro.
+describe("a macro call in a module that import transpiles on the JS thread", () => {
+  const macro = `export function tree(dir: string) {\n  return { dir };\n}\n`;
+  const asyncMacro = `export async function tree(dir: string) {\n  await 1;\n  return { dir };\n}\n`;
+  const a = `import { tree } from "./macro.ts" with { type: "macro" };\nexport const A = tree("a");\n`;
+  const b = `import { tree } from "./macro.ts" with { type: "macro" };\nexport const B = tree("b");\n`;
+  const files = {
+    "a.ts": a,
+    "b.ts": b,
+    // Never matches: it is only there so that a plugin is registered.
+    "plugin.ts": `Bun.plugin({\n  name: "never",\n  setup(build) {\n    build.onLoad({ filter: /\\.never$/ }, () => ({ contents: "", loader: "js" }));\n  },\n});\n`,
+    "enable-compile-cache.ts": `import { enableCompileCache } from "node:module";\nenableCompileCache(process.env.MACRO_TEST_COMPILE_CACHE);\n`,
+  };
+
+  const graphs: [name: string, files: Record<string, string>, expected: string][] = [
+    [
+      // #44936
+      "a module the entry imports after one of its importers",
+      {
+        "m.ts": `import "./a.ts";\n`,
+        "index.ts": `import "./m.ts";\nimport { A } from "./a.ts";\nconsole.log(JSON.stringify(A));\n`,
+      },
+      `{"dir":"a"}`,
+    ],
+    [
+      "a module that two siblings import",
+      {
+        "m1.ts": `export { A as A1 } from "./a.ts";\n`,
+        "m2.ts": `export { A as A2 } from "./a.ts";\n`,
+        "index.ts": `import { A1 } from "./m1.ts";\nimport { A2 } from "./m2.ts";\nconsole.log(JSON.stringify([A1, A2]));\n`,
+      },
+      `[{"dir":"a"},{"dir":"a"}]`,
+    ],
+    [
+      "two modules that call a macro, under two siblings",
+      {
+        "m1.ts": `export { A } from "./a.ts";\n`,
+        "m2.ts": `export { B } from "./b.ts";\n`,
+        "index.ts": `import { A } from "./m1.ts";\nimport { B } from "./m2.ts";\nconsole.log(JSON.stringify([A, B]));\n`,
+      },
+      `[{"dir":"a"},{"dir":"b"}]`,
+    ],
+  ];
+  const macros: [name: string, source: string][] = [
+    ["a macro", macro],
+    ["a macro that returns a promise", asyncMacro],
+  ];
+  // "off the JS thread" is the default and the control: it shows what each graph has to print.
+  const triggers: [name: string, args: string[], env: (cache: string) => Record<string, string>][] = [
+    ["off the JS thread", [], () => ({})],
+    ["NODE_COMPILE_CACHE", [], cache => ({ NODE_COMPILE_CACHE: cache })],
+    [
+      "module.enableCompileCache()",
+      ["--preload", "./enable-compile-cache.ts"],
+      cache => ({ MACRO_TEST_COMPILE_CACHE: cache }),
+    ],
+    ["a registered plugin", ["--preload", "./plugin.ts"], () => ({})],
+  ];
+
+  async function run(graph: Record<string, string>, args: string[], env: (cache: string) => Record<string, string>) {
+    using dir = tempDir("macro-on-js-thread", graph);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args, "index.ts"],
+      env: { ...bunEnv, ...env(path.join(String(dir), "compile-cache")) },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Debug builds also print "[macro] call <name>" to stdout.
+    return { lastLine: stdout.trim().split("\n").pop(), stderr, exitCode, signalCode: proc.signalCode };
+  }
+
+  describe.each(triggers)("%s", (_trigger, args, env) => {
+    describe.each(macros)("%s", (_macro, macroSource) => {
+      test.concurrent.each(graphs)("%s", async (_graph, graph, expected) => {
+        const result = await run({ ...files, "macro.ts": macroSource, ...graph }, args, env);
+        expect(result).toEqual({ lastLine: expected, stderr: "", exitCode: 0, signalCode: null });
+      });
+    });
+  });
+
+  // require() transpiles on the JS thread in every configuration. What the program queued before the
+  // call runs after require() returns, and a module that it imports then has its own macro call
+  // replaced.
+  test.concurrent.each(macros)(
+    "require() of a module that calls %s runs nothing the program queued",
+    async (_macro, macroSource) => {
+      const result = await run(
+        {
+          ...files,
+          "macro.ts": macroSource,
+          "index.ts": [
+            `const order: string[] = [];`,
+            `let b: Promise<typeof import("./b.ts")>;`,
+            `queueMicrotask(() => {`,
+            `  order.push("microtask");`,
+            `  b = import("./b.ts");`,
+            `});`,
+            `Promise.resolve().then(() => order.push("promise"));`,
+            `process.nextTick(() => order.push("tick"));`,
+            `const { A } = require("./a.ts");`,
+            `order.push("required");`,
+            `await new Promise(resolve => setImmediate(resolve));`,
+            `console.log(JSON.stringify({ first: order[0], ran: order.length, A, B: (await b!).B }));`,
+          ].join("\n"),
+        },
+        [],
+        () => ({}),
+      );
+      expect(result).toEqual({
+        lastLine: `{"first":"required","ran":4,"A":{"dir":"a"},"B":{"dir":"b"}}`,
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+  );
+});

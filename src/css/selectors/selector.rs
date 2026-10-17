@@ -989,6 +989,11 @@ pub(crate) mod serialize {
                 direction.to_css(dest)?;
                 return dest.write_str(b")");
             }
+            PseudoClass::State { state } => {
+                dest.write_str(b":state(")?;
+                state.to_css(dest)?;
+                return dest.write_str(b")");
+            }
             _ => {}
         }
 
@@ -1132,8 +1137,9 @@ pub(crate) mod serialize {
                 })?;
             }
 
-            PseudoClass::Lang { .. } => unreachable!(),
-            PseudoClass::Dir { .. } => unreachable!(),
+            PseudoClass::Lang { .. } | PseudoClass::Dir { .. } | PseudoClass::State { .. } => {
+                unreachable!()
+            }
             PseudoClass::Custom { name } => {
                 dest.write_char(b':')?;
                 return dest.serialize_identifier(name);
@@ -1266,6 +1272,15 @@ pub(crate) mod serialize {
             PseudoElement::PickerFunction { identifier } => {
                 dest.write_str(b"::picker(")?;
                 identifier.to_css(dest)?;
+                dest.write_char(b')')?;
+            }
+            PseudoElement::TargetText => dest.write_str(b"::target-text")?,
+            PseudoElement::SearchText => dest.write_str(b"::search-text")?,
+            PseudoElement::SpellingError => dest.write_str(b"::spelling-error")?,
+            PseudoElement::GrammarError => dest.write_str(b"::grammar-error")?,
+            PseudoElement::HighlightFunction { name } => {
+                dest.write_str(b"::highlight(")?;
+                name.to_css(dest)?;
                 dest.write_char(b')')?;
             }
             PseudoElement::Custom { name } => {

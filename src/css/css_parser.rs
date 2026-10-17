@@ -847,9 +847,10 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
 
 pub enum AtRulePrelude<T> {
     FontFace,
-    FontFeatureValues,
+    FontFeatureValues(Vec<css_properties::font::FontFamily>),
     FontPaletteValues(DashedIdent),
     CounterStyle(CustomIdent),
+    PositionTry(DashedIdent),
     Import {
         url: &'static [u8], // TODO: lifetime — arena-owned slice
         media: MediaList,
@@ -1535,8 +1536,13 @@ mod rule_parsers {
                     b"media" => break 'brk AtRulePrelude::Media(parse_media_list(input, this.options)?),
                     b"supports" => break 'brk AtRulePrelude::Supports(SupportsCondition::parse(input)?),
                     b"font-face" => break 'brk AtRulePrelude::FontFace,
+                    b"font-feature-values" => {
+                        let names = input.parse_comma_separated(css_properties::font::FontFamily::parse)?;
+                        break 'brk AtRulePrelude::FontFeatureValues(names);
+                    },
                     b"font-palette-values" => break 'brk AtRulePrelude::FontPaletteValues(DashedIdentFns::parse(input)?),
                     b"counter-style" => break 'brk AtRulePrelude::CounterStyle(CustomIdentFns::parse(input)?),
+                    b"position-try" => break 'brk AtRulePrelude::PositionTry(DashedIdentFns::parse(input)?),
                     b"viewport" | b"-ms-viewport" => {
                         let prefix = VendorPrefix::strip_from(name).0;
                         break 'brk AtRulePrelude::Viewport(prefix);
@@ -1695,6 +1701,16 @@ mod rule_parsers {
                 AtRulePrelude::CounterStyle(name) => {
                     this.rules.v.push(CssRule::CounterStyle(
                         css_rules::counter_style::CounterStyleRule {
+                            name,
+                            declarations: DeclarationBlock::parse(input, this.options)?,
+                            loc,
+                        },
+                    ));
+                    Ok(())
+                }
+                AtRulePrelude::PositionTry(name) => {
+                    this.rules.v.push(CssRule::PositionTry(
+                        css_rules::position_try::PositionTryRule {
                             name,
                             declarations: DeclarationBlock::parse(input, this.options)?,
                             loc,
@@ -1873,7 +1889,16 @@ mod rule_parsers {
                         }));
                     Ok(())
                 }
-                AtRulePrelude::FontFeatureValues => unreachable!(),
+                AtRulePrelude::FontFeatureValues(family_names) => {
+                    let rule = css_rules::font_feature_values::FontFeatureValuesRule::parse(
+                        family_names,
+                        input,
+                        loc,
+                        this.options,
+                    )?;
+                    this.rules.v.push(CssRule::FontFeatureValues(rule));
+                    Ok(())
+                }
                 AtRulePrelude::Unknown { name, tokens } => {
                     this.rules.v.push(CssRule::Unknown(UnknownAtRule {
                         name,

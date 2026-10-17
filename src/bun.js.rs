@@ -25,6 +25,15 @@ pub(crate) fn apply_standalone_runtime_flags(
     b.resolver.opts.load_package_json = !graph
         .flags
         .contains(GraphFlags::DISABLE_AUTOLOAD_PACKAGE_JSON);
+
+    // A compiled executable boots as production unless NODE_ENV/BUN_ENV says otherwise.
+    let env = b.env_mut();
+    bun_core::handle_oom(env.load_process());
+    let node_env = env.get_node_env().unwrap_or(b"");
+    if node_env != b"development" && node_env != b"test" {
+        b.options.set_production(true);
+        b.resolver.opts.set_production(true);
+    }
 }
 
 #[cold]

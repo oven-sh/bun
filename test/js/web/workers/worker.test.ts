@@ -331,6 +331,60 @@ describe("web worker", () => {
     });
   });
 
+  // https://github.com/oven-sh/bun/issues/24256
+  // A global "message" listener keeps a Worker alive to receive messages from
+  // its parent, but on the main thread there is no parent, so it must not keep
+  // the process running.
+  test.each([
+    ["globalThis.onmessage = () => {};", "onmessage setter"],
+    [`globalThis.addEventListener("message", () => {});`, "addEventListener"],
+  ])("main thread exits with a global message listener (%s)", async (snippet, _label) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `console.log("ready");\n${snippet}`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode, signalCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+      proc.exited.then(() => proc.signalCode),
+    ]);
+
+    expect({ stdout: stdout.trim(), exitCode, signalCode }).toEqual({
+      stdout: "ready",
+      exitCode: 0,
+      signalCode: null,
+    });
+    expect(stderr).not.toContain("error");
+  });
+
+  // The other half of the same rule: a worker does have a parent, so the
+  // listener is the only thing keeping it alive between messages. With nothing
+  // else on its loop it must still be there once the parent gets around to
+  // posting, rather than closing as soon as its script finishes.
+  test("worker stays alive for a global message listener", async () => {
+    const w = new Worker(
+      URL.createObjectURL(new Blob([`addEventListener("message", e => postMessage("pong:" + e.data)); postMessage("ready");`])),
+    );
+    const ready = Promise.withResolvers<void>();
+    const pong = Promise.withResolvers<string>();
+    const closed = Promise.withResolvers<string>();
+    w.onmessage = e => (e.data === "ready" ? ready.resolve() : pong.resolve(e.data));
+    w.addEventListener("close", () => closed.resolve("closed early"));
+
+    await ready.promise;
+    // An unref'd worker has an empty loop the moment its script returns, so it
+    // exits while the parent is off doing this read.
+    await Bun.file(import.meta.path).text();
+    w.postMessage("one");
+
+    expect(await Promise.race([pong.promise, closed.promise])).toBe("pong:one");
+    w.terminate();
+  });
+
   test("worker with process.exit", done => {
     const worker = new Worker(new URL("worker-fixture-process-exit.js", import.meta.url), {
       smol: true,

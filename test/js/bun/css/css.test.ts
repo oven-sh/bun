@@ -2,10 +2,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { cssInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
+  type Browsers,
   cssTest,
   cssTestTodo,
   indoc,
@@ -8298,6 +8300,783 @@ describe("css tests", () => {
       const input = await Bun.file(join(__dirname, "unicode.css")).text();
       const output = await Bun.file(join(__dirname, "unicode_expected.css")).text();
       cssTest(input, output);
+    });
+  });
+
+  // Declarations written after a nested rule, or directly in an at-rule that is
+  // nested in a style rule, form a nested declarations rule. It keeps its place
+  // among the nested rules, and it matches what the enclosing style rule matches:
+  // https://drafts.csswg.org/css-nesting-1/#nested-declarations-rule
+  describe("nested declarations", () => {
+    const { minifyTest, prefixTest, _test } = cssInternals;
+    // Chrome 87 has no CSS nesting, so nested rules are compiled away.
+    const chrome87 = { chrome: 87 << 16 };
+    // No logical inset properties and no light-dark(), but `:dir()`.
+    const firefox60 = { firefox: 60 << 16 };
+    // No lab() colors.
+    const chrome95 = { chrome: 95 << 16 };
+    // CSS nesting, but no light-dark().
+    const chrome120 = { chrome: 120 << 16 };
+    // `:fullscreen` needs the `-webkit-` form too, so the rule prints once per prefix.
+    const safari8 = { safari: 8 << 16 };
+    // `:lang()` with a list, but no `:dir()`.
+    const safari13 = { safari: 13 << 16 };
+    // What `bun build --target=browser` compiles for: `BROWSER_DEFAULT` in src/css/targets.rs.
+    const defaults = { chrome: 80 << 16, edge: 80 << 16, firefox: 78 << 16, safari: 14 << 16, opera: 67 << 16 };
+    // For these targets a `:dir()` rule prints with a `:lang()` list, once for each of three prefixes.
+    const rtl =
+      "(:lang(ae),:lang(ar),:lang(arc),:lang(bcc),:lang(bqi),:lang(ckb),:lang(dv),:lang(fa),:lang(glk),:lang(he)," +
+      ":lang(ku),:lang(mzn),:lang(nqo),:lang(pnb),:lang(ps),:lang(sd),:lang(ug),:lang(ur),:lang(yi))";
+    const dirRules = (selector: string, pseudoElement: string, ltr: string, rtlBlock: string) =>
+      [":-webkit-any", ":-moz-any", ":is"]
+        .map(any => `${selector}:not(${any}${rtl})${pseudoElement}{${ltr}}`)
+        .join("") +
+      [":-webkit-any", ":-moz-any", ":is"].map(any => `${selector}${any}${rtl}${pseudoElement}{${rtlBlock}}`).join("");
+
+    // `"".repeat()` is slow in debug builds of JavaScriptCore.
+    const repeat = (text: string, count: number) => Buffer.alloc(text.length * count, text).toString();
+
+    // Nesting is printed as written.
+    const kept = (source: string) => minifyTest(source, "");
+    const lowered = (source: string, targets: Browsers = chrome87) => minifyTest(source, "", targets);
+
+    // Rows are [source, output with nesting kept, output with nesting compiled away].
+    type Row = [source: string, kept: string, lowered: string];
+    const rows = (table: Row[]) =>
+      test.each(table)("%s", (source, keptOutput, loweredOutput) => {
+        expect(kept(source)).toBe(keptOutput);
+        expect(lowered(source)).toBe(loweredOutput);
+        // The output is valid input again.
+        expect(() => kept(keptOutput)).not.toThrow();
+        expect(() => kept(loweredOutput)).not.toThrow();
+      });
+
+    describe("keep their place among the nested rules", () => {
+      rows([
+        [
+          "a { @media (min-width: 1px) { color: blue } color: green }",
+          "a{@media (width>=1px){color:#00f}color:green}",
+          "@media (min-width:1px){a{color:#00f}}a{color:green}",
+        ],
+        ["a { & { color: blue } color: green }", "a{&{color:#00f}color:green}", "a{color:#00f}a{color:green}"],
+        [
+          "a { &:where(b) { color: blue } color: green }",
+          "a{&:where(b){color:#00f}color:green}",
+          "a:where(b){color:#00f}a{color:green}",
+        ],
+        [
+          "a { @supports (color: red) { color: blue } color: green }",
+          "a{@supports (color: red){color:#00f}color:green}",
+          "@supports (color: red){a{color:#00f}}a{color:green}",
+        ],
+        // The example in the specification.
+        [
+          "article { color: green; & { color: blue; } color: red; }",
+          "article{color:green;&{color:#00f}color:red}",
+          "article{color:green}article{color:#00f}article{color:red}",
+        ],
+        // Consecutive declarations are one rule. A nested rule between two runs splits them.
+        [
+          "a { color: red; &:hover { color: blue } color: green; color: yellow; span { x: y } margin: 0 }",
+          "a{color:red;&:hover{color:#00f}color:#ff0;& span{x:y}margin:0}",
+          "a{color:red}a:hover{color:#00f}a{color:#ff0}a span{x:y}a{margin:0}",
+        ],
+        [
+          ".a { color: red; .b { color: blue } color: green; background: white; .c { color: yellow } color: purple }",
+          ".a{color:red;& .b{color:#00f}color:green;background:#fff;& .c{color:#ff0}color:purple}",
+          ".a{color:red}.a .b{color:#00f}.a{color:green;background:#fff}.a .c{color:#ff0}.a{color:purple}",
+        ],
+        // `div:hover {` is first tried as a declaration named `div`. That attempt
+        // leaves no empty rule behind.
+        [
+          ".a { .b { color: blue } div:hover { color: red } color: green }",
+          ".a{& .b{color:#00f}& div:hover{color:red}color:green}",
+          ".a .b{color:#00f}.a div:hover{color:red}.a{color:green}",
+        ],
+        // Two at-rules with the same query are not merged across the declarations.
+        [
+          ".a { @media screen { color: red } color: blue; @media screen { color: green } }",
+          ".a{@media screen{color:red}color:#00f;@media screen{color:green}}",
+          "@media screen{.a{color:red}}.a{color:#00f}@media screen{.a{color:green}}",
+        ],
+        // Nor are two equal rules.
+        [
+          ".a { &:hover { color: red } color: green; &:hover { color: red } }",
+          ".a{&:hover{color:red}color:green;&:hover{color:red}}",
+          ".a:hover{color:red}.a{color:green}.a:hover{color:red}",
+        ],
+        // At each nesting level.
+        [
+          ".a { .b { .c { color: blue } color: green } color: red }",
+          ".a{& .b{& .c{color:#00f}color:green}color:red}",
+          ".a .b .c{color:#00f}.a .b{color:green}.a{color:red}",
+        ],
+        // A run is minified like a declaration block.
+        [
+          ".a { .b { color: blue } margin-left: 1px; margin-right: 2px; margin-top: 3px; margin-bottom: 4px }",
+          ".a{& .b{color:#00f}margin:3px 2px 4px 1px}",
+          ".a .b{color:#00f}.a{margin:3px 2px 4px 1px}",
+        ],
+        [
+          ".a { .b { color: blue } color: green !important; background: red }",
+          ".a{& .b{color:#00f}background:red;color:green!important}",
+          ".a .b{color:#00f}.a{background:red;color:green!important}",
+        ],
+        // Each run keeps its declarations: they are not deduplicated against another run.
+        [
+          ".card { .title { color: red } --pad: 1rem; .body { color: blue } --gap: 2rem }",
+          ".card{& .title{color:red}--pad:1rem;& .body{color:#00f}--gap:2rem}",
+          ".card .title{color:red}.card{--pad:1rem}.card .body{color:#00f}.card{--gap:2rem}",
+        ],
+        [
+          ".a { color: red !important; .b { color: blue } color: green }",
+          ".a{color:red!important;& .b{color:#00f}color:green}",
+          ".a{color:red!important}.a .b{color:#00f}.a{color:green}",
+        ],
+        // The next rule with the same selector is not merged across the nested rules.
+        [
+          ".a { .b { color: blue } color: green } .a { color: red }",
+          ".a{& .b{color:#00f}color:green}.a{color:red}",
+          ".a .b{color:#00f}.a{color:green}.a{color:red}",
+        ],
+        // Tailwind 4 writes a color utility as a declaration for old browsers and
+        // its override in `@supports`. Each override stays after its declaration.
+        [
+          ".btn { background-color: #f008; @supports (color: color-mix(in lab, red, red)) { background-color: color-mix(in oklab, var(--red) 50%, transparent) }" +
+            " border-color: #00f8; @supports (color: color-mix(in lab, red, red)) { border-color: color-mix(in oklab, var(--blue) 50%, transparent) } }",
+          ".btn{background-color:#f008;@supports (color: color-mix(in lab, red, red)){background-color:color-mix(in oklab,var(--red)50%,transparent)}" +
+            "border-color:#00f8;@supports (color: color-mix(in lab, red, red)){border-color:color-mix(in oklab,var(--blue)50%,transparent)}}",
+          ".btn{background-color:#f008}@supports (color: color-mix(in lab, red, red)){.btn{background-color:color-mix(in oklab,var(--red)50%,transparent)}}" +
+            ".btn{border-color:#00f8}@supports (color: color-mix(in lab, red, red)){.btn{border-color:color-mix(in oklab,var(--blue)50%,transparent)}}",
+        ],
+        // The inputs of https://github.com/oven-sh/bun/issues/45258 that depend on the place of a declaration.
+        [
+          ".a { --x: 1; @supports (color: red) { --x: 2; } --y: 1; @supports (color: red) { --y: 2; } }",
+          ".a{--x:1;@supports (color: red){--x:2}--y:1;@supports (color: red){--y:2}}",
+          ".a{--x:1}@supports (color: red){.a{--x:2}}.a{--y:1}@supports (color: red){.a{--y:2}}",
+        ],
+        [
+          ":root { --tint: var(--accent); @supports (color: color-mix(in lab, red, red)) { & { --tint: color-mix(in srgb, var(--accent) 14%, var(--base)); } }" +
+            " --line: var(--text); @supports (color: color-mix(in lab, red, red)) { & { --line: color-mix(in srgb, var(--text) 12%, transparent); } } }",
+          ":root{--tint:var(--accent);@supports (color: color-mix(in lab, red, red)){&{--tint:color-mix(in srgb,var(--accent)14%,var(--base))}}" +
+            "--line:var(--text);@supports (color: color-mix(in lab, red, red)){&{--line:color-mix(in srgb,var(--text)12%,transparent)}}}",
+          ":root{--tint:var(--accent)}@supports (color: color-mix(in lab, red, red)){:root{--tint:color-mix(in srgb,var(--accent)14%,var(--base))}}" +
+            ":root{--line:var(--text)}@supports (color: color-mix(in lab, red, red)){:root{--line:color-mix(in srgb,var(--text)12%,transparent)}}",
+        ],
+        // Both `&` rules stay only because the declaration between them ends the check
+        // for duplicate rules. That check does not compare the names of custom properties.
+        [
+          ":root { & { --a: 2 } --c: 1; & { --b: 2 } }",
+          ":root{&{--a:2}--c:1;&{--b:2}}",
+          ":root{--a:2}:root{--c:1}:root{--b:2}",
+        ],
+        // The two `.a` rules are merged, and the merge is settled before the declaration.
+        [
+          ".p { .a { color: red } .a { color: blue } color: green }",
+          ".p{& .a{color:#00f}color:green}",
+          ".p .a{color:#00f}.p{color:green}",
+        ],
+      ]);
+    });
+
+    describe("match what the enclosing rule matches", () => {
+      rows([
+        // The selector list is printed as written. `:is()` would give each selector
+        // the highest specificity of the list, and it cannot match a pseudo-element.
+        [
+          ".a, .d { .b { color: blue } color: green }",
+          ".a,.d{& .b{color:#00f}color:green}",
+          ":is(.a,.d) .b{color:#00f}.a,.d{color:green}",
+        ],
+        [
+          ".a::before { &:hover { color: blue } color: green }",
+          ".a:before{&:hover{color:#00f}color:green}",
+          ".a:before:hover{color:#00f}.a:before{color:green}",
+        ],
+        [
+          ".a, .d::before { &:hover { color: blue } color: green }",
+          ".a,.d:before{&:hover{color:#00f}color:green}",
+          ":is(.a,.d:before):hover{color:#00f}.a,.d:before{color:green}",
+        ],
+        [
+          ".a, .b::before { @media screen { color: red } }",
+          ".a,.b:before{@media screen{color:red}}",
+          "@media screen{.a,.b:before{color:red}}",
+        ],
+        // `.a` keeps its own weight: with `:is(.a,#zzz)` it would win against a later `.x.a` rule.
+        [
+          ".a, #zzz { @media screen { color: green } }",
+          ".a,#zzz{@media screen{color:green}}",
+          "@media screen{.a,#zzz{color:green}}",
+        ],
+        // Chrome 87 has no `:where()`, so the rule is split per selector. Each
+        // part prints the declarations under its own selector.
+        [
+          ".a:where(x), .b:where(y) { .c { color: blue } color: red }",
+          ".a:where(x),.b:where(y){& .c{color:#00f}color:red}",
+          ".a:where(x) .c{color:#00f}.a:where(x){color:red}.b:where(y) .c{color:#00f}.b:where(y){color:red}",
+        ],
+      ]);
+    });
+
+    describe("in the body of each kind of nested rule", () => {
+      test.each([
+        ["@media screen", "@media screen"],
+        ["@supports (display: grid)", "@supports (display: grid)"],
+        ["@container (min-width: 100px)", "@container (width>=100px)"],
+        ["@layer x", "@layer x"],
+        ["@starting-style", "@starting-style"],
+        ["@-moz-document url-prefix()", "@-moz-document url-prefix()"],
+      ])("%s", (prelude, printed) => {
+        const source = `.a, .b::before { ${prelude} { color: red; .c { color: blue } color: green } }`;
+        const keptOutput = `.a,.b:before{${printed}{color:red;& .c{color:#00f}color:green}}`;
+        const loweredOutput = `${printed}{.a,.b:before{color:red}:is(.a,.b:before) .c{color:#00f}.a,.b:before{color:green}}`;
+        expect(kept(source)).toBe(keptOutput);
+        expect(lowered(source)).toBe(loweredOutput);
+        expect(kept(keptOutput)).toBe(keptOutput);
+        expect(() => kept(loweredOutput)).not.toThrow();
+      });
+
+      rows([
+        // `@scope` hides the enclosing rule from its contents, which are relative to the
+        // scope root. Compiled away, the declarations print on what `&` prints there.
+        // That is `:scope` today and should be `:where(:scope)`: https://github.com/oven-sh/bun/pull/43165
+        [
+          ".a { @scope (.x) { color: red; .c { color: blue } color: green } }",
+          ".a{@scope(.x){color:red;& .c{color:#00f}color:green}}",
+          "@scope(.x){:scope{color:red}:scope .c{color:#00f}:scope{color:green}}",
+        ],
+        // The rule after the `@scope` block gets no `;` from the declarations that end the block.
+        [
+          ".a { @scope (.x) { .c { color: blue } color: green } .d { color: red } }",
+          ".a{@scope(.x){& .c{color:#00f}color:green}& .d{color:red}}",
+          "@scope(.x){:scope .c{color:#00f}:scope{color:green}}.a .d{color:red}",
+        ],
+        // The body of the obsolete `@nest` rule stays one block, as before: `color: red`
+        // prints before `.b`. The minifier does not touch that block.
+        [
+          ".a { @nest .p & { .b { color: blue } color: red } color: green }",
+          ".a{@nest .p &{color:red;& .b{color:#00f}}color:green}",
+          ".p .a{color:red}.p .a .b{color:#00f}.a{color:green}",
+        ],
+      ]);
+
+      test("a logical property in the body of `@nest` is not lowered", () => {
+        expect(lowered(".p { @nest &.x, &.z::before { .y { color: red } inset-inline-end: 7px } }", firefox60)).toBe(
+          ".p.x,.p.z:before{inset-inline-end:7px}:is(.p.x,.p.z:before) .y{color:red}",
+        );
+      });
+    });
+
+    describe("after a nested rule that is removed", () => {
+      rows([
+        [".a { .b {} color: green }", ".a{color:green}", ".a{color:green}"],
+        [".a { @media screen {} color: green }", ".a{color:green}", ".a{color:green}"],
+        [".a { color: red; .b {} color: green }", ".a{color:red;color:green}", ".a{color:red}.a{color:green}"],
+        // An empty rule between two runs.
+        [
+          ".a { .b { color: blue } color: red; .c {} color: green }",
+          ".a{& .b{color:#00f}color:red;color:green}",
+          ".a .b{color:#00f}.a{color:red}.a{color:green}",
+        ],
+      ]);
+    });
+
+    describe("minified with nesting kept: the `;` before what follows", () => {
+      // A minified `@media all` prints its contents with no block of its own.
+      // Declarations at its end are then not the last thing in the enclosing block.
+      rows([
+        [
+          ".a { @media all { .b { color: green } color: red } color: blue }",
+          ".a{& .b{color:green}color:red;color:#00f}",
+          ".a .b{color:green}.a{color:red}.a{color:#00f}",
+        ],
+        [
+          ".a { @media all { .b { color: green } color: red } .c { color: blue } }",
+          ".a{& .b{color:green}color:red;& .c{color:#00f}}",
+          ".a .b{color:green}.a{color:red}.a .c{color:#00f}",
+        ],
+        [
+          ".a { @media all { .b { color: green } color: red } }",
+          ".a{& .b{color:green}color:red}",
+          ".a .b{color:green}.a{color:red}",
+        ],
+        [
+          ".a { .b { color: green } color: red; @media all { color: blue } }",
+          ".a{& .b{color:green}color:red;color:#00f}",
+          ".a .b{color:green}.a{color:red}.a{color:#00f}",
+        ],
+      ]);
+    });
+
+    describe("fallback rules for the declarations", () => {
+      test.each<[string, Browsers, string]>([
+        // The `prefers-color-scheme` and `@supports` rules follow the declarations
+        // and print the selector list of the enclosing rule, with no `:is()`.
+        [
+          ".a, .d::before { .b { color: blue } color-scheme: light dark; .c { color: red } }",
+          firefox60,
+          ":is(.a,.d:before) .b{color:#00f}" +
+            ".a,.d:before{--buncss-light:initial;--buncss-dark: ;color-scheme:light dark}" +
+            "@media (prefers-color-scheme:dark){.a,.d:before{--buncss-light: ;--buncss-dark:initial}}" +
+            ":is(.a,.d:before) .c{color:red}",
+        ],
+        [
+          ".a, .d::before { .b { color: blue } color-scheme: light dark; .c { color: red } }",
+          chrome120,
+          ".a,.d:before{& .b{color:#00f}--buncss-light:initial;--buncss-dark: ;color-scheme:light dark;" +
+            "@media (prefers-color-scheme:dark){--buncss-light: ;--buncss-dark:initial}& .c{color:red}}",
+        ],
+        [
+          ".a::before, .b { .c { color: blue } color: var(--x, lab(50% 20 30)); .d { color: red } }",
+          chrome95,
+          ":is(.a:before,.b) .c{color:#00f}" +
+            ".a:before,.b{color:var(--x,#a16945)}" +
+            "@supports (color:lab(0% 0 0)){.a:before,.b{color:var(--x,lab(50% 20 30))}}" +
+            ":is(.a:before,.b) .d{color:red}",
+        ],
+        [
+          ".a::before, .b { @media screen { color: var(--x, lab(50% 20 30)) } }",
+          chrome95,
+          "@media screen{.a:before,.b{color:var(--x,#a16945)}" +
+            "@supports (color:lab(0% 0 0)){.a:before,.b{color:var(--x,lab(50% 20 30))}}}",
+        ],
+        // The `:dir()` rules of logical properties are built on the selectors of the
+        // enclosing rule, where `:dir()` goes before a pseudo-element. They print with
+        // the fallback rules of that rule, before its nested rules: see "known gaps".
+        [
+          ".a, .d::before { .b { color: blue } inset-inline-end: 20px }",
+          firefox60,
+          ".a:dir(ltr),.d:dir(ltr):before{right:20px}.a:dir(rtl),.d:dir(rtl):before{left:20px}:is(.a,.d:before) .b{color:#00f}",
+        ],
+        [
+          ".a { color: red; inset-inline-end: 1px; .b { color: blue } color: green; inset-inline-start: 2px }",
+          firefox60,
+          ".a{color:red}.a:dir(ltr){left:2px;right:1px}.a:dir(rtl){left:1px;right:2px}.a .b{color:#00f}.a{color:green}",
+        ],
+        // In a nested at-rule they print before its nested rules too.
+        [
+          ".a { @media (min-width: 100px) { .b { color: blue } inset-inline-end: 20px; .c { color: red } } }",
+          firefox60,
+          "@media (min-width:100px){.a:dir(ltr){right:20px}.a:dir(rtl){left:20px}.a .b{color:#00f}.a .c{color:red}}",
+        ],
+        // There they come after the declarations that the at-rule starts with, and after their fallback rules.
+        [
+          ".a { @media screen { color: var(--x, lab(50% 20 30)); .b { color: blue } inset-inline-end: 20px } }",
+          firefox60,
+          "@media screen{.a{color:var(--x,#a16945)}@supports (color:lab(0% 0 0)){.a{color:var(--x,lab(50% 20 30))}}" +
+            ".a:dir(ltr){right:20px}.a:dir(rtl){left:20px}.a .b{color:#00f}}",
+        ],
+        // So an earlier rule with one more pseudo-class still wins, as in the source.
+        [
+          ".a { @media screen { &:hover { right: 6px } inset-inline-end: 3px } }",
+          firefox60,
+          "@media screen{.a:dir(ltr){right:3px}.a:dir(rtl){left:3px}.a:hover{right:6px}}",
+        ],
+        // Two at-rules with the same query are merged. The `:dir()` rules of the second one stay after the first one.
+        [
+          ".a { @media screen { .b { color: blue } inset-inline-end: 1px } @media screen { .c { color: red } inset-inline-start: 2px } }",
+          firefox60,
+          "@media screen{.a:dir(ltr){right:1px}.a:dir(rtl){left:1px}.a .b{color:#00f}" +
+            ".a:dir(ltr){left:2px}.a:dir(rtl){right:2px}.a .c{color:red}}",
+        ],
+        // A rule that a later one overrides is removed.
+        [
+          ".a { @media screen { inset-inline-end: 1px } @media screen { inset-inline-end: 2px } }",
+          firefox60,
+          "@media screen{.a:dir(ltr){right:2px}.a:dir(rtl){left:2px}}",
+        ],
+        // For a target with no `:dir()` they are lowered to `:lang()`.
+        [
+          ".a { @media (min-width: 100px) { .b { color: blue } inset-inline-end: 20px; .c { color: red } } }",
+          safari13,
+          "@media (min-width:100px){" +
+            ".a:not(:lang(ae,ar,arc,bcc,bqi,ckb,dv,fa,glk,he,ku,mzn,nqo,pnb,ps,sd,ug,ur,yi)){right:20px}" +
+            ".a:lang(ae,ar,arc,bcc,bqi,ckb,dv,fa,glk,he,ku,mzn,nqo,pnb,ps,sd,ug,ur,yi){left:20px}" +
+            ".a .b{color:#00f}.a .c{color:red}}",
+        ],
+        // An authored `@supports` rule with the condition of the fallback rule before it is kept.
+        [
+          ".a { .b { color: blue } color: var(--x, lab(50% 20 30)); @supports (color: lab(0% 0 0)) { color: green } }",
+          chrome95,
+          ".a .b{color:#00f}.a{color:var(--x,#a16945)}@supports (color:lab(0% 0 0)){.a{color:var(--x,lab(50% 20 30))}}" +
+            "@supports (color: lab(0% 0 0)){.a{color:green}}",
+        ],
+        // None of them lands on the rule that follows.
+        [
+          ".a { .b { color: blue } inset-inline-end: 20px; .c { color: red } } .z { color: red }",
+          firefox60,
+          ".a:dir(ltr){right:20px}.a:dir(rtl){left:20px}.a .b{color:#00f}.a .c{color:red}.z{color:red}",
+        ],
+        [
+          ".a { .b { color: blue } color: var(--x, lab(50% 20 30)) } .z { color: red }",
+          chrome95,
+          ".a .b{color:#00f}.a{color:var(--x,#a16945)}@supports (color:lab(0% 0 0)){.a{color:var(--x,lab(50% 20 30))}}.z{color:red}",
+        ],
+      ])("%s", (source, targets, output) => {
+        expect(lowered(source, targets)).toBe(output);
+        expect(() => kept(output)).not.toThrow();
+      });
+
+      // Two at-rules with the same query are merged and minified again. The declarations
+      // stage their `prefers-color-scheme` rule a second time, and it prints once. The second
+      // pass repeats the two variables of the block, as it does in a top-level `@media`.
+      test("a fallback rule that is staged twice", () => {
+        expect(
+          lowered(".a { @media screen { color-scheme: light dark } @media screen { .b { color: red } } }", firefox60),
+        ).toBe(
+          "@media screen{.a{--buncss-light:initial;--buncss-dark: ;--buncss-light:initial;--buncss-dark: ;color-scheme:light dark}" +
+            "@media (prefers-color-scheme:dark){.a{--buncss-light: ;--buncss-dark:initial}}.a .b{color:red}}",
+        );
+      });
+
+      // Chrome 87 has no `:is()` and no `:where()`, so each of these rules is split per
+      // selector. Each part prints its block, then the fallback rules of that block, then
+      // its nested rules and the declarations after them.
+      const lab = (selector: string, color: string) =>
+        `@supports (color:lab(0% 0 0)){${selector}{color:var(--x,${color})}}`;
+      test.each<[string, string[], (selector: string) => string]>([
+        [
+          ".a:where(x), .b:where(y) { color: var(--x, lab(55% 20 30)); .c { margin: 0 } color: var(--x, lab(40% 20 30)) }",
+          [".a:where(x)", ".b:where(y)"],
+          s =>
+            `${s}{color:var(--x,#af7650)}${lab(s, "lab(55% 20 30)")}${s} .c{margin:0}` +
+            `${s}{color:var(--x,#85512e)}${lab(s, "lab(40% 20 30)")}`,
+        ],
+        [
+          ".p { .b, .c { color: var(--x, lab(50% 20 30)); @media screen { color: red } } }",
+          [".p .b", ".p .c"],
+          s => `${s}{color:var(--x,#a16945)}${lab(s, "lab(50% 20 30)")}@media screen{${s}{color:red}}`,
+        ],
+        [
+          ".p { .b, .c { color: var(--x, lab(50% 20 30)); & > i { margin: 0 } color: green } }",
+          [".p .b", ".p .c"],
+          s => `${s}{color:var(--x,#a16945)}${lab(s, "lab(50% 20 30)")}${s}>i{margin:0}${s}{color:green}`,
+        ],
+      ])("%s", (source, selectors, part) => {
+        // Before the parts comes an `@supports` block with no selector: https://github.com/oven-sh/bun/pull/43240
+        expect(lowered(source)).toEndWith(selectors.map(part).join(""));
+      });
+    });
+
+    // Each row pins output that does not compute like its source, so that a fix shows up
+    // here. The `:dir()` rule that stands in for a logical property has one more
+    // pseudo-class than the declaration: it wins or loses by that weight, whatever its place.
+    describe("known gaps", () => {
+      test.each<[string, string, Browsers, string]>([
+        [
+          "the `:dir()` rules of a declaration after a nested rule print before that rule: 1px wins, not 2px",
+          ".a { & { inset-inline-end: 1px } inset-inline-end: 2px }",
+          firefox60,
+          ".a:dir(ltr){right:2px}.a:dir(rtl){left:2px}.a:dir(ltr){right:1px}.a:dir(rtl){left:1px}",
+        ],
+        [
+          "the same in a nested at-rule: 1px wins, not 2px",
+          ".a { @media screen { & { inset-inline-end: 1px } inset-inline-end: 2px } }",
+          firefox60,
+          "@media screen{.a:dir(ltr){right:2px}.a:dir(rtl){left:2px}.a:dir(ltr){right:1px}.a:dir(rtl){left:1px}}",
+        ],
+        [
+          "they lose `!important`, and the declaration after the nested rule is the later one: 2px wins, not 1px",
+          ".a { inset-inline-end: 1px !important; & { color: red } inset-inline-end: 2px }",
+          firefox60,
+          ".a:dir(ltr){right:2px}.a:dir(rtl){left:2px}.a{color:red}",
+        ],
+        [
+          "the same in a nested at-rule: 2px wins, not 1px",
+          ".a { @media screen { inset-inline-end: 1px !important; & { color: red } inset-inline-end: 2px } }",
+          firefox60,
+          "@media screen{.a:dir(ltr){right:1px}.a:dir(rtl){left:1px}.a:dir(ltr){right:2px}.a:dir(rtl){left:2px}.a{color:red}}",
+        ],
+        [
+          "in a nested at-rule they are built on `&`: `:is()` for a list, which drops `.d::before`",
+          ".a, .d::before { @media screen { inset-inline-end: 20px } }",
+          firefox60,
+          "@media screen{:is(.a,.d:before):dir(ltr){right:20px}:is(.a,.d:before):dir(rtl){left:20px}}",
+        ],
+        [
+          "a list that is split per selector loses the weight of its `&`: the last rule wins, not red",
+          ".a { .k, & { & { color: red } } color: rgb(214, 0, 0) }",
+          chrome87,
+          ".a .k{color:red}.a{color:red}.a{color:#d60000}",
+        ],
+      ])("%s", (_gap, source, targets, output) => {
+        expect(lowered(source, targets)).toBe(output);
+      });
+    });
+
+    describe("in each vendor prefix pass of the enclosing rule", () => {
+      // In each pass the declarations print after the nested rule. The order of the passes is not pinned.
+      test(":fullscreen { div { color: red } color: green }", () => {
+        const output = lowered(":fullscreen { div { color: red } color: green }", safari8);
+        for (const pass of [":-webkit-full-screen", ":fullscreen"]) {
+          const nested = output.indexOf(`${pass} div{color:red}`);
+          expect(nested).toBeGreaterThan(-1);
+          expect(output.indexOf(`${pass}{color:green}`)).toBeGreaterThan(nested);
+        }
+      });
+
+      // A nested rule with prefixes of its own resets the pass of the enclosing
+      // rule. The declarations after it still print once in each pass.
+      test(":fullscreen { :fullscreen { color: red } color: green }", () => {
+        const output = lowered(":fullscreen { :fullscreen { color: red } color: green }", safari8);
+        const green = output.split("}").filter(rule => rule.endsWith("{color:green"));
+        expect(green.sort()).toEqual([":-webkit-full-screen{color:green", ":fullscreen{color:green"]);
+      });
+    });
+
+    // `bun build --target=browser` has no `:dir()`, no `:is()` and no `lab()`.
+    describe("at the default browser targets", () => {
+      const p3 = "color(display-p3 .598686 .422118 .293048)";
+      const supports = (selector: string) =>
+        `@supports (color:color(display-p3 0 0 0)){${selector}{color:var(--x,${p3})}}` +
+        `@supports (color:lab(0% 0 0)){${selector}{color:var(--x,lab(50% 20 30))}}`;
+
+      test.each<[string, string]>([
+        [
+          ".a { @media (min-width: 100px) { .b { color: blue } inset-inline-end: 20px; .c { color: red } } }",
+          `@media (min-width:100px){${dirRules(".a", "", "right:20px", "left:20px")}.a .b{color:#00f}.a .c{color:red}}`,
+        ],
+        [
+          ".a { .b { color: blue } color: var(--x, lab(50% 20 30)); .c { color: red } }",
+          `.a .b{color:#00f}.a{color:var(--x,#a16945)}${supports(".a")}.a .c{color:red}`,
+        ],
+        [
+          ".a::before { @media screen { color: var(--x, lab(50% 20 30)) } }",
+          `@media screen{.a:before{color:var(--x,#a16945)}${supports(".a:before")}}`,
+        ],
+        // A rule of daisyUI 5: declarations after a nested `@media`, under a `::after` parent.
+        [
+          ".collapse-arrow>.collapse-title:after{display:block;position:absolute;" +
+            "@media (prefers-reduced-motion:no-preference){transition-duration:.2s}" +
+            'top:50%;content:"";inset-inline-end:1.4rem}',
+          ".collapse-arrow>.collapse-title:after{display:block;position:absolute}" +
+            dirRules(".collapse-arrow>.collapse-title", ":after", "right:1.4rem", "left:1.4rem") +
+            "@media (prefers-reduced-motion:no-preference){.collapse-arrow>.collapse-title:after{transition-duration:.2s}}" +
+            '.collapse-arrow>.collapse-title:after{content:"";top:50%}',
+        ],
+        // The declarations print once in each of the three passes of `:is()`.
+        [
+          ":is(.a, .b) { .c { color: blue } color: green }",
+          ":-webkit-any(.a,.b) .c{color:#00f}:-webkit-any(.a,.b){color:green}" +
+            ":-moz-any(.a,.b) .c{color:#00f}:-moz-any(.a,.b){color:green}" +
+            ":is(.a,.b) .c{color:#00f}:is(.a,.b){color:green}",
+        ],
+        // Their `@supports` rules print in each pass of `:fullscreen`.
+        [
+          ":fullscreen { @media screen { color: var(--x, lab(50% 20 30)) } }",
+          `@media screen{:-webkit-full-screen{color:var(--x,#a16945)}${supports(":-webkit-full-screen")}}` +
+            `@media screen{:fullscreen{color:var(--x,#a16945)}${supports(":fullscreen")}}`,
+        ],
+      ])("%s", (source, output) => {
+        expect(lowered(source, defaults)).toBe(output);
+        expect(() => kept(output)).not.toThrow();
+      });
+    });
+
+    const pretty =
+      "a { color: red; & { color: blue } color: green }\n" +
+      ".c, .d::before { @media (min-width: 600px) { color: pink; .e { color: white } color: gray; background: black } color: black }";
+
+    test("not minified, nesting kept", () => {
+      expect(_test(pretty, "").split("\n")).toEqual([
+        "a {",
+        "  color: red;",
+        "",
+        "  & {",
+        "    color: #00f;",
+        "  }",
+        "",
+        "  color: green;",
+        "}",
+        "",
+        ".c, .d:before {",
+        "  @media (width >= 600px) {",
+        "    color: pink;",
+        "",
+        "    & .e {",
+        "      color: #fff;",
+        "    }",
+        "",
+        "    color: gray;",
+        "    background: #000;",
+        "  }",
+        "",
+        "  color: #000;",
+        "}",
+        "",
+      ]);
+    });
+
+    test("not minified, nesting compiled away", () => {
+      expect(prefixTest(pretty, "", chrome87).split("\n")).toEqual([
+        "a {",
+        "  color: red;",
+        "}",
+        "",
+        "a {",
+        "  color: #00f;",
+        "}",
+        "",
+        "a {",
+        "  color: green;",
+        "}",
+        "",
+        "@media (min-width: 600px) {",
+        "  .c, .d:before {",
+        "    color: pink;",
+        "  }",
+        "",
+        "  :is(.c, .d:before) .e {",
+        "    color: #fff;",
+        "  }",
+        "",
+        "  .c, .d:before {",
+        "    color: gray;",
+        "    background: #000;",
+        "  }",
+        "}",
+        "",
+        ".c, .d:before {",
+        "  color: #000;",
+        "}",
+        "",
+      ]);
+    });
+
+    test("count against the selector expansion limit", () => {
+      // 15 levels of two selectors expand to 65,532 selectors, 4 below the limit.
+      // The declarations in the `@media` print the 32,768 selectors of the last level again.
+      const source = repeat(".a,.b{", 15) + "@media screen{color:red}" + repeat("}", 15);
+      expect(() => lowered(source)).toThrow("Nested CSS rules expand to more than 65536 selectors");
+      expect(kept(source)).toBe(".a,.b{" + repeat("& .a,& .b{", 14) + "@media screen{color:red}" + repeat("}", 15));
+    });
+
+    test("start a new count of `&` substitutions", () => {
+      // The selector of the last level takes 32,766 substitutions and the one of
+      // `& & .x` takes 65,534. One count for both is over the limit of 65,536.
+      const source = ".a{" + repeat("&&{", 14) + "& & .x{color:blue} color:red" + repeat("}", 15);
+      const output = lowered(source);
+      const last = repeat(".a", 1 << 14);
+      // Compared in parts: a mismatch would print two strings of 98 KB.
+      expect(output.length).toBe(3 * last.length + " ".length * 2 + ".x{color:#00f}{color:red}".length);
+      expect(output.startsWith(`${last} ${last} .x{color:#00f}${last}`)).toBe(true);
+      expect(output.endsWith(`.a{color:red}`)).toBe(true);
+    });
+
+    describe("bun build", () => {
+      const source =
+        "a { color: red; & { color: blue } color: green }\n" +
+        ".c, .d::before { @media print { color: pink } color: black }\n";
+      const browser =
+        "a{color:red}a{color:#00f}a{color:green}@media print{.c,.d:before{color:pink}}.c,.d:before{color:#000}";
+      const bun = "a{color:red;&{color:#00f}color:green}.c,.d:before{@media print{color:pink}color:#000}";
+      // One rule for each kind of fallback rule, and two rules that print in parts.
+      const fallbacks =
+        ".ltr { .b { color: blue } inset-inline-end: 20px }\n" +
+        ".dark, .d::before { .b { color: blue } color-scheme: light dark }\n" +
+        ".lab::after { @media print { color: var(--x, lab(50% 20 30)) } }\n" +
+        ".split:where(x), .k { .c { margin: 0 } color: green }\n" +
+        ":fullscreen { .f { color: red } color: green }\n" +
+        ".media { @media print { .b { color: blue } inset-inline-end: 1px } }\n";
+
+      test.concurrent.each([
+        [["--target=browser", "--minify"], source, browser + "\n"],
+        [["--target=bun", "--minify"], source, bun + "\n"],
+        // Not bundled: minified with no targets, printed for the target.
+        [["--no-bundle", "--minify"], source, browser],
+        [["--no-bundle", "--minify", "--target=bun"], source, bun],
+        // With no targets the minifier adds no fallback rule.
+        [
+          ["--no-bundle", "--minify"],
+          fallbacks,
+          ".ltr .b{color:#00f}.ltr{inset-inline-end:20px}:is(.dark,.d:before) .b{color:#00f}.dark,.d:before{color-scheme:light dark}" +
+            "@media print{.lab:after{color:var(--x,lab(50% 20 30))}}:is(.split:where(x),.k) .c{margin:0}.split:where(x),.k{color:green}" +
+            ":fullscreen .f{color:red}:fullscreen{color:green}@media print{.media .b{color:#00f}.media{inset-inline-end:1px}}",
+        ],
+        // Known gap, pinned above too: in a nested at-rule the `:dir()` rules are built on `&`.
+        [
+          ["--target=browser", "--minify"],
+          ".a, .d::before { @media print { inset-inline-end: 20px } }\n",
+          `@media print{${dirRules(":is(.a,.d:before)", "", "right:20px", "left:20px")}}\n`,
+        ],
+      ])("%j %s", async (args, css, expected) => {
+        using dir = tempDir("css-nested-declarations", { "in.css": css });
+        // Without --outdir the stylesheet is written to stdout.
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "build", "in.css", ...args],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+      });
+
+      test.concurrent.each([
+        ["browser", browser],
+        ["bun", bun],
+      ] as const)("Bun.build({ target: %j })", async (target, expected) => {
+        using dir = tempDir("css-nested-declarations-api", { "in.css": source });
+        const result = await Bun.build({ entrypoints: [join(String(dir), "in.css")], target, minify: true });
+        expect(result.success).toBe(true);
+        expect(await result.outputs[0].text()).toBe(expected + "\n");
+      });
+
+      // A build for bun minifies the stylesheet of an HTML import for the browser targets
+      // and prints it with nesting kept. A browser loads it, and there `& {}` matches
+      // nothing for a pseudo-element.
+      test.concurrent("the stylesheet of an HTML import, target bun", async () => {
+        using dir = tempDir("css-nested-declarations-html", {
+          "server.ts": `import page from "./index.html";\nconsole.log(page);\n`,
+          "index.html": `<!doctype html><html><head><link rel="stylesheet" href="./style.css"></head><body></body></html>`,
+          "style.css": `.a::after { content: "x"; @media print { color: blue } color: green }\n` + fallbacks,
+        });
+        const result = await Bun.build({ entrypoints: [join(String(dir), "server.ts")], target: "bun", minify: true });
+        expect(result.success).toBe(true);
+        const css = result.outputs.filter(output => output.path.endsWith(".css"));
+        const text = (await Promise.all(css.map(output => output.text()))).join("");
+        expect(text).toBe(
+          `.a:after{content:"x";@media print{color:#00f}color:green}` +
+            // The `:dir()` rules of `.ltr` print with its own fallback rules, see "known gaps".
+            dirRules(".ltr", "", "right:20px", "left:20px") +
+            ".ltr{& .b{color:#00f}}" +
+            ".dark,.d:before{& .b{color:#00f}--buncss-light:initial;--buncss-dark: ;color-scheme:light dark;" +
+            "@media (prefers-color-scheme:dark){--buncss-light: ;--buncss-dark:initial}}" +
+            ".lab:after{@media print{color:var(--x,#a16945);" +
+            "@supports (color:color(display-p3 0 0 0)){color:var(--x,color(display-p3 .598686 .422118 .293048))}" +
+            "@supports (color:lab(0% 0 0)){color:var(--x,lab(50% 20 30))}}}" +
+            ".split:where(x){& .c{margin:0}color:green}.k{& .c{margin:0}color:green}" +
+            ":-webkit-full-screen{& .f{color:red}color:green}:fullscreen{& .f{color:red}color:green}" +
+            `.media{@media print{${dirRules("&", "", "right:1px", "left:1px")}& .b{color:#00f}}}\n`,
+        );
+        expect(() => kept(text)).not.toThrow();
+      });
+    });
+
+    // `bun pm diff` prints both sides with no minify step and compares the text.
+    // A browser applies `color: green` before the nested rule in a and after it in b.
+    test("bun pm diff shows a declaration that moves across a nested rule", async () => {
+      using dir = tempDir("css-nested-declarations-pm-diff", {
+        "a/s.css": ".a { color: green; & { color: blue } }\n",
+        "b/s.css": ".a { & { color: blue } color: green }\n",
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "pm", "diff", "./a", "./b"],
+        cwd: String(dir),
+        // The canonical re-print is the terminal view.
+        env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1", COLUMNS: "120" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const text = stdout.replace(/\x1b\[[0-9;]*[mK]/g, "");
+      expect(text).toMatch(/\ns\.css ─+ normalized \+2 -2\n/);
+      expect(text).toContain("│-   color: green;");
+      expect(text).toContain("│+   color: green;");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
     });
   });
 

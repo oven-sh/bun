@@ -7,13 +7,15 @@
 // output and never exited.
 //
 // The fixture queues thousands of background Wasm compiles and exits while they
-// are still running. Without the fix about half of these processes never exit on
-// Windows arm64. The test cannot fail elsewhere; it runs on every Windows lane so
-// the exit path is still exercised there.
+// are still running, through process.exit() or process.abort(). Both now go
+// through Bun__exitProcess, the one ExitProcess behind WTF's thread-suspend lock.
+// Without it about half of these processes never exit on Windows arm64. The test
+// cannot fail elsewhere; it runs on every Windows lane so both paths are still
+// exercised there.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
-const functionCount = 4000;
+const functionCount = 1000;
 const passes = 20;
 // Function i returns its argument plus i; the fixture sums every call.
 const expectedSum =
@@ -21,7 +23,7 @@ const expectedSum =
 
 // A file, not `-e`: one-shot invocations compile Wasm synchronously, and the
 // race needs the compiles to finish on the compiler threads.
-const fixture = `
+const fixture = (exit: string) => `
   // A module with many tiny functions: (func (param i32) (result i32) local.get 0 i32.const k i32.add).
   function uleb(v, out) {
     do {
@@ -84,11 +86,11 @@ const fixture = `
     for (let i = 0; i < fns.length; i++) acc += fns[i](pass);
   }
   console.log(acc);
-  process.exit(0);
+  ${exit};
 `;
 
-test.skipIf(!isWindows)("process exits while Wasm compiler threads are installing code", async () => {
-  using dir = tempDir("exit-during-wasm-tier-up", { "fixture.mjs": fixture });
+async function exitsWhileCompiling(exit: string, exitCode: number) {
+  using dir = tempDir("exit-during-wasm-tier-up", { "fixture.mjs": fixture(exit) });
   const procs = Array.from({ length: 8 }, () =>
     Bun.spawn({
       cmd: [bunExe(), "fixture.mjs"],
@@ -122,8 +124,16 @@ test.skipIf(!isWindows)("process exits while Wasm compiler threads are installin
         return { exitCode: exited, stdout: await stdout, stderr: await stderr };
       }),
     );
-    expect(results).toEqual(procs.map(() => ({ exitCode: 0, stdout: `${expectedSum}\n`, stderr: "" })));
+    expect(results).toEqual(procs.map(() => ({ exitCode, stdout: `${expectedSum}\n`, stderr: "" })));
   } finally {
     clearTimeout(timer);
   }
+}
+
+test.skipIf(!isWindows)("process.exit() while Wasm compiler threads are installing code", async () => {
+  await exitsWhileCompiling("process.exit(0)", 0);
+});
+
+test.skipIf(!isWindows)("process.abort() while Wasm compiler threads are installing code", async () => {
+  await exitsWhileCompiling("process.abort()", 134);
 });

@@ -107,6 +107,8 @@ export const bunEnv: NodeJS.Dict<string> = {
   AGENT: "false",
 };
 
+for (let i = 0; i < Number(process.env.DIAG_EXTRA ?? 0); i++) bunEnv["A_DIAG_EXTRA_" + i] = "x";
+
 const ciEnv = { ...bunEnv };
 
 if (isASAN) {

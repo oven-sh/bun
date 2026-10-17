@@ -7,8 +7,7 @@ test.skipIf(!isWindows)(
   "bunx.test.ts by number of other variables",
   async () => {
     const run = async (extra: number, fix: boolean) => {
-      const env: Record<string, string | undefined> = { ...process.env, DIAG_FIX: fix ? "1" : "0" };
-      for (let i = 0; i < extra; i++) env["A_DIAG_" + i] = "1";
+      const env = { ...process.env, DIAG_FIX: fix ? "1" : "0", DIAG_EXTRA: String(extra).padStart(2, "0") };
       await using proc = Bun.spawn({
         cmd: [bunExe(), "test", "./cli/install/bunx.test.ts", "-t", "is none of its bins"],
         env,
@@ -23,10 +22,12 @@ test.skipIf(!isWindows)(
     const lines: string[] = [];
     for (const fix of [false, true]) {
       let row = "";
-      for (let from = 0; from < 16; from += 4) {
-        row += (await Promise.all([0, 1, 2, 3].map(i => run(from + i, fix)))).join("");
+      for (let from = 0; from < 48; from += 6) {
+        row += (await Promise.all([0, 1, 2, 3, 4, 5].map(i => run(from + i, fix)))).join("");
       }
-      lines.push(`${fix ? "with   " : "without"} the harness change, 0..15 more variables: ${row}`);
+      lines.push(
+        `${fix ? "with   " : "without"} the harness change, 0..47 more variables at the end of bunEnv: ${row}`,
+      );
     }
     expect(lines.join("\n")).toBe("");
   },

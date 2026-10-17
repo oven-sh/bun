@@ -118,80 +118,6 @@ async function teeStream(stream: ReadableStream<Uint8Array>, output: NodeJS.Writ
   return Buffer.concat(chunks).toString();
 }
 
-// ---- TEMPORARY MEASUREMENT: symbolize the trace of a crash report printed by the last run ----
-let lastOutput = "";
-const base64Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-function readVlq(text: string, at: number): [number, number] {
-  let value = 0;
-  let scale = 1;
-  for (;;) {
-    const digit = base64Alphabet.indexOf(text[at++]);
-    if (digit < 0) throw new Error(`bad VLQ digit at ${at - 1}`);
-    value += (digit & 31) * scale;
-    scale *= 32;
-    if (!(digit & 32)) break;
-  }
-  const negative = value % 2 === 1;
-  value = Math.floor(value / 2);
-  return [negative ? -value : value, at];
-}
-async function symbolizeCrash() {
-  const match = /https:\/\/bun\.report\/[^/\s]+\/(\S+)/.exec(lastOutput);
-  if (!match) {
-    console.log("    (no crash report in the output of this run)");
-    return;
-  }
-  try {
-    const trace = match[1];
-    let at = 10; // platform, command, version, 7 hex of the commit
-    [, at] = readVlq(trace, at);
-    [, at] = readVlq(trace, at);
-    const frames: { module: string; address: number }[] = [];
-    for (;;) {
-      if (trace[at] === "_") {
-        frames.push({ module: "?", address: 0 });
-        at++;
-        continue;
-      }
-      let value: number;
-      [value, at] = readVlq(trace, at);
-      if (value === 0) break;
-      if (value === 1) {
-        let length: number;
-        [length, at] = readVlq(trace, at);
-        const module = trace.slice(at, at + length);
-        at += length;
-        let address: number;
-        [address, at] = readVlq(trace, at);
-        frames.push({ module, address });
-      } else {
-        frames.push({ module: "bun", address: value });
-      }
-    }
-    console.log(`+++ crash trace of the run above (${frames.length} frames, reason ${trace.slice(at)})`);
-    frames.forEach((frame, index) => console.log(`    #${index} ${frame.module} 0x${frame.address.toString(16)}`));
-    const pdb = binary.replace(/\.exe$/i, ".pdb");
-    const symbolizer = Bun.which("pdb-addr2line");
-    console.log(`    pdb: ${pdb} (exists: ${await Bun.file(pdb).exists()}), pdb-addr2line: ${symbolizer}`);
-    console.log(`    files next to the binary: ${readdirSync(dirname(binary)).join(", ")}`);
-    if (!isWindows || !symbolizer) return;
-    const addresses = frames.filter(f => f.module === "bun").map(f => `0x${f.address.toString(16).toUpperCase()}`);
-    for (const flags of [["-a", "-f", "-i", "-p"], []]) {
-      const result = Bun.spawnSync([symbolizer, "--exe", pdb, ...flags, ...addresses], {
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      console.log(`    pdb-addr2line ${flags.join(" ")} exit ${result.exitCode}`);
-      console.log(result.stdout.toString());
-      console.log(result.stderr.toString());
-      if (result.exitCode === 0) break;
-    }
-  } catch (error) {
-    console.log("    failed to decode the crash trace:", error);
-  }
-}
-// ---- END TEMPORARY MEASUREMENT ----
-
 async function runTest(label: string, binaryArgs: string[], options?: RunTestOptions): Promise<boolean> {
   console.log(`+++ ${label}`);
 
@@ -224,7 +150,6 @@ async function runTest(label: string, binaryArgs: string[], options?: RunTestOpt
   const signalCode = proc.signalCode;
   const elapsed = ((performance.now() - start) / 1000).toFixed(1);
   const output = stdout + "\n" + stderr;
-  lastOutput = output;
 
   if (exitCode === 0) {
     if (!live && stdout.trim()) console.log(stdout.trim());
@@ -310,18 +235,9 @@ if (values["skip-emulation"]) {
 } else {
   // Phase 1: SIMD code path verification
   const simdTestPath = join(repoRoot, "test", "js", "bun", "jsc-stress", "fixtures", "simd-baseline.test.ts");
+  // The default per-test timeout (5 s) assumes native speed. Intel SDE runs this file hundreds of
+  // times slower, so use the per-test timeout that runner.node.ts gives every native run in CI.
   await runTest("SIMD baseline tests", ["test", "--timeout=90000", simdTestPath], { live: true });
-
-  // ---- TEMPORARY MEASUREMENT ----
-  await symbolizeCrash();
-  const probePath = join(fixturesDir, "simd-baseline-probe.test.ts");
-  await runTest("probe: phases #1", ["test", "--timeout=300000", probePath], { live: true });
-  await symbolizeCrash();
-  await runTest("probe: SIMD baseline tests #2", ["test", "--timeout=90000", simdTestPath], { live: true });
-  await runTest("probe: phases #2", ["test", "--timeout=300000", probePath], { live: true });
-  await runTest("probe: bun -e", ["-e", "console.log(1)"], { live: true });
-  await symbolizeCrash();
-  // ---- END TEMPORARY MEASUREMENT ----
 }
 
 // Phase 2: JIT stress fixtures (only with --jit-stress, e.g. on WebKit changes)

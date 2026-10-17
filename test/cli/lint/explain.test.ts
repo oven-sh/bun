@@ -52,6 +52,8 @@ interface Listed {
   modes: ("native" | "eslint" | "oxlint")[];
   schema: unknown[] | Record<string, unknown> | null;
   default_options: unknown[] | null;
+  languages: string[];
+  package: string | null;
 }
 
 const listRules = async () => JSON.parse((await lint({}, ["--rules", "-f", "json"])).stdout) as Listed[];
@@ -72,7 +74,7 @@ describe.concurrent("--rules -f json", () => {
     const rules = await listRules();
     expect(rules.length).toBeGreaterThan(1000);
     expect([...new Set(rules.map(it => Object.keys(it).join()))]).toEqual([
-      "scope,value,category,type_aware,fix,default,docs_url,id,aliases,description,kind,deprecated,on_by_default,modes,schema,default_options",
+      "scope,value,category,type_aware,fix,default,docs_url,id,aliases,description,kind,deprecated,on_by_default,modes,schema,default_options,languages,package",
     ]);
     expect(rules.find(it => it.id === "@typescript-eslint/no-floating-promises")).toEqual({
       scope: "typescript",
@@ -91,6 +93,15 @@ describe.concurrent("--rules -f json", () => {
       modes: ["native", "eslint", "oxlint"],
       schema: [expect.objectContaining({ type: "object", additionalProperties: false })],
       default_options: [expect.objectContaining({ ignoreVoid: true, ignoreIIFE: false })],
+      languages: [],
+      package: null,
+    });
+    expect(rules.find(it => it.id === "json/no-duplicate-keys")).toMatchObject({
+      scope: "json",
+      aliases: [],
+      modes: ["eslint"],
+      languages: ["json/json", "json/jsonc", "json/json5"],
+      package: "@eslint/json",
     });
   });
 
@@ -139,7 +150,9 @@ describe.concurrent("--rules -f json", () => {
     const rules = await listRules();
     const names = rules.flatMap(it => [it.id, ...it.aliases]);
     expect(names.filter((name, at) => names.indexOf(name) !== at)).toEqual([]);
-    expect(rules.filter(it => !it.modes.includes("native")).map(it => it.id)).toEqual([]);
+    // Only an ESLint config can set a file's language, so a rule for a language doesn't have the "native" mode.
+    const isNative = (it: Listed) => it.modes.includes("native");
+    expect(rules.filter(it => isNative(it) !== (it.languages.length === 0)).map(it => it.id)).toEqual([]);
     expect([...new Set(rules.map(it => it.kind))].sort()).toEqual(["layout", "problem", "suggestion", null].sort());
   });
 
@@ -152,7 +165,9 @@ describe.concurrent("--rules -f json", () => {
       "eslint": "eslint",
       "import": "import",
       "jest": "jest",
+      "json": "json",
       "jsx_a11y": "jsx-a11y",
+      "markdown": "markdown",
       "nextjs": "nextjs",
       "node": "node",
       "oxc": "oxc",

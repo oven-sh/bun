@@ -50,7 +50,7 @@ impl<'r> Source<'r> {
         let name =
             strings::replace_owned(paths::inside(meta.cwd, &path).unwrap_or(&path), b"\\", b"/");
         let text = result.text.as_deref().unwrap_or_default();
-        let offsets = Offsets::new(text, result.line_starts.as_deref());
+        let offsets = Offsets::new(text, result.lines());
         // U+2028 and U+2029 start with the same two bytes.
         let has_separator = || {
             let mut rest = text;

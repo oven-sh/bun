@@ -284,7 +284,8 @@ plugin({
         stdout: collect(proc.stdout),
         stderr: collect(proc.stderr),
         write: (name, contents) => writeFileSync(path(name), contents),
-        // The file is never there empty, as it is for a moment in a write.
+        // The file is never there empty, as it is for a moment in a write. A reload that reads a
+        // preload empty passes it, and then the save is lost.
         create(name, contents) {
           writeFileSync(path(name + ".new"), contents);
           renameSync(path(name + ".new"), path(name));
@@ -375,7 +376,8 @@ plugin({
       const first = text => `console.log("first ran: ${text}");`;
       await using hot = spawnHot({ ...held, "first.js": first("old"), "second.js": second });
       expect(await hot.stderr("error: from second.js")).toContain("error: from second.js");
-      hot.write("main.js", `console.log("main ran");`);
+      // second.js is watched: it was loaded. The entry point is watched only after that report.
+      hot.create("second.js", second);
       expect(await hot.stdout("second holds\n")).toBe("first ran: old\nfirst ran: old\nsecond holds\n");
       hot.write("first.js", first("new"));
       await posted(hot, "first.js");
@@ -413,11 +415,11 @@ plugin({
       expect(await hot.stderr("error: from first.js, one")).toContain("error: from first.js, one");
       // The first load prints what is logged until it has reported its error. After the error of a
       // reload, that is over.
-      hot.write("first.js", first("two"));
+      hot.create("first.js", first("two"));
       expect(await hot.stderr("error: from first.js, two")).toContain("error: from first.js, two");
       // This reload logs a warning about tsconfig.json, and nothing prints it.
       hot.write("tsconfig.json", `{ "compilerOptions": { "paths": { "@/*": ["src/*"] } } }`);
-      hot.write("first.js", first("three"));
+      hot.create("first.js", first("three"));
       expect(await hot.stderr("error: from first.js, three")).toContain("error: from first.js, three");
       hot.write("tsconfig.json", `{}`);
       hot.remove("first.js");
@@ -430,7 +432,8 @@ plugin({
     concurrentTest("a reload that throws before it has a promise is reported, and the next reload runs", async () => {
       await using hot = spawnHot({ "first.js": runMainAnswerThrows, "second.js": failsOnce });
       expect(await hot.stderr("error: from second.js")).toContain("error: from second.js");
-      hot.write("main.js", `console.log("main ran");`);
+      // As above: a save of the entry point could come before it is watched.
+      hot.create("second.js", failsOnce);
       expect(await hot.stderr("error: from the getter")).toContain("error: from the getter");
       hot.write("main.js", `console.log("main ran again");`);
       expect(await hot.stdout("main ran again\n")).toContain("main ran again\n");

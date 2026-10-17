@@ -187,6 +187,8 @@ bool JSCommonJSExtensions::defineOwnProperty(JSC::JSObject* object, JSC::JSGloba
 bool JSCommonJSExtensions::put(JSC::JSCell* cell, JSC::JSGlobalObject* globalObject, JSC::PropertyName propertyName, JSC::JSValue value, JSC::PutPropertySlot& slot)
 {
     if (!isAllowedToMutateExtensions(globalObject)) return true;
+    // An inline cache would store the next value without calling put().
+    slot.disableCaching();
     onAssign(defaultGlobalObject(globalObject), propertyName, value);
     return Base::put(cell, globalObject, propertyName, value, slot);
 }

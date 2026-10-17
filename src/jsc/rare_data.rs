@@ -250,6 +250,8 @@ pub struct RareData {
 
     /// `node:http2` PADDED DATA scratch; see [`Self::take_h2_padded_frame_buffer`].
     h2_padded_frame_buffer: Option<Box<H2PaddedFrameBuffer>>,
+    /// `node:http2` outbound header block scratch; see [`Self::take_h2_header_scratch`].
+    h2_header_scratch: Option<H2HeaderScratch>,
     /// Output scratch for one JS-thread `CompressionStream` step; see [`Self::take_compression_scratch`].
     compression_scratch: Option<Vec<u8>>,
     /// Inflated payload of one `new WebSocket()` client message; see [`Self::take_websocket_inflate_scratch`].
@@ -303,6 +305,7 @@ impl Default for RareData {
             listening_sockets_for_watch_mode: Mutex::new(Vec::new()),
             pipe_read_scratch: Box::new(bun_event_loop::PipeReadScratch::new()),
             h2_padded_frame_buffer: None,
+            h2_header_scratch: None,
             compression_scratch: None,
             websocket_inflate_scratch: None,
             libdeflate_decompressor: None,
@@ -355,6 +358,13 @@ impl PathBuf {
 
 /// One max-size HTTP/2 PADDED DATA frame payload (pad-length byte + data + padding).
 pub type H2PaddedFrameBuffer = [u8; 16384];
+
+/// One outbound `node:http2` header block: the staged fields and their HPACK encoding.
+#[derive(Default)]
+pub struct H2HeaderScratch {
+    pub block: bun_http::lshpack::HeaderBlock,
+    pub encoded: Vec<u8>,
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // ProxyEnvStorage
@@ -742,6 +752,24 @@ impl RareData {
     /// Hand a taken buffer back; the slot keeps the first one returned.
     pub fn put_back_h2_padded_frame_buffer(&mut self, buffer: Box<H2PaddedFrameBuffer>) {
         self.h2_padded_frame_buffer.get_or_insert(buffer);
+    }
+
+    /// By value, like [`Self::take_h2_padded_frame_buffer`]: a value's `toString` can re-enter.
+    pub fn take_h2_header_scratch(&mut self) -> H2HeaderScratch {
+        self.h2_header_scratch.take().unwrap_or_default()
+    }
+
+    /// Hand a taken scratch back; the slot keeps the first one returned and lets an oversized one go.
+    pub fn put_back_h2_header_scratch(&mut self, mut scratch: H2HeaderScratch) {
+        const KEEP: usize = 64 * 1024;
+        if self.h2_header_scratch.is_none()
+            && scratch.block.capacity() <= KEEP
+            && scratch.encoded.capacity() <= KEEP
+        {
+            scratch.block.clear();
+            scratch.encoded.clear();
+            self.h2_header_scratch = Some(scratch);
+        }
     }
 
     /// Empty `Vec` with whatever capacity the last step left behind.

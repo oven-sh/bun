@@ -4460,8 +4460,6 @@ mod windows_impl {
         // negative LARGE_INTEGER never becomes ~18 EB after the i64→u64 cast.
         Ok(size.max(0) as u64)
     }
-    /// `uv_fs_realpath`'s shape: an attribute-only open, then the final name
-    /// by handle through the wrapper that also answers in an AppContainer.
     pub fn realpath<'a>(path: &ZStr, buf: &'a mut bun_core::PathBuffer) -> Maybe<&'a [u8]> {
         let to_error = |e: w::Win32Error| Error::from_win32(e, Tag::realpath);
         let bytes = path.as_bytes();

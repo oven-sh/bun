@@ -1406,7 +1406,7 @@ impl Diff {
                 && still_satisfied();
             let keeps_dependencies = retyped || recorded_request || range_link;
             summary.script_only_updates += keeps_dependencies as u32;
-            if frozen && !keeps_dependencies {
+            if frozen && !keeps_dependencies && !from_dep.behavior.is_workspace() {
                 let change = DependencyChange::Range {
                     now: (to_deps!()[cur_to_i].version.literal.slice(to_buf!())).into(),
                     before: from_dep.version.literal.slice(from_buf!()).into(),

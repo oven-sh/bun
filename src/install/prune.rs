@@ -1289,7 +1289,7 @@ fn plan_hoisted(
                         || !hoisted.is_installed(tree_id, alias)
                         || !hoisted.owners_installed(tree_id)
                         || !hoisted.removable(tree_id, entry.alias, &nested_path)
-                        // A bun.lock of an older Bun does not say which dependencies are bundled.
+                        // Not every bun.lock says which dependencies are bundled.
                         || cache.is_some_and(|cache| may_ship(manager, cache, pkg_id, entry.alias))
                 },
                 plan,

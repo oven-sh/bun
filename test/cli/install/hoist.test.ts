@@ -2260,7 +2260,7 @@ describe.concurrent("a folder that no bun.lock placed stays", () => {
     }
   });
 
-  // A bun.lock of an older bun does not say which dependencies are bundled. It places `dep` at the root alone.
+  // Not every bun.lock says which dependencies are bundled. This one places `dep` at the root alone.
   test("below a package, from its tarball: bun prune", async () => {
     const own = JSON.stringify({ name: "dep", version: "1.0.0", from: "the tarball" });
     using server = await serveGraph(

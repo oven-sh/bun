@@ -120,6 +120,7 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
         fs.writeFileSync(path.join(realDir, "real.txt"), "x");
         const realDirPosix = realDir.split(path.sep).join("/");
         const rootPosix = root.split(path.sep).join("/");
+        const crossing = "{_app/immutable/chunks,_app/immutable}/*.{js,css}";
         const glob = {
           scanSync: [...new Bun.Glob("*").scanSync(root)].sort(),
           scanAsync: (await Array.fromAsync(new Bun.Glob("*").scan(root))).sort(),
@@ -138,6 +139,11 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           // the match is dropped ([]), on the real filesystem and in the embedded
           // graph alike. If a walker fix changes this, both must change together.
           absoluteLiteralFile: [...new Bun.Glob(rootPosix + "/index.html").scanSync({})],
+          // A group with a separator in it: the matcher reads it against the paths of the embedded tree.
+          crossingGroup: [...new Bun.Glob(crossing).scanSync(root)].sort(),
+          crossingGroupAsync: (await Array.fromAsync(new Bun.Glob(crossing).scan(root))).sort(),
+          crossingGroupAbsolute: [...new Bun.Glob(crossing).scanSync({ cwd: root, absolute: true })].sort(),
+          crossingExtglob: [...new Bun.Glob("_app/@(immutable/chunks/entry.js|immutable/app.css)").scanSync(root)].sort(),
           enoentCode: errcode(() => [...new Bun.Glob("*").scanSync(missing)]),
           enotdirCode: errcode(() => [...new Bun.Glob("*").scanSync(indexHtml)]),
         };
@@ -158,6 +164,7 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
       const { stdout, stderr, code } = await run(String(dir));
       expect(stderr.trim()).toBe("");
       const r = JSON.parse(stdout.trim());
+      const nested = [join("_app", "immutable", "app.css"), join("_app", "immutable", "chunks", "entry.js")];
 
       const expectedRecursive = [
         "_app",
@@ -232,6 +239,10 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           mixedRealAbsolute: [r.realDirPosix + "/real.txt"],
           realCwdRelative: ["real.txt"],
           absoluteLiteralFile: [],
+          crossingGroup: nested,
+          crossingGroupAsync: nested,
+          crossingGroupAbsolute: nested.map(n => join(r.client.root, n)),
+          crossingExtglob: nested,
           enoentCode: "ENOENT",
           enotdirCode: "ENOTDIR",
         },

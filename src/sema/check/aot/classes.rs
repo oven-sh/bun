@@ -3593,7 +3593,8 @@ impl<'p, 's> Checker<'p, 's> {
         loop {
             at = match at {
                 Parent::ClassExtends(around) if around == class => return true,
-                Parent::MemberKey(member) if matches!(bound.member_owner[member.idx()], MemberOwner::Class(around) if around == class) => {
+                Parent::MemberKey(member) if matches!(bound.member_owner[member.idx()], MemberOwner::Class(around) if around == class) =>
+                {
                     return true;
                 }
                 Parent::None | Parent::File | Parent::FnBody(_) | Parent::ParamDefault(_) => {

@@ -22,6 +22,7 @@ use bun_collections::ArrayHashMap;
 use bun_core::{Ordinal, Output};
 use bun_core::{String as BunString, strings};
 use bun_io::Write as _;
+use bun_jsc::VirtualMachine::StackTraceStyle;
 use bun_jsc::{
     JSErrorCode, JSRuntimeType, ZigException, ZigStackFrame, ZigStackFrameCode,
     ZigStackFramePosition, ZigStackTrace,
@@ -331,6 +332,7 @@ impl ErrorReportRequest {
                 stderr,
                 true,
                 ansi_colors,
+                StackTraceStyle::DeemphasizeNodeModules,
             );
         }
 

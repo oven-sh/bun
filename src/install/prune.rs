@@ -1871,6 +1871,14 @@ fn remove_from_older_places(
         let found = places.binary_search_by_key(&place, |&(key, _)| key);
         found.ok().map(|i| places[i].1)
     };
+    struct Folder<'a> {
+        id: usize,
+        dir: Dir,
+        only_older: Vec<(&'a Dependency, PackageID)>,
+        stays: Vec<(&'a Dependency, PackageID)>,
+    }
+    let mut found: Vec<Folder<'_>> = Vec::new();
+    let mut keeps_older_copy = vec![false; trees.len()];
     let mut plan = Plan::default();
     for (id, older) in trees.iter().enumerate().skip(1) {
         let only_older: Vec<(&Dependency, PackageID)> = (older.dependencies.get(rows).iter())
@@ -1894,9 +1902,10 @@ fn remove_from_older_places(
         // user's own. The packages that Bun installed in it are not.
         let mut same_version = same_version;
         let mut above = id;
+        let mut is_new = false;
         while above != 0 {
             let owner = tree_owner(lockfile, above);
-            let is_new = replaced_places.binary_search(&folders[above]).is_ok();
+            is_new = replaced_places.binary_search(&folders[above]).is_ok();
             if is_new || has_bundled_deps(lockfile, owner) {
                 break;
             }
@@ -1909,9 +1918,9 @@ fn remove_from_older_places(
             above = trees[above].parent as usize;
         }
         if above != 0 {
+            keeps_older_copy[id] = !is_new;
             continue;
         }
-        let path = tree_path(lockfile, id);
         let Some(dir) = open_tree_folder(lockfile, older.id, &mut plan.linked_folders) else {
             continue;
         };
@@ -1930,10 +1939,15 @@ fn remove_from_older_places(
             })
             .copied()
             .collect();
-        // A copy that stays loads a dependency from this folder if it has no copy of its own, so
-        // that dependency stays with it.
+        // What a copy that stays can load from this folder stays with it. Without a `node_modules`
+        // of its own, that is what it depends on. With one, the packages in there load from this
+        // folder too, whatever they are: any name that is not in that `node_modules`. A copy that
+        // only stays for another one is not the version in bun.lock, so what it depends on is not
+        // known either.
+        let known = stays.len();
         let mut next = 0;
         while let Some(&(kept, package)) = stays.get(next) {
+            let is_known = next < known;
             next += 1;
             let Some(needs) = lockfile.packages.items_dependencies().get(package as usize) else {
                 continue;
@@ -1942,26 +1956,51 @@ fn remove_from_older_places(
                 continue;
             };
             let own = kept.open_at(b"node_modules").ok();
-            for need in needs.get(deps) {
-                let found = (only_older.iter()).find(|(dep, _)| dep.name_hash == need.name_hash);
-                if let Some(&(dep, resolved)) = found
-                    && !stays.iter().any(|kept| kept.0.name_hash == dep.name_hash)
-                    && (own.as_ref())
-                        .is_none_or(|own| open_package(own, dep.name.slice(buf)).is_none())
-                {
+            for &(dep, resolved) in &only_older {
+                let can_load = match &own {
+                    Some(own) => open_package(own, dep.name.slice(buf)).is_none(),
+                    None => {
+                        !is_known
+                            || (needs.get(deps).iter()).any(|need| need.name_hash == dep.name_hash)
+                    }
+                };
+                if can_load && !stays.iter().any(|kept| kept.0.name_hash == dep.name_hash) {
                     stays.push((dep, resolved));
                 }
             }
         }
-        scan_folder(
+        keeps_older_copy[id] = !stays.is_empty();
+        found.push(Folder {
+            id,
             dir,
-            &path,
+            only_older,
+            stays,
+        });
+    }
+    // A copy that stays also loads from the folders above its own, so nothing is removed from those.
+    // A tree comes after its parent.
+    let mut keeps_one_below = vec![false; trees.len()];
+    for id in (1..trees.len()).rev() {
+        if keeps_older_copy[id] || keeps_one_below[id] {
+            keeps_one_below[trees[id].parent as usize] = true;
+        }
+    }
+    for folder in found {
+        if keeps_one_below[folder.id] {
+            continue;
+        }
+        scan_folder(
+            folder.dir,
+            &tree_path(lockfile, folder.id),
             false,
             &|entry: &Entry| {
                 let name_hash = bun_semver::semver_string::Builder::string_hash(entry.alias);
                 entry.kind != EntryKind::Directory
-                    || !only_older.iter().any(|(dep, _)| dep.name_hash == name_hash)
-                    || stays.iter().any(|kept| kept.0.name_hash == name_hash)
+                    || !(folder.only_older.iter()).any(|(dep, _)| dep.name_hash == name_hash)
+                    || folder
+                        .stays
+                        .iter()
+                        .any(|kept| kept.0.name_hash == name_hash)
             },
             &mut plan,
         );

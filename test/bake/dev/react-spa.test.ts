@@ -211,6 +211,22 @@ devTest("react refresh cases", {
 
       expectHook((await import("./default_hook_unreferenced")).default);
 
+      // A hook is signed. Only a component is registered.
+      for (const id of ["default_hook.tsx:default", "default_hook_unreferenced.tsx:default"]) {
+        if (components.has(id)) throw new Error("a hook is registered as a component: " + id);
+      }
+
+      // The same forms in a module with a lowered top-level \`using\`.
+      const hoistedWithUsing = await import("./default_named_hooks_using");
+      expectHookComponent(hoistedWithUsing.default, "default_named_hooks_using.tsx", "default");
+      if (hoistedWithUsing.typeBeforeDeclaration !== "function") {
+        throw new Error("typeof WithUsing before its declaration: " + hoistedWithUsing.typeBeforeDeclaration);
+      }
+      expectComponent((await import("./default_named_using")).default, "default_named_using.tsx", "default");
+      const defaultHookWithUsing = await import("./default_hook_using");
+      expectHook(defaultHookWithUsing.default);
+      if (defaultHookWithUsing.callDefault() !== 7) throw new Error("callDefault() did not return the value of the default export");
+
       console.log("PASS");
     `,
     "default_unnamed.tsx": `
@@ -354,6 +370,32 @@ devTest("react refresh cases", {
       export default function useUnreferenced() {
         const [value] = useState(8);
         return value;
+      }
+    `,
+    "default_named_hooks_using.tsx": `
+      import { useState } from "react";
+      export const typeBeforeDeclaration = typeof WithUsing;
+      using resource = { [Symbol.dispose]() {} };
+      export default function WithUsing() {
+        const [count, setCount] = useState(0);
+        return <div>{count}</div>;
+      }
+    `,
+    "default_named_using.tsx": `
+      using resource = { [Symbol.dispose]() {} };
+      export default function Plain() {
+        return <div></div>;
+      }
+    `,
+    "default_hook_using.tsx": `
+      import { useState } from "react";
+      using resource = { [Symbol.dispose]() {} };
+      export default function useDefault() {
+        const [value] = useState(7);
+        return value;
+      }
+      export function callDefault() {
+        return useDefault();
       }
     `,
   },

@@ -1508,23 +1508,26 @@ describe("bundler", () => {
         }
       `,
     };
+    // Only a component is registered. A hook is signed and not registered.
+    const functionsLog = /* ts */ `
+      console.log("named:", namedType, Named(), isSigned(Named), isRegistered(Named, "named.tsx:default"));
+      console.log("anonymous:", Anonymous(), isSigned(Anonymous), isRegistered(Anonymous, "anonymous.tsx:default"));
+      console.log("async:", Async.constructor.name, isSigned(Async), isRegistered(Async, "async.tsx:default"));
+      console.log("hook:", hookType, useDefault(), callDefault(), isSigned(useDefault), isRegistered(useDefault, "hook.tsx:default"));
+    `;
     const functionsEntry = /* ts */ `
       import { isRegistered, isSigned } from "./host";
       import Named, { typeBeforeDeclaration as namedType } from "./named";
       import Anonymous from "./anonymous";
       import Async from "./async";
       import useDefault, { callDefault, typeBeforeDeclaration as hookType } from "./hook";
-
-      console.log("named:", namedType, Named(), isSigned(Named), isRegistered(Named, "named.tsx:default"));
-      console.log("anonymous:", Anonymous(), isSigned(Anonymous), isRegistered(Anonymous, "anonymous.tsx:default"));
-      console.log("async:", Async.constructor.name, isSigned(Async), isRegistered(Async, "async.tsx:default"));
-      console.log("hook:", hookType, useDefault(), callDefault(), isSigned(useDefault));
+      ${functionsLog}
     `;
     const functionsStdout = [
       "named: function named true true",
       "anonymous: anonymous true true",
       "async: AsyncFunction true true",
-      "hook: function hook hook true",
+      "hook: function hook hook true false",
     ].join("\n");
 
     const variants: [string, Partial<BundlerTestInput>][] = [
@@ -1558,39 +1561,63 @@ describe("bundler", () => {
       run: { file: "/out/entry.js", stdout: "named: function named true true" },
     });
 
-    // The bundler lowers a top-level `using` for the browser. It moves the module body into a `try` block.
-    itBundled("jsx/FastRefreshDefaultFunctionWithTopLevelUsing", {
+    // `require()` of an ES module wraps the module. A function declaration moves outside the wrapper.
+    itBundled("jsx/FastRefreshDefaultFunctionWithHookWrapped", {
       files: {
         "/entry.ts": /* ts */ `
           import { isRegistered, isSigned } from "./host";
-          import WithHook from "./with-hook";
-          import Plain from "./plain";
-          console.log("with hook:", WithHook(), isSigned(WithHook), isRegistered(WithHook, "with-hook.tsx:default"));
-          console.log("plain:", Plain(), isRegistered(Plain, "plain.tsx:default"));
+          const { default: Named, typeBeforeDeclaration: namedType } = require("./named");
+          const { default: Anonymous } = require("./anonymous");
+          const { default: Async } = require("./async");
+          const { default: useDefault, callDefault, typeBeforeDeclaration: hookType } = require("./hook");
+          ${functionsLog}
         `,
-        ...host,
-        "/with-hook.tsx": /* tsx */ `
-          import { useState } from "./react";
-          using resource = { [Symbol.dispose]() { console.log("disposed: with hook"); } };
-          export default function WithHook() {
-            const [value] = useState("with hook");
-            return value;
-          }
-        `,
-        "/plain.tsx": /* tsx */ `
-          using resource = { [Symbol.dispose]() { console.log("disposed: plain"); } };
-          export default function Plain() {
-            return "plain";
-          }
-        `,
+        ...functions,
       },
       reactFastRefresh: true,
-      run: {
-        stdout: ["disposed: with hook", "disposed: plain", "with hook: with hook true true", "plain: plain true"].join(
-          "\n",
-        ),
-      },
+      run: { stdout: functionsStdout },
     });
+
+    // The bundler lowers a top-level `using` for the browser. It moves the module body into a `try` block.
+    // The default function has to stay exported with the flag and without it.
+    for (const reactFastRefresh of [true, false]) {
+      itBundled(`jsx/${reactFastRefresh ? "FastRefresh" : ""}DefaultFunctionWithTopLevelUsing`, {
+        files: {
+          "/entry.ts": /* ts */ `
+            import { isRegistered, isSigned } from "./host";
+            import WithHook, { typeBeforeDeclaration } from "./with-hook";
+            import Plain from "./plain";
+            console.log("with hook:", typeBeforeDeclaration, WithHook(), isSigned(WithHook), isRegistered(WithHook, "with-hook.tsx:default"));
+            console.log("plain:", Plain(), isRegistered(Plain, "plain.tsx:default"));
+          `,
+          ...host,
+          "/with-hook.tsx": /* tsx */ `
+            import { useState } from "./react";
+            export const typeBeforeDeclaration = typeof WithHook;
+            using resource = { [Symbol.dispose]() { console.log("disposed: with hook"); } };
+            export default function WithHook() {
+              const [value] = useState("with hook");
+              return value;
+            }
+          `,
+          "/plain.tsx": /* tsx */ `
+            using resource = { [Symbol.dispose]() { console.log("disposed: plain"); } };
+            export default function Plain() {
+              return "plain";
+            }
+          `,
+        },
+        reactFastRefresh,
+        run: {
+          stdout: [
+            "disposed: with hook",
+            "disposed: plain",
+            `with hook: function with hook ${reactFastRefresh} ${reactFastRefresh}`,
+            `plain: plain ${reactFastRefresh}`,
+          ].join("\n"),
+        },
+      });
+    }
 
     const expressions = {
       ...host,

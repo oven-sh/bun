@@ -376,6 +376,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         macro_rules! record_on_exit {
             () => {
                 if data.default_name.ref_.is_symbol() {
+                    // The linker prints `var <default_name> = <value>`.
+                    debug_assert!(
+                        !matches!(&data.value, js_ast::StmtOrExpr::Expr(e)
+                            if matches!(e.data, js_ast::ExprData::EIdentifier(id) if id.ref_ == data.default_name.ref_)),
+                        "the value of `export default` reads the name that the statement declares"
+                    );
                     p.record_declared_symbol(data.default_name.ref_);
                 }
             };
@@ -474,7 +480,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         _ => false,
                     };
                 if should_emit_temp_var {
-                    let temp_id = p.generate_temp_var(b"default_export");
+                    let temp_id = p.generate_temp_ref(Some(b"default_export"));
+                    p.record_declared_symbol(temp_id);
 
                     let value_expr = *expr;
                     stmts.push(Stmt::alloc(
@@ -655,36 +662,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             );
                         }
 
+                        stmts.push(*stmt);
+
                         // React Fast Refresh signs and registers the function by the name
                         // that its declaration binds.
-                        let is_refresh_declaration = p.options.features.react_fast_refresh
-                            && matches!(data.value, js_ast::StmtOrExpr::Stmt(_));
-
-                        if is_refresh_declaration
-                            && p.current_scope().parent.is_none()
-                            && p.will_wrap_module_in_try_catch_for_using
+                        if p.options.features.react_fast_refresh
+                            && matches!(data.value, js_ast::StmtOrExpr::Stmt(_))
                         {
-                            // The lowering of a top-level `using` drops an `export default`
-                            // statement. It keeps a function declaration and an export clause.
-                            stmts.push(s2_copy);
-                            let items = core::slice::from_mut(p.arena.alloc(js_ast::ClauseItem {
-                                alias: js_ast::StoreStr::new(js_ast::ClauseItem::DEFAULT_ALIAS),
-                                alias_loc: data.default_name.loc,
-                                name: data.default_name,
-                                ..Default::default()
-                            }));
-                            stmts.push(p.s(
-                                S::ExportClause {
-                                    items: bun_ast::StoreSlice::new_mut(items),
-                                    is_single_line: false,
-                                },
-                                stmt.loc,
-                            ));
-                        } else {
-                            stmts.push(*stmt);
-                        }
-
-                        if is_refresh_declaration {
                             let name_ref = data.default_name.ref_;
                             if let Some(hook) = react_hook_data.as_mut() {
                                 let signature_cb = hook.signature_cb;

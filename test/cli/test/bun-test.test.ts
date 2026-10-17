@@ -525,6 +525,8 @@ describe("bun test", () => {
     });
 
     test("setDefaultTimeout(0) turns the timeout off for every file", async () => {
+      // The sleep only has to outlive `--timeout 100`: a file still on the CLI default
+      // fails with "timed out after 100ms", a file on the preload's 0 (unlimited) passes.
       const outlivesCliTimeout = `
         import { test } from "bun:test";
         test("outlives --timeout 100", () => Bun.sleep(150));

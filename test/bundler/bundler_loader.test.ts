@@ -315,6 +315,65 @@ describe("bundler", async () => {
     run: { stdout: '[true,true,null,"{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}"]' },
   });
 
+  // A YAML mapping key can be any node, not only a string. JavaScript coerces
+  // such a key with ToPropertyKey, the same as Bun.YAML.parse and the runtime
+  // loader do, so the printed object must keep that meaning and stay valid JS.
+  const yamlNonStringKeys = `true: t\n~: tilde\n1: one\n1.5: f\n-1: neg\n.inf: i\n.nan: n\n[a, b]: seq\n{x: 1}: map\nok: 1\n`;
+  const yamlNonStringKeysJson = `{"1":"one","true":"t","null":"tilde","1.5":"f","-1":"neg","Infinity":"i","NaN":"n","a,b":"seq","[object Object]":"map","ok":1}`;
+  itBundled("bun/loader-yaml-non-string-keys", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+    import data from './data.yaml';
+    console.write(JSON.stringify(data));
+  `,
+      "/data.yaml": yamlNonStringKeys,
+    },
+    run: { stdout: yamlNonStringKeysJson },
+  });
+  itBundled("bun/loader-yaml-boolean-keys-minify-syntax", {
+    target: "bun",
+    minifySyntax: true,
+    files: {
+      "/entry.ts": /* js */ `
+    import data from './data.yaml';
+    console.write(JSON.stringify(data));
+  `,
+      "/data.yaml": `true: t\nfalse: f\nok: 1\n`,
+    },
+    run: { stdout: `{"true":"t","false":"f","ok":1}` },
+  });
+  itBundled("bun/loader-yaml-non-string-keys-no-bundle", {
+    target: "bun",
+    bundling: false,
+    entryPoints: ["/data.yaml"],
+    files: {
+      "/data.yaml": yamlNonStringKeys,
+    },
+    runtimeFiles: {
+      "/test.js": /* js */ `
+    import data, * as ns from './out.js';
+    console.write(JSON.stringify(data) + " " + JSON.stringify(Object.keys(ns)));
+  `,
+    },
+    run: { file: "/test.js", stdout: `${yamlNonStringKeysJson} ["default","ok"]` },
+  });
+  itBundled("bun/loader-json5-non-string-keys-no-bundle", {
+    target: "bun",
+    bundling: false,
+    entryPoints: ["/data.json5"],
+    files: {
+      "/data.json5": `{true: 1, false: 2, null: 3, ok: 4}`,
+    },
+    runtimeFiles: {
+      "/test.js": /* js */ `
+    import data, * as ns from './out.js';
+    console.write(JSON.stringify(data) + " " + JSON.stringify(Object.keys(ns)));
+  `,
+    },
+    run: { file: "/test.js", stdout: `{"true":1,"false":2,"null":3,"ok":4} ["default","ok"]` },
+  });
+
   itBundled("bun/loader-xml-proto-key-is-own-property", {
     target: "bun",
     files: {

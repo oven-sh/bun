@@ -18,11 +18,17 @@ pub struct ProcessAutoKiller {
     pub(crate) ever_enabled: bool,
     /// The test runner begins a new one for each test and hook callback.
     scope: u32,
-    /// What a timed-out callback spawned, was sent SIGTERM and has not exited. Each keeps the ref
-    /// it had in `processes` until it exits, `timer` fires, or Bun exits.
-    terminating: Vec<*mut Process>,
-    /// Armed for `GRACE_MS` after the SIGTERM to `terminating`.
+    /// What a timed-out callback spawned, was sent SIGTERM and has not exited, oldest first. Each
+    /// keeps the ref it had in `processes` until it exits, is sent SIGKILL, or Bun exits.
+    terminating: Vec<Terminating>,
+    /// Armed no later than the first `kill_at` of `terminating`.
     timer: EventLoopTimer,
+}
+
+struct Terminating {
+    process: *mut Process,
+    /// `GRACE_MS` after its SIGTERM.
+    kill_at: Timespec,
 }
 
 bun_event_loop::impl_timer_owner!(ProcessAutoKiller; from_timer_ptr => timer);
@@ -72,24 +78,31 @@ impl ProcessAutoKiller {
     /// # Safety
     /// `self` is `vm.auto_killer`, and this is `vm`'s JS thread.
     pub unsafe fn kill_on_timeout(&mut self, vm: *mut VirtualMachine) -> Result {
-        let count = self.kill_processes(Some(self.scope));
-        if !self.terminating.is_empty() {
-            let timer = &raw mut self.timer;
-            // SAFETY: per fn contract, the node is address-stable while it is linked. The real
-            // clock: the grace period is Bun's, not the test's.
-            unsafe {
-                if (*timer).state == TimerState::ACTIVE {
-                    VirtualMachine::timer_remove(vm, timer);
-                }
-                (*timer).next =
-                    Timespec::ms_from_now(TimespecMockMode::ForceRealTime, Self::GRACE_MS);
-                VirtualMachine::timer_insert(vm, timer);
-            }
-        }
+        // The real clock: the grace period is Bun's, not the test's.
+        let kill_at = Timespec::ms_from_now(TimespecMockMode::ForceRealTime, Self::GRACE_MS);
+        let count = self.kill_processes(Some((self.scope, kill_at)));
+        // SAFETY: per fn contract.
+        unsafe { self.arm_timer(vm) };
         Result { processes: count }
     }
 
-    fn kill_processes(&mut self, own_scope: Option<u32>) -> u32 {
+    /// # Safety
+    /// As [`Self::kill_on_timeout`].
+    unsafe fn arm_timer(&mut self, vm: *mut VirtualMachine) {
+        let Some(first) = self.terminating.first() else {
+            return;
+        };
+        // Armed already: for `first`, or for one before it that has exited since.
+        if self.timer.state == TimerState::ACTIVE {
+            return;
+        }
+        self.timer.next = first.kill_at;
+        // SAFETY: per fn contract, the node is address-stable while it is linked.
+        unsafe { VirtualMachine::timer_insert(vm, &raw mut self.timer) };
+    }
+
+    /// `own`: the scope whose processes are sent SIGKILL at the `Timespec` if they are still running.
+    fn kill_processes(&mut self, own: Option<(u32, Timespec)>) -> u32 {
         let mut count: u32 = 0;
         while let Some(entry) = self.processes.pop() {
             {
@@ -101,10 +114,15 @@ impl ProcessAutoKiller {
                     bun_core::scoped_log!(AutoKiller, "process.kill {}", p.pid);
                     let asked = p.kill(SignalCode::DEFAULT.0).is_ok();
                     count += asked as u32;
-                    if asked && own_scope == Some(entry.value) && Self::can_force_kill(p) {
-                        // Its ref moves to `terminating`.
-                        self.terminating.push(entry.key);
-                        continue;
+                    if let Some((scope, kill_at)) = own {
+                        if asked && scope == entry.value && Self::can_force_kill(p) {
+                            // Its ref moves to `terminating`.
+                            self.terminating.push(Terminating {
+                                process: entry.key,
+                                kill_at,
+                            });
+                            continue;
+                        }
                     }
                 }
             }
@@ -131,9 +149,12 @@ impl ProcessAutoKiller {
         }
     }
 
-    /// SIGKILL to what is left of `terminating`, and its refs released.
-    fn kill_terminating(&mut self) {
-        for process in self.terminating.drain(..) {
+    /// SIGKILL to those of `terminating` whose grace period is over at `now`, and their refs released.
+    fn kill_due(&mut self, now: &Timespec) {
+        let due = self
+            .terminating
+            .partition_point(|waiting| !waiting.kill_at.greater(now));
+        for Terminating { process, .. } in self.terminating.drain(..due) {
             // SAFETY: ref'd by `terminating` until the deref below; nothing else borrows it.
             let p: &mut Process = unsafe { &mut *process };
             if !p.has_exited() && Self::can_force_kill(p) {
@@ -145,26 +166,27 @@ impl ProcessAutoKiller {
         }
     }
 
-    /// `Tag::ProcessAutoKiller` fire body: the grace period is over.
-    pub fn on_timer(&mut self) {
+    /// `Tag::ProcessAutoKiller` fire body.
+    ///
+    /// # Safety
+    /// As [`Self::kill_on_timeout`].
+    pub unsafe fn on_timer(&mut self, vm: *mut VirtualMachine) {
         self.timer.state = TimerState::FIRED;
-        self.kill_terminating();
+        self.kill_due(&Timespec::now(TimespecMockMode::ForceRealTime));
+        // SAFETY: per fn contract.
+        unsafe { self.arm_timer(vm) };
     }
 
-    /// Bun is about to exit, so `timer` cannot fire any more. Gives what is left of `terminating`
-    /// the rest of its grace period, then sends SIGKILL. Turns no event loop and runs no exit
-    /// handler.
+    /// Bun is about to exit, so `timer` cannot fire any more. Gives each of `terminating` the rest
+    /// of its grace period, then sends it SIGKILL. Turns no event loop and runs no exit handler.
     pub fn finish_before_exit(&mut self) {
-        if self.terminating.is_empty() {
-            return;
-        }
         #[cfg(unix)]
         {
             let mut step_ms: i64 = 1;
-            loop {
-                self.terminating.retain(|&process| {
+            while !self.terminating.is_empty() {
+                self.terminating.retain(|waiting| {
                     // SAFETY: ref'd by `terminating`.
-                    let p = unsafe { &*process };
+                    let p = unsafe { &*waiting.process };
                     let ended = p.has_exited() || !Self::can_force_kill(p) || {
                         let mut status: core::ffi::c_int = 0;
                         // This reaps the child, which is fine: nothing else waits for it any more.
@@ -173,28 +195,22 @@ impl ProcessAutoKiller {
                     };
                     if ended {
                         // SAFETY: releases the ref that `kill_processes` left with `terminating`.
-                        unsafe { Process::deref(process) };
+                        unsafe { Process::deref(waiting.process) };
                     }
                     !ended
                 });
-                if self.terminating.is_empty() {
+                let now = Timespec::now(TimespecMockMode::ForceRealTime);
+                self.kill_due(&now);
+                let Some(first) = self.terminating.first() else {
                     return;
-                }
-                let remaining_ms = self
-                    .timer
-                    .next
-                    .duration(&Timespec::now(TimespecMockMode::ForceRealTime))
-                    .ms();
-                if remaining_ms <= 0 {
-                    break;
-                }
+                };
+                let remaining_ms = first.kill_at.duration(&now).ms().max(1);
                 std::thread::sleep(std::time::Duration::from_millis(
                     step_ms.min(remaining_ms).unsigned_abs(),
                 ));
                 step_ms = (step_ms * 2).min(16);
             }
         }
-        self.kill_terminating();
     }
 
     pub fn clear(&mut self) {
@@ -235,8 +251,8 @@ impl ProcessAutoKiller {
             if self.processes.swap_remove(&process)
                 || terminating
                     .iter()
-                    .position(|&tracked| tracked == process)
-                    .map(|index| terminating.swap_remove(index))
+                    .position(|waiting| waiting.process == process)
+                    .map(|index| terminating.remove(index))
                     .is_some()
             {
                 // SAFETY: we held a ref from on_subprocess_spawn; the pointee
@@ -254,9 +270,10 @@ pub struct Result {
 
 impl Drop for ProcessAutoKiller {
     fn drop(&mut self) {
-        for process in self.processes.keys().iter().chain(&self.terminating) {
+        let terminating = self.terminating.iter().map(|waiting| waiting.process);
+        for process in self.processes.keys().iter().copied().chain(terminating) {
             // SAFETY: see kill_processes — key is live until deref().
-            unsafe { Process::deref(*process) };
+            unsafe { Process::deref(process) };
         }
         // `self.processes` storage freed by its own Drop.
     }

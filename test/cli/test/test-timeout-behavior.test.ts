@@ -263,6 +263,42 @@ if (isFlaky && isLinux) {
     expect(exitCode).toBe(1);
   });
 
+  test("a second timeout does not delay the SIGKILL that follows the first", async () => {
+    const { combined, exitCode } = await runTestFile(/* ts */ `
+      let first: Bun.Subprocess;
+      let second: Bun.Subprocess;
+      afterAll(() => {
+        first.kill("SIGKILL");
+        second.kill("SIGKILL");
+      });
+
+      test("times out", async () => {
+        first = Bun.spawn({ cmd: ["sh", "-c", ${JSON.stringify(children.ignoresSigterm)}], ...ignore });
+        waitUntilReady();
+        await new Promise(() => {});
+      }, 20);
+
+      test("times out 400 ms later", async () => {
+        second = Bun.spawn({ cmd: ["sh", "-c", ${JSON.stringify(children.answersSigusr1)}], ...ignore });
+        waitUntilReady("ready-shared");
+        await new Promise(() => {});
+      }, 400);
+
+      test("the first child is killed while the second still runs", async () => {
+        await first.exited;
+        second.kill("SIGUSR1");
+        for (let i = 0; i < 500 && !existsSync("answer"); i++) await Bun.sleep(10);
+        expect({ first: first.signalCode, secondAnswered: existsSync("answer") }).toEqual({
+          first: "SIGKILL",
+          secondAnswered: true,
+        });
+      }, 2000);
+    `);
+
+    expect(combined).toContain("(pass) the first child is killed while the second still runs");
+    expect(exitCode).toBe(1);
+  });
+
   test("the stale timer of an earlier test does not signal anything during a test with no timeout", async () => {
     const { combined, exitCode } = await runTestFile(/* ts */ `
       let child: Bun.Subprocess;

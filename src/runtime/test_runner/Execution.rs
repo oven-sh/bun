@@ -327,20 +327,24 @@ impl Execution {
                     if !entry.timespec.eql(&Timespec::EPOCH)
                         && entry.timespec.order(&now) == core::cmp::Ordering::Less
                     {
-                        let vm = global_this.bun_vm_ptr();
-                        // SAFETY: bun_vm_ptr() returns the live per-thread VM.
-                        let kill_count = unsafe { (*vm).auto_killer.kill_on_timeout(vm) };
-                        if kill_count.processes > 0 {
-                            bun_core::pretty_errorln!(
-                                "<d>killed {} dangling process{}<r>",
-                                kill_count.processes,
-                                if kill_count.processes != 1 { "es" } else { "" },
-                            );
-                            bun_core::Output::flush();
-                        }
+                        Self::kill_dangling_processes(global_this);
                     }
                 }
             }
+        }
+    }
+
+    fn kill_dangling_processes(global_this: &JSGlobalObject) {
+        let vm = global_this.bun_vm_ptr();
+        // SAFETY: bun_vm_ptr() returns the live per-thread VM.
+        let kill_count = unsafe { (*vm).auto_killer.kill_on_timeout(vm) };
+        if kill_count.processes > 0 {
+            bun_core::pretty_errorln!(
+                "<d>killed {} dangling process{}<r>",
+                kill_count.processes,
+                if kill_count.processes != 1 { "es" } else { "" },
+            );
+            bun_core::Output::flush();
         }
     }
 
@@ -998,6 +1002,12 @@ fn step_sequence_one(
         // SAFETY: arena-owned entry
         let active_entry = unsafe { &mut *active_entry_ptr.as_ptr() };
         if active_entry.evaluate_timeout(sequence, now) {
+            // The timer callback compared the deadline with an earlier clock, so it can have signalled nothing.
+            // SAFETY: group points into this.groups; read-only.
+            let group_ref = unsafe { group.as_ref() };
+            if group_ref.sequence_end - group_ref.sequence_start == 1 {
+                Execution::kill_dangling_processes(global_this);
+            }
             Execution::advance_sequence(buntest_ptr, sequence_ptr, group);
             return Ok(None); // run again
         }

@@ -1149,7 +1149,7 @@ pub(crate) unsafe fn __bun_fire_timer(
             // SAFETY: §Dispatch — `t` is the `timer` of the per-VM `ProcessAutoKiller`.
             let container = unsafe { ProcessAutoKiller::from_timer_ptr(t) };
             // SAFETY: per fn contract. It sends signals and runs no JS.
-            unsafe { (*container).on_timer() };
+            unsafe { (*container).on_timer(vm) };
             Ok(())
         }
         EventLoopTimerTag::DateHeaderTimer => {

@@ -135,12 +135,13 @@ fn cjs_export_names_annotation(
             .map(|alias| &**alias)
             .filter(|alias| *alias != b"default" && *alias != b"module.exports")
     };
-    // `export * from "external"`. A bundled file has a source index.
+    // `export * from "external"`. A bundled file has a source index, and a
+    // disabled path prints as a stub, not as `require()`.
     let external_stars = || {
         ast.export_star_import_records
             .iter()
             .map(|&index| &ast.import_records.as_slice()[index as usize])
-            .filter(|record| record.source_index.is_invalid())
+            .filter(|record| record.source_index.is_invalid() && !record.path.is_disabled)
     };
     let is_bare =
         |name: &[u8]| strings::is_all_ascii(name) && js_ast::lexer_tables::is_identifier(name);

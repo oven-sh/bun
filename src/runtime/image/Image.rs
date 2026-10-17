@@ -376,13 +376,13 @@ fn source_from_js(
                 )));
             }
             let mut out = vec![0u8; bun_base64::decode_len(payload)];
-            let r = base64::decode(&mut out, payload);
-            if r.fail {
+            let r = bun_base64::decode(&mut out, payload);
+            if !r.is_successful() {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "Image(): invalid base64 in data: URL"
                 )));
             }
-            out.truncate(r.written);
+            out.truncate(r.count);
             return Ok(Source::Owned(out));
         }
         return Ok(Source::Path(ZBox::from_bytes(s)));

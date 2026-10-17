@@ -277,7 +277,7 @@ static EncodedJSValue throwNodeArgType(JSGlobalObject* globalObject, ThrowScope&
 
 // `db.limits` property-name → SQLITE_LIMIT_* mapping. The ids are
 // contiguous (0..10) and equal their array index; DatabaseSyncOpen-
-// Configuration::initialLimits relies on that. static_assert picks up
+// Configuration::limits relies on that. static_assert picks up
 // any drift if the amalgamation ever renumbers them.
 struct NodeSqliteLimitInfo {
     ASCIILiteral name;
@@ -297,7 +297,7 @@ static constexpr std::array<NodeSqliteLimitInfo, kNodeSqliteLimitCount> kLimitMa
     { "triggerDepth"_s, SQLITE_LIMIT_TRIGGER_DEPTH },
 } };
 static_assert(SQLITE_LIMIT_LENGTH == 0 && SQLITE_LIMIT_TRIGGER_DEPTH == 10,
-    "kLimitMapping / DatabaseSyncOpenConfiguration::initialLimits assume contiguous SQLITE_LIMIT_* ids");
+    "kLimitMapping / DatabaseSyncOpenConfiguration::limits assume contiguous SQLITE_LIMIT_* ids");
 
 static inline int findLimitId(const WTF::String& name)
 {
@@ -1051,6 +1051,8 @@ void JSDatabaseSync::sweepOrphanedSessions()
     });
 }
 
+static int nodeSqliteAuthorizerCallback(void* userData, int actionCode, const char* p1, const char* p2, const char* p3, const char* p4);
+
 bool JSDatabaseSync::open(JSGlobalObject* globalObject, ThrowScope& scope)
 {
     // m_deferredClose: close() from inside a UDF/authorizer stashed the old
@@ -1130,8 +1132,8 @@ bool JSDatabaseSync::open(JSGlobalObject* globalObject, ThrowScope& scope)
     }
 
     for (const auto& info : kLimitMapping) {
-        int initial = m_config.initialLimits[static_cast<size_t>(info.id)];
-        if (initial >= 0) sqlite3_limit(m_db, info.id, initial);
+        int limit = m_config.limits[static_cast<size_t>(info.id)];
+        if (limit >= 0) sqlite3_limit(m_db, info.id, limit);
     }
 
     if (int r = sqlite3_busy_timeout(m_db, m_config.timeout); r != SQLITE_OK) {
@@ -1140,7 +1142,7 @@ bool JSDatabaseSync::open(JSGlobalObject* globalObject, ThrowScope& scope)
         return false;
     }
 
-    if (m_config.allowExtension) {
+    if (m_enableLoadExtension) {
         if (!LAZY_SQLITE_HAS_LOAD_EXTENSION()) [[unlikely]] {
             Bun::throwError(globalObject, scope, ErrorCode::ERR_LOAD_SQLITE_EXTENSION,
                 "the loaded SQLite library was built with SQLITE_OMIT_LOAD_EXTENSION.\n"
@@ -1156,7 +1158,22 @@ bool JSDatabaseSync::open(JSGlobalObject* globalObject, ThrowScope& scope)
         }
     }
 
+    // The authorizer outlives the connection, so a reopen reinstalls it.
+    if (m_authorizer) {
+        if (int r = sqlite3_set_authorizer(m_db, nodeSqliteAuthorizerCallback, this); r != SQLITE_OK) {
+            throwSqliteReturnCodeError(globalObject, scope, m_db, r);
+            closeInternal();
+            return false;
+        }
+    }
+
     return true;
+}
+
+void JSDatabaseSync::setLimit(int id, int value)
+{
+    sqlite3_limit(m_db, id, value);
+    m_config.limits[static_cast<size_t>(id)] = value;
 }
 
 template<typename Visitor>
@@ -1877,6 +1894,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncEnableDefensive, (JSGlobalObject * global
         throwSqliteReturnCodeError(globalObject, scope, self->connection(), r);
         return {};
     }
+    self->setEnableDefensive(enable != 0);
     return JSValue::encode(jsUndefined());
 }
 
@@ -2359,7 +2377,7 @@ JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSDatabaseSyncConstructor::construct(JSG
                     return Bun::throwError(globalObject, scope, ErrorCode::ERR_OUT_OF_RANGE,
                         makeString("The \"options.limits."_s, info.name, "\" argument must be non-negative."_s));
                 }
-                config.initialLimits[static_cast<size_t>(info.id)] = iv;
+                config.limits[static_cast<size_t>(info.id)] = iv;
             }
         }
 
@@ -3506,7 +3524,7 @@ bool JSNodeSqliteLimits::put(JSCell* cell, JSGlobalObject* globalObject, Propert
                     "Limit value must be a non-negative integer or Infinity."_s);
                 return false;
             }
-            sqlite3_limit(db->connection(), id, newValue);
+            db->setLimit(id, newValue);
             return true;
         }
     }

@@ -1495,6 +1495,42 @@ describe("DatabaseSync.prototype.setAuthorizer()", () => {
     expect(() => db.prepare("SELECT 1")).toThrow(RangeError);
     db.close();
   });
+
+  test("remains installed after close() and open()", () => {
+    const db = new DatabaseSync(":memory:");
+    let calls = 0;
+    db.setAuthorizer(() => {
+      calls++;
+      return constants.SQLITE_DENY;
+    });
+    expect(() => db.exec("CREATE TABLE x (a)")).toThrow(
+      expect.objectContaining({ code: "ERR_SQLITE_ERROR", message: expect.stringMatching(/not authorized/) }),
+    );
+    const callsBefore = calls;
+    expect(callsBefore).toBeGreaterThan(0);
+
+    db.close();
+    db.open();
+
+    expect(() => db.exec("CREATE TABLE x (a)")).toThrow(
+      expect.objectContaining({ code: "ERR_SQLITE_ERROR", message: expect.stringMatching(/not authorized/) }),
+    );
+    expect(calls).toBeGreaterThan(callsBefore);
+    db.close();
+  });
+
+  test("stays cleared after close() and open()", () => {
+    const db = new DatabaseSync(":memory:");
+    db.setAuthorizer(() => constants.SQLITE_DENY);
+    db.setAuthorizer(null);
+
+    db.close();
+    db.open();
+
+    db.exec("CREATE TABLE x (a)");
+    expect(db.prepare("SELECT count(*) AS n FROM x").get()).toEqual({ n: 0 });
+    db.close();
+  });
 });
 
 describe("db.limits", () => {
@@ -1542,6 +1578,36 @@ describe("db.limits", () => {
     expect(() => db.prepare("SELECT ?, ?, ?, ?")).toThrow(expect.objectContaining({ code: "ERR_SQLITE_ERROR" }));
     db.close();
     expect(() => new DatabaseSync(":memory:", { limits: { column: -1 } })).toThrow(RangeError);
+  });
+
+  test("limits set at runtime survive close() and open()", () => {
+    const db = new DatabaseSync(":memory:", { limits: { variableNumber: 3 } });
+    const originalColumn = db.limits.column;
+
+    db.limits.attach = 0;
+    db.limits.column = 10;
+    db.limits.variableNumber = 5;
+    db.close();
+    db.open();
+
+    expect({
+      attach: db.limits.attach,
+      column: db.limits.column,
+      variableNumber: db.limits.variableNumber,
+    }).toEqual({ attach: 0, column: 10, variableNumber: 5 });
+    expect(() => db.exec("ATTACH DATABASE ':memory:' AS db1")).toThrow(
+      expect.objectContaining({
+        code: "ERR_SQLITE_ERROR",
+        message: expect.stringMatching(/too many attached databases/),
+      }),
+    );
+
+    // Infinity resets to the compile-time maximum, and that reset also survives.
+    db.limits.column = Infinity;
+    db.close();
+    db.open();
+    expect(db.limits.column).toBe(originalColumn);
+    db.close();
   });
 });
 
@@ -1808,6 +1874,26 @@ describe("enableDefensive()", () => {
     expect(() => new DatabaseSync(":memory:").enableDefensive("nope" as any)).toThrow(
       expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
     );
+  });
+
+  test("enableDefensive() persists across close() and open()", () => {
+    const pragma = (db: any) => db.prepare("PRAGMA journal_mode").get().journal_mode;
+
+    const on = new DatabaseSync(":memory:", { defensive: false });
+    on.enableDefensive(true);
+    on.close();
+    on.open();
+    on.exec("PRAGMA journal_mode=OFF");
+    expect(pragma(on)).toBe("memory");
+    on.close();
+
+    const off = new DatabaseSync(":memory:", { defensive: true });
+    off.enableDefensive(false);
+    off.close();
+    off.open();
+    off.exec("PRAGMA journal_mode=OFF");
+    expect(pragma(off)).toBe("off");
+    off.close();
   });
 });
 

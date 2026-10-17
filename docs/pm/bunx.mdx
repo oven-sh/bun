@@ -48,6 +48,19 @@ As with `npx`, `bunx` checks for a locally installed package first, then falls b
 
 `bunx my-cli` asks the registry for newer versions of the package and of its dependencies once a day. If the registry cannot be reached or answers with a 5xx, 429 or 408 status, it warns and runs the version it has. `bunx my-cli@latest` asks on every run.
 
+## Registries
+
+When `bunx` installs a package, it reads your own `~/.bunfig.toml` and `~/.npmrc`. From the `bunfig.toml` and the `.npmrc` of your project, it takes these settings:
+
+- the default registry and the scoped registries, with their credentials
+- `ca` and `cafile`
+- `minimumReleaseAge` and `minimumReleaseAgeExcludes`
+- the [security scanner](/pm/security-scanner-api). It runs from your project, and `bunx` stops if the project has not installed it.
+
+The project is the [project root](/runtime/auto-install#project-root) of the directory where you run `bunx`, or that directory if there is no `package.json`. Every other `[install]` setting of the project, such as the cache directory or the linker, applies only to `bun install`. The project's `.env` files are read only to expand `$VAR` in the two files.
+
+If the project's default registry does not have the package, `bunx` fails, as `bun add` does there. A `bunx` that the install script of a package runs reads only your own files.
+
 ## Arguments and flags
 
 To pass additional command-line flags and arguments through to the executable, place them after the executable name.

@@ -1939,6 +1939,154 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
     );
 }
 
+/// For a `bunx` install: `project`'s registries and package checks. The rest is `user`'s.
+fn of_project_for_bunx(project: Api::BunInstall, user: Api::BunInstall) -> Api::BunInstall {
+    let Api::BunInstall {
+        default_registry,
+        scoped,
+        url_auth,
+        ca,
+        cafile,
+        security_scanner,
+        minimum_release_age_ms,
+        minimum_release_age_excludes,
+        lockfile_path: _,
+        save_lockfile_path: _,
+        cache_directory: _,
+        dry_run: _,
+        force: _,
+        save_dev: _,
+        save_optional: _,
+        save_peer: _,
+        save_lockfile: _,
+        production: _,
+        save_yarn_lockfile: _,
+        disable_cache: _,
+        disable_manifest_cache: _,
+        global_dir: _,
+        global_bin_dir: _,
+        frozen_lockfile: _,
+        exact: _,
+        concurrent_scripts: _,
+        save_text_lockfile: _,
+        ignore_scripts: _,
+        provenance: _,
+        link_workspace_packages: _,
+        node_linker: _,
+        global_store: _,
+        public_hoist_pattern: _,
+        hoist_pattern: _,
+        hoist: _,
+        offline: _,
+    } = project;
+    Api::BunInstall {
+        default_registry,
+        scoped,
+        url_auth,
+        ca,
+        cafile,
+        security_scanner,
+        minimum_release_age_ms,
+        minimum_release_age_excludes,
+        ..user
+    }
+}
+
+/// Hashes what `project`'s config decides about a `bunx` tree's packages. `Err`: an unusable file.
+pub fn bunx_project_key(env: &dot_env::Loader, project: &[u8]) -> Result<Option<u64>, Box<[u8]>> {
+    let bunfig = ::bun_bunfig::arguments::load_install_section(project)?
+        .map_or_else(Api::BunInstall::default, |bunfig| *bunfig);
+    initialize_store();
+    let mut npmrc = Api::BunInstall::default();
+    let mut npmrc_path = bun_paths::path_buffer_pool::get();
+    if let Some(path) = npmrc_of_bunx_project(project, &mut npmrc_path)
+        && let Some(unreadable) = ini::load_npmrc_config(
+            &mut npmrc,
+            &bunfig,
+            env,
+            ini::NpmrcDiagnostics::Discard,
+            &[path],
+        )
+    {
+        return Err(unreadable.as_bytes().into());
+    }
+
+    // Per file: the user's bunfig.toml overrides the project's .npmrc, not its bunfig.toml.
+    let mut settings: Vec<u8> = Vec::new();
+    for (file, config) in [(b'n', npmrc), (b'b', bunfig)] {
+        let config = of_project_for_bunx(config, Api::BunInstall::default());
+        let mut add = |name: &[u8], value: &[u8]| {
+            settings.extend_from_slice(&[file, 0]);
+            settings.extend_from_slice(name);
+            settings.push(0);
+            settings.extend_from_slice(value);
+            settings.push(0);
+        };
+        if let Some(registry) = &config.default_registry {
+            add(b"registry", &registry.url);
+        }
+        if let Some(scoped) = &config.scoped {
+            for (scope, registry) in scoped.scopes.keys().iter().zip(scoped.scopes.values()) {
+                add(scope, &registry.url);
+            }
+        }
+        if let Some(age) = config.minimum_release_age_ms {
+            add(b"minimumReleaseAge", &age.to_bits().to_le_bytes());
+        }
+        for exclude in config.minimum_release_age_excludes.iter().flatten() {
+            add(b"minimumReleaseAgeExcludes", exclude);
+        }
+        if let Some(scanner) = &config.security_scanner {
+            add(b"scanner", scanner);
+        }
+    }
+    Ok((!settings.is_empty()).then(|| bun_wyhash::hash(&settings)))
+}
+
+/// `project`'s .npmrc. `None` in the home directory, where that file is the user's own.
+fn npmrc_of_bunx_project<'a>(project: &[u8], buf: &'a mut PathBuffer) -> Option<&'a ZStr> {
+    let home = bun_core::env_var::HOME
+        .get()
+        .map(strings::without_trailing_slash);
+    if home == Some(strings::without_trailing_slash(project)) {
+        return None;
+    }
+    resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
+        project,
+        buf,
+        &[b".npmrc".as_slice()],
+    )
+}
+
+/// Follows `BUN_ENV` / `NODE_ENV` like `bun run`, but defaults to the production set.
+fn env_file_suffix(env: &dot_env::Loader) -> dot_env::DotEnvFileSuffix {
+    match env.get_node_env() {
+        Some(b"development") => dot_env::DotEnvFileSuffix::Development,
+        Some(b"test") => dot_env::DotEnvFileSuffix::Test,
+        _ => dot_env::DotEnvFileSuffix::Production,
+    }
+}
+
+/// A copy of `env` with the default `.env` files of `dir`, which is not the working directory.
+fn env_with_default_files_of(env: &dot_env::Loader, dir: &[u8]) -> Result<dot_env::Loader, Error> {
+    let mut loader = dot_env::Loader::init_with_map(env.map.clone_with_allocator()?);
+    loader.quiet = true;
+    let Ok(fs::EntriesOption::Entries(entries)) =
+        FileSystem::instance().read_directory(dir, 0, true)
+    else {
+        return Ok(loader);
+    };
+    // `.data` must only be probed while `entries_mutex` is held.
+    let names = {
+        let _entries_lock = FileSystem::instance().fs.entries_mutex.lock_guard();
+        dot_env::DirEntryKeys(entries.data.iter().map(|(k, _)| Box::from(&**k)).collect())
+    };
+    if let Ok(dir) = bun_sys::Dir::open(dir) {
+        loader.load_default_files_of(dir.fd(), &names, env_file_suffix(env))?;
+    }
+    Ok(loader)
+}
+
 /// Appends `<separator>package.json\0`. A Windows drive root, `C:\`, has its separator already.
 fn push_package_json(path: &mut Vec<u8>) {
     if !(cfg!(windows) && path.last().is_some_and(|&c| bun_paths::is_sep_native(c))) {
@@ -2779,20 +2927,20 @@ pub fn init(
                     .collect(),
             )
         };
-        // Follows `BUN_ENV` / `NODE_ENV` like `bun run`, but defaults to the production set.
-        let suffix = match env.get_node_env() {
-            Some(b"development") => dot_env::DotEnvFileSuffix::Development,
-            Some(b"test") => dot_env::DotEnvFileSuffix::Test,
-            _ => dot_env::DotEnvFileSuffix::Production,
-        };
+        let suffix = env_file_suffix(env);
         env.load(&env_probe_keys, &[], suffix, false)?;
     }
     // `bunx` sets these for this command alone. They are removed because lifecycle scripts and the
     // security scanner get a copy of this map.
     env.map.remove(b"BUN_INTERNAL_BUNX_INSTALL");
     env.map.remove(b"BUN_INTERNAL_BUNX_HAS_COPY");
+    env.map.remove(b"BUN_INTERNAL_BUNX_PROJECT");
 
     initialize_store();
+
+    // For `bunx`: the project's registries apply, and its `.env` files only expand `$VAR` in them.
+    let bunx_project = run_tasks::bunx_project();
+    let mut bunx_project_env: Option<dot_env::Loader> = None;
 
     {
         // npmrc < bunfig < CLI
@@ -2800,22 +2948,62 @@ pub fn init(
             .install
             .take()
             .map_or_else(Api::BunInstall::default, |b| *b);
+        let start_dir = bun_paths::fs::FileSystem::instance().initial_top_level_dir();
+        let join = resolve_path::join_abs_string_buf_z_checked::<platform::Auto>;
         let mut npmrc_local = bun_paths::path_buffer_pool::get();
+        let npmrc_local = join(
+            fs.top_level_dir(),
+            &mut npmrc_local,
+            &[b".npmrc".as_slice()],
+        );
+        let mut npmrc_of_project = bun_paths::path_buffer_pool::get();
+        let npmrc_of_project = bunx_project
+            .and_then(|project| npmrc_of_bunx_project(project, &mut npmrc_of_project))
+            .filter(|path| bun_sys::exists_z(path));
+        let bunfig_of_project =
+            match bunx_project.map(::bun_bunfig::arguments::load_install_section) {
+                Some(Ok(bunfig)) => bunfig,
+                Some(Err(path)) => {
+                    ctx.unreadable_config.get_or_insert(path);
+                    None
+                }
+                None => None,
+            };
+        if let Some(project) = bunx_project
+            && (npmrc_of_project.is_some() || bunfig_of_project.is_some())
+            && cli.env_files.is_empty()
+            && !cli.no_env_file
+            && !ctx.args.disable_default_env_files
+        {
+            bunx_project_env = Some(env_with_default_files_of(env, project)?);
+        }
+
         let mut install = load_npmrc_files(
             &bunfig_install,
-            env,
-            bun_paths::fs::FileSystem::instance().initial_top_level_dir(),
-            &mut resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
-                fs.top_level_dir(),
-                &mut npmrc_local,
-                &[b".npmrc".as_slice()],
-            )
-            .into_iter(),
+            bunx_project_env.as_ref().unwrap_or(&*env),
+            start_dir,
+            &mut npmrc_local.into_iter().chain(npmrc_of_project),
             ini::NpmrcDiagnostics::Print,
             &mut ctx.unreadable_config,
         );
+        if npmrc_of_project.is_some() {
+            // Every .npmrc collapses into one map: what the project may not set is read again.
+            let user = load_npmrc_files(
+                &bunfig_install,
+                env,
+                start_dir,
+                &mut npmrc_local.into_iter(),
+                ini::NpmrcDiagnostics::Discard,
+                &mut None,
+            );
+            install = of_project_for_bunx(install, user);
+        }
 
         overlay_bunfig_install(&mut install, bunfig_install);
+        if let Some(bunfig) = bunfig_of_project {
+            let bunfig = of_project_for_bunx(*bunfig, Api::BunInstall::default());
+            overlay_bunfig_install(&mut install, bunfig);
+        }
         if env_ignores_scripts {
             install.ignore_scripts = Some(true);
         }
@@ -2947,6 +3135,7 @@ pub fn init(
             ctx.install.as_deref(),
             None,
             [None, None],
+            bunx_project_env.as_mut(),
             subcommand,
         )?;
 
@@ -3271,6 +3460,7 @@ fn init_with_runtime_once(
         bun_install,
         Some(&npmrc),
         [root_bunfig.as_deref(), nearer_bunfig.as_deref()],
+        None,
         Subcommand::Install,
     )?;
 

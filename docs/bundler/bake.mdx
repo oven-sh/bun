@@ -71,8 +71,11 @@ export default {
 | `--console`                        | Print the browser's console logs.                                          |
 | `--no-console`                     | Do not print the browser's console logs.                                   |
 | `--check`                          | Type check the project first. With type errors, `bun bake` does not start. |
+| `--watch`                          | Start again when a file that `bun bake` loaded changes.                    |
+| `--hot`                            | Reload `app/server.ts` in place when it changes.                           |
+| `--no-clear-screen`                | With `--watch` or `--hot`, do not clear the terminal on a reload.          |
 
-A flag and its value can also be one argument: `--port=3000`. `bun --check bake` is the same as `bun bake --check`. With `--watch`, `bun --check --watch bake` type checks again after each change, and starts the server when there are no errors.
+A flag and its value can also be one argument: `--port=3000`. `--check`, `--watch`, `--hot` and `--no-clear-screen` mean the same before `bake`: `bun --check bake` is the same as `bun bake --check`. With `--watch`, `bun --check --watch bake` type checks again after each change, and starts the server when there are no errors.
 
 ## A `bake` script or file of your own
 

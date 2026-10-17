@@ -128,6 +128,14 @@ export default [
         cache: true,
       },
     },
-    values: ["exitedPromise", "onExitCallback", "onDisconnectCallback", "ipcCallback"],
+    values: [
+      "exitedPromise",
+      "onExitCallback",
+      "onDisconnectCallback",
+      "ipcCallback",
+      "ipcWorker",
+      "ipcInternalCallback",
+      "ipcAckCallbacks",
+    ],
   }),
 ];

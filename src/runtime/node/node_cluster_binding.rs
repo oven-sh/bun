@@ -5,9 +5,9 @@
 // - We should not be creating JSFunction's in process.nextTick.
 
 use crate::ipc::{IsInternal, SerializeAndSendResult};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StrongOptional};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
-use crate::api::bun::subprocess::Subprocess;
+use crate::api::bun::subprocess::{Subprocess, js as subprocess_js};
 
 // Struct lives in `crate::ipc` —
 // `SendQueue` stores one inline so it must live at that tier. Re-exported here so
@@ -47,9 +47,8 @@ pub(crate) fn on_internal_message_child(
     bun_output::scoped_log!(IPC, "onInternalMessageChild");
     let arguments = frame.arguments_as_array::<2>();
     let singleton = child_singleton();
-    // TODO: we should not create two jsc.Strong.Optional here. If absolutely necessary, a single Array. should be all we use.
-    singleton.worker = StrongOptional::create(arguments[0], global);
-    singleton.cb = StrongOptional::create(arguments[1], global);
+    singleton.worker.set(global, arguments[0]);
+    singleton.cb.set(global, arguments[1]);
     singleton.flush(global)?;
     Ok(JSValue::UNDEFINED)
 }
@@ -140,15 +139,11 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
     }
     let this_seq = ipc_data.internal_msg_queue.with_mut(|q| {
         let seq = q.seq;
-        if callback.is_function() {
-            let _ = q
-                .callbacks
-                .put(seq, StrongOptional::create(callback, global));
-        }
         q.seq = seq.wrapping_add(1);
         seq
     });
     if callback.is_function() {
+        InternalMsgHolder::put_callback(arguments[0], global, this_seq, callback)?;
         if let Some(h) = &mut native_handle {
             h.cluster_seq = Some(this_seq);
         }
@@ -194,14 +189,12 @@ pub(crate) fn on_internal_message_primary(
     let Some(subprocess) = arguments[0].as_class_ref::<Subprocess<'_>>() else {
         return Ok(JSValue::UNDEFINED);
     };
-    let Some(ipc_data) = subprocess.ipc() else {
+    if subprocess.ipc().is_none() {
         return Ok(JSValue::UNDEFINED);
-    };
-    // TODO: remove these strongs.
-    ipc_data.internal_msg_queue.with_mut(|q| {
-        q.worker = StrongOptional::create(arguments[1], global);
-        q.cb = StrongOptional::create(arguments[2], global);
-    });
+    }
+    // Cached slots, not `Strong` handles: a `Strong` here roots the worker's whole object graph.
+    subprocess_js::ipc_worker_set_cached(arguments[0], global, arguments[1]);
+    subprocess_js::ipc_internal_callback_set_cached(arguments[0], global, arguments[2]);
     Ok(JSValue::UNDEFINED)
 }
 
@@ -213,10 +206,18 @@ pub(crate) fn handle_internal_message_primary(
     let Some(ipc_data) = subprocess.ipc() else {
         return Ok(());
     };
-
-    if !ipc_data.internal_msg_queue.get().is_ready() {
+    let this_jsvalue = ipc_data.owner_this_jsvalue();
+    let _keep = bun_jsc::EnsureStillAlive(this_jsvalue);
+    if this_jsvalue.is_empty() {
         return Ok(());
     }
+
+    let (Some(worker), Some(cb)) = (
+        subprocess_js::ipc_worker_get_cached(this_jsvalue),
+        subprocess_js::ipc_internal_callback_get_cached(this_jsvalue),
+    ) else {
+        return Ok(());
+    };
 
     let event_loop = global.bun_vm().event_loop_mut();
 
@@ -224,41 +225,24 @@ pub(crate) fn handle_internal_message_primary(
     if let Some(p) = message.get(global, "ack")? {
         if !p.is_undefined() {
             let ack = p.to_int32();
-            let entry = ipc_data.internal_msg_queue.with_mut(|q| {
-                let cb = q.callbacks.get(&ack).and_then(|s| s.get());
-                if q.callbacks.contains_key(&ack) {
-                    q.callbacks.swap_remove(&ack);
-                }
-                cb.zip(q.worker.get())
-            });
-            if let Some((cb, worker)) = entry {
+            if let Some(callback) = InternalMsgHolder::take_callback(this_jsvalue, global, ack)? {
                 event_loop.run_callback(
                     subprocess.context,
-                    cb,
+                    callback,
                     global,
                     worker,
-                    &[
-                        message,
-                        JSValue::NULL, // handle
-                    ],
+                    &[message, JSValue::NULL],
                 );
                 return Ok(());
             }
         }
     }
-    let (cb, worker) = {
-        let q = ipc_data.internal_msg_queue.get();
-        (q.cb.get().unwrap(), q.worker.get().unwrap())
-    };
     event_loop.run_callback(
         subprocess.context,
         cb,
         global,
         worker,
-        &[
-            message,
-            JSValue::NULL, // handle
-        ],
+        &[message, JSValue::NULL],
     );
     Ok(())
 }

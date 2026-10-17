@@ -1135,8 +1135,7 @@ impl BunTest {
         // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point (before JS re-entry).
         unsafe { (*this).update_min_timeout(global_this, timeout) };
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { &[] };
-        // Called directly, with no `run_callback*` gate in between: a gate that declines to call
-        // has no answer the runner could tell from the callback's own return.
+        // No `run_callback*` gate: the runner cannot tell a call that a gate declined from a return.
         let result: JSValue = match cfg_callback.call(global_this, JSValue::UNDEFINED, args_slice).and_then(|result| {
             result.ensure_still_alive();
             vm.event_loop_mut()
@@ -1298,10 +1297,7 @@ impl BunTest {
         self.print_uncaught_exception(global_this, exception, handle_status);
     }
 
-    /// An exception already pending when the runner is about to call a callback was left by
-    /// native code that ran since the last one (a server's response path, say). It is no
-    /// test's: reported between tests, it is not charged to the entry that is about to run,
-    /// and that entry's callback is still called.
+    /// Reports an exception that native code left pending since the last callback as no test's.
     #[cold]
     #[inline(never)]
     fn take_exception_left_pending(&mut self, global_this: &JSGlobalObject) {
@@ -1381,10 +1377,7 @@ impl BunTest {
     }
 }
 
-/// The runner's print of an error. The printer runs the error's own code (accessors, inspect
-/// hooks) and returns nothing, so what that code throws is still pending when it returns. That
-/// exception belongs to this report: it is taken and printed here, and never meets the next
-/// callback the runner calls.
+/// Prints `error`, then takes and prints what the error's own code threw while it was printed.
 pub(crate) fn print_error(
     vm: &mut VirtualMachine,
     global_this: &JSGlobalObject,

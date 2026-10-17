@@ -3055,8 +3055,7 @@ impl TestCommand {
                 drop(buntest_strong);
             }
 
-            // What native code left pending after the file's last callback is no test's, and
-            // the next file's load would fail over it.
+            // An exception still pending here would fail the load of the next file.
             if global.has_exception() {
                 global.clear_termination_exception();
                 if global.has_exception() {

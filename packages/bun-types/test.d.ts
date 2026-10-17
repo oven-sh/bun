@@ -98,7 +98,22 @@ declare module "bun:test" {
     function fn<T extends (...args: any[]) => any>(func?: T): Mock<T>;
     function setSystemTime(now?: number | Date): void;
     function setTimeout(milliseconds: number): void;
-    function useFakeTimers(options?: { now?: number | Date } | "modern" | "legacy"): typeof vi;
+    function useFakeTimers(
+      options?:
+        | {
+            now?: number | Date;
+            /**
+             * The maximum number of timers that one `runAllTimers()` call runs.
+             * If timers remain after that, `runAllTimers()` throws an
+             * "assuming an infinite loop" error.
+             *
+             * @default 100_000
+             */
+            timerLimit?: number;
+          }
+        | "modern"
+        | "legacy",
+    ): typeof vi;
     function useRealTimers(): typeof vi;
     function advanceTimersByTime(milliseconds: number): typeof vi;
     function advanceTimersToNextTimer(): typeof vi;

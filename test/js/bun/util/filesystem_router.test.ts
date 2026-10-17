@@ -958,6 +958,69 @@ it("reload() while Bun.build() resolves the same directory", async () => {
   }).toEqual({ stdout: "matches 2000 builds-ok true", stderr: "", exitCode: 0, signalCode: null });
 }, 60_000);
 
+it("reload() while Bun.build() resolves imports in the same directory", async () => {
+  // The race of the test above, through the other resolver sites that fill a
+  // cached entry's absolute path: the extension probe, the directory index,
+  // and the .js to .tsx rewrite.
+  const files: Record<string, string> = {
+    "fixture.ts": /* ts */ `
+      import path from "path";
+      const pagesDir = path.join(import.meta.dir, "pages");
+      const entrypoints: string[] = [];
+      for (let i = 1; i <= 8; i++) {
+        entrypoints.push(path.join(pagesDir, "via" + i + ".tsx"));
+      }
+      const router = new Bun.FileSystemRouter({
+        dir: pagesDir,
+        style: "nextjs",
+        fileExtensions: [".tsx"],
+      });
+      await Bun.build({ entrypoints, target: "bun", throw: false });
+      let matches = 0;
+      let buildsOk = true;
+      for (let round = 0; round < 4; round++) {
+        const builds = Array.from({ length: 2 }, () =>
+          Bun.build({ entrypoints, target: "bun", throw: false }),
+        );
+        for (let i = 0; i < 10; i++) {
+          router.reload();
+          const m = router.match("/lib/a3");
+          if (m && m.filePath.endsWith("a3.tsx")) matches++;
+        }
+        const results = await Promise.all(builds);
+        buildsOk &&= results.every(r => r.success);
+      }
+      console.log("matches", matches, "builds-ok", buildsOk);
+    `,
+    "pages/lib/index.tsx": "export default 0;\n",
+  };
+  for (let i = 1; i <= 8; i++) {
+    files[`pages/lib/a${i}.tsx`] = `export default ${i};\n`;
+    files[`pages/lib/b${i}.tsx`] = `export default ${i};\n`;
+    files[`pages/via${i}.tsx`] =
+      `import a from "./lib/a${i}";\n` +
+      `import lib from "./lib";\n` +
+      `import b from "./lib/b${i}.js";\n` +
+      `export default a + lib + b;\n`;
+  }
+  using dir = tempDir("fsr-reload-build-imports", files);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({
+    stdout: normalizeBunSnapshot(stdout, String(dir)),
+    stderr: normalizeBunSnapshot(stderr, String(dir)),
+    exitCode,
+    signalCode: proc.signalCode,
+  }).toEqual({ stdout: "matches 40 builds-ok true", stderr: "", exitCode: 0, signalCode: null });
+});
+
 it("loads routes from a directory already cached by Bun.build()", async () => {
   // The resolver caches the directory name without a trailing slash while the
   // router spells it with one; loading routes out of the already-populated

@@ -214,7 +214,7 @@ pub mod ssl_wrapper {
     const MAX_RECORD_PLAINTEXT: usize = 16384;
     /// `SSL3_RT_HEADER_LENGTH + SSL3_RT_SEND_MAX_ENCRYPTED_OVERHEAD`
     const MAX_RECORD_OVERHEAD: usize = 5 + 88;
-    /// `kMaxEarlyDataSkipped` in BoringSSL's tls_record.cc: the early data a server skips when it rejects it.
+    /// `kMaxEarlyDataSkipped` in BoringSSL's tls_record.cc: the rejected early data a server skips.
     const MAX_EARLY_DATA_SKIPPED: usize = 16384;
 
     /// What the one BIO of the `SSL` reads and writes. No borrow spans an `SSL_*` call or a handler.
@@ -327,15 +327,14 @@ pub mod ssl_wrapper {
         keylog: RefCell<VecDeque<Box<[u8]>>>,
     }
 
-    /// How far a server wrapper is in asking its owner which context serves
-    /// the ClientHello's server name (`Handlers::on_server_name`).
+    /// How far a server wrapper is in asking its owner for a context (`Handlers::on_server_name`).
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum ServerName {
         /// Nobody to ask, or the answer is applied.
         Settled,
         /// The owner has a resolver and no ClientHello has arrived.
         Armed,
-        /// `us_ssl_wrapper_select_cert` suspended the handshake. The owner is asked once `SSL_do_handshake` has returned.
+        /// The handshake is suspended. The owner is asked once `SSL_do_handshake` has returned.
         Parked,
         /// The owner was asked. `resolve_server_name` resumes the handshake.
         Asked,
@@ -527,9 +526,7 @@ pub mod ssl_wrapper {
         pub on_keylog: Option<fn(T, &[u8])>,
         /// The name check of the verify step. `None`: the owner checks after the handshake.
         pub server_identity: Option<fn(T, &mut boring_sys::SSL) -> bun_boringssl::ServerIdentity>,
-        /// Server only: asked once for a ClientHello that carries a server name, with the handshake
-        /// paused before the certificate is chosen. The owner answers with `resolve_server_name`,
-        /// inside the call or later. It runs outside BoringSSL, so it may run JS.
+        /// Server only: asks for the context of a server name. `resolve_server_name` answers.
         pub on_server_name: Option<fn(T, &core::ffi::CStr)>,
     }
 
@@ -1150,14 +1147,13 @@ pub mod ssl_wrapper {
                     if self.callbacks.server_name.get() == ServerName::Parked {
                         self.ask_server_name(ssl);
                     }
-                    // Early data can follow a ClientHello, and BoringSSL skips it after the answer. More than it
-                    // skips cannot end in a session, so the queue stops there.
+                    // More early data than BoringSSL skips cannot end in a session.
                     if self.callbacks.server_name.get() == ServerName::Asked
                         && self.ciphertext.incoming.borrow().len() > MAX_EARLY_DATA_SKIPPED
                     {
                         self.drop_suspended_handshake();
                     }
-                    // Suspended until `resolve_server_name`: reading would drive the handshake again.
+                    // Suspended: a read would drive the handshake again.
                     return false;
                 }
                 // as far as I know these are the only errors we want to handle
@@ -1193,7 +1189,7 @@ pub mod ssl_wrapper {
         fn ask_server_name(&self, ssl: NonNull<boring_sys::SSL>) {
             self.callbacks.server_name.set(ServerName::Asked);
             let handlers = self.handlers.get();
-            // SAFETY: ssl is a live SSL*. The name belongs to it, and a `deinit` from inside this pass frees it only when the pass has unwound.
+            // SAFETY: ssl is live and owns the name. A `deinit` in this pass frees it afterwards.
             let name = unsafe { boring_sys::SSL_get_servername(ssl.as_ptr(), 0) };
             match handlers.on_server_name {
                 Some(on_server_name) if !name.is_null() => {
@@ -1205,8 +1201,7 @@ pub mod ssl_wrapper {
             }
         }
 
-        /// Closes with no TLS alert: the handshake is not driven again, and a fatal error keeps
-        /// `shutdown` from writing a close_notify. The owner hears ECONNRESET, as on the fd engine.
+        /// Closes with no TLS alert. The owner hears ECONNRESET, as on the fd engine.
         fn drop_suspended_handshake(&self) {
             self.callbacks.server_name.set(ServerName::Settled);
             self.flags.set_fatal_error(true);
@@ -1216,9 +1211,7 @@ pub mod ssl_wrapper {
             self.trigger_close_callback();
         }
 
-        /// The owner's answer to `on_server_name`: `Ok(Some(ctx))` serves that context, `Ok(None)` keeps
-        /// the default one, `Err` refuses the connection with no TLS alert, like node. An answer that
-        /// nobody waits for (the wrapper closed, or a second answer) is dropped.
+        /// Answers `on_server_name`: a context, the default one (`None`), or a refusal (`Err`).
         pub fn resolve_server_name(&self, answer: Result<Option<boring_sys::OwnedSslCtx>, ()>) {
             let Some(ssl) = self.ssl.get() else { return };
             if self.flags.closed_notified() || self.callbacks.server_name.get() != ServerName::Asked
@@ -1230,7 +1223,7 @@ pub mod ssl_wrapper {
             };
             self.callbacks.server_name.set(ServerName::Settled);
             if let Some(ctx) = selected {
-                // SAFETY: ssl is a live SSL*, suspended at its select-certificate step; `ctx` is live.
+                // SAFETY: `ssl` and `ctx` are live, and `ssl` is at its select-certificate step.
                 unsafe { us_ssl_apply_selected_ctx(ssl.as_ptr(), ctx.as_ptr()) };
             }
             self.handle_traffic();
@@ -1504,9 +1497,7 @@ pub mod ssl_wrapper {
         }
     }
 
-    /// openssl.c's select-certificate step (`us_select_cert_cb`) for an `SSL` that no `us_socket_t`
-    /// drives. 0 suspends the handshake, and `update_handshake_state` asks the owner: no owner code
-    /// runs inside BoringSSL.
+    /// For `us_select_cert_cb` (openssl.c). 0 suspends the handshake until the owner answers.
     #[unsafe(no_mangle)]
     extern "C" fn us_ssl_wrapper_select_cert(
         state: *const CallbackState,

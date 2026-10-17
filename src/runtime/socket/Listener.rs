@@ -2043,8 +2043,7 @@ impl WindowsNamedPipeListeningContext {
 }
 
 /// `us_dispatch_server_name` for a socket adopted into TLS, which has no listen
-/// socket. The duplex wrap asks through `ask_server_name` too
-/// (`DuplexUpgradeContext::on_server_name`).
+/// socket. Only the fd-adopt path registers this, not the duplex wrap.
 ///
 /// # Safety
 /// `socket` is the live us_socket_t processing this ClientHello and `hostname`
@@ -2058,8 +2057,7 @@ pub(crate) extern "C" fn us_dispatch_socket_server_name(
     dispatch_server_name(socket, hostname, abort_handshake).cast()
 }
 
-/// What the JS SNI handler (`ServerHandlers.serverName` in node:net) answered
-/// for one ClientHello. See `us_dispatch_server_name` for the contract.
+/// What the JS `serverName` handler answered (the contract is at `us_dispatch_server_name`).
 pub(crate) enum ServerNameAnswer {
     /// undefined / null: the default context (on a listener, its SNI tree first).
     Default,
@@ -2067,8 +2065,7 @@ pub(crate) enum ServerNameAnswer {
     Context(boring_sys::OwnedSslCtx),
     /// `true`: the SNICallback is asynchronous. `handle.resumeSNI(...)` answers.
     Pending,
-    /// An Error, a throw, or a value that is not a SecureContext: the
-    /// connection is dropped with no TLS alert.
+    /// An Error, a throw, or any other value: the connection is dropped with no TLS alert.
     Refused,
 }
 
@@ -2094,12 +2091,11 @@ impl ServerNameAnswer {
         }
     }
 
-    /// openssl.c's form: the context with a +1 that the C dispatcher frees
-    /// after `SSL_set_SSL_CTX` took its own, or null with `*abort_handshake`
-    /// 1 (refuse) or 2 (suspend).
+    /// The form `us_dispatch_server_name` returns to openssl.c.
     fn into_raw(self, abort_handshake: *mut core::ffi::c_int) -> *mut c_void {
         let code = match self {
             Self::Default => return core::ptr::null_mut(),
+            // The C dispatcher frees this +1 after `SSL_set_SSL_CTX` takes its own.
             Self::Context(ctx) => return ctx.into_raw().cast(),
             Self::Refused => 1,
             Self::Pending => 2,
@@ -2159,9 +2155,7 @@ fn dispatch_server_name(
     ask_server_name(tls, name).into_raw(abort_handshake)
 }
 
-/// Asks the `serverName` handler of a server-side socket. Both TLS engines
-/// call it: a `us_socket_t` from inside BoringSSL's select-certificate
-/// callback, the stream engine with its handshake suspended there.
+/// Asks the `serverName` handler of a server-side socket, for both TLS engines.
 pub(crate) fn ask_server_name(
     tls: bun_ptr::ThisPtr<TLSSocket>,
     name: &core::ffi::CStr,
@@ -2171,10 +2165,9 @@ pub(crate) fn ask_server_name(
     if !tls.has_handlers() {
         return ServerNameAnswer::Default;
     }
-    // No `Handlers::enter`/`exit` scope here: the fd engine calls this from
-    // inside BoringSSL, where that protocol corrupts `active_connections` for
-    // every subsequent accept. The stream engine takes its scope around the
-    // call (`TLSSocket::on_server_name`).
+    // No `Handlers::enter`/`exit` scope here: that protocol tracks the
+    // accepted-socket callback lifecycle, and running it from inside the
+    // handshake corrupts `active_connections` for every subsequent accept.
     let handlers = tls.get_handlers();
     let callback = handlers.on_server_name();
     if callback.is_empty() {

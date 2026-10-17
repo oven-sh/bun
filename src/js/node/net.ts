@@ -1097,11 +1097,10 @@ function toSNIError(err) {
 }
 
 // Applies one SNICallback resolution to the dispatch state. Node assigns
-// `sni_context = context.context || context` for a truthy context: both the
-// SecureContext wrapper and a raw native context are accepted. A falsy value
-// and any value that is no object keep the default context. An object that is
-// no context is an invalid SNI context, which drops the connection before the
-// handshake completes (crypto_tls.cc, TLSWrap::CertCbDone).
+// `sni_context = context.context || context`: both the SecureContext wrapper
+// and a raw native context are accepted, a falsy or primitive value keeps the
+// default context, and anything else is an invalid SNI context that drops the
+// connection before the handshake completes.
 function consumeSNIResult(state, err, context) {
   if (err) {
     state.failed = toSNIError(err);

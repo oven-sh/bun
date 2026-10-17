@@ -3266,8 +3266,7 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
   SSL *ssl = hello->ssl;
   struct us_socket_t *s = ssl ? us_ssl_socket(ssl) : NULL;
   if (!s) {
-    /* An SSL that no us_socket_t drives suspends here too. Its owner is asked
-     * once SSL_do_handshake has returned (src/uws/lib.rs). */
+    /* An SSL that no us_socket_t drives: its wrapper decides (src/uws/lib.rs). */
     void *wrapper = ssl ? us_ssl_wrapper(ssl) : NULL;
     if (wrapper && !us_ssl_wrapper_select_cert(wrapper, ssl)) return ssl_select_cert_retry;
     return ssl_select_cert_success;

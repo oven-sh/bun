@@ -4372,8 +4372,7 @@ pub(super) enum EventState {
 }
 
 impl TLSSocket {
-    /// The server-name question of the stream engine. It is asked outside BoringSSL, so it takes the
-    /// handler scope like the other engine callbacks.
+    /// The stream engine asks outside BoringSSL, so this takes the handler scope.
     fn on_server_name(
         this: bun_ptr::ThisPtr<Self>,
         name: &core::ffi::CStr,
@@ -4447,8 +4446,7 @@ impl DuplexUpgradeContext {
             })
     }
 
-    /// The stream engine suspended the handshake on the ClientHello's server name: ask the socket's
-    /// `serverName` handler, as the fd engine does. `Pending` is answered by `handle.resumeSNI(...)`.
+    /// Asks the socket's `serverName` handler. `handle.resumeSNI(...)` answers a `Pending` one.
     fn on_server_name(this: bun_ptr::ThisPtr<Self>, name: &core::ffi::CStr) {
         use super::listener::ServerNameAnswer;
         let answer = this

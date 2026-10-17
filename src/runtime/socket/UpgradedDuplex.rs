@@ -108,7 +108,7 @@ pub(crate) struct Handlers {
     pub(crate) on_keylog: fn(*mut (), &[u8]),
     pub(crate) server_identity:
         fn(*mut (), &mut bun_boringssl_sys::SSL) -> bun_boringssl::ServerIdentity,
-    /// Server wraps whose socket has a `serverName` handler: see `ssl_wrapper::Handlers::on_server_name`.
+    /// Server wraps only: see `ssl_wrapper::Handlers::on_server_name`.
     pub(crate) on_server_name: Option<fn(*mut (), &CStr)>,
 }
 

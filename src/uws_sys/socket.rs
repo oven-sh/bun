@@ -550,8 +550,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     }
 
     /// Resume a handshake suspended by an asynchronous SNICallback. The ctx
-    /// reference is consumed (freed here when the socket has no TLS engine
-    /// left to resume).
+    /// reference is consumed (freed here when no TLS engine is left to resume).
     pub fn sni_resolve(&self, ctx: *mut crate::SslCtx, error: bool) {
         match self.socket {
             InternalSocket::Connected(s) => return sock(s).sni_resolve(ctx, error),

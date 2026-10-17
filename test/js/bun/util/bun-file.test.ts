@@ -218,13 +218,13 @@ describe.skipIf(isWindows)("Bun.stdin asked for its size while bytes wait in it"
             proc.stdin.write(first);
             await proc.stdin.flush();
             if (!stdin.saysReady) writeSync(readyFd, "\n");
-            for (let r; !stdout.includes("\n") && !(r = await reader.read()).done; ) {
+            for (let r; !stdout.includes("\n") && !(r = await reader.read()).done;) {
               stdout += decoder.decode(r.value, { stream: true });
             }
 
             proc.stdin.write(second);
             await proc.stdin.end();
-            for (let r; !(r = await reader.read()).done; ) stdout += decoder.decode(r.value, { stream: true });
+            for (let r; !(r = await reader.read()).done;) stdout += decoder.decode(r.value, { stream: true });
 
             expect({ stdout, stderr: await stderr }).toEqual({ stdout: "Infinity\n" + first + second, stderr: "" });
             expect(await proc.exited).toBe(0);

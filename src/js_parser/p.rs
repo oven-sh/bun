@@ -4528,6 +4528,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     #[cold]
+    #[inline(never)]
     pub(crate) fn reject_bun_bundle_reexport(&mut self, path_loc: bun_ast::Loc) {
         self.log().add_error(
             Some(self.source),

@@ -2,8 +2,8 @@
  * The `bun:bundle` module provides compile-time utilities for dead-code elimination.
  *
  * `bun:bundle` does not exist at runtime. Bun removes the import at build time, so
- * only the named import is supported. A default import or a namespace import
- * (`import * as`) is a build error.
+ * only the named import is supported. A default import, a namespace import
+ * (`import * as`) or a re-export is a build error.
  *
  * @example
  * ```ts

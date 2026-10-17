@@ -763,23 +763,19 @@ console.log(x);
       "interface": `interface feature { id: number } class K { @dec p: feature | undefined; @dec q: feature[] = []; }`,
       "namespace": `declare namespace feature { interface X { id: number } } class K { @dec p: feature.X | undefined; }`,
     };
+    const refersToBinding = (output: string) => /(?<![\w$.])feature(?![\w$])/.test(output);
     for (const [name, source] of Object.entries(types)) {
-      const output = transpiler.transformSync(`${prelude} ${source} ${call}`);
-      expect({ name, refersToBinding: /(?<![\w$.])feature(?![\w$])/.test(output) }).toEqual({
+      expect({
         name,
-        refersToBinding: false,
-      });
-      // The import statement can come after the class.
-      expect(
-        errorsOf(() =>
+        importFirst: refersToBinding(transpiler.transformSync(`${prelude} ${source} ${call}`)),
+        // The import statement can come after the class.
+        importLast: refersToBinding(
           transpiler.transformSync(
             `function dec(...a: any[]): any {} ${source} ${call} import { feature } from "bun:bundle";`,
           ),
         ),
-      ).toEqual([]);
-      expect(errorsOf(() => transpiler.transformSync(`${prelude} ${source} const f = feature; ${call}`))).toEqual([
-        usedAsValue("feature", ""),
-      ]);
+        besideValueUse: errorsOf(() => transpiler.transformSync(`${prelude} ${source} const f = feature; ${call}`)),
+      }).toEqual({ name, importFirst: false, importLast: false, besideValueUse: [usedAsValue("feature", "")] });
     }
   });
 

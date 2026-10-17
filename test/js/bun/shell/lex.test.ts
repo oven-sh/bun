@@ -502,6 +502,103 @@ describe("lex shell", () => {
     expect(result).toEqual(expected);
   });
 
+  describe("interpolated array", () => {
+    const sep = { JSArraySep: {} };
+
+    test("an element boundary is a separator token, not a Delimit", () => {
+      expect(JSON.parse(lex`echo pre${["a b", "c"]}post ${[]} x`)).toEqual([
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "pre" },
+        { Text: "a b" },
+        sep,
+        { Text: "cpost" },
+        { Delimit: {} },
+        { Text: "x" },
+        { Delimit: {} },
+        { Eof: {} },
+      ]);
+    });
+
+    test("a separator is only where a blank between two parts of a word was", () => {
+      expect(JSON.parse(lex`${[[], "a", ["b", []], [[], []], ""]}`)).toEqual([
+        { Text: "a" },
+        sep,
+        { Text: "b" },
+        sep,
+        { DoubleQuotedText: "" },
+        { Eof: {} },
+      ]);
+      expect(lex`echo ${[]} ${["a"]} ${[[], "b", []]} c`).toBe(lex`echo a b c`);
+      expect(lex`echo ${["a", []]}#c; ${[[], "b", [[], []]]}; echo \${[[], "c"]}`).toBe(lex`echo a #c;  b  ; echo \ c`);
+      const buf = new Uint8Array(1);
+      expect(JSON.parse(lex`echo > ${[buf, "a", []]}`)).toEqual([
+        { Text: "echo" },
+        { Delimit: {} },
+        { Redirect: expect.anything() },
+        { JSObjRef: 0 },
+        sep,
+        { Text: "a" },
+        { Delimit: {} },
+        { Eof: {} },
+      ]);
+    });
+
+    test("inside quotes a separator is a space", () => {
+      expect(JSON.parse(lex`"${["a", "b"]}" '${["c", "d"]}' "${[]}"`)).toEqual([
+        { DoubleQuotedText: "a b" },
+        { Delimit: {} },
+        { SingleQuotedText: "c d" },
+        { Delimit: {} },
+        { DoubleQuotedText: "" },
+        { Eof: {} },
+      ]);
+    });
+
+    test("non-ASCII source", () => {
+      expect(JSON.parse(lex`${["é", "日本"]}`)).toEqual([
+        { Text: "é" },
+        sep,
+        { Text: "日本" },
+        { Delimit: {} },
+        { Eof: {} },
+      ]);
+    });
+
+    test("an array with a raw element has a space at each element boundary and no separator", () => {
+      expect(lex`echo ${["a", "b", { raw: "c d" }, ["e", []], "f"]} "${[[], "g", { raw: "" }, "h"]}"`).toBe(
+        lex`echo a b c d e  f " g  h"`,
+      );
+    });
+
+    test("the bytes of a separator are text where no array wrote one", () => {
+      const bytes = "\x08" + "0";
+      const text = [{ Text: "a" + bytes + "b" }, { Delimit: {} }, { Eof: {} }];
+      expect(JSON.parse(lex({ raw: ["a" + bytes + "b"] } as any))).toEqual(text);
+      expect(JSON.parse(lex`${{ raw: "a" + bytes + "b" }}`)).toEqual(text);
+      expect(JSON.parse(lex`${"a" + bytes + "b"}`)).toEqual(text);
+      expect(JSON.parse(lex`${["a" + bytes + "b"]}`)).toEqual(text);
+      // As data they are text also next to a separator.
+      expect(JSON.parse(lex`${["a" + bytes + "b", "c"]}`)).toEqual([
+        { Text: "a" + bytes + "b" },
+        sep,
+        { Text: "c" },
+        { Delimit: {} },
+        { Eof: {} },
+      ]);
+      // Raw text is not in the output of an array, so it cannot write a separator.
+      expect(JSON.parse(lex`${{ raw: "a" + bytes + "b" }} ${["c", "d"]}`)).toEqual([
+        { Text: "a" + bytes + "b" },
+        { Delimit: {} },
+        { Text: "c" },
+        sep,
+        { Text: "d" },
+        { Delimit: {} },
+        { Eof: {} },
+      ]);
+    });
+  });
+
   test("cmd_sub_dollar", () => {
     const expected = [
       {

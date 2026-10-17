@@ -385,6 +385,8 @@ When you pass the `terminal` option:
 | `exit`  | Callback when PTY stream closes (EOF or error). `exitCode` is PTY lifecycle status (0=EOF, 1=error), not subprocess exit code. Use `proc.exited` for process exit. | —                  |
 | `drain` | Callback when ready for more data `(terminal) => void`                                                                                                             | —                  |
 
+Bun can call `data` before `Bun.spawn()` returns. Use the `terminal` argument of the callback, not `proc.terminal`.
+
 ### Terminal methods
 
 The `Terminal` object returned by `proc.terminal` has the following methods:
@@ -437,6 +439,7 @@ When passing an existing `Terminal` object:
 - You control when to close the terminal
 - The `exit` callback fires when you call `terminal.close()`, not when each subprocess exits
 - Use `proc.exited` to detect individual subprocess exits
+- On Linux, Bun reads the terminal when a subprocess exits: the `data` callback has the output of that subprocess before its `proc.exited` resolves. Output that other processes still write to the terminal can arrive later
 
 ### Platform differences
 

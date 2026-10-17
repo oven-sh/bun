@@ -104,7 +104,7 @@ function rgbaAt(buf: Uint8Array, w: number, x: number, y: number): [number, numb
   return [buf[i], buf[i + 1], buf[i + 2], buf[i + 3]];
 }
 
-// Minimal PNG decoder for 8-bit RGBA non-interlaced (the only kind we emit).
+// Minimal PNG decoder for 8-bit RGBA non-interlaced (what `.png()` emits without `palette`).
 function decodePngRaw(png: Uint8Array): { w: number; h: number; data: Uint8Array } {
   const dv = new DataView(png.buffer, png.byteOffset, png.byteLength);
   let off = 8;
@@ -152,6 +152,67 @@ function decodePngRaw(png: Uint8Array): { w: number; h: number; data: Uint8Array
     }
   }
   return { w, h, data: out };
+}
+
+// An indexed (colour type 3), non-interlaced PNG, read without Bun.Image.
+// `rows` is the IDAT with the filters undone: ceil(w * depth / 8) bytes per
+// row. `data` is the RGBA that PLTE and tRNS give to the indices in `rows`.
+function readIndexedPng(png: Uint8Array) {
+  const dv = new DataView(png.buffer, png.byteOffset, png.byteLength);
+  let w = 0;
+  let h = 0;
+  let depth = 0;
+  let plte: Uint8Array = new Uint8Array(0);
+  let trns: Uint8Array = new Uint8Array(0);
+  const idats: Uint8Array[] = [];
+  for (let off = 8; off < png.length;) {
+    const len = dv.getUint32(off);
+    const type = String.fromCharCode(png[off + 4], png[off + 5], png[off + 6], png[off + 7]);
+    const data = png.subarray(off + 8, off + 8 + len);
+    if (type === "IHDR") {
+      w = dv.getUint32(off + 8);
+      h = dv.getUint32(off + 12);
+      depth = data[8];
+      if (data[9] !== 3 || data[12] !== 0) throw new Error(`colour type ${data[9]}, interlace ${data[12]}`);
+    } else if (type === "PLTE") plte = data;
+    else if (type === "tRNS") trns = data;
+    else if (type === "IDAT") idats.push(data);
+    else if (type === "IEND") break;
+    off += 12 + len;
+  }
+  const raw = zlib.inflateSync(Buffer.concat(idats));
+  const stride = Math.ceil((w * depth) / 8);
+  if (raw.length !== h * (1 + stride)) throw new Error(`IDAT inflates to ${raw.length} bytes`);
+  const rows = new Uint8Array(h * stride);
+  for (let y = 0; y < h; y++) {
+    const filter = raw[y * (stride + 1)];
+    for (let i = 0; i < stride; i++) {
+      const a = i > 0 ? rows[y * stride + i - 1] : 0;
+      const b = y > 0 ? rows[(y - 1) * stride + i] : 0;
+      const c = y > 0 && i > 0 ? rows[(y - 1) * stride + i - 1] : 0;
+      const pa = Math.abs(b - c);
+      const pb = Math.abs(a - c);
+      const pc = Math.abs(a + b - 2 * c);
+      const predicted = [0, a, b, (a + b) >> 1, pa <= pb && pa <= pc ? a : pb <= pc ? b : c][filter];
+      rows[y * stride + i] = (raw[y * (stride + 1) + 1 + i] + predicted) & 255;
+    }
+  }
+  const palette: [number, number, number, number][] = [];
+  for (let i = 0; i < plte.length / 3; i++) {
+    palette.push([plte[i * 3], plte[i * 3 + 1], plte[i * 3 + 2], i < trns.length ? trns[i] : 255]);
+  }
+  const perByte = 8 / depth;
+  const data = new Uint8Array(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      // The first pixel of a byte is in its high bits.
+      const shift = 8 - depth * ((x % perByte) + 1);
+      const index = (rows[y * stride + Math.floor(x / perByte)] >> shift) & ((1 << depth) - 1);
+      if (index >= palette.length) throw new Error(`index ${index} with ${palette.length} palette entries`);
+      data.set(palette[index], (y * w + x) * 4);
+    }
+  }
+  return { w, h, depth, palette, rows, data };
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
@@ -1291,6 +1352,164 @@ describe("Bun.Image", () => {
       const rgba = await new Bun.Image(shot).png({ compressionLevel: 9 }).bytes();
       const idx = await new Bun.Image(shot).png({ palette: true, colors: 16, compressionLevel: 9 }).bytes();
       expect(idx.length).toBeLessThan(rgba.length);
+    });
+
+    // PNG colour type 3 allows 1, 2 and 4 bits per index when the palette has
+    // at most 2, 4 and 16 entries. Fewer bits are less input for deflate.
+    describe("png({palette:true}) writes an opaque palette at the least bit depth", () => {
+      type Rgba = [number, number, number, number];
+
+      // Indices as PNG packs them: `depth` bits each, the first pixel in the
+      // high bits, zero bits from the last pixel of a row to the end of its byte.
+      function packRows(indices: number[], w: number, depth: number): number[] {
+        const stride = Math.ceil((w * depth) / 8);
+        const rows = new Array<number>((indices.length / w) * stride).fill(0);
+        indices.forEach((index, i) => {
+          const bit = (i % w) * depth;
+          rows[Math.floor(i / w) * stride + (bit >> 3)] |= index << (8 - depth - (bit & 7));
+        });
+        return rows;
+      }
+
+      // Colours 0 to 7 are the corners of the RGB cube, 8 to 15 the corners
+      // of a cube inside it, 16 is mid grey.
+      const opaque = (i: number): Rgba => {
+        if (i === 16) return [128, 128, 128, 255];
+        const [lo, hi] = i & 8 ? [64, 192] : [0, 255];
+        return [i & 1 ? hi : lo, i & 2 ? hi : lo, i & 4 ? hi : lo, 255];
+      };
+
+      // The colour number of each pixel of a w x 16 image: `colours` colours
+      // in equal counts (when 16 * w divides by it), in an order with no period.
+      function scattered(w: number, colours: number): number[] {
+        const order = Array.from({ length: w * 16 }, (_, i) => i % colours);
+        let seed = w * 31 + colours;
+        for (let i = order.length - 1; i > 0; i--) {
+          seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+          const j = seed % (i + 1);
+          [order[i], order[j]] = [order[j], order[i]];
+        }
+        return order;
+      }
+
+      // 2, 4 and 16 colours in equal counts quantize to exactly those
+      // colours, so every byte of the rows is known.
+      describe.each([
+        { colours: 2, depth: 1 },
+        { colours: 4, depth: 2 },
+        { colours: 16, depth: 4 },
+      ])("$colours colours: depth $depth", ({ colours, depth }) => {
+        // Widths 1 to 17 have every length of a row's last group, and rows of
+        // one group. 64 and 150 are long enough for vector code.
+        const cases = [...Array.from({ length: 17 }, (_, i) => ({ w: i + 1, dither: false }))];
+        for (const w of [64, 150]) cases.push({ w, dither: false });
+        for (const w of [7, 150]) cases.push({ w, dither: true });
+
+        test.each(cases)("width $w, dither $dither", async ({ w, dither }) => {
+          const order = scattered(w, colours);
+          const src = makePng(w, 16, (x, y) => opaque(order[y * w + x]));
+          const out = await new Bun.Image(src).png({ palette: true, colors: colours, dither }).bytes();
+          const got = readIndexedPng(out);
+          expect({ w: got.w, h: got.h, entries: got.palette.length, depth: got.depth }).toEqual({
+            w,
+            h: 16,
+            entries: colours,
+            depth,
+          });
+          const keys = got.palette.map(entry => entry.join());
+          const indices = order.map(colour => keys.indexOf(opaque(colour).join()));
+          expect([...got.rows]).toEqual(packRows(indices, w, depth));
+          expect(got.data).toEqual(decodePngRaw(src).data);
+        });
+      });
+
+      // Palette lengths that are not a power of two, and the first length at
+      // depth 8. Bun.Image must read the same pixels from the packed rows.
+      describe.each([
+        { colours: 1, depth: 1 },
+        { colours: 3, depth: 2 },
+        { colours: 5, depth: 4 },
+        { colours: 17, depth: 8 },
+      ])("$colours colours: depth $depth", ({ colours, depth }) => {
+        const cases = [2, 13, 150].flatMap(w => [false, true].map(dither => ({ w, dither })));
+
+        test.each(cases)("width $w, dither $dither", async ({ w, dither }) => {
+          const order = scattered(w, colours);
+          const src = makePng(w, 16, (x, y) => opaque(order[y * w + x]));
+          const out = await new Bun.Image(src).png({ palette: true, colors: colours, dither }).bytes();
+          const got = readIndexedPng(out);
+          expect({ entries: got.palette.length, depth: got.depth }).toEqual({ entries: colours, depth });
+          expect(decodePngRaw(await new Bun.Image(out).png().bytes()).data).toEqual(got.data);
+        });
+      });
+
+      // pdfkit and jsPDF read one index per byte when the file has a tRNS
+      // chunk, so a palette with alpha keeps 8 bits per index.
+      test.each([2, 4, 16])("%d colours with alpha stay at depth 8", async colours => {
+        const translucent = (i: number): Rgba => {
+          const [r, g, b] = opaque(i);
+          return [r, g, b, i < colours / 2 ? 255 : 128];
+        };
+        const order = scattered(13, colours);
+        const src = makePng(13, 16, (x, y) => translucent(order[y * 13 + x]));
+        const got = readIndexedPng(await new Bun.Image(src).png({ palette: true, colors: colours }).bytes());
+        expect({ entries: got.palette.length, depth: got.depth }).toEqual({ entries: colours, depth: 8 });
+        expect(got.data).toEqual(decodePngRaw(src).data);
+      });
+
+      test("a 2x1 black and white image is one byte of indices", async () => {
+        const src = makePng(2, 1, x => (x ? [255, 255, 255, 255] : [0, 0, 0, 255]));
+        const got = readIndexedPng(await new Bun.Image(src).png({ palette: true, colors: 2 }).bytes());
+        // The first pixel is the high bit. The six low bits are padding.
+        const blackIsEntry0 = got.palette[0][0] === 0;
+        expect({ depth: got.depth, rows: [...got.rows] }).toEqual({
+          depth: 1,
+          rows: [blackIsEntry0 ? 0b0100_0000 : 0b1000_0000],
+        });
+      });
+
+      // More colours than any palette: the indices come from the nearest
+      // colour search and the dither, not from a known pattern.
+      const gradient = makePng(150, 9, (x, y) => [(x * 5) & 255, y * 28, ((x + y) * 3) & 255, 255]);
+      const leastDepth = (entries: number) => (entries <= 2 ? 1 : entries <= 4 ? 2 : entries <= 16 ? 4 : 8);
+
+      test.each([2, 3, 4, 5, 16, 17, 256].flatMap(colors => [false, true].map(dither => ({ colors, dither }))))(
+        "gradient at colors $colors, dither $dither",
+        async ({ colors, dither }) => {
+          const out = await new Bun.Image(gradient).png({ palette: true, colors, dither }).bytes();
+          const got = readIndexedPng(out);
+          expect(got.palette.length).toBeLessThanOrEqual(colors);
+          expect(got.depth).toBe(leastDepth(got.palette.length));
+          expect(decodePngRaw(await new Bun.Image(out).png().bytes()).data).toEqual(got.data);
+        },
+      );
+
+      test("the depth follows the palette that was written, not the colors option", async () => {
+        const two = makePng(9, 6, (x, y) => ((x + y * 9) % 2 ? [255, 255, 255, 255] : [0, 0, 0, 255]));
+        const got = readIndexedPng(await new Bun.Image(two).png({ palette: true, colors: 256 }).bytes());
+        expect({ entries: got.palette.length, depth: got.depth }).toEqual({ entries: 2, depth: 1 });
+        expect(got.data).toEqual(decodePngRaw(two).data);
+      });
+
+      test("compressionLevel applies to the packed rows", async () => {
+        const stripes = makePng(64, 64, (x, y) => (((x >> 3) + (y >> 2)) % 2 ? [255, 255, 255, 255] : [0, 0, 0, 255]));
+        const stored = await new Bun.Image(stripes).png({ palette: true, colors: 2, compressionLevel: 0 }).bytes();
+        const deflated = await new Bun.Image(stripes).png({ palette: true, colors: 2, compressionLevel: 9 }).bytes();
+        // Level 0 stores the rows as they are: 64 rows of 1 filter byte and 8
+        // bytes of indices. At a byte per index the rows alone are 64 * 65 bytes.
+        expect(stored.length).toBeGreaterThan(64 * 9);
+        expect(stored.length).toBeLessThan(64 * 65);
+        expect(deflated.length).toBeLessThan(stored.length);
+        expect(readIndexedPng(deflated).rows).toEqual(readIndexedPng(stored).rows);
+      });
+
+      test("new Response(image) writes the same file", async () => {
+        const order = scattered(13, 4);
+        const src = makePng(13, 16, (x, y) => opaque(order[y * 13 + x]));
+        const body = await new Response(new Bun.Image(src).png({ palette: true, colors: 4 })).bytes();
+        expect(readIndexedPng(body).depth).toBe(2);
+        expect(body).toEqual(await new Bun.Image(src).png({ palette: true, colors: 4 }).bytes());
+      });
     });
 
     test("png({compressionLevel:0}) is larger than level 9", async () => {

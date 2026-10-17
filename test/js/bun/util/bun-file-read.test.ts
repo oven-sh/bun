@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -54,3 +54,52 @@ describe("Bun.file read-loop target selection", () => {
     expect(Bun.hash(buf)).toBe(Bun.hash(bytes.subarray(start, end)));
   });
 });
+
+// A read that is waiting on the io thread when its fd turns into an error
+// condition used to reject with a made-up "Unknown Error" (errno 0, syscall
+// "epoll_ctl"): the io thread read epoll's events bitmask as an errno. The
+// error the fd actually has is what the retried recv() reports. Linux only:
+// that dispatch is epoll's, and so is what produces the error condition here,
+// closing a unix socket (the child's stdin is one) with unread data in it
+// resets the peer instead of ending it.
+it.skipIf(!isLinux)(
+  "Bun.stdin.text() reports the socket's error when stdin is reset while the read is waiting",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const read = Bun.stdin.text().then(
+         text => ({ resolved: text }),
+         err => ({ code: err.code, syscall: err.syscall }),
+       );
+       // Unread by the parent, so that closing its end resets ours.
+       require("fs").writeSync(0, "x");
+       process.stdout.write("reading\\n");
+       process.stdout.write(JSON.stringify(await read));`,
+      ],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const stdout: Uint8Array[] = [];
+    const marker = Buffer.from("reading\n");
+    let closed = false;
+    for await (const chunk of proc.stdout) {
+      stdout.push(chunk);
+      if (!closed && Buffer.concat(stdout).indexOf(marker) !== -1) {
+        closed = true;
+        proc.stdin.end();
+      }
+    }
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: Buffer.concat(stdout).toString(), stderr }).toEqual({
+      stdout: "reading\n" + JSON.stringify({ code: "ECONNRESET", syscall: "recv" }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);

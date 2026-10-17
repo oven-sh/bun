@@ -81,10 +81,8 @@ static INSTANCE: AtomicPtr<ChromeProcess> = AtomicPtr::new(ptr::null_mut());
 #[cfg(windows)]
 static GENERATION: AtomicU32 = AtomicU32::new(0);
 
-/// Called from WebView.closeAll() and dispatchOnExit. SIGKILLs the browser and
-/// its helpers (see [`kill_group`]). The C++ side doesn't touch JS state;
-/// EVFILT_PROC → Bun__Chrome__died → rejectAllAndMarkDead handles promise
-/// rejection on the next loop tick.
+/// Called from WebView.closeAll() and dispatchOnExit. The C++ side doesn't touch
+/// JS state; EVFILT_PROC → Bun__Chrome__died → rejectAllAndMarkDead does that.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__Chrome__kill() {
     // SAFETY: JS-thread-only global; see INSTANCE decl.
@@ -144,16 +142,14 @@ fn kill_pid_and_group(pid: bun_spawn::PidT) {
     kill_group(pid);
 }
 
-/// Chrome's helpers outlive the browser by a few ms and write to the profile on
-/// the way out, so every kill is a group kill (Chrome leads its own group).
+/// Chrome's helpers outlive the browser by a few ms and write to the profile on the way out.
 #[cfg(unix)]
 fn kill_group(pid: bun_spawn::PidT) {
     // SAFETY: plain syscall on a pid; no memory is passed.
     unsafe { libc::kill(-pid, libc::SIGKILL) };
 }
 
-/// Kills an unreaped child and waits until it is gone. Not through
-/// [`Process`]: its exit handler must not run from here.
+/// Not through [`Process`]: its exit handler must not run from here.
 #[cfg(unix)]
 fn kill_and_reap(pid: bun_spawn::PidT) {
     kill_pid_and_group(pid);
@@ -200,8 +196,7 @@ fn take_parked(pid: bun_spawn::PidT) -> Option<TempProfile> {
     Some(parked.swap_remove(i).profile)
 }
 
-/// Exit callback (`dispatch_on_exit` only kills, and some `Global::exit` paths
-/// skip it). The `ChromeProcess` box stays allocated: the loop never runs again.
+/// `dispatch_on_exit` only kills, and some `Global::exit` paths skip it.
 extern "C" fn delete_temp_profiles_at_exit() {
     // SAFETY: JS-thread-only global; see INSTANCE decl.
     if let Some(chrome) = unsafe { INSTANCE.load(Ordering::Relaxed).as_mut() } {
@@ -612,9 +607,7 @@ fn spawn(
         // full-Chrome-only switch). Playwright passes plain --headless
         // (chromium.js:293).
         //
-        // Without a --user-data-dir, ProcessSingleton locks the default profile
-        // and aborts if a real Chrome is already running. The caller's
-        // (`dataStore.directory`, or one in backend.argv) is never deleted.
+        // Without a --user-data-dir, ProcessSingleton locks the default profile.
         let user_flag: Option<ZBox> = user_data_dir.map(|d| {
             let d = d.to_bytes();
             let mut v = Vec::with_capacity(USER_DATA_DIR_FLAG.len() + d.len());
@@ -720,8 +713,7 @@ fn spawn(
 
 const USER_DATA_DIR_FLAG: &[u8] = b"--user-data-dir=";
 
-/// The `--user-data-dir=<dir>` argument of a Chrome that got a fresh temp
-/// directory. Dropping it deletes the directory.
+/// The `--user-data-dir=<dir>` argument of a Chrome given a fresh temp directory; dropping it deletes the directory.
 struct TempProfile(ZBox);
 
 impl TempProfile {

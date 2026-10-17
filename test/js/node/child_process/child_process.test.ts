@@ -29,9 +29,11 @@ import {
 import { getEventListeners, once, setMaxListeners } from "node:events";
 import net from "node:net";
 import os from "node:os";
+import type { Writable } from "node:stream";
 import tls from "node:tls";
 import { promisify } from "node:util";
 import path from "path";
+import { stdinCallOrders } from "./fixtures/stdin-call-orders-fixture.js";
 const debug = process.env.DEBUG ? console.log : () => {};
 
 const originalProcessEnv = process.env;
@@ -435,6 +437,206 @@ describe("spawn()", () => {
     expect(await stdout).toBe(String(4 * chunk.length));
     expect(order).toEqual(["write", "end", "finish"]);
     expect(await exited).toBe(0);
+  });
+
+  // Node's child.stdin is a net.Socket over an open pipe: it has no construct
+  // step, and end(chunk) reaches the pipe in the same tick. Here the stream was
+  // constructed one tick after its creation, and a destroy(), a stream error or
+  // a process.exit() before that dropped the chunk that end(chunk) had buffered.
+  describe.concurrent("stdin.end(chunk) in the tick that creates the stream reaches the child", () => {
+    // The child writes all of its stdin to its stdout.
+    const echo = `const fs = require("node:fs"); fs.writeSync(1, fs.readFileSync(0));`;
+
+    // Runs `calls`, then resolves with what the child echoed back from its stdin.
+    async function echoed(stdio: StdioOptions, calls: (child: ChildProcess) => void) {
+      const child = spawn(bunExe(), ["-e", echo], { env: bunEnv, stdio });
+      let stdout = "";
+      let stderr = "";
+      child.stdout!.on("data", chunk => (stdout += chunk));
+      child.stderr!.on("data", chunk => (stderr += chunk));
+      calls(child);
+      const [exitCode] = await once(child, "close");
+      return { stdout, stderr, exitCode };
+    }
+
+    // The table test below has more call orders, with `cat` as the child.
+    const callOrders: [string, (stdin: Writable) => void][] = [
+      [`end("hello"); destroy()`, stdin => (stdin.end("hello"), stdin.destroy())],
+      [
+        `cork(); write("he"); end("llo"); destroy()`,
+        stdin => (stdin.cork(), stdin.write("he"), stdin.end("llo"), stdin.destroy()),
+      ],
+    ];
+
+    it.each(callOrders)("%s", async (_, calls) => {
+      const result = await echoed(["pipe", "pipe", "pipe"], child => calls(child.stdin!));
+      expect(result).toEqual({ stdout: "hello", stderr: "", exitCode: 0 });
+    });
+
+    // With fewer than three stdio entries spawn() does not touch child.stdin,
+    // so the first access, in the 'spawn' listener, creates the stream.
+    it("when the first access of child.stdin creates the stream after spawn()", async () => {
+      const result = await echoed(["pipe", "pipe"], child => {
+        child.once("spawn", () => {
+          child.stdin!.end("hello");
+          child.stdin!.destroy();
+        });
+      });
+      expect(result).toEqual({ stdout: "hello", stderr: "", exitCode: 0 });
+    });
+
+    // The echo child inherits the parent's stdout, so that pipe is at EOF only
+    // after the child has exited too.
+    it("when the parent calls process.exit() in that tick", async () => {
+      await using parent = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          // detached: on Windows a child in its parent's job object dies with the parent.
+          `const { spawn } = require("node:child_process");
+           const stdio = ["pipe", "inherit", "inherit"];
+           const child = spawn(process.execPath, ["-e", ${JSON.stringify(echo)}], { stdio, detached: true });
+           child.stdin.end("hello");
+           process.exit(0);`,
+        ],
+        // CI ASAN lanes set BUN_FEATURE_FLAG_NO_ORPHANS, which makes the parent
+        // SIGKILL its child when it exits.
+        env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([parent.stdout.text(), parent.stderr.text(), parent.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "hello", stderr: "", exitCode: 0 });
+    });
+
+    // The stream over the child's pipe takes no option. One that Object.prototype
+    // carries must not reach it: with that fd, the input would go to the fd.
+    it("when Object.prototype has stream options", async () => {
+      const inherited = { fd: 2147483647, autoClose: false };
+      let child!: ChildProcess;
+      let result;
+      Object.assign(Object.prototype, inherited);
+      try {
+        // spawn() and end() run before the first await of echoed().
+        result = echoed(["pipe", "pipe", "pipe"], spawned => {
+          child = spawned;
+          child.stdin!.on("error", () => child.kill());
+          child.stdin!.end("hello");
+        });
+      } finally {
+        for (const key of Object.keys(inherited)) delete (Object.prototype as any)[key];
+      }
+      try {
+        const { fd, autoClose } = child.stdin as any;
+        expect({ fd, autoClose }).toEqual({ fd: null, autoClose: true });
+        expect(await result).toEqual({ stdout: "hello", stderr: "", exitCode: 0 });
+      } finally {
+        child.kill();
+      }
+    });
+  });
+
+  // A pending stream promises a 'ready' event. This one has nothing to open.
+  it("stdin is constructed and not pending when it is created, and emits neither 'open' nor 'ready'", async () => {
+    const child = spawn(bunExe(), ["-e", ""], { env: bunEnv, stdio: ["pipe", "ignore", "ignore"] });
+    const stdin = child.stdin as any;
+    const atBirth = { constructed: stdin._writableState.constructed, pending: stdin.pending };
+    const events: string[] = [];
+    for (const name of ["open", "ready"]) stdin.on(name, () => events.push(name));
+    // The exit of the child destroys the stream.
+    await once(child, "close");
+    expect({ atBirth, events, pendingOnceDestroyed: stdin.pending }).toEqual({
+      atBirth: { constructed: true, pending: false },
+      events: [],
+      pendingOnceDestroyed: true,
+    });
+  });
+
+  describe.skipIf(isWindows).concurrent("stdin in the tick that creates the stream", () => {
+    // The flush that destroy() makes fails with EPIPE. Node drops a write error
+    // on a stream that is destroyed before 'finish'.
+    it.each([
+      [`destroy()`, undefined, ["close"]],
+      [`destroy(new Error("boom"))`, new Error("boom"), ["error boom", "close"]],
+    ])("end(chunk); %s to a child that has closed its stdin reports no write error", async (_, error, expected) => {
+      const child = spawn(
+        bunExe(),
+        ["-e", `require("fs").closeSync(0); process.stdout.write("ready\\n"); setInterval(() => {}, 1e5);`],
+        { env: bunEnv, stdio: ["pipe", "pipe"] },
+      );
+      try {
+        let stderr = "";
+        child.stderr!.on("data", chunk => (stderr += chunk));
+        await new Promise<void>((resolve, reject) => {
+          child.on("error", reject);
+          child.on("exit", code => reject(new Error(`child exited with ${code} before it was ready: ${stderr}`)));
+          child.stdout!.once("data", () => resolve());
+        });
+        child.removeAllListeners("error");
+        child.removeAllListeners("exit");
+        // With two stdio entries this first access creates the stream.
+        const stdin = child.stdin!;
+        const log: string[] = [];
+        const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+        stdin.on("error", err => log.push(`error ${err.message}`));
+        stdin.on("close", () => {
+          log.push("close");
+          onClose();
+        });
+        stdin.end("hello");
+        stdin.destroy(error);
+        await closed;
+        expect(log).toEqual(expected);
+      } finally {
+        child.kill("SIGKILL");
+      }
+    });
+
+    // What the child read, then the events and the callbacks of the stream, for
+    // each row of the fixture. `node` is the table Node.js v26.3.0 prints for it.
+    it("events and callbacks are those of Node.js, except in the rows listed", async () => {
+      const row = (bytes: string, ...log: string[]) => ({ bytes, log });
+      const finished = ["prefinish", "end cb null", "finish", "close"];
+      const node = {
+        [`end("hello"); destroy()`]: row("hello", "close"),
+        [`end("hello"); destroy(new Error("boom"))`]: row("hello", "error boom", "close"),
+        [`end("hello"); end("x")`]: row("hello", "error ERR_STREAM_WRITE_AFTER_END", "close"),
+        [`end("hello"); write("x")`]: row("hello", "error ERR_STREAM_WRITE_AFTER_END", "close"),
+        [`cork(); write("he"); end("llo"); destroy()`]: row("hello", "close"),
+        [`end("68656c6c6f", "hex"); destroy()`]: row("hello", "close"),
+        [`end(buffer); buffer.fill(0)`]: row("hello", "prefinish", "finish", "close"),
+        [`end("hello", cb); destroy()`]: row("hello", "end cb ERR_STREAM_DESTROYED", "close"),
+        [`end("hello", cb); destroy(new Error("boom"))`]: row("hello", "end cb boom", "error boom", "close"),
+        [`end(cb); destroy()`]: row("", "end cb ERR_STREAM_DESTROYED", "close"),
+        [`end("hello", cb); nextTick(destroy)`]: row("hello", "end cb ERR_STREAM_DESTROYED", "close"),
+        [`end("hello", cb); queueMicrotask(destroy)`]: row("hello", "end cb ERR_STREAM_DESTROYED", "close"),
+        [`write("hello", cb); end(); destroy()`]: row("hello", "write cb null", "close"),
+        [`cork(); write("hello", cb); destroy()`]: row("", "write cb ERR_STREAM_DESTROYED", "close"),
+        [`end("hello", cb)`]: row("hello", ...finished),
+        [`write("he", cb); end("llo", cb)`]: row("hello", "write cb null", ...finished),
+        [`write("he", cb); end("llo", cb); destroy()`]: row(
+          "hello",
+          "write cb null",
+          "end cb ERR_STREAM_DESTROYED",
+          "close",
+        ),
+        [`destroy(); end("hello", cb)`]: row("", "end cb ERR_STREAM_DESTROYED", "close"),
+      };
+      const bun = {
+        // _final completes synchronously when the sink has no backlog, so the
+        // stream finishes before a destroy() that follows end().
+        [`end(cb); destroy()`]: row("", ...finished),
+        [`end("hello", cb); nextTick(destroy)`]: row("hello", ...finished),
+        [`end("hello", cb); queueMicrotask(destroy)`]: row("hello", ...finished),
+        [`write("hello", cb); end(); destroy()`]: row("hello", "write cb null", "prefinish", "finish", "close"),
+        // write() hands the chunk to the sink at once and ignores cork().
+        [`cork(); write("hello", cb); destroy()`]: row("hello", "write cb null", "close"),
+      };
+      // The fixture starts from a macrotask, as the main script of a program does.
+      const { promise, resolve } = Promise.withResolvers<unknown>();
+      setImmediate(() => resolve(stdinCallOrders()));
+      expect(await promise).toEqual({ ...node, ...bun });
+    });
   });
 
   it("should allow us to timeout hanging processes", async () => {

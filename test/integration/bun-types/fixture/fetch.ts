@@ -362,8 +362,12 @@ if (typeof process !== "undefined") {
     tls: { ca: "ca", rejectUnauthorized: true, checkServerIdentity: () => undefined },
     proxy: { url: "http://proxy:8080", headers: { "x-proxy": "1" }, respectNoProxy: false },
     keepAlive: { idleTimeout: 30, maxIdleSockets: 4 },
+    tcp: { userTimeout: 10_000 },
   });
   fetch("https://example.com", { session });
+  new Bun.FetchSession({ tcp: {} });
+  // @ts-expect-error milliseconds, a number
+  new Bun.FetchSession({ tcp: { userTimeout: "10s" } });
   // The shape libraries declare for a `fetch` they accept.
   const bound: (input: string | URL | Request, init?: RequestInit) => Promise<Response> = session.fetch;
   bound("https://example.com", { method: "POST" }).then(r => r.text());

@@ -852,6 +852,13 @@ describe("a bun.lock written by Bun 1.4", () => {
       packages: () => [["no-deps-tags", "no-deps-tags@1.0.0-rc.1"]],
       held: "no-deps-tags@1.0.0-rc.1",
     },
+    {
+      // A rule for `no-deps` is the rule of an alias of a tag of `no-deps`.
+      title: "the entry of an alias of a tag of the package that the rule names",
+      pkg: () => ({ dependencies: { "my-alias": "npm:no-deps@latest" }, overrides: { "no-deps": "1.0.0" } }),
+      packages: () => [["my-alias", "no-deps@2.0.0"]],
+      held: "no-deps@2.0.0",
+    },
   ])("$title", saved => {
     const held = async () => {
       const lock = savedBy14(saved);
@@ -874,7 +881,8 @@ describe("a bun.lock written by Bun 1.4", () => {
       expect(stderr).toBe("Saved lockfile");
       expect(exitCode).toBe(0);
       const name = saved.held.slice(0, saved.held.indexOf("@"));
-      expect(nodeModulesPackages(dir)).toContain(`node_modules/${name}/${name}@1.0.0`);
+      const [key] = saved.packages().find(([, id]) => id === saved.held)!;
+      expect(nodeModulesPackages(dir)).toContain(`node_modules/${key}/${name}@1.0.0`);
       const repaired = await lockfile(dir);
       expect(repaired).not.toContain(saved.held);
       await expectLockfileStable(dir, repaired);
@@ -902,11 +910,24 @@ describe("a rule for a tarball or git dependency", () => {
   type Id = keyof typeof packages;
   const kinds = ["tarball", "git"] as const;
   type Kind = (typeof kinds)[number];
+  // Tarballs that depend on other packages of their test.
+  const dependents: Record<string, (spec: ReturnType<typeof at>) => object> = {
+    // The registry's `b`, then the tarball `other`, then the tarball `v`.
+    z: spec => ({
+      name: "z",
+      version: "1.0.0",
+      dependencies: { b: "3.0.0", other: spec.tarball("other"), v: spec.tarball("v") },
+    }),
+    v: () => ({ name: "v", version: "1.0.0", dependencies: { a: "3.0.0" } }),
+  };
 
   const tarballs = new Map<string, Promise<Uint8Array>>();
   const requests: string[] = [];
   const gone = new Set<string>();
   const failing = new Set<string>();
+  /** The answer to a path waits for its promise. A request for a path of `gates` resolves one. */
+  const held = new Map<string, Promise<void>>();
+  const gates = new Map<string, () => void>();
   const commits = {} as Record<Id, string>;
   let repos: ReturnType<typeof tempDir>;
   let server: ReturnType<typeof Bun.serve>;
@@ -960,6 +981,8 @@ describe("a rule for a tarball or git dependency", () => {
           return new Response("ok");
         }
         requests.push(pathname);
+        gates.get(pathname)?.();
+        await held.get(pathname);
         if (gone.has(pathname)) return new Response(null, { status: 404 });
         if (failing.has(pathname)) return new Response("{}", { status: 500 });
         const manifest = /^\/(\w+)\/registry\/(a|b)$/.exec(pathname);
@@ -978,11 +1001,15 @@ describe("a rule for a tarball or git dependency", () => {
         const json =
           id in packages
             ? packages[id as Id]
-            : dependent && {
-                name: "a",
-                version: "1.0.0",
-                [dependent[1] ? "peerDependencies" : "dependencies"]: { b: at(test)[dependent[2] as Kind]("original") },
-              };
+            : id in dependents
+              ? dependents[id](at(test))
+              : dependent && {
+                  name: "a",
+                  version: "1.0.0",
+                  [dependent[1] ? "peerDependencies" : "dependencies"]: {
+                    b: at(test)[dependent[2] as Kind]("original"),
+                  },
+                };
         if (!json) return new Response(null, { status: 404 });
         // One archive per URL: bun.lock pins its bytes.
         if (!tarballs.has(pathname)) {
@@ -1016,6 +1043,12 @@ describe("a rule for a tarball or git dependency", () => {
       /** The server answers 500 for `id` until a request for `heal`. */
       fail: (id: string) => paths(id).forEach(path => failing.add(path)),
       heal: `${origin}/${test}/heal`,
+      /** The server answers a request for `id` only after it has a request for `until`. */
+      hold(id: string, until: string) {
+        const { promise, resolve } = Promise.withResolvers<void>();
+        paths(until).forEach(path => gates.set(path, resolve));
+        paths(id).forEach(path => held.set(path, promise));
+      },
     };
   }
 
@@ -1329,6 +1362,30 @@ describe("a rule for a tarball or git dependency", () => {
     if (kind === "tarball") expect(spec.requested("fork-bee")).toBe(3);
   });
 
+  // `z` depends on the registry's `b`, on the tarball `other` and on the tarball `v`. The project has `other` already,
+  // so that dependency of `z` is bound while `b` waits for its manifest. It must not wait for the download once more
+  // when its turn comes: a tarball is added in the order of the dependencies that wait, and `v` would then be added
+  // only after everything else has arrived. The server keeps the tarball of `b` until `a`, which only `v` depends
+  // on, is resolved and downloaded.
+  test.concurrent(
+    "bun install --force adds a tarball in its turn after a dependency on one that is there",
+    async () => {
+      const spec = at();
+      spec.hold("registry-b", "registry-a");
+      const dir = await project({ name: "foo", dependencies: { other: spec.tarball("other"), z: spec.tarball("z") } });
+
+      const { stderr, exitCode } = await bunWith(spec.registry, dir, "install", "--force");
+
+      expect(stderr).toBe("Saved lockfile");
+      expect({ v: installed(dir, "v"), a: installed(dir, "a"), b: installed(dir, "b") }).toEqual({
+        v: "v@1.0.0",
+        a: "a@3.0.0",
+        b: "b@3.0.0",
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
+
   // `bun update` reads what a rule names again, like what a dependency names. If that is gone, the update fails and
   // changes nothing, or it leaves an optional dependency out.
   test.concurrent.each([
@@ -1631,8 +1688,8 @@ describe("a rule for a tarball or git dependency", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      return { stdout: stdout.trim(), exitCode };
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr, exitCode };
     }
     const declared = ["tarball", "git", "github"] as const;
 
@@ -1641,7 +1698,7 @@ describe("a rule for a tarball or git dependency", () => {
       const spec = at();
       spec.fail("b");
 
-      const { stdout, exitCode } = await autoInstall(
+      const { stdout, stderr, exitCode } = await autoInstall(
         spec,
         { name: "foo", dependencies: { b: spec[kind]("original") }, overrides: { b: "3.0.0" } },
         `const results = [attempt("b")];
@@ -1650,7 +1707,7 @@ describe("a rule for a tarball or git dependency", () => {
          console.log(JSON.stringify(results));`,
       );
 
-      expect(stdout).toBe(JSON.stringify(["MODULE_NOT_FOUND", "3.0.0"]));
+      expect({ stdout, stderr }).toEqual({ stdout: JSON.stringify(["MODULE_NOT_FOUND", "3.0.0"]), stderr: "" });
       expect({ manifest: spec.requested("b"), original: spec.requested("original") }).toEqual({
         manifest: 3,
         original: 0,
@@ -1662,7 +1719,7 @@ describe("a rule for a tarball or git dependency", () => {
     test.concurrent.each(declared)("a %s that cannot be fetched leaves the manifest of its name alone", async kind => {
       const spec = at();
 
-      const { stdout, exitCode } = await autoInstall(
+      const { stdout, stderr, exitCode } = await autoInstall(
         spec,
         { name: "foo", dependencies: { b: spec[kind]("gone") } },
         `const results = [attempt("b@3.0.0")];
@@ -1673,7 +1730,10 @@ describe("a rule for a tarball or git dependency", () => {
          console.log(JSON.stringify(results));`,
       );
 
-      expect(stdout).toBe(JSON.stringify(["3.0.0", "MODULE_NOT_FOUND", "MODULE_NOT_FOUND"]));
+      expect({ stdout, stderr }).toEqual({
+        stdout: JSON.stringify(["3.0.0", "MODULE_NOT_FOUND", "MODULE_NOT_FOUND"]),
+        stderr: "",
+      });
       expect(spec.requested("b")).toBe(1);
       expect(exitCode).toBe(0);
     });
@@ -1705,6 +1765,26 @@ test.concurrent.each([
   expect(exitCode).toBe(0);
   await expectLockfileStable(dir, await lockfile(dir));
 });
+
+// The rule for `no-deps` is the rule of `my-alias` also when it changes in a project that is installed.
+test.concurrent.each([
+  { change: "added to", before: undefined, after: { "no-deps": "1.0.0" }, installs: "no-deps@1.0.0" },
+  { change: "changed in", before: { "no-deps": "1.0.0" }, after: { "no-deps": "1.0.1" }, installs: "no-deps@1.0.1" },
+  { change: "removed from", before: { "no-deps": "1.0.0" }, after: undefined, installs: "no-deps@2.0.0" },
+])(
+  "a rule for the package of a tag alias is $change an installed project: $installs",
+  async ({ before, after, installs }) => {
+    const dir = await project({ name: "foo", dependencies: { "my-alias": "npm:no-deps@latest" }, overrides: before });
+    expect((await bun(dir, "install")).stderr).toBe("Saved lockfile");
+
+    await editPackageJson(dir, pkg => (pkg.overrides = after));
+    const { stderr, exitCode } = await bun(dir, "install");
+
+    expect(stderr).toBe("Saved lockfile");
+    expect(nodeModulesPackages(dir)).toBe(`node_modules/my-alias/${installs}`);
+    expect(exitCode).toBe(0);
+  },
+);
 
 // The name that `bun add npm:<name>@<tag>` asks the registry for is the key of its rule before the dependency has one.
 test.concurrent("bun add npm:no-deps@latest gets the version that the rule for no-deps names", async () => {

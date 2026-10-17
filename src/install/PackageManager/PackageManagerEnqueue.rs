@@ -2135,11 +2135,13 @@ fn bind_row_without_manifest(
                 };
                 let checkout_id = Task::Id::for_git_checkout(url, &resolved);
 
-                if needs_ctx {
-                    if let Some(pkg_id) = appended_by_task(this, checkout_id) {
+                // The checkout is done. A dependency that was bound before its turn comes here
+                // again at its turn, and has nothing to wait for.
+                if let Some(pkg_id) = appended_by_task(this, checkout_id) {
+                    if needs_ctx {
                         success_fn(this, id, pkg_id);
-                        return Ok(());
                     }
+                    return Ok(());
                 }
 
                 task_callback_list(this, checkout_id);
@@ -2304,11 +2306,13 @@ fn bind_row_without_manifest(
             };
             let task_id = Task::Id::for_tarball(url);
 
-            if this.lockfile.buffers.resolutions[id as usize] == invalid_package_id {
-                if let Some(pkg_id) = appended_by_task(this, task_id) {
+            // The download is done. A dependency that was bound before its turn comes here again
+            // at its turn: as a waiter of the finished task it would hold up every later package.
+            if let Some(pkg_id) = appended_by_task(this, task_id) {
+                if this.lockfile.buffers.resolutions[id as usize] == invalid_package_id {
                     success_fn(this, id, pkg_id);
-                    return Ok(());
                 }
+                return Ok(());
             }
 
             wait_for_remote_task(this, task_id, waiter());

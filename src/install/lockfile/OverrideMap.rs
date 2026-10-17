@@ -73,7 +73,7 @@ fn is_npm_alias(version: &dependency::Version) -> bool {
 /// The name that the rules for `dependency` are keyed by: the name it is declared under. Only an
 /// alias of a tag (`alias: npm:name@tag`) goes by the name of its package, as it always has.
 #[inline]
-fn rule_key(dependency: &Dependency, buf: &[u8]) -> PackageNameHash {
+pub(crate) fn rule_key(dependency: &Dependency, buf: &[u8]) -> PackageNameHash {
     if dependency.version.tag == VersionTag::DistTag {
         let name = dependency.version.dist_tag().name;
         if !name.eql(dependency.name, buf, buf) {

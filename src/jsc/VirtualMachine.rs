@@ -234,9 +234,7 @@ pub struct VirtualMachine {
     // `transpiler.resolver.standalone_module_graph` without a downcast.
     pub standalone_module_graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
     pub smol: bool,
-    /// Node's `getOptionValue('--eval')` is not empty for this VM: `-e` / `-p`
-    /// code is its main, or it is a Worker whose `execArgv` (its own, or the
-    /// one it inherits) carries eval code.
+    /// Node's `getOptionValue('--eval')` has a value for this VM.
     pub has_eval_string: bool,
     // LAYERING: real type is `bun_runtime::dns_jsc::Order` (forward
     // dep); stored as its `u8` repr.
@@ -2793,8 +2791,7 @@ pub struct WorkerExecArgvFlags {
     pub allow_addons: bool,
     /// `!--no-ffi-cc`
     pub allow_ffi_cc: bool,
-    /// The last `--eval` has a value that is not empty. See
-    /// [`VirtualMachine::has_eval_string`].
+    /// `--eval` has a value. See [`VirtualMachine::has_eval_string`].
     pub has_eval_string: bool,
     /// Where a flag is that is the process's, which a Worker cannot be given
     /// (`ERR_WORKER_INVALID_EXEC_ARGV`): `--disallow-code-generation-from-strings`.

@@ -16,8 +16,7 @@ bun_output::declare_scope!(parseArgs, hidden);
 mod args_slice {
     use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
-    /// Represents a slice of a JSValue array. The fields are private to this
-    /// module so that every value has `start <= end`.
+    /// A slice of a JSValue array. Private fields, so `start <= end` always holds.
     #[derive(Copy, Clone)]
     pub(super) struct ArgsSlice {
         array: JSValue,
@@ -32,8 +31,7 @@ mod args_slice {
             end: 0,
         };
 
-        /// `array[start..]`, which is empty when the array is shorter than
-        /// `start`, like `ArrayPrototypeSlice(array, start)`.
+        /// `array[start..]`, clamped as `ArrayPrototypeSlice(array, start)` is.
         pub(super) fn new(
             global: &JSGlobalObject,
             array: JSValue,

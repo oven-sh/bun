@@ -81,8 +81,7 @@ pub struct WebWorker {
     exec_argv_ptr: *const WTFStringImpl,
     exec_argv_len: usize,
     inherit_exec_argv: bool,
-    /// The worker VM's [`VirtualMachine::has_eval_string`]: the parent's when
-    /// `inherit_exec_argv`, else what `exec_argv` says.
+    /// The worker VM's [`VirtualMachine::has_eval_string`].
     has_eval_string: bool,
     unresolved_specifier: Box<[u8]>,
     preloads: Vec<Box<[u8]>>,

@@ -56,7 +56,7 @@
 namespace WebCore {
 using namespace JSC;
 
-template<> PerformanceObserver::Init convertDictionary<PerformanceObserver::Init>(JSGlobalObject& lexicalGlobalObject, JSValue value)
+template<> ConversionResult<IDLDictionary<PerformanceObserver::Init>> convertDictionary<PerformanceObserver::Init>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -177,7 +177,7 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSPerformanceObserverDOMConst
     RETURN_IF_EXCEPTION(throwScope, {});
     auto* structure = structureForNewTarget<PerformanceObserver>(lexicalGlobalObject, callFrame);
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto object = PerformanceObserver::create(*context, callback.releaseNonNull());
+    auto object = PerformanceObserver::create(*context, callback.releaseReturnValue());
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
@@ -283,7 +283,7 @@ static inline JSC::EncodedJSValue jsPerformanceObserverPrototypeFunction_observe
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
     EnsureStillAliveScope argument0 = callFrame->argument(0);
-    auto options = convert<IDLDictionary<PerformanceObserver::Init>>(*lexicalGlobalObject, argument0.value());
+    PerformanceObserver::Init options = convert<IDLDictionary<PerformanceObserver::Init>>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.observe(WTF::move(options)); })));
 }

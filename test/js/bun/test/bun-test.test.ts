@@ -12,6 +12,14 @@ test("expect().not.not", () => {
   expect(1).not.not.not.toBe(2);
 });
 
+test("expect().not.not on an expect() that already ran a matcher", () => {
+  const kept = expect(1);
+  kept.not.toBe(2);
+  kept.not.not.toBe(1);
+  kept.not.not.not.toBe(2);
+  expect(() => kept.not.not.toBe(2)).toThrow();
+});
+
 // Fuzzer-found crash: Bun.jest() without an active test runner, followed by
 // misuse of the expect statics, must not crash the process. In particular,
 // `new` on a matcher registered via expect.extend() used to jump to a null

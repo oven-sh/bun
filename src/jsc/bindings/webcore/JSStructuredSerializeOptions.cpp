@@ -85,7 +85,7 @@ Vector<JSC::Strong<JSC::JSObject>> convertTransferList(JSGlobalObject& lexicalGl
     return result;
 }
 
-template<> StructuredSerializeOptions convertDictionary<StructuredSerializeOptions>(JSGlobalObject& lexicalGlobalObject, JSValue value)
+template<> ConversionResult<IDLDictionary<StructuredSerializeOptions>> convertDictionary<StructuredSerializeOptions>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);

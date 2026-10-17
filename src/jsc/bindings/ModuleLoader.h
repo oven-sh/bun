@@ -52,9 +52,18 @@ struct OnLoadResult {
 
 extern "C" bool isBunTest;
 
-class PendingVirtualModuleResult : public JSC::JSInternalFieldObjectImpl<3> {
+class PendingVirtualModuleResult : public JSC::JSInternalFieldObjectImpl<8> {
 public:
-    using Base = JSC::JSInternalFieldObjectImpl<3>;
+    using Base = JSC::JSInternalFieldObjectImpl<8>;
+
+    // Fields 0 to 2 are the specifier, the referrer and the promise. These are empty when unused.
+    enum Field : unsigned {
+        TypeAttribute = 3,
+        ModuleGraph,
+        OnLoadPath, // Set while waiting on an onLoad callback's promise.
+        OnLoadCallbacks, // The callbacks to try next if that one declines.
+        ModuleMock, // Set while waiting for Bun::runModuleMock().
+    };
 
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
@@ -64,7 +73,7 @@ public:
     }
 
     JS_EXPORT_PRIVATE static PendingVirtualModuleResult* create(VM&, Structure*);
-    static PendingVirtualModuleResult* create(JSC::JSGlobalObject* globalObject, const WTF::String& specifier, const WTF::String& referrer, bool wasModuleMock);
+    static PendingVirtualModuleResult* create(JSC::JSGlobalObject* globalObject, const WTF::String& specifier, const WTF::String& referrer);
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
     JSC::JSPromise* internalPromise();
@@ -74,8 +83,6 @@ public:
 
     PendingVirtualModuleResult(JSC::VM&, JSC::Structure*);
     void finishCreation(JSC::VM&, const WTF::String& specifier, const WTF::String& referrer);
-
-    bool wasModuleMock = false;
 };
 
 // `graph`: the Bun.ModuleGraph whose loader is fetching, or null. A CommonJS file
@@ -119,7 +126,8 @@ JSValue fetchCommonJSModuleNonBuiltin(
     JSCommonJSModule* target,
     String specifierWtfString,
     BunLoaderType forceLoaderType,
-    JSC::ThrowScope& scope);
+    JSC::ThrowScope& scope,
+    const CodeString* pluginContents = nullptr);
 
 JSValue resolveAndFetchBuiltinModule(
     Zig::GlobalObject* globalObject,

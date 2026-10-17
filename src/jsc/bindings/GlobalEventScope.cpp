@@ -10,33 +10,39 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(GlobalEventScope);
 
-void GlobalEventScope::onDidChangeListenerImpl(EventTarget& self, const AtomString& eventType, OnDidChangeListenerKind kind)
+bool GlobalEventScope::addEventListener(const AtomString& eventType, Ref<EventListener>&& listener, const AddEventListenerOptions& options)
 {
+    if (!EventTarget::addEventListener(eventType, WTF::move(listener), options))
+        return false;
+
     if (eventType == eventNames().messageEvent) {
-        auto& global = static_cast<GlobalEventScope&>(self);
-        switch (kind) {
-        case Add:
-            if (global.m_messageEventCount == 0) {
-                global.scriptExecutionContext()->refEventLoop();
-            }
-            global.m_messageEventCount++;
-            break;
-        case Remove:
-            global.m_messageEventCount--;
-            if (global.m_messageEventCount == 0) {
-                global.scriptExecutionContext()->unrefEventLoop();
-            }
-            break;
-        // I dont think clear in this context is ever called. If it is (search OnDidChangeListenerKind::Clear for the impl),
-        // it may actually call once per event, in a way the Remove code above would suffice.
-        case Clear:
-            if (global.m_messageEventCount > 0) {
-                global.scriptExecutionContext()->unrefEventLoop();
-            }
-            global.m_messageEventCount = 0;
-            break;
-        }
+        if (!m_messageEventCount)
+            scriptExecutionContext()->refEventLoop();
+        m_messageEventCount++;
     }
-};
+    return true;
+}
+
+bool GlobalEventScope::removeEventListener(const AtomString& eventType, EventListener& listener, const EventListenerOptions& options)
+{
+    if (!EventTarget::removeEventListener(eventType, listener, options))
+        return false;
+
+    if (eventType == eventNames().messageEvent) {
+        m_messageEventCount--;
+        if (!m_messageEventCount)
+            scriptExecutionContext()->unrefEventLoop();
+    }
+    return true;
+}
+
+void GlobalEventScope::removeAllEventListeners()
+{
+    EventTarget::removeAllEventListeners();
+
+    if (m_messageEventCount > 0)
+        scriptExecutionContext()->unrefEventLoop();
+    m_messageEventCount = 0;
+}
 
 }

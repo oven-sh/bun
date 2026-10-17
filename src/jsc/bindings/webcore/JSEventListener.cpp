@@ -25,11 +25,11 @@
 #include "JSDOMConvertNullable.h"
 #include "JSDOMConvertStrings.h"
 #include "JSDOMGlobalObject.h"
-// #include "JSDocument.h"
 #include "JSEvent.h"
 #include "JSEventTarget.h"
 #include "ModuleGraph.h"
 #include "WebCoreJSClientData.h"
+#include "Window.h"
 // #include "JSExecState.h"
 // #include "JSExecStateInstrumentation.h"
 // #include "JSWorkerGlobalScope.h"
@@ -111,7 +111,7 @@ void JSEventListener::replaceJSFunctionForAttributeListener(JSObject* function, 
 
 JSValue eventHandlerAttribute(EventTarget& eventTarget, const AtomString& eventType, DOMWrapperWorld& isolatedWorld)
 {
-    if (auto* jsListener = eventTarget.attributeEventListener(eventType, isolatedWorld)) {
+    if (RefPtr jsListener = eventTarget.attributeEventListener(eventType, isolatedWorld)) {
         if (auto* context = eventTarget.scriptExecutionContext()) {
             if (auto* jsFunction = jsListener->ensureJSFunction(*context))
                 return jsFunction;
@@ -122,7 +122,7 @@ JSValue eventHandlerAttribute(EventTarget& eventTarget, const AtomString& eventT
 }
 
 template<typename Visitor>
-inline void JSEventListener::visitJSFunctionImpl(Visitor& visitor)
+inline void JSEventListener::visitJSFunctionImplInGCThread(Visitor& visitor)
 {
     // If m_wrapper is null, we are not keeping m_jsFunction alive.
     if (!m_wrapper)
@@ -131,8 +131,8 @@ inline void JSEventListener::visitJSFunctionImpl(Visitor& visitor)
     visitor.append(m_jsFunction);
 }
 
-void JSEventListener::visitJSFunction(AbstractSlotVisitor& visitor) { visitJSFunctionImpl(visitor); }
-void JSEventListener::visitJSFunction(SlotVisitor& visitor) { visitJSFunctionImpl(visitor); }
+void JSEventListener::visitJSFunctionInGCThread(AbstractSlotVisitor& visitor) { visitJSFunctionImplInGCThread(visitor); }
+void JSEventListener::visitJSFunctionInGCThread(SlotVisitor& visitor) { visitJSFunctionImplInGCThread(visitor); }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionEmitUncaughtException, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
@@ -176,6 +176,27 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
 
     JSGlobalObject* lexicalGlobalObject = jsFunction->globalObject();
 
+    RefPtr window = Window::forEventTarget(event.currentTarget());
+    Window::CurrentEventScope currentEventScope(window.get(), event);
+    bool isDOMTarget = window || [&] {
+        switch (event.currentTarget() ? event.currentTarget()->eventTargetInterface() : EventTargetInterfaceType::Invalid) {
+        case EventTargetInterfaceType::FileReader:
+        case EventTargetInterfaceType::XMLHttpRequest:
+        case EventTargetInterfaceType::XMLHttpRequestUpload:
+            return true;
+        default:
+            return false;
+        }
+    }();
+
+    auto report = [&](JSC::Exception* exception) {
+        event.target()->uncaughtExceptionInEventHandler();
+        if (window)
+            window->reportException(*lexicalGlobalObject, *exception);
+        else
+            reportException(lexicalGlobalObject, exception);
+    };
+
     JSValue handleEventFunction = jsFunction;
 
     auto callData = getCallData(handleEventFunction);
@@ -189,14 +210,12 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
         if (scope.exception()) [[unlikely]] {
             auto* exception = scope.exception();
             (void)scope.tryClearException();
-            event.target()->uncaughtExceptionInEventHandler();
-            reportException(lexicalGlobalObject, exception);
+            report(exception);
             return;
         }
         callData = getCallData(handleEventFunction);
         if (callData.type == CallData::Type::None) {
-            event.target()->uncaughtExceptionInEventHandler();
-            reportException(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "'handleEvent' property of event listener should be callable"_s));
+            report(JSC::Exception::create(vm, createTypeError(lexicalGlobalObject, "'handleEvent' property of event listener should be callable"_s), JSC::Exception::StackCaptureAction::DoNotCaptureStack));
             return;
         }
     }
@@ -218,22 +237,20 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
             return jsNull();
         return toJS(lexicalGlobalObject, globalObject, *currentTarget);
     }();
+
     NakedPtr<JSC::Exception> uncaughtException;
     JSValue retval = JSC::profiledCall(lexicalGlobalObject, JSC::ProfilingReason::Other, handleEventFunction, callData, thisValue, args, uncaughtException);
 
+    // https://html.spec.whatwg.org/multipage/webappapis.html#clean-up-after-running-script. Bun's older event targets keep Node's order.
+    if (isDOMTarget && !vm.isEntered())
+        vm.drainMicrotasks();
+
     // InspectorInstrumentation::didCallFunction(&scriptExecutionContext);
 
-    auto handleExceptionIfNeeded = [&](JSC::Exception* exception) -> bool {
-        if (exception) {
-            event.target()->uncaughtExceptionInEventHandler();
-            reportException(lexicalGlobalObject, exception);
-            return true;
-        }
-        return false;
-    };
-
-    if (handleExceptionIfNeeded(uncaughtException))
+    if (uncaughtException) {
+        report(uncaughtException);
         return;
+    }
 
     // Node handles promises in the return value and throws an uncaught exception on nextTick if it rejects.
     // See event_target.js function addCatch in node
@@ -242,8 +259,7 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
         if (scope.exception()) [[unlikely]] {
             auto* exception = scope.exception();
             (void)scope.tryClearException();
-            event.target()->uncaughtExceptionInEventHandler();
-            reportException(lexicalGlobalObject, exception);
+            report(exception);
             return;
         }
         if (then.isCallable()) {
@@ -254,8 +270,7 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
             if (scope.exception()) [[unlikely]] {
                 auto* exception = scope.exception();
                 (void)scope.tryClearException();
-                event.target()->uncaughtExceptionInEventHandler();
-                reportException(lexicalGlobalObject, exception);
+                report(exception);
                 return;
             }
         }

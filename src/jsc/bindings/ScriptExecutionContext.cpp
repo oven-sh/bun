@@ -186,6 +186,7 @@ JSGlobalObject* ScriptExecutionContext::jsGlobalObject()
 }
 
 extern "C" void Bun__VM__queueTaskAfterYield(void* bunVM, EventLoopTask*);
+extern "C" uint64_t Bun__VM__loopIterationNumber(void* bunVM);
 extern "C" void Bun__VmHandle__queueTaskConcurrently(const ::BunVmHandleRef*, EventLoopTask*);
 
 // JS thread (this context's thread): MessagePort / BroadcastChannel / worker global scope
@@ -469,6 +470,10 @@ void ScriptExecutionContext::postTask(EventLoopTask* task)
 void ScriptExecutionContext::postTaskAfterYield(Function<void(ScriptExecutionContext&)>&& lambda)
 {
     Bun__VM__queueTaskAfterYield(m_bunVM, new EventLoopTask(WTF::move(lambda)));
+}
+uint64_t ScriptExecutionContext::loopIterationNumber() const
+{
+    return Bun__VM__loopIterationNumber(m_bunVM);
 }
 
 // Native bindings

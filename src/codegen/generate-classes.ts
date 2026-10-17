@@ -51,6 +51,11 @@ function className(typeName) {
   return `JS${typeName}`;
 }
 
+const jsNames = new Map<string, string>();
+function jsName(typeName: string) {
+  return jsNames.get(typeName) ?? typeName;
+}
+
 function constructorName(typeName) {
   return `JS${typeName}Constructor`;
 }
@@ -303,7 +308,7 @@ ${generateHashTable(
   true,
 )}
 
-const ClassInfo ${proto}::s_info = { "${typeName}"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(${proto}) };
+const ClassInfo ${proto}::s_info = { "${jsName(typeName)}"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(${proto}) };
 
 ${renderFieldsImpl(protoSymbolName, typeName, obj, protoFields, obj.values || [])}
 
@@ -419,7 +424,7 @@ ${hashTable}
 
 void ${name}::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, ${prototypeName(typeName)}* prototype)
 {
-    Base::finishCreation(vm, 0, "${typeName}"_s, PropertyAdditionMode::WithoutStructureTransition);
+    Base::finishCreation(vm, 0, "${jsName(typeName)}"_s, PropertyAdditionMode::WithoutStructureTransition);
     ${hashTableIdentifier.length ? `Bun::reifyStaticPropertyTable(vm, &${name}::s_info, ${hashTableIdentifier}, *this);` : ""}
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     ASSERT(inherits(info()));
@@ -471,7 +476,7 @@ ${
     instance->m_ctx = ptr;
 `
     : `
-    Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, "${typeName} constructor cannot be invoked without 'new'"_s);
+    Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, "${jsName(typeName)} constructor cannot be invoked without 'new'"_s);
     return JSValue::encode(JSC::jsUndefined());
 `
 }
@@ -693,7 +698,7 @@ JSC_DEFINE_CUSTOM_GETTER(js${typeName}Constructor, (JSGlobalObject * lexicalGlob
     auto* prototype = dynamicDowncast<${prototypeName(typeName)}>(JSValue::decode(thisValue));
 
     if (!prototype) [[unlikely]] {
-        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for ${typeName}"_s);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for ${jsName(typeName)}"_s);
     }
     return JSValue::encode(globalObject->${className(typeName)}Constructor());
 }
@@ -718,12 +723,12 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
         ? `
       JSC::JSBoundFunction* thisBoundFunction = dynamicDowncast<JSC::JSBoundFunction>(JSValue::decode(encodedThisValue));
       if (!thisBoundFunction) [[unlikely]] {
-        return throwVMTypeError(lexicalGlobalObject, throwScope, "The ${typeName}.${name} getter can only be used on instances of ${typeName}"_s);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "The ${jsName(typeName)}.${name} getter can only be used on instances of ${jsName(typeName)}"_s);
       }
       JSC::JSValue thisBoundFunctionThisValue = thisBoundFunction->boundThis();
       ${className(typeName)}* thisObject = dynamicDowncast<${className(typeName)}>(thisBoundFunctionThisValue);
       if (!thisObject) [[unlikely]] {
-        return throwVMTypeError(lexicalGlobalObject, throwScope, "The ${typeName}.${name} getter can only be used on instances of ${typeName}"_s);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "The ${jsName(typeName)}.${name} getter can only be used on instances of ${jsName(typeName)}"_s);
       }
     `
         : `${className(typeName)}* thisObject = uncheckedDowncast<${className(typeName)}>(JSValue::decode(encodedThisValue));`
@@ -828,7 +833,7 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
       ? `
         JSC::JSBoundFunction* thisBoundFunction = dynamicDowncast<JSC::JSBoundFunction>(callFrame->thisValue());
         if (!thisBoundFunction) [[unlikely]] {
-          RELEASE_AND_RETURN(scope, Bun::throwInvalidThisCallError(lexicalGlobalObject, callFrame, "${typeName}"_s));
+          RELEASE_AND_RETURN(scope, Bun::throwInvalidThisCallError(lexicalGlobalObject, callFrame, "${jsName(typeName)}"_s));
         }
         JSC::JSValue thisBoundFunctionThisValue = thisBoundFunction->boundThis();
         ${className(typeName)}* thisObject = dynamicDowncast<${className(typeName)}>(thisBoundFunctionThisValue);
@@ -840,7 +845,7 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
       ${
         invalidThisBehavior == InvalidThisBehavior.Throw
           ? `
-    RELEASE_AND_RETURN(scope, Bun::throwInvalidThisCallError(lexicalGlobalObject, callFrame, "${typeName}"_s));`
+    RELEASE_AND_RETURN(scope, Bun::throwInvalidThisCallError(lexicalGlobalObject, callFrame, "${jsName(typeName)}"_s));`
           : `return JSValue::encode(JSC::jsUndefined());`
       }
   }
@@ -972,7 +977,8 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
   class ${name}${final ? " final" : ""} : public JSC::JSDestructibleObject {
     public:
         using Base = JSC::JSDestructibleObject;
-        static constexpr unsigned StructureFlags = Base::StructureFlags;
+        static constexpr unsigned StructureFlags = Base::StructureFlags${obj.callable ? " | JSC::OverridesGetCallData" : ""};
+        ${obj.callable ? "static JSC::CallData getCallData(JSC::JSCell*);" : ""}
         static ${name}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
         ${obj.valuesArray ? `static ${name}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx, WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>>&& jsvalueArray);` : ""}
         ${obj.valuesArray && obj.values && obj.values.length > 0 ? `static ${name}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx${obj.values.map(v => `, JSC::JSValue ${v}`).join("")});` : ""}
@@ -1232,8 +1238,24 @@ void ${name}::destroy(JSCell* cell)
     static_cast<${name}*>(cell)->${name}::~${name}();
 }
 
-const ClassInfo ${name}::s_info = { "${typeName}"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(${name}) };
+const ClassInfo ${name}::s_info = { "${jsName(typeName)}"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(${name}) };
+${
+  obj.callable
+    ? `
+extern JSC_CALLCONV JSC_DECLARE_HOST_FUNCTION(${symbolName(typeName, "callInstance")}) SYSV_ABI;
 
+JSC::CallData ${name}::getCallData(JSC::JSCell*)
+{
+    JSC::CallData callData;
+    callData.type = JSC::CallData::Type::Native;
+    callData.native.function = ${symbolName(typeName, "callInstance")};
+    callData.native.isBoundFunction = false;
+    callData.native.isWasm = false;
+    return callData;
+}
+`
+    : ""
+}
 void ${name}::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
@@ -1361,7 +1383,7 @@ ${
 JSObject* ${name}::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
 {
     auto *structure = ${prototypeName(typeName)}::createStructure(vm, globalObject, ${
-      obj.forBind
+      obj.forBind || obj.callable
         ? "globalObject->functionPrototype()"
         : obj.prototypeBase === "Error"
           ? "globalObject->errorPrototype()"
@@ -1731,6 +1753,7 @@ function generateRust(
     structuredClone = false,
     rustPath,
     sharedThis = true,
+    protoFnCaller,
   } = {} as ClassDefinition,
 ) {
   const gc_fields = Object.entries({
@@ -1878,12 +1901,17 @@ function generateRust(
 
       if (names.fn) {
         const id = rustSnakeIdent(fn);
+        if (protoFnCaller && passThis) {
+          throw new Error(`${typeName}.${name}: \`passThis\` is not supported with \`protoFnCaller\``);
+        }
         thunk(
           names.fn,
           `(this: ${recv}, global: &JSGlobalObject, callframe: &CallFrame${passThis ? ", js_this_value: JSValue" : ""}) -> JSValue`,
           passThis
             ? `    ${helper("host_fn_this_value")}(this, global, callframe, js_this_value, |t, g, c, v| ${T}::${id}(t, g, c, v))`
-            : `    ${helper("host_fn_this")}(this, global, callframe, |t, g, c| ${T}::${id}(t, g, c))`,
+            : protoFnCaller
+              ? `    ${helper("host_fn_this")}(this, global, callframe, |t, g, c| ${T}::${rustSnakeIdent(protoFnCaller)}(t, g, c, ${T}::${id}))`
+              : `    ${helper("host_fn_this")}(this, global, callframe, |t, g, c| ${T}::${id}(t, g, c))`,
         );
       }
     }
@@ -2369,6 +2397,7 @@ const classes: ClassDefinition[] = [];
   }
 }
 classes.sort((a, b) => (a.name < b.name ? -1 : 1));
+for (const { name, jsName } of classes) if (jsName) jsNames.set(name, jsName);
 
 // sort all the prototype keys and klass keys
 for (const obj of classes) {

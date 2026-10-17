@@ -37,7 +37,9 @@
 #pragma once
 
 #include "ActiveDOMObject.h"
+#include "ContextDestructionObserverInlines.h"
 #include "EventTarget.h"
+#include "EventTargetInterfaces.h"
 #include "ExceptionOr.h"
 #include "ScriptExecutionContext.h"
 #include <wtf/Forward.h>
@@ -78,8 +80,8 @@ public:
     // Called on this channel's context thread with one message.
     void dispatchMessage(Ref<SerializedScriptValue>&&);
 
-    void jsRef(JSGlobalObject*);
-    void jsUnref(JSGlobalObject*);
+    void jsRef(JSC::JSGlobalObject*);
+    void jsUnref(JSC::JSGlobalObject*);
 
 private:
     friend class BunBroadcastChannelRegistry;
@@ -87,7 +89,7 @@ private:
     BroadcastChannel(ScriptExecutionContext&, const String& name);
 
     // EventTarget
-    EventTargetInterface eventTargetInterface() const final { return BroadcastChannelEventTargetInterfaceType; }
+    enum EventTargetInterfaceType eventTargetInterface() const final { return EventTargetInterfaceType::BroadcastChannel; }
     ScriptExecutionContext* scriptExecutionContext() const final { return ActiveDOMObject::scriptExecutionContext(); }
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }

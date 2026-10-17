@@ -126,7 +126,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMExceptionDOMConstru
     auto* castedThis = uncheckedDowncast<JSDOMExceptionDOMConstructor>(callFrame->jsCallee());
     ASSERT(castedThis);
     EnsureStillAliveScope argument0 = callFrame->argument(0);
-    auto message = argument0.value().isUndefined() ? emptyString() : convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
+    String message = argument0.value().isUndefined() ? ConversionResult<IDLDOMString> { emptyString() } : convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
 
     String name = "Error"_s;

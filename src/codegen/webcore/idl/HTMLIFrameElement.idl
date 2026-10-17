@@ -1,0 +1,53 @@
+/*
+ * Copyright (C) 2006, 2007, 2009, 2010 Apple Inc. All rights reserved.
+ * Copyright (C) 2006 Samuel Weinig <sam.weinig@gmail.com>
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Library General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Library General Public License for more details.
+ *
+ * You should have received a copy of the GNU Library General Public License
+ * along with this library; see the file COPYING.LIB.  If not, write to
+ * the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
+ */
+
+// https://html.spec.whatwg.org/multipage/iframe-embed-object.html#htmliframeelement
+
+[
+    Exposed=Window,
+    JSGenerateToNativeObject
+] interface HTMLIFrameElement : HTMLElement {
+    [ReflectURL, CEReactions=NotNeeded] attribute USVString src;
+    [Reflect, CEReactions=NotNeeded] attribute DOMString srcdoc;
+    [Reflect, CEReactions=NotNeeded] attribute DOMString name;
+    [SameObject, PutForwards=value] readonly attribute DOMTokenList sandbox;
+    [Reflect, CEReactions=NotNeeded] attribute DOMString allow;
+    [Reflect, CEReactions=NotNeeded] attribute boolean allowFullscreen;
+    [Reflect, CEReactions=NotNeeded] attribute DOMString width;
+    [Reflect, CEReactions=NotNeeded] attribute DOMString height;
+    [CEReactions=NotNeeded, ImplementedAs=referrerPolicyForBindings, ReflectSetter] attribute [AtomString] DOMString referrerPolicy;
+    [CEReactions=NotNeeded, Reflect, Enumerated=HTMLIFrameElementLoadingValues] attribute DOMString loading;
+    readonly attribute Document? contentDocument;
+    readonly attribute Window? contentWindow;
+    Document? getSVGDocument();
+
+    // also has obsolete members
+    // https://html.spec.whatwg.org/multipage/obsolete.html#HTMLIFrameElement-partial
+    [Reflect, CEReactions=NotNeeded] attribute DOMString align;
+    [Reflect, CEReactions=NotNeeded] attribute DOMString scrolling;
+    [Reflect, CEReactions=NotNeeded] attribute DOMString frameBorder;
+    [ReflectURL, CEReactions=NotNeeded] attribute USVString longDesc;
+
+    [Reflect, CEReactions=NotNeeded] attribute [LegacyNullToEmptyString] DOMString marginHeight;
+    [Reflect, CEReactions=NotNeeded] attribute [LegacyNullToEmptyString] DOMString marginWidth;
+
+};
+
+[MissingValueDefault="eager", InvalidValueDefault="eager"] enum HTMLIFrameElementLoadingValues { "lazy", "eager" };

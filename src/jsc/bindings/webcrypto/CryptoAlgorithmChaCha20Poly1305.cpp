@@ -119,7 +119,7 @@ void CryptoAlgorithmChaCha20Poly1305::decrypt(const CryptoAlgorithmParameters& p
 void CryptoAlgorithmChaCha20Poly1305::generateKey(const CryptoAlgorithmParameters& parameters, bool extractable, CryptoKeyUsageBitmap usages, KeyOrKeyPairCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext&)
 {
     if (usagesAreInvalidForChaCha20Poly1305(usages)) {
-        exceptionCallback(SyntaxError, "Unsupported key usage for a ChaCha20-Poly1305 key"_s);
+        exceptionCallback(JSSyntaxError, "Unsupported key usage for a ChaCha20-Poly1305 key"_s);
         return;
     }
 
@@ -131,7 +131,7 @@ void CryptoAlgorithmChaCha20Poly1305::importKey(CryptoKeyFormat format, KeyData&
     using namespace CryptoAlgorithmChaCha20Poly1305Internal;
 
     if (usagesAreInvalidForChaCha20Poly1305(usages)) {
-        exceptionCallback(SyntaxError, "Unsupported key usage for a ChaCha20-Poly1305 key"_s);
+        exceptionCallback(JSSyntaxError, "Unsupported key usage for a ChaCha20-Poly1305 key"_s);
         return;
     }
 

@@ -31,7 +31,7 @@
 namespace WebCore {
 using namespace JSC;
 
-template<> CryptoAlgorithmX25519Params convertDictionary<CryptoAlgorithmX25519Params>(JSGlobalObject& lexicalGlobalObject, JSValue value)
+template<> ConversionResult<IDLDictionary<CryptoAlgorithmX25519Params>> convertDictionary<CryptoAlgorithmX25519Params>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
     SUPPRESS_UNCOUNTED_LOCAL auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -53,7 +53,7 @@ template<> CryptoAlgorithmX25519Params convertDictionary<CryptoAlgorithmX25519Pa
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "name"_s, "X25519Params"_s, "DOMString"_s);
         return {};
     }
-    auto nameConversionResult = convert<IDLDOMString>(lexicalGlobalObject, nameValue);
+    String nameConversionResult = convert<IDLDOMString>(lexicalGlobalObject, nameValue);
     RETURN_IF_EXCEPTION(throwScope, {});
     result.name = nameConversionResult;
     JSValue publicKeyValue;
@@ -69,7 +69,7 @@ template<> CryptoAlgorithmX25519Params convertDictionary<CryptoAlgorithmX25519Pa
     }
     auto publicKeyConversionResult = convert<IDLInterface<CryptoKey>>(lexicalGlobalObject, publicKeyValue, [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwDictionaryMemberTypeError(lexicalGlobalObject, scope, "publicKey"_s, "X25519Params"_s, "CryptoKey"_s); });
     RETURN_IF_EXCEPTION(throwScope, {});
-    result.publicKey = publicKeyConversionResult;
+    result.publicKey = publicKeyConversionResult.releaseReturnValue();
     return result;
 }
 

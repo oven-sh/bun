@@ -37,22 +37,35 @@ namespace WebCore {
 JSC::JSValue toJS(JSC::JSGlobalObject* state, JSDOMGlobalObject* globalObject, EventTarget& impl)
 {
     switch (impl.eventTargetInterface()) {
-    case EventTargetInterfaceType:
+    case EventTargetInterfaceType::Invalid:
+        ASSERT_NOT_REACHED();
         break;
-    case AbortSignalEventTargetInterfaceType:
+    case EventTargetInterfaceType::EventTarget:
+        break;
+    case EventTargetInterfaceType::AbortSignal:
         return toJS(state, globalObject, static_cast<AbortSignal&>(impl));
-    case BroadcastChannelEventTargetInterfaceType:
+    case EventTargetInterfaceType::BroadcastChannel:
         return toJS(state, globalObject, static_cast<BroadcastChannel&>(impl));
-    case BunWebViewEventTargetInterfaceType:
+    case EventTargetInterfaceType::BunWebView:
         return Bun::toJS(state, globalObject, static_cast<Bun::WebViewEventTarget&>(impl));
-    case DOMWindowEventTargetInterfaceType:
+    case EventTargetInterfaceType::DOMWindow:
         return globalObject;
-    case MessagePortEventTargetInterfaceType:
+    case EventTargetInterfaceType::FileReader:
+        return toJS(state, globalObject, static_cast<FileReader&>(impl));
+    case EventTargetInterfaceType::MessagePort:
         return toJS(state, globalObject, static_cast<MessagePort&>(impl));
-    case WebSocketEventTargetInterfaceType:
+    case EventTargetInterfaceType::Node:
+        return toJS(state, globalObject, downcast<Node>(impl));
+    case EventTargetInterfaceType::WebSocket:
         return toJS(state, globalObject, static_cast<WebSocket&>(impl));
-    case WorkerEventTargetInterfaceType:
+    case EventTargetInterfaceType::Window:
+        return toJS(state, globalObject, static_cast<Window&>(impl));
+    case EventTargetInterfaceType::Worker:
         return toJS(state, globalObject, static_cast<Worker&>(impl));
+    case EventTargetInterfaceType::XMLHttpRequest:
+        return toJS(state, globalObject, static_cast<XMLHttpRequest&>(impl));
+    case EventTargetInterfaceType::XMLHttpRequestUpload:
+        return toJS(state, globalObject, static_cast<XMLHttpRequestUpload&>(impl));
     default: {
         break;
     }

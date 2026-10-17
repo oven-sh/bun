@@ -145,6 +145,7 @@ pub mod generics;
 // ─── parser core + rule orchestration ─────────────────────────────────────
 #[path = "css_parser.rs"]
 pub mod css_parser;
+mod dom;
 #[path = "printer.rs"]
 pub mod printer;
 #[path = "values/mod.rs"]

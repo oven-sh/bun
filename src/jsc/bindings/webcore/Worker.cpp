@@ -440,7 +440,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
             transferList = convert<IDLSequence<IDLObject>>(*globalObject, options);
             RETURN_IF_EXCEPTION(scope, {});
         } else {
-            auto serializeOptions = convertDictionary<StructuredSerializeOptions>(*globalObject, options);
+            StructuredSerializeOptions serializeOptions = convertDictionary<StructuredSerializeOptions>(*globalObject, options);
             RETURN_IF_EXCEPTION(scope, {});
             transferList = WTF::move(serializeOptions.transfer);
         }

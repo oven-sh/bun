@@ -472,6 +472,107 @@ pub struct LoaderResult<'a> {
     pub package_json: Option<&'a PackageJSON>,
 }
 
+/// Vite's import path suffixes, as in `./icon.svg?raw`.
+#[derive(Clone, Copy)]
+pub enum ImportSuffix {
+    Raw,
+    Url,
+    Inline,
+    Init,
+    Worker(&'static str),
+}
+
+impl ImportSuffix {
+    /// Parameter precedence matches Vite.
+    pub fn find(query: &[u8], by_extension: Option<Loader>) -> Option<Self> {
+        let (mut raw, mut url, mut inline, mut init, mut worker) =
+            (false, false, false, false, None);
+        for parameter in strings::split(query.strip_prefix(b"?")?, b"&") {
+            match parameter {
+                b"raw" => raw = true,
+                b"url" => url = true,
+                // On WebAssembly, whichever of `init` and `inline` comes first wins.
+                b"init" => init = !inline,
+                b"worker" => worker = worker.or(Some("Worker")),
+                b"sharedworker" => worker = worker.or(Some("SharedWorker")),
+                // Vite matches `/[?&]inline\b/`.
+                _ => {
+                    inline |= parameter.strip_prefix(b"inline").is_some_and(|rest| {
+                        !matches!(
+                            rest.first(),
+                            Some(b'0'..=b'9' | b'A'..=b'Z' | b'a'..=b'z' | b'_')
+                        )
+                    });
+                }
+            }
+        }
+        let init = init && by_extension == Some(Loader::Wasm);
+        let is_asset = matches!(
+            by_extension,
+            None | Some(Loader::File | Loader::Wasm | Loader::Text)
+        );
+        match worker {
+            Some(_) if url => Some(Self::Url),
+            Some(constructor) => Some(Self::Worker(constructor)),
+            None if raw => Some(Self::Raw),
+            None if inline && is_asset && !init => Some(Self::Inline),
+            None if url => Some(Self::Url),
+            None if inline && by_extension == Some(Loader::Css) => Some(Self::Raw),
+            None if init => Some(Self::Init),
+            None => None,
+        }
+    }
+
+    pub fn loader(self) -> Loader {
+        match self {
+            Self::Raw => Loader::Text,
+            Self::Url => Loader::File,
+            Self::Inline | Self::Init | Self::Worker(_) => Loader::Js,
+        }
+    }
+
+    /// Loaded instead of `file`. Named `specifier` so an error in it isn't shown with `file`'s source.
+    pub fn module(self, file: &[u8], specifier: &[u8]) -> Option<bun_ast::Source> {
+        let quoted = bun_core::fmt::format_json_string_utf8(file, Default::default());
+        let contents = match self {
+            Self::Raw | Self::Url => return None,
+            Self::Inline => match bun_sys::File::read_from(bun_sys::Fd::cwd(), file) {
+                Ok(bytes) => {
+                    use bun_resolver::data_url::DataURL;
+                    let extension = Fs::PathName::init(file).ext_without_leading_dot();
+                    let mime_type = bun_http_types::MimeType::by_extension(extension).value;
+                    let mime_type =
+                        strings::split_once_char(&mime_type, b';').map_or(&*mime_type, |it| it.0);
+                    let url = match mime_type {
+                        b"image/svg+xml" => DataURL::encode_svg_as_data_url(&bytes),
+                        _ => DataURL::encode_as_base64_data_url(mime_type, &bytes),
+                    };
+                    let url = bun_core::fmt::format_json_string_utf8(&url, Default::default());
+                    format!("export default {url};\n")
+                }
+                Err(err) => {
+                    let message = err.to_string();
+                    let message = bun_core::fmt::format_json_string_utf8(
+                        message.as_bytes(),
+                        Default::default(),
+                    );
+                    format!("throw new Error({message});\n")
+                }
+            },
+            Self::Init => format!(
+                "export default async function init(imports) {{\n  return (await WebAssembly.instantiate(await Bun.file({quoted}).arrayBuffer(), imports)).instance;\n}}\n"
+            ),
+            Self::Worker(constructor) => format!(
+                "export default function WorkerWrapper(options) {{\n  return new {constructor}({quoted}, {{ type: \"module\", name: options?.name }});\n}}\n"
+            ),
+        };
+        Some(bun_ast::Source::init_path_string_owned(
+            specifier,
+            contents.into_bytes(),
+        ))
+    }
+}
+
 pub fn get_loader_and_virtual_source<'a>(
     specifier_str: &'a [u8],
     jsc_vm: &'a VmLoaderCtx,
@@ -486,6 +587,11 @@ pub fn get_loader_and_virtual_source<'a>(
     // SAFETY: loaders() returns a borrow tied to jsc_vm.owner
     let mut loader: Option<Loader> = path.loader(unsafe { &*jsc_vm.loaders() });
     let mut virtual_source: Option<&'a bun_ast::Source> = None;
+    let attribute_loader = type_attribute_str.and_then(Loader::from_string);
+    let suffix = match attribute_loader {
+        Some(_) => None,
+        None => ImportSuffix::find(query, loader),
+    };
 
     if let Some(eval_source) = jsc_vm.eval_source() {
         // SAFETY: eval_source outlives jsc_vm
@@ -543,16 +649,15 @@ pub fn get_loader_and_virtual_source<'a>(
         } else {
             return Err(GetLoaderAndVirtualSourceErr::BlobNotFound);
         }
+    } else if let Some(module) = suffix.and_then(|suffix| suffix.module(path.text, specifier)) {
+        *virtual_source_to_use = Some(module);
+        virtual_source = virtual_source_to_use.as_ref();
+        path = Fs::Path::init(specifier);
     }
 
-    if query == b"?raw" {
-        loader = Some(Loader::Text);
-    }
-    if let Some(attr_str) = type_attribute_str {
-        if let Some(attr_loader) = Loader::from_string(attr_str) {
-            loader = Some(attr_loader);
-        }
-    }
+    loader = attribute_loader
+        .or_else(|| suffix.map(ImportSuffix::loader))
+        .or(loader);
 
     let is_main = strings::eql_long(specifier, jsc_vm.main(), true);
 
@@ -1227,6 +1332,8 @@ pub struct BundleOptions<'a> {
     pub react_fast_refresh: bool,
     pub react_compiler: bun_ast::runtime::ReactCompilerMode,
     pub react_compiler_parse_test_pragmas: bool,
+    /// Set by `bun test`: returns whether to compile the file at this path. The bundler leaves it `None`.
+    pub react_compiler_filter: Option<&'static (dyn Fn(&[u8]) -> bool + Sync)>,
     pub(crate) inject: Option<Box<[Box<[u8]>]>>,
     // `bun_url::URL<'a>` borrows its input string; the owned variant keeps the
     // struct self-contained.
@@ -1282,6 +1389,12 @@ pub struct BundleOptions<'a> {
     pub(crate) load_package_json: bool,
 
     pub rewrite_jest_for_tests: bool,
+    /// `bun test --globals=vitest`
+    pub vitest_globals: bool,
+    /// Same effect as `vitest_globals`, for everything loaded by a test file that imports "vitest".
+    pub test_file_imports_vitest: bool,
+    /// See `RuntimeFeatures::own_test_globals`.
+    pub own_test_globals: u32,
 
     pub macro_remap: MacroRemap,
     pub no_macros: bool,
@@ -1484,6 +1597,7 @@ impl<'a> BundleOptions<'a> {
             react_fast_refresh: self.react_fast_refresh,
             react_compiler: self.react_compiler,
             react_compiler_parse_test_pragmas: self.react_compiler_parse_test_pragmas,
+            react_compiler_filter: self.react_compiler_filter,
             inject: self.inject.clone(),
             origin: self.origin.clone(),
             // The owning handle stays with the parent; copying it here would
@@ -1520,6 +1634,9 @@ impl<'a> BundleOptions<'a> {
             load_tsconfig_json: self.load_tsconfig_json,
             load_package_json: self.load_package_json,
             rewrite_jest_for_tests: self.rewrite_jest_for_tests,
+            vitest_globals: self.vitest_globals,
+            test_file_imports_vitest: self.test_file_imports_vitest,
+            own_test_globals: self.own_test_globals,
             macro_remap: clone_macro_remap(&self.macro_remap),
             no_macros: self.no_macros,
             conditions: ESMConditions {
@@ -1753,6 +1870,7 @@ impl<'a> BundleOptions<'a> {
             react_fast_refresh: false,
             react_compiler: bun_ast::runtime::ReactCompilerMode::Disabled,
             react_compiler_parse_test_pragmas: false,
+            react_compiler_filter: None,
             inject: None,
             origin: bun_url::OwnedURL::from_href(Box::default()),
             output_dir_handle: None,
@@ -1778,6 +1896,9 @@ impl<'a> BundleOptions<'a> {
             load_tsconfig_json: true,
             load_package_json: true,
             rewrite_jest_for_tests: false,
+            vitest_globals: false,
+            test_file_imports_vitest: false,
+            own_test_globals: 0,
             macro_remap: MacroRemap::default(),
             no_macros: false,
             conditions: ESMConditions {

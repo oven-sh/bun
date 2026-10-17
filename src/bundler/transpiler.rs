@@ -878,6 +878,7 @@ pub struct ParseOptions<'a, 'b> {
     pub virtual_source: Option<&'b bun_ast::Source>,
     pub replace_exports: bun_collections::StringArrayHashMap<bun_ast::runtime::ReplaceableExport>,
     pub inject_jest_globals: bool,
+    pub is_test_entry_point: bool,
     pub set_breakpoint_on_first_line: bool,
     pub emit_decorator_metadata: bool,
     pub experimental_decorators: bool,
@@ -1480,6 +1481,7 @@ impl<'a> Transpiler<'a> {
                     jsc_builtin_syntax: false,
                     output_format: p_opts::Format::Esm,
                     transform_only: self.options.transform_only,
+                    import_meta_glob: None,
                     import_meta_main_value: None,
                     lower_import_meta_main_for_node_js: false,
                     framework: None,
@@ -1525,8 +1527,22 @@ impl<'a> Transpiler<'a> {
                 // JavaScriptCore implements `using` / `await using` natively, so
                 // when targeting Bun there is no need to lower them.
                 opts.features.lower_using = !target.is_bun();
+                opts.features.ascii_only = target.is_bun();
 
                 opts.features.inject_jest_globals = this_parse.inject_jest_globals;
+                opts.features.is_test_entry_point = this_parse.is_test_entry_point;
+                if !this_parse.is_test_entry_point
+                    && !source.path.is_node_module()
+                    && self
+                        .options
+                        .react_compiler_filter
+                        .is_some_and(|is_compiled| is_compiled(source.path.text))
+                {
+                    opts.features.react_compiler = self.options.react_compiler;
+                }
+                opts.features.vitest_globals =
+                    self.options.vitest_globals || self.options.test_file_imports_vitest;
+                opts.features.own_test_globals = self.options.own_test_globals;
                 opts.features.minify_syntax = self.options.minify_syntax;
                 opts.features.minify_identifiers = self.options.minify_identifiers;
                 opts.features.dead_code_elimination = self.options.dead_code_elimination;
@@ -1587,6 +1603,16 @@ impl<'a> Transpiler<'a> {
                         .macro_context
                         .as_mut()
                         .map(|m| &mut *core::ptr::from_mut(m));
+                }
+                // Only the runtime's module loader sets `allow_commonjs`. Other callers just transform text.
+                if this_parse.allow_commonjs {
+                    // SAFETY: the resolver outlives the parse, which only calls it from this thread.
+                    opts.import_meta_glob = Some(unsafe {
+                        js_ast::ImportMetaGlobHost::new(
+                            js_ast::ImportMetaGlobHostKind::Resolver,
+                            &raw mut self.resolver,
+                        )
+                    });
                 }
 
                 // spec calls `transpiler.resolver.caches.js.parse`.
@@ -2860,6 +2886,7 @@ impl<'a> Transpiler<'a> {
                     virtual_source: None,
                     replace_exports: Default::default(),
                     inject_jest_globals: false,
+                    is_test_entry_point: false,
                     set_breakpoint_on_first_line: false,
                     remove_cjs_module_wrapper: false,
                     dont_bundle_twice: false,

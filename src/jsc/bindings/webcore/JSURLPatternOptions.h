@@ -25,6 +25,6 @@
 
 namespace WebCore {
 
-template<> URLPatternOptions convertDictionary<URLPatternOptions>(JSC::JSGlobalObject&, JSC::JSValue);
+template<> ConversionResult<IDLDictionary<URLPatternOptions>> convertDictionary<URLPatternOptions>(JSC::JSGlobalObject&, JSC::JSValue);
 
 } // namespace WebCore

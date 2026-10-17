@@ -44,17 +44,19 @@ public:
     struct JSValueTag {
     };
     using DataType = std::variant<JSValueTag, Ref<SerializedScriptValue>, String, Ref<Blob>, Ref<ArrayBuffer>>;
-    static Ref<MessageEvent> create(const AtomString& type, DataType&&, const String& origin = {}, const String& lastEventId = {}, RefPtr<MessagePort>&& = nullptr, Vector<RefPtr<MessagePort>>&& = {});
-    static Ref<MessageEvent> create(DataType&&, const String& origin = {}, const String& lastEventId = {}, RefPtr<MessagePort>&& = nullptr, Vector<RefPtr<MessagePort>>&& = {});
+    static Ref<MessageEvent> create(const AtomString& type, DataType&&, const String& origin = {}, const String& lastEventId = {}, RefPtr<EventTarget>&& = nullptr, Vector<RefPtr<MessagePort>>&& = {});
+    static Ref<MessageEvent> create(DataType&&, const String& origin = {}, const String& lastEventId = {}, RefPtr<EventTarget>&& = nullptr, Vector<RefPtr<MessagePort>>&& = {});
 
     struct Init : EventInit {
         JSC::JSValue data;
         String origin;
         String lastEventId;
-        RefPtr<MessagePort> source;
+        RefPtr<EventTarget> source; // A MessagePort or a Window.
+        JSC::JSValue sourceObject; // Any other object. Script gets the same object back.
         Vector<RefPtr<MessagePort>> ports;
     };
     static Ref<MessageEvent> create(const AtomString& type, Init&&, IsTrusted = IsTrusted::No);
+    static Ref<MessageEvent> createForBindings();
 
     struct MessageEventWithStrongData {
         Ref<MessageEvent> event;
@@ -63,38 +65,41 @@ public:
 
     // Deserializes `data` in the target realm. Throws what deserialization throws (nullopt then); the dispatching
     // task turns that into a `messageerror` event (message port post message steps, 7.3).
-    static std::optional<MessageEventWithStrongData> create(JSC::JSGlobalObject&, Ref<SerializedScriptValue>&&, const String& origin = {}, const String& lastEventId = {}, RefPtr<MessagePort>&& = nullptr, Vector<RefPtr<MessagePort>>&& = {});
+    static std::optional<MessageEventWithStrongData> create(JSC::JSGlobalObject&, Ref<SerializedScriptValue>&&, const String& origin = {}, const String& lastEventId = {}, RefPtr<EventTarget>&& = nullptr, Vector<RefPtr<MessagePort>>&& = {});
 
-    static std::optional<MessageEventWithStrongData> create(JSC::JSGlobalObject&, Ref<SerializedScriptValue>&&, RefPtr<MessagePort>&& = nullptr, Vector<RefPtr<MessagePort>>&& = {});
+    static std::optional<MessageEventWithStrongData> create(JSC::JSGlobalObject&, Ref<SerializedScriptValue>&&, RefPtr<EventTarget>&& = nullptr, Vector<RefPtr<MessagePort>>&& = {});
 
     virtual ~MessageEvent();
 
-    void initMessageEvent(const AtomString& type, bool canBubble, bool cancelable, JSC::JSValue data, const String& origin, const String& lastEventId, RefPtr<MessagePort>&&, Vector<RefPtr<MessagePort>>&&);
+    void initMessageEvent(JSC::JSGlobalObject&, const AtomString& type, bool canBubble, bool cancelable, JSC::JSValue data, const String& origin, const String& lastEventId, RefPtr<EventTarget>&&, JSC::JSValue sourceObject, Vector<RefPtr<MessagePort>>&&);
 
     const String& origin() const { return m_origin; }
     const String& lastEventId() const { return m_lastEventId; }
-    const RefPtr<MessagePort>& source() const { return m_source; }
+    const RefPtr<EventTarget>& source() const { return m_source; }
     const Vector<RefPtr<MessagePort>>& ports() const { return m_ports; }
 
     const DataType& data() const { return m_data; }
 
     JSValueInWrappedObject& jsData() { return m_jsData; }
+    JSValueInWrappedObject& jsSource() { return m_jsSource; }
     JSValueInWrappedObject& cachedData() { return m_cachedData; }
     JSValueInWrappedObject& cachedPorts() { return m_cachedPorts; }
 
     size_t memoryCost() const;
 
 private:
+    MessageEvent();
     MessageEvent(const AtomString& type, Init&&, IsTrusted);
-    MessageEvent(const AtomString& type, DataType&&, const String& origin, const String& lastEventId = {}, RefPtr<MessagePort>&& = nullptr, Vector<RefPtr<MessagePort>>&& = {});
+    MessageEvent(const AtomString& type, DataType&&, const String& origin, const String& lastEventId = {}, RefPtr<EventTarget>&& = nullptr, Vector<RefPtr<MessagePort>>&& = {});
 
     DataType m_data;
     String m_origin;
     String m_lastEventId;
-    RefPtr<MessagePort> m_source;
+    RefPtr<EventTarget> m_source;
     Vector<RefPtr<MessagePort>> m_ports;
 
     JSValueInWrappedObject m_jsData;
+    JSValueInWrappedObject m_jsSource;
     JSValueInWrappedObject m_cachedData;
     JSValueInWrappedObject m_cachedPorts;
 

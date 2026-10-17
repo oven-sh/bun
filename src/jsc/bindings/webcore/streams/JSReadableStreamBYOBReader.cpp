@@ -135,7 +135,7 @@ static BYOBReadArguments convertBYOBReadArguments(JSC::VM& vm, JSGlobalObject* g
     RETURN_IF_EXCEPTION(scope, result);
     if (minValue.isUndefined())
         return result;
-    result.min = convertToIntegerEnforceRange<uint64_t>(*globalObject, minValue);
+    result.min = convertToIntegerEnforceRange<IDLUnsignedLongLong>(*globalObject, minValue);
     RETURN_IF_EXCEPTION(scope, result);
     return result;
 }
@@ -259,7 +259,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamBYOBReaderPrototype_inspectCustom, (JSG
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue thisValue = callFrame->thisValue();
+    JSValue thisValue = callFrame->thisValue().toThis(lexicalGlobalObject, JSC::ECMAMode::strict());
     auto* thisObject = dynamicDowncast<JSReadableStreamBYOBReader>(thisValue);
     if (!thisObject) [[unlikely]]
         return JSValue::encode(thisValue);

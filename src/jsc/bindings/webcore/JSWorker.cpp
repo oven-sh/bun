@@ -619,7 +619,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_postMessage1Body(JSC
     auto message = convert<IDLAny>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto transfer = convert<IDLSequence<IDLObject>>(*lexicalGlobalObject, argument1.value());
+    Vector<JSC::Strong<JSC::JSObject>> transfer = convert<IDLSequence<IDLObject>>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.postMessage(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(message), WTF::move(transfer)); })));
 }

@@ -33,6 +33,7 @@
 #include "WebSocketDeflate.h"
 #include "ActiveDOMObject.h"
 #include "EventTarget.h"
+#include "EventTargetInterfaces.h"
 #include "ExceptionOr.h"
 #include <wtf/URL.h>
 #include <wtf/HashSet.h>
@@ -314,7 +315,7 @@ private:
 
     explicit WebSocket(ScriptExecutionContext&);
 
-    EventTargetInterface eventTargetInterface() const final;
+    enum EventTargetInterfaceType eventTargetInterface() const final;
 
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }

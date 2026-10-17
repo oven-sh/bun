@@ -311,7 +311,11 @@ impl BackgroundSize {
             BackgroundSize::Contain => dest.write_str("contain"),
             BackgroundSize::Explicit(explicit) => {
                 explicit.width.to_css(dest)?;
-                if !matches!(explicit.height, LengthPercentageOrAuto::Auto) {
+                let is_auto =
+                    |size: &LengthPercentageOrAuto| matches!(size, LengthPercentageOrAuto::Auto);
+                // The CSSOM leaves the height out only in `auto`.
+                if !is_auto(&explicit.height) || (dest.cssom.is_some() && !is_auto(&explicit.width))
+                {
                     dest.write_str(" ")?;
                     explicit.height.to_css(dest)?;
                 }

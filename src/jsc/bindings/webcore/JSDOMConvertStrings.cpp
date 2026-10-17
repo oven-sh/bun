@@ -22,7 +22,8 @@
 #include "config.h"
 #include "JSDOMConvertStrings.h"
 
-#include "JSDOMExceptionHandling.h"
+#include "JSDOMGlobalObject.h"
+#include "ScriptExecutionContext.h"
 #include <JavaScriptCore/HeapInlines.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <wtf/text/StringBuilder.h>
@@ -30,6 +31,18 @@
 
 namespace WebCore {
 using namespace JSC;
+
+auto Converter<IDLDOMString>::convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value) -> Result
+{
+    auto& vm = lexicalGlobalObject.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto string = value.toWTFString(&lexicalGlobalObject);
+
+    RETURN_IF_EXCEPTION(scope, Result::exception());
+
+    return Result { WTF::move(string) };
+}
 
 String identifierToString(JSGlobalObject& lexicalGlobalObject, const Identifier& identifier)
 {
@@ -63,16 +76,31 @@ String identifierToByteString(JSGlobalObject& lexicalGlobalObject, const Identif
     return string;
 }
 
-String valueToByteString(JSGlobalObject& lexicalGlobalObject, JSValue value)
+ConversionResult<IDLByteString> valueToByteString(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
     VM& vm = lexicalGlobalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto string = value.toWTFString(&lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, {});
+    RETURN_IF_EXCEPTION(scope, ConversionResult<IDLByteString>::exception());
 
     if (throwIfInvalidByteString(lexicalGlobalObject, scope, string)) [[unlikely]]
-        return {};
+        return ConversionResult<IDLByteString>::exception();
+
+    return { WTF::move(string) };
+}
+
+ConversionResult<IDLAtomStringAdaptor<IDLByteString>> valueToByteAtomString(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+{
+    VM& vm = lexicalGlobalObject.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    AtomString string = value.toString(&lexicalGlobalObject)->toAtomString(&lexicalGlobalObject).data;
+    RETURN_IF_EXCEPTION(scope, ConversionResult<IDLAtomStringAdaptor<IDLByteString>>::exception());
+
+    if (throwIfInvalidByteString(lexicalGlobalObject, scope, string.string())) [[unlikely]]
+        return ConversionResult<IDLAtomStringAdaptor<IDLByteString>>::exception();
+
     return string;
 }
 
@@ -81,7 +109,7 @@ String identifierToUSVString(JSGlobalObject& lexicalGlobalObject, const Identifi
     return replaceUnpairedSurrogatesWithReplacementCharacter(identifierToString(lexicalGlobalObject, identifier));
 }
 
-String valueToUSVString(JSGlobalObject& lexicalGlobalObject, JSValue value)
+ConversionResult<IDLUSVString> valueToUSVString(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
     VM& vm = lexicalGlobalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -89,13 +117,24 @@ String valueToUSVString(JSGlobalObject& lexicalGlobalObject, JSValue value)
     // Match V8/Node's wording for symbol-to-string coercion errors.
     if (value.isSymbol()) [[unlikely]] {
         throwTypeError(&lexicalGlobalObject, scope, "Cannot convert a Symbol value to a string"_s);
-        return {};
+        return ConversionResult<IDLUSVString>::exception();
     }
 
     auto string = value.toWTFString(&lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, {});
+    RETURN_IF_EXCEPTION(scope, ConversionResult<IDLUSVString>::exception());
 
-    return replaceUnpairedSurrogatesWithReplacementCharacter(WTF::move(string));
+    return { replaceUnpairedSurrogatesWithReplacementCharacter(WTF::move(string)) };
+}
+
+ConversionResult<IDLAtomStringAdaptor<IDLUSVString>> valueToUSVAtomString(JSGlobalObject& lexicalGlobalObject, JSValue value)
+{
+    VM& vm = lexicalGlobalObject.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto string = value.toString(&lexicalGlobalObject)->toAtomString(&lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, ConversionResult<IDLAtomStringAdaptor<IDLUSVString>>::exception());
+
+    return replaceUnpairedSurrogatesWithReplacementCharacter(AtomString(string));
 }
 
 } // namespace WebCore

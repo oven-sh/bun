@@ -1,0 +1,24 @@
+// https://html.spec.whatwg.org/multipage/history.html#location
+[
+    GenerateIsReachable=ImplDocument,
+    GenerateAddOpaqueRoot=document,
+    IsImmutablePrototypeExoticObject,
+    LegacyUnforgeable,
+    Exposed=Window
+] interface Location {
+    stringifier attribute USVString href;
+
+    undefined assign(USVString url);
+    undefined replace(USVString url);
+    undefined reload();
+
+    attribute USVString protocol;
+    attribute USVString host;
+    attribute USVString hostname;
+    attribute USVString port;
+    attribute USVString pathname;
+    attribute USVString search;
+    attribute USVString hash;
+
+    readonly attribute USVString origin;
+};

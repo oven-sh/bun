@@ -47,13 +47,36 @@ void RejectedPromiseQueue::drainTo(JSC::JSCell* owner, JSC::MarkedArgumentBuffer
     m_entries.clear();
 }
 
+size_t RejectedPromiseQueue::hold(JSC::JSCell* owner)
+{
+    WTF::Locker locker { owner->cellLock() };
+    size_t mark = m_held.size();
+    m_held.appendVector(std::exchange(m_entries, {}));
+    return mark;
+}
+
+void RejectedPromiseQueue::release(JSC::JSCell* owner, size_t mark)
+{
+    WTF::Locker locker { owner->cellLock() };
+    WTF::Vector<Entry> entries;
+    for (size_t i = mark; i < m_held.size(); i++) {
+        if (!isHandled(m_held[i]))
+            entries.append(m_held[i]);
+    }
+    entries.appendVector(m_entries);
+    m_entries = WTF::move(entries);
+    m_held.shrink(mark);
+}
+
 template<typename Visitor>
 void RejectedPromiseQueue::visit(JSC::JSCell* owner, Visitor& visitor)
 {
     WTF::Locker locker { owner->cellLock() };
-    for (auto& entry : m_entries) {
-        visitor.append(entry.promise);
-        visitor.append(entry.rejectionOwner);
+    for (auto* entries : { &m_entries, &m_held }) {
+        for (auto& entry : *entries) {
+            visitor.append(entry.promise);
+            visitor.append(entry.rejectionOwner);
+        }
     }
     visitor.append(m_reported);
 }

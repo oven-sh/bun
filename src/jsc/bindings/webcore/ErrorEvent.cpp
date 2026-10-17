@@ -44,7 +44,7 @@ using namespace JSC;
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ErrorEvent);
 
 ErrorEvent::ErrorEvent(const AtomString& type, const Init& initializer, IsTrusted isTrusted)
-    : Event(ErrorEventInterfaceType, type, initializer, isTrusted)
+    : Event(EventInterfaceType::ErrorEvent, type, initializer, isTrusted)
     , m_message(initializer.message)
     , m_fileName(initializer.filename)
     , m_lineNumber(initializer.lineno)
@@ -54,7 +54,7 @@ ErrorEvent::ErrorEvent(const AtomString& type, const Init& initializer, IsTruste
 }
 
 ErrorEvent::ErrorEvent(const AtomString& type, const String& message, const String& fileName, unsigned lineNumber, unsigned columnNumber, JSC::Strong<JSC::Unknown> error)
-    : Event(ErrorEventInterfaceType, type, CanBubble::No, IsCancelable::Yes)
+    : Event(EventInterfaceType::ErrorEvent, type, CanBubble::No, IsCancelable::Yes)
     , m_message(message)
     , m_fileName(fileName)
     , m_lineNumber(lineNumber)

@@ -19,6 +19,7 @@
 
 #pragma once
 
+#include "JSDOMClassSetup.h"
 #include "JSDOMConstructorBase.h"
 
 namespace WebCore {
@@ -60,7 +61,7 @@ template<typename JSClass> inline JSDOMConstructorCallable<JSClass>* JSDOMConstr
 
 template<typename JSClass> inline JSC::Structure* JSDOMConstructorCallable<JSClass>::createStructure(JSC::VM& vm, JSC::JSGlobalObject& globalObject, JSC::JSValue prototype)
 {
-    return JSC::Structure::create(vm, &globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+    return createDOMStructure(vm, &globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
 }
 
 template<typename JSClass> inline void JSDOMConstructorCallable<JSClass>::finishCreation(JSC::VM& vm, JSDOMGlobalObject& globalObject)

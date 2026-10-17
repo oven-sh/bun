@@ -4,17 +4,13 @@ use std::io::Write as _;
 
 use bun_alloc::AllocError;
 use bun_alloc::Arena;
-use bun_ast::Ref;
 use bun_ast::{B, Binding, E, Expr, ExprData, G, Part, S, Stmt, StmtData};
-use bun_ast::{Loc, Log, Source};
-use bun_collections::ArrayHashMap;
-use bun_core::fmt as bun_fmt;
+use bun_ast::{ImportRecord, Source};
 use bun_js_parser::js_lexer;
 
-use crate::bun_css::properties::css_modules::Specifier as CssSpecifier;
-use crate::bun_css::{BundlerStyleSheet, CssRef, CssRefTag};
+use crate::bun_css::BundlerStyleSheet;
+use crate::bun_css::css_modules::{ComposesGraph, ComposesVisitor, ExportedName};
 use crate::{Index, IndexInt, LinkerContext};
-use bun_collections::DynamicBitSetUnmanaged as BitSet;
 
 type SymbolList<'a> = bun_ast::symbol::List<'a>;
 
@@ -76,281 +72,80 @@ pub(crate) fn generate_code_for_lazy_export(
             let mut exports = E::Object::default();
 
             let symbols: &SymbolList<'_> = &this.graph.ast.items_symbols()[source_index as usize];
-            let all_import_records = this.graph.ast.items_import_records();
 
-            let values = css_ast.local_scope.values();
-            if values.len() == 0 {
-                break 'out;
-            }
-            let size: u32 = 'size: {
-                let mut size: u32 = 0;
-                for entry in values {
-                    size = size.max(entry.ref_.inner_index());
-                }
-                break 'size size + 1;
-            };
-
-            let mut inner_visited = BitSet::init_empty(size as usize)?;
-            // `defer inner_visited.deinit(...)` — handled by Drop.
-            let mut composes_visited: ArrayHashMap<Ref, ()> = ArrayHashMap::new();
-            // `defer composes_visited.deinit()` — handled by Drop.
-
-            struct Visitor<'a> {
-                inner_visited: &'a mut BitSet,
-                composes_visited: &'a mut ArrayHashMap<Ref, ()>,
-                parts: &'a mut Vec<E::TemplatePart>,
+            struct Graph<'a> {
                 all_import_records: &'a [bun_ast::import_record::List<'a>],
                 // `BundledAst.css` SoA column.
                 all_css_asts: &'a [crate::bundled_ast::CssCol],
                 all_sources: &'a [Source],
-                all_symbols: &'a [SymbolList<'a>],
-                source_index: IndexInt,
-                log: &'a mut Log,
-                loc: Loc,
-                arena: &'a Arena,
             }
 
-            impl<'a> Visitor<'a> {
-                fn clear_all(&mut self) {
-                    self.inner_visited.set_all(false);
-                    self.composes_visited.clear_retaining_capacity();
+            impl ComposesGraph for Graph<'_> {
+                fn stylesheet(&self, idx: IndexInt) -> Option<&BundlerStyleSheet> {
+                    self.all_css_asts[idx as usize].as_deref()
                 }
 
-                fn visit_name(&mut self, ast: &BundlerStyleSheet, ref_: CssRef, idx: IndexInt) {
-                    debug_assert!(ref_.can_be_composed());
-                    let real_ref = ref_.to_real_ref(idx);
-                    let from_this_file = idx == self.source_index;
-                    if (from_this_file && self.inner_visited.is_set(ref_.inner_index() as usize))
-                        || (!from_this_file && self.composes_visited.contains_key(&real_ref))
-                    {
-                        return;
-                    }
-
-                    self.visit_composes(ast, ref_, idx);
-                    self.parts.push(E::TemplatePart {
-                        value: Expr::init(
-                            E::NameOfSymbol {
-                                ref_: real_ref,
-                                ..Default::default()
-                            },
-                            self.loc,
-                        ),
-                        tail: E::TemplateContents::Cooked(E::String::init(b" ")),
-                        tail_loc: self.loc,
-                    });
-
-                    if from_this_file {
-                        self.inner_visited.set(ref_.inner_index() as usize);
-                    } else {
-                        self.composes_visited.insert(real_ref, ());
-                    }
+                fn source(&self, idx: IndexInt) -> &Source {
+                    &self.all_sources[idx as usize]
                 }
 
-                fn warn_non_single_class_composes(
-                    &mut self,
-                    ast: &BundlerStyleSheet,
-                    css_ref: CssRef,
-                    idx: IndexInt,
-                    compose_loc: Loc,
-                ) {
-                    let _ = self.arena;
-                    let syms: &SymbolList<'_> = &self.all_symbols[idx as usize];
-                    // `Symbol.original_name: StoreStr` — arena-owned for the link pass.
-                    let name: &[u8] = syms[css_ref.inner_index() as usize].original_name.slice();
-                    let loc = ast.local_scope.get(name).unwrap().loc;
-
-                    self.log.add_range_error_fmt_with_note(
-                        Some(&self.all_sources[idx as usize]),
-                        bun_ast::Range { loc: compose_loc, ..Default::default() },
-                        format_args!(
-                            "The composes property cannot be used with {}, because it is not a single class name.",
-                            bun_fmt::quote(name),
-                        ),
-                        format_args!(
-                            "The definition of {} is here.",
-                            bun_fmt::quote(name),
-                        ),
-                        bun_ast::Range { loc, ..Default::default() },
-                    );
-                }
-
-                fn visit_composes(
-                    &mut self,
-                    ast: &BundlerStyleSheet,
-                    css_ref: CssRef,
-                    idx: IndexInt,
-                ) {
-                    let ref_ = css_ref.to_real_ref(idx);
-                    if ast.composes.count() > 0 {
-                        let Some(composes) = ast.composes.get(&ref_) else {
-                            return;
-                        };
-                        // while parsing we check that we only allow `composes` on single class selectors
-                        debug_assert!(css_ref.tag().contains(CssRefTag::CLASS));
-
-                        for compose in composes.composes.slice() {
-                            match &compose.from {
-                                // it is imported
-                                Some(CssSpecifier::ImportRecordIndex(import_record_idx)) => {
-                                    let import_records = &self.all_import_records[idx as usize];
-                                    let import_record =
-                                        &import_records[*import_record_idx as usize];
-                                    if import_record.source_index.is_valid() {
-                                        let Some(other_file) = self.all_css_asts
-                                            [import_record.source_index.get() as usize]
-                                            .as_deref()
-                                        else {
-                                            self.log.add_error_fmt(
-                                                &self.all_sources[idx as usize],
-                                                compose.loc,
-                                                format_args!(
-                                                    "Cannot use the \"composes\" property with the {} file (it is not a CSS file)",
-                                                    bun_fmt::quote(
-                                                        self.all_sources
-                                                            [import_record.source_index.get() as usize]
-                                                            .path
-                                                            .pretty
-                                                    ),
-                                                ),
-                                            );
-                                            continue;
-                                        };
-                                        for name in compose.names.slice() {
-                                            let name_v = name.v();
-                                            let Some(other_name_entry) =
-                                                other_file.local_scope.get(name_v)
-                                            else {
-                                                continue;
-                                            };
-                                            let other_name_ref = other_name_entry.ref_;
-                                            if !other_name_ref.can_be_composed() {
-                                                self.warn_non_single_class_composes(
-                                                    other_file,
-                                                    other_name_ref,
-                                                    import_record.source_index.get(),
-                                                    compose.loc,
-                                                );
-                                            } else {
-                                                self.visit_name(
-                                                    other_file,
-                                                    other_name_ref,
-                                                    import_record.source_index.get(),
-                                                );
-                                            }
-                                        }
-                                    }
-                                }
-                                Some(CssSpecifier::Global) => {
-                                    // E.g.: `composes: foo from global`
-                                    //
-                                    // In this example `foo` is global and won't be rewritten to a locally scoped
-                                    // name, so we can just add it as a string.
-                                    for name in compose.names.slice() {
-                                        let name_v = name.v();
-                                        self.parts.push(E::TemplatePart {
-                                            value: Expr::init(E::String::init(name_v), self.loc),
-                                            tail: E::TemplateContents::Cooked(E::String::init(
-                                                b" ",
-                                            )),
-                                            tail_loc: self.loc,
-                                        });
-                                    }
-                                }
-                                None => {
-                                    // it is from the current file
-                                    for name in compose.names.slice() {
-                                        let name_v = name.v();
-                                        let Some(name_entry) = ast.local_scope.get(name_v) else {
-                                            self.log.add_error_fmt(
-                                                &self.all_sources[idx as usize],
-                                                compose.loc,
-                                                format_args!(
-                                                    "The name {} never appears in {} as a CSS modules locally scoped class name. Note that \"composes\" only works with single class selectors.",
-                                                    bun_fmt::quote(name_v),
-                                                    bun_fmt::quote(self.all_sources[idx as usize].path.pretty),
-                                                ),
-                                            );
-                                            continue;
-                                        };
-                                        let name_ref = name_entry.ref_;
-                                        if !name_ref.can_be_composed() {
-                                            self.warn_non_single_class_composes(
-                                                ast,
-                                                name_ref,
-                                                idx,
-                                                compose.loc,
-                                            );
-                                        } else {
-                                            self.visit_name(ast, name_ref, idx);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                fn import_record(&self, idx: IndexInt, import_record_idx: u32) -> &ImportRecord {
+                    &self.all_import_records[idx as usize][import_record_idx as usize]
                 }
             }
 
-            // The Visitor is constructed inside the loop with a fresh `parts`
-            // borrow each time (reshaped for borrowck).
-            let all_symbols = this.graph.ast.items_symbols();
+            let graph = Graph {
+                all_import_records: this.graph.ast.items_import_records(),
+                all_css_asts,
+                all_sources,
+            };
+            let mut visitor = ComposesVisitor::new(&graph);
             // SAFETY: `LinkerContext::arena()` returns a stable `&Arena` valid for the
             // link pass; detach via raw-pointer round-trip so it doesn't hold a `&self`
-            // borrow across the `this.log` reborrow inside the Visitor below.
+            // borrow across the `this.log` reborrow below.
             let arena: &Arena = unsafe { bun_ptr::detach_lifetime_ref::<Arena>(this.arena()) };
 
-            for entry in values {
+            for entry in css_ast.local_scope.values() {
                 let ref_ = entry.ref_;
                 debug_assert!(ref_.inner_index() < symbols.len() as u32);
 
-                let mut template_parts: Vec<E::TemplatePart> = Vec::new();
-                let mut value = Expr::init(
-                    E::NameOfSymbol {
-                        ref_: ref_.to_real_ref(source_index),
-                        ..Default::default()
-                    },
-                    stmt.loc,
-                );
-
-                let mut visitor = Visitor {
-                    inner_visited: &mut inner_visited,
-                    composes_visited: &mut composes_visited,
-                    source_index,
-                    parts: &mut template_parts,
-                    all_import_records,
-                    all_css_asts,
-                    loc: stmt.loc,
-                    // Split-borrow — see `LinkerContext::log_disjoint`.
-                    log: this.log_disjoint(),
-                    all_sources,
-                    arena,
-                    all_symbols,
+                let name_expr = |name: &ExportedName<'_>| match *name {
+                    ExportedName::Local(ref_) => Expr::init(
+                        E::NameOfSymbol {
+                            ref_,
+                            ..Default::default()
+                        },
+                        stmt.loc,
+                    ),
+                    ExportedName::Global(name) => Expr::init(E::String::init(name), stmt.loc),
                 };
-                visitor.clear_all();
-                visitor.inner_visited.set(ref_.inner_index() as usize);
-                if ref_.tag().contains(CssRefTag::CLASS) {
-                    visitor.visit_composes(css_ast, ref_, source_index);
-                }
-
-                if !template_parts.is_empty() {
-                    template_parts.push(E::TemplatePart {
-                        value,
-                        tail_loc: stmt.loc,
-                        tail: E::TemplateContents::Cooked(E::String::init(b"")),
-                    });
+                // Split-borrow — see `LinkerContext::log_disjoint`.
+                let names =
+                    visitor.exported_names(css_ast, ref_, source_index, this.log_disjoint());
+                let value = if let [name] = names {
+                    name_expr(name)
+                } else {
                     // Move the parts into the linker arena
                     // (freed when the linker arena drops).
-                    let parts_slice =
-                        bun_ast::StoreSlice::new_mut(arena.alloc_slice_fill_iter(template_parts));
-                    value = Expr::init(
+                    let parts_slice = bun_ast::StoreSlice::new_mut(arena.alloc_slice_fill_iter(
+                        names.iter().enumerate().map(|(i, name)| {
+                            let tail: &[u8] = if i + 1 == names.len() { b"" } else { b" " };
+                            E::TemplatePart {
+                                value: name_expr(name),
+                                tail_loc: stmt.loc,
+                                tail: E::TemplateContents::Cooked(E::String::init(tail)),
+                            }
+                        }),
+                    ));
+                    Expr::init(
                         E::Template {
                             tag: None,
                             parts: parts_slice,
                             head: E::TemplateContents::Cooked(E::String::init(b"")),
                         },
                         stmt.loc,
-                    );
-                }
+                    )
+                };
 
                 // `Symbol.original_name: StoreStr` — arena-owned for the link pass.
                 let key: &[u8] = symbols[ref_.inner_index() as usize].original_name.slice();

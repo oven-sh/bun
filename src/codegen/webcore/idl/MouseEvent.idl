@@ -1,0 +1,59 @@
+/*
+ * Copyright (C) 2006, 2007, 2015 Apple Inc. All rights reserved.
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Library General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Library General Public License for more details.
+ *
+ * You should have received a copy of the GNU Library General Public License
+ * along with this library; see the file COPYING.LIB.  If not, write to
+ * the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
+ */
+
+[
+    DoNotCheckConstants,
+    Exposed=Window
+] interface MouseEvent : UIEvent {
+    constructor([AtomString] DOMString type, optional MouseEventInit eventInitDict = {});
+
+    const double WEBKIT_FORCE_AT_MOUSE_DOWN = 1;
+    const double WEBKIT_FORCE_AT_FORCE_MOUSE_DOWN = 2;
+
+    readonly attribute unrestricted double screenX;
+    readonly attribute unrestricted double screenY;
+    readonly attribute unrestricted double clientX;
+    readonly attribute unrestricted double clientY;
+    readonly attribute boolean ctrlKey;
+    readonly attribute boolean shiftKey;
+    readonly attribute boolean altKey;
+    readonly attribute boolean metaKey;
+    [ImplementedAs=buttonAsShort] readonly attribute short button;
+    readonly attribute unsigned short buttons;
+    readonly attribute EventTarget? relatedTarget;
+
+    boolean getModifierState(DOMString keyArg);
+
+    readonly attribute double movementX;
+    readonly attribute double movementY;
+    [ImplementedAs=force] readonly attribute double webkitForce;
+
+    undefined initMouseEvent([AtomString] DOMString type, optional boolean canBubble = false, optional boolean cancelable = false,
+        optional Window? view = null, optional long detail = 0,
+        optional unrestricted double screenX = 0, optional unrestricted double screenY = 0, optional unrestricted double clientX = 0, optional unrestricted double clientY = 0,
+        optional boolean ctrlKey = false, optional boolean altKey = false, optional boolean shiftKey = false, optional boolean metaKey = false,
+        optional short button = 0, optional EventTarget? relatedTarget = null);
+
+    readonly attribute unrestricted double offsetX;
+    readonly attribute unrestricted double offsetY;
+    [ImplementedAs=clientX] readonly attribute unrestricted double x;
+    [ImplementedAs=clientY] readonly attribute unrestricted double y;
+    readonly attribute Node? fromElement;
+    readonly attribute Node? toElement;
+};

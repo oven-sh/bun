@@ -25,16 +25,23 @@
 
 #pragma once
 
+#include <JavaScriptCore/JSGlobalObject.h>
+#include "BunIDLConvertBase.h"
 #include "IDLTypes.h"
 #include "JSDOMConvertBase.h"
 
 namespace WebCore {
 
 template<> struct Converter<IDLBoolean> : DefaultConverter<IDLBoolean> {
-
     static constexpr bool conversionHasSideEffects = false;
+    static constexpr bool takesContext = true;
+    using Result = ConversionResult<IDLBoolean>;
 
-    static bool convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+    WEBCORE_EXPORT static Result convert(JSC::JSGlobalObject&, JSC::JSValue);
+
+    // ToBoolean never throws, so bindgen's code has no exception check after it, and this declares no scope that asks for one.
+    template<Bun::IDLConversionContext Ctx>
+    static bool convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, Ctx&)
     {
         return value.toBoolean(&lexicalGlobalObject);
     }

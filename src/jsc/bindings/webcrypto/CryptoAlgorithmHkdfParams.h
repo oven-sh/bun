@@ -38,7 +38,7 @@ namespace WebCore {
 class CryptoAlgorithmHkdfParams final : public CryptoAlgorithmParameters {
 public:
     // FIXME: Consider merging hash and hashIdentifier.
-    std::variant<JSC::Strong<JSC::JSObject>, String> hash;
+    Variant<JSC::Strong<JSC::JSObject>, String> hash;
     CryptoAlgorithmIdentifier hashIdentifier;
     BufferSource salt;
     BufferSource info;

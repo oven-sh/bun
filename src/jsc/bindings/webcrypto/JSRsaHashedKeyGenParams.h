@@ -27,7 +27,7 @@
 
 namespace WebCore {
 
-template<> CryptoAlgorithmRsaHashedKeyGenParams convertDictionary<CryptoAlgorithmRsaHashedKeyGenParams>(JSC::JSGlobalObject&, JSC::JSValue);
+template<> ConversionResult<IDLDictionary<CryptoAlgorithmRsaHashedKeyGenParams>> convertDictionary<CryptoAlgorithmRsaHashedKeyGenParams>(JSC::JSGlobalObject&, JSC::JSValue);
 
 } // namespace WebCore
 

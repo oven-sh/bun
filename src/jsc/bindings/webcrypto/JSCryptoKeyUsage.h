@@ -28,7 +28,7 @@
 namespace WebCore {
 
 String convertEnumerationToString(CryptoKeyUsage);
-template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, CryptoKeyUsage);
+template<> JSC::JSString* convertEnumerationToJS(JSC::VM&, CryptoKeyUsage);
 
 template<> std::optional<CryptoKeyUsage> parseEnumeration<CryptoKeyUsage>(JSC::JSGlobalObject&, JSC::JSValue);
 

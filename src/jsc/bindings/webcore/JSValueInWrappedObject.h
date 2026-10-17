@@ -42,13 +42,19 @@ class JSValueInWrappedObject {
 
 public:
     JSValueInWrappedObject(JSC::JSValue = {});
+    JSValueInWrappedObject(JSC::JSGlobalObject&, JSC::JSValue);
 
     explicit operator bool() const;
     template<typename Visitor> void visit(Visitor&) const;
+    template<typename Visitor> void visitInGCThread(Visitor& visitor) const { visit(visitor); }
     void clear();
 
     void set(JSC::VM&, const JSC::JSCell* owner, JSC::JSValue);
     void setWeakly(JSC::JSValue);
+    // Upstream remembers the world of the global object. Bun has one world.
+    void set(JSC::JSGlobalObject&, const JSC::JSCell* owner, JSC::JSValue);
+    void setWeakly(JSC::JSGlobalObject&, JSC::JSValue);
+    bool isWorldCompatible(JSC::JSGlobalObject&) const { return true; }
     JSC::JSValue getValue(JSC::JSValue nullValue = JSC::jsUndefined()) const;
 
 private:
@@ -60,6 +66,11 @@ private:
 JSC::JSValue cachedPropertyValue(JSC::ThrowScope&, JSC::JSGlobalObject&, const JSDOMObject& owner, JSValueInWrappedObject& cacheSlot, const auto&);
 
 inline JSValueInWrappedObject::JSValueInWrappedObject(JSC::JSValue value)
+{
+    setWeakly(value);
+}
+
+inline JSValueInWrappedObject::JSValueInWrappedObject(JSC::JSGlobalObject&, JSC::JSValue value)
 {
     setWeakly(value);
 }
@@ -100,6 +111,16 @@ inline void JSValueInWrappedObject::set(JSC::VM& vm, const JSC::JSCell* owner, J
     setWeakly(value);
     if (owner)
         vm.writeBarrier(owner, value);
+}
+
+inline void JSValueInWrappedObject::set(JSC::JSGlobalObject& globalObject, const JSC::JSCell* owner, JSC::JSValue value)
+{
+    set(globalObject.vm(), owner, value);
+}
+
+inline void JSValueInWrappedObject::setWeakly(JSC::JSGlobalObject&, JSC::JSValue value)
+{
+    setWeakly(value);
 }
 
 inline void JSValueInWrappedObject::clear()

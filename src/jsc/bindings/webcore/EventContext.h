@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010 Google Inc. All Rights Reserved.
+ * Copyright (C) 2010 Google Inc. All rights reserved.
  * Copyright (C) 2017 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -27,30 +27,122 @@
 
 #pragma once
 
-#include "root.h"
-#include "Event.h"
+#include "EventTargetInlines.h"
+#include "TouchList.h"
+#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
 class EventContext {
-    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(EventContext);
+    WTF_MAKE_TZONE_ALLOCATED(EventContext);
 
 public:
-    EventContext(EventTarget* currentTarget, int closedShadowDepth);
-    ~EventContext();
+    using EventInvokePhase = EventTarget::EventInvokePhase;
 
+    enum class Type : uint8_t {
+        Normal = 0,
+        MouseOrFocus,
+        Touch,
+        Window,
+    };
+
+    EventContext(Type, Node*, EventTarget* currentTarget, EventTarget* origin, int closedShadowDepth);
+    EventContext(Type, Node&, Node* currentTarget, EventTarget* origin, int closedShadowDepth);
+
+    Node* node() const { return m_node.get(); }
     EventTarget* currentTarget() const { return m_currentTarget.get(); }
+    bool isCurrentTargetInShadowTree() const { return m_currentTargetIsInShadowTree; }
+    EventTarget* target() const { return m_target.get(); }
     int closedShadowDepth() const { return m_closedShadowDepth; }
 
+    void handleLocalEvents(Event&, EventInvokePhase) const;
+
+    bool isNormalEventContext() const { return m_type == Type::Normal; }
+    bool isMouseOrFocusEventContext() const { return m_type == Type::MouseOrFocus; }
+    bool isTouchEventContext() const { return m_type == Type::Touch; }
+    bool isWindowContext() const { return m_type == Type::Window; }
+
+    Node* relatedTarget() const { return m_relatedTarget.get(); }
+    void setRelatedTarget(RefPtr<Node>&&);
+
+#if ENABLE(TOUCH_EVENTS)
+    enum class TouchListType : uint8_t { Touches,
+        TargetTouches,
+        ChangedTouches };
+    TouchList& touchList(TouchListType);
+#endif
+
 private:
+    inline EventContext(Type, Node* currentNode, RefPtr<EventTarget>&& currentTarget, EventTarget* origin, int closedShadowDepth, bool currentTargetIsInShadowTree = false);
+
+#if ENABLE(TOUCH_EVENTS)
+    void initializeTouchLists();
+#endif
+
+#if ASSERT_ENABLED
+    bool isUnreachableNode(EventTarget*) const;
+#endif
+
+    RefPtr<Node> m_node;
     RefPtr<EventTarget> m_currentTarget;
+    RefPtr<EventTarget> m_target;
+    RefPtr<Node> m_relatedTarget;
+#if ENABLE(TOUCH_EVENTS)
+    RefPtr<TouchList> m_touches;
+    RefPtr<TouchList> m_targetTouches;
+    RefPtr<TouchList> m_changedTouches;
+#endif
     int m_closedShadowDepth { 0 };
+    bool m_currentTargetIsInShadowTree { false };
+    bool m_relatedTargetIsSet { false };
+    Type m_type { Type::Normal };
 };
 
-inline EventContext::EventContext(EventTarget* currentTarget, int closedShadowDepth)
-    : m_currentTarget { currentTarget }
+inline EventContext::EventContext(Type type, Node* node, RefPtr<EventTarget>&& currentTarget, EventTarget* origin, int closedShadowDepth, bool currentTargetIsInShadowTree)
+    : m_node { node }
+    , m_currentTarget { WTF::move(currentTarget) }
+    , m_target { origin }
     , m_closedShadowDepth { closedShadowDepth }
+    , m_currentTargetIsInShadowTree { currentTargetIsInShadowTree }
+    , m_type { type }
+{
+    ASSERT(!isUnreachableNode(m_target.get()));
+#if ENABLE(TOUCH_EVENTS)
+    if (m_type == Type::Touch)
+        initializeTouchLists();
+#else
+    ASSERT(m_type != Type::Touch);
+#endif
+}
+
+inline EventContext::EventContext(Type type, Node* node, EventTarget* currentTarget, EventTarget* origin, int closedShadowDepth)
+    : EventContext(type, node, RefPtr { currentTarget }, origin, closedShadowDepth)
 {
 }
+
+inline void EventContext::setRelatedTarget(RefPtr<Node>&& relatedTarget)
+{
+    ASSERT(!isUnreachableNode(relatedTarget.get()));
+    m_relatedTarget = WTF::move(relatedTarget);
+    m_relatedTargetIsSet = true;
+}
+
+#if ENABLE(TOUCH_EVENTS)
+
+inline TouchList& EventContext::touchList(TouchListType type)
+{
+    switch (type) {
+    case TouchListType::Touches:
+        return *m_touches;
+    case TouchListType::TargetTouches:
+        return *m_targetTouches;
+    case TouchListType::ChangedTouches:
+        return *m_changedTouches;
+    }
+    ASSERT_NOT_REACHED();
+    return *m_touches;
+}
+
+#endif
 
 } // namespace WebCore

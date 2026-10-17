@@ -83,6 +83,12 @@ export class ClassDefinition {
    */
   name: string;
   /**
+   * The class name JavaScript sees. Set it when `name`, which also names the C++ class (`JS<name>`), has to differ.
+   *
+   * @default name
+   */
+  jsName?: string;
+  /**
    * Legacy. All classes emit implementer thunks into `generated_classes.rs`;
    * this field is accepted for backward compatibility but has no effect.
    *
@@ -119,6 +125,11 @@ export class ClassDefinition {
    */
   sharedThis?: boolean;
   /**
+   * Name of a Rust method that every prototype function is called through:
+   * `fn(&self, &JSGlobalObject, &CallFrame, fn(&Self, &JSGlobalObject, &CallFrame) -> JsResult<JSValue>) -> JsResult<JSValue>`
+   */
+  protoFnCaller?: string;
+  /**
    * Class constructor is newable. Called before the JSValue corresponding to
    * the object is created. Throwing an exception prevents the object from being
    * created.
@@ -139,6 +150,8 @@ export class ClassDefinition {
    * callable.
    */
   call?: boolean;
+  /** Instances are callable. `instance(...)` runs the host function exported as `<Type>__callInstance`. */
+  callable?: boolean;
   /**
    * The instances of this class are intended to be inside the this of a bound function.
    */

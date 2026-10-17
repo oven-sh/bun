@@ -37,7 +37,7 @@ impl Ratio {
 
     pub(crate) fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         CSSNumberFns::to_css(self.numerator, dest)?;
-        if self.denominator != 1.0 {
+        if self.denominator != 1.0 || dest.cssom.is_some() {
             dest.delim(b'/', true)?;
             CSSNumberFns::to_css(self.denominator, dest)?;
         }

@@ -1,0 +1,427 @@
+---
+title: DOM
+description: Parse, query and change HTML with bun:dom, the DOM that is built into Bun
+---
+
+`bun:dom` is a DOM built into Bun: `DOMParser`, `Document`, `Element`, selectors, events, `Window`. It is WebKit's DOM and HTML parser without the parts that load and draw a page.
+
+Use it on a server to read or change HTML, and in tests for code that expects a browser's DOM. It covers the same ground as jsdom and happy-dom: the standard DOM APIs, outside a browser.
+
+```ts
+import { DOMParser } from "bun:dom";
+
+const document = new DOMParser().parseFromString("<h1>Hello <em>world</em></h1>", "text/html");
+
+console.log(document.querySelector("h1")?.textContent);
+```
+
+```txt
+Hello world
+```
+
+---
+
+## Parse HTML and query it
+
+`DOMParser` turns a string into a `Document`. The parser follows the HTML standard, so markup with missing or misplaced tags gives the same tree as in a browser.
+
+```ts
+import { DOMParser } from "bun:dom";
+
+const html = `
+  <!doctype html>
+  <title>Releases</title>
+  <ul>
+    <li><a href="/v1.0">1.0</a>
+    <li><a href="/v1.1" class="latest">1.1</a>
+  </ul>`;
+
+const document = new DOMParser().parseFromString(html, "text/html");
+
+console.log(document.title);
+console.log(document.querySelector("a.latest")?.getAttribute("href"));
+
+for (const link of document.querySelectorAll("li > a")) {
+  console.log(link.textContent, link.parentElement?.outerHTML);
+}
+```
+
+```txt
+Releases
+/v1.1
+1.0 <li><a href="/v1.0">1.0</a>
+    </li>
+1.1 <li><a href="/v1.1" class="latest">1.1</a>
+  </li>
+```
+
+The rest of the DOM's read side is there too: `getElementById()`, `children`, `closest()`, `matches()`, `dataset`, `classList`, `TreeWalker`, `Range`.
+
+---
+
+## Change the tree and serialize it
+
+```ts
+import { DOMParser } from "bun:dom";
+
+const document = new DOMParser().parseFromString(
+  `<article><h1>Draft</h1><p class="note">Remove me</p></article>`,
+  "text/html",
+);
+const article = document.querySelector("article")!;
+
+article.querySelector("h1")!.textContent = "Fish & chips";
+article.querySelector(".note")?.remove();
+
+const link = document.createElement("a");
+link.href = "https://bun.com/";
+link.textContent = "Bun";
+link.classList.add("external");
+link.dataset.kind = "home";
+article.append(link);
+
+console.log(article.outerHTML);
+```
+
+```txt
+<article><h1>Fish &amp; chips</h1><a href="https://bun.com/" class="external" data-kind="home">Bun</a></article>
+```
+
+`innerHTML` and `outerHTML` read and write HTML. For the whole document, serialize its root element:
+
+```ts
+console.log(document.documentElement.outerHTML);
+```
+
+```txt
+<html><head></head><body><article><h1>Fish &amp; chips</h1><a href="https://bun.com/" class="external" data-kind="home">Bun</a></article></body></html>
+```
+
+---
+
+## Parse XML
+
+`DOMParser` also takes `"text/xml"`, `"application/xml"`, `"application/xhtml+xml"` and `"image/svg+xml"`. Names keep their case, prefixes are resolved to namespaces, and `XMLSerializer` writes the tree back as XML.
+
+```ts
+import { DOMParser } from "bun:dom";
+
+const feed = new DOMParser().parseFromString(
+  `<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <channel><item><title>Bun &amp; XML</title><dc:creator>Ada</dc:creator></item></channel>
+  </rss>`,
+  "text/xml",
+);
+
+console.log(feed.querySelector("item > title")?.textContent);
+console.log(feed.getElementsByTagNameNS("http://purl.org/dc/elements/1.1/", "creator")[0].textContent);
+```
+
+```txt
+Bun & XML
+Ada
+```
+
+Text that is not well-formed does not throw. As in a browser, the document then has a `<parsererror>` element:
+
+```ts
+const broken = new DOMParser().parseFromString("<a><b></a>", "text/xml");
+
+console.log(broken.querySelector("parsererror div")?.textContent);
+```
+
+```txt
+error on line 1 at column 7: Expected closing tag </b> but found </a>
+```
+
+Entities that the document itself declares are expanded, up to a limit. Nothing outside the document is read. In an XML document, `innerHTML` and `outerHTML` read and write XML, and throw a `SyntaxError` for markup that is not well-formed.
+
+For plain objects instead of a tree, use [`Bun.XML`](/runtime/xml).
+
+---
+
+## Window
+
+`new Window()` makes a window with an empty document. Code that needs `window`, `document.defaultView`, `location`, storage or `getComputedStyle()` needs one.
+
+```ts
+import { Window } from "bun:dom";
+
+const window = new Window({ url: "https://example.com/app?tab=home" });
+const { document } = window;
+
+document.body.innerHTML = `<button id="save">Save</button>`;
+
+console.log(document.documentElement.outerHTML);
+console.log(window.location.pathname, window.location.search);
+```
+
+```txt
+<html><head></head><body><button id="save">Save</button></body></html>
+/app ?tab=home
+```
+
+`url` is the only option. It is the address of the document and the base of relative URLs, and defaults to `about:blank`. Nothing is fetched from it.
+
+Each window has its own document, history and storage, also the window of a frame. A window also has every class of `bun:dom` as a property (`window.HTMLElement`, `window.MouseEvent`) and hands out Bun's globals (`window.fetch`, `window.console`).
+
+### Events
+
+Events are dispatched as in a browser: capture, target, bubble, `preventDefault()`, `stopPropagation()`.
+
+```ts
+const button = document.querySelector("button")!;
+
+document.body.addEventListener("click", event => {
+  if (event.target instanceof window.HTMLButtonElement) console.log("clicked", event.target.id);
+});
+
+button.click();
+button.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+```
+
+```txt
+clicked save
+clicked save
+```
+
+Custom elements, shadow DOM, `MutationObserver`, `Selection`, form controls and their validation work too.
+
+### Location and history
+
+```ts
+window.addEventListener("hashchange", event => console.log("hashchange", event.newURL));
+
+window.location.hash = "#settings";
+window.history.pushState({ page: 2 }, "", "/page/2");
+
+console.log(window.location.href);
+```
+
+```txt
+https://example.com/page/2
+hashchange https://example.com/app?tab=home#settings
+```
+
+Only `history` and a change of the fragment move the URL. Assigning another page to `location.href` does nothing: there is no navigation.
+
+### Storage
+
+`localStorage` and `sessionStorage` are kept in memory and belong to one window.
+
+```ts
+window.localStorage.setItem("theme", "dark");
+
+console.log(window.localStorage.getItem("theme"), window.localStorage.length);
+```
+
+```txt
+dark 1
+```
+
+Storage needs an origin. In a window without a `url`, reading `localStorage` throws a `SecurityError`, as it does on `about:blank` in a browser.
+
+### Timers
+
+`window.setTimeout()`, `setInterval()` and `queueMicrotask()` are Bun's own. `requestAnimationFrame()` calls back at most 60 times a second. The first frame after a pause does not wait.
+
+```ts
+window.requestAnimationFrame(() => console.log("frame"));
+window.setTimeout(() => console.log("timeout"), 0);
+```
+
+```txt
+frame
+timeout
+```
+
+`window.close()` removes the listeners of the window and its document, drops pending animation frames and cancels the window's `XMLHttpRequest`s. It also closes the windows of its frames and the windows it has opened.
+
+### Frames
+
+An `<iframe>` has a window and a document of its own from the moment it is in a window's document. Removing it closes that window.
+
+```ts
+const iframe = document.body.appendChild(document.createElement("iframe"));
+const frame = iframe.contentWindow!;
+
+frame.addEventListener("message", event => console.log(event.data));
+frame.postMessage("hello", "*");
+frame.document.body.append("text");
+
+console.log(frame.parent === window, window.frames[0] === frame);
+```
+
+```txt
+true true
+hello
+```
+
+- The document is `about:blank`, or what `srcdoc` holds. Nothing is loaded from `src`: the document then has that URL, stays empty, and no `load` event follows.
+- `window.open()` returns a new window at `about:blank`, whatever the URL. Its `opener` is the window that opened it.
+- All windows share one set of classes: `frame.Node === window.Node`, and `instanceof` holds across windows. In a browser each window has its own.
+
+### XMLHttpRequest
+
+Code that was written for `XMLHttpRequest`, such as the browser build of axios, works. The request is made by the HTTP client behind Bun's `fetch()`. Relative URLs resolve against the window's `url`.
+
+```ts
+import { Window } from "bun:dom";
+
+const server = Bun.serve({ port: 0, fetch: request => Response.json({ path: new URL(request.url).pathname }) });
+const window = new Window({ url: server.url.href });
+
+const xhr = new window.XMLHttpRequest();
+xhr.open("GET", "/api/user");
+xhr.responseType = "json";
+xhr.onload = () => console.log(xhr.status, xhr.response.path);
+xhr.onloadend = () => server.stop();
+xhr.send();
+```
+
+```txt
+200 /api/user
+```
+
+- There is no same-origin policy: no CORS, no preflight. No cookies are sent or stored, and `withCredentials` does nothing.
+- A synchronous request (`open(method, url, false)`) throws a `NotSupportedError` from `send()`.
+- `responseXML` is `null` for XML that is not well-formed.
+- Replacing `globalThis.fetch` does not change what `XMLHttpRequest` does. Mock the class itself, as [msw](https://mswjs.io) does.
+
+---
+
+## Selectors
+
+`querySelector()`, `querySelectorAll()`, `matches()` and `closest()` take the selectors that browsers take, including `:has()`, `:is()`, `:where()`, `:not()`, `:nth-child(2n of .item)` and the states of form controls.
+
+```ts
+import { DOMParser } from "bun:dom";
+
+const document = new DOMParser().parseFromString(
+  `<section><h2>Fruit</h2><input type="checkbox" checked></section>
+   <section><h2>Bread</h2><input type="checkbox"></section>`,
+  "text/html",
+);
+
+console.log(document.querySelector("section:has(:checked) h2")?.textContent);
+console.log(document.querySelectorAll("section:not(:has(:checked))").length);
+console.log(document.querySelector("input")?.closest("section")?.matches(":first-of-type"));
+```
+
+```txt
+Fruit
+1
+true
+```
+
+A selector that does not parse throws a `SyntaxError` `DOMException`.
+
+---
+
+## Styles
+
+`element.style` reads and writes the `style` attribute. `getComputedStyle()` applies the document's `<style>` elements and inline styles: specificity, `!important`, inheritance, `var()`, nesting, `@layer`, `@supports`.
+
+```ts
+import { Window } from "bun:dom";
+
+const window = new Window();
+const { document } = window;
+
+document.head.innerHTML = `<style>
+  :root { --accent: teal }
+  .card { color: var(--accent); margin: 1rem }
+  .card.hidden { display: none }
+</style>`;
+document.body.innerHTML = `<div class="card hidden" style="width: 50%"></div>`;
+
+const style = window.getComputedStyle(document.querySelector(".card")!);
+
+console.log(style.color, style.display, style.marginTop, style.width);
+```
+
+```txt
+rgb(0, 128, 128) none 1rem 50%
+```
+
+Colors are resolved. Lengths stay as they were written, because there is no layout to resolve them against. A `var()` that refers to a variable nobody defined also stays as written: in a unit test the theme's style sheet is usually not loaded, and `var(--accent)` says more than an initial value nobody wrote.
+
+---
+
+## Workers
+
+Every thread has a DOM of its own, so `bun:dom` works in a [`Worker`](/runtime/workers) as it does on the main thread, and in many at once.
+
+```ts worker.ts icon="/icons/typescript.svg"
+import { DOMParser } from "bun:dom";
+
+declare var self: Worker;
+
+self.onmessage = event => {
+  const document = new DOMParser().parseFromString(event.data, "text/html");
+  postMessage(Array.from(document.querySelectorAll("a"), link => link.getAttribute("href")));
+};
+```
+
+```ts index.ts icon="/icons/typescript.svg"
+const worker = new Worker(new URL("./worker.ts", import.meta.url));
+
+worker.onmessage = event => {
+  console.log(event.data);
+  worker.terminate();
+};
+worker.postMessage(`<a href="/one">1</a> <a href="/two">2</a>`);
+```
+
+```txt
+[ "/one", "/two" ]
+```
+
+A node belongs to the thread that made it and cannot be sent with `postMessage()`. Send strings.
+
+---
+
+## TypeScript
+
+The types come with [`@types/bun`](/typescript).
+
+- With `"DOM"` in the `lib` of `tsconfig.json`, every export has TypeScript's own DOM type. An element from `bun:dom` can go to any function that takes an `HTMLElement`.
+- Without it, which is what `bun init` sets up, `bun:dom` has its own declarations, with only what exists at run time. Nothing is added to the global scope, so import the names you use.
+
+```ts
+import { DOMParser, type HTMLAnchorElement } from "bun:dom";
+
+const document = new DOMParser().parseFromString(`<a href="/docs">Docs</a>`, "text/html");
+const links: HTMLAnchorElement[] = [...document.querySelectorAll("a")];
+
+console.log(links.length);
+```
+
+```txt
+1
+```
+
+---
+
+## What it does not do
+
+- **Render or lay out.** `getBoundingClientRect()` is all zeros, `offsetWidth` is `0`, and media queries about sizes do not match. `document.elementFromPoint()` does not exist.
+- **Load what a document refers to.** `<img src>`, `<link rel="stylesheet">`, `<script src>` and `<iframe src>` make no request, and no `load` event is fired. Only your own `fetch()` and `XMLHttpRequest` calls make requests.
+- **Run `<script>` elements**, whether they are parsed or inserted.
+- **Navigate.** Assigning another page to `location.href`, to the `src` of an `<iframe>` or passing it to `window.open()` loads nothing.
+- **XPath and XSLT.** `document.evaluate()` and `XSLTProcessor` do not exist. A DTD is read for its entities and default attributes, and nothing is validated against it.
+- **Draw or play.** `canvas.getContext()` returns `null`, `<video>` and `<audio>` do not play, and SVG elements have no geometry: there is no `getBBox()`, and only `<svg>`, `<g>`, `<defs>`, `<desc>`, `<metadata>`, `<switch>`, `<symbol>` and `<title>` have a class of their own.
+
+<Warning>
+  A window is not a sandbox. An event handler attribute such as `onclick="..."` in a window's document runs when its
+  event is dispatched, with access to everything your code has access to. A document from `new DOMParser()` never runs
+  any, so parse HTML that you do not trust that way.
+</Warning>
+
+---
+
+## `HTMLRewriter` or `bun:dom`
+
+[`HTMLRewriter`](/runtime/html-rewriter) rewrites HTML as a stream and never builds a tree. It can write output before the input has ended, and it does not hold the document in memory. Use it to change a response on its way through: rewrite links, inject a tag, strip elements.
+
+Use `bun:dom` when the work needs the tree: looking at an element's parents and siblings, selectors such as `:has()`, moving nodes, reading one document many times, or running code that was written for a browser.

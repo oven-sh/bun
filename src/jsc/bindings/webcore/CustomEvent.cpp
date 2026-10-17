@@ -35,12 +35,12 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(CustomEvent);
 
 inline CustomEvent::CustomEvent(IsTrusted isTrusted)
-    : Event(CustomEventInterfaceType, isTrusted)
+    : Event(EventInterfaceType::CustomEvent, isTrusted)
 {
 }
 
 inline CustomEvent::CustomEvent(const AtomString& type, const Init& initializer, IsTrusted isTrusted)
-    : Event(CustomEventInterfaceType, type, initializer, isTrusted)
+    : Event(EventInterfaceType::CustomEvent, type, initializer, isTrusted)
     , m_detail(initializer.detail)
 {
 }

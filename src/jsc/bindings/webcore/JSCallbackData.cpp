@@ -101,14 +101,29 @@ JSValue JSCallbackData::invokeCallback(VM& vm, JSObject* callback, JSValue thisV
     return result;
 }
 
+JSDOMGlobalObject* JSCallbackData::globalObject()
+{
+    auto* callback = this->callback();
+    return callback ? defaultGlobalObject(callback->globalObject()) : nullptr;
+}
+
+JSValue JSCallbackData::invokeCallback(JSValue thisValue, MarkedArgumentBuffer& args, CallbackType callbackType, PropertyName functionName, NakedPtr<JSC::Exception>& returnedException)
+{
+    auto* callback = this->callback();
+    if (!callback)
+        return {};
+
+    return invokeCallback(callback->vm(), callback, thisValue, args, callbackType, functionName, returnedException);
+}
+
 template<typename Visitor>
-void JSCallbackData::visitJSFunction(Visitor& visitor)
+void JSCallbackData::visitJSFunctionInGCThread(Visitor& visitor)
 {
     visitor.append(m_callback);
 }
 
-template void JSCallbackData::visitJSFunction(JSC::AbstractSlotVisitor&);
-template void JSCallbackData::visitJSFunction(JSC::SlotVisitor&);
+template void JSCallbackData::visitJSFunctionInGCThread(JSC::AbstractSlotVisitor&);
+template void JSCallbackData::visitJSFunctionInGCThread(JSC::SlotVisitor&);
 
 bool JSCallbackData::WeakOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {

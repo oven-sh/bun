@@ -27,8 +27,9 @@
 
 #include "config.h"
 
-#include "ContextDestructionObserver.h"
+#include "ContextDestructionObserverInlines.h"
 #include "EventTarget.h"
+#include "EventTargetInterfaces.h"
 #include "JSValueInWrappedObject.h"
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "ZigGlobalObject.h"
@@ -197,7 +198,7 @@ private:
     }
 
     // EventTarget.
-    EventTargetInterface eventTargetInterface() const final { return AbortSignalEventTargetInterfaceType; }
+    enum EventTargetInterfaceType eventTargetInterface() const final { return EventTargetInterfaceType::AbortSignal; }
     ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }

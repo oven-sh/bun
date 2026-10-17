@@ -36,7 +36,7 @@ using namespace JSC;
 
 #if ENABLE(WEB_CRYPTO)
 
-template<> CryptoAlgorithmAesCtrParams convertDictionary<CryptoAlgorithmAesCtrParams>(JSGlobalObject& lexicalGlobalObject, JSValue value)
+template<> ConversionResult<IDLDictionary<CryptoAlgorithmAesCtrParams>> convertDictionary<CryptoAlgorithmAesCtrParams>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -69,7 +69,7 @@ template<> CryptoAlgorithmAesCtrParams convertDictionary<CryptoAlgorithmAesCtrPa
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!counterValue.isUndefined()) {
-        result.counter = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>(lexicalGlobalObject, counterValue);
+        result.counter = convert<IDLBufferSource>(lexicalGlobalObject, counterValue);
         RETURN_IF_EXCEPTION(throwScope, {});
     } else {
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "counter"_s, "AesCtrParams"_s, "(ArrayBufferView or ArrayBuffer)"_s);

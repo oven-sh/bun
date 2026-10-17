@@ -39,6 +39,22 @@ test("keepalive", async () => {
   }
 });
 
+test("a Request's keepalive, which is false by default, does not turn off connection reuse", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch: request => new Response(String(request.headers.get("connection"))),
+  });
+  class Subclass extends Request {}
+  const connection = async (...args: Parameters<typeof fetch>) => await (await fetch(...args)).text();
+
+  expect(await connection(new Request(server.url))).toBe("keep-alive");
+  expect(await connection(server.url, new Request(server.url))).toBe("keep-alive");
+  expect(await connection(new Subclass(server.url))).toBe("keep-alive");
+  expect(await connection(server.url, new Subclass(server.url))).toBe("keep-alive");
+  expect(await connection(new Request(server.url, { keepalive: false }))).toBe("keep-alive");
+  expect(await connection(new Request(server.url), { keepalive: false })).toBe("null");
+});
+
 test("fetch reuses a pooled TLS connection across requests with different Host headers", async () => {
   using server = Bun.serve({
     port: 0,

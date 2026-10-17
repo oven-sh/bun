@@ -1,0 +1,6 @@
+[
+    Exposed=Window
+] interface DOMParser {
+    [CallWith=CurrentScriptExecutionContext] constructor();
+    [NewObject] Document parseFromString((TrustedHTML or DOMString) string, [AtomString] DOMString contentType);
+};

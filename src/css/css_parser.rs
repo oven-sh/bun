@@ -10,7 +10,7 @@ use bun_alloc::Arena as Bump;
 use bun_ast::Log;
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
 use bun_collections::{ArrayHashMap, StringArrayHashMap, VecExt};
-use bun_core::strings;
+use bun_core::{StackCheck, strings};
 
 // ───────────────────────────── re-exports ─────────────────────────────
 //
@@ -559,7 +559,9 @@ fn nested_block_enter(parser: &mut Parser) -> CssResult<NestedBlockState> {
     }
 
     parser.input.nesting_depth += 1;
-    if parser.input.nesting_depth > MAX_NESTING_DEPTH {
+    let out_of_stack = !parser.input.stack_check.is_safe_to_recurse();
+    parser.input.out_of_stack |= out_of_stack;
+    if out_of_stack || parser.input.nesting_depth > MAX_NESTING_DEPTH {
         parser.input.nesting_depth -= 1;
         let err = parser.new_custom_error(ParserError::maximum_nesting_depth);
         let found_close = consume_until_end_of_block(block_type, &mut parser.input.tokenizer);
@@ -2621,11 +2623,15 @@ mod stylesheet_impl {
                 if let Err(e) = result {
                     let result_options = rule_list_parser.parser.options;
                     if result_options.error_recovery {
-                        // todo_stuff.warn
+                        result_options.warn(&e);
                         continue;
                     }
                     return Err(Err::from_parse_error(e, options.filename));
                 }
+            }
+            if parser.input.out_of_stack {
+                let e = parser.new_custom_error(ParserError::maximum_nesting_depth);
+                return Err(Err::from_parse_error(e, options.filename));
             }
 
             let sources: Vec<Box<[u8]>> = vec![Box::<[u8]>::from(options.filename)];
@@ -2891,7 +2897,7 @@ pub struct ParserOptions<'a> {
     /// when the style sheet is serialized.
     pub(crate) source_index: u32,
     /// Whether to ignore invalid rules and declarations rather than erroring.
-    pub(crate) error_recovery: bool,
+    pub error_recovery: bool,
     /// A list that will be appended to when a warning occurs.
     ///
     /// Stored as a raw `NonNull<Log>` so `warn(&self)`
@@ -2967,6 +2973,8 @@ bitflags::bitflags! {
         const CUSTOM_MEDIA = 0b010;
         /// Whether to enable the non-standard >>> and /deep/ selector combinators used by Vue and Angular.
         const DEEP_SELECTOR_COMBINATOR = 0b100;
+        /// Whether one invalid selector makes all of `:is()` or `:where()` invalid, as `@supports selector()` wants.
+        const UNFORGIVING_SELECTORS = 0b1000;
     }
 }
 
@@ -2982,6 +2990,8 @@ bitflags::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq, Default)]
     pub struct ParserOpts: u8 {
         const CSS_MODULES = 0b1;
+        /// `width: 10` is not a length. Only `0` may go without a unit.
+        const NO_UNITLESS_LENGTHS = 0b10;
     }
 }
 impl ParserOpts {
@@ -3273,7 +3283,6 @@ impl<'a> Parser<'a> {
             match tok {
                 Token::Function(_) | Token::OpenParen | Token::OpenSquare | Token::OpenCurly => {
                     self.parse_nested_block(|i| i.expect_no_error_token())?;
-                    return Ok(());
                 }
                 _ => {
                     if tok.is_parse_error() {
@@ -3783,6 +3792,9 @@ pub struct ParserInput<'a> {
     pub(crate) tokenizer: Tokenizer<'a>,
     pub(crate) cached_token: Option<CachedToken>,
     pub(crate) nesting_depth: u32,
+    stack_check: StackCheck,
+    /// Sticky, so backtracking and error recovery can't hide a block that was skipped for lack of stack.
+    out_of_stack: bool,
     /// Set once a nested block fails to parse and the end of input is reached
     /// without ever finding its closing token, i.e. the stylesheet is
     /// truncated somewhere inside that block. Everything from
@@ -3827,6 +3839,8 @@ impl<'a> ParserInput<'a> {
             tokenizer: Tokenizer::init_with_arena(code, arena),
             cached_token: None,
             nesting_depth: 0,
+            stack_check: StackCheck::init(),
+            out_of_stack: false,
             unclosed_block_at_eof: None,
             math_fn_parse_failures: 0,
             token_list_parse_failures: 0,
@@ -3918,17 +3932,17 @@ pub mod nth {
             }
             Token::Ident(value) => {
                 let value = *value;
-                if strings::eql_case_insensitive_ascii_ignore_length(value, b"even") {
+                if strings::eql_case_insensitive_asciii_check_length(value, b"even") {
                     return Ok((2, 0));
-                } else if strings::eql_case_insensitive_ascii_ignore_length(value, b"odd") {
+                } else if strings::eql_case_insensitive_asciii_check_length(value, b"odd") {
                     return Ok((2, 1));
-                } else if strings::eql_case_insensitive_ascii_ignore_length(value, b"n") {
+                } else if strings::eql_case_insensitive_asciii_check_length(value, b"n") {
                     return parse_b(input, 1);
-                } else if strings::eql_case_insensitive_ascii_ignore_length(value, b"-n") {
+                } else if strings::eql_case_insensitive_asciii_check_length(value, b"-n") {
                     return parse_b(input, -1);
-                } else if strings::eql_case_insensitive_ascii_ignore_length(value, b"n-") {
+                } else if strings::eql_case_insensitive_asciii_check_length(value, b"n-") {
                     return parse_signless_b(input, 1, -1);
-                } else if strings::eql_case_insensitive_ascii_ignore_length(value, b"-n-") {
+                } else if strings::eql_case_insensitive_asciii_check_length(value, b"-n-") {
                     return parse_signless_b(input, -1, -1);
                 } else {
                     let (slice, a): (&[u8], i32) = if value.first() == Some(&b'-') {
@@ -3942,13 +3956,13 @@ pub mod nth {
                     return Err(input.new_unexpected_token_error(Token::Ident(value)));
                 }
             }
-            Token::Delim(_) => {
+            Token::Delim(d) if *d == u32::from(b'+') => {
                 let next_tok = input.next_including_whitespace()?;
                 if let Token::Ident(value) = next_tok {
                     let value = *value;
                     if strings::eql_case_insensitive_asciii_check_length(value, b"n") {
                         return parse_b(input, 1);
-                    } else if strings::eql_case_insensitive_asciii_check_length(value, b"-n") {
+                    } else if strings::eql_case_insensitive_asciii_check_length(value, b"n-") {
                         return parse_signless_b(input, 1, -1);
                     } else {
                         if let Ok(b) = parse_n_dash_digits(value) {
@@ -5610,7 +5624,7 @@ pub mod color {
     /// Returns the named color with the given name.
     /// <https://drafts.csswg.org/css-color-4/#typedef-named-color>
     pub(crate) fn parse_named_color(ident: &[u8]) -> Option<(u8, u8, u8)> {
-        NAMED_COLORS.get(ident).copied()
+        NAMED_COLORS.get_ascii_case_insensitive(ident).copied()
     }
 
     /// Parse a color hash, without the leading '#' character.
@@ -5744,6 +5758,12 @@ pub mod serializer {
         unit: &'static [u8],
         dest: &mut Printer,
     ) -> Result<(), PrintErr> {
+        // The CSSOM has no negative zero.
+        let value = if value == 0.0 && dest.cssom.is_some() {
+            0.0
+        } else {
+            value
+        };
         let int_value: Option<i32> = if fract(value) == 0.0 {
             Some(value as i32) // saturating cast
         } else {
@@ -5757,7 +5777,7 @@ pub mod serializer {
             },
             unit,
         });
-        if value != 0.0 && value.abs() < 1.0 {
+        if value != 0.0 && value.abs() < 1.0 && dest.cssom.is_none() {
             // TODO: calculate the actual number of chars here
             let mut buf = [0u8; 64];
             let mut fbs = FixedBufWriter::new(&mut buf);
@@ -5990,13 +6010,11 @@ pub(crate) fn parse_important(input: &mut Parser) -> CssResult<()> {
 }
 
 pub mod signfns {
-    /// Note: the ±0.0 sign FLIP is
-    /// intentional (do NOT "fix" it). Distinct from `f32::signum` and from
-    /// `calc::std_math_sign` / `CSSNumberFns::sign`.
+    /// ±0.0 stays as it is, where `f32::signum` gives ±1.0.
     #[inline]
     pub(crate) fn sign_f32(x: f32) -> f32 {
         if x == 0.0 {
-            return if x.is_sign_negative() { 0.0 } else { -0.0 };
+            return x;
         }
         x.signum()
     }

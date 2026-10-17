@@ -1,0 +1,38 @@
+// https://w3c.github.io/selection-api/#selection-interface
+[
+    GenerateIsReachable=ImplDocument,
+    GenerateAddOpaqueRoot=document,
+    InterfaceName=Selection,
+    Exposed=Window
+] interface DOMSelection {
+    readonly attribute Node? anchorNode;
+    readonly attribute unsigned long anchorOffset;
+    readonly attribute Node? focusNode;
+    readonly attribute unsigned long focusOffset;
+
+    readonly attribute boolean isCollapsed;
+    readonly attribute unsigned long rangeCount;
+
+    readonly attribute DOMString type;
+    readonly attribute DOMString direction;
+
+    Range getRangeAt(unsigned long index);
+    undefined addRange(Range range);
+    undefined removeRange(Range range);
+    undefined removeAllRanges();
+    [ImplementedAs=removeAllRanges] undefined empty();
+
+    undefined collapse(Node? node, optional unsigned long offset = 0);
+    [ImplementedAs=collapse] undefined setPosition(Node? node, optional unsigned long offset = 0);
+    undefined collapseToStart();
+    undefined collapseToEnd();
+
+    undefined extend(Node node, optional unsigned long offset = 0);
+    undefined setBaseAndExtent(Node anchorNode, unsigned long anchorOffset, Node focusNode, unsigned long focusOffset);
+    undefined selectAllChildren(Node node);
+
+    [CEReactions=Needed] undefined deleteFromDocument();
+    boolean containsNode(Node node, optional boolean allowPartialContainment = false);
+
+    DOMString toString();
+};

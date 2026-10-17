@@ -44,12 +44,15 @@ using namespace JSC;
     macro(atimeMs) \
     macro(attributes) \
     macro(autoAllocateChunkSize) \
+    macro(backingMap) \
+    macro(backingSet) \
     macro(basename) \
     macro(birthtimeMs) \
     macro(blob) \
     macro(body) \
     macro(bunNativePtr) \
     macro(bytes) \
+    macro(cachedAttrAssociatedElements) \
     macro(cancel) \
     macro(checks) \
     macro(close) \
@@ -64,10 +67,12 @@ using namespace JSC;
     macro(decode) \
     macro(dest) \
     macro(dirname) \
+    macro(document) \
     macro(domain) \
     macro(drain) \
     macro(encoding) \
     macro(end) \
+    macro(env) \
     macro(errno) \
     macro(esmLoadSync) \
     macro(esmNamespaceForCjs) \
@@ -101,6 +106,7 @@ using namespace JSC;
     macro(internalRequire) \
     macro(isAbortSignal) \
     macro(isAbsolute) \
+    macro(isEqualNode) \
     macro(isUncloneable) \
     macro(isUntransferable) \
     macro(join) \
@@ -126,6 +132,9 @@ using namespace JSC;
     macro(mtimeMs) \
     macro(napiDlopenHandle) \
     macro(napiWrappedContents) \
+    macro(natives) \
+    macro(nodeName) \
+    macro(nodeType) \
     macro(normalize) \
     macro(onClose) \
     macro(onDrain) \

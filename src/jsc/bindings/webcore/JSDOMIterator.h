@@ -35,6 +35,8 @@
 #include "JavaScriptCore/Interpreter.h"
 namespace WebCore {
 
+void addValueIterableMethods(JSC::JSGlobalObject&, JSC::JSObject&);
+
 enum class JSDOMIteratorType { Set,
     Map };
 

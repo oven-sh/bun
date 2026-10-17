@@ -116,7 +116,9 @@ function runInNewContext(code, context, options) {
   } else {
     options = { ...options };
   }
-  context = createContext(context, options);
+  if (context !== DONT_CONTEXTIFY) {
+    context = createContext(context, options);
+  }
   return createScript(code, options).runInNewContext(context, options);
 }
 

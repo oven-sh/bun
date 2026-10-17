@@ -24,6 +24,7 @@
 #include "DOMWrapperWorld.h"
 #include "EventListener.h"
 #include "EventNames.h"
+#include "EventTarget.h"
 // #include "HTMLElement.h"
 #include <JavaScriptCore/StrongInlines.h>
 #include <JavaScriptCore/Weak.h>
@@ -65,9 +66,9 @@ public:
 private:
     virtual JSC::JSObject* initializeJSFunction(ScriptExecutionContext&) const;
 
-    template<typename Visitor> void visitJSFunctionImpl(Visitor&);
-    void visitJSFunction(JSC::AbstractSlotVisitor&) final;
-    void visitJSFunction(JSC::SlotVisitor&) final;
+    template<typename Visitor> void visitJSFunctionImplInGCThread(Visitor&);
+    void visitJSFunctionInGCThread(JSC::AbstractSlotVisitor&) final;
+    void visitJSFunctionInGCThread(JSC::SlotVisitor&) final;
     virtual String code() const { return String(); }
 
 protected:
@@ -76,6 +77,7 @@ protected:
 
     JSEventListener(JSC::JSObject* function, JSC::JSObject* wrapper, bool isAttribute, CreatedFromMarkup, DOMWrapperWorld&);
     void handleEvent(ScriptExecutionContext&, Event&) override;
+    void setWrapperWhenInitializingJSFunction(JSC::VM&, JSC::JSObject* wrapper) const { m_wrapper = JSC::Weak<JSC::JSObject>(wrapper); }
 
     // JSVMClientDataClient
     void willDestroyVM() final;
@@ -128,7 +130,7 @@ inline JSC::JSObject* JSEventListener::ensureJSFunction(ScriptExecutionContext& 
     // m_wrapper and m_jsFunction are Weak<>. nullptr of these fields do not mean that this event-listener is not initialized yet.
     // If this is initialized once, m_isInitialized should be true, and then m_wrapper and m_jsFunction must be alive. m_wrapper's
     // liveness should be kept correctly by using ActiveDOMObject, output-constraints, etc. And m_jsFunction must be alive if m_wrapper
-    // is alive since JSEventListener marks m_jsFunction in JSEventListener::visitJSFunction if m_wrapper is alive.
+    // is alive since JSEventListener marks m_jsFunction in JSEventListener::visitJSFunctionInGCThread if m_wrapper is alive.
     // If the event-listener is not initialized yet, we should skip invoking this event-listener.
     if (!m_isInitialized)
         return nullptr;

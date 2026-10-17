@@ -30,10 +30,13 @@ namespace WebCore {
 enum class TaskSource : uint8_t {
     DOMManipulation,
     FileReading,
+    IdleTask,
+    Microtask,
     Networking,
     PerformanceTimeline,
     PostedMessageQueue,
     Timer,
+    UserInteraction,
     WebSocket,
 
     // Internal to WebCore

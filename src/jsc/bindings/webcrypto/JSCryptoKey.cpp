@@ -64,9 +64,9 @@
 namespace WebCore {
 using namespace JSC;
 
-template<> JSString* convertEnumerationToJS(JSGlobalObject& lexicalGlobalObject, CryptoKey::Type enumerationValue)
+template<> JSString* convertEnumerationToJS(VM& vm, CryptoKey::Type enumerationValue)
 {
-    auto& commonStrings = Bun::commonStrings(lexicalGlobalObject.vm());
+    auto& commonStrings = Bun::commonStrings(vm);
     switch (enumerationValue) {
     case CryptoKey::Type::Public:
         return commonStrings.keyTypePublicString();
@@ -76,7 +76,7 @@ template<> JSString* convertEnumerationToJS(JSGlobalObject& lexicalGlobalObject,
         return commonStrings.keyTypeSecretString();
     }
     ASSERT_NOT_REACHED();
-    return jsEmptyString(lexicalGlobalObject.vm());
+    return jsEmptyString(vm);
 }
 
 // Attributes
@@ -272,7 +272,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCryptoKeyPrototype_inspectCustom, (JSGlobalObject * l
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue thisValue = callFrame->thisValue();
+    JSValue thisValue = callFrame->thisValue().toThis(lexicalGlobalObject, JSC::ECMAMode::strict());
     auto* thisObject = dynamicDowncast<JSCryptoKey>(thisValue);
     if (!thisObject) [[unlikely]]
         return JSValue::encode(thisValue);

@@ -36,7 +36,7 @@ using namespace JSC;
 
 #if ENABLE(WEB_CRYPTO)
 
-template<> CryptoAlgorithmHkdfParams convertDictionary<CryptoAlgorithmHkdfParams>(JSGlobalObject& lexicalGlobalObject, JSValue value)
+template<> ConversionResult<IDLDictionary<CryptoAlgorithmHkdfParams>> convertDictionary<CryptoAlgorithmHkdfParams>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -83,7 +83,7 @@ template<> CryptoAlgorithmHkdfParams convertDictionary<CryptoAlgorithmHkdfParams
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!infoValue.isUndefined()) {
-        result.info = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>(lexicalGlobalObject, infoValue);
+        result.info = convert<IDLBufferSource>(lexicalGlobalObject, infoValue);
         RETURN_IF_EXCEPTION(throwScope, {});
     } else {
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "info"_s, "HkdfParams"_s, "(ArrayBufferView or ArrayBuffer)"_s);
@@ -97,7 +97,7 @@ template<> CryptoAlgorithmHkdfParams convertDictionary<CryptoAlgorithmHkdfParams
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!saltValue.isUndefined()) {
-        result.salt = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>(lexicalGlobalObject, saltValue);
+        result.salt = convert<IDLBufferSource>(lexicalGlobalObject, saltValue);
         RETURN_IF_EXCEPTION(throwScope, {});
     } else {
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "salt"_s, "HkdfParams"_s, "(ArrayBufferView or ArrayBuffer)"_s);

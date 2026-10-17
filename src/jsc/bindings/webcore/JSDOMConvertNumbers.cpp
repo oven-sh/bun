@@ -26,11 +26,8 @@
 #include <JavaScriptCore/HeapInlines.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <wtf/MathExtras.h>
-#include <wtf/text/StringConcatenateNumbers.h>
+#include <wtf/text/MakeString.h>
 #include <wtf/text/WTFString.h>
-
-// WebIDL §3.2.4.9 requires round-half-to-even for [Clamp].
-static ALWAYS_INLINE double clampRoundEven(double x) { return __builtin_roundeven(x); }
 
 namespace WebCore {
 using namespace JSC;
@@ -49,213 +46,211 @@ static String rangeErrorString(double value, double min, double max)
     return makeString("Value "_s, value, " is outside the range ["_s, min, ", "_s, max, ']');
 }
 
-double enforceRange(JSGlobalObject& lexicalGlobalObject, double x, double minimum, double maximum)
+template<typename IDL>
+static ConversionResult<IDL> enforceRange(JSGlobalObject& lexicalGlobalObject, double x, double minimum, double maximum)
 {
+    using T = typename IDL::ImplementationType;
+
     VM& vm = lexicalGlobalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (std::isnan(x) || std::isinf(x)) {
         throwTypeError(&lexicalGlobalObject, scope, rangeErrorString(x, minimum, maximum));
-        return 0;
+        return ConversionResult<IDL>::exception();
     }
     x = trunc(x);
     if (x < minimum || x > maximum) {
         throwTypeError(&lexicalGlobalObject, scope, rangeErrorString(x, minimum, maximum));
-        return 0;
+        return ConversionResult<IDL>::exception();
     }
-    return x;
+    return static_cast<T>(x);
 }
 
-namespace {
+double enforceRange(JSGlobalObject& lexicalGlobalObject, double x, double minimum, double maximum)
+{
+    auto scope = DECLARE_THROW_SCOPE(lexicalGlobalObject.vm());
+    auto result = enforceRange<IDLUnrestrictedDouble>(lexicalGlobalObject, x, minimum, maximum);
+    if (result.hasException(scope)) [[unlikely]]
+        return 0;
+    return result.releaseReturnValue();
+}
 
 template<typename T>
-struct IntTypeLimits {
-};
+struct IntTypeLimits {};
 
 template<>
 struct IntTypeLimits<int8_t> {
-    static const int8_t minValue = -128;
-    static const int8_t maxValue = 127;
-    static const unsigned numberOfValues = 256; // 2^8
+    static constexpr int8_t minValue = -128;
+    static constexpr int8_t maxValue = 127;
+    static constexpr unsigned numberOfValues = 256; // 2^8
 };
 
 template<>
 struct IntTypeLimits<uint8_t> {
-    static const uint8_t maxValue = 255;
-    static const unsigned numberOfValues = 256; // 2^8
+    static constexpr uint8_t maxValue = 255;
+    static constexpr unsigned numberOfValues = 256; // 2^8
 };
 
 template<>
 struct IntTypeLimits<int16_t> {
-    static const signed short minValue = -32768;
-    static const signed short maxValue = 32767;
-    static const unsigned numberOfValues = 65536; // 2^16
+    static constexpr short minValue = -32768;
+    static constexpr short maxValue = 32767;
+    static constexpr unsigned numberOfValues = 65536; // 2^16
 };
 
 template<>
 struct IntTypeLimits<uint16_t> {
-    static const unsigned short maxValue = 65535;
-    static const unsigned numberOfValues = 65536; // 2^16
+    static constexpr unsigned short maxValue = 65535;
+    static constexpr unsigned numberOfValues = 65536; // 2^16
 };
 
-}
-
-template<typename T, IntegerConversionConfiguration configuration>
-static inline T toSmallerInt(JSGlobalObject& lexicalGlobalObject, JSValue value)
+template<typename IDL, IntegerConversionConfiguration configuration>
+static inline ConversionResult<IDL> toSmallerInt(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
+    using T = typename IDL::ImplementationType;
+    using LimitsTrait = IntTypeLimits<T>;
+
     VM& vm = lexicalGlobalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     static_assert(std::is_signed<T>::value && std::is_integral<T>::value, "Should only be used for signed integral types");
 
-    typedef IntTypeLimits<T> LimitsTrait;
     // Fast path if the value is already a 32-bit signed integer in the right range.
     if (value.isInt32()) {
         int32_t d = value.asInt32();
         if (d >= LimitsTrait::minValue && d <= LimitsTrait::maxValue)
             return static_cast<T>(d);
-        switch (configuration) {
-        case IntegerConversionConfiguration::Normal:
-            break;
-        case IntegerConversionConfiguration::EnforceRange:
+
+        if constexpr (configuration == IntegerConversionConfiguration::Normal) {
+            d %= LimitsTrait::numberOfValues;
+            return static_cast<T>(d > LimitsTrait::maxValue ? d - LimitsTrait::numberOfValues : d);
+        } else if constexpr (configuration == IntegerConversionConfiguration::EnforceRange) {
             throwTypeError(&lexicalGlobalObject, scope);
-            return 0;
-        case IntegerConversionConfiguration::Clamp:
-            return d < LimitsTrait::minValue ? LimitsTrait::minValue : LimitsTrait::maxValue;
-        }
-        d %= LimitsTrait::numberOfValues;
-        return static_cast<T>(d > LimitsTrait::maxValue ? d - LimitsTrait::numberOfValues : d);
+            return ConversionResult<IDL>::exception();
+        } else if constexpr (configuration == IntegerConversionConfiguration::Clamp)
+            return d < LimitsTrait::minValue ? ConversionResult<IDL> { LimitsTrait::minValue } : ConversionResult<IDL> { LimitsTrait::maxValue };
     }
 
     double x = value.toNumber(&lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, 0);
+    RETURN_IF_EXCEPTION(scope, ConversionResult<IDL>::exception());
 
-    switch (configuration) {
-    case IntegerConversionConfiguration::Normal:
-        break;
-    case IntegerConversionConfiguration::EnforceRange:
-        RELEASE_AND_RETURN(scope, enforceRange(lexicalGlobalObject, x, LimitsTrait::minValue, LimitsTrait::maxValue));
-    case IntegerConversionConfiguration::Clamp:
-        return std::isnan(x) ? 0 : clampTo<T>(clampRoundEven(x));
-    }
+    if constexpr (configuration == IntegerConversionConfiguration::Normal) {
+        if (std::isnan(x) || std::isinf(x) || !x)
+            return 0;
 
-    if (std::isnan(x) || std::isinf(x) || !x)
-        return 0;
+        x = x < 0 ? -floor(-x) : floor(x);
+        x = fmod(x, LimitsTrait::numberOfValues);
 
-    x = x < 0 ? -floor(fabs(x)) : floor(fabs(x));
-    x = fmod(x, LimitsTrait::numberOfValues);
-
-    return static_cast<T>(x > LimitsTrait::maxValue ? x - LimitsTrait::numberOfValues : x);
+        return static_cast<T>(x > LimitsTrait::maxValue ? x - LimitsTrait::numberOfValues : x);
+    } else if constexpr (configuration == IntegerConversionConfiguration::EnforceRange)
+        RELEASE_AND_RETURN(scope, enforceRange<IDL>(lexicalGlobalObject, x, LimitsTrait::minValue, LimitsTrait::maxValue));
+    else if constexpr (configuration == IntegerConversionConfiguration::Clamp)
+        return std::isnan(x) ? ConversionResult<IDL> { 0 } : ConversionResult<IDL> { clampTo<T>(roundeven(x)) };
 }
 
-template<typename T, IntegerConversionConfiguration configuration>
-static inline T toSmallerUInt(JSGlobalObject& lexicalGlobalObject, JSValue value)
+template<typename IDL, IntegerConversionConfiguration configuration>
+static inline ConversionResult<IDL> toSmallerUInt(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
+    using T = typename IDL::ImplementationType;
+    using LimitsTrait = IntTypeLimits<T>;
+
     VM& vm = lexicalGlobalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     static_assert(std::is_unsigned<T>::value && std::is_integral<T>::value, "Should only be used for unsigned integral types");
 
-    typedef IntTypeLimits<T> LimitsTrait;
     // Fast path if the value is already a 32-bit unsigned integer in the right range.
     if (value.isUInt32()) {
         uint32_t d = value.asUInt32();
         if (d <= LimitsTrait::maxValue)
             return static_cast<T>(d);
-        switch (configuration) {
-        case IntegerConversionConfiguration::Normal:
+        if constexpr (configuration == IntegerConversionConfiguration::Normal)
             return static_cast<T>(d);
-        case IntegerConversionConfiguration::EnforceRange:
+        else if constexpr (configuration == IntegerConversionConfiguration::EnforceRange) {
             throwTypeError(&lexicalGlobalObject, scope);
-            return 0;
-        case IntegerConversionConfiguration::Clamp:
+            return ConversionResult<IDL>::exception();
+        } else if constexpr (configuration == IntegerConversionConfiguration::Clamp)
             return LimitsTrait::maxValue;
-        }
     }
 
     double x = value.toNumber(&lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, 0);
+    RETURN_IF_EXCEPTION(scope, ConversionResult<IDL>::exception());
 
-    switch (configuration) {
-    case IntegerConversionConfiguration::Normal:
-        break;
-    case IntegerConversionConfiguration::EnforceRange:
-        RELEASE_AND_RETURN(scope, enforceRange(lexicalGlobalObject, x, 0, LimitsTrait::maxValue));
-    case IntegerConversionConfiguration::Clamp:
-        return std::isnan(x) ? 0 : clampTo<T>(clampRoundEven(x));
-    }
+    if constexpr (configuration == IntegerConversionConfiguration::Normal) {
+        if (std::isnan(x) || std::isinf(x) || !x)
+            return 0;
 
-    if (std::isnan(x) || std::isinf(x) || !x)
-        return 0;
+        x = x < 0 ? -floor(-x) : floor(x);
+        x = fmod(x, LimitsTrait::numberOfValues);
 
-    x = x < 0 ? -floor(fabs(x)) : floor(fabs(x));
-    x = fmod(x, LimitsTrait::numberOfValues);
-    if (x < 0)
-        x += LimitsTrait::numberOfValues;
-    return static_cast<T>(x);
+        return static_cast<T>(x < 0 ? x + LimitsTrait::numberOfValues : x);
+    } else if constexpr (configuration == IntegerConversionConfiguration::EnforceRange)
+        RELEASE_AND_RETURN(scope, enforceRange<IDL>(lexicalGlobalObject, x, 0, LimitsTrait::maxValue));
+    else if constexpr (configuration == IntegerConversionConfiguration::Clamp)
+        return std::isnan(x) ? 0 : clampTo<T>(roundeven(x));
 }
 
-template<> int8_t convertToIntegerEnforceRange<int8_t>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+template<> ConversionResult<IDLByte> convertToIntegerEnforceRange<IDLByte>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
 {
-    return toSmallerInt<int8_t, IntegerConversionConfiguration::EnforceRange>(lexicalGlobalObject, value);
+    return toSmallerInt<IDLByte, IntegerConversionConfiguration::EnforceRange>(lexicalGlobalObject, value);
 }
 
-template<> uint8_t convertToIntegerEnforceRange<uint8_t>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+template<> ConversionResult<IDLOctet> convertToIntegerEnforceRange<IDLOctet>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
 {
-    return toSmallerUInt<uint8_t, IntegerConversionConfiguration::EnforceRange>(lexicalGlobalObject, value);
+    return toSmallerUInt<IDLOctet, IntegerConversionConfiguration::EnforceRange>(lexicalGlobalObject, value);
 }
 
-template<> int8_t convertToIntegerClamp<int8_t>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+template<> ConversionResult<IDLByte> convertToIntegerClamp<IDLByte>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
 {
-    return toSmallerInt<int8_t, IntegerConversionConfiguration::Clamp>(lexicalGlobalObject, value);
+    return toSmallerInt<IDLByte, IntegerConversionConfiguration::Clamp>(lexicalGlobalObject, value);
 }
 
-template<> uint8_t convertToIntegerClamp<uint8_t>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+template<> ConversionResult<IDLOctet> convertToIntegerClamp<IDLOctet>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
 {
-    return toSmallerUInt<uint8_t, IntegerConversionConfiguration::Clamp>(lexicalGlobalObject, value);
+    return toSmallerUInt<IDLOctet, IntegerConversionConfiguration::Clamp>(lexicalGlobalObject, value);
 }
 
-template<> int8_t convertToInteger<int8_t>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+template<> ConversionResult<IDLByte> convertToInteger<IDLByte>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
 {
-    return toSmallerInt<int8_t, IntegerConversionConfiguration::Normal>(lexicalGlobalObject, value);
+    return toSmallerInt<IDLByte, IntegerConversionConfiguration::Normal>(lexicalGlobalObject, value);
 }
 
-template<> uint8_t convertToInteger<uint8_t>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+template<> ConversionResult<IDLOctet> convertToInteger<IDLOctet>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
 {
-    return toSmallerUInt<uint8_t, IntegerConversionConfiguration::Normal>(lexicalGlobalObject, value);
+    return toSmallerUInt<IDLOctet, IntegerConversionConfiguration::Normal>(lexicalGlobalObject, value);
 }
 
-template<> int16_t convertToIntegerEnforceRange<int16_t>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+template<> ConversionResult<IDLShort> convertToIntegerEnforceRange<IDLShort>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
 {
-    return toSmallerInt<int16_t, IntegerConversionConfiguration::EnforceRange>(lexicalGlobalObject, value);
+    return toSmallerInt<IDLShort, IntegerConversionConfiguration::EnforceRange>(lexicalGlobalObject, value);
 }
 
-template<> uint16_t convertToIntegerEnforceRange<uint16_t>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+template<> ConversionResult<IDLUnsignedShort> convertToIntegerEnforceRange<IDLUnsignedShort>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
 {
-    return toSmallerUInt<uint16_t, IntegerConversionConfiguration::EnforceRange>(lexicalGlobalObject, value);
+    return toSmallerUInt<IDLUnsignedShort, IntegerConversionConfiguration::EnforceRange>(lexicalGlobalObject, value);
 }
 
-template<> int16_t convertToIntegerClamp<int16_t>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+template<> ConversionResult<IDLShort> convertToIntegerClamp<IDLShort>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
 {
-    return toSmallerInt<int16_t, IntegerConversionConfiguration::Clamp>(lexicalGlobalObject, value);
+    return toSmallerInt<IDLShort, IntegerConversionConfiguration::Clamp>(lexicalGlobalObject, value);
 }
 
-template<> uint16_t convertToIntegerClamp<uint16_t>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+template<> ConversionResult<IDLUnsignedShort> convertToIntegerClamp<IDLUnsignedShort>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
 {
-    return toSmallerUInt<uint16_t, IntegerConversionConfiguration::Clamp>(lexicalGlobalObject, value);
+    return toSmallerUInt<IDLUnsignedShort, IntegerConversionConfiguration::Clamp>(lexicalGlobalObject, value);
 }
 
-template<> int16_t convertToInteger<int16_t>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+template<> ConversionResult<IDLShort> convertToInteger<IDLShort>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
 {
-    return toSmallerInt<int16_t, IntegerConversionConfiguration::Normal>(lexicalGlobalObject, value);
+    return toSmallerInt<IDLShort, IntegerConversionConfiguration::Normal>(lexicalGlobalObject, value);
 }
 
-template<> uint16_t convertToInteger<uint16_t>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+template<> ConversionResult<IDLUnsignedShort> convertToInteger<IDLUnsignedShort>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
 {
-    return toSmallerUInt<uint16_t, IntegerConversionConfiguration::Normal>(lexicalGlobalObject, value);
+    return toSmallerUInt<IDLUnsignedShort, IntegerConversionConfiguration::Normal>(lexicalGlobalObject, value);
 }
 
-template<> int32_t convertToIntegerEnforceRange<int32_t>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+template<> ConversionResult<IDLLong> convertToIntegerEnforceRange<IDLLong>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
 {
     if (value.isInt32())
         return value.asInt32();
@@ -264,11 +259,13 @@ template<> int32_t convertToIntegerEnforceRange<int32_t>(JSC::JSGlobalObject& le
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     double x = value.toNumber(&lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, 0);
-    RELEASE_AND_RETURN(scope, enforceRange(lexicalGlobalObject, x, kMinInt32, kMaxInt32));
+
+    RETURN_IF_EXCEPTION(scope, ConversionResult<IDLLong>::exception());
+
+    RELEASE_AND_RETURN(scope, enforceRange<IDLLong>(lexicalGlobalObject, x, kMinInt32, kMaxInt32));
 }
 
-template<> uint32_t convertToIntegerEnforceRange<uint32_t>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+template<> ConversionResult<IDLUnsignedLong> convertToIntegerEnforceRange<IDLUnsignedLong>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
 {
     if (value.isUInt32())
         return value.asUInt32();
@@ -277,39 +274,13 @@ template<> uint32_t convertToIntegerEnforceRange<uint32_t>(JSC::JSGlobalObject& 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     double x = value.toNumber(&lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, 0);
-    RELEASE_AND_RETURN(scope, enforceRange(lexicalGlobalObject, x, 0, kMaxUInt32));
+
+    RETURN_IF_EXCEPTION(scope, ConversionResult<IDLUnsignedLong>::exception());
+
+    RELEASE_AND_RETURN(scope, enforceRange<IDLUnsignedLong>(lexicalGlobalObject, x, 0, kMaxUInt32));
 }
 
-template<> int32_t convertToIntegerClamp<int32_t>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
-{
-    if (value.isInt32())
-        return value.asInt32();
-
-    double x = value.toNumber(&lexicalGlobalObject);
-    return std::isnan(x) ? 0 : clampTo<int32_t>(clampRoundEven(x));
-}
-
-template<> uint32_t convertToIntegerClamp<uint32_t>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
-{
-    if (value.isUInt32())
-        return value.asUInt32();
-
-    double x = value.toNumber(&lexicalGlobalObject);
-    return std::isnan(x) ? 0 : clampTo<uint32_t>(clampRoundEven(x));
-}
-
-template<> int32_t convertToInteger<int32_t>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
-{
-    return value.toInt32(&lexicalGlobalObject);
-}
-
-template<> uint32_t convertToInteger<uint32_t>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
-{
-    return value.toUInt32(&lexicalGlobalObject);
-}
-
-template<> int64_t convertToIntegerEnforceRange<int64_t>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+template<> ConversionResult<IDLLong> convertToIntegerClamp<IDLLong>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
 {
     if (value.isInt32())
         return value.asInt32();
@@ -318,11 +289,13 @@ template<> int64_t convertToIntegerEnforceRange<int64_t>(JSC::JSGlobalObject& le
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     double x = value.toNumber(&lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, 0);
-    RELEASE_AND_RETURN(scope, enforceRange(lexicalGlobalObject, x, -kJSMaxInteger, kJSMaxInteger));
+
+    RETURN_IF_EXCEPTION(scope, ConversionResult<IDLLong>::exception());
+
+    return std::isnan(x) ? 0 : clampTo<int32_t>(roundeven(x));
 }
 
-template<> uint64_t convertToIntegerEnforceRange<uint64_t>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+template<> ConversionResult<IDLUnsignedLong> convertToIntegerClamp<IDLUnsignedLong>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
 {
     if (value.isUInt32())
         return value.asUInt32();
@@ -331,34 +304,107 @@ template<> uint64_t convertToIntegerEnforceRange<uint64_t>(JSC::JSGlobalObject& 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     double x = value.toNumber(&lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, 0);
-    RELEASE_AND_RETURN(scope, enforceRange(lexicalGlobalObject, x, 0, kJSMaxInteger));
+
+    RETURN_IF_EXCEPTION(scope, ConversionResult<IDLUnsignedLong>::exception());
+
+    return std::isnan(x) ? 0 : clampTo<uint32_t>(roundeven(x));
 }
 
-template<> int64_t convertToIntegerClamp<int64_t>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+template<> ConversionResult<IDLLong> convertToInteger<IDLLong>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+{
+    VM& vm = lexicalGlobalObject.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto x = value.toInt32(&lexicalGlobalObject);
+
+    RETURN_IF_EXCEPTION(scope, ConversionResult<IDLLong>::exception());
+
+    return x;
+}
+
+template<> ConversionResult<IDLUnsignedLong> convertToInteger<IDLUnsignedLong>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+{
+    VM& vm = lexicalGlobalObject.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto x = value.toUInt32(&lexicalGlobalObject);
+
+    RETURN_IF_EXCEPTION(scope, ConversionResult<IDLUnsignedLong>::exception());
+
+    return x;
+}
+
+template<> ConversionResult<IDLLongLong> convertToIntegerEnforceRange<IDLLongLong>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
 {
     if (value.isInt32())
         return value.asInt32();
 
+    VM& vm = lexicalGlobalObject.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     double x = value.toNumber(&lexicalGlobalObject);
-    return std::isnan(x) ? 0 : static_cast<int64_t>(clampRoundEven(std::min<double>(std::max<double>(x, -kJSMaxInteger), kJSMaxInteger)));
+
+    RETURN_IF_EXCEPTION(scope, ConversionResult<IDLLongLong>::exception());
+
+    RELEASE_AND_RETURN(scope, enforceRange<IDLLongLong>(lexicalGlobalObject, x, -kJSMaxInteger, kJSMaxInteger));
 }
 
-template<> uint64_t convertToIntegerClamp<uint64_t>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+template<> ConversionResult<IDLUnsignedLongLong> convertToIntegerEnforceRange<IDLUnsignedLongLong>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
 {
     if (value.isUInt32())
         return value.asUInt32();
 
+    VM& vm = lexicalGlobalObject.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     double x = value.toNumber(&lexicalGlobalObject);
-    return std::isnan(x) ? 0 : static_cast<uint64_t>(clampRoundEven(std::min<double>(std::max<double>(x, 0), kJSMaxInteger)));
+
+    RETURN_IF_EXCEPTION(scope, ConversionResult<IDLUnsignedLongLong>::exception());
+
+    RELEASE_AND_RETURN(scope, enforceRange<IDLUnsignedLongLong>(lexicalGlobalObject, x, 0, kJSMaxInteger));
 }
 
-template<> int64_t convertToInteger<int64_t>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+template<> ConversionResult<IDLLongLong> convertToIntegerClamp<IDLLongLong>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
 {
     if (value.isInt32())
         return value.asInt32();
 
+    VM& vm = lexicalGlobalObject.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     double x = value.toNumber(&lexicalGlobalObject);
+
+    RETURN_IF_EXCEPTION(scope, ConversionResult<IDLLongLong>::exception());
+
+    return std::isnan(x) ? 0 : static_cast<int64_t>(roundeven(std::min<double>(std::max<double>(x, -kJSMaxInteger), kJSMaxInteger)));
+}
+
+template<> ConversionResult<IDLUnsignedLongLong> convertToIntegerClamp<IDLUnsignedLongLong>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+{
+    if (value.isUInt32())
+        return value.asUInt32();
+
+    VM& vm = lexicalGlobalObject.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    double x = value.toNumber(&lexicalGlobalObject);
+
+    RETURN_IF_EXCEPTION(scope, ConversionResult<IDLUnsignedLongLong>::exception());
+
+    return std::isnan(x) ? 0 : static_cast<uint64_t>(roundeven(std::min<double>(std::max<double>(x, 0), kJSMaxInteger)));
+}
+
+template<> ConversionResult<IDLLongLong> convertToInteger<IDLLongLong>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+{
+    if (value.isInt32())
+        return value.asInt32();
+
+    VM& vm = lexicalGlobalObject.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    double x = value.toNumber(&lexicalGlobalObject);
+
+    RETURN_IF_EXCEPTION(scope, ConversionResult<IDLLongLong>::exception());
 
     // Map NaNs and +/-Infinity to 0; convert finite values modulo 2^64.
     unsigned long long n;
@@ -366,17 +412,38 @@ template<> int64_t convertToInteger<int64_t>(JSC::JSGlobalObject& lexicalGlobalO
     return n;
 }
 
-template<> uint64_t convertToInteger<uint64_t>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+template<> ConversionResult<IDLUnsignedLongLong> convertToInteger<IDLUnsignedLongLong>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
 {
     if (value.isUInt32())
         return value.asUInt32();
 
+    VM& vm = lexicalGlobalObject.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     double x = value.toNumber(&lexicalGlobalObject);
+
+    RETURN_IF_EXCEPTION(scope, ConversionResult<IDLUnsignedLongLong>::exception());
 
     // Map NaNs and +/-Infinity to 0; convert finite values modulo 2^64.
     unsigned long long n;
     doubleToInteger(x, n);
     return n;
+}
+
+JSC::JSValue JSConverter<IDLDouble>::convert(Type value)
+{
+    ASSERT(!std::isnan(value));
+    return JSC::jsNumber(value);
+}
+
+JSC::JSValue JSConverter<IDLUnrestrictedDouble>::convert(Type value)
+{
+    return JSC::jsNumber(JSC::purifyNaN(value));
+}
+
+JSC::JSValue JSConverter<IDLUnrestrictedDouble>::convert(const MediaTime& value)
+{
+    return JSC::jsNumber(JSC::purifyNaN(value.toDouble()));
 }
 
 } // namespace WebCore

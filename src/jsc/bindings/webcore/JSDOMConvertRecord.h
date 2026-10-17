@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2016-2019 Apple Inc. All rights reserved.
+ * Copyright (C) 2026 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,10 +26,11 @@
 
 #pragma once
 
+#include <JavaScriptCore/ObjectConstructor.h>
 #include "IDLTypes.h"
+#include "JSDOMBindingFacade.h"
 #include "JSDOMConvertStrings.h"
 #include "JSDOMGlobalObject.h"
-#include <JavaScriptCore/ObjectConstructor.h>
 
 namespace WebCore {
 
@@ -61,23 +63,24 @@ template<> struct IdentifierConverter<IDLUSVString> {
 }
 
 template<typename K, typename V> struct Converter<IDLRecord<K, V>> : DefaultConverter<IDLRecord<K, V>> {
-    using ReturnType = typename IDLRecord<K, V>::ImplementationType;
-    using KeyType = typename K::ImplementationType;
-    using ValueType = typename V::ImplementationType;
+    using ReturnType = typename DefaultConverter<IDLRecord<K, V>>::ReturnType;
+    using KeyType = typename K::InnerParameterType;
+    using ValueType = typename V::InnerParameterType;
+    using Result = ConversionResult<IDLRecord<K, V>>;
 
-    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, JSDOMGlobalObject& globalObject)
+    static Result convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, JSDOMGlobalObject& globalObject)
     {
-        return convertRecord<JSDOMGlobalObject&>(lexicalGlobalObject, value, globalObject);
+        return convertRecord(lexicalGlobalObject, value, globalObject);
     }
 
-    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+    static Result convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
     {
         return convertRecord(lexicalGlobalObject, value);
     }
 
 private:
     template<class... Args>
-    static ReturnType convertRecord(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, Args... args)
+    static Result convertRecord(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, Args&&... args)
     {
         auto& vm = JSC::getVM(&lexicalGlobalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -85,12 +88,12 @@ private:
         // 1. Let result be a new empty instance of record<K, V>.
         // 2. If Type(O) is Undefined or Null, return result.
         if (value.isUndefinedOrNull())
-            return {};
+            return ReturnType {};
 
         // 3. If Type(O) is not Object, throw a TypeError.
         if (!value.isObject()) {
             throwTypeError(&lexicalGlobalObject, scope);
-            return {};
+            return Result::exception();
         }
 
         JSC::JSObject* object = JSC::asObject(value);
@@ -102,23 +105,21 @@ private:
         JSC::Structure* structure = nullptr;
 
         switch (object->type()) {
-        case ObjectType:
-        case FinalObjectType: {
+        case JSC::ObjectType:
+        case JSC::FinalObjectType: {
             structure = object->structure();
             canUseFastPath = structure->canPerformFastPropertyEnumeration() && !structure->hasNonReifiedStaticProperties();
 
             if (canUseFastPath) {
-                JSValue prototype = object->getPrototypeDirect();
+                JSC::JSValue prototype = object->getPrototypeDirect();
 
-                if (!(prototype == lexicalGlobalObject.objectPrototype() || prototype.structureOrNull() == lexicalGlobalObject.nullPrototypeObjectStructure())) {
+                if (!(prototype == lexicalGlobalObject.objectPrototype() || prototype.structureOrNull() == lexicalGlobalObject.nullPrototypeObjectStructure()))
                     canUseFastPath = false;
-                }
             }
             break;
         }
-        default: {
+        default:
             break;
-        }
         }
 
         if (canUseFastPath) {
@@ -126,12 +127,11 @@ private:
             // forEachProperty, so the property table cannot be mutated out from under it.
             Vector<JSC::Identifier, 8> identifiers;
             Vector<JSC::PropertyOffset, 8> offsets;
-            structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
-                if (entry.attributes() & PropertyAttribute::DontEnum) {
+            structure->forEachProperty(vm, [&](const JSC::PropertyTableEntry& entry) -> bool {
+                if (entry.attributes() & JSC::PropertyAttribute::DontEnum)
                     return true;
-                }
 
-                identifiers.append(Identifier::fromUid(vm, entry.key()));
+                identifiers.append(JSC::Identifier::fromUid(vm, entry.key()));
                 offsets.append(entry.offset());
                 return true;
             });
@@ -139,14 +139,14 @@ private:
             for (size_t i = 0; i < identifiers.size(); ++i) {
                 const auto& identifier = identifiers[i];
 
-                // Converter<V>::convert below can run user code. The snapshotted offsets are only
+                // convert<V>() below can run user code. The snapshotted offsets are only
                 // valid while the object keeps its original structure; any mutation transitions it.
                 bool structureIsUnchanged = object->structure() == structure;
                 JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
                 if (!structureIsUnchanged) [[unlikely]] {
                     // 1. Let desc be ? O.[[GetOwnProperty]](key).
                     bool hasProperty = object->methodTable()->getOwnPropertySlot(object, &lexicalGlobalObject, identifier, slot);
-                    RETURN_IF_EXCEPTION(scope, {});
+                    RETURN_IF_EXCEPTION(scope, Result::exception());
 
                     // 2. If desc is not undefined and desc.[[Enumerable]] is true:
                     if (!hasProperty || (slot.attributes() & JSC::PropertyAttribute::DontEnum))
@@ -155,23 +155,24 @@ private:
 
                 // 1. Let typedKey be key converted to an IDL value of type K.
                 auto typedKey = Detail::IdentifierConverter<K>::convert(lexicalGlobalObject, identifier);
-                RETURN_IF_EXCEPTION(scope, {});
+                RETURN_IF_EXCEPTION(scope, Result::exception());
 
                 // 2. Let value be ? Get(O, key).
-                JSC::JSValue value;
+                JSC::JSValue subValue;
                 if (structureIsUnchanged) [[likely]]
-                    value = object->getDirect(offsets[i]);
+                    subValue = object->getDirect(offsets[i]);
                 else {
                     if (!slot.isTaintedByOpaqueObject()) [[likely]]
-                        value = slot.getValue(&lexicalGlobalObject, identifier);
+                        subValue = slot.getValue(&lexicalGlobalObject, identifier);
                     else
-                        value = object->get(&lexicalGlobalObject, identifier);
-                    RETURN_IF_EXCEPTION(scope, {});
+                        subValue = WebCore::get(object, &lexicalGlobalObject, identifier);
+                    RETURN_IF_EXCEPTION(scope, Result::exception());
                 }
 
                 // 3. Let typedValue be value converted to an IDL value of type V.
-                auto typedValue = Converter<V>::convert(lexicalGlobalObject, value, args...);
-                RETURN_IF_EXCEPTION(scope, {});
+                auto typedValue = WebCore::convert<V>(lexicalGlobalObject, subValue, args...);
+                if (typedValue.hasException(scope)) [[unlikely]]
+                    return Result::exception();
 
                 // 4. Set result[typedKey] to typedValue.
                 // Note: It's possible that typedKey is already in result if K is USVString and key contains unpaired surrogates.
@@ -180,7 +181,7 @@ private:
                         auto addResult = resultMap.add(typedKey, result.size());
                         if (!addResult.isNewEntry) {
                             ASSERT(result[addResult.iterator->value].key == typedKey);
-                            result[addResult.iterator->value].value = WTF::move(typedValue);
+                            result[addResult.iterator->value].value = typedValue.releaseReturnValue();
                             continue;
                         }
                     }
@@ -188,7 +189,7 @@ private:
                     UNUSED_VARIABLE(resultMap);
 
                 // 5. Otherwise, append to result a mapping (typedKey, typedValue).
-                result.append({ WTF::move(typedKey), WTF::move(typedValue) });
+                result.append({ WTF::move(typedKey), typedValue.releaseReturnValue() });
             }
 
             return result;
@@ -197,14 +198,14 @@ private:
         // 4. Let keys be ? O.[[OwnPropertyKeys]]().
         JSC::PropertyNameArrayBuilder keys(vm, JSC::PropertyNameMode::StringsAndSymbols, JSC::PrivateSymbolMode::Exclude);
         object->methodTable()->getOwnPropertyNames(object, &lexicalGlobalObject, keys, JSC::DontEnumPropertiesMode::Include);
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, Result::exception());
 
         // 5. Repeat, for each element key of keys in List order:
         for (auto& key : keys) {
             // 1. Let desc be ? O.[[GetOwnProperty]](key).
             JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
             bool hasProperty = object->methodTable()->getOwnPropertySlot(object, &lexicalGlobalObject, key, slot);
-            RETURN_IF_EXCEPTION(scope, {});
+            RETURN_IF_EXCEPTION(scope, Result::exception());
 
             // 2. If desc is not undefined and desc.[[Enumerable]] is true:
 
@@ -213,19 +214,20 @@ private:
             if (hasProperty && !(slot.attributes() & JSC::PropertyAttribute::DontEnum)) {
                 // 1. Let typedKey be key converted to an IDL value of type K.
                 auto typedKey = Detail::IdentifierConverter<K>::convert(lexicalGlobalObject, key);
-                RETURN_IF_EXCEPTION(scope, {});
+                RETURN_IF_EXCEPTION(scope, Result::exception());
 
                 // 2. Let value be ? Get(O, key).
                 JSC::JSValue subValue;
                 if (!slot.isTaintedByOpaqueObject()) [[likely]]
                     subValue = slot.getValue(&lexicalGlobalObject, key);
                 else
-                    subValue = object->get(&lexicalGlobalObject, key);
-                RETURN_IF_EXCEPTION(scope, {});
+                    subValue = WebCore::get(object, &lexicalGlobalObject, key);
+                RETURN_IF_EXCEPTION(scope, Result::exception());
 
                 // 3. Let typedValue be value converted to an IDL value of type V.
-                auto typedValue = Converter<V>::convert(lexicalGlobalObject, subValue, args...);
-                RETURN_IF_EXCEPTION(scope, {});
+                auto typedValue = WebCore::convert<V>(lexicalGlobalObject, subValue, args...);
+                if (typedValue.hasException(scope)) [[unlikely]]
+                    return Result::exception();
 
                 // 4. Set result[typedKey] to typedValue.
                 // Note: It's possible that typedKey is already in result if K is USVString and key contains unpaired surrogates.
@@ -234,7 +236,7 @@ private:
                         auto addResult = resultMap.add(typedKey, result.size());
                         if (!addResult.isNewEntry) {
                             ASSERT(result[addResult.iterator->value].key == typedKey);
-                            result[addResult.iterator->value].value = WTF::move(typedValue);
+                            result[addResult.iterator->value].value = typedValue.releaseReturnValue();
                             continue;
                         }
                     }
@@ -242,11 +244,44 @@ private:
                     UNUSED_VARIABLE(resultMap);
 
                 // 5. Otherwise, append to result a mapping (typedKey, typedValue).
-                result.append({ WTF::move(typedKey), WTF::move(typedValue) });
+                result.append({ WTF::move(typedKey), typedValue.releaseReturnValue() });
             }
         }
 
         // 6. Return result.
+        return result;
+    }
+};
+
+template<typename K, typename V> struct JSConverter<IDLRecord<K, V>> {
+    static constexpr bool needsState = true;
+    static constexpr bool needsGlobalObject = true;
+
+    template<typename MapType>
+    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const MapType& map)
+    {
+        auto& vm = JSC::getVM(&lexicalGlobalObject);
+
+        // 1. Let result be ! ObjectCreate(%ObjectPrototype%).
+        auto result = WebCore::constructEmptyObject(&lexicalGlobalObject, globalObject.objectPrototype());
+
+        // 2. Repeat, for each mapping (key, value) in D:
+        for (const auto& keyValuePair : map) {
+            // 1. Let esKey be key converted to an ECMAScript value.
+            // Note, this step is not required, as we need the key to be
+            // an Identifier, not a JSValue.
+
+            // 2. Let esValue be value converted to an ECMAScript value.
+            auto esValue = toJS<V>(lexicalGlobalObject, globalObject, keyValuePair.value);
+
+            // 3. Let created be ! CreateDataProperty(result, esKey, esValue).
+            bool created = WebCore::createDataProperty(result, &lexicalGlobalObject, JSC::Identifier::fromString(vm, keyValuePair.key), esValue, true);
+
+            // 4. Assert: created is true.
+            ASSERT_UNUSED(created, created);
+        }
+
+        // 3. Return result.
         return result;
     }
 };

@@ -8,6 +8,7 @@ use bun_io::KeepAlive;
 use bun_resolver::fs as Fs;
 
 use crate::bun_string_jsc;
+use crate::resolved_source::PrintedAst;
 use crate::virtual_machine::VirtualMachine;
 use crate::{
     self as jsc, EncodedSliceJsc as _, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise,
@@ -1072,8 +1073,7 @@ impl AsyncModule {
         // value (it moves `ast` into `print_ast`). Hoist the post-print
         // read (`is_commonjs_module`) above the move so we
         // can `mem::take` instead of cloning.
-        let is_commonjs_module = self.parse_result.ast.has_commonjs_export_names
-            || self.parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
+        let printed_ast = PrintedAst::new(&self.parse_result.ast);
         let arena = *self.parse_result.ast.parts.allocator();
         let parse_result = core::mem::replace(&mut self.parse_result, ParseResult::empty(arena));
 
@@ -1153,25 +1153,24 @@ impl AsyncModule {
             // SAFETY: per-thread VM.
             let mut resolved_source = unsafe {
                 (*jsc_vm).ref_counted_resolved_source(
+                    printed_ast,
                     printer.ctx.get_written(),
                     &BunString::from_bytes(specifier),
                     path.text,
                     None,
                 )
             };
-
-            resolved_source.is_commonjs_module = is_commonjs_module;
             resolved_source.is_static = self.is_static;
-
             return Ok(resolved_source);
         }
 
         Ok(ResolvedSource {
-            source_code: BunString::clone_latin1(printer.ctx.get_written()),
             source_url: BunString::from_bytes(path.text),
-            is_commonjs_module,
             is_static: self.is_static,
-            ..Default::default()
+            ..ResolvedSource::printed(
+                printed_ast,
+                BunString::clone_latin1(printer.ctx.get_written()),
+            )
         })
     }
 }

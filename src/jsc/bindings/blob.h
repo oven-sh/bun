@@ -3,6 +3,8 @@
 #include "root.h"
 #include "JSDOMGlobalObject.h"
 #include "BunClientData.h"
+#include <JavaScriptCore/Weak.h>
+#include <JavaScriptCore/WeakInlines.h>
 
 namespace WebCore {
 
@@ -73,6 +75,10 @@ public:
         m_fileName = fileName;
     }
 
+    // The JS object handed out for this FormData entry, so reads keep returning the same one while script still holds it.
+    JSC::JSObject* wrapper() const { return m_wrapper.get(); }
+    void setWrapper(JSC::JSObject* wrapper) { m_wrapper = JSC::Weak<JSC::JSObject>(wrapper); }
+
     size_t memoryCost() const;
 
 private:
@@ -92,6 +98,7 @@ private:
 
     BlobRefPtr m_impl;
     String m_fileName;
+    JSC::Weak<JSC::JSObject> m_wrapper;
 };
 
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, Blob&);

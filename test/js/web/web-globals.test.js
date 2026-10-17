@@ -309,10 +309,71 @@ test("navigator", () => {
   } else if (isLinux) {
     expect(navigator.platform).toBe("Linux x86_64");
   }
+  expect(navigator.language).toBe(Intl.DateTimeFormat().resolvedOptions().locale);
+  expect(navigator.languages).toEqual([navigator.language]);
+  expect(navigator.languages).toBe(navigator.languages);
+  expect(Object.isFrozen(navigator.languages)).toBe(true);
+});
+
+test("Navigator", () => {
+  expect(Object.getOwnPropertyDescriptor(globalThis, "Navigator")).toEqual({
+    value: Navigator,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+  expect([typeof Navigator, Navigator.name, Navigator.length]).toEqual(["function", "Navigator", 0]);
+  expect(navigator).toBeInstanceOf(Navigator);
+  expect(Object.getPrototypeOf(navigator)).toBe(Navigator.prototype);
+  expect(Object.getPrototypeOf(Navigator.prototype)).toBe(Object.prototype);
+  expect(Navigator.prototype.constructor).toBe(Navigator);
+  expect(Object.prototype.toString.call(navigator)).toBe("[object Navigator]");
+  expect(Reflect.ownKeys(navigator)).toEqual([]);
+  expect(Object.keys(Navigator.prototype).sort()).toEqual([
+    "hardwareConcurrency",
+    "language",
+    "languages",
+    "platform",
+    "userAgent",
+  ]);
+  for (const make of [() => new Navigator(), () => Navigator(), () => new (class extends Navigator {})()])
+    expect(make).toThrow(expect.objectContaining({ name: "TypeError", code: "ERR_ILLEGAL_CONSTRUCTOR" }));
+  for (const key of Object.keys(Navigator.prototype)) {
+    expect(() => Navigator.prototype[key]).toThrow(TypeError);
+    expect(() => Object.create(navigator)[key]).toThrow(TypeError);
+  }
+  // Only a window's navigator describes a browser. Old copies of jsbn read `window.crypto` when `appName` is "Netscape".
+  // Nor has Node's `onLine`: code that records the browser's online state finds none outside of a DOM.
+  for (const key of ["appName", "appVersion", "product", "vendor", "cookieEnabled", "plugins", "javaEnabled", "onLine"])
+    expect(key in navigator).toBe(false);
+});
+
+test("the members of navigator can be replaced on the object and on Navigator.prototype", async () => {
+  const src = `
+    const { userAgent, platform } = navigator;
+    const results = [];
+    Object.defineProperty(navigator, "userAgent", { value: "on the object", configurable: true });
+    results.push(navigator.userAgent);
+    delete navigator.userAgent;
+    results.push(navigator.userAgent === userAgent);
+    const descriptor = Object.getOwnPropertyDescriptor(Navigator.prototype, "platform");
+    Object.defineProperty(Navigator.prototype, "platform", { get: () => "on the prototype", configurable: true });
+    results.push(navigator.platform);
+    Object.defineProperty(Navigator.prototype, "platform", descriptor);
+    results.push(navigator.platform === platform);
+    navigator.clipboard = { readText() {} };
+    results.push(typeof navigator.clipboard.readText);
+    console.log(JSON.stringify(results));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual(["on the object", true, "on the prototype", true, "function"]);
+  expect(exitCode).toBe(0);
 });
 
 // https://github.com/oven-sh/bun/issues/21585
-test.concurrent.each(["userAgent", "platform", "hardwareConcurrency"])(
+test.concurrent.each(["userAgent", "platform", "hardwareConcurrency", "language", "languages"])(
   "navigator.%s is a getter-only accessor",
   async key => {
     // Spawn a fresh process so we don't mutate the test runner's own navigator object.
@@ -320,7 +381,7 @@ test.concurrent.each(["userAgent", "platform", "hardwareConcurrency"])(
     const src = `
     const nav = globalThis.navigator;
     const before = nav[${k}];
-    const desc = Object.getOwnPropertyDescriptor(nav, ${k});
+    const desc = Object.getOwnPropertyDescriptor(Navigator.prototype, ${k});
     let strictErr = null;
     try {
       (function () { "use strict"; nav[${k}] = "overwritten"; })();

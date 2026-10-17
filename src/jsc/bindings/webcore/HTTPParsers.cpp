@@ -33,6 +33,7 @@
 #include "HTTPParsers.h"
 
 #include "HTTPHeaderField.h"
+#include "HTTPHeaderNames.h"
 
 namespace WebCore {
 
@@ -94,6 +95,122 @@ bool isValidHTTPToken(const StringView& value)
             return false;
     }
     return true;
+}
+
+StringView extractCharsetFromMediaType(StringView mediaType LIFETIME_BOUND)
+{
+    unsigned charsetPos = 0, charsetLen = 0;
+    size_t pos = 0;
+    unsigned length = mediaType.length();
+
+    while (pos < length) {
+        pos = mediaType.findIgnoringASCIICase("charset"_s, pos);
+        if (pos == notFound || pos == 0) {
+            charsetLen = 0;
+            break;
+        }
+
+        // is what we found a beginning of a word?
+        if (mediaType[pos - 1] > ' ' && mediaType[pos - 1] != ';') {
+            pos += 7;
+            continue;
+        }
+
+        pos += 7;
+
+        // skip whitespace
+        while (pos < length && mediaType[pos] <= ' ')
+            ++pos;
+
+        if (pos >= length)
+            break;
+
+        if (mediaType[pos++] != '=') // this "charset" substring wasn't a parameter name, but there may be others
+            continue;
+
+        while (pos < length && (mediaType[pos] <= ' ' || mediaType[pos] == '"' || mediaType[pos] == '\''))
+            ++pos;
+
+        // we don't handle spaces within quoted parameter values, because charset names cannot have any
+        unsigned endpos = pos;
+        while (endpos < length && mediaType[endpos] > ' ' && mediaType[endpos] != '"' && mediaType[endpos] != '\'' && mediaType[endpos] != ';')
+            ++endpos;
+
+        charsetPos = pos;
+        charsetLen = endpos - pos;
+        break;
+    }
+    return mediaType.substring(charsetPos, charsetLen);
+}
+
+// Implements <https://fetch.spec.whatwg.org/#forbidden-header-name>.
+bool isForbiddenHeaderName(const String& name)
+{
+    HTTPHeaderName headerName;
+    if (findHTTPHeaderName(name, headerName)) {
+        switch (headerName) {
+        case HTTPHeaderName::AcceptCharset:
+        case HTTPHeaderName::AcceptEncoding:
+        case HTTPHeaderName::AccessControlRequestHeaders:
+        case HTTPHeaderName::AccessControlRequestMethod:
+        case HTTPHeaderName::Connection:
+        case HTTPHeaderName::ContentLength:
+        case HTTPHeaderName::Cookie:
+        case HTTPHeaderName::Cookie2:
+        case HTTPHeaderName::Date:
+        case HTTPHeaderName::DNT:
+        case HTTPHeaderName::Expect:
+        case HTTPHeaderName::Host:
+        case HTTPHeaderName::KeepAlive:
+        case HTTPHeaderName::Origin:
+        case HTTPHeaderName::Referer:
+        case HTTPHeaderName::SetCookie:
+        case HTTPHeaderName::TE:
+        case HTTPHeaderName::Trailer:
+        case HTTPHeaderName::TransferEncoding:
+        case HTTPHeaderName::Upgrade:
+        case HTTPHeaderName::Via:
+            return true;
+        default:
+            break;
+        }
+    }
+    return startsWithLettersIgnoringASCIICase(name, "sec-"_s) || startsWithLettersIgnoringASCIICase(name, "proxy-"_s);
+}
+
+bool isForbiddenHeader(const String& name, StringView value)
+{
+    if (isForbiddenHeaderName(name))
+        return true;
+    if (equalLettersIgnoringASCIICase(name, "x-http-method-override"_s) || equalLettersIgnoringASCIICase(name, "x-http-method"_s) || equalLettersIgnoringASCIICase(name, "x-method-override"_s)) {
+        for (auto methodValue : StringView(value).split(',')) {
+            auto method = methodValue.trim(isUnicodeCompatibleASCIIWhitespace<char16_t>);
+            if (isForbiddenMethod(method))
+                return true;
+        }
+    }
+    return false;
+}
+
+// Implements <https://fetch.spec.whatwg.org/#forbidden-method>.
+bool isForbiddenMethod(StringView name)
+{
+    return equalLettersIgnoringASCIICase(name, "connect"_s) || equalLettersIgnoringASCIICase(name, "trace"_s) || equalLettersIgnoringASCIICase(name, "track"_s);
+}
+
+// Implements <https://fetch.spec.whatwg.org/#concept-method-normalize>.
+String normalizeHTTPMethod(const String& method)
+{
+    constexpr std::array methods { "DELETE"_s, "GET"_s, "HEAD"_s, "OPTIONS"_s, "POST"_s, "PUT"_s };
+    for (auto value : methods) {
+        if (equalIgnoringASCIICase(method, value)) {
+            // Don't bother allocating a new string if it's already all uppercase.
+            if (method == value)
+                break;
+            return value;
+        }
+    }
+    return method;
 }
 
 extern "C" int Bun__writeHTTPDate(char* buffer, size_t length, uint64_t timestampMs)

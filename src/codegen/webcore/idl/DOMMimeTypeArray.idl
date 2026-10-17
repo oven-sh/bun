@@ -1,0 +1,12 @@
+// https://html.spec.whatwg.org/multipage/system-state.html#mimetypearray
+// It is always empty, so it needs no indexed or named getter, and there is no `MimeType`.
+[
+    GenerateIsReachable=ImplDocument,
+    GenerateAddOpaqueRoot=document,
+    InterfaceName=MimeTypeArray,
+    Exposed=Window
+] interface DOMMimeTypeArray {
+    readonly attribute unsigned long length;
+    any item(unsigned long index);
+    any namedItem(DOMString name);
+};

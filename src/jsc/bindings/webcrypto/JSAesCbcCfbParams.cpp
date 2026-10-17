@@ -35,7 +35,7 @@ using namespace JSC;
 
 #if ENABLE(WEB_CRYPTO)
 
-template<> CryptoAlgorithmAesCbcCfbParams convertDictionary<CryptoAlgorithmAesCbcCfbParams>(JSGlobalObject& lexicalGlobalObject, JSValue value)
+template<> ConversionResult<IDLDictionary<CryptoAlgorithmAesCbcCfbParams>> convertDictionary<CryptoAlgorithmAesCbcCfbParams>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -68,7 +68,7 @@ template<> CryptoAlgorithmAesCbcCfbParams convertDictionary<CryptoAlgorithmAesCb
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!ivValue.isUndefined()) {
-        result.iv = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>(lexicalGlobalObject, ivValue);
+        result.iv = convert<IDLBufferSource>(lexicalGlobalObject, ivValue);
         RETURN_IF_EXCEPTION(throwScope, {});
     } else {
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "iv"_s, "AesCbcCfbParams"_s, "(ArrayBufferView or ArrayBuffer)"_s);

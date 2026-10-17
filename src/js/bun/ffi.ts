@@ -179,14 +179,14 @@ function normalizePath(path: string | URL | Bun.BunFile | undefined) {
     // https://github.com/oven-sh/bun/issues/10304
     path = Bun.fileURLToPath(path);
   } else if (typeof path === "object" && path) {
-    if (path instanceof URL) {
-      // This is mostly for import.meta.resolve()
-      // https://github.com/oven-sh/bun/issues/10304
-      path = Bun.fileURLToPath(path as URL);
-    } else if ($inheritsBlob(path)) {
+    if ($inheritsBlob(path)) {
       // must be a Bun.file() blob
       // https://discord.com/channels/876711213126520882/1230114905898614794/1230114905898614794
       path = path.name;
+    } else {
+      // This is mostly for import.meta.resolve()
+      // https://github.com/oven-sh/bun/issues/10304
+      path = require("internal/url").toPathIfFileURL(path);
     }
   }
 

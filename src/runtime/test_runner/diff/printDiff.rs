@@ -446,6 +446,7 @@ impl<'c, W: Write> Printer<'c, W> {
     }
 
     /// `text` as whole rows: prefix, content, newline for each line.
+    #[optimize(size)]
     fn rows(&mut self, text: &[u8], style: Style) {
         self.prefix(style);
         self.segment(text, style);
@@ -454,6 +455,7 @@ impl<'c, W: Write> Printer<'c, W> {
 
     /// `text` continuing the current row; embedded newlines start new rows
     /// with `style`'s prefix.
+    #[optimize(size)]
     fn segment(&mut self, text: &[u8], style: Style) {
         self.color(style.text_color);
         let mut start = 0;
@@ -504,6 +506,7 @@ impl<'c, W: Write> Printer<'c, W> {
         self.b(&line[tail..]);
     }
 
+    #[optimize(size)]
     fn modified_without_highlight(
         &mut self,
         removed: &[u8],
@@ -522,6 +525,7 @@ impl<'c, W: Write> Printer<'c, W> {
         }
     }
 
+    #[optimize(size)]
     fn modified(&mut self, removed: &[u8], inserted: &[u8], single_line: bool) {
         let (rs, is) = match single_line {
             true => (styles::SINGLE_LINE_REMOVED, styles::SINGLE_LINE_INSERTED),

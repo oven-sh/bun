@@ -1,0 +1,14 @@
+// https://html.spec.whatwg.org/multipage/system-state.html#pluginarray
+// It is always empty, so it needs no indexed or named getter, and there is no `Plugin`.
+[
+    GenerateIsReachable=ImplDocument,
+    GenerateAddOpaqueRoot=document,
+    InterfaceName=PluginArray,
+    Exposed=Window
+] interface DOMPluginArray {
+    readonly attribute unsigned long length;
+    any item(unsigned long index);
+    any namedItem(DOMString name);
+
+    undefined refresh(optional boolean reload = false);
+};

@@ -34,7 +34,7 @@ namespace WebCore {
 template<typename Visitor>
 void JSPerformanceObserver::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
-    wrapped().callback().visitJSFunction(visitor);
+    wrapped().callback().visitJSFunctionInGCThread(visitor);
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSPerformanceObserver);

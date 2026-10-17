@@ -35,7 +35,7 @@ using namespace JSC;
 
 #if ENABLE(WEB_CRYPTO)
 
-template<> CryptoAlgorithmRsaHashedImportParams convertDictionary<CryptoAlgorithmRsaHashedImportParams>(JSGlobalObject& lexicalGlobalObject, JSValue value)
+template<> ConversionResult<IDLDictionary<CryptoAlgorithmRsaHashedImportParams>> convertDictionary<CryptoAlgorithmRsaHashedImportParams>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);

@@ -280,7 +280,7 @@ inline JSC::EncodedJSValue JSEventEmitter::addListener(JSC::JSGlobalObject* lexi
     RETURN_IF_EXCEPTION(throwScope, {});
 
     // then, add the listener
-    auto listener = convert<IDLNullable<IDLEventListener<JSEventListener>>>(*lexicalGlobalObject, argument1.value(), *castedThis, [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentMustBeObjectError(lexicalGlobalObject, scope, 1, "listener"_s, "EventEmitter"_s, "addListener"_s); });
+    RefPtr<JSEventListener> listener = convert<IDLNullable<IDLEventListener<JSEventListener>>>(*lexicalGlobalObject, argument1.value(), *castedThis, [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentMustBeObjectError(lexicalGlobalObject, scope, 1, "listener"_s, "EventEmitter"_s, "addListener"_s); });
     RETURN_IF_EXCEPTION(throwScope, {});
     JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.addListenerForBindings(WTF::move(eventType), WTF::move(listener), once, prepend); }));
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -386,7 +386,7 @@ inline JSC::EncodedJSValue JSEventEmitter::removeListener(JSC::JSGlobalObject* l
     }
 
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto listener = convert<IDLNullable<IDLEventListener<JSEventListener>>>(*lexicalGlobalObject, argument1.value(), *castedThis, [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentMustBeObjectError(lexicalGlobalObject, scope, 1, "listener"_s, "EventEmitter"_s, "removeListener"_s); });
+    RefPtr<JSEventListener> listener = convert<IDLNullable<IDLEventListener<JSEventListener>>>(*lexicalGlobalObject, argument1.value(), *castedThis, [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentMustBeObjectError(lexicalGlobalObject, scope, 1, "listener"_s, "EventEmitter"_s, "removeListener"_s); });
     RETURN_IF_EXCEPTION(throwScope, {});
     JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.removeListenerForBindings(WTF::move(eventType), WTF::move(listener)); }));
     RETURN_IF_EXCEPTION(throwScope, {});

@@ -47,6 +47,8 @@ use super::frame;
 /// The owner implements [`bun_core::IntrusiveField<Channel<Self>>`]
 /// (via `bun_core::intrusive_field!`) plus the two callbacks below.
 pub(crate) trait ChannelOwner: bun_core::IntrusiveField<Channel<Self>> {
+    /// Before the frames of one read.
+    fn on_channel_data(&mut self) {}
     fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader<'_>);
     fn on_channel_done(&mut self);
 }
@@ -481,6 +483,8 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         if self.done.get() {
             return;
         }
+        // SAFETY: see `owner_ptr()` — the Owner outlives all callbacks and the `&mut Owner` lives only for this call.
+        unsafe { &mut *self.owner_ptr() }.on_channel_data();
         let mut buf = self.r#in.replace(Vec::new());
         buf.extend_from_slice(data);
         let mut head: usize = 0;

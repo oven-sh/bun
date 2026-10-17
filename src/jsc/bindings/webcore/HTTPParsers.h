@@ -36,6 +36,13 @@ namespace WebCore {
 
 bool isValidHTTPHeaderValue(const StringView&);
 bool isValidHTTPToken(const StringView&);
+StringView extractCharsetFromMediaType(StringView mediaType LIFETIME_BOUND);
+
+bool isForbiddenHeader(const String& name, StringView value);
+bool isForbiddenHeaderName(const String&);
+bool isForbiddenMethod(StringView);
+
+String normalizeHTTPMethod(const String&);
 
 inline bool isHTTPSpace(char16_t character)
 {

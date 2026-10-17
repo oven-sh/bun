@@ -520,7 +520,7 @@ static JSC_DEFINE_CUSTOM_GETTER(jsStringDecoder_encoding, (JSGlobalObject * lexi
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSStringDecoder* castedThis = jsStringDecoderCast(lexicalGlobalObject, JSC::JSValue::decode(thisValue), "encoding"_s);
     RETURN_IF_EXCEPTION(scope, {});
-    return JSC::JSValue::encode(WebCore::convertEnumerationToJS<BufferEncodingType>(*lexicalGlobalObject, castedThis->m_encoding));
+    return JSC::JSValue::encode(WebCore::convertEnumerationToJS<BufferEncodingType>(vm, castedThis->m_encoding));
 }
 
 /* Hash table for prototype */
@@ -614,7 +614,7 @@ JSC::EncodedJSValue JSStringDecoderConstructor::call(JSC::JSGlobalObject* lexica
         JSObject* thisObject = asObject(thisValue);
 
         thisObject->putDirect(vm, clientData->builtinNames().decodePrivateName(), jsObject, JSC::PropertyAttribute::DontEnum | 0);
-        thisObject->putDirect(vm, clientData->builtinNames().encodingPublicName(), convertEnumerationToJS<BufferEncodingType>(*lexicalGlobalObject, encoding), JSC::PropertyAttribute::DontEnum | 0);
+        thisObject->putDirect(vm, clientData->builtinNames().encodingPublicName(), convertEnumerationToJS<BufferEncodingType>(vm, encoding), JSC::PropertyAttribute::DontEnum | 0);
         return JSC::JSValue::encode(thisObject);
     }
 

@@ -4,6 +4,7 @@ use super::{throw, Expect};
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
+    #[optimize(size)]
     pub(crate) fn to_be_within(
         &self,
         global: &JSGlobalObject,

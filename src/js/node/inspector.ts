@@ -307,13 +307,19 @@ function buildScriptCoverageList(
       url = pathToFileURL(url).href;
     }
 
-    // Outer functions before nested ones, so a stack-based sweep below sees
-    // enclosing ranges first. Zero-width entries are dropped: V8 never emits
+    // JSC's ranges include their last character; V8's end after it. What is empty or inverted
+    // after that is text JSC has between two adjacent functions: V8 never emits
     // startOffset === endOffset, and @bcoe/v8-coverage recurses forever on one.
+    // The program is one of JSC's function ranges, and has the whole-script entry below.
+    // Outer functions before nested ones, so a stack-based sweep below sees enclosing ranges first.
     const functions = script.functions
-      .filter(([start, end]) => start >= 0 && end > start)
+      .map(([start, end, executed]): [number, number, boolean] => [start, end + 1, executed])
+      .filter(([start, end]) => start >= 0 && end > start && !(start === 0 && end === sourceLength))
       .sort((a, b) => a[0] - b[0] || b[1] - a[1]);
-    const blocks = script.blocks.filter(([start, end]) => start >= 0 && end > start).sort((a, b) => a[0] - b[0]);
+    const blocks = script.blocks
+      .map(([start, end, count]): [number, number, number] => [start, end + 1, count])
+      .filter(([start, end]) => start >= 0 && end > start)
+      .sort((a, b) => a[0] - b[0]);
 
     // Assign each basic block to the innermost function range containing it.
     const blocksPerFunction: Array<Array<[number, number, number]>> = functions.map(() => []);
@@ -327,7 +333,7 @@ function buildScriptCoverageList(
       }
       // Functions that ended before this block started can no longer contain
       // this block or any later one (blocks are sorted by start).
-      while (stack.length > 0 && functions[stack[stack.length - 1]][1] < block[0]) {
+      while (stack.length > 0 && functions[stack[stack.length - 1]][1] <= block[0]) {
         stack.pop();
       }
       // The stack is a nesting chain (siblings get popped above), so ends

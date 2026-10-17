@@ -113,12 +113,16 @@ impl JSSourceMap {
         // Parse the payload to create a proper sourcemap
 
         // Extract mappings string from payload
-        let Some(mappings_value) = payload_arg.get_stringish(global, b"mappings")? else {
+        let Some(mappings_value) = payload_arg
+            .get(global, b"mappings")?
+            .filter(|mappings| !mappings.is_null() && *mappings != JSValue::FALSE)
+        else {
             return Err(
                 global.throw_invalid_arguments(format_args!("payload 'mappings' must be a string"))
             );
         };
 
+        let mappings_value = mappings_value.to_bun_string(global)?;
         let mappings_str = mappings_value.to_utf8();
 
         let mut names: Vec<bstring::String> = Vec::new();

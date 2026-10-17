@@ -637,6 +637,49 @@ console.log(JSON.stringify({ count: fn?.ranges[0].count }));
       });
     });
 
+    test.concurrent("a function's range is its text, and the script is reported once", async () => {
+      using dir = tempDir("inspector-coverage-ranges", {
+        "fixture.cjs": `
+          const inspector = require("node:inspector");
+          const vm = require("node:vm");
+          const code = [
+            "function called(x) { if (x) { return 1; } return 2; }",
+            "function neverCalled() { return 3; }",
+            "const arrow = y => y;",
+            "called(true); arrow(1);",
+            "",
+          ].join("\\n");
+          const session = new inspector.Session();
+          session.connect();
+          session.post("Profiler.enable");
+          session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: false });
+          vm.runInThisContext(code, { filename: "/virtual/ranges.js" });
+          session.post("Profiler.takePreciseCoverage", (err, { result }) => {
+            const { functions } = result.find(script => script.url.endsWith("/virtual/ranges.js"));
+            console.log(JSON.stringify(functions.map(f => code.slice(f.ranges[0].startOffset, f.ranges[0].endOffset))));
+          });
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+      const [script, ...functions] = JSON.parse(stdout);
+      expect(script).toStartWith("function called(x)");
+      expect(script).toEndWith("arrow(1);\n");
+      expect(functions).toEqual([
+        "function called(x) { if (x) { return 1; } return 2; }",
+        "function neverCalled() { return 3; }",
+        "y => y",
+      ]);
+    });
+
     test.concurrent("respects callCount: false and detailed: false", async () => {
       using dir = tempDir("inspector-coverage-flags", {
         "fixture.mjs": coverageVmFixture,

@@ -398,8 +398,8 @@ mod win_hdr {
 /// streams are consumed in order, so a reader is forward-only.
 // Invariant: `bytes`/`base`/`src_idx_mask` point into the blob and are only
 // valid while the blob is live. They are raw pointers (not lifetimes) because
-// readers are stored in lifetime-less caches (`FindCacheSlot`, `Cursor`) that
-// follow `InternalSourceMap`'s Copy-view design.
+// readers are stored in a lifetime-less cache (`FindCacheSlot`) that
+// follows `InternalSourceMap`'s Copy-view design.
 #[derive(Copy, Clone)]
 struct WindowReader {
     bytes: *const [u8],
@@ -637,99 +637,19 @@ impl InternalSourceMap {
     }
 }
 
-/// Stateful forward cursor. `move_to` is cheap when successive targets are
-/// monotonically non-decreasing in generated position; otherwise it reseeks via
-/// the sync index.
-///
-/// Invariant: when `has_state`, `reader` is positioned such that calling
-/// `advance_one()` produces the mapping immediately after `peek orelse state`.
-pub struct Cursor {
-    map: InternalSourceMap,
-    state: State,
-    peek: Option<State>,
-    reader: WindowReader,
-    sync_idx: u32,
-    has_state: bool,
-}
-
-impl Cursor {
-    pub(crate) fn init(map: InternalSourceMap) -> Cursor {
-        Cursor {
-            map,
-            state: State::default(),
-            peek: None,
-            reader: WindowReader::DANGLING,
-            sync_idx: 0,
-            has_state: false,
-        }
-    }
-
-    pub fn move_to(&mut self, line: Ordinal, column: Ordinal) -> Option<Mapping> {
-        let target_line = line.zero_based();
-        let target_col = column.zero_based();
-
-        if !self.has_state || !self.state.less_or_equal(target_line, target_col) {
-            if !self.reseek(target_line, target_col) {
-                return None;
-            }
-        }
-
-        loop {
-            if let Some(p) = self.peek {
-                if !p.less_or_equal(target_line, target_col) {
-                    break;
-                }
-                self.state = p;
-                self.peek = None;
-            }
-            let Some(nxt) = self.advance_one() else { break };
-            if nxt.less_or_equal(target_line, target_col) {
-                self.state = nxt;
-            } else {
-                self.peek = Some(nxt);
-                break;
-            }
-        }
-
-        if self.state.generated_line != target_line {
-            return None;
-        }
-        Some(self.state.to_mapping())
-    }
-
-    fn advance_one(&mut self) -> Option<State> {
-        if self.reader.done() {
-            let n_sync = self.map.sync_count();
-            if self.sync_idx + 1 >= n_sync {
-                return None;
-            }
-            self.sync_idx += 1;
-            let mut seed = State::default();
-            self.map
-                .seed_window(self.sync_idx, &mut seed, &mut self.reader);
-            return Some(seed);
-        }
-        let mut nxt = self.peek.unwrap_or(self.state);
-        self.reader.next(&mut nxt);
-        Some(nxt)
-    }
-
-    fn reseek(&mut self, target_line: i32, target_col: i32) -> bool {
-        let Some(idx) = self.map.locate_window(target_line, target_col) else {
-            self.has_state = false;
-            return false;
-        };
-        self.sync_idx = idx;
-        self.map.seed_window(idx, &mut self.state, &mut self.reader);
-        self.peek = None;
-        self.has_state = true;
-        true
-    }
-}
-
 impl InternalSourceMap {
-    pub(crate) fn cursor(self) -> Cursor {
-        Cursor::init(self)
+    /// Every mapping, in generated order.
+    pub(crate) fn for_each(self, mut each: impl FnMut(Mapping)) {
+        for idx in 0..self.sync_count() {
+            let mut state = State::default();
+            let mut reader = WindowReader::DANGLING;
+            self.seed_window(idx, &mut state, &mut reader);
+            each(state.to_mapping());
+            while !reader.done() {
+                reader.next(&mut state);
+                each(state.to_mapping());
+            }
+        }
     }
 
     /// Re-encode the full mapping stream as a standard VLQ "mappings" string. Only

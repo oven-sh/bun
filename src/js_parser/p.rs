@@ -1538,7 +1538,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 );
         }
 
-        let _ = self.check_dynamic_specifier(arg, state.loc, "import()");
+        let _ = self.check_dynamic_specifier(arg, arg.loc, "import()");
 
         self.new_expr(
             E::Import {
@@ -1728,7 +1728,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             import_record_index,
                             unwrapped_id,
                         },
-                        arg.loc,
+                        state.loc,
                     );
                 }
 
@@ -1751,7 +1751,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         import_record_index,
                         ..Default::default()
                     },
-                    arg.loc,
+                    state.loc,
                 )
             }
             _ => {

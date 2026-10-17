@@ -1250,6 +1250,18 @@ describe("SQL adapter environment variable precedence", () => {
         { adapter: "postgres", hostname: "localhost", password: "", sslMode: 2 },
       ],
       [
+        "{ adapter: 'postgres' }: a MySQL URL without a host names no other server, and fills in",
+        { DATABASE_URL: "mysql://mu:mp@/md?ssl-mode=VERIFY_IDENTITY" },
+        [{ adapter: "postgres" }],
+        { adapter: "postgres", hostname: "localhost", port: 5432, username: "mu", database: "md", sslMode: 4 },
+      ],
+      [
+        "{ adapter: 'mysql' }: so does a PostgreSQL URL without a host",
+        { DATABASE_URL: "postgres:///pd?sslmode=require" },
+        [{ adapter: "mysql" }],
+        { adapter: "mysql", hostname: "localhost", port: 3306, database: "pd", sslMode: 2 },
+      ],
+      [
         "{ adapter: 'postgres' }: the next generic variable is read after a foreign one",
         { DATABASE_URL: my, DATABASEURL: pg },
         [{ adapter: "postgres" }],
@@ -1268,6 +1280,105 @@ describe("SQL adapter environment variable precedence", () => {
         { adapter: "mysql", hostname: "myhost", port: 2 },
       ],
     ])("%s", expectOptions);
+
+    // `adapter` passes over the URL of another adapter's server. The server is not dialed and gets no credentials,
+    // but the connection is as well protected as that URL asks for.
+    const localPostgres = { adapter: "postgres", hostname: "localhost", port: 5432, password: "" };
+    const localMySQL = { adapter: "mysql", hostname: "localhost", port: 3306, password: "", database: "" };
+    const postgres = [{ adapter: "postgres" }] as Row[2];
+    const mysql = [{ adapter: "mysql" }] as Row[2];
+    test.each<Row>([
+      ["", { DATABASE_URL: "mysql://localhost/db?ssl-mode=REQUIRED" }, postgres, { ...localPostgres, sslMode: 2 }],
+      ["", { DATABASE_URL: "mysql://u:p@localhost/db?ssl-mode=REQUIRED" }, postgres, { ...localPostgres, sslMode: 2 }],
+      [
+        "",
+        { DATABASE_URL: "mysql://127.0.0.1/db?ssl-mode=VERIFY_IDENTITY" },
+        postgres,
+        { ...localPostgres, sslMode: 4 },
+      ],
+      ["", { DATABASE_URL: "postgres://localhost/db?sslmode=require" }, mysql, { ...localMySQL, sslMode: 2 }],
+      [
+        "",
+        { DATABASE_URL: "postgres://u:p@localhost:5432/db?sslmode=verify-full" },
+        mysql,
+        { ...localMySQL, sslMode: 4 },
+      ],
+      ["", { DATABASE_URL: "mysql://other.example/db?ssl-mode=REQUIRED" }, postgres, { ...localPostgres, sslMode: 2 }],
+      ["", { DATABASE_URL: "postgres://other.example/db?sslmode=require" }, mysql, { ...localMySQL, sslMode: 2 }],
+      ["", { DATABASE_URL: "postgres://localhost/db?ssl=true" }, mysql, { ...localMySQL, sslMode: 2 }],
+      ["", { DATABASE_URL: "postgres://localhost/db?sslmode=prefer" }, mysql, { ...localMySQL, sslMode: 1 }],
+      ["", { DATABASE_URL: "postgres://localhost/db" }, mysql, { ...localMySQL, sslMode: 0 }],
+      ["", { TLS_DATABASE_URL: "postgres://localhost/db" }, mysql, { ...localMySQL, sslMode: 2 }],
+      ["", { TLS_DATABASE_URL: "postgres://localhost/db?sslmode=disable" }, mysql, { ...localMySQL, sslMode: 0 }],
+      // without a host it is not passed over
+      ["", { DATABASE_URL: "mysql://?ssl-mode=VERIFY_IDENTITY" }, postgres, { ...localPostgres, sslMode: 4 }],
+      ["", { DATABASE_URL: "postgres://?sslmode=require" }, mysql, { ...localMySQL, sslMode: 2 }],
+      ["", { DATABASE_URL: "postgres:///pd?sslmode=require" }, mysql, { ...localMySQL, database: "pd", sslMode: 2 }],
+      // its own adapter's
+      [
+        "",
+        { DATABASE_URL: "postgres://localhost/db?sslmode=require" },
+        postgres,
+        { ...localPostgres, database: "db", sslMode: 2 },
+      ],
+    ])("the mode of the URL that `adapter` passes over%s: %j %j", expectOptions);
+
+    const verified = { DATABASE_URL: "postgres://localhost/db?sslmode=verify-full" };
+    test.each<Row>([
+      ["tls: false replaces it", verified, [{ adapter: "mysql", tls: false }], { sslMode: 0 }],
+      ['ssl: "require" replaces it', verified, [{ adapter: "mysql", ssl: "require" }], { sslMode: 2 }],
+      ["tls: true does not", verified, [{ adapter: "mysql", tls: true }], { sslMode: 4 }],
+      ["a tls object does not", verified, [{ adapter: "mysql", tls: {} }], { sslMode: 4 }],
+      [
+        "it does not keep tls: { ca } from verify-full",
+        { DATABASE_URL: "postgres://localhost/db?sslmode=verify-ca" },
+        [{ adapter: "mysql", tls: { ca: "x" } }],
+        { sslMode: 4 },
+      ],
+      // The adapter's own URL speaks for its server itself.
+      [
+        "not next to the adapter's own URL, on the same host either",
+        { DATABASE_URL: "postgres://localhost/db?sslmode=require", MYSQL_URL: "mysql://localhost/db" },
+        mysql,
+        { hostname: "localhost", port: 3306, database: "db", sslMode: 0 },
+      ],
+      [
+        "not next to the adapter's own URL",
+        { DATABASE_URL: "postgres://pghost/db?sslmode=verify-full", MYSQL_URL: my },
+        mysql,
+        { hostname: "myhost", port: 2, username: "mu", password: "mp", database: "md", sslMode: 0 },
+      ],
+      [
+        "not over the mode of the adapter's own URL",
+        { DATABASE_URL: "postgres://pghost/db?sslmode=require", MYSQL_URL: `${my}?ssl-mode=DISABLED` },
+        mysql,
+        { hostname: "myhost", sslMode: 0 },
+      ],
+      [
+        "nor under it",
+        { DATABASE_URL: "postgres://pghost/db?sslmode=require", MYSQL_URL: `${my}?ssl-mode=VERIFY_IDENTITY` },
+        mysql,
+        { hostname: "myhost", sslMode: 4 },
+      ],
+      [
+        "nor the TLS_ in its name",
+        { TLS_DATABASE_URL: "postgres://pghost/db", MYSQL_URL: my },
+        mysql,
+        { hostname: "myhost", sslMode: 0 },
+      ],
+      [
+        "the TLS_ in the name of the adapter's own URL is as ever",
+        { DATABASE_URL: "postgres://pghost/db?sslmode=verify-full", TLS_MYSQL_DATABASE_URL: my },
+        mysql,
+        { hostname: "myhost", sslMode: 2 },
+      ],
+      [
+        "a PostgreSQL unix socket has no TLS all the same",
+        { DATABASE_URL: "mysql://myhost/db?ssl-mode=REQUIRED", PGHOST: "/run/pg" },
+        postgres,
+        { path: "/run/pg/.s.PGSQL.5432", sslMode: 0 },
+      ],
+    ])("the mode of the URL that `adapter` passes over: %s", expectOptions);
   });
 
   describe.each([

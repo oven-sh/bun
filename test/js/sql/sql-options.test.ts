@@ -335,18 +335,16 @@ describe("what the options object inherits", () => {
 
   // [environment, the inherited key, the own keys, what both spellings give]
   test.each<[Record<string, string>, object, object, object]>([
-    [{ DATABASE_URL: "x" }, { hostname: "h" }, { adapter: "mysql" }, { hostname: "h", port: 3306 }],
-    [{ DATABASE_URL: "x" }, { host: "h" }, { adapter: "mysql" }, { hostname: "h", port: 3306 }],
+    [{ DATABASE_URL: "x" }, { hostname: "h" }, { adapter: "mysql" }, { hostname: "h", port: 7 }],
+    [{ DATABASE_URL: "x" }, { host: "h" }, { adapter: "mysql" }, { hostname: "h", port: 7 }],
     [{ DATABASE_URL: "x" }, { path: "/run/x.sock" }, { adapter: "mysql" }, { path: "/run/x.sock" }],
     [{ DATABASE_URL: "x" }, { socket: "/run/x.sock" }, { adapter: "mysql" }, { path: "/run/x.sock" }],
-    [{ POSTGRES_URL: "x" }, { hostname: "h" }, {}, { hostname: "h", port: 5432 }],
-  ])("%j: an inherited %j names the server as an own one does", (env, key, own, expected) => {
+    [{ POSTGRES_URL: "x" }, { hostname: "h" }, {}, { hostname: "h", port: 7 }],
+  ])("%j fills in what an inherited %j leaves out, as next to an own one", (env, key, own, expected) => {
     for (const name in env) process.env[name] = "postgres://eu:ep@eh:7/ed?sslmode=require";
-    for (const options of [optionsOf(undefined, { ...key, ...own }), optionsOf(undefined, inheriting(key, own))]) {
-      expect(options).toMatchObject({ ...expected, password: "", sslMode: 2 });
-      expect(options.username).not.toBe("eu");
-      expect(options.database).not.toBe("ed");
-    }
+    const resolved = { ...expected, username: "eu", password: "ep", database: "ed", sslMode: 2 };
+    expect(optionsOf(undefined, { ...key, ...own })).toMatchObject(resolved);
+    expect(optionsOf(undefined, inheriting(key, own))).toMatchObject(resolved);
   });
 
   test.each([

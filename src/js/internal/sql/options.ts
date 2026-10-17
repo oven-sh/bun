@@ -16,12 +16,6 @@ const ObjectHasOwn = Object.hasOwn;
 const kInspectCustom = Symbol.for("nodejs.util.inspect.custom");
 const env = Bun.env;
 
-// Four decisions that wait for the maintainer. `false` is what main does, and each is read in one place.
-const NAMED_HOST_IGNORES_ENVIRONMENT_URL = false;
-const TLS_VARIABLE_IS_A_FLOOR = false;
-const VERIFY_MODES_IGNORE_NODE_TLS_REJECT_UNAUTHORIZED = false;
-const URL_DATABASE_IS_ABOVE_ITS_VARIABLE = false;
-
 const SQLITE_MEMORY = ":memory:";
 const SUPPORTED_ADAPTERS = `"postgres", "sqlite", "mysql", "mariadb"`;
 
@@ -126,15 +120,23 @@ const ENVIRONMENT_URLS: [Adapter | null, ...string[]][] = [
 ];
 
 /**
+ * The URL of another adapter's server. It is not dialed, but where no other URL is in use, the connection is as
+ * well protected as it asks for.
+ */
+type PassedOver = [url: string, requireTLS: boolean];
+
+/**
  * `server`: the arguments name a server themselves, and the URL only fills in what they leave out. An SQLite URL
- * cannot. Otherwise the URL names the target, and with `adapter` the URL of another adapter counts as not set.
+ * cannot. Otherwise the URL names the target, and with `adapter` the URL of another adapter counts as not set,
+ * unless it has no host: then it names no server either, and fills in.
  */
 function urlFromEnvironment(
   adapter: Adapter | null,
   server: boolean,
-): [url: string | null, adapter: Adapter | null, requireTLS: boolean] {
-  // also from the name of a URL that is passed over
+): [url: string | null, adapter: Adapter | null, requireTLS: boolean, passedOver: PassedOver | null] {
+  // also from the name of an SQLite URL that counts as not set
   let requireTLS = false;
+  let passedOver: PassedOver | null = null;
   for (const row of ENVIRONMENT_URLS) {
     const implied = row[0];
     if (implied && (adapter ? implied !== adapter : server && implied === "sqlite")) continue;
@@ -144,18 +146,24 @@ function urlFromEnvironment(
       const url = env[name];
       if (!url) continue;
 
-      requireTLS ||= name.startsWith("TLS_");
+      const tls = name.startsWith("TLS_");
       const named = adapterFromScheme(schemeOf(url));
-      if (server) {
-        if (named === "sqlite") continue;
-      } else if (!implied && adapter && named && named !== adapter && !(isMySQL(named) && isMySQL(adapter))) {
+      const foreign =
+        !server && !implied && adapter && named && named !== adapter && !(isMySQL(named) && isMySQL(adapter));
+      if (foreign && adapter !== "sqlite" && named !== "sqlite") {
+        if (URL.parse(url)?.hostname) {
+          passedOver ??= [url, tls];
+          continue;
+        }
+      } else if (foreign || (server && named === "sqlite")) {
+        requireTLS ||= tls;
         continue;
       }
       // An SQLite URL is one under any name.
-      return [url, named === "sqlite" ? named : implied, requireTLS];
+      return [url, named === "sqlite" ? named : implied, requireTLS || tls, passedOver];
     }
   }
-  return [null, null, requireTLS];
+  return [null, null, requireTLS, passedOver];
 }
 
 function hasServerOption(options: AnyOptions): boolean {
@@ -224,7 +232,13 @@ function readInherited(options: AnyOptions, source: AnyOptions, names: string[])
 function resolveTarget(
   first: AnyOptions | string | URL | null | undefined,
   second: AnyOptions,
-): [adapter: Adapter, options: AnyOptions, target: string | URL | null, requireTLS: boolean] {
+): [
+  adapter: Adapter,
+  options: AnyOptions,
+  target: string | URL | null,
+  requireTLS: boolean,
+  passedOver: PassedOver | null,
+] {
   let target: string | URL | null = null;
   if (typeof first === "string" || first instanceof URL) {
     target = first;
@@ -264,14 +278,17 @@ function resolveTarget(
   // The URL from the environment fills in what the options leave out. Next to a URL in the options
   // the name of its variable still counts: for the adapter, and TLS_ for the SSL mode.
   let requireTLS = false;
-  const namesServer =
-    adapter !== "sqlite" && !!(target || options.hostname || options.host || options.path || options.socket);
-  if (readsEnvironment && !(NAMED_HOST_IGNORES_ENVIRONMENT_URL && namesServer)) {
-    const [url, implied, tls] = urlFromEnvironment(adapterOption, namesServer);
+  let passedOver: PassedOver | null = null;
+  if (readsEnvironment) {
+    const namesServer =
+      adapter !== "sqlite" && !!(target || options.hostname || options.host || options.path || options.socket);
+    let url: string | null, implied: Adapter | null;
+    [url, implied, requireTLS, passedOver] = urlFromEnvironment(adapterOption, namesServer);
     target ||= url;
+    // A URL that is in use speaks for its server itself.
+    if (target) passedOver = null;
     // mysql and mariadb are one driver, so between them the name decides, as for a URL without a scheme.
     if (!adapter || (!adapterOption && implied && isMySQL(adapter) && isMySQL(implied))) adapter = implied;
-    requireTLS = tls;
   }
 
   if (!adapter) {
@@ -285,7 +302,7 @@ function resolveTarget(
     }
   }
 
-  return [adapter, options, target, requireTLS];
+  return [adapter, options, target, requireTLS, passedOver];
 }
 
 function refuseRequiredChannelBinding(adapter: Adapter, channelBinding: unknown) {
@@ -586,7 +603,10 @@ function parseOptions(
   stringOrUrlOrOptions: Bun.SQL.Options | string | URL | undefined,
   definitelyOptionsButMaybeEmpty: Bun.SQL.Options,
 ): Bun.SQL.__internal.DefinedOptions {
-  const [adapter, options, target, requireTLS] = resolveTarget(stringOrUrlOrOptions, definitelyOptionsButMaybeEmpty);
+  const [adapter, options, target, requireTLS, passedOver] = resolveTarget(
+    stringOrUrlOrOptions,
+    definitelyOptionsButMaybeEmpty,
+  );
 
   if (adapter === "sqlite") {
     return parseSQLiteOptions(target, options);
@@ -629,6 +649,7 @@ function parseOptions(
   }
 
   // Every field: option, deprecated alias, URL query, URL, environment, default.
+  // Except the database, whose variable is above the URL.
 
   let hostname =
     options.hostname || options.host || query.hostname || urlHostname || envOf(prefix, "HOST") || "localhost";
@@ -660,10 +681,9 @@ function parseOptions(
   const database =
     options.database ||
     options.db ||
-    (!URL_DATABASE_IS_ABOVE_ITS_VARIABLE && envOf(prefix, "DATABASE")) ||
+    envOf(prefix, "DATABASE") ||
     query.database ||
     (!isUnixUrl && decodeIfValid(urlPathname.slice(1))) ||
-    envOf(prefix, "DATABASE") ||
     (isPostgres ? username : "");
 
   let path =
@@ -729,7 +749,7 @@ function parseOptions(
   }
   const transform = transformOption != null ? parseTransform(transformOption) : undefined;
 
-  // The name of a TLS_* URL variable asks for at least `require`.
+  // The name of a TLS_* URL variable asks for `require`, and PGSSLMODE can ask for more.
   let sslMode: SSLMode = requireTLS ? SSLMode.require : SSLMode.disable;
   if (isPostgres) {
     const envSslMode = normalizeSSLMode(envOf(prefix, "SSLMODE"));
@@ -737,13 +757,27 @@ function parseOptions(
   }
   sslMode = query.sslMode ?? sslMode;
 
+  let passedOverMode = SSLMode.disable;
+  if (passedOver !== null) {
+    if (passedOver[1]) passedOverMode = SSLMode.require;
+    // One that does not parse asks for nothing.
+    try {
+      const unused = { __proto__: null } as unknown as Record<string, string>;
+      const asked = readUrlQuery(parseServerUrl(passedOver[0], adapter, adapter)[0], isPostgres, unused);
+      passedOverMode = asked.sslMode ?? passedOverMode;
+      if (asked.tls && passedOverMode <= SSLMode.prefer) passedOverMode = SSLMode.require;
+    } catch {}
+  }
+
   let tls: TLSOptions | (Bun.BunFile & TLSOptions) | boolean | undefined;
   const { tls: optionsTls, ssl: optionsSsl } = options;
   const tlsOption = optionsTls || optionsSsl;
   if (typeof tlsOption === "string" && tlsOption) {
     sslMode = normalizeSSLMode(tlsOption);
+    passedOverMode = SSLMode.disable;
   } else if (!tlsOption && (optionsTls === false || optionsSsl === false)) {
     sslMode = SSLMode.disable;
+    passedOverMode = SSLMode.disable;
   } else if ($inheritsBlob(tlsOption)) {
     // A `Bun.file()` is the CA bundle to verify the server certificate against.
     tls = { ca: tlsOption };
@@ -755,7 +789,7 @@ function parseOptions(
   // declines TLS, the connection is aborted instead of continuing in plaintext.
   // Certificate verification is only enabled when explicitly requested
   // (ca, caFile, checkServerIdentity, rejectUnauthorized, or a verify-* sslmode).
-  if ((tls || (TLS_VARIABLE_IS_A_FLOOR && requireTLS)) && sslMode <= SSLMode.prefer) {
+  if (tls && sslMode <= SSLMode.prefer) {
     sslMode = SSLMode.require;
   }
 
@@ -776,6 +810,8 @@ function parseOptions(
       sslMode = SSLMode.verify_full;
     }
   }
+  // It can only ask for more, and an option that names a mode has replaced it.
+  if (passedOverMode > sslMode) sslMode = passedOverMode;
 
   // `tls` is read before its alias; a mode the alias names still counts.
   if (optionsTls && typeof optionsSsl === "string") {
@@ -790,13 +826,6 @@ function parseOptions(
   } else if (sslMode !== SSLMode.disable && (tls === undefined || tls === true || $isObject(tls))) {
     // The native constructor rejects any other `tls`.
     tlsObject.serverName ||= tlsObject.servername || hostname;
-    if (
-      VERIFY_MODES_IGNORE_NODE_TLS_REJECT_UNAUTHORIZED &&
-      sslMode >= SSLMode.verify_ca &&
-      rejectUnauthorized !== false
-    ) {
-      tlsObject.rejectUnauthorized = true;
-    }
     tls = tlsObject;
   }
 

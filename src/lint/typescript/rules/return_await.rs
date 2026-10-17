@@ -234,6 +234,7 @@ impl ReturnAwait {
         let mut affects_error_handling = None;
         let mut rest: SmallVec<[Expr<'a>; 8]> = smallvec![returned];
         while let Some(node) = rest.pop() {
+            let node = node.with_jsdoc_cast();
             match node.kind() {
                 ExprKind::Cond { yes, no, .. } => rest.extend([yes, no]),
                 _ => self.test(node, returned, &mut affects_error_handling, cx),

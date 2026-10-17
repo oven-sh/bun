@@ -5,7 +5,7 @@ use bun_core::strings;
 use bun_semver::{PinnedVersion, Version};
 
 use crate::lockfile::CatalogMap;
-use crate::lockfile::override_map::OverrideRule;
+use crate::lockfile::override_map::{Field, OverrideRule};
 use crate::lockfile_real::override_selector::{
     PackageSelector, Selector, parse_package_segment, parse_selector,
 };
@@ -112,6 +112,7 @@ impl PackageJsonEdit {
 
 pub(super) fn new_literal_for(old_literal: &[u8], to: &[u8], exact: bool) -> Box<[u8]> {
     let old = strings::trim(old_literal, &strings::WHITESPACE_CHARS);
+    let old = crate::dependency::without_npm_protocol(old);
     let mut out: Vec<u8> = Vec::with_capacity(old.len() + to.len() + 2);
     let range: &[u8] = match old.strip_prefix(b"npm:") {
         Some(alias) => match strings::last_index_of_char(alias, b'@') {
@@ -258,12 +259,11 @@ fn for_each_override_value(
     selector: &OverrideSelector,
     mut f: impl FnMut(&mut Option<Expr>),
 ) {
-    for (field, nested) in [(b"overrides".as_slice(), true), (b"resolutions", false)] {
-        let Some(mut rules) = root.get(field) else {
-            continue;
-        };
+    if let Some((field, rules)) = Field::of(root) {
+        let nested = field == Field::Overrides;
+        let mut rules = rules.expr;
         let Some(object) = rules.data.e_object_mut() else {
-            continue;
+            return;
         };
         for prop in object.properties.slice_mut() {
             let Some(key) = prop.key.as_ref().and_then(Expr::as_utf8_string_literal) else {

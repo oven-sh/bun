@@ -8427,13 +8427,14 @@ impl<'p, 's> Checker<'p, 's> {
             result &= compare_types(self, s, t);
         }
         let (mut sp, mut tp) = (self.sig_params(source), tp);
+        let is_open = [&sp, &tp].map(|params| matches!(params, List::Own(_)));
         for i in 0..self.parameter_count(&tp) {
             // `getTypeAtPosition` pushes the type resolution of the parameter, of the source first.
             // What `sig_params` could not store, it computed behind its barrier (`eager`).
-            if result.holds() && matches!(sp, List::Own(_)) {
+            if result.holds() && is_open[0] {
                 sp = self.sig_params_up_to(source, i + 1);
             }
-            if result.holds() && matches!(tp, List::Own(_)) {
+            if result.holds() && is_open[1] {
                 tp = self.sig_params_up_to(target, i + 1);
             }
             let s = self.param_type_at(&sp, i).unwrap_or(TypeId::ANY);

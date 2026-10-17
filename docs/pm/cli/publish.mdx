@@ -97,6 +97,10 @@ You can also set `--tag` in the `publishConfig` field of your `package.json`.
 }
 ```
 
+A prerelease version such as `2.0.0-beta.1` needs a tag: without one it would become `latest`, the version `bun add` installs. To publish it as `latest` anyway, pass `--tag latest`.
+
+A tag cannot be a version or a version range, such as `1.2.3` or `v1`.
+
 ### `publishConfig.registry`
 
 A package can pin the registry it is published to in the `publishConfig` field of its `package.json`, regardless of the registry configured for installs. `--registry` on the command line still overrides it.
@@ -122,6 +126,8 @@ As in npm, `publishConfig.registry` replaces the default registry only. A regist
 ```
 
 Credentials are the ones configured for that registry, the same as when it is the default registry: a `//registry.myorg.example/:_authToken=...` line in `.npmrc`, or a registry with the same URL in `bunfig.toml` or `.npmrc`. When there are none, the credentials of the registry the package would otherwise have been published to are used only if the pinned registry has the same origin; otherwise `bun publish` fails with a missing authentication error instead of sending them to a different registry.
+
+As in npm, `publishConfig` is read like the name and the version: from the `package.json` that the `prepublishOnly`, `prepack` and `prepare` scripts leave behind.
 
 ### `--dry-run`
 
@@ -170,7 +176,13 @@ bun publish --otp 123456
 
 ### `--provenance`
 
-`bun publish` cannot generate provenance statements yet: `--provenance`, `--provenance-file`, a `publishConfig.provenance` other than `false` in `package.json`, and an `NPM_CONFIG_PROVENANCE` environment variable other than `false` are errors, so that a package is never published without the statement it asked for.
+`bun publish` cannot generate provenance statements yet: `--provenance`, `--provenance-file`, `"provenance": true` in `publishConfig`, `NPM_CONFIG_PROVENANCE=true` and `provenance=true` in `.npmrc` are errors, so that a package is never published without the statement it asked for.
+
+A setting that turns provenance off is fine. As in npm, the command line wins over `publishConfig`, `publishConfig` over the environment, and the environment over `.npmrc`:
+
+```sh terminal icon="terminal"
+bun publish --no-provenance # or --provenance=false
+```
 
 ---
 

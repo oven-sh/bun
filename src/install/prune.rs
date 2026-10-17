@@ -1981,8 +1981,10 @@ fn remove_from_older_places(
     // A tree comes after its parent.
     let mut keeps_one_below = vec![false; trees.len()];
     for id in (1..trees.len()).rev() {
-        if keeps_older_copy[id] || keeps_one_below[id] {
-            keeps_one_below[trees[id].parent as usize] = true;
+        if (keeps_older_copy[id] || keeps_one_below[id])
+            && let Some(parent) = keeps_one_below.get_mut(trees[id].parent as usize)
+        {
+            *parent = true;
         }
     }
     for folder in found {

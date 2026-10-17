@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { itBundled } from "./expectBundled";
@@ -593,7 +593,7 @@ error: Hello World`,
 
   // One file under the pragma per row: what the module loader does with it, and what the bundler does.
   // The loader calls the value of the file's last statement, so it runs more texts than `bun build` writes.
-  describe("bun/BunCjsFile shapes", () => {
+  describe.concurrent("bun/BunCjsFile shapes", () => {
     const source = `module.exports = { v: 42 };`;
     const json = '{"v":42}';
     let written!: Record<"plain" | "bytecode" | "hashbang" | "banner" | "sourcemap" | "footer", string>;
@@ -659,7 +659,7 @@ error: Hello World`,
       ],
     };
 
-    test("fixtures", async () => {
+    beforeAll(async () => {
       written = {
         plain: await bunCjsFile("lib.cjs", source),
         bytecode: await bunCjsFile("lib.cjs", source, { bytecode: true }),
@@ -670,7 +670,11 @@ error: Hello World`,
       };
       declarationFooter = await bunCjsFile("lib.cjs", source, { footer: "var after = 1;" });
       statementFooter = await bunCjsFile("lib.cjs", source, { footer: `console.log("after");` });
+    });
+
+    test("a --footer is written after the wrapper", () => {
       expect(declarationFooter).toEndWith("})\n\nvar after = 1;\n");
+      expect(statementFooter).toEndWith(`})\n\nconsole.log("after");\n`);
     });
 
     for (const [name, [file, loader, bundler]] of Object.entries(shapes)) {

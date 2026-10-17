@@ -22,17 +22,21 @@ use crate::bun_json::{self as json, scan};
 
 /// The text of a package.json that was `old`, now that its tree is `root`.
 pub fn print(old: &[u8], root: Expr, indentation: Indentation) -> js_printer::Result<Vec<u8>> {
-    Ok(write(old, root, indentation, false)?.0)
+    Ok(write(old, root, indentation, &mut None, false)?.0)
 }
 
 /// [`print`], and what the parser read the new text as, with the position of every value.
 /// `None` for a text that was printed as a whole: nothing has read that one.
+///
+/// `old_is_jsonc` is for the caller to keep between the saves over one `old`: whether `old`
+/// has a comment or a trailing comma, once the parser has said so.
 pub(crate) fn print_and_read(
     old: &[u8],
     root: Expr,
     indentation: Indentation,
+    old_is_jsonc: &mut Option<bool>,
 ) -> js_printer::Result<(Vec<u8>, Option<json::ParsedJson>)> {
-    write(old, root, indentation, true)
+    write(old, root, indentation, old_is_jsonc, true)
 }
 
 /// The parser reads every text that is written over `old` before it is returned. A text that
@@ -44,6 +48,7 @@ fn write(
     old: &[u8],
     root: Expr,
     indentation: Indentation,
+    old_is_jsonc: &mut Option<bool>,
     with_positions: bool,
 ) -> js_printer::Result<(Vec<u8>, Option<json::ParsedJson>)> {
     let mut text = Text::new(old, indentation);
@@ -51,7 +56,12 @@ fn write(
     let is_wrong = match text.document(&root) {
         Ok(()) => {
             let new = text.out.list;
-            if let Some(read) = read_new(&new, old, text.looks_jsonc, with_positions)
+            let old = OldText {
+                text: old,
+                looks_jsonc: text.looks_jsonc,
+                is_jsonc: old_is_jsonc,
+            };
+            if let Some(read) = read_new(&new, old, with_positions)
                 && is_tree(&read.root, &root, stack)
             {
                 return Ok((new, Some(read)));
@@ -95,29 +105,38 @@ fn print_new_file(old: &[u8], root: Expr, indentation: Indentation) -> js_printe
     Ok(writer.ctx.written_without_trailing_zero().to_vec())
 }
 
+/// The old text, for the question whether a new text may have comments and trailing commas.
+struct OldText<'a> {
+    text: &'a [u8],
+    /// What the text looked like when it was read. This only says which dialect to read the
+    /// new text in first, so that a file is read once when it is as it looks.
+    looks_jsonc: bool,
+    /// What the parser says, once it was asked.
+    is_jsonc: &'a mut Option<bool>,
+}
+
+impl OldText<'_> {
+    fn is_jsonc(&mut self) -> bool {
+        *self
+            .is_jsonc
+            .get_or_insert_with(|| read(self.text, json::JSONOptions::DEFAULT, false).is_none())
+    }
+}
+
 /// What the parser reads `new` as. `None` also for a text that has a comment or a trailing
-/// comma when `old` has none: strict JSON stays strict JSON.
-///
-/// `old_looks_jsonc` only says which dialect to read first, so that a file is read once when
-/// it is as it looks. Whether `old` is strict JSON is for the parser to say.
-fn read_new(
-    new: &[u8],
-    old: &[u8],
-    old_looks_jsonc: bool,
-    with_positions: bool,
-) -> Option<json::ParsedJson> {
+/// comma when the old text has none: strict JSON stays strict JSON.
+fn read_new(new: &[u8], mut old: OldText<'_>, with_positions: bool) -> Option<json::ParsedJson> {
     let strict = json::JSONOptions::DEFAULT;
-    let old_is_jsonc = || read(old, strict, false).is_none();
-    if old_looks_jsonc {
+    if old.looks_jsonc {
         let read_as_jsonc = read(new, json::PACKAGE_JSON_OPTS, with_positions)?;
-        return if old_is_jsonc() {
+        return if old.is_jsonc() {
             Some(read_as_jsonc)
         } else {
             read(new, strict, with_positions)
         };
     }
     read(new, strict, with_positions).or_else(|| {
-        if old_is_jsonc() {
+        if old.is_jsonc() {
             read(new, json::PACKAGE_JSON_OPTS, with_positions)
         } else {
             None

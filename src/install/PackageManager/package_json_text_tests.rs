@@ -431,7 +431,11 @@ fn the_tree_that_is_read_back_is_the_tree_that_was_saved() {
     let bump = bun_alloc::Arena::new();
     let old = b"{\n  // c\n  \"a\": 1,\n}\n";
     let root = parse(b"{\"a\": 1, \"b\": [true, null, \"s\"]}", &bump);
-    let (text, read) = print_and_read(old, root, Indentation::default()).expect("prints");
+    let mut old_is_jsonc = None;
+    let (text, read) =
+        print_and_read(old, root, Indentation::default(), &mut old_is_jsonc).expect("prints");
+    // The old text looks like a text with a comment, and the parser said that it is one.
+    assert_eq!(old_is_jsonc, Some(true));
     assert_eq!(
         bstr::BStr::new(&text),
         "{\n  // c\n  \"a\": 1,\n  \"b\": [true, null, \"s\"],\n}\n"
@@ -461,16 +465,24 @@ fn strict_json_stays_strict_json() {
     let with_comment = b"{\"a\": [ // c\n] }";
     let with_comma = b"{\"a\": [1,], }";
     let strict = b"{\"a\": [1]}";
+    let may_be = |new: &[u8], old: &[u8], looks_jsonc: bool| {
+        let old = OldText {
+            text: old,
+            looks_jsonc,
+            is_jsonc: &mut None,
+        };
+        read_new(new, old, false).is_some()
+    };
     // Whatever the old text looks like: a text with a comment or a trailing comma is the
     // text of a file that has one, and not of a file that has none.
     for looks_jsonc in [false, true] {
         for new in [&with_comment[..], with_comma] {
-            assert!(read_new(new, with_comment, looks_jsonc, false).is_some());
-            assert!(read_new(new, with_comma, looks_jsonc, false).is_some());
-            assert!(read_new(new, strict, looks_jsonc, false).is_none());
+            assert!(may_be(new, with_comment, looks_jsonc));
+            assert!(may_be(new, with_comma, looks_jsonc));
+            assert!(!may_be(new, strict, looks_jsonc));
         }
         for old in [&with_comment[..], with_comma, strict] {
-            assert!(read_new(strict, old, looks_jsonc, false).is_some());
+            assert!(may_be(strict, old, looks_jsonc));
         }
     }
 }
@@ -939,11 +951,12 @@ fn check(seed: u64, edits: usize) {
         context()
     );
     for looks_jsonc in [false, true] {
-        assert!(
-            read_new(&printed, old, looks_jsonc, false).is_some(),
-            "{}",
-            context()
-        );
+        let old = OldText {
+            text: old,
+            looks_jsonc,
+            is_jsonc: &mut None,
+        };
+        assert!(read_new(&printed, old, false).is_some(), "{}", context());
     }
     assert_eq!(text.looks_jsonc, !is_strict, "{}", context());
     assert_eq!(value_of(&parse(&printed, &bump)), value, "{}", context());

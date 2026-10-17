@@ -26,6 +26,9 @@ pub struct MapEntry {
     pub source: Source,
     pub indentation: Indentation,
     indentation_guessed: bool,
+    /// Whether the text as loaded has a comment or a trailing comma, once a save had the
+    /// parser say so.
+    loaded_is_jsonc: Option<bool>,
     /// Owns the path bytes that `source.path.{text,pretty,name.*}` borrow,
     /// so the source's path slices stay valid for the entry's lifetime.
     /// `StringHashMap` boxes its own key, so keep the duped copy alive here.
@@ -45,7 +48,12 @@ impl MapEntry {
     /// owns its nodes and their positions are positions in its text.
     pub fn save(&mut self, root: Expr, log: &mut Log) -> Result<(), Error> {
         let loaded = self.stale_contents.first().unwrap_or(&self.source.contents);
-        let (text, read) = package_json_text::print_and_read(loaded, root, self.indentation)?;
+        let (text, read) = package_json_text::print_and_read(
+            loaded,
+            root,
+            self.indentation,
+            &mut self.loaded_is_jsonc,
+        )?;
         let old = core::mem::replace(&mut self.source.contents, Cow::Owned(text));
         self.stale_contents.push(old);
         let Some(read) = read else {
@@ -229,6 +237,7 @@ impl WorkspacePackageJSONCache {
             source,
             indentation: parsed.indentation,
             indentation_guessed: opts.guess_indentation,
+            loaded_is_jsonc: None,
             // `source.path` borrows this allocation; the `Box<[u8]>` heap
             // address is stable across the move into the map.
             _path_storage: key,

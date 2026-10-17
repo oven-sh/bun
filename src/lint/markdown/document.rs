@@ -362,7 +362,7 @@ impl<'d> Node<'d> {
     #[inline]
     pub(crate) fn span(self) -> Span {
         self.get()
-            .map_or(Span::default(), |it| Span::new(it.start, it.end))
+            .map_or_else(Span::default, |it| Span::new(it.start, it.end))
     }
 
     /// `node.position.start.offset`

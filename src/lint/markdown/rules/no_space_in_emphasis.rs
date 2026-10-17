@@ -74,8 +74,14 @@ impl Listens for NoSpaceInEmphasis {
         cx: &mut Context<'d>,
     ) -> Result<(), OutOfRange> {
         match listener {
-            0 => return Ok(texts.clear()),
-            1 => return Ok(texts.push(node.span())),
+            0 => {
+                texts.clear();
+                return Ok(());
+            }
+            1 => {
+                texts.push(node.span());
+                return Ok(());
+            }
             _ => {}
         }
         let has_marker = |span: &Span| self.markers(cx.document.slice(*span)).next().is_some();
@@ -111,8 +117,7 @@ impl Listens for NoSpaceInEmphasis {
             Ok(())
         };
         for (_, group) in &groups {
-            for pair in group.chunks_exact(2) {
-                let (opening, closing) = (pair[0], pair[1]);
+            for &[opening, closing] in group.as_chunks::<2>().0 {
                 report_whitespace(opening.1, opening.0, opening.1 + 2)?;
                 report_whitespace(closing.0 - 1, closing.0 - 2, closing.1)?;
             }

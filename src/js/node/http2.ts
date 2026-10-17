@@ -3022,7 +3022,15 @@ function doSendFD(this: ServerHttp2Stream, options, fd, headers, err, stat) {
     return;
   }
 
-  processRespondWithFD.$call(this, options, fd, headers, statOptions.offset, statOptions.length, false);
+  // Like node, the range that statCheck left is coerced before a header is sent.
+  const offset = toFileRange(statOptions.offset);
+  const length = toFileRange(statOptions.length);
+  processRespondWithFD.$call(this, options, fd, headers, offset, length, false, stat);
+}
+
+// node coerces a file range with `| 0`, which wraps at 2^31. Math.trunc keeps a range past 2 GiB.
+function toFileRange(value) {
+  return Math.trunc(value) || 0;
 }
 
 // node doSendFileFD: respondWithFile() after fstat. Every exit closes the descriptor it opened.
@@ -3068,15 +3076,9 @@ function doSendFileFD(options, fd, headers, err, stat) {
     offset: options.offset !== undefined ? options.offset : 0,
     length: options.length !== undefined ? options.length : -1,
   };
+  // node has no clamp: a negative offset there adds to content-length, and the client rejects the response.
   if (statOptions.offset <= 0) {
     statOptions.offset = 0;
-  }
-  if (statOptions.length <= 0) {
-    if (stat.isFile()) {
-      statOptions.length = stat.size;
-    } else {
-      statOptions.length = undefined;
-    }
   }
   // options.statCheck is a user-provided function that can be used to
   // verify stat values, override or set headers, or even cancel the
@@ -3085,8 +3087,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
   // of response so check again for the HEADERS_SENT flag
   let cancelled = false;
   try {
-    cancelled =
-      typeof options.statCheck === "function" && options.statCheck.$call(this, stat, headers, options) === false;
+    cancelled = typeof options.statCheck === "function" && options.statCheck.$call(this, stat, headers) === false;
   } catch (err) {
     tryClose(fd);
     throw err;
@@ -3115,13 +3116,15 @@ function doSendFileFD(options, fd, headers, err, stat) {
     options,
     fd,
     headers,
-    stat.isFile() ? statOptions.offset : -1,
-    statOptions.length ?? -1,
+    stat.isFile() ? toFileRange(statOptions.offset) : -1,
+    toFileRange(statOptions.length),
     true,
+    stat,
   );
 }
 
-// node processRespondWithFD + startFilePipe. offset < 0: the current position. length < 0: to EOF.
+// node processRespondWithFD. offset < 0: the current position. length < 0: to EOF.
+// `stat` is undefined for respondWithFD() without a statCheck, which has not read it.
 function processRespondWithFD(
   this: ServerHttp2Stream,
   options,
@@ -3130,6 +3133,7 @@ function processRespondWithFD(
   offset: number,
   length: number,
   ownsFd: boolean,
+  stat?: import("node:fs").Stats,
 ) {
   const onError = options.onError;
   try {
@@ -3150,18 +3154,49 @@ function processRespondWithFD(
   // _final (END_STREAM / wantTrailers) logic returned here.
   const finishNativeStream = closeWritableForFileResponse(this);
 
-  offset = Math.trunc(offset) || 0;
-  length = Math.trunc(length) || 0;
+  if (length < 0 && offset >= 0) {
+    // To EOF from a known offset: the size keeps the read stream from allocating 64 KiB for each read.
+    if (stat === undefined) {
+      // The headers are out and the descriptor is the caller's, so a failed fstat ends like a failed read.
+      try {
+        fs.fstat(fd, (err, stat) => {
+          if (this.destroyed || this.closed) return;
+          if (err) onFileStreamError.$call(this);
+          else pipeFile(this, fd, offset, fileLengthFrom(stat, offset), false, finishNativeStream);
+        });
+      } catch {
+        process.nextTick(onFileStreamError.bind(this));
+      }
+      return;
+    }
+    length = fileLengthFrom(stat, offset);
+  }
+  pipeFile(this, fd, offset, length, ownsFd, finishNativeStream);
+}
+
+// The bytes from `offset` to the end of a regular file. -1: not a regular file, so read to EOF.
+function fileLengthFrom(stat: import("node:fs").Stats, offset: number) {
+  return stat.isFile() ? Math.max(stat.size - offset, 0) : -1;
+}
+
+// node startFilePipe, with an fs.ReadStream as the source. length < 0: to EOF.
+function pipeFile(
+  stream: ServerHttp2Stream,
+  fd: number,
+  offset: number,
+  length: number,
+  ownsFd: boolean,
+  finishNativeStream: (callback: () => void) => void,
+) {
   if (length === 0) {
     if (ownsFd) tryClose(fd);
     // Next tick: _final has to see a 'wantTrailers' listener added right after respondWithFD().
     process.nextTick(() => {
-      if (!this.destroyed && !this.closed) finishNativeStream(() => {});
+      if (!stream.destroyed && !stream.closed) finishNativeStream(() => {});
     });
     return;
   }
 
-  const stream = this;
   let fileStream;
   try {
     fileStream = fs.createReadStream(null, {
@@ -3171,11 +3206,19 @@ function processRespondWithFD(
       start: offset < 0 ? undefined : offset,
       end: length < 0 ? undefined : Math.min(Math.max(offset, 0) + length - 1, Number.MAX_SAFE_INTEGER),
       emitClose: false,
+      fs: {
+        // No read starts once the stream is gone: from then on the caller can close its descriptor.
+        read(descriptor, buffer, at, size, position, callback) {
+          if (stream.destroyed || stream.closed) callback(null, 0, buffer);
+          else fs.read(descriptor, buffer, at, size, position, callback);
+        },
+        close: fs.close,
+      },
     });
   } catch {
     // The headers are out: an fd or range that createReadStream rejects ends like a failed read.
     if (ownsFd) tryClose(fd);
-    onFileStreamError.$call(this);
+    process.nextTick(onFileStreamError.bind(stream));
     return;
   }
   const sink = new Stream.Writable({
@@ -3200,8 +3243,8 @@ function processRespondWithFD(
   // stream itself goes away (peer reset, session destroy), stop reading the file. Like node's
   // onFileUnpipe, only an fd the stream opened itself (respondWithFile) is closed here; an fd
   // handed to respondWithFD stays the caller's to close.
-  fileStream.on("error", onFileStreamError.bind(this));
-  this.once("close", () => {
+  fileStream.on("error", onFileStreamError.bind(stream));
+  stream.once("close", () => {
     fileStream.unpipe(sink);
     if (ownsFd) fileStream.destroy();
     else fileStream.pause();
@@ -3418,7 +3461,7 @@ class ServerHttp2Stream extends Http2Stream {
   }
 
   respondWithFile(path, headers?: HeadersObject | null, options?) {
-    if (this.destroyed) {
+    if (this.destroyed || this.closed || this.session === undefined) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
@@ -3523,8 +3566,10 @@ class ServerHttp2Stream extends Http2Stream {
       fs.fstat(fd, doSendFD.bind(this, options, fd, headers));
       return;
     }
-    // Like node, nothing stats the descriptor when there is no statCheck to show it to.
-    processRespondWithFD.$call(this, options, fd, headers, options.offset ?? 0, options.length ?? -1, false);
+    // Like node, the headers go out before anything looks at the descriptor.
+    const offset = toFileRange(options.offset ?? 0);
+    const length = toFileRange(options.length ?? -1);
+    processRespondWithFD.$call(this, options, fd, headers, offset, length, false);
   }
   additionalHeaders(headers?: HeadersObject | null) {
     if (this.destroyed || this.closed || this.session === undefined) {

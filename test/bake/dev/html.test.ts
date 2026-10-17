@@ -1,4 +1,5 @@
 // HTML tests are tests relating to HTML files themselves.
+import { expect } from "bun:test";
 import { devTest, emptyHtmlFile } from "../bake-harness";
 
 devTest("html file is watched", {
@@ -126,6 +127,70 @@ devTest("image import in JS", {
     const img2 = await c.getStringMessage();
     await dev.fetch(img2).expect.toBe("SECOND");
     // await dev.fetch(img1).expect404();
+  },
+});
+devTest("html references a json file that is cached as a module", {
+  // "manifest.json" is bundled as a module first. It is not in the asset
+  // store, so a later HTML reference to it must not look up an asset URL.
+  files: {
+    "index.html": `
+      <!DOCTYPE html><html><head></head><body>
+      <script type="module" src="script.ts"></script>
+      </body></html>
+    `,
+    "script.ts": `
+      import manifest from "./manifest.json";
+      console.log(manifest.name);
+    `,
+    "manifest.json": `{ "name": "app" }`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("app");
+
+    await c.expectReload(async () => {
+      await dev.patch("index.html", {
+        find: "<head></head>",
+        replace: '<head><link rel="manifest" href="./manifest.json"></head>',
+      });
+    });
+    await c.expectMessage("app");
+
+    // One file is one module in the dev server. Until it can also be an
+    // asset, the script keeps the json module and the page is served without the link.
+    const html = await (await dev.fetch("/")).text();
+    expect(html).toInclude("<script");
+    expect(html).not.toInclude('rel="manifest"');
+  },
+});
+devTest("html of a second page references a json file that a script of the first page imports", {
+  // The same as above with no edit: the first page caches "manifest.json" as a module.
+  files: {
+    "first.html": `
+      <!DOCTYPE html><html><head></head><body>
+      <script type="module" src="first.ts"></script>
+      </body></html>
+    `,
+    "second.html": `
+      <!DOCTYPE html><html><head><link rel="manifest" href="./manifest.json"></head><body>
+      <script type="module" src="second.ts"></script>
+      </body></html>
+    `,
+    "first.ts": `
+      import manifest from "./manifest.json";
+      console.log(manifest.name);
+    `,
+    "second.ts": `
+      console.log("second");
+    `,
+    "manifest.json": `{ "name": "app" }`,
+  },
+  async test(dev) {
+    await using c1 = await dev.client("/first");
+    await c1.expectMessage("app");
+
+    await using c2 = await dev.client("/second");
+    await c2.expectMessage("second");
   },
 });
 devTest("import then create", {

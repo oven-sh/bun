@@ -72,6 +72,7 @@ export type NativeCreateQuery<QueryHandle> = (
   pendingValue: SQLResultArray<unknown>,
   bigint: boolean,
   simple: boolean,
+  describe: boolean,
 ) => QueryHandle;
 
 type OnConnected = (err: Error | null, connection: any) => void;
@@ -483,6 +484,7 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
 {
   public readonly connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions;
   public readonly supportsReservedConnections = true;
+  public readonly supportsDescribe: boolean = false;
 
   abstract readonly createNativeConnection: NativeCreateConnection<ConnectionHandle>;
   protected abstract readonly createNativeQuery: NativeCreateQuery<QueryHandle>;
@@ -583,12 +585,15 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
       values = [];
       flags |= SQLQueryFlags.simple;
     }
+    const describe = !!(flags & SQLQueryFlags.describe);
     return this.createNativeQuery(
       sql,
       values,
       new SQLResultArray(),
       !!(flags & SQLQueryFlags.bigint),
-      !!(flags & SQLQueryFlags.simple),
+      // .describe().simple(): the statement is described, not run
+      !describe && !!(flags & SQLQueryFlags.simple),
+      describe,
     );
   }
 

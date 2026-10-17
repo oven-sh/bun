@@ -41,6 +41,7 @@ export const prestartMap = {
   "js/sql/postgres-copy": ["postgres_plain", "postgres_tls"],
   "js/sql/postgres-datestyle": ["postgres_plain"],
   "js/sql/postgres-decode": ["postgres_plain"],
+  "js/sql/postgres-describe": ["postgres_plain"],
   "js/sql/postgres-dispatch": ["postgres_plain"],
   "js/sql/postgres-listen-notify": ["postgres_plain"],
   "js/sql/postgres-multi-statement-fields": ["postgres_plain"],

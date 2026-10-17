@@ -68,6 +68,8 @@ pub struct Flags {
     pub(crate) simple: bool,
     /// Parse + Describe go out first and Bind waits for the server's parameter types.
     pub(crate) describe_first: bool,
+    /// `describe()`: it resolves with the server's description of the statement, which never runs.
+    pub(crate) describe_only: bool,
     /// Its values are what `write_bind` sends. See `PostgresRequest::stage_parameters`.
     pub(crate) staged: bool,
     /// It failed while the server still answers it: its response is skipped until `ReadyForQuery`.
@@ -119,6 +121,7 @@ impl Default for Flags {
             bigint: false,
             simple: false,
             describe_first: false,
+            describe_only: false,
             staged: false,
             discard_response: false,
             cancel: Cancel::No,
@@ -323,6 +326,67 @@ impl PostgresSQLQuery {
         let Some(this_value) = self.this_value.get().try_get() else {
             return;
         };
+        let result =
+            js::pending_value_take_cached(this_value, global_object).unwrap_or(JSValue::UNDEFINED);
+        self.resolve_with(
+            global_object,
+            this_value,
+            [result, js_tag, tag.to_js_number(), statement],
+            is_last,
+        );
+    }
+
+    /// `describe()`: the server has described the statement, and its `ReadyForQuery` is in.
+    pub(crate) fn on_described(&self, global_object: &JSGlobalObject) {
+        let _guard = self.ref_guard();
+        self.status.set(Status::Success);
+        let description = match self.statement_mut() {
+            Some(statement) if statement.is_named() => {
+                statement.description(global_object, &self.query)
+            }
+            Some(statement) => describe(
+                global_object,
+                &self.query,
+                &statement.parameters,
+                &statement.fields,
+            ),
+            None => {
+                debug_assert!(false, "a described request has its statement");
+                return;
+            }
+        };
+        let description = match description {
+            Ok(description) => description,
+            Err(e) => {
+                let err = global_object.take_exception(e);
+                return self.on_js_error(err, global_object);
+            }
+        };
+        description.ensure_still_alive();
+        let Some(this_value) = self.this_value.get().try_get() else {
+            return;
+        };
+        self.resolve_with(
+            global_object,
+            this_value,
+            [
+                description,
+                JSValue::UNDEFINED,
+                JSValue::js_number_from_int32(0),
+                JSValue::NULL,
+            ],
+            true,
+        );
+    }
+
+    /// Calls `onResolvePostgresQuery(query, result, commandTag, count, is_last, statement)`.
+    fn resolve_with(
+        &self,
+        global_object: &JSGlobalObject,
+        this_value: JSValue,
+        [result, js_tag, count, statement]: [JSValue; 4],
+        is_last: bool,
+    ) {
         let _last = scopeguard::guard((), |_| {
             if is_last {
                 Self::allow_gc(this_value, global_object);
@@ -349,10 +413,9 @@ impl PostgresSQLQuery {
             this_value,
             &[
                 target_value,
-                js::pending_value_take_cached(this_value, global_object)
-                    .unwrap_or(JSValue::UNDEFINED),
+                result,
                 js_tag,
-                tag.to_js_number(),
+                count,
                 JSValue::from(is_last),
                 statement,
             ],
@@ -389,6 +452,7 @@ impl PostgresSQLQuery {
             pending_value,
             bigint,
             simple,
+            describe,
         } = QueryCtorArgs::parse(global_this, callframe.arguments())?;
 
         let ptr = bun_core::heap::into_raw(Box::new(PostgresSQLQuery::default()));
@@ -403,6 +467,7 @@ impl PostgresSQLQuery {
             (*ptr).flags.set(Flags {
                 bigint,
                 simple,
+                describe_only: describe,
                 ..Default::default()
             });
         }
@@ -476,14 +541,15 @@ impl PostgresSQLQuery {
             .contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS);
         // Reading the values can run user code, so it comes before any look at the connection's state.
         let mut declared = Vec::new();
-        if !this.flags.get().simple {
+        let flags = this.flags.get();
+        if !flags.simple {
             declared = Signature::declared_types(global_object, binding_value)?;
             let describe_first =
                 !unnamed || PostgresRequest::needs_parameter_types(global_object, binding_value)?;
             this.update_flags(|f| f.describe_first = describe_first);
             // The server takes what is written behind a COPY FROM STDIN for its data. Nothing is
             // written behind a simple query, and the server takes no parameter in a COPY.
-            if this.is_copy_statement() {
+            if !flags.describe_only && this.is_copy_statement() {
                 declared.clear();
                 this.update_flags(|f| f.simple = true);
             }

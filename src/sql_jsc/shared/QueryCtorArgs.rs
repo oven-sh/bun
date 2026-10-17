@@ -1,4 +1,4 @@
-//! Shared `createQuery(query, values, pendingValue?, bigint?, simple?)`
+//! Shared `createQuery(query, values, pendingValue?, bigint?, simple?, describe?)`
 //! constructor-argument parsing/validation used by both the Postgres and MySQL
 //! query constructors.
 
@@ -10,6 +10,8 @@ pub(crate) struct QueryCtorArgs {
     pub pending_value: JSValue,
     pub bigint: bool,
     pub simple: bool,
+    /// PostgreSQL only: the statement is parsed and described, never run.
+    pub describe: bool,
 }
 
 impl QueryCtorArgs {
@@ -33,9 +35,11 @@ impl QueryCtorArgs {
         let pending_value: JSValue = args.next().unwrap_or(JSValue::UNDEFINED);
         let js_bigint: JSValue = args.next().unwrap_or(JSValue::FALSE);
         let js_simple: JSValue = args.next().unwrap_or(JSValue::FALSE);
+        let js_describe: JSValue = args.next().unwrap_or(JSValue::FALSE);
 
         let bigint = js_bigint.is_boolean() && js_bigint.as_boolean();
         let simple = js_simple.is_boolean() && js_simple.as_boolean();
+        let describe = js_describe.is_boolean() && js_describe.as_boolean();
         if simple {
             if values.get_length(global_this)? > 0 {
                 return Err(global_this
@@ -55,6 +59,7 @@ impl QueryCtorArgs {
             pending_value,
             bigint,
             simple,
+            describe,
         })
     }
 }

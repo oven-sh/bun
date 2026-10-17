@@ -294,10 +294,8 @@ describe("maxSessionRejectedStreams and the reset of a delivered stream", () => 
     }
   });
 
-  // Bun-only, kept from 1.4.x: node v26.3.0 answers 3, 5 and 7 with RST_STREAM(REFUSED_STREAM),
-  // charges maxSessionInvalidFrames and keeps the session. Rewrite this test when the refusal
-  // moves to that budget.
-  test("a stream refused over maxConcurrentStreams is counted", async () => {
+  // Node charges this refusal to maxSessionInvalidFrames, so maxSessionRejectedStreams plays no part.
+  test("a stream refused over maxConcurrentStreams does not use maxSessionRejectedStreams", async () => {
     const seen: number[] = [];
     let sessionErrorCode: string | undefined;
     const server = http2.createServer({ settings: { maxConcurrentStreams: 1 }, maxSessionRejectedStreams: 3 });
@@ -314,21 +312,23 @@ describe("maxSessionRejectedStreams and the reset of a delivered stream", () => 
       client.get(1);
       await client.waitFor(f => f.type === HEADERS && f.streamId === 1);
       for (const streamId of [3, 5, 7]) client.get(streamId);
-      const goaway = await client.waitFor(f => f.type === GOAWAY);
-      if (!client.closed) await once(client.socket, "close");
+      await client.waitFor(f => f.type === GOAWAY || (f.type === RST_STREAM && f.streamId === 7));
       expect({
         seen,
         resets: client.resets(),
-        goaway: goaway?.payload.readUInt32BE(4),
+        acked: await client.ping(1),
+        goaways: client.goawayCodes(),
         sessionErrorCode,
       }).toEqual({
         seen: [1],
         resets: [
           [3, REFUSED_STREAM],
           [5, REFUSED_STREAM],
+          [7, REFUSED_STREAM],
         ],
-        goaway: ENHANCE_YOUR_CALM,
-        sessionErrorCode: "ERR_HTTP2_SESSION_ERROR",
+        acked: true,
+        goaways: [],
+        sessionErrorCode: undefined,
       });
     } finally {
       client.socket.destroy();

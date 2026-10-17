@@ -4036,26 +4036,12 @@ class ServerHttp2Session extends Http2Session {
   #remoteSettings: Settings | null = null;
   #pingCallbacks: Array<[Function, number]> | null = null;
   #strictFieldWhitespaceValidation: boolean = true;
-  // The SETTINGS_MAX_CONCURRENT_STREAMS value this session advertised (enforced from the moment it
-  // is submitted, like nghttp2's pending local settings — not only after the peer ACKs).
-  #advertisedMaxConcurrentStreams: number = Infinity;
-  // Client-initiated (odd-id) streams currently open: RFC 9113 5.1.2 - only these count against
-  // the limit this server advertised; its own pushed streams count against the client's setting.
-  #peerInitiatedStreams: number = 0;
 
   static #Handlers = {
     binaryType: "buffer",
     streamStart(self: ServerHttp2Session, stream_id: number) {
       if (!self) return;
-      // RFC 9113 §5.1.2: refuse peer-initiated streams that would exceed the advertised
-      // SETTINGS_MAX_CONCURRENT_STREAMS. nghttp2 answers with RST_STREAM REFUSED_STREAM and never
-      // surfaces the stream to the JS layer.
-      if (stream_id % 2 === 1 && self.#peerInitiatedStreams >= self.#advertisedMaxConcurrentStreams) {
-        // Native counts this against maxSessionRejectedStreams and resets the stream while budget remains.
-        return constants.NGHTTP2_REFUSED_STREAM;
-      }
       self.#connections++;
-      if (stream_id % 2 === 1) self.#peerInitiatedStreams++;
       const stream = new ServerHttp2Stream(stream_id, self, null);
       // Returned to the native caller, which stores it as the stream context — no
       // setStreamContext host call needed.
@@ -4078,13 +4064,11 @@ class ServerHttp2Session extends Http2Session {
         stream.emit("aborted");
       }
       self.#connections--;
-      if (stream.id % 2 === 1) self.#peerInitiatedStreams--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     },
     streamError(self: ServerHttp2Session, stream: ServerHttp2Stream, error: number) {
       if (!self || typeof stream !== "object") return;
       self.#connections--;
-      if (stream.id % 2 === 1) self.#peerInitiatedStreams--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     },
     streamEnd(self: ServerHttp2Session, stream: ServerHttp2Stream, state: number) {
@@ -4114,7 +4098,6 @@ class ServerHttp2Session extends Http2Session {
         stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed;
         markStreamClosed(stream);
         self.#connections--;
-        if (stream.id % 2 === 1) self.#peerInitiatedStreams--;
         if (stream.readable && !stream.rstCode) {
           // Clean close while data is still buffered on the readable side (e.g. the response
           // ended before the request body was consumed): node defers the destroy until the
@@ -4503,10 +4486,6 @@ class ServerHttp2Session extends Http2Session {
     if (typeof options?.maxOutstandingSettings === "number" && options.maxOutstandingSettings >= 1) {
       this.#maxOutstandingSettings = options.maxOutstandingSettings;
     }
-    const advertisedMaxConcurrentStreams = options?.settings?.maxConcurrentStreams ?? options?.maxConcurrentStreams;
-    if (typeof advertisedMaxConcurrentStreams === "number") {
-      this.#advertisedMaxConcurrentStreams = advertisedMaxConcurrentStreams;
-    }
 
     if (options?.settings !== undefined) {
       validateSettings(options.settings);
@@ -4685,9 +4664,6 @@ class ServerHttp2Session extends Http2Session {
     // in ServerHttp2Session's constructor). Clients still accept `enablePush`
     // via their own `settings()` method.
     settings = { ...settings, enablePush: false };
-    if (typeof settings.maxConcurrentStreams === "number") {
-      this.#advertisedMaxConcurrentStreams = settings.maxConcurrentStreams;
-    }
     // node: enforce maxOutstandingSettings - the session is destroyed with
     // ERR_HTTP2_MAX_PENDING_SETTINGS_ACK when too many SETTINGS are un-ACKed.
     this.#pendingSettingsAckCount++;

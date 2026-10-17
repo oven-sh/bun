@@ -488,7 +488,11 @@ test.concurrent("a --user-data-dir in backend.argv is the browser's only profile
   `,
     { BUN_TMPDIR: String(tmp) },
   );
-  expect({ result, afterExit: profileDirs(String(tmp)), userDirKept: existsSync(join(userDir, "Local State")) }).toEqual({
+  expect({
+    result,
+    afterExit: profileDirs(String(tmp)),
+    userDirKept: existsSync(join(userDir, "Local State")),
+  }).toEqual({
     result: { flags: ["--user-data-dir=" + userDir], whileRunning: 0 },
     afterExit: [],
     userDirKept: true,

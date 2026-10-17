@@ -2642,6 +2642,11 @@ describe.concurrent("--fix keeps what the program does, and its comments", () =>
       "directive-and-empty-line.ts": ["", `${suppressed}\nconsole.log(Math.abs("1"));\n`],
       "directive-above-header.ts": ["", `${suppressed}// Counts things.\n\nconsole.log(Math.abs("1"));\n`],
       "triple-slash-directive.ts": ["", `/${suppressed}\nconsole.log(Math.abs("1"));\n`],
+      "directive-above-reference.ts": [
+        '// deno-lint-ignore triple-slash-reference\n/// <reference lib="dom" />\n',
+        "const count = 1;\n",
+      ],
+      "directive-for-the-file.ts": [license, '// @ts-ignore-file\nconsole.log(Math.abs("1"));\n'],
       "directive-with-a-suffix.ts": [license, '// @ts-expect-error-next-line\nconsole.log(Math.abs("1"));\n'],
       "coverage.ts": ["", "/* v8 ignore next -- @preserve */\n\nconst count = 1;\n"],
       "no-side-effects.ts": ["", "/* @__NO_SIDE_EFFECTS__ */\n\nfunction one() {\n  return 1;\n}\n"],

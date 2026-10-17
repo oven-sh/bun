@@ -180,6 +180,14 @@ fn starts_license(content: &[u8]) -> bool {
         || strings::contains(content, b"SPDX-License-Identifier")
 }
 
+/// Each starts with a word that is about the next line.
+const IGNORES_IN_THE_WHOLE_FILE: [&[u8]; 4] = [
+    b"biome-ignore-all",
+    b"deno-lint-ignore-file",
+    b"deno-fmt-ignore-file",
+    b"dprint-ignore-file",
+];
+
 /// Whether `comment` is about the file, going by its text: the `#!` line, a pragma, which counts only before all code
 /// (`// @ts-nocheck`, `/// <reference path="a" />`, `/** @jsx h */`), a directive for a linter, which counts from where it stands
 /// (`/* eslint-disable */`), a license, or what documents the file (`/** @module */`). `bun fmt` keeps such comments above the
@@ -198,16 +206,8 @@ fn is_about_the_file(comment: &Token) -> bool {
         || text.get(2) == Some(&b'!')
         || match_directives_pattern(content)
             .is_some_and(|it| it.starts_with("eslint") && !it.ends_with("line"))
-        || [
-            &b"oxlint-disable"[..],
-            b"oxlint-enable",
-            b"biome-ignore-all",
-            b"deno-lint-ignore-file",
-            b"deno-fmt-ignore-file",
-            b"dprint-ignore-file",
-        ]
-        .into_iter()
-        .any(starts_with_word)
+        || [&b"oxlint-disable"[..], b"oxlint-enable"].into_iter().any(starts_with_word)
+        || IGNORES_IN_THE_WHOLE_FILE.into_iter().any(starts_with_word)
         || starts_license(content)
         || has_tag_about_the_file(content)
 }
@@ -246,12 +246,9 @@ fn is_about_the_next_line(comment: &Token) -> bool {
     let text = comment.text();
     let start = text.iter().take_while(is_before_content).count();
     let content = text.get(start..).unwrap_or_default();
-    // `biome-ignore-all` and `deno-lint-ignore-file` are about the file. TypeScript goes by the prefix: `@ts-ignore-next-line`.
-    let is_at_start = |directive: &&[u8]| {
-        (content.strip_prefix(*directive))
-            .is_some_and(|rest| !rest.starts_with(b"-all") && !rest.starts_with(b"-file"))
-    };
-    DIRECTIVES.iter().any(is_at_start)
+    // TypeScript goes by the prefix: `@ts-ignore-next-line`.
+    let is_at_start = |word: &&[u8]| content.starts_with(word);
+    DIRECTIVES.iter().any(is_at_start) && !IGNORES_IN_THE_WHOLE_FILE.iter().any(is_at_start)
 }
 
 /// Whether tools take `comment` to be about the code after it: the line after it, or what a `/** @type {A} */` documents.
@@ -319,9 +316,22 @@ impl<'a> Fixer<'a> {
         let start_of_text = if file.has_bom() { 3 } else { 0 };
         // A license in `//` lines goes on to the last line of its paragraph.
         let mut end_of_license = None;
-        for comment in file.comments_after(Span::empty(end.unwrap_or(start_of_text))) {
+        let mut comments = file
+            .comments_after(Span::empty(end.unwrap_or(start_of_text)))
+            .peekable();
+        while let Some(comment) = comments.next() {
             if is_about_the_next_line(&comment) {
-                break;
+                // `// eslint-disable-next-line` above `/// <reference path="a" />` is about that line. `// @ts-ignore` is about
+                // the next line that has code.
+                match comments.peek() {
+                    Some(next)
+                        if is_about_the_file(next)
+                            && !strings::contains(comment.text(), b"@ts-") =>
+                    {
+                        continue;
+                    }
+                    _ => break,
+                }
             }
             let goes_on = end_of_license
                 .is_some_and(|end| file.line_of(end) + 1 == file.line_of(comment.start()));

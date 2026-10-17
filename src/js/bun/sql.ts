@@ -209,8 +209,8 @@ function onQueryConnected(
 ) {
   query[_waiter] = null;
   if (err) {
-    // close() gave up on it while it waited. As in onQuerySettled(): one that is only started ends no process.
-    if (this.tornDown) {
+    // The caller dropped it while it waited. As in onQuerySettled(): one that is only started ends no process.
+    if (this.closedAtOnce) {
       $pokePromiseAsHandled(query);
     }
     return query.reject(err);

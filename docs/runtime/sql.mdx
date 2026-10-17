@@ -750,6 +750,7 @@ After `.execute()`, Bun does report the failure when:
 
 - It cannot connect: nothing listens, the login fails or the connection times out.
 - The pool was already closed.
+- The time of `close({ timeout })` runs out while the query waits for a connection.
 - You call `.cancel()` while the query waits for a connection.
 - It cannot build the query or read the file of `sql.file()`.
 - The adapter is SQLite and the query runs outside a transaction.

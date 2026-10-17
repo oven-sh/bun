@@ -96,6 +96,23 @@ async function unhandledRejections(url: string) {
         await row("execute(), then close({ timeout: 0 })", () => { good(cold).execute(); cold.close({ timeout: 0 }); });
         const holder = await sql.reserve();
         await row("execute(), then cancel() while it waits for a connection", () => { good().execute().cancel(); holder.release(); });
+        async function stillQueued(name, close) {
+          const full = new Bun.SQL(process.env.SQL_URL, { max: 1 });
+          await full.reserve();
+          reported.length = 0;
+          good(full).execute();
+          await close(full);
+          await new Promise(setImmediate);
+          result[name] = reported.join();
+        }
+        // The timer of close() does not keep the process alive.
+        const alive = setInterval(() => {}, 2 ** 30);
+        await stillQueued("execute(), still queued when the time of close({ timeout }) runs out", full => full.close({ timeout: 0.001 }));
+        await stillQueued("execute(), still queued when close({ timeout: 0 }) overtakes close({ timeout })", full => {
+          full.close({ timeout: 60 });
+          return full.close({ timeout: 0 });
+        });
+        clearInterval(alive);
       }
       const closed = new Bun.SQL(process.env.SQL_URL, { max: 1 });
       await closed.close();
@@ -113,7 +130,7 @@ async function unhandledRejections(url: string) {
 }
 
 /** Without a listener. Not in a top-level await: while one is pending, Bun reports the rejection and goes on. */
-async function outlivesAQueryThatIsOnlyStarted(url: string, closesAtOnce = false) {
+async function outlivesAQueryThatIsOnlyStarted(url: string, closeTimeout?: number) {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -121,9 +138,13 @@ async function outlivesAQueryThatIsOnlyStarted(url: string, closesAtOnce = false
       `
       const sql = new Bun.SQL(process.env.SQL_URL, { max: 1 });
       (async () => {
-        if (${closesAtOnce}) {
+        // The timer of close() does not keep the process alive.
+        const alive = setInterval(() => {}, 2 ** 30);
+        if (${closeTimeout} !== undefined) {
+          // Behind a reservation the query is still queued when the time runs out.
+          if (${closeTimeout} > 0) await sql.reserve();
           sql.unsafe("select 1").execute();
-          await sql.close({ timeout: 0 });
+          await sql.close({ timeout: ${closeTimeout} });
         } else {
           await sql.unsafe("select 1");
           sql.unsafe("select * from bun_pool_no_such_table").execute();
@@ -131,6 +152,7 @@ async function outlivesAQueryThatIsOnlyStarted(url: string, closesAtOnce = false
         }
         await new Promise(setImmediate);
         console.log("alive");
+        clearInterval(alive);
         await sql.close();
       })();
       `,
@@ -159,6 +181,7 @@ const refusedInSilenceByAServer = {
   ...refusedInSilence,
   "execute() on a reservation that was released": "",
   "execute(), then close({ timeout: 0 })": "",
+  "execute(), still queued when close({ timeout: 0 }) overtakes close({ timeout })": "",
 };
 const refusedAloud = { "execute() on a pool that is closed": "query" };
 const handled = {
@@ -693,15 +716,28 @@ for (const server of servers) {
 
       test("of a query that is only started, with close({ timeout: 0 }) behind it, does not end the process", async () => {
         await container.ready;
-        expect(await outlivesAQueryThatIsOnlyStarted(server.url(container.host, container.port), true)).toEqual({
+        expect(await outlivesAQueryThatIsOnlyStarted(server.url(container.host, container.port), 0)).toEqual({
           stdout: "alive\n",
           exitCode: 0,
         });
       });
 
+      test("of a query that is only started and still queued when the time of close({ timeout }) runs out ends the process", async () => {
+        await container.ready;
+        const { exitCode } = await outlivesAQueryThatIsOnlyStarted(server.url(container.host, container.port), 0.001);
+        expect(exitCode).toBe(1);
+      });
+
       test("of a query that is only started is reported for a closed pool and a cancel() while it waits", async () => {
         expect(await reported()).toMatchObject({
           result: { ...refusedAloud, "execute(), then cancel() while it waits for a connection": "query" },
+          exitCode: 0,
+        });
+      });
+
+      test("of a query that is only started is reported when the time of close({ timeout }) runs out", async () => {
+        expect(await reported()).toMatchObject({
+          result: { "execute(), still queued when the time of close({ timeout }) runs out": "query" },
           exitCode: 0,
         });
       });

@@ -913,9 +913,10 @@ declare module "bun" {
      * `close({ timeout: 0 })` closes the pool while it waits for one, when it
      * was cancelled before it started, or when its reservation, transaction or
      * savepoint has ended. After `execute()`, a failure to connect, a pool that
-     * was already closed, a `cancel()` while it waits for a connection and a
-     * query that cannot be built are reported. So is any failure on SQLite
-     * outside a transaction.
+     * was already closed, a `cancel()` or the end of the time of
+     * `close({ timeout })` while it waits for a connection, and a query that
+     * cannot be built are reported. So is any failure on SQLite outside a
+     * transaction.
      *
      * Bun reads the parameters when it sends the query. Leave a `Buffer`,
      * `TypedArray`, `Date` or object that you passed alone until the query

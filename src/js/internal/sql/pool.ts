@@ -569,9 +569,8 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     return this.#closing !== null;
   }
 
-  get tornDown(): boolean {
-    return this.#tornDown;
-  }
+  /// close({ timeout: 0 }) was called: the caller gave up on what is queued.
+  public closedAtOnce: boolean = false;
 
   abstract array(values: any[], typeNameOrID?: number | ArrayType): SQLArrayParameter;
   abstract getDistributedTransactionCommands(name: string): TransactionCommands | null;
@@ -944,6 +943,7 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
       this.#closeIfDrained();
     }
     if (timeout === 0) {
+      this.closedAtOnce = true;
       this.#teardown();
     } else if (timeout !== undefined && !this.#tornDown) {
       const timer = setTimeout(BaseSQLAdapter.#closeTimerFired, timeout, this);

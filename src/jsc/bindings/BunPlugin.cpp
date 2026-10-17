@@ -575,7 +575,7 @@ struct LoadedModule {
     bool staleCommonJSEntry { false };
 };
 
-static void findLoadedESModule(Zig::GlobalObject* globalObject, JSC::JSString* specifierString, LoadedModule& loaded)
+__attribute__((minsize)) static void findLoadedESModule(Zig::GlobalObject* globalObject, JSC::JSString* specifierString, LoadedModule& loaded)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1012,7 +1012,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionModuleMockDidLoadImportsOfOri
     return JSValue::encode(jsUndefined());
 }
 
-static JSC::JSPromise* importOriginalModule(Zig::GlobalObject* globalObject, JSModuleMock* mock, bool mayLoadOthersFirst = true, const String& from = String())
+__attribute__((minsize)) static JSC::JSPromise* importOriginalModule(Zig::GlobalObject* globalObject, JSModuleMock* mock, bool mayLoadOthersFirst = true, const String& from = String())
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2993,7 +2993,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionMockHoisted, (JSC::JSGlobalObject * globalObj
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::call(globalObject, factory, JSC::getCallData(factory), JSC::jsUndefined(), ArgList())));
 }
 
-extern "C" void JSMock__putModuleMockFunctions(Zig::GlobalObject* globalObject, JSC::EncodedJSValue encodedMockFn, JSC::EncodedJSValue encodedJest, JSC::EncodedJSValue encodedVi)
+extern "C" __attribute__((minsize)) void JSMock__putModuleMockFunctions(Zig::GlobalObject* globalObject, JSC::EncodedJSValue encodedMockFn, JSC::EncodedJSValue encodedJest, JSC::EncodedJSValue encodedVi)
 {
     auto& vm = JSC::getVM(globalObject);
     UNUSED_PARAM(encodedMockFn);
@@ -3117,7 +3117,7 @@ __attribute__((minsize)) static void giveBackPreloadModules(Zig::GlobalObject* g
     }
 }
 
-extern "C" [[ZIG_EXPORT(nothrow)]] void JSMock__undoModuleMocksOfTestFile(Zig::GlobalObject* globalObject, bool nextLoadSharesModules)
+extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoModuleMocksOfTestFile(Zig::GlobalObject* globalObject, bool nextLoadSharesModules)
 {
     auto& plugins = globalObject->onLoadPlugins;
     plugins.testFile++;
@@ -3214,7 +3214,7 @@ static void replaceModuleWithItsExports(Zig::GlobalObject* globalObject, JSC::Ab
 
 // A test file that mocked modules holds its own copies of their importers, partly in variables that `vi.mock()` made out of its imports.
 // So evict it too, and leave a module with the same exports in its place so that a later import doesn't evaluate the file again.
-extern "C" void JSMock__replaceModuleOfTestFile(Zig::GlobalObject* globalObject, const BunString* path)
+extern "C" __attribute__((minsize)) void JSMock__replaceModuleOfTestFile(Zig::GlobalObject* globalObject, const BunString* path)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -3971,7 +3971,7 @@ static JSC::JSObject* generateSettledModuleMock(JSValue source, JSC::JSGlobalObj
     return mock;
 }
 
-JSC::JSSourceCode* sourceCodeOfModuleMock(Zig::GlobalObject* globalObject, JSC::JSObject* moduleMock, const String& key, const String& typeAttribute)
+__attribute__((minsize)) JSC::JSSourceCode* sourceCodeOfModuleMock(Zig::GlobalObject* globalObject, JSC::JSObject* moduleMock, const String& key, const String& typeAttribute)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);

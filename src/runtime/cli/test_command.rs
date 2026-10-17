@@ -390,6 +390,7 @@ impl TestFailure {
     }
 
     /// VirtualMachine::on_print_error_zig_exception thunk.
+    #[optimize(size)]
     pub(crate) fn record_cb(ctx: *mut core::ffi::c_void, exception: &jsc::ZigException) {
         // SAFETY: `ctx` was set to `&mut CommandLineReporter.test_failure` by
         // `on_uncaught_exception` for the duration of a single
@@ -514,6 +515,7 @@ impl JunitReporter {
         self.begin_test_suite_with_line(name, 0, true)
     }
 
+    #[optimize(size)]
     pub(crate) fn begin_test_suite_with_line(
         &mut self,
         name: &[u8],
@@ -587,6 +589,7 @@ impl JunitReporter {
         Ok(())
     }
 
+    #[optimize(size)]
     fn end_test_suite(&mut self, file_elapsed_ns: Option<u64>) -> crate::Result<()> {
         if self.suite_stack.is_empty() {
             return Ok(());
@@ -647,6 +650,7 @@ impl JunitReporter {
 
     /// Open/close `<testsuite>` elements so the stack matches `t.file` and
     /// `t.scopes`, then write the `<testcase>`.
+    #[optimize(size)]
     pub(crate) fn record_test_case(&mut self, t: &TestCaseReport<'_>) -> crate::Result<()> {
         if !strings::eql(&self.current_file, t.file) {
             while let Some(top) = self.suite_stack.last()
@@ -734,6 +738,7 @@ impl JunitReporter {
         Ok(())
     }
 
+    #[optimize(size)]
     fn write_test_case(
         &mut self,
         t: &TestCaseReport<'_>,
@@ -1596,6 +1601,7 @@ impl CommandLineReporter {
     }
 
     /// Like the JUnit report, called before every exit path (including bail) so measured durations aren't lost.
+    #[optimize(size)]
     pub(crate) fn write_timings_if_needed(&mut self) {
         if self.jest.test_options.update_timings
             && self.worker_ipc_file_idx.is_none()
@@ -1608,6 +1614,7 @@ impl CommandLineReporter {
     /// Writes the JUnit reporter output file if a JUnit reporter is active and
     /// an outfile path was configured. This must be called before any early exit
     /// (e.g. bail) so that the report is not lost.
+    #[optimize(size)]
     pub(crate) fn write_junit_report_if_needed(&mut self) {
         if let Some(junit) = self.reporters.junit.as_mut() {
             if let Some(outfile) = self.jest.test_options.reporter_outfile.as_deref() {
@@ -3082,6 +3089,7 @@ impl TestCommand {
         }
     }
 
+    #[optimize(size)]
     pub(crate) fn run(
         reporter: &mut CommandLineReporter,
         vm: &mut VirtualMachine,

@@ -818,7 +818,7 @@ static bool isModuleLoadSettled(JSC::ModuleRegistryEntry* entry)
 }
 
 // Lets the next importer load them again. Returns "\nnote: " lines naming the modules the others were stuck on.
-extern "C" [[ZIG_EXPORT(nothrow)]] BunString Bun__evictUnfinishedModules(Zig::GlobalObject* globalObject)
+extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) BunString Bun__evictUnfinishedModules(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     auto* loader = Bun::testFileModuleLoader(globalObject);

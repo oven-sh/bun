@@ -195,7 +195,7 @@ static void unstubAllEnvs(Zig::GlobalObject* globalObject)
     RELEASE_AND_RETURN(scope, restoreOriginals(globalObject, stubbedEnvs, globalObject->mockModule.envsOfPreload, env, setEnv));
 }
 
-static void stubEnv(Zig::GlobalObject* globalObject, JSValue nameValue, JSValue value)
+__attribute__((minsize)) static void stubEnv(Zig::GlobalObject* globalObject, JSValue nameValue, JSValue value)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);

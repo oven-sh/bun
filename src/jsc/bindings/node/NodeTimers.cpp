@@ -329,7 +329,7 @@ enum class FakeTimerFunction : uint8_t {
     PerformanceNow,
 };
 
-extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__FakeTimers__createFunction(Zig::GlobalObject* globalObject, uint8_t function)
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] __attribute__((minsize)) JSC::EncodedJSValue Bun__FakeTimers__createFunction(Zig::GlobalObject* globalObject, uint8_t function)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);

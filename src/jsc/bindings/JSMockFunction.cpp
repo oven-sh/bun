@@ -1143,7 +1143,7 @@ void JSMockFunction::resetAll(Zig::GlobalObject* globalObject)
 
 // The next test file shares the global object, so this file's spies and recorded calls have to go.
 // Configured mocks stay registered, because a module shared with the next file may own them.
-void JSMockFunction::didFinishTestFile(Zig::GlobalObject* globalObject)
+__attribute__((minsize)) void JSMockFunction::didFinishTestFile(Zig::GlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

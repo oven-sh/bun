@@ -569,6 +569,7 @@ pub(crate) enum GitResult {
     },
 }
 
+#[optimize(size)]
 fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
     let mut argv: Vec<&[u8]> = Vec::with_capacity(args.len() + 3);
     argv.push(git_path);

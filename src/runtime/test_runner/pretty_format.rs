@@ -108,6 +108,7 @@ pub(crate) struct FormatOptions {
 }
 
 impl JestPrettyFormat {
+    #[optimize(size)]
     pub(crate) fn format<W: bun_io::Write>(
         level: MessageLevel,
         global: &JSGlobalObject,
@@ -621,6 +622,7 @@ impl Tag {
 }
 
 impl<'a> Formatter<'a> {
+    #[optimize(size)]
     fn write_with_formatting<W: bun_io::Write, S, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
         writer_: &mut W,
@@ -802,6 +804,7 @@ pub(crate) struct MapIterator<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS
 impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
     MapIterator<'a, 'f, W, ENABLE_ANSI_COLORS>
 {
+    #[optimize(size)]
     pub(crate) extern "C" fn for_each(
         _: *mut VM,
         global_object: &JSGlobalObject,
@@ -853,6 +856,7 @@ pub(crate) struct SetIterator<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS
 impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
     SetIterator<'a, 'f, W, ENABLE_ANSI_COLORS>
 {
+    #[optimize(size)]
     pub(crate) extern "C" fn for_each(
         _: *mut VM,
         global_object: &JSGlobalObject,
@@ -935,6 +939,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         Ok(())
     }
 
+    #[optimize(size)]
     extern "C" fn for_each(
         global_this: &JSGlobalObject,
         ctx_ptr: *mut c_void,
@@ -2535,6 +2540,7 @@ impl<'a> Formatter<'a> {
         result
     }
 
+    #[optimize(size)]
     pub(crate) fn format<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
         result: TagResult,
@@ -3532,6 +3538,7 @@ impl JestPrettyFormat {
 
     /// Returns true if an older Bun would have printed the same text, so `did_older_bun_print` can be skipped.
     #[inline(never)]
+    #[optimize(size)]
     pub(crate) fn print_snapshot(
         global: &JSGlobalObject,
         value: JSValue,
@@ -3631,6 +3638,7 @@ impl JestPrettyFormat {
     }
 
     /// Vitest's `stringify()`. As there, `max_depth_option` overrides the halved depth, so those retries are no-ops.
+    #[optimize(size)]
     fn stringify(
         global: &JSGlobalObject,
         value: JSValue,
@@ -3763,6 +3771,7 @@ impl Formatter<'_> {
     }
 
     #[inline(never)]
+    #[optimize(size)]
     pub(crate) fn print_like_pretty_format(
         &mut self,
         out: &mut Vec<u8>,
@@ -3858,6 +3867,7 @@ impl Formatter<'_> {
         Ok(())
     }
 
+    #[optimize(size)]
     fn print_object_like_pretty_format(
         &mut self,
         out: &mut Vec<u8>,
@@ -4033,6 +4043,7 @@ impl Formatter<'_> {
         Ok(())
     }
 
+    #[optimize(size)]
     fn print_list_items(&mut self, out: &mut Vec<u8>, list: JSValue) -> JsResult<()> {
         use std::io::Write as _;
         let global = self.global_this;
@@ -4070,6 +4081,7 @@ impl Formatter<'_> {
     }
 
     /// `has_size`: Vitest passes `collection.size` for a Map or Set, so the ellipsis can say how many items are left.
+    #[optimize(size)]
     fn print_iterated(
         &mut self,
         out: &mut Vec<u8>,
@@ -4130,6 +4142,7 @@ impl Formatter<'_> {
         })
     }
 
+    #[optimize(size)]
     fn print_object_properties(&mut self, out: &mut Vec<u8>, object: JSValue) -> JsResult<()> {
         let global = self.global_this;
         self.print_indented(out, &mut |this, out| {
@@ -4534,6 +4547,7 @@ impl Formatter<'_> {
         Ok(())
     }
 
+    #[optimize(size)]
     fn print_markup_child(&mut self, out: &mut Vec<u8>, child: JSValue) -> JsResult<()> {
         let global = self.global_this;
         self.check_length(out.len())?;
@@ -4689,6 +4703,7 @@ impl JestPrettyFormat {
     }
 
     /// Most recently added first. Drops the ones an earlier test file registered itself.
+    #[optimize(size)]
     fn serializers(global: &JSGlobalObject) -> JsResult<Option<JSValue>> {
         let utils_value = expect::ExpectMatcherUtils::singleton(global);
         let Some(utils) = expect::ExpectMatcherUtils::from_js(utils_value) else { return Ok(None) };
@@ -4735,6 +4750,7 @@ impl JestPrettyFormat {
     }
 
     /// `call_serializer` binds `indentation`.
+    #[optimize(size)]
     fn indent(global: &JSGlobalObject, frame: &jsc::CallFrame) -> JsResult<JSValue> {
         let [indentation, text] = frame.arguments_as_array::<2>();
         let indentation = indentation.to_bun_string(global)?.to_owned_slice();
@@ -4797,6 +4813,7 @@ fn indent_lines(out: &mut Vec<u8>, text: &[u8], indentation: &[u8]) {
 impl Formatter<'_> {
     #[cold]
     #[inline(never)]
+    #[optimize(size)]
     fn print_with_serializer(&mut self, out: &mut Vec<u8>, value: JSValue) -> JsResult<bool> {
         let global = self.global_this;
         let Some(serializers) = self.serializers else { return Ok(false) };

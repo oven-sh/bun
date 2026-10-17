@@ -3241,18 +3241,21 @@ impl ExpectMatcherUtils {
         bun_string_jsc::create_utf8_for_js(global_this, mutable_string.slice())
     }
 
+    #[optimize(size)]
     fn stringify(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
         let value = if arguments.is_empty() { JSValue::UNDEFINED } else { arguments[0] };
         Self::print_value(global_this, value, None)
     }
 
+    #[optimize(size)]
     fn print_expected(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
         let value = if arguments.is_empty() { JSValue::UNDEFINED } else { arguments[0] };
         Self::print_value(global_this, value, Some("<green>"))
     }
 
+    #[optimize(size)]
     fn print_received(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
         let value = if arguments.is_empty() { JSValue::UNDEFINED } else { arguments[0] };
@@ -3313,6 +3316,7 @@ impl ExpectMatcherUtils {
         }
     }
 
+    #[optimize(size)]
     fn print_with_type(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let [name, value, print] = callframe.arguments_as_array::<3>();
         let name = name.to_bun_string(global_this)?;

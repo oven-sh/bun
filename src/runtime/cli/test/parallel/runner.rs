@@ -784,6 +784,7 @@ pub(crate) fn run_as_worker(
     }
 }
 
+#[optimize(size)]
 fn worker_flush_aggregates(
     reporter: &mut CommandLineReporter,
     vm: &mut VirtualMachine,

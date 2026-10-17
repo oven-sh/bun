@@ -580,6 +580,7 @@ impl<'a> Coordinator<'a> {
         w.reap_pending = true;
     }
 
+    #[optimize(size)]
     fn run_pending_reaps(&mut self) {
         let n = self.spawned_count as usize;
         for i in 0..n {
@@ -602,6 +603,7 @@ impl<'a> Coordinator<'a> {
         }
     }
 
+    #[optimize(size)]
     fn reap_worker(&mut self, slot: usize, status: &SpawnStatus) {
         // SAFETY: `slot < spawned_count <= workers.len()`; fresh root derivation, like each reborrow below.
         let w = unsafe { &mut *self.workers.as_mut_ptr().add(slot) };
@@ -771,6 +773,7 @@ impl<'a> Coordinator<'a> {
         }
     }
 
+    #[optimize(size)]
     fn account_crash(
         &mut self,
         file_idx: u32,

@@ -67,8 +67,21 @@ async function check(form: string, result: unknown, requests: string[]) {
 // `new Response([file])` is the only road user JS has to empty a Blob, and
 // #38503 removes it. Probe it, so that the three cases below skip with a
 // reason in the title instead of asserting a state that no longer exists.
-const { stdout: probe } = await run("probe");
-const moveEmptiesTheFile = probe === JSON.stringify({ result: true });
+const probe = await run("probe");
+const moveEmptiesTheFile = probe.stdout === JSON.stringify({ result: true });
+
+// The skip below is for one answer only: a probe that ended by itself and
+// said the file kept its store. A probe that died or printed anything else
+// fails here, so it cannot skip the three cases in silence.
+test("the probe says if an array body empties the file", () => {
+  // stderr is included only so it appears in the toEqual diff on failure.
+  expect({ stderr: probe.stderr, stdout: probe.stdout, requests: probe.requests }).toEqual({
+    stderr: expect.any(String),
+    stdout: JSON.stringify({ result: moveEmptiesTheFile }),
+    requests: [],
+  });
+  expect(probe.exitCode).toBe(0);
+});
 
 describe.concurrent("S3 file that keeps its store", () => {
   test.each(controls)("%s", (form, result, requests) => check(form, result, requests));

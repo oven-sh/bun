@@ -170,6 +170,15 @@ function generate(ssl) {
         fn: "shutdown",
         length: 1,
       },
+      // node:net dials through these (Node's TCPWrap shape); connect6 is the same dial.
+      connect: {
+        fn: "connect",
+        length: 3,
+      },
+      connect6: {
+        fn: "connect",
+        length: 3,
+      },
       close: {
         fn: "close",
         length: 0,

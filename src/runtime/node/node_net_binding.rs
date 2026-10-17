@@ -180,5 +180,7 @@ pub(crate) fn do_connect(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         maybe_tcp,
         maybe_tls,
         opts,
+        crate::socket::listener::Dialer::Promise,
+        None,
     )
 }

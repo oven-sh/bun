@@ -228,6 +228,7 @@ const kEmptyObject: {} = { __proto__: null };
 
 const symbols = require("internal/quic/symbols");
 const kAttachFileHandle: typeof symbols.kAttachFileHandle = symbols.kAttachFileHandle;
+const kAvailable: typeof symbols.kAvailable = symbols.kAvailable;
 const kBlocked: typeof symbols.kBlocked = symbols.kBlocked;
 const kConnect: typeof symbols.kConnect = symbols.kConnect;
 const kDatagram: typeof symbols.kDatagram = symbols.kDatagram;
@@ -256,6 +257,7 @@ const kPathValidation: typeof symbols.kPathValidation = symbols.kPathValidation;
 const kPrivateConstructor: typeof symbols.kPrivateConstructor = symbols.kPrivateConstructor;
 const kReset: typeof symbols.kReset = symbols.kReset;
 const kSessionTicket: typeof symbols.kSessionTicket = symbols.kSessionTicket;
+const kStopSending: typeof symbols.kStopSending = symbols.kStopSending;
 const kTrailers: typeof symbols.kTrailers = symbols.kTrailers;
 const kVersionNegotiation: typeof symbols.kVersionNegotiation = symbols.kVersionNegotiation;
 const kInspect: typeof symbols.kInspect = symbols.kInspect;
@@ -847,6 +849,11 @@ setCallbacks({
     this[kOwner][kFinishClose](errorType, code, reason, errorName);
   },
 
+  /** Reserved for `session.onapplication`, which native does not emit yet. */
+  onSessionApplication(settings) {
+    debug("session application callback", settings, this[kOwner]);
+  },
+
   /**
    * Called when the peer sends a GOAWAY frame (HTTP/3 only).
    * @param {bigint} lastStreamId The highest stream ID the peer may have
@@ -1025,6 +1032,12 @@ setCallbacks({
     session[kNewStream](stream, direction);
   },
 
+  /** Called when a pending stream has been bound and assigned its ID. */
+  onStreamAvailable() {
+    debug("stream available callback", this[kOwner]);
+    this[kOwner][kAvailable]();
+  },
+
   onStreamBlocked() {
     debug("stream blocked callback", this[kOwner]);
     this[kOwner][kBlocked]();
@@ -1060,6 +1073,15 @@ setCallbacks({
     }
     debug("stream reset callback", this[kOwner], error);
     this[kOwner][kReset](error);
+  },
+
+  /** @param {any} error The application error carried by the peer's STOP_SENDING. */
+  onStreamStopSending(error) {
+    if (error !== undefined) {
+      error = convertQuicError(error);
+    }
+    debug("stream stop sending callback", this[kOwner], error);
+    this[kOwner][kStopSending](error);
   },
 
   onStreamHeaders(headers, kind) {
@@ -1627,6 +1649,7 @@ interface QuicStreamInner {
   state: QuicStreamState;
   stats: QuicStreamStats | undefined;
   pendingClose: PendingPromise | undefined;
+  pendingOpen: PendingPromise | undefined;
   reader: QuicStreamReader | undefined;
   destroying: boolean;
   iteratorLocked: boolean;
@@ -1639,6 +1662,7 @@ interface QuicStreamInner {
   onerror: Function | undefined;
   onblocked: Function | undefined;
   onreset: Function | undefined;
+  onstopsending: Function | undefined;
   onheaders: Function | undefined;
   ontrailers: Function | undefined;
   oninfo: Function | undefined;
@@ -1656,6 +1680,7 @@ class QuicStream {
     state: undefined as unknown as QuicStreamState,
     stats: undefined,
     pendingClose: undefined,
+    pendingOpen: undefined,
     reader: undefined,
     destroying: false,
     iteratorLocked: false,
@@ -1668,6 +1693,7 @@ class QuicStream {
     onerror: undefined,
     onblocked: undefined,
     onreset: undefined,
+    onstopsending: undefined,
     onheaders: undefined,
     ontrailers: undefined,
     oninfo: undefined,
@@ -1714,6 +1740,9 @@ class QuicStream {
     inner.direction = direction;
     inner.isLocal = isLocal;
     inner.state = new QuicStreamState(kPrivateConstructor, handle.state, handle.stateByteOffset);
+    if (inner.state.pending) {
+      inner.pendingOpen = PromiseWithResolvers();
+    }
 
     if (hasObserver("quic")) {
       startPerf(this, kPerfEntry, { type: "quic", name: "QuicStream" });
@@ -1764,6 +1793,18 @@ class QuicStream {
   get pending() {
     assertIsQuicStream(this);
     return this.#inner.state.pending;
+  }
+
+  /**
+   * A promise that is fulfilled once the stream has an ID.
+   * @type {Promise<void>}
+   */
+  get opened() {
+    assertIsQuicStream(this);
+    const inner = this.#inner;
+    // Only a stream that was pending at creation gets a deferred.
+    const pendingOpen = (inner.pendingOpen ??= { promise: PromiseResolve(), resolve: undefined, reject: undefined });
+    return pendingOpen.promise;
   }
 
   /**
@@ -1852,6 +1893,25 @@ class QuicStream {
       validateFunction(fn, "onreset");
       inner.onreset = FunctionPrototypeBind(fn, this);
       inner.state.wantsReset = true;
+    }
+  }
+
+  /** @type {OnStreamErrorCallback} */
+  get onstopsending() {
+    assertIsQuicStream(this);
+    return this.#inner.onstopsending;
+  }
+
+  set onstopsending(fn) {
+    assertIsQuicStream(this);
+    const inner = this.#inner;
+    if (fn === undefined) {
+      inner.onstopsending = undefined;
+      inner.state.wantsStopSending = false;
+    } else {
+      validateFunction(fn, "onstopsending");
+      inner.onstopsending = FunctionPrototypeBind(fn, this);
+      inner.state.wantsStopSending = true;
     }
   }
 
@@ -2196,6 +2256,22 @@ class QuicStream {
       }
     };
 
+    const onStopSending = stream[kStopSending];
+    stream[kStopSending] = reason => {
+      if (!closed && !errored) {
+        errored = true;
+        error = reason;
+        // `fail()` is a no-op for an errored writer, so mark `closed` here.
+        markPromiseAsHandled(stream.closed);
+        if (drainWakeup != null) {
+          markPromiseAsHandled(drainWakeup.promise);
+          drainWakeup.reject(error);
+          drainWakeup = null;
+        }
+      }
+      onStopSending.$call(stream, reason);
+    };
+
     function writeSync(chunk) {
       if (closed || errored || stream.#inner.state.writeEnded || drainWakeup != null) {
         return false;
@@ -2481,6 +2557,18 @@ class QuicStream {
     } else {
       inner.pendingClose.resolve!();
     }
+    const { pendingOpen } = inner;
+    if (pendingOpen?.resolve !== undefined) {
+      // A stream that got its ID opened, even if kAvailable has not run yet.
+      if (error !== undefined && inner.state.pending) {
+        markPromiseAsHandled(pendingOpen.promise);
+        pendingOpen.reject!(error);
+      } else {
+        pendingOpen.resolve();
+      }
+      pendingOpen.resolve = undefined;
+      pendingOpen.reject = undefined;
+    }
     debug("stream closed");
     if (onStreamClosedChannel.hasSubscribers) {
       onStreamClosedChannel.publish({
@@ -2510,6 +2598,7 @@ class QuicStream {
     inner.pendingClose.resolve = undefined;
     inner.onblocked = undefined;
     inner.onreset = undefined;
+    inner.onstopsending = undefined;
     inner.onheaders = undefined;
     inner.onerror = undefined;
     inner.ontrailers = undefined;
@@ -2523,6 +2612,14 @@ class QuicStream {
       markPromiseAsHandled(inner.fileHandle.close());
       inner.fileHandle = undefined;
     }
+  }
+
+  [kAvailable]() {
+    const { pendingOpen } = this.#inner;
+    if (pendingOpen?.resolve === undefined) return;
+    pendingOpen.resolve();
+    pendingOpen.resolve = undefined;
+    pendingOpen.reject = undefined;
   }
 
   [kBlocked]() {
@@ -2552,6 +2649,12 @@ class QuicStream {
       });
     }
     safeCallbackInvoke(inner.onreset, this, error);
+  }
+
+  [kStopSending](error) {
+    const inner = this.#inner;
+    assert(inner.onstopsending, "Unexpected stream stop sending event");
+    safeCallbackInvoke(inner.onstopsending, this, error);
   }
 
   [kHeaders](headers, kind) {

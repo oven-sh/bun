@@ -388,9 +388,8 @@ fn txt_reply_to_js_for_any(
     })
 }
 
-/// Groups the c-ares TXT list into records: one inner array of strings per
-/// TXT record, split where `is_record_start()` is set. `wrap` turns each
-/// inner array into the element stored in the outer array.
+/// One inner array of strings per TXT record, split on `is_record_start()`.
+/// `wrap` turns each inner array into the outer array element.
 fn txt_records_to_js_array(
     head: &c_ares::struct_ares_txt_ext,
     global_this: &JSGlobalObject,

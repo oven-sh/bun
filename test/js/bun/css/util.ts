@@ -87,4 +87,4 @@ export function indoc(...args: Parameters<typeof dedent>) {
   return dedent(...args);
 }
 
-export { minifyTestWithOptions };
+export { minifyTest, minifyTestWithOptions };

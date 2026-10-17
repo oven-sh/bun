@@ -1,9 +1,10 @@
-//! A Markdown text and its tree: `MarkdownSourceCode` of `@eslint/markdown`.
+//! A Markdown file's text and tree: `@eslint/markdown`'s `MarkdownSourceCode`.
 //!
-//! The tree is [mdast](https://github.com/syntax-tree/mdast), with the places that mdast-util-from-markdown gives its nodes.
+//! The tree is [mdast](https://github.com/syntax-tree/mdast), and its nodes have the positions that
+//! mdast-util-from-markdown gives them.
 //!
-//! Places in the tree are byte offsets. The rules of the plugin count in UTF-16 code units, and add to and subtract from what
-//! they have counted, so what they do with an index is done with an [`Index`] here. In a text that is ASCII the two are the same.
+//! The tree stores byte offsets. The plugin's rules work with UTF-16 indices and do arithmetic on them, so the ports do
+//! the same arithmetic on an [`Index`]. In ASCII text the two are equal.
 
 use crate::{Dialect, FrontMatter};
 use bun_core::strings;
@@ -15,17 +16,17 @@ use bun_lint::span::Span;
 use std::cell::{Cell, OnceCell};
 use std::sync::OnceLock;
 
-/// An index into the text as JavaScript has it. It can be outside of the text.
+/// An index into the text in UTF-16 code units, as in JavaScript. It can be out of range.
 pub(crate) type Index = i64;
 
-/// A line and a column, both from 1, the column in UTF-16 code units.
+/// A line and a column, both 1-based. The column counts UTF-16 code units.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
 pub(crate) struct Loc {
     pub(crate) line: i64,
     pub(crate) column: i64,
 }
 
-/// `getLocFromIndex` throws: the index is not in the text.
+/// The error that `getLocFromIndex` throws for an index outside the text.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) struct OutOfRange {
     pub(crate) index: Index,
@@ -33,17 +34,17 @@ pub(crate) struct OutOfRange {
     pub(crate) length: Index,
 }
 
-/// What a text is parsed to.
+/// A parsed file.
 pub(crate) struct Mdast {
     tree: Tree,
     root: NodeId,
     front_matter: FrontMatter,
-    /// The index at which each line starts, for a text that is not ASCII. All rules ask for the same.
+    /// The index of each line start, for non-ASCII text. It's cached here because every rule needs it.
     line_indices: OnceLock<Vec<u32>>,
 }
 
 impl Mdast {
-    /// `text`: without a byte order mark. `None`: it is too long for the parser, or nested too deeply.
+    /// `text` has no byte order mark. Returns `None` if it's too long for the parser or nested too deeply.
     pub(crate) fn parse(text: &[u8], dialect: Dialect) -> Option<Mdast> {
         let with = Extensions {
             gfm: dialect.is_gfm,
@@ -65,19 +66,19 @@ impl Mdast {
     }
 }
 
-/// A tree and the text that it is of.
+/// A tree and its source text.
 pub struct Document<'t> {
     text: &'t [u8],
     mdast: &'t Mdast,
     is_ascii: bool,
-    /// The byte offset that was asked about last, and its index: most are asked about in the order of the text, and a line
-    /// can be all of it.
+    /// The last byte offset that was converted, and its index. Most lookups come in source order, and the whole file
+    /// can be a single line, so the next lookup counts from here instead of from the start of the line.
     last_asked: Cell<(u32, u32)>,
     length: OnceCell<Index>,
 }
 
 impl<'t> Document<'t> {
-    /// `None`: the file is not Markdown.
+    /// Returns `None` if the file isn't Markdown.
     pub(crate) fn of(file: &'t File<'t>) -> Option<Document<'t>> {
         Some(Document::new(file.tree()?, file.text()))
     }
@@ -134,23 +135,23 @@ impl<'t> Document<'t> {
             return self.line_starts();
         }
         self.mdast.line_indices.get_or_init(|| {
-            let (mut index, mut from) = (0, 0);
+            let (mut index, mut line_before) = (0, Span::empty(0));
             (self.line_starts().iter())
-                .map(|&start| {
-                    index += strings::wtf8_len_utf16(self.slice(Span::new(from, start)));
-                    from = start;
+                .map(|&line| {
+                    line_before = Span::after(line_before, line);
+                    index += strings::wtf8_len_utf16(self.slice(line_before));
                     index
                 })
                 .collect()
         })
     }
 
-    /// The how manyth line, from 0, `at` is on, given where the lines start.
+    /// The 0-based number of the line that contains `at`. `starts` has the start of each line.
     fn line_at(starts: &[u32], at: u32) -> usize {
         starts.partition_point(|&start| start <= at).max(1) - 1
     }
 
-    /// The index of the byte offset `offset`.
+    /// Converts a byte offset to an index.
     pub(crate) fn index_of(&self, offset: u32) -> Index {
         if self.is_ascii {
             return Index::from(offset);
@@ -169,8 +170,8 @@ impl<'t> Document<'t> {
         Index::from(index)
     }
 
-    /// The byte offset of `index`: the start or the end of the text if it is outside of it, the start of the character if
-    /// it is between the halves of a surrogate pair.
+    /// Converts an index to a byte offset. An index outside the text is clamped to its start or end. An index in the
+    /// middle of a surrogate pair gives the start of the character.
     pub(crate) fn offset_of(&self, index: Index) -> u32 {
         let index = index.clamp(0, Index::from(u32::MAX)) as u32;
         if self.is_ascii {
@@ -189,7 +190,7 @@ impl<'t> Document<'t> {
         from.0 + strings::wtf8_offset_of_utf16_index(rest, index - from.1) as u32
     }
 
-    /// The byte offset of a line and a column. `None`: there is no such place in the text.
+    /// Converts a line and a column to a byte offset. Returns `None` if the text has no such position.
     pub(crate) fn offset_at(&self, loc: Loc) -> Option<u32> {
         let line = usize::try_from(loc.line - 1).ok()?;
         let index = Index::from(*self.line_indices().get(line)?) + loc.column - 1;
@@ -211,7 +212,7 @@ impl<'t> Document<'t> {
         })
     }
 
-    /// `position.start` or `position.end` of a node, from its byte offset.
+    /// Converts a byte offset to a node's `position.start` or `position.end`.
     pub(crate) fn loc(&self, offset: u32) -> Loc {
         let line = Self::line_at(self.line_starts(), offset);
         let start = self.line_indices().get(line).copied().unwrap_or(0);
@@ -221,7 +222,7 @@ impl<'t> Document<'t> {
         }
     }
 
-    /// The comments of the HTML in it, which can configure ESLint: `<!-- eslint-disable -->`.
+    /// The HTML comments in the file, which can configure ESLint: `<!-- eslint-disable -->`.
     pub(crate) fn comments(&self) -> Vec<Comment> {
         let mut comments = Vec::new();
         if !strings::contains(self.text, b"eslint") {
@@ -263,15 +264,15 @@ pub(crate) fn length(string: &[u8]) -> Index {
     Index::from(strings::wtf8_len_utf16(string))
 }
 
-/// The indices of places in a string, which are asked for in ascending order.
+/// Converts byte offsets in a string to indices. The offsets have to be passed in ascending order.
 pub(crate) struct Indices<'s> {
     string: &'s [u8],
-    /// The byte offset that was asked about last, and its index.
+    /// The last byte offset that was converted, and its index.
     last: (usize, Index),
 }
 
 impl<'s> Indices<'s> {
-    /// `first`: the index of the start of `string`.
+    /// `first` is the index of the start of `string`.
     pub(crate) fn new(string: &'s [u8], first: Index) -> Self {
         Indices {
             string,
@@ -279,7 +280,7 @@ impl<'s> Indices<'s> {
         }
     }
 
-    /// The index of the byte offset `offset`.
+    /// Converts a byte offset to an index.
     pub(crate) fn at(&mut self, offset: usize) -> Index {
         let between = self.string.get(self.last.0..offset).unwrap_or_default();
         self.last = (offset.max(self.last.0), self.last.1 + length(between));
@@ -287,7 +288,6 @@ impl<'s> Indices<'s> {
     }
 }
 
-/// A node of the tree.
 #[derive(Copy, Clone)]
 pub(crate) struct Node<'d> {
     document: &'d Document<'d>,
@@ -346,7 +346,7 @@ impl<'d> Node<'d> {
             Kind::ImageReference => "imageReference",
             Kind::FootnoteReference => "footnoteReference",
             Kind::InlineMath => "inlineMath",
-            // The parser makes none of these of what micromark reads.
+            // The parser never produces these when it's limited to the syntax that micromark supports.
             Kind::Directive
             | Kind::LiquidNode
             | Kind::WikiLink
@@ -422,7 +422,7 @@ impl<'d> Node<'d> {
         (!string.is_null()).then(|| self.document.mdast.tree.str(self.document.text, string))
     }
 
-    /// `node.value`. `None`: a node of its type has none.
+    /// `node.value`, or `None` for a node type that has no `value`.
     pub(crate) fn value(self) -> Option<&'d [u8]> {
         match self.kind() {
             Kind::FrontMatter
@@ -441,37 +441,37 @@ impl<'d> Node<'d> {
         self.get().map_or(0, |it| it.number)
     }
 
-    /// `node.lang` of code. `None` is `null`.
+    /// `node.lang` of a code block. `None` means `null`.
     pub(crate) fn lang(self) -> Option<&'d [u8]> {
         self.string(|it| it.second)
     }
 
-    /// `node.meta` of code. `None` is `null`.
+    /// `node.meta` of a code block. `None` means `null`.
     pub(crate) fn meta(self) -> Option<&'d [u8]> {
         self.string(|it| it.third)
     }
 
-    /// `node.url` of a link, an image and a definition.
+    /// `node.url` of a link, an image or a definition.
     pub(crate) fn url(self) -> &'d [u8] {
         self.string(|it| it.value).unwrap_or_default()
     }
 
-    /// `node.title` of a link, an image and a definition. `None` is `null`.
+    /// `node.title` of a link, an image or a definition. `None` means `null`.
     pub(crate) fn title(self) -> Option<&'d [u8]> {
         self.string(|it| it.second)
     }
 
-    /// `node.alt` of an image and of a reference to one.
+    /// `node.alt` of an image or an image reference.
     pub(crate) fn alt(self) -> &'d [u8] {
         self.string(|it| it.third).unwrap_or_default()
     }
 
-    /// `node.identifier` of a definition and a reference.
+    /// `node.identifier` of a definition or a reference.
     pub(crate) fn identifier(self) -> &'d [u8] {
         self.string(|it| it.identifier).unwrap_or_default()
     }
 
-    /// `node.label` of a definition and a reference.
+    /// `node.label` of a definition or a reference.
     pub(crate) fn label(self) -> &'d [u8] {
         match self.kind() {
             Kind::Definition => self.string(|it| it.third),
@@ -480,7 +480,7 @@ impl<'d> Node<'d> {
         .unwrap_or_default()
     }
 
-    /// For the tests: what the rules do not look at.
+    /// For tests, which also check the fields that no rule reads.
     pub(crate) fn raw(self) -> Option<&'d ast::Node> {
         self.get()
     }

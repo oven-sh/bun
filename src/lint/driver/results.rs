@@ -79,7 +79,7 @@ pub(crate) struct FileResult {
 }
 
 impl FileResult {
-    /// Where the lines of `text` start. A line ends where the language of the file says so.
+    /// The line starts of `text`, going by the line breaks of the file's language.
     pub(crate) fn lines(&self) -> LineStarts {
         if let Some(starts) = &self.line_starts {
             return LineStarts::at(starts.clone());

@@ -88,7 +88,8 @@ pub struct EmphDelim {
     pub(crate) open_num: u8, // number of open matches
     pub(crate) close_sizes: [u8; MAX_EMPH_MATCHES],
     pub(crate) close_num: u8, // number of close matches
-    // Where in the list the matches go on that have no room here, the latest first. 0: nowhere.
+    // Index in the delimiter list of the overflow entry for matches that don't fit here. Overflow entries are chained,
+    // newest first. 0 means none.
     pub(crate) more: u32,
     pub(crate) active: bool, // false if deactivated between matched pairs
 }
@@ -134,7 +135,7 @@ impl EmphDelim {
     }
 }
 
-/// All sizes of the matches of `d` as an opener or as a closer, in order, where `d` has not the room for them.
+/// All match sizes of `d` as an opener or as a closer, in order, for a `d` whose matches overflowed into other entries.
 #[cold]
 fn all_match_sizes(delims: &[EmphDelim], d: &EmphDelim, is_open: bool) -> Vec<u8> {
     let sizes_of = |it: &EmphDelim| match is_open {
@@ -1111,7 +1112,8 @@ impl Parser<'_> {
         }
     }
 
-    /// An entry behind the delimiters that has room for one more match of the delimiter at `index`, which has none itself.
+    /// Returns an overflow entry, stored after the real delimiters, with room for one more match of the delimiter at
+    /// `index`, which is full.
     #[cold]
     fn room_for_more_matches(&mut self, index: usize, is_open: bool) -> &mut EmphDelim {
         let latest = self.emph_delims[index].more as usize;
@@ -1208,37 +1210,35 @@ impl Parser<'_> {
                     }
 
                     // Match found! Determine how many chars to use
-                    // For strikethrough (~): consume entire run at once
-                    let use_: usize = if self.emph_delims[oi].emph_char == b'~' {
-                        self.emph_delims[oi].remaining
-                    } else if self.emph_delims[oi].remaining >= 2
+                    // For strikethrough (~) this is the entire run: both runs are 1 or 2 long,
+                    // equally long, and untouched until they match.
+                    let size: u8 = if self.emph_delims[oi].remaining >= 2
                         && self.emph_delims[closer_idx].remaining >= 2
                     {
                         2
                     } else {
                         1
                     };
+                    let use_ = usize::from(size);
 
                     self.emph_delims[oi].remaining -= use_;
                     self.emph_delims[oi].open_count += use_;
                     if (self.emph_delims[oi].open_num as usize) < MAX_EMPH_MATCHES {
                         let n = self.emph_delims[oi].open_num as usize;
-                        self.emph_delims[oi].open_sizes[n] = u8::try_from(use_).expect("int cast");
+                        self.emph_delims[oi].open_sizes[n] = size;
                         self.emph_delims[oi].open_num += 1;
                     } else {
-                        self.room_for_more_matches(oi, true)
-                            .push_match(true, use_ as u8);
+                        self.room_for_more_matches(oi, true).push_match(true, size);
                     }
                     self.emph_delims[closer_idx].remaining -= use_;
                     self.emph_delims[closer_idx].close_count += use_;
                     if (self.emph_delims[closer_idx].close_num as usize) < MAX_EMPH_MATCHES {
                         let n = self.emph_delims[closer_idx].close_num as usize;
-                        self.emph_delims[closer_idx].close_sizes[n] =
-                            u8::try_from(use_).expect("int cast");
+                        self.emph_delims[closer_idx].close_sizes[n] = size;
                         self.emph_delims[closer_idx].close_num += 1;
                     } else {
                         self.room_for_more_matches(closer_idx, false)
-                            .push_match(false, use_ as u8);
+                            .push_match(false, size);
                     }
 
                     // Remove all delimiters between opener and closer (CommonMark §6.4)

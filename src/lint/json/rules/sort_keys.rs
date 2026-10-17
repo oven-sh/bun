@@ -18,7 +18,7 @@ const SORT_KEYS: Message = Message::new(
     "Expected object keys to be in {{sortName}} case-{{sensitivity}} {{direction}} order. '{{thisName}}' should be before '{{prevName}}'.",
 );
 
-/// Whether a line between the two members has nothing on it, not even a part of a comment.
+/// Returns true if there's a blank line between the two members. A line inside a comment doesn't count as blank.
 fn is_line_separated<'a>(file: &'a File<'a>, document: Document<'a>, gap: Span) -> bool {
     let (last, first) = (file.line_of(gap.start), file.line_of(gap.end));
     if first - last < 2 {
@@ -36,7 +36,7 @@ fn is_line_separated<'a>(file: &'a File<'a>, document: Document<'a>, gap: Span) 
     })
 }
 
-/// Whether the token before `member`, or the one after it and its comma, is a comment.
+/// Returns true if the token before `member`, or the one after `member` and its comma, is a comment.
 fn has_adjacent_comment(document: Document, member: &Member) -> bool {
     let (text, span, comments) = (document.text(), member.span(), document.comments());
     let before = text.get(..span.start as usize).unwrap_or_default();

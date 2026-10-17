@@ -53,7 +53,7 @@ impl Listens for RequireAltText {
             if aria_hidden.is_some_and(|it| &*to_lower_case(it.bytes(1)) == b"true") {
                 continue;
             }
-            // `alt=""` says that the image is decoration. Blanks say nothing.
+            // `alt=""` marks the image as decorative. An `alt` with only whitespace counts as missing.
             let is_missing = ALT.exec_at(img, 0).is_none_or(|it| {
                 !it.bytes(1).is_empty() && strings::is_all_js_whitespace(it.bytes(1))
             });

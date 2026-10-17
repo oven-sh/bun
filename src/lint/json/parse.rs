@@ -1,5 +1,5 @@
-//! Tokens to tree. The tokens are those of Bun's scanner for JSON5. What only JSON5 has is refused in JSON and JSONC by a look at
-//! the token. Nothing here calls itself, so nesting is only limited by memory.
+//! Builds the tree from tokens. The tokens come from Bun's JSON5 scanner, and each one is checked for JSON5-only
+//! syntax, which JSON and JSONC reject. Nothing here is recursive, so nesting depth is only limited by memory.
 
 use crate::tree::{Entry, NodeKind, Tree};
 use crate::{Mode, Options};
@@ -9,10 +9,10 @@ use bun_lint::languages::{Comment, LineBreaks, SyntaxError};
 use bun_lint::span::Span;
 use bun_parsers::json5::{Error, SourceToken as Token, SourceTokenKind as Kind, SourceTokens};
 
-/// Why a text is refused: where, and in which words. `JSON5` in them stands for the language.
+/// A syntax error: its offset and its message. `JSON5` in the message is a placeholder for the name of the language.
 type Refused = (usize, &'static [u8]);
 
-/// In the words of Bun's parser for JSON5.
+/// Uses the message of Bun's JSON5 parser.
 fn refused(error: Error) -> Refused {
     error.describe().unwrap_or((0, b"Out of memory"))
 }
@@ -24,7 +24,7 @@ struct Reader<'a> {
     comments: Vec<Comment>,
 }
 
-/// Whether `text`, which is a number of JSON5, is `-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?`.
+/// Returns true if `text`, which is a valid JSON5 number, matches `-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?`.
 fn is_number_of_json(text: &[u8]) -> bool {
     let unsigned = text.strip_prefix(b"-").unwrap_or(text);
     let after_point = strings::index_of_char_usize(unsigned, b'.').map(|at| unsigned.get(at + 1));
@@ -34,7 +34,7 @@ fn is_number_of_json(text: &[u8]) -> bool {
     ) && after_point.is_none_or(|it| it.is_some_and(u8::is_ascii_digit))
 }
 
-/// Where the first escape sequence in `string` is that JSON5 has and JSON has not.
+/// The offset of the first escape sequence in `string` that's valid in JSON5 but not in JSON.
 fn escape_only_in_json5(string: &[u8]) -> Option<usize> {
     let mut from = 0;
     while let Some(found) = strings::index_of_char_usize(string.get(from..)?, b'\\') {
@@ -50,7 +50,7 @@ fn escape_only_in_json5(string: &[u8]) -> Option<usize> {
 }
 
 impl<'a> Reader<'a> {
-    /// What JSON and JSONC have against `token`, or against what is before it.
+    /// The error that JSON and JSONC give for `token`, or for the text before it.
     fn only_in_json5(&self, token: Option<&Token>) -> Option<Refused> {
         if let Some(at) = self.tokens.not_in_json() {
             return Some(match token.is_some_and(|it| it.start < at) {
@@ -77,7 +77,7 @@ impl<'a> Reader<'a> {
         }
     }
 
-    /// The next token that is no comment.
+    /// The next token that isn't a comment.
     fn next(&mut self) -> Result<Option<Token<'a>>, Refused> {
         loop {
             let token = self.tokens.next().map_err(refused)?;
@@ -100,7 +100,7 @@ impl<'a> Reader<'a> {
     }
 }
 
-/// What is read next, with the token that it starts with.
+/// The construct that the parser expects next, with its first token.
 enum State<'a> {
     Value(Option<Token<'a>>),
     Member(Option<Token<'a>>),
@@ -109,7 +109,7 @@ enum State<'a> {
 
 fn run(reader: &mut Reader, tree: &mut Tree, options: Options) -> Result<(), Refused> {
     let (is_json5, end) = (options.mode == Mode::Json5, reader.text.len());
-    // The objects and arrays whose end has not been seen.
+    // The objects and arrays that aren't closed yet.
     let mut open: Vec<u32> = Vec::new();
     let mut state = State::Value(reader.next()?);
     loop {
@@ -135,7 +135,7 @@ fn run(reader: &mut Reader, tree: &mut Tree, options: Options) -> Result<(), Ref
                     _ => return Err(refused(Error::UnexpectedToken { pos: token.start })),
                 };
                 let index = tree.push(&token, kind);
-                // Only a rule about halves of surrogate pairs looks at what a value stands for. An escape sequence makes one.
+                // The only rule that reads string values looks for lone surrogates, and only an escape can produce one.
                 if kind == NodeKind::String
                     && token.value.len() + 2 != written.len()
                     && strings::wtf8_has_surrogate(token.value)
@@ -160,7 +160,7 @@ fn run(reader: &mut Reader, tree: &mut Tree, options: Options) -> Result<(), Ref
             State::Member(Some(name)) => {
                 let kind = match name.kind {
                     Kind::String => NodeKind::String,
-                    // Every word is a name.
+                    // Keywords are valid keys too.
                     Kind::Identifier | Kind::Boolean | Kind::Null if is_json5 => {
                         NodeKind::Identifier
                     }
@@ -255,7 +255,7 @@ impl Tree {
         (self.nodes.get(index as usize)).is_some_and(|it| it.kind == NodeKind::Object)
     }
 
-    /// `token` ends the innermost object or array.
+    /// Closes the innermost object or array, which ends with `token`.
     fn close<'a>(&mut self, open: &mut Vec<u32>, token: &Token) -> State<'a> {
         let next = self.nodes.len() as u32;
         if let Some(node) = open.pop().and_then(|it| self.nodes.get_mut(it as usize)) {
@@ -277,7 +277,7 @@ pub(crate) fn parse(text: &[u8], options: Options) -> Result<(Tree, Vec<Comment>
                 tokens,
                 comments: Vec::new(),
             };
-            // A node for every six bytes is what minified JSON has.
+            // Minified JSON has about one node per six bytes.
             tree.nodes.reserve(text.len() / 6);
             run(&mut reader, &mut tree, options).map(|()| reader.comments)
         }

@@ -27,10 +27,10 @@ const LONE_SURROGATE: Message =
 
 const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
 
-/// What is wrong with the number that is written `text`.
+/// The problem with the number whose source text is `text`, if any.
 fn problem_of(text: &[u8]) -> Option<Message> {
     let has_exponent = strings::index_of_any(text, b"eE").is_some();
-    // So short, it is neither large nor small.
+    // A number this short can't be too large or too small.
     if text.len() <= 15 && !has_exponent {
         return None;
     }

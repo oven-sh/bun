@@ -1,11 +1,12 @@
-// Records the tree that `@eslint/markdown` gets from mdast-util-from-markdown for every example in `test/js/bun/md/*.txt` (the
-// specifications of CommonMark and GFM, and the tests of md4c), in both languages, with and without math and front matter.
+// Records the tree that `@eslint/markdown` gets from mdast-util-from-markdown for every example in
+// `test/js/bun/md/*.txt` (the CommonMark and GFM specs, and md4c's tests). Each example is parsed in both languages,
+// with and without math and front matter.
 //
 //   node markdown-trees.mjs <node_modules with @eslint/markdown>    # writes markdown-trees.zst next to this file
 //
-// It has a line of JSON for each case: `{ id, text, language, languageOptions, tree }`. `tree` is what
-// `bun lint --print-markdown-trees` prints: a line for each node, with its type, where it starts and ends in bytes, and its fields.
-// ` ?` is in the place of a position that a node does not have.
+// The output has one line of JSON per case: `{ id, text, language, languageOptions, tree }`. `tree` is in the format
+// that `bun lint --print-markdown-trees` prints: one line per node, with its type, its start and end in bytes, and its
+// fields. A node without a position has ` ?` instead.
 
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -13,7 +14,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { zstdCompressSync } from "node:zlib";
 
-// As the plugin finds them.
+// Resolve the packages from the plugin's directory, so that these are the versions it uses.
 const requireFromPlugin = createRequire(join(resolve(process.argv[2]), "@eslint/markdown/dist/index.js"));
 const load = name => import(pathToFileURL(requireFromPlugin.resolve(name)).href);
 const { fromMarkdown } = await load("mdast-util-from-markdown");

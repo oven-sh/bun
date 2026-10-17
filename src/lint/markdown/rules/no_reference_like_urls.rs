@@ -14,7 +14,8 @@ static LINK_OR_IMAGE: LazyLock<Regex> = LazyLock::new(|| {
     )
 });
 
-/// What alone can be the destination for `LINK_OR_IMAGE`, where that is plain to see. `Err`: the expression does not match.
+/// A cheap check before `LINK_OR_IMAGE` runs. Returns the only `destination` that the regex could capture if that's
+/// obvious from the text, `Ok(None)` if it isn't, and `Err` if the regex can't match.
 fn plain_destination(text: &[u8]) -> Result<Option<&[u8]>, ()> {
     let open = strings::index_of(text, b"](").ok_or(())?;
     let rest = &text[open + 2..];

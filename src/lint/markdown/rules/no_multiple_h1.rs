@@ -2,7 +2,7 @@ use crate::prelude::*;
 
 /// Disallow multiple H1 headings in the same document
 pub struct NoMultipleH1 {
-    title: Option<Regex>,
+    title: util::PatternOption,
 }
 
 const MULTIPLE_H1: Message =
@@ -15,12 +15,12 @@ impl Rule for NoMultipleH1 {
 
     fn new(options: &Options) -> Self {
         NoMultipleH1 {
-            title: util::front_matter_title(options.object(0)).unwrap_or_default(),
+            title: util::front_matter_title(&Self::META, options.object(0)),
         }
     }
 
     fn validate(options: &Options) -> Result<(), Vec<u8>> {
-        util::front_matter_title(options.object(0)).map(|_| ())
+        Self::new(options).title.map(|_| ())
     }
 }
 
@@ -43,11 +43,13 @@ impl Listens for NoMultipleH1 {
         match listener {
             0 => {
                 let value = node.value().unwrap_or_default();
-                *count += u32::from(util::front_matter_has_title(value, self.title.as_ref()));
+                if let Ok(title) = &self.title {
+                    *count += u32::from(util::front_matter_has_title(value, title.as_ref()));
+                }
             }
             1 => {
                 let text = util::strip_html_comments(node.value().unwrap_or_default());
-                // Indices into the value, which is not what is written if the lines of the HTML are in a container.
+                // Like upstream, these index into the value, which isn't the source text if the HTML is in a container.
                 let mut indices = Indices::new(&text, node.start_index());
                 // `/<h1[^>]*>[\s\S]*?<\/h1\s*>/giu`
                 for found in util::html_headings(&text, (1, 1)) {

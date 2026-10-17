@@ -73,11 +73,11 @@ Not reported:
 
 ## Options
 
-| Option             | Default                                              | What it does                                                                                                                         |
-| ------------------ | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `frontmatterTitle` | a pattern that finds `title:`, `title =`, `"title":` | A regular expression. If a line of the front matter matches it, the front matter counts as a level 1 heading. `""` turns that off. |
+| Option             | Default                                                | What it does                                                                                                                         |
+| ------------------ | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `frontmatterTitle` | a pattern that matches `title:`, `title =`, `"title":` | A regular expression. If a line of the front matter matches it, the front matter counts as a level 1 heading. `""` turns that off. |
 
-Front matter is only read if `languageOptions.frontmatter` says which kind the files have.
+Front matter is only parsed if `languageOptions.frontmatter` is set to the format that the files use.
 
 {/* bad {"languageOptions": { "frontmatter": "yaml" }} */}
 

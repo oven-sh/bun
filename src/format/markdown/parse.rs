@@ -36,7 +36,7 @@ pub(crate) enum Syntax {
     Plain,
     /// What Prettier makes of MDX, with remark-parse 8: `import` and `export`, any tag starts HTML, which is JSX.
     Mdx,
-    /// CommonMark as it is specified, with the extensions of GFM and with math or without, and nothing of Prettier's.
+    /// CommonMark as specified, optionally with the GFM extensions and math, and without any of Prettier's additions.
     CommonMark {
         gfm: bool,
         math: bool,

@@ -61,13 +61,13 @@ function summary(json: string) {
 // Each thread that needs JavaScript starts a VM, which takes seconds in a debug build.
 const timeout = isDebug || isASAN ? 120_000 : 10_000;
 
-// A debug build is 10 to 100 times slower, so what is large is smaller there.
+// Debug builds are 10 to 100 times slower, so the big inputs are smaller there.
 const many = (count: number) => (isDebug || isASAN ? count / 10 : count);
 
-// `fill.repeat(count)`, which is slow in a debug build.
+// Same as `fill.repeat(count)`, which is slow in a debug build.
 const repeated = (fill: string, count: number) => Buffer.alloc(count * Buffer.byteLength(fill), fill).toString();
 
-// What is only for the tests is compiled into debug and canary builds.
+// Test-only commands are only compiled into debug and canary builds.
 const hasTestRunner =
   isDebug || Bun.spawnSync({ cmd: [bunExe(), "--revision"], env: bunEnv }).stdout.includes("canary");
 
@@ -854,7 +854,7 @@ rules = { "no-console" = "off" }
   );
 });
 
-// A stand-in for `@eslint/json`. What it reports shows that it was asked, which takes the package `eslint`.
+// A stand-in for `@eslint/json`. Its reports show that the package ran, which requires the `eslint` package.
 const jsonPackage = (name = "@eslint/json") => ({
   "node_modules/@eslint/json/package.json": JSON.stringify({ name, version: "2.1.1", main: "index.js" }),
   "node_modules/@eslint/json/index.js": `
@@ -881,13 +881,13 @@ const jsonConfig = (more = "") => `
     ${more}
   ];`;
 
-// What is expected is what ESLint 10.13 with @eslint/json 2.1.1 reports.
-describe.concurrent("bun lint with the languages that are built in", () => {
+// The expected output is what ESLint 10.13 reports with @eslint/json 2.1.1.
+describe.concurrent("bun lint with the built-in JSON languages", () => {
   const json = { ...jsonPackage(), "eslint.config.mjs": jsonConfig() };
   const [mark, noBreakSpace] = [0xfeff, 0xa0].map(it => String.fromCodePoint(it));
   const separators = String.fromCodePoint(0x2028, 0x2029);
 
-  test("JSON, JSONC and JSON5 are linted here, without the package eslint", async () => {
+  test("lints JSON, JSONC and JSON5 without the eslint package", async () => {
     const result = await lint(
       {
         ...json,
@@ -940,8 +940,8 @@ describe.concurrent("bun lint with the languages that are built in", () => {
     expect(summary(result.raw)).toBe(`a.json: 1:${depth * 6 + 8} json/no-duplicate-keys Duplicate key "b" found.`);
   });
 
-  // Which texts are refused is what has to be the same as with the plugin. The words and the place are those of Bun's parser.
-  test("a text that is refused is one fatal problem", async () => {
+  // Bun has to reject the same inputs as the plugin. The message and its location come from Bun's parser.
+  test("a rejected file gets exactly one fatal problem", async () => {
     const cases: [string, string, string][] = [
       ["json", "", "1:1 Unexpected end of input"],
       ["json", "{", "1:2 Unexpected end of input"],
@@ -994,9 +994,9 @@ describe.concurrent("bun lint with the languages that are built in", () => {
     expect(result.exitCode).toBe(1);
   });
 
-  // `a` is accepted and `r` is refused: as JSON, as JSONC, as JSONC with `allowTrailingCommas`, as JSON5. Behind `//` is what ESLint
-  // does where that is something else, which the next test is about.
-  test("which texts are accepted", async () => {
+  // `a` means accepted and `r` means rejected, in this order: JSON, JSONC, JSONC with `allowTrailingCommas`, JSON5.
+  // Where ESLint differs, its result is in the `//` comment. The next test covers those cases.
+  test("accepts and rejects the right inputs", async () => {
     const texts: [string, string][] = [
       ["", "rrrr"],
       [" ", "rrrr"],
@@ -1248,7 +1248,7 @@ describe.concurrent("bun lint with the languages that are built in", () => {
     const result = await lint({ ...json, "eslint.config.mjs": config, ...files }, ["-f", "json", "."]);
     const found = new Map<string, string>();
     for (const { filePath, messages } of JSON.parse(result.raw)) {
-      // What is refused has one problem.
+      // A rejected file gets exactly one problem.
       const isRefused = messages.some((it: any) => it.fatal);
       found.set(
         filePath.replaceAll("\\", "/").split("/").slice(-2).join("/"),
@@ -1265,33 +1265,33 @@ describe.concurrent("bun lint with the languages that are built in", () => {
     ).toEqual(texts);
   });
 
-  // Momoa 3.3, which is the parser of the plugin, says the opposite of each.
-  test("where the parser of the plugin is wrong, the specification of the language counts", async () => {
+  // Momoa 3.3, the plugin's parser, does the opposite in each case.
+  test("follows the spec where the plugin's parser doesn't", async () => {
     const character = (code: number) => String.fromCodePoint(code);
     const cases: [string, string, "accepted" | "refused"][] = [
-      // RFC 8259: a control character in a string is written as an escape sequence.
+      // RFC 8259: control characters in strings must be escaped.
       ["json", '"a\nb"', "refused"],
       ["json", '"a\tb"', "refused"],
       ["jsonc", `"${character(1)}"`, "refused"],
-      // JSON5: a string goes on in the next line only after a backslash.
+      // JSON5: a string only continues on the next line after a backslash.
       ["json5", '"a\nb"', "refused"],
-      // A sign can be before every number.
+      // Any number can have a sign.
       ["json5", "[-.5, +.5]", "accepted"],
       ["json5", "[.a]", "refused"],
       ["json5", "[.e1]", "refused"],
       ["json5", "[0x1.5]", "refused"],
-      // A key is an IdentifierName of ECMAScript 5.1, which every word is, or a string.
+      // A key is a string or an ECMAScript 5.1 IdentifierName, which includes keywords.
       ["json5", "{true:1, null:2, false: 3}", "accepted"],
       ["json5", "{.5:1}", "refused"],
       ["json5", `{${character(0x200c)}:1}`, "refused"],
       ["json5", `{${character(0x1d400)}:1}`, "accepted"],
-      // After a backslash a digit is only `0`, and no digit follows.
+      // The only digit allowed after a backslash is `0`, and no digit can follow it.
       ["json5", '["\\1"]', "refused"],
       ["json5", '["\\01"]', "refused"],
       ["json5", '["\\8"]', "refused"],
-      // White space is what is in the category Zs.
+      // Every character in the Zs category is whitespace.
       ["json5", `${character(0x1680)}[]`, "accepted"],
-      // A comment ends where a line of ECMAScript ends.
+      // A comment ends at any ECMAScript line terminator.
       ["json5", `// c${character(0x2028)}[]`, "accepted"],
       ["json5", `// a${character(0x2029)}b\n[]`, "refused"],
     ];
@@ -1305,14 +1305,14 @@ describe.concurrent("bun lint with the languages that are built in", () => {
     );
   });
 
-  test("what only JSON5 has is read in JSON5", async () => {
+  test("parses JSON5-only syntax in JSON5", async () => {
     const text = `// c\n{ a: +1, b: .5, c: 5., d: 0xF, e: -Infinity, f: NaN, g: 'a\\\nb', "h": "\\x41\\v\\0", $_: [1,], NaN: 1, ${noBreakSpace}}\n`;
     const result = await lint({ ...json, "a.json5": text }, ["-f", "json", "."]);
     expect(summary(result.raw)).toBe("");
     expect(result.exitCode).toBe(0);
   });
 
-  describe("all rules of the plugin", () => {
+  describe("all of the plugin's rules", () => {
     const character = (code: number) => String.fromCodePoint(code);
     const [accent, backslash, wideQuote, wideBackslash, ligature] = [0x301, 92, 0xff02, 0xff3c, 0xfb01].map(character);
     const escaped = (code: string) => `${backslash}u${code}`;
@@ -1335,7 +1335,7 @@ describe.concurrent("bun lint with the languages that are built in", () => {
       "fix.jsonc": `{\n  "c": { "z": 1, "y": 2 }, "b": [1], // c\n  "a": 1, "0": 2\n}`,
     };
 
-    test("report what they report in ESLint", async () => {
+    test("report the same as in ESLint", async () => {
       const result = await lint(all, ["-f", "json", "."]);
       expect(summary(result.raw).replace(/f{300}/, "f..f")).toMatchInlineSnapshot(`
           "a.json: 2:8 json/no-unsafe-values The number '1e400' will evaluate to Infinity.
@@ -1382,7 +1382,7 @@ describe.concurrent("bun lint with the languages that are built in", () => {
       expect(result.exitCode).toBe(1);
     });
 
-    test("--fix goes on until the keys are sorted", async () => {
+    test("--fix repeats until the keys are sorted", async () => {
       const names = ["a.json", "desc.json", "fix.jsonc", "nfkc.json5"];
       const result = await lint(all, ["--fix", "."], names);
       expect(result.files).toMatchInlineSnapshot(`
@@ -1443,15 +1443,15 @@ describe.concurrent("bun lint with the languages that are built in", () => {
       const { messages } = JSON.parse(result.raw)[0];
       expect(messages.length).toBeGreaterThan(count / 2);
       expect(messages.filter((it: any) => it.fix)).toEqual([]);
-      // Nothing but comments between two keys, where an empty line would start a group.
+      // Only comments between two keys. A blank line there would start a new group.
       const apart = `{\n"b": 1,\n${repeated("// c\n/*\n\n*/\n", count)}"a": 2\n}`;
       const groups = await lint({ ...all, "groups.jsonc": apart }, ["-f", "json", "groups.jsonc"]);
       expect(JSON.parse(groups.raw)[0].messages.map((it: any) => it.line)).toEqual([count * 4 + 3]);
     });
   });
 
-  // ESLint reads a file as UTF-8.
-  test("what is not UTF-8 in a file counts as U+FFFD", async () => {
+  // ESLint reads files as UTF-8.
+  test("invalid UTF-8 in a file counts as U+FFFD", async () => {
     const bytes = (text: string) => Buffer.from(text, "latin1");
     const replaced = String.fromCodePoint(0xfffd);
     const result = await lint(
@@ -1468,8 +1468,8 @@ describe.concurrent("bun lint with the languages that are built in", () => {
     );
   });
 
-  // As in Microsoft's jsonc-parser, and in the plugin.
-  test("U+2028 and U+2029 do not end a comment in JSONC", async () => {
+  // Same as Microsoft's jsonc-parser and the plugin.
+  test("U+2028 and U+2029 don't end a comment in JSONC", async () => {
     const twice = '{ "a": 1, "a": 2 }';
     const result = await lint(
       {
@@ -1489,19 +1489,19 @@ describe.concurrent("bun lint with the languages that are built in", () => {
     );
   });
 
-  // The line of a problem is counted as the language counts, so whoever looks for that line in the text has to count that way.
+  // Line numbers in problems go by the language's line breaks, so code that looks a line up in the text must too.
   describe.each([
     ["only line feeds", (text: string) => text],
     ["a byte order mark", (text: string) => mark + text],
     ["carriage returns", (text: string) => text.replaceAll("\n", "\r\n")],
     ["both", (text: string) => mark + text.replaceAll("\n", "\r\n")],
-  ])("U+2028 and U+2029 do not end a line of JSON: a file with %s", (_, written) => {
-    // In a text that is not short, the lines are only counted while it is linted: nobody notes where they start.
+  ])("U+2028 and U+2029 aren't line breaks in JSON: a file with %s", (_, written) => {
+    // Unless the file is short, the linter counts lines without saving their offsets, so the formatter recomputes them.
     const more = Array.from({ length: 50 }, (_, i) => `  "${i}": "${"-".repeat(40)}",\n`).join("");
     const text = `{\n  "s": "${separators}",\n${more}  "a": 1,\n  "a": 2\n}\n`;
     const files = { ...json, "a.json": written(text) };
 
-    test.each(["pretty", "agent"])("the excerpt of %s", async format => {
+    test.each(["pretty", "agent"])("the code excerpt in %s", async format => {
       const result = await lint(files, ["-f", format, "a.json"]);
       const shown = result.stdout.split("\n").filter(line => line.includes('"a"') && !line.includes("Duplicate"));
       expect(shown.at(-1)).toEndWith('"a": 2');
@@ -1564,7 +1564,7 @@ describe.concurrent("bun lint with the languages that are built in", () => {
     expect(severities).toEqual([2, 2, 2, 2, 2, 2, 2, 1, 1]);
   });
 
-  test("--fix removes a comment that disables nothing, after a byte order mark too", async () => {
+  test("--fix removes an unused disable comment, also after a byte order mark", async () => {
     const files = { "a.jsonc": `${mark}{ "é": 1 /* eslint-disable-line */ }\n` };
     const result = await lint({ ...json, ...files }, ["--fix", "."], ["a.jsonc"]);
     expect(result.files).toEqual({ "a.jsonc": `${mark}{ "é": 1   }\n` });
@@ -1592,7 +1592,7 @@ describe.concurrent("bun lint with the languages that are built in", () => {
     expect(JSON.parse(strict.raw)[0].errorCount).toBe(1);
   });
 
-  test("languageOptions are those of the language", async () => {
+  test("languageOptions are interpreted by the language", async () => {
     const files = (options: string) => ({
       ...jsonPackage(),
       "eslint.config.mjs": jsonConfig(`{ files: ["**/*.jsonc", "x.json"], languageOptions: ${options} }`),
@@ -1653,7 +1653,7 @@ describe.concurrent("bun lint with the languages that are built in", () => {
     expect(rules.javascript).toEqual({});
   });
 
-  test("a block in JSON that a processor finds is linted here", async () => {
+  test("lints a JSON block that a processor extracts", async () => {
     const result = await lint(
       {
         ...jsonPackage(),
@@ -1672,7 +1672,7 @@ describe.concurrent("bun lint with the languages that are built in", () => {
     expect(summary(result.raw)).toBe('a.md: 6:3 json/no-duplicate-keys Duplicate key "a" found.');
   });
 
-  test("a rule for JSON does not take a file in JavaScript", async () => {
+  test("a JSON rule can't be enabled for a JavaScript file", async () => {
     const files = {
       ...jsonPackage(),
       "eslint.config.mjs": `
@@ -1693,7 +1693,7 @@ describe.concurrent("bun lint with the languages that are built in", () => {
     `);
   });
 
-  // ESLint makes the same prefix of its name.
+  // ESLint derives the same prefix, `json`, from its name.
   test.each<[string, Record<string, string>, string[]]>([
     [
       "an .eslintrc.json",
@@ -1715,7 +1715,7 @@ describe.concurrent("bun lint with the languages that are built in", () => {
       { ".oxlintrc.json": `{ "jsPlugins": ["eslint-plugin-json"], "rules": { "json/no-duplicate-keys": "error" } }` },
       [],
     ],
-  ])("eslint-plugin-json is a package like any other, named by %s", async (_, files, args) => {
+  ])("eslint-plugin-json is treated like any other package when it's loaded from %s", async (_, files, args) => {
     const result = await lint(
       {
         "package.json": "{}",
@@ -1731,8 +1731,8 @@ describe.concurrent("bun lint with the languages that are built in", () => {
     expect(result.stdout).toMatch(/a\.js:1:1: eslint-plugin-json \[Error\/json[/(]no-duplicate-keys\)?\]/);
   });
 
-  // Nothing that works with the package stops working.
-  describe("the whole file goes to the package eslint", () => {
+  // Anything that works with the package has to keep working.
+  describe("the whole file goes to the eslint package", () => {
     const own = {
       "own.mjs": `export default { rules: { seen: { create: context => ({ Line: () => context.report({ line: 1, message: "own" }) }) } } };`,
     };
@@ -1741,13 +1741,13 @@ describe.concurrent("bun lint with the languages that are built in", () => {
     const text = '{ "a": 1, "a": 2 }';
     test.each<[string, Record<string, string>, string[], string]>([
       [
-        "a rule of the plugin that is not built in is on",
+        "a plugin rule that isn't built in is on",
         { "eslint.config.mjs": jsonConfig(`{ files: ["*.json"], rules: { "json/only-in-the-package": "warn" } }`) },
         [],
         "the package: no-duplicate-keys, the package: only-in-the-package",
       ],
       [
-        "a rule of another plugin is on",
+        "another plugin's rule is on",
         {
           ...own,
           "eslint.config.mjs": withOwn(`{ files: ["*.json"], plugins: { own }, rules: { "own/seen": "error" } }`),
@@ -1756,8 +1756,8 @@ describe.concurrent("bun lint with the languages that are built in", () => {
         "the package: no-duplicate-keys, own",
       ],
       ["--no-native-plugin-rules", {}, ["--no-native-plugin-rules"], "the package: no-duplicate-keys"],
-      ["--native-plugin-rules names others", {}, ["--native-plugin-rules=import"], "the package: no-duplicate-keys"],
-      ["another package has the prefix", jsonPackage("eslint-plugin-json"), [], "the package: no-duplicate-keys"],
+      ["--native-plugin-rules lists others", {}, ["--native-plugin-rules=import"], "the package: no-duplicate-keys"],
+      ["another package uses the prefix", jsonPackage("eslint-plugin-json"), [], "the package: no-duplicate-keys"],
     ])("if %s", async (_, files, args, expected) => {
       const all = { ...eslintPackage, ...json, ...files, "a.json": text };
       const result = await lint(all, ["-f", "json", "--timing", ...args, "a.json"]);
@@ -1766,7 +1766,7 @@ describe.concurrent("bun lint with the languages that are built in", () => {
       expect(result.stderr).toContain("the eslint package linted 1 files");
     });
 
-    test("if a comment in it turns on a rule that is not built in", async () => {
+    test("if a comment in it turns on a rule that isn't built in", async () => {
       const files = {
         ...eslintPackage,
         ...json,
@@ -1781,7 +1781,7 @@ describe.concurrent("bun lint with the languages that are built in", () => {
       expect(result.stderr).toContain("the eslint package linted 1 files");
     });
 
-    test("which has to be installed", async () => {
+    test("and it's an error if eslint isn't installed", async () => {
       const config = jsonConfig(`{ files: ["a.json"], rules: { "json/only-in-the-package": "warn" } }`);
       const files = { ...json, "eslint.config.mjs": config, "a.json": text, "b.json": text };
       const result = await lint(files, ["-f", "unix", "."]);
@@ -1829,7 +1829,7 @@ const markdownPackage = (name = "@eslint/markdown") => ({
     };`,
 });
 
-// All rules are on, in CommonMark, and in GFM for `*.gfm.md`.
+// Turns on every rule. Files are CommonMark, except `*.gfm.md`, which are GFM.
 const markdownConfig = (more = "", rules = JSON.stringify(markdownRules)) => `
   import markdown from "@eslint/markdown";
   const rules = Object.fromEntries(${rules}.map(name => ["markdown/" + name, "error"]));
@@ -1839,13 +1839,13 @@ const markdownConfig = (more = "", rules = JSON.stringify(markdownRules)) => `
     ${more}
   ];`;
 
-// What is expected is what ESLint 10.13 with @eslint/markdown 8.0.3 reports, unless it says otherwise.
-describe.concurrent("bun lint with Markdown, which is built in", () => {
+// The expected output is what ESLint 10.13 reports with @eslint/markdown 8.0.3, unless a comment says otherwise.
+describe.concurrent("bun lint with built-in Markdown", () => {
   const project = { ...markdownPackage(), "eslint.config.mjs": markdownConfig() };
   const few = { ...markdownPackage(), "eslint.config.mjs": markdownConfig("", `["no-html", "no-empty-links"]`) };
   const mark = String.fromCodePoint(0xfeff);
 
-  test("CommonMark and GFM are linted here, without the package eslint", async () => {
+  test("lints CommonMark and GFM without the eslint package", async () => {
     const table = "| a | b |\n| - | - |\n| 1 | 2 | 3 |\n\nhttps://example.com";
     const result = await lint(
       {
@@ -1896,7 +1896,7 @@ describe.concurrent("bun lint with Markdown, which is built in", () => {
     expect(result.exitCode).toBe(1);
   });
 
-  test("comments in HTML disable and configure rules", async () => {
+  test("HTML comments disable and configure rules", async () => {
     const result = await lint(
       {
         ...few,
@@ -1968,7 +1968,7 @@ describe.concurrent("bun lint with Markdown, which is built in", () => {
     expect(JSON.parse(strict.raw)[0].errorCount).toBe(1);
   });
 
-  test("languageOptions say whether there is front matter, and math", async () => {
+  test("languageOptions turn on front matter and math", async () => {
     const [dashes, pluses, dollars] = [
       "---\ntitle: a\n---\n\n# b\n",
       "+++\ntitle = 'a'\n+++\n\n# b\n",
@@ -2013,7 +2013,7 @@ describe.concurrent("bun lint with Markdown, which is built in", () => {
     [`{ frontmatter: null }`, '`null` for frontmatter. Expected one of `false`, `"yaml"`, `"toml"`, or `"json"`.'],
     [`{ frontmatter: ["yaml"] }`, '`yaml` for frontmatter. Expected one of `false`, `"yaml"`, `"toml"`, or `"json"`.'],
     [`{ math: 1 }`, "`1` for math. Expected a boolean."],
-  ])("languageOptions: %s is refused", async (options, message) => {
+  ])("languageOptions: %s is rejected", async (options, message) => {
     const config = markdownConfig(`{ files: ["a.md"], languageOptions: ${options} }`);
     const result = await lint({ ...markdownPackage(), "eslint.config.mjs": config, "a.md": "# a\n" }, ["a.md"]);
     expect(result.stderr).toContain(`Key "languageOptions": Invalid language option value ${message}`);
@@ -2090,8 +2090,8 @@ describe.concurrent("bun lint with Markdown, which is built in", () => {
     expect(rules.javascript).toEqual({});
   });
 
-  // The rules of the plugin name no languages, so ESLint has nothing against it.
-  test("a rule for Markdown can be on for a file in JavaScript, where it finds nothing", async () => {
+  // The plugin's rules don't declare `meta.languages`, so ESLint allows it.
+  test("a Markdown rule can be enabled for a JavaScript file, where it reports nothing", async () => {
     const files = {
       ...markdownPackage(),
       "eslint.config.mjs": `
@@ -2104,8 +2104,8 @@ describe.concurrent("bun lint with Markdown, which is built in", () => {
     expect(result.exitCode).toBe(1);
   });
 
-  // As with `configs.recommended` and `configs.processor` of the plugin together.
-  test("a file that has the processor of the plugin too goes to the processor", async () => {
+  // This is what the plugin's `configs.recommended` and `configs.processor` give you together.
+  test("a file that also has the plugin's processor goes to the processor", async () => {
     const files = {
       ...markdownPackage(),
       "fenced.mjs": fenced(true),
@@ -2124,16 +2124,17 @@ describe.concurrent("bun lint with Markdown, which is built in", () => {
     expect(summary(result.raw)).toBe("a.md: 6:1 no-debugger Unexpected 'debugger' statement.");
   });
 
-  // micromark 4.0.3, which is the parser of the plugin, reads each of these in another way.
-  test("where the parser of the plugin is wrong, CommonMark counts", async () => {
+  // micromark 4.0.3, the plugin's parser, parses each of these differently.
+  test("follows CommonMark where the plugin's parser doesn't", async () => {
     const result = await lint(
       {
         ...project,
-        // A value without quotes can have a `/`. The plugin: this is no tag, and nothing is reported.
+        // An unquoted attribute value can contain a `/`. The plugin doesn't see a tag here and reports nothing.
         "slash-in-value.md": "a <a href=b/c>d</a>\n",
-        // It cannot have a `=`. The plugin: `markdown/no-html` reports it.
+        // It can't contain a `=`. The plugin sees a tag, and `markdown/no-html` reports it.
         "two-equals.md": "<a b=c=d>\n",
-        // A title in parentheses has no `(` that is not escaped, so this is no definition. The plugin: an unused definition.
+        // A title in parentheses can't contain an unescaped `(`, so this isn't a definition. The plugin reports an
+        // unused definition.
         "paren-in-title.md": "[a]: b (()\n",
       },
       ["-f", "json", "."],
@@ -2144,9 +2145,9 @@ describe.concurrent("bun lint with Markdown, which is built in", () => {
       `);
   });
 
-  // The rules are only as good as the tree. `conformance/markdown-trees.mjs` has recorded that of the plugin.
+  // The rules are only as good as the tree. `conformance/markdown-trees.mjs` recorded the plugin's trees.
   test.skipIf(!hasTestRunner)(
-    "the tree of every example of the specifications is the one that the parser of the plugin makes",
+    "every example in the CommonMark and GFM specs parses to the same tree as with the plugin's parser",
     async () => {
       const recorded = Bun.zstdDecompressSync(readFileSync(join(import.meta.dir, "conformance", "markdown-trees.zst")));
       using dir = tempDir("bun-lint-js-parsers", { "cases.jsonl": recorded });
@@ -2168,19 +2169,19 @@ describe.concurrent("bun lint with Markdown, which is built in", () => {
         .split("\n")
         .map(it => JSON.parse(it));
       expect(cases.length).toBe(3308);
-      // Links that the plugin makes of text afterwards have no position, and its rules throw: see below.
+      // Links that the plugin makes from plain text in a later pass have no position, and its rules throw: see below.
       const withPlaces = cases.filter(it => !/^ *\w+ \?/m.test(it.tree));
       expect(cases.length - withPlaces.length).toBe(6);
       const different = withPlaces.filter(it => trees.get(it.id) !== `${it.tree}\n`).map(it => it.id.split(" ")[0]);
-      // In each of these the file says what cmark and md4c make of it, which is what Bun does and micromark does not.
+      // For each of these, the file has the output of cmark and md4c. Bun matches it and micromark doesn't.
       expect([...new Set(different)]).toEqual([
-        // A character beyond U+FFFF that is punctuation.
+        // A punctuation character above U+FFFF.
         "coverage.txt#13",
-        // `a***b* c*`: whether two runs of delimiters match goes by their whole lengths.
+        // `a***b* c*`: whether two delimiter runs can match depends on their full lengths.
         "regressions.txt#7",
-        // An empty list item follows indented code.
+        // An empty list item after indented code.
         "regressions.txt#23",
-        // A line that is a tag goes on with the paragraph before it.
+        // A line that's just a tag continues the paragraph before it.
         "regressions.txt#39",
         // A tab before the two spaces of a hard line break.
         "regressions.txt#60",
@@ -2189,15 +2190,15 @@ describe.concurrent("bun lint with Markdown, which is built in", () => {
     },
   );
 
-  // In GFM the plugin makes links of such text without saying where they are, and five of its rules throw
-  // "Custom getLoc() method must be implemented in the subclass", which ends the run of ESLint.
-  test("a file that the plugin trips over is linted", async () => {
+  // In GFM, the plugin turns text like this into links that have no position. Five of its rules then throw
+  // "Custom getLoc() method must be implemented in the subclass", which ends the ESLint run.
+  test("lints a file that crashes the plugin", async () => {
     const files = { ...project, "a.gfm.md": "# a\n\n[www.example.com\n\n<www.example.com> <b>c</b>\n" };
     const result = await lint(files, ["-f", "json", "."]);
     expect(summary(result.raw)).toBe('a.gfm.md: 5:19 markdown/no-html HTML element "b" is not allowed.');
   });
 
-  test("where a rule of the plugin throws, the run ends the same way", async () => {
+  test("the run ends the same way as in ESLint when one of the plugin's rules throws", async () => {
     const config = markdownConfig(
       `{ rules: { "markdown/no-missing-atx-heading-space": ["error", { checkClosedHeadings: true }] } }`,
     );
@@ -2209,7 +2210,7 @@ describe.concurrent("bun lint with Markdown, which is built in", () => {
     expect(result.exitCode).toBe(2);
   });
 
-  test("what is not UTF-8 in a file counts as U+FFFD, and so does NUL", async () => {
+  test("invalid UTF-8 and NUL in a file count as U+FFFD", async () => {
     const bytes = (text: string) => Buffer.from(text, "latin1");
     const result = await lint(
       {
@@ -2231,19 +2232,19 @@ describe.concurrent("bun lint with Markdown, which is built in", () => {
     );
   });
 
-  describe("the time is in proportion to the size of the text", () => {
+  describe("runs in linear time", () => {
     const count = many(20_000);
     test.each([
       ["headings", "# a\n\n"],
-      ["headings in HTML", "<h1>a</h1>"],
-      ["opening tags of headings", "<h1>"],
+      ["HTML headings", "<h1>a</h1>"],
+      ["opening heading tags", "<h1>"],
       ["tags with an id", "<div id=a>\n"],
-      ["references on one line, after a character that is not ASCII", "é [a] "],
+      ["references on one line, after a non-ASCII character", "é [a] "],
       ["definitions", "[a]: b\n"],
-      ["links to fragments", "[a](#b) "],
+      ["fragment links", "[a](#b) "],
       ["emphasis markers", "* a *"],
       ["comments", "<!-- a -->"],
-      ["comments that are not closed", "<!-- "],
+      ["unclosed comments", "<!-- "],
       ["bare URLs", "https://a.b "],
       ["rows", "| a | b |\n"],
       ["block quotes", "> "],
@@ -2256,21 +2257,21 @@ describe.concurrent("bun lint with Markdown, which is built in", () => {
     });
   });
 
-  // Nothing that works with the package stops working.
-  describe("the whole file goes to the package eslint", () => {
+  // Anything that works with the package has to keep working.
+  describe("the whole file goes to the eslint package", () => {
     const own = {
       "own.mjs": `export default { rules: { seen: { create: context => ({ Line: () => context.report({ line: 1, message: "own" }) }) } } };`,
     };
     const one = (more = "") => markdownConfig(more, `["no-html"]`);
     test.each<[string, Record<string, string>, string[], string]>([
       [
-        "a rule of the plugin that is not built in is on",
+        "a plugin rule that isn't built in is on",
         { "eslint.config.mjs": one(`{ files: ["*.md"], rules: { "markdown/only-in-the-package": "warn" } }`) },
         [],
         "the package: no-html, the package: only-in-the-package",
       ],
       [
-        "a rule of another plugin is on",
+        "another plugin's rule is on",
         {
           ...own,
           "eslint.config.mjs": one(`{ files: ["*.md"], plugins: { own }, rules: { "own/seen": "error" } }`).replace(
@@ -2282,8 +2283,8 @@ describe.concurrent("bun lint with Markdown, which is built in", () => {
         "the package: no-html, own",
       ],
       ["--no-native-plugin-rules", {}, ["--no-native-plugin-rules"], "the package: no-html"],
-      ["--native-plugin-rules names others", {}, ["--native-plugin-rules=import"], "the package: no-html"],
-      ["another package has the prefix", markdownPackage("eslint-plugin-markdown"), [], "the package: no-html"],
+      ["--native-plugin-rules lists others", {}, ["--native-plugin-rules=import"], "the package: no-html"],
+      ["another package uses the prefix", markdownPackage("eslint-plugin-markdown"), [], "the package: no-html"],
     ])("if %s", async (_, files, args, expected) => {
       const all = {
         ...eslintPackage,
@@ -2298,7 +2299,7 @@ describe.concurrent("bun lint with Markdown, which is built in", () => {
       expect(result.stderr).toContain("the eslint package linted 1 files");
     });
 
-    test("if a comment in it turns on a rule that is not built in", async () => {
+    test("if a comment in it turns on a rule that isn't built in", async () => {
       const files = {
         ...eslintPackage,
         ...markdownPackage(),

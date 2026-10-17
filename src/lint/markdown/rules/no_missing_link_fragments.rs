@@ -5,7 +5,7 @@ use bun_lint::utils::text::decode_uri;
 /// Disallow link fragments that do not reference valid headings
 pub struct NoMissingLinkFragments {
     ignore_case: bool,
-    allow_pattern: Option<Regex>,
+    allow_pattern: util::PatternOption,
 }
 
 const INVALID_FRAGMENT: Message = Message::new(
@@ -15,15 +15,15 @@ const INVALID_FRAGMENT: Message = Message::new(
 
 static GITHUB_LINE_REFERENCE: LazyLock<Regex> =
     LazyLock::new(|| Regex::literal(r"/^L\d+(?:C\d+)?(?:-L\d+(?:C\d+)?)?$/u"));
-/// Upstream's starts with `(?<!<)`, not with `^`, and has the flag `g`: see `html_ids`.
+/// Upstream's regex starts with `(?<!<)` instead of `^` and has the `g` flag: see `html_ids`.
 static HTML_ID_NAME: LazyLock<Regex> = LazyLock::new(|| {
     Regex::literal(r#"/^<[^>]+\s(?:id|name)\s*=\s*["']?(?<id>[^"'\s>]+)["']?/iu"#)
 });
 
-/// `id` of what `/\{#(?<id>[^}\s]+)\}\s*$/u` finds in `text`.
+/// The `id` group of the match of `/\{#(?<id>[^}\s]+)\}\s*$/u` in `text`.
 fn custom_heading_id(text: &[u8]) -> Option<&[u8]> {
     let before = strings::trim_js_whitespace_end(text).strip_suffix(b"}")?;
-    // What can be in an id, as far back as it goes.
+    // Walk back over the characters that an id can contain.
     let mut start = before.len();
     while start > 0 && before[start - 1] != b'}' {
         match strings::js_whitespace_len_back(&before[..start]) {
@@ -36,8 +36,9 @@ fn custom_heading_id(text: &[u8]) -> Option<&[u8]> {
     (!id.is_empty()).then_some(id)
 }
 
-/// `id` of each match of upstream's expression in `html`. No match goes beyond a `>`, and of what can be the attribute the
-/// last before the `>` is taken, so from a `<` to the next `>` there is one match or none, and it starts at that `<`.
+/// The `id` group of each match of upstream's regex in `html`. A match never crosses a `>`, and it captures the last
+/// candidate attribute before the `>`. So there's at most one match between a `<` and the next `>`, and it starts at
+/// that `<`.
 fn html_ids(html: &[u8]) -> impl Iterator<Item = &[u8]> {
     let mut from = 0;
     std::iter::from_fn(move || {
@@ -55,19 +56,9 @@ fn html_ids(html: &[u8]) -> impl Iterator<Item = &[u8]> {
     })
 }
 
-fn allow_pattern(options: &Options) -> Result<Option<Regex>, Vec<u8>> {
-    match options.object(0).str("allowPattern").unwrap_or_default() {
-        "" => Ok(None),
-        pattern => match Regex::new(pattern, "u") {
-            Ok(regex) => Ok(Some(regex)),
-            Err(error) => Err(error.message.into_bytes()),
-        },
-    }
-}
-
 #[derive(Default)]
 pub(crate) struct Seen<'d> {
-    /// Without `top`, which is always one.
+    /// Doesn't include `top`, which is always valid.
     fragment_ids: FxHashSet<Vec<u8>>,
     slugger: Slugger,
     relevant_nodes: Vec<Node<'d>>,
@@ -79,14 +70,16 @@ impl Rule for NoMissingLinkFragments {
     listens!();
 
     fn new(options: &Options) -> Self {
+        let options = options.object(0);
+        let allow_pattern = options.str("allowPattern").unwrap_or_default();
         NoMissingLinkFragments {
-            ignore_case: options.object(0).bool_or("ignoreCase", true),
-            allow_pattern: allow_pattern(options).unwrap_or_default(),
+            ignore_case: options.bool_or("ignoreCase", true),
+            allow_pattern: util::pattern_option(&Self::META, allow_pattern, "u"),
         }
     }
 
     fn validate(options: &Options) -> Result<(), Vec<u8>> {
-        allow_pattern(options).map(|_| ())
+        Self::new(options).allow_pattern.map(|_| ())
     }
 }
 
@@ -154,7 +147,7 @@ impl Listens for NoMissingLinkFragments {
                         true => decode_uri(fragment, b"").map_or(Cow::Borrowed(fragment), Cow::Owned),
                         false => Cow::Borrowed(fragment),
                     };
-                    if self.allow_pattern.as_ref().is_some_and(|it| it.test(&decoded))
+                    if matches!(&self.allow_pattern, Ok(Some(allowed)) if allowed.test(&decoded))
                         || (decoded.starts_with(b"L") && GITHUB_LINE_REFERENCE.test(&decoded))
                     {
                         continue;

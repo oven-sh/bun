@@ -5,10 +5,10 @@
 //   bun test/cli/lint/conformance/sync.ts [<fixtures>]        # `fixtures` next to this file, unless named
 //   bun test/cli/lint/conformance/sync.ts --more <name> <directory>   # `more/<name>/` is what `<directory>/<plugin>/<rule>.json` are
 //   bun test/cli/lint/conformance/sync.ts --oxlint <directory>        # `oxlint/` is what `extract-oxlint.ts` wrote to `<directory>`
-//   bun test/cli/lint/conformance/sync.ts --plugin <name> <fixtures>  # `<name>/` is what `<fixtures>/<name>/<rule>.json` are
+//   bun test/cli/lint/conformance/sync.ts --plugin <name> <fixtures>  # replaces `<name>/` with `<fixtures>/<name>/<rule>.json`
 //   bun test/cli/lint/conformance/sync.ts --extract <part of a path, or ""> <directory>
 //
-// Each of the first four leaves the rest of the bundle as it is.
+// Each of the first four leaves the rest of the bundle untouched.
 //
 // The suites of eslint-plugin-import, -react and -prettier are recorded with the published packages and come into the bundle
 // rule by rule, as a rule here does the same as the package's. None of these commands touches them: see `RECORDED`.

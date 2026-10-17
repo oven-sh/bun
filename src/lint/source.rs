@@ -99,20 +99,20 @@ impl Lines {
     }
 }
 
-/// Where a line ends. Each language has its own idea.
+/// What counts as a line break. It depends on the language.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub enum LineBreaks {
-    /// At `\n`, `\r\n`, `\r`, U+2028 and U+2029.
+    /// `\n`, `\r\n`, `\r`, U+2028 and U+2029.
     #[default]
     EcmaScript,
-    /// At `\n`, `\r\n` and `\r`.
+    /// `\n`, `\r\n` and `\r`.
     Newlines,
-    /// At a form feed too.
+    /// `\n`, `\r\n`, `\r` and form feed.
     NewlinesAndFormFeeds,
 }
 
 impl LineBreaks {
-    /// Whether only `\n` ends a line of `text`.
+    /// Returns true if `\n` is the only line break in `text`.
     fn is_plain(self, text: &[u8]) -> bool {
         use bun_core::strings::{contains, contains_char};
         !contains_char(text, b'\r')
@@ -127,10 +127,10 @@ impl LineBreaks {
             }
     }
 
-    /// Where the lines of `text` start.
+    /// The offset of the start of each line of `text`.
     fn starts(self, text: &[u8], is_plain: bool) -> Vec<u32> {
         let ends: &[u8] = match self {
-            // Only `\n` ends a line, as in nearly every file.
+            // `\n` is the only line break, as in nearly every file.
             _ if is_plain => return bun_core::strings::line_starts(text),
             LineBreaks::EcmaScript => return bun_sema::check::compute_ecma_line_starts(text),
             LineBreaks::Newlines => b"\r\n",
@@ -151,7 +151,8 @@ impl LineBreaks {
         LineStarts::at(self.starts(text, self.is_plain(text)))
     }
 
-    /// The line and the column of `offset` in `text`. It looks at all of the text: for what is said once about a file.
+    /// The line and column of `offset` in `text`. It scans the whole text, so it's only for things that are reported
+    /// once per file.
     pub fn position(self, text: &[u8], offset: usize) -> Position {
         let offset = offset.min(text.len());
         let (line, start) = self.line_starts(text).line_at(offset as u32);

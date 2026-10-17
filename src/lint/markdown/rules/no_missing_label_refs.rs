@@ -15,9 +15,9 @@ static LABEL: LazyLock<Regex> = LazyLock::new(|| {
 
 #[derive(Default)]
 pub(crate) struct Seen<'d> {
-    /// `allMissingReferences`. The label of one that a definition has taken out is `None`.
+    /// `allMissingReferences`. A label is set to `None` once a definition for it is found.
     missing: Vec<(Option<&'d [u8]>, (Loc, Loc))>,
-    /// Which of them have a label.
+    /// For each label, the indices in `missing` of the references that have it.
     by_label: FxHashMap<&'d [u8], Vec<u32>>,
 }
 

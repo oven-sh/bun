@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-When an object has the same key twice, `JSON.parse` keeps the last value and drops the others without an error. Whoever reads the file may see the first one. It's usually a leftover of a merge or of a copy and paste.
+When an object has the same key twice, `JSON.parse` keeps the last value and silently drops the others. Someone reading the file may only notice the first one. It's usually left over from a merge or a copy and paste.
 
 An escape sequence counts as the character it stands for. In JSON5, `a`, `'a'`, and `"a"` are the same key.
 

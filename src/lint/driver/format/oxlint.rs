@@ -86,7 +86,7 @@ fn sizes(first: u8) -> Sizes {
 }
 
 impl<'t> Offsets<'t> {
-    /// `lines`: where the lines start.
+    /// `lines` has the start of each line.
     pub(super) fn new(text: &'t [u8], lines: LineStarts) -> Offsets<'t> {
         Offsets {
             text,

@@ -1,9 +1,10 @@
-//! The languages and the rules of `@eslint/json` 2.1.1: `json/json`, `json/jsonc` and `json/json5`. Each rule is a port of the rule
-//! of the same name, with the same options, the same messages, at the same places.
+//! The `json/json`, `json/jsonc` and `json/json5` languages and the rules of `@eslint/json` 2.1.1. Each rule is a port
+//! of the upstream rule with the same name, and has the same options, messages and report locations.
 //! - https://github.com/eslint/json (Copyright Nicholas C. Zakas, Apache License 2.0)
 //!
-//! The tokens are those of Bun's parser for JSON5 ([`bun_parsers::json5::SourceTokens`]), which reads all three languages.
-//! `parse.rs` makes the tree of them. A text is refused if the specification of its language refuses it, in Bun's own words.
+//! The tokens come from Bun's JSON5 parser ([`bun_parsers::json5::SourceTokens`]), which reads all three languages, and
+//! `parse.rs` builds the tree from them. A file is rejected if its language's spec rejects it. The error messages are
+//! Bun's own.
 
 #![forbid(unsafe_code)]
 #![deny(clippy::iter_over_hash_type)]
@@ -25,7 +26,7 @@ bun_lint::rules! {
     top_level_interop::TopLevelInterop,
 }
 
-/// `meta.languages` of all rules.
+/// Every rule's `meta.languages`.
 pub(crate) const LANGUAGES: &[&str] = &["json/json", "json/jsonc", "json/json5"];
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

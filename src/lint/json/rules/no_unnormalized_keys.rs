@@ -45,7 +45,7 @@ impl Rule for NoUnnormalizedKeys {
                 .data("key", raw_key)
                 .listened_on(member)
                 .fix(|fixer| {
-                    // Not where the key is written with escape sequences.
+                    // No fix for a key that's written with escape sequences.
                     if key != raw_key {
                         return None;
                     }

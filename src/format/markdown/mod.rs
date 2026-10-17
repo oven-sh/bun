@@ -62,25 +62,26 @@ pub(crate) fn parse_plain(text: &[u8], tree: &mut ast::Tree) -> Option<ast::Node
     parse::parse_content(text, tree, true)
 }
 
-/// `normalizeIdentifier(label).toLowerCase()` with micromark's function: the `identifier` of what has that label.
+/// `normalizeIdentifier(label).toLowerCase()`, with micromark's `normalizeIdentifier`. It's the `identifier` of a node
+/// with that label.
 pub fn identifier_of(label: &[u8]) -> Vec<u8> {
     let mut identifier = Vec::new();
     strings::push_lowercase(&strings::normalize_identifier(label), &mut identifier);
     identifier
 }
 
-/// What a text is read with besides CommonMark.
+/// The syntax extensions to enable on top of CommonMark.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub struct Extensions {
-    /// Tables, strikethrough, footnotes, tasks, links that are not marked as such.
+    /// Tables, strikethrough, footnotes, task lists and autolink literals.
     pub gfm: bool,
-    /// `$a$`, and `$$` as a fence.
+    /// Inline `$a$`, and blocks fenced with `$$`.
     pub math: bool,
-    /// Three of this character on a line are the fences of front matter.
+    /// A line with three of this character is a front matter fence.
     pub front_matter: Option<u8>,
 }
 
-/// Where what is between the fences of the front matter of `text` starts and ends, and where the closing fence ends.
+/// The start and end of the front matter's content in `text`, and the end of its closing fence.
 fn front_matter_between(text: &[u8], marker: u8) -> Option<(usize, usize, usize)> {
     let line_end = |from: usize| {
         let rest = text.get(from..).unwrap_or_default();
@@ -106,13 +107,14 @@ fn front_matter_between(text: &[u8], marker: u8) -> Option<(usize, usize, usize)
     None
 }
 
-/// A text as the parser takes it: with `\n` for every line break, and with U+FFFD for NUL.
+/// The text in the form that the parser expects: every line break is `\n` and every NUL is U+FFFD.
 #[derive(Default)]
 struct AsRead {
     bytes: Vec<u8>,
-    /// Where in `bytes` something is shorter or longer than in the text, and how many bytes more the text has up to behind it.
+    /// The offset in `bytes` of each replacement that changed the length, and how many more bytes the original text has
+    /// up to the end of that replacement.
     changes: Vec<(u32, i32)>,
-    /// Where in `bytes` the U+FFFD are that the text does not have.
+    /// The offsets in `bytes` of the U+FFFD that replaced a NUL.
     replaced: Vec<u32>,
 }
 
@@ -148,7 +150,7 @@ impl AsRead {
         this
     }
 
-    /// Where in the text `offset` of `bytes` is.
+    /// Converts an offset in `bytes` to an offset in the original text.
     fn offset_in_text(&self, offset: u32) -> u32 {
         match self.changes.partition_point(|it| it.0 < offset) {
             0 => offset,
@@ -162,8 +164,8 @@ impl AsRead {
     }
 }
 
-/// Fills `tree` with the mdast of `text`, whatever its line breaks are. Returns the root. The places are those of `text`. In a
-/// string that is not written the way it is meant, a line break is `\n`.
+/// Fills `tree` with the mdast of `text`, which can have any kind of line break, and returns the root. Offsets in the
+/// tree are offsets into `text`. In a string that isn't a plain range of `text`, every line break is `\n`.
 pub fn parse_to_mdast(text: &[u8], with: Extensions, tree: &mut ast::Tree) -> Option<ast::NodeId> {
     let is_changed = bun_core::strings::index_of_any(text, b"\r\0").is_some();
     let as_read = match is_changed {

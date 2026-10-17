@@ -36,7 +36,7 @@ impl Rule for TopLevelInterop {
             Some(NodeKind::Infinity) => "Infinity",
         };
         let document = Span::new(0, cx.state.text().len() as u32);
-        // The document is entered before its body, which can be as long.
+        // ESLint enters the document before its body, which can have the same span.
         cx.report(document, TOP_LEVEL)
             .data("type", kind)
             .listened_on(Span::new(0, u32::MAX));

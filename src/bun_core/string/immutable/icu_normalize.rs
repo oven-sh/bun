@@ -1,4 +1,4 @@
-//! Unicode's normalization forms, by ICU: what `String.prototype.normalize` goes by.
+//! Unicode normalization with ICU, which is what `String.prototype.normalize` uses.
 
 use super::{first_non_ascii, wtf8_to_utf16, wtf16_to_wtf8};
 use std::borrow::Cow;
@@ -21,17 +21,17 @@ pub enum NormalizationForm {
     Nfkd,
 }
 
-/// `text.normalize(form)`, for WTF-8. It is borrowed if `text` is normalized.
+/// `text.normalize(form)` for WTF-8. Returns `Cow::Borrowed` if `text` is already normalized.
 pub fn normalize(text: &[u8], form: NormalizationForm) -> Cow<'_, [u8]> {
-    // ASCII is normalized in every form.
+    // ASCII is already normalized in every form.
     if first_non_ascii(text).is_none() || i32::try_from(text.len()).is_err() {
         return Cow::Borrowed(text);
     }
     let units = wtf8_to_utf16(text);
     let mut out: Vec<u16> = vec![0; units.len() + units.len() / 2 + 8];
-    // The second time there is room for what the first time said it takes.
+    // If the buffer is too small, the first call returns the length it needs, so the second call has room.
     for _ in 0..2 {
-        // SAFETY: a live slice that is read, and one that is written up to its length. Neither is kept.
+        // SAFETY: `units` is only read, `out` is written up to its length, and the callee keeps neither pointer.
         let len = unsafe {
             Bun__normalizeUTF16(
                 form as u8,

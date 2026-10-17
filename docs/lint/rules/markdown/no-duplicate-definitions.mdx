@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-When two definitions have the same label, the first one wins and the others are ignored without a word. Links then lead somewhere else than the last edit intended. Labels are compared the way Markdown compares them: case and the amount of white space don't matter.
+When two definitions have the same label, the first one wins and the others are silently ignored. Links then don't go where the latest edit intended. Labels are compared the way Markdown compares them: case and the amount of whitespace don't matter.
 
 In `markdown/gfm` the same goes for footnote definitions.
 
@@ -80,7 +80,7 @@ Read the [guide] and the [reference].
 | -------------------------- | -------- | ------------------------------------------------------- |
 | `allowDefinitions`         | `["//"]` | Labels that may be defined more than once.              |
 | `allowFootnoteDefinitions` | `[]`     | Footnote labels that may be defined more than once.     |
-| `checkFootnoteDefinitions` | `true`   | Whether footnote definitions are looked at.             |
+| `checkFootnoteDefinitions` | `true`   | Check footnote definitions too.                         |
 
 `[//]: # (text)` is a common way to write a comment, which is why `//` is allowed:
 

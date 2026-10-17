@@ -9,10 +9,11 @@ const DUPLICATE_HEADING: Message =
     Message::new("duplicateHeading", "Duplicate heading \"{{text}}\" found.");
 
 pub(crate) struct Seen {
-    /// The headings of each level so far. Only those of the first unless `checkSiblingsOnly` is on.
+    /// The headings seen so far, by level. Only the first set is used unless `checkSiblingsOnly` is on.
     headings_by_level: [FxHashSet<Vec<u8>>; 6],
     last_level: usize,
-    /// What is in the heading that is open: the types and the values, and the values that are not HTML.
+    /// The contents of the current heading: `children_sequence` has the type and value of every descendant, and `text`
+    /// has the values of the ones that aren't HTML.
     children_sequence: Vec<u8>,
     text: Vec<u8>,
 }

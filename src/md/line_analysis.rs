@@ -237,11 +237,15 @@ impl Parser<'_> {
         // Type 1: <script, <pre, <style, <textarea (case insensitive)
         // Only opening tags start type 1 blocks. Closing tags like </pre> are
         // only END conditions for type 1, not start conditions.
+        let is_named = |tag: &[u8]| {
+            self.html_tag_name_end(off, tag)
+                .is_some_and(|end| self.can_end_html_tag_name(end))
+        };
         if ch(self.text, off + 1) != b'/'
-            && (self.match_html_tag::<false>(off, b"script")
-                || self.match_html_tag::<false>(off, b"pre")
-                || self.match_html_tag::<false>(off, b"style")
-                || self.match_html_tag::<false>(off, b"textarea"))
+            && (is_named(b"script")
+                || is_named(b"pre")
+                || is_named(b"style")
+                || is_named(b"textarea"))
         {
             return 1;
         }
@@ -392,14 +396,10 @@ impl Parser<'_> {
         false
     }
 
-    /// `CAN_CLOSE_ITSELF`: `/>` can follow the name.
-    pub(crate) fn match_html_tag<const CAN_CLOSE_ITSELF: bool>(
-        &self,
-        off: OFF,
-        tag: &[u8],
-    ) -> bool {
+    /// Where the name of the tag at `off` ends, if the name is `tag`. The tag can be a closing tag.
+    fn html_tag_name_end(&self, off: OFF, tag: &[u8]) -> Option<OFF> {
         if (off as usize) + 1 + tag.len() > self.size as usize {
-            return false;
+            return None;
         }
         let start = off + 1;
         // Allow optional / for closing tags
@@ -408,20 +408,21 @@ impl Parser<'_> {
             pos += 1;
         }
         if (pos as usize) + tag.len() > self.size as usize {
-            return false;
+            return None;
         }
         if !helpers::ascii_case_eql(&self.text[pos as usize..pos as usize + tag.len()], tag) {
-            return false;
+            return None;
         }
-        pos += u32::try_from(tag.len()).expect("int cast");
+        Some(pos + u32::try_from(tag.len()).expect("int cast"))
+    }
+
+    /// Whether what is at `pos` can follow a tag name: the end of the text, `>`, or white space.
+    fn can_end_html_tag_name(&self, pos: OFF) -> bool {
         if pos >= self.size {
             return true;
         }
         let after = ch(self.text, pos);
-        after == b'>'
-            || (CAN_CLOSE_ITSELF && after == b'/' && self.ch(pos + 1) == b'>')
-            || helpers::is_blank(after)
-            || helpers::is_newline(after)
+        after == b'>' || helpers::is_blank(after) || helpers::is_newline(after)
     }
 
     pub(crate) fn is_block_level_html_tag(&self, off: OFF) -> bool {
@@ -491,7 +492,10 @@ impl Parser<'_> {
         ];
 
         for tag in BLOCK_TAGS {
-            if self.match_html_tag::<true>(off, tag) {
+            if let Some(end) = self.html_tag_name_end(off, tag)
+                && (self.can_end_html_tag_name(end)
+                    || (self.ch(end) == b'/' && self.ch(end + 1) == b'>'))
+            {
                 return true;
             }
         }

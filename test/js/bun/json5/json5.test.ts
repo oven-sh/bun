@@ -520,7 +520,7 @@ describe("error messages", () => {
     expect(() => JSON5.parse("{a: hello}")).toThrow("Unexpected token");
   });
 
-  test("a NUL character is not the end of the text", () => {
+  test("a NUL character doesn't end the input", () => {
     const nul = String.fromCharCode(0);
     expect(() => JSON5.parse(`1${nul}`)).toThrow("Unexpected character");
     expect(() => JSON5.parse(`[1${nul}, @`)).toThrow("Unexpected character");
@@ -631,7 +631,7 @@ describe("error messages", () => {
     expect(() => JSON5.parse("{@key: 1}")).toThrow("Unexpected character");
   });
 
-  test("an escape in a key that is no part of an identifier", () => {
+  test("escape in a key that isn't an identifier character", () => {
     expect(() => JSON5.parse("{a\\u002d: 1}")).toThrow("Invalid identifier start character");
     expect(JSON5.parse("{a\\u0062: 1}")).toEqual({ ab: 1 });
   });

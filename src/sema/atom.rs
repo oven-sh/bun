@@ -140,9 +140,9 @@ impl std::ops::Deref for Text {
 #[derive(Copy, Clone)]
 pub struct Interner<'s> {
     session: &'s Session,
-    /// The atoms from `first` on.
+    /// The atoms numbered `first` and up.
     tables: &'s Tables,
-    /// The atoms below `first`: see `over`. Others may add to them meanwhile.
+    /// The atoms below `first`: see `over`. Other programs may add to this table concurrently.
     below: &'s Tables,
     first: u32,
 }
@@ -662,7 +662,7 @@ impl<'s> Interner<'s> {
             session,
             tables: session.keep(Tables::new(false)),
             below: below.tables,
-            // A text is pushed under the lock of its shard: then none below the length is half written.
+            // Texts are pushed under their shard's lock. With all shards locked, none below this length is incomplete.
             first: GrowingPlaces::while_none_grows(&shards[..], || texts.len()),
         }
     }

@@ -1,4 +1,4 @@
-//! The tree of a document: what the rules look at of the tree that the plugin's parser, Momoa, makes.
+//! A document's tree: the subset of the tree built by Momoa, the plugin's parser, that the rules need.
 //!
 //! | Momoa | here |
 //! | --- | --- |
@@ -22,7 +22,7 @@ pub enum NodeKind {
     Number,
     Boolean,
     Null,
-    /// A name without quotes.
+    /// An unquoted key.
     Identifier,
     NaN,
     Infinity,
@@ -32,23 +32,23 @@ pub enum NodeKind {
 pub(crate) struct Entry {
     pub(crate) start: u32,
     pub(crate) end: u32,
-    /// The index of the node after this one and all that is in it.
+    /// The index of the first node after this one and its descendants.
     pub(crate) next: u32,
     pub(crate) kind: NodeKind,
 }
 
-/// The nodes in the order of the text: an object or an array is followed by what is in it. In an object names and values take turns.
+/// The nodes in source order. An object or array is followed by its contents. In an object, keys and values alternate.
 #[derive(Default)]
 pub struct Tree {
     pub(crate) nodes: Vec<Entry>,
-    /// What strings and names stand for, by their indices, which ascend: where that is in `texts`. Only those names that are not
-    /// written as what they stand for, and those values that have half of a surrogate pair.
+    /// The unescaped values of strings and keys: a node index and a span in `texts`, sorted by node index. It only has
+    /// the keys whose value differs from their source text, and the string values that contain a lone surrogate.
     pub(crate) unescaped: Vec<(u32, Span)>,
     pub(crate) texts: Vec<u8>,
     pub(crate) comments: Vec<Span>,
 }
 
-/// A tree and the text that it is of.
+/// A tree and its source text.
 #[derive(Copy, Clone)]
 pub struct Document<'a> {
     tree: &'a Tree,
@@ -56,7 +56,7 @@ pub struct Document<'a> {
 }
 
 impl<'a> Document<'a> {
-    /// `None`: the file is not JSON.
+    /// Returns `None` if the file isn't JSON.
     pub fn of(file: &'a File<'a>) -> Option<Document<'a>> {
         Some(Document {
             tree: file.tree()?,
@@ -77,23 +77,23 @@ impl<'a> Document<'a> {
         self.node(0)
     }
 
-    /// All nodes, each before what is in it.
+    /// All nodes, parents before children.
     pub fn nodes(self) -> impl Iterator<Item = Node<'a>> {
         (0..self.tree.nodes.len() as u32).filter_map(move |index| self.node(index))
     }
 
-    /// All members, each before what is in it.
+    /// All members, parents before children.
     pub fn members(self) -> impl Iterator<Item = Member<'a>> {
         self.nodes().flat_map(Node::members)
     }
 
-    /// The strings and names whose [value](Node::value) is kept apart from the text.
+    /// The strings and keys whose [value](Node::value) is stored separately from the source text.
     pub fn unescaped(self) -> impl Iterator<Item = Node<'a>> {
         let indices = self.tree.unescaped.iter().map(|it| it.0);
         indices.filter_map(move |index| self.node(index))
     }
 
-    /// In the order of the text.
+    /// In source order.
     pub fn comments(self) -> &'a [Span] {
         &self.tree.comments
     }
@@ -122,7 +122,7 @@ impl<'a> Node<'a> {
         text.get(self.span().range()).unwrap_or_default()
     }
 
-    /// The text without the quotes of a string.
+    /// The source text, without the quotes if it's a string.
     fn written(self) -> &'a [u8] {
         match (self.kind(), self.text()) {
             (NodeKind::String, [_, inner @ .., _]) => inner,
@@ -130,7 +130,7 @@ impl<'a> Node<'a> {
         }
     }
 
-    /// What a name stands for. Of a string that is a value, this is right if it has half of a surrogate pair.
+    /// The unescaped value of a key. A string that's a value is only unescaped if it contains a lone surrogate.
     pub fn value(self) -> &'a [u8] {
         let tree = self.document.tree;
         let found = tree.unescaped.binary_search_by_key(&self.index, |it| it.0);
@@ -140,7 +140,7 @@ impl<'a> Node<'a> {
         }
     }
 
-    /// `members` of an `Object`. Nothing for any other node.
+    /// The `members` of an `Object`. Empty for any other node.
     pub fn members(self) -> impl Iterator<Item = Member<'a>> {
         let is_object = self.kind() == NodeKind::Object;
         let first = self.document.node(self.index + 1).filter(|_| is_object);
@@ -170,12 +170,12 @@ pub struct Member<'a> {
 }
 
 impl<'a> Member<'a> {
-    /// The name as it is written, without its quotes.
+    /// The key as written in the source, without its quotes.
     pub fn raw_key(self) -> &'a [u8] {
         self.name.written()
     }
 
-    /// What the name stands for.
+    /// The key with its escape sequences resolved.
     pub fn key(self) -> &'a [u8] {
         self.name.value()
     }

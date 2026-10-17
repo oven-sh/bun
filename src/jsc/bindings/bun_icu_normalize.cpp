@@ -1,11 +1,11 @@
-// `String.prototype.normalize` for Rust: ICU's normalizers, which are what StringPrototype.cpp asks.
+// `String.prototype.normalize` for Rust. It calls the same ICU normalizers as StringPrototype.cpp.
 
 #include "root.h"
 
 #if __has_include(<unicode/unorm2.h>)
 #include <unicode/unorm2.h>
 #else
-// macOS: libicucore has these, under these names, and the SDK has no header for them.
+// macOS: libicucore exports these functions under these names, but the SDK has no header for them.
 #include <unicode/utypes.h>
 extern "C" {
 typedef struct UNormalizer2 UNormalizer2;
@@ -17,8 +17,8 @@ int32_t unorm2_normalize(const UNormalizer2* normalizer, const UChar* source, in
 }
 #endif
 
-/// `form`: 0 is NFC, 1 NFD, 2 NFKC, 3 NFKD. Returns how long the normalized text is, which is written to `out` if that is no more
-/// than `capacity`. Less than 0: it failed.
+/// `form`: 0 is NFC, 1 is NFD, 2 is NFKC, 3 is NFKD. Returns the length of the normalized text, which is written to
+/// `out` if it fits in `capacity`. Returns a negative number on failure.
 extern "C" [[ZIG_EXPORT(nothrow)]] int32_t Bun__normalizeUTF16(uint8_t form, const uint16_t* text, size_t length, uint16_t* out, size_t capacity)
 {
     UErrorCode status = U_ZERO_ERROR;

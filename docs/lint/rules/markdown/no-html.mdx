@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-Markdown lets HTML through as it is. Not every renderer does: some strip it, some escape it, and MDX reads it as JSX. This rule keeps a document to what Markdown itself can say, or to a short list of elements.
+Markdown passes HTML through unchanged, but not every renderer does: some strip it, some escape it, and MDX reads it as JSX. This rule limits a document to plain Markdown, or to a short list of allowed elements.
 
 Each opening tag is reported. Closing tags and comments are not.
 
@@ -70,7 +70,7 @@ Press **Enter**.
 | Option              | Default | What it does                                                |
 | ------------------- | ------- | ----------------------------------------------------------- |
 | `allowed`           | `[]`    | The names of the elements that are allowed.                 |
-| `allowedIgnoreCase` | `false` | Whether `KBD` is allowed if `kbd` is on the list.           |
+| `allowedIgnoreCase` | `false` | Ignore case, so `KBD` is allowed if `kbd` is on the list.   |
 
 {/* good {"options": [{ "allowed": ["kbd"] }]} */}
 

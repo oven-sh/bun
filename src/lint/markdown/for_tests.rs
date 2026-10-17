@@ -1,4 +1,4 @@
-//! For the tests, which hold the tree against that of mdast-util-from-markdown. Only debug and canary builds call it.
+//! For the tests that compare the tree with mdast-util-from-markdown's. Only debug and canary builds call it.
 
 use crate::Dialect;
 use crate::document::{Document, Mdast, Node};
@@ -86,7 +86,7 @@ fn push_node(node: Node<'_>, depth: usize, out: &mut Vec<u8>) {
     out.push(b'\n');
 }
 
-/// The tree of `document`, a line for each node.
+/// Prints the tree of `document`, one line per node.
 fn push_tree(document: &Document<'_>, out: &mut Vec<u8>) {
     let (mut node, mut depth) = (document.root(), 0);
     loop {
@@ -108,8 +108,8 @@ fn push_tree(document: &Document<'_>, out: &mut Vec<u8>) {
     }
 }
 
-/// `input`: a line of JSON for each case, `{ id, text, language, languageOptions }`. Returns `### id` and the tree of each, a
-/// line for each node.
+/// `input` has one line of JSON per case: `{ id, text, language, languageOptions }`. Returns `### id` and then the tree
+/// for each case, one line per node.
 pub fn trees(input: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
     let lines = strings::split(input, b"\n").filter(|line| !line.is_empty());

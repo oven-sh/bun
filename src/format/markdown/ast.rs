@@ -309,8 +309,9 @@ impl Tree {
         from.get(start..start + len).unwrap_or_default()
     }
 
-    /// Every place in the text, of a node, of a string that is a range of the text and of the start of a line, becomes
-    /// what `map` makes of it. `copy`: appends the string from one place to another if it is not in the text at the new places.
+    /// Remaps every offset into the text with `map`: node spans, strings that are ranges of the text, and line starts.
+    /// `copy(start, end, out)` gets the old range of each such string. If the text doesn't have the same bytes at the
+    /// new offsets, it appends the string to `out` and returns true.
     pub(crate) fn map_offsets(
         &mut self,
         map: impl Fn(u32) -> u32,
@@ -342,7 +343,7 @@ impl Tree {
         }
     }
 
-    /// The columns of the table `node`.
+    /// The column alignments of the table `node`.
     pub fn aligns(&self, node: &Node) -> &[Align] {
         let first = node.first_align as usize;
         self.aligns
@@ -350,7 +351,7 @@ impl Tree {
             .unwrap_or_default()
     }
 
-    /// Where each line of the text starts.
+    /// The offset of the start of each line.
     pub fn line_starts(&self) -> &[u32] {
         &self.line_starts
     }

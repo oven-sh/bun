@@ -217,7 +217,7 @@ fn write_link(path: &[u8], target: &[u8]) {
 /// error.
 pub fn config_of(registry: &Registry, entry: &'static RuleEntry, case: &Json) -> ResolvedConfig {
     let language_options = case.get(b"languageOptions").cloned().unwrap_or(Json::Null);
-    // The language of the plugin that the file is in, which the options are for then.
+    // If the case is in one of the plugin's languages, `languageOptions` are that language's options.
     let language = string_of(case, b"language");
     let dialect = language.and_then(|written| {
         let name = &written[strings::last_index_of_char(written, b'/')? + 1..];

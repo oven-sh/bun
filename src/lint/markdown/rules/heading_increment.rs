@@ -2,7 +2,7 @@ use crate::prelude::*;
 
 /// Enforce heading levels increment by one
 pub struct HeadingIncrement {
-    title: Option<Regex>,
+    title: util::PatternOption,
 }
 
 const SKIPPED_HEADING: Message = Message::new(
@@ -16,17 +16,17 @@ impl Rule for HeadingIncrement {
 
     fn new(options: &Options) -> Self {
         HeadingIncrement {
-            title: util::front_matter_title(options.object(0)).unwrap_or_default(),
+            title: util::front_matter_title(&Self::META, options.object(0)),
         }
     }
 
     fn validate(options: &Options) -> Result<(), Vec<u8>> {
-        util::front_matter_title(options.object(0)).map(|_| ())
+        Self::new(options).title.map(|_| ())
     }
 }
 
 impl Listens for HeadingIncrement {
-    // Upstream has one for each of `yaml`, `toml` and `json`, which do the same.
+    // Upstream has separate `yaml`, `toml` and `json` listeners that all do the same thing.
     const LISTENERS: &'static [Listener] = &[
         Listener::new("yaml", Kinds::of(&[Kind::FrontMatter])),
         Listener::new("heading", Kinds::of(&[Kind::Heading])),
@@ -42,7 +42,9 @@ impl Listens for HeadingIncrement {
         cx: &mut Context<'d>,
     ) -> Result<(), OutOfRange> {
         if listener == 0 {
-            if util::front_matter_has_title(node.value().unwrap_or_default(), self.title.as_ref()) {
+            if let Ok(title) = &self.title
+                && util::front_matter_has_title(node.value().unwrap_or_default(), title.as_ref())
+            {
                 *last_depth = 1;
             }
             return Ok(());

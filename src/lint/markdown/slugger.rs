@@ -1,5 +1,5 @@
-//! [github-slugger](https://github.com/Flet/github-slugger) 2.0.0 (Copyright Dan Flettre, ISC License): the `id` that GitHub
-//! gives a heading.
+//! A port of [github-slugger](https://github.com/Flet/github-slugger) 2.0.0 (Copyright Dan Flettre, ISC License), which
+//! computes the `id` that GitHub gives a heading.
 
 use bun_core::strings;
 use bun_lint::utils::text::to_lower_case;
@@ -47,7 +47,7 @@ fn is_removed(c: u32) -> bool {
     after > 0 && REMOVED.get(after - 1).is_some_and(|range| c <= range.1)
 }
 
-/// `regex.js` of the package, which is generated from Unicode 13: made by asking it about every character.
+/// The package's `regex.js`, which is generated from Unicode 13. This table was made by testing it on every code point.
 #[rustfmt::skip]
 const REMOVED: &[(u32, u32)] = &[
     (0x0, 0x1F), (0x21, 0x2C), (0x2E, 0x2F), (0x3A, 0x40), (0x5B, 0x5E), (0x60, 0x60), (0x7B, 0xA9), (0xAB, 0xB4),

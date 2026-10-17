@@ -4200,7 +4200,7 @@ enum Placed<V> {
 
 /// FOLLOW, for one kind: writes the surviving records into the shared store, at their ids. Returns
 /// those that are `Later`, in id order: the caller writes them. Also returns, for `check_joined`,
-/// the merged records, remapped. `first`: the id of the first of `items`.
+/// the merged records, remapped. `first` is the id of the first element of `items`.
 fn put<V: Send + Sync, A: Allocator + Clone + Sync>(
     (shards, items, first): (&[GrowingPlaces<A>], &AppendVec<V, A>, u32),
     tasks: Vec<(Taken<V>, &Link)>,

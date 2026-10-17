@@ -165,12 +165,12 @@ Without Prettier, use [`bun/format`](/lint/rules/bun/format). It checks files ag
 
 ## Other languages
 
-With an ESLint config, a file can have a `language` from a plugin. Bun reads the languages of two plugins itself:
+In an ESLint config, a file can have a `language` from a plugin. Bun supports the languages of two plugins natively:
 
 - `@eslint/json`: `json/json`, `json/jsonc`, and `json/json5`, with its [rules](/lint/rules#json).
 - `@eslint/markdown`: `markdown/commonmark` and `markdown/gfm`, with its [rules](/lint/rules#markdown).
 
-It parses these files with its own parsers and runs its own rules on them, and `eslint` doesn't have to be installed.
+Bun parses these files with its own parsers and runs its own versions of the rules, so `eslint` doesn't have to be installed.
 
 ```js eslint.config.js icon="/icons/javascript.svg"
 import json from "@eslint/json";
@@ -185,7 +185,7 @@ export default [
 ];
 ```
 
-Comments such as `// eslint-disable-next-line` work in JSONC and JSON5, as they do in ESLint. A file with a syntax error gets one error and no rule runs, as in ESLint, but the message is Bun's.
+Comments such as `// eslint-disable-next-line` work in JSONC and JSON5, as they do in ESLint. A file with a syntax error gets a single error and no rules run. ESLint does the same, but the wording of the error is Bun's.
 
 ```js eslint.config.js icon="/icons/javascript.svg"
 import markdown from "@eslint/markdown";
@@ -203,16 +203,16 @@ export default [
 
 `markdown.configs.recommended` works too, and so do `languageOptions.frontmatter`, `languageOptions.math`, and comments such as `<!-- eslint-disable-next-line markdown/no-html -->`.
 
-The plugin parses Markdown with micromark, and Bun with the parser behind [`Bun.markdown`](/runtime/markdown). The two agree on almost every document. In the few places where micromark departs from the CommonMark and GFM specifications, Bun follows the specifications. For example, `<a href=b/c>` is an HTML tag for Bun and plain text for the plugin.
+The plugin parses Markdown with micromark. Bun uses the parser behind [`Bun.markdown`](/runtime/markdown). The two agree on almost every document. In the few places where micromark deviates from the CommonMark and GFM specs, Bun follows the specs. For example, `<a href=b/c>` is an HTML tag to Bun and plain text to the plugin.
 
 Bun hands every other file to the `eslint` package in your project, so keep `eslint` 8.57 or later installed if you use:
 
-- A language of another plugin, such as `css/css`.
-- A rule for JSON or Markdown that isn't built in, such as one of your own. Then the whole file goes to `eslint`.
+- A language from another plugin, such as `css/css`.
+- A JSON or Markdown rule that isn't built in, such as one of your own. The whole file then goes to `eslint`.
 - A parser for another file type, such as `vue-eslint-parser`, `svelte-eslint-parser`, or `yaml-eslint-parser`.
 - `eslint-plugin-html`.
 
-You still run `bun lint`, and these files show up in the same report. `bun lint --doctor` says how many files go to `eslint`.
+You still run `bun lint`, and these files show up in the same report. `bun lint --doctor` shows how many files go to `eslint`.
 
 ## Processors
 

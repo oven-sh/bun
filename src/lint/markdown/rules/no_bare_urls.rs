@@ -14,7 +14,7 @@ static HTML_TAG_NAME: LazyLock<Regex> =
 #[derive(Default)]
 pub(crate) struct Seen<'d> {
     link_nodes: Vec<Node<'d>>,
-    /// The links behind an opening tag that nothing has closed so far.
+    /// The links after an opening tag that hasn't been closed yet.
     temp_link_nodes: Vec<Node<'d>>,
     last_tag_name: Option<Vec<u8>>,
 }

@@ -41,7 +41,7 @@ impl Listens for FencedCodeLanguage {
         };
         let Some(lang) = node.lang().filter(|it| !it.is_empty()) else {
             let is_of_fence = |byte: &&u8| matches!(byte, b'`' | b'~');
-            // Of indented code it is 0.
+            // Indented code has no fence, so this is 0.
             let fence = node.text().iter().take_while(is_of_fence).count();
             if fence > 0 {
                 cx.report((start, end_after(fence as Index)), MISSING_LANGUAGE, &[]);

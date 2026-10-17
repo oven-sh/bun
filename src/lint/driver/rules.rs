@@ -13,6 +13,6 @@ bun_lint::rule_sets! {
     }
 }
 
-/// The languages other than JavaScript that `bun lint` reads.
+/// The languages other than JavaScript that `bun lint` parses itself.
 pub(crate) static LANGUAGES: &[&dyn bun_lint::languages::Language] =
     &[&bun_lint_json::Json, &bun_lint_markdown::Markdown];

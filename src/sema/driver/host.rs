@@ -1363,7 +1363,7 @@ impl Host for Disk {
         }
         for_the_system(path)?;
         let Split { parent, name } = split(path);
-        // Not of a configuration file or a `package.json`, which are read as JSON.
+        // Config files and `package.json` are read as JSON, so they never keep the mark.
         let keeps_mark = self.keeps_byte_order_marks && ScriptKind::from_file_name(path).is_some();
         if name.is_empty() || Self::is_above_listings(parent) {
             return read_at(path, keeps_mark);

@@ -103,9 +103,8 @@ if a configuration with them would end the run. Not where the recorded options h
   cases report something else without `@types/node` and `@types/react`, and one imports `@typescript-eslint/types`.
 - `import-project/`, `n-project/`: the files that the cases of `import/*` and `n/*` are next to.
 
-Next to the bundle, `markdown-trees.zst` has the tree that `@eslint/markdown` gets from its parser for every example of the
-specifications of CommonMark and GFM. `markdown-trees.mjs` writes it, and `../js-parsers.test.ts` holds the tree that `bun lint`
-reads against it.
+Next to the bundle, `markdown-trees.zst` has the tree that `@eslint/markdown`'s parser produces for every example in the
+CommonMark and GFM specs. `markdown-trees.mjs` writes it. `../js-parsers.test.ts` compares it with `bun lint`'s tree.
 
 ## Regenerating
 
@@ -125,7 +124,7 @@ bun summarize.ts --summary report.md # fixtures/index.json, and a report to read
 bun sync.ts                          # bundle.zst, version.json, licenses/
 bun extract-oxlint.ts --oxc <oxc at the tag of the executable> --oxlint <oxlint> --out <directory> <plugin>/<rule>..
 bun sync.ts --oxlint <directory>     # `oxlint/` of bundle.zst
-node extract-languages.ts ..         # the rules of a plugin with a language of its own: its first lines say how
+node extract-languages.ts ..         # the rules of a plugin that has its own language: usage is at the top of the file
 bun sync.ts --plugin json <fixtures> # `json/` of bundle.zst, and the same for `markdown`
 ```
 
@@ -222,8 +221,8 @@ columns on one line.
   `sourceType: "module"` and `disallowAutomaticSingleRunInference: true`; the last is never recorded, the first two only
   when they differ from the ESLint-level value. `tsconfigRootDir` is relative to the fixture project (`"."`,
   `"unstrict"`).
-- **`language`** is only there for a rule of a plugin that brings its own language: `json/jsonc`. **`languageOptions`** is then
-  what the language is given, as it is in the configuration.
+- **`language`** is only set for a rule from a plugin that has its own language, such as `json/jsonc`.
+  **`languageOptions`** then has that language's options, exactly as in the config.
 - **`typeAware`** is `parserOptions.project || parserOptions.projectService`. **`tsconfig`** is the config that applies,
   relative to the fixture project. The type-aware cases were linted with the fixture project as the working directory
   (upstream: `packages/eslint-plugin`), which is what `{ "from": "file", "path": ... }` specifiers in rule options are
@@ -250,7 +249,7 @@ A case that cannot be reproduced without upstream's test code. It still has what
 | `test-only rule: <name>`   | typescript-eslint | 5     | same, through `defineRule()`                              |
 | `parser: custom`           | typescript-eslint | 1     | a stub parser without parser services                     |
 | `skipped upstream`         | typescript-eslint | 1     | `skip: true` in the test; a known false negative          |
-| `half of a surrogate pair` | json              | 3     | it is in the code as it is, which no file in UTF-8 has    |
+| `half of a surrogate pair` | json              | 3     | the code has a lone surrogate, which UTF-8 can't encode   |
 
 26 core cases name a "parser" of `tests/fixtures/parsers/*.js`, which returns a hard-coded AST (type annotations, old
 babel-eslint and typescript-eslint). They are not skipped: 25 are recorded with the real parser that reads the code

@@ -25,7 +25,7 @@ pub struct JSON5Parser<'a> {
     bump: &'a Bump,
     stack_check: StackCheck,
     token: Token<'a>,
-    /// For [`SourceTokens`]: a comment is a token, and a string without escapes is a slice of the source.
+    /// Set for [`SourceTokens`]: comments become tokens, and a string without escapes is a slice of the source.
     as_written: bool,
     /// [`SourceTokens::new`]
     is_jsonc: bool,
@@ -89,7 +89,7 @@ pub enum SourceTokenKind {
     Colon,
     Comma,
     String,
-    /// With its sign. `Infinity` and `NaN` without one are identifiers.
+    /// Includes the sign. `Infinity` and `NaN` without a sign are identifiers.
     Number,
     Boolean,
     Null,
@@ -103,17 +103,17 @@ pub struct SourceToken<'a> {
     pub kind: SourceTokenKind,
     pub start: usize,
     pub end: usize,
-    /// What a string or an identifier stands for, once its escapes are read. Empty for the other kinds.
+    /// The value of a string or an identifier, with its escapes resolved. Empty for the other kinds.
     pub value: &'a [u8],
 }
 
-/// The tokens and the comments of a text one by one, for who wants a document as it is written. They are what
-/// [`JSON5Parser::parse`] reads. In which order they may come is not looked at.
+/// Iterates over the tokens and comments of a text, for callers that need the document as written. These are the same
+/// tokens that [`JSON5Parser::parse`] reads. It doesn't check that they come in a valid order.
 pub struct SourceTokens<'a>(JSON5Parser<'a>);
 
 impl<'a> SourceTokens<'a> {
-    /// `is_jsonc`: a `//` comment ends at `\n` and `\r` alone, as in Microsoft's `jsonc-parser`. In JSON5 it ends at U+2028 and
-    /// U+2029 too. `None`: the text is too long.
+    /// With `is_jsonc`, only `\n` and `\r` end a `//` comment, as in Microsoft's `jsonc-parser`. In JSON5, U+2028 and
+    /// U+2029 end one too. Returns `None` if the text is too long.
     pub fn new(text: &'a [u8], bump: &'a Bump, is_jsonc: bool) -> Option<SourceTokens<'a>> {
         i32::try_from(text.len()).ok()?;
         Some(SourceTokens(JSON5Parser {
@@ -131,13 +131,14 @@ impl<'a> SourceTokens<'a> {
         }))
     }
 
-    /// Where the first character is, before the last token or in it, that JSON does not take there and that the kind of the token
-    /// does not show: white space other than a blank, a tab and a line break, or a control character in a string.
+    /// The offset of the first character, in the last token or in the whitespace before it, that JSON doesn't allow
+    /// there and that the token's kind doesn't reveal. That's whitespace other than a space, a tab or a line break, or
+    /// a control character in a string.
     pub fn not_in_json(&self) -> Option<usize> {
         self.0.not_in_json
     }
 
-    /// `Ok(None)`: the text ends. `Err`: there is no token here.
+    /// Returns `Ok(None)` at the end of the text, and `Err` if there's no valid token at this position.
     pub fn next(&mut self) -> Result<Option<SourceToken<'a>>, Error> {
         self.0.not_in_json = None;
         if let Err(error) = self.0.scan() {
@@ -232,7 +233,7 @@ pub enum AddToLogError {
 bun_core::impl_tag_error!(AddToLogError);
 
 impl Error {
-    /// Where it is in the text, and what is wrong there. `None`: nothing is wrong with the text.
+    /// The error's offset in the text and its message. Returns `None` for an error that isn't about the text.
     pub fn describe(&self) -> Option<(usize, &'static [u8])> {
         let pos = match *self {
             Error::Oom | Error::StackOverflow => return None,
@@ -488,7 +489,7 @@ impl<'a> JSON5Parser<'a> {
                     };
                     break 'next TokenData::Number(self.scan_number()?);
                 }
-                // Comments — skipped, unless they are tokens
+                // Comments — skipped, unless `as_written` makes them tokens
                 b'/' => {
                     let n = if self.pos + 1 < self.source.len() {
                         self.source[self.pos + 1]
@@ -796,7 +797,8 @@ impl<'a> JSON5Parser<'a> {
 
         let start = self.pos;
         let mut buf: BumpVec<'a, u8> = BumpVec::new_in(self.bump);
-        // Everything but an escape sequence stands for itself, and is copied in one piece: what is from here on is still to be.
+        // Everything except escape sequences is copied verbatim, a run at a time. This is the start of the run that
+        // hasn't been copied yet.
         let mut uncopied = start;
 
         while let Some(&c) = source.get(self.pos) {
@@ -1001,7 +1003,7 @@ impl<'a> JSON5Parser<'a> {
             _ => {}
         }
 
-        // Nobody reads the value of a token.
+        // Nothing reads the numeric value of a `SourceToken`.
         if self.as_written {
             return Ok(0.0);
         }
@@ -1021,7 +1023,7 @@ impl<'a> JSON5Parser<'a> {
             return Err(ParseError::InvalidHexNumber);
         }
 
-        // Nobody reads the value of a token.
+        // Nothing reads the numeric value of a `SourceToken`.
         if self.as_written {
             return Ok(0.0);
         }
@@ -1034,7 +1036,7 @@ impl<'a> JSON5Parser<'a> {
     fn scan_identifier(&mut self) -> Result<&'a [u8], ParseError> {
         let mut buf: BumpVec<'a, u8> = BumpVec::new_in(self.bump);
 
-        // Nothing but ASCII, and no escape, as nearly always.
+        // Fast path: nearly every identifier is all ASCII and has no escapes.
         let source: &'a [u8] = self.source;
         let rest = &source[self.pos..];
         let plain = (rest.iter())

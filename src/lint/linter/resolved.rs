@@ -289,11 +289,12 @@ pub struct ResolvedConfig {
     pub plugins: Option<Vec<Plugin>>,
     /// `language`, if it is configured: `js/js`, `json/json`, ..
     pub language_name: Option<Box<[u8]>>,
-    /// `languageOptions`, if it is not JavaScript: they mean what that language says.
+    /// `languageOptions`, if the language isn't JavaScript. What they mean is up to that language.
     pub options_of_other_language: Option<Json>,
-    /// What it names, if that is not JavaScript and the file is linted here: [`Route::Language`].
+    /// The language that `language_name` refers to, if it isn't JavaScript and Bun lints the file itself:
+    /// [`Route::Language`].
     pub dialect: Option<Dialect>,
-    /// Where a line ends in the language, whoever lints the file. Those of ECMAScript for a language that is not known here.
+    /// The language's line breaks, whoever lints the file. Defaults to ECMAScript's if Bun doesn't know the language.
     pub line_breaks: LineBreaks,
     /// The name of the `processor`, if one is configured.
     pub processor: Option<Box<[u8]>>,

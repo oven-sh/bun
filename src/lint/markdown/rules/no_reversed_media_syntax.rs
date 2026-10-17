@@ -45,7 +45,7 @@ impl Listens for NoReversedMediaSyntax {
             Kinds::WITH_TEXT,
         ),
     ];
-    /// What is masked in the node that is open, in the order of the text.
+    /// The spans to mask in the current node, in source order.
     type Seen<'d> = Vec<Span>;
 
     fn on<'d>(
@@ -59,7 +59,7 @@ impl Listens for NoReversedMediaSyntax {
             0 => masked.clear(),
             1 => masked.push(node.span()),
             _ => {
-                // `)[`, and a `]` behind it.
+                // A match needs a `)[` with a `]` after it.
                 let Some(middle) = strings::index_of(node.text(), b")[") else {
                     return Ok(());
                 };
@@ -69,9 +69,9 @@ impl Listens for NoReversedMediaSyntax {
                 let mut text = Vec::with_capacity(node.text().len());
                 let mut from = node.span().start;
                 for &span in masked.iter() {
-                    // One that is in another is masked already.
+                    // A span nested in an earlier one is already masked.
                     if span.start >= from {
-                        text.extend_from_slice(cx.document.slice(Span::new(from, span.start)));
+                        text.extend_from_slice(cx.document.slice(Span::before(from, span)));
                         util::push_blanks(cx.document.slice(span), false, &mut text);
                         from = span.end;
                     }

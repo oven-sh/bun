@@ -1,8 +1,9 @@
-//! `util.js` of the plugin.
+//! The plugin's `util.js`.
 
 use bun_core::strings;
 use bun_lint::options::Object;
 use bun_lint::regex::Regex;
+use bun_lint::rule::Meta;
 use rustc_hash::FxHashSet;
 use std::borrow::Cow;
 use std::sync::LazyLock;
@@ -11,7 +12,7 @@ use std::sync::LazyLock;
 pub(crate) static ILLEGAL_SHORTHAND_TAIL: LazyLock<Regex> =
     LazyLock::new(|| Regex::literal(r"/\]\[\s+\]$/u"));
 
-/// The matches of `htmlCommentPattern`, `/<!--[\s\S]*?-->/gu`, in `value`: where each starts and ends.
+/// The start and end of each match of `htmlCommentPattern`, `/<!--[\s\S]*?-->/gu`, in `value`.
 pub(crate) fn html_comments(value: &[u8]) -> impl Iterator<Item = (usize, usize)> {
     let mut from = 0;
     std::iter::from_fn(move || {
@@ -34,8 +35,8 @@ pub(crate) fn is_only_comments(value: &[u8]) -> bool {
     strings::is_all_js_whitespace(&value[from..])
 }
 
-/// `stripHtmlComments(value)`: a blank in the place of each UTF-16 code unit of a comment that is not of a line break. So an
-/// index into it is an index into `value`, and a byte offset is not.
+/// `stripHtmlComments(value)`: replaces every UTF-16 code unit of a comment with a space, except line breaks. So UTF-16
+/// indices into the result are also valid in `value`, but byte offsets aren't.
 pub(crate) fn strip_html_comments(value: &[u8]) -> Cow<'_, [u8]> {
     let mut stripped = Vec::new();
     let mut from = 0;
@@ -52,7 +53,7 @@ pub(crate) fn strip_html_comments(value: &[u8]) -> Cow<'_, [u8]> {
     Cow::Owned(stripped)
 }
 
-/// One of upstream's regular expressions for tags. All have the flags `giu`.
+/// One of upstream's regular expressions for tags. They all have the flags `giu`.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum TagPattern {
     /// `<(?<tagName>[a-z0-9]+(?:-[a-z0-9]+)*)(?:\s(?:[^>"']|"[^"]*"|'[^']*')*)?\/?>`
@@ -63,7 +64,7 @@ pub(crate) enum TagPattern {
     OpeningOrClosing,
 }
 
-/// Where a tag starts and ends, and its name.
+/// The offsets of a tag and of its name.
 #[derive(Copy, Clone)]
 pub(crate) struct Tag {
     pub(crate) start: usize,
@@ -71,7 +72,8 @@ pub(crate) struct Tag {
     pub(crate) end: usize,
 }
 
-/// How much of the start of `text` is `[a-z0-9]+(?:-[a-z0-9]+)*`. With the flags `i` and `u`, U+017F is an `s` and U+212A a `k`.
+/// The length of the prefix of `text` that matches `[a-z0-9]+(?:-[a-z0-9]+)*`. With the flags `i` and `u`, U+017F
+/// matches `s` and U+212A matches `k`.
 fn tag_name_len(text: &[u8]) -> usize {
     let part_len = |from: usize| {
         let mut at = from;
@@ -94,16 +96,16 @@ fn tag_name_len(text: &[u8]) -> usize {
     len
 }
 
-/// The matches of `pattern` in `html`. It takes time in proportion to the length of `html`, which the regular expressions do
-/// not where tags are not closed: they look at all that follows from each `<`.
+/// The matches of `pattern` in `html`, in linear time. The regular expressions are quadratic on unclosed tags, because
+/// they scan the rest of the input from every `<`.
 pub(crate) fn tags(html: &[u8], pattern: TagPattern) -> impl Iterator<Item = Tag> {
-    // The quotes before which, outside of a value, it is known that no `>` closes the tag.
+    // Opening quotes from which the scan is already known to find no closing `>`.
     let mut hopeless: FxHashSet<usize> = FxHashSet::default();
-    // From where on there is no `"`, and no `'`.
+    // For `'` and for `"`, the offset after which that quote doesn't appear again.
     let mut no_quote_from = [html.len(); 2];
-    // From the first place to the second there is no `>` and no quote.
+    // A range that's known to have no `>` and no quote in it.
     let mut plain = (0, 0);
-    // The `>` that `(?:[^>"']|"[^"]*"|'[^']*')*` stops at from `from` on.
+    // `closing` finds the `>` where `(?:[^>"']|"[^"]*"|'[^']*')*` stops if it starts matching at `from`.
     let mut seen = Vec::new();
     let mut closing = move |mut from: usize| {
         seen.clear();
@@ -187,7 +189,7 @@ pub(crate) fn tags(html: &[u8], pattern: TagPattern) -> impl Iterator<Item = Tag
     })
 }
 
-/// `</h` and `depth` and `>`, with white space before the `>`: where the first one in `html` from `from` on starts and ends.
+/// The start and end of the first `</h{depth}>` in `html` at or after `from`. Whitespace is allowed before the `>`.
 fn closing_heading_tag(html: &[u8], mut from: usize, depth: u8) -> Option<(usize, usize)> {
     loop {
         let start = from + strings::index_of(html.get(from..)?, b"</")?;
@@ -202,19 +204,19 @@ fn closing_heading_tag(html: &[u8], mut from: usize, depth: u8) -> Option<(usize
     }
 }
 
-/// An element `h1` to `h6` in HTML.
+/// An `h1` to `h6` element in HTML.
 #[derive(Copy, Clone)]
 pub(crate) struct HtmlHeading {
     pub(crate) start: usize,
     pub(crate) end: usize,
-    /// What is between the tags.
+    /// The content between the tags.
     pub(crate) children: (usize, usize),
 }
 
-/// The matches of `/<h(?<depth>[1-6])[^>]*>(?<children>[\s\S]*?)<\/h\k<depth>\s*>/giu` in `html`, those of the `depths` from
-/// the first to the second. It takes time in proportion to the length of `html`, which the regular expression does not.
+/// The matches of `/<h(?<depth>[1-6])[^>]*>(?<children>[\s\S]*?)<\/h\k<depth>\s*>/giu` in `html` whose depth is in the
+/// inclusive range `depths`. It runs in linear time, unlike the regular expression.
 pub(crate) fn html_headings(html: &[u8], depths: (u8, u8)) -> impl Iterator<Item = HtmlHeading> {
-    // For each depth the first closing tag from a place on. `None`: there is none.
+    // The next closing tag for each depth. `None` means there are no more.
     let mut closing: [Option<(usize, usize)>; 6] = [Some((0, 0)); 6];
     let mut from = 0;
     std::iter::from_fn(move || {
@@ -227,7 +229,7 @@ pub(crate) fn html_headings(html: &[u8], depths: (u8, u8)) -> impl Iterator<Item
             if !(depths.0..=depths.1).contains(&(digit - b'0')) {
                 continue;
             }
-            // Without a `>` no tag from here on is closed.
+            // If there's no `>` left, no later tag is closed either.
             let children_start = from + 2 + strings::index_of_char_usize(rest, b'>')? + 1;
             let known = &mut closing[usize::from(digit - b'1')];
             if known.is_some_and(|it| it.0 < children_start) {
@@ -245,7 +247,7 @@ pub(crate) fn html_headings(html: &[u8], depths: (u8, u8)) -> impl Iterator<Item
     })
 }
 
-/// A blank for each UTF-16 code unit of `text`.
+/// Appends one space for each UTF-16 code unit of `text`.
 pub(crate) fn push_blanks(text: &[u8], keeps_line_breaks: bool, out: &mut Vec<u8>) {
     for (_, c) in strings::wtf8_codepoints(text) {
         match c {
@@ -271,26 +273,35 @@ pub(crate) fn lines(value: &[u8]) -> impl Iterator<Item = &[u8]> {
     })
 }
 
-/// The default of the option `frontmatterTitle`.
+/// A regex from a rule's options, or `None` for `""`. Upstream compiles it in `create()`, so an invalid pattern ends the run.
+/// `Err` is the error ESLint prints then. The rule returns it from `validate`, and never sees a file.
+pub(crate) type PatternOption = Result<Option<Regex>, Vec<u8>>;
+
+/// `pattern === "" ? null : new RegExp(pattern, flags)`
+pub(crate) fn pattern_option(rule: &Meta, pattern: &str, flags: &str) -> PatternOption {
+    if pattern.is_empty() {
+        return Ok(None);
+    }
+    Regex::new(pattern, flags).map(Some).map_err(|error| {
+        format!(
+            "SyntaxError: Error while loading rule 'markdown/{}': Invalid regular expression: /{pattern}/{flags}: {}",
+            rule.name,
+            error.reason()
+        )
+        .into_bytes()
+    })
+}
+
+/// The default of the `frontmatterTitle` option.
 const FRONT_MATTER_TITLE: &str =
     "^(?!\\s*['\"]title[:=]['\"])\\s*\\{?\\s*['\"]?title['\"]?\\s*[:=]";
 
 /// `frontmatterTitle === "" ? null : new RegExp(frontmatterTitle, "iu")`
-pub(crate) fn front_matter_title(options: Object<'_>) -> Result<Option<Regex>, Vec<u8>> {
-    match options
+pub(crate) fn front_matter_title(rule: &Meta, options: Object<'_>) -> PatternOption {
+    let pattern = options
         .str("frontmatterTitle")
-        .unwrap_or(FRONT_MATTER_TITLE)
-    {
-        "" => Ok(None),
-        pattern => match Regex::new(pattern, "iu") {
-            Ok(regex) => Ok(Some(regex)),
-            Err(error) => Err(format!(
-                "Invalid regular expression: /{pattern}/iu: {}",
-                error.reason()
-            )
-            .into_bytes()),
-        },
-    }
+        .unwrap_or(FRONT_MATTER_TITLE);
+    pattern_option(rule, pattern, "iu")
 }
 
 /// `frontmatterHasTitle(value, pattern)`

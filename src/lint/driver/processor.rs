@@ -162,7 +162,7 @@ impl Context<'_, '_> {
         }
     }
 
-    /// By the rules here for the language of `config`, which is not JavaScript.
+    /// Lints with the built-in rules for the language of `config`, which isn't JavaScript.
     fn verify_in_language_of(
         &self,
         loaded: &Loaded,
@@ -299,7 +299,7 @@ impl Context<'_, '_> {
     ) -> FileResult {
         let reads_fixes = self.lint_options().wants_fixes;
         let mut deprecated = None;
-        // ESLint reads a file as UTF-8: what is not becomes U+FFFD.
+        // ESLint reads files as UTF-8, so invalid bytes become U+FFFD.
         let is_read_here = loaded.routes(config, path_to_verify) == Route::Language;
         let text = match is_read_here && !bun_core::strings::is_valid_utf8(&text) {
             true => {

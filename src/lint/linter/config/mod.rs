@@ -1815,7 +1815,7 @@ impl Config {
         }
         config.language.has_rule_that_requires_types = config.has_enabled(|it| it.requires_types);
         let on = || (config.rules.iter()).filter(|it| it.severity != Severity::Off);
-        // Since ESLint 10.
+        // ESLint 10 and later reject a rule that doesn't support the file's language.
         let unsupported = on().filter(|it| !config.supports_language(it.entry.meta));
         let unsupported: Vec<Vec<u8>> = unsupported
             .map(|it| {
@@ -1827,7 +1827,7 @@ impl Config {
                 .concat()
             })
             .collect();
-        // A rule that is not for the language alone is one of a package, or sees JavaScript that is not there.
+        // A rule that isn't specific to the language belongs to a package, or expects JavaScript that isn't there.
         let is_all_here = on().all(|it| !it.entry.meta.languages.is_empty())
             && unsupported.is_empty()
             && (config.js_rules.iter()).all(|it| it.severity == Severity::Off)
@@ -1848,8 +1848,8 @@ impl Config {
         config
     }
 
-    /// The language here that `language` of `config` names, and what its plugin calls it. `plugins`: the prefixes of those that the
-    /// file has.
+    /// The built-in language that `config`'s `language` refers to, and its name within the plugin. `plugins` has the
+    /// prefixes of the plugins that are configured for the file.
     fn language_of<'c>(
         &self,
         registry: &Registry,

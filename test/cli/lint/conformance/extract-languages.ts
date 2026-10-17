@@ -1,14 +1,15 @@
-// Turns the tests of the rules of a plugin that brings its own language (`@eslint/markdown`, `@eslint/json`, `@eslint/css`) into
-// `fixtures/<plugin>/<rule>.json`, in the format of README.md, with what the published plugin reports under the real ESLint.
+// Converts the rule tests of a plugin that has its own language (`@eslint/markdown`, `@eslint/json`, `@eslint/css`)
+// into `fixtures/<plugin>/<rule>.json`, in the format that README.md describes. Each case records what the published
+// plugin reports under real ESLint.
 //
 //   node extract-languages.ts --plugin markdown --tests <eslint/markdown at the tag of the package>/tests/rules
 //        --packages <node_modules with eslint, @eslint/markdown and dedent> [--out <fixtures>] [<rule>..]
 //   node extract-languages.ts --plugin markdown --packages <node_modules> --cases <cases.json> --out <dir>
 //
-// `--cases`: your own inputs, an array of `{ rule, code, options?, language?, languageOptions?, filename? }`.
+// `--cases` takes your own inputs: an array of `{ rule, code, options?, language?, languageOptions?, filename? }`.
 //
-// A case differs from one for JavaScript in this: `language` is the language of the file (`markdown/gfm`), and `languageOptions`
-// is what the language is given, as it is in the configuration.
+// A case differs from a JavaScript case in two fields: `language` is the file's language (`markdown/gfm`), and
+// `languageOptions` has that language's options, exactly as in the config.
 
 import { mkdirSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { createRequire, registerHooks } from "node:module";
@@ -73,7 +74,7 @@ class RecordingRuleTester {
   }
 }
 
-// The tests import the sources of the plugin, which are not what is published, and the `RuleTester` of ESLint.
+// The tests import the plugin's sources, which aren't what's published, and ESLint's `RuleTester`. Redirect both.
 (globalThis as any).__recordingEslint = { RuleTester: RecordingRuleTester, Linter };
 const stub = "data:text/javascript,export const { RuleTester, Linter } = globalThis.__recordingEslint;";
 registerHooks({
@@ -87,7 +88,7 @@ registerHooks({
     return next(specifier, context);
   },
 });
-// What is not a case of a `RuleTester` measures time.
+// The only tests outside a `RuleTester` are timing tests, so skip them.
 Object.assign(globalThis, { describe: (_: string, body: () => void) => body(), it: () => {} });
 
 interface Raw {

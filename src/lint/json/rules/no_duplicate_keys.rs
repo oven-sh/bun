@@ -8,7 +8,7 @@ pub struct NoDuplicateKeys;
 
 const DUPLICATE_KEY: Message = Message::new("duplicateKey", "Duplicate key \"{{key}}\" found.");
 
-/// The names of an object with no more members are compared with each other.
+/// An object with at most this many members gets a linear search instead of a hash set.
 const FEW: usize = 16;
 
 impl Rule for NoDuplicateKeys {

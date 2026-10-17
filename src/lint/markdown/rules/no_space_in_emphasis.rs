@@ -11,8 +11,8 @@ const SPACE_IN_EMPHASIS: Message = Message::new(
 );
 
 impl NoSpaceInEmphasis {
-    /// The matches of `/(?<=(?<!\\)(?:\\{2})*)(?:\*\*\*|\*\*|\*|___|__|_|~~|~)/gu` in `text`, without the tildes unless they are
-    /// checked: where each starts and how long it is.
+    /// The start and length of each match of `/(?<=(?<!\\)(?:\\{2})*)(?:\*\*\*|\*\*|\*|___|__|_|~~|~)/gu` in `text`.
+    /// Tildes only match if `checkStrikethrough` is on.
     fn markers(&self, text: &[u8]) -> impl Iterator<Item = (usize, usize)> {
         let bytes: &[u8] = match self.check_strikethrough {
             true => b"*_~",
@@ -63,7 +63,7 @@ impl Listens for NoSpaceInEmphasis {
             Kinds::WITH_TEXT,
         ),
     ];
-    /// The texts right in the node that is open.
+    /// The `text` nodes that are direct children of the current node.
     type Seen<'d> = Vec<Span>;
 
     fn on<'d>(
@@ -88,15 +88,15 @@ impl Listens for NoSpaceInEmphasis {
         if !texts.iter().any(has_marker) {
             return Ok(());
         }
-        // Blanks in the place of everything else.
+        // Replace everything else with spaces.
         let mut masked = Vec::with_capacity(node.text().len());
         let mut from = node.span().start;
         for &span in texts.iter() {
-            util::push_blanks(cx.document.slice(Span::new(from, span.start)), false, &mut masked);
+            util::push_blanks(cx.document.slice(Span::before(from, span)), false, &mut masked);
             masked.extend_from_slice(cx.document.slice(span));
             from = span.end;
         }
-        // Where the markers of each sort start and end, the sorts in the order in which the first of each is found.
+        // The start and end of every marker, grouped by marker text. The groups are in order of first appearance.
         let mut groups: Vec<(&[u8], Vec<(Index, Index)>)> = Vec::new();
         let mut indices = Indices::new(&masked, node.start_index());
         for (at, len) in self.markers(&masked) {

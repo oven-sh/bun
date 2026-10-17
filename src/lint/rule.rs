@@ -91,8 +91,8 @@ enum UnderEslint {
     /// here. Without a name: whatever the plugin of the configuration says it is called. And the version of the package that
     /// the rules here do the same as.
     InPlaceOf(Option<&'static str>, &'static str),
-    /// The same for a plugin that has [languages](crate::languages), and rules for the files in them. Only ESLint has languages,
-    /// so with any other configuration, and with none, there is no such plugin.
+    /// Like `InPlaceOf`, for a plugin that defines [languages](crate::languages) and rules for files in those
+    /// languages. Only ESLint has languages, so the plugin doesn't exist with any other config, or without a config.
     Languages(&'static str, &'static str),
     /// The package of the project, which has other messages and other options: the rules here are those of oxlint,
     /// for a configuration of oxlint.
@@ -262,7 +262,7 @@ impl Plugin {
                     && (usual.zip(package))
                         .is_none_or(|(usual, package)| usual.as_bytes() == package)
             }
-            // The prefix alone is not enough: `json` is what ESLint makes of eslint-plugin-json.
+            // The prefix alone isn't enough: `json` is also the prefix that ESLint derives from eslint-plugin-json.
             UnderEslint::Languages(usual, _) => {
                 it.prefix().as_bytes() == prefix && package == Some(usual.as_bytes())
             }
@@ -285,7 +285,7 @@ impl Plugin {
         }
     }
 
-    /// The package in whose place the rules here answer, if it has to be that one.
+    /// The package that the built-in rules replace, if they only replace that specific package.
     pub fn package(self) -> Option<&'static str> {
         match self.names().under_eslint {
             UnderEslint::InPlaceOf(package, _) => package,
@@ -578,15 +578,15 @@ impl Meta {
         self
     }
 
-    /// ESLint's `meta.languages`, for a rule about a [language](crate::languages) other than JavaScript: `json/json`. It runs on
-    /// the files of these languages and on no other, and it exists only with a configuration of ESLint.
+    /// ESLint's `meta.languages`, for a rule about a [language](crate::languages) other than JavaScript, such as
+    /// `json/json`. The rule only runs on files in these languages, and it only exists with an ESLint config.
     pub const fn languages(mut self, languages: &'static [&'static str]) -> Meta {
         self.languages = languages;
         self
     }
 
-    /// Upstream's `meta` has no `languages`, so ESLint lets the rule be on for a file in any language. In one that is not among
-    /// [`Meta::languages`] it finds nothing.
+    /// Upstream's `meta` has no `languages`, so ESLint allows the rule to be enabled for a file in any language. It
+    /// reports nothing in a language that isn't in [`Meta::languages`].
     pub const fn on_in_any_language(mut self) -> Meta {
         self.is_on_in_any_language = true;
         self

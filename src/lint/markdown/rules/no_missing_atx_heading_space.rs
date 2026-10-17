@@ -10,7 +10,7 @@ const MISSING_SPACE: Message = Message::new(
     "Missing space {{position}} hash(es) on ATX style heading.",
 );
 
-/// What `/(?:^|(?<=[\r\n]))(?<hashes>#{1,6})(?:[^# \t]|$)/gu` finds in `text`: where the hashes start and end.
+/// The start and end of `hashes` in each match of `/(?:^|(?<=[\r\n]))(?<hashes>#{1,6})(?:[^# \t]|$)/gu` in `text`.
 fn leading_hashes(text: &[u8]) -> impl Iterator<Item = (usize, usize)> {
     let mut from = 0;
     std::iter::from_fn(move || {

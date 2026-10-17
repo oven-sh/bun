@@ -281,7 +281,7 @@ impl Parser<'_> {
                         && self.current_block.is_none()
                         && self.last_header_opens_list_item
                     {
-                        // What the item has taken of the indentation is given back.
+                        // The line leaves the list item, so it gets back the indentation that the item consumed.
                         n_parents -= 1;
                         line.indent =
                             remaining_indent + self.containers[n_parents as usize].contents_indent;

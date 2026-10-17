@@ -817,7 +817,7 @@ impl Parser<'_> {
                 while uri_end < content.len()
                     && content[uri_end] != b'>'
                     && content[uri_end] != b'<'
-                    // No space and no ASCII control character. NUL stands for U+FFFD.
+                    // A space or an ASCII control character ends the URI. NUL doesn't, because it stands for U+FFFD.
                     && ((content[uri_end] > b' ' && content[uri_end] != 0x7F)
                         || content[uri_end] == 0)
                 {

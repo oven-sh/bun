@@ -128,7 +128,7 @@ struct How<'h> {
     script: Option<(ScriptKind, &'h RuleFilter<'h>)>,
     /// [`File::is_later_script`]
     is_later_script: bool,
-    /// It is not JavaScript: what [`File::in_language`] takes.
+    /// Set if the file isn't JavaScript: the arguments of [`File::in_language`].
     in_language: Option<(&'h [u8], &'h Parsed, LineBreaks)>,
     rules: Which<'h>,
 }
@@ -365,7 +365,8 @@ impl Context<'_, '_> {
         Some(self.verify_as(path, text, config, &how)).filter(|it| !it.is_unread)
     }
 
-    /// The same for a text in `dialect`, which is not JavaScript. `physical_path_len`: as above, if it is such a block.
+    /// The same for text in `dialect`, which isn't JavaScript. `physical_path_len` is set if the text is a block that a
+    /// processor found, as in `verify_block_if_read`.
     pub(crate) fn verify_in_language(
         &self,
         path: &[u8],
@@ -400,7 +401,7 @@ impl Context<'_, '_> {
             ..How::default()
         };
         let mut result = self.verify_as(path, body, config, &how);
-        // The language has not seen the byte order mark.
+        // The language parsed the text without the byte order mark, so shift the fixes by its length.
         let mark = (text.len() - body.len()) as u32;
         if mark > 0 {
             result.line_starts = None;

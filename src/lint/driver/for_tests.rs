@@ -289,8 +289,8 @@ pub fn run_path_tests(args: &[&[u8]]) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// `bun lint --print-markdown-trees <cases>`: `args` is what follows the flag. Returns the trees of the cases, as `bun lint`
-/// reads Markdown.
+/// `bun lint --print-markdown-trees <cases>`: `args` is what follows the flag. Returns the tree that `bun lint` parses
+/// each case into.
 #[optimize(size)]
 pub fn print_markdown_trees(args: &[&[u8]]) -> Option<Vec<u8>> {
     let &[cases] = args else {

@@ -1,7 +1,8 @@
-//! How a rule for Markdown listens.
+//! Listeners for Markdown rules.
 //!
-//! A rule of `@eslint/markdown` listens with selectors of esquery, and so does its port: [`Listens::LISTENERS`] has them as
-//! upstream writes them, and [`Listens::on`] is called with the number of the one that matches, in the order of ESLint's walk.
+//! `@eslint/markdown` rules listen with esquery selectors, and so do their ports. [`Listens::LISTENERS`] has the
+//! selectors exactly as upstream writes them. [`Listens::on`] is called with the index of the selector that matched, in
+//! ESLint's traversal order.
 //!
 //! ```ignore
 //! impl Rule for NoEmptyLinks {
@@ -32,7 +33,7 @@ use bun_lint::context::Cx;
 use bun_lint::rule::{Message, Rule};
 use bun_lint::span::{Position, Span};
 
-/// A set of kinds of nodes.
+/// A set of node kinds.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) struct Kinds(u64);
 
@@ -41,7 +42,7 @@ impl Kinds {
     /// `heading, paragraph, tableCell`
     pub(crate) const WITH_TEXT: Kinds =
         Kinds::of(&[Kind::Heading, Kind::Paragraph, Kind::TableCell]);
-    /// What is in no heading, paragraph or cell.
+    /// The kinds that never appear inside a heading, a paragraph or a table cell.
     const BLOCKS: Kinds = Kinds::of(&[
         Kind::Root,
         Kind::FrontMatter,
@@ -75,7 +76,7 @@ impl Kinds {
     }
 }
 
-/// What is before the last part of a selector.
+/// The part of a selector before its last component: which ancestors the node needs.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum Within {
     Anything,
@@ -87,19 +88,19 @@ pub(crate) enum Within {
     ChildOfNodeWithText,
 }
 
-/// A selector that a rule listens with.
+/// A selector that a rule listens on.
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct Listener {
-    /// The kinds of nodes that its last part matches.
+    /// The node kinds that the selector's last component matches.
     kinds: Kinds,
     within: Within,
     is_exit: bool,
-    /// It is more than the name of a type. On one node ESLint calls such a listener after those that are only that.
+    /// The selector isn't just a type name. On the same node, ESLint calls such listeners after the plain type names.
     is_more_than_a_type: bool,
 }
 
 impl Listener {
-    /// `selector`: as upstream writes it.
+    /// `selector` is copied from upstream verbatim.
     pub(crate) const fn new(selector: &'static str, kinds: Kinds) -> Listener {
         let bytes = selector.as_bytes();
         let is_exit = matches!(bytes, [.., b':', b'e', b'x', b'i', b't']);
@@ -122,7 +123,6 @@ impl Listener {
     }
 }
 
-/// What a rule reports.
 struct Report {
     message: Message,
     data: Vec<(&'static str, Vec<u8>)>,
@@ -131,13 +131,13 @@ struct Report {
     fix: Option<(Span, Vec<u8>)>,
 }
 
-/// `context` of a rule.
+/// A rule's `context`.
 pub(crate) struct Context<'d> {
     pub(crate) document: &'d Document<'d>,
     reports: Vec<Report>,
 }
 
-/// A report that is being made.
+/// A handle to the report that was just added, for attaching a fix.
 pub(crate) struct Reported<'c>(&'c mut Report);
 
 impl Reported<'_> {
@@ -176,7 +176,7 @@ impl<'d> Context<'d> {
         self.report((node.start(), node.end()), message, data)
     }
 
-    /// From one index to another: `{ start: sourceCode.getLocFromIndex(start), end: sourceCode.getLocFromIndex(end) }`
+    /// `{ start: sourceCode.getLocFromIndex(start), end: sourceCode.getLocFromIndex(end) }`
     pub(crate) fn locs(&self, start: i64, end: i64) -> Result<(Loc, Loc), OutOfRange> {
         Ok((
             self.document.loc_from_index(start)?,
@@ -184,7 +184,7 @@ impl<'d> Context<'d> {
         ))
     }
 
-    /// The bytes from one index to another.
+    /// The byte span of an index range.
     pub(crate) fn span(&self, start: i64, end: i64) -> Span {
         Span::new(self.document.offset_of(start), self.document.offset_of(end))
     }
@@ -193,10 +193,10 @@ impl<'d> Context<'d> {
 pub(crate) trait Listens: Sized {
     const LISTENERS: &'static [Listener];
 
-    /// What it keeps while a text is linted.
+    /// The rule's state while it lints one file.
     type Seen<'d>: Default;
 
-    /// `LISTENERS[listener]` matches `node`. `Err`: upstream throws.
+    /// Called when `LISTENERS[listener]` matches `node`. Returns `Err` where upstream throws.
     fn on<'d>(
         &self,
         listener: usize,
@@ -206,7 +206,8 @@ pub(crate) trait Listens: Sized {
     ) -> Result<(), OutOfRange>;
 }
 
-/// In the `impl Rule` of a rule that [`Listens`]: all but `META`, `new` and `validate`.
+/// Goes in the `impl Rule` of a rule that implements [`Listens`]. It defines everything except `META`, `new` and
+/// `validate`.
 #[macro_export]
 macro_rules! listens {
     () => {
@@ -223,7 +224,7 @@ macro_rules! listens {
     };
 }
 
-/// ESLint's column -1 is `u32::MAX` there.
+/// ESLint's column -1 becomes `u32::MAX` in a [`Position`].
 fn position_of(loc: Loc) -> Position {
     Position {
         line: loc.line as u32,
@@ -231,7 +232,7 @@ fn position_of(loc: Loc) -> Position {
     }
 }
 
-/// Walks the tree as ESLint does, and calls `rule` with what it listens for.
+/// Walks the tree in ESLint's order and calls `rule` for every node that one of its selectors matches.
 pub(crate) fn walk<'c, R>(rule: &R, cx: &'c Cx<'_, R>)
 where
     R: Listens + for<'s> Rule<State<'s> = Document<'s>>,
@@ -242,7 +243,7 @@ where
         document,
         reports: Vec::new(),
     };
-    // Whether it listens for anything that is in a heading, a paragraph or a cell.
+    // True if a listener can match a node inside a heading, a paragraph or a table cell.
     let looks_into_text = const {
         let (mut looks, mut at) = (false, 0);
         while at < R::LISTENERS.len() {
@@ -251,7 +252,7 @@ where
         }
         looks
     };
-    // How many of the nodes that are open are headings, and how many are headings, paragraphs or cells.
+    // How many ancestors of the current node are headings, and how many are headings, paragraphs or table cells.
     let (mut headings, mut with_text) = (0u32, 0u32);
     let mut call = |is_exit: bool, node: Node<'c>, headings: u32, with_text: u32| -> bool {
         let kind = node.kind();

@@ -1597,7 +1597,7 @@ unsafe fn parse_worker_exec_argv_flags(
             // The next token is the code, unless it is a flag: a bare `-p` only prints.
             // https://github.com/nodejs/node/blob/v26.3.0/src/node_options.cc#L1171-L1174
             if let Some(&next) = exec_argv.get(index + 1) {
-                // SAFETY: per fn contract — a non-null `next` is a live `WTFStringImpl*`.
+                // SAFETY: per fn contract, a non-null `next` is a live `WTFStringImpl*`.
                 let code = (!next.is_null()).then(|| unsafe { &*next }.to_owned_slice_z());
                 let code = code.as_ref().map_or(b"".as_slice(), |code| code.as_bytes());
                 if code.first() != Some(&b'-') {

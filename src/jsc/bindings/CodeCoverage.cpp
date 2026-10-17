@@ -23,11 +23,13 @@ extern "C" bool CodeCoverage__withBlocksAndFunctions(
 
     size_t functionStartOffset = basicBlocks.size();
 
-    const Vector<std::tuple<bool, unsigned, unsigned>>& functionRanges = vm.functionHasExecutedCache()->getFunctionRanges(sourceID);
+    auto functionRanges = vm.functionHasExecutedCache()->getFunctionRanges(sourceID);
 
     basicBlocks.reserveCapacity(functionRanges.size() + basicBlocks.size());
 
     for (const auto& functionRange : functionRanges) {
+        if (!JSC::FunctionHasExecutedCache::isFunctionInSource(std::get<3>(functionRange)))
+            continue;
         BasicBlockRange range;
         range.m_hasExecuted = std::get<0>(functionRange);
         range.m_startOffset = static_cast<int>(std::get<1>(functionRange));

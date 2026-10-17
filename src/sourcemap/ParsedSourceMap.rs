@@ -247,8 +247,24 @@ impl ParsedSourceMap {
         self.mappings.find(line, column)
     }
 
-    pub fn internal_cursor(&self) -> Option<crate::internal_source_map::Cursor> {
-        self.internal.as_ref().map(|ism| ism.cursor())
+    /// Every mapping, in generated order.
+    pub fn for_each_mapping(&self, mut each: impl FnMut(Mapping)) {
+        if let Some(ism) = &self.internal {
+            return ism.for_each(each);
+        }
+        let (generated, original, source_index) = (
+            self.mappings.generated(),
+            self.mappings.original(),
+            self.mappings.source_index(),
+        );
+        for i in 0..generated.len() {
+            each(Mapping {
+                generated: generated[i],
+                original: original[i],
+                source_index: source_index[i],
+                name_index: -1,
+            });
+        }
     }
 
     pub(crate) fn standalone_module_graph_data(&self) -> *mut crate::SerializedSourceMap::Loaded {

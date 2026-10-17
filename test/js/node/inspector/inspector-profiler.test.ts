@@ -586,6 +586,54 @@ console.log(JSON.stringify({ count: fn?.ranges[0].count }));
       expect(JSON.parse(stdout.trim())).toEqual({ count: 2 });
     });
 
+    // What Node 26 lists for this script, less the "<instance_members_initializer>" of Fields and of Inner.
+    test.concurrent("lists a function once, and nothing that is not in the text", async () => {
+      using dir = tempDir("inspector-coverage-functions", {
+        "fixture.mjs": `
+import { Session } from "node:inspector/promises";
+import vm from "node:vm";
+const session = new Session();
+session.connect();
+await session.post("Profiler.enable");
+await session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+const code = [
+  "class Fields { a = 1; ['b'] = 2; }",
+  "class Derived extends Fields { }",
+  "class Empty { }",
+  "function around() { class Inner { c = 7; } new Inner; }",
+  "new Fields; new Derived; new Empty; around();",
+  "function* generator() { yield 3; }",
+  "function* notResumed() { yield 4; }",
+  "function* notCalled() { yield 5; }",
+  "async function asynchronous() { await 6; }",
+  "class Static { static { generator; } }",
+  "[...generator()]; notResumed(); asynchronous();",
+].join("\\n");
+const url = "file:///functions-fixture/virtual.js";
+vm.runInThisContext(code, { filename: url });
+const { result } = await session.post("Profiler.takePreciseCoverage");
+session.disconnect();
+const functions = result.find(script => script.url === url).functions.map(({ ranges: [range] }) => [
+  range.count,
+  range.startOffset === 0 && range.endOffset === code.length ? "the script" : code.slice(range.startOffset, range.endOffset),
+]);
+console.log(JSON.stringify(functions));
+`,
+      });
+      await using proc = Bun.spawn({ cmd: [bunExe(), "fixture.mjs"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+      expect(JSON.parse(stdout.trim())).toEqual([
+        [1, "the script"],
+        [1, "function around() { class Inner { c = 7; } new Inner; }"],
+        [1, "function* generator() { yield 3; }"],
+        [1, "function* notResumed() { yield 4; }"],
+        [0, "function* notCalled() { yield 5; }"],
+        [1, "async function asynchronous() { await 6; }"],
+        [1, "static { generator; }"],
+      ]);
+    });
+
     test.concurrent("collects block coverage with call counts for vm scripts", async () => {
       using dir = tempDir("inspector-coverage-vm", {
         "fixture.mjs": coverageVmFixture,
@@ -635,6 +683,49 @@ console.log(JSON.stringify({ count: fn?.ranges[0].count }));
         isBlockCoverage: false,
         ranges: [{ startOffset: expect.any(Number), endOffset: expect.any(Number), count: 0 }],
       });
+    });
+
+    test.concurrent("a function's range is its text, and the script is reported once", async () => {
+      using dir = tempDir("inspector-coverage-ranges", {
+        "fixture.cjs": `
+          const inspector = require("node:inspector");
+          const vm = require("node:vm");
+          const code = [
+            "function called(x) { if (x) { return 1; } return 2; }",
+            "function neverCalled() { return 3; }",
+            "const arrow = y => y;",
+            "called(true); arrow(1);",
+            "",
+          ].join("\\n");
+          const session = new inspector.Session();
+          session.connect();
+          session.post("Profiler.enable");
+          session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: false });
+          vm.runInThisContext(code, { filename: "/virtual/ranges.js" });
+          session.post("Profiler.takePreciseCoverage", (err, { result }) => {
+            const { functions } = result.find(script => script.url.endsWith("/virtual/ranges.js"));
+            console.log(JSON.stringify(functions.map(f => code.slice(f.ranges[0].startOffset, f.ranges[0].endOffset))));
+          });
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+      const [script, ...functions] = JSON.parse(stdout);
+      expect(script).toStartWith("function called(x)");
+      expect(script).toEndWith("arrow(1);\n");
+      expect(functions).toEqual([
+        "function called(x) { if (x) { return 1; } return 2; }",
+        "function neverCalled() { return 3; }",
+        "y => y",
+      ]);
     });
 
     test.concurrent("respects callCount: false and detailed: false", async () => {
@@ -713,6 +804,52 @@ console.log(JSON.stringify({ count: fn?.ranges[0].count }));
       expect(rangeCount).toBeGreaterThan(0);
       // Every range across every script satisfies startOffset < endOffset.
       expect(zeroWidth).toEqual([]);
+    });
+
+    test.concurrent("lists a range only where its count is not that of the range it is in", async () => {
+      using dir = tempDir("inspector-coverage-nested", {
+        "fixture.cjs": `
+          const inspector = require("node:inspector");
+          const vm = require("node:vm");
+          const code = [
+            "function called(x) {",
+            "  if (x) {",
+            "    return 1;",
+            "  }",
+            "  return 2;",
+            "}",
+            "function neverCalled() {}",
+            "called(0);",
+          ].join("\\n");
+          const session = new inspector.Session();
+          session.connect();
+          session.post("Profiler.enable");
+          session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+          vm.runInThisContext(code, { filename: "/virtual/nested.js" });
+          session.post("Profiler.takePreciseCoverage", (error, { result }) => {
+            const { functions } = result.find(script => script.url.endsWith("/virtual/nested.js"));
+            console.log(JSON.stringify(functions.map(f => f.ranges.map(r => [code.slice(r.startOffset, r.endOffset), r.count]))));
+          });
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+      const [script, called, neverCalled] = JSON.parse(stdout);
+      // The text between the two functions ran as often as the script: it is not a range,
+      // and so nothing but the function's own range is next to "function neverCalled".
+      expect(script).toHaveLength(1);
+      expect(called[0][1]).toBe(1);
+      expect(called.slice(1).map(([, count]) => count)).not.toContain(1);
+      expect(called.slice(1).map(([text]) => text)).toContainEqual(expect.stringContaining("return 1;"));
+      expect(neverCalled).toEqual([["function neverCalled() {}", 0]]);
     });
   });
 

@@ -307,13 +307,19 @@ function buildScriptCoverageList(
       url = pathToFileURL(url).href;
     }
 
-    // Outer functions before nested ones, so a stack-based sweep below sees
-    // enclosing ranges first. Zero-width entries are dropped: V8 never emits
+    // JSC's ranges include their last character; V8's end after it. What is empty or inverted
+    // after that is text JSC has between two adjacent functions: V8 never emits
     // startOffset === endOffset, and @bcoe/v8-coverage recurses forever on one.
+    // The program is one of JSC's function ranges, and has the whole-script entry below.
+    // Outer functions before nested ones, so a stack-based sweep below sees enclosing ranges first.
     const functions = script.functions
+      .map(([start, end, executed]): [number, number, boolean] => [start, end + 1, executed])
+      .filter(([start, end]) => start >= 0 && end > start && !(start === 0 && end === sourceLength))
+      .sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+    const blocks = script.blocks
+      .map(([start, end, count]): [number, number, number] => [start, end + 1, count])
       .filter(([start, end]) => start >= 0 && end > start)
       .sort((a, b) => a[0] - b[0] || b[1] - a[1]);
-    const blocks = script.blocks.filter(([start, end]) => start >= 0 && end > start).sort((a, b) => a[0] - b[0]);
 
     // Assign each basic block to the innermost function range containing it.
     const blocksPerFunction: Array<Array<[number, number, number]>> = functions.map(() => []);
@@ -327,7 +333,7 @@ function buildScriptCoverageList(
       }
       // Functions that ended before this block started can no longer contain
       // this block or any later one (blocks are sorted by start).
-      while (stack.length > 0 && functions[stack[stack.length - 1]][1] < block[0]) {
+      while (stack.length > 0 && functions[stack[stack.length - 1]][1] <= block[0]) {
         stack.pop();
       }
       // The stack is a nesting chain (siblings get popped above), so ends
@@ -353,19 +359,27 @@ function buildScriptCoverageList(
     const scriptExecuted = blocks.some(([, , count]) => count > 0) ? 1 : 0;
     const entries: object[] = [];
 
-    const toRange = ([startOffset, endOffset, count]: [number, number, number]) => ({
-      startOffset,
-      endOffset,
-      count: callCount ? count : count > 0 ? 1 : 0,
-    });
+    // As in V8, a range is listed only where its count is not that of the range it is in.
+    // ast-v8-to-istanbul takes a range to include the character after it, which a range
+    // that only repeats its parent's count would give to the function that starts there.
+    const toRanges = (outer: [number, number, number], inner: Array<[number, number, number]>) => {
+      const ranges: Array<{ startOffset: number; endOffset: number; count: number }> = [];
+      const enclosing: typeof ranges = [];
+      for (const [startOffset, endOffset, blockCount] of detailed ? [outer, ...inner] : [outer]) {
+        while (enclosing.length > 0 && enclosing[enclosing.length - 1].endOffset <= startOffset) enclosing.pop();
+        const count = callCount ? blockCount : blockCount > 0 ? 1 : 0;
+        if (enclosing.length > 0 && enclosing[enclosing.length - 1].count === count) continue;
+        const range = { startOffset, endOffset, count };
+        ranges.push(range);
+        enclosing.push(range);
+      }
+      return ranges;
+    };
 
     // Whole-script entry. V8 always reports one covering the entire source.
     entries.push({
       functionName: "",
-      ranges: [
-        { startOffset: 0, endOffset: sourceLength, count: scriptExecuted },
-        ...(detailed ? topLevelBlocks.map(toRange) : []),
-      ],
+      ranges: toRanges([0, sourceLength, scriptExecuted], topLevelBlocks),
       isBlockCoverage: detailed,
     });
 
@@ -395,10 +409,7 @@ function buildScriptCoverageList(
       }
       entries.push({
         functionName: "",
-        ranges: [
-          { startOffset, endOffset, count: callCount ? count : count > 0 ? 1 : 0 },
-          ...(detailed ? ownBlocks.map(toRange) : []),
-        ],
+        ranges: toRanges([startOffset, endOffset, count], ownBlocks),
         isBlockCoverage: detailed,
       });
     }

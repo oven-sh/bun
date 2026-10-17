@@ -45,16 +45,17 @@ impl FontPaletteValuesRule {
     pub(crate) fn parse(
         name: DashedIdent,
         input: &mut css::Parser,
+        rule_start: usize,
         loc: Location,
+        options: &css::ParserOptions,
     ) -> css::Result<FontPaletteValuesRule> {
         let mut decl_parser = FontPaletteValuesDeclarationParser {};
-        let mut parser = css::css_parser::RuleBodyParser::new(input, &mut decl_parser);
         let mut properties: ArrayList<FontPaletteValuesProperty> = ArrayList::new();
-        while let Some(result) = parser.next() {
-            if let Ok(decl) = result {
-                properties.push(decl);
-            }
-        }
+        css::css_parser::RuleBodyParser::new(input, &mut decl_parser).parse_lenient(
+            options,
+            rule_start,
+            |decl| properties.push(decl),
+        );
 
         Ok(FontPaletteValuesRule {
             name,

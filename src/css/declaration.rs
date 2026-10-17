@@ -155,35 +155,45 @@ impl DeclarationBlock<'static> {
         input: &mut css::Parser,
         options: &css::ParserOptions,
     ) -> Result<DeclarationBlock<'static>> {
+        let mut block = Self::new_in_arena_of(input);
+        css::RuleBodyParser::new(input, &mut block.item_parser(options)).parse_strict()?;
+        Ok(block)
+    }
+
+    /// For the block of a keyframe. A declaration that fails to parse is
+    /// dropped with a warning and the block keeps the rest, as in a browser.
+    /// lightningcss drops the whole keyframe.
+    pub(crate) fn parse_lenient(
+        input: &mut css::Parser,
+        options: &css::ParserOptions,
+        rule_start: usize,
+    ) -> DeclarationBlock<'static> {
+        let mut block = Self::new_in_arena_of(input);
+        css::RuleBodyParser::new(input, &mut block.item_parser(options)).parse_lenient(
+            options,
+            rule_start,
+            |()| {},
+        );
+        block
+    }
+
+    fn new_in_arena_of(input: &css::Parser) -> DeclarationBlock<'static> {
         // SAFETY: `Tokenizer<'a>` owns `arena: &'a Bump`; the arena outlives
         // every `DeclarationBlock` produced from this parser. `'static` here is
         // the crate-wide erasure (see note above), not a real static borrow.
         let bump: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(input.arena()) };
-        let mut important_declarations = DeclarationList::new_in(bump);
-        let mut declarations = DeclarationList::new_in(bump);
-        let mut decl_parser = PropertyDeclarationParser {
-            important_declarations: &mut important_declarations,
-            declarations: &mut declarations,
+        DeclarationBlock::new_in(bump)
+    }
+
+    fn item_parser<'a>(
+        &'a mut self,
+        options: &'a css::ParserOptions<'a>,
+    ) -> PropertyDeclarationParser<'a, 'static> {
+        PropertyDeclarationParser {
+            important_declarations: &mut self.important_declarations,
+            declarations: &mut self.declarations,
             options,
-        };
-        let mut parser = css::RuleBodyParser::new(input, &mut decl_parser);
-
-        while let Some(res) = parser.next() {
-            if let Err(e) = res {
-                if options.error_recovery {
-                    options.warn(&e);
-                    continue;
-                }
-                // `declarations`/`important_declarations` are bumpalo Vec<Property> and
-                // drop on this early return; freeing them is implicit via Drop.
-                return Err(e);
-            }
         }
-
-        Ok(DeclarationBlock {
-            important_declarations,
-            declarations,
-        })
     }
 }
 

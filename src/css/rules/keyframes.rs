@@ -287,15 +287,19 @@ impl KeyframesRule {
 // KeyframesListParser
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct KeyframesListParser;
+pub(crate) struct KeyframesListParser<'a> {
+    pub options: &'a css::ParserOptions<'a>,
+    /// The byte offset of the `@keyframes` rule.
+    pub rule_start: usize,
+}
 
 const _: () = {
     use css::css_parser::{
         AtRuleParser, DeclarationParser, QualifiedRuleParser, RuleBodyItemParser,
     };
-    use css::{BasicParseErrorKind, Maybe, Parser, ParserOptions, ParserState, Result};
+    use css::{BasicParseErrorKind, Maybe, Parser, ParserState, Result};
 
-    impl DeclarationParser for KeyframesListParser {
+    impl<'a> DeclarationParser for KeyframesListParser<'a> {
         type Declaration = Keyframe;
 
         fn parse_value(
@@ -312,7 +316,7 @@ const _: () = {
         }
     }
 
-    impl RuleBodyItemParser for KeyframesListParser {
+    impl<'a> RuleBodyItemParser for KeyframesListParser<'a> {
         fn parse_qualified(_this: &Self) -> bool {
             true
         }
@@ -322,7 +326,7 @@ const _: () = {
         }
     }
 
-    impl AtRuleParser for KeyframesListParser {
+    impl<'a> AtRuleParser for KeyframesListParser<'a> {
         type Prelude = ();
         type AtRule = Keyframe;
 
@@ -356,7 +360,7 @@ const _: () = {
         }
     }
 
-    impl QualifiedRuleParser for KeyframesListParser {
+    impl<'a> QualifiedRuleParser for KeyframesListParser<'a> {
         type Prelude = ArrayList<KeyframeSelector>;
         type QualifiedRule = Keyframe;
 
@@ -365,17 +369,14 @@ const _: () = {
         }
 
         fn parse_block(
-            _this: &mut Self,
+            this: &mut Self,
             prelude: Self::Prelude,
             _start: &ParserState,
             input: &mut Parser,
         ) -> Result<Self::QualifiedRule> {
-            // For now there are no options that apply within @keyframes
-            let options = ParserOptions::default(None);
-            let declarations = DeclarationBlock::parse(input, &options)?;
             Ok(Keyframe {
                 selectors: prelude,
-                declarations,
+                declarations: DeclarationBlock::parse_lenient(input, this.options, this.rule_start),
             })
         }
     }

@@ -212,17 +212,7 @@ impl PageRule {
             rules: &mut rules,
             options,
         };
-        let mut parser = css::css_parser::RuleBodyParser::new(input, &mut rule_parser);
-
-        while let Some(decl) = parser.next() {
-            if let Err(e) = decl {
-                if parser.parser.options.error_recovery {
-                    parser.parser.options.warn(&e);
-                    continue;
-                }
-                return Err(e);
-            }
-        }
+        css::css_parser::RuleBodyParser::new(input, &mut rule_parser).parse_strict()?;
 
         Ok(PageRule {
             selectors,

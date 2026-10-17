@@ -2,8 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { cssInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -8321,5 +8322,340 @@ console.log(line.length - line.trimStart().length);`,
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim()).toBe("300");
     expect(exitCode).toBe(0);
+  });
+
+  // `@font-face`, `@font-palette-values`, `@keyframes` and the block of a
+  // keyframe drop an item that fails to parse and keep the rest, as a browser
+  // does. Each dropped item is a warning. Every other rule body fails the sheet.
+  describe("a rule body with an invalid item", () => {
+    const tailwindKeyframes = `@keyframes gradient-in {
+      0% {
+        --tw-gradient-from: #00c950;
+        @supports (color: color-mix(in lab, red, red)) {
+          & {
+            --tw-gradient-from: color-mix(in oklab, green 0%, transparent);
+          }
+        }
+      }
+      100% { --tw-gradient-from: #00c950; }
+    }`;
+
+    describe("a keyframe keeps the valid declarations of its block", () => {
+      minify_test(
+        "@keyframes k { from { opacity: 0; 123: x } to { opacity: 1 } }",
+        "@keyframes k{0%{opacity:0}to{opacity:1}}",
+      );
+      minify_test(
+        "@keyframes k { from { 123: x; opacity: 0 } to { opacity: 1 } }",
+        "@keyframes k{0%{opacity:0}to{opacity:1}}",
+      );
+      minify_test(
+        "@keyframes k { from { opacity: 0; color red; top: 0 } to { opacity: 1 } }",
+        "@keyframes k{0%{opacity:0;top:0}to{opacity:1}}",
+      );
+      minify_test(
+        "@keyframes k { from { opacity: 0; color: ) } to { opacity: 1 } }",
+        "@keyframes k{0%{opacity:0}to{opacity:1}}",
+      );
+      minify_test(
+        "@keyframes k { from, 50% { *zoom: 1; opacity: 0 } to { opacity: 1 } }",
+        "@keyframes k{0%,50%{opacity:0}to{opacity:1}}",
+      );
+      // Tailwind 4.1.14 writes a nested `@supports` for each `color-mix()`.
+      minify_test(
+        tailwindKeyframes,
+        "@keyframes gradient-in{0%{--tw-gradient-from:#00c950}to{--tw-gradient-from:#00c950}}",
+      );
+      minify_test(
+        "@keyframes k { from { color: red; @supports (color: red) { color: blue; } top: 1px } to { opacity: 1 } }",
+        "@keyframes k{0%{color:red;top:1px}to{opacity:1}}",
+      );
+      minify_test(
+        '@keyframes k { from { opacity: 0; @import "x.css"; top: 0 } to { opacity: 1 } }',
+        "@keyframes k{0%{opacity:0;top:0}to{opacity:1}}",
+      );
+      // A style rule is not an item of this block: the invalid declaration
+      // runs to the next semicolon.
+      minify_test(
+        "@keyframes k { from { color: red; .a { color: blue } left: 0 } to { opacity: 1 } }",
+        "@keyframes k{0%{color:red}to{opacity:1}}",
+      );
+      minify_test("@keyframes k { from { 123: x } to { opacity: 1 } }", "@keyframes k{0%{}to{opacity:1}}");
+      minify_test(
+        "@keyframes k { to { opacity: 1 } from { opacity: 0; 123: x",
+        "@keyframes k{to{opacity:1}0%{opacity:0}}",
+      );
+      minify_test(
+        "@-webkit-keyframes k { from { opacity: 0; 123: x } to { opacity: 1 } }",
+        "@-webkit-keyframes k{0%{opacity:0}to{opacity:1}}",
+      );
+      minify_test(
+        "@media screen { @keyframes k { from { opacity: 0; 123: x } to { opacity: 1 } } }",
+        "@media screen{@keyframes k{0%{opacity:0}to{opacity:1}}}",
+      );
+    });
+
+    describe("the other lenient bodies drop the item alone", () => {
+      minify_test("@keyframes k { form { opacity: 0 } to { opacity: 1 } }", "@keyframes k{to{opacity:1}}");
+      minify_test("@keyframes k { opacity: 1; from { opacity: 0 } to { opacity: 1 } }", "@keyframes k{to{opacity:1}}");
+      minify_test(
+        "@keyframes k { @media print { from { opacity: 0 } } to { opacity: 1 } }",
+        "@keyframes k{to{opacity:1}}",
+      );
+      minify_test(
+        "@font-face { font-family: A; src: local(A); font-display: swap !important }",
+        "@font-face{font-family:A;src:local(A)}",
+      );
+      minify_test(
+        "@font-face { 123: x; font-family: A; @media print { x: y } src: local(A) }",
+        "@font-face{font-family:A;src:local(A)}",
+      );
+      minify_test("@font-palette-values --x { font-family: A; foo: bar }", "@font-palette-values --x{font-family:A}");
+      minify_test(
+        "@font-palette-values --x { 123: x; base-palette: 1 2; font-family: A }",
+        "@font-palette-values --x{font-family:A}",
+      );
+    });
+
+    describe("a strict body fails the sheet", () => {
+      for (const [source, message] of [
+        ["a { color: red; 123: x }", "Unexpected end of input"],
+        ["a { color: red; b { 123: x } }", "Unexpected token: {"],
+        ["@page { margin: 1in; 123: x }", "Unexpected token: 123"],
+        ["@page { @top-left { 123: x } }", "Unexpected token: 123"],
+        ["@counter-style c { system: cyclic; 123: x }", "Unexpected token: 123"],
+        ["@viewport { width: 100px; 123: x }", "Unexpected token: 123"],
+        ["@property --x { syntax: '*'; inherits: false; 123: x }", "Unexpected token: 123"],
+        ["@property --x { syntax: '*'; inherits: false; foo: bar }", "Invalid declaration"],
+      ]) {
+        test(source, () => {
+          expect(() => minify_test_with_options(source, "")).toThrow(`parsing failed: ${message}`);
+        });
+      }
+
+      test("style attribute", () => {
+        expect(() => cssInternals.attrTest("color: red; 123: x", "", false)).toThrow(
+          "parsing failed: Unexpected token: 123",
+        );
+      });
+    });
+
+    describe("each dropped item is a warning", () => {
+      async function bundle(css: string | Buffer) {
+        using dir = tempDir("css-dropped-item", { "in.css": css });
+        const result = await Bun.build({ entrypoints: [join(String(dir), "in.css")], minify: true, throw: false });
+        return {
+          success: result.success,
+          logs: result.logs.map(log => `${log.level}: ${log.message}`),
+          css: result.success ? (await result.outputs[0].text()).trim() : "",
+        };
+      }
+
+      test("a keyframe with an invalid selector", async () => {
+        expect(await bundle("@keyframes fade { form { opacity: 0 } 0 { top: 0 } to { opacity: 1 } }")).toEqual({
+          success: true,
+          logs: [
+            'warn: Ignored "form { opacity: 0 }" in @keyframes fade: Unexpected token: form',
+            'warn: Ignored "0 { top: 0 }" in @keyframes fade: Unexpected token: 0',
+          ],
+          css: "@keyframes fade{to{opacity:1}}",
+        });
+      });
+
+      test("an item in the block of a keyframe", async () => {
+        expect(
+          await bundle("@-webkit-keyframes spin { from { opacity: 0; colr red; top: 0 } to { opacity: 1 } }"),
+        ).toEqual({
+          success: true,
+          logs: ['warn: Ignored "colr red" in @-webkit-keyframes spin: Unexpected token: red'],
+          css: "@-webkit-keyframes spin{0%{opacity:0;top:0}to{opacity:1}}",
+        });
+      });
+
+      test("a long item is cut and printed on one line", async () => {
+        expect(await bundle(tailwindKeyframes)).toEqual({
+          success: true,
+          logs: [
+            'warn: Ignored "@supports (color: color-mix(in lab, red, red)) { & { --tw-gradient-from: color-m..." in @keyframes gradient-in: This at-rule is not valid here',
+          ],
+          css: "@keyframes gradient-in{0%{--tw-gradient-from:#00c950}to{--tw-gradient-from:#00c950}}",
+        });
+      });
+
+      test("@font-face descriptors", async () => {
+        expect(
+          await bundle(
+            "@font-face { font-family: A; font-display: swap !important; font-weight bold; @media print { x: y } src: local(A); 123: x }",
+          ),
+        ).toEqual({
+          success: true,
+          logs: [
+            'warn: Ignored "font-display: swap !important" in @font-face: Unexpected token: !',
+            'warn: Ignored "font-weight bold" in @font-face: Unexpected token: bold',
+            'warn: Ignored "@media print { x: y }" in @font-face: This at-rule is not valid here',
+            'warn: Ignored "123: x" in @font-face: Unexpected token: 123',
+          ],
+          css: "@font-face{font-family:A;src:local(A)}",
+        });
+      });
+
+      test("@font-palette-values descriptors", async () => {
+        expect(
+          await bundle("@layer a { @font-palette-values --x { font-family: A; foo: bar; base-palette: 1 2 } }"),
+        ).toEqual({
+          success: true,
+          logs: [
+            'warn: Ignored "foo: bar" in @font-palette-values --x: Invalid declaration',
+            'warn: Ignored "base-palette: 1 2" in @font-palette-values --x: Unexpected token: 2',
+          ],
+          css: "@layer a{@font-palette-values --x{font-family:A}}",
+        });
+      });
+
+      test("items are reported once, in order, without the text around them", async () => {
+        expect(
+          await bundle(`@keyframes k {
+            /* a */ ;; from { opacity: 0; /* b */ 1: x; top: 0; 2: y }
+            form { 3: z }
+            50% { left: 0 }
+            @media print { 4: w } ;
+            to { opacity: 1; 5: v }
+          }`),
+        ).toEqual({
+          success: true,
+          logs: [
+            'warn: Ignored "1: x" in @keyframes k: Unexpected token: 1',
+            'warn: Ignored "2: y" in @keyframes k: Unexpected token: 2',
+            'warn: Ignored "form { 3: z }" in @keyframes k: Unexpected token: form',
+            'warn: Ignored "@media print { 4: w }" in @keyframes k: This at-rule is not valid here',
+            'warn: Ignored "5: v" in @keyframes k: Unexpected token: 5',
+          ],
+          css: "@keyframes k{0%{opacity:0;top:0}50%{left:0}to{opacity:1}}",
+        });
+      });
+
+      test("a sheet that ends in the item", async () => {
+        expect(await bundle("@font-face { font-family: A; font-weight bold")).toEqual({
+          success: true,
+          logs: ['warn: Ignored "font-weight bold" in @font-face: Unexpected token: bold'],
+          css: "@font-face{font-family:A}",
+        });
+        expect(await bundle("@keyframes k { to { opacity: 1 } form { opacity: 0")).toEqual({
+          success: true,
+          logs: ['warn: Ignored "form { opacity: 0" in @keyframes k: Unexpected token: form'],
+          css: "@keyframes k{to{opacity:1}}",
+        });
+      });
+
+      test("an item with bytes that are not UTF-8", async () => {
+        expect(
+          await bundle(
+            Buffer.concat([
+              Buffer.from("@font-face { font-family: A; font-weight "),
+              Buffer.from([0xff, 0xfe]),
+              Buffer.from("é bold }"),
+            ]),
+          ),
+        ).toEqual({
+          success: true,
+          logs: ['warn: Ignored "font-weight \ufffd\ufffdé bold" in @font-face: Unexpected token: \ufffd\ufffdé'],
+          css: "@font-face{font-family:A}",
+        });
+      });
+
+      test("the position is the start of the item", async () => {
+        using dir = tempDir("css-dropped-item", {
+          "in.css": "@font-face {\n  font-family: A;\n    font-weight bold;\n}\n",
+        });
+        const result = await Bun.build({ entrypoints: [join(String(dir), "in.css")] });
+        expect(result.logs.map(log => [log.message, log.position?.column])).toEqual([
+          ['Ignored "font-weight bold" in @font-face: Unexpected token: bold', 5],
+        ]);
+      });
+
+      test("a CSS module names the rule as written", async () => {
+        using dir = tempDir("css-dropped-item", {
+          "in.module.css":
+            ".a { animation: fade 1s }\n@keyframes fade { from { opacity: 0; colr red } to { opacity: 1 } }\n",
+        });
+        const result = await Bun.build({ entrypoints: [join(String(dir), "in.module.css")], minify: true });
+        expect(result.logs.map(log => `${log.level}: ${log.message}`)).toEqual([
+          'warn: Ignored "colr red" in @keyframes fade: Unexpected token: red',
+        ]);
+        expect((await result.outputs[0].text()).trim()).toMatch(
+          /^\.a_([\w-]+)\{animation:1s fade_\1\}@keyframes fade_\1\{0%\{opacity:0\}to\{opacity:1\}\}$/,
+        );
+      });
+
+      test("valid rules and unknown descriptors print no warning", async () => {
+        expect(
+          await bundle(`
+            @font-face { font-family: A; src: local(A), local("B"); font-weight: 400 700; size-adjust: 90%; foo: bar }
+            @font-palette-values --x { font-family: A; base-palette: 1; override-colors: 0 red, 1 #00f }
+            @keyframes k { from, 25% { opacity: 0; foo: bar } 50.5% { top: 0 !important } to { opacity: 1 } }
+            @-webkit-keyframes k { 0% { -webkit-transform: none } 100% { } }
+          `),
+        ).toEqual({
+          success: true,
+          logs: [],
+          css: "@font-face{font-family:A;src:local(A),local(B);font-weight:400 700;size-adjust:90%;foo:bar}@font-palette-values --x{font-family:A;base-palette:1;override-colors:0 red,1 #00f}@keyframes k{0%,25%{opacity:0;foo:bar}50.5%{top:0!important}to{opacity:1}}@-webkit-keyframes k{0%{-webkit-transform:none}to{}}",
+        });
+      });
+
+      test("a warning stays in the log when a later rule fails the sheet", async () => {
+        expect(await bundle("@keyframes k { form { opacity: 0 } } a { color: red; 123: x }")).toEqual({
+          success: false,
+          logs: [
+            'warn: Ignored "form { opacity: 0 }" in @keyframes k: Unexpected token: form',
+            "error: Unexpected end of input",
+          ],
+          css: "",
+        });
+      });
+
+      test.concurrent("bun build prints the warnings and exits 0", async () => {
+        using dir = tempDir("css-dropped-item-cli", {
+          "in.css":
+            "@keyframes k { form { opacity: 0 } to { opacity: 1; 123: x } }\n@font-face { font-family: A; src: local(A); font-weight bold }\n",
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "build", "./in.css", "--minify"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).toBe("@keyframes k{to{opacity:1}}@font-face{font-family:A;src:local(A)}\n");
+        expect(stderr.split("\n").filter(line => line.startsWith("warn: "))).toEqual([
+          'warn: Ignored "form { opacity: 0 }" in @keyframes k: Unexpected token: form',
+          'warn: Ignored "123: x" in @keyframes k: Unexpected token: 123',
+          'warn: Ignored "font-weight bold" in @font-face: Unexpected token: bold',
+        ]);
+        expect(exitCode).toBe(0);
+      });
+
+      // `--no-bundle` resolves nothing. A `url()` must still parse: without an
+      // import record for it, `src` was dropped from every `@font-face`.
+      test.concurrent("bun build --no-bundle keeps a url() and prints no warning", async () => {
+        using dir = tempDir("css-dropped-item-no-bundle", {
+          "in.css":
+            '@font-face { font-family: A; src: url("./a.woff2") format("woff2"), url(b.ttf) }\n.a { background: url(./c.png) }\n',
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "build", "--no-bundle", "--minify", "./in.css"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).toBe(
+          "@font-face{font-family:A;src:url(./a.woff2)format(woff2),url(b.ttf)}.a{background:url(./c.png)}",
+        );
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+      });
+    });
   });
 });

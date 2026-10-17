@@ -88,14 +88,7 @@ impl PropertyRule {
             initial_value: None,
         };
 
-        // `RuleBodyParser` borrows `input`+`p`; re-borrow `input` after
-        // dropping `decl_parser`.
-        {
-            let mut decl_parser = RuleBodyParser::new(input, &mut p);
-            while let Some(decl) = decl_parser.next() {
-                decl?;
-            }
-        }
+        RuleBodyParser::new(input, &mut p).parse_strict()?;
 
         // `syntax` and `inherits` are always required.
         // TODO(zack): source clones these two, but I omitted here becaues it seems 100% unnecessary

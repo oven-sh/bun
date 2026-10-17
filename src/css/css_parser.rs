@@ -1441,7 +1441,7 @@ mod rule_parsers {
             let mut errors: Vec<ParseError<ParserError>> = Vec::new();
             let mut iter = RuleBodyParser::new(input, &mut nested_parser);
 
-            while let Some(result) = iter.next() {
+            while let Some(result) = iter.next_in_style_rule() {
                 if let Err(e) = result {
                     if parse_declarations {
                         iter.parser.declarations.clear();
@@ -1669,14 +1669,13 @@ mod rule_parsers {
             match prelude {
                 AtRulePrelude::FontFace => {
                     let mut decl_parser = css_rules::font_face::FontFaceDeclarationParser;
-                    let mut parser = RuleBodyParser::new(input, &mut decl_parser);
                     // todo_stuff.think_mem_mgmt
                     let mut properties: Vec<css_rules::font_face::FontFaceProperty> = Vec::new();
-                    while let Some(result) = parser.next() {
-                        if let Ok(decl) = result {
-                            properties.push(decl);
-                        }
-                    }
+                    RuleBodyParser::new(input, &mut decl_parser).parse_lenient(
+                        this.options,
+                        start.position,
+                        |decl| properties.push(decl),
+                    );
                     this.rules
                         .v
                         .push(CssRule::FontFace(css_rules::font_face::FontFaceRule {
@@ -1687,7 +1686,11 @@ mod rule_parsers {
                 }
                 AtRulePrelude::FontPaletteValues(name) => {
                     let rule = css_rules::font_palette_values::FontPaletteValuesRule::parse(
-                        name, input, loc,
+                        name,
+                        input,
+                        start.position,
+                        loc,
+                        this.options,
                     )?;
                     this.rules.v.push(CssRule::FontPaletteValues(rule));
                     Ok(())
@@ -1762,15 +1765,17 @@ mod rule_parsers {
                     Ok(())
                 }
                 AtRulePrelude::Keyframes { name, prefix } => {
-                    let mut parser = css_rules::keyframes::KeyframesListParser;
-                    let mut iter = RuleBodyParser::new(input, &mut parser);
+                    let mut parser = css_rules::keyframes::KeyframesListParser {
+                        options: this.options,
+                        rule_start: start.position,
+                    };
                     // todo_stuff.think_mem_mgmt
                     let mut keyframes: Vec<css_rules::keyframes::Keyframe> = Vec::new();
-                    while let Some(result) = iter.next() {
-                        if let Ok(keyframe) = result {
-                            keyframes.push(keyframe);
-                        }
-                    }
+                    RuleBodyParser::new(input, &mut parser).parse_lenient(
+                        this.options,
+                        start.position,
+                        |keyframe| keyframes.push(keyframe),
+                    );
                     this.rules
                         .v
                         .push(CssRule::Keyframes(css_rules::keyframes::KeyframesRule {
@@ -2784,99 +2789,336 @@ impl StyleAttribute {
 // `RuleBodyItemParser`/`DeclarationParser` traits are hoisted above; this is
 // pure trait-generic over `P`.
 
-pub struct RuleBodyParser<'i, 't, P: RuleBodyItemParser> {
-    pub input: &'i mut Parser<'t>,
-    pub(crate) parser: &'i mut P,
-}
+pub use rule_body::RuleBodyParser;
 
-impl<'i, 't, P> RuleBodyParser<'i, 't, P>
-where
-    P: RuleBodyItemParser<
-            Declaration = <P as QualifiedRuleParser>::QualifiedRule,
-            AtRule = <P as QualifiedRuleParser>::QualifiedRule,
-        >,
-{
-    pub(crate) fn new(input: &'i mut Parser<'t>, parser: &'i mut P) -> Self {
-        Self { input, parser }
+/// `RuleBodyParser::next` is private to this module: a loop over a rule body
+/// goes through `parse_strict` or `parse_lenient`, so none can drop an item
+/// that failed to parse without a record.
+mod rule_body {
+    use super::*;
+
+    pub struct RuleBodyParser<'i, 't, P: RuleBodyItemParser> {
+        pub input: &'i mut Parser<'t>,
+        pub(crate) parser: &'i mut P,
     }
 
-    /// TODO: result is actually `Result<I, (ParseError, &str)>` but nowhere
-    /// in the source do I actually see it using the string part of the tuple.
-    pub(crate) fn next(&mut self) -> Option<CssResult<<P as QualifiedRuleParser>::QualifiedRule>> {
-        type I<P> = <P as QualifiedRuleParser>::QualifiedRule;
-        loop {
-            self.input.skip_whitespace();
-            let start = self.input.state();
-
-            let tok: &Token = match self.input.next_including_whitespace_and_comments() {
-                Err(_) => return None,
-                Ok(vvv) => vvv,
-            };
-
-            match tok {
-                Token::CloseCurly | Token::Whitespace(_) | Token::Semicolon | Token::Comment(_) => {
-                    continue;
-                }
-                Token::AtKeyword(name) => {
-                    let name = *name;
-                    return Some(parse_at_rule(&start, name, self.input, self.parser));
-                }
-                Token::Ident(name) => {
-                    if P::parse_declarations(self.parser) {
-                        let name = *name;
-                        let parse_qualified = P::parse_qualified(self.parser);
-                        let result: CssResult<I<P>> = {
-                            let error_behavior = if parse_qualified {
-                                ParseUntilErrorBehavior::Stop
-                            } else {
-                                ParseUntilErrorBehavior::Consume
-                            };
-                            parse_until_after(
-                                self.input,
-                                Delimiters::SEMICOLON,
-                                error_behavior,
-                                (&mut *self.parser, name),
-                                |(parser, name), input| {
-                                    input.expect_colon()?;
-                                    P::parse_value(parser, name, input)
-                                },
-                            )
-                        };
-                        if result.is_err() && parse_qualified {
-                            self.input.reset(&start);
-                            if let Ok(qual) = parse_qualified_rule(
-                                &start,
-                                self.input,
-                                self.parser,
-                                Delimiters::SEMICOLON | Delimiters::CURLY_BRACKET,
-                            ) {
-                                return Some(Ok(qual));
-                            }
-                        }
-                        return Some(result);
-                    }
-                }
-                _ => {}
-            }
-
-            let result: CssResult<I<P>> = if P::parse_qualified(self.parser) {
-                self.input.reset(&start);
-                let delimiters = if P::parse_declarations(self.parser) {
-                    Delimiters::SEMICOLON | Delimiters::CURLY_BRACKET
-                } else {
-                    Delimiters::CURLY_BRACKET
-                };
-                parse_qualified_rule(&start, self.input, self.parser, delimiters)
-            } else {
-                let token = *tok;
-                self.input
-                    .parse_until_after(Delimiters::SEMICOLON, move |_i| {
-                        Err(start.source_location().new_unexpected_token_error(token))
-                    })
-            };
-
-            return Some(result);
+    impl<'i, 't, P> RuleBodyParser<'i, 't, P>
+    where
+        P: RuleBodyItemParser<
+                Declaration = <P as QualifiedRuleParser>::QualifiedRule,
+                AtRule = <P as QualifiedRuleParser>::QualifiedRule,
+            >,
+    {
+        pub(crate) fn new(input: &'i mut Parser<'t>, parser: &'i mut P) -> Self {
+            Self { input, parser }
         }
+
+        /// Upstream cssparser returns the source text of a failed item beside
+        /// its error. This port does not: `report_dropped_item` finds the text.
+        fn next(&mut self) -> Option<CssResult<<P as QualifiedRuleParser>::QualifiedRule>> {
+            type I<P> = <P as QualifiedRuleParser>::QualifiedRule;
+            loop {
+                self.input.skip_whitespace();
+                let start = self.input.state();
+
+                let tok: &Token = match self.input.next_including_whitespace_and_comments() {
+                    Err(_) => return None,
+                    Ok(vvv) => vvv,
+                };
+
+                match tok {
+                    Token::CloseCurly
+                    | Token::Whitespace(_)
+                    | Token::Semicolon
+                    | Token::Comment(_) => {
+                        continue;
+                    }
+                    Token::AtKeyword(name) => {
+                        let name = *name;
+                        return Some(parse_at_rule(&start, name, self.input, self.parser));
+                    }
+                    Token::Ident(name) => {
+                        if P::parse_declarations(self.parser) {
+                            let name = *name;
+                            let parse_qualified = P::parse_qualified(self.parser);
+                            let result: CssResult<I<P>> = {
+                                let error_behavior = if parse_qualified {
+                                    ParseUntilErrorBehavior::Stop
+                                } else {
+                                    ParseUntilErrorBehavior::Consume
+                                };
+                                parse_until_after(
+                                    self.input,
+                                    Delimiters::SEMICOLON,
+                                    error_behavior,
+                                    (&mut *self.parser, name),
+                                    |(parser, name), input| {
+                                        input.expect_colon()?;
+                                        P::parse_value(parser, name, input)
+                                    },
+                                )
+                            };
+                            if result.is_err() && parse_qualified {
+                                self.input.reset(&start);
+                                if let Ok(qual) = parse_qualified_rule(
+                                    &start,
+                                    self.input,
+                                    self.parser,
+                                    Delimiters::SEMICOLON | Delimiters::CURLY_BRACKET,
+                                ) {
+                                    return Some(Ok(qual));
+                                }
+                            }
+                            return Some(result);
+                        }
+                    }
+                    _ => {}
+                }
+
+                let result: CssResult<I<P>> = if P::parse_qualified(self.parser) {
+                    self.input.reset(&start);
+                    let delimiters = if P::parse_declarations(self.parser) {
+                        Delimiters::SEMICOLON | Delimiters::CURLY_BRACKET
+                    } else {
+                        Delimiters::CURLY_BRACKET
+                    };
+                    parse_qualified_rule(&start, self.input, self.parser, delimiters)
+                } else {
+                    let token = *tok;
+                    self.input
+                        .parse_until_after(Delimiters::SEMICOLON, move |_i| {
+                            Err(start.source_location().new_unexpected_token_error(token))
+                        })
+                };
+
+                return Some(result);
+            }
+        }
+
+        /// For a body where one invalid item invalidates the rule: stops at
+        /// the first item that fails to parse.
+        pub(crate) fn parse_strict(&mut self) -> CssResult<()>
+        where
+            P: QualifiedRuleParser<QualifiedRule = ()>,
+        {
+            while let Some(result) = self.next() {
+                result?;
+            }
+            Ok(())
+        }
+
+        /// For a body where a browser drops an invalid item and keeps the
+        /// rest: `keep` gets each valid item, and each dropped item is logged
+        /// as a warning. `rule_start` is the byte offset of the at-rule that
+        /// the body belongs to.
+        pub(crate) fn parse_lenient(
+            &mut self,
+            options: &ParserOptions,
+            rule_start: usize,
+            mut keep: impl FnMut(<P as QualifiedRuleParser>::QualifiedRule),
+        ) {
+            let skipper = ItemSkipper {
+                parse_declarations: P::parse_declarations(self.parser),
+                parse_qualified: P::parse_qualified(self.parser),
+            };
+            // `ItemSkipper` cannot find the end of an item that `next()`
+            // tries as a declaration and then as a qualified rule.
+            debug_assert!(skipper.parse_declarations != skipper.parse_qualified);
+            let mut scan_from = self.input.input.tokenizer.state();
+            while let Some(result) = self.next() {
+                match result {
+                    Ok(item) => keep(item),
+                    Err(err) => report_dropped_item(
+                        options,
+                        rule_start,
+                        skipper,
+                        self.input,
+                        &mut scan_from,
+                        err,
+                    ),
+                }
+            }
+        }
+    }
+
+    impl<'i, 't, 'a, T: CustomAtRuleParser> RuleBodyParser<'i, 't, NestedRuleParser<'a, T>> {
+        /// The body of a style rule collects the errors of its items itself
+        /// (`NestedRuleParser::parse_nested`).
+        pub(super) fn next_in_style_rule(&mut self) -> Option<CssResult<()>> {
+            self.next()
+        }
+    }
+
+    /// The item parser that `report_dropped_item` replays a body with. It
+    /// rejects every item. `next()` still consumes each item up to the same
+    /// byte as with the real parser of the body: where an item ends does not
+    /// depend on whether it parses.
+    #[derive(Clone, Copy)]
+    struct ItemSkipper {
+        parse_declarations: bool,
+        parse_qualified: bool,
+    }
+
+    impl AtRuleParser for ItemSkipper {
+        type Prelude = ();
+        type AtRule = ();
+
+        fn parse_prelude(_: &mut Self, _: &[u8], input: &mut Parser) -> CssResult<()> {
+            Err(input.new_error(BasicParseErrorKind::at_rule_body_invalid))
+        }
+
+        fn rule_without_block(_: &mut Self, _: (), _: &ParserState) -> Maybe<(), ()> {
+            Err(())
+        }
+
+        fn parse_block(_: &mut Self, _: (), _: &ParserState, input: &mut Parser) -> CssResult<()> {
+            Err(input.new_error(BasicParseErrorKind::at_rule_body_invalid))
+        }
+    }
+
+    impl QualifiedRuleParser for ItemSkipper {
+        type Prelude = ();
+        type QualifiedRule = ();
+
+        fn parse_prelude(_: &mut Self, input: &mut Parser) -> CssResult<()> {
+            Err(input.new_error(BasicParseErrorKind::qualified_rule_invalid))
+        }
+
+        fn parse_block(_: &mut Self, _: (), _: &ParserState, input: &mut Parser) -> CssResult<()> {
+            Err(input.new_error(BasicParseErrorKind::qualified_rule_invalid))
+        }
+    }
+
+    impl DeclarationParser for ItemSkipper {
+        type Declaration = ();
+
+        fn parse_value(_: &mut Self, _: &[u8], input: &mut Parser) -> CssResult<()> {
+            Err(input.new_error(BasicParseErrorKind::qualified_rule_invalid))
+        }
+    }
+
+    impl RuleBodyItemParser for ItemSkipper {
+        fn parse_qualified(this: &Self) -> bool {
+            this.parse_qualified
+        }
+
+        fn parse_declarations(this: &Self) -> bool {
+            this.parse_declarations
+        }
+    }
+
+    /// Source text for a warning: on one line, and cut after `MAX` bytes.
+    struct Excerpt<'a>(&'a [u8]);
+
+    impl fmt::Display for Excerpt<'_> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            const MAX: usize = 80;
+            let mut len = 0;
+            for word in strings::tokenize_any(self.0, b" \t\n\r\x0c") {
+                if len != 0 {
+                    f.write_str(" ")?;
+                    len += 1;
+                }
+                if len + word.len() > MAX {
+                    let mut cut = MAX.saturating_sub(len);
+                    while !strings::is_on_char_boundary(word, cut) {
+                        cut -= 1;
+                    }
+                    return write!(f, "{}...", bstr::BStr::new(&word[..cut]));
+                }
+                write!(f, "{}", bstr::BStr::new(word))?;
+                len += word.len();
+            }
+            Ok(())
+        }
+    }
+
+    /// Logs the item that `next()` just failed on as a warning. `scan_from`
+    /// is a point of the body at or before the item: the start of the body, or
+    /// the end of the item that was logged before.
+    #[cold]
+    #[inline(never)]
+    fn report_dropped_item(
+        options: &ParserOptions,
+        rule_start: usize,
+        mut skipper: ItemSkipper,
+        input: &mut Parser,
+        scan_from: &mut ParserState,
+        err: ParseError<ParserError>,
+    ) {
+        if options.logger.is_none() {
+            return;
+        }
+        // A comment can set the source map URL. The scans below read comments
+        // that the tokenizer has read before.
+        let source_map_url = input.input.tokenizer.source_map_url;
+
+        // `next()` can return before it reads the block of the item.
+        if let Some(block_type) = input.at_start_of.take() {
+            consume_until_end_of_block(block_type, &mut input.input.tokenizer);
+        }
+        let end = input.input.tokenizer.state();
+
+        // Replay the body from `scan_from`. The last item before `end` is the
+        // dropped item.
+        input.input.tokenizer.reset(scan_from);
+        let mut item_start = *scan_from;
+        loop {
+            // `next()` skips the same tokens before an item.
+            input.skip_whitespace();
+            let start = input.input.tokenizer.state();
+            if start.position >= end.position {
+                break;
+            }
+            match input.next_including_whitespace_and_comments() {
+                Ok(
+                    Token::CloseCurly | Token::Whitespace(_) | Token::Semicolon | Token::Comment(_),
+                ) => continue,
+                Ok(_) => {}
+                Err(_) => break,
+            }
+            input.input.tokenizer.reset(&start);
+            input.at_start_of = None;
+            item_start = start;
+            let _ = RuleBodyParser::new(input, &mut skipper).next();
+        }
+
+        // The at-rule as written, up to its block.
+        let tokenizer = &mut input.input.tokenizer;
+        tokenizer.position = rule_start;
+        let mut rule_end = rule_start;
+        while let Ok(token) = tokenizer.next() {
+            if matches!(token, Token::OpenCurly) {
+                break;
+            }
+            rule_end = tokenizer.position;
+        }
+
+        tokenizer.reset(&end);
+        tokenizer.source_map_url = source_map_url;
+        input.at_start_of = None;
+        *scan_from = end;
+
+        let src = input.input.tokenizer.src;
+        let item = strings::trim_right(&src[item_start.position..end.position], b"; \t\n\r\x0c");
+        let cause = Err::from_parse_error(err, b"").kind;
+        let cause: &dyn fmt::Display = match &cause {
+            // An at-rule that the body rejects can be valid in another place:
+            // "Unknown at-rule" would mislead.
+            ParserError::at_rule_invalid(_) => &"This at-rule is not valid here",
+            kind => kind,
+        };
+        let location = item_start.source_location();
+        options.warn_fmt(
+            format_args!(
+                "Ignored \"{}\" in {}: {}",
+                Excerpt(item),
+                Excerpt(&src[rule_start..rule_end]),
+                cause,
+            ),
+            location.line,
+            location.column,
+        );
     }
 }
 

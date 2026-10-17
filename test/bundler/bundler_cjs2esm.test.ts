@@ -2165,35 +2165,21 @@ describe("bundler", () => {
       stdout: "react react\na2 b2",
     },
   });
-  // TypeScript removes an import that nothing reads. A `const x = require()`
-  // is a call: the module loads.
+  // TypeScript rejects a write to `import x = require()`: it is always the
+  // namespace. A `let` that the file assigns is a variable, as in JavaScript.
   itBundled("cjs2esm/UnwrappedRequireTypeScript", {
     files: {
       "/entry.ts": /* ts */ `
         const a = require("react");
         import c = require("react-is");
-        const unused = require("scheduler");
-        function fn() {
-          const unusedInFunction = require("react-dom");
-        }
-        fn();
-        console.log(Object.keys(a).join(","), c.is, (globalThis as any).loaded);
+        let b = require("react");
+        b = { react: "b2" };
+        console.log(Object.keys(a).join(","), c.is, b.react);
       `,
       ...unwrapListPackages,
-      "/node_modules/scheduler/index.js": /* js */ `
-        globalThis.loaded = (globalThis.loaded || "") + "scheduler ";
-        exports.value = 1;
-      `,
-      "/node_modules/react-dom/package.json": /* json */ `
-        { "name": "react-dom", "version": "19.0.0", "main": "index.js" }
-      `,
-      "/node_modules/react-dom/index.js": /* js */ `
-        globalThis.loaded = (globalThis.loaded || "") + "react-dom";
-        exports.value = 1;
-      `,
     },
     run: {
-      stdout: "react,other,unused is scheduler react-dom",
+      stdout: "react,other,unused is b2",
     },
   });
   // Declaration kind x rebind x read x scope x visit order, each compared with

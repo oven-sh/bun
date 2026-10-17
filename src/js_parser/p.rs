@@ -1762,17 +1762,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> bool {
         let import = self.imports_to_convert_from_require.len() - 1;
         debug_assert!(self.imports_to_convert_from_require[import].namespace.ref_ == namespace);
-        let is_import_equals = origin.is_ts_import_equals();
-        if !self.require_local_is_namespace(local, kind, export_stmts.is_some(), is_import_equals) {
+        if !self.require_local_is_namespace(local, kind, origin, export_stmts.is_some()) {
             return false;
         }
         self.imports_to_convert_from_require[import].namespace.ref_ = local;
         self.import_items_for_namespace
             .insert(local, ImportItemForNamespaceMap::default());
-        // An import nothing reads is a type to TypeScript and is removed. A `require()` call runs.
-        if TYPESCRIPT && !is_import_equals {
-            self.ts_use_counts[local.inner_index() as usize] += 1;
-        }
         if let Some(stmts) = export_stmts {
             // What is left of the statement is `export { local }`: it uses `local`, which the import declares now.
             self.ignore_usage(namespace);
@@ -1798,11 +1793,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// False when something can rebind the `local` of `local = require("pkg")`: it stays a variable.
     fn require_local_is_namespace(
-        &mut self,
+        &self,
         local: Ref,
         kind: S::Kind,
+        origin: S::LocalOrigin,
         is_export: bool,
-        is_import_equals: bool,
     ) -> bool {
         let scope = self.current_scope;
         let symbol = &self.symbols[local.inner_index() as usize];
@@ -1824,7 +1819,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return false;
         }
         // TypeScript rejects a write to `import x = require()`.
-        if is_import_equals {
+        if origin.is_ts_import_equals() {
             return true;
         }
         if symbol.shares_variable() {

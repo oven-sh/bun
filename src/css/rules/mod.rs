@@ -558,8 +558,7 @@ impl<R> CssRuleList<R> {
                         }
                     }
                     CssRule::Supports(supp) => {
-                        if rules.len() != runs.fallback_end
-                            && let Some(CssRule::Supports(last_rule)) = rules.last_mut()
+                        if let Some(CssRule::Supports(last_rule)) = rules.last_mut()
                             && last_rule.condition.eql(&supp.condition)
                         {
                             // Drop the duplicate-condition rule outright.
@@ -955,11 +954,9 @@ fn split_off_nested_rules<R>(
 
 /// What `CssRuleList::minify` keeps from one nested declarations rule for the rules after it.
 struct NestedDeclarationsState<R> {
-    /// The `:dir()` rules of the runs that are not first in a nested group rule. On main they print at `dir_slot`.
+    /// The `:dir()` rules of the runs that are not first in a nested group rule. They print at `dir_slot`, before its nested rules.
     dir_rules: Vec<CssRule<R>>,
     dir_slot: usize,
-    /// The length of the list when it ends in a fallback rule of a run, which no `@supports` rule is a duplicate of.
-    fallback_end: usize,
 }
 
 impl<R> Default for NestedDeclarationsState<R> {
@@ -967,7 +964,6 @@ impl<R> Default for NestedDeclarationsState<R> {
         Self {
             dir_rules: Vec::new(),
             dir_slot: 0,
-            fallback_end: 0,
         }
     }
 }
@@ -1020,10 +1016,7 @@ fn minify_nested_declarations_arm<R: for<'b> css::generics::DeepClone<'b>>(
     } else {
         runs.dir_rules.extend(dir_rules);
     }
-    if !fallbacks.is_empty() {
-        rules.extend(fallbacks);
-        runs.fallback_end = rules.len();
-    }
+    rules.extend(fallbacks);
     if is_first {
         runs.dir_slot = rules.len();
     }

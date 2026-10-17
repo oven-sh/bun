@@ -138,7 +138,7 @@ impl NestedDeclarationsRule {
             return Ok((Vec::new(), Vec::new()));
         }
 
-        // Known gap (parcel-bundler/lightningcss#1179): the `:dir()` rules keep the place they have without this rule type.
+        // Known gap (parcel-bundler/lightningcss#1179): the `:dir()` rules print before the nested rules, not at this rule.
         let mut dir_rules = CssRuleList::<R> { v: Vec::new() };
         match enclosing {
             Some(enclosing) => {

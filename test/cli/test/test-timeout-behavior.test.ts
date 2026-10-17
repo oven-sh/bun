@@ -69,10 +69,13 @@ const echoChildHelpers = /* ts */ `
 // The inline files wait for echo round trips and for the runner to kill a child.
 // The default timeout is raised so that a slow machine cannot fail those waits;
 // every timeout under test is set per test.
-async function runTestFile(source: string, args: string[] = []) {
-  using dir = tempDir("test-timeout-kill", { "kill.test.ts": echoChildHelpers + source });
+async function runTestFile(source: string, args: string[] = [], preload?: string) {
+  using dir = tempDir("test-timeout-kill", {
+    "kill.test.ts": echoChildHelpers + source,
+    ...(preload && { "preload.ts": echoChildHelpers + preload }),
+  });
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "--timeout=30000", ...args, "./kill.test.ts"],
+    cmd: [bunExe(), "test", "--timeout=30000", ...(preload ? ["--preload=./preload.ts"] : []), ...args, "./kill.test.ts"],
     cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",
@@ -219,29 +222,30 @@ testKill("a test timeout leaves the children of its beforeEach hooks to afterEac
 });
 
 // A retry runs beforeEach again, which here reuses the child that the first attempt started.
+// Every attempt times out, so no callback has to finish inside the short timeout.
 testKill("a timed-out attempt does not kill a beforeEach child that the retry needs", async () => {
   const { combined, exitCode } = await runTestFile(/* ts */ `
-    import { afterAll, beforeEach, expect, test } from "bun:test";
+    import { afterAll, beforeEach, test } from "bun:test";
 
     let fromBeforeEach: ReturnType<typeof spawnEcho> | undefined;
     afterAll(() => fromBeforeEach?.kill());
 
     beforeEach(async () => {
       fromBeforeEach ??= spawnEcho();
-      expect(await echo(fromBeforeEach, "beforeEach")).toBe("beforeEach");
+      console.log("beforeEach child answered:", JSON.stringify(await echo(fromBeforeEach, "still here")));
     });
 
-    let attempts = 0;
-    test("times out on the first attempt", async () => {
-      if (++attempts === 1) await new Promise(() => {});
+    test("times out on every attempt", async () => {
+      await new Promise(() => {});
     }, { retry: 1, timeout: 100 });
   `);
 
   expect(combined).not.toContain("dangling process");
-  expect(combined).toContain("(pass) times out on the first attempt");
-  expect(combined).toContain(" 1 pass\n");
-  expect(combined).toContain(" 0 fail\n");
-  expect(exitCode).toBe(0);
+  expect(combined.match(/beforeEach child answered: "still here"/g)).toHaveLength(2);
+  expect(combined).toContain("(fail) times out on every attempt");
+  expect(combined).toContain(" 0 pass\n");
+  expect(combined).toContain(" 1 fail\n");
+  expect(exitCode).toBe(1);
 });
 
 testKill("a beforeAll timeout only kills the children of that hook", async () => {
@@ -279,30 +283,29 @@ testKill("a beforeAll timeout only kills the children of that hook", async () =>
 // hooks started has no other cleanup, so it is killed too. The beforeAll child is not.
 testKill("an afterEach timeout kills the children of its test, not of beforeAll", async () => {
   const { combined, exitCode } = await runTestFile(/* ts */ `
-    import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
+    import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 
     let fromBeforeAll: ReturnType<typeof spawnEcho>;
     let fromBeforeEach: ReturnType<typeof spawnEcho>;
     let fromTest: ReturnType<typeof spawnEcho>;
-    let isFirstTest = true;
     afterAll(() => fromBeforeAll.kill());
 
     beforeAll(() => {
       fromBeforeAll = spawnEcho();
     });
 
-    beforeEach(() => {
-      if (isFirstTest) fromBeforeEach = spawnEcho();
-    });
+    describe("cleanup hangs", () => {
+      beforeEach(() => {
+        fromBeforeEach = spawnEcho();
+      });
 
-    afterEach(async () => {
-      if (!isFirstTest) return;
-      isFirstTest = false;
-      await new Promise(() => {});
-    }, 100);
+      afterEach(async () => {
+        await new Promise(() => {});
+      }, 100);
 
-    test("its afterEach hangs", () => {
-      fromTest = spawnEcho();
+      test("spawns a child", () => {
+        fromTest = spawnEcho();
+      });
     });
 
     test("only the beforeAll child is still running", async () => {
@@ -312,34 +315,126 @@ testKill("an afterEach timeout kills the children of its test, not of beforeAll"
   `);
 
   expect(combined.match(/killed \d+ dangling process(?:es)?/g)).toEqual(["killed 2 dangling processes"]);
-  expect(combined).toContain("(fail) its afterEach hangs");
+  expect(combined).toContain("(fail) cleanup hangs > spawns a child");
   expect(combined).toContain("(pass) only the beforeAll child is still running");
   expect(combined).toContain(" 1 pass\n");
   expect(combined).toContain(" 1 fail\n");
   expect(exitCode).toBe(1);
 });
 
-// An afterAll that times out was the cleanup of everything that is still running.
-testKill("an afterAll timeout kills the children of beforeAll", async () => {
+// The kill goes back to the start of the test, not of the attempt: the afterEach of
+// the last attempt was the cleanup of what the earlier attempts left running.
+testKill("an afterEach timeout on a retry kills the beforeEach child of the first attempt", async () => {
   const { combined, exitCode } = await runTestFile(/* ts */ `
-    import { afterAll, beforeAll, test } from "bun:test";
+    import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-    let fromBeforeAll: ReturnType<typeof spawnEcho>;
+    let fromFirstAttempt: ReturnType<typeof spawnEcho>;
+    let attempts = 0;
 
-    beforeAll(() => {
-      fromBeforeAll = spawnEcho();
+    describe("retried", () => {
+      beforeEach(() => {
+        if (++attempts === 1) fromFirstAttempt = spawnEcho();
+      });
+
+      afterEach(async () => {
+        if (attempts === 2) await new Promise(() => {});
+      }, 100);
+
+      test("fails on the first attempt", () => {
+        expect(attempts).toBe(2);
+      }, { retry: 1 });
     });
 
-    test("passes", () => {});
-
-    afterAll(async () => {
-      await new Promise(() => {});
-      fromBeforeAll.kill();
-    }, 100);
+    test("the child of the first attempt was killed", async () => {
+      await fromFirstAttempt.exited;
+    });
   `);
 
   expect(combined.match(/killed \d+ dangling process(?:es)?/g)).toEqual(["killed 1 dangling process"]);
-  expect(combined).toContain("(pass) passes");
+  expect(combined).toContain("(fail) retried > fails on the first attempt");
+  expect(combined).toContain("(pass) the child of the first attempt was killed");
+  expect(exitCode).toBe(1);
+});
+
+// The afterAll of a describe block was the cleanup of that block. The child of the
+// file's beforeAll still has the file's afterAll.
+testKill("an afterAll timeout in a describe block only kills the children of that block", async () => {
+  const { combined, exitCode } = await runTestFile(/* ts */ `
+    import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+
+    let fromFileBeforeAll: ReturnType<typeof spawnEcho>;
+    let fromBlockBeforeAll: ReturnType<typeof spawnEcho>;
+    let fromBlockTest: ReturnType<typeof spawnEcho>;
+    afterAll(() => fromFileBeforeAll.kill());
+
+    beforeAll(() => {
+      fromFileBeforeAll = spawnEcho();
+    });
+
+    describe("block", () => {
+      beforeAll(() => {
+        fromBlockBeforeAll = spawnEcho();
+      });
+
+      afterAll(async () => {
+        await new Promise(() => {});
+      }, 100);
+
+      test("spawns a child that outlives the test", () => {
+        fromBlockTest = spawnEcho();
+      });
+    });
+
+    test("only the child of the file's beforeAll is still running", async () => {
+      await Promise.all([fromBlockBeforeAll.exited, fromBlockTest.exited]);
+      expect(await echo(fromFileBeforeAll, "beforeAll")).toBe("beforeAll");
+    });
+  `);
+
+  expect(combined.match(/killed \d+ dangling process(?:es)?/g)).toEqual(["killed 2 dangling processes"]);
+  expect(combined).toContain("(pass) block > spawns a child that outlives the test");
+  expect(combined).toContain("(pass) only the child of the file's beforeAll is still running");
+  expect(exitCode).toBe(1);
+});
+
+// The same for a file: its afterAll leaves the child of a preload beforeAll to the
+// preload afterAll. Nothing runs after that one, so it kills all that is left.
+testKill("an afterAll timeout of a file kills the children of the file, and of a preload kills the rest", async () => {
+  const { combined, exitCode } = await runTestFile(
+    /* ts */ `
+      import { afterAll, beforeAll, test } from "bun:test";
+
+      beforeAll(() => {
+        spawnEcho();
+      });
+
+      afterAll(async () => {
+        await new Promise(() => {});
+      }, 100);
+
+      test("spawns a child that outlives the test", () => {
+        spawnEcho();
+      });
+    `,
+    [],
+    /* ts */ `
+      import { afterAll, beforeAll } from "bun:test";
+
+      beforeAll(() => {
+        spawnEcho();
+      });
+
+      afterAll(async () => {
+        await new Promise(() => {});
+      }, 100);
+    `,
+  );
+
+  expect(combined.match(/killed \d+ dangling process(?:es)?/g)).toEqual([
+    "killed 2 dangling processes",
+    "killed 1 dangling process",
+  ]);
+  expect(combined).toContain("(pass) spawns a child that outlives the test");
   expect(exitCode).toBe(1);
 });
 
@@ -419,7 +514,9 @@ testKill("a test timeout kills all of its children after an earlier child exited
 
 // The timer fires after the callback returned and before the runner steps past the entry.
 // The callback was not interrupted, so the entry passes and nothing is killed.
-testKill("a callback that returns after its deadline keeps its children", async () => {
+// Not concurrent: the callback has to reach the event loop before its deadline, and
+// the cases above, run together, can hold it up for longer than that.
+test("a callback that returns after its deadline keeps its children", async () => {
   const { combined, exitCode } = await runTestFile(/* ts */ `
     import { afterAll, beforeAll, expect, test } from "bun:test";
 

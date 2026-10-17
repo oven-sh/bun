@@ -45,7 +45,7 @@ use bun_core::scoped_log;
 
 use super::debug::group as group_log; // bun_test.debug.group
 use super::bun_test::{
-    group_begin, AddedInPhase, BunTest, BunTestPtr, EntryData, ExecutionEntry,
+    group_begin, AddedInPhase, BunTest, BunTestPtr, DescribeScope, EntryData, ExecutionEntry,
     HandleUncaughtExceptionResult, Order, RefDataValue, ScopeMode, StepResult,
 };
 use crate::cli::test_command;
@@ -100,8 +100,6 @@ pub(crate) struct Execution {
     /// `t.skip()`/`t.todo()` mark lands there before the DoneCallback is
     /// stamped).
     pub(crate) on_stack_entry_data: core::cell::Cell<Option<super::bun_test::EntryData>>,
-    /// `ProcessAutoKiller` scope when the sequence that is running started. Only a group of one sequence reads it.
-    pub(crate) auto_kill_mark: u32,
 }
 
 pub(crate) struct ConcurrentGroup {
@@ -113,6 +111,8 @@ pub(crate) struct ConcurrentGroup {
     pub(crate) remaining_incomplete_entries: usize,
     /// used by beforeAll to skip directly to afterAll if it fails
     pub(crate) failure_skip_to: usize,
+    /// `ProcessAutoKiller` scope when the group started. Every attempt of its sequences spawns in a later scope.
+    pub(crate) auto_kill_mark: u32,
 }
 
 impl ConcurrentGroup {
@@ -124,6 +124,7 @@ impl ConcurrentGroup {
             remaining_incomplete_entries: sequence_end - sequence_start,
             failure_skip_to: next_index,
             next_sequence_index: 0,
+            auto_kill_mark: 0,
         }
     }
 
@@ -169,8 +170,6 @@ pub(crate) struct ExecutionSequence {
     /// Expectation set by expect.hasAssertions() or expect.assertions(n).
     pub(crate) expect_assertions: ExpectAssertions,
     pub(crate) maybe_skip: bool,
-    /// An afterAll hook: the cleanup of every process that is still tracked.
-    pub(crate) after_all: bool,
 }
 
 impl ExecutionSequence {
@@ -193,7 +192,6 @@ impl ExecutionSequence {
             expect_call_count: 0,
             expect_assertions: ExpectAssertions::NotSet,
             maybe_skip: false,
-            after_all: false,
         }
     }
 
@@ -304,7 +302,6 @@ impl Execution {
             group_index: 0,
             on_stack_entry: core::cell::Cell::new(None),
             on_stack_entry_data: core::cell::Cell::new(None),
-            auto_kill_mark: 0,
         }
     }
 
@@ -339,6 +336,7 @@ impl Execution {
         if let Some(current_group) = self.active_group() {
             // reshaped for borrowck — capture range, drop &mut group, re-borrow sequences
             let (start, end) = (current_group.sequence_start, current_group.sequence_end);
+            let group_mark = current_group.auto_kill_mark;
             let sequences = &self.sequences[start..end];
             if sequences.len() == 1 {
                 let sequence = &sequences[0];
@@ -349,11 +347,14 @@ impl Execution {
                     if entry.timespec.order(&now) == core::cmp::Ordering::Less {
                         // SAFETY: bun_vm() returns the live per-thread VM.
                         let auto_killer = &mut global_this.bun_vm().as_mut().auto_killer;
-                        // A cleanup hook that times out leaves what it was going to stop without a cleanup.
-                        let kill_count = if sequence.after_all {
-                            auto_killer.kill()
-                        } else if sequence.runs_after_test(entry) {
-                            auto_killer.kill_since(self.auto_kill_mark)
+                        // A cleanup hook that times out leaves what its test or its scope started without a cleanup.
+                        let kill_count = if sequence.runs_after_test(entry) {
+                            auto_killer.kill_since(group_mark)
+                        } else if let Some(scope) = after_all_scope(entry) {
+                            match self.scope_start_mark(scope) {
+                                Some(mark) => auto_killer.kill_since(mark),
+                                None => auto_killer.kill(),
+                            }
                         } else {
                             auto_killer.kill_scope()
                         };
@@ -362,6 +363,26 @@ impl Execution {
                 }
             }
         }
+    }
+
+    /// The mark of the first group with a hook or a test inside `scope`. `None` for the preload scope, whose beforeAll hooks ran with the first file.
+    fn scope_start_mark(&self, scope: &DescribeScope) -> Option<u32> {
+        scope.base.parent?;
+        let is_inside = |sequence: &ExecutionSequence| {
+            let entry = sequence.test_entry.or(sequence.first_entry);
+            // SAFETY: arena-owned entries and scopes, alive for the lifetime of BunTest which owns Execution
+            let mut parent = entry.and_then(|entry| unsafe { entry.as_ref() }.base.parent);
+            while let Some(ancestor) = parent {
+                if core::ptr::eq(ancestor, scope) {
+                    return true;
+                }
+                // SAFETY: see above
+                parent = unsafe { (*ancestor).base.parent };
+            }
+            false
+        };
+        let first_group = self.groups.iter().find(|group| group.sequences(self).iter().any(&is_inside))?;
+        Some(first_group.auto_kill_mark)
     }
 
     /// A result for an active entry is queued: its callback returned and `run` has not stepped yet.
@@ -603,9 +624,12 @@ impl Execution {
         }
     }
 
-    fn on_group_started(global_this: &JSGlobalObject) {
+    /// Returns the group's `auto_kill_mark`.
+    fn on_group_started(global_this: &JSGlobalObject) -> u32 {
         // SAFETY: bun_vm() returns the live per-thread VM.
-        global_this.bun_vm().as_mut().auto_killer.enable();
+        let auto_killer = &mut global_this.bun_vm().as_mut().auto_killer;
+        auto_killer.enable();
+        auto_killer.scope()
     }
 
     fn on_group_completed(global_this: &JSGlobalObject) {
@@ -868,7 +892,7 @@ fn step_group(
             // SAFETY: group_ptr points into this.groups; only this scope holds a `&mut` to it.
             let group = unsafe { &mut *group_ptr.as_ptr() };
             if !group.executing {
-                Execution::on_group_started(global_this);
+                group.auto_kill_mark = Execution::on_group_started(global_this);
                 group.executing = true;
             }
         }
@@ -985,6 +1009,13 @@ fn step_sequence(
     }
 }
 
+/// The scope that registered `entry` as an afterAll hook.
+fn after_all_scope(entry: &ExecutionEntry) -> Option<&DescribeScope> {
+    // SAFETY: parent backrefs point into the scope tree, which outlives its entries
+    let scope = unsafe { &*entry.base.parent? };
+    scope.after_all.iter().any(|hook| core::ptr::eq(&raw const **hook, entry)).then_some(scope)
+}
+
 pub(crate) fn report_killed_processes(count: u32) {
     if count > 0 {
         bun_core::pretty_errorln!(
@@ -1048,7 +1079,6 @@ fn step_sequence_one(
     sequence.executing = true;
     if Some(next_item_ptr) == sequence.first_entry {
         Execution::on_sequence_started(sequence);
-        this.auto_kill_mark = global_this.bun_vm().as_mut().auto_killer.scope();
     }
     Execution::on_entry_started(next_item);
 

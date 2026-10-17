@@ -1453,7 +1453,13 @@ describe("backpressure", () => {
       key: readFileSync(path.join(keysDir, "agent1-key.pem")),
     };
     type RequestListener = (req: http.IncomingMessage, res: http.ServerResponse) => void;
-    type ServerOptions = { keepAliveTimeout?: number; keepAliveTimeoutBuffer?: number };
+    type ServerOptions = {
+      keepAliveTimeout?: number;
+      keepAliveTimeoutBuffer?: number;
+      requestTimeout?: number;
+      headersTimeout?: number;
+      connectionsCheckingInterval?: number;
+    };
     // `timeout` is server.timeout. It is set before the server takes a connection.
     function withTimeout<T extends { setTimeout(ms: number): unknown }>(server: T, timeout?: number) {
       if (timeout !== undefined) server.setTimeout(timeout);
@@ -1788,6 +1794,199 @@ describe("backpressure", () => {
           sock.destroy();
         }
       });
+    });
+
+    // Node sweeps the connections of a server that listens: a request whose head is not complete after
+    // headersTimeout, or that is not complete after requestTimeout, is answered with 408 and closed.
+    // That is what ends a connection whose handler neither reads nor answers.
+    describe("requestTimeout and headersTimeout", () => {
+      const listening = {
+        http: transports.http,
+        https: transports.https,
+        "http2 allowHTTP1": transports["http2 allowHTTP1"],
+        // The http.Server listens on a port of its own, so that it sweeps the connections it is given.
+        'emit("connection") to a server that listens': {
+          createServer(listener: RequestListener, options: ServerOptions = {}) {
+            const server = http.createServer(options, listener).listen(0, "127.0.0.1");
+            const acceptor = net.createServer(socket => void server.emit("connection", socket));
+            return Object.assign(
+              acceptor.on("close", () => server.close()),
+              { httpServer: server },
+            );
+          },
+          connect: transports.http.connect,
+        },
+      };
+      const SWEEP = { connectionsCheckingInterval: 20 };
+      const HEAD = "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10\r\n";
+
+      // A raw client. `closed` resolves with everything the server sent.
+      async function open(transport: Transport, port: number, request: string) {
+        const sock = await transport.connect(port);
+        let received = "";
+        sock.on("data", chunk => (received += chunk.toString("latin1")));
+        const closed = once(sock, "close").then(() => received);
+        sock.write(request);
+        return { sock, closed, received: () => received };
+      }
+
+      describe.each(Object.keys(listening) as (keyof typeof listening)[])("%s", name => {
+        const transport = listening[name] as Transport;
+
+        it("answers 408 when the body does not arrive within requestTimeout", async () => {
+          await using server = transport.createServer(() => {}, { ...SWEEP, requestTimeout: 200, headersTimeout: 0 });
+          await once(server.listen(0, "127.0.0.1"), "listening");
+          const client = await open(transport, (server.address() as AddressInfo).port, HEAD + "\r\n12345");
+          try {
+            expect(await client.closed).toBe("HTTP/1.1 408 Request Timeout\r\nConnection: close\r\n\r\n");
+          } finally {
+            client.sock.destroy();
+          }
+        });
+
+        it("answers 408 when the head does not arrive within headersTimeout", async () => {
+          await using server = transport.createServer(() => {}, { ...SWEEP, requestTimeout: 0, headersTimeout: 200 });
+          await once(server.listen(0, "127.0.0.1"), "listening");
+          const client = await open(transport, (server.address() as AddressInfo).port, HEAD);
+          try {
+            expect(await client.closed).toBe("HTTP/1.1 408 Request Timeout\r\nConnection: close\r\n\r\n");
+          } finally {
+            client.sock.destroy();
+          }
+        });
+
+        it("does not apply headersTimeout to a request whose head is complete", async () => {
+          await using server = transport.createServer((req, res) => void req.resume().on("end", () => res.end("ok")), {
+            ...SWEEP,
+            requestTimeout: 0,
+            headersTimeout: 200,
+          });
+          await once(server.listen(0, "127.0.0.1"), "listening");
+          const port = (server.address() as AddressInfo).port;
+          const complete = await open(transport, port, HEAD + "\r\n12345");
+          // The clock: this head is not complete, so its 408 says that headersTimeout has passed.
+          const incomplete = await open(transport, port, HEAD);
+          try {
+            expect(await incomplete.closed).toStartWith("HTTP/1.1 408 ");
+            expect(complete.received()).toBe("");
+            complete.sock.end("67890");
+            expect(await complete.closed).toStartWith("HTTP/1.1 200 ");
+          } finally {
+            complete.sock.destroy();
+            incomplete.sock.destroy();
+          }
+        });
+
+        it("reports a request that timed out once, and the next request on the connection again", async () => {
+          const reported: [string, string][] = [];
+          const waiters: [number, () => void][] = [];
+          const reports = (count: number) => new Promise<void>(resolve => void waiters.push([count, resolve]));
+          await using server = transport.createServer(() => {}, { ...SWEEP, requestTimeout: 200, headersTimeout: 0 });
+          // The listener leaves the socket open, so the request stays expired through the sweeps that follow.
+          const sockets = new Map<object, string>();
+          const httpServer: net.Server = (server as { httpServer?: net.Server }).httpServer ?? server;
+          httpServer.on("clientError" as never, (err: NodeJS.ErrnoException, socket: object) => {
+            if (!sockets.has(socket)) sockets.set(socket, sockets.size === 0 ? "first" : "second");
+            reported.push([sockets.get(socket)!, err.code!]);
+            for (const [count, resolve] of waiters) if (reported.length >= count) resolve();
+          });
+          await once(server.listen(0, "127.0.0.1"), "listening");
+          const port = (server.address() as AddressInfo).port;
+          const a = await open(transport, port, HEAD + "\r\n12345");
+          await reports(1);
+          // The clock: a request that starts now is reported a requestTimeout later, many sweeps after the first one.
+          const b = await open(transport, port, HEAD + "\r\n12345");
+          try {
+            await reports(2);
+            // The first connection completes its request and starts another one, which times out too.
+            a.sock.write("67890" + HEAD + "\r\n12345");
+            await reports(3);
+            expect(reported).toEqual([
+              ["first", "ERR_HTTP_REQUEST_TIMEOUT"],
+              ["second", "ERR_HTTP_REQUEST_TIMEOUT"],
+              ["first", "ERR_HTTP_REQUEST_TIMEOUT"],
+            ]);
+          } finally {
+            a.sock.destroy();
+            b.sock.destroy();
+          }
+        });
+
+        it("does not apply requestTimeout between two requests", async () => {
+          await using server = transport.createServer((req, res) => void (req.method === "GET" && res.end(req.url)), {
+            ...SWEEP,
+            requestTimeout: 200,
+            headersTimeout: 0,
+          });
+          await once(server.listen(0, "127.0.0.1"), "listening");
+          const port = (server.address() as AddressInfo).port;
+          const idle = await open(transport, port, "GET /a HTTP/1.1\r\nHost: localhost\r\n\r\n");
+          // The clock: this request starts after the first response and times out a requestTimeout later.
+          const expired = await open(transport, port, HEAD + "\r\n12345");
+          try {
+            expect(await expired.closed).toStartWith("HTTP/1.1 408 ");
+            idle.sock.write("GET /b HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+            const received = await idle.closed;
+            expect([...received.matchAll(/HTTP\/1\.1 (\d+)/g)].map(match => match[1])).toEqual(["200", "200"]);
+            expect(received).toEndWith("/b");
+          } finally {
+            idle.sock.destroy();
+            expired.sock.destroy();
+          }
+        });
+
+        it("does not write 408 into a response whose head is on the wire", async () => {
+          await using server = transport.createServer(
+            (req, res) => {
+              res.writeHead(200, { "Content-Length": 10 });
+              res.write("12345");
+            },
+            { ...SWEEP, requestTimeout: 200, headersTimeout: 0 },
+          );
+          await once(server.listen(0, "127.0.0.1"), "listening");
+          const client = await open(transport, (server.address() as AddressInfo).port, HEAD + "\r\n12345");
+          try {
+            const received = await client.closed;
+            expect({ status: received.slice(0, 12), body: received.slice(received.indexOf("\r\n\r\n") + 4) }).toEqual({
+              status: "HTTP/1.1 200",
+              body: "12345",
+            });
+          } finally {
+            client.sock.destroy();
+          }
+        });
+      });
+
+      // Node's ConnectionsList::Expired swaps the two values when headersTimeout is the larger one. The
+      // constructor refuses that, so they are assigned. (Bun's native listener does not swap them.)
+      it.each(['emit("connection") to a server that listens', "http2 allowHTTP1"] as const)(
+        "%s: a headersTimeout above requestTimeout becomes the timeout of a request whose head is complete",
+        async name => {
+          const transport = listening[name] as Transport;
+          await using server = transport.createServer(
+            (req, res) => void req.resume().on("end", () => res.end("ok")),
+            SWEEP,
+          );
+          Object.assign((server as { httpServer?: object }).httpServer ?? server, {
+            headersTimeout: 5000,
+            requestTimeout: 200,
+          });
+          await once(server.listen(0, "127.0.0.1"), "listening");
+          const port = (server.address() as AddressInfo).port;
+          const complete = await open(transport, port, HEAD + "\r\n12345");
+          // The clock: this head is not complete. It expires at the smaller value.
+          const incomplete = await open(transport, port, HEAD);
+          try {
+            expect(await incomplete.closed).toStartWith("HTTP/1.1 408 ");
+            expect(complete.received()).toBe("");
+            complete.sock.end("67890");
+            expect(await complete.closed).toStartWith("HTTP/1.1 200 ");
+          } finally {
+            complete.sock.destroy();
+            incomplete.sock.destroy();
+          }
+        },
+      );
     });
 
     // A stopped socket reads nothing, so it does not see the FIN of a client that

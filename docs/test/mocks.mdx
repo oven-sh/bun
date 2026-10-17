@@ -531,6 +531,8 @@ test("hoisted", () => {
 
 `mock.module()`, `vi.doMock()` and `jest.doMock()` aren't hoisted, and neither are calls inside a block or a function. They run where they're written.
 
+As in Vitest, `vi.doMock()` leaves a module that's already imported as it is. Whatever imported it keeps the real module. The next `import()` calls the factory and gets the mock. After `vi.doUnmock()`, an `import()` gets the module that was loaded before. `mock.module()` and `jest.doMock()` update the loaded module instead, so its importers get the mock too.
+
 In a file with hoisted calls, Bun turns the other imports into `await import()` and reads them through the module namespace, so they stay live. The exceptions are imports from `bun:test`, `vitest`, `@jest/globals` and `bun`, imports with attributes, `import defer`, `export ... from`, and imports the file re-exports. Those stay static.
 
 Bun does the same in a test file or a `--preload` script that has no hoisted call, if it imports `vitest` or runs with `globals = "vitest"`. Vitest runs each import before it looks at the next one, so a module that the file imports first can mock what the next import loads:
@@ -788,8 +790,10 @@ test("lazy import", async () => {
 
 ### Differences from Vitest
 
-- Mocking a module of your own that's already imported updates it in place. Its existing exports change, exports that only the mock has aren't added, and getters are read once. A module that only `vi.importActual()` has loaded stays the original, and the next import calls the factory.
-- To update a module in place, Bun calls the factory when you mock the module, not at the next import. If the factory returns a promise, an `import()` of the module doesn't wait for it. Await what `vi.doMock()` returns instead.
+- A `vi.mock()` call that isn't hoisted, such as one inside a function, updates a module of your own that's already imported in place. Its existing exports change, exports that only the mock has aren't added, and getters are read once. A module that only `vi.importActual()` has loaded stays the original, and the next import calls the factory.
+- To update a module in place, Bun calls the factory when you mock the module, not at the next import. If the factory returns a promise, an `import()` of the module doesn't wait for it. Await what `vi.mock()` returns instead. `vi.doMock()` does the same for a builtin module such as `node:fs`.
+- After `vi.doUnmock()`, a module that imported the mock is evaluated again at its next import, and gets the real module. In Vitest it stays cached with the mock until `vi.resetModules()`.
+- Without `--isolate`, test files share the modules they load. For `vi.doMock()`, a module that an earlier file loaded counts as not loaded, even if this file imports it too. `vi.importActual()` and `importOriginal` evaluate it again.
 - Only test files and `--preload` scripts run their imports one at a time. Any other module's imports are all linked before the first one runs, as are those of a test file that uses `bun:test` and has no hoisted call. If one of them calls `vi.mock()` for a module that another one imports, that module is updated in place.
 - If a module that is imported with a static import calls `vi.mock()` with an async factory, a module that is imported after it can run before the factory settles. What that module reads from the mocked module while it loads is the original. What it reads later is the mock.
 - Where a loaded package is updated in place (see [Mocking a Package](#mocking-a-package)), a module inside `node_modules` that imports it gets the mock. In Vitest it gets the real package.

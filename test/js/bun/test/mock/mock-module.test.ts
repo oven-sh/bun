@@ -692,7 +692,7 @@ describe.concurrent("the original of a mocked module", () => {
           test("partial mock", async () => {
             const mod = await import("./mod");
             const realFn = mod.fn;
-            await vi.doMock("./mod", async importOriginal => {
+            await mock.module("./mod", async importOriginal => {
               const original = await importOriginal();
               expect(original.value).toBe("real");
               return { ...original, value: "mocked", fn: () => "mocked-" + original.fn() };
@@ -889,7 +889,7 @@ describe.concurrent("the original of a mocked module", () => {
           ])("stays the original, and the next import calls the factory: %s", async (_, path) => {
             const actual = await vi.importActual(path);
             const factory = vi.fn(() => ({ title: "mock" }));
-            vi.doMock(path, factory);
+            vi.mock(path, factory);
             expect(factory).not.toHaveBeenCalled();
             expect([(await import(path)).title, actual.title, factory.mock.calls.length]).toEqual(["mock", "real report", 1]);
             expect(await vi.importActual(path)).toBe(actual);
@@ -909,7 +909,7 @@ describe.concurrent("the original of a mocked module", () => {
             await vi.importActual("./report");
             vi.resetModules();
             const imported = await import("./report");
-            vi.doMock("./report", () => ({ title: "mock" }));
+            vi.mock("./report", () => ({ title: "mock" }));
             expect(imported.title).toBe("mock");
           });
         `,
@@ -922,7 +922,7 @@ describe.concurrent("the original of a mocked module", () => {
           import { expect, test, vi } from "bun:test";
           import * as shared from "./shared";
           test("and the next file, which imports it, patches it", () => {
-            vi.doMock("./shared", () => ({ title: "mock" }));
+            vi.mock("./shared", () => ({ title: "mock" }));
             expect(shared.title).toBe("mock");
           });
         `,
@@ -1032,7 +1032,7 @@ describe.concurrent("a module mocked without a factory", () => {
 
           test("a module that is already loaded", async () => {
             const dep = await import("./dep");
-            vi.doMock("./dep");
+            vi.mock("./dep");
             expect(dep.dep()).toBeUndefined();
             expect(vi.isMockFunction(dep.dep)).toBe(true);
             vi.doUnmock("./dep");
@@ -1122,7 +1122,7 @@ describe.concurrent("a module mocked without a factory", () => {
             const { nested } = loaded;
             const realPath = require("path");
             const originals = [nested.f, realPath.win32.join];
-            vi.doMock("./shared", { spy: true });
+            vi.mock("./shared", { spy: true });
             vi.doMock("node:path", { spy: true });
             const path = await import("node:path");
             expect([loaded.f, loaded.nested.f, path.join, path.win32.join].map(vi.isMockFunction)).toEqual([true, true, true, true]);
@@ -1618,16 +1618,102 @@ test("jest.mock() and friends return jest, and vi.doMock() returns a disposable"
   expect(ns.a).toBe("real-a");
 
   {
-    using patched = vi.doMock(a, async () => ({ a: "mocked-a" }));
-    await patched;
-    expect(ns.a).toBe("mocked-a");
-    // Disposing `patched` must not remove the later mock of the same module.
+    using earlier = vi.doMock(a, async () => ({ a: "mocked-a" }));
+    expect((await import(a)).a).toBe("mocked-a");
+    // Disposing `earlier` must not remove the later mock of the same module.
     using later = vi.doMock(a, () => ({ a: "mocked-later" }));
-    patched[Symbol.dispose]();
-    expect(ns.a).toBe("mocked-later");
+    earlier[Symbol.dispose]();
+    expect([(await import(a)).a, ns.a]).toEqual(["mocked-later", "real-a"]);
   }
-  expect(ns.a).toBe("real-a");
+  expect(await import(a)).toBe(ns);
 });
+
+test.concurrent.each(["bun:test", "vitest"])(
+  "vi.doMock() from %s leaves a module that is already loaded as it is",
+  async from => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": `
+          globalThis.loads = (globalThis.loads ?? 0) + 1;
+          export const value = "real";
+          export function fn() { return "real-fn"; }
+        `,
+        "reader.ts": `import { value, fn } from "./dep"; export const read = () => [value, fn()];`,
+        "loaded.test.ts": `
+          import { afterEach, expect, test, vi } from ${JSON.stringify(from)};
+          import * as dep from "./dep";
+          import { read } from "./reader";
+
+          afterEach(() => {
+            vi.doUnmock("./dep");
+            expect(globalThis.loads).toBe(1);
+          });
+
+          test("the next import() calls the factory", async () => {
+            const factory = vi.fn(() => ({ value: "mocked", fn: () => "mocked-fn" }));
+            vi.doMock("./dep", factory);
+            expect(factory).not.toHaveBeenCalled();
+            const mocked = await import("./dep");
+            expect(await import("./dep")).toBe(mocked);
+            expect(factory).toHaveBeenCalledTimes(1);
+            expect([mocked.value, dep.value, read()]).toEqual(["mocked", "real", ["real", "real-fn"]]);
+            expect((await import("./reader")).read).toBe(read);
+          });
+
+          test("a factory that throws fails that import()", async () => {
+            vi.doMock("./dep", () => {
+              throw new Error("from the factory");
+            });
+            await expect(import("./dep")).rejects.toThrow("from the factory");
+            expect(dep.value).toBe("real");
+          });
+
+          test("mocked again", async () => {
+            const first = vi.fn();
+            vi.doMock("./dep", first);
+            vi.doMock("./dep", () => ({ value: "second" }));
+            const second = await import("./dep");
+            vi.doMock("./dep", () => ({ value: "third" }));
+            const third = await import("./dep");
+            expect([third.value, second.value, dep.value, first.mock.calls.length]).toEqual(["third", "second", "real", 0]);
+          });
+
+          test("importOriginal, vi.importActual() and vi.doUnmock() give the loaded module", async () => {
+            let original;
+            vi.doMock("./dep", async importOriginal => ({ ...(original = await importOriginal()), value: "mocked" }));
+            expect((await import("./dep")).value).toBe("mocked");
+            expect([original.fn, (await vi.importActual("./dep")).fn]).toEqual([dep.fn, dep.fn]);
+            vi.doUnmock("./dep");
+            expect(await import("./dep")).toBe(dep);
+          });
+
+          test("without a factory", async () => {
+            vi.doMock("./dep");
+            const automock = await import("./dep");
+            expect([vi.isMockFunction(automock.fn), automock.fn(), vi.isMockFunction(dep.fn)]).toEqual([true, undefined, false]);
+          });
+
+          test("disposed", async () => {
+            {
+              using _ = vi.doMock("./dep", () => ({ value: "mocked" }));
+              expect((await import("./dep")).value).toBe("mocked");
+            }
+            expect(await import("./dep")).toBe(dep);
+          });
+
+          test("with { spy: true }, which spies on an instance of its own", async () => {
+            vi.doMock("./dep", { spy: true });
+            const spied = await import("./dep");
+            expect([vi.isMockFunction(spied.fn), spied.fn(), vi.isMockFunction(dep.fn)]).toEqual([true, "real-fn", false]);
+            expect(globalThis.loads).toBe(2);
+            globalThis.loads = 1;
+          });
+        `,
+      },
+      7,
+    );
+  },
+);
 
 describe.concurrent("resetModules", () => {
   test.each([[[]], [["--isolate"]]])("vi.resetModules() keeps packages, jest.resetModules() doesn't %j", async args => {
@@ -1753,9 +1839,18 @@ describe.concurrent("resetModules", () => {
             expect(await import("lib")).toBe(lib);
             expect(globalThis.loads.toSorted()).toEqual(["cjs-pkg", "esm-pkg", "lib"]);
           });
+
+          test("mocked without a factory", async () => {
+            vi.doMock("cjs-pkg");
+            vi.doMock("esm-pkg");
+            const mocks = [(await import("cjs-pkg")).default.who, (await import("esm-pkg")).who];
+            expect(mocks.map(who => [vi.isMockFunction(who), who()])).toEqual([[true, undefined], [true, undefined]]);
+            expect([cjs.who(), esm.who()]).toEqual(["real", "real"]);
+            expect(globalThis.loads.toSorted()).toEqual(["cjs-pkg", "esm-pkg", "lib"]);
+          });
         `,
       },
-      1,
+      2,
       ["--preload=./preload.js", ...args],
     );
   });
@@ -1819,7 +1914,7 @@ describe.concurrent("resetModules", () => {
             vi.resetModules();
             const loads = globalThis.loads;
             const mod = await import("./mod");
-            vi.doMock("./mod", () => ({ value: "mocked" }));
+            vi.mock("./mod", () => ({ value: "mocked" }));
             expect(mod.value).toBe("mocked");
 
             vi.resetModules();
@@ -2199,7 +2294,7 @@ describe.concurrent("a mocked module's exports are read from the object the fact
       {
         ...dep,
         "again.test.ts": `
-          import { expect, test, vi } from "bun:test";
+          import { expect, mock, test, vi } from "bun:test";
           import * as ns from "./dep";
           import { read, member } from "./reader";
           import { fn as viaStar } from "./star";
@@ -2209,24 +2304,24 @@ describe.concurrent("a mocked module's exports are read from the object the fact
           test("at once, or when the promise of the factory settles", async () => {
             expect(read()).toEqual(["one", "one", "one", "one", "one"]);
 
-            vi.doMock("./dep", () => ({ flag: "two", default: "two", plain: "two", fn: () => "two", added: "added" }));
+            vi.mock("./dep", () => ({ flag: "two", default: "two", plain: "two", fn: () => "two", added: "added" }));
             expect(read()).toEqual(["two", "two", "two", "two", "two"]);
             expect([member("added"), viaStar(), Object.keys(ns)]).toEqual(["added", "two", ["flag", "default", "plain", "fn", "added"]]);
 
-            const patched = vi.doMock("./dep", async importOriginal => ({ ...(await importOriginal()), flag: "three" }));
+            const patched = vi.mock("./dep", async importOriginal => ({ ...(await importOriginal()), flag: "three" }));
             expect(read()[0]).toBe("two");
             await patched;
             expect(read()).toEqual(["three", "three", "real-default", "real-plain", "real-fn"]);
             expect(() => member("added")).toThrow('No "added" export');
 
-            vi.doMock("./dep");
+            vi.mock("./dep");
             await vi.waitFor(() => expect(read()).toEqual(["real-flag", "real-flag", "real-default", "real-plain", undefined]));
             expect(vi.isMockFunction(ns.fn)).toBe(true);
           });
 
           test("a factory that fails leaves the module not mocked", async () => {
-            vi.doMock("./dep", () => ({ flag: "four", fn() {} }));
-            await expect(vi.doMock("./dep", async () => { await 0; throw new Error("failed"); })).rejects.toThrow("failed");
+            vi.mock("./dep", () => ({ flag: "four", fn() {} }));
+            await expect(mock.module("./dep", async () => { await 0; throw new Error("failed"); })).rejects.toThrow("failed");
             expect((await import("./reader")).read()[0]).toBe("real-flag");
           });
         `,
@@ -5451,24 +5546,24 @@ describe.concurrent(
       [
         "the module that re-exports it, then the one that re-exports that",
         `
-      await vi.doMock("./inner.js", async () => ({ a: "mock of inner" }));
-      await vi.doMock("./outer.js", async () => ({ a: "mock of outer" }));
+      await mock.module("./inner.js", async () => ({ a: "mock of inner" }));
+      await mock.module("./outer.js", async () => ({ a: "mock of outer" }));
     `,
         "mock of outer",
       ],
       [
         "the other way round",
         `
-      await vi.doMock("./outer.js", async () => ({ a: "mock of outer" }));
-      await vi.doMock("./inner.js", async () => ({ a: "mock of inner" }));
+      await mock.module("./outer.js", async () => ({ a: "mock of outer" }));
+      await mock.module("./inner.js", async () => ({ a: "mock of inner" }));
     `,
         "mock of inner",
       ],
       [
         "the second without a factory",
         `
-      await vi.doMock("./inner.js", async () => ({ a: "mock of inner" }));
-      await vi.doMock("./outer.js");
+      await mock.module("./inner.js", async () => ({ a: "mock of inner" }));
+      vi.mock("./outer.js");
     `,
         "mock of inner",
       ],
@@ -5476,8 +5571,8 @@ describe.concurrent(
         "the first made is the last to patch",
         `
       const gate = Promise.withResolvers();
-      const patched = vi.doMock("./inner.js", async () => (await gate.promise, { a: "mock of inner" }));
-      await vi.doMock("./outer.js", async () => ({ a: "mock of outer" }));
+      const patched = mock.module("./inner.js", async () => (await gate.promise, { a: "mock of inner" }));
+      await mock.module("./outer.js", async () => ({ a: "mock of outer" }));
       gate.resolve();
       await patched;
     `,
@@ -5490,7 +5585,7 @@ describe.concurrent(
           "inner.js": `export * from "./variable.js";`,
           "outer.js": `export * from "./inner.js";`,
           "a.test.js": `
-          import { expect, test, vi } from "bun:test";
+          import { expect, mock, test, vi } from "bun:test";
           test("both are patches in place", async () => {
             const outer = await import("./outer.js");
             ${mocks}
@@ -6423,9 +6518,9 @@ describe.concurrent("a module that is linked, but not evaluated yet, when it is 
           import { expect, test, vi } from "bun:test";
           test("the mock is what the next import gets, and an error of the module is thrown", async () => {
             await expect(import("./all")).rejects.toThrow("throws.ts threw");
-            vi.doMock("./tax", () => ({ rate: 0.5 }));
+            vi.mock("./tax", () => ({ rate: 0.5 }));
             expect((await import("./tax")).rate).toBe(0.5);
-            expect(() => vi.doMock("./throws-too", async importOriginal => ({ ...(await importOriginal()) }))).toThrow("throws-too.ts threw");
+            expect(() => vi.mock("./throws-too", async importOriginal => ({ ...(await importOriginal()) }))).toThrow("throws-too.ts threw");
           });
         `,
       },

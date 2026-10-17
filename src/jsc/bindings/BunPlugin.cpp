@@ -450,6 +450,8 @@ public:
     bool hasPendingPatch { false };
     bool spy { false };
     bool isFromPreload { false };
+    // unmockModule() registers that module under its own key again.
+    bool hasSetLoadedModuleAside { false };
     // Loaded as a generated ES module that imports the original (or the `__mocks__` file) and calls the factory when evaluated.
     bool importsOriginal { false };
 
@@ -2271,7 +2273,7 @@ __attribute__((minsize)) static void unmockModule(Zig::GlobalObject* globalObjec
     LoadedModule loaded = findLoadedModule(globalObject, mock->specifier.get());
     RETURN_IF_EXCEPTION(scope, );
     keepModuleMockOfLoadInFlight(globalObject, mock, specifier, loaded);
-    if (mock->isOfVitest() && isInNodeModules(specifier))
+    if (mock->hasSetLoadedModuleAside || (mock->isOfVitest() && isInNodeModules(specifier)))
         evict.packagesToBringBack.append(specifier);
 
     JSObject* saved = mock->originalExportsOfEvictedModule ? mock->originalExportsOfEvictedModule.get() : mock->originalExports.get();
@@ -2617,8 +2619,12 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     // Like Vitest, vi.mock() in a test file doesn't patch a module that a preload loaded. The file loads its own mocked copy,
     // and the preload's module is restored when the file ends. mock.module() and jest.mock() patch it in place.
     // Nor does it patch a package, which vi.resetModules() leaves loaded, or what vi.importActual() returned: the factory has to stay lazy.
-    bool staysTheOriginal = globalObject->onLoadPlugins.loadedByImportActual.remove(specifier) || isInNodeModules(specifier);
-    bool leavesLoadedModuleAlone = mock->isOfVitest() && Bun::isBunTest && !mock->isFromPreload && !isBuiltinModuleKey(specifier) && (!globalObject->onLoadPlugins.testFileOfModule.get(specifier) || staysTheOriginal);
+    // Nor does vi.doMock() patch what a test file loaded. This file's importers keep it. What an earlier file left is loaded again: in Vitest a file starts with nothing loaded.
+    bool isDoMock = function == ModuleMockFunction::ViDoMock;
+    unsigned loadedByTestFile = globalObject->onLoadPlugins.testFileOfModule.get(specifier);
+    bool wasLoadedByImportActual = globalObject->onLoadPlugins.loadedByImportActual.remove(specifier);
+    bool staysTheOriginal = wasLoadedByImportActual || isInNodeModules(specifier) || (isDoMock && loadedByTestFile == globalObject->onLoadPlugins.testFile);
+    bool leavesLoadedModuleAlone = mock->isOfVitest() && Bun::isBunTest && !mock->isFromPreload && !isBuiltinModuleKey(specifier) && (!loadedByTestFile || staysTheOriginal || isDoMock);
     // In Vitest a module that has yet to run imports it after this call, and gets the mock. Here it is linked already, so only a patch reaches it.
     if (leavesLoadedModuleAlone && loaded.esmNamespace && isImportedByModuleYetToRun(globalObject, loaded.esmNamespace->moduleRecord(), callerPath(vm, callframe)))
         leavesLoadedModuleAlone = false;
@@ -2633,6 +2639,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     if (leavesLoadedModuleAlone && staysTheOriginal && (loaded.esmNamespace || loaded.commonJSModule)) {
         setLoadedModuleAside(globalObject, specifier);
         RETURN_IF_EXCEPTION(scope, {});
+        mock->hasSetLoadedModuleAside = !wasLoadedByImportActual;
         loaded = findLoadedModule(globalObject, specifierString);
         RETURN_IF_EXCEPTION(scope, {});
     }
@@ -3350,7 +3357,10 @@ static JSValue evaluateModuleMock(Zig::GlobalObject* globalObject, JSC::Abstract
         }
     }
 
-    const String& dependencyKey = dependency->moduleRecord()->moduleKey().string();
+    String dependencyKey = dependency->moduleRecord()->moduleKey().string();
+    // A record that setLoadedModuleAside() moved keeps the key it was loaded with.
+    if (auto* original = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(vm, originalModuleKey(specifier))); original && original->record() == dependency->moduleRecord())
+        dependencyKey = originalModuleKey(specifier);
     bool isOriginal = isModuleOrCopyOfIt(dependencyKey, originalModuleKey(specifier));
 
     JSModuleMock* mock = registeredModuleMock(globalObject, specifier);

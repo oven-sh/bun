@@ -300,6 +300,7 @@ describe.concurrent("bun add --catalog", () => {
       { args: ["no-deps@1.0.0", "--catalog"], entry: "1.0.0", installed: "1.0.0" },
       { args: ["no-deps@^1.0.0", "--catalog"], entry: "^1.0.0", installed: "1.1.0" },
       { args: ["no-deps", "--catalog", "--exact"], entry: "2.0.0", installed: "2.0.0" },
+      { args: ["no-deps@^1.0.0", "--catalog", "--exact"], entry: "1.1.0", installed: "1.1.0" },
     ]) {
       test(`bun add ${args.join(" ")} writes ${JSON.stringify(entry)}`, async () => {
         const dir = await createDir(workspacesObject({ catalog: {} }));

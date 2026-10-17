@@ -1328,6 +1328,13 @@ export function isDockerEnabled(): boolean {
     return false;
   }
 }
+
+/** Can `ensure(service)` from test/docker/index.ts provide this service here? Same order as `ensure()`. */
+export function isDockerServiceEnabled(service: string): boolean {
+  // isDockerEnabled() throws on Linux CI without docker, so it comes last.
+  return !!process.env["BUN_TEST_SERVICE_" + service] || !!process.env.BUN_DOCKER_COORDINATOR || isDockerEnabled();
+}
+
 export async function waitForPort(port: number, timeout: number = 60_000): Promise<void> {
   let deadline = Date.now() + Math.max(1, timeout);
   let error: unknown;
@@ -1412,10 +1419,7 @@ export async function describeWithContainer(
     }
   }
 
-  // Skip only when no env override, no coordinator, and docker is unavailable.
-  // isDockerEnabled() may throw when docker is required but absent, so the
-  // env-override and coordinator checks must short-circuit before it.
-  if (!process.env["BUN_TEST_SERVICE_" + actualService] && !process.env.BUN_DOCKER_COORDINATOR && !isDockerEnabled()) {
+  if (!isDockerServiceEnabled(actualService)) {
     describe.todo(label);
     return;
   }
@@ -1771,6 +1775,14 @@ export async function pack(cwd: string, env: NodeJS.Dict<string>, ...args: strin
   expect(exitCode).toBe(0);
 
   return { out, err };
+}
+
+/** Writes `<packageDir>/node_modules/.bin/<name>`: a command that prints `says`. */
+export function writeBinCommand(packageDir: string, name: string, says: string) {
+  const bin = join(packageDir, "node_modules", ".bin");
+  fs.mkdirSync(bin, { recursive: true });
+  if (isWindows) fs.writeFileSync(join(bin, `${name}.cmd`), `@echo ${says}\r\n`);
+  else fs.writeFileSync(join(bin, name), `#!/bin/sh\necho ${says}\n`, { mode: 0o755 });
 }
 
 // If you need to modify, clone it

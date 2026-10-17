@@ -67,7 +67,6 @@
 #include "AddEventListenerOptions.h"
 #include "AsyncContextFrame.h"
 #include "BunClientData.h"
-#include "BunIDLConvert.h"
 #include "BunObject.h"
 #include "GeneratedBunObject.h"
 #include "BunPlugin.h"
@@ -190,7 +189,6 @@
 #include "JSPerformanceResourceTiming.h"
 #include "JSPerformanceTiming.h"
 #include "JSX509Certificate.h"
-#include "JSBakeResponse.h"
 #include "JSSign.h"
 #include "JSVerify.h"
 #include "JSHmac.h"
@@ -1492,7 +1490,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBTOA,
     RELEASE_AND_RETURN(
         throwScope,
         Bun__encoding__toString(
-            encodedString.span8().data(),
+            byteCast<uint8_t>(encodedString.span8().data()),
             length,
             globalObject,
             static_cast<uint8_t>(WebCore::BufferEncodingType::base64)));
@@ -2146,7 +2144,7 @@ void GlobalObject::finishCreation(VM& vm)
     if (Bun::codeGenerationFromStrings() != Bun::CodeGenerationFromStrings::Allowed) [[unlikely]]
         setEvalEnabled(false, Bun::codeGenerationFromStringsDisallowedMessage);
 
-    m_bakeAdditions.initialize();
+    m_bindgenAdditions.initialize();
     m_markdownTagStrings.initialize();
 
     static const LazyClassStructureInit lazyClassStructureInits[] = {
@@ -2404,6 +2402,9 @@ void GlobalObject::finishCreation(VM& vm)
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSSQLStatementStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              init.set(WebCore::createJSSQLStatementStructure(init.owner));
+         } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSSQLDatabaseStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+             init.set(WebCore::createJSSQLDatabaseStructure(init.owner));
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_memoryFootprintStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              init.set(

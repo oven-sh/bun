@@ -133,7 +133,7 @@ fn check_call<'a>(node: Expr<'a>, cx: &Cx<'a, UseUnknownInCatchCallbackVariable>
     let Some(call) = node.as_call() else {
         return;
     };
-    let callee = call.callee();
+    let callee = call.callee().with_jsdoc_cast();
     let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = callee.kind() else {
         return;
     };
@@ -168,6 +168,7 @@ fn check_call<'a>(node: Expr<'a>, cx: &Cx<'a, UseUnknownInCatchCallbackVariable>
     let mut pending: SmallVec<[Expr<'a>; 4]> = SmallVec::new();
     pending.push(arg_to_check);
     while let Some(candidate) = pending.pop() {
+        let candidate = candidate.with_jsdoc_cast();
         match candidate.kind() {
             ExprKind::Binary {
                 op: BinOp::And | BinOp::Or | BinOp::Nullish,

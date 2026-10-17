@@ -65,6 +65,7 @@ mod rust_regex;
 mod serde_json;
 mod shape;
 
+use super::RuleId;
 use super::globals::Tables;
 use super::registry::{Registry, formatting_rule};
 use super::resolved::{
@@ -75,9 +76,10 @@ use super::schema;
 use crate::context::Severity;
 use crate::js_plugin;
 use crate::language::{GlobalsOfOptions, InferGlobals, LanguageOptions};
+use crate::languages::{Dialect, Language, Refusal};
 use crate::options::Json;
 use crate::paths;
-use crate::rule::{Meta, Plugin};
+use crate::rule::{Frameworks, Meta, Plugin};
 use crate::runner::RuleEntry;
 use bun_glob::Candidate;
 use cache::Cache;
@@ -236,7 +238,7 @@ impl Pattern {
 
     /// A `files` or `excludeFiles` pattern from an override in an `.oxlintrc.json`.
     fn of_oxlint(written: &[u8]) -> Pattern {
-        Pattern::of_override(bun_glob::Pattern::of_oxc_glob_set(written))
+        Pattern::of_override(bun_glob::Pattern::of_oxlint(written))
     }
 
     /// A `files` or `excludeFiles` pattern from `[[lint.overrides]]` in bunfig.toml.
@@ -333,8 +335,9 @@ struct ConfigObject {
     parser_location: Option<Json>,
     /// `$changesLinter`: see [`ResolvedConfig::changes_linter`].
     changes_linter: bool,
-    /// `$forReact`, which `bun lint`'s default config sets. See [`ResolvedConfig::outside_of_react`].
-    is_for_react: bool,
+    /// `$framework`: skip this object unless the project uses this framework. Empty means it always applies.
+    /// Only Bun's built-in config sets it. See [`Config::get_with_frameworks`].
+    required_framework: Frameworks,
     /// Of an override of oxlint that has `plugins`: those, and those of the files, as sets. The settings at the start of its
     /// `rules` that yield are what `categories` turn on.
     plugins_of_override: Option<(u32, u32)>,
@@ -402,7 +405,7 @@ impl Default for ConfigObject {
             source: None,
             parser_location: None,
             changes_linter: false,
-            is_for_react: false,
+            required_framework: Frameworks::empty(),
             plugins_of_override: None,
             without_rules: Vec::new(),
         }
@@ -715,8 +718,8 @@ pub struct Within<'c> {
     merged: Option<(Indices, Arc<ResolvedConfig>)>,
     said: Said,
     known: Known,
-    /// [`Within::outside_of_react`]
-    is_outside_of_react: bool,
+    /// [`Config::missing_frameworks`] for this directory. Set by [`Within::with_frameworks`].
+    missing_frameworks: Frameworks,
 }
 
 /// For objects that are [about directories](ConfigObject::is_about_directories), by their index: whether it is for the files of
@@ -752,10 +755,10 @@ impl Entry<'_> {
 }
 
 impl Within<'_> {
-    /// `is_it`: the directory is of a project that doesn't use React, so [`Within::get`] is to leave out what is for React
-    /// alone. It saves making the configuration with that: see [`ResolvedConfig::outside_of_react`].
-    pub fn outside_of_react(mut self, is_it: bool) -> Self {
-        self.is_outside_of_react = is_it && self.config.objects.iter().any(|it| it.is_for_react);
+    /// Sets the frameworks detected for this directory. [`Within::get`] then skips config objects that require a different
+    /// one, like [`Config::get_with_frameworks`].
+    pub fn with_frameworks(mut self, detected: Frameworks) -> Self {
+        self.missing_frameworks = self.config.missing_frameworks(detected);
         self
     }
 
@@ -829,12 +832,13 @@ impl Within<'_> {
     ) -> FileConfig {
         let config = self.config;
         let must_match = !(is_selected && config.is_legacy);
+        let missing = self.missing_frameworks;
         let matching = {
             let Some((parts, entry)) = self.see(path, false) else {
                 return match config.is_file_ignored_in(path, dotfiles) {
                     _ if config.is_outside(path) => FileConfig::External,
                     true => FileConfig::Ignored,
-                    false => config.get_if(registry, path, must_match),
+                    false => config.get_if(registry, path, must_match, missing),
                 };
             };
             if paths::is_external(parts.path()) {
@@ -868,15 +872,7 @@ impl Within<'_> {
         let Some(mut matching) = matching else {
             return FileConfig::Unconfigured;
         };
-        if self.is_outside_of_react {
-            let is_for_react = |index: u32| {
-                config
-                    .objects
-                    .get(index as usize)
-                    .is_some_and(|it| it.is_for_react)
-            };
-            matching.retain(|index| !is_for_react(*index));
-        }
+        config.remove_unmet(&mut matching, missing);
         // Most files of a directory have the same.
         let merged = match self.merged.take().filter(|it| it.0 == matching) {
             Some(merged) => merged,
@@ -1143,7 +1139,7 @@ impl Config {
             merged: None,
             said: Said::default(),
             known: Known::default(),
-            is_outside_of_react: false,
+            missing_frameworks: Frameworks::empty(),
         }
     }
 
@@ -1190,6 +1186,17 @@ impl Config {
 
     /// ESLint's `getConfigWithStatus`. `file` is absolute.
     pub fn get(&self, registry: &Registry, file: &[u8]) -> FileConfig {
+        self.get_with_frameworks(registry, file, Frameworks::all())
+    }
+
+    /// Like [`Config::get`], but skips config objects whose [`ConfigObject::required_framework`] isn't in `detected`, the
+    /// frameworks the file's project uses.
+    pub fn get_with_frameworks(
+        &self,
+        registry: &Registry,
+        file: &[u8],
+        detected: Frameworks,
+    ) -> FileConfig {
         let relative = self.relative(file);
         if paths::is_external(&relative) {
             return FileConfig::External;
@@ -1202,36 +1209,55 @@ impl Config {
             return FileConfig::Ignored;
         }
         // ESLint 8 lints what it is told to, whatever it is called.
-        self.get_if(registry, file, !self.is_legacy)
+        let missing = self.missing_frameworks(detected);
+        self.get_if(registry, file, !self.is_legacy, missing)
     }
 
     /// The same for a file that is known not to be ignored, and to be inside the base path:
     /// whoever walks the directories has asked [`Config::is_directory_ignored`] on the way.
     pub fn get_unless_ignored(&self, registry: &Registry, file: &[u8]) -> FileConfig {
-        self.get_if(registry, file, true)
+        self.get_if(registry, file, true, Frameworks::empty())
     }
 
-    /// `must_match`: a file that no `files` is for has no configuration.
-    fn get_if(&self, registry: &Registry, file: &[u8], must_match: bool) -> FileConfig {
+    /// `must_match`: a file that no `files` is for has no configuration. `missing`: [`Config::missing_frameworks`].
+    fn get_if(
+        &self,
+        registry: &Registry,
+        file: &[u8],
+        must_match: bool,
+        missing: Frameworks,
+    ) -> FileConfig {
         let relative = self.relative(file);
         match self.matching(file, &Candidate::new(&relative), None, must_match) {
-            Some(matching) => FileConfig::Matched(self.resolved(registry, &matching)),
+            Some(mut matching) => {
+                self.remove_unmet(&mut matching, missing);
+                FileConfig::Matched(self.resolved(registry, &matching))
+            }
             None => FileConfig::Unconfigured,
         }
     }
 
+    /// Frameworks that some config object requires and that aren't in `detected`.
+    fn missing_frameworks(&self, detected: Frameworks) -> Frameworks {
+        let required = self.objects.iter().map(|it| it.required_framework);
+        required.fold(Frameworks::empty(), Frameworks::union) - detected
+    }
+
+    /// Removes the config objects that require one of the `missing` frameworks from `indices`.
+    fn remove_unmet(&self, indices: &mut Indices, missing: Frameworks) {
+        if missing.is_empty() {
+            return;
+        }
+        indices.retain(|index| {
+            let object = self.objects.get(*index as usize);
+            !object.is_some_and(|it| it.required_framework.intersects(missing))
+        });
+    }
+
     /// What the objects at `indices` make.
     fn resolved(&self, registry: &Registry, indices: &[u32]) -> Arc<ResolvedConfig> {
-        let is_for_all =
-            |index: &u32| !(self.objects.get(*index as usize)).is_some_and(|it| it.is_for_react);
-        self.cache.resolved(indices, || {
-            let mut config = self.merge(registry, indices);
-            if !indices.iter().all(is_for_all) {
-                let others: Indices = indices.iter().copied().filter(is_for_all).collect();
-                config.without_react = Some(self.resolved(registry, &others));
-            }
-            config
-        })
+        self.cache
+            .resolved(indices, || self.merge(registry, indices))
     }
 
     /// The objects that are for `file`. `parts`: [`Config::relative`] of it. `None`: it has no configuration.
@@ -1513,9 +1539,27 @@ impl Config {
             None => None,
         };
         // Another language validates its own.
-        if config.is_javascript() {
-            config.validate_language_options(&language_options);
+        match config.is_javascript() {
+            true => config.validate_language_options(&language_options),
+            false => config.options_of_other_language = Some(language_options.clone()),
         }
+        let language = self.language_of(registry, &config, &plugins);
+        let line_breaks = language.map_or_else(Default::default, |it| it.0.line_breaks());
+        let dialect = match language {
+            Some((language, name)) => match language.configure(name, &language_options) {
+                Ok(configured) => Some(Dialect {
+                    language,
+                    configured,
+                }),
+                Err(Refusal::Invalid(message)) => {
+                    config.error = Some([&b"Key \"languageOptions\": "[..], &message].concat());
+                    None
+                }
+                Err(Refusal::OnlyThePackage) => None,
+            },
+            None => None,
+        };
+        config.line_breaks = line_breaks;
         let whose = match (self.is_legacy, self.prefers_typescript_rules) {
             (true, _) => Tables::Eslint8,
             (false, true) => Tables::Oxlint,
@@ -1770,6 +1814,56 @@ impl Config {
             config.plugins = Some(implemented);
         }
         config.language.has_rule_that_requires_types = config.has_enabled(|it| it.requires_types);
+        let on = || (config.rules.iter()).filter(|it| it.severity != Severity::Off);
+        // ESLint 10 and later reject a rule that doesn't support the file's language.
+        let unsupported = on().filter(|it| !config.supports_language(it.entry.meta));
+        let unsupported: Vec<Vec<u8>> = unsupported
+            .map(|it| {
+                [
+                    b"\n\t- \"",
+                    &RuleId::Known(it.entry.meta).to_vec()[..],
+                    b"\"",
+                ]
+                .concat()
+            })
+            .collect();
+        // A rule that isn't specific to the language belongs to a package, or expects JavaScript that isn't there.
+        let is_all_here = on().all(|it| !it.entry.meta.languages.is_empty())
+            && unsupported.is_empty()
+            && (config.js_rules.iter()).all(|it| it.severity == Severity::Off)
+            && config.skipped == Skipped::None
+            && config.missing_rules.is_empty();
+        if !unsupported.is_empty() && config.error.is_none() && self.eslint_major >= 10 {
+            config.error = Some(
+                [
+                    b"Key \"rules\": The following rules do not support the language \"",
+                    config.normalized_language_name(),
+                    b"\":",
+                    &unsupported.concat(),
+                ]
+                .concat(),
+            );
+        }
+        config.dialect = dialect.filter(|_| is_all_here);
         config
+    }
+
+    /// The built-in language that `config`'s `language` refers to, and its name within the plugin. `plugins` has the
+    /// prefixes of the plugins that are configured for the file.
+    fn language_of<'c>(
+        &self,
+        registry: &Registry,
+        config: &'c ResolvedConfig,
+        plugins: &[&[u8]],
+    ) -> Option<(&'static dyn Language, &'c [u8])> {
+        let written = config.language_name.as_deref()?;
+        let slash = bun_core::strings::last_index_of_char(written, b'/')?;
+        let (prefix, name) = (&written[..slash], &written[slash + 1..]);
+        let is_built_in = plugins.contains(&prefix)
+            && !config.foreign_plugins.iter().any(|it| **it == *prefix)
+            && !self.is_legacy
+            && !self.prefers_typescript_rules;
+        let language = registry.language(Plugin::of_prefix(prefix)?, name)?;
+        is_built_in.then_some((language, name))
     }
 }

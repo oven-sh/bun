@@ -25,6 +25,7 @@ use crate::package_manager::{self, WorkspaceFilter};
 use crate::package_manager_real::ProgressStrings;
 use crate::package_manager_real::run_tasks;
 use crate::package_manager_task as Task;
+use crate::prune::LinkedNodeModules;
 
 /// `RunTasksCallbacks` impl for the hoisted-install loop, with
 /// `Ctx == PackageInstaller`.
@@ -193,7 +194,7 @@ pub(crate) fn install_hoisted_packages(
     let original_trees = this.lockfile.buffers.trees.clone();
     let original_tree_dep_ids = this.lockfile.buffers.hoisted_dependencies.clone();
 
-    {
+    let places = {
         // `lockfile` is `Box<Lockfile>` so the heap object
         // is disjoint from the `PackageManager` struct; snapshot raw `*mut
         // Lockfile` and `*mut Log` first so `filter` can hold `&mut Lockfile`
@@ -206,15 +207,17 @@ pub(crate) fn install_hoisted_packages(
         // SAFETY: `log` is the always-live logger backref (never null);
         // `mgr_ptr` see shadow-reborrow above.
         unsafe {
-            (*lockfile_ptr).filter(
-                &mut *log,
-                &mut *mgr_ptr,
-                install_root_dependencies,
-                workspace_filters,
-                packages_to_install,
-            )?;
+            (*lockfile_ptr)
+                .filter(
+                    &mut *log,
+                    &mut *mgr_ptr,
+                    install_root_dependencies,
+                    workspace_filters,
+                    packages_to_install,
+                )?
+                .places
         }
-    }
+    };
     // SAFETY: `mgr_ptr` is the provenance root derived from the unique `&mut`
     // fn param; the first reborrow's tag was popped by `&mut *mgr_ptr` in the
     // block above, so no other borrow of `*mgr_ptr` is live here.
@@ -246,13 +249,26 @@ pub(crate) fn install_hoisted_packages(
     };
 
     // A partial install (security scanner) runs ahead of the real one: it leaves the layout alone.
-    let replacing_isolated_node_modules = packages_to_install.is_none()
+    let has_isolated_store = packages_to_install.is_none()
         && this.options.node_linker == bun_install_types::NodeLinker::NodeLinker::Hoisted
         && sys::directory_exists_at(Fd::cwd(), bun_paths::path_literal!("node_modules/.bun"))
             .unwrap_or(false);
+    // If `node_modules` is a symlink, nothing behind it is cleared, so every install finds `.bun`
+    // again. Warn instead of treating each install as a switch away from the isolated linker.
+    let is_linked = has_isolated_store
+        && LinkedNodeModules::is_at(bun_paths::path_literal!("node_modules")) == Some(true);
+    let replacing_isolated_node_modules = has_isolated_store && !is_linked;
     let old_modules = if replacing_isolated_node_modules {
-        crate::isolated_install::move_node_modules_aside(&this.lockfile, this.options.global)
+        crate::isolated_install::move_node_modules_aside(
+            &this.lockfile,
+            this.options.global,
+            log_level,
+        )
     } else {
+        if is_linked {
+            let folder = Box::<[u8]>::from(&b"node_modules"[..]);
+            LinkedNodeModules::warn_not_cleared(log_level, &[folder]);
+        }
         None
     };
 
@@ -313,6 +329,7 @@ pub(crate) fn install_hoisted_packages(
 
     let mut summary = package_install::Summary {
         old_modules,
+        places,
         ..Default::default()
     };
 
@@ -405,6 +422,7 @@ pub(crate) fn install_hoisted_packages(
                 progress: unsafe { core::ptr::addr_of_mut!((*mgr_ptr).progress) },
                 skip_verify_installed_version_number,
                 skip_delete,
+                workspaces_seen: Vec::new(),
                 summary: &mut summary,
                 successfully_installed: Bitset::init_empty(pkg_len)?,
                 command_ctx: ctx,
@@ -419,9 +437,11 @@ pub(crate) fn install_hoisted_packages(
                                 direct_packages: bun_ptr::BackRef::new(&direct_packages),
                             }),
                             pending_installs: Vec::new(),
+                            bins_after_scripts: Vec::new(),
                             install_count: 0,
                             replaced: Vec::new(),
                             inside_replaced_folder: false,
+                            outlived_root: false,
                         });
                     }
                     break 'trees trees.into_boxed_slice();
@@ -468,6 +488,7 @@ pub(crate) fn install_hoisted_packages(
             let mut remaining: &[DependencyID] = node_modules.dependencies;
             installer.current_tree_id = node_modules.tree_id;
             installer.set_inside_replaced_folder(node_modules.tree_id);
+            installer.set_outlived_root(node_modules.tree_id, node_modules.relative_path);
 
             // cache line is 64 bytes on ARM64 and x64
             // PackageIDs are 4 bytes
@@ -559,9 +580,6 @@ pub(crate) fn install_hoisted_packages(
         // need to make sure bins are linked before completing any remaining scripts.
         // this can happen if a package fails to download
         installer.link_remaining_bins();
-        // Bin linking reads `successfully_installed`, so the summary takes it after.
-        installer.summary.successfully_installed =
-            Some(core::mem::take(&mut installer.successfully_installed));
         installer.complete_remaining_scripts(log_level);
 
         // .monotonic is okay because this value is only accessed on this thread.
@@ -570,6 +588,10 @@ pub(crate) fn install_hoisted_packages(
 
             this.sleep();
         }
+        installer.link_bins_after_scripts();
+        // Bin linking reads `successfully_installed`, so move it into the summary only afterwards.
+        installer.summary.successfully_installed =
+            Some(core::mem::take(&mut installer.successfully_installed));
 
         if log_level.show_progress() {
             // See `activate()` note above — reuse the stored `NonNull`'s

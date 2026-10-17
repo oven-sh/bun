@@ -2596,7 +2596,7 @@ pub(crate) mod __gated_printer {
                 &mut writer,
                 quote,
                 ASCII_ONLY,
-                false,
+                IS_JSON,
             );
         }
 
@@ -2609,7 +2609,7 @@ pub(crate) mod __gated_printer {
                 &mut writer,
                 quote,
                 ASCII_ONLY,
-                false,
+                IS_JSON,
             );
         }
 
@@ -5044,7 +5044,7 @@ pub(crate) mod __gated_printer {
                             }
                         }
                     } else {
-                        let c = best_quote_char_for_string(key_str.slice16(), false);
+                        let c = Self::best_quote_char_for_e_string(&key_str, false);
                         self.print(c);
                         self.print_string_characters_utf16(key_str.slice16(), c);
                         self.print(c);

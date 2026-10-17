@@ -56,6 +56,7 @@ const programArgs: { args: string[]; results: unknown[] }[] = [
 ];
 const [noArgs, twoArgs] = programArgs;
 
+// Serial on purpose: twenty bun processes at once put slow builds close to the test timeout.
 async function run(cmd: string[], options: Record<string, unknown> = {}) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...cmd],
@@ -70,7 +71,7 @@ async function run(cmd: string[], options: Record<string, unknown> = {}) {
 }
 const printed = (stdout: string) => ({ stdout, stderr: "", signalCode: null, exitCode: 0 });
 
-describe.concurrent("parseArgs default args when eval code is the program", () => {
+describe("parseArgs default args when eval code is the program", () => {
   // Node has no `-e=`, `-p=` or `--print=`. They get what the other spellings get.
   const spellings: [name: string, flags: (code: string) => string[]][] = [
     ["-e <code>", code => ["-e", `process.stdout.write(${code})`]],
@@ -103,7 +104,7 @@ describe.concurrent("parseArgs default args when eval code is the program", () =
   });
 });
 
-describe.concurrent("parseArgs default args when process.argv has a script entry", () => {
+describe("parseArgs default args when process.argv has a script entry", () => {
   const program = `process.stdout.write(${calls()})`;
 
   test("bun - zzz yyy", async () => {
@@ -120,7 +121,7 @@ describe.concurrent("parseArgs default args when process.argv has a script entry
   });
 });
 
-describe.concurrent("parseArgs default args when process.argv is short", () => {
+describe("parseArgs default args when process.argv is short", () => {
   test("bun repl", async () => {
     using dir = tempDir("parse-args-repl", {});
     const { stdout, ...rest } = await run(["repl"], {
@@ -159,7 +160,7 @@ describe.concurrent("parseArgs default args when process.argv is short", () => {
 // Node keeps `--eval` per thread: a Worker has the value of the thread that made it, or the one
 // in its own `execArgv`. Every expected value is what Node v26.3.0 returns in a `worker_threads`
 // Worker with the same `argv` and `execArgv`.
-describe.concurrent("parseArgs default args in a Worker", () => {
+describe("parseArgs default args in a Worker", () => {
   const files = {
     "worker.cjs": `
       const { positionals } = require("node:util").parseArgs({ strict: false });

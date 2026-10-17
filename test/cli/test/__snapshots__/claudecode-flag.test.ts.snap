@@ -61,7 +61,7 @@ bun test <version> (<revision>)"
 `;
 
 exports[`CLAUDECODE flag handles no test files found: no-tests-quiet 1`] = `
-"error: 0 test files matching **/*{.test,.spec,_test,_spec}.{js,jsx,ts,tsx,mjs,cjs,mts,cts} in --cwd="<dir>"
+"error: 0 test files matching **/*{.test,_test,.spec,_spec}.{jsx,js,mjs,cjs,ts,tsx,mts,cts} in --cwd="<dir>"
 
 bun test <version> (<revision>)"
 `;

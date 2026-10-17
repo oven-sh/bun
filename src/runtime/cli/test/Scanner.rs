@@ -1,6 +1,8 @@
+use core::fmt;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
+use bstr::BStr;
 use bun_alloc::AllocError;
 use bun_bundler::Transpiler;
 use bun_bundler::options::BundleOptions;
@@ -425,3 +427,51 @@ impl<'a> Scanner<'a> {
 }
 
 pub(crate) const TEST_NAME_SUFFIXES: [&[u8]; 4] = [b".test", b"_test", b".spec", b"_spec"];
+
+/// What [`Scanner::could_be_test_file`] takes with `NEEDS_TEST_SUFFIX`, for the
+/// messages that say no test file was found.
+pub(crate) enum TestFileRule<'a> {
+    /// `".test", "_test", ".spec" or "_spec"`
+    QuotedSuffixes,
+    /// `**/*{.test,_test,.spec,_spec}.{jsx,js,..}`, with every extension that has a JS-like loader.
+    Glob(&'a BundleOptions<'a>),
+}
+
+impl fmt::Display for TestFileRule<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            TestFileRule::QuotedSuffixes => {
+                for (i, suffix) in TEST_NAME_SUFFIXES.iter().enumerate() {
+                    let separator = match i {
+                        0 => "",
+                        i if i + 1 == TEST_NAME_SUFFIXES.len() => " or ",
+                        _ => ", ",
+                    };
+                    write!(f, "{separator}\"{}\"", BStr::new(suffix))?;
+                }
+                Ok(())
+            }
+            TestFileRule::Glob(options) => {
+                f.write_str("**/*{")?;
+                for (i, suffix) in TEST_NAME_SUFFIXES.iter().enumerate() {
+                    let separator = if i == 0 { "" } else { "," };
+                    write!(f, "{separator}{}", BStr::new(suffix))?;
+                }
+                f.write_str("}.{")?;
+                let mut separator = "";
+                for (extension, loader) in options.loaders.iter() {
+                    // `bun_paths::extension` returns one dot and what follows it, so
+                    // the scanner never looks up a key of another shape.
+                    let Some((b'.', name)) = extension.split_first() else {
+                        continue;
+                    };
+                    if loader.is_javascript_like() && !strings::contains_char(name, b'.') {
+                        write!(f, "{separator}{}", BStr::new(name))?;
+                        separator = ",";
+                    }
+                }
+                f.write_str("}")
+            }
+        }
+    }
+}

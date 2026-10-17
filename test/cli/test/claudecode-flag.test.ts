@@ -177,50 +177,59 @@ test.concurrent("the note for no test files found names suffixes that make a fil
   expect(noMatchQuiet.stderr).toContain("note: " + note);
   expect([noArguments.exitCode, noMatch.exitCode, noMatchQuiet.exitCode]).toEqual([1, 1, 1]);
 
-  // Do what the note says: one file for each suffix that it names.
+  // Do what the note says: one file for each suffix that it names. Its example is one of them.
   const suffixes = Array.from(noArguments.stderr.matchAll(/"([._][a-z_]+)"/g), match => match[1]);
   expect(suffixes).toEqual([".test", "_test", ".spec", "_spec"]);
-  using named = tempDir(
-    "no-tests-note-named",
-    Object.fromEntries(suffixes.map(suffix => [`MyApp${suffix}.ts`, passingTest])),
-  );
+  const names = suffixes.map(suffix => `MyApp${suffix}.ts`);
+  expect(names).toContain(noArguments.stderr.match(/\(ex: "(.+)"\)/)?.[1]);
+  using named = tempDir("no-tests-note-named", Object.fromEntries(names.map(name => [name, passingTest])));
   const { stderr, exitCode } = await runBunTest(String(named), [], "0");
   expect(stderr).toContain("Ran 4 tests across 4 files.");
   expect(exitCode).toBe(0);
 });
 
-test.concurrent(
-  "CLAUDECODE=1 error for no test files found prints a glob that matches the file names the scanner takes",
-  async () => {
-    const testFiles = [".test", "_test", ".spec", "_spec"]
-      .flatMap(suffix => ["js", "jsx", "ts", "tsx", "mjs", "cjs", "mts", "cts"].map(ext => `MyApp${suffix}.${ext}`))
-      .concat("nested/dir/MyApp_test.ts")
-      .sort();
-    const otherFiles = [
-      "MyApp.ts",
-      "MyApp_test_.ts",
-      "MyApp_spec_.ts",
-      "MyApp.testunit.ts",
-      "My.testApp.ts",
-      "testMyApp.ts",
-      "MyApp.test.json",
-    ];
-    // Each file prints its own name when the scanner takes it.
-    const printsName = (name: string) =>
-      `import { test } from "bun:test"; test("x", () => { console.log("RAN ${name}"); });`;
-    using mixed = tempDir(
-      "no-tests-glob-mixed",
-      Object.fromEntries([...testFiles, ...otherFiles].map(name => [name, printsName(name)])),
-    );
-    using empty = tempDir("no-tests-glob-empty", { "MyApp.ts": passingTest });
+// The glob comes from the loaders that the scanner looks up, so a `[loader]`
+// entry in bunfig.toml changes both.
+const defaultExtensions = ["js", "jsx", "ts", "tsx", "mjs", "cjs", "mts", "cts"];
 
-    const [scan, quiet] = await Promise.all([runBunTest(String(mixed), [], "0"), runBunTest(String(empty), [], "1")]);
-    expect(Array.from(scan.stdout.matchAll(/^RAN (\S+)/gm), match => match[1]).sort()).toEqual(testFiles);
-    expect(scan.exitCode).toBe(0);
+for (const [loaders, bunfig, extensions] of [
+  ["default loaders", "", defaultExtensions],
+  ["a [loader] entry in bunfig.toml", `[loader]\n".foo" = "ts"\n".d.ts" = "ts"\n`, [...defaultExtensions, "foo"]],
+] as const) {
+  test.concurrent(
+    `CLAUDECODE=1 error for no test files found prints a glob that matches the file names the scanner takes (${loaders})`,
+    async () => {
+      const testFiles = [".test", "_test", ".spec", "_spec"]
+        .flatMap(suffix => extensions.map(ext => `MyApp${suffix}.${ext}`))
+        .concat("nested/dir/MyApp_test.ts")
+        .sort();
+      const otherFiles = [
+        "MyApp.ts",
+        "MyApp_test_.ts",
+        "MyApp_spec_.ts",
+        "MyApp.testunit.ts",
+        "My.testApp.ts",
+        "testMyApp.ts",
+        "MyApp.test.json",
+        "MyApp.test.d.ts",
+      ];
+      // Each file prints its own name when the scanner takes it.
+      const printsName = (name: string) =>
+        `import { test } from "bun:test"; test("x", () => { console.log("RAN ${name}"); });`;
+      using mixed = tempDir("no-tests-glob-mixed", {
+        "bunfig.toml": bunfig,
+        ...Object.fromEntries([...testFiles, ...otherFiles].map(name => [name, printsName(name)])),
+      });
+      using empty = tempDir("no-tests-glob-empty", { "bunfig.toml": bunfig, "MyApp.ts": passingTest });
 
-    const glob = quiet.stderr.match(/0 test files matching (\S+) in --cwd=/)?.[1];
-    expect(glob).toBe("**/*{.test,.spec,_test,_spec}.{js,jsx,ts,tsx,mjs,cjs,mts,cts}");
-    expect([...testFiles, ...otherFiles].filter(name => new Bun.Glob(glob!).match(name))).toEqual(testFiles);
-    expect(quiet.exitCode).toBe(1);
-  },
-);
+      const [scan, quiet] = await Promise.all([runBunTest(String(mixed), [], "0"), runBunTest(String(empty), [], "1")]);
+      expect(Array.from(scan.stdout.matchAll(/^RAN (\S+)/gm), match => match[1]).sort()).toEqual(testFiles);
+      expect(scan.exitCode).toBe(0);
+
+      expect(quiet.stderr).toContain("0 test files matching");
+      const glob = new Bun.Glob(quiet.stderr.match(/0 test files matching (\S+) in --cwd=/)?.[1] ?? "");
+      expect([...testFiles, ...otherFiles].filter(name => glob.match(name))).toEqual(testFiles);
+      expect(quiet.exitCode).toBe(1);
+    },
+  );
+}

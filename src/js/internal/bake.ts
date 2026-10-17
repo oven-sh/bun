@@ -81,8 +81,11 @@ async function loadPages(pagesDir: string): Promise<Page[]> {
   for (const relative of files) {
     const file = path.join(pagesDir, relative);
     // `Bun.serve` routes read `:` as a parameter and `*` as a wildcard. `[` is the parameter syntax of page files.
-    if (/[[\]:*]/.test(relative)) {
-      throw new Error(`"${display(file)}": a page cannot have "[", ":" or "*" in its path. Its URL must be fixed.`);
+    // In a URL, `?` and `#` end the path and `%` starts an escape.
+    if (/[[\]:*?#%]/.test(relative)) {
+      throw new Error(
+        `"${display(file)}": a page cannot have "[", ":", "*", "?", "#" or "%" in its path. Its URL must be fixed.`,
+      );
     }
     const route = routeOfPage(relative);
     const other = fileOfRoute[route];
@@ -90,7 +93,8 @@ async function loadPages(pagesDir: string): Promise<Page[]> {
       throw new Error(`"${display(other)}" and "${display(file)}" are both the page "/${route}".`);
     }
     fileOfRoute[route] = file;
-    const url = "/" + route.split("/").map(encodeURIComponent).join("/");
+    // Encoded as browsers send it: non-ASCII characters and spaces are, `&` and `=` are not.
+    const url = new URL("/" + route, "http://localhost").pathname;
     pages.push({ route, url, file, bundle: (await import(file)).default });
   }
   return pages;
@@ -123,7 +127,14 @@ async function loadAppServer(cwd: string): Promise<{ file: string; server: AppSe
   if (fetch !== undefined && !$isCallable(fetch)) {
     throw $ERR_INVALID_ARG_TYPE("fetch", "function", fetch);
   }
-  return { file, server: { routes: server.routes, fetch, websocket: server.websocket } };
+  const { routes, websocket } = server;
+  if (routes !== undefined && (routes === null || typeof routes !== "object")) {
+    throw $ERR_INVALID_ARG_TYPE("routes", "object", routes);
+  }
+  if (websocket !== undefined && (websocket === null || typeof websocket !== "object")) {
+    throw $ERR_INVALID_ARG_TYPE("websocket", "object", websocket);
+  }
+  return { file, server: { routes, fetch, websocket } };
 }
 
 async function start() {

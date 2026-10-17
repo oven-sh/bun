@@ -1,6 +1,7 @@
 import type { Subprocess } from "bun";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { join } from "node:path";
 
 const env = { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1", NO_COLOR: "1" };
 
@@ -140,6 +141,11 @@ test.concurrent.each([
     error: `"app/server.ts": the default export has "port", but "bun bake" only uses "routes", "fetch", "websocket".`,
   },
   {
+    name: "routes that are not an object",
+    files: { "app/server.ts": `export default { routes: null };` },
+    error: `The "routes" argument must be of type object`,
+  },
+  {
     name: "a default export that is not an object",
     files: { "app/server.ts": `export default 42;` },
     error: `"app/server.ts" must have a default export with "routes", "fetch" or "websocket".`,
@@ -147,7 +153,7 @@ test.concurrent.each([
   {
     name: "a page with a [param]",
     files: { "app/pages/blog/[slug].html": page },
-    error: `"app/pages/blog/[slug].html": a page cannot have "[", ":" or "*" in its path. Its URL must be fixed.`,
+    error: `"app/pages/blog/[slug].html": a page cannot have "[", ":", "*", "?", "#" or "%" in its path. Its URL must be fixed.`,
   },
   // `:` is not allowed in a file name on Windows.
   ...(isWindows
@@ -156,7 +162,7 @@ test.concurrent.each([
         {
           name: "a page with a :param",
           files: { "app/pages/users/:id.html": page },
-          error: `"app/pages/users/:id.html": a page cannot have "[", ":" or "*" in its path. Its URL must be fixed.`,
+          error: `"app/pages/users/:id.html": a page cannot have "[", ":", "*", "?", "#" or "%" in its path. Its URL must be fixed.`,
         },
       ]),
   {
@@ -202,6 +208,7 @@ test.concurrent("bun bake --help", async () => {
 test.concurrent("bun bake serves a page with a non-ASCII name at its encoded URL", async () => {
   using dir = tempDir("bake-command-unicode", {
     "app/pages/über.html": `<!doctype html><html><body><h1>Über</h1></body></html>`,
+    "app/pages/q&a.html": `<!doctype html><html><body><h1>Q&amp;A</h1></body></html>`,
   });
 
   await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
@@ -212,4 +219,59 @@ test.concurrent("bun bake serves a page with a non-ASCII name at its encoded URL
   expect(new URL(res.url).pathname).toBe("/%C3%BCber");
   expect(await res.text()).toContain("<h1>Über</h1>");
   expect(res.status).toBe(200);
+
+  // Browsers do not encode `&` in a path.
+  expect(await get(url, "/q&a")).toContain("<h1>Q&amp;A</h1>");
+});
+
+/** Reads stdout and stderr of `proc` as they arrive, so a test can wait for either. */
+function collectOutput(proc: Subprocess<"ignore", "pipe", "pipe">) {
+  let text = "";
+  let changed = Promise.withResolvers<void>();
+  const pump = async (stream: ReadableStream<Uint8Array>) => {
+    const decoder = new TextDecoder();
+    for await (const chunk of stream) {
+      text += decoder.decode(chunk, { stream: true });
+      changed.resolve();
+      changed = Promise.withResolvers<void>();
+    }
+  };
+  const done = Promise.all([pump(proc.stdout), pump(proc.stderr)]);
+  return {
+    async waitFor(pattern: RegExp) {
+      while (!pattern.test(text)) {
+        await Promise.race([changed.promise, done]);
+        if (!pattern.test(text) && proc.exitCode !== null) {
+          throw new Error(`Exited before ${pattern}:\n${text}`);
+        }
+      }
+      return text.match(pattern)!;
+    },
+  };
+}
+
+test.concurrent.each([
+  { name: "bun --check --watch bake", args: ["--check", "--watch", "bake"] },
+  { name: "bun --hot bake --check", args: ["--hot", "bake", "--check"] },
+])("$name starts the server once the type errors are fixed", async ({ args }) => {
+  using dir = tempDir("bake-command-check-watch", {
+    "tsconfig.json": JSON.stringify({ compilerOptions: { lib: ["ESNext", "DOM"], strict: true } }),
+    "app/pages/index.html": page,
+    "app/server.ts": `
+      const count: number = "not a number";
+      export default { fetch: () => new Response(String(count)) };
+    `,
+  });
+
+  await using proc = spawnBake(String(dir), [...args, "--port=0"]);
+  const output = collectOutput(proc);
+  await output.waitFor(/TS2322/);
+
+  await Bun.write(
+    join(String(dir), "app/server.ts"),
+    `const count: number = 1;\nexport default { fetch: () => new Response(String(count)) };\n`,
+  );
+  const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
+
+  expect(await get(url, "/missing")).toBe("200 1");
 });

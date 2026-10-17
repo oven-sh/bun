@@ -39,7 +39,7 @@ Every `.html` file in `app/pages/` is a page. Its path is its URL:
 - `index.html` is the URL of its folder: `app/pages/docs/index.html` is `/docs`.
 - Any other file drops the `.html`: `app/pages/docs/install.html` is `/docs/install`.
 
-An HTML page cannot have a `[param]` in its path, because its URL must be fixed.
+A page cannot have `[`, `:`, `*`, `?`, `#` or `%` in its path, because its URL must be fixed. Other characters are allowed: `app/pages/über.html` is `/über`, and Bun serves it at `/%C3%BCber`, the URL that browsers request.
 
 ## Server code
 

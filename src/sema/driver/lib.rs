@@ -32,10 +32,10 @@ use bun_sema::program::{
 };
 pub use bun_sema::resolve::ScriptKind;
 use bun_sema::resolve::{
-    Host, ModuleDetection, Options, Phase, ProjectFile, ProjectFiles, ancestors, contains_path,
-    displayed_path, get_relative_path_from_directory, inside, is_declaration_file_name,
-    is_javascript, is_javascript_file, is_relative, is_same_path, join,
-    output_declaration_file_name, to_path, to_path_in, typescript_path,
+    Host, ModuleDetection, Options, Phase, PluginImport, ProjectFile, ProjectFiles, ancestors,
+    contains_path, displayed_path, get_relative_path_from_directory, inside,
+    is_declaration_file_name, is_javascript, is_javascript_file, is_relative, is_same_path, join,
+    output_declaration_file_name, plugin_imports_of, to_path, to_path_in, typescript_path,
 };
 use bun_sema::session::{Arena, Session};
 use bun_sema::types::LinkCounts;
@@ -1572,6 +1572,9 @@ pub fn check_provided_then<R>(
     let mut disk =
         host::Disk::with_already_read(threads, provided.already_read, &project).started_in(&cwd);
     disk.before_read = provided.before_read;
+    if !provided.plugin_imports.is_empty() {
+        disk.take_plugin_imports(provided.plugin_imports);
+    }
     disk.scripts_of_page = provided.scripts_of_page;
     disk.keeps_byte_order_marks = provided.keeps_byte_order_marks;
     if let Libs::Bundled(libs) = request.libs {
@@ -2643,6 +2646,36 @@ fn check_project_of(
     }
 }
 
+/// The files of a program whose path leads through a link. `Host::plugin_imports` has a file by
+/// its real path, as the bundler does. A program has it by the path that it is imported by.
+/// First what each of them imports there, by the index of its module. Then each with the
+/// `tspath.Path` of its real path, sorted by that. A declaration file is not asked about: most
+/// files of a program are installed ones, and the bundler has none of them.
+fn files_through_links<'a>(
+    program: &Program,
+    host: &'a dyn Host,
+) -> (Vec<(usize, &'a [PluginImport])>, Vec<(Vec<u8>, FileId)>) {
+    let (is_case_sensitive, plugin_imports) = (host.is_case_sensitive(), host.plugin_imports());
+    let (mut importers, mut by_real_path) = (Vec::new(), Vec::new());
+    for (index, module) in program.files.modules.iter().enumerate() {
+        if module.is_lib || module.hir.kind == FileKind::Declaration {
+            continue;
+        }
+        let real = host.realpath(module.file_name());
+        let real = to_path(&real, is_case_sensitive);
+        if *real == *module.path.text {
+            continue;
+        }
+        let imports = plugin_imports_of(plugin_imports, &real);
+        if !imports.is_empty() {
+            importers.push((index, imports));
+        }
+        by_real_path.push((real.into_owned(), FileId(index as u32)));
+    }
+    by_real_path.shared_sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    (importers, by_real_path)
+}
+
 /// `named` is sorted. It has, and `file` is, a `tspath.Path`.
 fn is_among(named: &[Vec<u8>], file: &[u8]) -> bool {
     named.binary_search_by(|it| it.as_slice().cmp(file)).is_ok()
@@ -3037,6 +3070,9 @@ impl Host for WithOutputs<'_> {
     }
     fn extra_file_extensions(&self) -> &[(Vec<u8>, ScriptKind)] {
         self.disk.extra_file_extensions()
+    }
+    fn plugin_imports(&self) -> &[(Vec<u8>, Vec<PluginImport>)] {
+        self.disk.plugin_imports()
     }
     fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>> {
         self.disk.scripts_of_page(page)
@@ -4077,8 +4113,15 @@ fn check_named_files(
         .map(|i| FileId(i as u32))
         .collect();
     let mut scripts_elsewhere = Vec::new();
+    let plugin_imports = host.plugin_imports();
+    debug_assert!(plugin_imports.is_sorted_by(|a, b| a.0 < b.0));
     let is_reached = named.map(|named| {
         let modules = &program.files.modules;
+        // Only a bundle with plugins asks.
+        let through_links = match plugin_imports.is_empty() {
+            true => Default::default(),
+            false => files_through_links(program, host),
+        };
         let mut is_reached = vec![false; modules.len()];
         let mut to_follow: Vec<usize> = (0..modules.len())
             .filter(|&i| is_among(named, modules[i].path.text))
@@ -4086,6 +4129,10 @@ fn check_named_files(
         for &i in &to_follow {
             is_reached[i] = true;
         }
+        // What is no file of the program and is followed for what it imports, by
+        // `PluginImport::path`.
+        let mut through: Vec<&[u8]> = Vec::new();
+        let mut is_followed: FxHashSet<&[u8]> = FxHashSet::default();
         while let Some(i) = to_follow.pop() {
             // A page stands for its scripts.
             let specifiers = modules[i].bound.specifiers.iter();
@@ -4107,6 +4154,46 @@ fn check_named_files(
             for edge in edges.iter().copied().chain(scripts) {
                 if !std::mem::replace(&mut is_reached[edge.idx()], true) {
                     to_follow.push(edge.idx());
+                }
+            }
+            // What only a plugin can read, like `App.svelte`, stands for what it imports.
+            if plugin_imports.is_empty() {
+                continue;
+            }
+            // The bundler has the file by its real path.
+            let own = plugin_imports_of(plugin_imports, modules[i].path.text);
+            let own = match through_links.0.binary_search_by_key(&i, |it| it.0) {
+                Ok(at) if own.is_empty() => through_links.0[at].1,
+                _ => own,
+            };
+            // First what the file imports itself, then what is behind a file that is followed.
+            let mut own = Some(own);
+            while let Some(imports) =
+                (own.take()).or_else(|| Some(plugin_imports_of(plugin_imports, through.pop()?)))
+            {
+                for import in imports {
+                    let here = match import.is_source {
+                        true => (program.files.by_path.get(&import.path)).or_else(|| {
+                            let linked = &through_links.1;
+                            let at = linked.binary_search_by(|it| (*it.0).cmp(&import.path));
+                            at.ok().map(|at| linked[at].1)
+                        }),
+                        false => None,
+                    };
+                    match here {
+                        Some(file) => {
+                            if !std::mem::replace(&mut is_reached[file.idx()], true) {
+                                to_follow.push(file.idx());
+                            }
+                        }
+                        // It is not checked: only a plugin can read it, or the program does
+                        // not have it.
+                        None => {
+                            if is_followed.insert(&import.path) {
+                                through.push(&import.path);
+                            }
+                        }
+                    }
                 }
             }
         }

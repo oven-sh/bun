@@ -1188,12 +1188,29 @@ pub struct TypeChecked<'a, 'i> {
     pub conditions: &'a [Box<[u8]>],
     /// `loaders`. A file that only has types is not in the bundle, so not among `sources`.
     pub loaders: &'a LoaderHashTable,
+    /// The imports that the type checker cannot follow, because a plugin has loaded the file that
+    /// imports or the file that is imported: `main.ts` imports `App.svelte`, which imports
+    /// `lib.ts`. Not what is installed, and not the imports of a file that `entry_points` has
+    /// them for.
+    pub plugin_imports: &'i mut dyn Iterator<Item = PluginImport<'a>>,
     /// The path of each JavaScript or TypeScript file that an entry point resolved to, or that a
     /// page imports.
     pub entry_points: &'i mut dyn Iterator<Item = &'a [u8]>,
     /// The path, the text and the loader of each JavaScript, TypeScript and JSON file of the
     /// bundle, which the type checker takes instead of reading the file again.
     pub sources: &'i mut dyn Iterator<Item = (&'a [u8], &'a [u8], Loader)>,
+}
+
+/// `TypeChecked::plugin_imports`
+pub struct PluginImport<'a> {
+    /// The namespace and the path of the module that imports. A file has no namespace here.
+    pub importer: (&'a [u8], &'a [u8]),
+    /// Of the module that the bundler has found for the import.
+    pub imported: (&'a [u8], &'a [u8]),
+    /// A plugin has loaded that file.
+    pub is_loaded_by_plugin: bool,
+    /// A plugin has loaded it, and it is of the `files` of the build.
+    pub is_in_files: bool,
 }
 
 /// `BundleOptions::type_check`. Errors are added to `log`, or reported in another way. Returns

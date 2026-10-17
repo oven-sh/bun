@@ -9,7 +9,7 @@
 
 use super::cli::{Options, Precedence};
 use super::tailwind::SetBy;
-use super::{editorconfig, package_json, tailwind};
+use super::{editorconfig, tailwind};
 use crate::configs::NAMES_OF_VITE;
 use crate::gitignore::{self, Chain};
 use crate::paths::package_of;
@@ -20,6 +20,7 @@ use bun_ast::expr::Data;
 use bun_collections::index_sort::sort_slice;
 use bun_core::strings;
 use bun_format::FormatOptions;
+use bun_format::json::{PackageJsonPlugin, SortPackageJson};
 use bun_format::sort_imports::{Settings as SortSettings, SortImports};
 use bun_format::tailwind::Oxc;
 use bun_lint::glob::Picomatch;
@@ -158,7 +159,7 @@ struct Override {
 /// A list of plugins.
 #[derive(Default)]
 struct Plugins {
-    /// One of them is not built in: its options are not known here.
+    /// One of them isn't built in, so Bun doesn't know its options.
     names_others: bool,
     /// One of them is `prettier-plugin-tailwindcss`.
     sorts_classes: bool,
@@ -236,7 +237,7 @@ const PLUGIN_FOR_CLASSES: &[u8] = b"prettier-plugin-tailwindcss";
 const PLUGIN_OF_OXC: &[u8] = b"@prettier/plugin-oxc";
 /// See [`Configs::formats_svelte`].
 const PLUGIN_FOR_SVELTE: &[u8] = b"prettier-plugin-svelte";
-/// See `package_json.rs`.
+/// See `src/format/json/sort_package_json/npm.rs`.
 const PLUGIN_FOR_PACKAGE_JSON: &[u8] = b"prettier-plugin-packagejson";
 
 pub(super) fn is_plugin_for_svelte(name: &[u8]) -> bool {
@@ -253,7 +254,7 @@ fn svelte_in(settings: &Settings) -> Option<bool> {
     about_it.map(|it| it.1 != b"false")
 }
 
-/// Plugins whose work is built in: they sort imports, classes and the keys of `package.json`, or format Svelte.
+/// Returns true for a plugin that's built in. These sort imports, classes or `package.json` keys, or format Svelte.
 pub(super) fn is_built_in_plugin(name: &[u8]) -> bool {
     let name = package_of(name);
     name.ends_with(b"/prettier-plugin-sort-imports")
@@ -299,8 +300,8 @@ fn is_built_in(plugin: &Json) -> bool {
     name_of(plugin).is_some_and(is_built_in_plugin)
 }
 
-/// Plugins that add a language to Prettier and leave the others as they are, with how the names of its files end. Without them
-/// the rest of a project is formatted the same.
+/// Plugins that add a language to Prettier and don't affect other languages, each with its file name endings. The rest
+/// of a project is formatted the same without them.
 const PLUGINS_FOR_LANGUAGES: [(&[u8], &[&[u8]]); 21] = [
     (b"prettier-plugin-astro", &[b".astro"]),
     (b"@prettier/plugin-pug", &[b".pug", b".jade"]),
@@ -552,8 +553,8 @@ fn not_an_integer(name: &[u8], value: &[u8], is_flag: bool) -> Option<Vec<u8>> {
     )
 }
 
-/// `packageSortOrder` of `prettier-plugin-packagejson`, as [`Settings`] have it. `Err`: Prettier's message for a value that isn't
-/// an array of strings.
+/// Parses `prettier-plugin-packagejson`'s `packageSortOrder` from its value in [`Settings`]. Returns Prettier's error
+/// message if it isn't an array of strings.
 fn package_sort_order(value: &[u8]) -> Result<Vec<Vec<u8>>, Vec<u8>> {
     let json = json::parse(value).filter(|it| it.as_str().is_none());
     let json = json.unwrap_or_else(|| Json::String(value.to_vec()));
@@ -909,8 +910,6 @@ pub(crate) struct Resolved {
     pub(crate) options: FormatOptions,
     /// `insertFinalNewline: false` of oxfmt.
     pub(crate) omits_final_newline: bool,
-    /// Set for a `package.json` whose keys `prettier-plugin-packagejson` sorts.
-    pub(crate) package_json: Option<package_json::Sort>,
     /// One of [`Configs::unsupported_options`] is among those of the file.
     pub(crate) has_unsupported_option: bool,
     /// What oxc's parser reports and recovers from is formatted, as in the tests of its formatter. oxfmt refuses it.
@@ -1020,7 +1019,7 @@ pub(crate) struct Configs<'c> {
     pub(crate) flavor: Flavor,
     /// By directory: see [`Configs::tsconfig_of`].
     tsconfigs: Guarded<FxHashMap<Vec<u8>, Arc<Settings>>>,
-    /// [`package_json::Sort::has_files_of_yarn_or_pnpm`]
+    /// [`PackageJsonPlugin::has_files_of_yarn_or_pnpm`]
     has_files_of_yarn_or_pnpm: OnceLock<bool>,
     /// How to sort imports, by the options that say so: they are read once, not for every file.
     sort_imports: Guarded<Vec<(SortSettings, Option<Arc<SortImports>>)>>,
@@ -1743,12 +1742,12 @@ impl<'c> Configs<'c> {
         (self.options.format.iter()).any(|it| it.0 == b"parser" && it.1 == b"svelte")
     }
 
-    /// Whether the Svelte in the file at `path`, which has `scope`, is formatted: a component, or the blocks of Svelte in a
-    /// Markdown file. `None`: text without a file name.
+    /// Returns true if Bun formats the Svelte in the file at `path`, which has `scope`. That's a component, or the
+    /// Svelte blocks in a Markdown file. `path` is `None` for text without a file name.
     ///
-    /// `--svelte`, `--no-svelte` and `svelte` in `[fmt]` say so. So does the config: oxfmt's with `svelte`, Prettier's by naming
-    /// the plugin, whichever version of it is installed. Which of the two counts is up to `--config-precedence`, as for every
-    /// option. Where neither says anything, it is formatted if no config applies.
+    /// `--svelte`, `--no-svelte` and `svelte` in `[fmt]` decide. So does the config: oxfmt's with `svelte`, Prettier's
+    /// by listing the plugin, whichever version of it is installed. If both are set, `--config-precedence` picks one,
+    /// as for every option. If neither is set, Svelte is formatted if no config applies.
     pub(crate) fn formats_svelte(&self, scope: &Scope, path: Option<&[u8]>) -> bool {
         self.formats_svelte_with(scope, path, self.svelte_of_flags(path))
     }
@@ -1796,16 +1795,24 @@ impl<'c> Configs<'c> {
             || (self.options.plugins.iter()).any(|it| is_plugin_for_svelte(it))
     }
 
-    /// Whether the config or `--plugin` names `prettier-plugin-packagejson` for the file at `path`, which has `scope`.
+    /// True if the config or `--plugin` lists `prettier-plugin-packagejson` for the file at `path`, which has `scope`.
     fn names_plugin_for_package_json(&self, scope: &Scope, path: Option<&[u8]>) -> bool {
         (self.plugins_for(scope, path)).is_some_and(|it| it.sorts_package_json)
             || (self.options.plugins.iter()).any(|it| is_plugin_for_package_json(it))
     }
 
+    /// `hasYarnOrPnpmFiles` of `sort-package-json`
     fn has_files_of_yarn_or_pnpm(&self) -> bool {
-        *self
-            .has_files_of_yarn_or_pnpm
-            .get_or_init(|| package_json::has_files_of_yarn_or_pnpm(&self.environment.cwd))
+        *self.has_files_of_yarn_or_pnpm.get_or_init(|| {
+            let kind = |name: &[u8]| fs::kind(&paths::join(&self.environment.cwd, name));
+            let files: [&[u8]; 4] = [
+                b"yarn.lock",
+                b".yarnrc.yml",
+                b"pnpm-lock.yaml",
+                b"pnpm-workspace.yaml",
+            ];
+            files.iter().any(|it| kind(it).is_some()) || kind(b".yarn") == Some(fs::Kind::Directory)
+        })
     }
 
     /// What `svelte` in the configuration of oxfmt says about the file at `path`, which has `scope`. An override can turn it
@@ -1962,7 +1969,7 @@ impl<'c> Configs<'c> {
         let names_plugin_for_svelte = self.names_plugin_for_svelte(scope, path);
         // Prettier validates a plugin's options for every file.
         let mut package_json = (!is_oxfmt && self.names_plugin_for_package_json(scope, path))
-            .then(package_json::Sort::default);
+            .then(PackageJsonPlugin::default);
         let mut unknown: Vec<(&[u8], &[u8])> = Vec::new();
         // `sortTailwindcss` as the options of the plugin have it.
         let mut of_plugin =
@@ -1996,7 +2003,7 @@ impl<'c> Configs<'c> {
                 }
                 b"packageSortOrder" if package_json.is_some() => {
                     let first = package_sort_order(value).map_err(Fatal)?;
-                    package_json = Some(package_json::Sort {
+                    package_json = Some(PackageJsonPlugin {
                         first,
                         ..Default::default()
                     });
@@ -2018,13 +2025,13 @@ impl<'c> Configs<'c> {
                         ));
                     }
                 }
-                // The other option of the plugin, and all of them where Svelte is off.
+                // The plugin's remaining option, and all of its options where Svelte is off, are accepted and ignored.
                 b"svelteSortOrder"
                 | b"svelteAllowShorthand"
                 | b"svelteIndentScriptAndStyle"
                 | b"svelte5CompilerPath"
                     if names_plugin_for_svelte => {}
-                // `Configs::formats_svelte` has looked at it.
+                // `Configs::formats_svelte` already handled it.
                 name if (name == b"svelte" || name.starts_with(b"svelte.")) && is_known(name) => {}
                 name if name == b"jsdoc" || name.starts_with(b"jsdoc.") => {
                     if resolved.options.set(name, value).is_err() {
@@ -2102,15 +2109,18 @@ impl<'c> Configs<'c> {
             }
         }
         resolved.options.sort_imports = self.sort_imports(sort)?;
-        // A flag or `[fmt]` counts for more than the plugin.
-        if let Some(mut sort) = package_json
+        // A flag or `[fmt]` overrides the plugin.
+        if let Some(mut plugin) = package_json
             && !says_how_to_sort_package_json
             && path.is_some_and(|it| paths::basename(it) == b"package.json")
         {
-            sort.has_files_of_yarn_or_pnpm = self.has_files_of_yarn_or_pnpm();
-            resolved.package_json = Some(sort);
+            plugin.has_files_of_yarn_or_pnpm = self.has_files_of_yarn_or_pnpm();
+            resolved.options.sort_package_json = Some(SortPackageJson {
+                plugin: Some(Arc::new(plugin)),
+                ..Default::default()
+            });
         }
-        // A flag or `[fmt]` counts for more than the plugin.
+        // A flag or `[fmt]` overrides the plugin.
         let (value, set_by) = match (sort_tailwindcss, of_plugin) {
             (Some(value), _) => (value, tailwindcss_set_by(is_tailwindcss_of_bun)),
             (None, Some(entries)) => {

@@ -10,7 +10,6 @@ mod doctor;
 mod editorconfig;
 mod files;
 mod for_rules;
-mod package_json;
 mod prettier;
 mod tailwind;
 
@@ -604,26 +603,6 @@ fn is_same_toml(before: &[u8], after: &[u8]) -> bool {
     }
 }
 
-/// How `prettier-plugin-packagejson` sorts the keys of `text`, or `None` if it doesn't. The plugin runs as part of the
-/// `json-stringify` parser. Prettier doesn't parse blank text, or text without a pragma comment under `requirePragma`.
-///
-/// With a range the plugin still sorts, and Prettier then applies the offsets to the sorted text. Here the offsets refer to the
-/// text as written, so nothing is sorted.
-fn sort_of_plugin<'r>(
-    resolved: &'r Resolved,
-    parser: bun_format::json::Parser,
-    text: &[u8],
-) -> Option<&'r package_json::Sort> {
-    let options = &resolved.options;
-    let is_whole = options.range_start.unwrap_or(0) == 0
-        && (options.range_end).is_none_or(|end| end >= strings::wtf8_len_utf16(text));
-    let is_read = parser == bun_format::json::Parser::JsonStringify
-        && is_whole
-        && !options.require_pragma
-        && !strings::is_all_js_whitespace(strings::without_utf8_bom(text));
-    resolved.package_json.as_ref().filter(|_| is_read)
-}
-
 /// The formatted text, and where the cursor is in it, if `cursorOffset` says where it was.
 type Formatted = (Vec<u8>, Option<u32>);
 
@@ -678,28 +657,6 @@ fn format(
     match kind {
         Some(Kind::Script) | None => {}
         Some(Kind::Json(parser)) => {
-            if let Some(sort) = sort_of_plugin(resolved, parser, text) {
-                let sorted = package_json::sorted(text, sort)
-                    .map_err(|(message, at)| Failure::Syntax(Problem::at(text, &message, at)))?;
-                let whole = FormatOptions {
-                    range_start: None,
-                    range_end: None,
-                    ..options.clone()
-                };
-                let json = &mut scratch.json;
-                let done = bun_format::json::format(&sorted, parser, &whole, json, &mut out);
-                return finish(done, out, "JSON");
-            }
-            let mut sorted = Vec::new();
-            let text = match options
-                .sort_package_json
-                .filter(|_| paths::basename(name) == b"package.json")
-            {
-                Some(sort) if bun_format::json::sort_package_json(text, sort, &mut sorted) => {
-                    &sorted[..]
-                }
-                _ => text,
-            };
             let done = bun_format::json::format(text, parser, options, &mut scratch.json, &mut out);
             return finish(done, out, "JSON");
         }
@@ -1075,7 +1032,7 @@ pub fn is_same_svelte_for_tests(before: &[u8], after: &[u8]) -> bool {
     bun_format::svelte::has_same_content(before, after, &options, None)
 }
 
-/// Why the file at `path` is in no language that is known.
+/// The error message for the file at `path`, which has no known language.
 fn has_no_parser(configs: &Configs, path: Vec<u8>) -> Vec<u8> {
     let is_off = configs.asks_for_parser_of_svelte() && configs.turns_svelte_off_for(&path);
     let reason: &[u8] = match is_off {

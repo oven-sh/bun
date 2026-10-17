@@ -26,18 +26,6 @@ enum Token {
 struct Parser<'t> {
     text: &'t [u16],
     at: usize,
-    /// End each message with its position, as V8 does.
-    says_where: bool,
-}
-
-/// `units` as WTF-8, which keeps a lone surrogate. Only an escape can produce one.
-fn to_wtf8(units: &[u16]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(units.len());
-    for unit in char::decode_utf16(units.iter().copied()) {
-        let c = unit.map_or_else(|half| u32::from(half.unpaired_surrogate()), u32::from);
-        bun_core::strings::push_codepoint_wtf8(&mut out, c);
-    }
-    out
 }
 
 /// A container whose end the parser hasn't reached yet.
@@ -91,9 +79,6 @@ impl Parser<'_> {
 
     /// `message` with ` at position P (line L column C)`.
     fn error_at(&self, message: &str) -> Vec<u8> {
-        if !self.says_where {
-            return message.as_bytes().to_vec();
-        }
         let at = self.at.min(self.text.len());
         let (mut line, mut line_start, mut i) = (1, 0, 0);
         while i < at {
@@ -246,7 +231,9 @@ impl Parser<'_> {
             match c {
                 0x22 => {
                     self.at += 1;
-                    return Ok(to_wtf8(&units));
+                    let mut out = Vec::with_capacity(units.len());
+                    bun_core::strings::to_utf8_append_to_list(&mut out, &units);
+                    return Ok(out);
                 }
                 0x5C => {
                     let Some(escaped) = self.next().and_then(|c| u8::try_from(c).ok()) else {
@@ -373,15 +360,6 @@ impl Parser<'_> {
 
 /// `Err`: the message of the `SyntaxError`.
 pub fn parse(text: &[u8]) -> Result<Json, Vec<u8>> {
-    parse_with(text, true).map_err(|it| it.0)
-}
-
-/// For a caller that shows the position itself. `Err`: the message without it, and the byte offset in `text`.
-pub fn parse_or_place(text: &[u8]) -> Result<Json, (Vec<u8>, usize)> {
-    parse_with(text, false)
-}
-
-fn parse_with(text: &[u8], says_where: bool) -> Result<Json, (Vec<u8>, usize)> {
     let mut units: Vec<u16> = Vec::with_capacity(text.len());
     for chunk in text.utf8_chunks() {
         units.extend(chunk.valid().encode_utf16());
@@ -392,16 +370,10 @@ fn parse_with(text: &[u8], says_where: bool) -> Result<Json, (Vec<u8>, usize)> {
     let mut parser = Parser {
         text: &units,
         at: 0,
-        says_where,
     };
-    let parsed = parser
-        .value()
-        .and_then(|value| match parser.check(Token::Eos) {
-            true => Ok(value),
-            false => Err(parser.error_at("Unexpected non-whitespace character after JSON")),
-        });
-    parsed.map_err(|message| {
-        let at = bun_core::strings::wtf8_offset_of_utf16_index(text, parser.at as u32);
-        (message, at)
-    })
+    let value = parser.value()?;
+    match parser.check(Token::Eos) {
+        true => Ok(value),
+        false => Err(parser.error_at("Unexpected non-whitespace character after JSON")),
+    }
 }

@@ -2556,14 +2556,15 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     );
   });
 
-  // What is expected is what Prettier 3.9.9 prints with prettier-plugin-packagejson 3.0.2 and sort-package-json 3.7.1, on Node.
+  // Unless a test says otherwise, the expected output is what Prettier 3.9.9 prints on Node, with
+  // prettier-plugin-packagejson 3.0.2 and sort-package-json 3.7.1.
   describe("prettier-plugin-packagejson", () => {
     const plugin = "prettier-plugin-packagejson";
-    /** Without the summary. */
+    /** Like `format`, without the summary. */
     const quiet = (files: Record<string, string>, args: string[], options?: Options) =>
       format(files, ["--log-level=warn", ...args], options);
     const prettierrc = `{ "plugins": ["${plugin}"] }\n`;
-    // Stand-ins that would say that they have been there.
+    // Stand-ins whose output would show that they ran.
     const packages = {
       "node_modules/prettier/package.json": '{ "name": "prettier", "version": "3.0.0", "main": "index.cjs" }',
       "node_modules/prettier/index.cjs": `exports.resolveConfig = async () => null;
@@ -2575,7 +2576,7 @@ exports.format = async text => "by Prettier";
     const onlyFormatted = '{\n  "version": "1",\n  "name": "a"\n}\n';
     const rows: [title: string, before: object, after: object][] = [
       [
-        "the keys of the document",
+        "top-level keys",
         {
           "_b": 1,
           "zeta": 1,
@@ -2686,7 +2687,7 @@ exports.format = async text => "by Prettier";
         },
       ],
       [
-        "objects with an order of their own",
+        "objects with their own key order",
         {
           "bugs": { "email": "e", "url": "u", "a": 1 },
           "repository": { "directory": "d", "url": "u", "type": "git" },
@@ -2727,7 +2728,7 @@ exports.format = async text => "by Prettier";
         },
       ],
       [
-        "objects that are sorted by name, and those that are not",
+        "objects that are sorted by name, and objects that aren't",
         {
           "bin": { "b": 1, "a": 1 },
           "contributes": { "b": { "d": 1, "c": 1 }, "a": 1 },
@@ -2797,7 +2798,7 @@ exports.format = async text => "by Prettier";
         },
       ],
       [
-        "an array with something else than strings stays as it is",
+        "an array with anything other than strings is left alone",
         { "keywords": ["b", 1, "b"], "bundledDependencies": ["b", "a", null, "b"] },
         { "keywords": ["b", 1, "b"], "bundledDependencies": ["b", "a", null, "b"] },
       ],
@@ -2880,7 +2881,7 @@ exports.format = async text => "by Prettier";
         },
       ],
       [
-        "scripts that run-s runs in the order in which they are written",
+        "scripts keep their order if run-s runs them in that order",
         {
           "scripts": { "build:b": "b", "prebuild": "p", "build:a": "a", "build": "run-s build:*", "a": "a" },
           "devDependencies": { "npm-run-all": "1" },
@@ -2902,12 +2903,12 @@ exports.format = async text => "by Prettier";
         },
       ],
       [
-        "not without the package",
+        "but not if npm-run-all isn't a dependency",
         { "scripts": { "c": "c", "b": "run-s b:*", "a": "a" }, "devDependencies": { "other": "1" } },
         { "scripts": { "a": "a", "b": "run-s b:*", "c": "c" }, "devDependencies": { "other": "1" } },
       ],
       [
-        "not without a pattern, and not in parallel",
+        "and not without a pattern, or if they run in parallel",
         {
           "scripts": { "d": "npm-run-all -p b:*", "c": "run-s b a", "b": "xrun-s b:*", "a": "run-sx a:*" },
           "devDependencies": { "npm-run-all": "1" },
@@ -2918,7 +2919,7 @@ exports.format = async text => "by Prettier";
         },
       ],
       [
-        "dependencies as npm sorts them",
+        "dependencies in npm's order",
         {
           "dependencies": {
             "b": "1",
@@ -2973,7 +2974,7 @@ exports.format = async text => "by Prettier";
         },
       ],
       [
-        "dependencies as Yarn and pnpm sort them",
+        "dependencies in Yarn's and pnpm's order",
         {
           "packageManager": "pnpm@9.0.0",
           "dependencies": { "b": "1", "@b/a": "1", "B": "1", "a": "1", "a-b": "1", "a_b": "1", "A": "1" },
@@ -3073,7 +3074,7 @@ exports.format = async text => "by Prettier";
         },
       ],
       [
-        "pnpm.overrides by the lowest version of each range",
+        "pnpm.overrides are sorted by the lowest version in each range",
         {
           "pnpm": {
             "packageExtensions": { "b": { "peerDependencies": { "d": "1", "c": "1" } }, "a": {} },
@@ -3159,39 +3160,44 @@ exports.format = async text => "by Prettier";
         },
       ],
     ];
-    const texts: [title: string, before: string, after: string][] = [
+    // The plugin passes the text through `JSON.parse` and `JSON.stringify`. Bun only moves members.
+    const asWritten: [title: string, before: string, after: string, ofPlugin: string][] = [
       [
-        "numbers, as JSON.stringify writes them",
-        '{ "a": 1.0, "b": -0, "c": 1e3, "d": 1E-7, "e": 12345678901234567890, "f": 0.10, "g": 1e21 }',
-        '{\n  "a": 1,\n  "b": 0,\n  "c": 1000,\n  "d": 1e-7,\n  "e": 12345678901234567000,\n  "f": 0.1,\n  "g": 1e+21\n}\n',
+        "keeps numbers as written",
+        '{ "b": 1.0, "a": -0, "c": 1e400, "d": 1E5, "e": 12345678901234567890, "f": 0.10 }',
+        '{\n  "a": -0,\n  "b": 1.0,\n  "c": 1e400,\n  "d": 1E5,\n  "e": 12345678901234567890,\n  "f": 0.10\n}\n',
+        '{\n  "a": 0,\n  "b": 1,\n  "c": null,\n  "d": 100000,\n  "e": 12345678901234567000,\n  "f": 0.1\n}\n',
       ],
       [
-        "a key that is there twice has its first place and its last value",
-        '{ "b": 1, "a": 2, "b": { "d": 1, "c": 1, "d": 2 } }',
-        '{\n  "a": 2,\n  "b": {\n    "d": 2,\n    "c": 1\n  }\n}\n',
+        "keeps strings and keys as written, and compares what they stand for",
+        '{ "b": "\\u00e9\\/\\ud83d\\ude00\\ud800", "\\u0061": "é", "n\\u0061me": "x", "keywords": ["\\u0062", "b", "a"] }',
+        '{\n  "n\\u0061me": "x",\n  "keywords": [\n    "\\u0062",\n    "a"\n  ],\n  "\\u0061": "é",\n  "b": "\\u00e9\\/\\ud83d\\ude00\\ud800"\n}\n',
+        '{\n  "name": "x",\n  "keywords": [\n    "b",\n    "a"\n  ],\n  "a": "é",\n  "b": "é/😀\\ud800"\n}\n',
       ],
       [
-        "keys that are numbers come first, as in every object of JavaScript",
-        '{ "name": "a", "10": 1, "9": 1, "01": 1, "scripts": { "b": "", "2": "", "1": "" }, "x": { "b": 1, "1": [{ "a": 1, "0": 1 }] } }',
-        '{\n  "9": 1,\n  "10": 1,\n  "name": "a",\n  "scripts": {\n    "1": "",\n    "2": "",\n    "b": ""\n  },\n  "01": 1,\n  "x": {\n    "1": [\n      {\n        "0": 1,\n        "a": 1\n      }\n    ],\n    "b": 1\n  }\n}\n',
+        "keeps every member with a duplicate key, in the order they're written in",
+        '{ "b": 1, "a": 2, "b": { "d": 1, "c": 1, "d": 2 }, "scripts": { "b": "1", "a": "", "b": "2" } }',
+        '{\n  "scripts": {\n    "a": "",\n    "b": "1",\n    "b": "2"\n  },\n  "a": 2,\n  "b": 1,\n  "b": {\n    "d": 1,\n    "c": 1,\n    "d": 2\n  }\n}\n',
+        '{\n  "scripts": {\n    "a": "",\n    "b": "2"\n  },\n  "a": 2,\n  "b": {\n    "d": 2,\n    "c": 1\n  }\n}\n',
       ],
       [
-        "strings",
-        '{ "b": "\\u00e9\\/\\ud83d\\ude00\\ud800\\u0001\\n", "\\u0061": "é" }',
-        '{\n  "a": "é",\n  "b": "é/😀\\ud800\\u0001\\n"\n}\n',
+        "sorts numeric keys like any other key, and only where it sorts",
+        '{ "name": "a", "10": 1, "9": 1, "scripts": { "b": "", "10": "", "9": "" }, "x": { "b": 1, "1": 1 } }',
+        '{\n  "name": "a",\n  "scripts": {\n    "10": "",\n    "9": "",\n    "b": ""\n  },\n  "10": 1,\n  "9": 1,\n  "x": {\n    "b": 1,\n    "1": 1\n  }\n}\n',
+        '{\n  "9": 1,\n  "10": 1,\n  "name": "a",\n  "scripts": {\n    "9": "",\n    "10": "",\n    "b": ""\n  },\n  "x": {\n    "1": 1,\n    "b": 1\n  }\n}\n',
       ],
-      ["what is no object", '[{ "b": 1, "a": 1 }, 1.0]', '[\n  {\n    "b": 1,\n    "a": 1\n  },\n  1\n]\n'],
       [
-        "a byte order mark and \\r\\n",
-        '\uFEFF{\r\n  "version": "1",\r\n  "name": "a"\r\n}\r\n',
-        '\uFEFF{\r\n  "name": "a",\r\n  "version": "1"\r\n}\r\n',
+        "leaves a file alone that isn't an object",
+        '[{ "b": 1, "a": 1 }, 1.0]',
+        '[\n  {\n    "b": 1,\n    "a": 1\n  },\n  1.0\n]\n',
+        '[\n  {\n    "b": 1,\n    "a": 1\n  },\n  1\n]\n',
       ],
     ];
 
-    test("the order of the keys", async () => {
+    test("puts the keys in the plugin's order", async () => {
       const names = rows.map((_, index) => `${index}/package.json`);
       const files = Object.fromEntries(rows.map(([, before], index) => [names[index], JSON.stringify(before)]));
-      // One of them has `prettier`, which is a configuration.
+      // `--config` is needed because one of the files has a `prettier` key, which counts as a config.
       const result = await quiet({ ".prettierrc": prettierrc, ...files }, ["--config", ".prettierrc", "."], {
         reads: names,
       });
@@ -3206,13 +3212,30 @@ exports.format = async text => "by Prettier";
       expect(await different({ ".prettierrc": prettierrc, ...again }, ["--config", ".prettierrc", "."])).toEqual([]);
     });
 
-    test.each(texts)("%s", async (_, before, after) => {
-      const files = { ".prettierrc": `{ "plugins": ["${plugin}"], "endOfLine": "auto" }\n`, "package.json": before };
+    test.each(asWritten)("%s", async (_, before, after, ofPlugin) => {
+      expect(after).not.toBe(ofPlugin);
+      // After the plugin's round trip, the two are the same.
+      expect(JSON.stringify(JSON.parse(after), null, 2) + "\n").toBe(ofPlugin);
+      const files = { ".prettierrc": prettierrc, "package.json": before };
       const result = await quiet(files, ["package.json"], { reads: ["package.json"] });
       expect(result).toMatchObject({ stderr: "", files: { "package.json": after }, exitCode: 0 });
+      expect(await different({ ...files, "package.json": after }, [])).toEqual([]);
     });
 
-    test("every package.json is sorted here, whatever is installed, and no other file", async () => {
+    test("keeps a byte order mark and \\r\\n", async () => {
+      const files = {
+        ".prettierrc": `{ "plugins": ["${plugin}"], "endOfLine": "auto" }\n`,
+        "package.json": '\uFEFF{\r\n  "version": "1",\r\n  "name": "a"\r\n}\r\n',
+      };
+      const result = await quiet(files, ["package.json"], { reads: ["package.json"] });
+      expect(result).toMatchObject({
+        stderr: "",
+        files: { "package.json": '\uFEFF{\r\n  "name": "a",\r\n  "version": "1"\r\n}\r\n' },
+        exitCode: 0,
+      });
+    });
+
+    test("sorts every package.json and no other file, whatever is installed", async () => {
       const files = {
         ".prettierrc": prettierrc,
         "package.json": unsorted,
@@ -3241,7 +3264,7 @@ exports.format = async text => "by Prettier";
       expect(await different({ ...files, ...after, "package.json": unsorted }, [])).toEqual(["package.json"]);
     });
 
-    test("from standard input", async () => {
+    test("sorts standard input", async () => {
       const files = { ".prettierrc": prettierrc, ...packages };
       const piped = (flags: string[]) => quiet(files, flags, { stdin: unsorted });
       expect(await piped(["--stdin-filepath", "a/package.json"])).toMatchObject({
@@ -3254,7 +3277,7 @@ exports.format = async text => "by Prettier";
         exitCode: 1,
       });
       expect(await piped(["--stdin-filepath", "a.json"])).toMatchObject({ raw: unsorted, stderr: "", exitCode: 0 });
-      // The plugin asks for the name of the file.
+      // The plugin checks the file name.
       expect(await piped(["--parser", "json-stringify"])).toMatchObject({
         raw: onlyFormatted,
         stderr: "",
@@ -3268,9 +3291,9 @@ exports.format = async text => "by Prettier";
         "an override",
         { ".prettierrc": JSON.stringify({ overrides: [{ files: "*.json", options: { plugins: [plugin] } }] }) },
       ],
-      ["its path", { ".prettierrc": `{ "plugins": ["./node_modules/${plugin}/lib/index.cjs"] }` }],
+      ["a path", { ".prettierrc": `{ "plugins": ["./node_modules/${plugin}/lib/index.cjs"] }` }],
       [
-        "the module",
+        "an imported module",
         {
           "prettier.config.mjs": `import plugin from "${plugin}";\nexport default { plugins: [plugin] };`,
           [`node_modules/${plugin}/package.json`]: `{ "name": "${plugin}", "main": "index.cjs" }`,
@@ -3278,14 +3301,14 @@ exports.format = async text => "by Prettier";
             'exports.parsers = { "json-stringify": {} };\nexports.options = { packageSortOrder: { type: "string", array: true } };\n',
         },
       ],
-    ])("named by %s", async (_, config, flags = []) => {
+    ])("enabled by %s", async (_, config, flags = []) => {
       const result = await quiet({ ...config, "package.json": unsorted }, [...flags, "package.json"], {
         reads: ["package.json"],
       });
       expect(result).toMatchObject({ stderr: "", files: { "package.json": sorted }, exitCode: 0 });
     });
 
-    test("not for the files of an override that empties the list, or has another parser", async () => {
+    test("doesn't sort files where an override clears the plugin list or sets another parser", async () => {
       const overrides = [
         { files: "a/**", options: { plugins: [] } },
         { files: "b/**", options: { parser: "json" } },
@@ -3299,7 +3322,7 @@ exports.format = async text => "by Prettier";
       expect(result.files).toEqual({ "a/package.json": onlyFormatted, "b/package.json": unsorted });
     });
 
-    test("packageSortOrder", async () => {
+    test("puts the keys in packageSortOrder first", async () => {
       const config = { plugins: [plugin], packageSortOrder: ["zeta", "version", "_a"] };
       const before = { name: "a", _a: 1, main: "m", alpha: 1, version: "1", zeta: 1 };
       const after = { zeta: 1, version: "1", _a: 1, name: "a", main: "m", alpha: 1 };
@@ -3310,7 +3333,7 @@ exports.format = async text => "by Prettier";
         files: { "package.json": JSON.stringify(after, null, 2) + "\n" },
         exitCode: 0,
       });
-      // Without the plugin Prettier does not know the option.
+      // Without the plugin, Prettier doesn't know the option.
       const unknown = await quiet({ ...files, ".prettierrc": '{ "packageSortOrder": ["version"] }' }, []);
       expect(unknown.stderr).toBe('warn: Ignored unknown option { packageSortOrder: ["version"] }.');
     });
@@ -3321,7 +3344,7 @@ exports.format = async text => "by Prettier";
       ['["a", null]', '["a", null]'],
       ["true", "true"],
       ['{ "a": 1 }', "{ a: 1 }"],
-    ])("packageSortOrder: %s is refused for every file, as by Prettier", async (value, shown) => {
+    ])("packageSortOrder: %s is rejected for every file, as in Prettier", async (value, shown) => {
       const files = { ".prettierrc": `{ "plugins": ["${plugin}"], "packageSortOrder": ${value} }`, "a.js": ugly };
       const result = await quiet(files, ["a.js"], { reads: ["a.js"] });
       expect(result.stderr).toBe(
@@ -3330,9 +3353,9 @@ exports.format = async text => "by Prettier";
       expect(result).toMatchObject({ files: { "a.js": ugly }, exitCode: 1 });
     });
 
-    // npm compares names as a dictionary does, Yarn and pnpm by their code units. The plugin looks in the working directory.
+    // npm sorts names in dictionary order, Yarn and pnpm by code unit. The plugin looks in the working directory.
     test.each(["yarn.lock", ".yarnrc.yml", "pnpm-lock.yaml", "pnpm-workspace.yaml", ".yarn/a"])(
-      "with %s, dependencies are sorted as Yarn and pnpm sort them",
+      "with %s, dependencies are sorted the way Yarn and pnpm sort them",
       async name => {
         const before = { dependencies: { b: "1", B: "1", a: "1" } };
         const files = { ".prettierrc": prettierrc, "package.json": JSON.stringify(before), "c/package.json": "{}\n" };
@@ -3345,22 +3368,32 @@ exports.format = async text => "by Prettier";
       },
     );
 
-    // The plugin reads the text with `JSON.parse`, and these are the words of Node.
-    test.each<[string, string, [number, number, string]]>([
-      ['{\n  // a\n  "name": "a"\n}\n', "Expected property name or '}' in JSON", [2, 3, "  // a"]],
-      ['{\n  "name": "a",\n}\n', "Expected double-quoted property name in JSON", [3, 1, "}"]],
-      ["{ name: 1 }\n", "Expected property name or '}' in JSON", [1, 3, "{ name: 1 }"]],
-      ["{ 'name': 1 }\n", "Expected property name or '}' in JSON", [1, 3, "{ 'name': 1 }"]],
-      ['{ "é": 1 } x\n', "Unexpected non-whitespace character after JSON", [1, 12, '{ "é": 1 } x']],
-      ['\uFEFF{ "a": +1 }\n', `Unexpected token '+', "{ "a": +1 }\n" is not valid JSON`, [1, 8, '{ "a": +1 }']],
-    ])("what is not JSON in the strict sense is an error: %j", async (text, message, at) => {
-      const files = { ".prettierrc": prettierrc, "package.json": text, "a.js": ugly };
-      const result = await quiet(files, [], { reads: ["package.json", "a.js"] });
-      expect(result.stderr).toStartWith(problem("package.json", message, at));
-      expect(result).toMatchObject({ files: { "package.json": text, "a.js": formatted }, exitCode: 2 });
+    // The plugin throws for these: "SyntaxError: Expected double-quoted property name in JSON at position 17".
+    test.each([
+      ['{\n  "version": "1",\n  "name": "a",\n}\n', sorted],
+      ["{ version: '1', name: 'a' }\n", sorted],
+      ['{ "version": `1`, "name": "a", }\n', sorted],
+      ['{ "b": +1, "a": [1, , 2] }\n', '{\n  "a": [\n    1,\n    null,\n    2\n  ],\n  "b": 1\n}\n'],
+    ])("sorts whatever it can format without the plugin: %j", async (text, after) => {
+      const result = await quiet({ ".prettierrc": prettierrc, "package.json": text }, [], { reads: ["package.json"] });
+      expect(result).toMatchObject({ stderr: "", files: { "package.json": after }, exitCode: 0 });
     });
 
-    test("a file with nothing in it is no error", async () => {
+    // Prettier doesn't allow comments in a package.json, with or without the plugin, so none ever has to move.
+    test.each<[string, string, [number, number, string]]>([
+      ['{\n  // a\n  "name": "a"\n}\n', "Unexpected token", [2, 3, "  // a"]],
+      ['{ "b": 1, /* c */ "a": 1 }\n', "Unexpected token", [1, 11, '{ "b": 1, /* c */ "a": 1 }']],
+      ['{ "é": 1 } x\n', "Expected end of file", [1, 12, '{ "é": 1 } x']],
+    ])("reports a syntax error the way it does without the plugin: %j", async (text, message, at) => {
+      for (const config of [prettierrc, "{}"]) {
+        const files = { ".prettierrc": config, "package.json": text, "a.js": ugly };
+        const result = await quiet(files, [], { reads: ["package.json", "a.js"] });
+        expect(result.stderr).toStartWith(problem("package.json", message, at));
+        expect(result).toMatchObject({ files: { "package.json": text, "a.js": formatted }, exitCode: 2 });
+      }
+    });
+
+    test("accepts an empty file", async () => {
       for (const text of ["", " \n"]) {
         const result = await quiet({ ".prettierrc": prettierrc, "package.json": text }, [], {
           reads: ["package.json"],
@@ -3369,7 +3402,7 @@ exports.format = async text => "by Prettier";
       }
     });
 
-    test("sortPackageJson, as a flag or in [fmt], counts for more", async () => {
+    test("sortPackageJson, as a flag or in [fmt], overrides the plugin", async () => {
       const before = '{ "license": "MIT", "author": "a", "repository": "r" }\n';
       const text = (...names: string[]) =>
         JSON.stringify(Object.fromEntries(names.map(name => [name, JSON.parse(before)[name]])), null, 2) + "\n";
@@ -3387,31 +3420,30 @@ exports.format = async text => "by Prettier";
       expect(await run({}, ["--no-sort-package-json"])).toBe(text("license", "author", "repository"));
     });
 
-    // Prettier looks for the range in the text that the plugin has sorted.
-    test("with a range nothing is sorted", async () => {
+    // In a package.json, a range formats the whole file except for the final line break, with or without the plugin.
+    // Prettier looks for the offsets in the text that the plugin wrote, so with some ranges it prints that text as it is:
+    // `{"name":"a","version":"1","files":["b","a"]}`.
+    test("sorts with a range too", async () => {
       const text = '{ "version": "1", "name": "a", "files": [ "b",   "a" ] }\n';
-      const run = async (config: string, ...flags: string[]) => {
-        const files = { ".prettierrc": config, "package.json": text };
+      const run = async (...flags: string[]) => {
+        const files = { ".prettierrc": prettierrc, "package.json": text };
         return (await quiet(files, [...flags, "package.json"], { reads: ["package.json"] })).files["package.json"];
       };
-      const ranges = [["--range-start=42", "--range-end=52"], ["--range-end=16"], [`--range-end=${text.length - 1}`]];
-      for (const flags of ranges) {
-        expect({ flags, text: await run(prettierrc, ...flags) }).toEqual({ flags, text: await run("{}", ...flags) });
-      }
-      expect(Object.keys(JSON.parse((await run(prettierrc, ...ranges[0]))!))).toEqual(["version", "name", "files"]);
-      // All of the text is no range.
-      const whole = '{\n  "name": "a",\n  "version": "1",\n  "files": [\n    "b",\n    "a"\n  ]\n}\n';
-      expect(await run(prettierrc, "--range-start=0", `--range-end=${text.length}`)).toBe(whole);
-      expect(await run(prettierrc, "--range-end=1000")).toBe(whole);
+      const whole = '{\n  "name": "a",\n  "version": "1",\n  "files": [\n    "b",\n    "a"\n  ]\n}';
+      expect(await run("--range-end=16")).toBe(whole);
+      expect(await run("--range-start=42", "--range-end=52")).toBe(whole);
+      expect(await run("--range-start=0", `--range-end=${text.length}`)).toBe(whole + "\n");
+      expect(await run("--range-end=1000")).toBe(whole + "\n");
+      expect(await run("--range-start=5", "--range-end=5")).toBe(text);
     });
 
-    test("requirePragma leaves it as it is, since it can have no comment", async () => {
+    test("requirePragma leaves the file unchanged, because it can't have a comment", async () => {
       const files = { ".prettierrc": `{ "plugins": ["${plugin}"], "requirePragma": true }`, "package.json": unsorted };
       const result = await quiet(files, [], { reads: ["package.json"] });
       expect(result).toMatchObject({ stderr: "", files: { "package.json": unsorted }, exitCode: 0 });
     });
 
-    describe("where the plugin loses something or throws", () => {
+    describe("where the plugin drops a key or throws", () => {
       const run = async (before: string) => {
         const result = await quiet({ ".prettierrc": prettierrc, "package.json": before }, [], {
           reads: ["package.json"],
@@ -3421,35 +3453,35 @@ exports.format = async text => "by Prettier";
       };
 
       // The plugin prints `{"scripts":{"b":"","a":""},"a":1}`.
-      test("a key __proto__ is a key like another", async () => {
+      test("keeps a __proto__ key", async () => {
         expect(await run('{"__proto__":{"c":1},"a":1,"scripts":{"b":"","a":""},"_a":1}')).toBe(
           '{"scripts":{"a":"","b":""},"a":1,"__proto__":{"c":1},"_a":1}',
         );
       });
 
       // "TypeError: command.includes is not a function"
-      test("a script that is no string, next to npm-run-all", async () => {
+      test("sorts scripts that aren't strings, with npm-run-all in devDependencies", async () => {
         expect(await run('{"betterScripts":{"b":{"command":"c"},"a":"a"},"devDependencies":{"npm-run-all":"1"}}')).toBe(
           '{"betterScripts":{"a":"a","b":{"command":"c"}},"devDependencies":{"npm-run-all":"1"}}',
         );
       });
 
       // "TypeError: Cannot convert undefined or null to object"
-      test("devDependencies: null", async () => {
+      test("sorts scripts next to devDependencies: null", async () => {
         expect(await run('{"scripts":{"b":"","a":""},"devDependencies":null}')).toBe(
           '{"scripts":{"a":"","b":""},"devDependencies":null}',
         );
       });
 
       // "TypeError: Invalid SemVer Range: latest"
-      test("what is no range of versions in pnpm.overrides", async () => {
+      test("sorts an invalid version range in pnpm.overrides last", async () => {
         expect(await run('{"pnpm":{"overrides":{"a@latest":"1","a@2":"1","a@>3 <2":"1","a@1":"1","a":"1"}}}')).toBe(
           '{"pnpm":{"overrides":{"a@>3 <2":"1","a":"1","a@1":"1","a@2":"1","a@latest":"1"}}}',
         );
       });
     });
 
-    test("objects and arrays that are nested very deep", async () => {
+    test("doesn't overflow the stack on very deeply nested objects and arrays", async () => {
       const depth = 30_000;
       const nested = (open: string, close: string) =>
         Buffer.alloc(depth * open.length, open).toString() + "1" + Buffer.alloc(depth * close.length, close).toString();

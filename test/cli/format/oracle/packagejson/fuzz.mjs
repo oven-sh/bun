@@ -1,14 +1,23 @@
-// Holds `bun fmt` against Prettier with prettier-plugin-packagejson, on random package.json files or on real ones.
+// Compares `bun fmt` with Prettier and prettier-plugin-packagejson, on random package.json files or on real ones.
 //
-//   node fuzz.mjs --modules=<dir> --bun=<bun> [--count=3000] [--seed=1] [--large] [--yarn] [--files=<dir>]
+//   node fuzz.mjs --modules=<dir> --bun=<bun> [--count=3000] [--seed=1] [--large] [--loose] [--yarn] [--files=<dir>]
 //
 // - `--modules`: a directory with node_modules/prettier and node_modules/prettier-plugin-packagejson.
-// - `--large`: hundreds of `scripts` and of `pnpm.overrides`, for what depends on how V8 sorts.
-// - `--yarn`: with a yarn.lock in the working directory, which changes how dependencies are sorted.
-// - `--files`: every package.json below that directory, in the place of random ones.
+// - `--large`: hundreds of `scripts` and `pnpm.overrides`, to cover behavior that depends on V8's sort algorithm.
+// - `--loose`: gives Bun the same files with trailing commas, single quotes and unquoted keys, which the plugin rejects.
+// - `--yarn`: puts a yarn.lock in the working directory, which changes how dependencies are sorted.
+// - `--files`: uses every package.json under that directory instead of random ones.
 //
-// Run it with Node: the plugin compares some keys of `pnpm.overrides` in a way that is no order, so what it prints depends on
-// the engine. Where the plugin throws, the input is not compared: see the header of src/lint/driver/fmt/package_json.rs.
+// Bun puts the keys where the plugin puts them and leaves every value as written. The plugin passes the text through
+// `JSON.parse` and `JSON.stringify`. So a file counts as "the same keys" if Bun's output is the plugin's after that round
+// trip, and the report says what the round trip changed: numbers, strings, duplicate keys, or numeric keys, which
+// JavaScript moves to the front. Anything else is a difference.
+//
+// It also checks that Bun rewrites nothing: every line of its output is a line of what it prints without the plugin.
+//
+// Run it with Node. The way the plugin compares some `pnpm.overrides` keys isn't a consistent ordering, so its output
+// depends on the engine. Inputs that make the plugin throw aren't compared: see the header of
+// src/format/json/sort_package_json/npm.rs.
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { createRequire } from "node:module";
@@ -37,21 +46,33 @@ const shuffled = list => {
 const some = (list, most) => shuffled(list).slice(0, int(most + 1));
 const unique = list => [...new Set(list)];
 
-/** An object whose keys stay in the order in which they are written, also those that are numbers. */
+/** An object whose keys keep their written order, including numeric keys. */
 class Written {
   constructor(entries) {
     this.entries = entries;
   }
 }
+/** A number or a string, spelled this way. */
+class Raw {
+  constructor(text) {
+    this.text = text;
+  }
+}
 const object = (keys, value = scalar) => new Written(keys.map(key => [key, value()]));
-const text = value =>
-  value instanceof Written
-    ? `{${value.entries.map(([key, it]) => `${JSON.stringify(key)}:${text(it)}`).join(",")}}`
-    : Array.isArray(value)
-      ? `[${value.map(text).join(",")}]`
-      : Object.is(value, -0)
-        ? "-0"
-        : JSON.stringify(value);
+/** `value` as JSON. `loose`: as something that only Bun reads, and prints the same. */
+function text(value, loose = false) {
+  const comma = () => (loose && chance(0.3) ? "," : "");
+  const string = it =>
+    loose && chance(0.3) && /^[^'"\\\n]*$/.test(it) ? `'${it}'` : JSON.stringify(it).replace(/^"a/, () => pick(['"a', '"\\u0061']));
+  const key = it => (loose && chance(0.3) && /^[a-z_$]+$/i.test(it) ? it : string(it));
+  if (value instanceof Raw) return value.text;
+  if (value instanceof Written) {
+    const members = value.entries.map(([name, it]) => `${key(name)}:${text(it, loose)}`);
+    return `{${members.join(",")}${members.length > 0 ? comma() : ""}}`;
+  }
+  if (Array.isArray(value)) return `[${value.map(it => text(it, loose)).join(",")}${value.length > 0 ? comma() : ""}]`;
+  return typeof value === "string" ? string(value) : JSON.stringify(value);
+}
 
 // prettier-ignore
 const WORDS = ["a", "b", "B", "Z", "z", "_a", "_b", "-x", "a-b", "a_b", "a.b", "a:b", "@s/a", "@s/b", "@S/a", "é", "É", "ä", "z1", "z10", "z2", "10", "9", "0", "01", "1.5", "4294967294", "4294967295", "", "$x", "~y", "😀", "￮", "ﬁ", "a b", "__proto", "constructor", "toString", "A", "aa", "Aa", "aA", "AA", "lodash", "lodash.merge", "lodash-es", "@types/node", "@types/a", "typescript", "react", "react-dom", "React"];
@@ -62,7 +83,10 @@ const COMMANDS = ["tsc", "run-s build:*", "run-s a b", "npm-run-all -s build:*",
 // prettier-ignore
 const RANGES = ["1", "2", "^1.2.3", "~1.2", "1.x", "*", ">=1.0.0 <2", ">1", "<1", "<=2.3.4", ">1.2.3", ">1.2.3-alpha", "1.2.3-beta.1", "1.2.3 - 2", "^0.0.1", "^0.1", "1 || 2", ">=3 || 1.5", "=1.2.3", "v1.2.3", ">=1.2.3-rc.1 <2", "0", "0.0.0", "<0.0.1", "10", "9", "1.10", "1.9", ">=6.0.0 <6.3.1", "<5.7.2", "7", "7.0.0-0", ">=7.0.0 <7.5.2", ">=2", ">5", "<3", "12.1", "12.10"];
 
-const scalar = () => pick([1, "x", true, null, 1.5, -0, 1e21, "é", "\n", [], new Written([]), 0.1, 100]);
+// prettier-ignore
+const SPELLINGS = ["-0", "1.0", "1e400", "1E5", "1e21", "12345678901234567890", "0.10", '"\\u00e9"', '"\\/"', '"\\ud800"', '"\\ud83d\\ude00"'];
+const scalar = () =>
+  chance(0.1) ? new Raw(pick(SPELLINGS)) : pick([1, "x", true, null, 1.5, "é", "\n", [], new Written([]), 0.1, 100]);
 const anything = (depth = 0) =>
   object(some(WORDS, 8), () =>
     depth < 3 && chance(0.3) ? anything(depth + 1) : chance(0.1) ? [anything(depth + 1), 1] : scalar(),
@@ -94,7 +118,7 @@ const eslintConfig = depth =>
 const person = of(["url", "email", "name", "z"]);
 const hooks = of(["pre-push", "pre-commit", "commit-msg", "zzz", "aaa", "post-merge", "update"]);
 
-/** What a key of the document can have. */
+/** Generates a value for each top-level key. */
 const FIELDS = {
   name: () => "x",
   version: () => "1.0.0",
@@ -196,10 +220,11 @@ const FIELDS = {
 
 function small() {
   const keys = shuffled(unique([...some(Object.keys(FIELDS), 14), ...some(WORDS, 5)]));
-  const entries = keys.map(key => [key, Object.hasOwn(FIELDS, key) ? FIELDS[key]() : chance(0.5) ? anything() : scalar()]);
-  // A key that is there twice.
-  if (chance(0.05) && entries.length > 0) entries.push([entries[0][0], "x"]);
-  return text(new Written(entries)) + pick(["", "\n"]);
+  const value = key => (Object.hasOwn(FIELDS, key) ? FIELDS[key]() : chance(0.5) ? anything() : scalar());
+  const entries = keys.map(key => [key, value(key)]);
+  // A duplicate key.
+  if (chance(0.05) && entries.length > 0) entries.push([entries[0][0], value(entries[0][0])]);
+  return new Written(entries);
 }
 
 function large() {
@@ -207,12 +232,10 @@ function large() {
   const parts = ["a", "b", "c", "build", "test", "", "a-b", "x"];
   const script = () =>
     pick(["", "pre", "post", "prepre"]) + Array.from({ length: 1 + int(4) }, () => pick(parts)).join(":");
-  return text(
-    new Written([
-      ["pnpm", new Written([["overrides", object(selectors(names, 400), () => "1")]])],
-      ["scripts", object(unique(Array.from({ length: int(300) }, script)), () => "")],
-    ]),
-  );
+  return new Written([
+    ["pnpm", new Written([["overrides", object(selectors(names, 400), () => "1")]])],
+    ["scripts", object(unique(Array.from({ length: int(300) }, script)), () => "")],
+  ]);
 }
 
 function* found(directory) {
@@ -222,32 +245,99 @@ function* found(directory) {
   }
 }
 
+/** For each file, what the plugin gets and what Bun gets. */
 const inputs = named.files
-  ? unique(found(resolve(named.files)))
-  : Array.from({ length: Number(named.count ?? 3000) }, "large" in named ? large : small);
+  ? unique(found(resolve(named.files))).map(it => [it, it])
+  : Array.from({ length: Number(named.count ?? 3000) }, () => {
+      const value = "large" in named ? large() : small();
+      const strict = text(value);
+      return [strict, "loose" in named ? text(value, true) : strict];
+    });
+
+/** What `JSON.parse` and `JSON.stringify` would change in `json`, which `bun fmt` has printed. */
+function changedByRoundTrip(json) {
+  const kinds = new Set();
+  // The keys of the objects that are open, by their value.
+  const open = [];
+  for (const line of json.split("\n")) {
+    const [, key, rest] = /^\s*(?:("(?:[^"\\]|\\.)*"): )?(.*?),?$/.exec(line);
+    if (key !== undefined) {
+      const name = JSON.parse(key);
+      const names = open.at(-1);
+      if (JSON.stringify(name) !== key) kinds.add("strings");
+      if (names.includes(name)) kinds.add("duplicate keys");
+      const isIndex = it => String(it >>> 0) === it && it >>> 0 !== 2 ** 32 - 1;
+      if (isIndex(name) && names.some(it => !isIndex(it) || Number(it) > Number(name))) kinds.add("numeric keys");
+      names.push(name);
+    }
+    if (rest === "{") open.push([]);
+    else if (rest === "}") open.pop();
+    else if (!/^[[\]]|^\{\}$|^$/.test(rest) && JSON.stringify(JSON.parse(rest)) !== rest) {
+      kinds.add(rest.startsWith('"') ? "strings" : "numbers");
+    }
+  }
+  return [...kinds].sort().join(", ");
+}
+
+function roundTrip(json) {
+  try {
+    return JSON.stringify(JSON.parse(json), null, 2) + "\n";
+  } catch {
+    return null;
+  }
+}
+
+/** The lines of `json` without their indentation and commas, with how often each is there. */
+function lines(json) {
+  const counts = new Map();
+  for (const line of json.split("\n").map(it => it.trim().replace(/,$/, ""))) {
+    counts.set(line, (counts.get(line) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/** The first line of `sorted` that `plain` doesn't have, or that it has less often. */
+function rewritten(sorted, plain) {
+  const written = lines(plain);
+  return [...lines(sorted)].find(([line, count]) => count > (written.get(line) ?? 0))?.[0];
+}
 
 const root = fs.mkdtempSync(join(tmpdir(), "packagejson-fuzz-"));
 try {
-  fs.writeFileSync(join(root, ".prettierrc"), '{ "plugins": ["prettier-plugin-packagejson"] }\n');
+  fs.writeFileSync(join(root, "with.json"), '{ "plugins": ["prettier-plugin-packagejson"] }\n');
+  fs.writeFileSync(join(root, "without.json"), "{}\n");
   if ("yarn" in named) fs.writeFileSync(join(root, "yarn.lock"), "");
-  const file = index => join(root, String(index), "package.json");
-  for (const [index, input] of inputs.entries()) {
-    fs.mkdirSync(join(root, String(index)));
-    fs.writeFileSync(file(index), input);
+  const file = (directory, index) => join(root, directory, String(index), "package.json");
+  for (const [index, [, input]] of inputs.entries()) {
+    for (const directory of ["with", "without"]) {
+      fs.mkdirSync(join(root, directory, String(index)), { recursive: true });
+      fs.writeFileSync(file(directory, index), input);
+    }
   }
-  // The plugin looks for lock files there.
+  // The plugin looks for lock files in the working directory.
   process.chdir(root);
-  // `--config`: a package.json with `prettier` is a configuration.
-  spawnSync(bun, ["fmt", "--log-level=silent", "--config", ".prettierrc", "."], { cwd: root });
+  // `--config` is needed because a package.json with a `prettier` key counts as a config.
+  for (const directory of ["with", "without"]) {
+    spawnSync(bun, ["fmt", "--log-level=silent", "--config", `${directory}.json`, directory], { cwd: root });
+  }
   let [same, thrown, different] = [0, 0, 0];
-  for (const [index, input] of inputs.entries()) {
-    const expected = await prettier.format(input, { filepath: file(index), plugins: [plugin] }).catch(() => null);
-    const printed = fs.readFileSync(file(index), "utf8");
-    if (expected === null) thrown++;
+  const kept = new Map();
+  const report = found => ++different <= 5 && console.log(JSON.stringify(found, null, 2));
+  for (const [index, [strict, input]] of inputs.entries()) {
+    const options = { filepath: file("with", index), plugins: [plugin] };
+    const expected = await prettier.format(strict, options).catch(() => null);
+    const printed = fs.readFileSync(file("with", index), "utf8");
+    const line = rewritten(printed, fs.readFileSync(file("without", index), "utf8"));
+    if (line !== undefined) report({ input, printed, rewritten: line });
+    else if (expected === null) thrown++;
     else if (expected === printed) same++;
-    else if (++different <= 5) console.log(JSON.stringify({ input, expected, printed }, null, 2));
+    else if (expected === roundTrip(printed)) {
+      const kinds = changedByRoundTrip(printed);
+      kept.set(kinds, (kept.get(kinds) ?? 0) + 1);
+    } else report({ input, expected, printed });
   }
   console.log(`${same} the same, ${different} different, ${thrown} that the plugin throws for`);
+  for (const [kinds, count] of kept) console.log(`${count} with the same keys, where the plugin rewrites ${kinds}`);
   process.exitCode = different > 0 ? 1 : 0;
 } finally {
   fs.rmSync(root, { recursive: true, force: true });

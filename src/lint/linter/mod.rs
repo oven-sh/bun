@@ -52,7 +52,7 @@ pub use fixer::{
     verify_and_fix,
 };
 pub use globals::{CommentGlobal, GlobalVariable};
-pub use json_v8::{parse as json_parse, parse_or_place as json_parse_or_place};
+pub use json_v8::parse as json_parse;
 pub use levn::parse_object as parse_levn_object;
 pub(crate) use message::write_json_with;
 pub use message::{

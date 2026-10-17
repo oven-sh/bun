@@ -572,6 +572,7 @@ dependencies = [
  "bun_md",
  "bun_parsers",
  "bun_sema",
+ "bun_semver",
  "bun_threading",
  "rustc-hash",
  "smallvec",

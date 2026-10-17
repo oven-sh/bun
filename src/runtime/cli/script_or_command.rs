@@ -189,14 +189,25 @@ pub(crate) fn is_of_the_project(command: &[u8]) -> bool {
 /// The directory that `--cwd <given>` names, as `bun run` takes it: `..` is folded before links are followed, and an empty
 /// value is the working directory.
 pub(crate) fn directory_of_cwd(given: &[u8]) -> Vec<u8> {
-    use bun_paths::{platform::Loose, resolve_path::join_abs_string_spill};
-    let cwd = working_directory();
-    let base: &[u8] = if bun_paths::is_absolute(given) {
-        b"/"
-    } else {
-        &cwd
+    use bun_paths::platform::Loose;
+    use bun_paths::resolve_path::{join_abs_string_spill, normalize_string_generic_t};
+    // An absolute one needs no working directory, which may be deleted.
+    let base = match bun_paths::is_absolute(given) {
+        true => b"/".to_vec(),
+        false => working_directory(),
     };
-    join_abs_string_spill::<Loose>(base, &mut Vec::new(), &[given]).to_vec()
+    if cfg!(windows) {
+        return join_abs_string_spill::<Loose>(&base, &mut Vec::new(), &[given]).to_vec();
+    }
+    // On POSIX, that function takes a `\` in a name for a separator.
+    let path = [&base[..], b"/", given].concat();
+    let mut folded = vec![b'/'; path.len() + 1];
+    let is_separator = |byte| byte == b'/';
+    let rest =
+        normalize_string_generic_t::<u8, false, false>(&path, &mut folded[1..], b'/', is_separator);
+    let len = 1 + rest.len();
+    folded.truncate(len);
+    folded
 }
 
 /// Decides what `bun <command>` runs, without looking at `command`'s own arguments.

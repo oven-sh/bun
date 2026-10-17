@@ -670,6 +670,52 @@ STARTED=1 exec "${bunExe()}" ${again.join(" ")}
     expect(exitCode).toBe(0);
   });
 
+  // Not `bun check`: like TypeScript, it takes a backslash for a separator everywhere, and finds no file in such a directory.
+  describe.skipIf(isWindows || command === "check")("a backslash in the name of a directory and --cwd", () => {
+    // What is taken for `a\b` if the backslash counts as a separator.
+    const other = { "a/b/other.ts": source, "a/b/sub/other.ts": source };
+
+    test.each([
+      [".", "a\\b", "a\\b"],
+      ["sub", "a\\b", "a\\b/sub"],
+      ["a\\b", ".", "a\\b"],
+    ])("--cwd=%s in %s", async (cwd, from, directory) => {
+      for (const args of [
+        [`--cwd=${cwd}`, command],
+        [command, "--cwd", cwd],
+      ]) {
+        expect(await ran(other, [...args, ...flags, "a.ts"], directory, { from })).toBe("the command");
+      }
+    });
+  });
+
+  test.skipIf(isWindows)("an absolute --cwd needs no working directory", async () => {
+    using dir = tempDir("bun-no-script", { "project/a.ts": source, "deleted/a.ts": "" });
+    const args = [`--cwd=${join(String(dir), "project")}`, command, ...flags, "a.ts"];
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", 'rm -r "$PWD" && exec "$0" "$@"', bunExe(), ...args],
+      env: bunEnv,
+      cwd: join(String(dir), "deleted"),
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toMatch(problem);
+    expect(exitCode).toBe(1);
+  });
+
+  test.skipIf(isWindows)("an absolute --cwd with `//`, `.` and `..` in it", async () => {
+    using dir = tempDir("bun-no-script", { "project/a.ts": source });
+    const cwd = `/..//${String(dir).slice(1)}/./missing/../project//`;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), `--cwd=${cwd}`, command, ...flags, "a.ts"],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toMatch(problem);
+    expect(exitCode).toBe(1);
+  });
+
   // The path of a package.json in it is longer than a path can be.
   test.skipIf(!isLinux)("a working directory whose path is almost as long as a path can be", async () => {
     using dir = tempDir("bun-long-path", script);

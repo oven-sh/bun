@@ -4343,6 +4343,8 @@ pub mod formatter {
                         continue;
                     }
                     if nonempty_count >= 100 {
+                        // A pending hole run is part of the elided tail, not trailing holes.
+                        let elided_from = empty_start.take().unwrap_or(i);
                         writer.print_comma::<C>();
                         writer.write_all(b"\n"); // we want the line break to be unconditional here
                         *writer.estimated_line_length = 0;
@@ -4352,7 +4354,7 @@ pub mod formatter {
                             format_args!(
                                 "{}... {} more items{}",
                                 pf!("<r><d>"),
-                                len - u64::from(i),
+                                len - u64::from(elided_from),
                                 pf!("<r>")
                             ),
                         );

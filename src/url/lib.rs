@@ -1860,8 +1860,6 @@ mod tests {
 
     #[test]
     fn pathname_keeps_its_leading_slashes() {
-        // The request-target is `new URL(s).pathname + search`, and WHATWG
-        // keeps every leading `/` of a special URL's path.
         let url = URL::parse(b"http://localhost:3000//a//b?x=1");
         assert_eq!(url.pathname, b"//a//b?x=1");
         assert_eq!(url.search, b"?x=1");

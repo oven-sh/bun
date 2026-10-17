@@ -2163,13 +2163,8 @@ static JSC::EncodedJSValue collectRows(JSC::JSGlobalObject* lexicalGlobalObject,
             return {};
         }
 
-        // An indexed setter on Array.prototype runs script here, which can finalize the statement.
-        rows->push(lexicalGlobalObject, row);
-        if (castedThis->stmt != stmt) [[unlikely]] {
-            if (!scope.exception())
-                throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, finalizedMessage(castedThis)));
-            return {};
-        }
+        // Not push(): an indexed setter on a prototype would get the row in place of the array, and the array as `this`.
+        rows->putDirectIndex(lexicalGlobalObject, rows->length(), row);
         if (scope.exception()) [[unlikely]] {
             sqlite3_reset(stmt);
             return {};

@@ -312,6 +312,18 @@ class Statement<ReturnType = unknown, ParamsType extends SqliteTypes.SQLQueryBin
 
   *#iterate(...args) {
     const raw = this.#raw;
+    // A write has made all its changes before its first row, and to end it is its commit. Left on a row it would hold
+    // the lock and its transaction until somebody ends the iterator, perhaps the collector.
+    if (!raw.readonly) {
+      const rows = raw.all(args);
+      const run = raw.runCount;
+      for (let i = 0; i < rows.length; i++) {
+        // Another run of the statement ends this iterator: iterateNext() throws.
+        if (raw.runCount !== run) raw.iterateNext(run);
+        yield rows[i];
+      }
+      return;
+    }
     let row = raw.iterate(args);
     const run = raw.runCount;
     try {

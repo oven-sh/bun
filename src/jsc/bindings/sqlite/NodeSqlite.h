@@ -15,6 +15,7 @@
 #include "BunClientData.h"
 #include "SqliteCallbackRoots.h"
 #include "SqliteColumnNames.h"
+#include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/InternalFunction.h>
 #include <wtf/HashMap.h>
@@ -536,10 +537,17 @@ public:
 
     JSStatementSync* statement() const { return m_statement.get(); }
     bool done() const { return m_done; }
-    void setDone() { m_done = true; }
+    void setDone()
+    {
+        m_done = true;
+        m_rows.clear();
+    }
     unsigned capturedGeneration() const { return m_capturedGeneration; }
 
     JSC::WriteBarrier<JSStatementSync> m_statement;
+    // All the rows of a statement that is not read-only, and the next one to hand out.
+    JSC::WriteBarrier<JSC::JSArray> m_rows;
+    unsigned m_nextRow = 0;
 
 private:
     JSStatementSyncIterator(JSC::VM& vm, JSC::Structure* structure)

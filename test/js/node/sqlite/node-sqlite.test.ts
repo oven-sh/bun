@@ -1,6 +1,6 @@
 import { heapStats, jscDescribe } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, isMacOS, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { existsSync, readdirSync, readlinkSync, rmSync } from "node:fs";
 import { builtinModules, isBuiltin } from "node:module";
 import { totalmem } from "node:os";
@@ -3053,7 +3053,7 @@ test.skipIf(process.platform !== "darwin")("reading process.versions does not de
 });
 
 // Each case runs in a child: what it guards against ends the process.
-describe.concurrent("a write statement that is left on its first row", () => {
+describe.concurrent("after the first next() of a statement that writes", () => {
   const prelude = `
     const { DatabaseSync, constants } = require("node:sqlite");
     const insert = "INSERT INTO ft VALUES ('hello world') RETURNING 1";
@@ -3062,7 +3062,7 @@ describe.concurrent("a write statement that is left on its first row", () => {
       db.exec("CREATE VIRTUAL TABLE ft USING " + module + "(x); CREATE TABLE plain (x)");
       return db;
     };
-    // The run stays on its first row, and nothing holds the statement.
+    // Reads the first row and lets go of the iterator.
     const leave = (db, sql = insert) => void db.prepare(sql).iterate().next();
     const allocate = () => Array.from({ length: 20000 }, (_, i) => ({ i, s: "x" + i })).length;
     const collect = () => {
@@ -3149,7 +3149,7 @@ describe.concurrent("a write statement that is left on its first row", () => {
   const nothing = { rows: 0, found: 0, plain: 0 };
   const theRow = { rows: 1, found: 1, plain: 0 };
 
-  const leaveRows = "rows = db.prepare(insert).iterate(); rows.next();";
+  const leaveRows = "rows = db.prepare(insert).iterate(); thrown = thrownBy(() => void (first = rows.next()));";
   // What the index writes to its own tables fires a foreign key action, and that a trigger. fts5 replaces two rows of ft_data
   // every time. fts3 and fts4 delete from ft_segments when they merge 16 segments that are too large for ft_segdir.
   const guarded = (module: string) => `
@@ -3174,6 +3174,7 @@ describe.concurrent("a write statement that is left on its first row", () => {
         UPDATE guarded SET x = 'changed';
       END;
     \`);
+    asked = denied = 0;
     ${leaveRows}
   `;
   const guardedInTheFile = {
@@ -3183,169 +3184,125 @@ describe.concurrent("a write statement that is left on its first row", () => {
   };
   const asItWas = { rows: 16, found: 0, guarded: "as it was", copies: 0, check: "ok" };
 
+  // Nothing is left to end: whatever comes after the first next() calls nothing and changes nothing.
   const roads = {
-    "the statement is collected": "rows = null; collect();",
-    "the statement and the DatabaseSync are collected": "rows = db = null; collect();",
+    "the iterator is collected": "rows = null; collect();",
+    "the iterator and the DatabaseSync are collected": "rows = db = null; collect();",
     "the script ends": "",
     "process.exit() is called": "process.exit();",
-    "the graph that opened it is disposed": "graph.dispose();",
+    "the graph that opened the database is disposed": "graph.dispose();",
   };
-  describe.each(Object.keys(roads) as (keyof typeof roads)[])("and ended when %s", road => {
-    // `start` opens `db` and leaves `rows` on the first row.
-    const onTheRoad = (start: string, inTheFile = counts) =>
+  describe.each(Object.keys(roads) as (keyof typeof roads)[])("and then %s", road => {
+    // `start` opens `db` and reads the first row of `rows`.
+    const onTheRoad = (start: string, inTheFile: Record<string, string> = counts) =>
       inChild(
         `
-        let db, rows, asked = 0, denied = 0;
+        let db, rows, first, asked = 0, denied = 0, thrown;
         const start = () => { ${start} };
         ${road.startsWith("the graph") ? "const graph = new Bun.ModuleGraph({ onError() {} }); graph.run(start);" : "start();"}
+        // How often SQLite asks, in which call, and the words of its refusal differ between its versions.
+        console.log(
+          JSON.stringify({ asked: asked > 0, denied: denied > 0, threw: thrown !== "did not throw", gaveARow: !!first }),
+        );
         ending = true;
         ${roads[road]}
       `,
         inTheFile,
       );
-
-    // Outside a transaction the statement keeps its own open, and what the connection writes later is part of it.
-    const amongOtherWrites = `
-      db = open("fts5");
-      db.exec("INSERT INTO plain VALUES (0); INSERT INTO ft VALUES ('hello earlier')");
-      ${leaveRows}
-      for (let i = 1; i <= 5; i++) db.prepare("INSERT INTO plain VALUES (?)").run(i);
-    `;
     const withPlain = { ...counts, plain: "SELECT count(*) FROM plain" };
 
-    test("is committed, with what the connection wrote later, when there is no authorizer", async () => {
-      expect(await onTheRoad(amongOtherWrites, withPlain)).toEqual({
-        ...quiet,
+    test.each([
+      ["no authorizer", "", false],
+      [
+        "an authorizer that allows",
+        `db.setAuthorizer(() => (called("the authorizer"), asked++, constants.SQLITE_OK));`,
+        true,
+      ],
+    ])("all of it is in the file, with what the connection wrote later: %s", async (_, authorizer, asked) => {
+      expect(
+        await onTheRoad(
+          `
+          db = open("fts5");
+          db.exec("INSERT INTO plain VALUES (0); INSERT INTO ft VALUES ('hello earlier')");
+          ${authorizer}
+          ${leaveRows}
+          for (let i = 1; i <= 5; i++) db.prepare("INSERT INTO plain VALUES (?)").run(i);
+        `,
+          withPlain,
+        ),
+      ).toEqual({
+        ...printed({ asked, denied: false, threw: false, gaveARow: true }),
         file: { rows: 2, found: 2, plain: 6, check: "ok" },
       });
     });
 
-    test("fails, with what the connection wrote later, when there is an authorizer, which is not asked", async () => {
-      expect(
-        await onTheRoad(
-          `
-          ${amongOtherWrites}
-          db.setAuthorizer(() => (called("the authorizer"), constants.SQLITE_OK));
-        `,
-          withPlain,
-        ),
-      ).toEqual({ ...quiet, file: { rows: 1, found: 1, plain: 1, check: "ok" } });
-    });
+    test.each(["fts5", "fts4", "fts3"])(
+      "a table that the authorizer denies is as it was, and next() has thrown in place of a row: %s",
+      async module => {
+        expect(await onTheRoad(guarded(module), guardedInTheFile)).toEqual({
+          ...printed({ asked: true, denied: true, threw: true, gaveARow: false }),
+          file: asItWas,
+        });
+      },
+    );
 
-    test.each(["fts5", "fts4", "fts3"])("leaves a table that the authorizer denies as it was: %s", async module => {
-      expect(await onTheRoad(guarded(module), guardedInTheFile)).toEqual({ ...quiet, file: asItWas });
-    });
-
-    test("calls no function: the write fails as a whole", async () => {
+    test("a function that the commit needs has been called", async () => {
       expect(
         await onTheRoad(`
           craft("a CHECK");
           db = new DatabaseSync(process.env.SQLITE_FILE);
-          db.function("f", { deterministic: true }, x => (called("f"), x));
+          db.function("f", { deterministic: true }, x => (called("f"), asked++, x));
           ${leaveRows}
         `),
-      ).toEqual({ ...quiet, file: { rows: 0, found: 0, check: "ok" } });
+      ).toEqual({
+        ...printed({ asked: true, denied: false, threw: false, gaveARow: true }),
+        file: { rows: 1, found: 1, check: "ok" },
+      });
     });
   });
 
-  test("the call of the user that ends it asks the authorizer, and the row is committed", async () => {
-    expect(
-      await inChild(`
-        const db = open("fts5");
-        const rows = db.prepare(insert).iterate();
-        rows.next();
-        let calls = 0;
-        db.setAuthorizer(() => (calls++, constants.SQLITE_OK));
-        rows.return();
-        console.log(JSON.stringify({ asked: calls > 0, after: committed() }));
-      `),
-    ).toEqual(printed({ asked: true, after: theRow }));
-  });
-
-  test.each(["fts5", "fts4", "fts3"])(
-    "the call of the user that ends it asks the authorizer, which denies its table: %s",
-    async module => {
-      expect(
-        await inChild(
-          `
-        let db, rows, asked = 0, denied = 0;
-        ${guarded(module)}
-        asked = denied = 0;
-        rows.return();
-        console.log(JSON.stringify({ asked: asked > 0, denied }));
-      `,
-          guardedInTheFile,
-        ),
-      ).toEqual({ ...printed({ asked: true, denied: 1 }), file: asItWas });
-    },
-  );
-
-  test.each(["fts5", "fts4", "fts3"])(
-    "collected: the authorizer is not asked, the index stays sound, and the next statements are its own again: %s",
-    async module => {
-      expect(
-        await inChild(
-          `
-          const db = open("${module}");
-          leave(db);
-          let calls = 0;
-          let answer = constants.SQLITE_OK;
-          db.setAuthorizer(() => (calls++, answer));
-          const before = committed();
-          collect();
-          const inTheCollection = calls;
-          const after = committed();
-          db.exec("INSERT INTO ft VALUES ('hello again')");
-          const askedAgain = calls > 0;
-          answer = constants.SQLITE_DENY;
-          const denied = {
-            prepare: thrownBy(() => db.prepare("SELECT * FROM ft")),
-            exec: thrownBy(() => db.exec("INSERT INTO plain VALUES (1)")),
-            fullText: thrownBy(() => db.exec("INSERT INTO ft VALUES ('hello once more')")),
-          };
-          console.log(JSON.stringify({ before, inTheCollection, after, askedAgain, denied }));
-        `,
-          counts,
-        ),
-      ).toEqual({
-        ...printed({
-          before: nothing,
-          inTheCollection: 0,
-          after: nothing,
-          askedAgain: true,
-          denied: { prepare: "not authorized", exec: "not authorized", fullText: "not authorized" },
-        }),
-        file: { rows: 1, found: 1, check: "ok" },
-      });
-    },
-  );
-
-  test("collected: the authorizer is not asked when the statement is a tag store's", async () => {
+  test.each(["fts5", "fts4", "fts3"])("nothing is left for a collection: %s", async module => {
     expect(
       await inChild(
         `
-        const db = open("fts5");
-        (() => void db.createTagStore(4).iterate\`INSERT INTO ft VALUES ('hello world') RETURNING 1\`.next())();
+        const db = open("${module}");
+        leave(db);
         let calls = 0;
-        db.setAuthorizer(() => (calls++, constants.SQLITE_OK));
+        let answer = constants.SQLITE_OK;
+        db.setAuthorizer(() => (calls++, answer));
+        const before = committed();
         collect();
-        console.log(JSON.stringify({ calls }));
+        const inTheCollection = calls;
+        db.exec("INSERT INTO ft VALUES ('hello again')");
+        const asked = calls > 0;
+        answer = constants.SQLITE_DENY;
+        const denied = thrownBy(() => db.exec("INSERT INTO ft VALUES ('hello once more')"));
+        console.log(JSON.stringify({ before, inTheCollection, asked, denied }));
       `,
         counts,
       ),
-    ).toEqual({ ...printed({ calls: 0 }), file: { rows: 0, found: 0, check: "ok" } });
+    ).toEqual({
+      ...printed({ before: theRow, inTheCollection: 0, asked: true, denied: "not authorized" }),
+      file: { rows: 2, found: 2, check: "ok" },
+    });
   });
 
   test.each([
-    ["INSERT", "INSERT INTO docs (body) VALUES ('hello world') RETURNING id"],
-    ["UPDATE", "UPDATE docs SET body = 'hello world' WHERE id = 1 RETURNING id"],
-    ["DELETE", "DELETE FROM docs WHERE id = 1 RETURNING id"],
-  ])(
-    "collected: the authorizer is not asked for an index that triggers keep, and table and index agree: %s",
-    async (_, sql) => {
-      expect(
-        await inChild(
-          `
+    [
+      "INSERT",
+      "INSERT INTO docs (body) VALUES ('hello world') RETURNING id",
+      { rows: 3, found: 1, docs: "aa bb,cc dd,hello world" },
+    ],
+    [
+      "UPDATE",
+      "UPDATE docs SET body = 'hello world' WHERE id = 1 RETURNING id",
+      { rows: 2, found: 1, docs: "hello world,cc dd" },
+    ],
+    ["DELETE", "DELETE FROM docs WHERE id = 1 RETURNING id", { rows: 1, found: 0, docs: "cc dd" }],
+  ])("nothing is left for a collection: an index that triggers keep, %s", async (_, sql, file) => {
+    expect(
+      await inChild(
+        `
         const db = new DatabaseSync(process.env.SQLITE_FILE);
         db.exec(docs);
         leave(db, ${JSON.stringify(sql)});
@@ -3354,102 +3311,62 @@ describe.concurrent("a write statement that is left on its first row", () => {
         collect();
         console.log(JSON.stringify({ calls }));
       `,
-          { ...counts, docs: "SELECT group_concat(body) FROM docs" },
-        ),
-      ).toEqual({ ...printed({ calls: 0 }), file: { rows: 2, found: 0, docs: "aa bb,cc dd", check: "ok" } });
-    },
-  );
+        { ...counts, docs: "SELECT group_concat(body) FROM docs" },
+      ),
+    ).toEqual({ ...printed({ calls: 0 }), file: { ...file, check: "ok" } });
+  });
 
-  // The index is written at the commit, and that is the user's.
   describe.each([
-    ["BEGIN", "COMMIT", "cannot commit - no transaction is active"],
-    ["SAVEPOINT s", "RELEASE s", "no such savepoint: s"],
-  ])("inside the user's %s", (begin, commit, noTransaction) => {
-    test("collected: all of the transaction is kept, or none where the index is written as the statement ends", async () => {
-      const begun = `
-        const db = open("fts5");
-        db.exec("${begin}; INSERT INTO plain VALUES (1); INSERT INTO ft VALUES ('hello earlier')");
-        let calls = 0;
-      `;
-      // macOS loads the system's SQLite. Does this one need the authorizer when a statement ends inside a transaction?
-      const { stdout: needsTheAuthorizer, ...control } = await inChild(`
-        ${begun}
-        const rows = db.prepare(insert).iterate();
-        rows.next();
-        db.setAuthorizer(() => (calls++, constants.SQLITE_OK));
-        rows.return();
-        console.log(calls > 0);
-      `);
-      expect(control).toEqual({ stderr: "", signalCode: null, exitCode: 0 });
-      expect(isMacOS ? ["false", "true"] : ["false"]).toContain(needsTheAuthorizer);
+    ["BEGIN", "COMMIT", "ROLLBACK"],
+    ["SAVEPOINT s", "RELEASE s", "ROLLBACK TO s"],
+  ])("inside the user's %s", (begin, commit, rollback) => {
+    const begun = `
+      const db = open("fts5");
+      db.exec("${begin}; INSERT INTO plain VALUES (1); INSERT INTO ft VALUES ('hello earlier')");
+      leave(db);
+      db.prepare("INSERT INTO ft VALUES ('hello later') RETURNING 1").all();
+      let calls = 0;
+      db.setAuthorizer(() => (calls++, constants.SQLITE_OK));
+      collect();
+      const inTheCollection = calls;
+      const inTransaction = db.isTransaction;
+      db.exec("INSERT INTO plain VALUES (2)");
+    `;
 
+    test("a collection leaves the transaction alone: all of it is kept", async () => {
       expect(
         await inChild(
           `
           ${begun}
-          leave(db);
-          db.setAuthorizer(() => (calls++, constants.SQLITE_OK));
-          collect();
-          const inTheCollection = calls;
-          const inTransaction = db.isTransaction;
           const ended = thrownBy(() => db.exec("${commit}"));
-          console.log(JSON.stringify({ inTheCollection, inTransaction, ended, asked: calls > 0, after: committed() }));
-        `,
-          counts,
-        ),
-      ).toEqual(
-        needsTheAuthorizer === "true"
-          ? {
-              ...printed({
-                inTheCollection: 0,
-                inTransaction: false,
-                ended: noTransaction,
-                asked: true,
-                after: nothing,
-              }),
-              file: { rows: 0, found: 0, check: "ok" },
-            }
-          : {
-              ...printed({
-                inTheCollection: 0,
-                inTransaction: true,
-                ended: "did not throw",
-                asked: true,
-                after: { rows: 2, found: 2, plain: 1 },
-              }),
-              file: { rows: 2, found: 2, check: "ok" },
-            },
-      );
-    });
-
-    // A defect. This has to turn round once a collected statement is ended where the authorizer can be asked.
-    // After a later statement with a journal of its own, the index is written as the first one ends.
-    test("collected after a later INSERT ... RETURNING: the transaction is gone, and the next write commits by itself", async () => {
-      expect(
-        await inChild(
-          `
-          const db = open("fts5");
-          db.exec("${begin}; INSERT INTO plain VALUES (1); INSERT INTO ft VALUES ('hello earlier')");
-          leave(db);
-          db.prepare("INSERT INTO ft VALUES ('hello later') RETURNING 1").all();
-          let calls = 0;
-          db.setAuthorizer(() => (calls++, constants.SQLITE_OK));
-          collect();
-          const inTheCollection = calls;
-          const inTransaction = db.isTransaction;
-          db.exec("INSERT INTO plain VALUES (2)");
-          const undone = thrownBy(() => db.exec("${begin === "BEGIN" ? "ROLLBACK" : "ROLLBACK TO s"}"));
-          console.log(JSON.stringify({ inTheCollection, inTransaction, undone, after: committed() }));
+          console.log(JSON.stringify({ inTheCollection, inTransaction, ended, after: committed() }));
         `,
           counts,
         ),
       ).toEqual({
         ...printed({
           inTheCollection: 0,
-          inTransaction: false,
-          undone: begin === "BEGIN" ? "cannot rollback - no transaction is active" : noTransaction,
-          after: { rows: 0, found: 0, plain: 1 },
+          inTransaction: true,
+          ended: "did not throw",
+          after: { rows: 3, found: 3, plain: 2 },
         }),
+        file: { rows: 3, found: 3, check: "ok" },
+      });
+    });
+
+    test("a collection leaves the transaction alone: all of it can be undone", async () => {
+      expect(
+        await inChild(
+          `
+          ${begun}
+          const undone = thrownBy(() => db.exec("${rollback}"));
+          db.close();
+          console.log(JSON.stringify({ inTheCollection, inTransaction, undone, after: committed() }));
+        `,
+          counts,
+        ),
+      ).toEqual({
+        ...printed({ inTheCollection: 0, inTransaction: true, undone: "did not throw", after: nothing }),
         file: { rows: 0, found: 0, check: "ok" },
       });
     });
@@ -3478,7 +3395,7 @@ describe.concurrent("a write statement that is left on its first row", () => {
     expect(
       await inChild(
         `
-        let db, rows, calls = 0;
+        let db, rows, first, thrown, calls = 0;
         const graph = new Bun.ModuleGraph({ onError() {} });
         graph.run(() => {
           db = open("fts5");
@@ -3497,45 +3414,27 @@ describe.concurrent("a write statement that is left on its first row", () => {
       ),
     ).toEqual({
       ...printed({ inDispose: 0, isOpen: false, askedAgain: true }),
-      file: { rows: 1, found: 1, check: "ok" },
+      file: { rows: 2, found: 2, check: "ok" },
     });
   });
 
-  test("collected: calls no aggregate that a trigger of the file calls: the write fails as a whole", async () => {
-    expect(
-      await inChild(`
-        craft("a trigger");
-        const db = new DatabaseSync(process.env.SQLITE_FILE, { defensive: false });
-        let calls = 0;
-        db.aggregate("g", { start: 0, step: (count, _) => (calls++, count + 1) });
-        leave(db);
-        calls = 0;
-        collect();
-        console.log(JSON.stringify({ calls, after: committed() }));
-      `),
-    ).toEqual(printed({ calls: 0, after: nothing }));
-  });
-
-  test.each(["an index", "a partial index", "a CHECK", "a DEFAULT"])(
-    "collected: calls no function that %s of the file calls: the write fails as a whole",
+  test.each(["an index", "a partial index", "a CHECK", "a DEFAULT", "a trigger"])(
+    "what %s of the file calls is called by next(), and not by a collection",
     async how => {
       expect(
         await inChild(`
         craft("${how}");
-        const db = new DatabaseSync(process.env.SQLITE_FILE);
+        const db = new DatabaseSync(process.env.SQLITE_FILE, { defensive: false });
         let calls = 0;
         db.function("f", { deterministic: true }, x => (calls++, x));
+        db.aggregate("g", { start: 0, step: (count, _) => (calls++, count + 1) });
         leave(db);
+        const inNext = calls > 0;
         calls = 0;
         collect();
-        const inTheCollection = calls;
-        const after = committed();
-        // The function is called again for the next statement that the user runs.
-        db.exec("INSERT INTO ft VALUES ('hello again')");
-        db.exec("INSERT INTO ft (ft) VALUES ('integrity-check')");
-        console.log(JSON.stringify({ inTheCollection, after, calledAgain: calls > 0, next: committed() }));
+        console.log(JSON.stringify({ inNext, inTheCollection: calls, after: committed() }));
       `),
-      ).toEqual(printed({ inTheCollection: 0, after: nothing, calledAgain: true, next: theRow }));
+      ).toEqual(printed({ inNext: true, inTheCollection: 0, after: theRow }));
     },
   );
 
@@ -3615,7 +3514,8 @@ describe.concurrent("a write statement that is left on its first row", () => {
 
 // Each case runs in a child: what it guards against ends the process.
 describe.concurrent("a callback that comes back to node:sqlite while a call ends a statement", () => {
-  // `rows` is on the first row of a write, so that to end it is its commit, where the index asks the callbacks.
+  // `rows` has given the first row of a write. When that left the statement on its row, each of these calls was its commit,
+  // where the index asks the callbacks.
   const script = (end: string) => `
     const { DatabaseSync, constants } = require("node:sqlite");
     const image = (() => {
@@ -3671,29 +3571,37 @@ describe.concurrent("a callback that comes back to node:sqlite while a call ends
   const executing = "statement is currently executing";
   const fine = "did not throw";
   // What the call that came back got, and what the call of the user got. A close() waits for the end of that call.
-  const expected = (statement: string) => ({
+  const expected = (statement: unknown) => ({
     "db.close()": [fine, fine],
     "db.deserialize()": ["cannot deserialize database while a statement is executing", fine],
     "statement.all()": [statement, fine],
     "statement.run()": [statement, fine],
     "statement.iterate().next()": [statement, fine],
-    "rows.next()": [executing, fine],
+    "rows.next()": ["iterator was invalidated", fine],
     "rows.return()": [fine, fine],
   });
-  // The tag store has a statement of its own: `statement` is another write, in the middle of the commit of the first.
-  const another = expected("database table is locked");
+  const both = <T>(results: T) => ({ "the authorizer": results, "a function": results });
+  // next() has read the write to its end: nothing is left to end.
+  const nothingToEnd = both(
+    Object.fromEntries(Object.keys(expected(fine)).map(name => [name, ["was not called", fine]])),
+  );
+  // The commit of the new run asks the callbacks.
+  const newRun = both(expected(executing));
+  // The tag store has a statement of its own, so `statement` is another write. Whether SQLite lets it run depends on where
+  // it calls back from, and on its version.
+  const newRunOfTheTagStore = both(expected(expect.any(String)));
 
   test.each([
-    ["rows.return()", "c.rows.return();", expected(executing)],
-    ["break in a for...of", "for (const row of c.rows) break;", expected(executing)],
-    ["statement.run()", "c.statement.run();", expected(executing)],
-    ["statement.get()", "c.statement.get();", expected(executing)],
-    ["statement.all()", "c.statement.all();", expected(executing)],
-    ["statement.iterate()", "c.statement.iterate();", expected(executing)],
-    ["the tag store's run", "c.tag.run`INSERT INTO ft VALUES ('a'), ('b'), ('c') RETURNING 1`;", another],
-    ["the tag store's get", "c.tag.get`INSERT INTO ft VALUES ('a'), ('b'), ('c') RETURNING 1`;", another],
-    ["the tag store's all", "c.tag.all`INSERT INTO ft VALUES ('a'), ('b'), ('c') RETURNING 1`;", another],
-    ["the tag store's iterate", "c.tag.iterate`INSERT INTO ft VALUES ('a'), ('b'), ('c') RETURNING 1`;", another],
+    ["rows.return()", "c.rows.return();", nothingToEnd],
+    ["break in a for...of", "for (const row of c.rows) break;", nothingToEnd],
+    ["statement.run()", "c.statement.run();", newRun],
+    ["statement.get()", "c.statement.get();", newRun],
+    ["statement.all()", "c.statement.all();", newRun],
+    ["statement.iterate()", "c.statement.iterate();", nothingToEnd],
+    ["the tag store's run", "c.tag.run`INSERT INTO ft VALUES ('a'), ('b'), ('c') RETURNING 1`;", newRunOfTheTagStore],
+    ["the tag store's get", "c.tag.get`INSERT INTO ft VALUES ('a'), ('b'), ('c') RETURNING 1`;", newRunOfTheTagStore],
+    ["the tag store's all", "c.tag.all`INSERT INTO ft VALUES ('a'), ('b'), ('c') RETURNING 1`;", newRunOfTheTagStore],
+    ["the tag store's iterate", "c.tag.iterate`INSERT INTO ft VALUES ('a'), ('b'), ('c') RETURNING 1`;", nothingToEnd],
   ])("%s", async (_, end, results) => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script(end)],
@@ -3703,10 +3611,396 @@ describe.concurrent("a callback that comes back to node:sqlite while a call ends
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ results: stdout && JSON.parse(stdout), stderr, signalCode: proc.signalCode, exitCode }).toEqual({
-      results: { "the authorizer": results, "a function": results },
+      results,
       stderr: "",
       signalCode: null,
       exitCode: 0,
     });
   });
+});
+
+// Node v26.3.0 leaves such a statement on its row until the iterator ends: it holds the lock and its transaction so long.
+describe("iterate() of a statement that writes", () => {
+  const insert = "INSERT INTO t (x) VALUES (1), (2), (3) RETURNING x";
+  const thrownBy = (fn: () => unknown) => {
+    try {
+      fn();
+    } catch (error) {
+      return (error as Error).message;
+    }
+    return "did not throw";
+  };
+  // Two connections to one file.
+  function open(schema = "") {
+    const dir = tempDir("node-sqlite-iterate-write", {});
+    const file = path.join(String(dir), "db.sqlite");
+    const db = new DatabaseSync(file);
+    db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, x);" + schema);
+    const other = new DatabaseSync(file);
+    return {
+      db,
+      other,
+      seen: (sql = "SELECT count(*) FROM t") => Object.values(other.prepare(sql).get()!)[0],
+      write: () => thrownBy(() => other.exec("CREATE TABLE IF NOT EXISTS probe (x)")),
+      [Symbol.dispose]() {
+        other.close();
+        if (db.isOpen) db.close();
+        dir[Symbol.dispose]();
+      },
+    };
+  }
+  const row = (x: unknown) => ({ done: false, value: { __proto__: null, x } });
+  const done = { done: true, value: null };
+
+  test.each([
+    ["INSERT", "", insert, "SELECT count(*) FROM t"],
+    [
+      "UPDATE",
+      "INSERT INTO t (x) VALUES (1), (2), (3)",
+      "UPDATE t SET x = 0 RETURNING x",
+      "SELECT count(*) FROM t WHERE x = 0",
+    ],
+    ["DELETE", "INSERT INTO t (x) VALUES (1), (2), (3)", "DELETE FROM t RETURNING x", "SELECT 3 - count(*) FROM t"],
+  ])("after the first next() another connection sees the rows and can write: %s", (_, schema, sql, changed) => {
+    using c = open(schema);
+    c.db.prepare(sql).iterate().next();
+    expect({ seen: c.seen(changed), write: c.write() }).toEqual({ seen: 3, write: "did not throw" });
+  });
+
+  test("the same for the tag store's iterate", () => {
+    using c = open();
+    c.db.createTagStore(4).iterate`INSERT INTO t (x) VALUES (1), (2), (3) RETURNING x`.next();
+    expect({ seen: c.seen(), write: c.write() }).toEqual({ seen: 3, write: "did not throw" });
+  });
+
+  test.each([1, 3, 1000])("the commit comes with the first next(), and all %d rows come out in order", count => {
+    using c = open();
+    const rows = c.db
+      .prepare(
+        "INSERT INTO t (x) WITH RECURSIVE n (i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?) SELECT i FROM n RETURNING x",
+      )
+      .iterate(count);
+    const first = rows.next();
+    expect({ first, seen: c.seen() }).toEqual({ first: row(1), seen: count });
+    expect([...rows].map(({ x }) => x)).toEqual(Array.from({ length: count - 1 }, (_, i) => i + 2));
+    expect(rows.next()).toEqual(done);
+  });
+
+  test("changes() and total_changes() have the rows after the first next()", () => {
+    using c = open();
+    c.db.prepare(insert).iterate().next();
+    expect(c.db.prepare("SELECT changes() AS changes, total_changes() AS total").get()).toEqual({
+      __proto__: null,
+      changes: 3,
+      total: 3,
+    });
+  });
+
+  test("COMMIT works while the iterator is open", () => {
+    using c = open();
+    c.db.exec("BEGIN");
+    const rows = c.db.prepare(insert).iterate();
+    rows.next();
+    expect({ commit: thrownBy(() => c.db.exec("COMMIT")), seen: c.seen(), next: rows.next() }).toEqual({
+      commit: "did not throw",
+      seen: 3,
+      next: row(2),
+    });
+  });
+
+  test("a BEGIN after the first next() does not take the write into its transaction", () => {
+    using c = open();
+    c.db.prepare(insert).iterate().next();
+    c.db.exec("BEGIN; INSERT INTO t (x) VALUES (4); ROLLBACK");
+    expect(c.seen()).toBe(3);
+  });
+
+  test("after a ROLLBACK of the user's transaction the iterator goes on", () => {
+    using c = open();
+    c.db.exec("BEGIN");
+    const rows = c.db.prepare(insert).iterate();
+    rows.next();
+    c.db.exec("ROLLBACK");
+    expect({ next: rows.next(), seen: c.seen() }).toEqual({ next: row(2), seen: 0 });
+  });
+
+  test("PRAGMA journal_mode = wal does not hold the lock", () => {
+    using c = open();
+    expect(c.db.prepare("PRAGMA journal_mode = wal").iterate().next().value).toEqual({
+      __proto__: null,
+      journal_mode: "wal",
+    });
+    expect(c.write()).toBe("did not throw");
+  });
+
+  test("PRAGMA incremental_vacuum frees all the pages", () => {
+    using dir = tempDir("node-sqlite-iterate-write", {});
+    using db = new DatabaseSync(path.join(String(dir), "db.sqlite"));
+    db.exec("PRAGMA auto_vacuum = incremental; CREATE TABLE t (x)");
+    for (let i = 0; i < 20; i++) db.exec("INSERT INTO t VALUES (zeroblob(4000))");
+    db.exec("DELETE FROM t");
+    const free = () => Object.values(db.prepare("PRAGMA freelist_count").get()!)[0];
+    expect(free()).toBeGreaterThan(10);
+    // It has no columns, and a row for every page.
+    expect({ first: db.prepare("PRAGMA incremental_vacuum").iterate().next(), free: free() }).toEqual({
+      first: { done: false, value: { __proto__: null } },
+      free: 0,
+    });
+  });
+
+  test.each([
+    ["iterate()", (statement: StatementSync) => void statement.iterate().next()],
+    ["run()", (statement: StatementSync) => void statement.run()],
+  ])("%s on the statement ends the iterator", (_, again) => {
+    using c = open();
+    const statement = c.db.prepare(insert);
+    const rows = statement.iterate();
+    rows.next();
+    again(statement);
+    expect({ next: thrownBy(() => rows.next()), seen: c.seen() }).toEqual({
+      next: "iterator was invalidated",
+      seen: 6,
+    });
+  });
+
+  test("close() ends the iterator", () => {
+    using c = open();
+    const rows = c.db.prepare(insert).iterate();
+    rows.next();
+    c.db.close();
+    expect({ next: thrownBy(() => rows.next()), seen: c.seen() }).toEqual({
+      next: "statement has been finalized",
+      seen: 3,
+    });
+  });
+
+  test("a function in the RETURNING list is called for every row by the first next()", () => {
+    using c = open();
+    let calls = 0;
+    c.db.function("f", x => (calls++, x));
+    const rows = c.db.prepare("INSERT INTO t (x) VALUES (1), (2), (3) RETURNING f(x) AS x").iterate();
+    rows.next();
+    const afterTheFirst = calls;
+    expect({ afterTheFirst, others: [...rows].length, calls }).toEqual({ afterTheFirst: 3, others: 2, calls: 3 });
+  });
+
+  test("a function that throws for the second row: the first next() throws, and the statement is undone", () => {
+    using c = open();
+    c.db.function("f", x => {
+      if (x === 2) throw new Error("from the function");
+      return x;
+    });
+    const rows = c.db.prepare("INSERT INTO t (x) VALUES (1), (2), (3) RETURNING f(x) AS x").iterate();
+    expect({ first: thrownBy(() => rows.next()), second: rows.next(), seen: c.seen(), write: c.write() }).toEqual({
+      first: "from the function",
+      second: done,
+      seen: 0,
+      write: "did not throw",
+    });
+  });
+
+  test("return() and break drop the other rows", () => {
+    using c = open();
+    const rows = c.db.prepare(insert).iterate();
+    rows.next();
+    expect({ returned: rows.return!(), next: rows.next(), seen: c.seen() }).toEqual({
+      returned: done,
+      next: done,
+      seen: 3,
+    });
+    for (const _ of c.db.prepare(insert).iterate()) break;
+    expect({ seen: c.seen(), write: c.write() }).toEqual({ seen: 6, write: "did not throw" });
+  });
+
+  test("iterate() without next() runs nothing", () => {
+    using c = open();
+    c.db.prepare(insert).iterate();
+    expect({ own: c.db.prepare("SELECT count(*) AS n FROM t").get()!.n, write: c.write() }).toEqual({
+      own: 0,
+      write: "did not throw",
+    });
+  });
+
+  test("a SELECT is still read row by row", () => {
+    using c = open();
+    let calls = 0;
+    c.db.function("f", x => (calls++, x));
+    const rows = c.db
+      .prepare("WITH RECURSIVE n (i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n) SELECT f(i) AS x FROM n")
+      .iterate();
+    expect({ rows: [rows.next(), rows.next(), rows.next()], calls, returned: rows.return!() }).toEqual({
+      rows: [row(1), row(2), row(3)],
+      calls: 3,
+      returned: done,
+    });
+  });
+
+  test.each([
+    ["rows.next()", "statement is currently executing"],
+    ["rows.return()", "did not throw"],
+    ["statement.all()", "statement is currently executing"],
+    ["statement.iterate()", "statement is currently executing"],
+  ])("%s from inside a function of the statement", (call, expected) => {
+    using c = open();
+    const inner: string[] = [];
+    const calls: Record<string, () => unknown> = {
+      "rows.next()": () => rows.next(),
+      "rows.return()": () => rows.return!(),
+      "statement.all()": () => statement.all(),
+      "statement.iterate()": () => statement.iterate(),
+    };
+    c.db.function("f", x => (inner.push(thrownBy(calls[call])), x));
+    const statement = c.db.prepare("INSERT INTO t (x) VALUES (1), (2), (3) RETURNING f(x) AS x");
+    const rows = statement.iterate();
+    expect({ first: rows.next(), inner, seen: c.seen() }).toEqual({
+      first: row(1),
+      inner: [expected, expected, expected],
+      seen: 3,
+    });
+  });
+
+  test("close() from inside a function of the statement waits for next() to end", () => {
+    using c = open();
+    c.db.function("f", x => (c.db.isOpen && c.db.close(), x));
+    const rows = c.db.prepare("INSERT INTO t (x) VALUES (1), (2), (3) RETURNING f(x) AS x").iterate();
+    expect({ first: rows.next(), second: thrownBy(() => rows.next()), seen: c.seen() }).toEqual({
+      first: row(1),
+      second: "statement has been finalized",
+      seen: 3,
+    });
+  });
+
+  // The rows are made at the first next(), as all() makes them.
+  test.each([
+    ["setReadBigInts(true)", (statement: StatementSync) => statement.setReadBigInts(true)],
+    ["setReturnArrays(true)", (statement: StatementSync) => statement.setReturnArrays(true)],
+  ])("%s after the first next() comes too late for its rows", (_, set) => {
+    using c = open();
+    const statement = c.db.prepare(insert);
+    const rows = statement.iterate();
+    rows.next();
+    set(statement);
+    expect(rows.next()).toEqual(row(2));
+  });
+
+  test("a row that cannot be converted: the first next() throws, and the write is committed, as for all()", () => {
+    using c = open();
+    const sql = "INSERT INTO t (x) VALUES (1), (9007199254740993), (3) RETURNING x";
+    const rows = c.db.prepare(sql).iterate();
+    const outOfRange = expect.stringContaining("too large to be represented as a JavaScript number");
+    expect({ first: thrownBy(() => rows.next()), second: rows.next(), seen: c.seen() }).toEqual({
+      first: outOfRange,
+      second: done,
+      seen: 3,
+    });
+    expect({ all: thrownBy(() => c.db.prepare(sql).all()), seen: c.seen() }).toEqual({ all: outOfRange, seen: 6 });
+  });
+
+  // The commit fails. However the program takes the first row, it gets the error in place of a row that does not exist.
+  describe.each([
+    {
+      cause: "another connection's lock",
+      sql: insert,
+      tagged: (db: DatabaseSync) => db.createTagStore(4).iterate`INSERT INTO t (x) VALUES (1), (2), (3) RETURNING x`,
+      message: "database is locked",
+      table: "t",
+    },
+    {
+      cause: "a deferred foreign key",
+      sql: "INSERT INTO child VALUES (99) RETURNING parent",
+      tagged: (db: DatabaseSync) => db.createTagStore(4).iterate`INSERT INTO child VALUES (99) RETURNING parent`,
+      message: "FOREIGN KEY constraint failed",
+      table: "child",
+    },
+  ])("a commit that fails for $cause", ({ cause, sql, tagged, message, table }) => {
+    test.each<[string, (db: DatabaseSync) => unknown]>([
+      ["next()", db => db.prepare(sql).iterate().next()],
+      [
+        "destructuring",
+        db => {
+          const [first] = db.prepare(sql).iterate();
+          return first;
+        },
+      ],
+      [
+        "for...of and break",
+        db => {
+          for (const first of db.prepare(sql).iterate()) return first;
+        },
+      ],
+      ["take(1)", db => db.prepare(sql).iterate().take(1).toArray()],
+      [
+        "next() and return()",
+        db => {
+          const rows = db.prepare(sql).iterate();
+          const first = rows.next();
+          rows.return!();
+          return first;
+        },
+      ],
+      ["the tag store's iterator", db => tagged(db).next()],
+      [
+        "next(), and iterate() on the statement again",
+        db => {
+          const statement = db.prepare(sql);
+          const first = statement.iterate().next();
+          statement.iterate();
+          return first;
+        },
+      ],
+    ])("is thrown to %s", (_, take) => {
+      using c = open("CREATE TABLE child (parent REFERENCES t DEFERRABLE INITIALLY DEFERRED)");
+      if (cause.includes("lock")) {
+        c.other.exec("BEGIN");
+        c.other.prepare("SELECT count(*) FROM t").get();
+      }
+      let got: unknown = "nothing";
+      const thrown = thrownBy(() => void (got = take(c.db)));
+      if (c.other.isTransaction) c.other.exec("COMMIT");
+      expect({ thrown, got, seen: c.seen(`SELECT count(*) FROM ${table}`), write: c.write() }).toEqual({
+        thrown: message,
+        got: "nothing",
+        seen: 0,
+        write: "did not throw",
+      });
+    });
+  });
+});
+
+// In a child: the accessors are there for every array of the process.
+test("an indexed accessor on Array.prototype is not called for the rows", async () => {
+  const src = `
+    const { DatabaseSync } = require("node:sqlite");
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE t (a)");
+    const insert = db.prepare("INSERT INTO t VALUES (1), (2), (3) RETURNING a");
+    let calls = 0;
+    for (const index of [0, 1, 2]) {
+      Object.defineProperty(Array.prototype, index, {
+        configurable: true,
+        get() {
+          calls++;
+          return "from the prototype";
+        },
+        set() {
+          calls++;
+        },
+      });
+    }
+    let iterated = "";
+    for (const row of insert.iterate()) iterated += JSON.stringify(row);
+    console.log(JSON.stringify({ all: insert.all(), iterated }), calls);
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe(`{"all":[{"a":1},{"a":2},{"a":3}],"iterated":"{\\"a\\":1}{\\"a\\":2}{\\"a\\":3}"} 0`);
+  expect(exitCode).toBe(0);
 });

@@ -235,9 +235,6 @@ static_assert(sizeof(StreamingUTF8DecodeState) == 4);
 // dictionary conversion.
 enum class ReadableStreamType : uint8_t { Bytes };
 
-// WebIDL `enum ReadableStreamReaderMode { "byob" }` (getReader(options).mode)
-enum class ReadableStreamReaderMode : uint8_t { Byob };
-
 } // namespace WebStreams
 } // namespace Bun
 
@@ -247,7 +244,6 @@ namespace WebCore {
 using Bun::WebStreams::BunStreamMode;
 using Bun::WebStreams::ControllerKind;
 using Bun::WebStreams::DirectSinkKind;
-using Bun::WebStreams::ReadableStreamReaderMode;
 using Bun::WebStreams::ReadableStreamState;
 using Bun::WebStreams::ReadableStreamType;
 using Bun::WebStreams::ReaderType;

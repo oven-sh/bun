@@ -99,6 +99,11 @@ pub struct PackageInstaller<'a> {
 
     pub(crate) trusted_dependencies_from_update_requests: ArrayHashMap<PackageID, ()>,
 
+    /// `tree::rebound_rows`. No name and version in a slot proves that it holds such a row.
+    pub(crate) rebound: Vec<(u64, u64)>,
+    /// The rows of `rebound` whose slot this install linked, or verified by what identifies the source.
+    pub(crate) rebound_settled: Bitset,
+
     /// uses same ids as lockfile.trees
     pub(crate) trees: Box<[TreeContext]>,
 
@@ -1502,6 +1507,41 @@ impl<'a> PackageInstaller<'a> {
         self.trees[tree_id as usize].inside_replaced_folder = inside;
     }
 
+    /// The keys of `places` whose slot can still hold the old source: a row of `rebound` is not settled, or this install has no row for the key. Sorted.
+    #[cold]
+    pub(crate) fn rebound_stale(&self, places: &[(u64, PackageID)]) -> Vec<u64> {
+        let keys_where = |settled: bool| {
+            let rows = self.rebound.iter().enumerate();
+            let mut keys: Vec<u64> = rows
+                .filter(|&(row, _)| self.rebound_settled.is_set(row) == settled)
+                .map(|(_, &(_, key))| key)
+                .collect();
+            keys.sort_unstable();
+            keys
+        };
+        let (settled, open) = (keys_where(true), keys_where(false));
+        let mut stale: Vec<u64> = (places.iter().map(|&(key, _)| key))
+            .filter(|key| settled.binary_search(key).is_err() || open.binary_search(key).is_ok())
+            .collect();
+        stale.dedup();
+        stale
+    }
+
+    #[cold]
+    fn rebound_row(&self, dependency_id: DependencyID) -> Option<usize> {
+        let row = (self.current_tree_id as u64) << 32 | dependency_id as u64;
+        (self.rebound)
+            .binary_search_by_key(&row, |&(row, _)| row)
+            .ok()
+    }
+
+    #[cold]
+    fn settle_rebound(&mut self, dependency_id: DependencyID) {
+        if let Some(row) = self.rebound_row(dependency_id) {
+            self.rebound_settled.set(row);
+        }
+    }
+
     /// Call when you mutate the length of `lockfile.packages`
     pub(crate) fn fix_cached_lockfile_package_slices(&mut self) {
         // These `RawSlice<T>` fields alias into `self.lockfile.packages`
@@ -1954,6 +1994,7 @@ impl<'a> PackageInstaller<'a> {
         let (inside_replaced_folder, outlived_root) =
             (tree.inside_replaced_folder, tree.outlived_root);
         let verifying = needs_verify && !self.skip_verify_installed_version_number;
+        let rebound = !self.rebound.is_empty() && self.rebound_row(dependency_id).is_some();
         let needs_install = !verifying
             || remove_patch
             || inside_replaced_folder
@@ -1961,6 +2002,7 @@ impl<'a> PackageInstaller<'a> {
                 resolution,
                 &self.metas[package_id as usize].integrity,
                 self.manager().skips_verify(resolution.tag),
+                rebound,
                 &self.root_node_modules_folder,
             );
         self.summary.skipped += (!needs_install) as u32;
@@ -2335,6 +2377,9 @@ impl<'a> PackageInstaller<'a> {
                 install_result,
             );
         } else {
+            if rebound {
+                self.settle_rebound(dependency_id);
+            }
             if self.manager().options.offline
                 == crate::package_manager_real::options::OfflineMode::Offline
             {
@@ -2412,6 +2457,9 @@ impl<'a> PackageInstaller<'a> {
                 let is_duplicate = self.successfully_installed.is_set(package_id as usize);
                 self.summary.success += (!is_duplicate) as u32;
                 self.successfully_installed.set(package_id as usize);
+                if !self.rebound.is_empty() {
+                    self.settle_rebound(dependency_id);
+                }
 
                 if log_level.show_progress() {
                     self.node.complete_one();

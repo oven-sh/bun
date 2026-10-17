@@ -916,6 +916,8 @@ struct HoistedTree<'a> {
     checked: RefCell<DynamicBitSet>,
     matched: RefCell<DynamicBitSet>,
     missing: RefCell<DynamicBitSet>,
+    /// `Summary::rebound_stale`, and the `tree::folder_keys` of `trees` if it is not empty.
+    stale: (&'a [u64], Vec<u64>),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -983,7 +985,17 @@ impl<'a> HoistedTree<'a> {
             checked: RefCell::new(checked),
             matched: RefCell::new(matched),
             missing: RefCell::new(missing),
+            stale: (&[], Vec::new()),
         }
+    }
+
+    /// The install that just ran did not settle these places, so what is there does not count as installed.
+    fn without(mut self, stale: &'a [u64]) -> HoistedTree<'a> {
+        if !stale.is_empty() {
+            let deps = self.lockfile.buffers.dependencies.as_slice();
+            self.stale = (stale, tree::folder_keys(self.trees, deps));
+        }
+        self
     }
 
     fn path(&self, tree_id: usize) -> &[u8] {
@@ -1101,6 +1113,16 @@ impl<'a> HoistedTree<'a> {
     }
 
     fn installed(&self, tree_id: tree::Id, alias: &[u8], pkg_id: PackageID) -> Installed {
+        let (stale, folders) = &self.stale;
+        if let Some(&folder) = folders.get(tree_id as usize) {
+            let name_hash = bun_semver::semver_string::Builder::string_hash(alias);
+            if stale
+                .binary_search(&tree::place_key(folder, name_hash))
+                .is_ok()
+            {
+                return Installed::Mismatch;
+            }
+        }
         let buf = self.lockfile.buffers.string_bytes.as_slice();
         let Some(res) = self
             .lockfile
@@ -1388,15 +1410,19 @@ fn has_bundled_deps(lockfile: &Lockfile, pkg_id: PackageID) -> bool {
 }
 
 /// Removes what `before` placed and the install tree of all dependency types and platforms lacks.
-pub(crate) fn remove_collapsed_copies(manager: &mut PackageManager, before: &Lockfile) {
+pub(crate) fn remove_collapsed_copies(
+    manager: &mut PackageManager,
+    before: &Lockfile,
+    stale: &[u64],
+) {
     let Ok(saved) = hoist_install_tree(manager, true) else {
         return;
     };
-    plan_and_remove_collapsed_copies(manager, before);
+    plan_and_remove_collapsed_copies(manager, before, stale);
     restore_tree(&mut manager.lockfile, saved);
 }
 
-fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile) {
+fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile, stale: &[u64]) {
     let after: &Lockfile = &manager.lockfile;
     let workspace_names = collect_workspace_names(manager);
     if before.buffers.trees.is_empty() && workspace_names.is_empty() {
@@ -1404,7 +1430,7 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
     }
     let quiet = manager.options.log_level == LogLevel::Silent;
     let old = HoistedTree::init(before, true);
-    let new = HoistedTree::init(after, quiet);
+    let new = HoistedTree::init(after, quiet).without(stale);
     let targets = manager.filtered_link_targets.as_ref();
     let selected: Option<Vec<PackageID>> = targets.map(|targets| targets.package_ids(before));
     let importers = selected.as_ref().map(|_| tree_importers(before));

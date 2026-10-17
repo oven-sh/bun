@@ -68,6 +68,9 @@ pub struct Summary {
     /// Set by the hoisted linker only. A copy of `tree::Builder::places`.
     pub(crate) places: Vec<(u64, PackageID)>,
 
+    /// Set by the hoisted linker only. See `PackageInstaller::rebound_stale`.
+    pub(crate) rebound_stale: Vec<u64>,
+
     pub(crate) offline_misses: OfflineMisses,
 }
 
@@ -1214,11 +1217,13 @@ impl<'a> PackageInstall<'a> {
         matches(&bun_tag_file.bytes)
     }
 
+    /// `rebound`: the loaded lockfile filled this slot from another source, so an arm that cannot tell sources apart answers false.
     pub(crate) fn verify(
         &mut self,
         resolution: &Resolution,
         integrity: &Integrity,
         skips_verify: bool,
+        rebound: bool,
         root_node_modules_dir: &Dir,
     ) -> bool {
         let verified = match resolution.tag {
@@ -1234,10 +1239,12 @@ impl<'a> PackageInstall<'a> {
                 )
             }
             resolution::Tag::LocalTarball | resolution::Tag::RemoteTarball => self.verify_bun_tag(
-                &|tag| tarball_tag_matches(tag, integrity, skips_verify),
+                &|tag| tarball_tag_matches(tag, integrity, skips_verify && !rebound),
                 root_node_modules_dir,
             ),
-            resolution::Tag::Root => self.verify_directory_exists(root_node_modules_dir),
+            resolution::Tag::Root => {
+                !rebound && self.verify_directory_exists(root_node_modules_dir)
+            }
             resolution::Tag::Symlink => self.verify_link(root_node_modules_dir),
             resolution::Tag::Folder => {
                 let tree_id = self.node_modules.tree_id;
@@ -1247,10 +1254,14 @@ impl<'a> PackageInstall<'a> {
                     self.verify_folder()
                 } else {
                     // Inside an installed package, and replaced together with it.
-                    self.verify_directory_exists(root_node_modules_dir)
+                    !rebound && self.verify_directory_exists(root_node_modules_dir)
                 }
             }
-            _ => self.verify_package_json_name_and_version(root_node_modules_dir, resolution.tag),
+            _ => {
+                !rebound
+                    && self
+                        .verify_package_json_name_and_version(root_node_modules_dir, resolution.tag)
+            }
         };
 
         verified

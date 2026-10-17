@@ -792,6 +792,11 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
         return JSValue::encode(jsUndefined());
     }
 
+    // A frozen or sealed error keeps `stack` read-only and not configurable when the value replaces the getter.
+    unsigned attributes = 0;
+    errorObject->getDirectOffset(vm, vm.propertyNames->stack, attributes);
+    unsigned integrity = attributes & (JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete);
+
     OrdinalNumber line;
     OrdinalNumber column;
     String sourceURL;
@@ -818,7 +823,7 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
             errorObject->setStackFrames(vm, {});
     }
     RETURN_IF_EXCEPTION(scope, {});
-    errorObject->putDirect(vm, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
+    errorObject->putDirect(vm, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | integrity);
     return JSValue::encode(result);
 }
 

@@ -61,8 +61,8 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__SQLError__crea
     // The position of no source. The caller writes the server's `line` and `column`, if any.
     error->putDirect(vm, vm.propertyNames->line, jsUndefined(), static_cast<unsigned>(PropertyAttribute::DontEnum));
     error->putDirect(vm, vm.propertyNames->column, jsUndefined(), static_cast<unsigned>(PropertyAttribute::DontEnum));
-    // The first read makes `stack`, in the code of the reader and not in the client.
-    error->putDirectCustomAccessor(vm, vm.propertyNames->stack, realm->m_lazyStackCustomGetterSetter.get(realm), PropertyAttribute::DontEnum | PropertyAttribute::CustomAccessor);
+    // The first read makes `stack`, in the reader and not in the client. A custom value: the getter gets this error, not the receiver.
+    error->putDirectCustomAccessor(vm, vm.propertyNames->stack, realm->m_lazyStackCustomGetterSetter.get(realm), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue);
     // Own and enumerable, as `this.name = ...` in the constructor of the class makes it.
     auto& strings = commonStrings(vm);
     error->putDirect(vm, vm.propertyNames->name, isMySQL ? strings.mySQLErrorString() : strings.postgresErrorString(), 0);

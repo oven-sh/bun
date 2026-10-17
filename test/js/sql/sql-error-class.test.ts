@@ -464,6 +464,14 @@ async function withPrepareStackTrace<T>(
   }
 }
 
+function readStack(error: Error) {
+  try {
+    return { value: error.stack };
+  } catch (threw) {
+    return { threw };
+  }
+}
+
 // The state today: a native error has no stack frames, so `stack` is the name
 // and the message. The first read makes it, as for each Error. When Bun can
 // show where the query was made (#22011), only the expectations of `stack`
@@ -530,19 +538,18 @@ describeWithContainer("mysql: the stack of a native error", { image: "mysql_plai
     });
   });
 
-  test("is an own property that is not enumerable, before and after the first read", async () => {
+  test("is an own data property that is not enumerable, before and after the first read", async () => {
     await container.ready;
     await using sql = new SQL({ url: url(), max: 1 });
 
     const error = await rejectionOf(sql.unsafe(oversizedQuery()));
     const before = Object.getOwnPropertyDescriptor(error, "stack");
     const stack = error.stack;
-    expect({
-      before: { enumerable: before?.enumerable, configurable: before?.configurable },
-      after: Object.getOwnPropertyDescriptor(error, "stack"),
-    }).toEqual({
-      before: { enumerable: false, configurable: true },
-      after: { value: stack, writable: true, enumerable: false, configurable: true },
+    const descriptor = { value: stack, writable: true, enumerable: false, configurable: true };
+    expect({ stack, before, after: Object.getOwnPropertyDescriptor(error, "stack") }).toEqual({
+      stack: "MySQLError: failed to execute query",
+      before: descriptor,
+      after: descriptor,
     });
 
     const assigned = await rejectionOf(sql.unsafe(oversizedQuery()));
@@ -552,6 +559,61 @@ describeWithContainer("mysql: the stack of a native error", { image: "mysql_plai
       writable: true,
       enumerable: false,
       configurable: true,
+    });
+  });
+
+  test("is the same for a Proxy, for an object that inherits from the error and for another receiver", async () => {
+    await container.ready;
+    await using sql = new SQL({ url: url(), max: 1 });
+
+    // Each read is the first read of its error.
+    const failed = () => rejectionOf(sql.unsafe(oversizedQuery()));
+    expect({
+      proxy: new Proxy(await failed(), {}).stack,
+      inherits: Object.create(await failed()).stack,
+      receiver: Reflect.get(await failed(), "stack", {}),
+    }).toEqual({
+      proxy: "MySQLError: failed to execute query",
+      inherits: "MySQLError: failed to execute query",
+      receiver: "MySQLError: failed to execute query",
+    });
+  });
+
+  test("a frozen error stays frozen when the first read comes after Object.freeze()", async () => {
+    await container.ready;
+    await using sql = new SQL({ url: url(), max: 1 });
+
+    const error = Object.freeze(await rejectionOf(sql.unsafe(oversizedQuery())));
+    const stack = error.stack;
+    expect({
+      stack,
+      frozen: Object.isFrozen(error),
+      descriptor: Object.getOwnPropertyDescriptor(error, "stack"),
+    }).toEqual({
+      stack: "MySQLError: failed to execute query",
+      frozen: true,
+      descriptor: { value: stack, writable: false, enumerable: false, configurable: false },
+    });
+  });
+
+  test("an Error.prepareStackTrace that throws, throws to the first reader of the stack", async () => {
+    await container.ready;
+    await using sql = new SQL({ url: url(), max: 1 });
+
+    const error = await rejectionOf(sql.unsafe(oversizedQuery()));
+    const thrownByTheHook = new UserError("thrown by Error.prepareStackTrace");
+    let calls = 0;
+    const reads = await withPrepareStackTrace(
+      () => {
+        calls++;
+        throw thrownByTheHook;
+      },
+      () => [readStack(error), readStack(error)],
+    );
+    // The hook can read the stack that has no hook. That value stays when the hook throws.
+    expect({ reads, calls }).toEqual({
+      reads: [{ threw: thrownByTheHook }, { value: "MySQLError: failed to execute query" }],
+      calls: 1,
     });
   });
 
@@ -688,6 +750,29 @@ describeWithContainer("postgres: the stack of a native error", { image: "postgre
     );
     expect(fields(error)).toEqual(serverFields);
     await expectUsable(sql);
+  });
+
+  test("an Error.prepareStackTrace that throws, throws to the first reader of the stack", async () => {
+    await container.ready;
+    await using sql = new SQL({ url: url(), max: 1 });
+    await sql`CREATE TEMPORARY TABLE error_class_not_null (id int NOT NULL)`;
+
+    const error = await rejectionOf(sql`INSERT INTO error_class_not_null (id) VALUES (${null})`);
+    const thrownByTheHook = new UserError("thrown by Error.prepareStackTrace");
+    let calls = 0;
+    const reads = await withPrepareStackTrace(
+      () => {
+        calls++;
+        throw thrownByTheHook;
+      },
+      () => [readStack(error), readStack(error)],
+    );
+    // The hook can read the stack that has no hook. That value stays when the hook throws.
+    expect({ reads, calls }).toEqual({
+      reads: [{ threw: thrownByTheHook }, { value: "PostgresError: " + message }],
+      calls: 1,
+    });
+    expect(fields(error)).toEqual(serverFields);
   });
 
   test("follows a change of the message until the first read", async () => {

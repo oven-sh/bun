@@ -3,7 +3,19 @@ import { CString, dlopen, ptr } from "bun:ffi";
 import { memoryUsage as jscMemoryUsage } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isRoot, isWindows, tempDir, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isLinux,
+  isMacOS,
+  isRoot,
+  isWindows,
+  libcPathForDlopen,
+  tempDir,
+  tmpdirSync,
+} from "harness";
 import { basename, join, resolve } from "path";
 import { getHeapStatistics } from "v8";
 
@@ -1084,6 +1096,361 @@ describe.concurrent(() => {
       expect(stdout).toBeEmpty();
       // 7 is node's "the uncaughtException handler itself threw"; there is no handler here.
       expect(exitCode).toBe(1);
+    });
+
+    // Each case is `setup`, then a listener that runs `first` on the first 'beforeExit' and
+    // `second` on the second one. `steps` is the same for more emissions: one script for
+    // each. `files` are the other files that the case needs.
+    async function runBeforeExitCase({ setup = "", first = "", second = "", steps = [first, second], files = {} }) {
+      using dir = tempDir("process-beforeexit", {
+        ...files,
+        "index.js": `
+          // Blocks this thread until \`condition\` holds for the counters of its event loop.
+          function waitForLoop(condition) {
+            const { getEventLoopStats } = require("bun:internal-for-testing");
+            const deadline = Date.now() + 30_000;
+            while (!condition(getEventLoopStats())) {
+              if (Date.now() > deadline) throw new Error("timed out waiting for " + condition);
+              Bun.sleepSync(1);
+            }
+          }
+          // Until another thread has posted a task to this one.
+          const waitForPost = () => waitForLoop(stats => !stats.concurrentTasksEmpty);
+          // Blocks this thread until a Worker has stored \`value\` in \`state\`.
+          function waitForWorker(state, value) {
+            const deadline = Date.now() + 30_000;
+            while (Atomics.load(state, 0) !== value) {
+              if (Date.now() > deadline) throw new Error("timed out waiting for the Worker");
+              Atomics.wait(state, 0, Atomics.load(state, 0), 5);
+            }
+          }
+          ${setup}
+          const steps = [${steps.map(step => `() => {${step}}`).join(", ")}];
+          let emitted = 0;
+          process.on("beforeExit", () => {
+            console.log("beforeExit", ++emitted);
+            // One emission more than the case has steps for would be a loop.
+            if (emitted > steps.length) process.exit(1);
+            steps[emitted - 1]();
+          });
+          process.on("exit", () => console.log("exit"));`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    const unrefdPort = `
+      const { port1, port2 } = new (require("node:worker_threads").MessageChannel)();
+      port2.on("message", message => console.log("message", message));
+      port2.unref();`;
+
+    // Nothing here holds the event loop after the listener ran. Node v26.3.0 prints the same
+    // for each case: the loop does not run again, so the listener runs once and what arrived
+    // is not delivered.
+    describe("is emitted once, and the loop does not run again, for", () => {
+      const cases = {
+        // One drain of a port takes 1024 messages and continues in a second task.
+        "1025 messages for an unref'd MessagePort": {
+          setup: unrefdPort,
+          first: `for (let i = 0; i < 1025; i++) port1.postMessage(i);`,
+        },
+        "a message for an unref'd BroadcastChannel": {
+          setup: `
+            const sender = new BroadcastChannel("channel");
+            const receiver = new BroadcastChannel("channel");
+            receiver.onmessage = event => console.log("message", event.data);
+            sender.unref();
+            receiver.unref();`,
+          first: `sender.postMessage("late");`,
+        },
+        "an unref'd setImmediate()": {
+          first: `setImmediate(() => console.log("immediate")).unref();`,
+        },
+        "a message from an unref'd Worker": {
+          setup: `
+            const { Worker } = require("node:worker_threads");
+            const state = new Int32Array(new SharedArrayBuffer(4));
+            const worker = new Worker(__dirname + "/worker.js", { workerData: state.buffer });
+            worker.on("message", message => console.log("message", message));
+            worker.unref();`,
+          files: {
+            "worker.js": `
+              const { parentPort, workerData } = require("node:worker_threads");
+              const state = new Int32Array(workerData);
+              // Until the parent is inside its 'beforeExit' listener.
+              Atomics.wait(state, 0, 0);
+              parentPort.postMessage("late");
+              Atomics.store(state, 0, 2);
+              Atomics.notify(state, 0);
+              setInterval(() => {}, 1000);`,
+          },
+          first: `
+            Atomics.store(state, 0, 1);
+            Atomics.notify(state, 0);
+            waitForWorker(state, 2);
+            waitForPost();`,
+        },
+        "the reply to getHeapStatistics() of an unref'd Worker": {
+          setup: `
+            const { Worker } = require("node:worker_threads");
+            const worker = new Worker(__dirname + "/worker.js");
+            worker.once("online", () => worker.unref());`,
+          files: { "worker.js": `setInterval(() => {}, 1000);` },
+          first: `
+            worker.getHeapStatistics().then(() => console.log("reply"));
+            waitForPost();`,
+        },
+      };
+      // Here the watcher's own thread posts the event.
+      if (isLinux) {
+        cases["an event for an unref'd fs.watch()"] = {
+          setup: `
+            const fs = require("node:fs");
+            fs.mkdirSync(__dirname + "/watched");
+            fs.watch(__dirname + "/watched", event => console.log("watch", event)).unref();`,
+          first: `
+            fs.writeFileSync(__dirname + "/watched/file.txt", "x");
+            waitForPost();`,
+        };
+      }
+
+      for (const [name, scripts] of Object.entries(cases)) {
+        it(name, async () => {
+          expect(await runBeforeExitCase(scripts)).toEqual({ stdout: "beforeExit 1\nexit\n", stderr: "", exitCode: 0 });
+        });
+      }
+
+      // Node settles this promise from its platform task queue, which a dead loop does not drain.
+      it("Atomics.waitAsync() that a notify resolves", async () => {
+        const result = await runBeforeExitCase({
+          setup: `const shared = new Int32Array(new SharedArrayBuffer(4));`,
+          first: `
+            Atomics.waitAsync(shared, 0, 0).value.then(value => console.log("waitAsync", value));
+            console.log("notified", Atomics.notify(shared, 0));`,
+        });
+        expect(result).toEqual({ stdout: "beforeExit 1\nnotified 1\nexit\n", stderr: "", exitCode: 0 });
+      });
+
+      // Not Node's output. There, the Worker that the listener creates leaves a handle that is
+      // closing, which libuv counts for one more turn: Node prints "message late" and emits
+      // 'beforeExit' again. Here only a keep-alive holds the loop, and an unref'd Worker has none.
+      it("a message from a Worker that the listener creates and unrefs", async () => {
+        const result = await runBeforeExitCase({
+          setup: `
+            const { Worker } = require("node:worker_threads");
+            const state = new Int32Array(new SharedArrayBuffer(4));`,
+          files: {
+            "worker.js": `
+              const { parentPort, workerData } = require("node:worker_threads");
+              const state = new Int32Array(workerData);
+              parentPort.postMessage("late");
+              Atomics.store(state, 0, 2);
+              Atomics.notify(state, 0);
+              setInterval(() => {}, 1000);`,
+          },
+          first: `
+            const worker = new Worker(__dirname + "/worker.js", { workerData: state.buffer });
+            worker.on("message", message => console.log("message", message));
+            worker.unref();
+            waitForWorker(state, 2);`,
+        });
+        expect(result).toEqual({ stdout: "beforeExit 1\nexit\n", stderr: "", exitCode: 0 });
+      });
+    });
+
+    // The other half: work that a listener starts holds the event loop until it is done, so
+    // the loop runs again and 'beforeExit' is emitted again after it. Node v26.3.0 prints the
+    // same for each case that it can run.
+    describe("is emitted again after", () => {
+      const cases = {
+        // The pool thread posts the result and then lets go of the loop. A ref() and unref()
+        // on this thread must not apply that release while the result is still in the queue.
+        "a crypto.subtle.digest() whose result was posted while the listener ran": {
+          first: `
+            crypto.subtle.digest("SHA-256", new Uint8Array(4096)).then(hash => console.log("digest", hash.byteLength));
+            waitForLoop(stats => stats.concurrentRef !== 0);
+            const { port1 } = new (require("node:worker_threads").MessageChannel)();
+            port1.ref();
+            port1.unref();`,
+          output: "digest 32\n",
+        },
+        // The first stat of a watcher is a request in flight, also when the watcher is unref'd.
+        "the first stat of an unref'd fs.watchFile()": {
+          first: `require("node:fs").watchFile(__filename, () => console.log("listener")).unref();`,
+          output: "",
+        },
+        "the first stat of an unref'd fs.watchFile() of a missing file": {
+          first: `
+            const missing = __dirname + "/missing";
+            require("node:fs").watchFile(missing, current => console.log("listener", current.mtimeMs)).unref();`,
+          output: "listener 0\n",
+        },
+        // Its abort is a task that this thread queues. The watcher itself holds nothing.
+        "an fs.watch() that is not persistent, with a signal that is already aborted": {
+          first: `
+            const options = { persistent: false, signal: AbortSignal.abort() };
+            const watcher = require("node:fs").watch(__dirname, options);
+            watcher.on("error", () => {});
+            watcher.on("close", () => console.log("close"));`,
+          output: "close\n",
+        },
+        // The read that decides is made after every emission, not only after the first one.
+        "a timer, and not a third time for what the second call leaves unheld": {
+          setup: unrefdPort,
+          first: `setTimeout(() => console.log("timer"), 1);`,
+          second: `
+            port1.postMessage("late");
+            setImmediate(() => console.log("immediate")).unref();`,
+          output: "timer\n",
+        },
+      };
+
+      // An invocation of a threadsafe JSCallback is only queued, from whichever thread the
+      // native code calls it on. Nothing else holds the loop for it.
+      if (!isWindows) {
+        const threadsafeCallback = signature => `
+          const { dlopen, JSCallback, ptr } = require("bun:ffi");
+          const { symbols: libc } = dlopen(${JSON.stringify(libcPathForDlopen())}, {
+            qsort: { args: ["ptr", "usize", "usize", "function"], returns: "void" },
+            pthread_create: { args: ["ptr", "ptr", "function", "ptr"], returns: "int" },
+            pthread_join: { args: ["u64", "ptr"], returns: "int" },
+          });
+          const callback = new JSCallback(() => console.log("callback"), { ...${signature}, threadsafe: true });`;
+        cases["a threadsafe JSCallback that native code calls on this thread"] = {
+          setup: threadsafeCallback(`{ args: ["ptr", "ptr"], returns: "int" }`),
+          // qsort() calls its comparator once for two elements.
+          first: `libc.qsort(ptr(new Int32Array(2)), 2, 4, callback.ptr);`,
+          output: "callback\n",
+        };
+        cases["a threadsafe JSCallback that native code calls on another thread"] = {
+          setup: threadsafeCallback(`{ args: ["ptr"], returns: "ptr" }`),
+          // The callback is the start routine of a thread that has ended when the listener returns.
+          first: `
+            const thread = new BigUint64Array(1);
+            if (libc.pthread_create(ptr(thread), null, callback.ptr, null) !== 0) throw new Error("pthread_create");
+            libc.pthread_join(thread[0], null);`,
+          output: "callback\n",
+        };
+      }
+
+      for (const [name, { output, ...scripts }] of Object.entries(cases)) {
+        it(name, async () => {
+          expect(await runBeforeExitCase(scripts)).toEqual({
+            stdout: "beforeExit 1\n" + output + "beforeExit 2\nexit\n",
+            stderr: "",
+            exitCode: 0,
+          });
+        });
+      }
+
+      // Computed at once, on this thread: the result is only a task in this thread's own queue.
+      // One hash for each emission, so that each one has to hold the loop alone.
+      it("crypto.subtle.digest() of less than 64 bytes, for each hash", async () => {
+        const hashes = Object.entries({
+          "SHA-1": 20,
+          "SHA-224": 28,
+          "SHA-256": 32,
+          "SHA-384": 48,
+          "SHA-512": 64,
+          "SHA3-256": 32,
+          "SHA3-384": 48,
+          "SHA3-512": 64,
+        });
+        const result = await runBeforeExitCase({
+          steps: [
+            ...hashes.map(
+              ([name]) =>
+                `crypto.subtle.digest("${name}", new Uint8Array(32)).then(hash => console.log("${name}", hash.byteLength));`,
+            ),
+            "",
+          ],
+        });
+        expect(result).toEqual({
+          stdout:
+            hashes.map(([name, length], index) => `beforeExit ${index + 1}\n${name} ${length}\n`).join("") +
+            `beforeExit ${hashes.length + 1}\nexit\n`,
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+
+      // Each of these completes through a backend that differs by platform. Where it completes
+      // at once, the loop does not run again: what counts is that the result is not lost.
+      it.each([
+        `Bun.file(__filename).text()`,
+        `Bun.write(__dirname + "/copy.js", Bun.file(__filename))`,
+        `Bun.write(__dirname + "/written.txt", "x")`,
+        `require("node:fs").promises.readFile(__filename)`,
+        `require("node:dns").promises.lookup("localhost")`,
+      ])("%s, which settles before 'exit'", async operation => {
+        const { stdout, ...rest } = await runBeforeExitCase({
+          first: `${operation}.then(() => console.log("done"));`,
+        });
+        expect({ stdout: stdout.replace("beforeExit 2\n", ""), ...rest }).toEqual({
+          stdout: "beforeExit 1\ndone\nexit\n",
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+    });
+
+    // In a Worker console.log() is asynchronous, which is work that holds the loop: these write directly.
+    describe("inside a Worker", () => {
+      const setup = `
+        const { Worker } = require("node:worker_threads");
+        new Worker(__dirname + "/worker.mjs").on("exit", code => console.log("worker exit", code));`;
+      // The Worker's top-level await waits for a message that its own listener posts.
+      const worker = listener => `
+        import { writeSync } from "node:fs";
+        import { MessageChannel } from "node:worker_threads";
+        const { port1, port2 } = new MessageChannel();
+        const received = new Promise(resolve =>
+          port2.on("message", message => {
+            port2.unref();
+            resolve(message);
+          }),
+        );
+        port2.unref();
+        let emitted = 0;
+        process.on("beforeExit", () => {
+          writeSync(1, "worker beforeExit " + ++emitted + "\\n");
+          if (emitted > 2) process.exit(1);
+          if (emitted > 1) return;
+          ${listener}
+        });
+        writeSync(1, "worker received " + (await received) + "\\n");`;
+
+      // 13 is Node's exit code for a top-level await that never settles.
+      it("a message for an unref'd MessagePort is not delivered, and the Worker exits 13", async () => {
+        const result = await runBeforeExitCase({
+          setup,
+          files: { "worker.mjs": worker(`port1.postMessage("late");`) },
+        });
+        expect(result).toEqual({
+          stdout: "worker beforeExit 1\nworker exit 13\nbeforeExit 1\nexit\n",
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+
+      it("a message for a MessagePort that the listener ref'd is delivered, and the Worker exits 0", async () => {
+        const result = await runBeforeExitCase({
+          setup,
+          files: { "worker.mjs": worker(`port2.ref(); port1.postMessage("late");`) },
+        });
+        expect(result).toEqual({
+          stdout: "worker beforeExit 1\nworker received late\nworker beforeExit 2\nworker exit 0\nbeforeExit 1\nexit\n",
+          stderr: "",
+          exitCode: 0,
+        });
+      });
     });
   });
 

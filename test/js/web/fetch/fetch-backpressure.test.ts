@@ -1871,6 +1871,67 @@ describe.concurrent("fetch() receive backpressure — a body nothing waits for d
       });
     });
   }
+
+  // The same rule at 'beforeExit'. The event is emitted again only when something holds the
+  // process after the listeners ran. The test ends the body while the first listener runs.
+  const beforeExitClients = [
+    [
+      "does not emit 'beforeExit' again when the body ends",
+      /* js */ `
+        // Stay here until the HTTP thread has posted the end of the body to this thread.
+        const { getEventLoopStats } = require("bun:internal-for-testing");
+        const deadline = Date.now() + 30_000;
+        while (getEventLoopStats().concurrentTasksEmpty) {
+          if (Date.now() > deadline) throw new Error("the end of the body was not posted");
+          Bun.sleepSync(1);
+        }
+      `,
+      ["beforeExit 1"],
+    ],
+    [
+      "emits 'beforeExit' again after a listener read the body to its end",
+      /* js */ `res.text().then(text => console.log("text " + text.length));`,
+      ["beforeExit 1", `text ${CHUNK}`, "beforeExit 2"],
+    ],
+  ] as const;
+
+  for (const [name, first, expected] of beforeExitClients) {
+    test(`a process holding the Response ${name}`, async () => {
+      await using server = await serveByHand();
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const res = await fetch(${JSON.stringify(server.url)});
+            let emitted = 0;
+            process.on("beforeExit", () => {
+              console.log("beforeExit " + ++emitted);
+              // A third time would be a loop.
+              if (emitted > 2) process.exit(1);
+              if (emitted > 1) return;
+              ${first}
+            });
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const stderr = proc.stderr.text();
+      const upstream = await server.response;
+      const lines: string[] = [];
+      for await (const line of forEachLine(proc.stdout)) {
+        lines.push(line);
+        if (line === "beforeExit 1") upstream.end();
+      }
+      expect({ lines, stderr: await stderr, exitCode: await proc.exited }).toEqual({
+        lines: [...expected],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  }
 });
 
 // Serial on purpose: both count the connections a pooled client opens, and a connection is back in

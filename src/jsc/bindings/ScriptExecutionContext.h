@@ -127,10 +127,19 @@ public:
     void reportException(const String& errorMessage, int lineNumber, int columnNumber, const String& sourceURL, JSC::Exception* exception, RefPtr<void*>&&, CachedScript* = nullptr, bool = false)
     {
     }
+    // Whether a queued task holds its context's event loop. Only held work emits 'beforeExit' again.
+    enum class HoldsEventLoop : uint8_t {
+        // Only a post from the context's own thread, which nothing else holds the loop for.
+        FromContextThread,
+        // From any thread: the poster has no keep-alive of its own (a threadsafe JSCallback).
+        Always,
+        // A delivery whose receiver decides with ref() and unref() (MessagePort, BroadcastChannel).
+        Never,
+    };
     // `loopKind`: which of the target VM's loops the task joins — currentLoopKind() captured on the
     // target's thread when the work whose completion this is was initiated, or Regular for work no
     // script there initiated.
-    WEBCORE_EXPORT static bool postTaskTo(ScriptExecutionContextIdentifier identifier, BunLoopKind loopKind, Function<void(ScriptExecutionContext&)>&& task);
+    WEBCORE_EXPORT static bool postTaskTo(ScriptExecutionContextIdentifier identifier, BunLoopKind loopKind, Function<void(ScriptExecutionContext&)>&& task, HoldsEventLoop = HoldsEventLoop::FromContextThread);
     WEBCORE_EXPORT static bool ensureOnContextThread(ScriptExecutionContextIdentifier, Function<void(ScriptExecutionContext&)>&& task);
 
     WEBCORE_EXPORT JSC::JSGlobalObject* globalObject();

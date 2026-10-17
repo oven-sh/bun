@@ -1812,6 +1812,32 @@ describe("bun test", () => {
       expect(exitCode).toBe(1);
     });
 
+    test("under BUN_TEST_DRAIN_EVENT_LOOP, 'beforeExit' is emitted once, after the event loop drained", async () => {
+      using dir = tempDir("bun-test-before-exit", {
+        "drain.test.ts": `
+          import { test } from "bun:test";
+          let emitted = 0;
+          process.on("beforeExit", () => console.log("beforeExit", ++emitted));
+          test("leaves a timer running", () => {
+            setTimeout(() => console.log("timer"), 1);
+          });
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "drain.test.ts"],
+        env: { ...bunEnv, BUN_TEST_DRAIN_EVENT_LOOP: "1" },
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.split("\n").filter(line => line === "timer" || line.startsWith("beforeExit"))).toEqual([
+        "timer",
+        "beforeExit 1",
+      ]);
+      expect(stderr).toContain("1 pass");
+      expect(exitCode).toBe(0);
+    });
+
     test("are not run in --parallel workers for bun:test files", async () => {
       const { stdout, stderr, exitCode } = await runFiles(
         { "a.test.ts": bunTestFile(1), "b.test.ts": bunTestFile(2) },

@@ -557,7 +557,7 @@ impl StatWatcher {
     /// `this` is the watcher the pool posted (ref held for the hop).
     pub(crate) unsafe fn run_hop(this: *mut StatWatcher) -> bun_event_loop::JsResult<()> {
         // SAFETY: fn contract.
-        let hop = unsafe { (*this).pending_hop.get() };
+        let hop = unsafe { (*this).take_hop() };
         match hop {
             x if x == StatWatcherHop::InitialStatSuccess as u8 => {
                 Self::initial_stat_success_on_main_thread(this)
@@ -574,7 +574,18 @@ impl StatWatcher {
     /// # Safety
     /// As [`run_hop`](Self::run_hop).
     pub(crate) unsafe fn release_hop(this: *mut StatWatcher) {
+        // SAFETY: fn contract.
+        unsafe { (*this).take_hop() };
         Self::deref(this);
+    }
+
+    /// JS thread: a hop left the queue. The first stat's hop also ends its keep-alive.
+    fn take_hop(&self) -> u8 {
+        let hop = self.pending_hop.get();
+        if hop != StatWatcherHop::Changed as u8 {
+            self.ctx.event_loop_shared().unref_keep_alive();
+        }
+        hop
     }
 
     /// Copy the last stat by value.
@@ -1025,11 +1036,14 @@ impl InitialStatTask {
         // the task lifetime (balanced by `deref()` in run_owned's closed path or
         // by the main-thread `initial_stat_*_on_main_thread` callbacks).
         StatWatcher::ref_(watcher);
+        // SAFETY: per fn contract; JS thread.
+        let vm = unsafe { (*watcher).ctx.get() };
+        // As libuv's request in Node, the first stat holds the loop, also for an unref'd watcher.
+        vm.event_loop_shared().ref_keep_alive();
         WorkPool::schedule_new(InitialStatTask {
             watcher,
             // The watcher is a JS-owned m_ctx; its VM waits for this ticket.
-            // SAFETY: per fn contract; JS thread.
-            ticket: unsafe { (*watcher).ctx.get() }.ticket(),
+            ticket: vm.ticket(),
             task: WorkPoolTask::default(),
         });
     }
@@ -1056,6 +1070,7 @@ impl InitialStatTask {
             // Balance the ref() from createAndSchedule().
             // SAFETY: `this` is live (ref'd in `create_and_schedule`); we own that ref.
             StatWatcher::deref(this);
+            ticket.unref_keep_alive();
             return;
         }
 

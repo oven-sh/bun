@@ -394,6 +394,8 @@ function seenLines(stdout: string) {
   return stdout.split("\n").filter(line => line.startsWith("SEEN "));
 }
 
+// Each of these tests starts one or two debug+ASAN bun processes, and the tests run at the same time: they get the
+// same headroom as the tests of the largest fixtures above.
 describe.concurrent("context.error", () => {
   // [fixture, tests that pass on bun, tests and subtests that pass on node]
   const onBothRuntimes: [string, number, number][] = [
@@ -402,7 +404,7 @@ describe.concurrent("context.error", () => {
     ["38-expect-failure-validator-input.js", 4, 4],
   ];
 
-  test.each(onBothRuntimes)(
+  test.each([...onBothRuntimes, ["35c-values-node-cannot-report.js", 2, 0]])(
     "%s passes",
     async (fixture, passes) => {
       const { exitCode, stderr } = await runTests([fixture]);
@@ -418,37 +420,41 @@ describe.concurrent("context.error", () => {
     expect({ exitCode, stdout }).toMatchObject({ exitCode: 0, stdout: expect.stringContaining("fail 0") });
   });
 
-  test("a failed subtest gives its parent the error '1 subtest failed'", async () => {
-    const seen = `SEEN {"passed":false,"code":"ERR_TEST_FAILURE","failureType":"subtestsFailed","message":"1 subtest failed","cause":"1 subtest failed"}`;
-    const onBun = await runTests(["36b-subtest-rollup.js"]);
-    expect(seenLines(onBun.stdout)).toEqual([seen]);
-    expect(onBun.exitCode).toBe(1);
-    if (referenceNode) {
-      const onNode = await runTestsOnNode(["36b-subtest-rollup.js"]);
-      expect(seenLines(onNode.stdout)).toEqual([seen]);
-      expect(onNode.exitCode).toBe(1);
-    }
-  }, 30_000);
+  // These two fixtures fail on purpose. Each prints what its hooks or its exit listener saw.
+  const kSubtestRollup = [
+    `SEEN {"passed":false,"code":"ERR_TEST_FAILURE","failureType":"subtestsFailed","message":"1 subtest failed","cause":"1 subtest failed"}`,
+  ];
+  const kTopLevelHooks = [
+    `SEEN {"where":"suite","name":"throws","passed":false,"code":"ERR_TEST_FAILURE","failureType":"testCodeFailure","message":"boom","cause":"TypeError: boom"}`,
+    `SEEN {"where":"file","name":"throws","passed":false,"code":"ERR_TEST_FAILURE","failureType":"testCodeFailure","message":"boom","cause":"TypeError: boom"}`,
+    `SEEN {"where":"suite","name":"passes","passed":true}`,
+    `SEEN {"where":"file","name":"passes","passed":true}`,
+    `SEEN {"where":"suite","name":"fails as expected","passed":true,"code":"ERR_TEST_FAILURE","failureType":"testCodeFailure","message":"expected","cause":"Error: expected"}`,
+    `SEEN {"where":"file","name":"fails as expected","passed":true,"code":"ERR_TEST_FAILURE","failureType":"testCodeFailure","message":"expected","cause":"Error: expected"}`,
+    `SEEN {"where":"suite","name":"times out","passed":false,"code":"ERR_TEST_FAILURE","failureType":"testTimeoutFailure","message":"test timed out after 5ms","cause":"test timed out after 5ms"}`,
+    `SEEN {"where":"file","name":"times out","passed":false,"code":"ERR_TEST_FAILURE","failureType":"testTimeoutFailure","message":"test timed out after 5ms","cause":"test timed out after 5ms"}`,
+  ];
+  const failingOnPurpose: [string, string[]][] = [
+    ["36b-subtest-rollup.js", kSubtestRollup],
+    ["36c-top-level-hooks.js", kTopLevelHooks],
+  ];
 
-  test("the hooks of a file and of a suite read the same error", async () => {
-    const onBun = await runTests(["36c-top-level-hooks.js"]);
-    expect(seenLines(onBun.stdout)).toEqual([
-      `SEEN {"where":"suite","name":"throws","passed":false,"code":"ERR_TEST_FAILURE","failureType":"testCodeFailure","message":"boom","cause":"TypeError: boom"}`,
-      `SEEN {"where":"file","name":"throws","passed":false,"code":"ERR_TEST_FAILURE","failureType":"testCodeFailure","message":"boom","cause":"TypeError: boom"}`,
-      `SEEN {"where":"suite","name":"passes","passed":true}`,
-      `SEEN {"where":"file","name":"passes","passed":true}`,
-      `SEEN {"where":"suite","name":"fails as expected","passed":true,"code":"ERR_TEST_FAILURE","failureType":"testCodeFailure","message":"expected","cause":"Error: expected"}`,
-      `SEEN {"where":"file","name":"fails as expected","passed":true,"code":"ERR_TEST_FAILURE","failureType":"testCodeFailure","message":"expected","cause":"Error: expected"}`,
-      `SEEN {"where":"suite","name":"times out","passed":false,"code":"ERR_TEST_FAILURE","failureType":"testTimeoutFailure","message":"test timed out after 5ms","cause":"test timed out after 5ms"}`,
-      `SEEN {"where":"file","name":"times out","passed":false,"code":"ERR_TEST_FAILURE","failureType":"testTimeoutFailure","message":"test timed out after 5ms","cause":"test timed out after 5ms"}`,
-    ]);
-    expect(onBun.exitCode).toBe(1);
-    if (referenceNode) {
-      const onNode = await runTestsOnNode(["36c-top-level-hooks.js"]);
-      expect(seenLines(onNode.stdout)).toEqual(seenLines(onBun.stdout));
-      expect(onNode.exitCode).toBe(1);
-    }
-  }, 30_000);
+  test.each(failingOnPurpose)(
+    "%s: the hooks read node's error",
+    async (fixture, seen) => {
+      const { exitCode, stdout } = await runTests([fixture]);
+      expect({ seen: seenLines(stdout), exitCode }).toEqual({ seen, exitCode: 1 });
+    },
+    30_000,
+  );
+
+  test.skipIf(!referenceNode).each(failingOnPurpose)(
+    "%s: the hooks read the same error on node",
+    async (fixture, seen) => {
+      const { exitCode, stdout } = await runTestsOnNode([fixture]);
+      expect({ seen: seenLines(stdout), exitCode }).toEqual({ seen, exitCode: 1 });
+    },
+  );
 
   test("bun test prints the thrown value, not the ERR_TEST_FAILURE error", async () => {
     const { exitCode, stderr } = await runTests(["37-failure-output.js"]);
@@ -465,45 +471,80 @@ describe.concurrent("context.error", () => {
     expect({ exitCode, stderr }).toMatchObject({ exitCode: 1, stderr: expect.stringContaining(" 11 fail") });
   }, 30_000);
 
-  test("run() gives the parent process the same errors as on node", async () => {
-    using dir = tempDir("node-test-error-run", {
-      "run.js": `
-        const { run } = require("node:test");
-        const describeValue = value => (value instanceof Error ? value.name + ": " + value.message : value);
-        (async () => {
-          // run() on bun sends an event as JSON, so a thrown object that is not an Error arrives as an Error.
-          const notCompared = ["throws an object", "throws an object that cannot print itself"];
-          const failed = [];
-          for await (const { type, data } of run({ files: process.argv.slice(2) })) {
-            if (type !== "test:fail" || data.details.type !== "test" || notCompared.includes(data.name)) continue;
-            const { error } = data.details;
-            const own = Object.prototype.hasOwnProperty.call(error, "cause");
-            failed.push([data.name, error.code, error.failureType, error.message, own, describeValue(error.cause)].join(" | "));
-          }
-          console.log("FAILED " + JSON.stringify(failed.sort()));
-        })();
-      `,
-    });
-    const script = join(String(dir), "run.js");
-    const fixtures = ["35-context-error.js", "36b-subtest-rollup.js"].map(name =>
-      join(import.meta.dirname, "fixtures", name),
-    );
-    async function failedOn(exe: string): Promise<string[]> {
-      await using proc = spawn({ cmd: [exe, script, ...fixtures], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-      const [stdout] = await Promise.all([proc.stdout.text(), proc.exited]);
+  describe("the error of each test:fail event of run()", () => {
+    // One line for each failed test: name | code | failureType | message | has an own cause | cause
+    async function failedOn(exe: string, fixtures: string[]) {
+      using dir = tempDir("node-test-error-run", {
+        "run.js": `
+          const { run } = require("node:test");
+          const describeValue = value => (value instanceof Error ? value.name + ": " + value.message : value);
+          (async () => {
+            const failed = [];
+            for await (const { type, data } of run({ files: process.argv.slice(2) })) {
+              if (type !== "test:fail" || data.details.type !== "test") continue;
+              const { error } = data.details;
+              const own = Object.prototype.hasOwnProperty.call(error, "cause");
+              failed.push([data.name, error.code, error.failureType, error.message, own, describeValue(error.cause)].join(" | "));
+            }
+            console.log("FAILED " + JSON.stringify(failed.sort()));
+          })();
+        `,
+      });
+      await using proc = spawn({
+        cmd: [exe, join(String(dir), "run.js"), ...fixtures.map(name => join(import.meta.dirname, "fixtures", name))],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       const line = stdout.split("\n").find(line => line.startsWith("FAILED "));
-      return line === undefined ? [] : JSON.parse(line.slice("FAILED ".length));
+      const failed: string[] = line === undefined ? [] : JSON.parse(line.slice("FAILED ".length));
+      return { failed, stderr, exitCode };
     }
-    const onBun = await failedOn(bunExe());
-    expect(onBun).toContain("throws an error | ERR_TEST_FAILURE | testCodeFailure | boom | true | Error: boom");
-    expect(onBun).toContain("throws a string | ERR_TEST_FAILURE | testCodeFailure | a string | true | a string");
-    expect(onBun).toContain("throws undefined | ERR_TEST_FAILURE | testCodeFailure | undefined | true | ");
-    expect(onBun).toContain(
-      "timeout | ERR_TEST_FAILURE | testTimeoutFailure | test timed out after 5ms | true | test timed out after 5ms",
+
+    const comparedWithNode = ["35-context-error.js", "36b-subtest-rollup.js"];
+    // run() on bun sends an event as JSON, so a thrown object that is not an Error arrives as an Error.
+    const notCompared = ["throws an object", "throws an object that cannot print itself"];
+    const compared = (failed: string[]) =>
+      failed.filter(row => !notCompared.includes(row.slice(0, row.indexOf(" | "))));
+
+    test("has the code, the failure type and the cause", async () => {
+      const { failed, stderr, exitCode } = await failedOn(bunExe(), comparedWithNode);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      expect(failed).toContain("throws an error | ERR_TEST_FAILURE | testCodeFailure | boom | true | Error: boom");
+      expect(failed).toContain("throws a string | ERR_TEST_FAILURE | testCodeFailure | a string | true | a string");
+      expect(failed).toContain("throws undefined | ERR_TEST_FAILURE | testCodeFailure | undefined | true | ");
+      expect(failed).toContain(
+        "timeout | ERR_TEST_FAILURE | testTimeoutFailure | test timed out after 5ms | true | test timed out after 5ms",
+      );
+      expect(failed).toContain(
+        "parent | ERR_TEST_FAILURE | subtestsFailed | 1 subtest failed | true | 1 subtest failed",
+      );
+    }, 30_000);
+
+    test.skipIf(!referenceNode)(
+      "is the same as on node",
+      async () => {
+        const [bun, node] = await Promise.all([
+          failedOn(bunExe(), comparedWithNode),
+          failedOn(referenceNode!, comparedWithNode),
+        ]);
+        expect({ failed: compared(node.failed), exitCode: node.exitCode }).toEqual({
+          failed: compared(bun.failed),
+          exitCode: 0,
+        });
+      },
+      30_000,
     );
-    expect(onBun).toContain("parent | ERR_TEST_FAILURE | subtestsFailed | 1 subtest failed | true | 1 subtest failed");
-    if (referenceNode) expect(await failedOn(referenceNode)).toEqual(onBun);
-  }, 30_000);
+
+    test("a thrown symbol does not stop the report", async () => {
+      const { failed, stderr, exitCode } = await failedOn(bunExe(), ["35c-values-node-cannot-report.js"]);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      expect(failed).toContain(
+        "throws a symbol | ERR_TEST_FAILURE | testCodeFailure | Symbol(a symbol) | true | Error: Symbol(a symbol)",
+      );
+    }, 30_000);
+  });
 });
 
 describe("node:test mock", () => {

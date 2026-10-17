@@ -702,7 +702,7 @@ function serializeRunError(error: unknown, depth = 0) {
     error === null ||
     typeof error === "string" ||
     typeof error === "boolean" ||
-    (error as number) - (error as number) === 0
+    (typeof error === "number" && error - error === 0)
   ) {
     return { __proto__: null, value: error };
   }
@@ -2377,8 +2377,10 @@ async function runHook(hook: Hook, owner: TestNode, arg: unknown) {
     }
   } catch (err) {
     // Node stores the reason of an abort as it is, with this failure type (test.js:1058-1062), and wraps what the hook threw.
-    if (err != null && signal !== undefined && signal.aborted && err === signal.reason) {
-      if (typeof err === "object") (err as { failureType?: string }).failureType = "testAborted";
+    if (typeof err === "object" && err !== null && signal !== undefined && signal.aborted && err === signal.reason) {
+      try {
+        (err as { failureType?: string }).failureType = "testAborted";
+      } catch {}
       throw err;
     }
     throw TestFailure.fromHook(err);

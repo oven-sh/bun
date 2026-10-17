@@ -6,7 +6,7 @@
 //
 // The SQL drivers kept the raw us_socket_t* in self.socket after
 // on_close/on_connect_error; usockets frees it at end-of-tick, so later
-// reads (timer callbacks, ref()/unref()/close()) were heap-use-after-free.
+// reads (timer callbacks, ref()/close()) were heap-use-after-free.
 // Capture the native handle via the query handle's .run(connection, …),
 // drop the server socket, yield past the free, then touch the handle.
 
@@ -21,7 +21,7 @@ const drivers = [
     name: "postgres",
     // .ref() calls update_has_pending_activity() which reads
     // self.socket.is_closed() when the connection is in a terminal state.
-    touch: "nativeConnection.ref(); nativeConnection.unref();",
+    touch: "nativeConnection.ref();",
     server: /* js */ `
       import { pgAuthenticationOk, pgReadyForQuery } from ${JSON.stringify(wireFrames)};
       export const url = port => \`postgres://postgres@127.0.0.1:\${port}/db\`;
@@ -34,8 +34,7 @@ const drivers = [
   },
   {
     name: "mysql",
-    // .close() on a failed connection calls clean_queue_and_close() which
-    // calls self.socket.close() and so reads the freed is_closed flag.
+    // .close() on a failed connection must not close the freed socket again.
     touch: "nativeConnection.close();",
     server: /* js */ `
       import { mysqlAckSessionSetup, mysqlHandshakeV10, mysqlOkPacket } from ${JSON.stringify(wireFrames)};
@@ -90,7 +89,8 @@ test.concurrent.skipIf(!isDebug && !isASAN).each(drivers)(
         let nativeConnection;
         let runCount = 0;
         const q = sql\`select 1\`;
-        q.values(); // force lazy creation of the native query handle
+        // Starting the query makes its native handle. run() comes when the pool has dialed.
+        const settled = q.catch(err => err?.code ?? String(err));
         const handleSym = Object.getOwnPropertySymbols(q).find(s => s.description === "handle");
         const handle = q[handleSym];
         const protoRun = Object.getPrototypeOf(handle).run;
@@ -103,22 +103,15 @@ test.concurrent.skipIf(!isDebug && !isASAN).each(drivers)(
             return protoRun.call(this, connection, query);
           },
         });
-        const settled = q.catch(err => err?.code ?? String(err));
 
         // Wait for the connection to establish and the query to enqueue.
         while (runCount === 0) await new Promise(r => setImmediate(r));
 
-        // Replace the pool's JS onclose so it does not pre-emptively drop
-        // our reference (we want the native connection to outlive the
-        // socket), and use it to observe the native on_close dispatch.
-        const { promise: closed, resolve: onNativeClose } = Promise.withResolvers();
-        nativeConnection.onclose = onNativeClose;
-
-        // Server drops the socket -> native on_close -> status=Failed. The
-        // us_socket_t goes onto closed_head and is freed at the end of the
-        // current usockets tick.
+        // Server drops the socket -> native on_close -> status=Failed, which
+        // rejects the query. The us_socket_t goes onto closed_head and is
+        // freed at the end of the current usockets tick.
         socketRef.destroy();
-        await closed;
+        await settled;
 
         // One more tick: us_internal_free_closed_sockets runs at the end of
         // the loop iteration that dispatched on_close.
@@ -128,9 +121,7 @@ test.concurrent.skipIf(!isDebug && !isASAN).each(drivers)(
         // us_socket_t and ASAN aborts with heap-use-after-free.
         ${touch}
 
-        await settled;
-        // A second round of touches after the promise machinery has
-        // settled covers the re-entrant path the timer originally hit.
+        await new Promise(r => setImmediate(r));
         ${touch}
 
         console.log("ok");

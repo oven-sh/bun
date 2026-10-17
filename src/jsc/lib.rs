@@ -790,7 +790,7 @@ pub use script_execution_context::{
 pub use self::js_global_object::{GlobalRef, JSGlobalObject};
 pub use self::vm::VM;
 
-/// Options for `JSGlobalObject::validate_integer_range` / `validate_bigint_range`.
+/// Options for `JSGlobalObject::validate_integer_range`.
 /// min/max are `i128` so every
 /// signed/unsigned primitive's bounds + MIN/MAX_SAFE_INTEGER fit without
 /// narrowing. Defined at crate root so `bun_runtime` callers and
@@ -1054,7 +1054,7 @@ pub struct GregorianDateTime {
     pub day: i32,
     pub hour: i32,
     pub minute: i32,
-    pub(crate) second: i32,
+    pub second: i32,
     pub weekday: i32,
 }
 

@@ -370,7 +370,7 @@ pub(crate) fn lint(
                 lacks_eslint |= target.loaded.flavor == Flavor::Eslint
                     && config.route_as_it_is(&target.path) == Route::Eslint;
             }
-            Route::Native | Route::Processor => {
+            Route::Native | Route::Language | Route::Processor => {
                 files += 1;
                 if seen.insert(Arc::as_ptr(config)) {
                     if let Some(error) = &config.error {

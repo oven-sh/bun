@@ -101,6 +101,76 @@ describe.skipIf(isASAN)("given an add(a, b) function", () => {
   });
 }); // </given add(a, b) function>
 
+describe.skipIf(isASAN)("given an identity(int) function", () => {
+  const source = /* c */ `
+      #include <stdint.h>
+      int identity(int v) {
+        return v;
+      }
+      int16_t identity16(int16_t v) {
+        return v;
+      }
+    `;
+  let dir: string;
+
+  beforeAll(() => {
+    dir = tempDirWithFiles("bun-ffi-cc-int-identity-test", {
+      "identity.c": source,
+    });
+  });
+
+  afterAll(async () => {
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  describe("when compiled", () => {
+    let res: Library<{
+      identity: { args: ["int"]; returns: "int" };
+      identity16: { args: ["i16"]; returns: "i16" };
+    }>;
+
+    beforeAll(() => {
+      res = cc({
+        source: path.join(dir, "identity.c"),
+        symbols: {
+          identity: {
+            returns: "int",
+            args: ["int"],
+          },
+          identity16: {
+            returns: "i16",
+            args: ["i16"],
+          },
+        },
+      });
+    });
+
+    afterAll(() => {
+      res.close();
+    });
+
+    // https://github.com/oven-sh/bun/issues/44906: double-encoded
+    // numbers used to arrive as the raw low 32 bits (0 for small
+    // integral doubles, junk otherwise) instead of being converted.
+    it("converts double-encoded numbers, not just int32-tagged ones", () => {
+      const heap = new Float64Array([7, 3, 0, -5, 1e6]);
+      for (const v of heap) {
+        expect(res.symbols.identity(v)).toBe(v);
+      }
+      expect(res.symbols.identity(Math.sqrt(49))).toBe(7);
+      expect(res.symbols.identity(1.1)).toBe(1);
+    });
+
+    it("converts double-encoded numbers for i16 args too", () => {
+      const heap = new Float64Array([7, -5, 32767, 32768]);
+      for (const v of heap) {
+        // int16 truncation, matching C semantics
+        expect(res.symbols.identity16(v)).toBe(((v + 32768) % 65536) - 32768);
+      }
+    });
+  }); // </when compiled>
+}); // </given identity(int) function>
+
 describe("given a source file with syntax errors", () => {
   const source = /* c */ `
     int add(int a, int b) {

@@ -190,18 +190,14 @@ impl ABIType {
         })
     }
 
-    /// Types that we can directly pass through as an `int64_t`
+    /// Every argument arrives as an `EncodedJSValue` and must be decoded,
+    /// including small integers: passing the raw `int64_t` through only
+    /// works for int32-tagged values, whose low 32 bits are the value.
+    /// Double-encoded numbers (heap doubles, `Math.*` results, ...) would
+    /// be truncated to the low mantissa bits instead (#44906).
     pub(crate) fn needs_a_cast_in_c(self) -> bool {
-        !matches!(
-            self,
-            ABIType::Char
-                | ABIType::Int8T
-                | ABIType::Uint8T
-                | ABIType::Int16T
-                | ABIType::Uint16T
-                | ABIType::Int32T
-                | ABIType::Uint32T
-        )
+        let _ = self;
+        true
     }
 
     pub(crate) fn is_floating_point(self) -> bool {

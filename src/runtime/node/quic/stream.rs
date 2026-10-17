@@ -334,6 +334,17 @@ impl QuicStream {
     pub(super) fn pre_reset_code(&self) -> Option<u64> {
         self.with_state(|s| (s.reset != 0).then_some(s.reset_code))
     }
+    /// A stream whose close is only the connection's death, not its own
+    /// end. Node destroys such streams with the session's close error, so
+    /// their close must wait for the session's close instead of being
+    /// reported as clean. A stream with both sides done, or one the peer
+    /// reset with an error code, reports its own close.
+    pub(super) fn is_open_at_conn_death(&self) -> bool {
+        self.with_state(|s| {
+            let complete = s.fin_received != 0 && (s.fin_sent != 0 || s.write_ended != 0);
+            !complete && !(s.reset != 0 && s.reset_code != 0)
+        })
+    }
     pub(super) fn release_close_root(&self) {
         self.this_value.with_mut(|r| r.downgrade());
     }

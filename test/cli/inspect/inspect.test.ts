@@ -765,11 +765,13 @@ describe.concurrent("event loop keep-alive", () => {
 
   test("an inspector target that refuses the connection does not unref the inspectee's loop", async () => {
     // The debugger thread creates a connection and closes it at once when the
-    // dial fails, before the inspectee can run the connect task.
+    // dial fails. The fixture blocks its JS thread until the test releases
+    // stdin, so the close always lands before the connect task runs.
     using dir = tempDir("inspect-refused", {
       "timer.js": `
         process.on("beforeExit", () => console.log("beforeExit"));
         console.log("ready");
+        require("fs").readSync(0, Buffer.alloc(1));
         setTimeout(() => console.log("alive"), 200);
       `,
     });
@@ -786,15 +788,34 @@ describe.concurrent("event loop keep-alive", () => {
       cmd: [bunExe(), `--inspect=${target}`, "timer.js"],
       cwd: String(dir),
       env: bunEnv,
+      stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
     });
-    // Drain stderr too. The inspector banner on it races the exit, so it is not asserted.
-    const [stdout, , exitCode] = await Promise.all([
-      inspectee.stdout.text(),
-      inspectee.stderr.text(),
-      inspectee.exited,
-    ]);
+
+    // The debugger thread prints its banner and then dials. The dial fails in
+    // the same tick, so once the banner is out the early close is queued.
+    const decoder = new TextDecoder();
+    let stderr = "";
+    for await (const chunk of inspectee.stderr) {
+      stderr += decoder.decode(chunk);
+      if (stderr.includes("Listening on")) break;
+    }
+    const stdoutReader = inspectee.stdout.getReader();
+    let stdout = "";
+    const readStdoutUntil = async (marker: string) => {
+      while (!stdout.includes(marker)) {
+        const { value, done } = await stdoutReader.read();
+        if (done) break;
+        stdout += decoder.decode(value);
+      }
+    };
+    await readStdoutUntil("ready\n");
+    inspectee.stdin.write("\n");
+    await inspectee.stdin.end();
+
+    await readStdoutUntil("beforeExit\n");
+    const exitCode = await inspectee.exited;
     expect({ stdout, exitCode }).toEqual({ stdout: "ready\nalive\nbeforeExit\n", exitCode: 0 });
   });
 });

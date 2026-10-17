@@ -44,19 +44,17 @@ impl MapEntry {
     /// file has it. The entry takes the tree that the parser reads the new text as, so that it
     /// owns its nodes and their positions are positions in its text.
     pub fn save(&mut self, root: Expr, log: &mut Log) -> Result<(), Error> {
-        let heap = bun_alloc::Arena::borrowing_default();
         let loaded = self.stale_contents.first().unwrap_or(&self.source.contents);
-        let (text, read) =
-            package_json_text::print_and_read(loaded, root, self.indentation, &heap)?;
+        let (text, read) = package_json_text::print_and_read(loaded, root, self.indentation)?;
         let old = core::mem::replace(&mut self.source.contents, Cow::Owned(text));
         self.stale_contents.push(old);
-        match read {
-            Some(read) => {
-                self.root = json::clone_out_of_store(&read, &self.source, log, &heap)?;
-                Ok(())
-            }
-            None => self.reparse_root(log),
-        }
+        let Some(read) = read else {
+            return self.reparse_root(log);
+        };
+        let heap = bun_alloc::Arena::borrowing_default();
+        let tree = json::materialize(&read.root, &self.source, log, &heap)?;
+        self.root = json::clone_out_of_store(&tree, &self.source, log, &heap)?;
+        Ok(())
     }
 
     fn reparse_root(&mut self, log: &mut Log) -> Result<(), Error> {

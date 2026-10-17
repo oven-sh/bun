@@ -2099,6 +2099,67 @@ describe("bun test", () => {
       expect(exitCode).toBe(1);
     });
 
+    test("an exit that reaches --bail reports the failures up to the count, and the process runs its exit steps", async () => {
+      const files = {
+        "bail.test.ts": `
+          import { test, expect, afterEach, describe } from "bun:test";
+          const sink = Bun.file("sink.log").writer();
+          let hooks = 0;
+          test("first", () => { expect(1).toBe(2); });
+          describe("in flight", () => {
+            afterEach(async () => {
+              if (++hooks === 1) await new Promise(() => {});
+              sink.write("written before the exit\\n");
+              process.exit(0);
+            });
+            test.concurrent("a", () => { expect(1).toBe(2); });
+            test.concurrent("b", () => { expect(1).toBe(2); });
+          });
+        `,
+      };
+      const [reached, notReached] = await Promise.all([
+        run(files, ["--bail=2", "./bail.test.ts"], { read: ["sink.log"] }),
+        run(files, ["--bail=5", "./bail.test.ts"]),
+      ]);
+      for (const { stderr } of [reached, notReached]) {
+        expect(stderr).toContain(
+          `error: process.exit() was called by a hook of the test "b" while bail.test.ts was running (exit code 0). ${failedRun}`,
+        );
+        expect(stderr).toContain("(fail) first");
+        expect(stderr).toContain("(fail) in flight > a");
+      }
+      expect(reached.stderr).not.toContain("(fail) in flight > b");
+      expect(reached.stderr).toContain(" 0 pass\n 2 fail\n");
+      expect(reached.stderr).toContain("Ran 2 tests across 1 file.");
+      expect(reached.stderr).toContain("Bailed out after 2 failures");
+      expect(notReached.stderr).toContain("(fail) in flight > b");
+      expect(notReached.stderr).toContain(" 0 pass\n 3 fail\n");
+      expect(notReached.stderr).not.toContain("Bailed out");
+      // On Windows a FileSink writes on the thread pool, and no exit waits for it.
+      if (!isWindows) expect(reached.written["sink.log"]).toBe("written before the exit\n");
+      expect({ reached: reached.exitCode, notReached: notReached.exitCode }).toEqual({ reached: 1, notReached: 1 });
+    });
+
+    test("--bail keeps a non-zero code when the exit reports the failure that reaches the count", async () => {
+      const { stderr, exitCode } = await run(
+        {
+          "a.test.ts": `
+            import { test, expect, afterEach } from "bun:test";
+            afterEach(() => { process.exit(7); });
+            test("fails", () => { expect(1).toBe(2); });
+          `,
+        },
+        ["--bail", "./a.test.ts"],
+      );
+      expect(stderr).toContain("(fail) fails");
+      expect(stderr).toContain(
+        `error: process.exit() was called by a hook of the test "fails" while a.test.ts was running (exit code 7)`,
+      );
+      expect(stderr).toContain(" 0 pass\n 2 fail\n");
+      expect(stderr).toContain("Bailed out after 1 failure");
+      expect(exitCode).toBe(7);
+    });
+
     test("a failed test with retries left is reported as failed, with no attempt that did not run", async () => {
       const { stderr, exitCode } = await run(
         {

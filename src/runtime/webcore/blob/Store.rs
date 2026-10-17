@@ -420,6 +420,7 @@ impl S3Ext for S3 {
             unsafe { &(*wrapper).resolved_list_options },
             Wrapper::resolve,
             wrapper.cast::<c_void>(),
+            aws_options.request_payer,
         )?;
 
         Ok(value)

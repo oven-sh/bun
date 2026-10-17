@@ -91,7 +91,9 @@ const records = (lanes[process.env.SOURCE_POSITIONS_LANE] = { failed: {} });
 function record(id, error) {
   const previous = records[id];
   if (previous) return void previous.count++;
-  records[id] = { count: 1, stack: error.stack, preview: Bun.inspect(error, { colors: false }) };
+  // An error that nothing catches is printed without its stack having been read.
+  const preview = Bun.inspect(error, { colors: false });
+  records[id] = { count: 1, preview, stack: error.stack, previewAfterStack: Bun.inspect(error, { colors: false }) };
   return records[id];
 }
 globalThis.at = function at(id) {
@@ -139,7 +141,14 @@ const builds: Record<string, Partial<Bun.BuildConfig>> = {
 // Bun reads the source map of what was built for it.
 const bundles = Object.keys(builds).filter(name => name !== "browser");
 
-type Record_ = { count: number; stack?: string; preview: string; callSite?: string; getCallSites?: string };
+type Record_ = {
+  count: number;
+  stack?: string;
+  preview: string;
+  previewAfterStack: string;
+  callSite?: string;
+  getCallSites?: string;
+};
 type Lane = { failed: Record<string, string> } & Record<number, Record_>;
 
 const lanes: Record<string, Lane> = {};
@@ -254,10 +263,15 @@ function underCaret(preview: string, text: string) {
   const lines = preview.split("\n");
   const caret = lines.findIndex(line => /^\s*\^$/.test(line));
   if (caret < 1) return lines.some(line => Buffer.byteLength(line) > 1024) ? text : preview;
-  return lines[caret - 1].slice(lines[caret].indexOf("^")).slice(0, text.length);
+  const under = lines[caret - 1].slice(lines[caret].indexOf("^"));
+  // In most lanes `new X()` is at `new`, where V8 has it, until the stack of the error is read, and at `X` after that.
+  return (under.startsWith("new " + text) ? under.slice(4) : under).slice(0, text.length);
 }
 
 describe.each(["test", "run", ...bundles, "compiled"])("%s", laneName => {
+  // On Windows, an executable has no preview of an error whose stack has been read.
+  const hasPreviewAfterStack = !(isWindows && laneName === "compiled");
+
   test("every program loads", () => {
     expect(lanes[laneName].failed).toEqual({});
   });
@@ -278,11 +292,13 @@ describe.each(["test", "run", ...bundles, "compiled"])("%s", laneName => {
         ...(said.callSite && { callSite: position(said.callSite), getCallSites: position(said.getCallSites) }),
         // The preview is of the first frame.
         preview: frame === 0 ? underCaret(said.preview, text) : text,
+        previewAfterStack: frame === 0 && hasPreviewAfterStack ? underCaret(said.previewAfterStack, text) : text,
       };
       const want = {
         stack: expected,
         ...(said.callSite && { callSite: expected, getCallSites: expected }),
         preview: text,
+        previewAfterStack: text,
       };
       if (!Bun.deepEquals(got, want)) wrong[`${expected} ${text}`] = got;
     }

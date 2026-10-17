@@ -267,6 +267,46 @@ export const cases: Record<string, Case> = {
  1|stuck();
 `,
   },
+  // What is a function to the engine alone: not one of the file's functions, and not run until it is.
+  "engine-functions.ts": {
+    functions: "5/6",
+    lines: `
+ 1|function* branches(x: boolean) {
+ 1|  if (x) {
+ 1|    yield 1;
+ -|  }
+ 1|  yield 2;
+ -|}
+ 1|function thrower(): number {
+ 1|  throw new Error();
+ -|}
+ 1|try {
+ 1|  class A {
+ 1|    static a = thrower();
+ -|    static {
+ 0|      ran();
+ -|    }
+ -|  }
+ 1|} catch {}
+ 1|const key = "k";
+ 1|class B {
+ 1|  [key] =
+ 3|    () => { at(); };
+ -|}
+ 1|const b: any = new B();
+ 1|b.k();
+ 1|b.k();
+ 1|b.k();
+ 1|const pick = (x: boolean) =>
+ 1|  x
+ 2|    ? () => { at(); }
+ 0|    : () => { ran(); };
+ 1|const picked = pick(true);
+ 1|picked();
+ 1|picked();
+ 1|[...branches(true)];
+`,
+  },
   "logical.ts": {
     functions: "1/2",
     lines: `
@@ -454,7 +494,7 @@ export const cases: Record<string, Case> = {
 `,
   },
   "module.mjs": {
-    functions: "1/2",
+    functions: "2/3",
     lines: `
  1|export const value = at();
  0|export default function never() {
@@ -463,7 +503,11 @@ export const cases: Record<string, Case> = {
  1|export function called() {
  1|  at();
  -|}
+ 1|export async function awaited() {
+ 1|  at();
+ -|}
  1|called();
+ 1|awaited();
 `,
   },
   // What a bundle keeps of a default export is a declaration without `export default`.
@@ -485,13 +529,36 @@ export const cases: Record<string, Case> = {
  -|}
 `,
   },
+  "async.ts": {
+    functions: "1/1",
+    lines: `
+ 1|export default async function awaited() {
+ 1|  at();
+ -|}
+`,
+  },
+  "abstract.ts": {
+    functions: "1/1",
+    lines: `
+ 1|abstract class Plain {
+ 1|  method() {
+ 1|    at();
+ -|  }
+ -|}
+ 1|export default abstract class Base extends Plain {}
+`,
+  },
   "importer.ts": {
     functions: "0/0",
     lines: `
+ 1|import Base from "./abstract.ts";
+ 1|import awaited from "./async.ts";
  1|import Imported from "./class.ts";
  1|import imported from "./function.ts";
  1|imported();
+ 1|awaited();
  1|new Imported().method();
+ 1|new (class extends Base {})().method();
 `,
   },
   // The error is from the file that is loaded. Below it is who loads it.

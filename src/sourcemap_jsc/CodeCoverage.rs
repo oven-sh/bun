@@ -606,14 +606,15 @@ pub struct BasicBlockRange {
 }
 
 pub struct ByteRangeMapping {
-    /// The text JSC compiled. JSC's offsets and the source map's generated columns both count
-    /// its code units.
-    source: bun_core::String,
-    /// Code unit offset of the first unit of each line of `source`.
+    /// A bit for each code unit of the text JSC compiled, which is what JSC's offsets and the
+    /// source map's generated columns count. Set if the unit can make its line executable:
+    /// not white space, `{` or `}`. The text itself is only borrowed while this is made.
+    executable_units: Bitset,
+    /// Code unit offset of the first unit of each line of the text.
     line_starts: Vec<u32>,
     /// JSC records coverage per `SourceProvider`, and each load of the file makes one.
     pub(crate) source_ids: Vec<i32>,
-    /// Of `source`.
+    /// Of the text.
     source_hash: u64,
     pub source_url: Utf8Bytes<'static>,
 }
@@ -692,7 +693,7 @@ impl ByteRangeMapping {
             blocks.iter().filter_map(CountedRange::from_jsc).collect();
         blocks.sort_unstable_by_key(|block| block.range);
 
-        let source_len = u32::try_from(self.source.length()).expect("int cast");
+        let source_len = u32::try_from(self.executable_units.bit_length()).expect("int cast");
         let mut functions: Vec<CountedRange> = Vec::with_capacity(function_blocks.len());
         for function in function_blocks {
             let Some(mut function) = CountedRange::from_jsc(function) else {
@@ -782,13 +783,9 @@ impl ByteRangeMapping {
         line: usize,
         lines: &mut LineCounts,
     ) {
-        if matches!(
-            self.source.char_at(offset as usize),
-            0x09 | 0x0A | 0x0D | 0x20 | 0x7B | 0x7D
-        ) {
-            return;
-        }
-        if let Some(count) = counts.at(offset) {
+        if self.executable_units.is_set(offset as usize)
+            && let Some(count) = counts.at(offset)
+        {
             lines.add(line, count);
         }
     }
@@ -797,7 +794,7 @@ impl ByteRangeMapping {
         let line = usize::try_from(generated.lines.zero_based()).ok()?;
         let column = u32::try_from(generated.columns.zero_based()).ok()?;
         let offset = self.line_starts.get(line)?.checked_add(column)?;
-        ((offset as usize) < self.source.length()).then_some(offset)
+        ((offset as usize) < self.executable_units.bit_length()).then_some(offset)
     }
 
     fn line_and_column_of(&self, offset: u32) -> (Ordinal, Ordinal) {
@@ -811,18 +808,18 @@ impl ByteRangeMapping {
     }
 
     pub(crate) fn compute(
-        source: bun_core::String,
+        source: &bun_core::String,
         source_hash: u64,
         source_id: i32,
         source_url: Utf8Bytes<'static>,
     ) -> ByteRangeMapping {
-        let line_starts = if source.is_utf16() {
-            line_starts(source.utf16().iter().copied())
+        let (line_starts, executable_units) = if source.is_utf16() {
+            scan(source.utf16().iter().copied())
         } else {
-            line_starts(source.latin1().iter().map(|&unit| unit as u16))
+            scan(source.latin1().iter().map(|&unit| unit as u16))
         };
         ByteRangeMapping {
-            source,
+            executable_units,
             line_starts,
             source_ids: vec![source_id],
             source_hash,
@@ -831,9 +828,11 @@ impl ByteRangeMapping {
     }
 }
 
-/// Lines end where `bun_sourcemap::Chunk`'s builder ends a generated line.
-fn line_starts(units: impl Iterator<Item = u16>) -> Vec<u32> {
+/// `ByteRangeMapping::line_starts` and `executable_units`. Lines end where
+/// `bun_sourcemap::Chunk`'s builder ends a generated line.
+fn scan(units: impl ExactSizeIterator<Item = u16>) -> (Vec<u32>, Bitset) {
     let mut starts = vec![0u32];
+    let mut executable = bun_core::handle_oom(Bitset::init_empty(units.len()));
     let mut units = units.enumerate().peekable();
     while let Some((i, unit)) = units.next() {
         match unit {
@@ -841,8 +840,11 @@ fn line_starts(units: impl Iterator<Item = u16>) -> Vec<u32> {
             0x0A | 0x0D | 0x2028 | 0x2029 => starts.push(u32::try_from(i + 1).expect("int cast")),
             _ => {}
         }
+        if !matches!(unit, 0x09 | 0x0A | 0x0D | 0x20 | 0x7B | 0x7D) {
+            executable.set(i);
+        }
     }
-    starts
+    (starts, executable)
 }
 
 #[derive(Clone, Copy)]
@@ -852,12 +854,11 @@ struct CountedRange {
 }
 
 impl CountedRange {
-    /// JSC's ranges include their end, and the text between two adjacent functions is a range
-    /// that ends before it starts.
+    /// JSC's ranges include their end. The program of an empty file ends at -1.
     fn from_jsc(range: &BasicBlockRange) -> Option<CountedRange> {
         let start = u32::try_from(range.start_offset).ok()?;
         let end = u32::try_from(range.end_offset).ok()?.checked_add(1)?;
-        (start < end).then(|| CountedRange {
+        Some(CountedRange {
             range: ByteRange { start, end },
             count: u32::try_from(range.execution_count).unwrap_or(u32::MAX),
         })
@@ -977,12 +978,8 @@ extern "C" fn ByteRangeMapping__generate(
         return;
     }
 
-    let new_value = ByteRangeMapping::compute(
-        source_contents_str.clone(),
-        source_hash,
-        source_id,
-        source_url,
-    );
+    let new_value =
+        ByteRangeMapping::compute(source_contents_str, source_hash, source_id, source_url);
     map.insert(hash, new_value);
 }
 

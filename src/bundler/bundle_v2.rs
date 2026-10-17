@@ -461,7 +461,7 @@ pub mod bv2_impl {
 
         /// TYPE_ONLY subset of the `Framework` fields
         /// the bundler/parser actually consult; `file_system_router_types`
-        /// stays in T6 because only `bake::framework_router` reads it.
+        /// stays in T6 because only `bake::router` reads it.
         #[non_exhaustive]
         pub struct Framework {
             pub(crate) built_in_modules: bun_collections::StringArrayHashMap<BuiltInModule>,
@@ -602,7 +602,7 @@ pub mod bv2_impl {
             use super::Side;
 
             /// `OpaqueFileId` is the insertion index into `EntryPointMap.files`.
-            /// This is the same newtype as `framework_router::OpaqueFileId`; the
+            /// This is the same newtype as `router::OpaqueFileId`; the
             /// bake crate re-exports that one and converts via `.get()` only at
             /// the FFI boundary.
             #[repr(transparent)]
@@ -3157,7 +3157,7 @@ pub mod bv2_impl {
             path.assert_pretty_is_valid();
             // intern via `dupe_alloc` BEFORE writing back into `result` /
             // the path-to-source-index map. The dev-server path builds a fresh
-            // `bake_types::EntryPointList` with `Box<[u8]>` keys (DevServer.rs:3027)
+            // `bake_types::EntryPointList` with `Box<[u8]>` keys (bake/dev_server/bundle.rs)
             // that drops as soon as `enqueue_entry_points_dev_server` returns;
             // `resolve_with_framework` then lifetime-erases that key into the
             // returned `Path`, so without interning here `ParseTask.path.text` (and

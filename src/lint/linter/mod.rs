@@ -176,7 +176,8 @@ pub struct LintResult {
     pub skipped_rules: Vec<Box<[u8]>>,
     /// Why a rule has [handed the file back](File::hand_back) to that of its package, which has run in its place.
     pub handed_back: Option<crate::formats::Reason>,
-    /// It [may be misread](may_be_misread), and whoever lints has somebody else to read it. There is nothing else in the result.
+    /// It [may be misread](may_be_misread), or a comment in a file that is not JavaScript turns on a rule that is not for its
+    /// language, and whoever lints has somebody else to read it. There is nothing else in the result.
     pub is_unread: bool,
     /// ESLint throws this while it lints the file, and that ends the run with the exit code 2: a rule refuses options that its
     /// schema accepts ([`Rule::validate`](crate::rule::Rule::validate)), or a rule of a JavaScript plugin throws. There is
@@ -463,7 +464,11 @@ impl<S: RuleSet> Linter<S> {
     ) -> LintResult {
         let locator = Locator::new(file);
         let mut problems: Vec<LintMessage> = Vec::new();
-        let (mut fatal, is_of_parser) = syntax::parse_errors_and_stage(file);
+        let (mut fatal, is_of_parser) = match file.parsed() {
+            // Its language has parsed it.
+            Some(_) => (Vec::new(), false),
+            None => syntax::parse_errors_and_stage(file),
+        };
         if !fatal.is_empty() {
             let is_oxlint = file.language().is_oxlint;
             if is_oxlint && is_of_parser && syntax::is_flow(file) {
@@ -599,6 +604,19 @@ impl<S: RuleSet> Linter<S> {
             for comment in comments.iter().filter(is_understood) {
                 inline.disable_directives(comment, &mut parents, &mut disable_directives);
             }
+        }
+        // Such a rule is one of a package, or it would see JavaScript that is not there.
+        let is_of_no_language =
+            |it: &Running<S>| it.severity != Severity::Off && it.entry.meta.languages.is_empty();
+        if file.parsed().is_some()
+            && (running.iter().any(is_of_no_language)
+                || !running_js.is_empty()
+                || !result.skipped_rules.is_empty())
+        {
+            return LintResult {
+                is_unread: true,
+                ..LintResult::default()
+            };
         }
         let mut off: Vec<RuleId> = Vec::new();
         if config.has_every_rule {
@@ -1064,6 +1082,10 @@ impl<S: RuleSet> Linter<S> {
                 problems.retain(|it| !it.rule_id.as_ref().is_some_and(stands_for_js_rule));
             }
         }
+        // Before the comments, which are compared with a report where it's shown.
+        if file.language().stands_alone {
+            problems.iter_mut().for_each(LintMessage::stay_in_file);
+        }
         if wants_places && !in_run_order {
             LintMessage::sort(&mut problems);
         }
@@ -1502,7 +1524,8 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
             }
             _ => return,
         }
-        let rules = match comment::parse_json_like_config(self.file.slice(comment.value)) {
+        let rules = match comment::parse_json_like_config(self.file.slice_of_comment(comment.value))
+        {
             Ok(rules) => rules,
             Err(message) => return self.fatal(comment, message),
         };
@@ -1630,6 +1653,26 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                     b"\" is invalid:\n\t",
                     bun_core::strings::trim_js_whitespace(lines),
                     b"\n",
+                ]);
+                self.error(comment, Some(rule.id()), message);
+                continue;
+            }
+            let meta = match rule {
+                Named::Native(entry) | Named::Instance(&ConfiguredRule { entry, .. }, _) => {
+                    Some(entry.meta)
+                }
+                Named::Js(_) => None,
+            };
+            if validated.is_some()
+                && meta.is_some_and(|it| !self.config.supports_language(it))
+                && self.config.language.eslint_major >= 10
+            {
+                let message = quoted(&[
+                    b"Inline configuration for rule \"",
+                    &id,
+                    b"\" is invalid:\n\tRule does not support the language \"",
+                    self.config.normalized_language_name(),
+                    b"\". Use a config block with \"files\" to apply the rule only to supported files, or disable it.\n",
                 ]);
                 self.error(comment, Some(rule.id()), message);
                 continue;
@@ -1797,7 +1840,7 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
             ]);
             return self.error(comment, None, message);
         }
-        let list = self.file.slice(comment.value);
+        let list = self.file.slice_of_comment(comment.value);
         let mut names = comment::parse_list_config(list);
         let (line, column) = if kind == disable::Kind::DisableNextLine {
             end
@@ -1835,8 +1878,9 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
         parents.push(disable::Parent {
             comment: comment.span,
             list,
+            list_span: comment.value,
             names,
-            justification: self.file.slice(comment.justification),
+            justification: self.file.slice_of_comment(comment.justification),
             start,
             tool: match self.file.slice(comment.label_span).starts_with(b"oxlint") {
                 true => "oxlint",

@@ -191,6 +191,19 @@ pub(crate) fn write_rules_as_json(out: &mut Vec<u8>, registry: &Registry) {
             ),
             (b"schema", schema),
             (b"default_options", default_options),
+            (
+                b"languages",
+                Json::Array(
+                    meta.languages
+                        .iter()
+                        .map(|it| text(it.as_bytes()))
+                        .collect(),
+                ),
+            ),
+            (
+                b"package",
+                (meta.plugin.package()).map_or(Json::Null, |it| text(it.as_bytes())),
+            ),
         ])
     });
     write_indented(out, &Json::Array(rules.collect()), 0);
@@ -297,7 +310,10 @@ fn facts(
 /// Looks up a rule by any of its names, with or without the plugin prefix. `Err` has the message to print if no rule
 /// matches, or more than one.
 fn find(registry: &Registry, name: &[u8]) -> Result<&'static Meta, Vec<u8>> {
-    if let Some(entry) = registry.find_by_any_name(name) {
+    // A rule for another language can only be looked up by its ESLint name.
+    let of_language = |id: &[u8]| registry.find(id).filter(|it| !it.meta.languages.is_empty());
+    let by_name = |id: &[u8]| registry.find_by_any_name(id).or_else(|| of_language(id));
+    if let Some(entry) = by_name(name) {
         return Ok(entry.meta);
     }
     let all = listed(registry).into_iter();
@@ -305,7 +321,7 @@ fn find(registry: &Registry, name: &[u8]) -> Result<&'static Meta, Vec<u8>> {
         .map(|it| registry.names_of(it.1).id)
         .collect();
     match &ids[..] {
-        [id] => registry.find_by_any_name(id).map(|it| it.meta),
+        [id] => by_name(id).map(|it| it.meta),
         [] => None,
         ids => {
             let count = ids.len().to_string();

@@ -4748,10 +4748,39 @@ impl NodeFS {
         Ok(())
     }
 
+    #[cfg(not(windows))]
+    pub(crate) fn copy_file_using_read_write_loop(
+        src: &ZStr,
+        dest: &ZStr,
+        src_fd: FD,
+        dest_fd: FD,
+        stat_size: usize,
+        wrote: &mut u64,
+    ) -> Maybe<ret::CopyFile> {
+        Self::copy_file_using_read_write_loop_impl::<false>(
+            src, dest, src_fd, dest_fd, stat_size, wrote,
+        )
+    }
+
+    #[cfg(target_os = "macos")]
+    fn copy_file_using_pread_write_loop(
+        src: &ZStr,
+        dest: &ZStr,
+        src_fd: FD,
+        dest_fd: FD,
+        stat_size: usize,
+        wrote: &mut u64,
+    ) -> Maybe<ret::CopyFile> {
+        // Opening /dev/fd/N shares the caller's offset; path copies must not consume it.
+        Self::copy_file_using_read_write_loop_impl::<true>(
+            src, dest, src_fd, dest_fd, stat_size, wrote,
+        )
+    }
+
     // since we use a 64 KB stack buffer, we should not let this function get inlined
     #[inline(never)]
     #[cfg(not(windows))]
-    pub(crate) fn copy_file_using_read_write_loop(
+    fn copy_file_using_read_write_loop_impl<const POSITIONAL: bool>(
         src: &ZStr,
         dest: &ZStr,
         src_fd: FD,
@@ -4771,7 +4800,7 @@ impl NodeFS {
         const STACK_BUF_LEN: usize = 64 * 1024;
         let mut stack_buf = bun_core::vec::UninitBuf::<STACK_BUF_LEN>::uninit();
         let mut buf_to_free: Vec<u8> = Vec::new();
-        // SAFETY: `Syscall::read` is the only writer of `buf`; each iteration reads back only `buf[..amt]`.
+        // SAFETY: read/pread initialize `buf`; each iteration reads back only `buf[..amt]`.
         let mut buf: &mut [u8] = unsafe { stack_buf.as_bytes_mut() };
 
         'maybe_allocate_large_temp_buf: {
@@ -4802,7 +4831,12 @@ impl NodeFS {
         let mut broke = false;
         'toplevel: while remain > 0 {
             let read_len = (buf.len() as u64).min(remain) as usize;
-            let amt = match Syscall::read(src_fd, &mut buf[..read_len]) {
+            let read_result = if POSITIONAL {
+                Syscall::pread(src_fd, &mut buf[..read_len], *wrote as i64)
+            } else {
+                Syscall::read(src_fd, &mut buf[..read_len])
+            };
+            let amt = match read_result {
                 Ok(result) => result,
                 Err(err) => {
                     return Err(if !src.is_empty() {
@@ -4841,7 +4875,12 @@ impl NodeFS {
         }
         if !broke {
             'outer: loop {
-                let amt = match Syscall::read(src_fd, buf) {
+                let read_result = if POSITIONAL {
+                    Syscall::pread(src_fd, buf, *wrote as i64)
+                } else {
+                    Syscall::read(src_fd, buf)
+                };
+                let amt = match read_result {
                     Ok(result) => result,
                     Err(err) => {
                         return Err(if !src.is_empty() {
@@ -4925,6 +4964,16 @@ impl NodeFS {
         }
     }
 
+    #[cfg(target_os = "macos")]
+    fn is_devfs_path(path: &ZStr) -> bool {
+        // Darwin copyfile rejects /dev/fd paths because stat and fstat report different device IDs.
+        sys::statfs(path).is_ok_and(|fs| {
+            fs.f_fstypename
+                .map(|byte| byte as u8)
+                .starts_with(b"devfs\0")
+        })
+    }
+
     /// https://github.com/libuv/libuv/pull/2233
     /// https://github.com/pnpm/pnpm/issues/2761
     /// https://github.com/libuv/libuv/pull/2578
@@ -4962,7 +5011,8 @@ impl NodeFS {
 
                 // 64 KB is about the break-even point for clonefile() to be worth it
                 // at least, on an M1 with an NVME SSD.
-                if stat_.st_size > 128 * 1024 {
+                let mut use_read_write = stat_.st_size <= 128 * 1024;
+                if !use_read_write {
                     if !args.mode.shouldnt_overwrite() {
                         // clonefile() will fail if it already exists
                         let _ = Syscall::unlink(dest);
@@ -4977,7 +5027,9 @@ impl NodeFS {
                         let _ = Syscall::chmod(dest, stat_.st_mode as u32);
                         return Ok(());
                     }
-                } else {
+                    use_read_write = Self::is_devfs_path(src);
+                }
+                if use_read_write {
                     let src_fd = match Syscall::open(src, sys::O::RDONLY, 0o644) {
                         Ok(result) => result,
                         Err(err) => return Err(err.with_path(args.src.slice())),
@@ -5001,7 +5053,7 @@ impl NodeFS {
                         Err(err) => return Err(err.with_path(args.dest.slice())),
                     };
 
-                    let result = Self::copy_file_using_read_write_loop(
+                    let result = Self::copy_file_using_pread_write_loop(
                         src,
                         dest,
                         src_fd,

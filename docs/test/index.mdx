@@ -270,7 +270,9 @@ Use the `--seed` flag to specify the randomization seed and reproduce the same t
 bun test --seed 123456
 ```
 
-The `--seed` flag implies `--randomize`, so you don't need to specify both. The same seed always produces the same test execution order.
+The `--seed` flag implies `--randomize`, so you don't need to specify both. In a serial run, the same seed produces the same order of test files and of tests within each file, for the same set of test files and the same version of Bun. The order does not depend on the order in which the file system lists a directory.
+
+With `--parallel`, the seed fixes the order of tests within each file. Which worker runs a file, and when, depends on the number of workers and on timing.
 
 ## Bail out with `--bail`
 

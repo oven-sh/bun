@@ -424,4 +424,12 @@ impl<'a> Scanner<'a> {
     }
 }
 
+/// Puts test files in path order: the byte order of their absolute paths.
+pub(crate) fn sort_test_files(files: &mut [Interned]) {
+    // Most callers pass a list that is already in path order.
+    if !files.is_sorted_by(|a, b| a.as_bytes() <= b.as_bytes()) {
+        index_sort::sort_slice_by(files, |a, b| strings::order(a.as_bytes(), b.as_bytes()));
+    }
+}
+
 pub(crate) const TEST_NAME_SUFFIXES: [&[u8]; 4] = [b".test", b"_test", b".spec", b"_spec"];

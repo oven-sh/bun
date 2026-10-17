@@ -16,6 +16,7 @@ use bun_resolver::fs::FileSystem;
 use bun_sys::{Fd, File};
 
 use super::parallel::file_range::FileRange;
+use super::scanner;
 use bun_collections::index_sort;
 
 pub(crate) struct Timings {
@@ -174,7 +175,7 @@ impl Timings {
     /// Keeps shard `index` of `count` (see [`partition`]) compacted to the
     /// front of `files`; returns how many were kept.
     pub(crate) fn select_shard(&self, files: &mut [Interned], shard: Shard) -> usize {
-        index_sort::sort_slice_by(files, |a, b| strings::order(a.as_bytes(), b.as_bytes()));
+        scanner::sort_test_files(files);
         let r = self.partition(files, shard.count)[(shard.index - 1) as usize];
         files.copy_within(r.lo as usize..r.hi as usize, 0);
         (r.hi - r.lo) as usize

@@ -436,8 +436,27 @@ note: package.json has a "${command}" script, so bun ${command} runs that script
     ["-bp", '"printed"', "printed\n"],
   ])("bun %s <code> <command> evaluates the code", async (flag, code, printed) => {
     expect(await bun({}, [flag, code, command])).toMatchObject({ stdout: printed, source, exitCode: 0 });
+    // `bun -ptsconfig.json check` is `bun check --project tsconfig.json`.
+    if (command === "check" && flag.endsWith("p")) return;
     expect(await bun({}, [flag + code, command])).toMatchObject({ stdout: printed, source, exitCode: 0 });
   });
+
+  // Each has an `e`, a `p` or an `F` in it, which are `--eval`, `--print` and `--filter` in a chain of flags of `bun`.
+  test.skipIf(command !== "lint").each(["-f=agent", "-fagent", "-Deqeqeq", "-Dprefer-const"])(
+    "bun %s lint: a flag of the command isn't a chain of flags of bun",
+    async flag => {
+      const { stdout, exitCode } = await bun({}, [flag, command, "a.ts"]);
+      expect(stdout).toContain("no-debugger");
+      expect(exitCode).toBe(1);
+    },
+  );
+
+  test.skipIf(command !== "check").each(["-ptsconfig.json", "-p=tsconfig.json", "-bptsconfig.json"])(
+    "bun %s check: the project",
+    async flag => {
+      expect(await ran({ "tsconfig.json": "{}" }, [flag, command, ...flags])).toBe("the command");
+    },
+  );
 
   test.skipIf(command === "check")("bun -bc=<path> <command>: the letters of the path are not flags", async () => {
     expect(await ran({ "all.toml": "" }, ["-bc=all.toml", command, ...flags, "a.ts"])).toBe("the command");
@@ -687,6 +706,21 @@ STARTED=1 exec "${bunExe()}" ${again.join(" ")}
         expect(await ran(other, [...args, ...flags, "a.ts"], directory, { from })).toBe("the command");
       }
     });
+  });
+
+  // As in a script that was written on Windows.
+  test.each(["apps\\web", ".\\apps\\web\\", "apps\\other\\..\\web"])("--cwd=%s is apps/web", async cwd => {
+    const files = { "apps/web/package.json": script["package.json"] };
+    expect(await ran(files, [`--cwd=${cwd}`, command], "apps/web", { from: "." })).toBe("the script");
+    expect(await ran(files, ["--cwd", cwd, command], "apps/web", { from: "." })).toBe("the script");
+    const args = [`--cwd=${cwd}`, command, "--no-script", ...flags, "a.ts"];
+    expect(await ran(files, args, "apps/web", { from: "." })).toBe("the command");
+  });
+
+  test.skipIf(isWindows || command === "check")("in `a\\b`, --cwd=missing doesn't go to a/b/missing", async () => {
+    const result = await bun({ "a/b/missing/a.ts": source }, ["--cwd=missing", command, ...flags, "a.ts"], "a\\b");
+    expect(result.stderr).toContain('Could not change directory to "missing"');
+    expect(result.exitCode).toBe(1);
   });
 
   test.skipIf(isWindows)("an absolute --cwd needs no working directory", async () => {

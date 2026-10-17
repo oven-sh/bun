@@ -47,7 +47,9 @@ fn place_of_short_with_value(shorts: &[u8]) -> Option<usize> {
         match values_of(&|names| names.short == Some(*short)) {
             Some(Values::One | Values::Many) => return Some(at),
             Some(Values::OneOptional) => return None,
-            Some(Values::None) | None => {}
+            Some(Values::None) => {}
+            // It isn't a chain of flags of `bun`: `-f=agent` is for `bun lint`.
+            None => return None,
         }
     }
     None
@@ -87,6 +89,8 @@ fn has_flag(command: &[u8], flag: &[u8]) -> bool {
     match command {
         b"lint" => super::lint_command::LintCommand::has_flag(flag),
         b"fmt" => super::format_command::FormatCommand::has_flag(flag),
+        // `--project`, which for `bun` is `--print`.
+        b"check" => short_with_value(flag) == Some(b'p'),
         _ => false,
     }
 }
@@ -102,12 +106,12 @@ fn place_of_first_word(args: &[&[u8]]) -> Option<usize> {
         if arg == b"--" {
             return Some(at + 1).filter(|next| *next < args.len());
         }
-        if evaluates(arg) {
+        // `bun -l fmt`, `bun -ptsconfig.json check`: the flags of these commands count before them too.
+        let is_of_next = args.get(at + 1).is_some_and(|next| has_flag(next, arg));
+        if evaluates(arg) && !is_of_next {
             return None;
         }
-        // `bun -l fmt`: the flags of these commands count before them too.
-        let is_value = |next: &&[u8]| has_value_in_next_argument(arg) && !has_flag(next, arg);
-        at += if args.get(at + 1).is_some_and(is_value) {
+        at += if has_value_in_next_argument(arg) && !is_of_next && at + 1 < args.len() {
             2
         } else {
             1
@@ -187,7 +191,7 @@ pub(crate) fn is_of_the_project(command: &[u8]) -> bool {
 }
 
 /// The directory that `--cwd <given>` names, as `bun run` takes it: `..` is folded before links are followed, and an empty
-/// value is the working directory.
+/// value is the working directory. Unlike there, a `\` is part of a name on POSIX where there is such a name.
 pub(crate) fn directory_of_cwd(given: &[u8]) -> Vec<u8> {
     use bun_paths::platform::Loose;
     use bun_paths::resolve_path::{join_abs_string_spill, normalize_string_generic_t};
@@ -199,15 +203,29 @@ pub(crate) fn directory_of_cwd(given: &[u8]) -> Vec<u8> {
     if cfg!(windows) {
         return join_abs_string_spill::<Loose>(&base, &mut Vec::new(), &[given]).to_vec();
     }
-    // On POSIX, that function takes a `\` in a name for a separator.
-    let path = [&base[..], b"/", given].concat();
-    let mut folded = vec![b'/'; path.len() + 1];
-    let is_separator = |byte| byte == b'/';
-    let rest =
-        normalize_string_generic_t::<u8, false, false>(&path, &mut folded[1..], b'/', is_separator);
-    let len = 1 + rest.len();
-    folded.truncate(len);
-    folded
+    // On POSIX, that function takes every `\` for a separator, also one in the name of the working directory.
+    let fold = |given: &[u8]| {
+        let path = [&base[..], b"/", given].concat();
+        let mut folded = vec![b'/'; path.len() + 1];
+        let rest = &mut folded[1..];
+        let is_separator = |byte| byte == b'/';
+        let len =
+            normalize_string_generic_t::<u8, false, false>(&path, rest, b'/', is_separator).len();
+        folded.truncate(1 + len);
+        folded
+    };
+    let as_written = fold(given);
+    let exists = |path: &[u8]| {
+        bun_sys::exists_at_type(bun_core::Fd::cwd(), &bun_core::ZBox::from_bytes(path)).is_ok()
+    };
+    if !bun_core::strings::contains_char(given, b'\\') || exists(&as_written) {
+        return as_written;
+    }
+    // `--cwd apps\web`, from a script that was written on Windows. `bun run` takes it on every platform.
+    let with_slashes: Vec<u8> = (given.iter())
+        .map(|byte| if *byte == b'\\' { b'/' } else { *byte })
+        .collect();
+    fold(&with_slashes)
 }
 
 /// Decides what `bun <command>` runs, without looking at `command`'s own arguments.

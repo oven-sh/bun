@@ -20,6 +20,9 @@
 //! The functions are deliberately permissive: any malformation returns
 //! `None`/`.Normal` rather than an error. EXIF is advisory; we never fail
 //! decode over it.
+//!
+//! `read_jpeg_head` is the exception. Where its walk over the segments stops
+//! says how far into a file `metadata()` reads (`codecs::probe_head`).
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -96,15 +99,77 @@ impl Orientation {
 /// images; PNG eXIf and WebP EXIF chunks exist but are rare enough to leave
 /// for a follow-up.
 pub(crate) fn read_jpeg(bytes: &[u8]) -> Orientation {
+    let mut found = Orientation::Normal;
+    walk::<false>(bytes, |app1| match exif_orientation(app1) {
+        Some(orientation) => {
+            found = orientation;
+            true
+        }
+        None => false,
+    });
+    found
+}
+
+/// `read_jpeg` for `head`, the first bytes of a longer file, when the first
+/// SOS header ends inside `head`: a header parse of `head` can then succeed.
+/// Otherwise `Err` with the length of the shortest head that can have both,
+/// or `usize::MAX` when only the whole file can tell.
+///
+/// The header has to be made of segments alone. Stray bytes and a stuffed
+/// zero make libjpeg warn, and a head that it parses with a warning is never
+/// a final answer (`jpeg::header_of_head`). Fill bytes and markers with no
+/// length field are legal, but a walk over a run of them costs more than the
+/// read that a head saves.
+pub(crate) fn read_jpeg_head(head: &[u8]) -> Result<Orientation, usize> {
+    let mut found = None;
+    let stop = walk::<true>(head, |app1| {
+        // `read_jpeg` stops at the first Exif segment, so later ones do not count.
+        if found.is_none() {
+            found = exif_orientation(app1);
+        }
+        false
+    });
+    match stop {
+        Stop::Sos(end) if end <= head.len() => Ok(found.unwrap_or(Orientation::Normal)),
+        Stop::Sos(end) | Stop::Short(end) => Err(end),
+        Stop::Lost | Stop::Taken => Err(usize::MAX),
+    }
+}
+
+/// Where the walk over the segments before the first scan ended.
+enum Stop {
+    /// `app1` took a segment.
+    Taken,
+    /// At the first SOS. Its header ends at this offset, which can lie past
+    /// the input.
+    Sos(usize),
+    /// The input is not a JPEG, has EOI before SOS, or has a segment whose
+    /// length is not a length. With `SEGMENTS_ONLY`, also: it has bytes
+    /// between two segments.
+    Lost,
+    /// The segments run past the input. No shorter input than this reaches
+    /// the next one.
+    Short(usize),
+}
+
+/// One walk over the marker segments between SOI and the first SOS. `app1`
+/// gets the payload of each APP1 segment, and returns `true` to end the walk
+/// there. A decoder steps over stray bytes, fill bytes and markers with no
+/// length field. So does the walk, unless `SEGMENTS_ONLY`.
+#[inline(always)]
+fn walk<const SEGMENTS_ONLY: bool>(bytes: &[u8], mut app1: impl FnMut(&[u8]) -> bool) -> Stop {
     if bytes.len() < 4 || bytes[0] != 0xFF || bytes[1] != 0xD8 {
-        return Orientation::Normal;
+        return Stop::Lost;
     }
     let mut i: usize = 2;
     while i + 4 <= bytes.len() {
         if bytes[i] != 0xFF {
+            if SEGMENTS_ONLY {
+                return Stop::Lost;
+            }
             // libjpeg's next_marker() skips to the next 0xFF with a warning, so the decoder accepts this junk too.
             let Some(skip) = bun_core::strings::index_of_char_usize(&bytes[i..], 0xFF) else {
-                return Orientation::Normal;
+                return Stop::Lost;
             };
             i += skip;
             continue;
@@ -113,31 +178,54 @@ pub(crate) fn read_jpeg(bytes: &[u8]) -> Orientation {
         match marker {
             // Padding / restart markers carry no length field.
             0xFF => {
+                if SEGMENTS_ONLY {
+                    return Stop::Lost;
+                }
                 i += 1;
                 continue;
             }
             // 0xFF00 is a stuffed zero, which next_marker() skips the same way.
             0x00 | 0xD0..=0xD8 => {
+                if SEGMENTS_ONLY {
+                    return Stop::Lost;
+                }
                 i += 2;
                 continue;
             }
             // SOS / EOI: scan data begins; EXIF would have come earlier.
-            0xDA | 0xD9 => return Orientation::Normal,
+            0xDA => return Stop::Sos(i + 2 + segment_length(bytes, i)),
+            0xD9 => return Stop::Lost,
             _ => {}
         }
-        let seglen = ((bytes[i + 2] as usize) << 8) | (bytes[i + 3] as usize);
-        if seglen < 2 || i + 2 + seglen > bytes.len() {
-            return Orientation::Normal;
+        let seglen = segment_length(bytes, i);
+        let end = i + 2 + seglen;
+        if seglen < 2 {
+            return Stop::Lost;
         }
-        if marker == 0xE1 && seglen >= 8 {
-            let seg = &bytes[i + 4..i + 2 + seglen];
-            if seg.len() >= 6 && &seg[0..6] == b"Exif\x00\x00" {
-                return parse_tiff(&seg[6..]).unwrap_or(Orientation::Normal);
-            }
+        if end > bytes.len() {
+            return Stop::Short(end);
         }
-        i += 2 + seglen;
+        if marker == 0xE1 && app1(&bytes[i + 4..end]) {
+            return Stop::Taken;
+        }
+        i = end;
     }
-    Orientation::Normal
+    Stop::Short(i + 4)
+}
+
+/// The big-endian length field of the segment whose marker is at `bytes[at]`.
+#[inline(always)]
+fn segment_length(bytes: &[u8], at: usize) -> usize {
+    ((bytes[at + 2] as usize) << 8) | (bytes[at + 3] as usize)
+}
+
+/// The orientation that an APP1 payload gives when it is an Exif segment.
+#[inline]
+fn exif_orientation(app1: &[u8]) -> Option<Orientation> {
+    if app1.len() >= 6 && &app1[0..6] == b"Exif\x00\x00" {
+        return Some(parse_tiff(&app1[6..]).unwrap_or(Orientation::Normal));
+    }
+    None
 }
 
 fn parse_tiff(tiff: &[u8]) -> Option<Orientation> {

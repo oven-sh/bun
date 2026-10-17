@@ -19,6 +19,10 @@ import { quote } from "../shell.ts";
 import type { Dependency } from "../source.ts";
 import { depBuildDir, depSourceDir } from "../source.ts";
 
+// On a bump, keep one fact that `jpeg::header_of_head` (src/runtime/image)
+// relies on: the memory source warns (JWRN_JPEG_EOF in src/jdatasrc-tj.c) when
+// a header parse runs off the end of its buffer, and tj3DecompressHeader()
+// returns -1 for a parse that warned.
 const LIBJPEG_TURBO_COMMIT = "c85e6b905bf237038faa936dab160ebfc5da0344"; // 3.2.0
 
 const VERSION = "3.2.0";

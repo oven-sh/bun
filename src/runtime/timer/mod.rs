@@ -237,9 +237,6 @@ pub(crate) mod timeout_object;
 #[path = "ImmediateObject.rs"]
 pub(crate) mod immediate_object;
 
-#[path = "DateHeaderTimer.rs"]
-mod date_header_timer_draft;
-
 #[path = "EventLoopDelayMonitor.rs"]
 mod event_loop_delay_monitor_draft;
 
@@ -343,60 +340,7 @@ impl Maps {
 // host fns see the same nominal type.
 pub(crate) use crate::test_runner::timers::fake_timers::FakeTimers;
 
-// ─── DateHeaderTimer / EventLoopDelayMonitor (struct-only) ───────────────────
-// Method bodies (`enable`/`run`) call `vm.timer.*` and `vm.uws_loop()` which
-// need `VirtualMachine.timer: All` (currently `()` in bun_jsc). Struct shape
-// is real so `All` embeds them by value with the correct layout.
-
-pub(crate) struct DateHeaderTimer {
-    pub(crate) event_loop_timer: EventLoopTimer,
-}
-impl Default for DateHeaderTimer {
-    fn default() -> Self {
-        Self {
-            event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::DateHeaderTimer),
-        }
-    }
-}
-impl DateHeaderTimer {
-    #[inline]
-    fn timer_all() -> *mut All {
-        crate::jsc_hooks::timer_all()
-    }
-
-    /// Refresh the cached `Date:` header and
-    /// reschedule for 1s later iff there are active connections.
-    pub(crate) fn run(&mut self, vm: &mut bun_jsc::virtual_machine::VirtualMachine) {
-        self.event_loop_timer.state = EventLoopTimerState::FIRED;
-        // `uws_loop_mut` is the audited safe accessor (loop owned by the VM,
-        // separate allocation from `RuntimeState.timer` so no aliasing with
-        // `&mut self`).
-        let loop_ = vm.uws_loop_mut();
-        let now = Timespec::now(TimespecMockMode::ForceRealTime);
-
-        // Record when we last ran it.
-        self.event_loop_timer.next = ElTimespec {
-            sec: now.sec,
-            nsec: now.nsec,
-        };
-
-        // updateDate() is an expensive function.
-        loop_.update_date();
-
-        if loop_.internal_loop_data.sweep_timer_count > 0 {
-            // Reschedule it automatically for 1 second later.
-            let next = now.add_ms(1000);
-            self.event_loop_timer.next = ElTimespec {
-                sec: next.sec,
-                nsec: next.nsec,
-            };
-            let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
-            // SAFETY: single JS thread; nothing `All::insert` touches
-            // overlaps `date_header_timer`, which `self` aliases.
-            unsafe { (*Self::timer_all()).insert(elt) };
-        }
-    }
-}
+// ─── EventLoopDelayMonitor ───────────────────────────────────────────────────
 
 pub(crate) struct EventLoopDelayMonitor {
     /// Weak, so a leaked monitor does not pin the retired `--isolate` realm.
@@ -601,7 +545,6 @@ pub(crate) struct All {
     pub(crate) event_loop_delay: EventLoopDelayMonitor,
     pub(crate) fake_timers: FakeTimers,
     pub(crate) maps: Maps,
-    pub(crate) date_header_timer: DateHeaderTimer,
     pub(crate) wtf_timers: Guarded<TimerHeap>,
 }
 
@@ -623,7 +566,6 @@ impl All {
             event_loop_delay: EventLoopDelayMonitor::default(),
             fake_timers: FakeTimers::default(),
             maps: Maps::default(),
-            date_header_timer: DateHeaderTimer::default(),
             wtf_timers: Guarded::init(TimerHeap::default()),
         }
     }

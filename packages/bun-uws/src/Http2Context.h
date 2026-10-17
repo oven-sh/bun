@@ -1749,7 +1749,7 @@ inline void Http2Response::writeMark() {
     if (data.state & Http2ResponseData::HTTP_WROTE_DATE_HEADER) return;
     data.state |= Http2ResponseData::HTTP_WROTE_DATE_HEADER;
     LoopData *ld = (LoopData *) us_loop_ext(us_socket_group_loop(us_socket_group(conn->s)));
-    writeHeader("date", std::string_view{ld->date, 29});
+    writeHeader("date", ld->dateHeaderValue());
 }
 
 inline Http2Response *Http2Response::writeContinue() {

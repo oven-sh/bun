@@ -137,7 +137,7 @@ use bun_sql_jsc::postgres::PostgresSQLConnection;
 use bun_sql_jsc::shared::connection_timers::TimedConnection as _;
 
 use crate::test_runner::bun_test::{BunTest, BunTestPtr};
-use crate::timer::{DateHeaderTimer, EventLoopDelayMonitor};
+use crate::timer::EventLoopDelayMonitor;
 use bun_jsc::abort_signal::Timeout as AbortSignalTimeout;
 use bun_jsc::garbage_collection_controller::GarbageCollectionController;
 
@@ -1143,10 +1143,6 @@ pub(crate) unsafe fn __bun_fire_timer(
                 gc_repeating_timer,
                 |c, _now, vm| GarbageCollectionController::on_gc_repeating_timer(c, vm)
             )
-        }
-        EventLoopTimerTag::DateHeaderTimer => {
-            timer_arm!(DateHeaderTimer, event_loop_timer, |c, _now, vm| (*c)
-                .run(&mut *vm))
         }
         EventLoopTimerTag::EventLoopDelayMonitor => {
             timer_arm!(EventLoopDelayMonitor, event_loop_timer, |c, now, vm| {

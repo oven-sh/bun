@@ -115,11 +115,6 @@ pub trait LoopHandler {
 // `impl WindowsLoop` block below (same surface, different routing).
 #[cfg(not(windows))]
 impl PosixLoop {
-    pub fn update_date(&mut self) {
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::uws_loop_date_header_timer_update(self) };
-    }
-
     pub fn iteration_number(&self) -> u64 {
         self.internal_loop_data.iteration_nr
     }
@@ -293,10 +288,6 @@ impl PosixLoop {
         unsafe { c::us_loop_close_all_groups(self) != 0 }
     }
 
-    pub fn should_enable_date_header_timer(&self) -> bool {
-        self.internal_loop_data.should_enable_date_header_timer()
-    }
-
     /// FFI-destroy: `us_loop_free` frees the C-allocated loop itself.
     /// Not `impl Drop` because the loop is C-owned (created by `us_create_loop`),
     /// never lives as a Rust-owned value.
@@ -326,10 +317,6 @@ pub struct WindowsLoop {
 
 #[cfg(windows)]
 impl WindowsLoop {
-    pub fn should_enable_date_header_timer(&self) -> bool {
-        self.internal_loop_data.should_enable_date_header_timer()
-    }
-
     pub fn get() -> *mut WindowsLoop {
         // SAFETY: uv::Loop::get() returns the libuv default loop; uws wraps it
         unsafe { c::uws_get_loop_with_native(uv::Loop::get() as *mut c_void) }
@@ -470,11 +457,6 @@ impl WindowsLoop {
         unsafe { c::us_loop_close_all_groups(self) != 0 }
     }
 
-    pub fn update_date(&mut self) {
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::uws_loop_date_header_timer_update(self) };
-    }
-
     /// # Safety
     /// `this` must have been returned by `us_create_loop`/`uws_get_loop_with_native`
     /// and not yet freed.
@@ -531,7 +513,6 @@ mod c {
         pub(super) safe fn uws_get_loop() -> *mut Loop;
         #[cfg(windows)]
         pub(super) fn uws_get_loop_with_native(native: *mut c_void) -> *mut WindowsLoop;
-        pub(super) fn uws_loop_date_header_timer_update(loop_: *mut Loop);
         pub(super) fn uws_loop_flush_pending_writes(loop_: *mut Loop);
     }
 }

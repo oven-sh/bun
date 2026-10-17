@@ -4,6 +4,11 @@
 // the overflow in the SSL low-priority queue, which the timer sweep must still
 // be able to see.
 //
+// The queue gives 5 sockets back per loop turn, and the loop does not wait
+// while some are parked. So the burst is only still parked at its timeout when
+// the turns are slow: on Linux this process holds the loop between turns for
+// longer than the 4 s sweep period, until the sweep that the timeout falls on.
+//
 // Prints one JSON line: { opened, held } where held is the count the server
 // had not closed by the deadline.
 
@@ -36,6 +41,20 @@ for (let i = 0; i < N; i++) {
     if (settled === N) allSettled.resolve();
   });
   socks.push(s);
+}
+
+if (process.platform === "linux") {
+  // The kernel completes these connections at once and hands them to the
+  // server 1 s later. Hold the loop from before that until 3 sweeps after it:
+  // one turn accepts the burst, and each later turn gives 5 sockets back.
+  const connected = Promise.withResolvers<void>();
+  const poll = setInterval(() => opened === N && connected.resolve(), 1);
+  await connected.promise;
+  clearInterval(poll);
+  for (let turn = 0; turn < 4; turn++) {
+    Bun.sleepSync(4100);
+    await new Promise(resolve => setTimeout(resolve, 0));
+  }
 }
 
 // The idle timeout is 10s and the sweep granularity is 4s, so a correctly

@@ -88,7 +88,9 @@ public:
             return;
         }
         /* Date is always written */
-        writeHeader("Date", std::string_view(((LoopData *) us_loop_ext(us_socket_group_loop(us_socket_group((us_socket_t *) this))))->date, 29));
+        writeStatus(HTTP_200_OK);
+        std::string_view date = Super::getLoopData()->dateHeaderLine();
+        Super::write(date.data(), (int) date.length());
         getHttpResponseData()->state |= HttpResponseData<SSL>::HTTP_WROTE_DATE_HEADER;
     }
 

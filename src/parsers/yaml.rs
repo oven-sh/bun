@@ -1794,10 +1794,11 @@ fn yaml_merge_key_number_bits(value: f64) -> u64 {
 pub(crate) struct MergeKeyMemo {
     /// The hash of a node's text, and the index of that text in `texts`.
     nodes: bun_collections::HashMap<*const E::String, (u64, u32)>,
-    /// The indexes in `texts` of the texts that have this hash.
-    by_hash: bun_collections::HashMap<u64, Vec<u32>>,
-    /// The first node seen of each distinct text.
-    texts: Vec<ast::StoreRef<E::String>>,
+    /// The index in `texts` of the text seen last with this hash.
+    by_hash: bun_collections::HashMap<u64, u32>,
+    /// The first node seen of each distinct text, and the index of the text seen before it with
+    /// its hash.
+    texts: Vec<(ast::StoreRef<E::String>, Option<u32>)>,
 }
 
 impl MergeKeyMemo {
@@ -1822,17 +1823,19 @@ impl MergeKeyMemo {
             return Ok(*hash);
         }
         let hash = s.hash();
-        let same_hash = memo.by_hash.get_or_put(hash)?.value_ptr;
-        let text = match same_hash
-            .iter()
-            .find(|text| memo.texts[**text as usize].data == s.data)
-        {
-            Some(text) => *text,
-            None => {
-                let text = memo.texts.len() as u32;
-                same_hash.push(text);
-                memo.texts.push(s);
-                text
+        let last = memo.by_hash.get_or_put(hash)?;
+        let last_with_hash = last.found_existing.then_some(*last.value_ptr);
+        let mut with_hash = last_with_hash;
+        let text = loop {
+            match with_hash {
+                Some(text) if memo.texts[text as usize].0.data == s.data => break text,
+                Some(text) => with_hash = memo.texts[text as usize].1,
+                None => {
+                    let text = memo.texts.len() as u32;
+                    memo.texts.push((s, last_with_hash));
+                    *last.value_ptr = text;
+                    break text;
+                }
             }
         };
         memo.nodes.put(node, (hash, text))?;

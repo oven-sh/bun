@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { spawn as cpSpawn } from "child_process";
 import { chmodSync } from "fs";
-import { bunEnv, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
 test.skipIf(isWindows)("spawn uses PATH from env if present", async () => {
@@ -24,6 +24,21 @@ echo "hello from script"`,
 
   const status = await proc.exited;
   expect(status).toBe(0);
+});
+
+// What a Windows environment has. bunEnv spells it `PATH`.
+test.skipIf(!isWindows)("spawn uses the PATH that env spells `Path`", () => {
+  using dir = tempDir("spawn-path-spelling", { "only-here.cmd": "@echo found\r\n" });
+  const { PATH, ...rest } = bunEnv;
+  const env = { ...rest, Path: `${String(dir)};${PATH}` };
+  const run = (cmd: string[]) => Bun.spawnSync(cmd, { env, stdout: "pipe", stderr: "pipe" }).stdout.toString().trim();
+  expect({
+    lookup: run(["only-here"]),
+    child: run([bunExe(), "-p", "process.env.PATH"]),
+  }).toEqual({
+    lookup: "found",
+    child: env.Path,
+  });
 });
 
 // Node's execvp walks PATH after the child's chdir, so a relative PATH entry

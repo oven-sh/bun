@@ -1,6 +1,6 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
+import { bunEnv, bunExe, isAndroid, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
 import { rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import path from "path";
@@ -10,6 +10,35 @@ const { getMachOImageZeroOffset } = crash_handler;
 // deliberate crashes must not upload there or the runner pins them on the
 // next unrelated failing test as "crash reported" and blocks its retries.
 const noReportEnv = { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" };
+
+test.if(isPosix)("unexpected root errors are not diagnosed as file descriptor exhaustion", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      isAndroid ? "/system/bin/sh" : "/bin/sh",
+      "-c",
+      `ulimit -Sn 4096 && ulimit -Hn 4096 && exec "$1" "$2" rootError`,
+      "sh",
+      bunExe(),
+      path.join(import.meta.dir, "fixture-crash.js"),
+    ],
+    env: {
+      ...noReportEnv,
+      // The rootError hook exits through handle_root_error without VM teardown.
+      // On the LSAN lane the live VM's allocations are reported as leaks and
+      // abort_on_error turns the expected exit(1) into SIGABRT.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toBe("");
+  expect(stderr).toContain("An unknown error occurred");
+  expect(stderr).toContain("(Unexpected)");
+  expect(stderr).not.toContain("file descriptors");
+  expect(stderr).not.toContain("ulimit");
+  expect(exitCode).toBe(1);
+});
 
 // On Linux, debug builds symbolize crash traces by spawning llvm-symbolizer;
 // without it the fallback printer has no Rust symbol names to assert on.

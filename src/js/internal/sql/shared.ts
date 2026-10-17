@@ -83,10 +83,10 @@ interface ResultDescriber {
 }
 
 class SQLResultArray<T> extends PublicArray<T> {
-  #count: number | null = null;
-  #command: string | null = null;
-  #lastInsertRowid: number | bigint | string | null = null;
-  #affectedRows: number | bigint | null = null;
+  count: number | null = null;
+  command: string | null = null;
+  lastInsertRowid: number | bigint | string | null = null;
+  affectedRows: number | bigint | null = null;
   /** The native query while `#undescribed` is a number that it makes the description for. */
   #statement: SQLStatementDescription | ResultDescriber | null = null;
   #undescribed = -1;
@@ -100,30 +100,6 @@ class SQLResultArray<T> extends PublicArray<T> {
     }
   }
 
-  get count() {
-    return this.#count;
-  }
-  set count(value) {
-    this.#count = value;
-  }
-  get command() {
-    return this.#command;
-  }
-  set command(value) {
-    this.#command = value;
-  }
-  get lastInsertRowid() {
-    return this.#lastInsertRowid;
-  }
-  set lastInsertRowid(value) {
-    this.#lastInsertRowid = value;
-  }
-  get affectedRows() {
-    return this.#affectedRows;
-  }
-  set affectedRows(value) {
-    this.#affectedRows = value;
-  }
   get statement() {
     const number = this.#undescribed;
     if (number !== -1) {
@@ -155,7 +131,7 @@ class SQLResultArray<T> extends PublicArray<T> {
 
   /** `instanceof` asks `Array[Symbol.hasInstance]`, which a program can define. */
   static isResult(array: unknown[]): boolean {
-    return #count in array;
+    return #undescribed in array;
   }
 
   static get [Symbol.species]() {

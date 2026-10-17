@@ -132,30 +132,33 @@ function suite(dialect: Dialect, url: () => string) {
       ]);
     });
 
-    test("the numbers are not enumerable and not own properties", async () => {
+    test("count, command, lastInsertRowid and affectedRows are own and enumerable, so console.log shows them", async () => {
       await using sql = connect();
       const rows = await sql`select 1 as a union all select 2 as a`;
       const forIn: string[] = [];
       for (const key in rows) forIn.push(key);
+      const metadata = ["count", "command", "lastInsertRowid", "affectedRows"];
 
       expect({
         isArray: Array.isArray(rows),
         keys: Object.keys(rows),
         forIn,
         own: Object.getOwnPropertyNames(rows),
-        spread: { ...rows },
+        spread: Object.keys({ ...rows }),
+        inspected: /count: 2,/.test(Bun.inspect(rows)),
         json: JSON.stringify(rows),
         clone: Object.keys(structuredClone(rows)),
         mapped: rows.map((row: any) => row.a).constructor,
         count: rows.count,
       }).toEqual({
         isArray: true,
-        keys: ["0", "1"],
-        forIn: ["0", "1"],
-        own: ["0", "1", "length"],
-        spread: { 0: { a: 1 }, 1: { a: 2 } },
+        keys: ["0", "1", ...metadata],
+        forIn: ["0", "1", ...metadata],
+        own: ["0", "1", "length", ...metadata],
+        spread: ["0", "1", ...metadata],
+        inspected: true,
         json: '[{"a":1},{"a":2}]',
-        clone: ["0", "1"],
+        clone: ["0", "1", ...metadata],
         mapped: Array,
         count: 2,
       });

@@ -1,0 +1,82 @@
+---
+title: "bun bake"
+description: "Serve an app from the pages in app/pages and an optional app/server.ts, with hot reloading"
+---
+
+<Warning>
+  `bun bake` is experimental. It is on in canary builds. In other builds, set the environment variable
+  `BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE=1`.
+</Warning>
+
+`bun bake` serves the app in the working directory with Bun's dev server. It reads two places:
+
+- `app/pages/`: the HTML pages.
+- `app/server.ts`: your server code. This file is optional.
+
+```txt File Tree icon="folder-tree"
+app/
+  pages/
+    index.html          → /
+    about.html          → /about
+    docs/
+      index.html        → /docs
+      install.html      → /docs/install
+  server.ts
+```
+
+```bash terminal icon="terminal"
+bun bake
+```
+
+Each page is bundled with its scripts and stylesheets, the same as an [HTML import](/bundler/fullstack). Edits to pages reload in the browser. After you change `app/server.ts`, restart `bun bake`, or run it with `--watch` or `--hot` to pick up changes on their own.
+
+`bun bake` always runs the dev server, also with `NODE_ENV=production`. It is not for production.
+
+## Pages
+
+Every `.html` file in `app/pages/` is a page. Its path is its URL:
+
+- `index.html` is the URL of its folder: `app/pages/docs/index.html` is `/docs`.
+- Any other file drops the `.html`: `app/pages/docs/install.html` is `/docs/install`.
+
+A page cannot have `[`, `]`, `:`, `*`, `?`, `#` or `%` in its path, because its URL must be fixed. Other characters are allowed: `app/pages/über.html` is `/über`, and Bun serves it at `/%C3%BCber`, the URL that browsers request.
+
+## Server code
+
+The default export of `app/server.ts` can have three options of [`Bun.serve()`](/runtime/http/server):
+
+- `routes`: more routes. A route cannot have the URL of a page.
+- `fetch`: handles each request that no page and no route matched.
+- `websocket`: the WebSocket handlers.
+
+```ts title="app/server.ts" icon="/icons/typescript.svg"
+export default {
+  routes: {
+    "/api/hello": () => Response.json({ message: "Hello" }),
+  },
+  fetch(req) {
+    return new Response("Not found", { status: 404 });
+  },
+};
+```
+
+`bun bake` starts the server. Do not call `Bun.serve()` in `app/server.ts`. The program is `bun bake` itself, so `app/server.ts` is not the entry module: `import.meta.main` is `false`, `Bun.main` is an empty string, and `process.argv` holds the path of `bun` followed by the arguments of `bun bake`. Without a `fetch`, a request that no page and no route matched gets a 404.
+
+## Options
+
+| Flag                               | Description                                                                |
+| ---------------------------------- | -------------------------------------------------------------------------- |
+| `--port <NUM>`                     | The port. The default is `$PORT`, or 3000.                                 |
+| `--host <STR>`, `--hostname <STR>` | The hostname. The default is `localhost`. `host:3000` also sets the port.  |
+| `--console`                        | Print the browser's console logs.                                          |
+| `--no-console`                     | Do not print the browser's console logs.                                   |
+| `--check`                          | Type check the project first. With type errors, `bun bake` does not start. |
+| `--watch`                          | Start again when a file that `bun bake` loaded changes.                    |
+| `--hot`                            | Reload `app/server.ts` in place when it changes.                           |
+| `--no-clear-screen`                | With `--watch` or `--hot`, do not clear the terminal on a reload.          |
+
+A flag and its value can also be one argument: `--port=3000`. `--check`, `--watch`, `--hot` and `--no-clear-screen` mean the same before `bake`: `bun --check bake` is the same as `bun bake --check`. With `--watch`, `bun --check --watch bake` type checks again after each change, and starts the server when there are no errors.
+
+## A `bake` script or file of your own
+
+When `package.json` has a `bake` script, `bun bake` runs that script. A file named `bake.ts` (or `bake.js`, and so on) also takes precedence. To start the dev server in that project, rename the script or the file.

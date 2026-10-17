@@ -628,7 +628,7 @@ public:
         httpResponseData->state |= HttpResponseData<SSL>::HTTP_STATUS_CALLED;
 
         Super::write("HTTP/1.1 ", 9);
-        Super::write(status.data(), (int) status.length());
+        Super::write(status.data(), status.length());
         Super::write("\r\n", 2);
         return this;
     }
@@ -637,9 +637,9 @@ public:
     HttpResponse *writeHeader(std::string_view key, std::string_view value) {
         writeStatus(HTTP_200_OK);
 
-        Super::write(key.data(), (int) key.length());
+        Super::write(key.data(), key.length());
         Super::write(": ", 2);
-        Super::write(value.data(), (int) value.length());
+        Super::write(value.data(), value.length());
         Super::write("\r\n", 2);
         return this;
     }
@@ -654,7 +654,7 @@ public:
             return this;
         }
 
-        Super::write(key.data(), (int) key.length());
+        Super::write(key.data(), key.length());
         Super::write(": ", 2);
         writeUnsigned64(value);
         Super::write("\r\n", 2);

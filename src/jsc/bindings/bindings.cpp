@@ -1689,7 +1689,10 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                 return false;
             }
 
-            if (mode.isStrict) {
+            // Vitest compares the causes only if the expected error has one, and the `errors` of an AggregateError.
+            bool isLikeVitest = mode.enableAsymmetricMatchers && Bun__VM__isRunningVitestEntry(bunVM(globalObject));
+
+            if (mode.isStrict && !isLikeVitest) {
                 if (left->runtimeTypeForCause() != right->runtimeTypeForCause()) {
                     return false;
                 }
@@ -1701,7 +1704,7 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
             // note that an undefined cause is different than a missing cause in
             // strict mode.
             const PropertyName cause(vm.propertyNames->cause);
-            if (mode.isStrict) {
+            if (mode.isStrict && !isLikeVitest) {
                 bool leftHasCause = left->hasProperty(globalObject, cause);
                 RETURN_IF_EXCEPTION(scope, {});
                 bool rightHasCause = right->hasProperty(globalObject, cause);
@@ -1714,10 +1717,22 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
             RETURN_IF_EXCEPTION(scope, {});
             auto rightCause = right->get(globalObject, cause);
             RETURN_IF_EXCEPTION(scope, {});
-            bool causesEqual = mode.deepEquals(globalObject, leftCause, rightCause, gcBuffer, stack, scope, true);
+            bool causesEqual = (isLikeVitest && rightCause.isUndefined()) || mode.deepEquals(globalObject, leftCause, rightCause, gcBuffer, stack, scope, true);
             RETURN_IF_EXCEPTION(scope, {});
             if (!causesEqual) {
                 return false;
+            }
+
+            if (isLikeVitest && left->errorType() == ErrorType::AggregateError) {
+                auto leftErrors = left->get(globalObject, vm.propertyNames->errors);
+                RETURN_IF_EXCEPTION(scope, {});
+                auto rightErrors = right->get(globalObject, vm.propertyNames->errors);
+                RETURN_IF_EXCEPTION(scope, {});
+                bool errorsEqual = mode.deepEquals(globalObject, leftErrors, rightErrors, gcBuffer, stack, scope, true);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (!errorsEqual) {
+                    return false;
+                }
             }
 
             // check arbitrary enumerable properties. `.stack` is not checked.

@@ -5323,6 +5323,46 @@ test.concurrent("arrays of different lengths can be equal in Jest and never in V
   });
 });
 
+test.concurrent("two errors are compared as in Vitest", async () => {
+  // Prints the names of the checks that pass.
+  const checks = `
+    const aggregate = message => new AggregateError([new Error(message)], "m");
+    const checks = {
+      "only the received one has a cause": () => expect(new Error("m", { cause: 1 })).toEqual(new Error("m")),
+      "the same, inside a cause": () =>
+        expect(new Error("m", { cause: new Error("c", { cause: 1 }) })).toEqual(new Error("m", { cause: new Error("c") })),
+      "the same, toStrictEqual": () => expect(new Error("m", { cause: 1 })).toStrictEqual(new Error("m")),
+      "only the expected one has a cause": () => expect(new Error("m")).toEqual(new Error("m", { cause: 1 })),
+      "different causes": () => expect(new Error("m", { cause: 1 })).toEqual(new Error("m", { cause: 2 })),
+      "equal causes": () => expect(new Error("m", { cause: { a: 1 } })).toEqual(new Error("m", { cause: { a: 1 } })),
+      "different errors of an AggregateError": () => expect(aggregate("a")).toEqual(aggregate("b")),
+      "equal errors of an AggregateError": () => expect(aggregate("a")).toEqual(aggregate("a")),
+    };
+    test("checks", () => {
+      for (const [name, check] of Object.entries(checks)) {
+        try {
+          check();
+          console.log(name);
+        } catch {}
+      }
+    });
+  `;
+  const [bun, vitest] = await Promise.all([
+    runTests({ "a.test.js": `import { expect, test } from "bun:test";` + checks }),
+    runTests({ "a.test.js": `import { expect, test } from "vitest";` + checks }),
+  ]);
+  expect({ bun: bun.log, vitest: vitest.log }).toEqual({
+    bun: ["equal causes", "different errors of an AggregateError", "equal errors of an AggregateError"],
+    vitest: [
+      "only the received one has a cause",
+      "the same, inside a cause",
+      "the same, toStrictEqual",
+      "equal causes",
+      "equal errors of an AggregateError",
+    ],
+  });
+});
+
 describe.concurrent("the name of the running test", () => {
   const names = `
     expect.extend({

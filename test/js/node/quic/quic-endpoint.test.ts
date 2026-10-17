@@ -403,3 +403,74 @@ describe("endpoint.close() with an unsent stateless reset", () => {
     60_000,
   );
 });
+
+// lsquic read "error code != 0" as "an error is recorded", so a close with
+// code 0 that went through lsquic_conn_abort_error (an application close, or
+// a transport close with a reason) went out as transport INTERNAL_ERROR (0x1).
+describe("session close with error code 0", () => {
+  const tp = { maxIdleTimeout: 30 };
+  const sniOpt = { "*": { keys: [key], certs: [cert] } };
+
+  /** How the peer of a session closed with `close` sees that close. */
+  async function peerView(close: (session: any) => void) {
+    let accept!: (s: any) => void;
+    const accepted = new Promise<any>(r => (accept = r));
+    await using server = await listen(
+      (s: any) => {
+        s.closed.catch(() => {});
+        accept(s);
+      },
+      { sni: sniOpt, alpn: ["quic-test"], transportParams: tp },
+    );
+    await using endpoint = new QuicEndpoint();
+    const session = await connect(server.address!, {
+      endpoint,
+      alpn: "quic-test",
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: tp,
+    } as SessionOptions);
+    session.closed.catch(() => {});
+    await session.opened;
+    const peer = await accepted;
+    await peer.opened;
+    close(session);
+    return peer.closed.then(
+      () => "resolved",
+      (e: any) => ({ code: e.code, type: e.type, errorCode: e.errorCode, reason: e.reason }),
+    );
+  }
+
+  test("destroy(undefined, { code: 0n, type: 'application' }) resolves the peer's closed", async () => {
+    expect(await peerView(s => s.destroy(undefined, { code: 0n, type: "application" }))).toBe("resolved");
+  });
+
+  test("close({ code: 0n, type: 'application' }) resolves the peer's closed", async () => {
+    expect(await peerView(s => s.close({ code: 0n, type: "application" }).catch(() => {}))).toBe("resolved");
+  });
+
+  test("close({ code: 0n, type: 'application', reason }) resolves the peer's closed", async () => {
+    expect(await peerView(s => s.close({ code: 0n, type: "application", reason: "bye" }).catch(() => {}))).toBe(
+      "resolved",
+    );
+  });
+
+  test("a nonzero application code still reaches the peer as an application error", async () => {
+    expect(await peerView(s => s.destroy(undefined, { code: 2n, type: "application" }))).toEqual({
+      code: "ERR_QUIC_APPLICATION_ERROR",
+      type: "application",
+      errorCode: 2n,
+      reason: undefined,
+    });
+  });
+
+  test("a transport close with code 0 resolves the peer's closed", async () => {
+    expect(await peerView(s => s.destroy(undefined, { code: 0n, type: "transport" }))).toBe("resolved");
+  });
+
+  // With a reason the close goes through the same lsquic path as an
+  // application close, so it hit the same INTERNAL_ERROR fallback.
+  test("a transport close with code 0 and a reason resolves the peer's closed", async () => {
+    expect(await peerView(s => s.destroy(undefined, { code: 0n, type: "transport", reason: "bye" }))).toBe("resolved");
+  });
+});

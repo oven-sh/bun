@@ -1,0 +1,41 @@
+--- a/src/liblsquic/lsquic_full_conn_ietf.c
++++ b/src/liblsquic/lsquic_full_conn_ietf.c
+@@ -261,7 +261,7 @@
+     ABORT_WITH_FLAG(conn, LSQ_LOG_WARN, IFC_ERROR, __VA_ARGS__)
+ 
+ #define CONN_ERR(app_error_, code_) (struct conn_err) { \
+-                            .app_error = (app_error_), .u.err = (code_), }
++            .app_error = (app_error_), .recorded = 1, .u.err = (code_), }
+ 
+ /* Use this for protocol errors; they do not need to be as loud as our own
+  * internal errors.
+@@ -294,6 +294,11 @@
+ struct conn_err
+ {
+     int                         app_error;
++    /* bun: set by CONN_ERR.  "u.err != 0" cannot mean "an error is
++     * recorded": application error code 0 is a valid code (RFC 9000
++     * s10.2.3) and a conn closed with it must not fall through to
++     * TEC_INTERNAL_ERROR. */
++    int                         recorded;
+     union
+     {
+         enum trans_error_code   tec;
+@@ -4228,7 +4233,7 @@
+         conn_err = CONN_ERR(0, TEC_APPLICATION_ERROR);
+         error_reason = NULL;
+     }
+-    else if (conn->ifc_error.u.err != 0)
++    else if (conn->ifc_error.recorded)
+     {
+         conn_err = conn->ifc_error;
+         error_reason = conn->ifc_errmsg;
+@@ -9020,7 +9025,7 @@
+     const char *err_str, *percent;
+     char err_buf[0x100];
+ 
+-    if (conn->ifc_error.u.err != 0)
++    if (conn->ifc_error.recorded)
+         return;
+     percent = strchr(fmt, '%');
+     if (percent)

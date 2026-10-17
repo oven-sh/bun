@@ -958,6 +958,8 @@ extern "C" fn bun_restore_stdio() {}
 #[unsafe(no_mangle)]
 extern "C" fn on_before_reload_process_posix() {}
 #[unsafe(no_mangle)]
+extern "C" fn BunDebugger__willReloadProcess() {}
+#[unsafe(no_mangle)]
 extern "C" fn getRSS(rss: &mut usize) -> c_int {
     *rss = 0;
     -1

@@ -1042,6 +1042,14 @@ pub(crate) extern "C" fn Bun__errnoName(err: core::ffi::c_int) -> *const core::f
     })
 }
 
+/// `unlink` for C++ callers. The result is dropped.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn Bun__unlink(ptr: *const u8, len: usize) {
+    // SAFETY: the caller passes a NUL-terminated path of `len` bytes that outlives the call.
+    let path = unsafe { ZStr::from_raw(ptr, len) };
+    let _ = unlink(path);
+}
+
 // libuv-style error constants (negated errno on posix, UV_* on Windows). The
 // per-platform `bun_errno` module defines this as `mod uv_e`; re-export under
 // the canonical name so callers can write `bun_sys::UV_E::NOENT`.

@@ -619,7 +619,7 @@ fn read_dir_tree(
         Global::exit(1);
     };
     // A package (has a package.json) is read as `bun pm pack` would publish it: `files`, .npmignore/.gitignore,
-    // bins — not the whole checkout with its vendor/ and build/.
+    // bins, `main` — not the whole checkout with its vendor/ and build/.
     'package: {
         if let Ok(pkg) = bun_sys::File::read_from(root_fd, b"package.json") {
             // This has to come before the parse below, because it parses other package.json files.
@@ -634,13 +634,12 @@ fn read_dir_tree(
                 crate::cli::pack_command::drop_shadowed_properties(json);
                 // pack crashes on a malformed `files`; here that just means "not a package we understand": full walk.
                 let files_ok = json.get(b"files").is_none_or(|f| {
-                    f.as_array().is_some_and(|mut a| {
-                        let mut ok = true;
-                        while let Some(e) = a.next() {
-                            ok &= e.as_string(&bump).is_some();
-                        }
-                        ok
-                    })
+                    let mut ok = f.is_array();
+                    let mut entries = f.as_array();
+                    while let Some(e) = entries.as_mut().and_then(|entries| entries.next()) {
+                        ok &= e.as_string(&bump).is_some();
+                    }
+                    ok
                 });
                 if !files_ok {
                     break 'package;

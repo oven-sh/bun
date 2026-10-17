@@ -1408,8 +1408,8 @@ fn print_exception_left_by_print(vm: &mut VirtualMachine, global_this: &JSGlobal
         return;
     };
     vm.run_error_handler(left, None);
-    if global_this.has_exception() && !global_this.has_pending_termination_exception() {
-        let _ = global_this.try_take_exception();
+    // That print can throw as well. One line reports it: a third print could throw again.
+    if !global_this.has_pending_termination_exception() && global_this.try_take_exception().is_some() {
         bun_core::pretty_errorln!("<blue>note<r><d>:<r> printing the error above threw another error");
         Output::flush();
     }

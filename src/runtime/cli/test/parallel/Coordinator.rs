@@ -403,6 +403,26 @@ impl<'a> Coordinator<'a> {
         }
     }
 
+    /// A worker prints over two pipes and sends frames over a third channel, so what it printed before a frame may not have
+    /// been read when the frame is. Once per read of the channel is enough: the frames of one read are all of one file.
+    #[cfg(unix)]
+    pub(crate) fn read_output(w: &mut Worker) {
+        let w: *mut Worker = w;
+        // SAFETY: `w` is live. The reader's callbacks reach `captured` and `done` through the pipes' own backref, so no
+        // borrow of `*w` is held across `read`.
+        unsafe {
+            for pipe in [&raw mut (*w).out, &raw mut (*w).err] {
+                let fd = (*pipe).reader.get_fd();
+                if (*pipe).done || fd == bun_sys::Fd::INVALID {
+                    continue;
+                }
+                if !matches!(bun_core::is_readable(fd), bun_core::Pollable::NotReady) {
+                    bun_io::BufferedReader::read(&raw mut (*pipe).reader);
+                }
+            }
+        }
+    }
+
     fn flush_captured(&mut self, w: &mut Worker) {
         if w.captured.is_empty() {
             return;
@@ -588,6 +608,8 @@ impl<'a> Coordinator<'a> {
         // Decrement here (not in onProcessExit) so drive() keeps pumping until
         // the IPC pipe has been drained and this reap actually runs.
         self.live_workers -= 1;
+        #[cfg(unix)]
+        Self::read_output(w);
         self.flush_captured(w);
         // Exited before the IPC handshake. `inflight` is None for these, so
         // the mid-file handling below never fires; the per-slot cap is what

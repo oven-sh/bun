@@ -853,6 +853,38 @@ test("--parallel --dots prints one status character per test", async () => {
   expect(exitCode).toBe(1);
 });
 
+test("--parallel prints what a file printed under that file's name", async () => {
+  const files: Record<string, string> = {};
+  for (let i = 10; i < 50; i++) {
+    files[`f${i}.test.js`] = `import {test} from "bun:test";
+      test("fails", () => { throw new Error("thrown in f${i}"); });
+      test("logs", () => { console.log("logged in f${i}"); console.error("warned in f${i}"); });`;
+  }
+  using dir = tempDir("parallel-output-of-a-file", files);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=4"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  let file = "";
+  let count = 0;
+  const misplaced: string[] = [];
+  for (const line of stderr.split("\n")) {
+    const printed = line.match(/^(?:error: thrown|logged|warned) in (f\d+)$/);
+    file = line.match(/^(f\d+)\.test\.js:$/)?.[1] ?? file;
+    if (!printed) continue;
+    count++;
+    if (printed[1] !== file) misplaced.push(`"${line}" under ${file}`);
+  }
+  expect(misplaced).toEqual([]);
+  expect(count).toBe(120);
+  expect(exitCode).toBe(1);
+});
+
 test("--parallel never interleaves console output across files", async () => {
   // Two files, each test logs a marker then sleeps so the other worker has
   // time to also log. Buffered-per-test flush means a MARK line is always

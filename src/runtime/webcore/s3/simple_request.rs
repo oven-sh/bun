@@ -138,8 +138,7 @@ pub(crate) struct S3HttpSimpleTask {
     /// request still queued or in flight fails promptly and comes back.
     pub(crate) signal_store: bun_http::signals::Store,
     pub(crate) abort_handle: bun_jsc::AbortHandle,
-    /// The JS object of the signal the task follows. `AbortSignal` keeps its reason only
-    /// through that object: held until the completion has read `signal.reason`.
+    /// The JS object of the followed signal: `signal.reason` lives only through it.
     pub(crate) signal_object: bun_jsc::StrongOptional,
     /// The context of the script that asked (the handle forgets it when the context stops).
     pub(crate) context: bun_jsc::ContextId,
@@ -552,8 +551,7 @@ pub(crate) struct S3SimpleRequestOptions<'a> {
     pub(crate) signal: Option<AbortSignalRef>,
 }
 
-/// What every request of an operation carries from its handle, client, or per-call
-/// options: the per-attempt knobs of [`MultiPartUploadOptions`] and `requestPayer`.
+/// What every request of an operation carries from its handle, client, or call options.
 #[derive(Clone, Copy)]
 pub(crate) struct RequestConfig {
     pub(crate) options: MultiPartUploadOptions,

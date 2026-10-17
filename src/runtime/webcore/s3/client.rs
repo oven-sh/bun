@@ -409,8 +409,7 @@ pub(crate) fn writable_stream(
     request_payer: bool,
     signal: Option<AbortSignalRef>,
 ) -> JsResult<JSValue> {
-    // Local callback wrapper. `uploaded`, `path` and `signal` are read off the upload (see
-    // `MultiPartUpload::callback`).
+    // Local callback wrapper. `uploaded`, `path` and `signal` are read off the upload.
     fn wrapper_callback(
         result: S3UploadResult,
         task: &MultiPartUpload,
@@ -547,8 +546,7 @@ pub(crate) fn writable_stream(
     // `source` defaults to `SourceHandle::None`; no stream is attached on the
     // `writer()` path, so ready/close/start are no-ops.
     debug_assert!(sink.source.is_dead());
-    // Followed last: a signal that has fired already fails the upload right here, and the
-    // writer then rejects `end()` and `flush()` with the reason.
+    // Last: a signal that fired already fails the upload here, and `end()` reports it.
     if let Some(signal) = &task.signal {
         // SAFETY: as `arm_owner` above.
         unsafe { bun_jsc::AbortHandle::follow_owner(task_ptr, signal.clone()) };
@@ -977,8 +975,7 @@ pub(crate) fn upload_stream(
     // SAFETY: freshly heap-allocated; exclusive access here.
     let ctx = unsafe { &mut *ctx_ptr };
     task.callback_context.set(ctx_ptr.cast::<c_void>());
-    // Followed once the completion has somewhere to go. The callers reject a signal that
-    // has fired already before they get here, so this never fails the upload on the spot.
+    // After `callback_context`: the completion has somewhere to go.
     if let Some(signal) = &task.signal {
         // SAFETY: as `arm_owner` above.
         unsafe { bun_jsc::AbortHandle::follow_owner(task_ptr, signal.clone()) };

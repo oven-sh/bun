@@ -209,8 +209,7 @@ pub(crate) fn get_credentials_with_options(
                     new_credentials.options.retry = retry as u8;
                 }
             }
-            // `timeout`: the socket idle timeout in ms, as for `fetch()`. `false`, `0` and
-            // a non-finite number turn it off; `true` keeps the process-wide default.
+            // `timeout` in ms, with `fetch()`'s rules: `false`, `0` and a non-finite number turn it off.
             if let Some(timeout) =
                 opts.get_common_string(global_object, CommonString::FetchOptionTimeout)?
             {

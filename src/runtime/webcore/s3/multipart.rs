@@ -140,8 +140,7 @@ pub struct MultiPartUpload {
     /// An upload waits for its script to write more, which the script of a `Bun.ModuleGraph` that
     /// was disposed never does: the graph's context fails it.
     pub(crate) abort_handle: bun_jsc::AbortHandle,
-    /// The `signal` of the operation: it fails the upload and aborts every request of it
-    /// except the rollback, which has to reach the store.
+    /// The operation's `signal`: followed by every request of the upload except the rollback.
     pub(crate) signal: Option<AbortSignalRef>,
     /// The context of the script that started the upload: its requests are that script's.
     pub(crate) context: bun_jsc::ContextId,
@@ -179,8 +178,7 @@ bun_jsc::impl_abort_handle_owner!(MultiPartUpload, abort_handle, |this, _cause| 
     // while the completion callback releases others.
     unsafe {
         let _guard = RefPtr::init_ref(this);
-        // (What its callback settles is settled in the stopped context: for nobody. The
-        // completion of an upload whose `signal` fired reads the reason off the signal.)
+        // (What its callback settles is settled in the stopped context: for nobody.)
         let _ = (*this).fail(S3Error {
             code: b"AbortError",
             message: b"The operation was aborted",
@@ -869,8 +867,7 @@ impl MultiPartUpload {
         match result {
             S3DeleteResult::Failure(err) => {
                 let mut options = self_.options.get();
-                // A store that did not answer in time, or a VM that is shutting down, is not
-                // asked again.
+                // A store that did not answer in time is not asked again.
                 if options.retry > 0 && !matches!(err.code, b"Timeout" | b"Aborted") {
                     options.retry -= 1;
                     self_.options.set(options);

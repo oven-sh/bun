@@ -36,6 +36,74 @@ test("new $.Shell() inherits process.env and throws on non-zero exit by default"
   expect(exitCode).toBe(0);
 });
 
+// The first argument's `raw` strings are spliced into the script unescaped, so
+// only a template object may be accepted there. The default `$` and
+// `new $.Shell()` instances each make that decision.
+describe.each([
+  ["$", () => $],
+  ["new $.Shell()", () => new $.Shell()],
+])("%s only accepts a template object as its first argument", (_, makeShell) => {
+  const rejected = "threw: Please use '$' as a tagged template function: $`cmd arg1 arg2`";
+  const payload = "echo pwned";
+
+  // Not expect(() => shell(x)).toThrow(): a shell that accepts x returns a lazy ShellPromise, and
+  // toThrow() would then wait for that never-started promise instead of failing.
+  function callWith(first: unknown): string {
+    let result: unknown;
+    try {
+      result = makeShell()(first as any);
+    } catch (e) {
+      return `threw: ${(e as Error).message}`;
+    }
+    return `returned ${typeof result} without throwing`;
+  }
+
+  test.each([
+    ["a JSON object carrying a raw array", () => JSON.parse('{"raw":["echo pwned"]}')],
+    ["an array without raw", () => [payload]],
+    ["an array with raw assigned onto it", () => Object.assign([payload], { raw: [payload] })],
+    ["a structuredClone of an array with raw", () => structuredClone(Object.assign([payload], { raw: [payload] }))],
+    ["an array whose raw is a string", () => Object.defineProperty([payload], "raw", { value: payload })],
+    [
+      "an array whose raw has a different length",
+      () => Object.defineProperty([payload, ""], "raw", { value: [payload] }),
+    ],
+    ["a string", () => payload],
+    ["undefined", () => undefined],
+  ])("rejects %s", (_, makeFirstArgument) => {
+    expect(callWith(makeFirstArgument())).toBe(rejected);
+  });
+
+  test("rejects a raw inherited through a polluted prototype", () => {
+    (Object.prototype as any).raw = [payload];
+    try {
+      expect([callWith({}), callWith([]), callWith(payload)]).toEqual([rejected, rejected, rejected]);
+    } finally {
+      delete (Object.prototype as any).raw;
+    }
+  });
+
+  test("runs a template object forwarded by a wrapper", async () => {
+    const shell = makeShell();
+    const sh = (strings: TemplateStringsArray, ...values: string[]) => shell(strings, ...values);
+    expect(await sh`echo ${"forwarded"} ${"template"}`.text()).toBe("forwarded template\n");
+  });
+
+  // What tsc's __makeTemplateObject produces for target es5: raw is defined, nothing is frozen.
+  test("runs a template object built with Object.defineProperty", async () => {
+    const shell = makeShell();
+    const strings = Object.defineProperty(["echo ", ""], "raw", { value: ["echo ", ""] });
+    expect(await shell(strings as unknown as TemplateStringsArray, "downleveled").text()).toBe("downleveled\n");
+  });
+
+  // What babel, swc and esbuild produce: raw is defined and both arrays are frozen.
+  test("runs a frozen template object", async () => {
+    const shell = makeShell();
+    const strings = Object.freeze(Object.defineProperty(["echo ", ""], "raw", { value: Object.freeze(["echo ", ""]) }));
+    expect(await shell(strings as unknown as TemplateStringsArray, "frozen").text()).toBe("frozen\n");
+  });
+});
+
 test("$$", async () => {
   const $$ = new $.Shell();
   $$.env({ BUN: "bun" });

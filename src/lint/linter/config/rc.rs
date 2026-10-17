@@ -1200,8 +1200,7 @@ impl Config {
             reader: Reader {
                 registry,
                 base_path: base_path.clone(),
-                prefers_typescript_rules: true,
-                has_every_rule: false,
+                semantics: Semantics::Rc,
                 objects: Vec::new(),
                 notes: Vec::new(),
                 advice: Vec::new(),
@@ -1298,11 +1297,7 @@ impl Config {
             without_modules: !rc.has_plugin(Plugin::Import),
             options_of_oxlint,
             printed_for_oxlint,
-            ..rc.reader.finish(Semantics {
-                keeps_options: false,
-                accepts_all_plugins: true,
-                is_legacy: false,
-            })
+            ..rc.reader.finish()
         })
     }
 

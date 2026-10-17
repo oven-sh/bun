@@ -270,6 +270,11 @@ pub(crate) struct Summary {
 }
 
 impl Summary {
+    /// Every test that reached the reporter, whatever its result.
+    pub(crate) fn tests(&self) -> u32 {
+        self.pass + self.fail + self.skip + self.todo + self.skipped_because_label
+    }
+
     pub(crate) fn did_label_filter_out_all_tests(&self) -> bool {
         self.skipped_because_label > 0
             && (self.pass + self.skip + self.todo + self.fail + self.expectations) == 0

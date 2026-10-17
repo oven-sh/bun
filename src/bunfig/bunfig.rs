@@ -19,7 +19,7 @@ use bun_parsers::toml::TOML;
 use bun_install_types::NodeLinker::FromExprError;
 use bun_options_types::LoaderExt as _;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
-use bun_options_types::context::{MacroImportReplacementMap, MacroMap, MacroOptions};
+use bun_options_types::context::{MacroImportReplacementMap, MacroMap, MacroOptions, TestProject};
 use bun_options_types::global_cache::GlobalCache;
 use bun_options_types::offline_mode::PREFER as OFFLINE_PREFER;
 use bun_options_types::schema::api;
@@ -286,6 +286,119 @@ impl<'a> Parser<'a, '_> {
         Ok(())
     }
 
+    /// A string or a non-empty array of non-empty strings.
+    fn string_or_strings(
+        &mut self,
+        expr: &Expr,
+        key: &'static [u8],
+    ) -> crate::Result<Vec<Box<[u8]>>> {
+        match &expr.data {
+            ExprData::EString(s) => {
+                if s.len() == 0 {
+                    self.add_error_format(
+                        expr.loc,
+                        format_args!("{} cannot be an empty string", bstr::BStr::new(key)),
+                    )?;
+                }
+                Ok(vec![estring_to_owned(s, self.bump)])
+            }
+            ExprData::EArray(arr) => {
+                let items = arr.items.slice();
+                if items.is_empty() {
+                    self.add_error_format(
+                        expr.loc,
+                        format_args!("{} array cannot be empty", bstr::BStr::new(key)),
+                    )?;
+                }
+                let mut out: Vec<Box<[u8]>> = Vec::with_capacity(items.len());
+                for item in items {
+                    let ExprData::EString(s) = &item.data else {
+                        self.add_error_format(
+                            item.loc,
+                            format_args!(
+                                "{} array must contain only strings",
+                                bstr::BStr::new(key)
+                            ),
+                        )?;
+                        return Ok(out);
+                    };
+                    if s.len() == 0 {
+                        self.add_error_format(
+                            item.loc,
+                            format_args!(
+                                "{} array cannot contain empty strings",
+                                bstr::BStr::new(key)
+                            ),
+                        )?;
+                    }
+                    out.push(estring_to_owned(s, self.bump));
+                }
+                Ok(out)
+            }
+            _ => {
+                self.add_error_format(
+                    expr.loc,
+                    format_args!(
+                        "{} must be a string or array of strings",
+                        bstr::BStr::new(key)
+                    ),
+                )?;
+                Ok(Vec::new())
+            }
+        }
+    }
+
+    /// `[[test.projects]]`: unique `name`, `testMatch`, optional `preload`.
+    fn load_test_projects(&mut self, expr: &Expr) -> crate::Result<()> {
+        self.expect(expr, ExprTag::EArray)?;
+        let ExprData::EArray(arr) = &expr.data else {
+            return Ok(());
+        };
+        let items = arr.items.slice();
+        let mut projects: Vec<TestProject> = Vec::with_capacity(items.len());
+        for item in items {
+            self.expect(item, ExprTag::EObject)?;
+
+            let Some(name_expr) = item.get(b"name") else {
+                self.add_error(item.loc, b"test.projects entry is missing \"name\"")?;
+                return Ok(());
+            };
+            self.expect_string(&name_expr)?;
+            let name = name_expr.as_string(self.bump).unwrap_or(b"");
+            if name.is_empty() {
+                self.add_error(name_expr.loc, b"test.projects name cannot be empty")?;
+            }
+            if projects.iter().any(|p| &*p.name == name) {
+                self.add_error_format(
+                    name_expr.loc,
+                    format_args!(
+                        "test.projects name \"{}\" is used twice",
+                        bstr::BStr::new(name)
+                    ),
+                )?;
+            }
+
+            let Some(match_expr) = item.get(b"testMatch") else {
+                self.add_error(item.loc, b"test.projects entry is missing \"testMatch\"")?;
+                return Ok(());
+            };
+            let test_match = self.string_or_strings(&match_expr, b"testMatch")?;
+
+            let preloads = match item.get(b"preload") {
+                Some(preload_expr) => self.string_or_strings(&preload_expr, b"preload")?,
+                None => Vec::new(),
+            };
+
+            projects.push(TestProject {
+                name: Box::<[u8]>::from(name),
+                test_match,
+                preloads,
+            });
+        }
+        self.ctx.test_options.projects = projects;
+        Ok(())
+    }
+
     fn load_env_config(&mut self, expr: &Expr) -> crate::Result<()> {
         match &expr.data {
             ExprData::ENull(_) => {
@@ -454,6 +567,10 @@ impl<'a> Parser<'a, '_> {
 
                 if let Some(expr) = test.get(b"preload") {
                     self.load_preload(&expr)?;
+                }
+
+                if let Some(expr) = test.get(b"projects") {
+                    self.load_test_projects(&expr)?;
                 }
 
                 if let Some(expr) = test.get(b"smol") {

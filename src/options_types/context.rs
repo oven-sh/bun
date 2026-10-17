@@ -470,6 +470,15 @@ pub struct TestOptions {
 
     pub reporters: Reporters,
     pub reporter_outfile: Option<Box<[u8]>>,
+    /// `[[test.projects]]` in file order. The first `testMatch` hit wins.
+    pub projects: Vec<TestProject>,
+}
+
+pub struct TestProject {
+    pub name: Box<[u8]>,
+    /// Globs against the path relative to the project root, like `pathIgnorePatterns`.
+    pub test_match: Vec<Box<[u8]>>,
+    pub preloads: Vec<Box<[u8]>>,
 }
 
 #[derive(Copy, Clone)]
@@ -535,6 +544,7 @@ impl Default for TestOptions {
             update_timings: false,
             reporters: Reporters::default(),
             reporter_outfile: None,
+            projects: Vec::new(),
         }
     }
 }

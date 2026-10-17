@@ -3,6 +3,7 @@ use bun_io::Write as _;
 use crate::cli::Command;
 use crate::cli::test::changed_files_filter as ChangedFilesFilter;
 use crate::cli::test::parallel_runner as ParallelRunner;
+use crate::cli::test::projects::TestProjects;
 use crate::cli::test::scanner::{self, Scanner};
 use crate::cli::test::timings::Timings;
 use bun_collections::BoundedArray;
@@ -975,6 +976,9 @@ pub(crate) struct CommandLineReporter {
 
     /// `--timings`: loaded before the run, updated per file, written back under `--update-timings`.
     pub(crate) timings: Option<Timings>,
+
+    /// `[[test.projects]]`: which preloads each test file's global needs.
+    pub(crate) projects: TestProjects,
 }
 
 #[derive(Default)]
@@ -1891,6 +1895,11 @@ impl TestCommand {
             } else {
                 Some(Timings::load(&ctx.test_options.timings_files))
             },
+            // SAFETY: `ctx` is the process-lifetime CLI context; `exec()` never returns.
+            projects: TestProjects::init(
+                unsafe { bun_ptr::detach_lifetime(&ctx.preloads[..]) },
+                unsafe { bun_ptr::detach_lifetime(&ctx.test_options.projects[..]) },
+            ),
         });
         // `defer { if (reporter.reporters.junit) |fr| fr.deinit() }` — handled by Drop.
         reporter.repeat_count = ctx.test_options.repeat_count.max(1);
@@ -1940,8 +1949,7 @@ impl TestCommand {
             })?
         };
         vm.argv = core::mem::take(&mut ctx.passthrough);
-        // Clone (not take): build_worker_argv reads ctx.preloads to forward --preload.
-        vm.preload = ctx.preloads.clone();
+        // `vm.preload` is filled per global by the file loops from `reporter.projects`.
         vm.transpiler.options.rewrite_jest_for_tests = true;
         bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.store(
             ctx.runtime_options.experimental_http2_fetch,
@@ -1968,7 +1976,8 @@ impl TestCommand {
         vm.is_main_thread = true;
         VirtualMachine::set_is_main_thread_vm(true);
 
-        if ctx.test_options.isolate {
+        // `[[test.projects]]` swaps the global between projects like `--isolate` does between files.
+        if ctx.test_options.isolate || !ctx.test_options.projects.is_empty() {
             vm.test_isolation_enabled = true;
             vm.auto_killer.enabled = true;
         }
@@ -2362,6 +2371,8 @@ impl TestCommand {
                     }
                 }
             }
+
+            reporter.projects.group(test_files);
 
             if ctx.test_options.parallel > 0 {
                 ran_parallel = ParallelRunner::run_as_coordinator(
@@ -2760,53 +2771,43 @@ impl TestCommand {
                 let files = self.files;
                 debug_assert!(!files.is_empty());
 
-                let isolate = vm.test_isolation_enabled;
+                let isolate = reporter.jest.test_options.isolate;
+                let n = files.len();
+                // `fresh`: the global has not loaded its preloads yet.
+                let mut fresh = true;
 
-                if files.len() > 1 {
-                    for (i, file_name) in files[0..files.len() - 1].iter().enumerate() {
-                        let started = bun::time::milli_timestamp();
-                        if let Err(err) = TestCommand::run(
-                            reporter,
-                            vm,
-                            file_name.as_bytes(),
-                            bun_test::FirstLast {
-                                first: isolate || i == 0,
-                                last: isolate,
-                            },
-                        ) {
-                            handle_top_level_test_error_before_javascript_start(&err);
-                        }
-                        if let Some(t) = reporter.timings.as_mut() {
-                            t.record_since(file_name.as_bytes(), started);
-                        }
-                        reporter.jest.default_timeout_override = u32::MAX;
-                        Global::mimalloc_cleanup(false);
-                        if isolate {
-                            crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
-                            vm.swap_global_for_test_isolation();
-                            reporter
-                                .jest
-                                .bun_test_root
-                                .reset_hook_scope_for_test_isolation();
-                        }
+                for (i, file_name) in files.iter().enumerate() {
+                    let key = reporter.projects.key_for(file_name.as_bytes());
+                    if fresh {
+                        vm.preload = reporter.projects.preloads_for(key);
                     }
-                }
+                    let swap_after = i + 1 < n
+                        && (isolate || reporter.projects.key_for(files[i + 1].as_bytes()) != key);
 
-                let last = files[files.len() - 1];
-                let started = bun::time::milli_timestamp();
-                if let Err(err) = TestCommand::run(
-                    reporter,
-                    vm,
-                    last.as_bytes(),
-                    bun_test::FirstLast {
-                        first: isolate || files.len() == 1,
-                        last: true,
-                    },
-                ) {
-                    handle_top_level_test_error_before_javascript_start(&err);
-                }
-                if let Some(t) = reporter.timings.as_mut() {
-                    t.record_since(last.as_bytes(), started);
+                    let started = bun::time::milli_timestamp();
+                    if let Err(err) = TestCommand::run(
+                        reporter,
+                        vm,
+                        file_name.as_bytes(),
+                        bun_test::FirstLast {
+                            first: fresh,
+                            last: swap_after || i + 1 == n,
+                        },
+                    ) {
+                        handle_top_level_test_error_before_javascript_start(&err);
+                    }
+                    if let Some(t) = reporter.timings.as_mut() {
+                        t.record_since(file_name.as_bytes(), started);
+                    }
+                    if i + 1 == n {
+                        break;
+                    }
+                    reporter.jest.default_timeout_override = u32::MAX;
+                    Global::mimalloc_cleanup(false);
+                    if swap_after {
+                        TestCommand::swap_global(reporter, vm);
+                    }
+                    fresh = swap_after;
                 }
             }
         }
@@ -2826,6 +2827,16 @@ impl TestCommand {
         // SAFETY: `vm_ptr` was derived from `vm_` above; `ctx` holds the unique
         // `&mut VirtualMachine` and `run_with_api_lock(&self)` only acquires the JSC lock.
         unsafe { (*vm_ptr).run_with_api_lock(|| ctx.begin()) };
+    }
+
+    /// Fresh global. The caller refills `vm.preload`, consumed once per global.
+    pub(crate) fn swap_global(reporter: &mut CommandLineReporter, vm: &mut VirtualMachine) {
+        crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
+        vm.swap_global_for_test_isolation();
+        reporter
+            .jest
+            .bun_test_root
+            .reset_hook_scope_for_test_isolation();
     }
 
     pub(crate) fn run(

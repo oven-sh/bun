@@ -464,11 +464,10 @@ pub struct HTTPClientResult<'a> {
     pub body: &'a [u8],
     /// Populated only on the terminal (`!has_more`) progress callback:
     /// `send_progress_update_*` moves the whole `decoded_body.list` here so
-    /// one-shot consumers (`send_sync`, `NetworkTask` manifest, S3 simple,
-    /// `RemoteImageDownload`) can `mem::take` it instead of
-    /// `extend_from_slice`ing the borrowed `body`. Streaming consumers read
-    /// `body` on non-terminal callbacks and treat this as just the final
-    /// chunk's bytes.
+    /// one-shot consumers (`send_sync`, `NetworkTask` manifest, S3 simple)
+    /// can `mem::take` it instead of `extend_from_slice`ing the borrowed
+    /// `body`. Streaming consumers read `body` on non-terminal callbacks and
+    /// treat this as just the final chunk's bytes.
     pub body_owned: Vec<u8>,
     pub has_more: bool,
     pub redirected: bool,

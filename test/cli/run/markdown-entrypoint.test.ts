@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, rmSync, symlinkSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isPosix, tempDir } from "harness";
-import { join } from "path";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, tempDir } from "harness";
+import { mkfifo } from "mkfifo";
+import { extname, join } from "path";
 
 // Tracks exit code from the last runMd() call so individual tests can
 // assert it after snapshotting stdout (giving a readable diff on failure).
@@ -402,3 +403,428 @@ describe("bun <file.md>", () => {
     },
   );
 });
+
+// The limits `prefetch_remote_images` (src/runtime/cli/run_command.rs) puts on the remote
+// images of one document: REMOTE_IMAGE_DEADLINE and REMOTE_IMAGE_BYTE_BUDGET.
+const REMOTE_IMAGE_DEADLINE = 3_000;
+const REMOTE_IMAGE_BYTE_BUDGET = 64 * 1024 * 1024;
+
+const FIRST_LINE = "first line of the document";
+const LAST_LINE = "last line of the document";
+
+/**
+ * Renders a document with `bun ./doc.md` on a terminal that speaks the Kitty graphics
+ * protocol. There bun downloads the `http(s)` images of the document before it prints
+ * the first line. `images` is a list of `[alt text, url]`.
+ */
+async function renderOnKitty(
+  images: [alt: string, url: string][],
+  options: {
+    env?: Record<string, string>;
+    /** Runs while bun renders. */
+    meanwhile?: (terminal: Bun.Terminal, proc: Bun.Subprocess) => Promise<void>;
+  } = {},
+) {
+  const doc = [`# ${FIRST_LINE}`, ...images.map(([alt, url]) => `![${alt}](${url})`), LAST_LINE, ""].join("\n\n");
+  using dir = tempDir("md-remote-img-", { "doc.md": doc, "tmp/keep": "" });
+  const tmp = join(String(dir), "tmp");
+  const decoder = new TextDecoder();
+  let output = "";
+  // Settles when the whole document is on the terminal, or at the terminal's EOF,
+  // which comes after the last byte the child wrote.
+  const rendered = Promise.withResolvers<void>();
+  await using terminal = new Bun.Terminal({
+    cols: 80,
+    rows: 24,
+    data(_terminal, chunk) {
+      output += decoder.decode(chunk, { stream: true });
+      if (output.includes(LAST_LINE)) rendered.resolve();
+    },
+    exit() {
+      rendered.resolve();
+    },
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "./doc.md"],
+    env: {
+      ...bunEnv,
+      FORCE_COLOR: "1",
+      TERM: "xterm-kitty",
+      KITTY_WINDOW_ID: "1",
+      BUN_TMPDIR: tmp,
+      TMPDIR: tmp,
+      ...options.env,
+    },
+    cwd: String(dir),
+    terminal,
+  });
+  await options.meanwhile?.(terminal, proc);
+  await rendered.promise;
+  const exitCode = await proc.exited;
+  const text = Bun.stripANSI(output);
+  // The staged files by extension. bun takes the extension of a staged file from the
+  // URL of its image, and the bytes from the body.
+  const staged: Record<string, Buffer[]> = {};
+  for (const name of readdirSync(tmp)
+    .filter(name => name.startsWith("bun-md-"))
+    .sort()) {
+    (staged[extname(name)] ??= []).push(readFileSync(join(tmp, name)));
+  }
+  return {
+    printed: [FIRST_LINE, LAST_LINE].filter(line => text.includes(line)),
+    // An image that bun did not download renders as its alt text.
+    altTexts: images.map(([alt]) => alt).filter(alt => text.includes(alt)),
+    staged,
+    exitCode,
+    // `null`: the child exited on its own.
+    signalCode: proc.signalCode,
+  };
+}
+
+describe.concurrent("bun <file.md> remote images", () => {
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+    "base64",
+  );
+  const asPng = { headers: { "content-type": "image/png" } };
+  const silent = () => new Promise<Response>(() => {});
+  // Bun.serve closes a connection that is idle for 10 seconds by default. These hosts never do.
+  const quietHost = { port: 0, hostname: "127.0.0.1", idleTimeout: 0 };
+  const printed = [FIRST_LINE, LAST_LINE];
+  // For the tests in which bun waits out REMOTE_IMAGE_DEADLINE: a debug build does not fit
+  // that and its own startup into the default 5 seconds.
+  const pastDeadline = 30_000;
+  // One byte every 20 ms: the body never ends, and the connection is never idle.
+  const drips = () =>
+    new Response(async function* () {
+      for (;;) {
+        yield ".";
+        await Bun.sleep(20);
+      }
+    }, asPng);
+
+  test(
+    "images that miss the deadline are alt text, and the images that arrived are drawn",
+    async () => {
+      const first = Buffer.from("the first image");
+      const second = Buffer.from("the second image");
+      const moved = Buffer.from("the image behind a redirect");
+      const inTime = Buffer.from("the image that takes a third of the deadline");
+      const requested: string[] = [];
+      // The host answers `ms` after the request, unless bun gives up on it first. The delay
+      // is the stimulus: how far away the image is.
+      const after = (req: Request, ms: number, body: Buffer) =>
+        new Promise<Response>(resolve => {
+          const timer = setTimeout(() => resolve(new Response(body)), ms);
+          req.signal.addEventListener("abort", () => clearTimeout(timer));
+        });
+      await using host = Bun.serve({
+        ...quietHost,
+        fetch(req) {
+          const path = new URL(req.url).pathname;
+          requested.push(path);
+          switch (path) {
+            case "/first.png":
+              return new Response(first);
+            case "/second.gif":
+              return new Response(second);
+            case "/moved.webp":
+              return Response.redirect(new URL("/moved-to", req.url).href);
+            case "/moved-to":
+              return new Response(moved);
+            case "/in-time.jpg":
+              return after(req, REMOTE_IMAGE_DEADLINE / 3, inTime);
+            case "/late.png":
+              return after(req, REMOTE_IMAGE_DEADLINE * 3, png);
+            case "/missing.png":
+              return new Response(png, { status: 404 });
+            case "/empty.png":
+              return new Response("");
+            case "/redirected.png":
+              return Response.redirect(new URL("/redirected-to", req.url).href);
+            case "/drips.png":
+              return drips();
+            default:
+              return silent();
+          }
+        },
+      });
+      const url = (path: string) => `http://127.0.0.1:${host.port}${path}`;
+      const result = await renderOnKitty([
+        ["ALT-FIRST", url("/first.png")],
+        ["ALT-SILENT", url("/silent.png")],
+        ["ALT-SECOND", url("/second.gif")],
+        ["ALT-DRIPS", url("/drips.png")],
+        ["ALT-REDIRECTED", url("/redirected.png")],
+        ["ALT-MOVED", url("/moved.webp")],
+        ["ALT-MISSING", url("/missing.png")],
+        ["ALT-EMPTY", url("/empty.png")],
+        ["ALT-IN-TIME", url("/in-time.jpg")],
+        ["ALT-LATE", url("/late.png")],
+      ]);
+      expect({ ...result, requested: requested.sort() }).toEqual({
+        printed,
+        altTexts: ["ALT-SILENT", "ALT-DRIPS", "ALT-REDIRECTED", "ALT-MISSING", "ALT-EMPTY", "ALT-LATE"],
+        staged: { ".gif": [second], ".jpg": [inTime], ".png": [first], ".webp": [moved] },
+        exitCode: 0,
+        signalCode: null,
+        requested: [
+          "/drips.png",
+          "/empty.png",
+          "/first.png",
+          "/in-time.jpg",
+          "/late.png",
+          "/missing.png",
+          "/moved-to",
+          "/moved.webp",
+          "/redirected-to",
+          "/redirected.png",
+          "/second.gif",
+          "/silent.png",
+        ],
+      });
+    },
+    pastDeadline,
+  );
+
+  test(
+    "more stalled images than the HTTP thread runs at once cost one deadline",
+    async () => {
+      let requests = 0;
+      await using host = Bun.serve({
+        ...quietHost,
+        fetch() {
+          requests++;
+          return silent();
+        },
+      });
+      const images = Array.from({ length: 300 }, (_, i): [string, string] => [
+        `ALT-${i}-OF-300`,
+        `http://127.0.0.1:${host.port}/${i}.png`,
+      ]);
+      const result = await renderOnKitty(images);
+      expect({ ...result, requests }).toEqual({
+        printed,
+        altTexts: images.map(([alt]) => alt),
+        staged: {},
+        exitCode: 0,
+        signalCode: null,
+        // The HTTP thread runs 256 requests at a time. The other 44 wait for a free slot,
+        // and are aborted there: they never reach the host.
+        requests: 256,
+      });
+    },
+    pastDeadline,
+  );
+
+  // Ctrl-S stops the output of a POSIX terminal, so bun blocks when it prints and cannot
+  // exit. The requests must end at the deadline all the same, not when bun exits.
+  test.skipIf(!isPosix)(
+    "the requests that miss the deadline are aborted",
+    async () => {
+      const stalled = ["/silent-1.png", "/silent-2.png", "/drips.png"];
+      let ended = 0;
+      const allEnded = Promise.withResolvers<void>();
+      await using host = Bun.serve({
+        ...quietHost,
+        fetch(req) {
+          req.signal.addEventListener("abort", () => {
+            if (++ended === stalled.length) allEnded.resolve();
+          });
+          return new URL(req.url).pathname === "/drips.png" ? drips() : silent();
+        },
+      });
+      let exitedBeforeTheRequestsEnded: boolean | undefined;
+      const result = await renderOnKitty(
+        stalled.map((path, i): [string, string] => [`ALT-${i}`, `http://127.0.0.1:${host.port}${path}`]),
+        {
+          async meanwhile(terminal, proc) {
+            terminal.write("\x13");
+            await allEnded.promise;
+            exitedBeforeTheRequestsEnded = proc.exitCode !== null || proc.signalCode !== null;
+            terminal.write("\x11");
+          },
+        },
+      );
+      expect({ ...result, exitedBeforeTheRequestsEnded }).toEqual({
+        printed,
+        altTexts: ["ALT-0", "ALT-1", "ALT-2"],
+        staged: {},
+        exitCode: 0,
+        signalCode: null,
+        exitedBeforeTheRequestsEnded: false,
+      });
+    },
+    pastDeadline,
+  );
+
+  // On Linux the HTTP thread reads $SSL_CERT_FILE when it first needs TLS. A FIFO that
+  // nobody writes to blocks that thread in open(2), so no request ever reports or aborts.
+  test.skipIf(!isLinux)(
+    "an HTTP thread that is stuck costs one deadline",
+    async () => {
+      using dir = tempDir("md-remote-img-ca-", {});
+      const fifo = join(String(dir), "ca.pem");
+      mkfifo(fifo);
+      await using host = Bun.serve({ ...quietHost, fetch: () => new Response(png, asPng) });
+      const result = await renderOnKitty(
+        [
+          ["ALT-HTTPS", `https://127.0.0.1:${host.port}/a.png`],
+          ["ALT-HTTP", `http://127.0.0.1:${host.port}/b.png`],
+        ],
+        { env: { SSL_CERT_FILE: fifo } },
+      );
+      expect(result).toEqual({
+        printed,
+        altTexts: ["ALT-HTTPS", "ALT-HTTP"],
+        staged: {},
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+    pastDeadline,
+  );
+
+  test("a compressed body is not staged, and bun asks for none", async () => {
+    const acceptEncoding: (string | null)[] = [];
+    await using host = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        acceptEncoding.push(req.headers.get("accept-encoding"));
+        switch (new URL(req.url).pathname) {
+          case "/gzip.png":
+            return new Response(Bun.gzipSync(png), { headers: { "content-encoding": "gzip" } });
+          case "/identity.png":
+            return new Response(png, { headers: { "content-encoding": "identity" } });
+          default:
+            // Not a coding bun decodes: the body is the image as it is.
+            return new Response(png, { headers: { "content-encoding": "aws-chunked" } });
+        }
+      },
+    });
+    const url = (path: string) => `http://127.0.0.1:${host.port}${path}`;
+    const result = await renderOnKitty([
+      ["ALT-GZIP", url("/gzip.png")],
+      ["ALT-IDENTITY", url("/identity.png")],
+      ["ALT-UNKNOWN-CODING", url("/unknown-coding.gif")],
+    ]);
+    expect({ ...result, acceptEncoding }).toEqual({
+      printed,
+      altTexts: ["ALT-GZIP"],
+      staged: { ".gif": [png], ".png": [png] },
+      exitCode: 0,
+      signalCode: null,
+      acceptEncoding: ["identity", "identity", "identity"],
+    });
+  });
+
+  // The next two move 64 MiB each way, twice. Each runs alone, so that on a loaded machine
+  // the bodies still arrive well inside bun's deadline.
+  test.serial(
+    "a body that does not end is cut off at the byte budget, and the image that arrived is kept",
+    async () => {
+      const chunk = Buffer.alloc(1024 * 1024, "x");
+      let sent = 0;
+      await using host = Bun.serve({
+        ...quietHost,
+        fetch(req) {
+          if (new URL(req.url).pathname === "/arrives.png") return new Response(png, asPng);
+          return new Response(
+            new ReadableStream({
+              // Twice the budget, then the body stays open: a bun that has no budget takes all of it.
+              pull(controller) {
+                if (sent >= 2 * REMOTE_IMAGE_BYTE_BUDGET) return new Promise<void>(() => {});
+                sent += chunk.length;
+                controller.enqueue(chunk);
+              },
+            }),
+            asPng,
+          );
+        },
+      });
+      const url = (path: string) => `http://127.0.0.1:${host.port}${path}`;
+      const result = await renderOnKitty([
+        ["ALT-ARRIVES", url("/arrives.png")],
+        ["ALT-ENDLESS", url("/endless.gif")],
+      ]);
+      expect({ ...result, staged: lengths(result.staged), arrived: result.staged[".png"] }).toEqual({
+        printed,
+        altTexts: ["ALT-ENDLESS"],
+        staged: { ".png": [png.length] },
+        arrived: [png],
+        exitCode: 0,
+        signalCode: null,
+      });
+      // The budget ended the body, not the deadline: the host got rid of the budget, and of
+      // no more than what the sockets held when bun stopped reading.
+      expect(sent).toBeGreaterThanOrEqual(REMOTE_IMAGE_BYTE_BUDGET);
+      expect(sent).toBeLessThan(1.5 * REMOTE_IMAGE_BYTE_BUDGET);
+    },
+  );
+
+  test.serial(
+    "the byte budget is for the whole document: the body that takes it one byte past is dropped",
+    async () => {
+      const big = Buffer.alloc(REMOTE_IMAGE_BYTE_BUDGET, "remote image bytes ");
+      // With the png, `rest` is exactly the budget and `restAndOne` is one byte past it.
+      const rest = big.subarray(0, REMOTE_IMAGE_BYTE_BUDGET - png.length);
+      const restAndOne = big.subarray(0, REMOTE_IMAGE_BYTE_BUDGET - png.length + 1);
+      // The body that goes past the budget starts after the host answered the png of the
+      // same document, so the png is the image that arrived first.
+      const pngAnswered = Promise.withResolvers<void>();
+      await using host = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        async fetch(req) {
+          switch (new URL(req.url).pathname) {
+            case "/small.png":
+              return new Response(png, asPng);
+            case "/small-first.png":
+              pngAnswered.resolve();
+              return new Response(png, asPng);
+            case "/rest.gif":
+              return new Response(rest, asPng);
+            default:
+              await pngAnswered.promise;
+              return new Response(restAndOne, asPng);
+          }
+        },
+      });
+      const url = (path: string) => `http://127.0.0.1:${host.port}${path}`;
+      const atBudget = await renderOnKitty([
+        ["ALT-SMALL", url("/small.png")],
+        ["ALT-REST", url("/rest.gif")],
+      ]);
+      const pastBudget = await renderOnKitty([
+        ["ALT-REST-AND-ONE", url("/rest-and-one.gif")],
+        ["ALT-SMALL", url("/small-first.png")],
+      ]);
+      expect({
+        ...atBudget,
+        staged: lengths(atBudget.staged),
+        restIsStagedByteForByte: atBudget.staged[".gif"]?.[0]?.equals(rest),
+      }).toEqual({
+        printed,
+        altTexts: [],
+        staged: { ".gif": [rest.length], ".png": [png.length] },
+        restIsStagedByteForByte: true,
+        exitCode: 0,
+        signalCode: null,
+      });
+      // Each of the two bodies is under the budget on its own.
+      expect({ ...pastBudget, staged: lengths(pastBudget.staged) }).toEqual({
+        printed,
+        altTexts: ["ALT-REST-AND-ONE"],
+        staged: { ".png": [png.length] },
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+  );
+});
+
+/** The lengths of the staged files, for a failure message that does not print 64 MiB. */
+function lengths(staged: Record<string, Buffer[]>) {
+  return Object.fromEntries(Object.entries(staged).map(([extension, files]) => [extension, files.map(f => f.length)]));
+}

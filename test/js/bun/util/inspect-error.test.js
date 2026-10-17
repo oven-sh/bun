@@ -513,9 +513,9 @@ describe.concurrent("AggregateError whose errors cannot be walked", () => {
 
 test("lines of the message that look like stack frames are not printed as stack frames", () => {
   const message = "my message\n    at fake (/nonexistent/fake.js:1:5)";
-  const print = err => {
+  const print = (err, name = "error") => {
     const printed = Bun.inspect(err);
-    return printed.slice(printed.lastIndexOf("error: ")).replace(/\S*inspect-error\.test\.js:\d+:\d+/, "this file");
+    return printed.slice(printed.lastIndexOf(name + ": ")).replace(/\S*inspect-error\.test\.js:\d+:\d+/, "this file");
   };
 
   const err = new Error(message);
@@ -523,10 +523,20 @@ test("lines of the message that look like stack frames are not printed as stack 
   err.stack;
   expect(print(err)).toBe(`error: ${message}\n      at this file\n`);
 
-  const renamed = new Error("my message");
+  const unnamed = new Error(message);
+  unnamed.name = "";
+  unnamed.stack;
+  expect(print(unnamed)).toBe(`error: ${message}\n      at this file\n`);
+
+  const renamed = new Error(message);
   renamed.stack;
-  renamed.message = "inspect-error.test.js";
-  expect(print(renamed)).toBe("error: inspect-error.test.js\n      at this file\n");
+  renamed.name = "Renamed";
+  expect(print(renamed, "Renamed")).toBe(`Renamed: ${message}\n      at this file\n`);
+
+  const reworded = new Error("my message");
+  reworded.stack;
+  reworded.message = "inspect-error.test.js";
+  expect(print(reworded)).toBe("error: inspect-error.test.js\n      at this file\n");
 
   const origLimit = Error.stackTraceLimit;
   Error.stackTraceLimit = 0;

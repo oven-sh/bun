@@ -6662,6 +6662,18 @@ impl VirtualMachine {
         // `defer default_formatter.deinit()` → Drop.
     }
 
+    /// Stack one print cycle of an error needs on top of the platform
+    /// threshold: `remap_zig_exception` runs the transpiler for the source
+    /// preview. On Windows that call tree stack-allocates `PathBuffer`s
+    /// (`MAX_PATH_BYTES * 3` measured on the 16K-deep Error test in
+    /// `bun-inspect.test.ts`). Elsewhere the chain measured about 130 KB under
+    /// debug+ASAN, past the 128 KB default.
+    const ERROR_PRINT_STACK_HEADROOM: usize = if cfg!(windows) {
+        bun_paths::MAX_PATH_BYTES * 3
+    } else {
+        256 * 1024
+    };
+
     /// JS-value variant of the error printer; see
     /// [`Self::print_error_instance_body`].
     fn print_error_instance_js(
@@ -6673,32 +6685,11 @@ impl VirtualMachine {
         allow_ansi_color: bool,
         allow_side_effects: bool,
     ) -> crate::CrateResult<()> {
-        // Note: stack-safety guard for the Error recursion path.
-        // `print_error_instance_body` dispatches on runtime bools, so it
-        // carries the union of all
-        // branches' locals (every `pretty_write!` expands to two `write!`s).
-        // More importantly, `remap_zig_exception` below calls
-        // `fetch_without_on_load_plugins` → the transpiler for source-line
-        // preview, and on Windows that call tree stack-allocates `PathBuffer`s
-        // (`MAX_PATH_BYTES = 98302` vs 4096 on Linux). One cycle can therefore
-        // exceed the default 256 KB headroom `is_safe_to_recurse()` leaves, so
-        // re-check here with an extra `MAX_PATH_BYTES * 3` of slack on Windows
-        // to cover the transpiler's nested path buffers — same parity-level
-        // protection the Object path gets from C++ `forEachProperty`'s
-        // `vm.isSafeToRecurse()`. The formatter's `stack_check` was seated by
-        // the caller (`format2` / `Bun.inspect` / `print_exception`).
-        let extra_headroom: usize = if cfg!(windows) {
-            // 3× PathBuffer ≈ 288 KB — empirically enough for the
-            // `remap_zig_exception` → `transpile_source_code` chain on the
-            // 16K-deep Error test (`bun-inspect.test.ts`).
-            bun_paths::MAX_PATH_BYTES * 3
-        } else {
-            // The same chain measured ~130 KB under debug+ASAN, past the 128 KB default.
-            256 * 1024
-        };
+        // The formatter's `stack_check` was seated by the caller
+        // (`format2` / `Bun.inspect` / `print_exception`).
         if !formatter
             .stack_check
-            .is_safe_to_recurse_with_extra(extra_headroom)
+            .is_safe_to_recurse_with_extra(Self::ERROR_PRINT_STACK_HEADROOM)
         {
             formatter.failed = true;
             if formatter.can_throw_stack_overflow {
@@ -7312,7 +7303,10 @@ impl VirtualMachine {
                 writer.write_all(b"\n")?;
                 let prev_depth = formatter.depth;
                 formatter.depth = formatter.depth.saturating_add(1);
-                let over_cap = formatter.depth > formatter.error_chain_max_depth();
+                let over_cap = formatter.depth > formatter.error_chain_max_depth()
+                    || !formatter
+                        .stack_check
+                        .is_safe_to_recurse_with_extra(Self::ERROR_PRINT_STACK_HEADROOM);
                 let mut result = if label.is_empty() {
                     Ok(())
                 } else if over_cap {

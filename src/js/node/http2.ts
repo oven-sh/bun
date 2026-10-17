@@ -6056,6 +6056,8 @@ class ClientHttp2Session extends Http2Session {
       // given order. The derived object form (original-case keys, array values
       // for duplicates) backs sentHeaders.
       let rawHeadersList: any[] | null = null;
+      // The :method of a raw list, from its last :method slot, as node reads it (sentHeaders keeps every slot).
+      let rawMethod;
       if (headers == undefined) {
         headers = {};
       } else if ($isArray(headers)) {
@@ -6077,6 +6079,7 @@ class ClientHttp2Session extends Http2Session {
           method = HTTP2_METHOD_GET;
           additionalPseudoHeaders.push(HTTP2_HEADER_METHOD, method);
         }
+        rawMethod = method;
         if (method !== HTTP2_METHOD_CONNECT || protocol !== undefined) {
           // `raw` is a flat [name, value, ...] array - scan the name slots for a host header
           // instead of reading a string key off the array.
@@ -6193,7 +6196,7 @@ class ClientHttp2Session extends Http2Session {
 
       // node injects defaulted pseudo-headers in this order: :method, :authority, :scheme,
       // :path - the object's insertion order is the wire order.
-      let method = headers[":method"];
+      let method = rawHeadersList !== null ? rawMethod : headers[":method"];
       if (!method) {
         method = "GET";
         headers[":method"] = method;

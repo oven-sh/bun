@@ -646,7 +646,8 @@ describe("an array in a value slot of a raw header list is sent as one field per
 
   // request() reads :method back to decide if the HEADERS frame ends the stream. An array in that
   // slot is sent as the method that it holds. The stream then stays open, as in Node.js.
-  test("request() accepts an array in the :method slot", async () => {
+  // An undefined :method slot is no field: the default GET is sent and the request is ended.
+  test("request() accepts an array or undefined in the :method slot", async () => {
     let received: string[] = [];
     const { client, close } = await peers((stream, _headers, _flags, rawHeaders) => {
       received = [];
@@ -663,18 +664,23 @@ describe("an array in a value slot of a raw header list is sent as one field per
         [":method", ["GET"], ":path", "/"],
         [":method", "GET", ":method", [], ":path", "/"],
         { ":method": ["GET"], ":path": "/" },
+        [":method", undefined, ":path", "/"],
+        [":path", "/", ":method", undefined],
       ];
       for (const headers of forms) {
         const req = client.request(headers);
         const endedByRequest = req.writableEnded;
+        const sentMethod = req.sentHeaders[":method"];
         await exchange(req);
-        outcomes.push({ received, endedByRequest });
+        outcomes.push({ received, endedByRequest, sentMethod });
       }
       expect(outcomes).toEqual([
-        { received: ["GET"], endedByRequest: true },
-        { received: ["GET"], endedByRequest: false },
-        { received: ["GET"], endedByRequest: false },
-        { received: ["GET"], endedByRequest: false },
+        { received: ["GET"], endedByRequest: true, sentMethod: "GET" },
+        { received: ["GET"], endedByRequest: false, sentMethod: ["GET"] },
+        { received: ["GET"], endedByRequest: false, sentMethod: ["GET", []] },
+        { received: ["GET"], endedByRequest: false, sentMethod: ["GET"] },
+        { received: ["GET"], endedByRequest: true, sentMethod: ["GET", undefined] },
+        { received: ["GET"], endedByRequest: true, sentMethod: ["GET", undefined] },
       ]);
     } finally {
       close();

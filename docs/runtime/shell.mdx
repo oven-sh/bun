@@ -297,6 +297,28 @@ Use the `$(...)` syntax instead.
 
 ---
 
+## Background commands
+
+Bash's `&` operator is not supported. A `$` command doesn't start until you `await` it, call `.then()` on it, or call an output method like `.text()`, so to run a command in the background, call `.then()` and keep going:
+
+```js
+import { $ } from "bun";
+
+// Starts now, but nothing waits for it yet
+const upload = $`sleep 1 && echo "upload finished"`.nothrow().then(({ exitCode }) => {
+  console.log(`upload exited with ${exitCode}`);
+});
+
+await $`echo "doing other work"`;
+
+// Later, wait for it to finish
+await upload;
+```
+
+The process stays alive until the background command finishes, even if you never `await` it. A background command that exits with a non-zero code rejects its promise like any other `$` command, and nothing is waiting on it, so use `.nothrow()` as in the example above, or attach a `.catch()`, to keep that from becoming an unhandled rejection.
+
+---
+
 ## Environment variables
 
 Set environment variables like in bash:

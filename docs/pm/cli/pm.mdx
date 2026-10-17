@@ -48,6 +48,7 @@ bun pm pack --destination ./dist
 - `--destination <dir>`: The directory to save the tarball in.
 - `--filename <name>`: An exact file name for the tarball.
 - `--ignore-scripts`: Skip running pre/postpack and prepare scripts.
+- `--bun`: Run the pre/postpack and prepare scripts with bun as `node`, like `bun run --bun`.
 - `--gzip-level <0-9>`: Set the gzip compression level, from 0 to 9 (default 9).
 - `--quiet`: Print only the tarball filename, suppressing the rest of the output. Useful in scripts.
 
@@ -468,6 +469,7 @@ bun pm trust <names>
 Options for the `trust` command:
 
 - `--all`: Trust all untrusted dependencies.
+- `--bun`: Run the lifecycle scripts with bun as `node`, like `bun run --bun`.
 - `--dry-run`: Print the scripts that would run and the packages that would be trusted, without running scripts or writing `package.json` and `bun.lock`.
 
 A package that does not come from the npm registry (a tarball, `git`, `file:` or `link:` dependency) also has to be declared in the `package.json` of the project or of a workspace. `bun install`, `bun pm trust` and `bun add --trust` do not run the scripts of the others, and `bun pm untrusted` marks them with `cannot be trusted by name`.

@@ -1544,11 +1544,19 @@ describe("node v26 stream semantics", () => {
       return out;
     };
     // push(null) ran. 'end' is not emitted while the data is unread.
-    const holdsItsEnd = async stream => {
-      while (!stream._readableState.ended) await new Promise(resolve => setImmediate(resolve));
+    // The deadline is below the default test timeout, so a stream with no end reports what it holds.
+    const holdsItsEnd = async (stream, name) => {
+      const deadline = Date.now() + 4000;
+      while (!stream._readableState.ended) {
+        if (Date.now() > deadline) throw new Error(`${name} holds ${stream.readableLength} bytes and no end`);
+        await new Promise(resolve => setImmediate(resolve));
+      }
     };
     const listen = server =>
-      new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
+      new Promise((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", () => resolve(server.address().port));
+      });
     // 17 bytes: a base64 decoder keeps the last 2 until end().
     const body = Buffer.from("0123456789abcdef!");
 
@@ -1587,7 +1595,7 @@ describe("node v26 stream semantics", () => {
     it("PassThrough: end(body), then setEncoding('base64')", async () => {
       const stream = new PassThrough();
       stream.end(body);
-      await holdsItsEnd(stream);
+      await holdsItsEnd(stream, "the PassThrough");
       stream.setEncoding("base64");
       expect(await text(stream)).toBe(body.toString("base64"));
     });
@@ -1598,7 +1606,7 @@ describe("node v26 stream semantics", () => {
       const res = await new Promise((resolve, reject) => {
         http.get({ port, host: "127.0.0.1", agent: false }, resolve).on("error", reject);
       });
-      await holdsItsEnd(res);
+      await holdsItsEnd(res, "the response");
       res.setEncoding("base64");
       expect(await text(res)).toBe(body.toString("base64"));
     });
@@ -1607,7 +1615,7 @@ describe("node v26 stream semantics", () => {
       const { promise, resolve, reject } = Promise.withResolvers();
       await using server = http.createServer(async (req, res) => {
         try {
-          await holdsItsEnd(req);
+          await holdsItsEnd(req, "the request");
           req.setEncoding("base64");
           resolve(await text(req));
         } catch (err) {

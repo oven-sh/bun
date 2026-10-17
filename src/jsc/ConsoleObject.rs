@@ -559,6 +559,42 @@ fn message_with_type_and_level_(
     Ok(())
 }
 
+/// Steps the formatters give an iterable that has no element count of its own, such as a generator.
+const UNSIZED_ITERABLE_BUDGET: u32 = 1000;
+
+/// A bounded [`JSValue::for_each`] for formatters. True when elements were left. `Bun__ConsoleObject__forEachLimited` has the rules.
+pub(crate) fn for_each_limited(
+    iterable: JSValue,
+    global: &JSGlobalObject,
+    budget: u32,
+    size_already_read: Option<i32>,
+    ctx: *mut c_void,
+    callback: jsc::ForEachCallback,
+) -> JsResult<bool> {
+    unsafe extern "C" {
+        // safe: `ctx` is an opaque round-trip pointer that C++ only forwards to `callback`.
+        safe fn Bun__ConsoleObject__forEachLimited(
+            iterable: JSValue,
+            global: &JSGlobalObject,
+            budget: u32,
+            size_already_read: i32,
+            ctx: *mut c_void,
+            callback: jsc::ForEachCallback,
+        ) -> bool;
+    }
+    let size_already_read = size_already_read.filter(|size| *size >= 0).unwrap_or(-1);
+    jsc::host_fn::from_js_host_call_generic(global, || {
+        Bun__ConsoleObject__forEachLimited(
+            iterable,
+            global,
+            budget,
+            size_already_read,
+            ctx,
+            callback,
+        )
+    })
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // TablePrinter
 // ───────────────────────────────────────────────────────────────────────────
@@ -903,6 +939,7 @@ impl<'a> TablePrinter<'a> {
         // ranges, so no property is re-read and no value is re-formatted.
         let mut cell_text: Vec<u8> = Vec::new();
         let mut rows: Vec<CollectedRow> = Vec::new();
+        let mut rows_truncated = false;
         {
             if self.is_iterable {
                 struct Ctx<'c, 'a> {
@@ -948,8 +985,11 @@ impl<'a> TablePrinter<'a> {
                     }
                     ctx.idx += 1;
                 }
-                tabular_data.for_each_with_context(
+                rows_truncated = for_each_limited(
+                    tabular_data,
                     global_object,
+                    UNSIZED_ITERABLE_BUDGET,
+                    None,
                     (&raw mut ctx).cast::<c_void>(),
                     callback::<ENABLE_ANSI_COLORS>,
                 )?;
@@ -1066,6 +1106,11 @@ impl<'a> TablePrinter<'a> {
                 );
             }
             let _ = writer.write_all("┘\n".as_bytes());
+        }
+
+        if rows_truncated {
+            let _ =
+                writer.write_all(pfmt!("<r><d>... more rows<r>\n", ENABLE_ANSI_COLORS).as_bytes());
         }
 
         Ok(())
@@ -2758,6 +2803,24 @@ pub mod formatter {
             writer.write_all(pfmt!("<r><d>,<r>", ENABLE_ANSI_COLORS).as_bytes())?;
             self.estimated_line_length += 1;
             Ok(())
+        }
+
+        /// Ends a preview whose iterator had more to give than the walk allowed.
+        fn print_more_entries<const C: bool>(
+            &mut self,
+            writer: &mut dyn bun_io::Write,
+            wrote_entry: bool,
+        ) {
+            if !self.single_line {
+                let _ = self.write_indent(writer);
+            } else if wrote_entry {
+                let _ = self.print_comma::<C>(writer);
+                let _ = writer.write_all(b" ");
+            }
+            let _ = writer.write_all(pfmt!("<r><d>... more items<r>", C).as_bytes());
+            if !self.single_line {
+                let _ = writer.write_all(b"\n");
+            }
         }
     }
 
@@ -4621,8 +4684,11 @@ pub mod formatter {
                         writer: writer_,
                         count: 0,
                     };
-                    value.for_each(
+                    let truncated = for_each_limited(
+                        value,
                         global_this,
+                        UNSIZED_ITERABLE_BUDGET,
+                        Some(length),
                         (&raw mut iter).cast::<c_void>(),
                         MapIteratorCtx::<C, false, true>::for_each,
                     )?;
@@ -4630,7 +4696,10 @@ pub mod formatter {
                     if iter.formatter.failed {
                         return Ok(());
                     }
-                    if count > 0 {
+                    if truncated {
+                        self.print_more_entries::<C>(writer_, count > 0);
+                    }
+                    if count > 0 || truncated {
                         let _ = writer_.write_all(b" ");
                     }
                 } else {
@@ -4639,13 +4708,19 @@ pub mod formatter {
                         writer: writer_,
                         count: 0,
                     };
-                    value.for_each(
+                    let truncated = for_each_limited(
+                        value,
                         global_this,
+                        UNSIZED_ITERABLE_BUDGET,
+                        Some(length),
                         (&raw mut iter).cast::<c_void>(),
                         MapIteratorCtx::<C, false, false>::for_each,
                     )?;
                     if iter.formatter.failed {
                         return Ok(());
+                    }
+                    if truncated {
+                        self.print_more_entries::<C>(writer_, true);
                     }
                 }
             }
@@ -4683,14 +4758,20 @@ pub mod formatter {
                         writer: writer_,
                         count: 0,
                     };
-                    value.for_each(
+                    let truncated = for_each_limited(
+                        value,
                         global_this,
+                        UNSIZED_ITERABLE_BUDGET,
+                        None,
                         (&raw mut iter).cast::<c_void>(),
                         MapIteratorCtx::<C, true, true>::for_each,
                     )?;
                     let count = iter.count;
                     if iter.formatter.failed {
                         return Ok(());
+                    }
+                    if truncated {
+                        self.print_more_entries::<C>(writer_, count > 0);
                     }
                     // Only the MapIterator case writes a trailing space.
                     if count > 0 && label == "MapIterator" {
@@ -4702,8 +4783,11 @@ pub mod formatter {
                         writer: writer_,
                         count: 0,
                     };
-                    value.for_each(
+                    let truncated = for_each_limited(
+                        value,
                         global_this,
+                        UNSIZED_ITERABLE_BUDGET,
+                        None,
                         (&raw mut iter).cast::<c_void>(),
                         MapIteratorCtx::<C, true, false>::for_each,
                     )?;
@@ -4713,6 +4797,9 @@ pub mod formatter {
                     }
                     if count > 0 {
                         let _ = writer_.write_all(b"\n");
+                    }
+                    if truncated {
+                        self.print_more_entries::<C>(writer_, count > 0);
                     }
                 }
             }
@@ -4770,8 +4857,11 @@ pub mod formatter {
                         writer: writer_,
                         is_first: true,
                     };
-                    value.for_each(
+                    let truncated = for_each_limited(
+                        value,
                         global_this,
+                        UNSIZED_ITERABLE_BUDGET,
+                        Some(length),
                         (&raw mut iter).cast::<c_void>(),
                         SetIteratorCtx::<C, true>::for_each,
                     )?;
@@ -4779,7 +4869,10 @@ pub mod formatter {
                     if iter.formatter.failed {
                         return Ok(());
                     }
-                    if !is_first {
+                    if truncated {
+                        self.print_more_entries::<C>(writer_, !is_first);
+                    }
+                    if !is_first || truncated {
                         let _ = writer_.write_all(b" ");
                     }
                 } else {
@@ -4788,13 +4881,19 @@ pub mod formatter {
                         writer: writer_,
                         is_first: true,
                     };
-                    value.for_each(
+                    let truncated = for_each_limited(
+                        value,
                         global_this,
+                        UNSIZED_ITERABLE_BUDGET,
+                        Some(length),
                         (&raw mut iter).cast::<c_void>(),
                         SetIteratorCtx::<C, false>::for_each,
                     )?;
                     if iter.formatter.failed {
                         return Ok(());
+                    }
+                    if truncated {
+                        self.print_more_entries::<C>(writer_, true);
                     }
                 }
             }

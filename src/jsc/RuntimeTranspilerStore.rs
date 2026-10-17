@@ -828,6 +828,7 @@ impl TranspilerJob {
             virtual_source: None,
             replace_exports: Default::default(),
             dont_bundle_twice: true,
+            unwrap_bun_cjs: false,
             allow_commonjs: true,
             inject_jest_globals: transpiler.options.rewrite_jest_for_tests,
             // SAFETY: leaf-field `&` borrow on `*vm.debugger`; see `vm` note above.

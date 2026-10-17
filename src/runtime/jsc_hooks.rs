@@ -2625,6 +2625,7 @@ fn transpile_source_code_of_any_provenance(
                     },
                     virtual_source,
                     dont_bundle_twice: true,
+                    unwrap_bun_cjs: false,
                     allow_commonjs: true,
                     module_type: module_type_only_for_wrappables,
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.

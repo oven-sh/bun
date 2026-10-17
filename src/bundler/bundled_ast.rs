@@ -53,6 +53,7 @@ pub struct BundledAst<'arena> {
     pub(crate) exports_kind: ExportsKind,
 
     /// Extension or package.json `"type"`, not syntax. `Esm` prints `__toESM(.., 1)`.
+    /// A `// @bun @bun-cjs` file is `Cjs` whatever its extension or package.json says.
     pub(crate) module_type: ModuleType,
 
     /// These are stored at the AST level instead of on individual AST nodes so

@@ -253,6 +253,7 @@ impl<'a> Options<'a> {
                 auto_polyfill_require: f.auto_polyfill_require,
                 replace_exports: Default::default(),
                 dont_bundle_twice: f.dont_bundle_twice,
+                unwrap_bun_cjs: f.unwrap_bun_cjs,
                 unwrap_commonjs_packages: f.unwrap_commonjs_packages,
                 commonjs_at_runtime: f.commonjs_at_runtime,
                 unwrap_commonjs_to_esm: f.unwrap_commonjs_to_esm,
@@ -927,7 +928,13 @@ impl<'a> Parser<'a> {
         // Which makes sense.
         // June 4: "Parsing took: 18028000"
         // June 4: "Rest of this took: 8003000"
-        let stmts: &'a mut [Stmt] = match p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts) {
+        let parsed =
+            if p.options.features.unwrap_bun_cjs && Self::has_bun_cjs_pragma(&source.contents) {
+                Self::parse_bun_cjs_wrapper(p)
+            } else {
+                p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts)
+            };
+        let stmts: &'a mut [Stmt] = match parsed {
             Ok(s) => s.into_bump_slice_mut(),
             Err(e) => {
                 parse_tracer.end();
@@ -2535,6 +2542,98 @@ impl<'a> Parser<'a> {
         Ok(crate::Result::Ast(ast))
     }
 
+    /// Whether the file starts with `// @bun @bun-cjs` or `// @bun @bytecode @bun-cjs`, below an
+    /// optional hashbang line: see `bun_cjs_wrapper`.
+    #[inline]
+    pub fn has_bun_cjs_pragma(contents: &[u8]) -> bool {
+        let has_hashbang = contents.starts_with(b"#!");
+        (has_hashbang || contents.starts_with(b"// @bun"))
+            && matches!(
+                Self::has_bun_pragma(contents, has_hashbang),
+                Some(crate::AlreadyBundled::BunCjs | crate::AlreadyBundled::BytecodeCjs)
+            )
+    }
+
+    /// Reads the CommonJS module inside the function wrapper of a `// @bun @bun-cjs` file
+    /// (`bun_cjs_wrapper`). Any other text below the pragma is an error.
+    #[cold]
+    #[inline(never)]
+    fn parse_bun_cjs_wrapper<const TS: bool>(
+        p: &mut P<'a, TS, false>,
+    ) -> Result<BumpVec<'a, Stmt>, Error> {
+        use js_lexer::T;
+
+        macro_rules! expect {
+            ($is_expected:expr, $message:expr) => {
+                if !$is_expected {
+                    p.log()
+                        .add_range_error(Some(p.source), p.lexer.range(), $message);
+                    return Err(Error::SyntaxError);
+                }
+                p.lexer.next()?;
+            };
+        }
+
+        expect!(p.lexer.token == T::TOpenParen, bun_cjs_wrapper::EXPECTED);
+        expect!(p.lexer.token == T::TFunction, bun_cjs_wrapper::EXPECTED);
+        expect!(p.lexer.token == T::TOpenParen, bun_cjs_wrapper::EXPECTED);
+        for (i, name) in bun_cjs_wrapper::PARAMS.iter().enumerate() {
+            if i > 0 {
+                expect!(p.lexer.token == T::TComma, bun_cjs_wrapper::EXPECTED);
+            }
+            expect!(
+                p.lexer.is_contextual_keyword(name),
+                bun_cjs_wrapper::EXPECTED
+            );
+        }
+        expect!(p.lexer.token == T::TCloseParen, bun_cjs_wrapper::EXPECTED);
+        expect!(p.lexer.token == T::TOpenBrace, bun_cjs_wrapper::EXPECTED);
+
+        // The statements are a function's (a top-level `return`, `arguments`), so they must stay
+        // in a function when the file is bundled: no `exports.name = value` is lifted into an ES
+        // module export.
+        p.commonjs_named_exports_deoptimized = true;
+        p.is_bun_cjs_wrapper_body = true;
+
+        // The scope is still the module's, so the wrapper's five parameters are the CommonJS
+        // names that `prepare_for_visit_pass` declares there.
+        let mut stmts =
+            p.parse_stmts_up_to(T::TCloseBrace, &mut ParseStatementOptions::default())?;
+
+        // The wrapper is not an async function.
+        if p.top_level_await_keyword.len > 0 {
+            p.log().add_range_error(
+                Some(p.source),
+                p.top_level_await_keyword,
+                b"\"await\" can only be used inside an \"async\" function",
+            );
+            return Err(Error::SyntaxError);
+        }
+        // `import.meta` does not make the file an ES module. Released versions write it here.
+        p.esm_import_keyword = bun_ast::Range::NONE;
+
+        const CODE_AFTER: &[u8] =
+            b"Unexpected code after the CommonJS wrapper of a \"// @bun @bun-cjs\" file";
+        p.lexer.next()?;
+        expect!(p.lexer.token == T::TCloseParen, CODE_AFTER);
+        if p.lexer.token == T::TSemicolon {
+            p.lexer.next()?;
+        }
+        if p.lexer.token != T::TEndOfFile {
+            p.log()
+                .add_range_error(Some(p.source), p.lexer.range(), CODE_AFTER);
+            return Err(Error::SyntaxError);
+        }
+        // A legal comment after the wrapper stays in the module, as `parse_stmts_up_to` keeps one.
+        let loc = p.lexer.loc();
+        for comment in p.lexer.comments_to_preserve_before.iter() {
+            stmts.push(p.s(S::Comment { text: comment.text }, loc));
+        }
+        p.lexer.comments_to_preserve_before.clear();
+
+        Ok(stmts)
+    }
+
     // associated fn (was `&self` reading `self.lexer.source.contents`)
     // because `_parse` consumes `self` by value and destructures it before this
     // call site; the source contents are passed explicitly.
@@ -2617,6 +2716,40 @@ impl<'a> Parser<'a> {
 struct PragmaState {
     seen_cjs: bool,
     seen_bytecode: bool,
+}
+
+/// A `// @bun @bun-cjs` file is what `bun build --target=bun --format=cjs` writes: the pragma
+/// line (`// @bun @bytecode @bun-cjs` with a bytecode cache), then one function expression in
+/// parentheses around the chunk. A hashbang line can come first.
+///
+/// The module loader evaluates the file and calls the value of its last statement with the
+/// five parameters below. It accepts any text whose last value is callable.
+/// `Parser::parse_bun_cjs_wrapper` reads only the text that the bundler writes: the header,
+/// the module, `})`, an optional `;`, and comments.
+pub mod bun_cjs_wrapper {
+    macro_rules! define {
+        ($first:literal $(, $rest:literal)*) => {
+            /// The parameters, in the order the module loader passes them.
+            pub(crate) const PARAMS: &[&[u8]] = &[$first.as_bytes() $(, $rest.as_bytes())*];
+            /// The pragma line and the start of the function.
+            pub const HEADER: &[u8] = concat!(
+                "// @bun @bun-cjs\n(function(", $first $(, ", ", $rest)*, ") {"
+            )
+            .as_bytes();
+            /// `HEADER` for a chunk that has a bytecode cache.
+            pub const HEADER_WITH_BYTECODE: &[u8] = concat!(
+                "// @bun @bytecode @bun-cjs\n(function(", $first $(, ", ", $rest)*, ") {"
+            )
+            .as_bytes();
+            pub(crate) const EXPECTED: &[u8] = concat!(
+                "\"// @bun @bun-cjs\" must be followed by the CommonJS wrapper \"(function(",
+                $first $(, ", ", $rest)*,
+                ") {...})\""
+            )
+            .as_bytes();
+        };
+    }
+    define!("exports", "require", "module", "__filename", "__dirname");
 }
 
 #[cfg(target_arch = "wasm32")]

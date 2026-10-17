@@ -885,6 +885,8 @@ pub struct ParseOptions<'a, 'b> {
     pub remove_cjs_module_wrapper: bool,
 
     pub dont_bundle_twice: bool,
+    /// `Features::unwrap_bun_cjs`
+    pub unwrap_bun_cjs: bool,
     pub allow_commonjs: bool,
     /// `"type"` from `package.json`. Used to make sure the parser defaults
     /// to CommonJS or ESM based on what the package.json says, when it
@@ -1517,6 +1519,7 @@ impl<'a> Transpiler<'a> {
 
                 // @bun annotation
                 opts.features.dont_bundle_twice = this_parse.dont_bundle_twice;
+                opts.features.unwrap_bun_cjs = this_parse.unwrap_bun_cjs;
 
                 opts.features.commonjs_at_runtime = this_parse.allow_commonjs;
 
@@ -2863,6 +2866,7 @@ impl<'a> Transpiler<'a> {
                     set_breakpoint_on_first_line: false,
                     remove_cjs_module_wrapper: false,
                     dont_bundle_twice: false,
+                    unwrap_bun_cjs: true,
                     allow_commonjs: false,
                     module_type: options::ModuleType::Unknown,
                     runtime_transpiler_cache: None,

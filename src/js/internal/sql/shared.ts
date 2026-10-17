@@ -590,12 +590,25 @@ const enum PooledConnectionFlags {
   canBeConnected = 1 << 0,
   /// reserved is used to indicate that the connection is currently reserved
   reserved = 1 << 1,
-  /// preReserved is used to indicate that the connection will be reserved in the future when queryCount drops to 0
-  preReserved = 1 << 2,
   /// onConnectFired is used to indicate that handleConnected ran for this slot, so the user's onconnect callback already fired (with null or an error)
   onConnectFired = 1 << 3,
 }
 export type { BasePooledConnection, PooledConnectionState };
+
+type PoolCallback = (err: Error | null, result: any) => void;
+
+/// In the pool's queue: a caller that wants a connection for itself (reserve(), begin()).
+/// A plain query is queued as its bare callback.
+class Reservation {
+  onConnected: PoolCallback;
+  constructor(onConnected: PoolCallback) {
+    this.onConnected = onConnected;
+  }
+}
+
+function idleFirst(a: BasePooledConnection, b: BasePooledConnection): number {
+  return a.queryCount - b.queryCount;
+}
 
 function onQueryFinish(this: BasePooledConnection, onClose: (err: Error) => void) {
   this.queries.delete(onClose);
@@ -683,7 +696,6 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
       if (onFinish) {
         this.queryCount = 0;
         this.flags &= ~PooledConnectionFlags.reserved;
-        this.flags &= ~PooledConnectionFlags.preReserved;
 
         // pool is closed, lets finish the connection
         if (err) {
@@ -743,7 +755,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
       return false;
     }
     // only retry while queries are actually waiting for a connection
-    if (this.adapter.waitingQueue.length === 0 && this.adapter.reservedQueue.length === 0) {
+    if (this.adapter.queue.length === 0) {
       return false;
     }
     // an explicit connectionTimeout of 0 disables the connect timer, and with
@@ -938,8 +950,9 @@ abstract class BaseSQLAdapter<
   public readonly connections: PooledConnection[];
   public readonly readyConnections: Set<PooledConnection> = new Set();
 
-  public waitingQueue: Array<(err: Error | null, result: any) => void> = [];
-  public reservedQueue: Array<(err: Error | null, result: any) => void> = [];
+  /// Callers waiting for a connection, oldest first. release() and connect() serve it from the
+  /// front, so a reserve() or begin() never overtakes a plain query that was queued before it.
+  public readonly queue: Array<PoolCallback | Reservation> = [];
 
   public poolStarted: boolean = false;
   public closed: boolean = false;
@@ -1041,48 +1054,23 @@ abstract class BaseSQLAdapter<
   /// Removes a pending reserve callback that is still waiting for a
   /// connection. Returns false when the callback already ran (the caller owns
   /// a connection and must release() it) or was never queued.
-  cancelReserve(onConnected: (err: Error | null, result: any) => void): boolean {
-    const index = this.reservedQueue.indexOf(onConnected);
-    if (index === -1) {
-      return false;
-    }
-    this.reservedQueue.splice(index, 1);
-    this.#dropExcessPreReservations();
-    // the cancelled reservation may have been the last pending work; a
-    // graceful close() is waiting on this callback
-    if (this.onAllQueriesFinished && !this.hasPendingQueries()) {
-      this.onAllQueriesFinished();
-    }
-    return true;
-  }
-
-  /// preReserved marks are not tied to a specific reservation. When a
-  /// reservation leaves reservedQueue without taking a marked connection
-  /// (cancelled, or an unmarked connection went idle first), the mark would
-  /// keep queries off that connection until it happens to go idle, which is
-  /// the only point where release() clears it. Keep at most one mark per
-  /// reservation still queued.
-  #dropExcessPreReservations() {
-    const preReserved: PooledConnection[] = [];
-    const pollSize = this.connections.length;
-    for (let i = 0; i < pollSize; i++) {
-      const connection = this.connections[i];
-      // unassigned holes while the pool is starting, null once it is closed
-      if (connection && connection.flags & PooledConnectionFlags.preReserved) {
-        preReserved.push(connection);
+  cancelReserve(onConnected: PoolCallback): boolean {
+    const queue = this.queue;
+    for (let i = 0; i < queue.length; i++) {
+      const waiter = queue[i];
+      if (waiter === onConnected || (waiter as Reservation).onConnected === onConnected) {
+        queue.splice(i, 1);
+        // the queries behind it were kept off the connection that was draining for it
+        this.#serve();
+        // the cancelled reservation may have been the last pending work; a
+        // graceful close() is waiting on this callback
+        if (this.onAllQueriesFinished && !this.hasPendingQueries()) {
+          this.onAllQueriesFinished();
+        }
+        return true;
       }
     }
-    const excess = preReserved.length - this.reservedQueue.length;
-    if (excess <= 0) {
-      return;
-    }
-    // the connections closest to idle serve the remaining reservations
-    // soonest, so give up the busiest marks first
-    preReserved.sort((a, b) => b.queryCount - a.queryCount);
-    for (let i = 0; i < excess; i++) {
-      preReserved[i].flags &= ~PooledConnectionFlags.preReserved;
-    }
-    this.flushConcurrentQueries();
+    return false;
   }
 
   getConnectionForQuery(pooledConnection: PooledConnection) {
@@ -1130,37 +1118,97 @@ abstract class BaseSQLAdapter<
     return { valid: true };
   }
 
-  maxDistribution() {
-    if (!this.waitingQueue.length) return 0;
-    const result = Math.ceil((this.waitingQueue.length + this.totalQueries) / this.connections.length);
-    return result ? result : 1;
+  /// Connections that are still dialing (the first dial, or a connect retry in its backoff).
+  /// Each one comes up idle, so it can serve a queued reservation without draining a ready one.
+  #connecting(): number {
+    const connections = this.connections;
+    let connecting = 0;
+    for (let i = 0; i < connections.length; i++) {
+      const connection = connections[i];
+      // an unassigned hole is a connection still being created
+      if (!connection || connection.state === PooledConnectionState.pending) {
+        connecting++;
+      }
+    }
+    return connecting;
   }
 
-  flushConcurrentQueries() {
-    const maxDistribution = this.maxDistribution();
-    if (maxDistribution === 0) {
-      return;
-    }
-
-    while (true) {
-      const nonReservedConnections = Array.from(this.readyConnections).filter(
-        c =>
-          !(c.flags & (PooledConnectionFlags.preReserved | PooledConnectionFlags.reserved)) &&
-          c.queryCount < maxDistribution,
-      );
-      if (nonReservedConnections.length === 0) {
-        return;
-      }
-      const orderedConnections = nonReservedConnections.sort((a, b) => a.queryCount - b.queryCount);
-      for (const connection of orderedConnections) {
-        const pending = this.waitingQueue.shift();
-        if (!pending) {
-          return;
+  /// The ready connection that runs the fewest queries, if fewer than `limit`. The `setAside`
+  /// connections that will be idle soonest are left to the reservations queued ahead of the caller.
+  #leastBusy(limit: number, setAside: number): PooledConnection | null {
+    let found: PooledConnection | undefined;
+    if (setAside === 0) {
+      for (const connection of this.readyConnections) {
+        if (found === undefined || connection.queryCount < found.queryCount) {
+          found = connection;
         }
-        connection.queryCount++;
-        this.totalQueries++;
-        pending(null, connection);
       }
+    } else {
+      found = Array.from(this.readyConnections).sort(idleFirst)[setAside];
+    }
+    return found !== undefined && found.queryCount < limit ? found : null;
+  }
+
+  /// An even share of the demand over the pool: a plain query lands on a ready connection only
+  /// while that connection runs fewer queries than this.
+  #shareLimit(waiting: number): number {
+    return Math.ceil((waiting + this.totalQueries) / this.connections.length);
+  }
+
+  /// Books `connection` for a waiter, then calls it. The booking comes first: the callback can
+  /// re-enter the pool.
+  #grant(connection: PooledConnection, onConnected: PoolCallback, reserved: boolean) {
+    if (reserved) {
+      connection.flags |= PooledConnectionFlags.reserved;
+      this.readyConnections.delete(connection);
+    }
+    connection.queryCount++;
+    this.totalQueries++;
+    onConnected(null, connection);
+  }
+
+  /// Serves the oldest waiter that a ready connection can take now. A plain query behind a
+  /// reservation leaves the soonest-idle connection to it, unless a dial in flight covers it. Only
+  /// the oldest reservation may take an idle connection, the others wait their turn.
+  #serveNext(): boolean {
+    const queue = this.queue;
+    let reservationsAhead = 0;
+    for (let i = 0; i < queue.length; i++) {
+      const waiter = queue[i];
+      if (typeof waiter === "function") {
+        const connection = this.#leastBusy(
+          this.#shareLimit(queue.length),
+          reservationsAhead === 0 ? 0 : Math.max(reservationsAhead - this.#connecting(), 0),
+        );
+        if (connection === null) {
+          return false;
+        }
+        queue.splice(i, 1);
+        this.#grant(connection, waiter, false);
+        return true;
+      }
+      if (reservationsAhead++ === 0) {
+        const connection = this.#leastBusy(1, 0);
+        if (connection !== null) {
+          queue.splice(i, 1);
+          this.#grant(connection, waiter.onConnected, true);
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  #serve() {
+    while (this.#serveNext());
+  }
+
+  /// Fails every waiter with `err`. The callbacks can queue new work: the queue is emptied first.
+  #failQueue(err: Error, result: any) {
+    const failed = this.queue.splice(0);
+    for (let i = 0; i < failed.length; i++) {
+      const waiter = failed[i];
+      (typeof waiter === "function" ? waiter : waiter.onConnected)(err, result);
     }
   }
 
@@ -1169,10 +1217,8 @@ abstract class BaseSQLAdapter<
       connection.queryCount--;
       this.totalQueries--;
     }
-    const currentQueryCount = connection.queryCount;
-    if (currentQueryCount == 0) {
+    if (connection.queryCount == 0) {
       connection.flags &= ~PooledConnectionFlags.reserved;
-      connection.flags &= ~PooledConnectionFlags.preReserved;
     }
     if (this.onAllQueriesFinished) {
       // we are waiting for all queries to finish, lets check if we can call it
@@ -1191,19 +1237,9 @@ abstract class BaseSQLAdapter<
           return;
         }
 
-        const waitingQueue = this.waitingQueue;
-        const reservedQueue = this.reservedQueue;
-
-        this.waitingQueue = [];
-        this.reservedQueue = [];
         // we have no connections available so lets fails
-        for (const pending of waitingQueue) {
-          pending(storedError, connection);
-        }
-        for (const pending of reservedQueue) {
-          pending(storedError, connection);
-        }
-        // draining the queues may have been the last pending work; a
+        this.#failQueue(storedError, connection);
+        // draining the queue may have been the last pending work; a
         // graceful close() is waiting on this callback
         if (this.onAllQueriesFinished && !this.hasPendingQueries()) {
           this.onAllQueriesFinished();
@@ -1212,23 +1248,8 @@ abstract class BaseSQLAdapter<
       return;
     }
 
-    if (currentQueryCount == 0) {
-      // ok we can actually bind reserved queries to it
-      const pendingReserved = this.reservedQueue.shift();
-      if (pendingReserved) {
-        connection.flags |= PooledConnectionFlags.reserved;
-        connection.queryCount++;
-        this.totalQueries++;
-        this.readyConnections.delete(connection);
-        // we have a connection waiting for a reserved connection lets prioritize it
-        pendingReserved(connection.storedError, connection);
-        // the reservation may have been draining a different connection
-        this.#dropExcessPreReservations();
-        return;
-      }
-    }
     this.readyConnections.add(connection);
-    this.flushConcurrentQueries();
+    this.#serve();
   }
 
   hasConnectionsAvailable() {
@@ -1249,7 +1270,7 @@ abstract class BaseSQLAdapter<
   }
 
   hasPendingQueries() {
-    if (this.waitingQueue.length > 0 || this.reservedQueue.length > 0) return true;
+    if (this.queue.length > 0) return true;
     if (this.poolStarted) {
       return this.totalQueries > 0;
     }
@@ -1286,16 +1307,7 @@ abstract class BaseSQLAdapter<
   }
 
   async #close() {
-    let pending;
-    while ((pending = this.waitingQueue.shift())) {
-      pending(this.connectionClosedError(), null);
-    }
-    while (this.reservedQueue.length > 0) {
-      const pendingReserved = this.reservedQueue.shift();
-      if (pendingReserved) {
-        pendingReserved(this.connectionClosedError(), null);
-      }
-    }
+    this.#failQueue(this.connectionClosedError(), null);
 
     const promises: Array<Promise<any>> = [];
 
@@ -1328,7 +1340,7 @@ abstract class BaseSQLAdapter<
     }
 
     this.readyConnections.clear();
-    this.waitingQueue.length = 0;
+    this.queue.length = 0;
     return Promise.all(promises);
   }
 
@@ -1396,7 +1408,7 @@ abstract class BaseSQLAdapter<
    * @param {function} onConnected - The callback function to be called when the connection is established.
    * @param {boolean} reserved - Whether the connection is reserved, if is reserved the connection will not be released until release is called, if not release will only decrement the queryCount counter
    */
-  connect(onConnected: (err: Error | null, result: any) => void, reserved: boolean = false) {
+  connect(onConnected: PoolCallback, reserved: boolean = false) {
     if (this.closed) {
       return onConnected(this.connectionClosedError(), null);
     }
@@ -1422,12 +1434,7 @@ abstract class BaseSQLAdapter<
               if (!retry_in_progress) {
                 // avoid adding to the queue twice, we wanna to retry every available pool connection
                 retry_in_progress = true;
-                if (reserved) {
-                  // we are not sure what connection will be available so we dont pre reserve
-                  this.reservedQueue.push(onConnected);
-                } else {
-                  this.waitingQueue.push(onConnected);
-                }
+                this.queue.push(reserved ? new Reservation(onConnected) : onConnected);
               }
             } else {
               // we have some error, lets grab it and fail if unable to start a connection
@@ -1441,12 +1448,7 @@ abstract class BaseSQLAdapter<
         if (!all_closed && !retry_in_progress) {
           // is possible to connect because we have some working connections, or we are just without network for some reason
           // wait for connection to be released or fail
-          if (reserved) {
-            // we are not sure what connection will be available so we dont pre reserve
-            this.reservedQueue.push(onConnected);
-          } else {
-            this.waitingQueue.push(onConnected);
-          }
+          this.queue.push(reserved ? new Reservation(onConnected) : onConnected);
         } else if (!retry_in_progress) {
           // impossible to connect or retry
           onConnected(storedError ?? this.connectionClosedError(), null);
@@ -1454,57 +1456,27 @@ abstract class BaseSQLAdapter<
         return;
       }
       // we never started the pool, lets start it
-      if (reserved) {
-        this.reservedQueue.push(onConnected);
-      } else {
-        this.waitingQueue.push(onConnected);
-      }
+      this.queue.push(reserved ? new Reservation(onConnected) : onConnected);
       this.poolStarted = true;
       const pollSize = this.connections.length;
       // pool is always at least 1 connection
-      const firstConnection = this.createPooledConnection();
-      this.connections[0] = firstConnection;
-      if (reserved) {
-        firstConnection.flags |= PooledConnectionFlags.preReserved; // lets pre reserve the first connection
-      }
+      this.connections[0] = this.createPooledConnection();
       for (let i = 1; i < pollSize; i++) {
         this.connections[i] = this.createPooledConnection();
       }
       return;
     }
-    if (reserved) {
-      let connectionWithLeastQueries: PooledConnection | null = null;
-      let leastQueries = Infinity;
-      for (const connection of this.readyConnections) {
-        if (connection.flags & PooledConnectionFlags.preReserved || connection.flags & PooledConnectionFlags.reserved)
-          continue;
-        const queryCount = connection.queryCount;
-        if (queryCount !== 0) {
-          if (queryCount > 0 && queryCount < leastQueries) {
-            leastQueries = queryCount;
-            connectionWithLeastQueries = connection;
-          }
-          continue;
-        }
-        connection.flags |= PooledConnectionFlags.reserved;
-        connection.queryCount++;
-        this.totalQueries++;
-        this.readyConnections.delete(connection);
-        onConnected(null, connection);
+
+    if (this.queue.length === 0) {
+      // nobody waits ahead: take a connection now, without a trip through the queue
+      const connection = reserved ? this.#leastBusy(1, 0) : this.#leastBusy(this.#shareLimit(1), 0);
+      if (connection !== null) {
+        this.#grant(connection, onConnected, reserved);
         return;
       }
-
-      if (connectionWithLeastQueries) {
-        // lets mark the connection with the least queries as preReserved if any
-        connectionWithLeastQueries.flags |= PooledConnectionFlags.preReserved;
-      }
-
-      // no connection available to be reserved lets wait for a connection to be released
-      this.reservedQueue.push(onConnected);
-    } else {
-      this.waitingQueue.push(onConnected);
-      this.flushConcurrentQueries();
     }
+    this.queue.push(reserved ? new Reservation(onConnected) : onConnected);
+    this.#serve();
   }
 }
 

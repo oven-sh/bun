@@ -40,7 +40,7 @@ async function inspect(cwd: string, entry: string) {
     failed.catch(() => {});
     socket.addEventListener("error", cause => fail(new Error("WebSocket error", { cause })));
     socket.addEventListener("close", cause => fail(new Error("WebSocket closed", { cause })));
-    proc.exited.then(code => fail(new Error(`inspectee exited (${code})`)));
+    proc.exited.then(code => fail(new Error(`inspectee exited (${code})`)), fail);
 
     await Promise.race([new Promise<void>(resolve => socket.addEventListener("open", () => resolve())), failed]);
 

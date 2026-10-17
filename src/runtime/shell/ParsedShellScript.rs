@@ -17,6 +17,21 @@ use super::{EnvStr, Interpreter};
 // `toJS`/`fromJS`/`fromJSDirect` re-exports are provided by the
 // `#[bun_jsc::JsClass]` derive in Rust — do not hand-port them.
 
+/// Where the output of a script's commands goes. `OutputMode` in
+/// `src/js/builtins/shell.ts` mirrors the discriminants.
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum OutputMode {
+    /// Printed to bun's stdout/stderr and buffered for the result.
+    #[default]
+    Tee = 0,
+    /// Buffered for the result only: `.quiet()` and the output methods.
+    Capture = 1,
+    /// Commands write to bun's own stdout/stderr; nothing is buffered:
+    /// `.inheritStdio()`.
+    Inherit = 2,
+}
+
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
 #[bun_jsc::JsClass(no_constructor)]
@@ -27,7 +42,7 @@ pub(crate) struct ParsedShellScript {
     // (own: array on the C++ wrapper), so storing them on the Rust heap is sound.
     pub(crate) jsobjs: JsCell<Vec<JSValue>>,
     pub(crate) export_env: JsCell<Option<EnvMap>>,
-    pub(crate) quiet: Cell<bool>,
+    pub(crate) output_mode: Cell<OutputMode>,
     pub(crate) cwd: JsCell<Option<BunString>>,
     /// Self-wrapper backref. `.classes.ts` has `finalize: true`, so the weak arm is
     /// sound: the codegen finalizer drops this Box (and the `JsRef`) at sweep.
@@ -43,7 +58,7 @@ impl Default for ParsedShellScript {
             args: JsCell::new(None),
             jsobjs: JsCell::new(Vec::new()),
             export_env: JsCell::new(None),
-            quiet: Cell::new(false),
+            output_mode: Cell::new(OutputMode::Tee),
             cwd: JsCell::new(None),
             this_jsvalue: JsRef::empty(),
             estimated_size_for_gc: 0,
@@ -82,16 +97,16 @@ impl ParsedShellScript {
     ) -> (
         Box<ShellArgs>,
         Vec<JSValue>,
-        bool,
+        OutputMode,
         Option<BunString>,
         Option<EnvMap>,
     ) {
         let args = self.args.replace(None).expect("args already taken");
         let jsobjs = self.jsobjs.replace(Vec::new());
-        let quiet = self.quiet.get();
+        let output_mode = self.output_mode.get();
         let cwd = self.cwd.replace(None);
         let export_env = self.export_env.replace(None);
-        (args, jsobjs, quiet, cwd, export_env)
+        (args, jsobjs, output_mode, cwd, export_env)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -111,14 +126,41 @@ impl ParsedShellScript {
         Ok(JSValue::UNDEFINED)
     }
 
+    /// `setOutputMode(mode, on)`. `.quiet(on)` and the output methods pass
+    /// `Capture`, `.inheritStdio(on)` passes `Inherit`. `on == false` leaves
+    /// `mode` only if the command is in it.
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn set_quiet(
+    pub(crate) fn set_output_mode(
         &self,
-        _global: &JSGlobalObject,
+        global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arg = callframe.argument(0);
-        self.quiet.set(arg.to_boolean());
+        let mode = match callframe.argument(0) {
+            arg if arg.is_int32() && arg.as_int32() == OutputMode::Capture as i32 => {
+                OutputMode::Capture
+            }
+            arg if arg.is_int32() && arg.as_int32() == OutputMode::Inherit as i32 => {
+                OutputMode::Inherit
+            }
+            _ => {
+                return Err(
+                    global.throw_invalid_arguments(format_args!("$`...`: expected an output mode"))
+                );
+            }
+        };
+        let current = self.output_mode.get();
+        if !callframe.argument(1).to_boolean() {
+            if current == mode {
+                self.output_mode.set(OutputMode::Tee);
+            }
+            return Ok(JSValue::UNDEFINED);
+        }
+        if current != mode && current != OutputMode::Tee {
+            return Err(global.throw(format_args!(
+                "inheritStdio() cannot be combined with quiet() or an output method such as text()"
+            )));
+        }
+        self.output_mode.set(mode);
         Ok(JSValue::UNDEFINED)
     }
 

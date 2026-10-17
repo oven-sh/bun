@@ -1,6 +1,12 @@
+// Mirrors `OutputMode` in src/runtime/shell/ParsedShellScript.rs.
+const enum OutputMode {
+  Capture = 1,
+  Inherit = 2,
+}
+
 export function createBunShellTemplateFunction(createShellInterpreter_, createParsedShellScript_) {
   const createShellInterpreter = createShellInterpreter_ as (
-    resolve: (code: number, stdout: Buffer, stderr: Buffer) => void,
+    resolve: (code: number, stdout: Buffer, stderr: Buffer, inherited: boolean) => void,
     reject: (error: unknown) => void,
     args: $ZigGeneratedClasses.ParsedShellScript,
   ) => $ZigGeneratedClasses.ShellInterpreter;
@@ -11,6 +17,10 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
 
   function lazyBufferToHumanReadableString(this: Buffer) {
     return this.toString();
+  }
+
+  function throwNotBuffered(): never {
+    throw new Error("output is not buffered when inheritStdio() is used");
   }
 
   class ShellError extends Error {
@@ -24,10 +34,24 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
       super("");
     }
 
-    initialize(output: ShellOutput, code: number) {
+    initialize(output: ShellOutput, code: number, inherited: boolean) {
       this.message = `Failed with exit code ${code}`;
       this.#output = output;
       this.name = "ShellError";
+
+      if (inherited) {
+        // Nothing was buffered, so `stdout` and `stderr` throw here as they do on the output.
+        Object.defineProperty(this, "info", {
+          value: { exitCode: code },
+          writable: true,
+          enumerable: false,
+          configurable: true,
+        });
+        Object.defineProperty(this, "stdout", { get: throwNotBuffered, enumerable: false, configurable: true });
+        Object.defineProperty(this, "stderr", { get: throwNotBuffered, enumerable: false, configurable: true });
+        this.exitCode = code;
+        return;
+      }
 
       // We previously added this so that errors would display the "info" property
       // We fixed that, but now it displays both.
@@ -103,11 +127,30 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     }
   }
 
+  // The output of a script that ran with `inheritStdio()`. Nothing was buffered, so `stdout`
+  // and `stderr` throw, and so does each reader it gets from `ShellOutput.prototype`.
+  const InheritedShellOutput = class ShellOutput {
+    exitCode: number;
+
+    constructor(exitCode: number) {
+      this.exitCode = exitCode;
+    }
+
+    get stdout(): Buffer {
+      throwNotBuffered();
+    }
+
+    get stderr(): Buffer {
+      throwNotBuffered();
+    }
+  };
+  Object.setPrototypeOf(InheritedShellOutput.prototype, ShellOutput.prototype);
+
   class ShellPromise extends Promise<ShellOutput> {
     #args: $ZigGeneratedClasses.ParsedShellScript | undefined = undefined;
     #hasRun: boolean = false;
     #throws: boolean = true;
-    #resolve: (code: number, stdout: Buffer, stderr: Buffer) => void;
+    #resolve: (code: number, stdout: Buffer, stderr: Buffer, inherited: boolean) => void;
     #reject: (error: unknown) => void;
 
     constructor(args: $ZigGeneratedClasses.ParsedShellScript, throws: boolean) {
@@ -119,10 +162,12 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
       let resolve, reject;
 
       super((res, rej) => {
-        resolve = (code, stdout, stderr) => {
-          const out = new ShellOutput(stdout, stderr, code);
+        resolve = (code, stdout, stderr, inherited) => {
+          const out: ShellOutput = inherited
+            ? (new InheritedShellOutput(code) as ShellOutput)
+            : new ShellOutput(stdout, stderr, code);
           if (this.#throws && code !== 0) {
-            potentialError!.initialize(out, code);
+            potentialError!.initialize(out, code, inherited);
             rej(potentialError);
           } else {
             // Set to undefined to hint to the GC that this is unused so it can
@@ -184,12 +229,18 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
 
     #quiet(isQuiet: boolean = true): this {
       this.#throwIfRunning();
-      this.#args!.setQuiet(isQuiet);
+      this.#args!.setOutputMode(OutputMode.Capture, isQuiet);
       return this;
     }
 
     quiet(isQuiet: boolean | undefined): this {
       return this.#quiet(isQuiet ?? true);
+    }
+
+    inheritStdio(isInherit: boolean | undefined): this {
+      this.#throwIfRunning();
+      this.#args!.setOutputMode(OutputMode.Inherit, isInherit ?? true);
+      return this;
     }
 
     nothrow(): this {

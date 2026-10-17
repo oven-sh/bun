@@ -35,6 +35,7 @@ use bun_sys::{self, Fd};
 
 pub(crate) use crate::shell::env_map::EnvMap;
 use crate::shell::io::IO;
+use crate::shell::parsed_shell_script::OutputMode;
 use crate::shell::states::assigns::Assigns;
 use crate::shell::states::r#async::Async;
 use crate::shell::states::base::Base;
@@ -328,11 +329,9 @@ impl InterpreterFlags {
     pub(crate) fn set_done(&mut self, v: bool) {
         if v { self.0 |= 0b1 } else { self.0 &= !0b1 }
     }
+    /// [`OutputMode::Capture`].
     pub(crate) const fn quiet(self) -> bool {
         self.0 & 0b10 != 0
-    }
-    pub(crate) fn set_quiet(&mut self, v: bool) {
-        if v { self.0 |= 0b10 } else { self.0 &= !0b10 }
     }
     /// Set by [`Interpreter::take_failure`].
     pub(crate) const fn failed(self) -> bool {
@@ -340,6 +339,18 @@ impl InterpreterFlags {
     }
     pub(crate) fn set_failed(&mut self, v: bool) {
         if v { self.0 |= 0b100 } else { self.0 &= !0b100 }
+    }
+    /// [`OutputMode::Inherit`].
+    pub(crate) const fn inherit_stdio(self) -> bool {
+        self.0 & 0b1000 != 0
+    }
+    pub(crate) fn set_output_mode(&mut self, mode: OutputMode) {
+        self.0 &= !(0b10 | 0b1000);
+        self.0 |= match mode {
+            OutputMode::Tee => 0,
+            OutputMode::Capture => 0b10,
+            OutputMode::Inherit => 0b1000,
+        };
     }
 }
 
@@ -571,7 +582,7 @@ impl Interpreter {
             root_io: JsCell::new(IO {
                 stdin: crate::shell::io::InKind::Fd(stdin_reader),
                 // By default stdout/stderr should be IOWriters on dup'd
-                // stdout/stderr, but if the user later calls `.setQuiet(true)`
+                // stdout/stderr, but if the user later calls `.quiet()`
                 // that work is wasted. So they start as `.pipe` and `run()`
                 // upgrades them via `setup_io_before_run()` if `!quiet`.
                 stdout: crate::shell::io::OutKind::Pipe,
@@ -1177,7 +1188,9 @@ impl Interpreter {
     /// wrap each in an `IOWriter`, and install them as `root_io.stdout/stderr`
     /// so command output reaches the terminal. On the JS event loop the
     /// `captured` slot is also wired to `_buffered_stdout/err` so
-    /// `Bun.$` callers can read it back.
+    /// `Bun.$` callers can read it back, unless the script runs with
+    /// `inheritStdio()`. A captured stream reaches a subprocess as a pipe that
+    /// the shell relays; an uncaptured one reaches it as the dup itself.
     fn setup_io_before_run(&self) -> bun_sys::Result<()> {
         if self.flags.get().quiet() {
             return Ok(());
@@ -1231,8 +1244,11 @@ impl Interpreter {
 
         // On the JS event loop, hook captured buffers so the JS
         // `Bun.$` API can read stdout/stderr after completion. The mini path
-        // does not capture (it writes straight to the dup'd fd).
-        let (cap_out, cap_err) = if matches!(event_loop, EventLoopHandle::Js { .. }) {
+        // and `inheritStdio()` do not capture (they write straight to the
+        // dup'd fd).
+        let (cap_out, cap_err) = if matches!(event_loop, EventLoopHandle::Js { .. })
+            && !self.flags.get().inherit_stdio()
+        {
             self.root_shell
                 .with_mut(|rs| (Some(rs.buffered_stdout()), Some(rs.buffered_stderr())))
         } else {
@@ -1325,6 +1341,7 @@ impl Interpreter {
                                 JSValue::js_number_from_int32(i32::from(exit_code)),
                                 buffered_stdout,
                                 buffered_stderr,
+                                JSValue::js_boolean(self.flags.get().inherit_stdio()),
                             ],
                         ),
                         Err(err) if !global_this.has_pending_termination_exception() => {
@@ -3057,7 +3074,7 @@ pub(crate) fn create_shell_interpreter(
         )));
     }
 
-    let (shargs, jsobjs, quiet, cwd, export_env) = parsed_shell_script.take(global);
+    let (shargs, jsobjs, output_mode, cwd, export_env) = parsed_shell_script.take(global);
 
     let cwd_slice = cwd.as_ref().map(|c| c.to_utf8());
 
@@ -3087,7 +3104,7 @@ pub(crate) fn create_shell_interpreter(
     // Single-threaded.
     let js_value = unsafe {
         let it = &*interpreter;
-        it.update_flags(|f| f.set_quiet(quiet));
+        it.update_flags(|f| f.set_output_mode(output_mode));
         it.global_this
             .set(std::ptr::from_ref::<crate::jsc::JSGlobalObject>(global).cast_mut());
         it.estimated_size_for_gc

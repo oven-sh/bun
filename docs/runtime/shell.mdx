@@ -73,6 +73,48 @@ console.log(stderr); // Buffer(0) []
 
 ---
 
+## Colors and terminal output
+
+By default, Bun Shell prints the output of a command and also buffers it for the result. To do both, it gives the command a pipe for stdout and a pipe for stderr, and copies what the command writes to the stdout and stderr of the Bun process. The command cannot tell when its output ends on a terminal, so most programs turn off colors and progress bars, and some interactive programs refuse to run.
+
+To give a command Bun's own stdout and stderr, call `.inheritStdio()`. The command then writes to them directly, as it does under `Bun.spawn` with `stdout: "inherit"` and `stderr: "inherit"`. When Bun's stdout and stderr are a terminal, the command sees that terminal.
+
+```js
+import { $ } from "bun";
+
+// colors when Bun's stdout is a terminal
+await $`git log --oneline -5`.inheritStdio();
+```
+
+Nothing is buffered in this mode:
+
+- The output of the command does not stay in memory.
+- Reading `stdout`, `stderr` or an output method (`.text()`, `.json()`, ...) of the result throws.
+- `.inheritStdio()` cannot be combined with `.quiet()` or an output method such as `.text()` on the same command.
+- The command finishes when its process exits. In the default mode it finishes when its output pipes close, which is later if it leaves a background process that holds them open.
+
+Stdin does not change: a command reads the stdin of the Bun process in every mode.
+
+To use it for every command of a script, wrap `$`:
+
+```js
+import { $ } from "bun";
+
+const run = (strings, ...values) => $(strings, ...values).inheritStdio();
+
+await run`git status`;
+```
+
+When the output does not go to a terminal (a CI log, `| tee`, `bun run --filter`), or when you need the colors and also the buffered output, keep the default mode and ask the program for colors. Many programs have a flag such as `--color=always` or read the `FORCE_COLOR` environment variable.
+
+```js
+import { $ } from "bun";
+
+const { stdout } = await $`FORCE_COLOR=1 eslint .`;
+```
+
+---
+
 ## Error handling
 
 By default, a non-zero exit code throws an error. The `ShellError` contains information about the command that ran.

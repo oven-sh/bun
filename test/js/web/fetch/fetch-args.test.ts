@@ -260,6 +260,31 @@ describe.concurrent("fetch() early rejections are reported when unhandled", () =
     expect(exitCode).toBe(0);
   });
 
+  // The S3 upload refuses a body stream that an option getter used. That has to reject the
+  // promise fetch() returned. It used to reject a second promise that nothing could reach.
+  test("s3: a refused body stream rejects the promise that fetch() returned", async () => {
+    const { stdout, stderr, exitCode } = await runUnhandled(`
+      process.on("unhandledRejection", (reason, promise) => {
+        console.log(promise === returned, reason.message);
+      });
+      const body = new ReadableStream();
+      const returned = fetch("s3://bucket/key", {
+        method: "PUT",
+        body,
+        s3: {
+          secretAccessKey: "b",
+          get accessKeyId() {
+            body.cancel();
+            return "a";
+          },
+        },
+      });
+    `);
+    expect(stdout).toBe("true ReadableStream is already disturbed\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   // Before the rejection was registered, handling it still reached the tracker's
   // "handled" side, which emitted a spurious rejectionHandled event.
   test("a rejection that is handled is not reported", async () => {
@@ -346,6 +371,156 @@ describe("fetch() releases a string body when it ends before it queues a request
     // the string measures the same.
     await expectRssDeltaBelow(["--smol", "-e", code], { release: 48, debug: 96 });
   });
+});
+
+// fetch() checks a body stream when it reads the body. It reads `headers` and `s3` after that,
+// so a getter there can use the stream before the S3 upload gets it. The upload refuses a used
+// stream, and the fetch has to reject. It used to stay pending forever.
+test("fetch(s3://) rejects when an option getter used the body stream", async () => {
+  type Row = { call: string; start: string; method: string; getter: string; use: "read" | "cancel" };
+  const first: Row = {
+    call: "fetch(url, init)",
+    start: `fetch(url, options({ method, body }))`,
+    method: "PUT",
+    getter: "s3.accessKeyId",
+    use: "read",
+  };
+  const rows: Row[] = [
+    first,
+    // Each of the other rows changes one thing.
+    { ...first, call: "Bun.fetch(url, init)", start: `Bun.fetch(url, options({ method, body }))` },
+    { ...first, call: "FetchSession#fetch(url, init)", start: `session.fetch(url, options({ method, body }))` },
+    { ...first, call: "node-fetch(url, init)", start: `nodeFetch(url, options({ method, body }))` },
+    { ...first, call: "fetch(request, init)", start: `fetch(new Request(url, { method, body }), options({}))` },
+    { ...first, call: "fetch(init with url, init)", start: `fetch({ url, method, body }, options({}))` },
+    { ...first, method: "POST" },
+    { ...first, getter: "headers" },
+    { ...first, getter: "s3" },
+    { ...first, use: "cancel" },
+    // Controls: the S3 write calls take the promise of the same upload. They rejected before too.
+    { ...first, call: "s3file.write(stream, options) (control)", start: `client.file("key").write(body, s3)` },
+    {
+      ...first,
+      call: "Bun.write(s3file, stream, options) (control)",
+      start: `Bun.write(client.file("key"), body, s3)`,
+    },
+    {
+      ...first,
+      call: "s3file.write(stream, options) (control)",
+      start: `client.file("key").write(body, s3)`,
+      use: "cancel",
+    },
+    {
+      ...first,
+      call: "Bun.write(s3file, stream, options) (control)",
+      start: `Bun.write(client.file("key"), body, s3)`,
+      use: "cancel",
+    },
+  ];
+  const name = (row: Row) => `${row.call} ${row.method}, ${row.getter} getter: ${row.use}`;
+
+  const code = /* js */ `
+    const requests = [];
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(request) {
+        requests.push(request.method);
+        await request.arrayBuffer();
+        return new Response("");
+      },
+    });
+    const credentials = {
+      endpoint: "http://127.0.0.1:" + server.port,
+      bucket: "bucket",
+      accessKeyId: "key",
+      secretAccessKey: "secret",
+      region: "us-east-1",
+    };
+    const unhandled = [];
+    process.on("unhandledRejection", reason => unhandled.push(String(reason)));
+
+    const url = "s3://bucket/key";
+    const session = new Bun.FetchSession();
+    const nodeFetch = require("node-fetch");
+    const client = new Bun.S3Client(credentials);
+    // What the getter does with the stream. The result is what the getter's own use of it got.
+    const uses = {
+      read: stream => stream.getReader().read().then(({ value }) => new TextDecoder().decode(value)),
+      cancel: stream => stream.cancel().then(() => "cancelled"),
+    };
+    const rows = [
+      ${rows
+        .map(
+          row =>
+            `{ name: ${JSON.stringify(name(row))}, method: ${JSON.stringify(row.method)}, getter: ${JSON.stringify(row.getter)}, ` +
+            `use: uses.${row.use}, start: (method, body, options, s3) => ${row.start} },`,
+        )
+        .join("\n")}
+    ];
+
+    const results = {};
+    for (const row of rows) {
+      const stream = new ReadableStream({
+        pull(controller) {
+          controller.enqueue(new TextEncoder().encode("hello"));
+          controller.close();
+        },
+      });
+      let used;
+      const run = getter => {
+        if (getter === row.getter) used ??= row.use(stream);
+      };
+      const s3 = {
+        ...credentials,
+        get accessKeyId() {
+          run("s3.accessKeyId");
+          return credentials.accessKeyId;
+        },
+      };
+      const options = init => ({
+        ...init,
+        get headers() {
+          run("headers");
+          return undefined;
+        },
+        get s3() {
+          run("s3");
+          return s3;
+        },
+      });
+
+      let result = "pending";
+      row.start(row.method, stream, options, s3).then(
+        value => (result = "resolved " + (value.status ?? value)),
+        error => (result = "rejected " + error),
+      );
+      // A refusal needs no I/O, so one turn of the event loop is enough for it to settle.
+      await new Promise(resolve => setImmediate(resolve));
+      results[row.name] = result + ", getter: " + (await used);
+    }
+    await server.stop();
+    console.log(JSON.stringify({ results, requests, unhandled }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    // An inherited proxy would take a request away from the stub.
+    env: { ...bunEnv, HTTP_PROXY: undefined, HTTPS_PROXY: undefined, http_proxy: undefined, https_proxy: undefined },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const results = Object.fromEntries(
+    rows.map(row => [
+      name(row),
+      `rejected Error: ReadableStream is already disturbed, getter: ${row.use === "read" ? "hello" : "cancelled"}`,
+    ]),
+  );
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({ results, requests: [], unhandled: [] });
+  expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
 });
 
 test("fetch(RequestSubclass, undefined)", async () => {

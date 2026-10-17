@@ -871,6 +871,7 @@ const SQL = function SQL(
       };
     }
     let needs_rollback = false;
+    let before_sent = false;
     try {
       await run_internal_transaction_sql(BEGIN_COMMAND);
       needs_rollback = true;
@@ -881,7 +882,14 @@ const SQL = function SQL(
       // at this point we dont need to rollback anymore
       needs_rollback = false;
       if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
-        await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
+        before_sent = true;
+        try {
+          await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
+        } catch (err) {
+          // The server still holds the transaction, and only ROLLBACK ends it.
+          if (pool.isRollbackOwedAfterBeforeRejection?.(err)) needs_rollback = true;
+          throw err;
+        }
       }
       const commit_result = await run_internal_transaction_sql(COMMIT_COMMAND);
       // PostgreSQL answers COMMIT on an aborted transaction with a
@@ -898,8 +906,12 @@ const SQL = function SQL(
     } catch (err) {
       try {
         if (!(state.connectionState & ReservedConnectionState.closed) && needs_rollback) {
-          if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
-            await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
+          if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND && !before_sent) {
+            try {
+              await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
+            } catch (before_err) {
+              if (!pool.isRollbackOwedAfterBeforeRejection?.(before_err)) throw before_err;
+            }
           }
           await run_internal_transaction_sql(ROLLBACK_COMMAND);
         }

@@ -1,6 +1,6 @@
 import { SQL, randomUUIDv7 } from "bun";
 import { beforeAll, describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, describeWithContainer, isDockerEnabled, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, describeWithContainer, isCI, isDockerEnabled, tempDirWithFiles } from "harness";
 import path from "path";
 import {
   listeningServer,
@@ -66,6 +66,79 @@ async function assertComputedDecimalsAreStrings(sql: SQL) {
   const [rawRow] = await sql`SELECT SUM(balance) AS total FROM ${sql(t)}`.raw();
   expect(rawRow[0]).toEqual(new Uint8Array(Buffer.from("350.75")));
 }
+
+// sql.beginDistributed() is an XA branch on MySQL and MariaDB. Two of them update the same two
+// rows in opposite order, so the server has to break a deadlock: it rolls the work of one branch
+// back and rejects the update of that branch with ER_LOCK_DEADLOCK. That branch is ROLLBACK ONLY
+// from then on. The server rejects its XA END, and only XA ROLLBACK removes it from the
+// connection. `onDeadlock` is the catch clause of the rejected update.
+async function deadlockInDistributedTransaction(
+  getOptions: () => Bun.SQL.PostgresOrMySQLOptions,
+  onDeadlock: (error: unknown) => unknown,
+) {
+  const options = { ...getOptions(), max: 1 };
+  await using setup = new SQL(options);
+  const table = "xa_" + randomUUIDv7("hex").replaceAll("-", "");
+  await setup.unsafe(`create table ${table} (id int primary key, v int) engine = InnoDB`);
+  try {
+    await setup.unsafe(`insert into ${table} values (0, 0), (1, 0)`);
+    await using first = new SQL(options);
+    await using second = new SQL(options);
+    const pools = [first, second];
+    const names = [0, 1].map(() => "xa_" + randomUUIDv7("hex"));
+    const holdsFirstRow = [0, 1].map(() => Promise.withResolvers<void>());
+    const deadlocks: unknown[] = [undefined, undefined];
+    const begins = pools.map((sql, i) =>
+      sql.beginDistributed(names[i], async tx => {
+        await tx.unsafe(`update ${table} set v = v + 1 where id = ${i}`);
+        holdsFirstRow[i].resolve();
+        await holdsFirstRow[1 - i].promise;
+        try {
+          await tx.unsafe(`update ${table} set v = v + 1 where id = ${1 - i}`);
+        } catch (error) {
+          deadlocks[i] = error;
+          return onDeadlock(error);
+        }
+      }),
+    );
+    // A branch that fails before it holds its first row must not keep the other one waiting.
+    for (const i of [0, 1]) {
+      holdsFirstRow[i].promise.catch(() => {});
+      begins[i].catch(holdsFirstRow[i].reject);
+    }
+    const settled = await Promise.allSettled(begins);
+    const victim = deadlocks[0] !== undefined ? 0 : 1;
+    const other = settled[1 - victim].status;
+    // The other branch got both rows and is prepared. It holds its locks until it is rolled back.
+    if (other === "fulfilled") await pools[1 - victim].rollbackDistributed(names[1 - victim]);
+
+    const begin = settled[victim];
+    // The server rejects XA START while the only connection of the pool still holds a branch.
+    const branch = await pools[victim]
+      .beginDistributed(names[victim], tx => tx.unsafe("select 1"))
+      .then(() => pools[victim].rollbackDistributed(names[victim]))
+      .then(
+        () => "gone",
+        (error: any) => `still open: ${error.message}`,
+      );
+    return {
+      server: String((await setup.unsafe("select version() as version"))[0].version),
+      deadlock: (deadlocks[victim] as any)?.errno,
+      begin:
+        begin.status === "fulfilled"
+          ? "resolved"
+          : begin.reason === deadlocks[victim]
+            ? "the deadlock error"
+            : { errno: begin.reason?.errno, sqlState: begin.reason?.sqlState },
+      other,
+      branch,
+      rows: [...(await setup.unsafe(`select id, v from ${table} order by id`))],
+    };
+  } finally {
+    await setup.unsafe(`drop table ${table}`);
+  }
+}
+
 if (isDockerEnabled()) {
   // Ordered so the suites whose containers become healthy quickly (mysql_plain,
   // mysql:9) run first; the slow-to-start mysql_tls container warms up in the
@@ -1261,6 +1334,52 @@ if (isDockerEnabled()) {
       },
     );
   }
+}
+
+// MySQL answers the XA END of a ROLLBACK ONLY branch with XA_RBDEADLOCK, MariaDB with XAER_RMFAIL, so
+// the cases run on both. The gate on the MariaDB container is the one in sql-mariadb-json.test.ts.
+const mariadbProvided =
+  !!process.env.BUN_TEST_SERVICE_mariadb_plain || !!process.env.BUN_DOCKER_COORDINATOR || (isCI && isDockerEnabled());
+if (!mariadbProvided) describe.todo("distributed transaction (mariadb_plain)");
+for (const image of mariadbProvided ? ["mysql_plain", "mariadb_plain"] : ["mysql_plain"]) {
+  describeWithContainer(`distributed transaction (${image})`, { image }, container => {
+    const getOptions = () => ({ url: `mysql://root@${container.host}:${container.port}/bun_sql_test` });
+    const ER_LOCK_DEADLOCK = 1213;
+    const untouched = [
+      { id: 0, v: 0 },
+      { id: 1, v: 0 },
+    ];
+
+    beforeAll(() => container.ready);
+
+    test("a deadlock rejects with the deadlock error and rolls the branch back", async () => {
+      const outcome = await deadlockInDistributedTransaction(getOptions, error => {
+        throw error;
+      });
+      expect(outcome).toEqual({
+        server: expect.any(String),
+        deadlock: ER_LOCK_DEADLOCK,
+        begin: "the deadlock error",
+        other: "fulfilled",
+        branch: "gone",
+        rows: untouched,
+      });
+    });
+
+    test("a deadlock that the callback swallows rejects with the answer to XA END and rolls the branch back", async () => {
+      const outcome = await deadlockInDistributedTransaction(getOptions, () => "swallowed");
+      expect(outcome).toEqual({
+        server: expect.any(String),
+        deadlock: ER_LOCK_DEADLOCK,
+        begin: outcome.server.includes("MariaDB")
+          ? { errno: 1399, sqlState: "XAE07" }
+          : { errno: 1614, sqlState: "XA102" },
+        other: "fulfilled",
+        branch: "gone",
+        rows: untouched,
+      });
+    });
+  });
 }
 
 test("MySQL: binary TIME with a very large days field formats without integer wraparound", async () => {

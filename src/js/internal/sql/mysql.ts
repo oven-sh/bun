@@ -17,6 +17,8 @@ const {
 } = require("internal/sql/query");
 const { MySQLError } = require("internal/sql/errors");
 
+const StringPrototypeIncludes = String.prototype.includes;
+
 const {
   createConnection: createMySQLConnection,
   createQuery: createMySQLQuery,
@@ -257,6 +259,20 @@ class MySQLAdapter
       ROLLBACK_TO_SAVEPOINT: "ROLLBACK TO SAVEPOINT",
       BEFORE_COMMIT_OR_ROLLBACK: `XA END '${name}'`,
     };
+  }
+
+  /// True when the rejection of XA END shows a ROLLBACK ONLY branch: the server rolled its work back, and only XA ROLLBACK ends it.
+  isRollbackOwedAfterBeforeRejection(error: unknown): boolean {
+    if (!(error instanceof MySQLError)) return false;
+    switch (error.errno) {
+      case 1402: // XA_RBROLLBACK
+      case 1613: // XA_RBTIMEOUT
+      case 1614: // XA_RBDEADLOCK
+        return true;
+      case 1399: // XAER_RMFAIL names the state of the branch. MariaDB answers it for a ROLLBACK ONLY branch.
+        return StringPrototypeIncludes.$call(error.message, "ROLLBACK ONLY");
+    }
+    return false;
   }
 
   getCommitDistributedSQL(name: string): string {

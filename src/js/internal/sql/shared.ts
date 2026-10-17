@@ -2267,6 +2267,8 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> {
   getTransactionCommands(options?: string): TransactionCommands;
   array(values: any[], typeNameOrID?: number | string): SQLArrayParameter;
   getDistributedTransactionCommands?(name: string): TransactionCommands | null;
+  /// True when `error`, the rejection of the BEFORE_COMMIT_OR_ROLLBACK statement, leaves a transaction that only ROLLBACK ends.
+  isRollbackOwedAfterBeforeRejection?(error: unknown): boolean;
 
   validateTransactionOptions?(options: string): { valid: boolean; error?: string };
   validateDistributedTransactionName?(name: string): { valid: boolean; error?: string };

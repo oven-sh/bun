@@ -98,9 +98,10 @@ struct BackPressure {
     /* Room a growth keeps behind the bytes it was asked for. A writer that
      * queues a payload appends its framing right behind it: the chunk CRLF (2)
      * and a chunk size line (HttpResponse::CHUNK_HEAD_MAX), the 7-byte
-     * terminating chunk, a WebSocket ping or close frame (2 to 8), an HTTP/2
-     * frame header (9). Without the room that append grows the buffer a second
-     * time and copies the whole payload. */
+     * terminating chunk, a WebSocket ping (2) or a close frame with a reason
+     * of 8 bytes or fewer, an HTTP/2 frame header (9). Without the room that
+     * append grows the buffer a second time and copies the whole payload. An
+     * append of more than TAIL_ROOM bytes still does. */
     static constexpr size_t TAIL_ROOM = 12;
 
 private:

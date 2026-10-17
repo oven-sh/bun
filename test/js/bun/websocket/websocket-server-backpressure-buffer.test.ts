@@ -249,12 +249,12 @@ describe("BackPressure buffer", () => {
     expect(hash.digest("hex")).toBe(expectedHash);
   });
 
-  // A growth of the buffer keeps room behind the bytes it was asked for, so the
-  // framing that follows a queued frame (a ping, a close, a short frame) fits.
-  // Without that room those few bytes grow the buffer again and copy the frame,
-  // or move it when some of it drained. estimateShallowMemoryUsageOf reports
-  // the buffer's capacity, and the three rows are the three ways a frame gets
-  // into the buffer.
+  // A growth of the buffer keeps 12 bytes of room behind the bytes it was asked
+  // for, so a frame of up to 12 bytes behind a queued one fits (a ping, a close
+  // with a short reason, a short message). Without that room those few bytes
+  // grow the buffer again and copy the queued frame, or move it when some of
+  // it drained. estimateShallowMemoryUsageOf reports the buffer's capacity,
+  // and the three rows are the three ways a frame gets into the buffer.
   describe.each([
     { name: "ws", secure: false, subscribed: false },
     { name: "wss", secure: true, subscribed: false },
@@ -296,14 +296,17 @@ describe("BackPressure buffer", () => {
       while (ws.getBufferedAmount() === 0 && ++sends < 16);
       const queued = ws.getBufferedAmount();
       const capacity = estimateShallowMemoryUsageOf(ws) - idle;
+      ws.send("x"); // a 3-byte frame
+      const capacityAfterShortFrame = estimateShallowMemoryUsageOf(ws) - idle;
       sock.destroy();
       // Plain ws appends what the socket did not take to an empty buffer. The
       // other two put the whole frame in the buffer and flush its front.
       const room = capacity - (secure || subscribed ? FRAME : queued);
-      expect({ queued: queued > 0, roomForFraming: room >= TAIL_ROOM }).toEqual({
-        queued: true,
-        roomForFraming: true,
-      });
+      expect({
+        queued: queued > 0,
+        roomForFraming: room >= TAIL_ROOM,
+        grewForTheShortFrame: capacityAfterShortFrame > capacity,
+      }).toEqual({ queued: true, roomForFraming: true, grewForTheShortFrame: false });
     });
   });
 });

@@ -3884,6 +3884,58 @@ console.log(resolve.length)
     expectPrinted_("delete foo?.bar?.baz", "delete foo?.bar?.baz");
   });
 
+  // `delete undefined` deletes an identifier: a SyntaxError in strict code, `false`
+  // in sloppy code. The value undefined under `delete` must not print that way.
+  it("delete of the value undefined prints as `delete void 0`", () => {
+    const define = {
+      "a.undef": "undefined",
+      "a.str": '"s"',
+      "a.nil": "null",
+      "a.ident": "x",
+      "a.chain": "x.y",
+      "import.meta.flag": "undefined",
+    };
+    const transpilers = ["js", "ts"].flatMap(loader => [
+      new Bun.Transpiler({ define, loader, target: "browser" }),
+      new Bun.Transpiler({ define, loader, target: "browser", minify: { syntax: true } }),
+      new Bun.Transpiler({ define, loader, target: "browser", minify: { syntax: true, whitespace: true } }),
+    ]);
+    const expectDelete = (
+      input,
+      plain,
+      minifySyntax = plain,
+      minifyWhitespace = minifySyntax.replaceAll(" = ", "="),
+    ) => {
+      const expected = [plain + ";\n", minifySyntax + ";\n", minifyWhitespace + ";"];
+      expect(transpilers.map(t => t.transformSync(input))).toEqual([...expected, ...expected]);
+    };
+
+    // A define replaced the property access with the value.
+    expectDelete("x = delete a.undef", "x = delete void 0");
+    expectDelete("x = delete (a.undef)", "x = delete void 0");
+    expectDelete("x = delete import.meta.flag", "x = delete void 0");
+    // Without minify.syntax the index form does not match the define.
+    expectDelete("x = delete a['undef']", 'x = delete a["undef"]', "x = delete void 0");
+
+    // The operand was never a reference.
+    expectDelete("x = delete void 0", "x = delete void 0");
+    expectDelete("x = delete (null ?? undefined)", "x = delete void 0");
+    expectDelete("x = delete (null ?? a.undef)", "x = delete void 0");
+
+    // Other values already print as values.
+    expectDelete("x = delete a.str", 'x = delete "s"', 'x = delete "s"', 'x=delete"s"');
+    expectDelete("x = delete a.nil", "x = delete null");
+
+    // The replacement is still a reference, so `delete` still deletes it.
+    expectDelete("x = delete a.ident", "x = delete x");
+    expectDelete("x = delete a.chain", "x = delete x.y");
+    expectDelete("x = delete a.other", "x = delete a.other");
+    expectDelete("x = delete a?.undef", "x = delete a?.undef");
+
+    // The source deletes the identifier. Sloppy code allows that.
+    expectDelete("x = delete undefined", "x = delete undefined");
+  });
+
   it("useDefineForConst TypeScript class initialization", () => {
     var { expectPrinted_ } = ts;
     expectPrinted_(

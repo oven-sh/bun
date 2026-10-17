@@ -1529,6 +1529,15 @@ impl RequireOrImportMetaCallback {
     }
 }
 
+/// The values that `print_undefined` spells as the identifier `undefined`.
+fn is_undefined_value(expr: &js_ast::Expr) -> bool {
+    use js_ast::{E, ExprData};
+    matches!(
+        expr.data,
+        ExprData::EUndefined(_) | ExprData::ESpecial(E::Special::HotDisabled)
+    )
+}
+
 fn is_identifier_or_numeric_constant_or_property_access(expr: &js_ast::Expr) -> bool {
     use js_ast::ExprData;
     match &expr.data {
@@ -1541,8 +1550,7 @@ fn is_identifier_or_numeric_constant_or_property_access(expr: &js_ast::Expr) -> 
         | ExprData::ERequireResolveCallTarget
         | ExprData::ERequireMain
         | ExprData::EImportMeta(_)
-        | ExprData::EImportMetaMain(_)
-        | ExprData::EUndefined(_) => true,
+        | ExprData::EImportMetaMain(_) => true,
         ExprData::EInlinedEnum(e) => is_identifier_or_numeric_constant_or_property_access(&e.value),
         ExprData::ENumber(e) => e.value().is_infinite() || e.value().is_nan(),
         _ => false,
@@ -4435,12 +4443,19 @@ pub(crate) mod __gated_printer {
                     if Op::Code::is_prefix(e.op) {
                         // Never turn "typeof (0, x)" into "typeof x" or "delete (0, x)" into "delete x"
                         if (e.op == Op::Code::UnTypeof && !e.flags.contains(E::UnaryFlags::WAS_ORIGINALLY_TYPEOF_IDENTIFIER) && self.is_unbound_identifier(&e.value))
-                        || (e.op == Op::Code::UnDelete && !e.flags.contains(E::UnaryFlags::WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS) && is_identifier_or_numeric_constant_or_property_access(&e.value))
+                        || (e.op == Op::Code::UnDelete && (is_undefined_value(&e.value) || (!e.flags.contains(E::UnaryFlags::WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS) && is_identifier_or_numeric_constant_or_property_access(&e.value))))
                     {
-                        self.print(b"(0,");
-                        self.print_space();
-                        self.print_expr(e.value, Level::Prefix.sub(1), ExprFlag::none());
-                        self.print(b")");
+                        if is_undefined_value(&e.value) {
+                            // "delete undefined" deletes an identifier, whatever the operand was in the source
+                            self.print_space_before_identifier();
+                            self.add_source_mapping(e.value.loc);
+                            self.print(b"void 0");
+                        } else {
+                            self.print(b"(0,");
+                            self.print_space();
+                            self.print_expr(e.value, Level::Prefix.sub(1), ExprFlag::none());
+                            self.print(b")");
+                        }
                     } else {
                         self.print_expr(e.value, Level::Prefix.sub(1), ExprFlag::none());
                     }

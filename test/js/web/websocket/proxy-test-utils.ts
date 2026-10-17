@@ -307,11 +307,11 @@ export function forwardRecordsTogether(count: number, firstType?: number) {
 }
 
 /**
- * A wss:// origin that sends `frames` (a string is a text message) in the same write as the 101. What stands in
- * front of it, a CONNECT proxy or for "direct" a plain forwarder, puts a TLS record that can't be decrypted
- * behind them, in the same write to the client. Connect to `url`, through `proxy` if there is one.
+ * A wss:// origin that sends `messages` in the same write as the 101. What stands in front of it, a CONNECT
+ * proxy or for "direct" a plain forwarder, puts a TLS record that can't be decrypted behind them, in the
+ * same write to the client. Connect to `url`, through `proxy` if there is one.
  */
-export async function startOriginWithCorruptRecord(route: "direct" | "http" | "https", frames: (string | Buffer)[]) {
+export async function startOriginWithCorruptRecord(route: "direct" | "http" | "https", messages: string[]) {
   const response = forwardRecordsTogether(1);
   const origin = await createPeer({
     secure: true,
@@ -321,7 +321,7 @@ export async function startOriginWithCorruptRecord(route: "direct" | "http" | "h
       response.hold();
       return response101(connection);
     },
-    afterUpgrade: Buffer.concat(frames.map(frame => (typeof frame === "string" ? encodeFrame(OP.text, frame) : frame))),
+    afterUpgrade: Buffer.concat(messages.map(message => encodeFrame(OP.text, message))),
   });
   const corruptRecord = Buffer.from([TLS_RECORD.applicationData, 3, 3, 0, 20, ...Buffer.alloc(20, 7)]);
   const onTargetData = (chunk: Buffer, forward: (bytes: Buffer) => void) =>

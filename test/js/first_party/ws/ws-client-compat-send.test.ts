@@ -11,13 +11,11 @@ import {
   createInflater,
   createPeer,
   detached,
-  encodeFrame,
   Frame,
   implementations,
   invalidData,
   MiB,
   nextEvent,
-  OP,
   openClient,
   overflowSize,
   type RawSocket,
@@ -443,13 +441,6 @@ describe.each(implementations)("ws client send ($name)", ({ ws: implementation, 
       client.ws.ping("p");
       client.ws.send("b");
       expect(await client.conn.nextFrames(3)).toEqual(['text "a" !fin', 'ping "p"', 'continuation "b"']);
-    });
-
-    test("ignores inherited options", async () => {
-      await using client = await openClient(implementation, { perMessageDeflate: false });
-      client.ws.send("a", Object.create({ binary: true, fin: false }));
-      client.ws.send("b", Object.create({ binary: true, fin: false }));
-      expect(await client.conn.nextFrames(2)).toEqual(['text "a"', 'text "b"']);
     });
 
     test("ignores non-object options and a missing callback", async () => {
@@ -975,29 +966,6 @@ describe.each(implementations)("ws client send ($name)", ({ ws: implementation, 
         expect(await conn.remainingFrames()).toEqual([]);
       },
     );
-
-    test("after a reset, in the 'message' events of a paused socket: calls back with an Error", async () => {
-      const buffered = Buffer.concat([encodeFrame(OP.text, "one"), encodeFrame(OP.text, "two")]);
-      await using client = await connectClient(
-        implementation,
-        { perMessageDeflate: false },
-        { afterUpgrade: buffered },
-      );
-      const { ws } = client;
-      const events: unknown[] = [];
-      ws.on("open", () => {
-        ws.pause();
-        client.peer.connections[0].reset();
-      });
-      ws.on("message", data => {
-        events.push(String(data));
-        ws.send("abcd", (error?: NodeJS.ErrnoException | null) => events.push(error?.code ?? error?.message));
-      });
-      await client.closed;
-      // npm ws is already CLOSING in these listeners.
-      const error = builtin ? "ERR_STREAM_DESTROYED" : "WebSocket is not open: readyState 2 (CLOSING)";
-      expect(events).toEqual(["one", "two", error, error]);
-    });
 
     test("after a failed connection", async () => {
       const ws = new WebSocket("ws://127.0.0.1:" + (await closedPort()));

@@ -469,11 +469,9 @@ describe("ws package wss:// through HTTP proxy (TLS tunnel)", () => {
 
       test.each([
         ["open", "send"],
-        ["open", "ping"],
         ["open", "close"],
         ["open", "pause"],
         ["message", "send"],
-        ["message", "close"],
       ] as const)("the '%s' listener calls %s(): every message is still delivered", async (listener, method) => {
         await using origin = await startOriginWithCorruptRecord(route, messages);
         const ws = connect(origin);
@@ -493,20 +491,6 @@ describe("ws package wss:// through HTTP proxy (TLS tunnel)", () => {
         expect({ events: await wsEvents(ws), sent: await sent.promise }).toEqual({
           events: [...messages, { close: [1006, Buffer.alloc(0)] }],
           sent: expect.objectContaining({ code: "ERR_STREAM_DESTROYED" }),
-        });
-      });
-
-      test("a paused client gets the messages at the end, and the callbacks of its answers get an error", async () => {
-        await using origin = await startOriginWithCorruptRecord(route, messages);
-        const ws = connect(origin);
-        const answers: unknown[] = [];
-        ws.on("open", () => ws.pause());
-        ws.on("message", () =>
-          ws.send("never sent", (error?: NodeJS.ErrnoException | null) => answers.push(error?.code)),
-        );
-        expect({ events: await wsEvents(ws), answers }).toEqual({
-          events: [...messages, { close: [1006, Buffer.alloc(0)] }],
-          answers: messages.map(() => "ERR_STREAM_DESTROYED"),
         });
       });
     },
@@ -802,27 +786,11 @@ describe("ws package with HttpsProxyAgent", () => {
         }),
       })),
       {
-        where: "`Host` on an HttpsProxyAgent",
-        winner: "the target as Host, and the other headers",
-        options: port => ({
-          agent: new HttpsProxyAgent(`http://${valid}@127.0.0.1:${port}`, {
-            headers: { Host: "other.example", "X-Kept": "yes" },
-          }),
-        }),
-        kept: { "x-kept": "yes" },
-      },
-      // hpagent sets `connection` itself too.
-      {
-        where: "`Proxy-Authorization`, `Host` and `connection` in hpagent's `proxyRequestOptions.headers`",
-        winner: "the URL's credentials, the target as Host, and the other headers",
+        where: "`Proxy-Authorization` in hpagent's `proxyRequestOptions.headers`",
+        winner: "the URL's credentials and the other headers",
         options: port => ({
           agent: hpagent(`http://${valid}@127.0.0.1:${port}`, {
-            headers: {
-              "Proxy-Authorization": basic("other:other"),
-              Host: "other.example",
-              connection: "close",
-              "X-Kept": "yes",
-            },
+            headers: { "Proxy-Authorization": basic("other:other"), "X-Kept": "yes" },
           }),
         }),
         kept: { "x-kept": "yes" },
@@ -834,23 +802,6 @@ describe("ws package with HttpsProxyAgent", () => {
           agent: hpagent(`http://127.0.0.1:${port}`, { headers: { "proxy-authorization": basic(valid) } }),
         }),
       },
-      {
-        where: "a symbol key in hpagent's `proxyRequestOptions.headers`",
-        winner: "the other headers",
-        options: port => ({
-          agent: hpagent(`http://${valid}@127.0.0.1:${port}`, {
-            headers: { [Symbol("ignored")]: "x", "X-Kept": "yes" } as http.OutgoingHttpHeaders,
-          }),
-        }),
-        kept: { "x-kept": "yes" },
-      },
-      ...[7, true, "text"].map(headers => ({
-        where: `\`proxyRequestOptions.headers: ${JSON.stringify(headers)}\``,
-        winner: "no extra header",
-        options: (port: number) => ({
-          agent: hpagent(`http://${valid}@127.0.0.1:${port}`, { headers } as {}),
-        }),
-      })),
       // Bun-only: https-proxy-agent itself can't read a Headers object.
       {
         where: "a Headers object on an HttpsProxyAgent",

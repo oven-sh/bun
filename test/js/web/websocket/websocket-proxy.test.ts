@@ -29,7 +29,6 @@ import {
   startRenegotiatingWssServer,
   TLS_RECORD,
 } from "./proxy-test-utils";
-import { closePayload, encodeFrame, OP } from "./raw-peer";
 // Use dynamic require to avoid linter removing the import
 const { HttpsProxyAgent } = require("https-proxy-agent") as {
   HttpsProxyAgent: typeof HttpsProxyAgentType;
@@ -889,10 +888,8 @@ describe.concurrent("wss://: a corrupt TLS record right behind the messages", ()
 
     test.each([
       ["open", "send"],
-      ["open", "ping"],
       ["open", "pause"],
       ["message", "send"],
-      ["message", "pong"],
     ] as const)("the '%s' listener calls %s(): every message is still delivered", async (listener, method) => {
       await using origin = await startOriginWithCorruptRecord(route, messages);
       const ws = connect(origin);
@@ -907,25 +904,6 @@ describe.concurrent("wss://: a corrupt TLS record right behind the messages", ()
       await clientEvents(ws);
       // The whole frame: a 2-byte header, the mask and the payload.
       expect(ws.bufferedAmount).toBe(2 + 4 + "never sent".length);
-    });
-
-    test("the answers of a paused client to the messages it gets at the end stay in bufferedAmount", async () => {
-      await using origin = await startOriginWithCorruptRecord(route, messages);
-      const ws = connect(origin);
-      ws.addEventListener("open", () => ws.pause());
-      ws.addEventListener("message", () => ws.send("never sent"));
-      expect(await clientEvents(ws)).toEqual([...messages, ...failure, { code: 1006, reason: "", wasClean: false }]);
-      expect(ws.bufferedAmount).toBe(messages.length * (2 + 4 + "never sent".length));
-    });
-
-    test("the peer's Close frame in front of it decides the close code", async () => {
-      const close = encodeFrame(OP.close, closePayload(4001, "why"));
-      await using origin = await startOriginWithCorruptRecord(route, [...messages, close]);
-      // Not clean: the reply can't be sent any more.
-      expect(await clientEvents(connect(origin))).toEqual([
-        ...messages,
-        { code: 4001, reason: "why", wasClean: false },
-      ]);
     });
   });
 });

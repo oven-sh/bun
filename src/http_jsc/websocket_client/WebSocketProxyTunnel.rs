@@ -513,13 +513,12 @@ impl WebSocketProxyTunnel {
 
         if let Some(w) = this.wrapper.get() {
             w.receive_data(data);
-            // Only now, so that what this read decrypted is delivered first, like openssl.c's `ssl_write_wants_read`.
-            if this.renegotiation_ended.take()
-                && !w.is_shutdown()
-                && let Some(ws) = this.connected_websocket.get()
-            {
-                WebSocketClient::handle_tunnel_writable(ws.this_ptr());
-            }
+        }
+        // Only now, so that what this read decrypted is delivered first, like openssl.c's `ssl_write_wants_read`.
+        if this.renegotiation_ended.take()
+            && let Some(ws) = this.connected_websocket.get()
+        {
+            WebSocketClient::handle_tunnel_writable(ws.this_ptr());
         }
     }
 

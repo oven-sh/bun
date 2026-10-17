@@ -202,8 +202,6 @@ pub struct WebSocket<const SSL: bool> {
     /// (or until `resume()` if an `open` listener paused the socket), or bytes from a
     /// re-entrant `feed`, held until the outer `feed` finishes.
     initial_data: Cell<Option<Box<InitialData>>>,
-    /// The size of the frames that listeners sent after the connection was gone. See `count_unsendable`.
-    unsendable_bytes: Cell<usize>,
     /// A `feed` call is on the stack.
     parsing: Cell<bool>,
     options: ConnectedOptions,
@@ -350,8 +348,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     /// The single teardown path. Closes the connection if it's still open, reports the
     /// outcome to C++ and releases the C++ ref. The close is clean (RFC 6455 §7.1.4) if both
-    /// Close frames were exchanged, no matter how the connection ended afterwards. Once the peer's
-    /// Close frame has arrived, its code is the outcome (§7.1.5), also if the connection then fails.
+    /// Close frames were exchanged, no matter how the connection ended afterwards.
     ///
     /// Every caller holds a ref guard (the uws dispatcher, a C++ entry point,
     /// or the tunnel callback), so `self` outlives the releases below.
@@ -367,11 +364,11 @@ impl<const SSL: bool> WebSocket<SSL> {
         if is_stream {
             ws.stream_destroy();
         }
-        match (outcome, received) {
-            (Outcome::Failed(code, detail), None) => {
+        match outcome {
+            Outcome::Failed(code, detail) => {
                 ws.did_fail(code, buffered_amount, BunString::EMPTY, detail);
             }
-            (_, received) => {
+            Outcome::Closed => {
                 let was_clean = received.is_some() && self.sent_fin.get();
                 let (code, reason) = received.unwrap_or((1006, BunString::EMPTY));
                 ws.did_close(code, reason, was_clean, buffered_amount);
@@ -1123,17 +1120,14 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
-    /// Returns how many bytes the transport took, or `None` if it's closed.
+    /// Returns how many bytes were written, or `None` if the write failed.
     fn write_to_transport(&self, bytes: &[u8]) -> Option<usize> {
         match self.io() {
             // Do not set MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
             Io::Socket => usize::try_from(self.tcp.get().write(bytes)).ok(),
-            Io::Tunnel(tunnel) => match WebSocketProxyTunnel::write(tunnel, bytes) {
-                Ok(wrote) => Some(wrote),
-                // Refused during a renegotiation (`handle_tunnel_writable` follows) or after a failed read,
-                // whose data is still being delivered (`handle_tunnel_close` follows, unless it just ran).
-                Err(_) => self.tunnel().map(|_| 0),
-            },
+            // Like a socket, a tunnel that refuses a write took 0 bytes: `handle_tunnel_writable` follows
+            // (a renegotiation ended) or `handle_tunnel_close` (a read failed, its data comes first).
+            Io::Tunnel(tunnel) => Some(WebSocketProxyTunnel::write(tunnel, bytes).unwrap_or(0)),
             Io::Stream => {
                 self.cpp_websocket()?.stream_write(bytes);
                 Some(bytes.len())
@@ -1387,7 +1381,6 @@ impl<const SSL: bool> WebSocket<SSL> {
     pub(crate) fn buffered_amount(&self) -> usize {
         self.send_buffer.borrow().readable_length()
             + self.tunnel().map_or(0, |t| t.buffered_amount())
-            + self.unsendable_bytes.get()
     }
 
     /// Set whether this connection keeps the process alive. Nothing re-refs it automatically.
@@ -1453,23 +1446,15 @@ impl<const SSL: bool> WebSocket<SSL> {
         // `this` while enqueue_encoded_bytes/send_buffer_out still run.
         let _guard = RefPtr::from_this(this);
 
-        if this.close_sent.get() || op > 0xF {
+        if !this.can_send() || op > 0xF {
             return;
         }
 
-        let kind = FrameKind::from_ffi(op, flags, !this.options.is_server);
-        if !this.has_tcp() {
-            return this.count_unsendable(Copy::Bytes(slice), kind);
-        }
-        this.send_frame(Copy::Bytes(slice), slice.len(), kind);
-    }
-
-    /// The connection is gone, and `finish` runs once what had arrived is parsed. What a listener
-    /// sends until then can't leave, so it's only counted: `bufferedAmount` reports it as unsent.
-    fn count_unsendable(&self, bytes: Copy<'_>, kind: FrameKind) {
-        let (frame_size, _) = bytes.frame_and_content_len(kind.masked);
-        self.unsendable_bytes
-            .set(self.unsendable_bytes.get().saturating_add(frame_size));
+        this.send_frame(
+            Copy::Bytes(slice),
+            slice.len(),
+            FrameKind::from_ffi(op, flags, !this.options.is_server),
+        );
     }
 
     /// An inline frame skips the send queue and the compressor.
@@ -1516,21 +1501,13 @@ impl<const SSL: bool> WebSocket<SSL> {
         // See write_binary_data() — tunnel.write() can re-enter finish().
         let _guard = RefPtr::from_this(this);
 
-        if this.close_sent.get() {
+        if !this.can_send() {
             return;
         }
 
         // Note: 0 is valid
 
         let kind = FrameKind::from_ffi(op, flags, !this.options.is_server);
-        let whole = if str.is_16bit() {
-            Copy::Utf16(str.utf16_slice())
-        } else {
-            Copy::Latin1(str.slice())
-        };
-        if !this.has_tcp() {
-            return this.count_unsendable(whole, kind);
-        }
 
         // fast path: small frame, no backpressure, attempt to send without allocating
         if !str.is_16bit() && str.len < STACK_FRAME_SIZE {
@@ -1548,7 +1525,15 @@ impl<const SSL: bool> WebSocket<SSL> {
             return;
         }
 
-        this.send_data(whole, !this.has_backpressure(), kind);
+        this.send_data(
+            if str.is_16bit() {
+                Copy::Utf16(str.utf16_slice())
+            } else {
+                Copy::Latin1(str.slice())
+            },
+            !this.has_backpressure(),
+            kind,
+        );
     }
 
     /// `code` 1005 ("no status received") sends a Close frame with an empty payload.
@@ -1609,7 +1594,6 @@ impl<const SSL: bool> WebSocket<SSL> {
             payload_length_frame_bytes: Cell::new([0u8; 8]),
             payload_length_frame_len: Cell::new(0),
             initial_data: Cell::new(None),
-            unsendable_bytes: Cell::new(0),
             parsing: Cell::new(false),
             options: *options,
             deflate: RefCell::new(

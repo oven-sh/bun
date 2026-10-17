@@ -1336,11 +1336,10 @@ class WebSocket extends EventEmitter {
     let compress: boolean | undefined = true;
     let fin: boolean | undefined = true;
 
-    // Upstream spreads `options`, so inherited properties don't count.
     if ($isObject(options)) {
-      if (Object.hasOwn(options, "binary")) binary = options.binary;
-      if (Object.hasOwn(options, "compress")) compress = options.compress;
-      if (Object.hasOwn(options, "fin")) fin = options.fin;
+      if ("binary" in options) binary = options.binary;
+      if ("compress" in options) compress = options.compress;
+      if ("fin" in options) fin = options.fin;
     }
 
     if (!data) data = EMPTY_BUFFER;
@@ -2373,31 +2372,23 @@ function extractAgentOptions(agent: Agent): {
     (proxySource && getIgnoringObjectPrototype(proxySource, "proxy")) || getIgnoringObjectPrototype(agent, "proxy");
   const proxyUrl = (agentProxy as URL)?.href || agentProxy;
   if (typeof proxyUrl === "string" && (proxyUrl.startsWith("http:") || proxyUrl.startsWith("https:"))) {
-    const proxyHeaders = getIgnoringObjectPrototype(agent, "proxyHeaders");
+    // hpagent keeps them in `proxyRequestOptions.headers`.
+    const proxyHeaders =
+      getIgnoringObjectPrototype(agent, "proxyHeaders") ??
+      (connectOpts && getIgnoringObjectPrototype(connectOpts, "headers"));
     let headers = $isCallable(proxyHeaders) ? proxyHeaders.$call(agent) : proxyHeaders;
-    // The agents overwrite these. The native client prefers the caller's.
-    const setByAgent = ["host"];
 
-    // hpagent keeps them in `proxyRequestOptions.headers`. It spreads that, so only an object has any effect.
-    if (headers == null && connectOpts) {
-      headers = getIgnoringObjectPrototype(connectOpts, "headers");
-      if (!$isObject(headers)) headers = undefined;
-      setByAgent.push("connection");
-    }
-
+    // Both agents overwrite this header with the URL's credentials. The native client prefers the header.
     const { username, password } = new URL(proxyUrl);
-    if (username || password) setByAgent.push("proxy-authorization");
-
-    if ($isObject(headers)) {
+    if ((username || password) && $isObject(headers)) {
       if (headers instanceof Headers) {
         headers = new Headers(headers);
-        for (const name of setByAgent) headers.delete(name);
+        headers.delete("proxy-authorization");
       } else {
-        const kept: HttpHeaders = { __proto__: null as never };
+        headers = { ...headers };
         for (const name of Object.keys(headers)) {
-          if (!setByAgent.includes(name.toLowerCase())) kept[name] = headers[name];
+          if (name.toLowerCase() === "proxy-authorization") delete headers[name];
         }
-        headers = kept;
       }
     }
 

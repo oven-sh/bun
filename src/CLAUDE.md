@@ -127,7 +127,7 @@ async call; `StringOrBuffer`: borrowed for a sync call) and
 `StringOrBuffer::PinnedBuffer` (pinned and GC-rooted, parsed for an async
 call). Values parsed from JS for an async call, stored, or sent to another thread (the
 `from_js_async` parsers, which return `ThreadIsolated<T>`;
-`PathLike::thread_isolated_copy` for a `Blob` store) is `'static`.
+`PathLike::thread_isolated_copy` for a `Blob` store, which always owns its bytes) are `'static`.
 
 `EncodedSlice<'a>` is the `{ptr, len}` + encoding-bits (Latin-1/UTF-8/UTF-16)
 borrowed view handed to C++. Constructors name the encoding of the bytes:

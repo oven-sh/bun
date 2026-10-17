@@ -1,4 +1,7 @@
 import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 describe("DOMException in Node.js environment", () => {
   it("exists globally", () => {
@@ -70,5 +73,107 @@ describe("DOMException in Node.js environment", () => {
     // Create an exception with known code
     const abortError = new DOMException("Aborted", "AbortError");
     expect(abortError.code).toBe(20); // ABORT_ERR
+  });
+});
+
+function thrownBy(fn) {
+  try {
+    fn();
+  } catch (e) {
+    return e;
+  }
+  throw new Error("expected the callback to throw");
+}
+
+async function rejectionOf(promise) {
+  try {
+    await promise;
+  } catch (e) {
+    return e;
+  }
+  throw new Error("expected the promise to reject");
+}
+
+async function timeoutReason() {
+  const signal = AbortSignal.timeout(0);
+  const { promise, resolve } = Promise.withResolvers();
+  signal.addEventListener("abort", resolve, { once: true });
+  await promise;
+  return signal.reason;
+}
+
+// As in Node, no DOMException has own enumerable properties. The creation site Bun
+// records on internally created ones (line/column/sourceURL/stack) is non-enumerable.
+describe("DOMException own properties", () => {
+  it.each([
+    ["new DOMException()", "AbortError", () => new DOMException("The operation was aborted.", "AbortError")],
+    ["structuredClone(domException)", "AbortError", () => structuredClone(new DOMException("cloned", "AbortError"))],
+    ["AbortSignal.abort().reason", "AbortError", () => AbortSignal.abort().reason],
+    [
+      "AbortController#abort() reason",
+      "AbortError",
+      () => {
+        const controller = new AbortController();
+        controller.abort();
+        return controller.signal.reason;
+      },
+    ],
+    ["AbortSignal.timeout() reason", "TimeoutError", timeoutReason],
+    ["structuredClone() DataCloneError", "DataCloneError", () => thrownBy(() => structuredClone(() => {}))],
+    ["atob() InvalidCharacterError", "InvalidCharacterError", () => thrownBy(() => atob("!"))],
+    [
+      "crypto.subtle rejection",
+      "DataError",
+      () => rejectionOf(crypto.subtle.importKey("raw", new Uint8Array(3), { name: "AES-GCM" }, false, ["encrypt"])),
+    ],
+  ])("%s has no own enumerable properties", async (_, name, create) => {
+    const exception = await create();
+    expect(exception).toBeInstanceOf(DOMException);
+    expect(exception.name).toBe(name);
+
+    expect({
+      keys: Object.keys(exception),
+      json: JSON.stringify(exception),
+      spread: { ...exception },
+    }).toEqual({ keys: [], json: "{}", spread: {} });
+  });
+
+  it("internally created DOMExceptions from different call sites are deep equal", () => {
+    const first = AbortSignal.abort().reason;
+    const second = AbortSignal.abort().reason;
+    const constructed = new DOMException(first.message, first.name);
+
+    expect(isDeepStrictEqual(first, second)).toBe(true);
+    expect(isDeepStrictEqual(first, constructed)).toBe(true);
+    expect(first).toEqual(second);
+    expect(first).toEqual(constructed);
+  });
+
+  it("the uncaught error printer still reports where an internally created DOMException came from", async () => {
+    using dir = tempDir("domexception-uncaught", {
+      "reject.js": "Promise.reject(AbortSignal.abort().reason);\n",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "reject.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // The location comes from the sourceURL JSC recorded, which spells the
+    // drive letter in lowercase on Windows.
+    const normalizeCase = line => (isWindows ? line.toLowerCase() : line);
+    const locations = stderr
+      .split("\n")
+      .map(line => line.trim())
+      .filter(line => line.startsWith("at "))
+      .map(normalizeCase);
+    expect({ stdout, locations, exitCode }).toEqual({
+      stdout: "",
+      locations: [normalizeCase(`at ${join(String(dir), "reject.js")}:1`)],
+      exitCode: 1,
+    });
   });
 });

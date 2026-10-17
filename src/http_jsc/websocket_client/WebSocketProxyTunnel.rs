@@ -342,6 +342,13 @@ impl WebSocketProxyTunnel {
         // re-enter `tunnel.detach_upgrade_client()` / `tunnel.write()`, so no borrow of
         // `*this` may span the dispatch.
         let Some(upgrade_client) = this.upgrade_client.get() else {
+            // A renegotiation ended. Retry the writes refused during it, like openssl.c's `ssl_write_wants_read`.
+            if success
+                && this.wrapper.get().is_some_and(|w| !w.is_shutdown())
+                && let Some(ws) = this.connected_websocket.get()
+            {
+                WebSocketClient::handle_tunnel_writable(ws.this_ptr());
+            }
             return;
         };
 

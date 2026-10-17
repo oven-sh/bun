@@ -8,6 +8,7 @@ import { bunEnv, nodeExe, tls as tlsCerts } from "harness";
 import { createHash } from "crypto";
 import net from "net";
 import tls from "tls";
+import { createPeer, encodeFrame, OP, response101 } from "./raw-peer";
 
 /**
  * NO_PROXY applies to explicit proxies too. An ambient NO_PROXY=localhost,127.0.0.1,... would bypass
@@ -249,6 +250,83 @@ export function connectRequest(port: number, headers: Record<string, string> = {
   };
 }
 
+/** The complete TLS records in `bytes`, and the bytes left over behind them. */
+export function tlsRecords(bytes: Buffer) {
+  let complete = 0;
+  let offset = 0;
+  while (offset + 5 <= bytes.length) {
+    const next = offset + 5 + bytes.readUInt16BE(offset + 3);
+    if (next > bytes.length) break;
+    offset = next;
+    complete++;
+  }
+  return { complete, trailing: bytes.length - offset };
+}
+
+/**
+ * An `onTargetData` for a proxy with one connection. After `hold()`, it waits for `count` complete TLS
+ * records from the target and forwards them in one write, so the client decrypts them in one read.
+ */
+export function forwardRecordsTogether(count: number) {
+  let held: Buffer | null = null;
+  let holding = false;
+  const forwarded: ReturnType<typeof tlsRecords>[] = [];
+  return {
+    /** What each write to the client carried since `hold()`. */
+    forwarded,
+    hold() {
+      held = Buffer.alloc(0);
+      holding = true;
+    },
+    onTargetData(chunk: Buffer, forward: (bytes: Buffer) => void) {
+      let bytes = chunk;
+      if (held !== null) {
+        held = Buffer.concat([held, chunk]);
+        if (tlsRecords(held).complete < count) return;
+        bytes = held;
+        held = null;
+      }
+      if (holding) forwarded.push(tlsRecords(bytes));
+      forward(bytes);
+    },
+  };
+}
+
+/**
+ * A wss:// origin that sends `messages` in the same write as the 101, behind a CONNECT proxy that
+ * puts a TLS record that can't be decrypted behind them, in the same write to the client.
+ */
+export async function startOriginBehindCorruptingProxy(scheme: "http" | "https", messages: string[]) {
+  const response = forwardRecordsTogether(1);
+  const origin = await createPeer({
+    secure: true,
+    // A TLS 1.3 server can send session tickets right before the response.
+    tls: { maxVersion: "TLSv1.2" },
+    respond(connection) {
+      response.hold();
+      return response101(connection);
+    },
+    afterUpgrade: Buffer.concat(messages.map(message => encodeFrame(OP.text, message))),
+  });
+  const corruptRecord = Buffer.from([0x17, 3, 3, 0, 20, ...Buffer.alloc(20, 7)]);
+  const proxy = await startRecordingProxy({
+    tls: scheme === "https",
+    onTargetData(chunk, forward) {
+      response.onTargetData(chunk, bytes =>
+        forward(response.forwarded.length === 1 ? Buffer.concat([bytes, corruptRecord]) : bytes),
+      );
+    },
+  });
+  return {
+    url: origin.url,
+    proxy: `${scheme}://127.0.0.1:${proxy.port}`,
+    async [Symbol.asyncDispose]() {
+      proxy[Symbol.dispose]();
+      await origin[Symbol.asyncDispose]();
+    },
+  };
+}
+
 /**
  * A wss:// server that answers the upgrade by hand and gives every later chunk
  * to `onFrames`. It never ends a connection on its own.
@@ -293,10 +371,12 @@ export async function startRawWssServer(
  * when the upgrade client owns the connection, or on the client's first frame,
  * when the connected client does. After the client's first frame (and that
  * renegotiation) it sends "after renegotiation", then replies to the client's next
- * frame (its Close frame) with Close 1000. It runs in real node because a
+ * frame (its Close frame) with Close 1000. With "behind a message" it sends
+ * "renegotiating" right before it asks for the renegotiation, and echoes one more
+ * short frame before "after renegotiation". It runs in real node because a
  * BoringSSL server cannot renegotiate, so skip the test when `nodeExe()` is null.
  */
-export async function startRenegotiatingWssServer(when: "before the 101" | "after the 101") {
+export async function startRenegotiatingWssServer(when: "before the 101" | "after the 101" | "behind a message") {
   const server = Bun.spawn({
     cmd: [
       nodeExe()!,
@@ -310,11 +390,16 @@ export async function startRenegotiatingWssServer(when: "before the 101" | "afte
             socket.on("error", () => {});
             const renegotiate = then =>
               socket.renegotiate({ rejectUnauthorized: false }, err => (err ? socket.destroy(err) : then()));
+            const send = payload => socket.write(Buffer.concat([Buffer.from([0x81, payload.length]), Buffer.from(payload)]));
             const greet = () => {
-              const payload = Buffer.from("after renegotiation");
-              socket.write(Buffer.concat([Buffer.from([0x81, payload.length]), payload]));
+              send("after renegotiation");
               socket.once("data", () => socket.end(Buffer.from([0x88, 0x02, 0x03, 0xe8])));
             };
+            const echoThenGreet = () =>
+              socket.once("data", frame => {
+                send(frame.subarray(6).map((byte, i) => byte ^ frame[2 + (i % 4)]));
+                greet();
+              });
             let head = "";
             const onHead = chunk => {
               head += chunk.toString("latin1");
@@ -330,6 +415,12 @@ export async function startRenegotiatingWssServer(when: "before the 101" | "afte
               if (process.env.WHEN === "before the 101") {
                 socket.once("data", greet);
                 renegotiate(answer);
+              } else if (process.env.WHEN === "behind a message") {
+                socket.once("data", () => {
+                  send("renegotiating");
+                  renegotiate(echoThenGreet);
+                });
+                answer();
               } else {
                 socket.once("data", () => renegotiate(greet));
                 answer();

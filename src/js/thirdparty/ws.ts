@@ -294,6 +294,7 @@ interface Agent extends HttpAgent {
 }
 
 interface AgentConnectOptions extends HttpAgentOptions {
+  headers?: HttpHeaders;
   proxy?: string | URL;
 }
 
@@ -2367,17 +2368,26 @@ function extractAgentOptions(agent: Agent): {
   if (typeof proxyUrl === "string" && (proxyUrl.startsWith("http:") || proxyUrl.startsWith("https:"))) {
     const proxyHeaders = getIgnoringObjectPrototype(agent, "proxyHeaders");
     let headers = $isCallable(proxyHeaders) ? proxyHeaders.$call(agent) : proxyHeaders;
+    const setByAgent: string[] = [];
 
-    // https-proxy-agent overwrites this header with the URL's credentials. The native client prefers the header.
+    // hpagent keeps them in `proxyRequestOptions.headers`.
+    if (headers == null && connectOpts) {
+      headers = getIgnoringObjectPrototype(connectOpts, "headers");
+      setByAgent.push("host", "connection");
+    }
+
+    // Both agents overwrite this header with the URL's credentials. The native client prefers the header.
     const { username, password } = new URL(proxyUrl);
-    if ((username || password) && $isObject(headers)) {
+    if (username || password) setByAgent.push("proxy-authorization");
+
+    if (setByAgent.length !== 0 && $isObject(headers)) {
       if (headers instanceof Headers) {
         headers = new Headers(headers);
-        headers.delete("proxy-authorization");
+        for (const name of setByAgent) headers.delete(name);
       } else {
         headers = { ...headers };
         for (const name of Object.keys(headers)) {
-          if (name.toLowerCase() === "proxy-authorization") delete headers[name];
+          if (setByAgent.includes(name.toLowerCase())) delete headers[name];
         }
       }
     }

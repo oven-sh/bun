@@ -1118,12 +1118,17 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
-    /// Returns how many bytes were written, or `None` if the write failed.
+    /// Returns how many bytes the transport took, or `None` if it's closed.
     fn write_to_transport(&self, bytes: &[u8]) -> Option<usize> {
         match self.io() {
             // Do not set MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
             Io::Socket => usize::try_from(self.tcp.get().write(bytes)).ok(),
-            Io::Tunnel(tunnel) => WebSocketProxyTunnel::write(tunnel, bytes).ok(),
+            Io::Tunnel(tunnel) => match WebSocketProxyTunnel::write(tunnel, bytes) {
+                Ok(wrote) => Some(wrote),
+                // Refused during a renegotiation (`handle_tunnel_writable` follows) or after a failed read,
+                // whose data is still being delivered (`handle_tunnel_close` follows, unless it just ran).
+                Err(_) => self.tunnel().map(|_| 0),
+            },
             Io::Stream => {
                 self.cpp_websocket()?.stream_write(bytes);
                 Some(bytes.len())
@@ -1791,7 +1796,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         this.finish(Outcome::Closed);
     }
 
-    /// Called by the WebSocketProxyTunnel when the underlying socket drains.
+    /// Called by the WebSocketProxyTunnel when the underlying socket drains or a renegotiation ends.
     /// Flushes any buffered plaintext data through the tunnel.
     pub(crate) fn handle_tunnel_writable(this: ThisPtr<Self>) {
         // send_buffer → tunnel.write() can re-enter finish() synchronously

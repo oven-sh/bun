@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { gc, tls as tlsCerts } from "harness";
+import { gc, nodeExe, tls as tlsCerts } from "harness";
 import type { HttpsProxyAgent as HttpsProxyAgentType } from "https-proxy-agent";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { getEventListeners, once } from "node:events";
@@ -10,7 +10,14 @@ import net from "node:net";
 import path from "node:path";
 import type { ConnectionOptions } from "node:tls";
 import WebSocket from "ws";
-import { connectRequest, startEchoServer, startRecordingProxy } from "../../web/websocket/proxy-test-utils";
+import {
+  connectRequest,
+  forwardRecordsTogether,
+  startEchoServer,
+  startOriginBehindCorruptingProxy,
+  startRecordingProxy,
+  startRenegotiatingWssServer,
+} from "../../web/websocket/proxy-test-utils";
 import { closedPort, createPeer, nextEvent, runScript, scriptTimeout } from "./ws-raw-peer";
 
 // Use dynamic require to avoid linter removing the import
@@ -450,6 +457,71 @@ describe("ws package wss:// through HTTP proxy (TLS tunnel)", () => {
     });
     gc();
   });
+
+  describe.concurrent("a corrupt TLS record right behind messages that came with the 101", () => {
+    const messages = ["m0", "m1", "m2"];
+    const connect = (origin: { url: string; proxy: string }) =>
+      new WebSocket(origin.url, { proxy: origin.proxy, tls: { ca: tlsCerts.cert } } as ClientOptions);
+
+    test.each([
+      ["open", "send"],
+      ["open", "ping"],
+      ["open", "close"],
+      ["message", "send"],
+      ["message", "close"],
+    ] as const)("the '%s' listener calls %s(): every message is still delivered", async (listener, method) => {
+      await using origin = await startOriginBehindCorruptingProxy("http", messages);
+      const ws = connect(origin);
+      ws.once(listener, () => (method === "close" ? ws.close(1000) : ws[method]("never sent")));
+      expect(await wsEvents(ws)).toEqual([...messages, { close: [1006, Buffer.alloc(0)] }]);
+    });
+
+    test("the callback of a send() that could not be written gets an error", async () => {
+      await using origin = await startOriginBehindCorruptingProxy("http", messages);
+      const ws = connect(origin);
+      const sent = Promise.withResolvers<Error | null | undefined>();
+      ws.on("open", () => ws.send("never sent", sent.resolve));
+      expect({ events: await wsEvents(ws), sent: await sent.promise }).toEqual({
+        events: [...messages, { close: [1006, Buffer.alloc(0)] }],
+        sent: expect.objectContaining({ code: "ERR_STREAM_DESTROYED" }),
+      });
+    });
+  });
+
+  test.skipIf(!nodeExe())("a message sent during a TLS renegotiation arrives after it", async () => {
+    await using origin = await startRenegotiatingWssServer("behind a message");
+    const records = forwardRecordsTogether(2);
+    using recorded = await startRecordingProxy({ onTargetData: records.onTargetData });
+    const ws = new WebSocket(`wss://127.0.0.1:${origin.port}`, {
+      proxy: `http://127.0.0.1:${recorded.port}`,
+      tls: { ca: tlsCerts.cert },
+    } as ClientOptions);
+    const events = wsEvents(ws);
+    ws.on("open", () => {
+      records.hold();
+      ws.send("ready");
+    });
+    const sent = Promise.withResolvers<{ error: Error | null | undefined; stillQueued: number }>();
+    let queued = false;
+    ws.on("message", (data: Buffer) => {
+      if (data.toString() === "renegotiating") {
+        ws.send("sent during the renegotiation", error => sent.resolve({ error, stillQueued: ws.bufferedAmount }));
+        queued = ws.bufferedAmount > 0;
+      }
+      if (data.toString() === "after renegotiation") ws.close(1000);
+    });
+    expect({ events: await events, together: records.forwarded[0], queued, sent: await sent.promise }).toEqual({
+      events: [
+        "renegotiating",
+        "sent during the renegotiation",
+        "after renegotiation",
+        { close: [1000, Buffer.alloc(0)] },
+      ],
+      together: { complete: 2, trailing: 0 },
+      queued: true,
+      sent: { error: null, stillQueued: 0 },
+    });
+  });
 });
 
 describe("ws package through HTTPS proxy (TLS proxy)", () => {
@@ -677,6 +749,10 @@ describe("ws package with HttpsProxyAgent", () => {
 
     type Row = { where: string; winner: string; options(port: number): ClientOptions; kept?: Record<string, string> };
 
+    /** What `new (require("hpagent").HttpProxyAgent)({ proxy, proxyRequestOptions })` has. */
+    const hpagent = (proxy: string, proxyRequestOptions: http.RequestOptions) =>
+      Object.assign(new http.Agent(), { proxy: new URL(proxy), proxyRequestOptions });
+
     test.each<Row>([
       ...["Proxy-Authorization", "proxy-authorization"].map(name => ({
         where: `\`${name}\` on an HttpsProxyAgent`,
@@ -687,6 +763,29 @@ describe("ws package with HttpsProxyAgent", () => {
           }),
         }),
       })),
+      // hpagent sets `host` and `connection` itself too.
+      {
+        where: "`Proxy-Authorization`, `Host` and `connection` in hpagent's `proxyRequestOptions.headers`",
+        winner: "the URL's credentials, the target as Host, and the other headers",
+        options: port => ({
+          agent: hpagent(`http://${valid}@127.0.0.1:${port}`, {
+            headers: {
+              "Proxy-Authorization": basic("other:other"),
+              Host: "other.example",
+              connection: "close",
+              "X-Kept": "yes",
+            },
+          }),
+        }),
+        kept: { "x-kept": "yes" },
+      },
+      {
+        where: "no credentials in the URL and `proxy-authorization` in hpagent's `proxyRequestOptions.headers`",
+        winner: "the header",
+        options: port => ({
+          agent: hpagent(`http://127.0.0.1:${port}`, { headers: { "proxy-authorization": basic(valid) } }),
+        }),
+      },
       // Bun-only: https-proxy-agent itself can't read a Headers object.
       {
         where: "a Headers object on an HttpsProxyAgent",

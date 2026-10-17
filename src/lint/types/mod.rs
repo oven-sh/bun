@@ -448,7 +448,7 @@ impl<'a> Types<'a> {
 
     /// `checker.getTypeAtLocation(node)`
     pub fn get_type_at_location(self, node: impl Locate<'a>) -> Type<'a> {
-        node.locate(self.file).get_type_at_location()
+        node.locate_for_type(self.file).get_type_at_location()
     }
 
     /// `checker.getAccessedPropertyName(node)` of a property or element access: the name that is written, or the

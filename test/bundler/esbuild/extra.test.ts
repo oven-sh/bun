@@ -683,12 +683,10 @@ describe("bundler", () => {
       files: {
         "in.js": `
           import { config } from "./config.macro.js" with { type: "macro" };
-          console.log(
-            delete process.env.DEBUG,
-            delete import.meta.flag,
-            delete import.meta.hot,
-            delete config().missing,
-          );
+          console.log("define", delete process.env.DEBUG);
+          console.log("import.meta define", delete import.meta.flag);
+          console.log("macro", delete config().missing);
+          console.log("hot", delete import.meta.hot);
         `,
         "config.macro.js": `
           export function config() {
@@ -705,10 +703,15 @@ describe("bundler", () => {
       minifyWhitespace: minify,
       onAfterBundle(api) {
         const code = api.readFile("out.js");
-        expect(code).toContain("delete void 0");
-        expect(code).not.toMatch(/delete\s*undefined\b/);
+        const separator = minify ? "," : ", ";
+        for (const producer of ["define", "import.meta define", "macro"]) {
+          expect(code).toContain(`console.log("${producer}"${separator}delete void 0)`);
+        }
+        // No exact text for `delete import.meta.hot`: it only must not delete an
+        // identifier, and must not fall back to the `(0, undefined)` wrap.
+        expect(code).not.toMatch(/delete\s*(undefined\b|\(0,)/);
       },
-      run: { stdout: "true true true true" },
+      run: { stdout: "define true\nimport.meta define true\nmacro true\nhot true" },
     });
   }
   // Not from esbuild. Each line is what esbuild 0.28.2 prints. A value is not a

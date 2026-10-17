@@ -27,17 +27,19 @@ echo "hello from script"`,
 });
 
 // What a Windows environment has. bunEnv spells it `PATH`.
-test.skipIf(!isWindows)("spawn uses the PATH that env spells `Path`", () => {
+test.skipIf(!isWindows)("spawn uses the PATH that env spells `Path`", async () => {
   using dir = tempDir("spawn-path-spelling", { "only-here.cmd": "@echo found\r\n" });
   const { PATH, ...rest } = bunEnv;
   const env = { ...rest, Path: `${String(dir)};${PATH}` };
-  const run = (cmd: string[]) => Bun.spawnSync(cmd, { env, stdout: "pipe", stderr: "pipe" }).stdout.toString().trim();
-  expect({
-    lookup: run(["only-here"]),
-    child: run([bunExe(), "-p", "process.env.PATH"]),
-  }).toEqual({
-    lookup: "found",
-    child: env.Path,
+  const run = async (cmd: string[]) => {
+    await using proc = Bun.spawn({ cmd, env, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  };
+  const [lookup, child] = await Promise.all([run(["only-here"]), run([bunExe(), "-p", "process.env.PATH"])]);
+  expect({ lookup, child }).toEqual({
+    lookup: { stdout: "found", stderr: "", exitCode: 0 },
+    child: { stdout: env.Path, stderr: "", exitCode: 0 },
   });
 });
 

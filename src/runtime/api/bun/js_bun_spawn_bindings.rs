@@ -132,7 +132,13 @@ fn get_argv0(
         ZBox::from_bytes(argv0_to_use)
     } else {
         let Some(resolved) =
-            bun_which::which_for_spawn(&mut path_buf, path_to_use, cwd, argv0_to_use)
+            bun_which::which_for_spawn(&mut path_buf, path_to_use, cwd, argv0_to_use).map_err(
+                |errno| {
+                    sys::Error::new(errno, sys::Tag::posix_spawn)
+                        .with_path(argv0_to_use)
+                        .throw(global_this)
+                },
+            )?
         else {
             return Err(throw_command_not_found(global_this, argv0_to_use));
         };

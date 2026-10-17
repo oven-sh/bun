@@ -317,14 +317,17 @@ impl<'a> Fixer<'a> {
         let directives = (file.body().iter()).take_while(|it| it.directive().is_some());
         let mut end = (directives.last()).map(|it| self.end_with_comments_beside(it.span().end));
         let start_of_text = if file.has_bom() { 3 } else { 0 };
-        // A license in `//` lines goes on to the last of them, whether it has empty lines or not.
-        let mut is_in_license = false;
+        // A license in `//` lines goes on to the last line of its paragraph.
+        let mut end_of_license = None;
         for comment in file.comments_after(Span::empty(end.unwrap_or(start_of_text))) {
             if is_about_the_next_line(&comment) {
                 break;
             }
-            is_in_license = comment.kind() == TokenKind::Line
-                && (is_in_license || starts_license(comment.value().trim_ascii()));
+            let goes_on = end_of_license
+                .is_some_and(|end| file.line_of(end) + 1 == file.line_of(comment.start()));
+            let is_in_license = comment.kind() == TokenKind::Line
+                && (goes_on || starts_license(comment.value().trim_ascii()));
+            end_of_license = is_in_license.then(|| comment.end());
             let next = self.skip_white_space(comment.end());
             let is_detached = file.line_of(next) > file.line_of(comment.end()) + 1;
             if is_in_license || is_detached || is_about_the_file(&comment) {

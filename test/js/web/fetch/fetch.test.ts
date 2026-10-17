@@ -3121,6 +3121,31 @@ it("never sends the URL fragment in the request-target", async () => {
   expect(targets).toEqual(expected);
 });
 
+it("keeps the leading slashes of the pathname in the request-target", async () => {
+  // new URL("http://h//a//b").pathname is "//a//b". The request-target is sent
+  // as written, like node and curl do. See #45330.
+  const targets: string[] = [];
+  await using server = net.createServer(socket => {
+    socket.once("data", data => {
+      targets.push(data.toString("utf8").split("\r\n")[0]);
+      socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+    });
+  });
+  await once(server.listen(0, "localhost"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const tails = ["//a//b?x=1", "///", "//?q=1", "//a#frag"];
+  const expected: string[] = [];
+  for (const tail of tails) {
+    const href = `http://localhost:${port}${tail}`;
+    const url = new URL(href);
+    expect(url.pathname.startsWith("//")).toBe(true);
+    expected.push(`GET ${url.pathname}${url.search} HTTP/1.1`);
+    await (await fetch(new Request(href))).text();
+  }
+  expect(targets).toEqual(expected);
+});
+
 it("combines duplicate response headers per the Fetch spec", async () => {
   // WHATWG Fetch requires repeated header fields to be combined with ", " when
   // read via Headers.get(), except Set-Cookie which is stored as separate

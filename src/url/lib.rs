@@ -821,13 +821,6 @@ impl<'a> URL<'a> {
             url.pathname = b"/";
         }
 
-        const SLASH_SLASH: u16 = u16::from_le_bytes(*b"//");
-        while url.pathname.len() > 1
-            && u16::from_le_bytes([url.pathname[0], url.pathname[1]]) == SLASH_SLASH
-        {
-            url.pathname = &url.pathname[1..];
-        }
-
         // Only the right side: a protocol-relative origin keeps its leading `//`.
         url.origin = strings::trim_right(url.origin, b"/ ?#");
         url
@@ -1863,6 +1856,20 @@ mod tests {
         assert_eq!(url.path, b"/path");
         assert_eq!(url.search, b"?q=1");
         assert_eq!(url.hash, b"#frag?x=2");
+    }
+
+    #[test]
+    fn pathname_keeps_its_leading_slashes() {
+        // The request-target is `new URL(s).pathname + search`, and WHATWG
+        // keeps every leading `/` of a special URL's path.
+        let url = URL::parse(b"http://localhost:3000//a//b?x=1");
+        assert_eq!(url.pathname, b"//a//b?x=1");
+        assert_eq!(url.search, b"?x=1");
+        assert_eq!(url.origin, b"http://localhost:3000");
+
+        let url = URL::parse(b"http://localhost:3000///#frag");
+        assert_eq!(url.pathname, b"///");
+        assert_eq!(url.hash, b"#frag");
     }
 
     #[test]

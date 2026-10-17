@@ -233,18 +233,6 @@ static struct lsxpack_header *nq_hsi_prepare_decode(void *hset,
     lsxpack_header_prepare_decode(&h->xhdr, h->decode_buf, 0, h->decode_cap);
     return &h->xhdr;
 }
-/* Non-zero when p[0..n) holds a byte below 0x0e, as NUL, LF and CR are. The
- * loop has no exit and a byte result, so the compiler vectorizes it 16 wide. */
-static inline unsigned char nq_has_byte_below_0e(const char *p, size_t n) {
-    const unsigned char *s = (const unsigned char *) p;
-    unsigned char low = 0;
-    for (size_t i = 0; i < n; i++)
-        low |= s[i] < 0x0e;
-    return low;
-}
-static inline int nq_has_byte(const char *p, size_t n, int c) {
-    return n && memchr(p, c, n);
-}
 static int nq_hsi_process_header(void *hset, struct lsxpack_header *hdr) {
     struct nq_hset *h = hset;
     if (!hdr)
@@ -257,22 +245,18 @@ static int nq_hsi_process_header(void *hset, struct lsxpack_header *hdr) {
         return 0;
     const char *name = lsxpack_header_get_name(hdr);
     const char *val = lsxpack_header_get_value(hdr);
-    if (nq_has_byte_below_0e(name, hdr->name_len)
-            || nq_has_byte_below_0e(val, hdr->val_len)) {
-        /* RFC 9114 4.1.2 makes such a field invalid. */
-        if (nq_has_byte(name, hdr->name_len, 0)
-                || nq_has_byte(val, hdr->val_len, 0))
-            return -1;
-        /* RFC 9114 10.3: CR or LF. nghttp3 leaves such a field out before Node
-         * counts it. A pseudo-header is not left out: nghttp3 fails the message
-         * there, and a non-zero return here closes the whole connection. */
-        if ((!hdr->name_len || name[0] != ':')
-                && (nq_has_byte(name, hdr->name_len, '\r')
-                    || nq_has_byte(name, hdr->name_len, '\n')
-                    || nq_has_byte(val, hdr->val_len, '\r')
-                    || nq_has_byte(val, hdr->val_len, '\n')))
-            return 0;
-    }
+    /* lsqpack decodes the name and then the value into one buffer, so one scan covers both. */
+    const char *field = hdr->buf + hdr->name_offset;
+    size_t field_len = (size_t) (hdr->val_offset - hdr->name_offset) + hdr->val_len;
+    /* RFC 9114 4.1.2 makes such a field invalid. */
+    if (memchr(field, 0, field_len))
+        return -1;
+    /* RFC 9114 10.3: CR or LF. The field is left out before it is counted, as
+     * nghttp3 does for a regular field it has no other rule for. A pseudo-header
+     * is still delivered: Node fails the whole session for it. */
+    if ((!hdr->name_len || name[0] != ':')
+            && (memchr(field, '\r', field_len) || memchr(field, '\n', field_len)))
+        return 0;
     h->n_pairs++;
     h->total_bytes += (size_t) hdr->name_len + hdr->val_len;
     size_t need = h->pairs_len + (size_t) hdr->name_len + 1

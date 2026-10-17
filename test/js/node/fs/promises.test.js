@@ -374,6 +374,280 @@ it("close() while an operation is in flight actually closes the fd", async () =>
   expect(() => fs.fstatSync(fd)).toThrow(expect.objectContaining({ code: "EBADF" }));
 });
 
+// A stream on a FileHandle holds a ref on the handle and listens for its 'close'. Node keeps both when the
+// constructor throws (handle.close() then throws, and the descriptor stays open). Bun gives them back.
+describe("a stream constructor that throws gives the FileHandle back", () => {
+  // Runs `build`, which has to throw, and closes the handle before a test asserts anything.
+  async function afterThrow(handle, build) {
+    let closeEvents = 0;
+    handle.on("close", () => closeEvents++);
+    let thrown;
+    try {
+      build(handle);
+    } catch (err) {
+      thrown = err;
+    }
+    const listeners = handle.listenerCount("close");
+    const closed = await handle.close().then(
+      () => "fulfilled",
+      err => err,
+    );
+    return { thrown, listeners, closed, fd: handle.fd, closeEvents };
+  }
+  // The one listener that stays is the listener of `afterThrow`.
+  const givenBack = { listeners: 1, closed: "fulfilled", fd: -1, closeEvents: 1 };
+  const boom = () => {
+    throw new Error("boom");
+  };
+
+  // One row for each check of an option. `end: -1` is `end: size - 1` for an empty file.
+  it.each([
+    ["createReadStream", { start: -1 }, "ERR_OUT_OF_RANGE"],
+    ["createReadStream", { end: -1 }, "ERR_OUT_OF_RANGE"],
+    ["createReadStream", { start: 5, end: 2 }, "ERR_OUT_OF_RANGE"],
+    ["createReadStream", { highWaterMark: -1 }, "ERR_INVALID_ARG_VALUE"],
+    ["createReadStream", { defaultEncoding: "nope" }, "ERR_UNKNOWN_ENCODING"],
+    ["createReadStream", { encoding: "buffer" }, "ERR_UNKNOWN_ENCODING"],
+    ["createReadStream", { signal: {} }, "ERR_INVALID_ARG_TYPE"],
+    ["createReadStream", { captureRejections: 1 }, "ERR_INVALID_ARG_TYPE"],
+    ["createWriteStream", { flush: 1 }, "ERR_INVALID_ARG_TYPE"],
+    ["createWriteStream", { start: -1 }, "ERR_OUT_OF_RANGE"],
+    ["createWriteStream", { highWaterMark: -1 }, "ERR_INVALID_ARG_VALUE"],
+    ["createWriteStream", { defaultEncoding: "nope" }, "ERR_UNKNOWN_ENCODING"],
+    ["createWriteStream", { signal: {} }, "ERR_INVALID_ARG_TYPE"],
+    ["createWriteStream", { captureRejections: 1 }, "ERR_INVALID_ARG_TYPE"],
+    ["createWriteStream", { encoding: "buffer" }, "ERR_UNKNOWN_ENCODING"],
+  ])("handle.%s(%j)", async (method, options, code) => {
+    await using dir = tempDir("filehandle-stream-throws", { "x.txt": "hello world" });
+    const handle = await open(join(dir, "x.txt"), "r+");
+    expect(await afterThrow(handle, () => handle[method](options))).toEqual({
+      thrown: expect.objectContaining({ code }),
+      ...givenBack,
+    });
+  });
+
+  // `highWaterMark` is checked in Readable / Writable, after the stream took the ref.
+  it.each([
+    ["fs.createReadStream(null, { fd })", fd => fs.createReadStream(null, { fd, highWaterMark: -1 })],
+    ["fs.createWriteStream(null, { fd })", fd => fs.createWriteStream(null, { fd, highWaterMark: -1 })],
+    ["new fs.ReadStream(null, { fd })", fd => new fs.ReadStream(null, { fd, highWaterMark: -1 })],
+    ["new fs.WriteStream(null, { fd })", fd => new fs.WriteStream(null, { fd, highWaterMark: -1 })],
+    ["fs.ReadStream(null, { fd })", fd => fs.ReadStream(null, { fd, highWaterMark: -1 })],
+    ["fs.WriteStream(null, { fd })", fd => fs.WriteStream(null, { fd, highWaterMark: -1 })],
+    ["a subclass of fs.ReadStream", fd => new (class extends fs.ReadStream {})(null, { fd, highWaterMark: -1 })],
+    ["a subclass of fs.WriteStream", fd => new (class extends fs.WriteStream {})(null, { fd, highWaterMark: -1 })],
+    ["handle.readLines()", handle => handle.readLines({ highWaterMark: -1 })],
+  ])("%s", async (_, build) => {
+    await using dir = tempDir("filehandle-stream-throws", { "x.txt": "hello world" });
+    const handle = await open(join(dir, "x.txt"), "r+");
+    expect(await afterThrow(handle, build)).toEqual({
+      thrown: expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+      ...givenBack,
+    });
+  });
+
+  // Code of the caller that runs while the stream takes the ref and adds its listener.
+  describe.each(["ReadStream", "WriteStream"])("fs.%s gives the ref back when", name => {
+    it.each([
+      [
+        "a 'newListener' listener of the handle throws",
+        fd => {
+          fd.once("newListener", boom);
+          new fs[name](null, { fd });
+        },
+      ],
+      [
+        "a `close` getter of a subclass throws",
+        fd =>
+          new (class extends fs[name] {
+            get close() {
+              return boom();
+            }
+          })(null, { fd }),
+      ],
+    ])("%s", async (_, build) => {
+      await using dir = tempDir("filehandle-stream-throws", { "x.txt": "hello world" });
+      const handle = await open(join(dir, "x.txt"), "r+");
+      expect(await afterThrow(handle, build)).toEqual({
+        thrown: expect.objectContaining({ message: "boom" }),
+        ...givenBack,
+      });
+    });
+  });
+
+  // A stream on a path takes nothing from a handle. The error of Readable / Writable is the one thrown.
+  it.each(["createReadStream", "createWriteStream"])("fs.%s(path) throws the same error", async method => {
+    await using dir = tempDir("filehandle-stream-throws", { "x.txt": "hello world" });
+    expect(() => fs[method](join(dir, "x.txt"), { highWaterMark: -1 })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    );
+  });
+
+  it("settles a close() that was pending when the constructor threw", async () => {
+    await using dir = tempDir("filehandle-stream-throws", { "x.txt": "hello world" });
+    const handle = await open(join(dir, "x.txt"), "r+");
+    const read = handle.read(Buffer.alloc(5), 0, 5, 0);
+    const closed = handle.close();
+    expect(() => handle.createReadStream({ highWaterMark: -1 })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    );
+    await read;
+    await closed;
+    expect(handle.fd).toBe(-1);
+  });
+
+  it("leaves a live stream of the same handle as it is", async () => {
+    await using dir = tempDir("filehandle-stream-throws", { "x.txt": "hello world" });
+    const handle = await open(join(dir, "x.txt"), "r+");
+    const live = handle.createReadStream();
+    // The close in `afterThrow` closes the live stream through its listener, and waits for it.
+    const result = await afterThrow(handle, () => handle.createReadStream({ highWaterMark: -1 }));
+    expect({ ...result, liveDestroyed: live.destroyed }).toEqual({
+      thrown: expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+      ...givenBack,
+      listeners: 2,
+      liveDestroyed: true,
+    });
+  });
+
+  it("lets the next stream of the same handle read the file and close the handle", async () => {
+    await using dir = tempDir("filehandle-stream-throws", { "x.txt": "hello world" });
+    const handle = await open(join(dir, "x.txt"), "r+");
+    let thrown;
+    try {
+      handle.createReadStream({ highWaterMark: -1 });
+    } catch (err) {
+      thrown = err;
+    }
+    const text = await handle
+      .createReadStream({ encoding: "utf8" })
+      .toArray()
+      .then(
+        chunks => chunks.join(""),
+        err => err,
+      );
+    const closed = await handle.close().then(
+      () => "fulfilled",
+      err => err,
+    );
+    expect({ thrown, text, closed, fd: handle.fd }).toEqual({
+      thrown: expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+      text: "hello world",
+      closed: "fulfilled",
+      fd: -1,
+    });
+  });
+
+  // Plain inheritance lets the caller keep a stream whose constructor threw. The handle can then close the
+  // descriptor, and another file can get its number.
+  it("leaves no descriptor number in a stream that the caller kept", async () => {
+    await using dir = tempDir("filehandle-stream-throws", { "x.txt": "hello world", "other.txt": "other" });
+    const handle = await open(join(dir, "x.txt"), "r+");
+    const stream = Object.create(fs.WriteStream.prototype);
+    const result = await afterThrow(handle, fd => fs.WriteStream.call(stream, null, { fd, encoding: "buffer" }));
+    // The lowest free number is the number that the handle had.
+    const other = fs.openSync(join(dir, "other.txt"), "r+");
+    const { promise: written, resolve } = Promise.withResolvers();
+    try {
+      stream.write("zombie", resolve);
+    } catch (err) {
+      resolve(err);
+    }
+    const writeError = await written;
+    fs.closeSync(other);
+    expect({
+      ...result,
+      streamFd: stream.fd,
+      writeError,
+      other: fs.readFileSync(join(dir, "other.txt"), "utf8"),
+    }).toEqual({
+      thrown: expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING" }),
+      ...givenBack,
+      streamFd: -1,
+      writeError: expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
+      other: "other",
+    });
+  });
+
+  it.each(["createReadStream", "createWriteStream"])("handle.%s() keeps `fd` as its first property", async method => {
+    await using dir = tempDir("filehandle-stream-throws", { "x.txt": "hello world" });
+    await using handle = await open(join(dir, "x.txt"), "r+");
+    expect(Object.keys(handle[method]())[0]).toBe("fd");
+  });
+
+  // The listener runs while the stream adds its own 'close' listener. The stream holds its ref by then.
+  it("takes the ref before code of the caller can close the handle", async () => {
+    await using dir = tempDir("filehandle-stream-throws", { "x.txt": "hello world" });
+    const handle = await open(join(dir, "x.txt"), "r+");
+    let closed;
+    handle.once("newListener", () => {
+      closed = handle.close();
+    });
+    const text = await handle
+      .createReadStream({ encoding: "utf8" })
+      .toArray()
+      .then(
+        chunks => chunks.join(""),
+        err => err,
+      );
+    const listenerRan = closed !== undefined;
+    await (closed ?? handle.close());
+    expect({ listenerRan, text, fd: handle.fd }).toEqual({ listenerRan: true, text: "hello world", fd: -1 });
+  });
+
+  // The `aborted` getter runs in Readable and closes the handle: the stream gives its ref back there.
+  it("does not give the ref back a second time", async () => {
+    await using dir = tempDir("filehandle-stream-throws", { "x.txt": "hello world" });
+    const handle = await open(join(dir, "x.txt"), "r+");
+    const read = handle.read(Buffer.alloc(5), 0, 5, 0);
+    let closed;
+    const signal = {
+      get aborted() {
+        closed = handle.close();
+        return boom();
+      },
+    };
+    let thrown;
+    try {
+      handle.createReadStream({ signal });
+    } catch (err) {
+      thrown = err;
+    }
+    // The read still holds its ref, so the descriptor stays open until the read ends.
+    const openDuringRead = handle.fd !== -1;
+    const bytesRead = await read.then(
+      result => result.bytesRead,
+      err => err,
+    );
+    await (closed ?? handle.close());
+    expect({ thrown, openDuringRead, bytesRead, fd: handle.fd }).toEqual({
+      thrown: expect.objectContaining({ message: "boom" }),
+      openDuringRead: true,
+      bytesRead: 5,
+      fd: -1,
+    });
+  });
+
+  // Readable adds an abort listener before it checks `captureRejections`, so the signal can destroy the stream later.
+  it("does not close the handle when the signal of the stream aborts later", async () => {
+    await using dir = tempDir("filehandle-stream-throws", { "x.txt": "hello world" });
+    await using handle = await open(join(dir, "x.txt"), "r+");
+    // Plain inheritance keeps the stream in reach, so that its AbortError has a listener.
+    const stream = Object.create(fs.ReadStream.prototype);
+    const onError = jest.fn();
+    const { promise: streamClosed, resolve } = Promise.withResolvers();
+    stream.on("error", onError).on("close", resolve);
+    const controller = new AbortController();
+    expect(() =>
+      fs.ReadStream.call(stream, null, { fd: handle, signal: controller.signal, captureRejections: 1 }),
+    ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    controller.abort();
+    await streamClosed;
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ code: "ABORT_ERR" }));
+    expect((await handle.stat()).isFile()).toBe(true);
+  });
+});
+
 it("fail()/end() with autoClose defer the close past an in-flight write", async () => {
   await using dir = tempDir("writer-teardown", { "a.bin": "", "b.bin": "" });
   // fail() while a large write is on the threadpool must not close the fd

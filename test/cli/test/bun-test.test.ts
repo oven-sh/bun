@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
-import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 
 describe("bun test", () => {
@@ -1994,6 +1994,69 @@ describe.concurrent("--react-compiler", () => {
     const result = await compiled({ "bunfig.toml": `[test]\n${config}` }, args);
     expect(result.compiled).toBe(expected);
     expect(result.exitCode).toBe(0);
+  });
+
+  describe("in a workspace, run from apps/web", () => {
+    const workspace = {
+      ...Object.fromEntries(Object.entries(files).filter(([path]) => path.startsWith("node_modules/react/"))),
+      "apps/web/Root.tsx": component("Root"),
+      "apps/web/src/Local.tsx": component("Local"),
+      "apps/web/test/Helper.tsx": component("Helper"),
+      "packages/ui/Ui.tsx": component("Ui"),
+      "packages/ui2/Ui2.tsx": component("Ui2"),
+      "packages/linked/package.json": JSON.stringify({ name: "linked", main: "./index.tsx" }),
+      "packages/linked/index.tsx": component("Linked"),
+      "apps/web/node_modules/.keep": "",
+      "apps/web/where.test.tsx": `
+        import { test } from "bun:test";
+        import { Linked } from "linked";
+        import { Ui } from "../../packages/ui/Ui";
+        import { Ui2 } from "../../packages/ui2/Ui2";
+        import { Root } from "./Root";
+        import { Local } from "./src/Local";
+        import { Helper } from "./test/Helper";
+        test("which are compiled", () => {
+          const all = { Root, Local, Helper, Ui, Ui2, Linked };
+          ${printCompiled}
+        });
+      `,
+    };
+    const inWeb = "Root Local Helper";
+    test.each([
+      ["a package linked into node_modules is compiled", `true`, `${inWeb} Ui Ui2 Linked`],
+      ["a linked package is included by its real path", `["../../packages/linked"]`, "Linked"],
+      [`"." is the run directory`, `["."]`, inWeb],
+      [`"../../apps/web" is the run directory too`, `["../../apps/web"]`, inWeb],
+      ["a path that goes up and back down into the run directory", `["../../apps/web/src/"]`, "Local"],
+      ["a folder above the run directory includes it", `["../.."]`, `${inWeb} Ui Ui2 Linked`],
+      ["an absolute path", `["<dir>/apps/web/src"]`, "Local"],
+      [
+        "exclude with a path that goes up and back down",
+        `{ exclude = ["../../apps/web/test", "../../packages"] }`,
+        "Root Local",
+      ],
+      ["a folder doesn't match a sibling whose name starts the same", `["../../packages/ui"]`, "Ui"],
+      ["a pattern reaches outside the run directory", `{ exclude = ["**/U*.tsx"] }`, `${inWeb} Linked`],
+      ["a pattern that goes up and back down only matches inside that folder", `["../../apps/web/**/*.tsx"]`, inWeb],
+    ])("%s", async (_, config, expected) => {
+      using dir = tempDir("react-compiler-workspace", workspace);
+      const root = String(dir).replaceAll("\\", "/");
+      symlinkSync(join(String(dir), "packages/linked"), join(String(dir), "apps/web/node_modules/linked"), "junction");
+      await Bun.write(
+        join(String(dir), "apps/web/bunfig.toml"),
+        `[test]\nreactCompiler = ${config.replace("<dir>", root)}`,
+      );
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "./where.test.tsx"],
+        cwd: join(String(dir), "apps/web"),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.match(/compiled: (.*)/)?.[1] ?? stderr).toBe(expected);
+      expect(exitCode).toBe(0);
+    });
   });
 
   // The fifth is OptOut.tsx: the compiler still has to read it to find out there is nothing to compile.

@@ -984,21 +984,46 @@ impl JunitReporter {
 /// would before exiting; the vendored-node-test runner opts in via
 /// `BUN_TEST_DRAIN_EVENT_LOOP=1` so mustCall()-style exit checks see
 /// completed async work. Off by default: bun suites keep exit-after-tests.
+/// An entry of `include` or `exclude`.
+struct ReactCompilerEntry {
+    /// As written. A pattern like "**/*.stories.tsx" is matched against the file's path relative to the run directory.
+    written: Box<[u8]>,
+    /// Resolved against the run directory, so that ".", "../../apps/web" and "../.." mean the folders they point to.
+    absolute: Box<[u8]>,
+}
+
+fn with_forward_slashes(path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    use std::borrow::Cow;
+    if cfg!(windows) {
+        let replaced = path.iter().map(|&b| if b == b'\\' { b'/' } else { b });
+        Cow::Owned(replaced.collect())
+    } else {
+        Cow::Borrowed(path)
+    }
+}
+
 /// Leaked on purpose: every thread's transpiler calls it until the process exits.
 fn react_compiler_filter(
     scope: &ReactCompilerScope,
     root: &'static [u8],
 ) -> &'static (dyn Fn(&[u8]) -> bool + Sync) {
-    let patterns = |patterns: &[Box<[u8]>]| -> Vec<Box<[u8]>> {
-        patterns
+    let entries = |written: &[Box<[u8]>]| -> Vec<ReactCompilerEntry> {
+        written
             .iter()
-            .map(|pattern| {
-                let pattern = pattern.strip_prefix(b"./").unwrap_or(pattern);
-                Box::from(pattern.strip_suffix(b"/").unwrap_or(pattern))
+            .map(|written| {
+                let written: &[u8] = written;
+                let absolute =
+                    resolve_path::join_abs_string::<bun_path::platform::Auto>(root, &[written]);
+                let absolute = with_forward_slashes(absolute);
+                let written = written.strip_prefix(b"./").unwrap_or(written);
+                ReactCompilerEntry {
+                    written: Box::from(written),
+                    absolute: Box::from(absolute.strip_suffix(b"/").unwrap_or(&absolute)),
+                }
             })
             .collect()
     };
-    let (include, exclude) = (patterns(&scope.include), patterns(&scope.exclude));
+    let (include, exclude) = (entries(&scope.include), entries(&scope.exclude));
     Box::leak(Box::new(move |path: &[u8]| {
         // The original of a mocked module is loaded as "file.ts?actual".
         let path = &path[..strings::index_of_char(path, b'?').map_or(path.len(), |at| at as usize)];
@@ -1010,23 +1035,16 @@ fn react_compiler_filter(
         {
             return false;
         }
-        let relative = bun_paths::resolve_path::relative(root, path);
-        #[cfg(windows)]
-        let with_slashes: Vec<u8> = relative
-            .iter()
-            .map(|&byte| if byte == b'\\' { b'/' } else { byte })
-            .collect();
-        #[cfg(windows)]
-        let relative = with_slashes.as_slice();
-        // A folder matches everything inside it.
-        let matches = |pattern: &[u8]| {
-            relative
-                .strip_prefix(pattern)
+        let relative = with_forward_slashes(resolve_path::relative(root, path));
+        let path = with_forward_slashes(path);
+        let matches = |entry: &ReactCompilerEntry| {
+            // A folder matches everything inside it.
+            path.strip_prefix(&*entry.absolute)
                 .is_some_and(|rest| rest.is_empty() || rest[0] == b'/')
-                || bun_glob::r#match(pattern, relative).matches()
+                || bun_glob::r#match(&entry.written, &relative).matches()
+                || bun_glob::r#match(&entry.absolute, &path).matches()
         };
-        (include.is_empty() || include.iter().any(|pattern| matches(pattern)))
-            && !exclude.iter().any(|pattern| matches(pattern))
+        (include.is_empty() || include.iter().any(matches)) && !exclude.iter().any(matches)
     }))
 }
 

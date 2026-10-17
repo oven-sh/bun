@@ -149,6 +149,10 @@ include = ["src", "packages/ui"]
 exclude = ["**/*.stories.*", "**/__mocks__/**"]
 ```
 
+- A folder includes everything inside it. `"."` is the directory you run `bun test` in, and `"../../packages/ui"` is a folder outside of it.
+- A glob pattern is matched against the file's path relative to that directory. `**` also matches `..`, so `**/*.stories.*` applies to the folders outside of it too.
+- A workspace package that is linked into `node_modules` is compiled. List it by its real path, like `"../../packages/ui"`.
+
 The `--react-compiler` flag turns the compiler on for one run. It compiles what `bunfig.toml` includes, or every file if `bunfig.toml` doesn't say.
 
 - What `importOriginal()` and `vi.importActual()` load is compiled like any other import of that file.

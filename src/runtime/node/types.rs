@@ -1583,6 +1583,19 @@ impl FileSystemFlags {
             .throw())
     }
 
+    /// Node's `options.flag || default` in writeFile and appendFile: https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L2343
+    #[inline]
+    pub(crate) fn from_js_or_default(
+        ctx: &JSGlobalObject,
+        val: JSValue,
+        default: FileSystemFlags,
+    ) -> JsResult<FileSystemFlags> {
+        if val.is_falsey() {
+            return Ok(default);
+        }
+        Ok(Self::from_js(ctx, val)?.unwrap_or(default))
+    }
+
     /// Equivalent of GetValidFileMode, which is used to implement fs.access and copyFile
     pub(crate) fn from_js_number_only(
         global: &JSGlobalObject,

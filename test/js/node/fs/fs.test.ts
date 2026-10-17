@@ -830,6 +830,283 @@ describe("appendFile honors an explicit 'w' flag", () => {
   });
 });
 
+// Node takes a falsy `flag` as not given: `options.flag || 'w'` in writeFile and
+// writeFileSync, `!options.flag` in appendFile and appendFileSync, and
+// `options.flag || 'r'` in fs.promises.readFile. The idiom `{ flag: append && "a" }`
+// depends on it. fs.readFileSync, fs.readFile and fs.open pass the flag on as it is.
+describe("a falsy flag option means the default flag", () => {
+  const falsy: [string, any][] = [
+    ["false", false],
+    ["zero", 0],
+    ["negative zero", -0],
+    ["NaN", NaN],
+    ["0n", 0n],
+    ["empty string", ""],
+    ["null", null],
+    ["undefined", undefined],
+  ];
+  const forEveryFalsyFlag = (value: string) => Object.fromEntries(falsy.map(([label]) => [label, value]));
+
+  // Resolves with what the callback received. A synchronous throw is not caught.
+  const viaCallback = (run: (callback: (err: NodeJS.ErrnoException | null) => void) => void) => {
+    const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException | null>();
+    run(resolve);
+    return promise;
+  };
+  const orThrow = async (result: Promise<NodeJS.ErrnoException | null>) => {
+    const err = await result;
+    if (err) throw err;
+  };
+
+  // Each write form writes "new". Each append form writes "+".
+  type Writer = (target: any, options: any) => unknown;
+  const writers: [string, "write" | "append", Writer][] = [
+    ["fs.writeFileSync", "write", (target, options) => fs.writeFileSync(target, "new", options)],
+    ["fs.appendFileSync", "append", (target, options) => fs.appendFileSync(target, "+", options)],
+    [
+      "fs.writeFile",
+      "write",
+      (target, options) => orThrow(viaCallback(cb => fs.writeFile(target, "new", options, cb))),
+    ],
+    [
+      "fs.appendFile",
+      "append",
+      (target, options) => orThrow(viaCallback(cb => fs.appendFile(target, "+", options, cb))),
+    ],
+    ["util.promisify(fs.writeFile)", "write", (target, options) => promisify(fs.writeFile)(target, "new", options)],
+    ["util.promisify(fs.appendFile)", "append", (target, options) => promisify(fs.appendFile)(target, "+", options)],
+    ["fs.promises.writeFile", "write", (target, options) => promises.writeFile(target, "new", options)],
+    ["fs.promises.appendFile", "append", (target, options) => promises.appendFile(target, "+", options)],
+  ];
+
+  it.each(writers)("%s with a path", async (_name, kind, write) => {
+    using dir = tempDir("fs-falsy-flag", {});
+    const file = join(String(dir), "f.txt");
+    const results: Record<string, string> = {};
+    for (const [label, flag] of falsy) {
+      // Longer than "new": the default flag of a write form truncates.
+      writeFileSync(file, "old content");
+      try {
+        await write(file, { flag });
+        results[label] = readFileSync(file, "utf8");
+      } catch (e: any) {
+        results[label] = `${e.code}, the file holds ${readFileSync(file, "utf8")}`;
+      }
+    }
+    expect(results).toEqual(forEveryFalsyFlag(kind === "write" ? "new" : "old content+"));
+  });
+
+  it.each(writers)("%s with an fd or a FileHandle", async (name, kind, write) => {
+    using dir = tempDir("fs-falsy-flag-fd", {});
+    const file = join(String(dir), "f.txt");
+    const openFlags = kind === "write" ? "r+" : "a";
+    const results: Record<string, string> = {};
+    for (const [label, flag] of falsy) {
+      writeFileSync(file, "old");
+      const handle = name.startsWith("fs.promises.") ? await promises.open(file, openFlags) : undefined;
+      const fd = handle ? undefined : openSync(file, openFlags);
+      try {
+        await write(handle ?? fd, { flag });
+        results[label] = readFileSync(file, "utf8");
+      } catch (e: any) {
+        results[label] = `${e.code}, the file holds ${readFileSync(file, "utf8")}`;
+      } finally {
+        if (fd !== undefined) closeSync(fd);
+        await handle?.close();
+      }
+    }
+    expect(results).toEqual(forEveryFalsyFlag(kind === "write" ? "new" : "old+"));
+  });
+
+  it("flag 0 creates a missing file and truncates an existing one", () => {
+    using dir = tempDir("fs-flag-zero", { "existing.txt": "old" });
+    const written = join(String(dir), "written.txt");
+    const appended = join(String(dir), "appended.txt");
+    const existing = join(String(dir), "existing.txt");
+    const options: any = { flag: 0 };
+    fs.writeFileSync(written, "new", options);
+    fs.appendFileSync(appended, "+", options);
+    fs.writeFileSync(existing, "", options);
+    expect({
+      written: readFileSync(written, "utf8"),
+      appended: readFileSync(appended, "utf8"),
+      existing: readFileSync(existing, "utf8"),
+    }).toEqual({ written: "new", appended: "+", existing: "" });
+  });
+
+  it("a flag that is not falsy and not valid still fails with ERR_INVALID_ARG_VALUE", async () => {
+    using dir = tempDir("fs-invalid-flag", { "f.txt": "old" });
+    const file = join(String(dir), "f.txt");
+    const invalid: [string, any][] = [
+      ["true", true],
+      ["'bogus'", "bogus"],
+      ["{}", {}],
+      ["[]", []],
+      ["new String('')", new String("")],
+      ["new Number(0)", new Number(0)],
+      ["new Boolean(false)", new Boolean(false)],
+    ];
+    const thrown = (run: () => unknown) => {
+      try {
+        run();
+        return "returns";
+      } catch (e: any) {
+        return `throws ${e.name} ${e.code}`;
+      }
+    };
+    const rejected = (promise: Promise<unknown>) =>
+      promise.then(
+        () => "resolves",
+        (e: any) => `rejects ${e.name} ${e.code}`,
+      );
+    const results: Record<string, Record<string, string>> = {};
+    for (const [label, flag] of invalid) {
+      results[label] = {
+        "fs.writeFileSync": thrown(() => fs.writeFileSync(file, "new", { flag })),
+        "fs.appendFileSync": thrown(() => fs.appendFileSync(file, "+", { flag })),
+        "fs.writeFile": thrown(() => fs.writeFile(file, "new", { flag }, () => {})),
+        "fs.appendFile": thrown(() => fs.appendFile(file, "+", { flag }, () => {})),
+        "fs.promises.writeFile": await rejected(promises.writeFile(file, "new", { flag })),
+        "fs.promises.appendFile": await rejected(promises.appendFile(file, "+", { flag })),
+        "fs.promises.readFile": await rejected(promises.readFile(file, { flag })),
+      };
+    }
+    const strict = {
+      "fs.writeFileSync": "throws TypeError ERR_INVALID_ARG_VALUE",
+      "fs.appendFileSync": "throws TypeError ERR_INVALID_ARG_VALUE",
+      "fs.writeFile": "throws TypeError ERR_INVALID_ARG_VALUE",
+      "fs.appendFile": "throws TypeError ERR_INVALID_ARG_VALUE",
+      "fs.promises.writeFile": "rejects TypeError ERR_INVALID_ARG_VALUE",
+      "fs.promises.appendFile": "rejects TypeError ERR_INVALID_ARG_VALUE",
+      "fs.promises.readFile": "rejects TypeError ERR_INVALID_ARG_VALUE",
+    };
+    expect(results).toEqual(Object.fromEntries(invalid.map(([label]) => [label, strict])));
+    expect(readFileSync(file, "utf8")).toBe("old");
+  });
+
+  it("an aborted signal is reported for a call with a falsy flag", async () => {
+    using dir = tempDir("fs-falsy-flag-abort", { "f.txt": "old" });
+    const file = join(String(dir), "f.txt");
+    const options: any = { flag: false, signal: AbortSignal.abort() };
+    const rejectionName = (promise: Promise<unknown>) =>
+      promise.then(
+        () => "resolves",
+        (e: any) => e.name,
+      );
+    expect({
+      "fs.writeFile": (await viaCallback(cb => fs.writeFile(file, "new", options, cb)))?.name,
+      "fs.appendFile": (await viaCallback(cb => fs.appendFile(file, "+", options, cb)))?.name,
+      "fs.promises.writeFile": await rejectionName(promises.writeFile(file, "new", options)),
+      "fs.promises.appendFile": await rejectionName(promises.appendFile(file, "+", options)),
+      "fs.promises.readFile": await rejectionName(promises.readFile(file, options)),
+    }).toEqual({
+      "fs.writeFile": "AbortError",
+      "fs.appendFile": "AbortError",
+      "fs.promises.writeFile": "AbortError",
+      "fs.promises.appendFile": "AbortError",
+      "fs.promises.readFile": "AbortError",
+    });
+    expect(readFileSync(file, "utf8")).toBe("old");
+  });
+
+  it("an invalid data or flush argument is reported for a call with a falsy flag", () => {
+    using dir = tempDir("fs-falsy-flag-args", { "f.txt": "old" });
+    const file = join(String(dir), "f.txt");
+    const data: any = 123;
+    const flush: any = "yes";
+    expect(() => fs.writeFileSync(file, data, { flag: false as any })).toThrowWithCode(
+      TypeError,
+      "ERR_INVALID_ARG_TYPE",
+    );
+    expect(() => fs.appendFileSync(file, data, { flag: false as any })).toThrowWithCode(
+      TypeError,
+      "ERR_INVALID_ARG_TYPE",
+    );
+    expect(() => fs.writeFileSync(file, "new", { flag: false as any, flush })).toThrowWithCode(
+      TypeError,
+      "ERR_INVALID_ARG_TYPE",
+    );
+    expect(readFileSync(file, "utf8")).toBe("old");
+  });
+
+  it.each([false, "r+"])("reads a %p options.flag once per call, from a frozen options object", async value => {
+    using dir = tempDir("fs-falsy-flag-getter", { "f.txt": "old" });
+    const file = join(String(dir), "f.txt");
+    let reads = 0;
+    const options: any = Object.freeze({
+      get flag() {
+        reads++;
+        return value;
+      },
+    });
+    const count = async (run: () => unknown) => {
+      reads = 0;
+      await run();
+      return reads;
+    };
+    expect({
+      "fs.writeFileSync": await count(() => fs.writeFileSync(file, "new", options)),
+      "fs.appendFileSync": await count(() => fs.appendFileSync(file, "+", options)),
+      "fs.writeFile": await count(() => orThrow(viaCallback(cb => fs.writeFile(file, "new", options, cb)))),
+      "fs.appendFile": await count(() => orThrow(viaCallback(cb => fs.appendFile(file, "+", options, cb)))),
+      "fs.promises.writeFile": await count(() => promises.writeFile(file, "new", options)),
+      "fs.promises.appendFile": await count(() => promises.appendFile(file, "+", options)),
+      "fs.promises.readFile": await count(() => promises.readFile(file, options)),
+      "fs.promises.writeFile with iterable data": await count(() => promises.writeFile(file, ["new"], options)),
+    }).toEqual({
+      "fs.writeFileSync": 1,
+      "fs.appendFileSync": 1,
+      "fs.writeFile": 1,
+      "fs.appendFile": 1,
+      "fs.promises.writeFile": 1,
+      "fs.promises.appendFile": 1,
+      "fs.promises.readFile": 1,
+      "fs.promises.writeFile with iterable data": 1,
+    });
+  });
+
+  it("fs.promises.readFile and FileHandle.readFile read with a falsy flag", async () => {
+    using dir = tempDir("fs-falsy-flag-read", { "f.txt": "old" });
+    const file = join(String(dir), "f.txt");
+    const results: Record<string, string> = {};
+    for (const [label, flag] of falsy) {
+      results[label] = await promises.readFile(file, { encoding: "utf8", flag }).catch(e => e.code);
+    }
+    expect(results).toEqual(forEveryFalsyFlag("old"));
+
+    const handle = await promises.open(file, "r");
+    try {
+      expect(await handle.readFile({ encoding: "utf8", flag: false as any })).toBe("old");
+    } finally {
+      await handle.close();
+    }
+
+    // A flag that is not falsy still reaches the open call.
+    const missing = join(String(dir), "missing.txt");
+    expect(await promises.readFile(missing, { encoding: "utf8", flag: "a+" })).toBe("");
+    expect(existsSync(missing)).toBe(true);
+    await expect(promises.readFile(file, { flag: "ax+" })).rejects.toMatchObject({ code: "EEXIST" });
+  });
+
+  it("fs.readFileSync, fs.readFile and fs.openSync still reject false, NaN and 0n", async () => {
+    using dir = tempDir("fs-strict-read-flag", { "f.txt": "old" });
+    const file = join(String(dir), "f.txt");
+    const flag = (value: unknown): any => ({ flag: value });
+    expect(() => readFileSync(file, flag(false))).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
+    expect(() => readFileSync(file, flag(NaN))).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
+    expect(() => readFileSync(file, flag(0n))).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
+    expect(() => fs.readFile(file, flag(false), () => {})).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
+    expect(() => fs.readFile(file, flag(NaN), () => {})).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
+    expect(() => fs.readFile(file, flag(0n), () => {})).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
+    await expect(promisify(fs.readFile)(file, flag(false))).rejects.toMatchObject({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_VALUE",
+    });
+    const falseFlag: any = false;
+    expect(() => openSync(file, falseFlag)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
+  });
+});
+
 // A write that dies partway through must not leave the old tail sitting behind
 // the bytes that did land. `ulimit -f 1` gives the child a 512 byte RLIMIT_FSIZE,
 // and Linux's generic_write_checks() then clamps the write to the limit and fails

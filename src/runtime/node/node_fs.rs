@@ -4260,8 +4260,8 @@ pub(crate) mod args {
                     encoding = Encoding::assert(arg, ctx, encoding)?;
                 } else if arg.is_object() {
                     encoding = get_encoding(arg, ctx, encoding)?;
-                    if let Some(flag_) = arg.get_truthy(ctx, "flag")? {
-                        flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
+                    if let Some(flag_) = arg.get(ctx, "flag")? {
+                        flag = FileSystemFlags::from_js_or_default(ctx, flag_, flag)?;
                     }
                     if let Some(mode_) = arg.get_truthy(ctx, "mode")? {
                         mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);

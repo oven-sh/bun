@@ -307,9 +307,16 @@ const exports = {
   read: asyncWrap(fs.read, "read"),
   write: asyncWrap(fs.write, "write"),
   readdir: asyncWrap(fs.readdir, "readdir"),
-  readFile: async function (fileHandleOrFdOrPath, ...args) {
+  readFile: async function (fileHandleOrFdOrPath, options) {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
-    return _readFile(fileHandleOrFdOrPath, ...args);
+    if (typeof options === "object" && options !== null) {
+      const flag = options.flag;
+      if (flag !== undefined) {
+        // Node: `options.flag || 'r'` https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/promises.js#L1928
+        options = { encoding: options.encoding, signal: options.signal, flag: flag || "r" };
+      }
+    }
+    return _readFile(fileHandleOrFdOrPath, options);
   },
   writeFile: async function (fileHandleOrFdOrPath, ...args: TailParameters<typeof _writeFile>) {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
@@ -1614,7 +1621,8 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
   let signal: AbortSignal | null = null;
   if (typeof optionsOrEncoding === "object") {
     encoding = optionsOrEncoding?.encoding ?? (encoding || "utf8");
-    flag = optionsOrEncoding?.flag ?? (flag || "w");
+    // Node: `options.flag || 'w'` https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/promises.js#L1889
+    flag = optionsOrEncoding?.flag || "w";
     mode = optionsOrEncoding?.mode ?? (mode || 0o666);
     signal = optionsOrEncoding?.signal ?? null;
     if (signal?.aborted) {

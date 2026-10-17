@@ -639,7 +639,7 @@ impl NetworkTask {
                         log,
                         !is_optional,
                         format_args!(
-                            "Invalid package name {}: manifest URL {} is not on registry {}",
+                            "invalid package name {}: manifest URL {} is not on registry {}",
                             quote(name),
                             quote(&redacted_url(&url_bytes)),
                             quote(&redacted_url(scope.url.href())),

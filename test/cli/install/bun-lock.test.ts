@@ -5649,7 +5649,7 @@ describe.each(["hoisted", "isolated"] as const)(
           const before = await lock();
           const { out, err, code } = await bun("install", "--frozen-lockfile");
           expect(err.split("\n").filter(Boolean)).toEqual([
-            "warn: the dependencies in vendor/vdir/package.json changed since the lockfile was saved (run 'bun install' to update it)",
+            "warn: dependencies in vendor/vdir/package.json changed since lockfile was saved (run 'bun install')",
           ]);
           expect(await lock()).toBe(before);
           expect({ out, err, code }).toMatchObject({ code: 0 });

@@ -75,7 +75,7 @@ fn unreadable_config(
                 .at_least(bun_ast::Level::Warn)
         {
             bun_core::warn!(
-                "{}\nThe settings in <b>{}<r> are not applied.",
+                "{}\nignoring settings in <b>{}<r>",
                 err,
                 BStr::new(config_path),
             );

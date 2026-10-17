@@ -63,13 +63,39 @@ which is otherwise the number of arguments up to the last that is not written
 the ones TypeScript lets a caller leave out.
 
 Nothing else is written by hand, except once per crate: `src/<crate>/generated_bindgen.rs`
-includes the generated file, and the crate root declares `mod generated_bindgen`. If the
-Rust signature does not match the schema, the generated code does not compile.
+includes the generated file, the crate root declares `mod generated_bindgen`, and a
+`build.rs` like `src/semver_jsc/build.rs` says where the generated file is, for a `cargo check`
+outside of `bun bd`. If the Rust signature does not match the schema, the generated code does
+not compile.
 
 To reach the function:
 
 - from `src/js`: `$bindgen("bindgen_test.bind.ts", "add")`, which is typed from the schema;
 - from a C++ static property table: `Bun::Bindgen::Generated::BindgenTest::jsAdd` in `GeneratedBindgenTest.h`.
+
+### Namespaces
+
+`b.namespace` is a plain object that holds functions, like `Bun.semver`. Each is written as
+the argument of `b.fn` is:
+
+```ts src/semver_jsc/SemverObject.bind.ts icon="/icons/typescript.svg"
+export const semver = b.namespace({
+  satisfies: {
+    args: { version: b.string.loose.utf8, range: b.string.loose.utf8 },
+    returns: b.bool,
+    throws: true,
+  },
+  order: { .. },
+});
+```
+
+`Bun::Bindgen::Generated::SemverObject::createSemver` makes the object. It has the signature of
+a `PropertyCallback` of a static property table, so the object is made when the property is
+first read.
+
+A namespace that can itself be called, like `Bun.hash`, names the function that a call runs:
+`b.namespace({ wyhash: { .. }, crc32: { .. } }, { call: "wyhash" })`. The object is then a
+function named after the namespace.
 
 ### What a function may do: `capability`
 
@@ -91,9 +117,24 @@ The compiler holds a body to its capability as far as this API goes. The older A
 other ways to a `&JSGlobalObject` (`VirtualMachine::get().global()`), and a body that
 takes one of those to run JavaScript has stepped around the check.
 
+Much of the older API takes a `&JSGlobalObject` only to allocate or to throw. A `"heap"`
+function calls it with `heap.global()`, which is `unsafe`: nothing the global object is passed
+to may run JavaScript, and the compiler cannot see that. Read what is called all the way down
+before writing the `SAFETY` comment. `ToString` of an object, a property that is looked up or
+set and not defined, and a call to a constructor found on the global object all run JavaScript.
+Throwing tells the debugger, which can run code, so after a throw the body returns without
+reading what it borrowed.
+
+```rust
+// SAFETY: parsing runs no JavaScript. Nor does making the result: its keys are primitives, and its properties are
+// defined and not set.
+let global = unsafe { heap.global() };
+```
+
 `throws: true` makes the return type a `Result`. The error is a
 `bindgen::Error<'a>`, made by `heap.error(..)`, `heap.type_error(..)`,
-`heap.range_error(..)` or `bindgen::Error::from_value(value)`, or any type that
+`heap.range_error(..)`, `heap.error_with_code(ErrorCode::OUT_OF_RANGE, ..)`, `heap.invalid_arguments(..)` or
+`bindgen::Error::from_value(value)` (`?` makes one of a `JsError` or an `AllocError`), or any type that
 implements `bindgen::IntoError` (`bun_sys::Error`, `SystemError`, `JsError` and a `Box` of
 one do), which lets a `capability: "none"` function fail too.
 
@@ -109,7 +150,7 @@ own Rust function, which gets exactly the types of that signature:
 ```ts
 export const read = b.overloads(
   { args: { path: b.string.utf8, options: ReadOptions.optional }, rustPath: "crate::read_path" },
-  { args: { fd: b.i32, buffer: b.bufferSource.bytes, offset: b.u32.default(0) }, rustPath: "crate::read_fd" },
+  { args: { fd: b.i32, buffer: b.bytes({ from: ["buffer"] }), offset: b.u32.default(0) }, rustPath: "crate::read_fd" },
 );
 ```
 
@@ -134,7 +175,7 @@ an error when the schema is loaded.
 ## Types
 
 Conversions are strict unless the schema says otherwise: `b.i32` takes a number
-or BigInt that is an integer in range, and nothing else. A failed strict or
+that is an integer in range, and nothing else. A failed strict or
 `.validateInteger` conversion, or a `.loose` one of an integer, throws
 `ERR_INVALID_ARG_TYPE` or `ERR_OUT_OF_RANGE` naming the argument or the dictionary
 member; `.wrap`, `.enforceRange` and the other `.loose` conversions throw what WebIDL does. An argument that was not passed is `undefined` and is converted like
@@ -143,40 +184,50 @@ any other: nothing looks at how many there are.
 | Schema                                           | Rust, as an argument             | Takes                                                         |
 | ------------------------------------------------ | -------------------------------- | ------------------------------------------------------------- |
 | `b.bool`                                         | `bool`                           | a boolean; `.loose` is `ToBoolean`                            |
-| `b.u8` `b.u16` `b.u32` `b.u64` `b.usize` `b.i32` | the same                         | a number or BigInt that is an integer in range; see below     |
-| `b.f64`                                          | `f64`                            | a number                                                      |
+| `b.u8` `b.u16` `b.u32` `b.u64` `b.usize` `b.i32` | the same                         | a number that is an integer in range; see below               |
+| `b.f64`                                          | `f64`                            | a number; `.loose` is `ToNumber`; see below                   |
 | `b.string`                                       | `bun_core::String`               | a string; `.loose` is `ToString`                              |
 | `b.string.utf8`                                  | `&'a [u8]`                       | the same, and a `String` object                               |
 | `b.string.utf8.owned`                            | `bun_core::Utf8Bytes<'static>`   | as `b.string.utf8`                                            |
 | `b.bufferSource`                                 | `JsLocal<'a, BufferSource>`      | a typed array, `DataView` or `ArrayBuffer` that is not shared |
-| `b.bufferSource.bytes`                           | `&'a [u8]`                       | the same; see [Buffers](#buffers)                             |
 | `b.bufferSource.arrayBuffer`                     | `ExternalShared<JSCArrayBuffer>` | the same; the bytes of a view are copied                      |
+| `b.bytes(options)`                               | `&'a [u8]`, and others           | see [Bytes](#bytes)                                           |
 | `b.blob`                                         | `ExternalShared<Blob>`           | a `Blob`                                                      |
 | `b.any`                                          | `JsLocal<'a>`                    | anything                                                      |
 | `b.null`                                         | `()`                             | `null` or `undefined`; only in a union                        |
-| `b.array(T)`                                     | `Vec<T>`                         | an array                                                      |
+| `b.array(T)`                                     | `Vec<T>`                         | an array; `T` holds no JS value, which the GC would not see   |
 | `b.enumeration(values)`                          | a generated `enum`               | one of the strings                                            |
 | `b.dictionary(members)`                          | a generated `struct`             | an object that is not an array                                |
 | `b.union(alternatives)`                          | a generated `enum`               | see [Unions and kinds](#unions-and-kinds)                     |
 | `b.class(options)`                               | `JsWrapper<'a, T>`               | an instance                                                   |
 
 One JS type has one name; a modifier picks the Rust form. The last four are named
-types: each is called what it is exported as, and has to be exported.
+types: each is called what it is exported as, and has to be exported. It is used by
+schemas of the crate it is generated into. A member or an alternative also names a C++
+field, so one that is a C++ keyword is refused: a member takes a `rustName`.
 
-These come last, in this order (`b.any` already takes `undefined` and `null`, so only `.withValue` applies to it):
+These come last, in this order (`b.any` already takes `undefined` and `null`, so none applies to it):
 
 - `.optional`: `undefined` means absent; `Option<T>`.
 - `.nullable`: `null` or `undefined` means absent; `Option<T>`.
 - `.falsyAsNull`: every falsy value means absent; `Option<T>`.
 - `.default(value)`: what to use when absent; `T`. `.nullable.default(value)` also applies to `null`.
-- `.withValue`, for arguments: see [Keeping the original value](#keeping-the-original-value). Not with `.default()`.
 
-As results, `b.string.utf8` is anything that is `AsRef<[u8]>` and `b.array(T)` anything
-that is `IntoIterator`.
+As results, `b.string.utf8` is anything that is `AsRef<[u8]>` and `b.array(T)` anything that
+is `IntoIterator`. The body of a `b.fn` or of a namespace's function whose bytes do not outlive
+it returns the string itself, from `heap.create_utf8_string(bytes)`. `b.u64.asBigInt` is a
+result only: a `u64` that is always returned as a BigInt. `b.bufferSource` as a result is what
+`heap.create_uninitialized_uint8_array(length)`, `heap.create_uint8_array_from_box(bytes)` or
+`heap.create_buffer_from_box(bytes)` made. The last two take over the allocation.
 
-### Integers
+### Numbers
 
-- `.loose`: `ToNumeric` first, then as strict as the default.
+A BigInt is refused unless the schema says `.allowBigInt`, which is for an argument whose
+type is `number | bigint`. `b.f64.loose.allowBigInt` is `ToNumeric`, and a BigInt becomes the
+double nearest to it. On an integer:
+
+- `.allowBigInt`: a BigInt in the same range too. It is how a `b.u64` above 2<sup>53</sup> gets in. It goes with the strict conversion and with `.loose`; the others refuse a BigInt.
+- `.loose`: `ToNumber` first, or `ToNumeric` with `.allowBigInt`, then as strict as the default.
 - `.wrap`: the WebIDL conversion, `ToNumber` then wrap modulo the width.
 - `.enforceRange(min, max)`: WebIDL `[EnforceRange]`.
 - `.validateInteger(min, max)`: Node's `validateInteger`, with its exact errors. Use it when implementing Node.js APIs.
@@ -211,7 +262,9 @@ export const BracesOptions = b.dictionary({
 Each member is read, then converted, in declaration order, once. A member
 whose type does not accept `undefined` is required. A member can be written
 `{ type, rustName, altNames }` to rename its field or to accept other spellings.
-A dictionary whose members can all be absent implements `Default`.
+A dictionary whose members can all be absent implements `Default`. The thunk hands the struct
+over by value, so the body of one over 64 bytes needs
+`#[allow(clippy::large_types_passed_by_value)]`.
 
 A member is looked up on the object and its prototype chain, **stopping before
 the calling realm's `Object.prototype`**, so a polluted `Object.prototype` cannot
@@ -224,11 +277,11 @@ each one on it. An `.optional` member that is `None` is left out.
 
 The second argument of `b.dictionary` takes:
 
-| Key                | What it does                                                                                                                                                                             |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `allowArray`       | an array is read like any other object, not refused                                                                                                                                      |
-| `nonObjectAsEmpty` | a value whose `typeof` is not `"object"` gives every member its default, as in Node's `if (typeof options !== "object") options = null`; every member must be optional or have a default |
-| `fromJS`           | also generates `Name::from_js(global, value)`, for a `#[host_fn]` body; one that holds JS values is lent to a closure, `Name::from_js(global, value, \|converted\| ..)`                  |
+| Key                | What it does                                                                                                                                                                                                      |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `allowArray`       | an array is read like any other object, not refused                                                                                                                                                               |
+| `nonObjectAsEmpty` | a value that is not an object gives every member its default; with `"typeof"` so does a function, as in Node's `if (typeof options !== "object") options = null`; every member must be optional or have a default |
+| `fromJS`           | also generates `Name::from_js(global, value)`, for a `#[host_fn]` body; one that holds JS values is lent to a closure, `Name::from_js(global, value, \|converted\| ..)`                                           |
 
 ### Enumerations
 
@@ -254,7 +307,7 @@ in play apart:
 
 A strict type takes the kinds its row under [Types](#types) says. A type that coerces or
 reports its own error takes every kind: `.loose`, `.wrap`, `.enforceRange`,
-`.validateInteger`, `b.any`, a dictionary.
+`.validateInteger`, `b.any`, `b.bytes`, a dictionary.
 
 **A value goes to the first alternative, in written order, that takes its kind.** That
 alternative then converts it, and reports what is wrong with it: `1.5` given to
@@ -271,11 +324,8 @@ place they end up in.
 
 ### Buffers
 
-JavaScript can detach, resize or transfer a buffer, so `b.bufferSource.bytes` is only
-for an argument (not a member or an alternative) of a function that cannot run
-JavaScript. The generated code reads pointer and length after every other argument
-is converted, since a conversion can run JavaScript too. A function that can run
-JavaScript takes `b.bufferSource` itself and looks the bytes up when it needs them:
+`b.bufferSource` is the buffer itself. JavaScript can detach, resize or transfer it, so the
+body looks the bytes up when it needs them:
 
 ```rust
 let before = buffer.with_bytes(&cx.heap, sum);
@@ -284,24 +334,84 @@ let after = buffer.with_bytes(&cx.heap, sum);
 ```
 
 Calling `callback.call(cx, ..)` inside the closure does not compile. A detached or
-out-of-bounds view is empty.
+out-of-bounds view is empty. A shared buffer is refused: [`b.bytes`](#bytes) takes one.
 
-### Keeping the original value
+### Bytes
 
-A converted argument is for use now. To hand the value to something that holds
-it longer (one of a class's `internalFields`, a `Strong`, another JS call, the result), ask
-for both:
+Many functions take "a string or a buffer" and want its bytes. They differ in which values they
+take, in what becomes of anything else, and in how long they need the bytes. `b.bytes` takes
+those as named options. The combinations that are build errors are listed at the end.
 
 ```ts
-args: { name: b.string.utf8.withValue },
+export const gzipSync = b.fn({
+  args: { data: b.bytes({ from: ["string", "buffer"] }), options: ZlibCompressionOptions.default({}) },
+  returns: b.bufferSource,
+  capability: "heap",
+  throws: true,
+});
 ```
 
 ```rust
-fn set_name<'a>(&mut self, this: JsWrapper<'a, Self>, heap: &JsHeap<'a>, name: WithValue<'a, &'a [u8]>) {
-    this.set_name_field(heap, name.value); // the JS string itself, not a copy
-    self.name_length = name.converted.len();
-}
+fn gzip_sync<'a>(heap: &JsHeap<'a>, data: &[u8], options: ZlibCompressionOptions<'a>) -> bindgen::Result<'a, JsLocal<'a, BufferSource>>
 ```
+
+| Option      | Values                                               | Meaning                                                                |
+| ----------- | ---------------------------------------------------- | ---------------------------------------------------------------------- |
+| `from`      | `"string"`, `"buffer"`, `"blob"`                     | what is taken without `ToString`                                       |
+| `otherwise` | **`"throw"`**, `"toString"`                          | anything else                                                          |
+| `refuse`    | `"undefined"`, `"null"`                              | with `"toString"`: these throw, and are not `"undefined"` and `"null"` |
+| `string`    | **`"utf8"`**, `"asIs"`                               | a string is its UTF-8, or stays a `bun_core::String`                   |
+| `shared`    | **`"borrowed"`**, `"copied"`                         | the bytes of a shared buffer                                           |
+| `held`      | **`"borrowed"`**, `"handle"`, `"copied"`, `"pinned"` | what the body gets                                                     |
+
+`"string"` is a string or a `String` object. `"buffer"` is a typed array, `DataView`,
+`ArrayBuffer` or `SharedArrayBuffer`. `"blob"` is a `Blob` whose bytes are in memory: a file,
+here or in S3, throws.
+
+| `held`       | `string` | Rust                  |
+| ------------ | -------- | --------------------- |
+| `"borrowed"` | `"utf8"` | `&'a [u8]`            |
+| `"handle"`   | `"utf8"` | `JsBytes<'a>`         |
+| `"handle"`   | `"asIs"` | `StringOrJsBytes<'a>` |
+| `"copied"`   | `"utf8"` | `Vec<u8>`             |
+| `"pinned"`   | `"utf8"` | `PinnedBytes`         |
+
+**Borrowed** bytes are where they are. A string is converted into the frame of the host function,
+unless it is stored as ASCII already. JavaScript can detach, resize or free a buffer, so this is
+for a function that cannot run it.
+
+**A handle** is for a function that can. `JsBytes::get` borrows the bytes from the `JsHeap`, and the
+compiler refuses whatever takes the `&mut JsScope` until the slice is gone:
+
+```rust
+fn parse<'a>(cx: &mut JsScope<'a>, input: JsBytes<'a>) -> JsResult<JSValue> {
+    let tree = parse_tree(input.get(&cx.heap))?; // no JavaScript here
+    let global = cx.global();                    // `tree` owns what it kept, or this does not compile
+```
+
+Each `get` reads the pointer and the length of a buffer again. With `string: "asIs"` the body
+gets either `String`, in Latin-1 or UTF-16, or `Bytes`, the handle. That also tells a string
+from a buffer.
+
+**Copied** bytes are the body's. **Pinned** bytes are for a job on another thread to read after
+the call returns: a string is thread-isolated, a buffer is a GC-rooted `PinnedArrayBuffer`, and a
+resizable one is copied. A `PinnedBytes` is `Send`, derefs to `[u8]`, and is dropped on the JS
+thread.
+
+**A shared buffer** is borrowed like any other, as JSC's own `toBase64` and `indexOf` read one, and
+another thread that writes it during the call changes what the body reads. `shared: "copied"` is
+for a body that reads a byte again and counts on what it was, such as a parser that scans ahead
+and comes back. JSC's `sort` copies for the same reason.
+
+The kind of the value is checked, and a string converted, in the order of the arguments. The
+bytes of a buffer are read, copied or pinned after every argument is converted. The argument is
+always there: it is not `.optional`, and not a member of a dictionary, a union or an array.
+
+An option that cannot apply is a build error: `refuse` without `"toString"`, `string` where no
+string is taken, `shared` where no buffer is taken or `held: "copied"` copies it anyway. So is
+what no function needs yet, which is not written: `"asIs"` without `"handle"` or that copies a
+shared buffer, `"pinned"` that takes a `Blob` or copies a shared buffer, and a `"pinned"` argument
+next to another or next to a `"borrowed"` one.
 
 ## Values and lifetimes
 

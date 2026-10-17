@@ -557,8 +557,8 @@ new file mode 100644
   // Older versions of bun, and other tools, wrote these into patch files that install: a binary
   // change without its content, a copy or colors because of the user's git config. They did
   // nothing then, without a word. isEvenPatch() has 8 lines.
-  const binary = "was left out: the file is binary, and the patch does not have it";
-  const nothing = "was left out: it has no change that bun can apply";
+  const binary = "binary file, content not in patch";
+  const nothing = "no applicable changes";
 
   /** What is printed about line `line` of `patch`: the line, a caret, the message and the place. */
   const diagnostic = (kind: "warn" | "error", patch: string, line: number, message: string) =>
@@ -576,39 +576,39 @@ new file mode 100644
           isEvenPatch("is-even patched") +
             "diff --git a/img.bin b/img.bin\nindex 1111111..2222222 100644\nBinary files a/img.bin and b/img.bin differ\n",
           9,
-          `the content of img.bin ${binary}`,
+          `skipping img.bin: ${binary}`,
         ],
         [
           "a new binary file",
           isEvenPatch("is-even patched") +
             "diff --git a/img.bin b/img.bin\nnew file mode 100644\nindex 0000000..2222222\nBinary files /dev/null and b/img.bin differ\n",
           9,
-          `the content of img.bin ${binary}`,
+          `skipping img.bin: ${binary}`,
         ],
         [
           "a copy",
           isEvenPatch("is-even patched") +
             "diff --git a/index.js b/copy.js\nsimilarity index 100%\ncopy from index.js\ncopy to copy.js\n",
           9,
-          `the section for copy.js ${nothing}`,
+          `skipping copy.js: ${nothing}`,
         ],
         [
           "a header alone",
           isEvenPatch("is-even patched") + "diff --git a/other.js b/other.js\nindex 1111111..2222222 100644\n",
           9,
-          `the section for other.js ${nothing}`,
+          `skipping other.js: ${nothing}`,
         ],
         [
           "text after the last hunk",
           isEvenPatch("is-even patched") + "Only in b: new.js\n",
           9,
-          `text that is not a patch ${nothing}`,
+          `skipping non-patch text: ${nothing}`,
         ],
         [
           "a patch with colors",
           isEvenPatch("is-even in colors").replace(/^.+$/gm, line => `\x1b[1m${line}\x1b[m`),
           1,
-          `text that is not a patch ${nothing}`,
+          `skipping non-patch text: ${nothing}`,
         ],
       ])("%s", async (_name, patch, line, message) => {
         await using project = createProject("patch-left-out", {
@@ -620,7 +620,7 @@ new file mode 100644
         const { stderr, exitCode } = await runBun(dir, env, "install", `--linker=${linker}`);
         expect(stderr).toContain(
           diagnostic("warn", patch, line, message) +
-            "\n\nnote: make the patch again with bun patch, or delete these lines\n",
+            "\n\nnote: recreate the patch with bun patch, or delete these lines\n",
         );
         expect(stderr.match(/^(warn|error): /gm)).toEqual(["warn: "]);
         // The rest of the patch is applied.
@@ -1145,7 +1145,7 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
   const ignoredWarnings = (err: string) =>
     [
       ...err.matchAll(
-        /^warn: "patchedDependencies" is ignored in a workspace package\. Move it to the root package\.json\r?\n\s+at .*?[\\/](packages[\\/][^\r\n]*)/gm,
+        /^warn: ignoring "patchedDependencies" in workspace package, move it to the root package\.json\r?\n\s+at .*?[\\/](packages[\\/][^\r\n]*)/gm,
       ),
     ].map(match => match[1].replaceAll("\\", "/"));
 

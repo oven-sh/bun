@@ -12,14 +12,16 @@ thread-affine-types = ["Strong"]
 freed-while-borrowed-frees = ["heap::destroy"]
 # Like the line above, for releases that free only the last reference.
 freed-while-borrowed-releases = ["ThreadSafeRefCount::deref", "RefCount::deref"]
+# Bun's own lock types, for the lock order checks.
+lock-guard-types = ["GuardedLock", "threading::MutexGuard", "RwLockReadGuard", "RwLockWriteGuard", "StreamBufferGuard"]
+# The raw mutex locks and unlocks by hand, with no guard.
+lock-methods = ["threading::Mutex::lock"]
+unlock-methods = ["threading::Mutex::unlock"]
 # Lints this repo has decided not to act on. Everything else in the pack is
 # on; add a lint here only with a reason.
 disabled = [
     # "list the variants instead of `_`": a per-site style call, ~500 today.
     "wildcard_over_own_enum",
-    # Structs with several bools are nearly all option bags here; the state
-    # machines among them were found by hand once and are not worth the volume.
-    "bool_cluster",
     # Most names it flags are real, on the C++/JS side or in a sibling crate.
     "stale_safety_comment",
     # Variants only ever tested through `!=` / `_`; checked, none were bugs.

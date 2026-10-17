@@ -165,6 +165,7 @@ pub mod string_builder;
 pub mod strong;
 #[path = "Task.rs"]
 pub mod task;
+mod thread_isolated;
 #[path = "TopExceptionScope.rs"]
 pub mod top_exception_scope;
 #[path = "uuid.rs"]
@@ -203,6 +204,7 @@ pub use self::js_promise::JSPromise as JSInternalPromise;
 pub use self::rare_data as RareData;
 pub use self::system_error::SystemError;
 pub use self::task::Taskable;
+pub use self::thread_isolated::{ThreadIsolated, ThreadIsolatedArg};
 
 /// Trait surface for `write_format`-style hooks on runtime types
 /// (`Response::write_format`, `Request::write_format`, `S3File::write_format`,
@@ -785,7 +787,7 @@ pub use script_execution_context::{
 // re-exported here so `crate::VM` and `crate::vm::VM` name the same nominal
 // type (and likewise for `JSGlobalObject`). Both structs carry `UnsafeCell`
 // so `&T → *mut T` for FFI is sound under Stacked Borrows.
-pub use self::js_global_object::{GlobalRef, JSGlobalObject, MicrotaskCallback};
+pub use self::js_global_object::{GlobalRef, JSGlobalObject};
 pub use self::vm::VM;
 
 /// Options for `JSGlobalObject::validate_integer_range` / `validate_bigint_range`.
@@ -798,7 +800,6 @@ pub struct IntegerRange {
     pub min: i128,
     pub max: i128,
     pub field_name: &'static [u8],
-    pub always_allow_zero: bool,
 }
 impl Default for IntegerRange {
     fn default() -> Self {
@@ -806,7 +807,6 @@ impl Default for IntegerRange {
             min: i128::from(MIN_SAFE_INTEGER),
             max: i128::from(MAX_SAFE_INTEGER),
             field_name: b"",
-            always_allow_zero: false,
         }
     }
 }

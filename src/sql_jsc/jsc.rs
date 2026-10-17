@@ -841,7 +841,7 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-/// `bun_jsc::JSValue::put_host_functions`-shaped helper for the SQL binding
+/// `bun_jsc::create_host_function_object`-shaped helper for the SQL binding
 /// objects. Macro (not fn) because each entry's `$f` is a *distinct* fn-item
 /// ZST routed through [`IntoJSHostFn`] — a `&[(&str, JSHostFn, u32)]` slice
 /// can't hold heterogeneous safe-Rust signatures. Expands to the same

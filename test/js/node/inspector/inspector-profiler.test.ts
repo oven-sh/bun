@@ -586,6 +586,54 @@ console.log(JSON.stringify({ count: fn?.ranges[0].count }));
       expect(JSON.parse(stdout.trim())).toEqual({ count: 2 });
     });
 
+    // What Node 26 lists for this script, less the "<instance_members_initializer>" of Fields and of Inner.
+    test.concurrent("lists a function once, and nothing that is not in the text", async () => {
+      using dir = tempDir("inspector-coverage-functions", {
+        "fixture.mjs": `
+import { Session } from "node:inspector/promises";
+import vm from "node:vm";
+const session = new Session();
+session.connect();
+await session.post("Profiler.enable");
+await session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+const code = [
+  "class Fields { a = 1; ['b'] = 2; }",
+  "class Derived extends Fields { }",
+  "class Empty { }",
+  "function around() { class Inner { c = 7; } new Inner; }",
+  "new Fields; new Derived; new Empty; around();",
+  "function* generator() { yield 3; }",
+  "function* notResumed() { yield 4; }",
+  "function* notCalled() { yield 5; }",
+  "async function asynchronous() { await 6; }",
+  "class Static { static { generator; } }",
+  "[...generator()]; notResumed(); asynchronous();",
+].join("\\n");
+const url = "file:///functions-fixture/virtual.js";
+vm.runInThisContext(code, { filename: url });
+const { result } = await session.post("Profiler.takePreciseCoverage");
+session.disconnect();
+const functions = result.find(script => script.url === url).functions.map(({ ranges: [range] }) => [
+  range.count,
+  range.startOffset === 0 && range.endOffset === code.length ? "the script" : code.slice(range.startOffset, range.endOffset),
+]);
+console.log(JSON.stringify(functions));
+`,
+      });
+      await using proc = Bun.spawn({ cmd: [bunExe(), "fixture.mjs"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+      expect(JSON.parse(stdout.trim())).toEqual([
+        [1, "the script"],
+        [1, "function around() { class Inner { c = 7; } new Inner; }"],
+        [1, "function* generator() { yield 3; }"],
+        [1, "function* notResumed() { yield 4; }"],
+        [0, "function* notCalled() { yield 5; }"],
+        [1, "async function asynchronous() { await 6; }"],
+        [1, "static { generator; }"],
+      ]);
+    });
+
     test.concurrent("collects block coverage with call counts for vm scripts", async () => {
       using dir = tempDir("inspector-coverage-vm", {
         "fixture.mjs": coverageVmFixture,

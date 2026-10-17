@@ -45,7 +45,7 @@ export default plugin;
   ];
 
   // What matters is that the template typechecks, not which runtime runs the
-  // compiler, and tsc under a debug+ASAN bun is 10-50x slower.
+  // compiler: tsc takes 2 seconds under node and 160 under a debug+ASAN bun.
   await using tsc = Bun.spawn({
     cmd: [
       nodeExe() ?? bunExe(),
@@ -65,4 +65,5 @@ export default plugin;
   expect(stderr).toBe("");
   expect(stdout).toBe("");
   expect(exitCode).toBe(0);
-});
+  // tsc reads 250 files. With a cold page cache that takes about 5 seconds.
+}, 30_000);

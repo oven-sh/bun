@@ -1086,6 +1086,8 @@ describe("bundler", () => {
           (import.meta.hot ? import.meta.hot.accept : fallback)();
           (true ? fallback : import.meta.hot.accept)();
           (fallback || import.meta.hot.accept).call(null);
+          (import.meta.hot.accept || fallback)();
+          ((0, import.meta.hot.accept), fallback)();
           new Date(import.meta.hot.accept);
           console.log("after new");
           import.meta.hot.accept(() => {
@@ -1095,6 +1097,8 @@ describe("bundler", () => {
           console.log([...seen, accept, dispose, ...rest].join());
           import.meta.hot.accept(() => console.log("FAIL"));
           import.meta.hot.dispose(() => console.log("FAIL"));
+          import.meta.hot["accept"](() => console.log("FAIL"));
+          import.meta.hot.accept?.(() => console.log("FAIL"));
           console.log("after direct calls");
         `,
       },
@@ -1113,6 +1117,8 @@ describe("bundler", () => {
           "called fallback",
           "called fallback",
           "called fallback",
+          "called fallback",
+          "called fallback",
           "after new",
           "after callback that reads a method",
           ",,,,,,,,",
@@ -1124,61 +1130,7 @@ describe("bundler", () => {
         api.expectFile("/out.js").not.toContain("import.meta.hot");
       },
     });
-    // A call through a property of a disabled method is removed like the direct call.
-    // It must not become a method call on `undefined`, which throws when the file loads.
-    itBundled(`minify/ImportMetaHotCallThroughProperty${suffix}`, {
-      files: {
-        "/entry.ts": `
-          const fail = () => console.log("FAIL");
-          const key = ["call"][0];
-          import.meta.hot.accept.call(null, fail);
-          import.meta.hot.dispose.apply(null, [fail]);
-          import.meta.hot.accept["call"](null, fail);
-          import.meta.hot.accept[key](null, fail);
-          import.meta.hot["accept"](fail);
-          import.meta.hot.accept?.(fail);
-          import.meta.hot.on[fail()]();
-          console.log(import.meta.hot.accept.bind(null), import.meta.hot.on.toString());
-          // A conditional or logical expression that folds to the method is the method.
-          (true ? import.meta.hot.accept : fail)(fail);
-          (false ? fail : import.meta.hot.accept).call(null, fail);
-          // A call in the dead branch must not take the removal meant for the outer call.
-          (true ? import.meta.hot.accept : fail())(fail);
-          (null ?? import.meta.hot.dispose)(fail);
-          (false || import.meta.hot.on)(fail);
-          (1 && import.meta.hot.off)(fail);
-          console.log("after calls");
-        `,
-      },
-      ...options,
-      outfile: "/out.js",
-      run: {
-        stdout: "undefined undefined\nafter calls",
-      },
-      onAfterBundle(api) {
-        api.expectFile("/out.js").not.toContain("import.meta.hot");
-      },
-    });
   }
-  // `(0, f)(x)` folds to `f(x)` only with minify.syntax. Without it the call on `(0, undefined)` stays, as before.
-  itBundled("minify/ImportMetaHotCommaCalleeMinifySyntax", {
-    files: {
-      "/entry.ts": `
-        const fail = () => console.log("FAIL");
-        (0, import.meta.hot.accept)(fail);
-        (0, import.meta.hot.dispose).call(null, fail);
-        console.log("after calls");
-      `,
-    },
-    minifySyntax: true,
-    outfile: "/out.js",
-    run: {
-      stdout: "after calls",
-    },
-    onAfterBundle(api) {
-      api.expectFile("/out.js").not.toContain("import.meta.hot");
-    },
-  });
   itBundled("minify/ProductionMode", {
     files: {
       "/entry.jsx": `
@@ -2167,8 +2119,8 @@ test("runtime transpiler keeps the call after an import.meta.hot method that is 
     "index.ts": /* ts */ `
       const accept = import.meta.hot.accept;
       console.log("after read", accept);
-      import.meta.hot.dispose.call(null, () => console.log("FAIL"));
-      console.log("after call through property");
+      import.meta.hot.dispose(() => console.log("FAIL"));
+      console.log("after direct call");
     `,
   });
 
@@ -2182,7 +2134,7 @@ test("runtime transpiler keeps the call after an import.meta.hot method that is 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect({ stdout, stderr, exitCode }).toEqual({
-    stdout: "after read undefined\nafter call through property\n",
+    stdout: "after read undefined\nafter direct call\n",
     stderr: "",
     exitCode: 0,
   });

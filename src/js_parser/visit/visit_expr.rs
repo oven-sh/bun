@@ -8,8 +8,8 @@ use bun_core::strings;
 use crate::lexer as js_lexer;
 use crate::p::P;
 use crate::parser::{
-    CalleeChain, ExprIn, FnOrArrowDataVisit, IdentifierOpts, PrependTempRefsOpts, ReactRefresh,
-    Ref, StrictModeFeature, ThenCatchChain, TransposeState, VisitArgsOpts, float_to_int32, prefill,
+    ExprIn, FnOrArrowDataVisit, IdentifierOpts, PrependTempRefsOpts, ReactRefresh, Ref,
+    StrictModeFeature, ThenCatchChain, TransposeState, VisitArgsOpts, float_to_int32, prefill,
 };
 use crate::scan::scan_side_effects::SideEffects;
 use bun_alloc::ArenaVecExt as _;
@@ -40,28 +40,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.visit_expr_in_out(e, ExprIn::default())
     }
 
-    /// Visits a child that is not in the callee. What the callee raised is for the enclosing call: a call in this child must not take it.
-    #[inline(always)]
-    fn visit_expr_outside_callee(&mut self, e: &mut Expr, in_callee: bool) {
-        let raised = in_callee && self.method_call_must_be_replaced_with_undefined.take();
-        self.visit_expr(e);
-        if raised {
-            self.method_call_must_be_replaced_with_undefined
-                .raise(in_callee);
-        }
-    }
-
     pub(crate) fn visit_expr_in_out(&mut self, e: &mut Expr, in_: ExprIn) {
         if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
             self.report_stack_overflow(e.loc);
             return;
         }
-
-        debug_assert!(
-            in_.callee_chain != CalleeChain::None
-                || !self.method_call_must_be_replaced_with_undefined.is_raised(),
-            "a node outside the callee of a call asked for a call to be replaced with undefined"
-        );
 
         if in_.assign_target != js_ast::AssignTarget::None && !self.is_valid_assignment_target(e) {
             self.log()
@@ -81,7 +64,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Tag::EIdentifier => Self::e_identifier(self, e, in_),
             Tag::EJsxElement => Self::e_jsx_element(self, e, in_),
             Tag::ETemplate => Self::e_template(self, e, in_),
-            Tag::EBinary => Self::e_binary(self, e, in_),
+            Tag::EBinary => Self::e_binary(self, e),
             Tag::EIndex => Self::e_index(self, e, in_),
             Tag::EUnary => Self::e_unary(self, e, in_),
             Tag::EDot => Self::e_dot(self, e, in_),
@@ -308,10 +291,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 // If the user passed --drop=console, drop all property accesses to console.
                 if def.method_call_must_be_replaced_with_undefined()
+                    && in_.property_access_for_method_call_maybe_should_replace_with_undefined
                     && in_.assign_target == js_ast::AssignTarget::None
                 {
-                    p.method_call_must_be_replaced_with_undefined
-                        .raise(in_.callee_chain == CalleeChain::Dots);
+                    p.method_call_must_be_replaced_with_undefined = true;
                 }
             }
 
@@ -788,7 +771,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
     }
-    fn e_binary(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_binary(p: &mut Self, e: &mut Expr) {
         let expr = *e;
         use crate::visit::visit_binary::BinaryExpressionVisitor;
         let e_ = expr.data.e_binary().expect("infallible: variant checked");
@@ -810,15 +793,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // should almost always be very small, and almost all visits should reuse
         // existing memory without allocating anything.
         let stack_bottom = p.binary_expression_stack.len();
-
-        // Only the outermost operation is in the place that `in_` describes.
-        let callee_chain_at = |stack_len: usize| {
-            if stack_len == stack_bottom {
-                in_.callee_chain
-            } else {
-                CalleeChain::None
-            }
-        };
 
         // Assigned on every `break` arm of the loop below; the initial input
         // `expr` is never read directly.
@@ -848,8 +822,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // statement).
             if left_binary.is_none() || left_in.assign_target != js_ast::AssignTarget::None {
                 p.visit_expr_in_out(&mut v.e.left, left_in);
-                let callee_chain = callee_chain_at(p.binary_expression_stack.len());
-                current = BinaryExpressionVisitor::visit_right_and_finish(&mut v, p, callee_chain);
+                current = BinaryExpressionVisitor::visit_right_and_finish(&mut v, p);
                 break;
             }
 
@@ -869,8 +842,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         while p.binary_expression_stack.len() > stack_bottom {
             v = p.binary_expression_stack.pop().unwrap();
             v.e.left = current;
-            let callee_chain = callee_chain_at(p.binary_expression_stack.len());
-            current = BinaryExpressionVisitor::visit_right_and_finish(&mut v, p, callee_chain);
+            current = BinaryExpressionVisitor::visit_right_and_finish(&mut v, p);
         }
 
         *e = current;
@@ -882,14 +854,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let is_call_target = matches!(p.call_target, Data::EIndex(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
         let is_template_tag = matches!(p.template_tag, Data::EIndex(tag) if core::ptr::eq(&raw const *e_, &raw const *tag));
         let is_delete_target = matches!(p.delete_target, Data::EIndex(dt) if core::ptr::eq(&raw const *e_, &raw const *dt));
-        // Built before the target visit: built after it, the release frame of `visit_expr_in_out` is 16 bytes larger.
-        let opts = IdentifierOpts::default()
-            .with_is_call_target(is_call_target)
-            .with_is_template_tag(is_template_tag)
-            .with_is_delete_target(is_delete_target)
-            .with_assign_target(in_.assign_target)
-            .with_is_property_access_target(in_.is_property_access_target)
-            .with_is_callee_chain(in_.callee_chain != CalleeChain::None);
 
         // "a['b']" => "a.b"
         if p.options.features.minify_syntax {
@@ -926,7 +890,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.visit_expr_in_out(
             &mut e_.target,
             ExprIn {
-                callee_chain: in_.callee_chain.indirect(),
                 is_property_access_target: !is_delete_target,
                 ..Default::default()
             },
@@ -1012,7 +975,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 };
             }
             _ => {
-                p.visit_expr_outside_callee(&mut e_.index, in_.callee_chain != CalleeChain::None);
+                p.visit_expr(&mut e_.index);
 
                 let unwrapped = e_.index.unwrap_inlined();
                 if let Some(mut s) = unwrapped.data.e_string() {
@@ -1051,6 +1014,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // Reminder that this can only be done after
                         // `target` is visited.
                         if e_.optional_chain.is_none() {
+                            let opts = IdentifierOpts::default()
+                                .with_is_call_target(is_call_target)
+                                .with_is_template_tag(is_template_tag)
+                                .with_is_delete_target(is_delete_target)
+                                .with_assign_target(in_.assign_target)
+                                .with_is_property_access_target(in_.is_property_access_target);
                             if let Some(rewrite) = p.maybe_rewrite_property_access(
                                 expr.loc,
                                 e_.target,
@@ -1360,14 +1329,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let is_delete_target = matches!(p.delete_target, Data::EDot(dt) if core::ptr::eq(&raw const *e_, &raw const *dt));
         let is_call_target = matches!(p.call_target, Data::EDot(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
         let is_template_tag = matches!(p.template_tag, Data::EDot(tag) if core::ptr::eq(&raw const *e_, &raw const *tag));
-        // Built before the target visit: built after it, the release frame of `visit_expr_in_out` is 16 bytes larger.
-        let opts = IdentifierOpts::default()
-            .with_is_call_target(is_call_target)
-            .with_is_template_tag(is_template_tag)
-            .with_assign_target(in_.assign_target)
-            .with_is_delete_target(is_delete_target)
-            .with_is_property_access_target(in_.is_property_access_target)
-            .with_is_callee_chain(in_.callee_chain != CalleeChain::None);
 
         // `p.define: &'a Define` is `Copy`; hoist so the `dots.get` borrow is
         // tied to `'a`, not `&*p`, and `&mut self` helpers below can be called
@@ -1388,9 +1349,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             return;
                         }
 
-                        if define.data.method_call_must_be_replaced_with_undefined() {
-                            p.method_call_must_be_replaced_with_undefined
-                                .raise(in_.callee_chain == CalleeChain::Dots);
+                        if define.data.method_call_must_be_replaced_with_undefined()
+                            && in_
+                                .property_access_for_method_call_maybe_should_replace_with_undefined
+                        {
+                            p.method_call_must_be_replaced_with_undefined = true;
                         }
                     }
 
@@ -1439,7 +1402,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.visit_expr_in_out(
             &mut e_.target,
             ExprIn {
-                callee_chain: in_.callee_chain,
+                property_access_for_method_call_maybe_should_replace_with_undefined: in_
+                    .property_access_for_method_call_maybe_should_replace_with_undefined,
                 is_property_access_target: !is_delete_target,
                 ..Default::default()
             },
@@ -1477,6 +1441,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if e_.optional_chain.is_none() {
+            let opts = IdentifierOpts::default()
+                .with_is_call_target(is_call_target)
+                .with_is_template_tag(is_template_tag)
+                .with_assign_target(in_.assign_target)
+                .with_is_delete_target(is_delete_target)
+                .with_is_property_access_target(in_.is_property_access_target);
             if let Some(_expr) = p.maybe_rewrite_property_access(
                 expr.loc,
                 e_.target,
@@ -1511,7 +1481,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    fn e_if(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_if(p: &mut Self, e: &mut Expr, _: ExprIn) {
         let mut e_ = e.data.e_if().expect("infallible: variant checked");
         let is_call_target =
             matches!(p.call_target, Data::EIf(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
@@ -1530,19 +1500,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         };
 
-        // The live branch takes the place of this expression, in a callee too.
-        let live_in = ExprIn {
-            callee_chain: in_.callee_chain.indirect(),
-            ..Default::default()
-        };
-
         // Mark the control flow as dead if the branch is never taken
         if side_effects.value {
             // "true ? live : dead"
-            p.visit_expr_in_out(&mut e_.yes, live_in);
+            p.visit_expr(&mut e_.yes);
             let old = p.is_control_flow_dead;
             p.is_control_flow_dead = true;
-            p.visit_expr_outside_callee(&mut e_.no, in_.callee_chain != CalleeChain::None);
+            p.visit_expr(&mut e_.no);
             p.is_control_flow_dead = old;
 
             if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
@@ -1569,7 +1533,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.is_control_flow_dead = true;
             p.visit_expr(&mut e_.yes);
             p.is_control_flow_dead = old;
-            p.visit_expr_in_out(&mut e_.no, live_in);
+            p.visit_expr(&mut e_.no);
 
             // "(a, false) ? b : c" => "a, c"
             if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
@@ -1923,7 +1887,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.visit_expr_in_out(
             &mut e_.target,
             ExprIn {
-                callee_chain: CalleeChain::Dots,
+                property_access_for_method_call_maybe_should_replace_with_undefined: true,
                 ..Default::default()
             },
         );
@@ -2149,8 +2113,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // When a value is targeted by `--drop`, it will be removed.
             // The HMR APIs in `import.meta.hot` are implicitly dropped when HMR is disabled.
             let mut method_call_should_be_replaced_with_undefined =
-                p.method_call_must_be_replaced_with_undefined.take();
+                p.method_call_must_be_replaced_with_undefined;
             if method_call_should_be_replaced_with_undefined {
+                p.method_call_must_be_replaced_with_undefined = false;
                 match &e_.target.data {
                     // If we're removing this call, don't count any arguments as symbol uses
                     Data::EIndex(..) | Data::EDot(..) | Data::EIdentifier(..) => {

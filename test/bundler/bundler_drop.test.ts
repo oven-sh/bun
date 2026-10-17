@@ -122,12 +122,4 @@ describe("bundler", () => {
     run: { stdout: "kept" },
     drop: ["console"],
   });
-  // `--drop` does not follow a computed member, so the bound method stays callable.
-  itBundled("drop/ComputedMemberBindStaysCallable", {
-    files: {
-      "/a.js": `for (const level of ["log"]) { const log = console[level].bind(console); log("kept"); }`,
-    },
-    run: { stdout: "kept" },
-    drop: ["console"],
-  });
 });

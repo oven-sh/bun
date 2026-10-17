@@ -3,7 +3,7 @@ use bun_collections::VecExt;
 use core::cmp::Ordering;
 
 use crate::p::P;
-use crate::parser::{CalleeChain, ExprIn, float_to_int32, prefill};
+use crate::parser::{ExprIn, float_to_int32, prefill};
 use crate::scan::scan_side_effects::SideEffects;
 use bun_ast::fold_string_addition::{FoldStringAdditionKind, fold_string_addition};
 use bun_ast::{
@@ -105,7 +105,6 @@ impl BinaryExpressionVisitor {
     pub(crate) fn visit_right_and_finish<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
         v: &mut Self,
         p: &mut P<'a, TYPESCRIPT, SCAN_ONLY>,
-        callee_chain: CalleeChain,
     ) -> Expr {
         // `v.e: StoreRef<E::Binary>` is the safe arena back-reference (Copy).
         // Snapshot the handle for the identity check / tail re-wrap, then take
@@ -132,50 +131,41 @@ impl BinaryExpressionVisitor {
             }
         }
 
-        // When the left operand settles the result, the right operand is the value of this expression. It takes its place in a callee too.
-        let value_in = || ExprIn {
-            callee_chain: callee_chain.indirect(),
-            ..Default::default()
-        };
-
         // Mark the control flow as dead if the branch is never taken
         match e_.op {
-            Op::Code::BinLogicalOr => match SideEffects::to_boolean(p, &e_.left.data) {
-                Some(left) if left.value => {
+            Op::Code::BinLogicalOr => {
+                if SideEffects::to_boolean(p, &e_.left.data).is_some_and(|k| k.value) {
                     // "true || dead"
                     let old = p.is_control_flow_dead;
                     p.is_control_flow_dead = true;
                     p.visit_expr(&mut e_.right);
                     p.is_control_flow_dead = old;
+                } else {
+                    p.visit_expr(&mut e_.right);
                 }
-                Some(_) => p.visit_expr_in_out(&mut e_.right, value_in()),
-                None => p.visit_expr(&mut e_.right),
-            },
-            Op::Code::BinLogicalAnd => match SideEffects::to_boolean(p, &e_.left.data) {
-                Some(left) if !left.value => {
+            }
+            Op::Code::BinLogicalAnd => {
+                if SideEffects::to_boolean(p, &e_.left.data).is_some_and(|k| !k.value) {
                     // "false && dead"
                     let old = p.is_control_flow_dead;
                     p.is_control_flow_dead = true;
                     p.visit_expr(&mut e_.right);
                     p.is_control_flow_dead = old;
-                }
-                Some(_) => p.visit_expr_in_out(&mut e_.right, value_in()),
-                None => p.visit_expr(&mut e_.right),
-            },
-            Op::Code::BinNullishCoalescing => {
-                match SideEffects::to_null_or_undefined(p, &e_.left.data) {
-                    Some(left) if !left.value => {
-                        // "notNullOrUndefined ?? dead"
-                        let old = p.is_control_flow_dead;
-                        p.is_control_flow_dead = true;
-                        p.visit_expr(&mut e_.right);
-                        p.is_control_flow_dead = old;
-                    }
-                    Some(_) => p.visit_expr_in_out(&mut e_.right, value_in()),
-                    None => p.visit_expr(&mut e_.right),
+                } else {
+                    p.visit_expr(&mut e_.right);
                 }
             }
-            Op::Code::BinComma => p.visit_expr_in_out(&mut e_.right, value_in()),
+            Op::Code::BinNullishCoalescing => {
+                if SideEffects::to_null_or_undefined(p, &e_.left.data).is_some_and(|k| !k.value) {
+                    // "notNullOrUndefined ?? dead"
+                    let old = p.is_control_flow_dead;
+                    p.is_control_flow_dead = true;
+                    p.visit_expr(&mut e_.right);
+                    p.is_control_flow_dead = old;
+                } else {
+                    p.visit_expr(&mut e_.right);
+                }
+            }
             _ => {
                 p.visit_expr(&mut e_.right);
             }

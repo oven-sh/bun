@@ -37,7 +37,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 object
             }
             Constant::Array(elements) => {
-                let elements = elements.iter().map(|element| self.emit_constant(fx, element)).collect();
+                let elements = elements
+                    .iter()
+                    .map(|element| self.emit_constant(fx, element))
+                    .collect();
                 self.emit_throwing(fx, Op::NewArray(elements))
             }
         }
@@ -55,16 +58,27 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 }
                 Some(self.c.atoms().bytes(name).to_vec())
             }
-            ExprKind::Dot { obj, name, chain: hir::Chain::No, .. } => {
+            ExprKind::Dot {
+                obj,
+                name,
+                chain: hir::Chain::No,
+                ..
+            } => {
                 let mut path = self.global_path(file, obj)?;
                 path.push(b'.');
                 path.extend_from_slice(self.c.atoms().bytes(name));
                 Some(path)
             }
-            ExprKind::Index { obj, index, chain: hir::Chain::No } => {
+            ExprKind::Index {
+                obj,
+                index,
+                chain: hir::Chain::No,
+            } => {
                 let name: Atom = match hir[index].kind {
                     ExprKind::String(name) => name,
-                    ExprKind::Template { exprs } if exprs.is_empty() => hir.id_at(hir.template_texts(exprs), 0),
+                    ExprKind::Template { exprs } if exprs.is_empty() => {
+                        hir.id_at(hir.template_texts(exprs), 0)
+                    }
                     _ => return None,
                 };
                 if bun_core::strings::contains_char(self.c.atoms().bytes(name), b'.') {
@@ -75,7 +89,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 path.extend_from_slice(self.c.atoms().bytes(name));
                 Some(path)
             }
-            ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) => self.global_path(file, expr),
+            ExprKind::As { expr, .. }
+            | ExprKind::Satisfies { expr, .. }
+            | ExprKind::NonNull(expr) => self.global_path(file, expr),
             _ => None,
         }
     }
@@ -85,8 +101,17 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return None;
         }
         let (holder, name) = match self.hir(file)[e].kind {
-            ExprKind::Ident(name) if self.is_unbound_in(file, e, name) && !self.c.module_graph_may_replace(name) => (global_object(), name),
-            ExprKind::Dot { obj, name, chain: hir::Chain::No, .. } => (self.resolve_locked_builtin(file, obj)?, name),
+            ExprKind::Ident(name)
+                if self.is_unbound_in(file, e, name) && !self.c.module_graph_may_replace(name) =>
+            {
+                (global_object(), name)
+            }
+            ExprKind::Dot {
+                obj,
+                name,
+                chain: hir::Chain::No,
+                ..
+            } => (self.resolve_locked_builtin(file, obj)?, name),
             _ => return None,
         };
         holder.known_read_result(self.c.atoms().bytes(name))
@@ -94,16 +119,36 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     fn resolve_locked_builtin(&mut self, file: FileId, e: ExprId) -> Option<&'static Builtin> {
         match self.hir(file)[e].kind {
-            ExprKind::Ident(name) if self.is_unbound_in(file, e, name) && !self.c.module_graph_may_replace(name) => global_object().object_at(self.c.atoms().bytes(name)),
-            ExprKind::Dot { obj, name, chain: hir::Chain::No, .. } => self.resolve_locked_builtin(file, obj)?.object_at(self.c.atoms().bytes(name)),
+            ExprKind::Ident(name)
+                if self.is_unbound_in(file, e, name) && !self.c.module_graph_may_replace(name) =>
+            {
+                global_object().object_at(self.c.atoms().bytes(name))
+            }
+            ExprKind::Dot {
+                obj,
+                name,
+                chain: hir::Chain::No,
+                ..
+            } => self
+                .resolve_locked_builtin(file, obj)?
+                .object_at(self.c.atoms().bytes(name)),
             _ => None,
         }
     }
 
-    pub(crate) fn is_locked_global_read_from_global_object(&mut self, file: FileId, obj: ExprId, name: Atom) -> bool {
+    pub(crate) fn is_locked_global_read_from_global_object(
+        &mut self,
+        file: FileId,
+        obj: ExprId,
+        name: Atom,
+    ) -> bool {
         !self.is_builtin_file(file)
-            && self.resolve_locked_builtin(file, obj).is_some_and(|holder| holder.is_global_object())
-            && global_object().object_at(self.c.atoms().bytes(name)).is_some_and(|held| !held.is_global_object())
+            && self
+                .resolve_locked_builtin(file, obj)
+                .is_some_and(|holder| holder.is_global_object())
+            && global_object()
+                .object_at(self.c.atoms().bytes(name))
+                .is_some_and(|held| !held.is_global_object())
     }
 
     pub(crate) fn mark_dead_expr(&mut self, fx: &Fx, e: ExprId) {
@@ -140,10 +185,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     fn is_dropped_call(&mut self, file: FileId, callee: ExprId) -> bool {
         let mut named = callee;
         while !self.shared.defines.dropped.is_empty() && !self.is_builtin_file(file) {
-            if self.global_path(file, named).is_some_and(|path| self.shared.defines.dropped.contains(&path)) {
+            if self
+                .global_path(file, named)
+                .is_some_and(|path| self.shared.defines.dropped.contains(&path))
+            {
                 return true;
             }
-            let ExprKind::Dot { obj, .. } = self.hir(file)[named].kind else { break };
+            let ExprKind::Dot { obj, .. } = self.hir(file)[named].kind else {
+                break;
+            };
             named = obj;
         }
         false
@@ -151,7 +201,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     fn replacement_of(&mut self, file: FileId, e: ExprId) -> Option<Constant> {
         let hir = self.hir(file);
-        let (defines, last_names) = if self.is_builtin_file(file) { (&self.shared.builtin_defines, &self.shared.last_names_of_builtin_defines) } else { (&self.shared.defines, &self.shared.last_names_of_defines) };
+        let (defines, last_names) = if self.is_builtin_file(file) {
+            (
+                &self.shared.builtin_defines,
+                &self.shared.last_names_of_builtin_defines,
+            )
+        } else {
+            (&self.shared.defines, &self.shared.last_names_of_defines)
+        };
         match hir[e].kind {
             ExprKind::Ident(name) | ExprKind::Dot { name, .. } => {
                 if last_names.contains(&name) {
@@ -160,37 +217,64 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                         return Some(found.clone());
                     }
                 }
-                let ExprKind::Dot { obj, name, chain: hir::Chain::No, .. } = hir[e].kind else { return None };
+                let ExprKind::Dot {
+                    obj,
+                    name,
+                    chain: hir::Chain::No,
+                    ..
+                } = hir[e].kind
+                else {
+                    return None;
+                };
                 let mut root = obj;
                 while let ExprKind::Dot { obj, .. } = hir[root].kind {
                     root = obj;
                 }
-                let ExprKind::Ident(root) = hir[root].kind else { return None };
+                let ExprKind::Ident(root) = hir[root].kind else {
+                    return None;
+                };
                 if !last_names.contains(&root) {
                     return None;
                 }
-                let Constant::Object(members) = self.replacement_of(file, obj)? else { return None };
+                let Constant::Object(members) = self.replacement_of(file, obj)? else {
+                    return None;
+                };
                 let name = self.c.atoms().bytes(name);
-                members.into_iter().rev().find(|member| member.0 == name).map(|member| member.1)
+                members
+                    .into_iter()
+                    .rev()
+                    .find(|member| member.0 == name)
+                    .map(|member| member.1)
             }
             ExprKind::Call(call) => {
                 if self.is_dropped_call(file, hir[call].callee) {
                     return Some(Constant::Undefined);
                 }
-                let ExprKind::Ident(name) = hir[hir[call].callee].kind else { return None };
+                let ExprKind::Ident(name) = hir[hir[call].callee].kind else {
+                    return None;
+                };
                 if self.c.atoms().bytes(name) != b"feature" || hir[call].args.len() != 1 {
                     return None;
                 }
                 let found = self.ident_binding(file, hir[call].callee, name)?;
-                let is_bundler_constant = self.files.decls_of(found).iter().copied().any(|(file, decl)| match decl {
-                    Decl::ImportSpec(spec) => {
-                        let hir = self.hir(file);
-                        self.c.atoms().bytes(hir[hir[spec].import].spec) == b"bun:bundle"
-                    }
-                    _ => false,
-                });
-                let ExprKind::String(flag) = hir[hir.id_at(hir[call].args, 0)].kind else { return None };
-                is_bundler_constant.then(|| Constant::Bool(self.shared.features.contains(self.c.atoms().bytes(flag))))
+                let is_bundler_constant =
+                    self.files
+                        .decls_of(found)
+                        .iter()
+                        .copied()
+                        .any(|(file, decl)| match decl {
+                            Decl::ImportSpec(spec) => {
+                                let hir = self.hir(file);
+                                self.c.atoms().bytes(hir[hir[spec].import].spec) == b"bun:bundle"
+                            }
+                            _ => false,
+                        });
+                let ExprKind::String(flag) = hir[hir.id_at(hir[call].args, 0)].kind else {
+                    return None;
+                };
+                is_bundler_constant.then(|| {
+                    Constant::Bool(self.shared.features.contains(self.c.atoms().bytes(flag)))
+                })
             }
             _ => None,
         }
@@ -222,7 +306,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.constants_after_defines.insert(sym, None);
         let (file, init) = self.c.initializer_of_const(sym)?;
         let outer = std::mem::replace(&mut self.is_query_only, true);
-        let found = self.constant_in(file, init).filter(|value| value.is_primitive() && !matches!(value, Constant::String(text) if text.len() > 64));
+        let found = self.constant_in(file, init).filter(|value| {
+            value.is_primitive() && !matches!(value, Constant::String(text) if text.len() > 64)
+        });
         self.is_query_only = outer;
         self.constants_after_defines.insert(sym, found.clone());
         found
@@ -234,7 +320,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     pub(crate) fn is_chain_short_circuited(&mut self, fx: &mut Fx, e: ExprId) -> bool {
-        let Some(ended_by) = self.files.short_circuiting_root(fx.file, e) else { return false };
+        let Some(ended_by) = self.files.short_circuiting_root(fx.file, e) else {
+            return false;
+        };
         self.expr_unused(fx, ended_by);
         if !self.is_query_only {
             let hir = self.hir(fx.file);
@@ -245,26 +333,50 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     pub(crate) fn is_operand_decided(&self, fx: &Fx, e: ExprId) -> bool {
         match self.hir(fx.file)[e].kind {
-            ExprKind::Cond { test: deciding, .. } | ExprKind::Binary { op: hir::BinOp::And | hir::BinOp::Or, left: deciding, .. } => self.files.decision(fx.file, deciding).is_some(),
-            ExprKind::Binary { op: hir::BinOp::Nullish, left, .. } => self.files.decision(fx.file, left).is_some_and(|decision| decision.is_nullish.is_some()),
+            ExprKind::Cond { test: deciding, .. }
+            | ExprKind::Binary {
+                op: hir::BinOp::And | hir::BinOp::Or,
+                left: deciding,
+                ..
+            } => self.files.decision(fx.file, deciding).is_some(),
+            ExprKind::Binary {
+                op: hir::BinOp::Nullish,
+                left,
+                ..
+            } => self
+                .files
+                .decision(fx.file, left)
+                .is_some_and(|decision| decision.is_nullish.is_some()),
             _ => false,
         }
     }
 
-    pub(crate) fn emit_decided_operand(&mut self, fx: &mut Fx, e: ExprId) -> Option<DecidedOperand> {
+    pub(crate) fn emit_decided_operand(
+        &mut self,
+        fx: &mut Fx,
+        e: ExprId,
+    ) -> Option<DecidedOperand> {
         let decision = |deciding: ExprId| self.files.decision(fx.file, deciding);
         let (for_effect, yields, cut) = match self.hir(fx.file)[e].kind {
             ExprKind::Cond { test, yes, no } => match decision(test)?.is_truthy {
                 true => (test, yes, no),
                 false => (test, no, yes),
             },
-            ExprKind::Binary { op: op @ (hir::BinOp::And | hir::BinOp::Or | hir::BinOp::Nullish), left, right } => {
+            ExprKind::Binary {
+                op: op @ (hir::BinOp::And | hir::BinOp::Or | hir::BinOp::Nullish),
+                left,
+                right,
+            } => {
                 let picks_right = match op {
                     hir::BinOp::And => decision(left)?.is_truthy,
                     hir::BinOp::Or => !decision(left)?.is_truthy,
                     _ => decision(left)?.is_nullish?,
                 };
-                if picks_right { (left, right, ExprId::NONE) } else { (ExprId::NONE, left, right) }
+                if picks_right {
+                    (left, right, ExprId::NONE)
+                } else {
+                    (ExprId::NONE, left, right)
+                }
             }
             _ => return None,
         };
@@ -272,7 +384,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             self.expr_unused(fx, for_effect);
         }
         self.mark_dead_expr(fx, cut);
-        Some(DecidedOperand { yields, is_cut_left: for_effect.is_none() })
+        Some(DecidedOperand {
+            yields,
+            is_cut_left: for_effect.is_none(),
+        })
     }
 
     pub(crate) fn known_truthiness(&mut self, fx: &Fx, e: ExprId) -> Option<bool> {
@@ -288,9 +403,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         let hir = self.hir(file);
         match hir[e].kind {
-            ExprKind::Binary { op: op @ (hir::BinOp::And | hir::BinOp::Or), left, right } => {
+            ExprKind::Binary {
+                op: op @ (hir::BinOp::And | hir::BinOp::Or),
+                left,
+                right,
+            } => {
                 let deciding = op == hir::BinOp::Or;
-                let (left, right) = (self.known_truthiness_in(file, left), self.known_truthiness_in(file, right));
+                let (left, right) = (
+                    self.known_truthiness_in(file, left),
+                    self.known_truthiness_in(file, right),
+                );
                 if left == Some(deciding) || right == Some(deciding) {
                     Some(deciding)
                 } else if left == Some(!deciding) && right == Some(!deciding) {
@@ -299,9 +421,20 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     None
                 }
             }
-            ExprKind::Binary { op: hir::BinOp::Comma, right, .. } => self.known_truthiness_in(file, right),
-            ExprKind::Unary { op: hir::UnOp::Not, operand } => self.known_truthiness_in(file, operand).map(|truthy| !truthy),
-            _ => self.constant_in(file, e).map(|constant| constant.is_truthy()),
+            ExprKind::Binary {
+                op: hir::BinOp::Comma,
+                right,
+                ..
+            } => self.known_truthiness_in(file, right),
+            ExprKind::Unary {
+                op: hir::UnOp::Not,
+                operand,
+            } => self
+                .known_truthiness_in(file, operand)
+                .map(|truthy| !truthy),
+            _ => self
+                .constant_in(file, e)
+                .map(|constant| constant.is_truthy()),
         }
     }
 
@@ -319,9 +452,18 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             ExprKind::String(value) => Some(Constant::String(self.c.atoms().bytes(value).to_vec())),
             ExprKind::Ident(name) => (self.define_replacement(file, e))
                 .or_else(|| self.const_binding_value(file, e, name))
-                .or_else(|| (self.c.atoms().bytes(name) == b"undefined" && self.is_unbound_in(file, e, name)).then_some(Constant::Undefined)),
-            ExprKind::Dot { .. } | ExprKind::Call(_) => self.define_replacement(file, e).or_else(|| self.checker_constant(file, e)),
-            ExprKind::Unary { op: hir::UnOp::Not, operand } => match self.constant_in(file, operand) {
+                .or_else(|| {
+                    (self.c.atoms().bytes(name) == b"undefined"
+                        && self.is_unbound_in(file, e, name))
+                    .then_some(Constant::Undefined)
+                }),
+            ExprKind::Dot { .. } | ExprKind::Call(_) => self
+                .define_replacement(file, e)
+                .or_else(|| self.checker_constant(file, e)),
+            ExprKind::Unary {
+                op: hir::UnOp::Not,
+                operand,
+            } => match self.constant_in(file, operand) {
                 Some(constant) => Some(Constant::Bool(!constant.is_truthy())),
                 None => {
                     let held = self.known_builtin_value(file, operand)?;
@@ -329,7 +471,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     Some(Constant::Bool(!held.is_truthy))
                 }
             },
-            ExprKind::Unary { op: hir::UnOp::Typeof, operand } if matches!(hir[operand].kind, ExprKind::Ident(_) | ExprKind::Dot { .. }) => {
+            ExprKind::Unary {
+                op: hir::UnOp::Typeof,
+                operand,
+            } if matches!(hir[operand].kind, ExprKind::Ident(_) | ExprKind::Dot { .. }) => {
                 let Some(replaced) = self.define_replacement(file, operand) else {
                     let held = self.known_builtin_value(file, operand)?;
                     self.mark_dead_expr_in(file, operand);
@@ -384,7 +529,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                         Some(Constant::Bool(equal == (op == hir::BinOp::EqEq)))
                     }
                     hir::BinOp::Lt | hir::BinOp::Le | hir::BinOp::Gt | hir::BinOp::Ge => {
-                        let (Constant::Number(a), Constant::Number(b)) = (a, b) else { return None };
+                        let (Constant::Number(a), Constant::Number(b)) = (a, b) else {
+                            return None;
+                        };
                         Some(Constant::Bool(match op {
                             hir::BinOp::Lt => a < b,
                             hir::BinOp::Le => a <= b,
@@ -396,7 +543,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 }
             }
             ExprKind::Cond { test, yes, no } => {
-                let (taken, left_out) = if self.constant_in(file, test)?.is_truthy() { (yes, no) } else { (no, yes) };
+                let (taken, left_out) = if self.constant_in(file, test)?.is_truthy() {
+                    (yes, no)
+                } else {
+                    (no, yes)
+                };
                 self.mark_dead_expr_in(file, left_out);
                 self.constant_in(file, taken)
             }

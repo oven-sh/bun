@@ -4,11 +4,23 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { test } from "./supported";
 
 const tsconfig = JSON.stringify({
-  compilerOptions: { lib: ["ESNext"], target: "ESNext", module: "Preserve", moduleResolution: "bundler", strict: true, noEmit: true, skipLibCheck: true, types: [] },
+  compilerOptions: {
+    lib: ["ESNext"],
+    target: "ESNext",
+    module: "Preserve",
+    moduleResolution: "bundler",
+    strict: true,
+    noEmit: true,
+    skipLibCheck: true,
+    types: [],
+  },
 });
 
 async function factsOf(text: string) {
-  using dir = tempDir("aot-runtime-use-of-built-in-code", { "tsconfig.json": tsconfig, "main.ts": `declare const console: any, process: any, require: any;\n${text}` });
+  using dir = tempDir("aot-runtime-use-of-built-in-code", {
+    "tsconfig.json": tsconfig,
+    "main.ts": `declare const console: any, process: any, require: any;\n${text}`,
+  });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "check", "--aot", "--no-pretty", "--aot-explain=runtime-use", "main.ts"],
     cwd: String(dir),
@@ -18,7 +30,10 @@ async function factsOf(text: string) {
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
   const prefix = "aot: runtime use: ";
-  const lines = stderr.split("\n").filter(line => line.startsWith(prefix)).map(line => line.slice(prefix.length));
+  const lines = stderr
+    .split("\n")
+    .filter(line => line.startsWith(prefix))
+    .map(line => line.slice(prefix.length));
   expect({ exitCode, world: lines[0] }).toEqual({ exitCode: 0, world: "closed" });
   return new Set(lines);
 }

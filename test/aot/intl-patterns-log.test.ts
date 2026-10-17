@@ -15,7 +15,15 @@ console.log(new Intl.NumberFormat("en-US").format(1234));
 `,
   });
   await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", join(String(dir), "main" + (isWindows ? ".exe" : ""))],
+    cmd: [
+      bunExe(),
+      "build",
+      "--compile",
+      "--aot",
+      "main.ts",
+      "--outfile",
+      join(String(dir), "main" + (isWindows ? ".exe" : "")),
+    ],
     cwd: String(dir),
     env: { ...bunEnv, BUN_JSC_logAOTFormatPatterns: "1" },
     stdout: "pipe",
@@ -24,10 +32,18 @@ console.log(new Intl.NumberFormat("en-US").format(1234));
   const [stderr, exitCode] = await Promise.all([build.stderr.text(), build.exited]);
   const lines = stderr.split("\n").filter(line => line.startsWith("AOT: "));
   expect(lines).toEqual([
-    expect.stringMatching(/^AOT: no format pattern for Intl\.DateTimeFormat\("zh-TW", timeStyle: short, timeZone: UTC\): ICU's pattern, .*, has 1 of the letter B$/),
-    expect.stringMatching(/^AOT: no format pattern for Intl\.DateTimeFormat\("th", dateStyle: medium, timeZone: UTC\): the calendar is buddhist and the numbering system latn$/),
-    expect.stringMatching(/^AOT: no format pattern for Intl\.NumberFormat\("en-US", notation: compact\): notation is compact$/),
-    expect.stringMatching(/^AOT: 4 Intl formatters have a constant locale and constant options; 1 have a pattern in the image; 0 patterns differed from ICU on a sample$/),
+    expect.stringMatching(
+      /^AOT: no format pattern for Intl\.DateTimeFormat\("zh-TW", timeStyle: short, timeZone: UTC\): ICU's pattern, .*, has 1 of the letter B$/,
+    ),
+    expect.stringMatching(
+      /^AOT: no format pattern for Intl\.DateTimeFormat\("th", dateStyle: medium, timeZone: UTC\): the calendar is buddhist and the numbering system latn$/,
+    ),
+    expect.stringMatching(
+      /^AOT: no format pattern for Intl\.NumberFormat\("en-US", notation: compact\): notation is compact$/,
+    ),
+    expect.stringMatching(
+      /^AOT: 4 Intl formatters have a constant locale and constant options; 1 have a pattern in the image; 0 patterns differed from ICU on a sample$/,
+    ),
   ]);
   expect(exitCode).toBe(0);
 });

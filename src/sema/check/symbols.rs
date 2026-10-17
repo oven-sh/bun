@@ -320,7 +320,11 @@ impl<'p, 's> Checker<'p, 's> {
         let in_report = !self.reporting_nonexistent.is_empty()
             && matches!(value_declaration, Some((file, Decl::Expando(e)))
                 if matches!(self.hir(file)[e].kind, ExprKind::Call(_)));
-        if in_report && self.innermost(Query::Symbol(sym), self.resolution_start).is_some() {
+        if in_report
+            && self
+                .innermost(Query::Symbol(sym), self.resolution_start)
+                .is_some()
+        {
             return self.type_of_circular_symbol(sym, flags, value_declaration, None);
         }
         if let Some(raw) = self.provisional(Query::Symbol(sym)) {
@@ -1910,7 +1914,8 @@ impl<'p, 's> Checker<'p, 's> {
                 return;
             }
         }
-        if !self.report_errors_from_widening(file, ty) || self.hir(file).is_js && !self.is_check_js(file)
+        if !self.report_errors_from_widening(file, ty)
+            || self.hir(file).is_js && !self.is_check_js(file)
         {
             return;
         }
@@ -2208,7 +2213,12 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             TypeId::UNDEFINED
         };
-        if self.p.files.options.undefined_properties_have_no_declaration {
+        if self
+            .p
+            .files
+            .options
+            .undefined_properties_have_no_declaration
+        {
             return Prop {
                 name: prop.name,
                 flags: PropFlags::OPTIONAL,
@@ -5266,7 +5276,9 @@ impl<'p, 's> Checker<'p, 's> {
     /// that is not iterable, such as `never`, is an error, and the result of an error is any.
     pub fn type_of_iterator(&mut self, ty: TypeId) -> Option<TypeId> {
         self.resolve_known_symbol(b"iterator");
-        let Some((method, false)) = self.declared_property(ty, known::sym_iterator) else { return None };
+        let Some((method, false)) = self.declared_property(ty, known::sym_iterator) else {
+            return None;
+        };
         if self.is_any(method) {
             return None;
         }
@@ -5289,8 +5301,11 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     pub fn declared_method(&mut self, ty: TypeId, name: Atom) -> Option<(FileId, FnId)> {
-        let Some((method, false)) = self.declared_property(ty, name) else { return None };
-        self.function_for_type(method).filter(|&(file, func)| self.hir(file)[func].kind == FnKind::Method)
+        let Some((method, false)) = self.declared_property(ty, name) else {
+            return None;
+        };
+        self.function_for_type(method)
+            .filter(|&(file, func)| self.hir(file)[func].kind == FnKind::Method)
     }
 
     pub fn declared_iterator_method(&mut self, ty: TypeId) -> Option<(FileId, FnId)> {
@@ -5426,7 +5441,8 @@ impl<'p, 's> Checker<'p, 's> {
         let element = self.index_type_of_type(arrays, TypeId::NUMBER)?;
         Some(if !has_string {
             element
-        } else if self.is_string_like(element) && !self.index_may_be_missing(error_node.map(|at| at.0))
+        } else if self.is_string_like(element)
+            && !self.index_may_be_missing(error_node.map(|at| at.0))
         {
             TypeId::STRING
         } else {

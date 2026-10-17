@@ -521,7 +521,14 @@ export function rawDebug() {
 // Port of https://github.com/nodejs/node/blob/main/lib/internal/process/warning.js onWarning.
 // The 'warning' listener itself is a native trampoline registered when `process` is created
 // (BunProcess.cpp); this builds the printer it forwards to on the first warning.
-export function createOnWarning(process, redirectPath, disabledArr, writeToUntouchedStderr, basename, appendToWarningsFile) {
+export function createOnWarning(
+  process,
+  redirectPath,
+  disabledArr,
+  writeToUntouchedStderr,
+  basename,
+  appendToWarningsFile,
+) {
   const appendFileSync = redirectPath && !appendToWarningsFile ? require("node:fs").appendFileSync : undefined;
   // --disable-warning names/codes as a Set: matches Node's SafeSet lookup
   // and avoids an FFI + utf8() encode per emit.

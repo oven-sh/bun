@@ -5,7 +5,11 @@ import { test } from "./supported";
 const functionCount = isDebug || isASAN ? 400 : 4_000;
 const timeout = isDebug || isASAN ? 240_000 : 20_000;
 
-const callees = (index: number) => [(index * 7 + 1) % functionCount, (index * 13 + 5) % functionCount, (index * 29 + 11) % functionCount];
+const callees = (index: number) => [
+  (index * 7 + 1) % functionCount,
+  (index * 13 + 5) % functionCount,
+  (index * 29 + 11) % functionCount,
+];
 
 const shapes: Record<string, (index: number) => string> = {
   "calls assigned to variables": index => {
@@ -32,7 +36,11 @@ for (const [shape, write] of Object.entries(shapes)) {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([checked.stdout.text(), checked.stderr.text(), checked.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([
+        checked.stdout.text(),
+        checked.stderr.text(),
+        checked.exited,
+      ]);
       expect({ output: exitCode ? stdout + stderr : "", exitCode }).toEqual({ output: "", exitCode: 0 });
     },
     timeout,

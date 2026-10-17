@@ -24,7 +24,13 @@ function sources(propertiesPerUnion: number) {
 }
 
 async function check(cwd: string, args: string[]) {
-  await using checked = Bun.spawn({ cmd: [bunExe(), "check", ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  await using checked = Bun.spawn({
+    cmd: [bunExe(), "check", ...args],
+    cwd,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, stderr, exitCode] = await Promise.all([checked.stdout.text(), checked.stderr.text(), checked.exited]);
   return { output: exitCode ? stdout + stderr : "", exitCode };
 }

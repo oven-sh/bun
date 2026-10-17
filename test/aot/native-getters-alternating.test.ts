@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "./supported";
 
 const files = {
   "main.mjs": `
@@ -76,12 +76,22 @@ async function run(cmd: string[], cwd: string, env: Record<string, string | unde
 async function visitsOfTheSlowPath(files: Record<string, string>, said: (rounds: number) => string) {
   using dir = tempDir("aot-native-getters-read-in-turn", files);
   const executable = join(String(dir), "main" + (isWindows ? ".exe" : ""));
-  const built = await run([bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", executable], String(dir), bunEnv);
+  const built = await run(
+    [bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", executable],
+    String(dir),
+    bunEnv,
+  );
   expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
   const visits: number[] = [];
   for (const rounds of [100, 1100]) {
     const path = join(String(dir), "counts" + rounds);
-    const env = { ...bunEnv, ROUNDS: String(rounds), BUN_JSC_crashIfInterpreterIsUsed: "1", BUN_JSC_useAOTOperationCounters: "1", BUN_JSC_aotTypeCoverageCountsPath: path };
+    const env = {
+      ...bunEnv,
+      ROUNDS: String(rounds),
+      BUN_JSC_crashIfInterpreterIsUsed: "1",
+      BUN_JSC_useAOTOperationCounters: "1",
+      BUN_JSC_aotTypeCoverageCountsPath: path,
+    };
     expect(await run([executable], String(dir), env)).toEqual({ stdout: said(rounds), stderr: "", exitCode: 0 });
     let count = 0;
     for (const line of readFileSync(path + ".operations", "utf8").split("\n")) {
@@ -94,13 +104,19 @@ async function visitsOfTheSlowPath(files: Record<string, string>, said: (rounds:
 }
 
 test("a hundred and more native getters read in turn are all remembered", async () => {
-  const visits = await visitsOfTheSlowPath(files, rounds => `136 getters of 18 kinds of native objects, read ${rounds} times: 134\n`);
+  const visits = await visitsOfTheSlowPath(
+    files,
+    rounds => `136 getters of 18 kinds of native objects, read ${rounds} times: 134\n`,
+  );
   expect(visits[0]).toBeGreaterThan(0);
   expect(visits[1] - visits[0]).toBeLessThan(3000);
 }, 240_000);
 
 test("four hundred and more native getters read in turn are all remembered", async () => {
-  const visits = await visitsOfTheSlowPath(subclasses, rounds => `13 getters of 32 subclasses of Event, read ${rounds} times: 416\n`);
+  const visits = await visitsOfTheSlowPath(
+    subclasses,
+    rounds => `13 getters of 32 subclasses of Event, read ${rounds} times: 416\n`,
+  );
   expect(visits[0]).toBeGreaterThan(0);
   expect(visits[1] - visits[0]).toBeLessThan(9000);
 }, 240_000);

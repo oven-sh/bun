@@ -6,9 +6,7 @@ type SQLResultArray<T> = import("./shared").SQLResultArray<T>;
 
 const { SQLResultArray } = require("internal/sql/shared");
 const { BaseSQLAdapter, addResult, onRejectQuery } = require("internal/sql/pool");
-const {
-  stateOf,
-} = require("internal/sql/query");
+const { stateOf } = require("internal/sql/query");
 const { MySQLError } = require("internal/sql/errors");
 
 const {

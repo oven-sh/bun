@@ -164,9 +164,7 @@ function pushWithInitHooks(cb: unknown, args: unknown[] | undefined, frame: unkn
       hooks[i](asyncId, "TickObject", 0, tock);
     } catch (err) {
       try {
-        console.error(
-          typeof (err as any)?.stack === "string" ? (err as Error).stack : err,
-        );
+        console.error(typeof (err as any)?.stack === "string" ? (err as Error).stack : err);
       } catch {}
       tickingProcess.exit(1);
     }

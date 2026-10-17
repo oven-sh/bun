@@ -452,7 +452,8 @@ function removeEvent(target, events, type) {
     delete events[type];
     return;
   }
-  const removed = typeof type === "string" || typeof type === "symbol" ? type : ReflectOwnKeys({ [type]: undefined })[0];
+  const removed =
+    typeof type === "string" || typeof type === "symbol" ? type : ReflectOwnKeys({ [type]: undefined })[0];
   const copy = Object.create(null);
   const keys = ReflectOwnKeys(events);
   for (let i = 0, length = keys.length; i < length; i++) {

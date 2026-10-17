@@ -247,7 +247,13 @@ impl<'a> Parser<'a, '_> {
         let mut strings = Vec::with_capacity(items.len());
         for item in items {
             self.expect_string(item)?;
-            strings.push(estring_to_owned(item.data.e_string().expect("infallible: variant checked").get(), self.bump));
+            strings.push(estring_to_owned(
+                item.data
+                    .e_string()
+                    .expect("infallible: variant checked")
+                    .get(),
+                self.bump,
+            ));
         }
         Ok(strings)
     }
@@ -258,8 +264,20 @@ impl<'a> Parser<'a, '_> {
             for rule in self.string_list(&list)? {
                 let setting = [b"aot.".as_slice(), key, b"=", &rule[..]].concat();
                 match files {
-                    [] => self.ctx.bundler_options.aot_rules.push(setting.into_boxed_slice()),
-                    _ => self.ctx.bundler_options.aot_rules.extend(files.iter().map(|pattern| [&setting[..], b":", &pattern[..]].concat().into_boxed_slice())),
+                    [] => self
+                        .ctx
+                        .bundler_options
+                        .aot_rules
+                        .push(setting.into_boxed_slice()),
+                    _ => self
+                        .ctx
+                        .bundler_options
+                        .aot_rules
+                        .extend(files.iter().map(|pattern| {
+                            [&setting[..], b":", &pattern[..]]
+                                .concat()
+                                .into_boxed_slice()
+                        })),
                 }
             }
         }
@@ -271,12 +289,28 @@ impl<'a> Parser<'a, '_> {
         self.load_aot_rules(aot, &[])?;
         if let Some(baseline) = aot.get(b"baseline") {
             self.expect_string(&baseline)?;
-            let path = estring_to_owned(baseline.data.e_string().expect("infallible: variant checked").get(), self.bump);
-            self.ctx.bundler_options.aot_rules.push([b"aot.baseline=".as_slice(), &path[..]].concat().into_boxed_slice());
+            let path = estring_to_owned(
+                baseline
+                    .data
+                    .e_string()
+                    .expect("infallible: variant checked")
+                    .get(),
+                self.bump,
+            );
+            self.ctx.bundler_options.aot_rules.push(
+                [b"aot.baseline=".as_slice(), &path[..]]
+                    .concat()
+                    .into_boxed_slice(),
+            );
         }
-        let Some(overrides) = aot.get(b"overrides") else { return Ok(()) };
+        let Some(overrides) = aot.get(b"overrides") else {
+            return Ok(());
+        };
         self.expect(&overrides, ExprTag::EArray)?;
-        let array = overrides.data.e_array().expect("infallible: variant checked");
+        let array = overrides
+            .data
+            .e_array()
+            .expect("infallible: variant checked");
         for table in array.items.slice() {
             self.expect(table, ExprTag::EObject)?;
             let Some(files) = table.get(b"files") else {

@@ -7,16 +7,24 @@ import { packageOf } from "./icu-data-package.ts";
 import { shutDoors } from "./islands-shut-doors.ts";
 
 const wrapper = join(import.meta.dir, "../../scripts/build/islands.ts");
-const tools = Object.fromEntries(["clang", "ld.lld", "llvm-cxxfilt", "llvm-nm", "llvm-objcopy"].map(name => [name, Bun.which(name)]));
+const tools = Object.fromEntries(
+  ["clang", "ld.lld", "llvm-cxxfilt", "llvm-nm", "llvm-objcopy"].map(name => [name, Bun.which(name)]),
+);
 const canLink = isLinux && Object.values(tools).every(path => path !== null);
 const hasCxxRuntime =
-  canLink && Bun.spawnSync({ cmd: [tools.clang!, "-x", "c++", "-fuse-ld=lld", "-lstdc++", "-o", "/dev/null", "-"], stdin: Buffer.from("int main() { try { throw 1; } catch (int) {} }"), env: bunEnv }).exitCode === 0;
+  canLink &&
+  Bun.spawnSync({
+    cmd: [tools.clang!, "-x", "c++", "-fuse-ld=lld", "-lstdc++", "-o", "/dev/null", "-"],
+    stdin: Buffer.from("int main() { try { throw 1; } catch (int) {} }"),
+    env: bunEnv,
+  }).exitCode === 0;
 
 const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 const manyFunctions = (prefix: string) =>
   Array.from(
     { length: 1500 },
-    (_, index) => `__attribute__((noinline)) int ${prefix}${index}(int x) { for (int i = 0; i < ${index + 3}; i++) x = x * ${index + 7} + i; return x ^ ${index}; }`,
+    (_, index) =>
+      `__attribute__((noinline)) int ${prefix}${index}(int x) { for (int i = 0; i < ${index + 3}; i++) x = x * ${index + 7} + i; return x ^ ${index}; }`,
   ).join("\n");
 const callAll = (prefix: string) => Array.from({ length: 1500 }, (_, index) => `x += ${prefix}${index}(x);`).join(" ");
 
@@ -48,7 +56,13 @@ async function run(cmd: string[], cwd: string) {
   return { stdout, stderr, exitCode };
 }
 
-async function wrapped(folder: string, plan: string, objects: string[], compileFlags: Record<string, string[]>, linkFlags: string[]) {
+async function wrapped(
+  folder: string,
+  plan: string,
+  objects: string[],
+  compileFlags: Record<string, string[]>,
+  linkFlags: string[],
+) {
   for (const name of objects) {
     const flags = ["-O1", "-ffunction-sections", "-fdata-sections", "-fno-pic", ...(compileFlags[name] ?? [])];
     const compiled = await run([tools.clang!, ...flags, "-c", `${name}.c`, "-o", `${name}.o`], folder);
@@ -57,7 +71,21 @@ async function wrapped(folder: string, plan: string, objects: string[], compileF
   writeFileSync(join(folder, "in.rsp"), objects.map(name => `${name}.o\n`).join(""));
   const flags = ["-fuse-ld=lld", "-no-pie", "-Wl,--gc-sections", "-Wl,--icf=all", "-Wl,-Map=program.map", ...linkFlags];
   return await run(
-    [bunExe(), wrapper, "doors", tools["llvm-cxxfilt"]!, "work", plan, "program.plan", "--", tools.clang!, "@in.rsp", ...flags, "-o", "program"],
+    [
+      bunExe(),
+      wrapper,
+      "doors",
+      tools["llvm-cxxfilt"]!,
+      "work",
+      plan,
+      "program.plan",
+      "--",
+      tools.clang!,
+      "@in.rsp",
+      ...flags,
+      "-o",
+      "program",
+    ],
     folder,
   );
 }
@@ -89,14 +117,25 @@ async function linked(
   const said = await wrapped(folder, plan, objects, compileFlags, linkFlags);
   expect({ stderr: said.stderr, exitCode: said.exitCode }).toEqual({ stderr: "", exitCode: 0 });
   const names = await run([tools["llvm-nm"]!, "program"], folder);
-  const addressOf = new Map(names.stdout.split("\n").map(line => [line.split(" ")[2]!, parseInt(line.split(" ")[0]!, 16)]));
+  const addressOf = new Map(
+    names.stdout.split("\n").map(line => [line.split(" ")[2]!, parseInt(line.split(" ")[0]!, 16)]),
+  );
   await run([tools["llvm-objcopy"]!, "-O", "binary", "--only-section=.bun_islands", "program", "table"], folder);
   const table = decodeTable(readFileSync(join(folder, "table")));
   const islands = table.islands.map(({ start, end }) => [start, end] as const);
   const isDoor = (name: string) => table.doors.some(door => door.address === addressOf.get(name));
-  const canGo = (name: string) => islands.some(([start, end]) => start <= addressOf.get(name)! && addressOf.get(name)! < end);
+  const canGo = (name: string) =>
+    islands.some(([start, end]) => start <= addressOf.get(name)! && addressOf.get(name)! < end);
   fillWithTraps(folder, islands);
-  return { said: said.stdout, table, addressOf, canGo, isDoor, ran: await run([join(folder, "program")], folder), ranTrimmed: await run([join(folder, "trimmed")], folder) };
+  return {
+    said: said.stdout,
+    table,
+    addressOf,
+    canGo,
+    isDoor,
+    ran: await run([join(folder, "program")], folder),
+    ranTrimmed: await run([join(folder, "trimmed")], folder),
+  };
 }
 
 const start = `
@@ -118,7 +157,8 @@ interface Road {
   skip?: boolean;
 }
 
-const twin = (name: string) => `__attribute__((noinline)) int ${name}(int x) { for (int i = 0; i < 3; i++) x = x * 3 + i; return x ^ 77; }`;
+const twin = (name: string) =>
+  `__attribute__((noinline)) int ${name}(int x) { for (int i = 0; i < 3; i++) x = x * 3 + i; return x ^ 77; }`;
 const choose = (name: string) => `
   __attribute__((noinline)) int ${name}(int x) {
     switch (x) {
@@ -251,7 +291,10 @@ const roads: Record<string, Road> = {
       int main(int argc, char **argv) { return argc > 5 ? the_door(argc) : shared_inline(argc) == 56 ? 0 : 1; }
     `,
     stay: ["_Z13shared_inlinei"],
-    compileFlags: { more: ["-x", "c++", "-fno-exceptions", "-fno-rtti"], main: ["-x", "c++", "-fno-exceptions", "-fno-rtti"] },
+    compileFlags: {
+      more: ["-x", "c++", "-fno-exceptions", "-fno-rtti"],
+      main: ["-x", "c++", "-fno-exceptions", "-fno-rtti"],
+    },
   },
   "a string that the linker merged with an equal one": {
     more: `__attribute__((noinline)) const char *behind_words(void) { return "the same words in both"; } int more(int x) { return behind_words()[x & 7]; }`,
@@ -305,8 +348,16 @@ describe.skipIf(!canLink)("what stays can reach what lies behind the door by", (
         "main.c": (isCxx ? "" : start) + road.main,
         "doors": sources.doors,
       });
-      const { said, canGo, ran, ranTrimmed } = await linked(String(dir), "none", ["behind", "door", "more", "main"], road.compileFlags, road.linkFlags);
-      expect(Object.fromEntries(road.stay.map(name => [name, canGo(name)]))).toEqual(Object.fromEntries(road.stay.map(name => [name, false])));
+      const { said, canGo, ran, ranTrimmed } = await linked(
+        String(dir),
+        "none",
+        ["behind", "door", "more", "main"],
+        road.compileFlags,
+        road.linkFlags,
+      );
+      expect(Object.fromEntries(road.stay.map(name => [name, canGo(name)]))).toEqual(
+        Object.fromEntries(road.stay.map(name => [name, false])),
+      );
       expect(["behind", "behind_0", "behind_1499"].map(canGo)).toEqual([true, true, true]);
       expect(said).toContain("; 0 references lead where the names did not");
       expect({ whole: ran.exitCode, trimmed: ranTrimmed.exitCode }).toEqual({ whole: 0, trimmed: 0 });
@@ -334,7 +385,9 @@ describe.skipIf(!canLink)("what stays can reach what lies behind the door by", (
       `,
       "doors": sources.doors + "door extra exit ^hop$\n",
     });
-    const { said, canGo, ranTrimmed } = await linked(String(dir), "none", ["behind", "door", "more", "main"], {}, ["-Wl,-O2"]);
+    const { said, canGo, ranTrimmed } = await linked(String(dir), "none", ["behind", "door", "more", "main"], {}, [
+      "-Wl,-O2",
+    ]);
     const wasSentOn = said.includes("; 1 branches to a branch were sent on to its target;");
     expect(said).toContain(wasSentOn ? "; 1 branches to a branch" : "; 0 branches to a branch");
     expect({ landing: canGo("landing"), behind_0: canGo("behind_0") }).toEqual({ landing: !wasSentOn, behind_0: true });
@@ -371,15 +424,27 @@ describe.skipIf(!canLink)("what stays can reach what lies behind the door by", (
       "doors": sources.doors + "door extra exit ^gone::\n",
     });
     const flags = ["-x", "c++", "-fno-exceptions", "-fno-rtti"];
-    const { isDoor, canGo, ranTrimmed } = await linked(String(dir), "none", ["behind", "door", "more", "main"], { more: flags, main: flags });
-    expect({ entered: isDoor("_ZN4gone7enteredEi"), moved: isDoor("_Z5movedIiEPN4gone5ThingES2_T_") }).toEqual({ entered: true, moved: false });
+    const { isDoor, canGo, ranTrimmed } = await linked(String(dir), "none", ["behind", "door", "more", "main"], {
+      more: flags,
+      main: flags,
+    });
+    expect({ entered: isDoor("_ZN4gone7enteredEi"), moved: isDoor("_Z5movedIiEPN4gone5ThingES2_T_") }).toEqual({
+      entered: true,
+      moved: false,
+    });
     expect(["_Z5movedIiEPN4gone5ThingES2_T_", "touched"].map(canGo)).toEqual([false, false]);
     expect(ranTrimmed.exitCode).toBe(0);
   });
 
   test("references written in a way that is not read stop the link", async () => {
     using dir = tempDir("islands-road", { ...sources });
-    const said = await wrapped(String(dir), "none", ["behind", "door", "table", "main"], { main: ["-Wa,--crel,--allow-experimental-crel"] }, []);
+    const said = await wrapped(
+      String(dir),
+      "none",
+      ["behind", "door", "table", "main"],
+      { main: ["-Wa,--crel,--allow-experimental-crel"] },
+      [],
+    );
     expect(said.stderr).toContain("are written in a way that is not read here");
     expect(said.exitCode).toBe(1);
   });
@@ -470,14 +535,23 @@ describe.skipIf(!canLink)("a thin door", () => {
     const whole = await exitCodes(folder, "program");
     expect(whole[0]).toBe(0);
     expect(whole.slice(1)).not.toContain(70);
-    writeFileSync(join(folder, "shut"), shutDoors(readFileSync(join(folder, "program")), table, ["extra"], process.arch === "arm64"));
+    writeFileSync(
+      join(folder, "shut"),
+      shutDoors(readFileSync(join(folder, "program")), table, ["extra"], process.arch === "arm64"),
+    );
     chmodSync(join(folder, "shut"), 0o755);
     expect(await exitCodes(folder, "shut")).toEqual([0, 70, 70, 70, 70]);
   });
 
   test("stays fat when the executable exports it", async () => {
     using dir = tempDir("islands-thin", thin);
-    const { said, table, canGo, addressOf } = await linked(String(dir), "none", ["behind", "door", "table", "main"], {}, ["-Wl,--export-dynamic-symbol=the_door"]);
+    const { said, table, canGo, addressOf } = await linked(
+      String(dir),
+      "none",
+      ["behind", "door", "table", "main"],
+      {},
+      ["-Wl,--export-dynamic-symbol=the_door"],
+    );
     expect(said).toContain("0 doors are thin");
     expect(canGo("the_door")).toBe(false);
     expect(table.doors.find(door => door.address === addressOf.get("the_door"))?.places ?? []).toEqual([]);
@@ -509,7 +583,13 @@ describe.skipIf(!canLink)("a link with islands", () => {
     expect(twice.said).toContain("first link");
     expect(once.said).not.toContain("first link");
     expect(once.said).toContain("link by an earlier build's plan");
-    expect(["behind", "behind_1499", "behind_numbers", "table_that_stays", "stays"].map(once.canGo)).toEqual([true, true, true, false, false]);
+    expect(["behind", "behind_1499", "behind_numbers", "table_that_stays", "stays"].map(once.canGo)).toEqual([
+      true,
+      true,
+      true,
+      false,
+      false,
+    ]);
   });
 
   test("the room is cut to the table; a plan whose table was smaller costs a link and nothing else", async () => {
@@ -524,7 +604,13 @@ describe.skipIf(!canLink)("a link with islands", () => {
     const again = await linked(folder, "small.plan");
     expect(again.said).toMatch(/the table takes \d+ bytes and there is room for 0: linking again/);
     expect(again.said).toMatch(/; the table takes \d+ of 1024 bytes: /);
-    expect(["behind", "behind_1499", "behind_numbers", "table_that_stays", "stays"].map(again.canGo)).toEqual([true, true, true, false, false]);
+    expect(["behind", "behind_1499", "behind_numbers", "table_that_stays", "stays"].map(again.canGo)).toEqual([
+      true,
+      true,
+      true,
+      false,
+      false,
+    ]);
     expect(again.ran.exitCode).toBe(0);
   });
 
@@ -560,7 +646,9 @@ describe.skipIf(!canLink)("ICU's data package in a link with islands", () => {
       extern const unsigned char icudt99_dat[];
       int main(int argc, char **argv) { return argc > 5 ? the_door(argc) : icudt99_dat[argc + 1] == 0xda ? 0 : 1; }
     `,
-    "doors": sources.doors + "feature collation the order of strings\ndata collation ^coll/\ndata extra ^coll/root\\.res$\ndata extra \\.cnv$\n",
+    "doors":
+      sources.doors +
+      "feature collation the order of strings\ndata collation ^coll/\ndata extra ^coll/root\\.res$\ndata extra \\.cnv$\n",
   });
   const runs = [
     { first: 1, count: 1, features: "collation" },
@@ -572,8 +660,12 @@ describe.skipIf(!canLink)("ICU's data package in a link with islands", () => {
   test("is found by its name and ends where the next name in its section begins; its items are listed by the features that claim them", async () => {
     using dir = tempDir("islands-data", files(".balign 16\\n.globl dictionary\\ndictionary:\\n.zero 64\\n"));
     const { said, addressOf, ran } = await linked(String(dir), "none", ["behind", "door", "data", "main"]);
-    expect(packagesOf(String(dir))).toEqual([{ start: addressOf.get("icudt99_dat")!, end: addressOf.get("dictionary")!, runs }]);
-    expect(addressOf.get("dictionary")! - addressOf.get("icudt99_dat")!).toBe(Math.ceil(packageOf(items).length / 16) * 16);
+    expect(packagesOf(String(dir))).toEqual([
+      { start: addressOf.get("icudt99_dat")!, end: addressOf.get("dictionary")!, runs },
+    ]);
+    expect(addressOf.get("dictionary")! - addressOf.get("icudt99_dat")!).toBe(
+      Math.ceil(packageOf(items).length / 16) * 16,
+    );
     expect(said).toContain("ICU's data: 5 items");
     expect(ran.exitCode).toBe(0);
   });
@@ -581,7 +673,9 @@ describe.skipIf(!canLink)("ICU's data package in a link with islands", () => {
   test("ends where its section ends when no name follows", async () => {
     using dir = tempDir("islands-data", files(""));
     const { addressOf } = await linked(String(dir), "none", ["behind", "door", "data", "main"]);
-    expect(packagesOf(String(dir))).toEqual([{ start: addressOf.get("icudt99_dat")!, end: addressOf.get("icudt99_dat")! + packageOf(items).length, runs }]);
+    expect(packagesOf(String(dir))).toEqual([
+      { start: addressOf.get("icudt99_dat")!, end: addressOf.get("icudt99_dat")! + packageOf(items).length, runs },
+    ]);
   });
 
   test("a program without it lists none", async () => {

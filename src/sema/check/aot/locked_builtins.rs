@@ -53,7 +53,9 @@ impl Builtin {
     }
 
     pub fn index(&self) -> u16 {
-        BUILTINS.binary_search_by(|it| it.name.cmp(self.name)).unwrap_or(0) as u16
+        BUILTINS
+            .binary_search_by(|it| it.name.cmp(self.name))
+            .unwrap_or(0) as u16
     }
 
     pub fn at(index: u16) -> &'static Builtin {
@@ -117,14 +119,22 @@ impl Builtin {
                     Some((b'?', type_of)) => (type_of, false),
                     _ => (holds, true),
                 };
-                Some(KnownValue { type_of: str::from_utf8(type_of).ok()?, is_truthy })
+                Some(KnownValue {
+                    type_of: str::from_utf8(type_of).ok()?,
+                    is_truthy,
+                })
             }
             None => self.parent()?.known_value(name),
         }
     }
 
     pub fn known_read_result(&self, name: &[u8]) -> Option<KnownValue> {
-        self.known_value(name).or_else(|| self.can_never_have(name).then_some(KnownValue { type_of: "undefined", is_truthy: false }))
+        self.known_value(name).or_else(|| {
+            self.can_never_have(name).then_some(KnownValue {
+                type_of: "undefined",
+                is_truthy: false,
+            })
+        })
     }
 
     pub fn rejects_change(&self, name: &[u8], change: Change) -> bool {
@@ -160,7 +170,9 @@ impl Builtin {
         if self.has(name) || change == Change::Delete {
             return None;
         }
-        let shadowed = self.inherited(name).filter(|&(_, inherited)| inherited == Property::Replaceable || change == Change::Define);
+        let shadowed = self.inherited(name).filter(|&(_, inherited)| {
+            inherited == Property::Replaceable || change == Change::Define
+        });
         shadowed.map(|(it, _)| it)
     }
 
@@ -173,9 +185,18 @@ impl Builtin {
             return None;
         }
         if self.is_global_object() {
-            return if name == b"globalThis" { Some(global_object()) } else { find(name).filter(|_| self.has(name)) };
+            return if name == b"globalThis" {
+                Some(global_object())
+            } else {
+                find(name).filter(|_| self.has(name))
+            };
         }
-        let at = BUILTINS.binary_search_by(|it| it.name.as_bytes().iter().cmp(self.name.as_bytes().iter().chain(b".").chain(name)));
+        let at = BUILTINS.binary_search_by(|it| {
+            it.name
+                .as_bytes()
+                .iter()
+                .cmp(self.name.as_bytes().iter().chain(b".").chain(name))
+        });
         at.ok().and_then(|at| BUILTINS.get(at))
     }
 }

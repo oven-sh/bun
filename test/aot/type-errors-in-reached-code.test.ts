@@ -35,7 +35,12 @@ function singleFilePrograms(folder: string, into: string[] = []) {
   const names = new Set(entries.map(entry => entry.name));
   for (const entry of entries) {
     if (entry.isDirectory()) singleFilePrograms(join(folder, entry.name), into);
-    else if (entry.name.endsWith(".ts") && !entry.name.endsWith(".d.ts") && !names.has(entry.name.slice(0, -3) + ".json")) into.push(join(folder, entry.name));
+    else if (
+      entry.name.endsWith(".ts") &&
+      !entry.name.endsWith(".d.ts") &&
+      !names.has(entry.name.slice(0, -3) + ".json")
+    )
+      into.push(join(folder, entry.name));
   }
   return into;
 }
@@ -86,8 +91,13 @@ test.skipIf(!!unsupported)(
           writeFileSync(join(folder, "main.ts"), changed + helper);
           if (!(await run([bunExe(), "run", "./main.ts"], folder, 30_000)).includes(marker)) continue;
           reached++;
-          const said = await run([bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", "./compiled"], folder, 120_000);
-          if (!/error: TS2339/.test(said)) missed.push({ from: path.slice(import.meta.dir.length + 1), source: changed });
+          const said = await run(
+            [bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", "./compiled"],
+            folder,
+            120_000,
+          );
+          if (!/error: TS2339/.test(said))
+            missed.push({ from: path.slice(import.meta.dir.length + 1), source: changed });
         }
       }
     };

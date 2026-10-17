@@ -327,7 +327,11 @@ describe("finding an earlier build to inherit from", () => {
         const number = Number(/\/builds\/(\d+)\.json$/.exec(url)?.[1]);
         // Anything else is not a build's JSON: Buildkite answers with the HTML page.
         if (Number.isNaN(number)) return undefined;
-        return { id: `id-${number}`, number, branch_name: main.includes(number) ? "main" : own.includes(number) ? "mine" : "some-pr" };
+        return {
+          id: `id-${number}`,
+          number,
+          branch_name: main.includes(number) ? "main" : own.includes(number) ? "mine" : "some-pr",
+        };
       },
       redirect: async () => (newestPassed === undefined ? null : location(newestPassed)),
     };
@@ -372,7 +376,9 @@ describe("finding an earlier build to inherit from", () => {
   });
 
   it("offers the builds of a second branch among those of main, nearest first", async () => {
-    expect((await walk({ main: [990, 950], own: [995, 960], from: { branch: "mine" } })).found).toEqual([995, 990, 960, 950]);
+    expect((await walk({ main: [990, 950], own: [995, 960], from: { branch: "mine" } })).found).toEqual([
+      995, 990, 960, 950,
+    ]);
     expect((await walk({ main: [990, 950], own: [995, 960] })).found).toEqual([990, 950]);
   });
 });

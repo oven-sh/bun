@@ -13,7 +13,12 @@ describe.skipIf(!!unsupported)("compile/aot/react-compiler", () => {
   const folder = String(tempDir("aot-react-compiler", {}));
   afterAll(() => rmSync(folder, { recursive: true, force: true }));
 
-  test.concurrent.each(["stores-through-wider-type", "types-of-component-results", "getter-literal-exported-by-component-file", "component-file-without-cache"])(
+  test.concurrent.each([
+    "stores-through-wider-type",
+    "types-of-component-results",
+    "getter-literal-exported-by-component-file",
+    "component-file-without-cache",
+  ])(
     "%s",
     name =>
       slot(async () => {
@@ -26,7 +31,9 @@ describe.skipIf(!!unsupported)("compile/aot/react-compiler", () => {
         expect(compiled.stderr).toContain("[react-compiler] a cache of ");
         const plain = await spawned([bunExe(), "run", main], programs, bunEnv);
         expect({ signal: plain.signal, exitCode: plain.exitCode }).toEqual({ signal: null, exitCode: 0 });
-        expect(told({ ...compiled, stderr: compiled.stderr.replace(/^\[react-compiler\] .*\n/gm, "") })).toEqual(told(plain));
+        expect(told({ ...compiled, stderr: compiled.stderr.replace(/^\[react-compiler\] .*\n/gm, "") })).toEqual(
+          told(plain),
+        );
       }),
     600_000,
   );
@@ -37,14 +44,22 @@ describe.skipIf(!!unsupported)("compile/aot/react-compiler", () => {
       slot(async () => {
         const main = join(programs, "component-files-with-slow-plugin", "main.ts");
         const executable = join(folder, "component-files-with-slow-plugin");
-        built(await spawned([bunExe(), "run", join(programs, "build-with-slow-plugin.ts"), main, executable], programs, bunEnv));
+        built(
+          await spawned(
+            [bunExe(), "run", join(programs, "build-with-slow-plugin.ts"), main, executable],
+            programs,
+            bunEnv,
+          ),
+        );
         const compiled = await spawned([executable], programs, bunEnv);
         expect(compiled.signal).toBeNull();
         // Each of the three components ran as the compiler's output.
         expect(compiled.stderr.match(/^\[react-compiler\] a cache of /gm)?.length).toBe(3);
         const plain = await spawned([bunExe(), "run", main], programs, bunEnv);
         expect({ signal: plain.signal, exitCode: plain.exitCode }).toEqual({ signal: null, exitCode: 0 });
-        expect(told({ ...compiled, stderr: compiled.stderr.replace(/^\[react-compiler\] .*\n/gm, "") })).toEqual(told(plain));
+        expect(told({ ...compiled, stderr: compiled.stderr.replace(/^\[react-compiler\] .*\n/gm, "") })).toEqual(
+          told(plain),
+        );
       }),
     600_000,
   );
@@ -55,7 +70,11 @@ describe.skipIf(!!unsupported)("compile/aot/react-compiler", () => {
       slot(async () => {
         const main = join(programs, "component-file-loaded-by-require", "main.ts");
         const executable = join(folder, "component-file-loaded-by-require");
-        const build = await spawned([bunExe(), "run", join(programs, "build.ts"), main, executable, "given"], programs, bunEnv);
+        const build = await spawned(
+          [bunExe(), "run", join(programs, "build.ts"), main, executable, "given"],
+          programs,
+          bunEnv,
+        );
         built(build);
         expect(build.stderr).toContain("given: read through: Item: 2 reads: closed");
         const compiled = await spawned([executable], programs, bunEnv);
@@ -63,7 +82,9 @@ describe.skipIf(!!unsupported)("compile/aot/react-compiler", () => {
         expect(compiled.stderr).toContain("[react-compiler] a cache of ");
         const plain = await spawned([bunExe(), "run", main], programs, bunEnv);
         expect({ signal: plain.signal, exitCode: plain.exitCode }).toEqual({ signal: null, exitCode: 0 });
-        expect(told({ ...compiled, stderr: compiled.stderr.replace(/^\[react-compiler\] .*\n/gm, "") })).toEqual(told(plain));
+        expect(told({ ...compiled, stderr: compiled.stderr.replace(/^\[react-compiler\] .*\n/gm, "") })).toEqual(
+          told(plain),
+        );
       }),
     600_000,
   );
@@ -73,7 +94,11 @@ describe.skipIf(!!unsupported)("compile/aot/react-compiler", () => {
     () =>
       slot(async () => {
         const main = join(programs, "type-error-in-component-file", "main.ts");
-        const build = await spawned([bunExe(), "run", join(programs, "build.ts"), main, join(folder, "type-error-in-component-file")], programs, bunEnv);
+        const build = await spawned(
+          [bunExe(), "run", join(programs, "build.ts"), main, join(folder, "type-error-in-component-file")],
+          programs,
+          bunEnv,
+        );
         expect({ errors: build.stderr.match(/\bTS\d+: .*/g), signal: build.signal, exitCode: build.exitCode }).toEqual({
           errors: [
             "TS2322: Type 'string' is not assignable to type 'number'.",

@@ -7,7 +7,13 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { test } from "./supported";
 
-const programs = ["calls/generic-copy-forms", "calls/generic-copies-with-added-members", "calls/members-called-by-signature", "typed-objects/generic-spread-for-bounded-type-parameter", "typed-objects/generic-spread-bound-with-layout"];
+const programs = [
+  "calls/generic-copy-forms",
+  "calls/generic-copies-with-added-members",
+  "calls/members-called-by-signature",
+  "typed-objects/generic-spread-for-bounded-type-parameter",
+  "typed-objects/generic-spread-bound-with-layout",
+];
 
 function hotFunctions(count: number) {
   const functions = Array.from(
@@ -28,11 +34,16 @@ async function run(cmd: string[], cwd: string) {
 test.concurrent.each(programs)(
   "%s",
   async program => {
-    using dir = tempDir("aot-cold-functions", { "main.ts": readFileSync(join(import.meta.dir, "programs", program + ".ts"), "utf8") + "\n" + hotFunctions(2600) });
+    using dir = tempDir("aot-cold-functions", {
+      "main.ts": readFileSync(join(import.meta.dir, "programs", program + ".ts"), "utf8") + "\n" + hotFunctions(2600),
+    });
     const cwd = String(dir);
     const executable = join(cwd, isWindows ? "main.exe" : "main");
     const built = await run([bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", executable], cwd);
-    expect({ output: built.exitCode ? built.stdout + built.stderr : "", exitCode: built.exitCode }).toEqual({ output: "", exitCode: 0 });
+    expect({ output: built.exitCode ? built.stdout + built.stderr : "", exitCode: built.exitCode }).toEqual({
+      output: "",
+      exitCode: 0,
+    });
     const plain = await run([bunExe(), "run", "./main.ts"], cwd);
     expect(plain.exitCode).toBe(0);
     expect(await run([executable], cwd)).toEqual(plain);

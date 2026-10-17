@@ -1288,7 +1288,8 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     release,
     mode: "full",
     lto,
-    islands: (partial.islands ?? false) && (linux || darwinCross || (windows && host.os !== "windows")) && release && !asan,
+    islands:
+      (partial.islands ?? false) && (linux || darwinCross || (windows && host.os !== "windows")) && release && !asan,
     pgoGenerate,
     pgoUse,
     asan,

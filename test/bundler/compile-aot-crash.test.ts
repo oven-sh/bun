@@ -1,13 +1,16 @@
 import { spawn } from "bun";
 import { afterAll, expect, setDefaultTimeout } from "bun:test";
-import { test } from "../aot/supported";
 import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "../aot/supported";
 
 setDefaultTimeout(60_000);
 
-if (isASAN) console.error("SKIPPED: compile-aot-crash.test.ts: in a Bun built with AddressSanitizer its handler answers a segmentation fault, not Bun's");
+if (isASAN)
+  console.error(
+    "SKIPPED: compile-aot-crash.test.ts: in a Bun built with AddressSanitizer its handler answers a segmentation fault, not Bun's",
+  );
 
 const files = {
   "ffi.d.ts": `declare module "bun:ffi" {
@@ -38,7 +41,14 @@ console.log("before");
 console.log(start());
 `,
   "tsconfig.json": JSON.stringify({
-    compilerOptions: { strict: true, module: "esnext", moduleResolution: "bundler", target: "esnext", types: [], lib: ["esnext", "dom"] },
+    compilerOptions: {
+      strict: true,
+      module: "esnext",
+      moduleResolution: "bundler",
+      target: "esnext",
+      types: [],
+      lib: ["esnext", "dom"],
+    },
   }),
 };
 

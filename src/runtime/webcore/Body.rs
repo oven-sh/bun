@@ -726,7 +726,8 @@ impl SharedBody {
                         was_string: false,
                     });
                 }
-                let made = value.to_readable_stream(&global.js_thread(vm.context_of_caller_no_frame()));
+                let made =
+                    value.to_readable_stream(&global.js_thread(vm.context_of_caller_no_frame()));
                 if made.is_err() {
                     return Value::Used;
                 }

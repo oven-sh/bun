@@ -662,7 +662,11 @@ JSC::JSObject* compiledRuntimeHelpers(JSC::JSGlobalObject* globalObject, const S
     return helpers.getObject();
 }
 
-enum class CompiledProgramQuery : int32_t { Require = 0, Import = 1, Namespace = 2, RequireWithNonDefaultLoader = 12, Wrapper = 13 };
+enum class CompiledProgramQuery : int32_t { Require = 0,
+    Import = 1,
+    Namespace = 2,
+    RequireWithNonDefaultLoader = 12,
+    Wrapper = 13 };
 
 extern "C" bool NodeModuleModule__usesNonDefaultLoader(Zig::GlobalObject*, const BunString* path);
 

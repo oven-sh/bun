@@ -50,8 +50,11 @@ impl<'s> Components<'s> {
             edges.dedup();
             edges
         };
-        let mut edges: Vec<(FileId, Vec<u32>)> = order.iter().map(|&file| (file, Vec::new())).collect();
-        crate::util::for_each_mut(&mut edges, in_parallel, &|(file, edges)| *edges = edges_of(file));
+        let mut edges: Vec<(FileId, Vec<u32>)> =
+            order.iter().map(|&file| (file, Vec::new())).collect();
+        crate::util::for_each_mut(&mut edges, in_parallel, &|(file, edges)| {
+            *edges = edges_of(file)
+        });
         let edges: Vec<Vec<u32>> = edges.into_iter().map(|(_, edges)| edges).collect();
         // Numbered by the traversal: a component has a higher number than every component it imports.
         let (number_of, numbered) = strongly_connected_components(&edges);

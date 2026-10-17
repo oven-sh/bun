@@ -1803,7 +1803,7 @@ pub(crate) struct MergeKeyMemo {
 impl MergeKeyMemo {
     #[inline]
     fn remembers(s: &E::String) -> bool {
-        !s.is_utf16 && s.data.len() >= SHARED_STRING_MIN_LEN
+        s.data.len() >= SHARED_STRING_MIN_LEN && !s.is_utf16
     }
 
     /// `None` for a node that `hash` has not seen.

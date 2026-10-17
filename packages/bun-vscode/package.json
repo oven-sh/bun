@@ -1,6 +1,6 @@
 {
   "name": "bun-vscode",
-  "version": "0.0.31",
+  "version": "0.0.33",
   "author": "oven",
   "repository": {
     "type": "git",
@@ -277,6 +277,14 @@
               "remoteRoot": {
                 "type": "string",
                 "description": "The remote path to the code when attaching. File paths reported by Bun that start with this path will be mapped back to 'localRoot'."
+              },
+              "restart": {
+                "type": [
+                  "boolean",
+                  "number"
+                ],
+                "description": "If the debugger should automatically reattach when the connection is lost. When set to a number, specifies the timeout in milliseconds before giving up on reattachment.",
+                "default": false
               }
             }
           }

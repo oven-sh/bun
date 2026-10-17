@@ -9,7 +9,7 @@ use core::ffi::c_void;
 
 use crate as jsc;
 use crate::virtual_machine::VirtualMachine;
-use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsResult};
+use crate::{CallFrame, EventType, JSGlobalObject, JSPromise, JSValue, JsResult};
 use bun_collections::HashMap;
 use bun_core::{EncodedSlice, String as BunString, strings};
 use bun_core::{Output, StackCheck};
@@ -5790,12 +5790,10 @@ pub(crate) extern "C" fn Bun__ConsoleObject__countReset(
     // SAFETY: caller passes a valid (ptr, len) pair.
     let slice = unsafe { bun_core::ffi::slice(ptr, len) };
     let hash = bun_wyhash::hash(slice);
-    // we don't delete it because deleting is implemented via tombstoning
-    if let Some(v) = this.counts.get_mut(&hash) {
-        *v = 0;
-    }
+    this.counts.remove(&hash);
 }
 
+/// `Option` only because `get_or_put` needs `Default`: an entry always holds `Some`.
 type PendingTimers = bun_collections::HashMap<u64, Option<bun_core::time::Timer>>;
 thread_local! {
     static PENDING_TIME_LOGS: RefCell<PendingTimers> = RefCell::new(PendingTimers::default());
@@ -5819,7 +5817,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__time(
 
     PENDING_TIME_LOGS.with_borrow_mut(|map| {
         let result = map.get_or_put(id).expect("unreachable");
-        if !result.found_existing || result.value_ptr.is_none() {
+        if !result.found_existing {
             *result.value_ptr = Some(bun_core::time::Timer::start());
         }
     });
@@ -5840,12 +5838,9 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(
     // SAFETY: caller passes a valid (ptr, len) pair.
     let slice = unsafe { bun_core::ffi::slice(chars, len) };
     let id = bun_wyhash::hash(slice);
-    // Replace the slot with `None`, returning the previous value.
-    let Some(prev) = PENDING_TIME_LOGS.with_borrow_mut(|m| m.get_mut(&id).map(|slot| slot.take()))
-    else {
+    let Some(Some(value)) = PENDING_TIME_LOGS.with_borrow_mut(|m| m.remove(&id)) else {
         return;
     };
-    let Some(value) = prev else { return };
     // get the duration in microseconds, then display it in milliseconds
     Output::print_elapsed(
         (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64,
@@ -5917,6 +5912,36 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
     }
     let _ = bun_io::Write::write_all(&mut writer, b"\n");
     let _ = bun_io::Write::flush(&mut writer);
+}
+
+/// `consoleTableSizes()` in `bun:internal-for-testing`.
+pub fn table_sizes_for_testing(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    let (timer_entries, timer_capacity) =
+        PENDING_TIME_LOGS.with_borrow(|map| (map.len(), map.capacity()));
+    // SAFETY: see [`vm_console`]. Nothing writes `counts` during this JS-thread read.
+    let counts = unsafe { &(*vm_console(global)).counts };
+    let sizes = JSValue::create_empty_object(global, 4);
+    sizes.put(
+        global,
+        b"timerEntries",
+        JSValue::js_number(timer_entries as f64),
+    );
+    sizes.put(
+        global,
+        b"timerCapacity",
+        JSValue::js_number(timer_capacity as f64),
+    );
+    sizes.put(
+        global,
+        b"countEntries",
+        JSValue::js_number(counts.len() as f64),
+    );
+    sizes.put(
+        global,
+        b"countCapacity",
+        JSValue::js_number(counts.capacity() as f64),
+    );
+    Ok(sizes)
 }
 
 /// Stamp out the empty `Bun__ConsoleObject__*` C-ABI hooks that JSC's

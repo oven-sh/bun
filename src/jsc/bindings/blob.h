@@ -7,6 +7,7 @@
 namespace WebCore {
 
 extern "C" void* Blob__dupeFromJS(JSC::EncodedJSValue impl);
+extern "C" bool Blob__canDupeFromJS(JSC::EncodedJSValue impl);
 extern "C" void* Blob__dupe(void* impl);
 // Returns false for a file- or S3-backed Blob, since its bytes aren't in memory. `ptr` is only valid while `blob` is alive.
 extern "C" bool Blob__sharedView(JSC::EncodedJSValue blob, const uint8_t** ptr, size_t* len);
@@ -51,6 +52,12 @@ public:
     static RefPtr<Blob> create(JSC::JSValue impl)
     {
         return createAdopted(Blob__dupeFromJS(JSValue::encode(impl)));
+    }
+
+    // Whether `create(value)` gives a Blob: a Blob, or a `Bun.build()` output, which wraps one.
+    static bool canCreate(JSC::JSValue value)
+    {
+        return Blob__canDupeFromJS(JSValue::encode(value));
     }
 
     static RefPtr<Blob> create(std::span<const uint8_t> bytes, JSC::JSGlobalObject* globalThis)

@@ -256,7 +256,6 @@
 
 [bun_threading]
 "unsafe_send_covers_more_than_pointers:src/threading/Semaphore.rs" = 1
-"unsafe_send_covers_more_than_pointers:src/threading/channel.rs" = 1
 
 [bun_uws_sys]
 "unused_pub:src/uws_sys/Loop.rs" = 2

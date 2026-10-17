@@ -307,21 +307,16 @@ const exports = {
   read: asyncWrap(fs.read, "read"),
   write: asyncWrap(fs.write, "write"),
   readdir: asyncWrap(fs.readdir, "readdir"),
-  readFile: async function (fileHandleOrFdOrPath, ...args) {
+  readFile: async function (fileHandleOrFdOrPath, options) {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
-    const options = args[0];
     if (typeof options === "object" && options !== null) {
       const flag = options.flag;
       if (flag !== undefined) {
         // Node: `options.flag || 'r'` https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/promises.js#L1928
-        return _readFile(fileHandleOrFdOrPath, {
-          encoding: options.encoding,
-          signal: options.signal,
-          flag: flag || "r",
-        });
+        options = { encoding: options.encoding, signal: options.signal, flag: flag || "r" };
       }
     }
-    return _readFile(fileHandleOrFdOrPath, ...args);
+    return _readFile(fileHandleOrFdOrPath, options);
   },
   writeFile: async function (fileHandleOrFdOrPath, ...args: TailParameters<typeof _writeFile>) {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;

@@ -3,7 +3,7 @@
 use core::ffi::c_void;
 use std::sync::Arc;
 
-use bun_collections::{HashMap, IdentityContext, TaggedPtrUnion};
+use bun_collections::{HashMap, IdentityContext, StringArrayHashMap, TaggedPtrUnion};
 use bun_core::MutableString;
 use bun_core::Ordinal;
 use bun_ptr::tagged_pointer::TagType;
@@ -16,6 +16,8 @@ use bun_wyhash::hash;
 pub struct SavedSourceMap {
     /// Only accessed between [`Self::lock`] and [`Self::unlock`].
     map: HashTable,
+    /// Every path inserted into `map`, by bytes (`map` keys are only hashes).
+    paths: StringArrayHashMap<()>,
     mutex: Mutex,
 }
 
@@ -141,6 +143,7 @@ impl SavedSourceMap {
         };
         if refers_to_provider {
             self.map.remove(&key);
+            self.paths.swap_remove(path);
             // SAFETY: `old_value` was stored by us; the table's ownership of
             // it ends here.
             unsafe { Self::release_value(old_value) };
@@ -248,8 +251,28 @@ impl SavedSourceMap {
                 v.insert(value.ptr());
             }
         }
+        if !self.paths.contains(path) {
+            self.paths.insert(path, ());
+        }
         self.unlock();
         Ok(())
+    }
+
+    /// Records a path that a loaded module's own source map names as an original source.
+    pub(crate) fn trust_path(&mut self, path: &[u8]) {
+        self.lock();
+        if !self.paths.contains(path) {
+            self.paths.insert(path, ());
+        }
+        self.unlock();
+    }
+
+    /// Whether `path` is exactly a loaded module, or an original source one of them maps to.
+    pub(crate) fn is_loaded_path(&mut self, path: &[u8]) -> bool {
+        self.lock();
+        let found = self.paths.contains(path);
+        self.unlock();
+        found
     }
 
     /// You must call `sourcemap.map.deref()` or you will leak memory

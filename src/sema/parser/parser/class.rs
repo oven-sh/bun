@@ -358,6 +358,10 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
         let empty_list = less_than.filter(|_| type_params.is_empty());
         let empty_list = empty_list.map(|less_than| (less_than, self.prev_end()));
+        // From here on an exported class is in the await context in the first parse already.
+        let in_names = self.names_are_in_await_context;
+        self.names_are_in_await_context |=
+            flags.contains(Flags::EXPORT) && !self.options.dialect.oxc;
         let heritage = self.class_heritage();
         // `checkGrammarClassLikeDeclaration`, which looks at the clauses first. The checker finds the
         // empty list of anything else in the text.
@@ -396,6 +400,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if has_members {
             self.expect(T::CloseBrace);
         }
+        self.names_are_in_await_context = in_names;
         self.classes_around -= 1;
         if std::mem::replace(&mut self.has_odd_members, has_odd_members) {
             let (written, place) = (&self.s.members[members..], self.place());

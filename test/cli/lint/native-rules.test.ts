@@ -797,6 +797,35 @@ describe.concurrent("rule options", () => {
   });
 });
 
+describe.concurrent("react/jsx-newline", () => {
+  const id = "react/jsx-newline";
+  const component = (children: string) => `export const C = ({ time, now }) => (\n  <div>\n${children}\n  </div>\n);\n`;
+  const onOneLine = component("    took {time} at {now}");
+
+  test("only has a fix where there's a line break to double", async () => {
+    const files = { "a.jsx": onOneLine, "b.jsx": component("    {time}\n    {now}"), ...bunfig({ [id]: "error" }) };
+    const { stdout } = await lint(files, ["-f", "json", "a.jsx", "b.jsx"]);
+    const results = JSON.parse(stdout) as { messages: { ruleId: string; line: number; fix?: { text: string } }[] }[];
+    expect(results.map(it => it.messages.filter(it => it.ruleId === id).map(it => [it.line, it.fix?.text]))).toEqual([
+      [[3, undefined]],
+      [[4, "\n\n    "]],
+    ]);
+  });
+
+  test("--fix doesn't say it fixed two expressions on one line", async () => {
+    const { stdout, stderr, exitCode } = await lint({ "a.jsx": onOneLine, ...bunfig({ [id]: "error" }) }, [
+      "--fix",
+      "-f",
+      "unix",
+      "a.jsx",
+    ]);
+    expect(stdout).toContain(`a.jsx:3:20: JSX element should start in a new line [Error/${id}]`);
+    expect(stderr).not.toContain("Circular fixes");
+    expect(stderr).not.toContain("Fixed");
+    expect(exitCode).toBe(1);
+  });
+});
+
 // oxlint renames in all of these, and the two variables become one.
 describe.concurrent("unicorn/catch-error-name only renames when `error` is free", () => {
   const id = "unicorn/catch-error-name";

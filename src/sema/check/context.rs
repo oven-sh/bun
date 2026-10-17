@@ -941,7 +941,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let innermost = self.stack.iter().rposition(|&visit| visit == q);
         if let Some(innermost) = innermost.filter(|&innermost| innermost != outermost)
-            && (self.stack.len() >= MAX_DEPTH / 2 || self.is_half_of_stack_in_use())
+            && self.is_half_of_stack_in_use()
         {
             // The frames of a visit store nothing, up to the first that is not rechecked.
             let is_stored = |in_flight: &Query| match *in_flight {

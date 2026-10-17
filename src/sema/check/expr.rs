@@ -503,8 +503,7 @@ impl<'p, 's> Checker<'p, 's> {
                 | ExprKind::False
                 | ExprKind::Number(_)
                 | ExprKind::String(_)
-        ) || self.stack.len() >= MAX_DEPTH
-            || self.is_stack_low()
+        ) || self.is_most_of_stack_in_use()
         {
             return None;
         }

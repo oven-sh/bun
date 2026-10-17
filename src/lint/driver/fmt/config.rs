@@ -10,7 +10,7 @@
 use super::cli::{Options, Precedence};
 use super::tailwind::SetBy;
 use super::{editorconfig, tailwind};
-use crate::configs::NAMES_OF_VITE;
+use crate::configs::{NAMES_OF_VITE, package_that_depends_on};
 use crate::gitignore::{self, Chain};
 use crate::paths::package_of;
 use crate::run::{Environment, Fatal};
@@ -815,23 +815,14 @@ struct Formatters {
 }
 
 impl Formatters {
-    /// Those in the `package.json` nearest to `directory`.
+    /// Those in the `package.json` nearest to `directory` that has one of them.
     fn depended_on(directory: &[u8]) -> Formatters {
-        let nearest = paths::ancestors(directory)
-            .find_map(|it| fs::read(&paths::join(it, b"package.json")).ok())
-            .and_then(|text| json::parse(&text));
-        let Some(json) = nearest else {
-            return Formatters::default();
-        };
-        let has = |name: &[u8]| {
-            [&b"dependencies"[..], b"devDependencies"]
-                .iter()
-                .any(|key| json.get(key).is_some_and(|it| it.get(name).is_some()))
-        };
+        let found = package_that_depends_on(directory, [b"oxfmt", b"vite-plus", b"prettier"]);
+        let [oxfmt, vite_plus, prettier] = found.map_or([false; 3], |it| it.1);
         Formatters {
-            oxfmt: has(b"oxfmt"),
-            vite_plus: has(b"vite-plus"),
-            prettier: has(b"prettier"),
+            oxfmt,
+            vite_plus,
+            prettier,
         }
     }
 }

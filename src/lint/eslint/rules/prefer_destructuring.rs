@@ -196,8 +196,9 @@ impl Config {
             }
             return;
         }
-        // Only `let x = a.x` is fixed.
+        // Only `let x = a.x` is fixed. ESLint also rewrites `let x: T = a.x`, and the `T` is lost.
         if can_fix
+            && declaration.ty().is_none()
             && kind == "object"
             && let Property::Name(name) = property
             && left == Some(name)

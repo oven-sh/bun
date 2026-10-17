@@ -28,6 +28,7 @@
 //! | `n.toPrecision(p)`, `n.toFixed(d)`, `n.toExponential(d)`, `Number(s)` | `bun_core::fmt` | `FormatDouble::to_precision(&mut [0; 124], n, p)`, `js_string_to_number(s)` |
 //! | methods of `String`, `/\s/` | [`text`] | `bun_core::strings::trim_js_whitespace(bytes)`, `bun_core::strings::wtf8_len_utf16(bytes)` |
 //! | a fix that renames a variable or declares a new one | [`names`] | `names::is_free(name, scope, uses)` |
+//! | a fix that is only right for an array, a string, a regular expression, in a rule without types | [`visible`] | `report.fix_where_safe(\|\| visible::is_visibly_array(e), fix)` |
 //! | a loop over `node.parent` from each of many nodes | [`ancestor_memo`] | `AncestorMemo::default()` in the state, `cx.state.find(node, \|child, parent\| ..)` |
 //!
 //! A function that takes two handles has one lifetime for both, `fn f<'a>(a: Expr<'a>, b: Expr<'a>)`:
@@ -59,6 +60,7 @@ pub mod text;
 pub mod ts_scope;
 pub mod ts_utils;
 pub mod unicode;
+pub mod visible;
 
 pub use array::array_sort_by;
 pub use estree_compat::{

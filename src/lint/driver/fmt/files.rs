@@ -26,6 +26,8 @@ pub(crate) struct Target {
     pub(crate) ignores_unknown: bool,
     /// It is an argument itself, so nothing has been asked yet about the directories that it is in.
     pub(crate) is_named: bool,
+    /// `Some` if the file has other names (hard links), which can be targets too.
+    pub(crate) linked: Option<fs::Identity>,
 }
 
 /// What the arguments stand for, in the order in which Prettier comes to it.
@@ -416,12 +418,32 @@ fn collation_key(path: &[u8]) -> Vec<u8> {
     key
 }
 
+/// The arguments that start with `!`, as Prettier reads them: what they match is left out of what the other arguments select.
+/// `bun lint` reads them the same way.
+#[derive(Default)]
+pub(crate) struct Negative(Vec<bun_glob::Pattern>);
+
+impl Negative {
+    /// `pattern`: an argument without its `!`.
+    pub(crate) fn push(&mut self, pattern: &[u8]) {
+        let pattern = pattern.strip_prefix(b"./").unwrap_or(pattern);
+        self.0.push(glob_of_prettier(pattern, Picomatch::FastGlob));
+    }
+
+    /// `path`: of a file or a directory. The patterns start in `cwd`.
+    pub(crate) fn matches(&self, cwd: &[u8], path: &[u8]) -> bool {
+        !self.0.is_empty() && {
+            let relative = paths::relative(cwd, path);
+            self.0.iter().any(|it| it.matches(&relative))
+        }
+    }
+}
+
 /// Which files are left out.
 pub(crate) struct Ignored {
     /// `.git`, `node_modules`, ..
     directories: Vec<&'static [u8]>,
-    /// The arguments that start with `!`, from the working directory.
-    negative: Vec<bun_glob::Pattern>,
+    negative: Negative,
     /// `.gitignore`, `.prettierignore`: a file is ignored if one of them says so.
     files: Vec<Chain>,
     /// `Some`: every `.gitignore` counts, as for Git, and none of them is in `files`. It holds what has been read so far, by
@@ -510,7 +532,7 @@ impl Ignored {
         }
         Ok(Ignored {
             directories,
-            negative: Vec::new(),
+            negative: Negative::default(),
             files,
             of_git: follows_git.then(Guarded::default),
             cwd: cwd.to_vec(),
@@ -532,10 +554,7 @@ impl Ignored {
     }
 
     fn is_negated(&self, path: &[u8]) -> bool {
-        !self.negative.is_empty() && {
-            let relative = paths::relative(&self.cwd, path);
-            self.negative.iter().any(|it| it.matches(&relative))
-        }
+        self.negative.matches(&self.cwd, path)
     }
 
     /// What `fast-glob` does not come to.
@@ -683,7 +702,7 @@ fn search(
                     }
                 } else if !is_ignored_by_configuration
                     && matches(&relative)
-                    && let Some(size) = listing.size_of(&entry.name)
+                    && let Some((size, linked)) = listing.size_and_identity_of(&entry.name)
                 {
                     files.push(Target {
                         path,
@@ -691,6 +710,7 @@ fn search(
                         scope: Arc::clone(&scope),
                         ignores_unknown: false,
                         is_named: false,
+                        linked,
                     });
                 }
             }
@@ -710,7 +730,7 @@ fn search(
 }
 
 enum Entry {
-    File(Vec<u8>, u64),
+    File(Vec<u8>, u64, Option<fs::Identity>),
     Directory(Vec<u8>),
     Pattern,
 }
@@ -733,8 +753,8 @@ pub(crate) fn expand(
         if ignored.is_in_ignored_directory(&path) {
             continue;
         }
-        match fs::link_kind_and_size(&path) {
-            Some((fs::LinkKind::Link, _)) => {
+        match fs::lstat(&path) {
+            Some((fs::LinkKind::Link, ..)) => {
                 if error_on_unmatched_pattern {
                     expanded.push(Expanded::Error(
                         [
@@ -746,19 +766,16 @@ pub(crate) fn expand(
                     ));
                 }
             }
-            Some((fs::LinkKind::File, size)) => {
+            Some((fs::LinkKind::File, size, linked)) => {
                 configs.name(paths::dirname(&path));
-                entries.push((Entry::File(path, size), pattern, &written[..]))
+                entries.push((Entry::File(path, size, linked), pattern, &written[..]))
             }
-            Some((fs::LinkKind::Directory, _)) => {
+            Some((fs::LinkKind::Directory, ..)) => {
                 configs.name(&path);
                 entries.push((Entry::Directory(path), pattern, &written[..]))
             }
             None => match pattern.strip_prefix(b"!") {
-                Some(negative) => ignored.negative.push(glob_of_prettier(
-                    negative.strip_prefix(b"./").unwrap_or(negative),
-                    Picomatch::FastGlob,
-                )),
+                Some(negative) => ignored.negative.push(negative),
                 None => entries.push((Entry::Pattern, pattern, &written[..])),
             },
         }
@@ -770,7 +787,7 @@ pub(crate) fn expand(
         // What the paths that `fast-glob` returns start with, which they are sorted by.
         let mut written_base: (Vec<u8>, Vec<u8>) = (Vec::new(), cwd.clone());
         let (mut found, nothing): (Vec<Target>, &[u8]) = match entry {
-            Entry::File(path, size) => {
+            Entry::File(path, size, linked) => {
                 // The configuration of a file that is ignored is not even read.
                 if ignored.ignores_file(&path, &None) {
                     is_anything_ignored = true;
@@ -784,6 +801,7 @@ pub(crate) fn expand(
                         size,
                         ignores_unknown: false,
                         is_named: true,
+                        linked,
                     }],
                 };
                 (
@@ -926,10 +944,10 @@ pub(crate) fn expand_as_oxfmt(
         fs::Kind::Directory => gitignore::is_directory_ignored_anywhere(chain, path),
         fs::Kind::File => gitignore::is_file_ignored_anywhere(chain, path),
     };
-    let targets: Vec<(Vec<u8>, fs::Kind, u64)> = targets
+    let targets: Vec<(Vec<u8>, fs::Kind, u64, Option<fs::Identity>)> = targets
         .into_iter()
-        .filter_map(|path| fs::kind_and_size(&path).map(|(kind, size)| (path, kind, size)))
-        .filter(|(path, kind, _)| !ignored.files.iter().any(|it| is_ignored(it, path, *kind)))
+        .filter_map(|path| fs::stat(&path).map(|(kind, size, linked)| (path, kind, size, linked)))
+        .filter(|(path, kind, ..)| !ignored.files.iter().any(|it| is_ignored(it, path, *kind)))
         .collect();
     let are_all_in_repositories = LazyCell::new(|| {
         let directories = || targets.iter().filter(|it| it.1 == fs::Kind::Directory);
@@ -937,14 +955,14 @@ pub(crate) fn expand_as_oxfmt(
         directories().count() == 1
             || gitignore::are_all_in_repositories(searched, std::iter::empty())
     });
-    for (path, kind, _) in &targets {
+    for (path, kind, ..) in &targets {
         configs.name(match kind {
             fs::Kind::Directory => path,
             fs::Kind::File => paths::dirname(path),
         });
     }
     let mut found: Vec<Target> = Vec::new();
-    for (path, kind, size) in &targets {
+    for (path, kind, size, linked) in &targets {
         if *kind == fs::Kind::Directory {
             let matches =
                 |relative: &[u8]| globs.is_empty() || globs.iter().any(|it| it.matches(relative));
@@ -967,6 +985,7 @@ pub(crate) fn expand_as_oxfmt(
             found.push(Target {
                 path: path.clone(),
                 size: *size,
+                linked: *linked,
                 scope,
                 ignores_unknown: true,
                 is_named: false,

@@ -802,11 +802,11 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         join_words(lines, self.prose_wrap == ProseWrap::Never)
     }
 
-    /// `getBlockValueLineContents`
+    /// `getBlockValueLineContents`. `column_of_item`: how many columns are before the item that `node` is in, if any.
     fn block_value_line_contents(
         &self,
         node: &Node<'a>,
-        parent_indent: usize,
+        column_of_item: Option<u32>,
         is_last_descendant: bool,
     ) -> Vec<Words<'a>> {
         if node.position.start.line == node.position.end.line {
@@ -829,7 +829,10 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                     (spaces < line.len()).then_some(spaces)
                 })
                 .unwrap_or(usize::MAX),
-            Some(indent) => (indent as usize + parent_indent).saturating_sub(1),
+            Some(indent) => match column_of_item {
+                Some(column) => column.saturating_add(indent) as usize,
+                None => (indent as usize).saturating_sub(1),
+            },
         };
         // Only blanks are cut off. Prettier cuts as many characters off a line that has fewer, whatever they are.
         let raw_lines: Vec<&'a [u8]> = strings::split(content, b"\n")
@@ -944,12 +947,13 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
 
     /// `printBlock`
     fn print_block(&mut self, node: &'t Node<'a>, is_last_descendant: bool) {
-        let mut parent_indent = 0;
-        let mut ancestor = self.parent(node);
-        while let Some(it) = ancestor {
-            parent_indent += usize::from(matches!(it.kind, Kind::Sequence | Kind::Mapping));
-            ancestor = self.parent(it);
+        let mut item = self.parent(node);
+        while let Some(it) =
+            item.filter(|it| !matches!(it.kind, Kind::MappingItem | Kind::SequenceItem))
+        {
+            item = self.parent(it);
         }
+        let column_of_item = item.map(|it| it.position.start.column.saturating_sub(1));
         self.out.text(if node.kind == Kind::BlockFolded {
             b">"
         } else {
@@ -974,15 +978,21 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 self.out.end_line_suffix();
             }
         }
-        let lines = self.block_value_line_contents(node, parent_indent, is_last_descendant);
+        let lines = self.block_value_line_contents(node, column_of_item, is_last_descendant);
         match node.indent {
             None => {
                 self.out.start_indent(IndentCommand::Dedent);
                 self.start_align(self.tab_width);
             }
+            // The indicator counts from the item. Prettier leaves the lines in the columns that they are in, so where
+            // the item moves, the value changes or what is printed isn't YAML.
+            Some(indent) if column_of_item.is_some() => {
+                self.out.start_indent(IndentCommand::Dedent);
+                self.start_align(indent);
+            }
             Some(indent) => {
                 self.out.start_indent(IndentCommand::DedentToRoot);
-                self.start_align((indent + parent_indent as u32).saturating_sub(1));
+                self.start_align(indent.saturating_sub(1));
             }
         }
         let out = &mut *self.out;

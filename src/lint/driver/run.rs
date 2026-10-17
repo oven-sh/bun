@@ -395,6 +395,17 @@ impl Run<'_> {
         }
     }
 
+    /// Says that both tools have a config for the same files, and which one counts.
+    fn note_ignored_config(&mut self, of_eslint: &[u8], of_oxlint: &[u8]) {
+        pretty!(
+            &mut self.out.stderr,
+            self.environment.stderr.colors,
+            "<blue>note<r><d>:<r> Using {}. {} is ignored. Use --config to pick it.\n",
+            BStr::new(of_oxlint),
+            BStr::new(of_eslint)
+        );
+    }
+
     /// Refuses the command line, which both do on standard error.
     fn refuse(mut self, text: &[u8]) -> Outcome {
         self.error(text);
@@ -933,13 +944,7 @@ impl Run<'_> {
         // `--rules` prints the same list either way, and `--doctor` has this in its report.
         let is_told = !options.rules && !options.doctor && !options.silent;
         if let Some((of_eslint, of_oxlint)) = loader.passed_over().filter(|_| is_told) {
-            pretty!(
-                &mut self.out.stderr,
-                environment.stderr.colors,
-                "<blue>note<r><d>:<r> Using {}. {} is ignored. Use --config to pick it.\n",
-                BStr::new(of_oxlint),
-                BStr::new(of_eslint)
-            );
+            self.note_ignored_config(of_eslint, of_oxlint);
         }
         if options.init {
             return match loader.for_directory(&environment.cwd) {
@@ -1131,6 +1136,10 @@ impl Run<'_> {
         let warnings = std::mem::take(&mut *loader.warnings.lock());
         for warning in warnings.iter().filter(|_| !(is_native && options.silent)) {
             self.warn(warning);
+        }
+        let passed_over = loader.passed_over_below();
+        for (of_eslint, of_oxlint) in passed_over.iter().filter(|_| !options.silent) {
+            self.note_ignored_config(of_eslint, of_oxlint);
         }
         let without_types = js_plugins.rules_that_asked_for_types();
         if !without_types.is_empty() {

@@ -10,6 +10,60 @@ const SPACE_IN_EMPHASIS: Message = Message::new(
     "Unexpected space around emphasis marker.",
 );
 
+/// Stands for a character of a child that is not text: code, a link, HTML.
+const NOT_TEXT: u8 = 1;
+
+/// A marker in the masked text, and the indices of its start and end in the file.
+#[derive(Copy, Clone)]
+struct Marker {
+    start: usize,
+    end: usize,
+    place: (Index, Index),
+}
+
+fn is_blank(byte: u8) -> bool {
+    matches!(byte, b' ' | b'\t' | b'\n' | b'\r')
+}
+
+/// Whether a marker is not stuck to a word on this side. `outward` is the text from the marker on, which may have
+/// punctuation before the next blank. `/` and `\` count as parts of a word: `src/*`, `*/`.
+fn is_free(mut outward: impl Iterator<Item = u8>) -> bool {
+    let is_in_word =
+        |byte: u8| byte.is_ascii_alphanumeric() || byte >= 0x80 || matches!(byte, b'/' | b'\\');
+    !outward
+        .find(|&byte| is_blank(byte) || is_in_word(byte))
+        .is_some_and(is_in_word)
+}
+
+/// Whether two markers with the same text would be emphasis but for a blank inside of them: `** a**`, `_a _`, `__ a __`.
+///
+/// Upstream takes the first and the second marker of a paragraph for a pair, then the third and the fourth, whatever is
+/// around them. So it reports `*.ts, *.tsx` and `char *a, *b`, and its fix joins the words.
+fn is_broken_pair(text: &[u8], opening: Marker, closing: Marker) -> bool {
+    let (Some(&first), Some(&last)) = (
+        text.get(opening.end),
+        closing.start.checked_sub(1).and_then(|at| text.get(at)),
+    ) else {
+        return false;
+    };
+    let (before, after) = (
+        text.get(..opening.start).unwrap_or_default(),
+        text.get(closing.end..).unwrap_or_default(),
+    );
+    // `(* a comment in OCaml *)`
+    let is_single = opening.end - opening.start == 1 && text.get(opening.start) != Some(&b'_');
+    match (is_blank(first), is_blank(last)) {
+        (false, false) => return false,
+        (true, true) if is_single => return false,
+        _ => {}
+    }
+    // `*.ts`, `*/`, `/*`
+    !matches!(first, b'.' | b'/')
+        && last != b'/'
+        && is_free(before.iter().rev().copied())
+        && is_free(after.iter().copied())
+}
+
 impl NoSpaceInEmphasis {
     /// The start and length of each match of `/(?<=(?<!\\)(?:\\{2})*)(?:\*\*\*|\*\*|\*|___|__|_|~~|~)/gu` in `text`.
     /// Tildes only match if `checkStrikethrough` is on.
@@ -88,38 +142,65 @@ impl Listens for NoSpaceInEmphasis {
         if !texts.iter().any(has_marker) {
             return Ok(());
         }
-        // Replace everything else with spaces.
+        // One byte for each UTF-16 code unit of everything else.
         let mut masked = Vec::with_capacity(node.text().len());
         let mut from = node.span().start;
         for &span in texts.iter() {
-            util::push_blanks(cx.document.slice(Span::before(from, span)), false, &mut masked);
+            let first = masked.len();
+            let between = cx.document.slice(Span::before(from, span));
+            util::push_blanks(between, false, &mut masked);
+            if !between.iter().all(|&byte| is_blank(byte)) {
+                masked[first..].fill(NOT_TEXT);
+            }
             masked.extend_from_slice(cx.document.slice(span));
             from = span.end;
         }
-        // The start and end of every marker, grouped by marker text. The groups are in order of first appearance.
-        let mut groups: Vec<(&[u8], Vec<(Index, Index)>)> = Vec::new();
+        let mut report_whitespace =
+            |check: Index, start: Index, end: Index| -> Result<(), OutOfRange> {
+                let span = cx.span(check, check + 1);
+                if check >= 0 && matches!(cx.document.slice(span), b" " | b"\t") {
+                    let locs = cx.locs(start, end)?;
+                    cx.report(locs, SPACE_IN_EMPHASIS, &[]).fix(span, b"");
+                }
+                Ok(())
+            };
+        // For each marker text, the last marker that has no partner yet.
+        let mut open: Vec<(&[u8], Option<Marker>)> = Vec::new();
         let mut indices = Indices::new(&masked, node.start_index());
-        for (at, len) in self.markers(&masked) {
-            let marker = &masked[at..at + len];
-            let start = indices.at(at);
-            let place = (start, start + len as Index);
-            match groups.iter_mut().find(|it| it.0 == marker) {
-                Some(group) => group.1.push(place),
-                None => groups.push((marker, vec![place])),
+        for (start, len) in self.markers(&masked) {
+            let end = start + len;
+            let index = indices.at(start);
+            let marker = Marker {
+                start,
+                end,
+                place: (index, index + len as Index),
+            };
+            // `2 * 3`, `~ 5`: a character of the text. Upstream makes `2 *3* 4` of `2 * 3 * 4`.
+            let is_blank_at = |at: Option<usize>| {
+                at.and_then(|at| masked.get(at))
+                    .copied()
+                    .is_some_and(is_blank)
+            };
+            if matches!(&masked[start..end], b"*" | b"~")
+                && is_blank_at(start.checked_sub(1))
+                && is_blank_at(Some(end))
+            {
+                continue;
             }
-        }
-        let mut report_whitespace = |check: Index, start: Index, end: Index| -> Result<(), OutOfRange> {
-            let span = cx.span(check, check + 1);
-            if check >= 0 && matches!(cx.document.slice(span), b" " | b"\t") {
-                let locs = cx.locs(start, end)?;
-                cx.report(locs, SPACE_IN_EMPHASIS, &[]).fix(span, b"");
-            }
-            Ok(())
-        };
-        for (_, group) in &groups {
-            for &[opening, closing] in group.as_chunks::<2>().0 {
-                report_whitespace(opening.1, opening.0, opening.1 + 2)?;
-                report_whitespace(closing.0 - 1, closing.0 - 2, closing.1)?;
+            let at = match open.iter().position(|it| it.0 == &masked[start..end]) {
+                Some(at) => at,
+                None => {
+                    open.push((&masked[start..end], None));
+                    open.len() - 1
+                }
+            };
+            match open[at].1.take() {
+                Some(opening) if is_broken_pair(&masked, opening, marker) => {
+                    let (opening, closing) = (opening.place, marker.place);
+                    report_whitespace(opening.1, opening.0, opening.1 + 2)?;
+                    report_whitespace(closing.0 - 1, closing.0 - 2, closing.1)?;
+                }
+                _ => open[at].1 = Some(marker),
             }
         }
         Ok(())

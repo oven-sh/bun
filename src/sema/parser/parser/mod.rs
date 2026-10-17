@@ -240,8 +240,8 @@ pub(crate) struct Parser<'a, const GENERAL: bool, const COMMENTS: bool> {
     pub(crate) has_plain_top_level_await: bool,
     /// `statementHasAwaitIdentifier`, as far as recovery asks: see `is_in_some_parsing_context`.
     pub(crate) has_await_in_statement: bool,
-    /// A computed name in the top-level statement that is being parsed has an `await`, which was read outside the await
-    /// context.
+    /// A computed name in the top-level statement that is being parsed has an `await`, or an arrow function has it as its
+    /// first parameter, which was read outside the await context.
     pub(crate) has_await_in_name: bool,
     /// `statementHasAwaitIdentifier`: an `await` at the top level is a name unless the context makes it a keyword.
     pub(crate) has_await_identifier: bool,
@@ -1104,6 +1104,9 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     pub(crate) fn note_name_in_type(&mut self, atom: Atom, pos: u32) {
         if atom.is_keyword_identifier() {
             self.f.keyword_identifier_positions.push(pos);
+            if atom == known::r#await {
+                self.note_await_as_a_name();
+            }
         }
     }
 

@@ -2498,6 +2498,62 @@ describe.concurrent("bun lint with built-in Markdown", () => {
       `);
   });
 
+  describe("markdown/no-space-in-emphasis", () => {
+    const options = `{ files: ["**/*.md"], rules: { "markdown/no-space-in-emphasis": ["error", { checkStrikethrough: true }] } }`;
+    const files = { ...markdownPackage(), "eslint.config.mjs": markdownConfig(options, "[]") };
+
+    // The plugin pairs the first marker of a paragraph with the second and the third with the fourth, whatever is around
+    // them. It reports every one of these down to the table, and its fix changes what a reader sees: `2 *3* 4`,
+    // `*.ts,*.tsx`.
+    test("leaves stars and underscores alone that are only text", async () => {
+      const text = [
+        "The area is 2 * 3 * 4 units.",
+        "x = a * b + c * d",
+        'globs: "*.ts, *.tsx, *.html, *.css"',
+        "Matches **/*.js, **/*.mjs and src/* files.",
+        "Prints [[ cyclic ref *1 ]] and then [[ cyclic ref *2 ]].",
+        "In C: char *a, *b; and x = *p * 2;",
+        "f(*args, **kwargs) and g(*a, **k)",
+        "/* one comment */ and (* another *)",
+        "This is * ambiguous * too.",
+        "Will _flag on _words, and words* with asterisks* after them.",
+        "About ~ 5 or ~ 10.",
+        "# 2 * 3 * 4",
+        "| a * b * c |\n| --------- |\n| 1 * 2 * 3 |",
+        "`*.ts, *.tsx` and `2 * 3 * 4`",
+        "See https://example.com/*/a and https://example.com/*/b.",
+      ].join("\n\n");
+      const result = await lint({ ...files, "a.gfm.md": `${text}\n` }, ["--fix", "-f", "json", "."], ["a.gfm.md"]);
+      expect(summary(result.raw)).toBe("");
+      expect(result.files).toEqual({ "a.gfm.md": `${text}\n` });
+      expect(result.exitCode).toBe(0);
+    });
+
+    test.each([
+      ["This is ** important**.", "This is **important**."],
+      ["This is **important **.", "This is **important**."],
+      ["This is ** important ** too.", "This is **important** too."],
+      ["This is _important _.", "This is _important_."],
+      ["This is _ important _ too.", "This is _important_ too."],
+      ["This is *** very important***.", "This is ***very important***."],
+      ["One-sided *broken emphasis *", "One-sided *broken emphasis*"],
+      ["(*broken *)", "(*broken*)"],
+      ["(* broken*)", "(*broken*)"],
+      ["**`code` **", "**`code`**"],
+      ["Follow ** [a link](b)**", "Follow **[a link](b)**"],
+      ["**Several ** in **one ** line.", "**Several** in **one** line."],
+      ["2 * 3 is ** important**.", "2 * 3 is **important**."],
+      ["This is ~~ gone~~.", "This is ~~gone~~."],
+      ["# A ** heading**", "# A **heading**"],
+    ])("--fix makes emphasis of %j", async (before, after) => {
+      expect(Bun.markdown.html(before)).not.toMatch(/<(em|strong|del)>/);
+      expect(Bun.markdown.html(after)).toMatch(/<(em|strong|del)>/);
+      const result = await lint({ ...files, "a.gfm.md": `${before}\n` }, ["--fix", "."], ["a.gfm.md"]);
+      expect(result.files).toEqual({ "a.gfm.md": `${after}\n` });
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
   // The rules are only as good as the tree. `conformance/markdown-trees.mjs` recorded the plugin's trees.
   test.skipIf(!hasTestRunner)(
     "every example in the CommonMark and GFM specs parses to the same tree as with the plugin's parser",

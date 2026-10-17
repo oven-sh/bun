@@ -4359,60 +4359,97 @@ fn check_named_files(
             unsafe { program.files.free_tree(file) };
         }
     };
-    // `task`: its step, its index in the step, and `is_read_later`. `None`: the files are checked
-    // outside the plan.
-    let check_chunk =
-        |files: &[FileId], expected: Requested, task: Option<(usize, usize, bool)>| {
-            let mut checker = new_checker(expected);
-            if let Some((step, index, is_read_later)) = task {
-                checker.begin_task(step as u32, index as u32, is_read_later);
-                checker.set_checker_count(checker_count as u32);
-                if checker_count == 1 && request.plan_options.reproduces_symbol_ids {
-                    checker.hand_out_symbol_ids();
-                }
+    let mut is_visited = vec![false; program.files.modules.len()];
+    for file in to_check.iter().chain(&only_emitted) {
+        is_visited[file.idx()] = true;
+    }
+    /// The step of a task, its index in the step, and `is_read_later`. `None`: the files are checked outside the plan.
+    type InPlan = Option<(usize, usize, bool)>;
+    // `in_full`: `Checker::check_in_full`. `Err`: `Request::after_file` has asked for a type that depends on the order in these
+    // files too, so what it was told doesn't count. Nothing of the task is published.
+    let try_chunk = |files: &[FileId], expected: Requested, task: InPlan, in_full: &[FileId]| {
+        let mut checker = new_checker(expected);
+        checker.check_in_full(in_full);
+        if let Some((step, index, is_read_later)) = task {
+            checker.begin_task(step as u32, index as u32, is_read_later);
+            checker.set_checker_count(checker_count as u32);
+            if checker_count == 1 && request.plan_options.reproduces_symbol_ids {
+                checker.hand_out_symbol_ids();
             }
-            let (mut checked, mut incomplete) = (Vec::new(), Vec::new());
-            for &file in files {
-                checked.push((file, checker.check_file(file)));
-                if let Some(after_file) = request.after_file
-                    && expected == wanted
-                {
-                    after_file(&mut checker, file);
-                }
-                if checker.take_ran_out_of_stack() {
-                    incomplete.push(file);
-                }
-                if let (Some(progress), Some(_)) = (request.progress, task) {
-                    progress.checked.fetch_add(1, Ordering::Relaxed);
-                    let bytes = size(file) as usize;
-                    progress.bytes_checked.fetch_add(bytes, Ordering::Relaxed);
-                }
+        }
+        for &file in in_full.iter().filter(|it| !files.contains(it)) {
+            checker.check_for_the_files_after(file);
+        }
+        let (mut checked, mut incomplete) = (Vec::new(), Vec::new());
+        let mut depend_on_order: Vec<FileId> = Vec::new();
+        for &file in files {
+            checked.push((file, checker.check_file(file)));
+            if let Some(after_file) = request.after_file
+                && expected == wanted
+            {
+                after_file(&mut checker, file);
+                // A file that is visited later, or not at all, isn't checked yet when TypeScript comes here either.
+                let more = checker.take_files_that_depend_on_order().into_iter();
+                depend_on_order
+                    .extend(more.filter(|&it| is_visited[it.idx()] && place(it) <= place(file)));
             }
-            deepest_stack.fetch_max(checker.deepest_stack(), Ordering::Relaxed);
-            let mut outcome = Outcome {
-                finished: task.map(|_| checker.end_task()),
-                checked,
-                incomplete,
-                generic_relation_entries_not_published: checker
-                    .generic_relation_entries_not_published(),
-                trees_to_free: Vec::new(),
-                obstacles: 0,
-            };
-            // It holds references into the HIR of files.
-            drop(checker);
-            // At the end of the task, not of the file: an entry of the buffer can hold a value that is
-            // bound to an earlier file of the task.
-            // A freed HIR cannot be restored, and a file that is checked outside the plan is checked
-            // again by its task.
-            if let Some(finished) = &outcome.finished {
-                let is_leaf = |file: &&FileId| program.files.modules[file.idx()].is_leaf;
-                outcome.trees_to_free = files.iter().filter(is_leaf).copied().collect();
-                if !finished.can_be_invalid() {
-                    free_trees(std::mem::take(&mut outcome.trees_to_free));
-                }
+            if checker.take_ran_out_of_stack() {
+                incomplete.push(file);
             }
-            outcome
+            if let (Some(progress), Some(_)) = (request.progress, task) {
+                progress.checked.fetch_add(1, Ordering::Relaxed);
+                let bytes = size(file) as usize;
+                progress.bytes_checked.fetch_add(bytes, Ordering::Relaxed);
+            }
+        }
+        // It went on to the last file to find all of them at once.
+        if !depend_on_order.is_empty() {
+            if let (Some(progress), Some(_)) = (request.progress, task) {
+                let bytes = files.iter().map(|&file| size(file) as usize).sum();
+                progress.checked.fetch_sub(files.len(), Ordering::Relaxed);
+                progress.bytes_checked.fetch_sub(bytes, Ordering::Relaxed);
+            }
+            if task.is_some() {
+                drop(checker.end_task());
+            }
+            return Err(depend_on_order);
+        }
+        deepest_stack.fetch_max(checker.deepest_stack(), Ordering::Relaxed);
+        let mut outcome = Outcome {
+            finished: task.map(|_| checker.end_task()),
+            checked,
+            incomplete,
+            generic_relation_entries_not_published: checker
+                .generic_relation_entries_not_published(),
+            trees_to_free: Vec::new(),
+            obstacles: 0,
         };
+        // It holds references into the HIR of files.
+        drop(checker);
+        // At the end of the task, not of the file: an entry of the buffer can hold a value that is
+        // bound to an earlier file of the task.
+        // A freed HIR cannot be restored, and a file that is checked outside the plan is checked
+        // again by its task.
+        if let Some(finished) = &outcome.finished {
+            let is_leaf = |file: &&FileId| program.files.modules[file.idx()].is_leaf;
+            outcome.trees_to_free = files.iter().filter(is_leaf).copied().collect();
+            if !finished.can_be_invalid() {
+                free_trees(std::mem::take(&mut outcome.trees_to_free));
+            }
+        }
+        Ok(outcome)
+    };
+    let check_chunk = |files: &[FileId], expected: Requested, task: InPlan| {
+        let mut in_full: Vec<FileId> = Vec::new();
+        loop {
+            match try_chunk(files, expected, task, &in_full) {
+                Ok(outcome) => return outcome,
+                Err(more) => in_full.extend(more),
+            }
+            in_full.shared_sort_by_key(|&file| place(file));
+            in_full.dedup();
+        }
+    };
     // `place`: the step of the task, and its index in the step.
     let check_ahead = |file: FileId, range: (u32, u32), expected: Requested, place: [usize; 2]| {
         let mut checker = new_checker(expected);

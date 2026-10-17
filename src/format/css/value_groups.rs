@@ -1,7 +1,7 @@
 //! Prettier's `print/comma-separated-value-group.js` and `print/parenthesized-value-group.js`.
 
 use super::Parser as Syntax;
-use super::misc::ends_before_escaped_blank;
+use super::misc::{ends_before_escaped_blank, ends_with_hex_escape};
 use super::postcss::Kind;
 use super::printer::{Printer, Statement};
 use super::sink::Separator;
@@ -79,6 +79,21 @@ fn is_inline_comment(node: ValueRef<'_>) -> bool {
 
 fn has_empty_raw_before(node: ValueRef<'_>) -> bool {
     node.node().before == Before::Empty
+}
+
+/// Whether there is no white space before `node` in the text.
+fn touches_what_is_before(mut node: ValueRef<'_>) -> bool {
+    loop {
+        let first = match node.kind() {
+            ValueKind::ParenGroup if node.node().open != 0 => Some(node.at(node.node().open)),
+            ValueKind::ParenGroup | ValueKind::CommaGroup => node.group(0),
+            _ => None,
+        };
+        match first {
+            Some(first) => node = first,
+            None => return has_empty_raw_before(node),
+        }
+    }
 }
 
 /// `isParenGroupNode`: the `(`, if it is one.
@@ -242,6 +257,7 @@ impl<'a> Printer<'a, '_> {
         let at_rule = self.at_rule_around(statement);
         let is_control_directive = at_rule.is_some_and(|it| self.is_scss_control_directive(it));
         let has_inline_comment = node.groups().any(is_inline_comment);
+        let is_custom_property = statement.is_custom_property();
         let is_in_paren_group = parent.is_some_and(|it| it.kind() == ValueKind::ParenGroup);
 
         // `insideValueFunctionNode`
@@ -343,10 +359,22 @@ impl<'a> Printer<'a, '_> {
                 self.sink.start_line_suffix();
                 self.sink.token(" ");
             }
+            // `100${unit}`, `0.${n}` in a template of JavaScript: one number, or a number and its unit, once the template is
+            // put together. Prettier prints `100 ${unit}` and `0 ${n}`.
+            let number_before_placeholder = next_node
+                .filter(|next| {
+                    is_at_word_placeholder(*next) && i_node.is_number_right_before(*next)
+                })
+                .and_then(|_| i_node.number_as_written());
             self.index_in_comma_group = i;
-            self.value_stack.push(id);
-            self.print_value(statement, i_node.id, prev_node.map(|it| it.id));
-            self.value_stack.pop();
+            match number_before_placeholder {
+                Some(number) => self.sink.text(number),
+                None => {
+                    self.value_stack.push(id);
+                    self.print_value(statement, i_node.id, prev_node.map(|it| it.id));
+                    self.value_stack.pop();
+                }
+            }
             if is_in_expression
                 && !is_before_operator
                 && (!is_math_operator(i_node) || next_node.is_none())
@@ -398,13 +426,17 @@ impl<'a> Printer<'a, '_> {
                 }
                 continue;
             };
+            if is_custom_property && touches_what_is_before(next_node) {
+                continue;
+            }
             // `if(condition: value; else: value)`
             if is_in_scss_if && is_the_word(next_node, b";") {
                 continue;
             }
-            if word(i_node).is_some()
-                && is_at_word_placeholder(next_node)
-                && ends_where_starts(i_node, next_node)
+            if number_before_placeholder.is_some()
+                || (word(i_node).is_some()
+                    && is_at_word_placeholder(next_node)
+                    && ends_where_starts(i_node, next_node))
             {
                 continue;
             }
@@ -462,6 +494,23 @@ impl<'a> Printer<'a, '_> {
                 }
             }
 
+            let is_next_word = matches!(
+                next_node.kind(),
+                ValueKind::Word
+                    | ValueKind::Number
+                    | ValueKind::String
+                    | ValueKind::Func
+                    | ValueKind::AtWord
+            );
+            // The first blank of `\31  x` ends the escape. To the parser `\31` is the unit of a number without digits.
+            if i_node.kind() == ValueKind::Number
+                && is_next_word
+                && i_node.blanks_behind() > 1
+                && i_node.number_as_written().is_some_and(ends_with_hex_escape)
+            {
+                self.sink.token("  ");
+                continue;
+            }
             let i_value = i_node.value().filter(|it| !it.is_empty());
             if i_node.kind() != ValueKind::String
                 && i_value.is_some_and(|it| bun_core::strings::contains_char(it, b'\\'))
@@ -469,17 +518,18 @@ impl<'a> Printer<'a, '_> {
             {
                 // Prettier writes nothing between the two: `Font\ Awesome` becomes `Font\Awesome`, and `a\b c` one word.
                 if next_node.node().before == Before::Spaces {
-                    let is_word = matches!(
-                        next_node.kind(),
-                        ValueKind::Word
-                            | ValueKind::Number
-                            | ValueKind::String
-                            | ValueKind::Func
-                            | ValueKind::AtWord
-                    );
+                    let is_word = is_next_word;
                     match is_before_escaped_blank(i_node) {
                         true if is_word && i_node.blanks_behind() > 1 => self.sink.token("  "),
                         true => self.sink.token(" "),
+                        // `\e9  x`
+                        false
+                            if is_word
+                                && i_node.blanks_behind() > 1
+                                && i_value.is_some_and(ends_with_hex_escape) =>
+                        {
+                            self.sink.token("  ")
+                        }
                         false if is_word => self.sink.token(" "),
                         false => {}
                     }
@@ -970,6 +1020,7 @@ impl<'a> Printer<'a, '_> {
             _ => ")",
         };
         let count = node.groups().len();
+        let is_custom_property = statement.is_custom_property();
 
         let is_url = parent.is_some_and(|it| {
             is_func(it)
@@ -1019,6 +1070,9 @@ impl<'a> Printer<'a, '_> {
                     match (force_hard_line, is_behind_comment) {
                         (true, _) => self.sink.hard_line(),
                         (false, true) => self.sink.fill_separator(Separator::HardLine),
+                        (false, false) if is_custom_property && touches_what_is_before(child) => {
+                            self.sink.fill_separator(Separator::SoftLine)
+                        }
                         (false, false) => self.sink.fill_separator(Separator::Line),
                     }
                 }
@@ -1093,8 +1147,12 @@ impl<'a> Printer<'a, '_> {
         self.sink.soft_line();
         for (index, child) in node.groups().enumerate() {
             let is_last = index + 1 == count;
-            if index > 0 {
-                self.sink.line();
+            match index > 0 {
+                true if is_custom_property && touches_what_is_before(child) => {
+                    self.sink.soft_line()
+                }
+                true => self.sink.line(),
+                false => {}
             }
             // For oxfmt the comments before a key make no difference to what follows them.
             let is_in_group_with_comments = self.print_comments_above_pair(statement, id, child);

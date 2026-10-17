@@ -180,8 +180,11 @@ fn is_file_or_executable(name: &[u8], cwd: &[u8]) -> bool {
 /// The text of the `package.json` at `path`. A link in a repository can lead to `/dev/zero`: `bun run` stops at such a file, and
 /// finds no script in it.
 fn read_package_json(path: &[u8]) -> Option<Vec<u8>> {
-    use bun_sys::EntryKind;
-    let file = bun_sys::File::openat(bun_core::Fd::cwd(), path, bun_sys::O::RDONLY, 0).ok()?;
+    use bun_sys::{EntryKind, O};
+    // Otherwise opening a named pipe waits for somebody to open it for writing, who may never come.
+    let without_waiting = if cfg!(unix) { O::NONBLOCK } else { 0 };
+    let flags = O::RDONLY | without_waiting;
+    let file = bun_sys::File::openat(bun_core::Fd::cwd(), path, flags, 0).ok()?;
     let found = file.stat().ok()?;
     match bun_sys::kind_from_mode(found.st_mode as _) {
         EntryKind::File if (found.st_size as u64) < 1 << 29 => file.read_to_end().ok(),

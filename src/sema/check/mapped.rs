@@ -1773,8 +1773,8 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn constraint_of_conditional(&mut self, this: TypeId) -> Option<TypeId> {
         let (file, _, mapper, [check, ..]) = self.cond_origin(this);
         // `conditionalConstraintDepth`. The second test comes before `enter` would refuse a query
-        // for lack of capacity on `stack`.
-        if self.conditional_constraint_depth >= 100 || self.stack.len() + 20 >= MAX_DEPTH {
+        // for lack of stack.
+        if self.conditional_constraint_depth >= 100 || self.is_most_of_stack_in_use() {
             self.bailed_out();
             return None;
         }

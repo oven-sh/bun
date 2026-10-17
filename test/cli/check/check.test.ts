@@ -1825,6 +1825,14 @@ export const a: number[] = [file, one, two];
       expect(written.stdout).toBe(error("src/a.ts"));
     });
 
+    // Opening such a pipe waits until somebody opens it for writing. The file is opened to look for a "check" script.
+    test.skipIf(isWindows)("package.json can be a link to a named pipe that nobody writes to", async () => {
+      using dir = project({ "a.ts": `export {};\n` });
+      expect(Bun.spawnSync(["mkfifo", join(String(dir), "pipe")]).exitCode).toBe(0);
+      symlinkSync("pipe", join(String(dir), "package.json"));
+      expect((await check(dir)).exitCode).toBe(0);
+    });
+
     // Every write to /dev/full fails with ENOSPC, as on a full disk.
     test.skipIf(!isLinux)("what can't be written to standard output is an error with exit code 2", async () => {
       using dir = project({ "a.ts": `export {};\n` });
@@ -3467,6 +3475,49 @@ export const wrong: number = { ...tool, kind: 1 };
       );
     });
 
+    // TypeScript first parses a top-level statement of a module with `await` as a name. It parses the statement again, with
+    // `await` as the operator, only if the first parse found a reference to `await`. A parameter's name isn't one.
+    test.each([
+      ["in a module", {}, "export {};"],
+      ['under `"moduleDetection": "force"`', { moduleDetection: "force" }, ""],
+    ])("a top-level arrow function whose first parameter is named `await`, %s", async (_, options, lastLine) => {
+      using dir = project({
+        "tsconfig.json": JSON.stringify({ compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, ...options } }),
+        "a.ts": `declare function g(x: unknown): void;
+const untyped = (await) => {};
+const typed = (await: number, b?: string) => { return await; };
+g((await: number) => {});
+const wrong: number = "";
+${lastLine}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(2,18): error TS7006: Parameter 'await' implicitly has an 'any' type.
+        a.ts(5,7): error TS2322: Type 'string' is not assignable to type 'number'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("an initializer after `[name]`, `get` or `set` in an interface or a type literal is no syntax error", async () => {
+      using dir = project({
+        "a.ts": `declare const e: unique symbol;
+export interface I { [e] = 1 }
+export type T = { ["x"] = 1 };
+export interface J { get = 1 }
+export const wrong: number = "";
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(2,28): error TS1246: An interface property cannot have an initializer.
+        a.ts(3,27): error TS1247: A type literal property cannot have an initializer.
+        a.ts(4,28): error TS1246: An interface property cannot have an initializer.
+        a.ts(5,14): error TS2322: Type 'string' is not assignable to type 'number'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("a type that is nested too deeply to be printed whole loses no error", async () => {
       // An optimised build prints about 700 levels, and the check itself runs out of stack at about 3,000. The frames of
       // another build are larger, by how much depends on the system: there the type may be printed whole.
@@ -3486,6 +3537,49 @@ export const wrong: number = x;
         `a.ts(2,14): error TS2322: Type '${repeat("{ a: ", levels)}${innermost}${repeat("; }", levels)}' is not assignable to type 'number'.`,
       );
       expect(stderr.split("\n")[0]).toBe("Found 1 error in 1 file, checked 1 file [time]");
+      expect(exitCode).toBe(1);
+    });
+
+    // How deep an expression can nest depends on how much stack is left, not on a count. A build that isn't optimized has
+    // larger frames and runs out of stack at a smaller depth.
+    test.skipIf(isDebug || isASAN).each([
+      [
+        "a lookup written as 1,200 conditional expressions",
+        `declare const k: number;\nexport const x: number = ${Array.from({ length: 1_200 }, (_, i) => `k === ${i} ? "v${i}" : `).join("")}"none";`,
+        "Type 'string' is not assignable to type 'number'.",
+      ],
+      [
+        "1,200 conditional expressions, each in the last branch of the one before",
+        `declare const c: boolean;\nexport const x: string = ${repeat("c ? 1 : ", 1_200)}2;`,
+        "Type 'number' is not assignable to type 'string'.",
+      ],
+      [
+        "`c || (c || (...))`, 1,500 deep",
+        `declare const c: boolean;\nexport const x: string = ${repeat("c || (", 1_500)}1${repeat(")", 1_500)};`,
+        "Type 'number | boolean' is not assignable to type 'string'.",
+      ],
+      [
+        "`!` 1,200 times",
+        `declare const c: boolean;\nexport const x: string = ${repeat("!", 1_200)}c;`,
+        "Type 'boolean' is not assignable to type 'string'.",
+      ],
+    ])("%s", async (_, source, message) => {
+      using dir = project({ "a.ts": `${source}\n` });
+      const { stdout, stderr, exitCode } = await check(dir);
+      expect(stdout.split("\n")[0]).toBe(`a.ts(2,14): error TS2322: ${message}`);
+      expect(stderr.split("\n")[0]).toBe("Found 1 error in 1 file, checked 1 file [time]");
+      expect(exitCode).toBe(1);
+    });
+
+    // The stack ends somewhere in this range. Where depends on the platform, so this tries every depth: none may crash.
+    test.skipIf(isDebug || isASAN)("`!` from 1,000 to 8,000 times", async () => {
+      const files: Record<string, string> = {};
+      for (let depth = 1_000; depth < 8_000; depth = Math.ceil(depth * 1.05)) {
+        files[`not-${depth}.ts`] = `export const x: string = ${repeat("!", depth)}1;\n`;
+      }
+      using dir = project(files);
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toContain("not-1000.ts(1,14): error TS2322: Type 'boolean' is not assignable to type 'string'.");
       expect(exitCode).toBe(1);
     });
 
@@ -3814,29 +3908,45 @@ export const alsoWrong = wrong.nope;
       expect(exitCode).toBe(1);
     });
 
-    // The checker has a thousand questions open at the most, which is less than its stack holds. That one was refused for that was
-    // forgotten: the walk over the tree asked again at every level, each time down to where the last was refused, and about an
-    // argument first about every call around it: minutes to days. What is refused so is refused whole, as where the stack runs
-    // out: the file is said to be incomplete, and what is wrong inside such an expression is not reported.
+    // Where the stack runs out in an expression, that a question was refused used to be forgotten: the walk over the tree asked
+    // again at every level, each time down to where the last was refused, and about an argument first about every call around
+    // it: minutes to days. Now the whole expression is refused: the file is said to be incomplete, and what is wrong deeper
+    // in it than the checker got is not reported. The last column is an error in the expression that tsc reports too. The
+    // checker finds it with two thirds of its stack, so that larger frames on another platform don't lose it. For array and
+    // object literals more than 100 deep tsc also reports TS2321, which `bun check` doesn't do yet.
     test.skipIf(isDebug || isASAN).each([
-      ["calls", "f(", ")", 3_000],
-      ["new", "new f(", ")", 3_000],
-      ["array literals", "[", "]", 3_000],
-      ["spread array literals", "[...", "]", 3_000],
-      ["object literals", "{ a: ", " }", 3_000],
-      ["template literals", "`${", "}`", 2_500],
-      ["conditions", "f ? ", " : 0", 15_000],
-      ["assignments", "a = ", "", 15_000],
-      ["!", "!", "", 15_000],
-      ["typeof", "typeof ", "", 15_000],
+      ["calls", "f(", ")", 3_000, ""],
+      ["new", "new f(", ")", 3_000, ""],
+      ["array literals", "[", "]", 3_000, ""],
+      [
+        "spread array literals",
+        "[...",
+        "]",
+        2_000,
+        "a.ts(3,8018): error TS2488: Type '1' must have a '[Symbol.iterator]()' method that returns an iterator.\n",
+      ],
+      ["object literals", "{ a: ", " }", 3_000, ""],
+      ["template literals", "`${", "}`", 2_500, ""],
+      [
+        "conditions",
+        "f ? ",
+        " : 0",
+        15_000,
+        "a.ts(1,1): error TS2563: The containing function or module body is too large for control flow analysis.\n",
+      ],
+      ["assignments", "a = ", "", 15_000, ""],
+      ["!", "!", "", 15_000, ""],
+      ["typeof", "typeof ", "", 15_000, ""],
     ])(
       "%s in each other",
-      async (_, open, close, depth) => {
+      async (_, open, close, depth, inTheExpression) => {
         using dir = project({
           "a.ts": `declare const f: any;\ndeclare let a: any;\nexport const r = ${repeat(open, depth)}1${repeat(close, depth)};\nexport const wrong: number = "";\n`,
         });
         const { stdout, exitCode } = await check(dir, [], {}, 10_000);
-        expect(stdout).toBe(`a.ts(4,14): error TS2322: Type 'string' is not assignable to type 'number'.`);
+        expect(stdout).toBe(
+          `${inTheExpression}a.ts(4,14): error TS2322: Type 'string' is not assignable to type 'number'.`,
+        );
         expect(exitCode).toBe(1);
       },
       // Longer than the child may take, which does not outlive the test then.

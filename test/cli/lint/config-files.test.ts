@@ -4805,6 +4805,79 @@ describe.concurrent("whose configuration files count", () => {
     expect((await lint(both, ["--nonsense"])).exitCode).toBe(1);
   });
 
+  describe("a package with both configs, in a repository whose root has none", () => {
+    const files = {
+      "package.json": `{ "workspaces": ["packages/*"] }`,
+      "packages/app/.oxlintrc.json": oxlintrc({ eqeqeq: "error" }),
+      "packages/app/eslint.config.js": `module.exports = [{ rules: { "no-var": "error" } }];`,
+      "packages/app/src/a.js": code,
+    };
+    const absolute = (dir: string) => [join(dir, "packages", "app", "src", "a.js")];
+
+    test.each<[cwd: string, args: string[], up: string, more?: Options["args"]]>([
+      [".", ["."], "packages/app/"],
+      [".", ["packages/app"], "packages/app/"],
+      [".", ["packages/app/src/a.js"], "packages/app/"],
+      [".", [], "packages/app/", absolute],
+      ["packages", ["app"], "app/"],
+      ["packages/app", ["."], ""],
+      ["packages/app", [], "", absolute],
+      ["packages/app/src", ["a.js"], "../"],
+    ])("the oxlint config wins in %s with %j", async (cwd, args, up, more) => {
+      const { problems, stderr, exitCode } = await lint(files, args, { cwd, args: more });
+      expect(problems).toEqual(["packages/app/src/a.js:2:7 eqeqeq"]);
+      expect(stderr).toContain(ignores(`${up}eslint.config.js`, `${up}.oxlintrc.json`));
+      expect(exitCode).toBe(1);
+    });
+
+    test("--print-config prints the oxlint config from the root and from the package", async () => {
+      const [fromRoot, fromPackage] = await Promise.all([
+        lint(files, ["--print-config", "packages/app/src/a.js"]),
+        lint(files, ["--print-config", "src/a.js"], { cwd: "packages/app" }),
+      ]);
+      expect(fromRoot.raw).toContain(`"eqeqeq": "deny"`);
+      expect(fromRoot.raw).toBe(fromPackage.raw);
+    });
+
+    test("every such package gets a note", async () => {
+      const copy = Object.entries(files).map(([name, text]) => [name.replace("/app/", "/web/"), text]);
+      const { problems, stderr } = await lint({ ...files, ...Object.fromEntries(copy) });
+      expect(problems).toEqual(["packages/app/src/a.js:2:7 eqeqeq", "packages/web/src/a.js:2:7 eqeqeq"]);
+      const notes = ["app", "web"].map(it =>
+        ignores(`packages/${it}/eslint.config.js`, `packages/${it}/.oxlintrc.json`),
+      );
+      expect(stderr).toContain(notes.join("\n"));
+    });
+
+    test.each([
+      [".", ["."]],
+      [".", ["packages/app/fixtures/b.js"]],
+      ["packages/app", ["."]],
+    ])("no ESLint config below the oxlint config counts in %s with %j", async (cwd, args) => {
+      const { "packages/app/eslint.config.js": _, ...rest } = files;
+      const below = {
+        ...rest,
+        "packages/app/fixtures/eslint.config.js": `import "a-package-that-is-not-installed";`,
+        "packages/app/fixtures/b.js": code,
+        "packages/app/fixtures/old/.eslintrc": "not: [valid",
+        "packages/app/fixtures/old/c.js": code,
+      };
+      const { problems, exitCode } = await lint(below, args, { cwd });
+      expect(problems).toContain("packages/app/fixtures/b.js:2:7 eqeqeq");
+      expect(problems.filter(it => !it.endsWith(" eqeqeq"))).toEqual([]);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a package next to it that only has an ESLint config keeps it", async () => {
+      const { problems } = await lint({
+        ...files,
+        "packages/old/eslint.config.js": files["packages/app/eslint.config.js"],
+        "packages/old/a.js": code,
+      });
+      expect(problems).toEqual(["packages/app/src/a.js:2:7 eqeqeq", "packages/old/a.js:1:1 no-var"]);
+    });
+  });
+
   const [ofESLint, ofOxlint, legacy] = [both["eslint.config.js"], oxlintrc({ "no-debugger": "error" }), rc(noVar)];
   const asModule = ofESLint.replace("module.exports =", "export default");
   test.each([

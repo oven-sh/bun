@@ -37,16 +37,28 @@ pub(crate) enum Kind {
     Directory,
 }
 
-/// What is at `path`, following links, and its size. `None`: nothing, or neither a file nor a
+/// What tells a file from every other: its device and its inode. On Windows, its volume and its file index.
+pub(crate) type Identity = (u64, u64);
+
+/// The identity of a file that has more names than the one it was found by: hard links.
+fn identity_if_linked(found: &bun_sys::Stat) -> Option<Identity> {
+    (found.st_nlink > 1).then_some((found.st_dev as _, found.st_ino as _))
+}
+
+/// What is at `path`, following links, its size, and [`identity_if_linked`]. `None`: nothing, or neither a file nor a
 /// directory.
-pub(crate) fn kind_and_size(path: &[u8]) -> Option<(Kind, u64)> {
+pub(crate) fn stat(path: &[u8]) -> Option<(Kind, u64, Option<Identity>)> {
     let found = bun_sys::stat(for_libuv(path, &mut path_buffer_pool::get())).ok()?;
     let kind = match bun_sys::kind_from_mode(found.st_mode as _) {
         EntryKind::File => Kind::File,
         EntryKind::Directory => Kind::Directory,
         _ => return None,
     };
-    Some((kind, found.st_size as u64))
+    Some((kind, found.st_size as u64, identity_if_linked(&found)))
+}
+
+pub(crate) fn kind_and_size(path: &[u8]) -> Option<(Kind, u64)> {
+    stat(path).map(|(kind, size, _)| (kind, size))
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -56,8 +68,8 @@ pub(crate) enum LinkKind {
     Link,
 }
 
-/// What is at `path`, which can be a link, and its size.
-pub(crate) fn link_kind_and_size(path: &[u8]) -> Option<(LinkKind, u64)> {
+/// What is at `path`, which can be a link, its size, and [`identity_if_linked`].
+pub(crate) fn lstat(path: &[u8]) -> Option<(LinkKind, u64, Option<Identity>)> {
     let found = bun_sys::lstat(for_libuv(path, &mut path_buffer_pool::get())).ok()?;
     let kind = match bun_sys::kind_from_mode(found.st_mode as _) {
         EntryKind::File => LinkKind::File,
@@ -65,7 +77,11 @@ pub(crate) fn link_kind_and_size(path: &[u8]) -> Option<(LinkKind, u64)> {
         EntryKind::SymLink => LinkKind::Link,
         _ => return None,
     };
-    Some((kind, found.st_size as u64))
+    Some((kind, found.st_size as u64, identity_if_linked(&found)))
+}
+
+pub(crate) fn link_kind_and_size(path: &[u8]) -> Option<(LinkKind, u64)> {
+    lstat(path).map(|(kind, size, _)| (kind, size))
 }
 
 /// What the link at `path` leads to. `Ok(None)`: neither a file nor a directory.
@@ -87,10 +103,13 @@ pub(crate) fn is_file(path: &[u8]) -> bool {
 }
 
 /// `EFBIG` for a file that JavaScript could not hold as a string, as Node has an error for it, and for more than 64 MB of what is
-/// no file: `/dev/null` and a pipe are read, and a link in a repository can lead to `/dev/zero`.
+/// no file: `/dev/null` and a pipe are read, and a link in a repository can lead to `/dev/zero`. A named pipe that nobody has
+/// open for writing is empty.
 pub(crate) fn read(path: &[u8]) -> bun_sys::Result<Vec<u8>> {
     let too_large = || bun_sys::Error::from_code(bun_sys::E::EFBIG, bun_sys::Tag::read);
-    let file = File::openat(Fd::cwd(), path, O::RDONLY, 0)?;
+    // Otherwise opening a named pipe waits for somebody to open it for writing, who may never come.
+    let without_waiting = if cfg!(unix) { O::NONBLOCK } else { 0 };
+    let file = File::openat(Fd::cwd(), path, O::RDONLY | without_waiting, 0)?;
     let found = file.stat()?;
     if matches!(bun_sys::kind_from_mode(found.st_mode as _), EntryKind::File) {
         let size = found.st_size as u64;
@@ -102,6 +121,8 @@ pub(crate) fn read(path: &[u8]) -> bun_sys::Result<Vec<u8>> {
         file.read_to_end_into(&mut text)?;
         return Ok(text);
     }
+    // Reading does wait, for a writer that is there: `--config <(..)`.
+    bun_sys::update_nonblocking(file.handle(), false)?;
     let (mut text, mut part) = (Vec::new(), vec![0; 64 << 10]);
     loop {
         match file.read(&mut part)? {
@@ -143,10 +164,19 @@ pub(crate) struct Listing {
 impl Listing {
     /// The size of the file called `name` in the directory. 0 if it cannot be told. `None`: a link to what [`list`] leaves out.
     pub(crate) fn size_of(&self, name: &[u8]) -> Option<u64> {
+        self.size_and_identity_of(name).map(|it| it.0)
+    }
+
+    /// The same, and [`identity_if_linked`].
+    pub(crate) fn size_and_identity_of(&self, name: &[u8]) -> Option<(u64, Option<Identity>)> {
         let found = bun_sys::fstatat(self.directory.fd(), z(name, &mut path_buffer_pool::get()));
-        let Ok(found) = found else { return Some(0) };
+        let Ok(found) = found else {
+            return Some((0, None));
+        };
         match bun_sys::kind_from_mode(found.st_mode as _) {
-            EntryKind::File | EntryKind::Directory => Some(found.st_size as u64),
+            EntryKind::File | EntryKind::Directory => {
+                Some((found.st_size as u64, identity_if_linked(&found)))
+            }
             _ => None,
         }
     }
@@ -378,7 +408,8 @@ fn leads_out(cwd: &[u8], path: &[u8], real: &[u8]) -> bool {
 }
 
 /// The real paths of the files that a run has written. Two paths can lead to one file (a link, a letter in the other case), and
-/// two threads that replace the same file at the same time fail now and then on Windows.
+/// two threads that replace the same file at the same time fail now and then on Windows. Two hard links have a real path each:
+/// `bun fmt` knows them by [`Identity`].
 #[derive(Default)]
 pub(crate) struct Written(Guarded<FxHashSet<Vec<u8>>>);
 

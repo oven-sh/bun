@@ -1,5 +1,6 @@
 use bun_lint::ast::walk::{Visitor, walk_node};
 use bun_lint::prelude::*;
+use bun_lint::utils::visible::{is_declared_again, is_only_declaration};
 
 /// Enforce using function types instead of interfaces with call signatures.
 pub struct PreferFunctionType;
@@ -181,7 +182,12 @@ fn check_member<'a>(member: Member<'a>, owner: Owner<'a>, cx: &Cx<'a, PreferFunc
         false => report,
     };
     if !is_default_export {
-        report.fix(|fixer| fix(fixer, member, return_type, owner));
+        let is_safe = || match owner {
+            Owner::TypeLiteral(_) => true,
+            Owner::Interface(interface) => is_only_declaration(interface),
+        };
+        let is_duplicate = || matches!(owner, Owner::Interface(interface) if is_declared_again(interface));
+        report.fix_where_safe(is_safe, |fixer| fix(fixer, member, return_type, owner).filter(|_| !is_duplicate()));
     }
 }
 

@@ -1052,6 +1052,10 @@ impl Order {
             return;
         }
         report.fix(|fixer| {
+            // The lines above a declaration stay where they are.
+            if fixer.has_directive_before(second.root) || !is_after && fixer.has_directive_before(first.root) {
+                return None;
+            }
             let lines_of = |it: &Entry| {
                 (
                     start_of_line_with_comments(file, it.root),

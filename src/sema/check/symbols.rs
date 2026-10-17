@@ -90,7 +90,10 @@ pub(super) fn circularity_error_type(annotation: TypeNodeId) -> TypeId {
 /// `flags` and `value_declaration`. It tests for an accessor first, and neither
 /// `getTypeOfAccessors` nor `getTypeOfAlias` assigns or reports anything where
 /// `pushTypeResolution` fails.
-fn is_variable_or_property(flags: SymFlags, value_declaration: Option<(FileId, Decl)>) -> bool {
+pub(super) fn is_variable_or_property(
+    flags: SymFlags,
+    value_declaration: Option<(FileId, Decl)>,
+) -> bool {
     !flags.intersects(SymFlags::ACCESSOR)
         && (flags.intersects(SymFlags::VARIABLE | SymFlags::PROPERTY)
             || matches!(

@@ -13,6 +13,8 @@ mod for_rules;
 mod prettier;
 mod tailwind;
 
+pub(crate) use files::Negative;
+
 use crate::doctor::{Modules, watching};
 use crate::run::{Environment, Fatal, Outcome, Pool};
 use crate::{fs, git, paths};
@@ -36,6 +38,7 @@ use bun_sema::bind::{BindOptions, Recycled, bind, bind_for_format_in, try_bind_f
 use bun_sema::hir::Diagnostic;
 use bun_sema::resolve::Dialect;
 use bun_sema::session::Session;
+use bun_sema::util::FxHashMap;
 use bun_sema_parser::Summary;
 use bun_threading::Guarded;
 use cli::{LogLevel, Options};
@@ -1787,8 +1790,17 @@ impl Run<'_> {
         // Tailwind cannot be asked, and that is allowed.
         let leaves_classes = AtomicBool::new(false);
         let once = fs::Written::default();
+        // A file with several names (hard links) is written in place. A thread that read it under another name meanwhile would
+        // get a part of the text, and could write that part back. So the names of one file take turns, from the read to the
+        // write. Files share a lock by their inode, which only costs a wait now and then.
+        let turns: [Guarded<()>; 32] = Default::default();
+        let turn_of = |target: &Target| {
+            let linked = target.linked.filter(|_| !only_looks);
+            linked.map(|(_, inode)| turns[inode as usize % turns.len()].lock())
+        };
         let format_at = |at: usize| {
             let (index, target) = work[at];
+            let _turn = turn_of(target);
             let began = Instant::now();
             let shown = paths::relative(cwd, &target.path);
             let mut scratch = scratches.lock().pop().unwrap_or_default();
@@ -1881,6 +1893,7 @@ impl Run<'_> {
             let is_heavy = |at: usize| handed_over[at].1.size >= HEAVY as u64;
             bridge.for_each(handed_over.len(), &is_heavy, &|at| {
                 let (index, target) = handed_over[at];
+                let _turn = turn_of(target);
                 let began = Instant::now();
                 let shown = paths::relative(cwd, &target.path);
                 let config = configs.path_of_config(&target.scope);
@@ -1902,7 +1915,27 @@ impl Run<'_> {
         let mut warnings = std::mem::take(warnings.get_mut());
         sort_slice_by(&mut warnings[..], |a, b| a.0.cmp(&b.0));
         let mut warnings = warnings.into_iter().peekable();
-        let results = std::mem::take(results.get_mut());
+        let mut results = std::mem::take(results.get_mut());
+        // Which name of a file came first, and so was the one to be written, is chance. The file has changed under all of them.
+        let linked = |it: &Expanded| match it {
+            Expanded::File(target) if !only_looks => target.linked,
+            _ => None,
+        };
+        let rewritten: FxHashMap<fs::Identity, Duration> = (expanded.iter().zip(&results))
+            .filter_map(|(it, done)| match done {
+                Some(Done::Different(took)) => Some((linked(it)?, *took)),
+                _ => None,
+            })
+            .collect();
+        if !rewritten.is_empty() {
+            for (it, done) in expanded.iter().zip(&mut results) {
+                if matches!(done, Some(Done::Unchanged))
+                    && let Some(took) = linked(it).and_then(|it| rewritten.get(&it))
+                {
+                    *done = Some(Done::Different(*took));
+                }
+            }
+        }
         for (index, (it, done)) in expanded.iter().zip(results).enumerate() {
             let target = match it {
                 Expanded::Error(error) => {

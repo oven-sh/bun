@@ -326,6 +326,20 @@ fn moved_type_needs_parentheses(template: TypeNode, moved: TypeNode) -> bool {
     binding < needed
 }
 
+/// Whether `` `${interpolation}` `` is there to make a string of whatever a caller passes. The type says what the author promises,
+/// not what arrives: a parameter, and `` a = `${a}` ``.
+fn is_coercion<'a>(template: Node<'a>, interpolation: Node<'a>) -> bool {
+    let (Node::Expr(template), Node::Expr(interpolation)) = (template, interpolation) else {
+        return false;
+    };
+    let Some(symbol) = interpolation.symbol() else {
+        return false;
+    };
+    let is_assigned_back = matches!(template.parent(), Node::Expr(parent)
+        if parent.tag() == ExprTag::Assign && parent.left().and_then(Expr::symbol) == Some(symbol));
+    is_assigned_back || matches!(symbol.declarations().next(), Some(Declaration::Param(_)))
+}
+
 /// `head` is the text before the interpolation, `outer` the interpolation with its parentheses.
 fn report_single_interpolation<'a>(
     node: Node<'a>,
@@ -337,13 +351,16 @@ fn report_single_interpolation<'a>(
     if !cx.language().is_oxlint {
         let span = interpolation.span();
         cx.report(Span::new(span.start.saturating_sub(2), span.end + 1), NO_UNNECESSARY_TEMPLATE_EXPRESSION)
-            .fix(|fixer| fixer.replace(node, get_moved_node_code(node, interpolation)));
+            .fix_where_safe(
+                || !is_coercion(node, interpolation),
+                |fixer| fixer.replace(node, get_moved_node_code(node, interpolation)),
+            );
         return;
     }
     // tsgolint reports from the `${`, whatever space follows, to the character after the interpolation and its
     // parentheses, which are a part of what is in them.
     cx.report(Span::new(head.end - 2, outer.end + 1), NO_UNNECESSARY_TEMPLATE_EXPRESSION)
-        .fix(|fixer| {
+        .fix_where_safe(|| !is_coercion(node, interpolation), |fixer| {
             let is_wrapped = match (node, interpolation) {
                 (Node::Expr(template), Node::Expr(moved)) => is_wrapped_by_tsgolint(template, moved),
                 (Node::Type(template), Node::Type(moved)) => {

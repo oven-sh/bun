@@ -502,40 +502,50 @@ impl<'t> Builder<'t, '_, '_> {
                     .unwrap_or_default(),
             });
 
+        // A comment that waits for the end of the line would be written in the string, as Prettier does.
+        self.push(FormatElement::LineSuffixBoundary);
         self.token("\"\"\"");
-        let mut empty_lines = 0;
+        // `""" a """` stays as it is: the blanks are part of the value, and Prettier drops them. On a line of its own,
+        // those at the start would be indentation, and nobody would see those at the end.
+        let ends_with_blank = |line: &[u8]| matches!(line.last(), Some(b' ' | b'\t'));
+        let is_padded = leading_blanks(content) > 0 || ends_with_blank(content);
+        if count == 1 && is_padded && bun_core::strings::index_of_any(content, b"\r\n").is_none() {
+            self.text(content);
+            return self.token("\"\"\"");
+        }
+        let mut is_at_quotes = count == 1 && first == 0 && leading_blanks(content) > 0;
+        let (mut empty_lines, mut is_line_ended) = (0, false);
         for line in dedented {
-            // The printer of Prettier leaves out the blanks at the end of a line.
-            let mut line = &line[..line.len()
-                - line
-                    .iter()
-                    .rev()
-                    .take_while(|byte| matches!(byte, b' ' | b'\t'))
-                    .count()];
-            if count == 1 {
-                line = line.trim_ascii();
-            }
             if line.is_empty() {
                 empty_lines += 1;
                 continue;
             }
-            self.line_breaks(empty_lines);
+            if !std::mem::take(&mut is_at_quotes) {
+                self.line_breaks(empty_lines, is_line_ended);
+            }
             empty_lines = 0;
             self.text(line);
+            // Blanks at the end of a line are part of the value too. A `hardline` trims them, as in Prettier. A line
+            // break that is text does not, and the `hardline` that follows it only indents.
+            is_line_ended = ends_with_blank(line);
+            if is_line_ended {
+                self.f.write_text(b"\n", Some(TextWidth::multiline(0)));
+            }
         }
         self.hardline();
         self.token("\"\"\"");
     }
 
-    /// A line break after so many empty lines.
-    fn line_breaks(&mut self, empty_lines: usize) {
+    /// A line break after so many empty lines. `is_line_ended`: the line break at the end of the line is written.
+    fn line_breaks(&mut self, empty_lines: usize, is_line_ended: bool) {
         match empty_lines {
             0 => {}
             1 => return self.line(LineMode::Empty),
             // The printer writes no more than one empty line for line breaks.
-            _ => self
-                .f
-                .write_text(&vec![b'\n'; empty_lines + 1], Some(TextWidth::multiline(0))),
+            _ => self.f.write_text(
+                &vec![b'\n'; empty_lines + usize::from(!is_line_ended)],
+                Some(TextWidth::multiline(0)),
+            ),
         }
         self.hardline();
     }

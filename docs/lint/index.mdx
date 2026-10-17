@@ -46,6 +46,12 @@ To lint specific files, pass paths or globs.
 bun lint src "test/**/*.test.ts"
 ```
 
+An argument that starts with `!` leaves files out of what the other arguments select, as it does for `bun fmt`. This holds with an ESLint or oxlint config too.
+
+```bash terminal icon="terminal"
+bun lint src "!src/generated" "!**/*.test.ts"
+```
+
 The exit code is `1` if there are errors and `0` if there are only warnings.
 
 ## Fix problems
@@ -166,7 +172,7 @@ ignorePatterns = ["vendor/", "**/*.gen.ts"]
 
 ## ES modules and CommonJS
 
-`bun lint` works out whether a file is an ES module or CommonJS the way Bun does when it runs the file:
+`bun lint` works out whether a file is an ES module or CommonJS from the file itself, the way Node.js does:
 
 - `.mjs` and `.mts` files are modules. `.cjs` and `.cts` files are CommonJS.
 - Any other file is a module if the nearest `package.json` has `"type": "module"`.

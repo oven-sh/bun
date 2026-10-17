@@ -237,8 +237,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     }
 
     /// `parseToplevelStatement`. `parsePropertyName` restores `statementHasAwaitIdentifier`, so that no statement is parsed
-    /// again for an `await` in a name: there it is a name. For another `await` `reparseTopLevelAwait` parses all of the
-    /// statement again, in the await context.
+    /// again for an `await` in a name: there it is a name. `parseBindingIdentifier` restores it too, which matters for the
+    /// first parameter of `(await) => {}`. For another `await` `reparseTopLevelAwait` parses all of the statement again, in
+    /// the await context.
     #[cold]
     #[inline(never)]
     pub(crate) fn top_level_statement(&mut self) -> StmtId {

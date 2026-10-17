@@ -1970,7 +1970,8 @@ impl<'a> Printer<'a, '_> {
         Doc::Array(parts)
     }
 
-    /// `formatted`: the code, if it has been formatted, and the longest run in it of what the fence is made of.
+    /// `formatted`: the code with the line break after it, if it has been formatted, and the longest run in it of what
+    /// the fence is made of.
     fn print_code(&self, id: NodeId, node: &Node, formatted: Option<(Doc<'a>, usize)>) -> Doc<'a> {
         let value = self.str(node.value);
         if formatted.is_none() && is_indented_code(self.original, self.tree, id) {
@@ -1984,7 +1985,7 @@ impl<'a> Printer<'a, '_> {
         }
         let style_unit = self.fence_unit(node);
         let (code, run) = match formatted {
-            Some((formatted, run)) => (docs![formatted, hardline()], run),
+            Some(formatted) => formatted,
             None => (
                 docs![self.code_as_written(value, false), line_break_after(value)],
                 max_continuous_count(value, style_unit),
@@ -2051,7 +2052,8 @@ impl<'a> Printer<'a, '_> {
             code,
             width,
         })?;
-        let formatted = bun_core::strings::trim_js_whitespace_end(&formatted);
+        let formatted = super::front_matter::trim_end_to_last_line(&formatted);
+        let end = line_break_after(formatted);
         // Prettier only looks at the code as it was. Markdown that had `~~~` in it has backticks now.
         let unit = self.fence_unit(node);
         let run = match is_oxfmt {
@@ -2070,7 +2072,7 @@ impl<'a> Printer<'a, '_> {
         Some(mark_as_root(self.print_code(
             id,
             node,
-            Some((formatted, run)),
+            Some((docs![formatted, end], run)),
         )))
     }
 
@@ -2085,7 +2087,7 @@ impl<'a> Printer<'a, '_> {
         let is_toml = language == b"toml" || (language.is_empty() && raw.starts_with(b"+++"));
         let is_yaml = language == b"yaml" || (language.is_empty() && !is_toml);
         let value = &self.original[front_matter.value.0..front_matter.value.1];
-        let value = bun_core::strings::trim_js_whitespace_end(
+        let value = super::front_matter::trim_end_to_last_line(
             bun_core::strings::trim_js_whitespace_start(value),
         );
         let formatted = match value {
@@ -2105,14 +2107,14 @@ impl<'a> Printer<'a, '_> {
         let Some(formatted) = formatted else {
             return Doc::from(raw);
         };
-        let formatted = bun_core::strings::trim_js_whitespace_end(&formatted);
+        let formatted = super::front_matter::trim_end_to_last_line(&formatted);
         mark_as_root(docs![
             &raw[..3],
             language,
             hardline(),
             match formatted.is_empty() {
                 true => Doc::EMPTY,
-                false => docs![lines_of(formatted), hardline()],
+                false => docs![lines_of(formatted), line_break_after(formatted)],
             },
             &raw[raw.len() - 3..]
         ])

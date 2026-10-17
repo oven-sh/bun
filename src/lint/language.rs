@@ -513,7 +513,7 @@ impl LanguageOptions {
         self.config_globals = OnceLock::new();
     }
 
-    /// With `stands_alone`: works out `sourceType` the way Bun and Node do when they run the file. `language_options` is what
+    /// With `stands_alone`: works out `sourceType` the way Node does when it runs the file. `language_options` is what
     /// these options were made from. In order:
     ///
     /// 1. `parserOptions.sourceType`, from `--parser-options` or `[lint.parserOptions]`. It's for every file, like

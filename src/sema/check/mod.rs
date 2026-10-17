@@ -794,6 +794,8 @@ impl<'s> Program<'s> {
             enclosing_module_specifier_mode: None,
             emit_resolver_links: Default::default(),
             expected: Requested::All,
+            checked_in_full: Vec::new(),
+            found_to_depend_on_order: Vec::new(),
             declaration_file: None,
             declaration_indent: None,
             has_ambient_context: false,
@@ -1069,12 +1071,6 @@ pub(super) enum CurrentNode {
     Node(FileId, Node),
 }
 
-/// For unbounded recursion. tsgo has no limit. A declaration without an annotation whose type is
-/// that of the next one takes three queries: `Symbol`, `Pat`, `Expr`, or `Return`, `Expr`, `Call`.
-/// One query takes 1 to 2 KB of stack in a release build, which `is_stack_low` guards. See
-/// `refuse_as_too_deep`.
-const MAX_DEPTH: usize = 1000;
-
 /// The metadata of an entry of `Checker::stack`.
 #[derive(Copy, Clone)]
 struct QueryFrame {
@@ -1122,7 +1118,7 @@ pub enum Requested {
     /// `GetSyntacticDiagnostics`: the diagnostics of the parser and the scanner.
     Syntactic,
     /// The same, for a caller that then asks for the types it needs, as typescript-eslint and tsgolint do, and reads no
-    /// diagnostics. A file that `has_types_that_depend_on_order` is checked in full, as under `All`. If it is too large for
+    /// diagnostics. A file that `depends_on_order` is checked in full, as under `All`. If it is too large for
     /// control flow analysis (TS2563), that check turns the analysis off one block at a time, and stores the types of
     /// everything else before any rule asks.
     Types,
@@ -1534,6 +1530,10 @@ pub struct Checker<'p, 's> {
     enclosing_module_specifier_mode: Option<ResolutionMode>,
     emit_resolver_links: errors_declaration_emit::EmitResolverLinks,
     expected: Requested,
+    /// See `check_in_full`.
+    checked_in_full: Vec<FileId>,
+    /// See `take_files_that_depend_on_order`.
+    found_to_depend_on_order: Vec<FileId>,
     /// The output `get_declaration_diagnostics` leaves for `checked`.
     declaration_file: Option<Vec<u8>>,
     /// During declaration emit: the indentation depth of the current line.
@@ -1778,8 +1778,8 @@ pub struct Checker<'p, 's> {
     context_sensitive_functions: std::cell::RefCell<FxHashMap<(FileId, FnId), bool>>,
     /// Of how many functions it has been asked.
     context_sensitivity_asked: std::cell::Cell<u64>,
-    /// A query was refused at `MAX_DEPTH`: `enter` refuses every query while `stack` is higher than this. `usize::MAX`: none was. See
-    /// `refuse_as_too_deep`.
+    /// A query was refused for lack of stack: `enter` refuses every query while `stack` is higher than this. `usize::MAX`: none
+    /// was. See `starts_over_from_lower`.
     unwind_to: usize,
     /// `work` of the next `enter` while that is so. It takes the slow path (`work_trap`).
     unwind_work: u64,
@@ -1958,6 +1958,14 @@ impl<'p, 's> Checker<'p, 's> {
         self.stack_base.saturating_sub(stack_pointer()) > self.stack_limit / 2
     }
 
+    /// Whether three quarters of the stack that queries may use are in use. A chain of declarations starts over from here
+    /// (`starts_over_from_lower`), while there is still stack for the recursion between two queries, which only asks
+    /// `is_stack_low`.
+    #[inline]
+    pub(crate) fn is_most_of_stack_in_use(&self) -> bool {
+        self.stack_base.saturating_sub(stack_pointer()) > self.stack_limit - self.stack_limit / 4
+    }
+
     /// The maximum stack in use at any query.
     pub fn deepest_stack(&self) -> usize {
         self.deepest_stack.get()
@@ -1983,8 +1991,8 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return false;
         }
-        if self.stack.len() >= MAX_DEPTH {
-            return self.refuse_as_too_deep(q);
+        if self.is_most_of_stack_in_use() && self.starts_over_from_lower(q) {
+            return false;
         }
         self.last_enter = EnterOutcome::Entered;
         if self.stack.is_empty() {
@@ -2067,9 +2075,13 @@ impl<'p, 's> Checker<'p, 's> {
         let is_low = self.is_stack_low();
         if is_low {
             self.refuse_outermost_in_flight(q);
+            // Not every query is about an expression or a type node. One that goes on regardless comes back here.
+            self.unwind_to = 0;
+            self.unwind_work = self.work + 1;
+            self.restart_with = None;
         }
         // Every later `enter` takes this path.
-        self.work_trap = if self.refused_expressions.is_empty() {
+        self.work_trap = if self.refused_expressions.is_empty() && !is_low {
             WORK_TRAP_DISARMED
         } else {
             self.work + 1
@@ -2136,27 +2148,23 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `q` would be entry `MAX_DEPTH` of `stack`. Always `false`.
+    /// `is_most_of_stack_in_use`, and `q` would take more. tsgo has a stack that grows. Returns whether `q` is refused.
     ///
-    /// The result of no frame in progress is cached. A frame that goes on regardless computes
+    /// The type of a variable, the return type of a function and the declared type of a symbol are
+    /// the same from any height, if nothing in progress is a context for them. Then the outermost such frame resolves the
+    /// innermost one from its own height, where that has the stack which the frames in between
+    /// took, and starts over: `resolve_what_was_too_deep`. The frames below it see no refusal. A
+    /// cycle that needs more stack than there is never closes, and is refused again.
+    ///
+    /// The result of no frame in between is cached. A frame that goes on regardless computes
     /// again, from its lower height, what the frames above it could not finish: a chain of
     /// functions that is n links too long costs n^3. So every query is refused until `stack` is
     /// back at `unwind_to`.
     ///
-    /// The type of a variable, the return type of a function and the declared type of a symbol are
-    /// the same from any height, if nothing in progress is a context for them. Then the outermost such frame resolves the
-    /// innermost one from its own height, where that has the depth which the frames in between
-    /// took, and starts over: `resolve_what_was_too_deep`. The frames below it see no refusal. A
-    /// cycle that is longer than `MAX_DEPTH` never closes, and is refused again.
+    /// Anything else goes on with the stack that is left: see `refuse_for_lack_of_stack`.
     #[cold]
     #[inline(never)]
-    fn refuse_as_too_deep(&mut self, q: Query) -> bool {
-        self.last_enter = EnterOutcome::Refused;
-        bun_core::scoped_log!(
-            SemaCycles,
-            "too deep: {:?}",
-            &self.stack[self.stack.len() - 12..]
-        );
+    fn starts_over_from_lower(&mut self, q: Query) -> bool {
         let starts_over =
             |q: &Query| matches!(q, Query::Symbol(_) | Query::Return(..) | Query::Declared(_));
         let is_without_context = self.flow_loops.is_empty()
@@ -2172,29 +2180,29 @@ impl<'p, 's> Checker<'p, 's> {
             true => Some(q),
             false => self.stack.iter().rev().find(|q| starts_over(q)).copied(),
         };
+        let (Some(outermost), Some(innermost)) = (outermost, innermost) else {
+            return false;
+        };
+        if !is_without_context || self.stack[outermost] == innermost {
+            return false;
+        }
+        bun_core::scoped_log!(
+            SemaCycles,
+            "too deep: {:?}",
+            &self.stack[self.stack.len().saturating_sub(12)..]
+        );
+        self.last_enter = EnterOutcome::Refused;
         self.unwind_work = self.work + 1;
         self.work_trap = self.work + 1;
-        match (outermost, innermost) {
-            (Some(outermost), Some(innermost))
-                if is_without_context && self.stack[outermost] != innermost =>
-            {
-                self.unwind_to = outermost;
-                self.restart_with = Some(innermost);
-            }
-            _ => {
-                self.unwind_to = 0;
-                self.restart_with = None;
-                self.ran_out_of_stack.set(true);
-                self.refuse_outermost_in_flight(q);
-            }
-        }
-        self.bailed_out_from(self.unwind_to);
-        false
+        self.unwind_to = outermost;
+        self.restart_with = Some(innermost);
+        self.bailed_out_from(outermost);
+        true
     }
 
     /// After the `leave` of a `Query::Symbol`, a `Query::Return` or a `Query::Declared`, if
     /// `stack.len() == unwind_to`.
-    /// Returns whether the caller is to start over: what `refuse_as_too_deep` refused has a result.
+    /// Returns whether the caller is to start over: what `starts_over_from_lower` refused has a result.
     #[cold]
     #[inline(never)]
     fn resolve_what_was_too_deep(&mut self) -> bool {
@@ -2573,6 +2581,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             if !self.frames[j].circular {
                 bun_core::scoped_log!(SemaCycles, "CIRCLE {:?} in {:?}", q, &self.stack[i..]);
+                self.note_circular_resolution(q);
             }
             self.frames[j].circular = true;
         }
@@ -2781,7 +2790,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.bailed_out_from(0);
     }
 
-    /// `bailed_out`, where the frame at `from` makes the query again: see `refuse_as_too_deep`.
+    /// `bailed_out`, where the frame at `from` makes the query again: see `starts_over_from_lower`.
     fn bailed_out_from(&mut self, from: usize) {
         self.mark_tainted_from(from);
         self.note_cycle();
@@ -3299,7 +3308,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `provisional` returns it while it is valid.
     ///
     /// A frame is non-cacheable if its result depends on a query in flight (a cycle), on a refused
-    /// query (native stack, `MAX_DEPTH`, instantiation depth) or on a binding pattern whose implied
+    /// query (native stack, instantiation depth) or on a binding pattern whose implied
     /// type is being computed. Nothing is written to a shared cache then. The result stays valid
     /// until the outermost non-cacheable frame is popped, because everything it depends on is
     /// unchanged until then. It is stored in `provisional` for that time. Otherwise it would be

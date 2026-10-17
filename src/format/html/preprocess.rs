@@ -4,6 +4,7 @@
 //! done for a node, in the same order, before its children have their turn. Only the last step comes after them.
 
 use super::ast::{Flags, Id, Kind, Node, Span, Tree};
+use super::data::Display;
 use super::utilities::{is_pre_like, is_script_like_tag};
 use super::{Options, Parser};
 use crate::options::HtmlWhitespaceSensitivity;
@@ -94,6 +95,12 @@ impl<'a> Preprocessor<'_, 'a, '_> {
                     .css_display(child, is_in_svg_foreign_object, self.options);
             self.add_is_self_closing(child);
             self.add_has_htm_component_closing_tag(child);
+            if self.options.parser == Parser::Vue
+                && (self.tree[id].has(Flags::IS_IN_V_PRE)
+                    || (self.tree.attrs(child).iter()).any(|attr| &attr.name[..] == b"v-pre"))
+            {
+                self.tree[child].flags.insert(Flags::IS_IN_V_PRE);
+            }
         }
         if has_children_property {
             self.add_is_space_sensitive(id, svg_text_edges);
@@ -254,6 +261,10 @@ impl<'a> Preprocessor<'_, 'a, '_> {
     fn extract_interpolation(&mut self, id: Id) {
         // `canHaveInterpolation`
         if self.options.parser == Parser::Html || is_script_like_tag(&self.tree[id], self.options) {
+            return;
+        }
+        // Vue does not compile it, so `{{a+b}}` is the text that is shown. Prettier prints `{{ a + b }}`.
+        if self.tree[id].has(Flags::IS_IN_V_PRE) {
             return;
         }
         let mut next = self.tree.first_child(id);
@@ -440,6 +451,7 @@ impl<'a> Preprocessor<'_, 'a, '_> {
             flags.set(Flags::IS_LEADING_SPACE_SENSITIVE, is_leading);
             flags.set(Flags::IS_TRAILING_SPACE_SENSITIVE, is_trailing);
         }
+        self.keep_what_touches_through_hidden_elements(first);
         // From the first to the last: what is asked of the one before has been settled, of the one behind not yet.
         let mut next = Some(first);
         while let Some(child) = next {
@@ -461,6 +473,68 @@ impl<'a> Preprocessor<'_, 'a, '_> {
                 self.tree[child]
                     .flags
                     .remove(Flags::IS_TRAILING_SPACE_SENSITIVE);
+            }
+        }
+    }
+
+    /// An element that takes no room in the line that it is in, and that is a block to Prettier.
+    fn is_hidden_block(&self, id: Id) -> bool {
+        let node = &self.tree[id];
+        node.kind == Kind::Element
+            && node.css_display == Display::Block
+            && node.namespace.is_empty()
+            && matches!(
+                &node.name[..],
+                b"script" | b"dialog" | b"param" | b"source" | b"track"
+            )
+    }
+
+    /// Prettier gives such an element a line of its own, so `a<script></script>b` is shown as "a b". Where what is
+    /// before it and what is after it are parts of one line, with no white space in between, none is added.
+    /// `first`: the first of the siblings, which know what Prettier takes to be sensitive.
+    fn keep_what_touches_through_hidden_elements(&mut self, first: Id) {
+        let is_other = |node: &Node<'_>| {
+            !matches!(node.kind, Kind::FrontMatter | Kind::AngularControlFlowBlock)
+        };
+        let mut next = Some(first);
+        while let Some(start) = next {
+            next = self.tree.next(start);
+            if !self.is_hidden_block(start) {
+                continue;
+            }
+            let mut end = start;
+            while let Some(following) = self.tree.next(end).filter(|&it| {
+                self.is_hidden_block(it) && !self.tree[it].has(Flags::HAS_LEADING_SPACES)
+            }) {
+                end = following;
+            }
+            next = self.tree.next(end);
+            let (before, after) = (self.tree.prev(start), next);
+            let leading = Flags::IS_LEADING_SPACE_SENSITIVE | Flags::HAS_LEADING_SPACES;
+            let trailing = Flags::IS_TRAILING_SPACE_SENSITIVE | Flags::HAS_TRAILING_SPACES;
+            if self.tree[start].flags & leading != Flags::IS_LEADING_SPACE_SENSITIVE
+                || self.tree[end].flags & trailing != Flags::IS_TRAILING_SPACE_SENSITIVE
+                || !before.is_none_or(|it| is_other(&self.tree[it]))
+                || !after.is_none_or(|it| is_other(&self.tree[it]))
+            {
+                continue;
+            }
+            if let Some(before) = before {
+                self.tree[before]
+                    .flags
+                    .insert(Flags::IS_TRAILING_SPACE_SENSITIVE);
+            }
+            if let Some(after) = after {
+                self.tree[after]
+                    .flags
+                    .insert(Flags::IS_LEADING_SPACE_SENSITIVE);
+            }
+            let mut hidden = Some(start);
+            while let Some(id) = hidden {
+                self.tree[id]
+                    .flags
+                    .insert(Flags::IS_LEADING_SPACE_SENSITIVE | Flags::IS_TRAILING_SPACE_SENSITIVE);
+                hidden = self.tree.next(id).filter(|_| id != end);
             }
         }
     }

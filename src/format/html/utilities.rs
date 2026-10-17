@@ -270,6 +270,11 @@ impl<'a> Tree<'a> {
         {
             return true;
         }
+        // White space that is all of a `<pre>` is shown, and in a `<textarea>` it is the value. Prettier makes one
+        // blank of it, or nothing.
+        if is_pre_like(node) && node.has(Flags::HAS_DANGLING_SPACES | Flags::HAS_END_SPAN) {
+            return true;
+        }
         self.is_vue_non_html_block(id, options) && !is_script_like_tag(node, options)
     }
 

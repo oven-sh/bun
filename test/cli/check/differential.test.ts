@@ -2393,3 +2393,126 @@ differential("the files that are checked, by layout of the project and by comman
   // Most of them are about something.
   expect(compared).toBeGreaterThan(cells.length / 2);
 });
+
+/** What the two print about a project in which each of `cases` is a module of its own. */
+async function modulesChecked(cases: string[]) {
+  const name = (index: number) => `c${String(index).padStart(2, "0")}.ts`;
+  using dir = tempDir("bun-check-differential", {
+    "tsconfig.json": tsconfig,
+    ...Object.fromEntries(cases.map((text, index) => [name(index), `${text}\nexport {};\n`])),
+  });
+  const root = String(dir);
+  const [theirs, ours] = await Promise.all([
+    linesOf([tsc!, "-p", ".", "--pretty", "false"], root, root),
+    linesOf([bunExe(), "check"], root, root),
+  ]);
+  return { theirs, ours };
+}
+
+// TypeScript first parses a top-level statement of a module with `await` as a name. It parses the statement again, with
+// `await` as the operator, only if the first parse found a reference to `await`. The name of a parameter, of a property
+// or of a declaration isn't one, and neither is anything in the body of a function.
+differential("a top-level arrow function whose first parameter is `await`, parsed once", async () => {
+  const { theirs, ours } = await modulesChecked([
+    "var f = (await) => {};",
+    "var f = (await: number) => {};",
+    "declare function g(x: unknown): void; g((await: number) => {});",
+    "var f = (await, b) => {};",
+    "var f = (await?) => {};",
+    "var f = (await?: number) => {};",
+    "var f = (await = 1) => {};",
+    "var f = (await): void => {};",
+    "var f = async (await) => {};",
+    "var f = async (await: number) => {};",
+    "var f = { a: (await: number) => {} };",
+    "var f = (await: number) => { return await; };",
+    "var f = (await: number) => {}, g = await 1;",
+    "var f = (await: number) => (await: number) => {};",
+    "var f = (await: number, b = await 1) => {};",
+    "(await) => {};",
+    "(await: number) => {};",
+    "var f = true ? (await) => {} : 1;",
+    "for (const x of [(await: number) => {}]) {}",
+    "if (true) { var f = (await: number) => {}; }",
+    "export const f = (await: number) => {};",
+    "var f = (public await: number) => {};",
+    "var f = (await\n) => {};",
+    "var f = (await)\n=> {};",
+    "var f = (await) => {}, { [await]: x } = {};",
+    "var f = (await, ...b) => {};",
+    "var f = (await, { b }) => {};",
+    "@((await: number) => {}) class C {}",
+    "class C extends ((await: number) => {}) {}",
+    "var f = (await: number) => {}, g = { await: 1 };",
+    "var f = (await: number) => {}, g = function await() {};",
+    "var f = (await: number) => {}, g = class await {};",
+    "var f = (await: number) => {}, g = (x: { await: 1 }) => {};",
+    "var f = { await }, g = function () { return await; };",
+  ]);
+  // After a syntax error nothing is checked.
+  expect(theirs.join("\n")).toContain("error TS7006");
+  expect(ours).toEqual(theirs);
+});
+
+// In the second parse `(await` starts no arrow function and `{ await }` is no shorthand. What is exported by default,
+// `export =` and an exported class are parsed that way the first time.
+differential("a name `await` in a top-level statement that is parsed with `await` as the operator", async () => {
+  const { theirs, ours } = await modulesChecked([
+    "var f = (await: number) => await + 1;",
+    "var g = await (1), f = (await: number) => {};",
+    "var f = (await: number, b = await) => {};",
+    "var f = (await: number, b = () => await) => {};",
+    "var f = (await: await) => {};",
+    "export default (await: number) => {};",
+    "export = (await: number) => {};",
+    "export class C extends ((await: number) => {}) {}",
+    "export default class C extends ((await: number) => {}) {}",
+    "var f = (await);",
+    "var f = (await, 1);",
+    "var f = (await = 1);",
+    "var f = true ? (await) : 1;",
+    "var f = true ? (await) : (await) => {};",
+    "var f = (await.x) => {};",
+    "var f = (await x) => {};",
+    "var f = (await) { };",
+    "var f = (await): number { return 1 };",
+    "var f = { await }, g = (x: number) => await;",
+    "var f = { await }, g = (x = await) => 1;",
+    "var f = { await }, g: await = 1;",
+    "var f = { await }, g = class { x = await };",
+    "var f = { await }, g = f.await;",
+    "export default { await };",
+    "export default { [await]: 1 };",
+    "export class C { [await] = 1 }",
+    "export default class C { [await] = 1 }",
+  ]);
+  expect(theirs.length).toBeGreaterThan(27);
+  expect(ours).toEqual(theirs);
+});
+
+differential("an initializer in an interface or a type literal", async () => {
+  const { theirs, ours } = await modulesChecked([
+    "declare const e: unique symbol; interface C { [e] = 1 }",
+    "declare const e: unique symbol; interface C { readonly [e] = 1 }",
+    "declare const e: unique symbol; interface C { [e]? = 1 }",
+    "declare const e: unique symbol; type C = { [e] = 1 };",
+    'interface C { ["x"] = 1; b: string }',
+    "interface C { get = 1 }",
+    "interface C { set = 1 }",
+    "interface C { a: number = 1 }",
+    '{ interface C { static ["x"] = @dec class {} } }',
+  ]);
+  expect(theirs.join("\n")).toContain("error TS1246");
+  expect(ours).toEqual(theirs);
+});
+
+// A build that isn't optimized runs out of stack at a smaller depth.
+test.concurrent.skipIf(!tsc || isDebug || isASAN)("expressions nested more than 1,000 deep", async () => {
+  const { theirs, ours } = await modulesChecked([
+    `declare const c: boolean; export const x: string = ${"c ? 1 : ".repeat(1_200)}2;`,
+    `declare const c: boolean; export const x: string = ${"c || (".repeat(1_500)}1${")".repeat(1_500)};`,
+    `export const x: string = ${"!".repeat(1_200)}1;`,
+  ]);
+  expect(theirs.filter(line => line.includes("error TS2322"))).toHaveLength(3);
+  expect(ours).toEqual(theirs);
+});

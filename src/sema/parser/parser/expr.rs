@@ -210,6 +210,16 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
+    /// `newIdentifier` of an `await`, which sets `statementHasAwaitIdentifier`. A function body restores it, so this also
+    /// counts in a parameter's default, in a type and in an arrow function's expression body: see `top_level_statement`.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn note_await_as_a_name(&mut self) {
+        if self.recovers() && !self.options.dialect.oxc {
+            self.has_await_identifier = true;
+        }
+    }
+
     /// `allowInAnd(parseExpression)`
     #[inline]
     pub(crate) fn expression_allowing_in(&mut self) -> ExprId {
@@ -1534,6 +1544,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             let after_dot = self.full_start();
             return (self.missing_identifier(0, 0).0, after_dot);
         }
+        if token == T::Await {
+            self.note_await_as_a_name();
+        }
         let name = (self.lx.atom, self.lx.start);
         self.next_after_name();
         name
@@ -2044,6 +2057,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             // After `new`.
             T::Import if self.is_ecmascript || self.options.dialect.oxc => self.import_expression(),
             _ if self.is_identifier() => {
+                if self.token() == T::Await {
+                    self.note_await_as_a_name();
+                }
                 self.take_as_name();
                 let name = self.lx.atom;
                 self.note_identifier(name, self.lx.start);
@@ -2501,7 +2517,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `parsePropertyName` restores `statementHasAwaitIdentifier`: a name stays outside the await
     /// context of the top level of a module. That context, where there is one to leave.
     #[inline(always)]
-    fn await_context_of_module(&self) -> u32 {
+    pub(crate) fn await_context_of_module(&self) -> u32 {
         match self.recovers() && self.has_context(ctx::TOP_LEVEL) {
             true if !self.options.dialect.typescript_5 && !self.names_are_in_await_context => {
                 ctx::AWAIT

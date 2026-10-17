@@ -701,6 +701,150 @@ export function run(command: string) {
     expect(eslint).toEqual(["a.ts:6:5 error no-fallthrough", "a.ts:8:5 error no-fallthrough"]);
   });
 
+  describe("with --type-aware, URL in a template literal", () => {
+    const rule = "@typescript-eslint/restrict-template-expressions";
+    const tsconfig = (lib: string[]) =>
+      JSON.stringify({ compilerOptions: { strict: true, lib, types: [], moduleDetection: "force" } });
+    const code = `declare const server: { url: URL };
+export const texts = [
+  \`\${server.url}api\`,
+  \`\${new URL("/x", server.url)}\`,
+  \`\${server.url.searchParams}\`,
+  \`\${{ a: 1 }}\`,
+];
+`;
+    // The shape of @types/node: the global extends the interface of node:url.
+    const node = `declare module "node:url" {
+  interface URLSearchParams { toString(): string }
+  interface URL { href: string; searchParams: URLSearchParams; toString(): string }
+  var URL: { prototype: URL; new (url: string, base?: string | URL): URL };
+}
+`;
+    const globalsOfNode = `import * as url from "node:url";
+declare global {
+  interface URL extends url.URL {}
+  var URL: typeof url.URL;
+}
+`;
+
+    test("is fine when a types package declares the global, as in a project from bun init", async () => {
+      const files = {
+        "tsconfig.json": tsconfig(["ESNext"]),
+        "url.d.ts": node,
+        "globals.d.ts": globalsOfNode,
+        "a.ts": code,
+      };
+      const { native, eslint } = await inBothModes(files, [rule], ["--type-aware"]);
+      expect(native).toEqual([`a.ts:6:6 error ${rule}`]);
+      expect(eslint).toEqual([3, 4, 5, 6].map(line => `a.ts:${line}:6 error ${rule}`));
+    });
+
+    test("is fine when a script declares the global", async () => {
+      const declared = `declare class URLSearchParams { toString(): string }
+declare class URL { constructor(url: string, base?: string | URL); searchParams: URLSearchParams; toString(): string }
+`;
+      const files = { "tsconfig.json": tsconfig(["ESNext"]), "globals.d.ts": declared, "a.ts": code };
+      expect((await inBothModes(files, [rule], ["--type-aware"])).native).toEqual([`a.ts:6:6 error ${rule}`]);
+    });
+
+    test("is fine when it's imported from node:url", async () => {
+      const imported = `import { URL } from "node:url";\nexport const text = \`\${new URL("https://bun.com")}\`;\n`;
+      const files = { "tsconfig.json": tsconfig(["ESNext"]), "url.d.ts": node, "a.ts": imported };
+      expect((await inBothModes(files, [rule], ["--type-aware"])).native).toEqual([]);
+    });
+
+    test("is fine with the DOM lib, as before", async () => {
+      const files = { "tsconfig.json": tsconfig(["ESNext", "DOM"]), "a.ts": code };
+      const { native, eslint } = await inBothModes(files, [rule], ["--type-aware"]);
+      expect(native).toEqual([`a.ts:6:6 error ${rule}`]);
+      expect(eslint).toEqual(native);
+    });
+
+    test("is reported when URL is a class of the project", async () => {
+      const files = {
+        "tsconfig.json": tsconfig(["ESNext", "DOM"]),
+        "url.ts": 'export class URL {\n  href = "";\n}\n',
+        "a.ts": `import { URL } from "./url";\nexport const text = \`\${new URL()}\`;\n`,
+        "b.ts": `class URL {\n  href = "";\n}\nexport const text = \`\${new URL()}\`;\n`,
+      };
+      const { native } = await inBothModes(files, [rule], ["--type-aware"]);
+      expect(native).toEqual([`a.ts:2:24 error ${rule}`, `b.ts:4:24 error ${rule}`]);
+    });
+
+    test("is reported when your own allow list says from lib and the lib doesn't have it", async () => {
+      const files = {
+        "tsconfig.json": tsconfig(["ESNext"]),
+        "url.d.ts": node,
+        "globals.d.ts": globalsOfNode,
+        "a.ts": code,
+        "bunfig.toml": `[lint.rules]\n"${rule}" = ["error", { allow = [{ from = "lib", name = ["URL", "URLSearchParams"] }] }]\n`,
+      };
+      const { reports } = await lint(files, ["--type-aware"]);
+      expect(reports.filter(it => it.endsWith(rule))).toEqual([3, 4, 5, 6].map(line => `a.ts:${line}:6 error ${rule}`));
+    });
+  });
+
+  test("with --type-aware, setTimeout with an argument of type any isn't an implied eval", async () => {
+    const rule = "@typescript-eslint/no-implied-eval";
+    const files = {
+      "tsconfig.json": `{ "compilerOptions": { "strict": true, "lib": ["esnext", "dom"], "types": [] } }`,
+      "a.ts": `import { stub } from "not-installed";
+export function later(callback: any, code: string, options: { done: any }) {
+  setTimeout(callback, 1);
+  setTimeout(options.done, 1);
+  setTimeout(stub, 1);
+  setTimeout(JSON.parse(code), 1);
+  setTimeout(code, 1);
+}
+`,
+    };
+    const { native, eslint } = await inBothModes(files, [rule], ["--type-aware"]);
+    expect(native).toEqual([`a.ts:7:14 warning ${rule}`]);
+    expect(eslint).toEqual([3, 4, 5, 6, 7].map(line => `a.ts:${line}:14 error ${rule}`));
+  });
+
+  describe("with --type-aware, await in front of a promise matcher of bun:test", () => {
+    const rule = "@typescript-eslint/await-thenable";
+    const tsconfig = `{ "compilerOptions": { "strict": true, "lib": ["esnext"], "types": [] } }`;
+    // The lines of bun-types that matter.
+    const matchers = `interface Matchers<T> {
+    not: Matchers<unknown>;
+    resolves: Matchers<Awaited<T>>;
+    rejects: Matchers<unknown>;
+    toBe(expected: T): void;
+    toThrow(expected?: unknown): void;
+  }
+  export function expect<T>(actual: T): Matchers<T>;`;
+    const code = (source: string) => `import { expect } from "${source}";
+declare const promise: Promise<number>;
+await expect(promise).resolves.toBe(1);
+await expect(promise).rejects.toThrow();
+await expect(promise).resolves.not.toBe(2);
+await expect(1).toBe(1);
+`;
+
+    test("isn't reported", async () => {
+      const files = {
+        "tsconfig.json": tsconfig,
+        "bun-test.d.ts": `declare module "bun:test" {\n  ${matchers}\n}\n`,
+        "a.ts": code("bun:test"),
+      };
+      const { native, eslint } = await inBothModes(files, [rule], ["--type-aware"]);
+      expect(native).toEqual([`a.ts:6:1 warning ${rule}`]);
+      expect(eslint).toEqual([`a.ts:6:1 error ${rule}`]);
+    });
+
+    test("is reported when expect isn't the one of bun:test", async () => {
+      const files = {
+        "tsconfig.json": tsconfig,
+        "mine.ts": `export ${matchers.replace("export function", "export declare function")}\n`,
+        "a.ts": code("./mine"),
+      };
+      const { native } = await inBothModes(files, [rule], ["--type-aware"]);
+      expect(native).toEqual([3, 4, 5, 6].map(line => `a.ts:${line}:1 warning ${rule}`));
+    });
+  });
+
   test("an array of elements needs keys only where React renders it as a list", async () => {
     const files = {
       ...react,
@@ -1112,6 +1256,61 @@ export function Timer({ ms, cb }) {
     expect(dangerous.texts["b.jsx"]).toBe(files["b.jsx"].replace("[ms]", "[cb, ms]"));
   });
 
+  // ESLint applies all of these with --fix. The project type checks before and doesn't after.
+  test("--fix writes nothing that bun check rejects", async () => {
+    const kept = {
+      // TS2339 on `globalThis.BUILD_ID`, and TS2451 if another file declares it too
+      "global.ts": "declare var BUILD_ID: string;\nconsole.log(globalThis.BUILD_ID);\n",
+      "ambient.ts": "declare namespace Legacy {\n  var version: string;\n}\nconsole.log(Legacy.version);\n",
+      // TS2540
+      "namespace.ts":
+        "export namespace Config {\n  export let verbose = false;\n}\nConfig.verbose = true;\nconsole.log(Config.verbose);\n",
+      // TS2322, TS2345
+      "object.ts":
+        'export const a: Object = 1;\nexport function f(x: Object) {\n  return x;\n}\nconsole.log(f("s"));\n',
+      // TS2774
+      "cast.ts":
+        'declare function cb(): void;\nif (!!cb) console.log("has cb");\nexport const b = Boolean(cb) ? 1 : 2;\n',
+    };
+    const fixed = {
+      "fixed.ts":
+        'export let n = 1;\nlet m = 2;\nvar k = 3;\nexport const s: String = "x";\nconst v = 0;\nif (!!v) console.log(k, m, n);\nexport const g = (name: string) => (!!name ? 1 : 2);\nexport const h = (cb: () => void) => !Boolean(cb);\nexport const i = (value: unknown) => (!!value ? 1 : 2);\n',
+      "fixed.js": "export function call(cb) {\n  if (!!cb) cb();\n}\n",
+    };
+    const rules = /(no-var|prefer-const|no-wrapper-object-types|no-extra-boolean-cast)$/;
+    const reportsOf = (result: { reports: string[] }) =>
+      result.reports
+        .filter(it => rules.test(it))
+        .map(it => it.replace(/:\d+:\d+ warning/, ""))
+        .sort();
+    const [safe, dangerous] = await Promise.all([
+      lint({ ...kept, ...fixed }, ["--fix"]),
+      lint({ ...kept, ...fixed }, ["--fix-dangerously"]),
+    ]);
+    expect(safe.texts).toEqual({
+      ...kept,
+      "fixed.ts":
+        'export const n = 1;\nconst m = 2;\nconst k = 3;\nexport const s: string = "x";\nconst v = 0;\nif (v) console.log(k, m, n);\nexport const g = (name: string) => (name ? 1 : 2);\nexport const h = (cb: () => void) => !cb;\nexport const i = (value: unknown) => (value ? 1 : 2);\n',
+      "fixed.js": "export function call(cb) {\n  if (cb) cb();\n}\n",
+    });
+    expect(reportsOf(safe)).toEqual([
+      "cast.ts no-extra-boolean-cast",
+      "cast.ts no-extra-boolean-cast",
+      "namespace.ts prefer-const",
+      "object.ts @typescript-eslint/no-wrapper-object-types",
+      "object.ts @typescript-eslint/no-wrapper-object-types",
+    ]);
+    // `declare var` isn't reported at all, so no flag rewrites it.
+    expect(dangerous.texts["global.ts"]).toBe(kept["global.ts"]);
+    expect(dangerous.texts["ambient.ts"]).toBe(kept["ambient.ts"]);
+    expect(dangerous.texts["namespace.ts"]).toContain("export const verbose = false;");
+    expect(dangerous.texts["object.ts"]).toContain("a: object = 1");
+    expect(dangerous.texts["object.ts"]).toContain("f(x: object)");
+    expect(dangerous.texts["cast.ts"]).toContain("if (cb) console.log");
+    expect(dangerous.texts["cast.ts"]).toContain("b = cb ? 1 : 2");
+    expect(reportsOf(dangerous)).toEqual([]);
+  });
+
   test("it leaves alone what would change working code or break the type check", async () => {
     const files = {
       "tsconfig.json": `{ "compilerOptions": { "strict": true, "lib": ["esnext", "dom"], "types": [] } }`,
@@ -1215,15 +1414,20 @@ declare const c: any;
   });
 
   test("rules set in bunfig.toml or with --rule apply to them too", async () => {
-    const bunfig = `[lint.rules]\n"@typescript-eslint/no-explicit-any" = "warn"\n"no-var" = "error"\n`;
+    const bunfig = `[lint.rules]\n"@typescript-eslint/no-explicit-any" = "warn"\n"@typescript-eslint/no-empty-object-type" = "error"\n`;
     const expected = [
-      "types.d.ts:1:1 error no-var",
       "types.d.ts:1:16 warning @typescript-eslint/no-explicit-any",
       "types.d.ts:2:19 error @typescript-eslint/no-misused-new",
+      "types.d.ts:3:18 error @typescript-eslint/no-empty-object-type",
     ];
     const [byFile, byFlag] = await Promise.all([
       lint({ "types.d.ts": code, "bunfig.toml": bunfig }, []),
-      lint({ "types.d.ts": code }, ["--rule", "@typescript-eslint/no-explicit-any: warn", "--rule", "no-var: error"]),
+      lint({ "types.d.ts": code }, [
+        "--rule",
+        "@typescript-eslint/no-explicit-any: warn",
+        "--rule",
+        "@typescript-eslint/no-empty-object-type: error",
+      ]),
     ]);
     expect(byFile.reports).toEqual(expected);
     expect(byFlag.reports).toEqual(expected);
@@ -1233,7 +1437,6 @@ declare const c: any;
     const config = `export default [{ files: ["**/*.ts"], extends: ["typescript-eslint/recommended"] }];\n`;
     const { reports } = await lint({ "types.d.ts": code, "eslint.config.js": config }, ["types.d.ts"]);
     expect(reports).toEqual([
-      "types.d.ts:1:1 error no-var",
       "types.d.ts:1:16 error @typescript-eslint/no-explicit-any",
       "types.d.ts:2:19 error @typescript-eslint/no-misused-new",
       "types.d.ts:3:18 error @typescript-eslint/no-empty-object-type",
@@ -1906,5 +2109,289 @@ module.exports = (function () {
     const { json, exitCode } = await lint({ ...ofModule, ".oxlintrc.json": "{}", "early.js": early }, ["early.js"]);
     expect(json.diagnostics).toEqual([]);
     expect(exitCode).toBe(0);
+  });
+});
+
+// The tool that each rule comes from applies all of these fixes with --fix.
+describe.concurrent("--fix keeps what the program does, and its comments", () => {
+  type Case = {
+    rule: string;
+    /** Reported, and --fix leaves it alone. */
+    kept: string;
+    /** What --fix-dangerously makes of `kept`. Without it, no flag changes `kept`. */
+    dangerous?: string;
+    /** Code where the fix is safe, and what --fix makes of it. */
+    fixed?: [string, string];
+    extension?: string;
+  };
+  const cases: Case[] = [
+    {
+      rule: "unicorn/prefer-single-call",
+      // The second argument of `Readable#push` is the encoding. `nextId()` depends on the first `push`.
+      kept: 'import { Readable } from "node:stream";\nexport const readable = new Readable({ read() {} });\nreadable.push("a");\nreadable.push("b");\nexport const rows = [];\nconst nextId = () => rows.length + 1;\nrows.push(nextId());\nrows.push(nextId());\n',
+      dangerous:
+        'import { Readable } from "node:stream";\nexport const readable = new Readable({ read() {} });\nreadable.push("a", "b");\nexport const rows = [];\nconst nextId = () => rows.length + 1;\nrows.push(nextId(), nextId());\n',
+      fixed: ["export const list = [];\nlist.push(1);\nlist.push(2);\n", "export const list = [];\nlist.push(1, 2);\n"],
+    },
+    {
+      rule: "unicorn/prefer-string-raw",
+      kept: 'export const dir = "C:\\\\café\\\\menu";\n',
+      fixed: ['export const dir = "C:\\\\cafe\\\\menu";\n', "export const dir = String.raw`C:\\cafe\\menu`;\n"],
+    },
+    {
+      rule: "unicorn/text-encoding-identifier-case",
+      kept: 'export const isUtf8 = new TextDecoder().encoding === "utf-8";\n',
+      dangerous: 'export const isUtf8 = new TextDecoder().encoding === "utf8";\n',
+      fixed: [
+        'import fs from "node:fs";\nexport const text = fs.readFileSync("a.txt", "utf-8");\n',
+        'import fs from "node:fs";\nexport const text = fs.readFileSync("a.txt", "utf8");\n',
+      ],
+    },
+    {
+      rule: "unicorn/prefer-regexp-test",
+      // `pattern` can be a string or have the `g` flag, and `database` is no regular expression.
+      kept: "export const has = (text, pattern) => (text.match(pattern) ? 1 : 2);\nexport const ran = (database, sql) => (database.exec(sql) ? 1 : 2);\n",
+      dangerous:
+        "export const has = (text, pattern) => (pattern.test(text) ? 1 : 2);\nexport const ran = (database, sql) => (database.test(sql) ? 1 : 2);\n",
+      fixed: [
+        "const pattern = /b/g;\nexport const has = text => (pattern.exec(text) ? 1 : 2);\nexport const starts = text => (`${text}`.match(/^b/) ? 1 : 2);\n",
+        "const pattern = /b/g;\nexport const has = text => (pattern.test(text) ? 1 : 2);\nexport const starts = text => (/^b/.test(`${text}`) ? 1 : 2);\n",
+      ],
+    },
+    {
+      rule: "unicorn/no-useless-undefined",
+      kept: "export const text = String(undefined);\nfor (const i of [1, 2]) {\n  var seen = undefined;\n  console.log(seen);\n  seen = i;\n}\nexport function f(a = undefined, b) {\n  return [a, b];\n}\n",
+      dangerous:
+        "export const text = String();\nfor (const i of [1, 2]) {\n  var seen;\n  console.log(seen);\n  seen = i;\n}\nexport function f(a, b) {\n  return [a, b];\n}\n",
+      fixed: [
+        "export function g() {\n  return undefined;\n}\nexport let x = undefined;\nx = g();\n",
+        "export function g() {\n  return;\n}\nexport let x;\nx = g();\n",
+      ],
+    },
+    {
+      rule: "unicorn/no-useless-undefined",
+      // `g` would return `void`, and `x` would have no type.
+      kept: "export function g() {\n  return undefined;\n}\nexport let x = undefined;\nx = g();\n",
+      dangerous: "export function g() {\n  return;\n}\nexport let x;\nx = g();\n",
+      fixed: [
+        "export function* h() {\n  yield undefined;\n}\nexport const { a = undefined } = { a: 1 };\n",
+        "export function* h() {\n  yield;\n}\nexport const { a } = { a: 1 };\n",
+      ],
+      extension: "ts",
+    },
+    {
+      rule: "unicorn/prefer-spread",
+      kept: "export const copy = buffer1 => buffer1.slice();\nexport const list = arrayLike => Array.from(arrayLike);\n",
+      dangerous: "export const copy = buffer1 => [...buffer1];\nexport const list = arrayLike => [...arrayLike];\n",
+      fixed: [
+        "const set = new Set([1, 2]);\nexport const list = Array.from(set);\n",
+        "const set = new Set([1, 2]);\nexport const list = [...set];\n",
+      ],
+    },
+    {
+      rule: "unicorn/prefer-string-starts-ends-with",
+      kept: "export const isA = x => /^a/.test(x);\n",
+      dangerous: "export const isA = x => x.startsWith('a');\n",
+      fixed: ["export const isA = x => /^a/.test(`${x}`);\n", "export const isA = x => `${x}`.startsWith('a');\n"],
+    },
+    {
+      rule: "unicorn/no-useless-spread",
+      kept: 'export const ranges = [\n  ...["<x", ">x"],\n  // the same after a wildcard\n  ...["<x.1", ">x.1"],\n];\n',
+      fixed: ["export const a = [...[1, 2]]; // beside it\n", "export const a = [1, 2]; // beside it\n"],
+    },
+    {
+      rule: "no-implicit-coercion",
+      kept: "export const isOn = a =>\n  !!(\n    a // not b\n  );\n",
+      fixed: ["export const isOn = a => !!a; // beside it\n", "export const isOn = a => Boolean(a); // beside it\n"],
+    },
+    {
+      rule: "@typescript-eslint/method-signature-style",
+      kept: "export interface Hot {\n  /** Accepts this module. */\n  accept(): void;\n  /** Accepts a dependency. */\n  accept(specifier: string): void;\n}\n",
+      fixed: [
+        "export interface Hot {\n  /** Accepts this module. */\n  accept(): void;\n}\n",
+        "export interface Hot {\n  /** Accepts this module. */\n  accept: () => void;\n}\n",
+      ],
+      extension: "ts",
+    },
+    // A type alias can't be declared twice, so there is no fix. Two properties of one name parse, and don't type check.
+    {
+      rule: "@typescript-eslint/no-empty-interface",
+      kept: "export interface Base { a: number }\nexport interface Thing extends Base {}\nexport interface Thing { b: string }\n",
+      fixed: [
+        "export interface Base { a: number }\nexport interface Alone extends Base {}\n",
+        "export interface Base { a: number }\nexport type Alone = Base\n",
+      ],
+      extension: "ts",
+    },
+    {
+      rule: "@typescript-eslint/method-signature-style",
+      kept: "export interface Api { get(id: number): string }\nexport interface Api { get(id: string): number }\n",
+      dangerous:
+        "export interface Api { get: (id: number) => string }\nexport interface Api { get: (id: string) => number }\n",
+      fixed: [
+        "export interface Api { get(id: number): string }\n",
+        "export interface Api { get: (id: number) => string }\n",
+      ],
+      extension: "ts",
+    },
+    {
+      rule: "@typescript-eslint/prefer-function-type",
+      kept: "export interface Handler { (event: string): void }\nexport interface Handler { once?: boolean }\n",
+      fixed: [
+        "export interface Handler { (event: string): void }\n",
+        "export type Handler = (event: string) => void\n",
+      ],
+      extension: "ts",
+    },
+    {
+      rule: "@typescript-eslint/consistent-indexed-object-style",
+      kept: "export interface Env { [key: string]: string | undefined }\nexport interface Env { HOME: string }\n",
+      fixed: ["export interface Env { [key: string]: string }\n", "export type Env = Record<string, string>;\n"],
+      extension: "ts",
+    },
+    {
+      // Other files add to what `declare global` declares. A lone interface at the top of a script keeps its fix.
+      rule: "@typescript-eslint/prefer-function-type",
+      kept: "export {};\ndeclare global {\n  interface Handler { (event: string): void }\n}\n",
+      dangerous: "export {};\ndeclare global {\n  type Handler = (event: string) => void\n}\n",
+      fixed: [
+        'interface Handler { (event: string): void }\nconst handler: Handler = () => {};\nhandler("a");\n',
+        'type Handler = (event: string) => void\nconst handler: Handler = () => {};\nhandler("a");\n',
+      ],
+      extension: "ts",
+    },
+    {
+      rule: "unicorn/require-module-specifiers",
+      kept: 'const name = "one";\nconsole.log(name);\nexport {};\n',
+      dangerous: 'const name = "one";\nconsole.log(name);\n\n',
+      fixed: ["export const a = 1;\nexport {};\n", "export const a = 1;\n\n"],
+      extension: "ts",
+    },
+    {
+      rule: "unicorn/prefer-dom-node-append",
+      kept: 'export const add = (list, item) => {\n  list.appendChild(item);\n};\nexport const li = document.body.appendChild(document.createElement("li"));\n',
+      dangerous:
+        'export const add = (list, item) => {\n  list.append(item);\n};\nexport const li = document.body.append(document.createElement("li"));\n',
+      fixed: [
+        'document.body.appendChild(document.createElement("p"));\n',
+        'document.body.append(document.createElement("p"));\n',
+      ],
+    },
+    {
+      rule: "unicorn/prefer-dom-node-dataset",
+      kept: 'new HTMLRewriter().on("div", {\n  element(element) {\n    element.setAttribute("data-count", "1");\n  },\n});\nexport const count = document.body.getAttribute("data-count");\n',
+      dangerous:
+        'new HTMLRewriter().on("div", {\n  element(element) {\n    element.dataset.count = "1";\n  },\n});\nexport const count = document.body.dataset.count;\n',
+      fixed: ['document.body.setAttribute("data-count", "1");\n', 'document.body.dataset.count = "1";\n'],
+    },
+    {
+      rule: "unicorn/prefer-query-selector",
+      kept: 'export const a = document.getElementById("user.name");\nexport const b = document.getElementsByClassName("item");\n',
+      dangerous:
+        'export const a = document.querySelector("#user.name");\nexport const b = document.querySelectorAll(".item");\n',
+      fixed: [
+        'export const main = document.getElementById("main");\n',
+        'export const main = document.querySelector("#main");\n',
+      ],
+    },
+    {
+      rule: "unicorn/prefer-dom-node-text-content",
+      kept: "export const text = node => node.innerText;\n",
+      dangerous: "export const text = node => node.textContent;\n",
+    },
+    {
+      rule: "unicorn/prefer-keyboard-event-key",
+      kept: 'window.addEventListener("keydown", event => {\n  if (event.keyCode === 65) save();\n});\n',
+      dangerous: "window.addEventListener(\"keydown\", event => {\n  if (event.key === 'A') save();\n});\n",
+      fixed: [
+        'window.addEventListener("keydown", event => {\n  if (event.keyCode === 27) close();\n});\n',
+        "window.addEventListener(\"keydown\", event => {\n  if (event.key === 'Escape') close();\n});\n",
+      ],
+    },
+    {
+      rule: "prefer-destructuring",
+      kept: "export function f(o: { x?: number }) {\n  let x: number | null | undefined = o.x;\n  x ??= null;\n  return x;\n}\n",
+      fixed: [
+        "export function f(o: { x: number }) {\n  const x = o.x;\n  return x;\n}\n",
+        "export function f(o: { x: number }) {\n  const {x} = o;\n  return x;\n}\n",
+      ],
+      extension: "ts",
+    },
+    {
+      rule: "import/order",
+      kept: 'import { b } from "./b";\n// @ts-expect-error there are no types for this one\nimport { a } from "a-package";\nconsole.log(a, b);\n',
+      fixed: [
+        'import { b } from "./b";\nimport { a } from "a-package";\nconsole.log(a, b);\n',
+        'import { a } from "a-package";\nimport { b } from "./b";\nconsole.log(a, b);\n',
+      ],
+      extension: "ts",
+    },
+  ];
+
+  test.each(cases)("$rule", async ({ rule, kept, dangerous = kept, fixed, extension = "js" }) => {
+    const [keptName, fixedName] = [`kept.${extension}`, `fixed.${extension}`];
+    const [before, after] = fixed ? [{ [fixedName]: fixed[0] }, { [fixedName]: fixed[1] }] : [{}, {}];
+    const files = { [keptName]: kept, ...before };
+    const [safe, all] = await Promise.all([
+      lint(files, ["--fix", "--rule", `${rule}: warn`]),
+      lint(files, ["--fix-dangerously", "--rule", `${rule}: warn`]),
+    ]);
+    const filesWithReports = (result: { reports: string[] }) => [
+      ...new Set(result.reports.filter(it => it.endsWith(` ${rule}`)).map(it => it.slice(0, it.indexOf(":")))),
+    ];
+    expect(safe.texts).toEqual({ [keptName]: kept, ...after });
+    expect(filesWithReports(safe)).toEqual([keptName]);
+    expect(all.texts).toEqual({ [keptName]: dangerous, ...after });
+    expect(filesWithReports(all)).toEqual(dangerous === kept ? [keptName] : []);
+  });
+
+  test("a new first import goes below what has to stay first", async () => {
+    const body = 'test("a", () => {\n  expect(1).toBe(1);\n});\n';
+    const heads = ["// @ts-nocheck\n", '/// <reference types="node" />\n', '"use strict";\n', "#!/usr/bin/env bun\n"];
+    const files = Object.fromEntries(heads.map((head, i) => [`${i}.test.ts`, head + body]));
+    const [vitest, jest, first] = await Promise.all([
+      lint(files, ["--fix", "--rule", "vitest/prefer-importing-vitest-globals: warn"]),
+      lint(files, ["--fix", "--rule", "jest/prefer-importing-jest-globals: warn"]),
+      lint({ "a.ts": '"use client";\nconst started = 1;\nimport { b } from "./b";\nconsole.log(started, b);\n' }, [
+        "--fix",
+        "--rule",
+        "import/first: warn",
+      ]),
+    ]);
+    for (const [i, head] of heads.entries()) {
+      expect(vitest.texts[`${i}.test.ts`]).toBe(`${head}import { expect, test } from 'vitest';\n${body}`);
+      expect(jest.texts[`${i}.test.ts`]).toStartWith(head);
+      expect(jest.texts[`${i}.test.ts`]).toContain("@jest/globals");
+    }
+    expect(first.texts["a.ts"]).toBe(
+      '"use client";\nimport { b } from "./b";\nconst started = 1;\nconsole.log(started, b);\n',
+    );
+  });
+
+  test("with types", async () => {
+    const files = {
+      "tsconfig.json": '{ "compilerOptions": { "strict": true, "types": [], "lib": ["esnext"] }, "include": ["*.ts"] }',
+      // `readonly #limit = 0` has the type `0`, which the constructor can't assign a number to.
+      "readonly.ts":
+        "export class Pool {\n  #limit = 0;\n  constructor(limit: number) {\n    this.#limit = limit;\n  }\n  get limit() {\n    return this.#limit;\n  }\n}\n",
+      // A caller without types can pass a number.
+      "coerce.ts": 'export function time(label = "default") {\n  label = `${label}`;\n  return label;\n}\n',
+      "plain.ts": "declare const name: string;\nexport const text = `${name}`;\n",
+    };
+    const rules = ["prefer-readonly", "no-unnecessary-template-expression"].flatMap(rule => [
+      "--rule",
+      `@typescript-eslint/${rule}: warn`,
+    ]);
+    const [safe, all] = await Promise.all([
+      lint(files, ["--fix", "--type-aware", ...rules]),
+      lint(files, ["--fix-dangerously", "--type-aware", ...rules]),
+    ]);
+    expect(safe.texts["readonly.ts"]).toBe(files["readonly.ts"].replace("#limit = 0", "readonly #limit: number = 0"));
+    expect(safe.texts["coerce.ts"]).toBe(files["coerce.ts"]);
+    expect(safe.reports.filter(it => it.endsWith("no-unnecessary-template-expression"))).toEqual([
+      expect.stringMatching(/^coerce\.ts:2:/),
+    ]);
+    expect(safe.texts["plain.ts"]).toBe("declare const name: string;\nexport const text = name;\n");
+    expect(all.texts["coerce.ts"]).toBe(files["coerce.ts"].replace("`${label}`", "label"));
   });
 });

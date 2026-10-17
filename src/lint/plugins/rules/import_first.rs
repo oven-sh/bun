@@ -137,7 +137,9 @@ impl<'a> ErrorInfo<'a> {
             }
             insert_source_code.extend_from_slice(node_source_code);
         }
-        let insert_at = match (last_legal_imp, file.body().first()) {
+        // The plugin takes the first statement, and `"use client"` isn't a directive any more below an import.
+        let first = file.body().iter().find(|it| it.directive().is_none());
+        let insert_at = match (last_legal_imp, first) {
             (Some(import), _) => import.span().end,
             (None, first) => {
                 let without_start = strings::trim_js_whitespace_start(&insert_source_code);

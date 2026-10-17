@@ -192,6 +192,19 @@ impl<'w, 'f> Writer<'w, 'f> {
         self.add_line(LineMode::Hard);
     }
 
+    /// A `hardline` after `line`, which another formatter has printed. That only leaves blanks at the end of a line if
+    /// they have to stay, and a `hardline` trims them. A line break that is text does not, and the `hardline` after it
+    /// only indents.
+    pub(crate) fn hardline_after(&mut self, line: &[u8]) {
+        if !matches!(line.last(), Some(b' ' | b'\t')) {
+            return self.hardline();
+        }
+        self.flush();
+        self.f.write_text(b"\n", Some(TextWidth::multiline(0)));
+        self.f.write_element(FormatElement::Line(LineMode::Hard));
+        self.empty_line = EmptyLine::Yes;
+    }
+
     pub(crate) fn break_parent(&mut self) {
         self.flush();
         self.f.write_element(FormatElement::ExpandParent);
@@ -286,20 +299,13 @@ impl<'w, 'f> Writer<'w, 'f> {
     /// Text that another formatter has printed for lines that start where these do. A line break that is part of
     /// a text in it is `\r\n`: see `FormatOptions::is_in_markdown`.
     pub(crate) fn printed_text(&mut self, text: &[u8]) {
-        // A formatter only leaves blanks at the end of a line if they have to stay, and a `hardline` trims them. Where
-        // nothing is indented, the line break can be part of the text instead.
-        let keeps_blanks = self.indent_level == Some(0);
         let mut rest = text;
         loop {
             // Up to the first line break that is not part of a text.
             let (mut end, mut has_line_breaks) = (0, false);
             while let Some(at) =
                 strings::index_of_char_usize(&rest[end..], b'\n').map(|at| end + at)
-                && match rest[..at].last() {
-                    Some(b'\r') => true,
-                    Some(b' ' | b'\t') => keeps_blanks,
-                    _ => false,
-                }
+                && rest[..at].ends_with(b"\r")
             {
                 (end, has_line_breaks) = (at + 1, true);
             }
@@ -320,7 +326,7 @@ impl<'w, 'f> Writer<'w, 'f> {
             let Some(after) = rest.get(end + 1..) else {
                 return;
             };
-            self.hardline();
+            self.hardline_after(line);
             rest = after;
         }
     }

@@ -2325,8 +2325,16 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 }
             } else {
                 member.ty = self.type_annotation();
-                // The checker reports it. `scanTypeMemberStart`: no member starts with `a =`.
-                if member.ty.is_some() || member.flags.contains(Flags::OPTIONAL) {
+                // The checker reports it. `scanTypeMemberStart`: no member starts with `a =`, but `[a] =` and `get =` do.
+                let starts_before_equals = match name_token {
+                    T::OpenBracket => true,
+                    T::Get | T::Set => member.modifiers.is_empty(),
+                    _ => false,
+                };
+                if member.ty.is_some()
+                    || member.flags.contains(Flags::OPTIONAL)
+                    || starts_before_equals
+                {
                     let saved = self.enter_context(0, ctx::TYPE);
                     member.init = self.optional_initializer();
                     self.context = saved;

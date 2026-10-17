@@ -774,6 +774,9 @@ describe.concurrent("bun lint --staged lints what the commit gets", () => {
     expect(await selected(root, root, ["lint", "--staged", "**/*.js"])).toEqual(["sub/gone.js"]);
     expect(await selected(root, root, ["lint", "--staged", "kept"])).toEqual([]);
     expect(await selected(root, root, ["lint", "--staged", "--ignore-pattern", "sub/**"])).toEqual([]);
+    expect(await selected(root, root, ["lint", "--staged", ".", "!kept/other.js"])).toEqual(["sub/gone.js"]);
+    expect(await selected(root, root, ["lint", "--staged", ".", "!sub/gone.js"])).toEqual([]);
+    expect(await selected(root, root, ["lint", "--staged", "**/*.js", "!sub"])).toEqual([]);
   });
 
   test("--fix doesn't bring back a file that was deleted after it was staged", async () => {

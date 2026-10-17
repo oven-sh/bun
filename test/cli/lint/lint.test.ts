@@ -1324,6 +1324,90 @@ describe.concurrent("bun lint", () => {
       expect(await listed([], { cwd: "src/deep" })).toEqual({ files: ["<dir>/src/deep/f.js"], exitCode: 0 });
     });
 
+    // As for `bun fmt` and Prettier. ESLint 10.12.0 exits with 2 for such an argument, and oxlint 1.87.0 passes it over.
+    describe.each([
+      ["no config", {}],
+      ["eslint.config.js", { "eslint.config.js": config({ "no-var": "error" }) }],
+      [".oxlintrc.json", { ".oxlintrc.json": "{}\n" }],
+    ])("an argument that starts with ! leaves files out: %s", (name, project) => {
+      const code = "var  a = 1;\n";
+      const files = {
+        ...project,
+        "src/f.js": code,
+        "src/g.js": code,
+        "src/deep/h.js": code,
+        "other/o.js": code,
+        "top.js": code,
+      };
+      const listed = async (...args: string[]) => {
+        const { stdout, stderr, exitCode } = await lint(files, ["--list-files", ...args], { mayFail: true });
+        return { files: stdout.split("\n").filter(Boolean), stderr: stderr.split("\n")[0], exitCode };
+      };
+
+      test.each([
+        [
+          ["src", "!src/f.js"],
+          ["<dir>/src/deep/h.js", "<dir>/src/g.js"],
+        ],
+        [
+          ["!src/f.js", "src"],
+          ["<dir>/src/deep/h.js", "<dir>/src/g.js"],
+        ],
+        [["src/*.js", "!src/f.js"], ["<dir>/src/g.js"]],
+        [
+          ["src", "!src/deep"],
+          ["<dir>/src/f.js", "<dir>/src/g.js"],
+        ],
+        [["src", "!**/h.js", "!./src/g.js"], ["<dir>/src/f.js"]],
+        [
+          ["src", "top.js", "!nothing.js"],
+          ["<dir>/src/deep/h.js", "<dir>/src/f.js", "<dir>/src/g.js", "<dir>/top.js"],
+        ],
+        // Not at the start of the argument, it starts a group.
+        [["src/!(f).js"], ["<dir>/src/g.js"]],
+      ])("%j", async (args, expected) => {
+        expect(await listed(...args)).toEqual({ files: expected, stderr: "", exitCode: 0 });
+      });
+
+      test.skipIf(name === ".oxlintrc.json")("it selects nothing by itself", async () => {
+        expect(
+          await Promise.all([listed("!top.js"), listed("top.js", "!top.js"), listed("src/*.js", "!src/*")]),
+        ).toEqual([
+          { files: [], stderr: 'error: No files matching the pattern "!top.js" were found.', exitCode: 2 },
+          {
+            files: [],
+            stderr:
+              'error: You are linting "top.js", but all of the files matching the glob pattern "top.js" are ignored.',
+            exitCode: 2,
+          },
+          {
+            files: [],
+            stderr:
+              'error: You are linting "src/*.js", but all of the files matching the glob pattern "src/*.js" are ignored.',
+            exitCode: 2,
+          },
+        ]);
+      });
+
+      // As for oxfmt.
+      test.skipIf(name !== ".oxlintrc.json")(
+        "without another argument, the rest of the working directory is linted",
+        async () => {
+          expect(await listed("!top.js")).toEqual({
+            files: ["<dir>/other/o.js", "<dir>/src/deep/h.js", "<dir>/src/f.js", "<dir>/src/g.js"],
+            stderr: "",
+            exitCode: 0,
+          });
+        },
+      );
+
+      test("--fix writes to no other file", async () => {
+        const reads = ["src/f.js", "src/g.js", "src/deep/h.js", "other/o.js", "top.js"];
+        const result = await lint(files, ["--fix", "--rule", "no-var: error", "src", "!src/f.js"], { reads });
+        expect(reads.filter(name => result.files[name] !== code)).toEqual(["src/g.js", "src/deep/h.js"]);
+      });
+    });
+
     test.skipIf(isWindows)("a named pipe with the name of a script is passed over", async () => {
       const { stdout, exitCode } = await lint({ "eslint.config.js": basic, "a.js": bad }, ["-f", "unix", "."], {
         before: dir => expect(Bun.spawnSync(["mkfifo", join(dir, "pipe.js")]).exitCode).toBe(0),
@@ -1332,6 +1416,21 @@ describe.concurrent("bun lint", () => {
       expect(stdout).not.toContain("pipe.js");
       expect(exitCode).toBe(1);
     });
+
+    // Opening such a pipe waits until somebody opens it for writing.
+    test.skipIf(isWindows).each([".gitignore", ".git/info/exclude", ".eslintignore", "package.json"])(
+      "%s can be a link to a named pipe that nobody writes to",
+      async name => {
+        const { raw } = await lint({ "project/a.js": bad, "project/.git/info/a": "" }, ["-f", "json", "."], {
+          cwd: "project",
+          before: dir => {
+            expect(Bun.spawnSync(["mkfifo", join(dir, "pipe")]).exitCode).toBe(0);
+            symlinkSync(join(dir, "pipe"), join(dir, "project", name));
+          },
+        });
+        expect(raw).toContain("a.js");
+      },
+    );
 
     // git keeps a link to `/dev/zero` as it is.
     test.skipIf(isWindows).each([
@@ -5044,8 +5143,18 @@ maybe(() => { return f; });
         }
         return Object.fromEntries(names.map(it => [it, byProject[it].sort()]));
       };
+      // What oxlint reports and `bun lint` doesn't. `declare var` says that a global exists, and with `let` the project no longer
+      // type checks.
+      const notReported: Record<string, string[]> = {
+        "ambient/var": ["a.ts:19:9+3 eslint(no-var)", "a.ts:20:16+3 eslint(no-var)"],
+      };
       const expected = (names: string[]) =>
-        Object.fromEntries(names.map(it => [it, whatOxlintReports[it as keyof typeof whatOxlintReports]]));
+        Object.fromEntries(
+          names.map(it => [
+            it,
+            whatOxlintReports[it as keyof typeof whatOxlintReports].filter(line => !notReported[it]?.includes(line)),
+          ]),
+        );
       // All that is marked for a report, and what is said there, where that is more than one place without a text. labels.json has
       // only the projects in which there is such a report.
       const marked = (raw: string, names: string[]) => {
@@ -5866,11 +5975,15 @@ maybe(() => { return f; });
           }
           const reads = some.map(({ it, directory }) => `${directory}/${it.file}`);
           const result = await lint(files, [...flagSets[flags], ...(typed ? ["--type-aware"] : [])], { reads });
+          // What oxlint rewrites and no flag of `bun lint` does: `declare var`, which no-var doesn't report here.
+          const leftAlone = ["76-no-var"];
           expect(result.files).toEqual(
             Object.fromEntries(
               some.map(({ it, directory }) => [
                 `${directory}/${it.file}`,
-                whatOxlintFixes[directory as keyof typeof whatOxlintFixes][flags],
+                leftAlone.includes(directory)
+                  ? it.text
+                  : whatOxlintFixes[directory as keyof typeof whatOxlintFixes][flags],
               ]),
             ),
           );
@@ -10149,6 +10262,90 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         expect(exitCode).toBe(1);
       },
     );
+
+    // `server` is `any` to TypeScript, because its initializer leads back to it. But whoever asks for it first gets what `serve`
+    // returns. So what `start()` is depends on whether TypeScript comes to the declaration first, or to something that needs
+    // the return type of `start`. tsc 7.0.2 has `any` in declared.ts, and `Server<undefined>` in hoisted.ts, arrow.ts and early.ts.
+    describe("a variable that a callback in its own initializer refers to", () => {
+      const use = "await using s = start();\ns.port;\n";
+      const circle = "serve({ fetch: path => path + server.port })";
+      const sources = {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: {
+            ...JSON.parse(files["tsconfig.json"]).compilerOptions,
+            noImplicitAny: false,
+            moduleDetection: "force",
+          },
+        }),
+        "serve.d.ts": `interface Server<T> {\n  port: number;\n  data: T;\n  [Symbol.dispose](): void;\n}
+declare function serve<T = undefined>(options: { fetch(path: string): string; data?: T }): Server<T>;\n`,
+        "declared.ts": `function start() {\n  const server = ${circle};\n  return server;\n}\n${use}`,
+        "hoisted.ts": `${use}function start() {\n  const server = ${circle};\n  return server;\n}\n`,
+        "arrow.ts": `const start = () => {\n  const server = ${circle};\n  return server;\n};\n${use}`,
+        "early.ts": `function start(really = true) {\n  if (really) return serve({ fetch: path => path });
+  const server = ${circle};\n  return server;\n}\n${use}`,
+        "property.ts": `class Holder {\n  server = serve({ fetch: path => path + this.server.port });\n}
+function start() {\n  return new Holder().server;\n}\n${use}`,
+        "pattern.ts": `function start() {\n  const { port, data } = serve({ fetch: path => path + port });\n  return { port, data };\n}
+await start().port;\n`,
+        "indirect.ts": `function start() {\n  const server = serve({ fetch: path => path + port() });
+  function port() {\n    return server.port;\n  }\n  return server;\n}\n${use}`,
+        "parameter.ts": `function start(server = ${circle}) {\n  return server;\n}\n${use}`,
+        "no-circle.ts": `function start() {\n  const server = serve({ fetch: path => path });\n  return server;\n}\n${use}`,
+        "lib.ts": `export function start() {\n  const server = ${circle};\n  return server;\n}\n`,
+        "imports.ts": `import { start } from "./lib";\n${use}`,
+      };
+      const rules = ["await-thenable", "no-unsafe-assignment", "no-unsafe-member-access", "no-unsafe-return"];
+      // `file:line rule`, sorted.
+      const reports = async (on: string[], ...flags: string[]) => {
+        const turnedOn = on.flatMap(rule => ["--rule", `@typescript-eslint/${rule}: warn`]);
+        const args = ["--type-aware", "-f", "unix", "--rule", "@typescript-eslint/*: off", ...turnedOn, ...flags];
+        const { raw } = await lint(sources, args);
+        return Array.from(raw.matchAll(/([\w-]+\.ts:\d+):\d+: .*\/([a-z-]+)\]$/gm), it => `${it[1]} ${it[2]}`).sort();
+      };
+      // The lines of `server.port` and `return server`, and those of `use`.
+      const inCircle = (line: number) => [`${line} no-unsafe-member-access`, `${line + 1} no-unsafe-return`];
+      const isAny = (line: number) => [`${line} no-unsafe-assignment`, `${line + 1} no-unsafe-member-access`];
+      const isServer = (line: number) => [`${line} await-thenable`];
+      const byFile = {
+        "declared.ts": [...inCircle(2), ...isAny(5)],
+        "hoisted.ts": [...isServer(1), ...inCircle(4)],
+        "arrow.ts": [...inCircle(2), ...isServer(5)],
+        "early.ts": [...inCircle(3), ...isServer(6)],
+        "property.ts": ["2 no-unsafe-member-access", "5 no-unsafe-return", ...isAny(7)],
+        "pattern.ts": ["3 no-unsafe-assignment"],
+        "indirect.ts": ["4 no-unsafe-member-access", "4 no-unsafe-return", "6 no-unsafe-return", ...isAny(8)],
+        "parameter.ts": [...inCircle(1), ...isAny(4)],
+        "no-circle.ts": isServer(5),
+        "lib.ts": inCircle(2),
+        "imports.ts": isAny(2),
+      };
+      const expected = Object.entries(byFile)
+        .flatMap(([file, lines]) => lines.map(it => `${file}:${it}`))
+        .sort();
+      const of = (on: string[]) => expected.filter(it => on.some(rule => it.endsWith(` ${rule}`)));
+
+      test.each([[["--type-check"]], [[]], [["--threads", "1"]], [["--threads", "8"]]])(
+        "has the type that a check of the whole file gives it: %j",
+        async flags => {
+          expect(await reports(rules, ...flags)).toEqual(expected);
+        },
+      );
+
+      test.each(rules)("%s reports the same alone as with the other rules", async rule => {
+        expect(await reports([rule])).toEqual(of([rule]));
+      });
+
+      test("no-unsafe-member-access keeps its reports when await-thenable is on too", async () => {
+        const both = ["await-thenable", "no-unsafe-member-access"];
+        expect(await reports(both)).toEqual(of(both));
+      });
+
+      // lib.ts isn't checked then, so the call is the first to ask.
+      test.each([[[]], [["--type-check"]]])("in a file that isn't linted: %j", async flags => {
+        expect(await reports(rules, ...flags, "imports.ts")).toEqual(["imports.ts:2 await-thenable"]);
+      });
+    });
 
     // `subst` gives the directory a drive letter, as in test/cli/check/check.test.ts.
     test.skipIf(!isWindows)(

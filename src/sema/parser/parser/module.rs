@@ -947,7 +947,11 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             }
             false => self.enter_context(ctx::AWAIT, ctx::DISALLOW_IN),
         };
+        // That is so in the first parse already.
+        let in_names = self.names_are_in_await_context;
+        self.names_are_in_await_context |= !self.options.dialect.oxc;
         let expression = self.assignment_expression();
+        self.names_are_in_await_context = in_names;
         self.context = saved;
         self.semicolon();
         let kind = match is_export_equals {

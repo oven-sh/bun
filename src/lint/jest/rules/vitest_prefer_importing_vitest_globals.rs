@@ -199,7 +199,8 @@ fn build_fix<'a>(file: &'a File<'a>, globals_imports: &str, fixer: Fixer<'a>) ->
         globals_imports.as_bytes(),
         b" } from '".as_slice(),
         import_source,
-        b"';\n".as_slice(),
+        b"';".as_slice(),
     ];
-    fixer.insert_before(Span::empty(0), text.concat())
+    // oxlint puts it in the first line, above `// @ts-nocheck` and `"use strict"`.
+    fixer.insert_first_statement(&text.concat())
 }

@@ -1,5 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ts_utils::for_each_child_estree;
+use bun_lint::utils::visible::is_only_declaration;
 
 /// Enforce using a particular method signature syntax.
 pub struct MethodSignatureStyle {
@@ -116,7 +117,15 @@ impl MethodSignatureStyle {
         let (Some(func), Some(key)) = (member.func(), MethodKey::of(member)) else {
             return;
         };
-        cx.report(member, ERROR_METHOD).fix(|fixer| {
+        // Another declaration of the interface can have an overload of the method. Two properties of one name are an error.
+        let is_safe = || match member.parent() {
+            Node::Stmt(statement) => match statement.kind() {
+                StmtKind::Interface(interface) => is_only_declaration(interface),
+                _ => true,
+            },
+            _ => true,
+        };
+        cx.report(member, ERROR_METHOD).fix_where_safe(is_safe, |fixer| {
             if return_type_references_this_type(func) || is_node_parent_module_declaration(member) {
                 return None;
             }
@@ -147,6 +156,12 @@ impl MethodSignatureStyle {
                 }
             }
             text.extend_from_slice(get_delimiter(member));
+            // The comments of the overloads, and those between them. One that stayed where it is would be about the next member.
+            let end = fixes.iter().map(|it| it.span.end).fold(overloads.last()?.span().end, u32::max);
+            let all = Span::new(overloads.first()?.span().start, end);
+            if !fixer.keeps_comments(&fixer.replace(all, &text[..])) {
+                return None;
+            }
             fixes.push(fixer.replace(member, text));
             Some(fixes)
         });
@@ -170,7 +185,7 @@ impl MethodSignatureStyle {
             key.append_to(&mut text);
             append_signature(func, b": ", &mut text);
             text.extend_from_slice(get_delimiter(member));
-            fixer.replace(member, text)
+            Some(fixer.replace(member, text)).filter(|it| fixer.keeps_comments(it))
         };
         let report = cx.report(member, ERROR_PROPERTY);
         // A method cannot be `readonly`, so the change is not safe.

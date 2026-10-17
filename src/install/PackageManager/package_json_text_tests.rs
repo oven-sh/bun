@@ -1,8 +1,8 @@
-//! `cargo test -p bun_install --lib package_json_text`. A test gives a text and, as JSON, its tree after an edit.
+//! A test gives a text and, as JSON, its tree after an edit. CI type-checks this file and does not run it.
+// To run it, link the native symbols: add `bun_sema_standalone = { path = "../sema/standalone" }` to the
+// `[dev-dependencies]` of this crate and `use bun_sema_standalone as _;` here. Then `cargo test -p bun_install --lib package_json_text`.
 
 use super::*;
-// The native symbols that Bun's C and C++ side provides to `bun_core`.
-use bun_sema_standalone as _;
 
 const PATH: &[u8] = b"package.json";
 

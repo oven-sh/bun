@@ -749,7 +749,6 @@ dependencies = [
  "bun_picohttp",
  "bun_ptr",
  "bun_resolver",
- "bun_sema_standalone",
  "bun_semver",
  "bun_sha_hmac",
  "bun_simdutf_sys",

@@ -12,9 +12,22 @@ export function asyncIterator(this: Console) {
   var value: Uint8Array[];
   var value_len: number;
   var pendingChunk: Uint8Array | undefined;
+  // The reader that holds stdin, the read an iterator waits on, and how many iterators took the reader.
+  var activeReader: import("node:stream/web").ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>> | undefined;
+  var activeRead: Promise<Bun.ReadableStreamDefaultReadManyResult<Uint8Array<ArrayBuffer>>> | undefined;
+  var turns = 0;
 
   async function* ConsoleAsyncIterator() {
-    var reader = stream.getReader();
+    // Code that `--hot` replaced never releases its reader, so the newest iterator takes it, with the read in flight.
+    const taken = typeof $hotReloaded !== "undefined" ? activeReader : undefined;
+    var reader = taken ?? stream.getReader();
+    activeReader = reader;
+    const turn = ++turns;
+    if (taken !== undefined) {
+      // A paused `process.stdin` stops the source that this reader shares with it.
+      const source = stream.$bunNativePtr;
+      if ($isObject(source)) source.setFlowing?.(true);
+    }
     var deferredError: Error | undefined;
     try {
       if (i !== -1) {
@@ -22,10 +35,19 @@ export function asyncIterator(this: Console) {
         i = indexOf(actualChunk, last);
 
         while (i !== -1) {
-          yield decoder.decode(actualChunk.subarray(last, i));
+          yield decoder.decode(
+            actualChunk.subarray(
+              last,
+              process.platform === "win32" ? (actualChunk[i - 1] === 0x0d /* \r */ ? i - 1 : i) : i,
+            ),
+          );
+          // An iterator that lost the reader never settles: `done` would run the code after its loop.
+          if (turn !== turns) await $newPromise();
           last = i + 1;
           i = indexOf(actualChunk, last);
         }
+        // What follows the last newline of the chunk is the start of the next line.
+        if (last < actualChunk.length) pendingChunk = actualChunk.subarray(last);
 
         for (idx++; idx < value_len; idx++) {
           actualChunk = value[idx];
@@ -44,6 +66,7 @@ export function asyncIterator(this: Console) {
                 process.platform === "win32" ? (actualChunk[i - 1] === 0x0d /* \r */ ? i - 1 : i) : i,
               ),
             );
+            if (turn !== turns) await $newPromise();
             last = i + 1;
             i = indexOf(actualChunk, last);
           }
@@ -55,16 +78,28 @@ export function asyncIterator(this: Console) {
       }
 
       while (true) {
-        const firstResult = reader.readMany();
+        const firstResult = activeRead ?? reader.readMany();
         if ($isPromise(firstResult)) {
-          ({ done, value } = await firstResult);
+          activeRead = firstResult;
+          var result: Bun.ReadableStreamDefaultReadManyResult<Uint8Array<ArrayBuffer>>;
+          try {
+            result = await firstResult;
+          } finally {
+            if (turn !== turns) await $newPromise();
+          }
+          activeRead = undefined;
+          ({ done, value } = result);
         } else {
           ({ done, value } = firstResult);
         }
 
         if (done) {
           if (pendingChunk) {
-            yield decoder.decode(pendingChunk);
+            // Cleared first: the iterator that takes over reads the end of stdin too, and must not yield this line again.
+            const rest = pendingChunk;
+            pendingChunk = undefined;
+            yield decoder.decode(rest);
+            if (turn !== turns) await $newPromise();
           }
           return;
         }
@@ -89,6 +124,7 @@ export function asyncIterator(this: Console) {
                 process.platform === "win32" ? (actualChunk[i - 1] === 0x0d /* \r */ ? i - 1 : i) : i,
               ),
             );
+            if (turn !== turns) await $newPromise();
             last = i + 1;
             i = indexOf(actualChunk, last);
           }
@@ -101,7 +137,10 @@ export function asyncIterator(this: Console) {
     } catch (e) {
       deferredError = e as Error;
     } finally {
-      reader.releaseLock();
+      if (turn === turns) {
+        activeReader = activeRead = undefined;
+        reader.releaseLock();
+      }
     }
 
     if (deferredError) {

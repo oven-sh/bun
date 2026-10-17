@@ -142,7 +142,6 @@ function emitErrorNextTickIfErrorListener(self, err, cb) {
   }
 }
 
-
 interface Original {
   holder: object | null;
   start: object | null;
@@ -193,7 +192,13 @@ function resolvesToOriginals(object: object, originals: Original[]): boolean {
     }
     if (at === null) continue;
     const found = Object.getOwnPropertyDescriptor(at, name);
-    if (found === undefined || found.value !== original.value || found.get !== original.get || found.set !== original.set) return false;
+    if (
+      found === undefined ||
+      found.value !== original.value ||
+      found.get !== original.get ||
+      found.set !== original.set
+    )
+      return false;
     if (found.get === undefined && found.set === undefined && !$watchProperty(at, name)) return false;
   }
   return true;
@@ -369,7 +374,8 @@ function checkSocket(socket: object): boolean {
   if (socketOriginals.length === 0 || $isCheckedStructure(socket, 18) || failedSocketChecks > 1000) return false;
   if (resolvesToOriginals(socket, socketOriginals)) {
     nextSocketSlot ^= 1;
-    if (!(nextSocketSlot === 0 ? $setCheckedStructure(socket, 16) : $setCheckedStructure(socket, 17))) failedSocketChecks++;
+    if (!(nextSocketSlot === 0 ? $setCheckedStructure(socket, 16) : $setCheckedStructure(socket, 17)))
+      failedSocketChecks++;
     return true;
   }
   failedSocketChecks++;
@@ -809,102 +815,102 @@ function checkShouldUseProxy(proxyConfig: ProxyConfig, reqOptions: any) {
   return proxyConfig.shouldUseProxy(reqOptions.host || "localhost", reqOptions.port);
 }
 
-export type { Connection, EmitterFields, IncomingMessageFields, Original, ServerResponseFields };
 export {
-  kConnection,
-  kHeaders,
-  kHeadersCount,
-  kTrailers,
-  kTrailersCount,
-  kRawHeaders,
-  kBytesWritten,
-  kCorked,
-  kChunkedBuffer,
-  kChunkedLength,
-  kLenientValidation,
-  kDispatcherDetached,
-  kSnapshotStatusCode,
-  kSnapshotStatusMessage,
-  kMustCloseConnection,
-  kPendingFinish,
-  kPipelinedQueuedState,
-  kImplicitHeaderFromEnd,
-  kBytesBuffered,
-  kAccountingFlushScheduled,
-  kReplayingPipelinedOps,
-  kFramingFrozenChunked,
-  kServerResponseStatistics,
-  absentName,
-  hasOnlyOwnFinishListener,
-  isPlainRequest,
-  isPlainResponse,
-  originalAskedOfHolder,
-  originalOf,
-  requestOriginals,
-  createConnection,
-  isPlainSocket,
-  originalFoundFrom,
-  socketOriginals,
-  resolvesToOriginals,
-  responseOriginals,
-  nop,
-  storesMakeOwnProperties,
   METHODS,
   STATUS_CODES,
   abortedSymbol,
+  absentName,
   callCloseCallback,
   checkShouldUseProxy,
+  clearServerParserIncoming,
+  createConnection,
   drainMicrotasks,
   emitCloseNT,
   emitEOFIncomingMessage,
   emitEOFIncomingMessageOuter,
-  clearServerParserIncoming,
   emitErrorNextTickIfErrorListenerNT,
   eofInProgress,
   fakeSocketSymbol,
   getMaxHTTPHeaderSize,
+  hasOnlyOwnFinishListener,
   hasServerResponseFinished,
   headerStateSymbol,
   http1ServerPipeline,
+  isPlainRequest,
+  isPlainResponse,
+  isPlainSocket,
   isTlsSymbol,
   kAbortController,
+  kAccountingFlushScheduled,
+  kBytesBuffered,
+  kBytesWritten,
+  kChunkedBuffer,
+  kChunkedLength,
   kCloseCallback,
-  kErrored,
   kClosedWithUnsentData,
+  kConnection,
+  kCorked,
+  kDispatcherDetached,
+  kErrored,
+  kFramingFrozenChunked,
   kHandle,
   kHandoffResponse,
-  kResumeUnlessFlowing,
-  kHighWaterMark,
-  kIncomingMessage,
   kHasQueuedReads,
   kHeaderSource,
+  kHeaders,
+  kHeadersCount,
+  kHighWaterMark,
+  kImplicitHeaderFromEnd,
+  kIncomingMessage,
   kInternalSocketData,
+  kLenientValidation,
+  kMustCloseConnection,
   kNeedDrain,
   kOnReadParsed,
   kOutHeaders,
   kPendingCallbacks,
+  kPendingFinish,
   kPerRequestCheckServerIdentity,
+  kPipelinedQueuedState,
   kProxyConfig,
+  kRawHeaders,
   kRealListen,
   kRejectNonStandardBodyWrites,
-  kReqShouldKeepAlive,
   kRememberPeer,
+  kReplayingPipelinedOps,
+  kReqShouldKeepAlive,
   kRequest,
+  kResumeUnlessFlowing,
+  kServerResponseStatistics,
   kSkipPendingData,
+  kSnapshotStatusCode,
+  kSnapshotStatusMessage,
   kSocket,
+  kTrailers,
+  kTrailersCount,
   kUniqueHeaders,
   kWaitForProxyTunnel,
   noBodySymbol,
+  nop,
   onDataIncomingMessage,
   optionsSymbol,
+  originalAskedOfHolder,
+  originalFoundFrom,
+  originalOf,
   parseProxyConfigFromEnv,
   parseProxyUrl,
   redactInvalidProxyUrl,
+  requestOriginals,
+  resolvesToOriginals,
+  responseOriginals,
   serverSymbol,
   setMaxHTTPHeaderSize,
   setServerAppFlags,
   setServerCustomOptions,
   setServerMaxHeadersCount,
+  socketOriginals,
+  storesMakeOwnProperties,
   tlsSymbol,
   utcDate,
 };
+export type { Connection, EmitterFields, IncomingMessageFields, Original, ServerResponseFields };

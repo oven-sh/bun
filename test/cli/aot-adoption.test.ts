@@ -1,11 +1,18 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { unsupported } from "../aot/run-programs";
 import { readFileSync, rmSync } from "fs";
-import { bunEnv, bunExe, isArm64, isLinux, isMacOS, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+import { unsupported } from "../aot/run-programs";
 
 const tsconfig = JSON.stringify({
-  compilerOptions: { strict: true, module: "esnext", moduleResolution: "bundler", target: "esnext", types: [], lib: ["esnext", "dom"] },
+  compilerOptions: {
+    strict: true,
+    module: "esnext",
+    moduleResolution: "bundler",
+    target: "esnext",
+    types: [],
+    lib: ["esnext", "dom"],
+  },
 });
 const app = `function double(n: number): number {
   return n * 2;
@@ -19,7 +26,13 @@ console.log((body.visits as number) + 1);
 const folders: string[] = [];
 afterAll(() => folders.forEach(folder => rmSync(folder, { recursive: true, force: true })));
 function project(name: string, files: Record<string, string>) {
-  const folder = String(tempDir(name, { "tsconfig.json": tsconfig, "package.json": JSON.stringify({ name: "app", type: "module" }), ...files }));
+  const folder = String(
+    tempDir(name, {
+      "tsconfig.json": tsconfig,
+      "package.json": JSON.stringify({ name: "app", type: "module" }),
+      ...files,
+    }),
+  );
   folders.push(folder);
   return folder;
 }
@@ -42,7 +55,9 @@ interface Line {
 function lines(text: string, word: "type-error" | "type-check"): Line[] {
   const found: Line[] = [];
   for (const line of text.split("\n")) {
-    const match = /^\[aot\] (type-error|type-check) ([0-9a-f]{12}) ([a-z0-9-]+) (\S+:\d+:\d+) \(.*?\): (.*)$/.exec(line);
+    const match = /^\[aot\] (type-error|type-check) ([0-9a-f]{12}) ([a-z0-9-]+) (\S+:\d+:\d+) \(.*?\): (.*)$/.exec(
+      line,
+    );
     if (!match || match[1] !== word) continue;
     const rest = match[5].split("; ");
     found.push({
@@ -50,7 +65,8 @@ function lines(text: string, word: "type-error" | "type-check"): Line[] {
       id: match[2],
       kind: match[3],
       place: match[4],
-      action: rest.find(part => /^(would-[a-z]+|continued|converted|threw|dropped|copied|warning|error)$/.test(part)) ?? "",
+      action:
+        rest.find(part => /^(would-[a-z]+|continued|converted|threw|dropped|copied|warning|error)$/.test(part)) ?? "",
       call: rest.find(part => part.startsWith("call "))?.slice(5),
       text: line,
     });
@@ -68,12 +84,17 @@ describe.concurrent("bun --aot-audit", () => {
     const audited = await bun(dir, "--aot-audit", "app.ts");
     expect(plain).toEqual({ stdout: "6\n31\n", stderr: "", exitCode: 0 });
     expect(audited.stdout).toBe(plain.stdout);
-    expect(brief(lines(audited.stderr, "type-error"))).toEqual(["read-property app.ts:6:20 would-throw", "as-convert app.ts:7:14 would-convert"]);
+    expect(brief(lines(audited.stderr, "type-error"))).toEqual([
+      "read-property app.ts:6:20 would-throw",
+      "as-convert app.ts:7:14 would-convert",
+    ]);
     expect(audited.exitCode).toBe(0);
   });
 
-  test.skipIf(!compiles)("a false cast among the program's own types is named where the executable throws; what the executable accepts has no line", async () => {
-    const types = `interface Circle { kind: "circle"; radius: number }
+  test.skipIf(!compiles)(
+    "a false cast among the program's own types is named where the executable throws; what the executable accepts has no line",
+    async () => {
+      const types = `interface Circle { kind: "circle"; radius: number }
 interface Square { kind: "square"; side: number }
 interface Label { kind: "label"; text: string }
 type Shape = Circle | Square;
@@ -84,26 +105,42 @@ function make(kind: string): Circle | Square | Label {
 }
 function kindOf(shape: Shape): string { return shape.kind; }
 `;
-    const dir = project("aot-audit-false-cast", {
-      "false.ts": types + `for (const kind of ["circle", "square", "label"]) { const shape = make(kind) as Shape; console.log(kindOf(shape)); }\n`,
-      "any.ts": types + `for (const kind of ["circle", "square", "label"]) { const shape: any = make(kind); console.log(kindOf(shape)); }\n`,
-      "true.ts": types + `for (const kind of ["circle", "square", "circle"]) { const shape = make(kind) as Shape; console.log(kindOf(shape)); }\n`,
-    });
-    const audited = await bun(dir, "--aot-audit", "false.ts");
-    expect(audited.stdout).toBe("circle\nsquare\nlabel\n");
-    const named = lines(audited.stderr, "type-error");
-    expect(named.map(line => line.action)).toEqual(["would-throw"]);
-    expect(named[0].text).toContain(", got Label;");
-    expect((await bun(dir, "build", "--compile", "--aot", "false.ts", "--outfile", "false.exe")).exitCode).toBe(0);
-    const run = await spawned([join(dir, "false.exe")], dir, { BUN_AOT_TYPE_ERROR_LOG: "stderr" });
-    expect(run.stdout).toBe("circle\nsquare\n");
-    const thrown = lines(run.stderr, "type-error").filter(line => !line.text.endsWith("; total"));
-    expect(thrown.map(line => line.place)).toEqual([named[0].place]);
-    expect(await bun(dir, "--aot-audit", "any.ts")).toEqual({ stdout: "circle\nsquare\nlabel\n", stderr: "", exitCode: 0 });
-    expect((await bun(dir, "build", "--compile", "--aot", "any.ts", "--outfile", "any.exe")).exitCode).toBe(0);
-    expect((await spawned([join(dir, "any.exe")], dir)).stdout).toBe("circle\nsquare\nlabel\n");
-    expect(await bun(dir, "--aot-audit", "true.ts")).toEqual({ stdout: "circle\nsquare\ncircle\n", stderr: "", exitCode: 0 });
-  }, 240_000);
+      const dir = project("aot-audit-false-cast", {
+        "false.ts":
+          types +
+          `for (const kind of ["circle", "square", "label"]) { const shape = make(kind) as Shape; console.log(kindOf(shape)); }\n`,
+        "any.ts":
+          types +
+          `for (const kind of ["circle", "square", "label"]) { const shape: any = make(kind); console.log(kindOf(shape)); }\n`,
+        "true.ts":
+          types +
+          `for (const kind of ["circle", "square", "circle"]) { const shape = make(kind) as Shape; console.log(kindOf(shape)); }\n`,
+      });
+      const audited = await bun(dir, "--aot-audit", "false.ts");
+      expect(audited.stdout).toBe("circle\nsquare\nlabel\n");
+      const named = lines(audited.stderr, "type-error");
+      expect(named.map(line => line.action)).toEqual(["would-throw"]);
+      expect(named[0].text).toContain(", got Label;");
+      expect((await bun(dir, "build", "--compile", "--aot", "false.ts", "--outfile", "false.exe")).exitCode).toBe(0);
+      const run = await spawned([join(dir, "false.exe")], dir, { BUN_AOT_TYPE_ERROR_LOG: "stderr" });
+      expect(run.stdout).toBe("circle\nsquare\n");
+      const thrown = lines(run.stderr, "type-error").filter(line => !line.text.endsWith("; total"));
+      expect(thrown.map(line => line.place)).toEqual([named[0].place]);
+      expect(await bun(dir, "--aot-audit", "any.ts")).toEqual({
+        stdout: "circle\nsquare\nlabel\n",
+        stderr: "",
+        exitCode: 0,
+      });
+      expect((await bun(dir, "build", "--compile", "--aot", "any.ts", "--outfile", "any.exe")).exitCode).toBe(0);
+      expect((await spawned([join(dir, "any.exe")], dir)).stdout).toBe("circle\nsquare\nlabel\n");
+      expect(await bun(dir, "--aot-audit", "true.ts")).toEqual({
+        stdout: "circle\nsquare\ncircle\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    240_000,
+  );
 
   test("a program that respects its types logs nothing", async () => {
     const dir = project("aot-audit-clean", {
@@ -153,7 +190,9 @@ new (Point as any)("1");
   });
 
   test("a write to a built-in object", async () => {
-    const dir = project("aot-audit-builtins", { "app.ts": `(Math as any).ceil = () => 1;\nconsole.log(Math.ceil(1.5));\n` });
+    const dir = project("aot-audit-builtins", {
+      "app.ts": `(Math as any).ceil = () => 1;\nconsole.log(Math.ceil(1.5));\n`,
+    });
     const { stdout, stderr } = await bun(dir, "--aot-audit", "app.ts");
     expect(stdout).toBe("1\n");
     expect(brief(lines(stderr, "type-error"))).toEqual(["builtin-member-replace app.ts:1:2 would-refuse"]);
@@ -204,9 +243,13 @@ test("half", () => {
 `,
     });
     const plain = await bun(dir, "test", "--aot-audit", "a.test.ts");
-    expect(lines(plain.stderr, "type-error").map(line => `${line.place.replace(/:\d+$/, "")} ${line.action}`)).toEqual(["a.test.ts:4 would-throw"]);
+    expect(lines(plain.stderr, "type-error").map(line => `${line.place.replace(/:\d+$/, "")} ${line.action}`)).toEqual([
+      "a.test.ts:4 would-throw",
+    ]);
     const mocked = await bun(dir, "test", "--aot-audit", "mocked.test.ts");
-    expect(lines(mocked.stderr, "type-error").map(line => `${line.place.replace(/:\d+$/, "")} ${line.action}`)).toEqual(["mocked.test.ts:5 would-throw"]);
+    expect(lines(mocked.stderr, "type-error").map(line => `${line.place.replace(/:\d+$/, "")} ${line.action}`)).toEqual(
+      ["mocked.test.ts:5 would-throw"],
+    );
     expect(mocked.stderr).toContain("1 pass");
   });
 
@@ -240,12 +283,27 @@ console.log(double(query.size));
     const toFile = await audit({ BUN_AOT_TYPE_ERROR_LOG: join(dir, "audit.jsonl") });
     expect(toFile.stderr).toBe("");
     expect(toFile.stdout).toBe("6\n31\n");
-    const written = readFileSync(join(dir, "audit.jsonl"), "utf8").trimEnd().split("\n").map(line => JSON.parse(line));
+    const written = readFileSync(join(dir, "audit.jsonl"), "utf8")
+      .trimEnd()
+      .split("\n")
+      .map(line => JSON.parse(line));
     expect(written).toHaveLength(2);
-    expect(written[0]).toMatchObject({ aot: "type-error", kind: "read-property", file: "app.ts", line: 6, col: 20, fn: "module", got: "string", action: "would-throw", count: 1 });
+    expect(written[0]).toMatchObject({
+      aot: "type-error",
+      kind: "read-property",
+      file: "app.ts",
+      line: 6,
+      col: 20,
+      fn: "module",
+      got: "string",
+      action: "would-throw",
+      count: 1,
+    });
     expect(written[0].callId).toMatch(/^[0-9a-f]{12}$/);
     expect(written[1]).toMatchObject({ kind: "as-convert", line: 7, col: 14, action: "would-convert" });
-    expect((await audit({ BUN_AOT_TYPE_ERROR_LOG_FORMAT: "json" })).stderr.split("\n")[0]).toStartWith('{"aot":"type-error"');
+    expect((await audit({ BUN_AOT_TYPE_ERROR_LOG_FORMAT: "json" })).stderr.split("\n")[0]).toStartWith(
+      '{"aot":"type-error"',
+    );
     expect((await audit({ BUN_AOT_TYPE_ERROR_LOG: "off" })).stderr).toBe("");
   });
 
@@ -274,11 +332,15 @@ console.log(n);
     });
     const { stdout, stderr } = await bun(dir, "--aot-audit", "app.ts");
     expect(stdout).toBe("1 61\n04\n");
-    expect([...new Set(lines(stderr, "type-error").map(line => `${line.place.replace(/:\d+$/, "")} ${line.action}`))]).toEqual(["app.ts:3 would-throw", "app.ts:5 would-throw"]);
+    expect([
+      ...new Set(lines(stderr, "type-error").map(line => `${line.place.replace(/:\d+$/, "")} ${line.action}`)),
+    ]).toEqual(["app.ts:3 would-throw", "app.ts:5 would-throw"]);
   });
 
   test("type errors come first", async () => {
-    const dir = project("aot-audit-errors", { "app.ts": `const n: number = "x";\nconst m: number = JSON.parse('"y"');\nconsole.log(n, m);\n` });
+    const dir = project("aot-audit-errors", {
+      "app.ts": `const n: number = "x";\nconst m: number = JSON.parse('"y"');\nconsole.log(n, m);\n`,
+    });
     const { stdout, stderr } = await bun(dir, "--aot-audit", "app.ts");
     expect(stdout).toBe("x y\n");
     expect(stderr).toContain("TS2322");
@@ -287,7 +349,9 @@ console.log(n);
   });
 
   test("a file that calls eval() directly is not audited, and Bun reports that", async () => {
-    const dir = project("aot-audit-eval", { "app.ts": `const local = 3;\nconst n: number = JSON.parse('"y"');\nconsole.log(eval("local"), n);\n` });
+    const dir = project("aot-audit-eval", {
+      "app.ts": `const local = 3;\nconst n: number = JSON.parse('"y"');\nconsole.log(eval("local"), n);\n`,
+    });
     const { stdout, stderr } = await bun(dir, "--aot-audit", "app.ts");
     expect(stdout).toBe("3 y\n");
     expect(stderr).toStartWith("[aot] note: app.ts is not audited: ");
@@ -336,7 +400,11 @@ console.log(five, later);
     const dir = project("aot-check-throws", { "app.ts": app });
     const { stderr, exitCode } = await bun(dir, "check", "--aot", "--aot-explain=throws", "app.ts");
     const said = stderr.split("\n").filter(line => line.startsWith("[aot]") || line.startsWith("aot:"));
-    expect(brief(lines(stderr, "type-check"))).toEqual(["read-property app.ts:6:20 warning", "as-late-use app.ts:7:13 warning", "as-convert app.ts:7:14 warning"]);
+    expect(brief(lines(stderr, "type-check"))).toEqual([
+      "read-property app.ts:6:20 warning",
+      "as-late-use app.ts:7:13 warning",
+      "as-convert app.ts:7:14 warning",
+    ]);
     expect(said.slice(3)).toEqual([
       "[aot] type-check summary: 3 checks can fail when the program runs, 0 always fail",
       "[aot] type-check summary: those that can fail: 1 at an `as`, 1 where a value that an `as` let through is used, 1 on an `any`",
@@ -349,7 +417,10 @@ console.log(five, later);
   test("--aot-explain=throws-json prints one object per line on stdout", async () => {
     const dir = project("aot-check-json", { "app.ts": app });
     const { stdout } = await bun(dir, "check", "--aot", "--aot-explain=throws-json", "app.ts");
-    const objects = stdout.split("\n").filter(line => line.startsWith("{")).map(line => JSON.parse(line));
+    const objects = stdout
+      .split("\n")
+      .filter(line => line.startsWith("{"))
+      .map(line => JSON.parse(line));
     expect(objects.map(it => [it.aot, it.kind, it.file, it.line, it.col, it.action, it.category, it.cause])).toEqual([
       ["type-check", "read-property", "app.ts", 6, 20, "warning", "untyped-input", "any"],
       ["type-check", "as-late-use", "app.ts", 7, 13, "warning", "untyped-input", "after-as"],
@@ -360,8 +431,18 @@ console.log(five, later);
 
 describe.concurrent.skipIf(!compiles)("bun build --compile --aot", () => {
   test("a check that always fails stops the build", async () => {
-    const dir = project("aot-build-errors", { "wrong.ts": `function double(n: number) { return n * 2; }\nconsole.log(double("4" as any));\n` });
-    const { stdout, stderr, exitCode } = await bun(dir, "build", "--compile", "--aot", "wrong.ts", "--outfile", "wrong");
+    const dir = project("aot-build-errors", {
+      "wrong.ts": `function double(n: number) { return n * 2; }\nconsole.log(double("4" as any));\n`,
+    });
+    const { stdout, stderr, exitCode } = await bun(
+      dir,
+      "build",
+      "--compile",
+      "--aot",
+      "wrong.ts",
+      "--outfile",
+      "wrong",
+    );
     expect(stdout + stderr).toContain("TS100013");
     expect(exitCode).toBe(1);
   }, 120_000);
@@ -385,7 +466,16 @@ console.log(result.success, result.logs.filter(log => String(log.message).includ
 
   test("an unknown report name is an error that lists the valid names", async () => {
     const dir = project("aot-build-unknown", { "app.ts": app });
-    const { stdout, stderr, exitCode } = await bun(dir, "build", "--compile", "--aot", "--aot-explain=nonsense", "app.ts", "--outfile", "app");
+    const { stdout, stderr, exitCode } = await bun(
+      dir,
+      "build",
+      "--compile",
+      "--aot",
+      "--aot-explain=nonsense",
+      "app.ts",
+      "--outfile",
+      "app",
+    );
     expect(stdout + stderr).toContain("it is one of throws, throws-all, throws-json, throws-all-json");
     expect(exitCode).not.toBe(0);
   }, 120_000);
@@ -433,7 +523,16 @@ console.log(JSON.stringify(result.logs.filter(log => log.level === "verbose").ma
   describe("--aot-type-errors=log", () => {
     async function built(name: string, text = app) {
       const dir = project(name, { "app.ts": text });
-      const build = await bun(dir, "build", "--compile", "--aot", "--aot-type-errors=log", "app.ts", "--outfile", "app");
+      const build = await bun(
+        dir,
+        "build",
+        "--compile",
+        "--aot",
+        "--aot-type-errors=log",
+        "app.ts",
+        "--outfile",
+        "app",
+      );
       expect(build.stderr).not.toContain("error");
       expect(build.exitCode).toBe(0);
       return dir;
@@ -459,7 +558,16 @@ export function refresh(token?: string): void { if (token) console.log(token.len
 `,
       });
       for (const mode of ["throw", "log"]) {
-        const build = await bun(dir, "build", "--compile", "--aot", `--aot-type-errors=${mode}`, "app.ts", "--outfile", "app");
+        const build = await bun(
+          dir,
+          "build",
+          "--compile",
+          "--aot",
+          `--aot-type-errors=${mode}`,
+          "app.ts",
+          "--outfile",
+          "app",
+        );
         expect(build.stdout + build.stderr).not.toContain("error");
         expect(build.exitCode).toBe(0);
         expect((await spawned([join(dir, "app")], dir)).stdout).toBe("8 3\n");
@@ -479,10 +587,22 @@ export function refresh(token?: string): void { if (token) console.log(token.len
 
     test("BUN_AOT_TYPE_ERROR_LOG: a file, json, off", async () => {
       const dir = await built("aot-log-file");
-      const toFile = await spawned([join(dir, "app")], dir, { BUN_AOT_TYPE_ERROR_LOG: join(dir, "errors.log"), BUN_AOT_TYPE_ERROR_LOG_FORMAT: "json" });
+      const toFile = await spawned([join(dir, "app")], dir, {
+        BUN_AOT_TYPE_ERROR_LOG: join(dir, "errors.log"),
+        BUN_AOT_TYPE_ERROR_LOG_FORMAT: "json",
+      });
       expect(toFile.stderr).toBe("");
       const first = JSON.parse(readFileSync(join(dir, "errors.log"), "utf8").split("\n")[0]);
-      expect(first).toMatchObject({ aot: "type-error", kind: "enter-argument", file: "app.ts", line: 6, col: 13, got: "string", action: "continued", count: 1 });
+      expect(first).toMatchObject({
+        aot: "type-error",
+        kind: "enter-argument",
+        file: "app.ts",
+        line: 6,
+        col: 13,
+        got: "string",
+        action: "continued",
+        count: 1,
+      });
       expect((await spawned([join(dir, "app")], dir, { BUN_AOT_TYPE_ERROR_LOG: "off" })).stderr).toBe("");
     }, 120_000);
 
@@ -492,7 +612,11 @@ export function refresh(token?: string): void { if (token) console.log(token.len
         `function take(n: number) { return n; }\nconst inputs: any[] = JSON.parse('["hunter2"]');\nfor (let i = 0; i < 12; i++) take(inputs[0]);\n`,
       );
       const { stderr } = await spawned([join(dir, "app")], dir);
-      expect(lines(stderr, "type-error").map(line => /count (\d+(; total)?)/.exec(line.text)![1])).toEqual(["1", "10", "12; total"]);
+      expect(lines(stderr, "type-error").map(line => /count (\d+(; total)?)/.exec(line.text)![1])).toEqual([
+        "1",
+        "10",
+        "12; total",
+      ]);
       expect(stderr).not.toContain("hunter2");
     }, 120_000);
 
@@ -554,15 +678,31 @@ show(5, () => { function idOf(s: Session): number { return s.id.length + 1; } re
       expect(stderr).toContain("; reason property 'type' is missing in untyped object but required in Session");
       expect(exitCode).toBe(0);
       expect((await bun(dir, "build", "--compile", "--aot", "app.ts", "--outfile", "throws")).exitCode).toBe(0);
-      expect((await spawned([join(dir, "throws")], dir)).stdout).toBe("a\n1 y undefined\n2 thrown\n3 thrown\n4 thrown\n5 thrown\n");
+      expect((await spawned([join(dir, "throws")], dir)).stdout).toBe(
+        "a\n1 y undefined\n2 thrown\n3 thrown\n4 thrown\n5 thrown\n",
+      );
     }, 240_000);
 
     test("the report says where this build continues", async () => {
       const dir = project("aot-log-report", { "app.ts": roads });
-      const build = await bun(dir, "build", "--compile", "--aot", "--aot-type-errors=log", "--aot-explain=throws", "app.ts", "--outfile", "app");
+      const build = await bun(
+        dir,
+        "build",
+        "--compile",
+        "--aot",
+        "--aot-type-errors=log",
+        "--aot-explain=throws",
+        "app.ts",
+        "--outfile",
+        "app",
+      );
       const report = lines(build.stdout + build.stderr, "type-check").map(line => line.text);
       expect(report.filter(text => text.includes("; this log build continues here")).length).toBe(6);
-      expect(report.filter(text => text.includes("; this log build throws here")).map(text => /expected ([^,]+),/.exec(text)![1])).toEqual(["string", "string", "string", "string", "Session[]", "string", "number"]);
+      expect(
+        report
+          .filter(text => text.includes("; this log build throws here"))
+          .map(text => /expected ([^,]+),/.exec(text)![1]),
+      ).toEqual(["string", "string", "string", "string", "Session[]", "string", "number"]);
       expect(build.stdout + build.stderr).toContain("this build continues at 6, converts at 0 and still throws at 7");
       const other = await bun(dir, "build", "--compile", "--aot", "--aot-explain=throws", "app.ts", "--outfile", "app");
       expect(other.stdout + other.stderr).not.toContain("log build");
@@ -614,22 +754,49 @@ try { console.log(7, await later(body.n)); } catch { console.log(7, "thrown"); }
 `,
       });
       const plain = await bun(dir, "app.ts");
-      expect(plain.stdout).toBe("1 n=wrong\n2 n=wrong\n3 n=wrong\nemitter wrong\n4 true\n5 n=wrong\n6 n=wrong\n7 n=wrong\n");
-      const build = await bun(dir, "build", "--compile", "--aot", "--aot-type-errors=log", "--aot-explain=throws", "app.ts", "--outfile", "app");
+      expect(plain.stdout).toBe(
+        "1 n=wrong\n2 n=wrong\n3 n=wrong\nemitter wrong\n4 true\n5 n=wrong\n6 n=wrong\n7 n=wrong\n",
+      );
+      const build = await bun(
+        dir,
+        "build",
+        "--compile",
+        "--aot",
+        "--aot-type-errors=log",
+        "--aot-explain=throws",
+        "app.ts",
+        "--outfile",
+        "app",
+      );
       expect(build.exitCode).toBe(0);
       const { stdout, stderr, exitCode } = await spawned([join(dir, "app")], dir);
       expect(stdout).toBe(plain.stdout);
       const logged = lines(stderr, "type-error").filter(line => !line.text.endsWith("; total"));
       expect(logged.map(line => line.action)).toEqual(Array(7).fill("continued"));
-      const foretold = lines(build.stdout + build.stderr, "type-check").filter(line => line.text.includes("; this log build continues here"));
+      const foretold = lines(build.stdout + build.stderr, "type-check").filter(line =>
+        line.text.includes("; this log build continues here"),
+      );
       const ids = new Set(foretold.flatMap(line => [line.id, line.call]));
       expect(logged.filter(line => !ids.has(line.id)).map(line => line.text)).toEqual([]);
       expect(exitCode).toBe(0);
-      const other = await bun(dir, "build", "--compile", "--aot", "--aot-explain=throws", "app.ts", "--outfile", "throws");
+      const other = await bun(
+        dir,
+        "build",
+        "--compile",
+        "--aot",
+        "--aot-explain=throws",
+        "app.ts",
+        "--outfile",
+        "throws",
+      );
       expect(other.exitCode).toBe(0);
-      expect((await spawned([join(dir, "throws")], dir)).stdout).toBe("1 thrown\n2 thrown\n3 thrown\n4 thrown\n5 thrown\n6 thrown\n7 thrown\n");
+      expect((await spawned([join(dir, "throws")], dir)).stdout).toBe(
+        "1 thrown\n2 thrown\n3 thrown\n4 thrown\n5 thrown\n6 thrown\n7 thrown\n",
+      );
       const named = lines(other.stdout + other.stderr, "type-check").filter(line => line.kind === "enter-function");
-      expect(named.map(line => line.place)).toEqual(["1:1", "2:1", "3:1", "4:1", "6:70", "6:133"].map(place => "handlers.ts:" + place));
+      expect(named.map(line => line.place)).toEqual(
+        ["1:1", "2:1", "3:1", "4:1", "6:70", "6:133"].map(place => "handlers.ts:" + place),
+      );
     }, 240_000);
 
     test("a class-based server: arrows in a method, a class field, a static field", async () => {
@@ -652,8 +819,14 @@ console.log(app.count);
       const plain = await bun(dir, "app.ts");
       const { stdout, stderr, exitCode } = await spawned([join(dir, "app")], dir);
       expect(stdout).toBe(plain.stdout);
-      expect(stdout).toBe("p method wrong 1 | p method 5 2\np field wrong 3 | p field 5 4\nS static wrong true | S static 5 true\n4\n");
-      expect(lines(stderr, "type-error").filter(line => !line.text.endsWith("; total")).map(line => line.action)).toEqual(["continued", "continued", "continued"]);
+      expect(stdout).toBe(
+        "p method wrong 1 | p method 5 2\np field wrong 3 | p field 5 4\nS static wrong true | S static 5 true\n4\n",
+      );
+      expect(
+        lines(stderr, "type-error")
+          .filter(line => !line.text.endsWith("; total"))
+          .map(line => line.action),
+      ).toEqual(["continued", "continued", "continued"]);
       expect(exitCode).toBe(0);
     }, 120_000);
 
@@ -680,17 +853,35 @@ row(7, () => { untyped.ignored = body.n; return counter.total; });
 `,
       });
       const plain = await bun(dir, "app.ts");
-      expect(plain.stdout).toBe('1 registered wrong\n2 add wrong 1 | add 5 2\n3 10\n4 get Symbol(Symbol.iterator)\n5 ["key 0"]\n6 nested wrong\n7 11\n');
-      const build = await bun(dir, "build", "--compile", "--aot", "--aot-type-errors=log", "--aot-explain=throws", "app.ts", "--outfile", "app");
+      expect(plain.stdout).toBe(
+        '1 registered wrong\n2 add wrong 1 | add 5 2\n3 10\n4 get Symbol(Symbol.iterator)\n5 ["key 0"]\n6 nested wrong\n7 11\n',
+      );
+      const build = await bun(
+        dir,
+        "build",
+        "--compile",
+        "--aot",
+        "--aot-type-errors=log",
+        "--aot-explain=throws",
+        "app.ts",
+        "--outfile",
+        "app",
+      );
       expect(build.exitCode).toBe(0);
       const { stdout, stderr, exitCode } = await spawned([join(dir, "app")], dir);
       expect(stdout).toBe(plain.stdout);
       const logged = lines(stderr, "type-error").filter(line => !line.text.endsWith("; total"));
-      expect(brief(logged)).toEqual(["6:12", "7:29", "7:97", "10:16", "8:31"].map(place => `enter-function app.ts:${place} continued`));
-      const foretold = lines(build.stdout + build.stderr, "type-check").filter(line => line.text.includes("; this log build continues here"));
+      expect(brief(logged)).toEqual(
+        ["6:12", "7:29", "7:97", "10:16", "8:31"].map(place => `enter-function app.ts:${place} continued`),
+      );
+      const foretold = lines(build.stdout + build.stderr, "type-check").filter(line =>
+        line.text.includes("; this log build continues here"),
+      );
       const ids = new Set(foretold.flatMap(line => [line.id, line.call]));
       expect(logged.filter(line => !ids.has(line.id)).map(line => line.text)).toEqual([]);
-      expect(lines(build.stdout + build.stderr, "type-check").filter(line => line.text.includes("ignored"))).toEqual([]);
+      expect(lines(build.stdout + build.stderr, "type-check").filter(line => line.text.includes("ignored"))).toEqual(
+        [],
+      );
       expect(exitCode).toBe(0);
     }, 120_000);
 
@@ -713,8 +904,13 @@ console.log(app.count);
       const plain = await bun(dir, "app.ts");
       const { stdout, stderr, exitCode } = await spawned([join(dir, "app")], dir);
       expect(stdout).toBe(plain.stdout);
-      expect(stdout).toBe("app constructor wrong 1 | app constructor 5 2\nbase app method wrong 3 | base app method 5 4\n4\n");
-      expect(brief(lines(stderr, "type-error").filter(line => !line.text.endsWith("; total")))).toEqual(["enter-function app.ts:6:55 continued", "enter-function app.ts:7:80 continued"]);
+      expect(stdout).toBe(
+        "app constructor wrong 1 | app constructor 5 2\nbase app method wrong 3 | base app method 5 4\n4\n",
+      );
+      expect(brief(lines(stderr, "type-error").filter(line => !line.text.endsWith("; total")))).toEqual([
+        "enter-function app.ts:6:55 continued",
+        "enter-function app.ts:7:80 continued",
+      ]);
       expect(exitCode).toBe(0);
     }, 120_000);
 
@@ -744,8 +940,20 @@ row(7, () => (function (a: boolean, b: number, c: number): string { return "stan
 `,
       });
       const plain = await bun(dir, "app.ts");
-      expect(plain.stdout).toBe("1 arrow wrong12\n2 aliased wrongb2\n3 table wrong1c\n4 s field 51c\n5 s made 512\n6 taken wrongbc\n7 stands wrong12\n");
-      const build = await bun(dir, "build", "--compile", "--aot", "--aot-type-errors=log", "--aot-explain=throws", "app.ts", "--outfile", "app");
+      expect(plain.stdout).toBe(
+        "1 arrow wrong12\n2 aliased wrongb2\n3 table wrong1c\n4 s field 51c\n5 s made 512\n6 taken wrongbc\n7 stands wrong12\n",
+      );
+      const build = await bun(
+        dir,
+        "build",
+        "--compile",
+        "--aot",
+        "--aot-type-errors=log",
+        "--aot-explain=throws",
+        "app.ts",
+        "--outfile",
+        "app",
+      );
       expect(build.exitCode).toBe(0);
       const { stdout, stderr, exitCode } = await spawned([join(dir, "app")], dir);
       expect(stdout).toBe(plain.stdout);
@@ -775,7 +983,16 @@ row(6, () => String(back(parse('"s"')).path));
 row(7, () => h(back(parse('{"path":"/p","n":1}'))));
 `,
       });
-      const build = await bun(dir, "build", "--compile", "--aot", "--aot-type-errors=log", "app.ts", "--outfile", "app");
+      const build = await bun(
+        dir,
+        "build",
+        "--compile",
+        "--aot",
+        "--aot-type-errors=log",
+        "app.ts",
+        "--outfile",
+        "app",
+      );
       expect(build.exitCode).toBe(0);
       const { stdout, stderr, exitCode } = await spawned([join(dir, "app")], dir);
       expect(stdout).toStartWith("0 h:/typed1\n");
@@ -804,9 +1021,20 @@ for (const text of ['{"path":"/p","n":1}', '"no object"', "7"]) {
 `,
       });
       const plain = await bun(dir, "app.ts");
-      const wrong = "1 h:undefinedundefined d:undefinedundefined\n2 h:undefinedundefined d:undefinedundefined\n3 h:undefinedundefined d:undefinedundefined\n";
+      const wrong =
+        "1 h:undefinedundefined d:undefinedundefined\n2 h:undefinedundefined d:undefinedundefined\n3 h:undefinedundefined d:undefinedundefined\n";
       expect(plain.stdout).toBe("0 h:/typed1 d:/typed2\n1 h:/p1 d:/p1\n2 h:/p1 d:/p1\n3 h:/p1 d:/p1\n" + wrong + wrong);
-      const build = await bun(dir, "build", "--compile", "--aot", "--aot-type-errors=log", "--aot-explain=throws", "app.ts", "--outfile", "app");
+      const build = await bun(
+        dir,
+        "build",
+        "--compile",
+        "--aot",
+        "--aot-type-errors=log",
+        "--aot-explain=throws",
+        "app.ts",
+        "--outfile",
+        "app",
+      );
       expect(build.exitCode).toBe(0);
       const { stdout, stderr, exitCode } = await spawned([join(dir, "app")], dir);
       expect(stdout).toBe(plain.stdout);
@@ -842,8 +1070,20 @@ try { console.log(7, letOut(await resolved(1))(body.n, 2)); } catch { console.lo
 `,
       });
       const plain = await bun(dir, "app.ts");
-      expect(plain.stdout).toBe("1 0:wrong,1:wrong\n2 yielded 1wrong\n3 kept wrong\n4 passed wrong\n5 tuple 1wrong\n6 b1wrong\n7 resolved 1wrong\n");
-      const build = await bun(dir, "build", "--compile", "--aot", "--aot-type-errors=log", "--aot-explain=throws", "app.ts", "--outfile", "app");
+      expect(plain.stdout).toBe(
+        "1 0:wrong,1:wrong\n2 yielded 1wrong\n3 kept wrong\n4 passed wrong\n5 tuple 1wrong\n6 b1wrong\n7 resolved 1wrong\n",
+      );
+      const build = await bun(
+        dir,
+        "build",
+        "--compile",
+        "--aot",
+        "--aot-type-errors=log",
+        "--aot-explain=throws",
+        "app.ts",
+        "--outfile",
+        "app",
+      );
       expect(build.exitCode).toBe(0);
       const { stdout, stderr, exitCode } = await spawned([join(dir, "app")], dir);
       expect(stdout).toBe(plain.stdout);
@@ -865,13 +1105,27 @@ console.log(new Other().make());
 console.log(letOut(new Makes().make(1))(body.n));
 `,
       });
-      const build = await bun(dir, "build", "--compile", "--aot", "--aot-type-errors=log", "--aot-explain=throws", "app.ts", "--outfile", "app");
+      const build = await bun(
+        dir,
+        "build",
+        "--compile",
+        "--aot",
+        "--aot-type-errors=log",
+        "--aot-explain=throws",
+        "app.ts",
+        "--outfile",
+        "app",
+      );
       expect(build.exitCode).toBe(0);
       const row = lines(build.stdout + build.stderr, "type-check").find(line => line.place === "app.ts:5:52")!;
       expect(row.text).toContain("; this log build continues here;");
       const { stdout, stderr, exitCode } = await spawned([join(dir, "app")], dir);
       expect(stdout).toBe("none\nb1wrong\n");
-      expect(lines(stderr, "type-error").filter(line => !line.text.endsWith("; total")).map(line => `${line.id} ${line.action}`)).toEqual([row.id + " continued"]);
+      expect(
+        lines(stderr, "type-error")
+          .filter(line => !line.text.endsWith("; total"))
+          .map(line => `${line.id} ${line.action}`),
+      ).toEqual([row.id + " continued"]);
       expect(exitCode).toBe(0);
     }, 120_000);
 
@@ -894,12 +1148,37 @@ row(3, () => loose(inAnObject)(body.n));
 row(4, () => loose(inAStatic)(body.n));
 `,
       });
-      const build = await bun(dir, "build", "--compile", "--aot", "--aot-type-errors=log", "--aot-explain=throws", "app.ts", "--outfile", "app");
+      const build = await bun(
+        dir,
+        "build",
+        "--compile",
+        "--aot",
+        "--aot-type-errors=log",
+        "--aot-explain=throws",
+        "app.ts",
+        "--outfile",
+        "app",
+      );
       expect(build.exitCode).toBe(0);
       const { stderr } = await spawned([join(dir, "app")], dir);
       const logged = lines(stderr, "type-error").filter(line => !line.text.endsWith("; total"));
-      expect(logged.map(line => line.action)).toEqual(["continued", "threw", "continued", "threw", "continued", "threw", "continued", "threw"]);
-      const ids = new Set(lines(build.stdout + build.stderr, "type-check").flatMap(line => [line.id, line.call, /; logged as ([0-9a-f]{12})/.exec(line.text)?.[1]]));
+      expect(logged.map(line => line.action)).toEqual([
+        "continued",
+        "threw",
+        "continued",
+        "threw",
+        "continued",
+        "threw",
+        "continued",
+        "threw",
+      ]);
+      const ids = new Set(
+        lines(build.stdout + build.stderr, "type-check").flatMap(line => [
+          line.id,
+          line.call,
+          /; logged as ([0-9a-f]{12})/.exec(line.text)?.[1],
+        ]),
+      );
       expect(logged.filter(line => !ids.has(line.id)).map(line => line.text)).toEqual([]);
     }, 120_000);
 
@@ -964,12 +1243,26 @@ row(3, () => String(t.back(parse('"s"')).path));
 row(4, () => t.back(parse('{"path":"/p","n":1}')).path);
 `,
       });
-      const build = await bun(dir, "build", "--compile", "--aot", "--aot-type-errors=log", "--aot-explain=throws", "app.ts", "--outfile", "app");
+      const build = await bun(
+        dir,
+        "build",
+        "--compile",
+        "--aot",
+        "--aot-type-errors=log",
+        "--aot-explain=throws",
+        "app.ts",
+        "--outfile",
+        "app",
+      );
       expect(build.exitCode).toBe(0);
       const { stdout, stderr } = await spawned([join(dir, "app")], dir);
       expect(stdout).toBe("1 thrown\n2 thrown\n3 thrown\n4 /p\n");
       const logged = lines(stderr, "type-error").filter(line => !line.text.endsWith("; total"));
-      expect(logged.filter(line => line.action === "threw").map(line => line.kind)).toEqual(["call-result", "enter-variable", "call-result"]);
+      expect(logged.filter(line => line.action === "threw").map(line => line.kind)).toEqual([
+        "call-result",
+        "enter-variable",
+        "call-result",
+      ]);
       const ids = new Set(lines(build.stdout + build.stderr, "type-check").flatMap(line => [line.id, line.call]));
       expect(logged.filter(line => !ids.has(line.id)).map(line => line.text)).toEqual([]);
     }, 120_000);
@@ -1010,14 +1303,26 @@ row(7, () => { account.ignored = body.n; return account.total; });
 `,
     });
     for (const mode of ["throw", "log"]) {
-      const build = await bun(dir, "build", "--compile", "--aot", `--aot-type-errors=${mode}`, "--aot-explain=throws", "app.ts", "--outfile", "app");
+      const build = await bun(
+        dir,
+        "build",
+        "--compile",
+        "--aot",
+        `--aot-type-errors=${mode}`,
+        "--aot-explain=throws",
+        "app.ts",
+        "--outfile",
+        "app",
+      );
       expect(build.exitCode).toBe(0);
       const { stderr } = await spawned([join(dir, "app")], dir, { BUN_AOT_TYPE_ERROR_LOG: "stderr" });
       const logged = lines(stderr, "type-error").filter(line => !line.text.endsWith("; total"));
       expect(logged.length).toBe(6);
       const report = lines(build.stdout + build.stderr, "type-check");
       expect(report.filter(line => line.text.includes("ignored"))).toEqual([]);
-      const ids = new Set(report.flatMap(line => [line.id, line.call, /; logged as ([0-9a-f]{12})/.exec(line.text)?.[1]]));
+      const ids = new Set(
+        report.flatMap(line => [line.id, line.call, /; logged as ([0-9a-f]{12})/.exec(line.text)?.[1]]),
+      );
       expect(logged.filter(line => !ids.has(line.id)).map(line => line.text)).toEqual([]);
     }
   }, 240_000);
@@ -1057,14 +1362,30 @@ row(13, () => { loose(Account).ignored = body.n; return Account.rate; });
 `,
     });
     for (const mode of ["throw", "log"]) {
-      const build = await bun(dir, "build", "--compile", "--aot", `--aot-type-errors=${mode}`, "--aot-explain=throws", "app.ts", "--outfile", "app");
+      const build = await bun(
+        dir,
+        "build",
+        "--compile",
+        "--aot",
+        `--aot-type-errors=${mode}`,
+        "--aot-explain=throws",
+        "app.ts",
+        "--outfile",
+        "app",
+      );
       expect(build.exitCode).toBe(0);
       const { stderr } = await spawned([join(dir, "app")], dir, { BUN_AOT_TYPE_ERROR_LOG: "stderr" });
       const logged = lines(stderr, "type-error").filter(line => !line.text.endsWith("; total"));
-      expect(logged.map(line => `${line.kind} ${/\((.*?)\)/.exec(line.text)![1]}`)).toEqual(["declared", "anonymous", "usesThis", "steps", "Account", "level", "parse", "scale", "area"].map(name => "enter-function " + name));
+      expect(logged.map(line => `${line.kind} ${/\((.*?)\)/.exec(line.text)![1]}`)).toEqual(
+        ["declared", "anonymous", "usesThis", "steps", "Account", "level", "parse", "scale", "area"].map(
+          name => "enter-function " + name,
+        ),
+      );
       const ids = new Set(lines(build.stdout + build.stderr, "type-check").map(line => line.id));
       expect(logged.filter(line => !ids.has(line.id)).map(line => line.text)).toEqual([]);
-      expect(lines(build.stdout + build.stderr, "type-check").filter(line => line.text.includes("ignored"))).toEqual([]);
+      expect(lines(build.stdout + build.stderr, "type-check").filter(line => line.text.includes("ignored"))).toEqual(
+        [],
+      );
     }
   }, 240_000);
 
@@ -1080,7 +1401,17 @@ row(3, () => { loose.ignored = body.n; return gauge.level; });
 `,
     });
     for (const mode of ["throw", "log"]) {
-      const build = await bun(dir, "build", "--compile", "--aot", `--aot-type-errors=${mode}`, "--aot-explain=throws", "app.ts", "--outfile", "app");
+      const build = await bun(
+        dir,
+        "build",
+        "--compile",
+        "--aot",
+        `--aot-type-errors=${mode}`,
+        "--aot-explain=throws",
+        "app.ts",
+        "--outfile",
+        "app",
+      );
       expect(build.exitCode).toBe(0);
       const { stdout, stderr } = await spawned([join(dir, "app")], dir, { BUN_AOT_TYPE_ERROR_LOG: "stderr" });
       expect(stdout).toBe("1 0\n2 thrown\n3 2\n");
@@ -1088,7 +1419,9 @@ row(3, () => { loose.ignored = body.n; return gauge.level; });
       expect(logged.map(line => `${line.kind} ${/\((.*?)\)/.exec(line.text)![1]}`)).toEqual(["enter-function size"]);
       const ids = new Set(lines(build.stdout + build.stderr, "type-check").map(line => line.id));
       expect(logged.filter(line => !ids.has(line.id)).map(line => line.text)).toEqual([]);
-      expect(lines(build.stdout + build.stderr, "type-check").filter(line => line.text.includes("ignored"))).toEqual([]);
+      expect(lines(build.stdout + build.stderr, "type-check").filter(line => line.text.includes("ignored"))).toEqual(
+        [],
+      );
     }
   }, 240_000);
 
@@ -1110,15 +1443,33 @@ for (const kind of ["circle", "square", "label"]) {
 `,
     });
     for (const mode of ["throw", "log"]) {
-      const build = await bun(dir, "build", "--compile", "--aot", `--aot-type-errors=${mode}`, "--aot-explain=throws", "app.ts", "--outfile", "app");
+      const build = await bun(
+        dir,
+        "build",
+        "--compile",
+        "--aot",
+        `--aot-type-errors=${mode}`,
+        "--aot-explain=throws",
+        "app.ts",
+        "--outfile",
+        "app",
+      );
       expect(build.exitCode).toBe(0);
       const { stdout, stderr } = await spawned([join(dir, "app")], dir, { BUN_AOT_TYPE_ERROR_LOG: "stderr" });
       expect(stdout).toBe("circle\nsquare\nthrown\n");
       const logged = lines(stderr, "type-error").filter(line => !line.text.endsWith("; total"));
       expect(logged.map(line => line.place)).toEqual(["app.ts:12:63"]);
-      const ids = new Set(lines(build.stdout + build.stderr, "type-check").flatMap(line => [line.id, line.call, /; logged as ([0-9a-f]{12})/.exec(line.text)?.[1]]));
+      const ids = new Set(
+        lines(build.stdout + build.stderr, "type-check").flatMap(line => [
+          line.id,
+          line.call,
+          /; logged as ([0-9a-f]{12})/.exec(line.text)?.[1],
+        ]),
+      );
       expect(logged.filter(line => !ids.has(line.id)).map(line => line.text)).toEqual([]);
-      expect(build.stdout + build.stderr).toContain("those that can fail: 1 where a value that an `as` let through is used");
+      expect(build.stdout + build.stderr).toContain(
+        "those that can fail: 1 where a value that an `as` let through is used",
+      );
     }
   }, 240_000);
 
@@ -1126,7 +1477,9 @@ for (const kind of ["circle", "square", "label"]) {
     const dir = project("aot-one-story", { "app.ts": app });
     const audit = lines((await bun(dir, "--aot-audit", "app.ts")).stderr, "type-error");
     const report = lines((await bun(dir, "check", "--aot", "--aot-explain=throws", "app.ts")).stderr, "type-check");
-    expect((await bun(dir, "build", "--compile", "--aot", "--aot-type-errors=log", "app.ts", "--outfile", "app")).exitCode).toBe(0);
+    expect(
+      (await bun(dir, "build", "--compile", "--aot", "--aot-type-errors=log", "app.ts", "--outfile", "app")).exitCode,
+    ).toBe(0);
     const log = lines((await spawned([join(dir, "app")], dir)).stderr, "type-error");
     const at = (found: Line[], place: string) => found.find(line => line.place === place)!;
     expect(at(report, "app.ts:6:20").id).toBe(at(audit, "app.ts:6:20").id);
@@ -1135,7 +1488,10 @@ for (const kind of ["circle", "square", "label"]) {
     expect(at(report, "app.ts:7:14").id).toBe(at(audit, "app.ts:7:14").id);
     expect(at(log, "app.ts:7:14").id).toBe(at(audit, "app.ts:7:14").id);
     expect((await bun(dir, "build", "--compile", "--aot", "app.ts", "--outfile", "throws")).exitCode).toBe(0);
-    const thrown = lines((await spawned([join(dir, "throws")], dir, { BUN_AOT_TYPE_ERROR_LOG: "stderr" })).stderr, "type-error");
+    const thrown = lines(
+      (await spawned([join(dir, "throws")], dir, { BUN_AOT_TYPE_ERROR_LOG: "stderr" })).stderr,
+      "type-error",
+    );
     expect(brief(thrown.filter(line => !line.text.endsWith("; total")))).toEqual(["type-mismatch app.ts:6:20 threw"]);
     expect(at(report, "app.ts:6:20").text).toContain("; logged as " + at(thrown, "app.ts:6:20").id + ";");
   }, 240_000);

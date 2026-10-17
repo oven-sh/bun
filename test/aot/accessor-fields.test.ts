@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { test } from "./supported";
 
 const files = {
-  "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, target: "esnext", module: "preserve", moduleResolution: "bundler" } }),
+  "tsconfig.json": JSON.stringify({
+    compilerOptions: { strict: true, target: "esnext", module: "preserve", moduleResolution: "bundler" },
+  }),
   "hidden.ts": `
     export class Hidden {
       accessor #value = 3;
@@ -60,7 +62,10 @@ test("`accessor` fields without a decorator in the file, as without --aot", asyn
   for (const flags of [[], ["--aot"]]) {
     const outfile = join(String(dir), "out" + flags.length + (isWindows ? ".exe" : ""));
     const built = await run(String(dir), [bunExe(), "build", "--compile", ...flags, "./main.ts", "--outfile", outfile]);
-    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
+      stderr: "",
+      exitCode: 0,
+    });
     answers.push(await run(String(dir), [outfile]));
   }
   expect(answers[0].stdout.split("\n")).toEqual([

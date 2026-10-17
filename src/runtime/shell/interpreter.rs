@@ -1702,7 +1702,11 @@ impl Interpreter {
                 let main = vm.main();
                 if !main.is_empty() {
                     if int == 0 {
-                        out.extend_from_slice(vm.standalone_module_graph.and_then(|graph| graph.source_path(main)).unwrap_or(main));
+                        out.extend_from_slice(
+                            vm.standalone_module_graph
+                                .and_then(|graph| graph.source_path(main))
+                                .unwrap_or(main),
+                        );
                         return;
                     }
                     int -= 1;

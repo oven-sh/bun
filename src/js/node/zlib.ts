@@ -84,7 +84,12 @@ function zlibBuffer(engine, buffer, callback, direct) {
     // kDirectLast: unpacking yields the same whichever way, so the input goes with the last flush flag at once, as in the synchronous methods.
     engine.on("error", zlibBufferOnError);
     engine._handle.direct = direct;
-    processChunk(engine, buffer, direct === kDirectLast ? maxFlush(engine._defaultFlushFlag, engine._finishFlushFlag) : engine._defaultFlushFlag, undefined);
+    processChunk(
+      engine,
+      buffer,
+      direct === kDirectLast ? maxFlush(engine._defaultFlushFlag, engine._finishFlushFlag) : engine._defaultFlushFlag,
+      undefined,
+    );
     return;
   }
   engine.on("data", zlibBufferOnData);
@@ -304,7 +309,9 @@ function ZlibBase(opts, mode, handle, { flush, finishFlush, fullFlush }) {
   // Used by processCallback() and zlibOnError()
   handle.onerror = zlibOnError;
   this._outBuffer =
-    sync && chunkSize === Z_DEFAULT_CHUNK ? (syncOutBuffer ??= Buffer.allocUnsafe(Z_DEFAULT_CHUNK)) : Buffer.allocUnsafe(chunkSize);
+    sync && chunkSize === Z_DEFAULT_CHUNK
+      ? (syncOutBuffer ??= Buffer.allocUnsafe(Z_DEFAULT_CHUNK))
+      : Buffer.allocUnsafe(chunkSize);
   this._outOffset = 0;
 
   this._chunkSize = chunkSize;
@@ -591,7 +598,15 @@ function processDirectCallback(handle, self) {
   if (availOutAfter === 0) {
     handle.inOff += inDelta;
     handle.availInBefore = availInAfter;
-    handle.write(handle.flushFlag, handle.buffer, handle.inOff, handle.availInBefore, self._outBuffer, self._outOffset, chunkSize);
+    handle.write(
+      handle.flushFlag,
+      handle.buffer,
+      handle.inOff,
+      handle.availInBefore,
+      self._outBuffer,
+      self._outOffset,
+      chunkSize,
+    );
     return;
   }
 
@@ -1083,21 +1098,43 @@ const zlib = {
   inflateRaw: createConvenienceMethod(InflateRaw, false, "inflateRaw", false, true),
   inflateRawSync: createConvenienceMethod(syncEngineOf(InflateRaw, Zlib, INFLATERAW), true, "inflateRawSync"),
   brotliCompress: createConvenienceMethod(BrotliCompress, false, "brotliCompress"),
-  brotliCompressSync: createConvenienceMethod(syncEngineOf(BrotliCompress, Brotli, BROTLI_ENCODE), true, "brotliCompressSync"),
+  brotliCompressSync: createConvenienceMethod(
+    syncEngineOf(BrotliCompress, Brotli, BROTLI_ENCODE),
+    true,
+    "brotliCompressSync",
+  ),
   brotliDecompress: createConvenienceMethod(BrotliDecompress, false, "brotliDecompress", false, true),
-  brotliDecompressSync: createConvenienceMethod(syncEngineOf(BrotliDecompress, Brotli, BROTLI_DECODE), true, "brotliDecompressSync"),
+  brotliDecompressSync: createConvenienceMethod(
+    syncEngineOf(BrotliDecompress, Brotli, BROTLI_DECODE),
+    true,
+    "brotliDecompressSync",
+  ),
   zstdCompress: createConvenienceMethod(ZstdCompress, false, "zstdCompress", true),
-  zstdCompressSync: createConvenienceMethod(syncEngineOfClass(ZstdCompress, class ZstdCompress extends Zstd {
-    constructor(opts) {
-      super(opts, ZSTD_COMPRESS, zstdInitCParamsArray, kMaxZstdCParam);
-    }
-  }), true, "zstdCompressSync"),
+  zstdCompressSync: createConvenienceMethod(
+    syncEngineOfClass(
+      ZstdCompress,
+      class ZstdCompress extends Zstd {
+        constructor(opts) {
+          super(opts, ZSTD_COMPRESS, zstdInitCParamsArray, kMaxZstdCParam);
+        }
+      },
+    ),
+    true,
+    "zstdCompressSync",
+  ),
   zstdDecompress: createConvenienceMethod(ZstdDecompress, false, "zstdDecompress", false, true),
-  zstdDecompressSync: createConvenienceMethod(syncEngineOfClass(ZstdDecompress, class ZstdDecompress extends Zstd {
-    constructor(opts) {
-      super(opts, ZSTD_DECOMPRESS, zstdInitDParamsArray, kMaxZstdDParam);
-    }
-  }), true, "zstdDecompressSync"),
+  zstdDecompressSync: createConvenienceMethod(
+    syncEngineOfClass(
+      ZstdDecompress,
+      class ZstdDecompress extends Zstd {
+        constructor(opts) {
+          super(opts, ZSTD_DECOMPRESS, zstdInitDParamsArray, kMaxZstdDParam);
+        }
+      },
+    ),
+    true,
+    "zstdDecompressSync",
+  ),
 
   createDeflate: function (options) {
     return new Deflate(options);

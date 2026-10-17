@@ -1,5 +1,4 @@
 import type { PooledConnection as ServerConnection } from "internal/sql/pool";
-import type { BaseQueryHandle } from "internal/sql/query";
 import type { DatabaseAdapter, TransactionCommands } from "internal/sql/shared";
 
 type Query = import("internal/sql/query").Query<any, any>;
@@ -17,12 +16,7 @@ interface PooledConnection {
   close(): void;
 }
 
-const {
-  Query,
-  SQLQueryFlags,
-  onQuerySettled,
-  stateOf,
-} = require("internal/sql/query");
+const { Query, SQLQueryFlags, onQuerySettled, stateOf } = require("internal/sql/query");
 const { PostgresAdapter } = require("internal/sql/postgres");
 const { MySQLAdapter } = require("internal/sql/mysql");
 const { SQLiteAdapter } = require("internal/sql/sqlite");

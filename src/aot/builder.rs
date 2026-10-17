@@ -78,7 +78,13 @@ enum Stored {
 
 enum PendingRead {
     Only(BlockId),
-    Join { block: BlockId, param: V, preds: Preds, at: usize, only: Option<V> },
+    Join {
+        block: BlockId,
+        param: V,
+        preds: Preds,
+        at: usize,
+        only: Option<V>,
+    },
 }
 
 pub struct FuncBuilder {
@@ -102,7 +108,21 @@ impl FuncBuilder {
         func.values = SPARE_VALUES.take();
         func.blocks = SPARE_BLOCKS.take();
         let (states, defs) = (SPARE_STATES.take(), SPARE_DEFS.take().unwrap_or_default());
-        let mut builder = FuncBuilder { func, block: BlockId(0), pos: 0, states, defs, pending_reads: Vec::new(), found_held: FxHashSet::default(), vars: Vec::new(), stored: Vec::new(), homes: Vec::new(), blanks: FxHashMap::default(), unplaced: Vec::new(), undefined };
+        let mut builder = FuncBuilder {
+            func,
+            block: BlockId(0),
+            pos: 0,
+            states,
+            defs,
+            pending_reads: Vec::new(),
+            found_held: FxHashSet::default(),
+            vars: Vec::new(),
+            stored: Vec::new(),
+            homes: Vec::new(),
+            blanks: FxHashMap::default(),
+            unplaced: Vec::new(),
+            undefined,
+        };
         let entry = builder.new_block();
         builder.seal(entry);
         builder
@@ -145,7 +165,8 @@ impl FuncBuilder {
 
     pub fn is_unreachable_here(&self) -> bool {
         let state = &self.states[self.block.idx()];
-        !self.is_open() || (self.block != crate::ir::Func::ENTRY && state.is_sealed && state.preds.is_empty())
+        !self.is_open()
+            || (self.block != crate::ir::Func::ENTRY && state.is_sealed && state.preds.is_empty())
     }
 
     pub fn is_open(&self) -> bool {
@@ -169,7 +190,11 @@ impl FuncBuilder {
     }
 
     fn place_value(&mut self, value: V) {
-        if let Some(at) = self.unplaced.iter().position(|unplaced| unplaced.0 == value) {
+        if let Some(at) = self
+            .unplaced
+            .iter()
+            .position(|unplaced| unplaced.0 == value)
+        {
             let (_, block, index) = self.unplaced.swap_remove(at);
             self.func.blocks[block.idx()].ops.insert(index, value);
         }
@@ -180,12 +205,19 @@ impl FuncBuilder {
             return;
         }
         let from = self.block;
-        let term = if self.is_unreachable_here() { Term::Unreachable } else { term };
+        let term = if self.is_unreachable_here() {
+            Term::Unreachable
+        } else {
+            term
+        };
         if !self.unplaced.is_empty() {
             term.for_each_operand(|operand| self.place_value(operand));
         }
         term.for_each_target(|t| {
-            debug_assert!(!self.states[t.block.idx()].is_sealed, "a sealed block gets no new predecessor");
+            debug_assert!(
+                !self.states[t.block.idx()].is_sealed,
+                "a sealed block gets no new predecessor"
+            );
             self.states[t.block.idx()].preds.push(from);
         });
         self.func.blocks[from.idx()].term = Some(term);
@@ -196,7 +228,11 @@ impl FuncBuilder {
     }
 
     pub fn branch(&mut self, cond: V, then: BlockId, otherwise: BlockId) {
-        self.terminate(Term::Branch { cond, then: Target::new(then), otherwise: Target::new(otherwise) });
+        self.terminate(Term::Branch {
+            cond,
+            then: Target::new(then),
+            otherwise: Target::new(otherwise),
+        });
     }
 
     pub fn write(&mut self, var: Var, value: V) {
@@ -205,7 +241,9 @@ impl FuncBuilder {
         self.record_def_block(var, self.block);
         self.stored[var.0 as usize] = match self.stored[var.0 as usize] {
             Stored::Never => Stored::Once(value, self.block),
-            Stored::Once(_, home) if home == self.block && self.is_open() => Stored::Once(value, home),
+            Stored::Once(_, home) if home == self.block && self.is_open() => {
+                Stored::Once(value, home)
+            }
             _ => Stored::Often,
         };
     }
@@ -224,7 +262,10 @@ impl FuncBuilder {
         };
         let mut nearest: Option<(u32, bool)> = None;
         for &home in homes {
-            if self.states[home.idx()].above.is_none_or(|above| above.root != here.root) {
+            if self.states[home.idx()]
+                .above
+                .is_none_or(|above| above.root != here.root)
+            {
                 continue;
             }
             let Some(meet) = self.lowest_common_ancestor(home, block) else {
@@ -234,7 +275,11 @@ impl FuncBuilder {
                 continue;
             }
             let depth = self.states[meet.idx()].above.map_or(0, |above| above.depth);
-            let level = if meet == home { (depth, true) } else { (depth + 1, false) };
+            let level = if meet == home {
+                (depth, true)
+            } else {
+                (depth + 1, false)
+            };
             nearest = nearest.max(Some(level));
         }
         match nearest {
@@ -242,7 +287,10 @@ impl FuncBuilder {
             None => Shortcut::No,
             Some((depth, _)) if depth >= here.depth => Shortcut::No,
             Some((depth, is_home)) => match (self.ancestor_at(block, depth), is_home) {
-                (Some(home), true) => self.defs.get(home, var).map_or(Shortcut::No, Shortcut::Value),
+                (Some(home), true) => self
+                    .defs
+                    .get(home, var)
+                    .map_or(Shortcut::No, Shortcut::Value),
                 (Some(join), false) => Shortcut::To(join),
                 (None, _) => Shortcut::No,
             },
@@ -255,36 +303,61 @@ impl FuncBuilder {
             if above.depth <= depth {
                 return Some(block);
             }
-            block = if self.states[above.jump.idx()].above?.depth >= depth { above.jump } else { above.parent };
+            block = if self.states[above.jump.idx()].above?.depth >= depth {
+                above.jump
+            } else {
+                above.parent
+            };
         }
     }
 
     fn lowest_common_ancestor(&self, a: BlockId, b: BlockId) -> Option<BlockId> {
-        let depth = self.states[a.idx()].above?.depth.min(self.states[b.idx()].above?.depth);
+        let depth = self.states[a.idx()]
+            .above?
+            .depth
+            .min(self.states[b.idx()].above?.depth);
         let (mut a, mut b) = (self.ancestor_at(a, depth)?, self.ancestor_at(b, depth)?);
         while a != b {
             let (above_a, above_b) = (self.states[a.idx()].above?, self.states[b.idx()].above?);
             if above_a.depth == 0 {
                 return None;
             }
-            (a, b) = if above_a.jump != above_b.jump { (above_a.jump, above_b.jump) } else { (above_a.parent, above_b.parent) };
+            (a, b) = if above_a.jump != above_b.jump {
+                (above_a.jump, above_b.jump)
+            } else {
+                (above_a.parent, above_b.parent)
+            };
         }
         Some(a)
     }
 
     fn place(&mut self, block: BlockId) {
         let preds = &self.states[block.idx()].preds;
-        let mut parent = preds.first().copied().filter(|pred| self.states[pred.idx()].above.is_some());
+        let mut parent = preds
+            .first()
+            .copied()
+            .filter(|pred| self.states[pred.idx()].above.is_some());
         for &pred in preds.iter().skip(1) {
             parent = parent.and_then(|parent| self.lowest_common_ancestor(parent, pred));
         }
         let placed = parent.and_then(|parent| {
             let above = self.states[parent.idx()].above?;
             let jump = self.states[above.jump.idx()].above?;
-            let is_even = above.depth - jump.depth == jump.depth - self.states[jump.jump.idx()].above?.depth;
-            Some(DominatorLink { parent, jump: if is_even { jump.jump } else { parent }, depth: above.depth + 1, root: above.root })
+            let is_even =
+                above.depth - jump.depth == jump.depth - self.states[jump.jump.idx()].above?.depth;
+            Some(DominatorLink {
+                parent,
+                jump: if is_even { jump.jump } else { parent },
+                depth: above.depth + 1,
+                root: above.root,
+            })
         });
-        self.states[block.idx()].above = Some(placed.unwrap_or(DominatorLink { parent: block, jump: block, depth: 0, root: block }));
+        self.states[block.idx()].above = Some(placed.unwrap_or(DominatorLink {
+            parent: block,
+            jump: block,
+            depth: 0,
+            root: block,
+        }));
     }
 
     pub fn read(&mut self, var: Var) -> V {
@@ -305,7 +378,10 @@ impl FuncBuilder {
         {
             return value;
         }
-        let (mut awaiting, mut found_held) = (std::mem::take(&mut self.pending_reads), std::mem::take(&mut self.found_held));
+        let (mut awaiting, mut found_held) = (
+            std::mem::take(&mut self.pending_reads),
+            std::mem::take(&mut self.found_held),
+        );
         let mut block = block;
         loop {
             let mut single_pred_run = 0;
@@ -317,7 +393,11 @@ impl FuncBuilder {
                     break v;
                 }
                 let asks = self.states[block.idx()].preds.len() != 1 || single_pred_run % 4 == 3;
-                match if asks { self.shortcut(var, block) } else { Shortcut::No } {
+                match if asks {
+                    self.shortcut(var, block)
+                } else {
+                    Shortcut::No
+                } {
                     Shortcut::Value(v) => {
                         if !awaiting.is_empty() {
                             found_held.insert(v);
@@ -330,7 +410,10 @@ impl FuncBuilder {
                     }
                     Shortcut::No => {}
                 }
-                let (is_sealed, preds) = (self.states[block.idx()].is_sealed, self.states[block.idx()].preds.len());
+                let (is_sealed, preds) = (
+                    self.states[block.idx()].is_sealed,
+                    self.states[block.idx()].preds.len(),
+                );
                 if !is_sealed {
                     let param = self.add_var_param(var, block);
                     self.states[block.idx()].incomplete.push((var, param));
@@ -341,7 +424,11 @@ impl FuncBuilder {
                 }
                 if preds == 0 || single_pred_run > self.states.len() {
                     let pos = self.pos;
-                    let (blank, ty) = self.blanks.get(&var).cloned().unwrap_or((Op::Undefined, self.undefined));
+                    let (blank, ty) = self
+                        .blanks
+                        .get(&var)
+                        .cloned()
+                        .unwrap_or((Op::Undefined, self.undefined));
                     let v = self.func.add_value(blank, pos, ty);
                     self.func.blocks[block.idx()].ops.insert(0, v);
                     self.defs.insert(block, var, v);
@@ -359,7 +446,13 @@ impl FuncBuilder {
                 self.defs.insert(block, var, param);
                 let preds = self.unique_preds(block);
                 let first = preds[0];
-                awaiting.push(PendingRead::Join { block, param, preds, at: 0, only: None });
+                awaiting.push(PendingRead::Join {
+                    block,
+                    param,
+                    preds,
+                    at: 0,
+                    only: None,
+                });
                 block = first;
                 single_pred_run = 0;
             };
@@ -373,16 +466,36 @@ impl FuncBuilder {
                     Some(PendingRead::Only(below)) => {
                         self.defs.insert(below, var, value);
                     }
-                    Some(PendingRead::Join { block: join, param, preds, at, only }) => {
+                    Some(PendingRead::Join {
+                        block: join,
+                        param,
+                        preds,
+                        at,
+                        only,
+                    }) => {
                         self.pass(preds[at], join, value);
-                        let only = if at == 0 { Some(value) } else { only.filter(|&only| only == value) };
+                        let only = if at == 0 {
+                            Some(value)
+                        } else {
+                            only.filter(|&only| only == value)
+                        };
                         if let Some(&next) = preds.get(at + 1) {
-                            awaiting.push(PendingRead::Join { block: join, param, preds, at: at + 1, only });
+                            awaiting.push(PendingRead::Join {
+                                block: join,
+                                param,
+                                preds,
+                                at: at + 1,
+                                only,
+                            });
                             block = next;
                             break;
                         }
                         value = match only {
-                            Some(only) if only != param && !found_held.contains(&param) && self.try_remove_param(join, param, &preds) => {
+                            Some(only)
+                                if only != param
+                                    && !found_held.contains(&param)
+                                    && self.try_remove_param(join, param, &preds) =>
+                            {
                                 self.defs.insert(join, var, only);
                                 only
                             }
@@ -416,7 +529,8 @@ impl FuncBuilder {
             self.func.values.pop();
         } else {
             let undefined = self.undefined;
-            self.func.values[param.idx()] = crate::ir::Value::new(crate::ir::Def::Op(Op::Undefined), 0, undefined);
+            self.func.values[param.idx()] =
+                crate::ir::Value::new(crate::ir::Def::Op(Op::Undefined), 0, undefined);
             self.func.blocks[block.idx()].ops.insert(0, param);
         }
         true
@@ -453,7 +567,9 @@ impl FuncBuilder {
 
     pub fn entry_constant(&mut self, op: Op, ty: TyId) -> V {
         let v = self.func.add_value(op, 0, ty);
-        self.func.blocks[crate::ir::Func::ENTRY.idx()].ops.insert(0, v);
+        self.func.blocks[crate::ir::Func::ENTRY.idx()]
+            .ops
+            .insert(0, v);
         v
     }
 

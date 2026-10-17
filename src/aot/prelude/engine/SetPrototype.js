@@ -23,27 +23,23 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-export function forEach(callback /*, thisArg */)
-{
-    "use strict";
+export function forEach(callback /*, thisArg */) {
+  "use strict";
 
-    if (!$isSet(this))
-        throw new TypeError("Set operation called on non-Set object");
+  if (!$isSet(this)) throw new TypeError("Set operation called on non-Set object");
 
-    if (!$isCallable(callback))
-        throw new TypeError("Set.prototype.forEach callback must be a function");
+  if (!$isCallable(callback)) throw new TypeError("Set.prototype.forEach callback must be a function");
 
-    var thisArg = $argument(1);
-    var storage = $setStorage(this);
-    var entry = 0;
+  var thisArg = $argument(1);
+  var storage = $setStorage(this);
+  var entry = 0;
 
-    do {
-        storage = $setIterationNext(storage, entry);
-        if (storage == $orderedHashTableSentinel)
-            break;
-        entry = $setIterationEntry(storage) + 1;
-        var key = $setIterationEntryKey(storage);
+  do {
+    storage = $setIterationNext(storage, entry);
+    if (storage == $orderedHashTableSentinel) break;
+    entry = $setIterationEntry(storage) + 1;
+    var key = $setIterationEntryKey(storage);
 
-        callback.$call(thisArg, key, key, this);
-    } while (true);
+    callback.$call(thisArg, key, key, this);
+  } while (true);
 }

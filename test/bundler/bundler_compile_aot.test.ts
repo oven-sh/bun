@@ -4,7 +4,6 @@ import { bunEnv, bunExe, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
 import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
 
-
 const usesImage = (stdout: string) =>
   ({
     env: { BUN_AOT_VERBOSE: "1" },
@@ -451,7 +450,9 @@ describe("bundler", () => {
       },
       run: usesImage(
         [
-          ...["internal", "target", "main"].flatMap(label => ["mock.module", "jest.mock"].map(name => label + " " + name + " TypeError 3:1:ready 3:2")),
+          ...["internal", "target", "main"].flatMap(label =>
+            ["mock.module", "jest.mock"].map(name => label + " " + name + " TypeError 3:1:ready 3:2"),
+          ),
           "42 lazy31 lazy11",
           "",
         ].join("\n"),
@@ -485,7 +486,9 @@ describe("bundler", () => {
           export function fromUser() { return read() + " | " + table.kept + ":" + box.get() + ":" + helper(3); }
         `,
       },
-      run: usesImage(["helper", "table", "box"].map(name => name + " TypeError 1:2:3.5:4 | 1:3.5:6\n").join("") + "2\n"),
+      run: usesImage(
+        ["helper", "table", "box"].map(name => name + " TypeError 1:2:3.5:4 | 1:3.5:6\n").join("") + "2\n",
+      ),
     });
 
     itBundled("CompiledModulesCannotBeEvicted", {
@@ -827,9 +830,11 @@ describe("Bun.ModuleGraph with --aot", () => {
     },
   );
 
-  test.concurrent("generators of one graph stepped from another, and from the host, use their own variables", async () => {
-    expect(
-      await run(`
+  test.concurrent(
+    "generators of one graph stepped from another, and from the host, use their own variables",
+    async () => {
+      expect(
+        await run(`
         const a = await new Bun.ModuleGraph().import(url);
         const b = await new Bun.ModuleGraph().import(url);
         const host = await import(url);
@@ -862,8 +867,47 @@ describe("Bun.ModuleGraph with --aot", () => {
         out.push(new Map([[1, 2]]).entries().next().value!.join(), JSON.stringify(ofA.next()), Object.getPrototypeOf(ofA.next()) === Object.prototype);
         return out;
       `),
-    ).toEqual(everywhere([1, 2, "2/0/0", 6, "2/4/0", "3,4", "5/4/0", 5, 6, "5/7/0", "1,2", "5/7/3", "6,8,9,7", "7/10/3", 23008, 9004, "10/13/4", 11, "{\"value\":5,\"done\":true}", "{\"done\":true}", "12/13/4", "out", "12/15/4", 13, 14, "14/15/4", 51, "14/18/4", 5, 15, 6, "15/18/6", "1,2", "{\"value\":16,\"done\":false}", true]));
-  });
+      ).toEqual(
+        everywhere([
+          1,
+          2,
+          "2/0/0",
+          6,
+          "2/4/0",
+          "3,4",
+          "5/4/0",
+          5,
+          6,
+          "5/7/0",
+          "1,2",
+          "5/7/3",
+          "6,8,9,7",
+          "7/10/3",
+          23008,
+          9004,
+          "10/13/4",
+          11,
+          '{"value":5,"done":true}',
+          '{"done":true}',
+          "12/13/4",
+          "out",
+          "12/15/4",
+          13,
+          14,
+          "14/15/4",
+          51,
+          "14/18/4",
+          5,
+          15,
+          6,
+          "15/18/6",
+          "1,2",
+          '{"value":16,"done":false}',
+          true,
+        ]),
+      );
+    },
+  );
 
   test.concurrent("closure outlives its graph", async () => {
     expect(
@@ -1033,33 +1077,30 @@ describe("Bun.ModuleGraph with --aot", () => {
   });
 });
 
-test.each(["forEach", "map"])(
-  "an uncaught error from the callback of %s is reported",
-  async method => {
-    using dir = tempDir("compile-aot-uncaught", {
-      "entry.ts": `[1].${method}(function callback() { throw new Error("thrown in the callback"); });`,
-    });
-    await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "--aot", "entry.ts", "--outfile", "out"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    expect([await build.stderr.text(), await build.exited]).toEqual([expect.not.stringContaining("error"), 0]);
-    await using proc = Bun.spawn({ cmd: [join(String(dir), "out")], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, firstLines: stderr.split("\n").slice(0, 3), exitCode }).toEqual({
-      stdout: "",
-      firstLines: [
-        "error: thrown in the callback",
-        expect.stringMatching(/^ +at callback \(.*entry\.ts:\d+:\d+\)$/),
-        expect.stringMatching(new RegExp(`^ +at ${method} `)),
-      ],
-      exitCode: 1,
-    });
-  },
-);
+test.each(["forEach", "map"])("an uncaught error from the callback of %s is reported", async method => {
+  using dir = tempDir("compile-aot-uncaught", {
+    "entry.ts": `[1].${method}(function callback() { throw new Error("thrown in the callback"); });`,
+  });
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", "--compile", "--aot", "entry.ts", "--outfile", "out"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect([await build.stderr.text(), await build.exited]).toEqual([expect.not.stringContaining("error"), 0]);
+  await using proc = Bun.spawn({ cmd: [join(String(dir), "out")], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, firstLines: stderr.split("\n").slice(0, 3), exitCode }).toEqual({
+    stdout: "",
+    firstLines: [
+      "error: thrown in the callback",
+      expect.stringMatching(/^ +at callback \(.*entry\.ts:\d+:\d+\)$/),
+      expect.stringMatching(new RegExp(`^ +at ${method} `)),
+    ],
+    exitCode: 1,
+  });
+});
 
 test("image and program data are used", async () => {
   using dir = tempDir("compile-aot-address", {
@@ -1093,35 +1134,36 @@ test("image and program data are used", async () => {
   });
 });
 
-test.each([
-  ["without a JIT", { BUN_JSC_useJIT: "0" }, ["--aot"]],
-])("a build %s produces the same code", async (_, env, flags) => {
-  using dir = tempDir("compile-aot-builder", {
-    "entry.ts": `console.log(/(\\d+)-(\\w+)/.exec("abc 123-foo")!.slice(1).join());`,
-  });
-  async function imageOf(outfile: string, env: Record<string, string>, flags: string[]) {
-    await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", ...flags, "entry.ts", "--outfile", outfile],
-      env: { ...bunEnv, ...env },
-      cwd: String(dir),
-      stdout: "ignore",
-      stderr: "pipe",
+test.each([["without a JIT", { BUN_JSC_useJIT: "0" }, ["--aot"]]])(
+  "a build %s produces the same code",
+  async (_, env, flags) => {
+    using dir = tempDir("compile-aot-builder", {
+      "entry.ts": `console.log(/(\\d+)-(\\w+)/.exec("abc 123-foo")!.slice(1).join());`,
     });
-    expect([await build.stderr.text(), await build.exited]).toEqual(["", 0]);
-    await using proc = Bun.spawn({
-      cmd: [join(String(dir), outfile)],
-      env: { ...bunEnv, BUN_AOT_VERBOSE: "1" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, exitCode }).toEqual({ stdout: "123,foo\n", exitCode: 0 });
-    return stderr.match(/^\[aot\] image: \d+ bytes, \d+ of code/m)?.[0];
-  }
-  const [expected, actual] = await Promise.all([imageOf("a", {}, ["--aot"]), imageOf("b", env, flags)]);
-  expect(expected).toStartWith("[aot] image: ");
-  expect(actual).toBe(expected);
-});
+    async function imageOf(outfile: string, env: Record<string, string>, flags: string[]) {
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", ...flags, "entry.ts", "--outfile", outfile],
+        env: { ...bunEnv, ...env },
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      expect([await build.stderr.text(), await build.exited]).toEqual(["", 0]);
+      await using proc = Bun.spawn({
+        cmd: [join(String(dir), outfile)],
+        env: { ...bunEnv, BUN_AOT_VERBOSE: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, exitCode }).toEqual({ stdout: "123,foo\n", exitCode: 0 });
+      return stderr.match(/^\[aot\] image: \d+ bytes, \d+ of code/m)?.[0];
+    }
+    const [expected, actual] = await Promise.all([imageOf("a", {}, ["--aot"]), imageOf("b", env, flags)]);
+    expect(expected).toStartWith("[aot] image: ");
+    expect(actual).toBe(expected);
+  },
+);
 
 test("file imports evaluate to the paths of the embedded files", async () => {
   using dir = tempDir("compile-aot-file-imports", {
@@ -1380,21 +1422,24 @@ test("image size limit is a build error", async () => {
   expect(existsSync(join(String(dir), "out"))).toBe(false);
 });
 
-test.each(["index", "frame", "callSites", "slots"])("a function record over its limit (%s) is a build error", async limit => {
-  using dir = tempDir("compile-aot-record-limit", { "entry.ts": `console.log(1);` });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", "entry.ts", "--outfile", "out"],
-    env: { ...bunEnv, BUN_JSC_aotImageLimitToExceedForTesting: limit },
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain("error: --aot: the program is too large");
-  expect(stderr).not.toContain("AOT: ");
-  expect(exitCode).toBe(1);
-  expect(existsSync(join(String(dir), "out"))).toBe(false);
-});
+test.each(["index", "frame", "callSites", "slots"])(
+  "a function record over its limit (%s) is a build error",
+  async limit => {
+    using dir = tempDir("compile-aot-record-limit", { "entry.ts": `console.log(1);` });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--aot", "entry.ts", "--outfile", "out"],
+      env: { ...bunEnv, BUN_JSC_aotImageLimitToExceedForTesting: limit },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("error: --aot: the program is too large");
+    expect(stderr).not.toContain("AOT: ");
+    expect(exitCode).toBe(1);
+    expect(existsSync(join(String(dir), "out"))).toBe(false);
+  },
+);
 
 test("code that cannot be compiled is a build error at its file, line and column", async () => {
   using dir = tempDir("compile-aot-declined", {
@@ -1413,7 +1458,9 @@ console.log(countDown(3));`,
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const why = "cannot be compiled ahead of time: it holds so many values at once";
   expect(stderr).toMatch(new RegExp("error: --aot: `countDown` " + why + "[^\\n]*\\n\\s+at [^\\n]*entry\\.ts:3:1\\b"));
-  expect(stderr).toMatch(new RegExp("error: --aot: the top-level code " + why + "[^\\n]*\\n\\s+at [^\\n]*entry\\.ts:1:1\\b"));
+  expect(stderr).toMatch(
+    new RegExp("error: --aot: the top-level code " + why + "[^\\n]*\\n\\s+at [^\\n]*entry\\.ts:1:1\\b"),
+  );
   expect(stderr).not.toContain("AOT: ");
   expect(exitCode).toBe(1);
   expect(existsSync(join(String(dir), "out"))).toBe(false);
@@ -1429,7 +1476,9 @@ test("an entry function that is not compiled is a build error", async () => {
     stderr: "pipe",
   });
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain("error: --aot: internal error: the entry function of a module was not compiled: it holds so many values at once");
+  expect(stderr).toContain(
+    "error: --aot: internal error: the entry function of a module was not compiled: it holds so many values at once",
+  );
   expect(stderr).not.toMatch(/^\s+at .*:0$/m);
   expect(stderr).not.toContain("AOT: ");
   expect(exitCode).toBe(1);
@@ -1721,7 +1770,10 @@ describe("--aot at run time", () => {
     ["equal literals share a string", (i: number) => "a literal that is repeated", 100],
     ["different literals do not", (i: number) => "a literal that is not repeated " + i, 3000],
   ] as const)("%s", async (_, literal, atLeast) => {
-    const rows = Array.from({ length: 3000 }, (_, i) => `  { kind: ${JSON.stringify(literal(i))}, list: [${JSON.stringify(literal(i))}, "x${i % 7}y"] },`);
+    const rows = Array.from(
+      { length: 3000 },
+      (_, i) => `  { kind: ${JSON.stringify(literal(i))}, list: [${JSON.stringify(literal(i))}, "x${i % 7}y"] },`,
+    );
     const { stdout, stderr, exitCode } = await run(`
       import { heapStats } from "bun:jsc";
       const rows = [
@@ -1753,6 +1805,10 @@ test("--aot with --bytecode-order is an error", async () => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "error: --aot does not support --bytecode-order\n", exitCode: 1 });
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "",
+    stderr: "error: --aot does not support --bytecode-order\n",
+    exitCode: 1,
+  });
   expect(existsSync(join(String(dir), "out"))).toBe(false);
 });

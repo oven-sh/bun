@@ -119,11 +119,17 @@ impl Rule {
     }
 
     pub fn named(name: &[u8]) -> Option<Rule> {
-        RULES.iter().find(|info| info.name.as_bytes() == name).map(|info| info.rule)
+        RULES
+            .iter()
+            .find(|info| info.name.as_bytes() == name)
+            .map(|info| info.rule)
     }
 
     pub fn of_code(code: u32) -> Option<Rule> {
-        RULES.iter().find(|info| info.codes.contains(&code)).map(|info| info.rule)
+        RULES
+            .iter()
+            .find(|info| info.codes.contains(&code))
+            .map(|info| info.rule)
     }
 }
 
@@ -173,7 +179,9 @@ impl Baseline {
         for (path, counts) in json.get(b"files")?.as_object()? {
             let mut of_file = [0; Rule::COUNT];
             for (rule, count) in counts.as_object()? {
-                let Json::Number(count) = count else { return None };
+                let Json::Number(count) = count else {
+                    return None;
+                };
                 if let Some(rule) = Rule::named(rule) {
                     of_file[rule as usize] = *count as u32;
                 }
@@ -185,12 +193,29 @@ impl Baseline {
 
     fn to_text(&self) -> Vec<u8> {
         let mut text = b"{\n  \"version\": 1,\n  \"files\": {".to_vec();
-        for (index, (path, counts)) in self.allowed.iter().filter(|file| file.1.iter().any(|&count| count > 0)).enumerate() {
+        for (index, (path, counts)) in self
+            .allowed
+            .iter()
+            .filter(|file| file.1.iter().any(|&count| count > 0))
+            .enumerate()
+        {
             text.extend_from_slice(if index == 0 { b"\n    " } else { b",\n    " });
             Json::String(path.clone()).stringify(&mut text);
             text.extend_from_slice(b": { ");
-            for (position, (info, count)) in RULES.iter().zip(counts).filter(|rule| *rule.1 > 0).enumerate() {
-                text.extend_from_slice(format!("{}\"{}\": {count}", if position == 0 { "" } else { ", " }, info.name).as_bytes());
+            for (position, (info, count)) in RULES
+                .iter()
+                .zip(counts)
+                .filter(|rule| *rule.1 > 0)
+                .enumerate()
+            {
+                text.extend_from_slice(
+                    format!(
+                        "{}\"{}\": {count}",
+                        if position == 0 { "" } else { ", " },
+                        info.name
+                    )
+                    .as_bytes(),
+                );
             }
             text.extend_from_slice(b" }");
         }
@@ -229,9 +254,17 @@ impl Settings {
             let rule = match Rule::named(name) {
                 Some(rule) => Some(rule),
                 None if name == EVERY_RULE.as_bytes() => None,
-                None => return Err(UnknownRule { written: name.to_vec() }),
+                None => {
+                    return Err(UnknownRule {
+                        written: name.to_vec(),
+                    });
+                }
             };
-            self.settings.push(Setting { rule, severity, scope: scope.filter(|scope| !scope.is_empty()).map(Box::from) });
+            self.settings.push(Setting {
+                rule,
+                severity,
+                scope: scope.filter(|scope| !scope.is_empty()).map(Box::from),
+            });
         }
         Ok(())
     }
@@ -256,8 +289,14 @@ struct PragmaScope {
 }
 
 fn parse_pragma(comment: &[u8]) -> Option<(Severity, [bool; Rule::COUNT])> {
-    let written = comment.strip_prefix(b"//")?.trim_ascii().strip_prefix(PRAGMA_PREFIX)?;
-    let word_len = written.iter().take_while(|byte| byte.is_ascii_alphabetic()).count();
+    let written = comment
+        .strip_prefix(b"//")?
+        .trim_ascii()
+        .strip_prefix(PRAGMA_PREFIX)?;
+    let word_len = written
+        .iter()
+        .take_while(|byte| byte.is_ascii_alphabetic())
+        .count();
     let (word, rest) = written.split_at(word_len);
     if word == STRICT_PRAGMA && rest.trim_ascii().is_empty() {
         return Some((Severity::Deny, [true; Rule::COUNT]));
@@ -278,16 +317,34 @@ fn add_pragma_scopes(file: FileId, hir: &File<'_>, scopes: &mut Vec<PragmaScope>
         return;
     }
     for comment in hir.comments.iter().filter(|comment| !comment.is_block) {
-        let Some((severity, applies_to)) = parse_pragma(&text[comment.pos as usize..comment.end as usize]) else { continue };
+        let Some((severity, applies_to)) =
+            parse_pragma(&text[comment.pos as usize..comment.end as usize])
+        else {
+            continue;
+        };
         let start = comment.next_token_start;
         let end = if comment.prev_token_end == 0 {
             Some(text.len() as u32)
         } else {
-            let statements = hir.stmts.iter().filter(|statement| statement.start == start).map(|statement| statement.loc.end);
-            let members = hir.members.iter().filter(|member| member.start == start).map(|member| member.loc.end);
+            let statements = hir
+                .stmts
+                .iter()
+                .filter(|statement| statement.start == start)
+                .map(|statement| statement.loc.end);
+            let members = hir
+                .members
+                .iter()
+                .filter(|member| member.start == start)
+                .map(|member| member.loc.end);
             statements.chain(members).max()
         };
-        scopes.extend(end.map(|end| PragmaScope { file, start, end, severity, applies_to }));
+        scopes.extend(end.map(|end| PragmaScope {
+            file,
+            start,
+            end,
+            severity,
+            applies_to,
+        }));
     }
 }
 
@@ -309,32 +366,82 @@ impl Scopes {
             None => *severities = [setting.severity; Rule::COUNT],
         };
         let mut pragmas = Vec::new();
-        for (index, module) in files.modules.iter().enumerate().filter(|(_, module)| !module.is_lib && module.builtin.is_none() && !matches!(module.hir.kind, FileKind::Declaration | FileKind::Json)) {
+        for (index, module) in files.modules.iter().enumerate().filter(|(_, module)| {
+            !module.is_lib
+                && module.builtin.is_none()
+                && !matches!(module.hir.kind, FileKind::Declaration | FileKind::Json)
+        }) {
             add_pragma_scopes(FileId(index as u32), &module.hir, &mut pragmas);
         }
-        let is_denied_by_pragma = pragmas.iter().any(|pragma| pragma.severity == Severity::Deny);
+        let is_denied_by_pragma = pragmas
+            .iter()
+            .any(|pragma| pragma.severity == Severity::Deny);
         let mut outside_files = default_severities();
-        for setting in settings.settings.iter().filter(|setting| setting.scope.is_none()) {
+        for setting in settings
+            .settings
+            .iter()
+            .filter(|setting| setting.scope.is_none())
+        {
             apply(&mut outside_files, setting);
         }
-        if settings.settings.iter().all(|setting| setting.scope.is_none()) {
-            let is_enabled = outside_files.map(|severity| is_denied_by_pragma || severity != Severity::Allow);
-            return Scopes { outside_files, by_file: Vec::new(), pragmas, is_enabled, base: base.to_vec(), baseline: settings.baseline.clone(), updates_baseline: settings.updates_baseline, counts: Default::default() };
+        if settings
+            .settings
+            .iter()
+            .all(|setting| setting.scope.is_none())
+        {
+            let is_enabled =
+                outside_files.map(|severity| is_denied_by_pragma || severity != Severity::Allow);
+            return Scopes {
+                outside_files,
+                by_file: Vec::new(),
+                pragmas,
+                is_enabled,
+                base: base.to_vec(),
+                baseline: settings.baseline.clone(),
+                updates_baseline: settings.updates_baseline,
+                counts: Default::default(),
+            };
         }
-        let patterns: Vec<Option<PathPattern>> = settings.settings.iter().map(|setting| setting.scope.as_deref().map(|scope| PathPattern::new(scope, base, files.is_case_sensitive))).collect();
+        let patterns: Vec<Option<PathPattern>> = settings
+            .settings
+            .iter()
+            .map(|setting| {
+                setting
+                    .scope
+                    .as_deref()
+                    .map(|scope| PathPattern::new(scope, base, files.is_case_sensitive))
+            })
+            .collect();
         let by_file: Vec<Severities> = (files.modules.iter())
             .map(|module| {
                 let mut severities = default_severities();
                 for (setting, pattern) in settings.settings.iter().zip(&patterns) {
-                    if pattern.as_ref().is_none_or(|pattern| pattern.matches(module.file_name())) {
+                    if pattern
+                        .as_ref()
+                        .is_none_or(|pattern| pattern.matches(module.file_name()))
+                    {
                         apply(&mut severities, setting);
                     }
                 }
                 severities
             })
             .collect();
-        let is_enabled = std::array::from_fn(|rule| is_denied_by_pragma || by_file.iter().any(|severities| severities[rule] != Severity::Allow));
-        Scopes { outside_files, by_file, pragmas, is_enabled, base: base.to_vec(), baseline: settings.baseline.clone(), updates_baseline: settings.updates_baseline, counts: Default::default() }
+        let is_enabled = std::array::from_fn(|rule| {
+            is_denied_by_pragma
+                || by_file
+                    .iter()
+                    .any(|severities| severities[rule] != Severity::Allow)
+        });
+        Scopes {
+            outside_files,
+            by_file,
+            pragmas,
+            is_enabled,
+            base: base.to_vec(),
+            baseline: settings.baseline.clone(),
+            updates_baseline: settings.updates_baseline,
+            counts: Default::default(),
+        }
     }
 
     pub fn is_enabled(&self, rule: Rule) -> bool {
@@ -343,7 +450,12 @@ impl Scopes {
 
     pub fn severity(&self, rule: Rule, file: FileId, pos: u32) -> Severity {
         let first = self.pragmas.partition_point(|pragma| pragma.file < file);
-        let around = self.pragmas[first..].iter().take_while(|pragma| pragma.file == file).filter(|pragma| pragma.applies_to[rule as usize] && (pragma.start..pragma.end).contains(&pos));
+        let around = self.pragmas[first..]
+            .iter()
+            .take_while(|pragma| pragma.file == file)
+            .filter(|pragma| {
+                pragma.applies_to[rule as usize] && (pragma.start..pragma.end).contains(&pos)
+            });
         match around.min_by_key(|pragma| pragma.end - pragma.start) {
             Some(innermost) => innermost.severity,
             None => self.by_file.get(file.idx()).unwrap_or(&self.outside_files)[rule as usize],
@@ -351,7 +463,13 @@ impl Scopes {
     }
 
     pub fn may_apply_in(&self, rule: Rule, file: FileId) -> bool {
-        self.by_file.get(file.idx()).unwrap_or(&self.outside_files)[rule as usize] != Severity::Allow || self.pragmas.iter().any(|pragma| pragma.file == file && pragma.severity != Severity::Allow && pragma.applies_to[rule as usize])
+        self.by_file.get(file.idx()).unwrap_or(&self.outside_files)[rule as usize]
+            != Severity::Allow
+            || self.pragmas.iter().any(|pragma| {
+                pragma.file == file
+                    && pragma.severity != Severity::Allow
+                    && pragma.applies_to[rule as usize]
+            })
     }
 
     pub fn severity_outside_files(&self, rule: Rule) -> Severity {
@@ -359,7 +477,11 @@ impl Scopes {
     }
 
     pub fn baseline_key(&self, name: &[u8], is_case_sensitive: bool) -> Vec<u8> {
-        if name.starts_with(b"/") { get_relative_path_from_directory(&self.base, name, is_case_sensitive) } else { name.to_vec() }
+        if name.starts_with(b"/") {
+            get_relative_path_from_directory(&self.base, name, is_case_sensitive)
+        } else {
+            name.to_vec()
+        }
     }
 
     fn has_baseline(&self) -> bool {
@@ -370,8 +492,15 @@ impl Scopes {
         if !self.has_baseline() {
             return Some(0);
         }
-        self.counts.lock().entry(key.to_vec()).or_insert([0; Rule::COUNT])[rule as usize] += count;
-        let allowed = self.baseline.as_ref().and_then(|baseline| baseline.allowed.get(key)).map_or(0, |counts| counts[rule as usize]);
+        self.counts
+            .lock()
+            .entry(key.to_vec())
+            .or_insert([0; Rule::COUNT])[rule as usize] += count;
+        let allowed = self
+            .baseline
+            .as_ref()
+            .and_then(|baseline| baseline.allowed.get(key))
+            .map_or(0, |counts| counts[rule as usize]);
         (!self.updates_baseline && count > allowed).then_some(allowed)
     }
 
@@ -387,16 +516,32 @@ impl Scopes {
         }
         let verdicts: FxHashMap<(FileId, Rule), (u32, Option<u32>)> = (counted.into_iter())
             .map(|((file, rule), count)| {
-                let key = self.baseline_key(files.module(file).file_name(), files.is_case_sensitive);
-                ((file, rule), (count, self.allowed_by_baseline(rule, &key, count)))
+                let key =
+                    self.baseline_key(files.module(file).file_name(), files.is_case_sensitive);
+                (
+                    (file, rule),
+                    (count, self.allowed_by_baseline(rule, &key, count)),
+                )
             })
             .collect();
         found.retain_mut(|finding| {
-            let Some(rule) = Rule::of_code(finding.code) else { return true };
+            let Some(rule) = Rule::of_code(finding.code) else {
+                return true;
+            };
             let (count, allowed) = verdicts[&(finding.file, rule)];
             if let Some(allowed) = allowed.filter(|&allowed| allowed > 0) {
-                let args = vec![allowed.to_string().into_bytes(), count.to_string().into_bytes()];
-                finding.related.push(CompilerDiagnostic { file: finding.file, start: finding.start, end: finding.end, code: 100039, args, related: Vec::new() });
+                let args = vec![
+                    allowed.to_string().into_bytes(),
+                    count.to_string().into_bytes(),
+                ];
+                finding.related.push(CompilerDiagnostic {
+                    file: finding.file,
+                    start: finding.start,
+                    end: finding.end,
+                    code: 100039,
+                    args,
+                    related: Vec::new(),
+                });
             }
             allowed.is_some()
         });
@@ -408,12 +553,22 @@ impl Scopes {
         }
         let counts = self.counts.lock();
         let before = self.baseline.clone().unwrap_or_default();
-        let count_now = |path: &[u8], rule: usize| counts.get(path).map_or(0, |counts| counts[rule]);
-        let lower_counts = (before.allowed.iter()).map(|(path, allowed)| (0..Rule::COUNT).filter(|&rule| self.is_enabled[rule] && count_now(path, rule) < allowed[rule]).count()).sum();
+        let count_now =
+            |path: &[u8], rule: usize| counts.get(path).map_or(0, |counts| counts[rule]);
+        let lower_counts = (before.allowed.iter())
+            .map(|(path, allowed)| {
+                (0..Rule::COUNT)
+                    .filter(|&rule| self.is_enabled[rule] && count_now(path, rule) < allowed[rule])
+                    .count()
+            })
+            .sum();
         let updated_text = self.updates_baseline.then(|| {
             let mut updated = before.clone();
             for path in counts.keys() {
-                updated.allowed.entry(path.clone()).or_insert([0; Rule::COUNT]);
+                updated
+                    .allowed
+                    .entry(path.clone())
+                    .or_insert([0; Rule::COUNT]);
             }
             for (path, allowed) in updated.allowed.iter_mut() {
                 for rule in (0..Rule::COUNT).filter(|&rule| self.is_enabled[rule]) {
@@ -422,6 +577,9 @@ impl Scopes {
             }
             updated.to_text()
         });
-        Some(BaselineOutcome { updated_text, lower_counts })
+        Some(BaselineOutcome {
+            updated_text,
+            lower_counts,
+        })
     }
 }

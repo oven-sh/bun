@@ -361,7 +361,7 @@ export function evaluateCMake(file: string, options: CMakeEvaluateOptions): CMak
       const inv = invocations[i]!;
       const end = skippedBlocks[inv.name];
       if (end !== undefined) {
-        for (let depth = 1; depth > 0; ) {
+        for (let depth = 1; depth > 0;) {
           const next = invocations[++i];
           if (next === undefined) throw new BuildError(`${inv.file}:${inv.line}: ${inv.name}() without ${end}()`);
           if (next.name === inv.name) depth++;

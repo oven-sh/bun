@@ -40,27 +40,48 @@ impl Declared {
         Declared::default()
     }
     pub fn prims(prims: u32) -> Declared {
-        Declared { prims, ..Declared::default() }
+        Declared {
+            prims,
+            ..Declared::default()
+        }
     }
     pub fn int(value: i64) -> Declared {
         Declared::ints(value, value)
     }
     pub fn ints(minimum: i64, maximum: i64) -> Declared {
-        Declared { ints: Some((minimum, maximum)), ..Declared::default() }
+        Declared {
+            ints: Some((minimum, maximum)),
+            ..Declared::default()
+        }
     }
     pub fn part(part: Part) -> Declared {
         let mut parts = SmallVec::new();
         parts.push(part);
-        Declared { parts, ..Declared::default() }
+        Declared {
+            parts,
+            ..Declared::default()
+        }
     }
     pub fn any_object() -> Declared {
-        Declared { any_object: true, any_function: true, ..Declared::default() }
+        Declared {
+            any_object: true,
+            any_function: true,
+            ..Declared::default()
+        }
     }
     pub fn any_function() -> Declared {
-        Declared { any_function: true, ..Declared::default() }
+        Declared {
+            any_function: true,
+            ..Declared::default()
+        }
     }
     pub fn anything() -> Declared {
-        Declared { prims: prim::ALL, any_object: true, any_function: true, ..Declared::default() }
+        Declared {
+            prims: prim::ALL,
+            any_object: true,
+            any_function: true,
+            ..Declared::default()
+        }
     }
     pub fn is_never(&self) -> bool {
         *self == Declared::default()
@@ -69,7 +90,10 @@ impl Declared {
         self.any_object || self.any_function || !self.parts.is_empty()
     }
     pub fn has_multiple_primitive_kinds(&self) -> bool {
-        let kinds = [prim::BOOLEAN, prim::STRING, prim::SYMBOL, prim::BIGINT].iter().filter(|&&kind| self.prims & kind != 0).count();
+        let kinds = [prim::BOOLEAN, prim::STRING, prim::SYMBOL, prim::BIGINT]
+            .iter()
+            .filter(|&&kind| self.prims & kind != 0)
+            .count();
         let numbers = usize::from(self.prims & prim::NUMBER != 0 || self.ints.is_some());
         !self.has_objects() && kinds + numbers > 1
     }
@@ -93,7 +117,15 @@ impl Declared {
     }
     pub fn single_layout(&self) -> Option<LayoutId> {
         match self.parts[..] {
-            [Part::Class(layout)] if layout.is_some() && self.prims & !prim::NULLISH == 0 && self.ints.is_none() && !self.any_object && !self.any_function => Some(layout),
+            [Part::Class(layout)]
+                if layout.is_some()
+                    && self.prims & !prim::NULLISH == 0
+                    && self.ints.is_none()
+                    && !self.any_object
+                    && !self.any_function =>
+            {
+                Some(layout)
+            }
             _ => None,
         }
     }
@@ -109,7 +141,12 @@ impl Declared {
         self.prims & !other.prims == 0
             && (!self.any_object || other.any_object)
             && (!self.any_function || other.any_function)
-            && self.ints.is_none_or(|(minimum, maximum)| other.prims & prim::NUMBER != 0 || other.ints.is_some_and(|within| within.0 <= minimum && maximum <= within.1))
+            && self.ints.is_none_or(|(minimum, maximum)| {
+                other.prims & prim::NUMBER != 0
+                    || other
+                        .ints
+                        .is_some_and(|within| within.0 <= minimum && maximum <= within.1)
+            })
             && (other.any_object || self.parts.iter().all(is_part_subset))
     }
 
@@ -131,7 +168,14 @@ impl Declared {
             parts.sort_unstable();
             parts.dedup();
         }
-        Declared { prims, ints, parts, any_object, any_function: self.any_function || other.any_function }.normalized()
+        Declared {
+            prims,
+            ints,
+            parts,
+            any_object,
+            any_function: self.any_function || other.any_function,
+        }
+        .normalized()
     }
 
     pub fn merge(&mut self, other: &Declared) {
@@ -155,7 +199,11 @@ impl Declared {
                 }
             }
         }
-        if self.has_literal_string() && (self.prims & !(prim::LITERAL_STRING | prim::NULLISH) != 0 || self.ints.is_some() || self.has_objects()) {
+        if self.has_literal_string()
+            && (self.prims & !(prim::LITERAL_STRING | prim::NULLISH) != 0
+                || self.ints.is_some()
+                || self.has_objects())
+        {
             self.prims = self.prims & !prim::LITERAL_STRING | prim::STRING;
         }
     }
@@ -163,15 +211,27 @@ impl Declared {
     const PLAIN_COUNT: usize = 1 << 11;
 
     fn plain_index(&self) -> Option<usize> {
-        (self.parts.is_empty() && self.ints.is_none()).then_some(self.prims as usize | usize::from(self.any_object) << 9 | usize::from(self.any_function) << 10)
+        (self.parts.is_empty() && self.ints.is_none()).then_some(
+            self.prims as usize
+                | usize::from(self.any_object) << 9
+                | usize::from(self.any_function) << 10,
+        )
     }
 
     pub fn normalized(self) -> Declared {
-        if self.prims & !(prim::LITERAL_STRING | prim::NULLISH) != 0 || self.ints.is_some() || self.has_objects() { self.with_literal_string_widened() } else { self }
+        if self.prims & !(prim::LITERAL_STRING | prim::NULLISH) != 0
+            || self.ints.is_some()
+            || self.has_objects()
+        {
+            self.with_literal_string_widened()
+        } else {
+            self
+        }
     }
 }
 
-static WIDENED_LITERAL_STRINGS: LazyLock<[Declared; 4]> = LazyLock::new(|| [0, 1, 2, 3].map(|nullish| Declared::prims(prim::STRING | nullish)));
+static WIDENED_LITERAL_STRINGS: LazyLock<[Declared; 4]> =
+    LazyLock::new(|| [0, 1, 2, 3].map(|nullish| Declared::prims(prim::STRING | nullish)));
 
 pub struct DeclaredTable {
     pub list: Vec<Declared>,
@@ -182,7 +242,12 @@ pub struct DeclaredTable {
 
 impl Default for DeclaredTable {
     fn default() -> DeclaredTable {
-        let mut table = DeclaredTable { list: Vec::new(), ids: FxHashMap::default(), plain_ids: Vec::new(), anything: TyId::NONE };
+        let mut table = DeclaredTable {
+            list: Vec::new(),
+            ids: FxHashMap::default(),
+            plain_ids: Vec::new(),
+            anything: TyId::NONE,
+        };
         table.anything = table.intern(Declared::anything());
         table
     }
@@ -214,7 +279,11 @@ impl DeclaredTable {
     }
     pub fn get_widened(&self, id: TyId) -> &Declared {
         let declared = &self.list[id.idx()];
-        if declared.has_literal_string() { &WIDENED_LITERAL_STRINGS[(declared.prims & prim::NULLISH) as usize] } else { declared }
+        if declared.has_literal_string() {
+            &WIDENED_LITERAL_STRINGS[(declared.prims & prim::NULLISH) as usize]
+        } else {
+            declared
+        }
     }
     pub fn find(&self, declared: &Declared) -> Option<TyId> {
         match declared.plain_index() {
@@ -235,8 +304,14 @@ mod tests {
 
     #[test]
     fn class_without_layout_has_no_single_layout() {
-        let of_class = |layout: LayoutId| Declared { parts: [Part::Class(layout)].into_iter().collect(), ..Declared::default() };
-        assert_eq!(of_class(LayoutId::new(3)).single_layout(), Some(LayoutId::new(3)));
+        let of_class = |layout: LayoutId| Declared {
+            parts: [Part::Class(layout)].into_iter().collect(),
+            ..Declared::default()
+        };
+        assert_eq!(
+            of_class(LayoutId::new(3)).single_layout(),
+            Some(LayoutId::new(3))
+        );
         assert_eq!(of_class(LayoutId::NONE).single_layout(), None);
     }
 }

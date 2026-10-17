@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "./supported";
 
 const files = {
   "keys.cjs": `"use strict";\nconst keys = { kState: Symbol("state"), kCount: Symbol("count") };\nmodule.exports = keys;\n`,
@@ -25,7 +25,13 @@ const files = {
 };
 
 async function run(cwd: string, args: string[], env: Record<string, string> = {}) {
-  await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: { ...bunEnv, ...env }, stdout: "pipe", stderr: "pipe" });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    cwd,
+    env: { ...bunEnv, ...env },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
@@ -42,23 +48,30 @@ function operationsOf(map: string, name: string) {
   return found;
 }
 
-test(
-  "bun run --aot: the symbols that a CommonJS module that only makes values exports are names, and the host still finds the module",
-  async () => {
-    using dir = tempDir("aot-symbols-of-a-leaf-module-in-place", files);
-    const mapPath = join(String(dir), "main.map");
-    const plain = await run(String(dir), ["run", "./main.cjs"]);
-    const compiled = await run(String(dir), ["run", "--debug-aot", "./main.cjs"], { BUN_JSC_crashIfInterpreterIsUsed: "1", BUN_JSC_aotMapFilePath: mapPath });
-    expect(compiled.stderr).not.toContain("crashIfInterpreterIsUsed");
-    expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
-    const asked = await run(String(dir), ["run", "--debug-aot", "./asks-the-host.cjs"], { BUN_JSC_crashIfInterpreterIsUsed: "1" });
-    expect({ stdout: asked.stdout, exitCode: asked.exitCode }).toEqual({ stdout: (await run(String(dir), ["run", "./asks-the-host.cjs"])).stdout, exitCode: 0 });
-    const map = readFileSync(mapPath, "utf8");
-    for (const name of ["Thing", "bump"]) {
-      const bodies = operationsOf(map, name);
-      expect({ name, bodies: bodies.length > 0 }).toEqual({ name, bodies: true });
-      expect({ name, byKey: bodies.flat().filter(operation => operation === "GetByVal" || operation === "PutByVal") }).toEqual({ name, byKey: [] });
-    }
-  },
-  120_000,
-);
+test("bun run --aot: the symbols that a CommonJS module that only makes values exports are names, and the host still finds the module", async () => {
+  using dir = tempDir("aot-symbols-of-a-leaf-module-in-place", files);
+  const mapPath = join(String(dir), "main.map");
+  const plain = await run(String(dir), ["run", "./main.cjs"]);
+  const compiled = await run(String(dir), ["run", "--debug-aot", "./main.cjs"], {
+    BUN_JSC_crashIfInterpreterIsUsed: "1",
+    BUN_JSC_aotMapFilePath: mapPath,
+  });
+  expect(compiled.stderr).not.toContain("crashIfInterpreterIsUsed");
+  expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
+  const asked = await run(String(dir), ["run", "--debug-aot", "./asks-the-host.cjs"], {
+    BUN_JSC_crashIfInterpreterIsUsed: "1",
+  });
+  expect({ stdout: asked.stdout, exitCode: asked.exitCode }).toEqual({
+    stdout: (await run(String(dir), ["run", "./asks-the-host.cjs"])).stdout,
+    exitCode: 0,
+  });
+  const map = readFileSync(mapPath, "utf8");
+  for (const name of ["Thing", "bump"]) {
+    const bodies = operationsOf(map, name);
+    expect({ name, bodies: bodies.length > 0 }).toEqual({ name, bodies: true });
+    expect({
+      name,
+      byKey: bodies.flat().filter(operation => operation === "GetByVal" || operation === "PutByVal"),
+    }).toEqual({ name, byKey: [] });
+  }
+}, 120_000);

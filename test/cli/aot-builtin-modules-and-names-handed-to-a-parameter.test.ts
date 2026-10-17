@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { test } from "../aot/supported";
-import { statSync } from "node:fs";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { statSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "../aot/supported";
 
 const wire = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
 
@@ -41,13 +41,22 @@ test("a name that only written strings are handed to is a written name", async (
   const plain = await built("plain.mjs", `import { join } from "node:path";\nconsole.log(typeof join);\n`);
   for (const [entry, text] of Object.entries(known)) {
     const found = await built(entry, text);
-    expect({ entry, stdout: found.stdout, exitCode: found.exitCode, grows: found.size - plain.size > 2 * 1024 * 1024 }).toEqual({ entry, stdout: found.plain, exitCode: 0, grows: false });
+    expect({
+      entry,
+      stdout: found.stdout,
+      exitCode: found.exitCode,
+      grows: found.size - plain.size > 2 * 1024 * 1024,
+    }).toEqual({ entry, stdout: found.plain, exitCode: 0, grows: false });
   }
 }, 240_000);
 
 test("a name that anything else can reach stays a computed one", async () => {
   for (const [entry, text] of Object.entries(unknown)) {
     const found = await built(entry, text);
-    expect({ entry, stdout: found.stdout, exitCode: found.exitCode }).toEqual({ entry, stdout: found.plain, exitCode: 0 });
+    expect({ entry, stdout: found.stdout, exitCode: found.exitCode }).toEqual({
+      entry,
+      stdout: found.plain,
+      exitCode: 0,
+    });
   }
 }, 480_000);

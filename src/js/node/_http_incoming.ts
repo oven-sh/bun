@@ -191,7 +191,12 @@ function checkRequestPrototype(): boolean {
   if (!IS_BUN_AOT) return false;
   if (failedRequestPrototypeChecks > 1000) return false;
   const sample = createIncomingMessage("", "", null, false, null);
-  if (resolvesToOriginals(sample, requestOriginals) && storesMakeOwnProperties(sample) && $setCheckedStructure(IncomingMessagePrototype, 11)) return true;
+  if (
+    resolvesToOriginals(sample, requestOriginals) &&
+    storesMakeOwnProperties(sample) &&
+    $setCheckedStructure(IncomingMessagePrototype, 11)
+  )
+    return true;
   failedRequestPrototypeChecks++;
   return false;
 }
@@ -450,9 +455,19 @@ function resumeConnection(req: IncomingMessageFields) {
     const state = connection.readableState;
     if (socket._readableState === state) {
       const flags = state.flags;
-      if ((flags & (kHasReadable | kReadable)) === kHasReadable || (flags & (kDestroyed | kErrorEmitted | kEndEmitted)) !== 0) return;
+      if (
+        (flags & (kHasReadable | kReadable)) === kHasReadable ||
+        (flags & (kDestroyed | kErrorEmitted | kEndEmitted)) !== 0
+      )
+        return;
       if (req.upgrade || socket[kHandoffResponse] !== undefined) onIncomingMessageResumeNodeHTTPResponse.$call(req);
-      else if (!socket._paused && (connection.streamingEnabled || connection.upgradeIncoming !== undefined || (flags & (kFlowing | kHasPaused | kPaused)) !== (kFlowing | kHasPaused))) socket.resume();
+      else if (
+        !socket._paused &&
+        (connection.streamingEnabled ||
+          connection.upgradeIncoming !== undefined ||
+          (flags & (kFlowing | kHasPaused | kPaused)) !== (kFlowing | kHasPaused))
+      )
+        socket.resume();
       return;
     }
   }
@@ -878,7 +893,8 @@ const { _read: incomingMessageRead, _destroy: incomingMessageDestroy } = Incomin
 
 if (IS_BUN_AOT) {
   for (const name of ["_read", "_destroy", "_dump"]) requestOriginals.push(originalOf(IncomingMessage.prototype, name));
-  for (const name of ["read", "push", "resume", "destroy", "removeAllListeners", "readableEnded"]) requestOriginals.push(originalOf(Readable.prototype, name));
+  for (const name of ["read", "push", "resume", "destroy", "removeAllListeners", "readableEnded"])
+    requestOriginals.push(originalOf(Readable.prototype, name));
   for (const name of ["emit", "listenerCount"]) requestOriginals.push(originalOf(EventEmitterPrototype, name));
   for (const name of ["writable", "_writableState"]) requestOriginals.push(absentName(name));
 }
@@ -891,10 +907,7 @@ function isUnheard(req: IncomingMessageFields, name) {
 }
 
 function endsUnwatched(req: IncomingMessageFields) {
-  if (
-    !req[noBodySymbol] ||
-    (!(IS_BUN_AOT && isPlainRequest(req)) && req.resume !== resume)
-  ) {
+  if (!req[noBodySymbol] || (!(IS_BUN_AOT && isPlainRequest(req)) && req.resume !== resume)) {
     return false;
   }
   const state: ReadableState = req._readableState;
@@ -948,7 +961,8 @@ function destroyOnNextTick(req: IncomingMessageFields, state: ReadableState) {
   if (
     !handle ||
     !req.complete ||
-    (!(IS_BUN_AOT && isPlainRequest(req)) && (req.writable || req._writableState || req.destroy !== destroy || req._destroy !== incomingMessageDestroy)) ||
+    (!(IS_BUN_AOT && isPlainRequest(req)) &&
+      (req.writable || req._writableState || req.destroy !== destroy || req._destroy !== incomingMessageDestroy)) ||
     req._readableState !== state ||
     !isUnheard(req, "end") ||
     !advanceFlags(state, kFlagsEnded, kFlagsDestroyed)
@@ -984,4 +998,14 @@ function onError(self, error, cb) {
   }
 }
 
-export { IncomingMessage, createIncomingMessage, dumpRequest, hasEmittedEnd, isRequestPrototypePlain, needsDump, kReqShouldKeepAlive, readStart, readStop };
+export {
+  IncomingMessage,
+  createIncomingMessage,
+  dumpRequest,
+  hasEmittedEnd,
+  isRequestPrototypePlain,
+  kReqShouldKeepAlive,
+  needsDump,
+  readStart,
+  readStop,
+};

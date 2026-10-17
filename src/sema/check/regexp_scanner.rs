@@ -1587,7 +1587,11 @@ pub fn get_spelling_suggestion<'c, T: Copy>(
     };
     let is_ascii = name.is_ascii();
     let name_runes = if is_ascii { Vec::new() } else { runes(name) };
-    let length = if is_ascii { name.len() } else { name_runes.len() };
+    let length = if is_ascii {
+        name.len()
+    } else {
+        name_runes.len()
+    };
     let maximum_length_difference = 2.max((length as f64 * 0.34) as usize);
     // A candidate with a greater distance is not suggested.
     let mut best_distance = (length as f64 * 0.4).floor() + 0.9;
@@ -1605,7 +1609,9 @@ pub fn get_spelling_suggestion<'c, T: Copy>(
                 continue;
             }
             let differs_by_case = |a: u8, b: u8| a.to_ascii_lowercase() == b.to_ascii_lowercase();
-            let Some(distance) = levenshtein_with_max(name, candidate_name, best_distance, differs_by_case) else {
+            let Some(distance) =
+                levenshtein_with_max(name, candidate_name, best_distance, differs_by_case)
+            else {
                 continue;
             };
             if distance < best_distance {
@@ -1617,7 +1623,11 @@ pub fn get_spelling_suggestion<'c, T: Copy>(
             continue;
         }
         let of_ascii_name = if is_ascii { runes(name) } else { Vec::new() };
-        let name_runes = if is_ascii { &of_ascii_name } else { &name_runes };
+        let name_runes = if is_ascii {
+            &of_ascii_name
+        } else {
+            &name_runes
+        };
         let candidate_runes = runes(candidate_name);
         // Two-letter names are easy to distinguish, unless they differ only by case.
         let lower = |runes: &[char]| {
@@ -1630,7 +1640,8 @@ pub fn get_spelling_suggestion<'c, T: Copy>(
             continue;
         }
         let differs_by_case = |a: char, b: char| a.to_lowercase().eq(b.to_lowercase());
-        let Some(distance) = levenshtein_with_max(name_runes, &candidate_runes, best_distance, differs_by_case)
+        let Some(distance) =
+            levenshtein_with_max(name_runes, &candidate_runes, best_distance, differs_by_case)
         else {
             continue;
         };
@@ -1654,7 +1665,12 @@ pub(super) fn spelling_suggestion<'c>(
 
 /// `levenshteinWithMax`: a substitution costs 2, and a case change costs almost nothing. `None` for
 /// its -1: more than `max_value`.
-fn levenshtein_with_max<C: Copy + PartialEq>(s1: &[C], s2: &[C], max_value: f64, differs_by_case: impl Fn(C, C) -> bool) -> Option<f64> {
+fn levenshtein_with_max<C: Copy + PartialEq>(
+    s1: &[C],
+    s2: &[C],
+    max_value: f64,
+    differs_by_case: impl Fn(C, C) -> bool,
+) -> Option<f64> {
     let mut previous: smallvec::SmallVec<[f64; 40]> = (0..=s2.len()).map(|j| j as f64).collect();
     let mut current: smallvec::SmallVec<[f64; 40]> = smallvec::smallvec![0.0; s2.len() + 1];
     let big = max_value + 0.01;
@@ -1676,12 +1692,8 @@ fn levenshtein_with_max<C: Copy + PartialEq>(s1: &[C], s2: &[C], max_value: f64,
             let distance = if c1 == c2 {
                 previous[j - 1]
             } else {
-                let substitution = previous[j - 1]
-                    + if differs_by_case(c1, c2) {
-                        0.1
-                    } else {
-                        2.0
-                    };
+                let substitution =
+                    previous[j - 1] + if differs_by_case(c1, c2) { 0.1 } else { 2.0 };
                 (previous[j] + 1.0)
                     .min(current[j - 1] + 1.0)
                     .min(substitution)

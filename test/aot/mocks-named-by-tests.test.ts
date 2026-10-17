@@ -3,7 +3,9 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 const service = {
-  "tsconfig.json": JSON.stringify({ compilerOptions: { typeRoots: [join(import.meta.dir, "../../packages")], types: ["bun-types"] } }),
+  "tsconfig.json": JSON.stringify({
+    compilerOptions: { typeRoots: [join(import.meta.dir, "../../packages")], types: ["bun-types"] },
+  }),
   "service.ts": `
     export interface Job { id: number; done: boolean; label: string }
     export function load(id: number): Job { return { id, done: true, label: "real" }; }
@@ -112,13 +114,23 @@ async function seen(cwd: string, args: string[]) {
 
 const inPart = "what a spy returns lacks members that the type requires";
 
-test("bun test --aot holds what a spy returns to the type: " + inPart, async () => {
-  using dir = tempDir("mocks-named-by-tests", cases[inPart]);
-  await using ran = Bun.spawn({ cmd: [bunExe(), "test", "--aot", "./main.test.ts"], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stderr, exitCode] = await Promise.all([ran.stderr.text(), ran.exited]);
-  expect(stderr).toContain("TypeError: expected ");
-  expect(exitCode).toBe(1);
-}, 120_000);
+test(
+  "bun test --aot holds what a spy returns to the type: " + inPart,
+  async () => {
+    using dir = tempDir("mocks-named-by-tests", cases[inPart]);
+    await using ran = Bun.spawn({
+      cmd: [bunExe(), "test", "--aot", "./main.test.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([ran.stderr.text(), ran.exited]);
+    expect(stderr).toContain("TypeError: expected ");
+    expect(exitCode).toBe(1);
+  },
+  120_000,
+);
 
 test.concurrent.each(Object.keys(cases).filter(name => name !== inPart))(
   "bun test --aot prints what bun test prints: %s",

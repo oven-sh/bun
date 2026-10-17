@@ -1,7 +1,26 @@
 // @ts-check
 // Hardcoded module "node:_http_server"
 const { kConnection } = require("internal/http");
-const { kNeedDrain, kBytesWritten: kOutgoingBytesWritten, kChunkedBuffer, kChunkedLength, kCorked, kLenientValidation, kAccountingFlushScheduled, kBytesBuffered, kDispatcherDetached, kFramingFrozenChunked, kImplicitHeaderFromEnd, kMustCloseConnection, kPendingFinish, kPipelinedQueuedState, kReplayingPipelinedOps, kServerResponseStatistics, kSnapshotStatusCode, kSnapshotStatusMessage } = require("internal/http");
+const {
+  kNeedDrain,
+  kBytesWritten: kOutgoingBytesWritten,
+  kChunkedBuffer,
+  kChunkedLength,
+  kCorked,
+  kLenientValidation,
+  kAccountingFlushScheduled,
+  kBytesBuffered,
+  kDispatcherDetached,
+  kFramingFrozenChunked,
+  kImplicitHeaderFromEnd,
+  kMustCloseConnection,
+  kPendingFinish,
+  kPipelinedQueuedState,
+  kReplayingPipelinedOps,
+  kServerResponseStatistics,
+  kSnapshotStatusCode,
+  kSnapshotStatusMessage,
+} = require("internal/http");
 const { kCapture, kShapeMode } = require("internal/event_emitter_symbols");
 const EventEmitter: typeof import("node:events").EventEmitter = require("node:events");
 const { Stream } = require("node:stream");
@@ -102,7 +121,14 @@ const { FakeSocket } = require("internal/http/FakeSocket");
 const NumberIsNaN = Number.isNaN;
 const { tick1, tick2 } = require("internal/process/ticks");
 
-const { IncomingMessage, createIncomingMessage, dumpRequest, hasEmittedEnd, isRequestPrototypePlain, needsDump } = require("node:_http_incoming");
+const {
+  IncomingMessage,
+  createIncomingMessage,
+  dumpRequest,
+  hasEmittedEnd,
+  isRequestPrototypePlain,
+  needsDump,
+} = require("node:_http_incoming");
 const { OutgoingMessage, parseUniqueHeadersOption, setHeaderOfPlainResponse } = require("node:_http_outgoing");
 const OutgoingMessagePrototype = OutgoingMessage.prototype;
 let http1Fallback;
@@ -892,12 +918,20 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
 
         let http_res: ServerResponseFields;
         let listensForFinish = false;
-        if (IS_BUN_AOT && ResponseClass === ServerResponse && RequestClass === IncomingMessage && !isAncientHTTP && isResponsePrototypePlain()) {
+        if (
+          IS_BUN_AOT &&
+          ResponseClass === ServerResponse &&
+          RequestClass === IncomingMessage &&
+          !isAncientHTTP &&
+          isResponsePrototypePlain()
+        ) {
           listensForFinish = true;
           http_res = createServerResponse(
             http_req,
             handle,
-            isPlainSocket(socket) && socket._writableState === connection.writableState ? connection.writableState.highWaterMark : (socket.writableHighWaterMark ?? getDefaultHighWaterMark()),
+            isPlainSocket(socket) && socket._writableState === connection.writableState
+              ? connection.writableState.highWaterMark
+              : (socket.writableHighWaterMark ?? getDefaultHighWaterMark()),
             server.rejectNonStandardBodyWrites ?? false,
             server.keepAliveTimeout,
             method !== "HEAD",
@@ -2325,8 +2359,19 @@ function getNodeHTTPServerSocket() {
   netSocketResume = NetSocket.prototype.resume;
   if (IS_BUN_AOT && socketOriginals.length === 0) {
     const prototype = NodeHTTPServerSocket.prototype;
-    for (const name of ["destroyed", "readable", "readableHighWaterMark", "writableHighWaterMark", "resume", "setTimeout"]) socketOriginals.push(originalFoundFrom(prototype, name, false));
-    socketOriginals.push(originalFoundFrom(NetSocket.prototype, "resume", true), originalFoundFrom(DuplexPrototype, "resume", true));
+    for (const name of [
+      "destroyed",
+      "readable",
+      "readableHighWaterMark",
+      "writableHighWaterMark",
+      "resume",
+      "setTimeout",
+    ])
+      socketOriginals.push(originalFoundFrom(prototype, name, false));
+    socketOriginals.push(
+      originalFoundFrom(NetSocket.prototype, "resume", true),
+      originalFoundFrom(DuplexPrototype, "resume", true),
+    );
   }
   return NodeHTTPServerSocket;
 }
@@ -2526,7 +2571,12 @@ function checkResponsePrototype(): boolean {
   if (!IS_BUN_AOT) return false;
   if (failedResponsePrototypeChecks > 1000) return false;
   const sample = createServerResponse(null, null, 0, false, 0, true);
-  if (resolvesToOriginals(sample, responseOriginals) && storesMakeOwnProperties(sample) && $setCheckedStructure(ServerResponsePrototype, 4)) return true;
+  if (
+    resolvesToOriginals(sample, responseOriginals) &&
+    storesMakeOwnProperties(sample) &&
+    $setCheckedStructure(ServerResponsePrototype, 4)
+  )
+    return true;
   failedResponsePrototypeChecks++;
   return false;
 }
@@ -2578,7 +2628,14 @@ const emitCloseOfResponseNT = function emitCloseNT(res: ServerResponseFields) {
     res.emit("close");
   }
 };
-function createServerResponse(req: any, handle: any, highWaterMark: any, rejectNonStandardBodyWrites: any, keepAliveTimeout: any, hasBody: any): ServerResponseFields {
+function createServerResponse(
+  req: any,
+  handle: any,
+  highWaterMark: any,
+  rejectNonStandardBodyWrites: any,
+  keepAliveTimeout: any,
+  hasBody: any,
+): ServerResponseFields {
   if (!IS_BUN_AOT) return false;
   const capture = EventEmitterPrototype[kCapture];
   const events: any = { __proto__: null, finish: emitResponseFinish };
@@ -2950,7 +3007,12 @@ function onResponseFinishHandleSocket(server, socket, res: ServerResponseFields)
     return;
   }
   if (!socket || !server) return;
-  if (connection !== undefined && isPlainSocket(socket) && socket._readableState === connection.readableState && socket._writableState === connection.writableState) {
+  if (
+    connection !== undefined &&
+    isPlainSocket(socket) &&
+    socket._readableState === connection.readableState &&
+    socket._writableState === connection.writableState
+  ) {
     if ((connection.readableState.flags & connection.writableState.flags & kDestroyed) !== 0) return;
   } else if (socket.destroyed || typeof socket.setTimeout !== "function") {
     return;
@@ -3664,7 +3726,12 @@ function processInformationHeader(name, value) {
   return `${name}: ${value}\r\n`;
 }
 
-ServerResponse.prototype.writeInformation = function writeInformation(this: ServerResponseFields, statusCode, headers, cb) {
+ServerResponse.prototype.writeInformation = function writeInformation(
+  this: ServerResponseFields,
+  statusCode,
+  headers,
+  cb,
+) {
   if (this.headersSent) {
     throw $ERR_HTTP_HEADERS_SENT("write");
   }
@@ -3899,7 +3966,8 @@ function queueResponseFinished(res: ServerResponseFields, callback) {
 // 'close' is queued before the 'finish' listeners run, like Node.js's resOnFinish does.
 function emitResponseFinished(res: ServerResponseFields, callback) {
   tick1(emitCloseOfResponseNT, res);
-  if (isPlainResponse(res) && hasOnlyOwnFinishListener(res) && res._events.finish === emitResponseFinish) emitResponseFinish.$call(res);
+  if (isPlainResponse(res) && hasOnlyOwnFinishListener(res) && res._events.finish === emitResponseFinish)
+    emitResponseFinish.$call(res);
   else res.emit("finish");
   if (callback) {
     try {
@@ -3925,7 +3993,6 @@ function finishDrainedResponse(res) {
   res._callPendingCallbacks();
   emitResponseFinished(res, callback);
 }
-
 
 ServerResponse.prototype.write = function (this: ServerResponseFields, chunk, encoding, callback) {
   const handle = this[kHandle];
@@ -4417,9 +4484,18 @@ function failPendingWriteCallbacks(res, error) {
 OriginalWriteHeadFn = ServerResponse.prototype.writeHead;
 OriginalImplicitHeadFn = ServerResponse.prototype._implicitHeader;
 if (IS_BUN_AOT) {
-  for (const name of ["emit", "setHeader", "detachSocket", "_callPendingCallbacks", "writeHead", "_implicitHeader", "socket"])
+  for (const name of [
+    "emit",
+    "setHeader",
+    "detachSocket",
+    "_callPendingCallbacks",
+    "writeHead",
+    "_implicitHeader",
+    "socket",
+  ])
     responseOriginals.push(originalOf(ServerResponse.prototype, name));
-  for (const name of ["hasHeader", "_isLenientHeaderValidation"]) responseOriginals.push(originalOf(OutgoingMessagePrototype, name));
+  for (const name of ["hasHeader", "_isLenientHeaderValidation"])
+    responseOriginals.push(originalOf(OutgoingMessagePrototype, name));
   responseOriginals.push(originalAskedOfHolder(OutgoingMessagePrototype, "setHeader"));
 }
 

@@ -23,225 +23,212 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-export function from(items /*, mapFn, thisArg */)
-{
-    "use strict";
+export function from(items /*, mapFn, thisArg */) {
+  "use strict";
 
-    var mapFn = $argument(1);
+  var mapFn = $argument(1);
 
-    var thisArg;
+  var thisArg;
 
-    if (mapFn !== undefined) {
-        if (!$isCallable(mapFn))
-            throw new TypeError("Array.from requires that the second argument, when provided, be a function");
+  if (mapFn !== undefined) {
+    if (!$isCallable(mapFn))
+      throw new TypeError("Array.from requires that the second argument, when provided, be a function");
 
-        thisArg = $argument(2);
-    }
+    thisArg = $argument(2);
+  }
 
-    var arrayLike = $toObject(items, "Array.from requires an array-like object - not null or undefined");
+  var arrayLike = $toObject(items, "Array.from requires an array-like object - not null or undefined");
 
-    if (mapFn === undefined) {
-        var fastResult = $arrayFromFastWithoutMapFn(this, arrayLike);
-        if (fastResult)
-            return fastResult;
-    }
+  if (mapFn === undefined) {
+    var fastResult = $arrayFromFastWithoutMapFn(this, arrayLike);
+    if (fastResult) return fastResult;
+  }
 
-    var iteratorMethod = items[Symbol.iterator];
-    if (!$isUndefinedOrNull(iteratorMethod)) {
-        if (!$isCallable(iteratorMethod))
-            throw new TypeError("Array.from requires that the property of the first argument, items[Symbol.iterator], when exists, be a function");
-
-        var result = this !== $Array && $isConstructor(this) ? new this() : [];
-
-        var k = 0;
-        var iterator = iteratorMethod.$call(items);
-
-        // Since for-of loop once more looks up the @@iterator property of a given iterable,
-        // it could be observable if the user defines a getter for @@iterator.
-        // To avoid this situation, we define a wrapper object that @@iterator just returns a given iterator.
-        var wrapper = {
-            [Symbol.iterator]: function () { return iterator; }
-        };
-
-        for (var value of wrapper) {
-            if (k >= 9007199254740991)
-                throw new TypeError("Length exceeded the maximum array length");
-            if (mapFn === undefined)
-                $putByValDirect(result, k, value);
-            else
-                $putByValDirect(result, k, thisArg === undefined ? mapFn(value, k) : mapFn.$call(thisArg, value, k));
-            k += 1;
-        }
-
-        result.length = k;
-        return result;
-    }
-
-    var arrayLikeLength = $toLength(arrayLike.length);
-
-    var result = this !== $Array && $isConstructor(this) ? new this(arrayLikeLength) : $newArrayWithSize(arrayLikeLength);
-
-    var k = 0;
-    while (k < arrayLikeLength) {
-        var value = arrayLike[k];
-        if (mapFn === undefined)
-            $putByValDirect(result, k, value);
-        else
-            $putByValDirect(result, k, thisArg === undefined ? mapFn(value, k) : mapFn.$call(thisArg, value, k));
-        k += 1;
-    }
-
-    result.length = arrayLikeLength;
-    return result;
-}
-
-$linkTimeConstant;
-$visibility = "PrivateRecursive";
-export async function defaultAsyncFromAsyncIterator(iterator, mapFn, thisArg)
-{
-    "use strict";
+  var iteratorMethod = items[Symbol.iterator];
+  if (!$isUndefinedOrNull(iteratorMethod)) {
+    if (!$isCallable(iteratorMethod))
+      throw new TypeError(
+        "Array.from requires that the property of the first argument, items[Symbol.iterator], when exists, be a function",
+      );
 
     var result = this !== $Array && $isConstructor(this) ? new this() : [];
 
     var k = 0;
+    var iterator = iteratorMethod.$call(items);
 
     // Since for-of loop once more looks up the @@iterator property of a given iterable,
     // it could be observable if the user defines a getter for @@iterator.
     // To avoid this situation, we define a wrapper object that @@iterator just returns a given iterator.
     var wrapper = {
-        [Symbol.asyncIterator]: function () { return iterator; }
+      [Symbol.iterator]: function () {
+        return iterator;
+      },
     };
 
-    for await (var value of wrapper) {
-        if (k >= 9007199254740991)
-            throw new TypeError("Length exceeded the maximum array length");
-        if (mapFn === undefined)
-            $putByValDirect(result, k, value);
-        else
-            $putByValDirect(result, k, await (thisArg === undefined ? mapFn(value, k) : mapFn.$call(thisArg, value, k)));
-        k += 1;
+    for (var value of wrapper) {
+      if (k >= 9007199254740991) throw new TypeError("Length exceeded the maximum array length");
+      if (mapFn === undefined) $putByValDirect(result, k, value);
+      else $putByValDirect(result, k, thisArg === undefined ? mapFn(value, k) : mapFn.$call(thisArg, value, k));
+      k += 1;
     }
 
     result.length = k;
     return result;
+  }
+
+  var arrayLikeLength = $toLength(arrayLike.length);
+
+  var result = this !== $Array && $isConstructor(this) ? new this(arrayLikeLength) : $newArrayWithSize(arrayLikeLength);
+
+  var k = 0;
+  while (k < arrayLikeLength) {
+    var value = arrayLike[k];
+    if (mapFn === undefined) $putByValDirect(result, k, value);
+    else $putByValDirect(result, k, thisArg === undefined ? mapFn(value, k) : mapFn.$call(thisArg, value, k));
+    k += 1;
+  }
+
+  result.length = arrayLikeLength;
+  return result;
 }
 
 $linkTimeConstant;
 $visibility = "PrivateRecursive";
-export async function defaultAsyncFromAsyncIteratorWithNext(iterator, mapFn, thisArg)
-{
-    "use strict";
+export async function defaultAsyncFromAsyncIterator(iterator, mapFn, thisArg) {
+  "use strict";
 
-    if (!$isObject(iterator))
-        throw new TypeError("Iterator result interface is not an object.");
+  var result = this !== $Array && $isConstructor(this) ? new this() : [];
 
-    var nextMethod = iterator.next;
+  var k = 0;
 
-    var result = this !== $Array && $isConstructor(this) ? new this() : [];
+  // Since for-of loop once more looks up the @@iterator property of a given iterable,
+  // it could be observable if the user defines a getter for @@iterator.
+  // To avoid this situation, we define a wrapper object that @@iterator just returns a given iterator.
+  var wrapper = {
+    [Symbol.asyncIterator]: function () {
+      return iterator;
+    },
+  };
 
-    var k = 0;
-    for (;;) {
-        var nextResult = await nextMethod.$call(iterator);
-        if (!$isObject(nextResult))
-            throw new TypeError("Iterator result interface is not an object.");
-        if (nextResult.done)
-            break;
+  for await (var value of wrapper) {
+    if (k >= 9007199254740991) throw new TypeError("Length exceeded the maximum array length");
+    if (mapFn === undefined) $putByValDirect(result, k, value);
+    else $putByValDirect(result, k, await (thisArg === undefined ? mapFn(value, k) : mapFn.$call(thisArg, value, k)));
+    k += 1;
+  }
 
-        var value = nextResult.value;
-        try {
-            if (k >= 9007199254740991)
-                throw new TypeError("Length exceeded the maximum array length");
-            if (mapFn === undefined)
-                $putByValDirect(result, k, value);
-            else
-                $putByValDirect(result, k, await (thisArg === undefined ? mapFn(value, k) : mapFn.$call(thisArg, value, k)));
-        } catch (error) {
-            try {
-                var returnMethod = iterator.return;
-                if (!$isUndefinedOrNull(returnMethod)) {
-                    var returnResult = await returnMethod.$call(iterator);
-                    if (!$isObject(returnResult))
-                        throw new TypeError("Iterator result interface is not an object.");
-                }
-            } catch { }
-            throw error;
-        }
-        k += 1;
-    }
-
-    result.length = k;
-    return result;
+  result.length = k;
+  return result;
 }
 
 $linkTimeConstant;
 $visibility = "PrivateRecursive";
-export async function defaultAsyncFromAsyncArrayLike(asyncItems, mapFn, thisArg)
-{
-    "use strict";
+export async function defaultAsyncFromAsyncIteratorWithNext(iterator, mapFn, thisArg) {
+  "use strict";
 
-    var arrayLike = $toObject(asyncItems, "Array.fromAsync requires an array-like object - not null or undefined");
+  if (!$isObject(iterator)) throw new TypeError("Iterator result interface is not an object.");
 
-    var arrayLikeLength = $toLength(arrayLike.length);
+  var nextMethod = iterator.next;
 
-    var result = this !== $Array && $isConstructor(this) ? new this(arrayLikeLength) : $newArrayWithSize(arrayLikeLength);
+  var result = this !== $Array && $isConstructor(this) ? new this() : [];
 
-    var k = 0;
-    while (k < arrayLikeLength) {
-        var value = await arrayLike[k];
-        if (mapFn === undefined)
-            $putByValDirect(result, k, value);
-        else
-            $putByValDirect(result, k, await (thisArg === undefined ? mapFn(value, k) : mapFn.$call(thisArg, value, k)));
-        k += 1;
-    }
+  var k = 0;
+  for (;;) {
+    var nextResult = await nextMethod.$call(iterator);
+    if (!$isObject(nextResult)) throw new TypeError("Iterator result interface is not an object.");
+    if (nextResult.done) break;
 
-    result.length = arrayLikeLength;
-    return result;
-}
-
-export function fromAsync(asyncItems  /*, mapFn, thisArg */)
-{
-    "use strict";
-
+    var value = nextResult.value;
     try {
-        var mapFn = $argument(1);
-
-        var thisArg;
-
-        if (mapFn !== undefined) {
-            if (!$isCallable(mapFn))
-                throw new TypeError("Array.fromAsync requires that the second argument, when provided, be a function");
-
-            thisArg = $argument(2);
+      if (k >= 9007199254740991) throw new TypeError("Length exceeded the maximum array length");
+      if (mapFn === undefined) $putByValDirect(result, k, value);
+      else $putByValDirect(result, k, await (thisArg === undefined ? mapFn(value, k) : mapFn.$call(thisArg, value, k)));
+    } catch (error) {
+      try {
+        var returnMethod = iterator.return;
+        if (!$isUndefinedOrNull(returnMethod)) {
+          var returnResult = await returnMethod.$call(iterator);
+          if (!$isObject(returnResult)) throw new TypeError("Iterator result interface is not an object.");
         }
-
-        var usingSyncIterator;
-        var usingAsyncIterator = asyncItems[Symbol.asyncIterator];
-        if (!$isUndefinedOrNull(usingAsyncIterator)) {
-            if (!$isCallable(usingAsyncIterator))
-                throw new TypeError("Array.fromAsync requires that the property of the first argument, items[Symbol.asyncIterator], when exists, be a function");
-        } else {
-            usingSyncIterator = asyncItems[Symbol.iterator];
-            if (!$isUndefinedOrNull(usingSyncIterator)) {
-                if (!$isCallable(usingSyncIterator))
-                    throw new TypeError("Array.fromAsync requires that the property of the first argument, items[Symbol.iterator], when exists, be a function");
-            }
-        }
-
-        if (!$isUndefinedOrNull(usingAsyncIterator)) {
-            var iterator = usingAsyncIterator.$call(asyncItems);
-            return $defaultAsyncFromAsyncIteratorWithNext.$call(this, iterator, mapFn, thisArg);
-        }
-
-        if (!$isUndefinedOrNull(usingSyncIterator)) {
-            var iterator = usingSyncIterator.$call(asyncItems);
-            return $defaultAsyncFromAsyncIterator.$call(this, $asyncFromSyncIteratorCreate(iterator), mapFn, thisArg);
-        }
-
-        return $defaultAsyncFromAsyncArrayLike.$call(this, asyncItems, mapFn, thisArg);
-    } catch (reason) {
-        var promise = $newPromise();
-        $rejectPromiseWithFirstResolvingFunctionCallCheck(promise, reason);
-        return promise;
+      } catch {}
+      throw error;
     }
+    k += 1;
+  }
+
+  result.length = k;
+  return result;
+}
+
+$linkTimeConstant;
+$visibility = "PrivateRecursive";
+export async function defaultAsyncFromAsyncArrayLike(asyncItems, mapFn, thisArg) {
+  "use strict";
+
+  var arrayLike = $toObject(asyncItems, "Array.fromAsync requires an array-like object - not null or undefined");
+
+  var arrayLikeLength = $toLength(arrayLike.length);
+
+  var result = this !== $Array && $isConstructor(this) ? new this(arrayLikeLength) : $newArrayWithSize(arrayLikeLength);
+
+  var k = 0;
+  while (k < arrayLikeLength) {
+    var value = await arrayLike[k];
+    if (mapFn === undefined) $putByValDirect(result, k, value);
+    else $putByValDirect(result, k, await (thisArg === undefined ? mapFn(value, k) : mapFn.$call(thisArg, value, k)));
+    k += 1;
+  }
+
+  result.length = arrayLikeLength;
+  return result;
+}
+
+export function fromAsync(asyncItems /*, mapFn, thisArg */) {
+  "use strict";
+
+  try {
+    var mapFn = $argument(1);
+
+    var thisArg;
+
+    if (mapFn !== undefined) {
+      if (!$isCallable(mapFn))
+        throw new TypeError("Array.fromAsync requires that the second argument, when provided, be a function");
+
+      thisArg = $argument(2);
+    }
+
+    var usingSyncIterator;
+    var usingAsyncIterator = asyncItems[Symbol.asyncIterator];
+    if (!$isUndefinedOrNull(usingAsyncIterator)) {
+      if (!$isCallable(usingAsyncIterator))
+        throw new TypeError(
+          "Array.fromAsync requires that the property of the first argument, items[Symbol.asyncIterator], when exists, be a function",
+        );
+    } else {
+      usingSyncIterator = asyncItems[Symbol.iterator];
+      if (!$isUndefinedOrNull(usingSyncIterator)) {
+        if (!$isCallable(usingSyncIterator))
+          throw new TypeError(
+            "Array.fromAsync requires that the property of the first argument, items[Symbol.iterator], when exists, be a function",
+          );
+      }
+    }
+
+    if (!$isUndefinedOrNull(usingAsyncIterator)) {
+      var iterator = usingAsyncIterator.$call(asyncItems);
+      return $defaultAsyncFromAsyncIteratorWithNext.$call(this, iterator, mapFn, thisArg);
+    }
+
+    if (!$isUndefinedOrNull(usingSyncIterator)) {
+      var iterator = usingSyncIterator.$call(asyncItems);
+      return $defaultAsyncFromAsyncIterator.$call(this, $asyncFromSyncIteratorCreate(iterator), mapFn, thisArg);
+    }
+
+    return $defaultAsyncFromAsyncArrayLike.$call(this, asyncItems, mapFn, thisArg);
+  } catch (reason) {
+    var promise = $newPromise();
+    $rejectPromiseWithFirstResolvingFunctionCallCheck(promise, reason);
+    return promise;
+  }
 }

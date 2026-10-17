@@ -72,6 +72,24 @@ inline std::optional<std::span<const uint8_t>> unsharedBufferSourceSpan(JSC::VM&
     return std::nullopt;
 }
 
+// As unsharedBufferSourceSpan, and the bytes of a shared buffer, which another thread can write.
+inline std::optional<std::span<const uint8_t>> possiblySharedBufferSourceSpan(JSC::VM& vm, JSC::JSValue value)
+{
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value))
+        return view->span();
+    if (auto* buffer = JSC::toPossiblySharedArrayBuffer(vm, value))
+        return buffer->span();
+    return std::nullopt;
+}
+
+// Null data is the null value of IDLBufferSourceBytes.
+inline std::optional<std::span<const uint8_t>> withNonNullData(std::optional<std::span<const uint8_t>> bytes)
+{
+    if (bytes && !bytes->data())
+        return byteCast<uint8_t>(WTF::nonNullEmptyUTF8Span());
+    return bytes;
+}
+
 }
 }
 
@@ -128,17 +146,27 @@ template<> struct WebCore::Converter<Bun::Bindgen::IDLBufferSourceBytes> : Bun::
     template<Bun::IDLConversionContext Ctx>
     static std::optional<std::span<const uint8_t>> tryConvert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx&)
     {
-        auto bytes = Bun::Bindgen::unsharedBufferSourceSpan(JSC::getVM(&globalObject), value);
-        // Null data is the null value.
-        if (bytes && !bytes->data())
-            return byteCast<uint8_t>(WTF::nonNullEmptyUTF8Span());
-        return bytes;
+        return Bun::Bindgen::withNonNullData(Bun::Bindgen::unsharedBufferSourceSpan(JSC::getVM(&globalObject), value));
     }
 
     template<Bun::IDLConversionContext Ctx>
     static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
     {
         Bun::Bindgen::throwNotUnsharedBufferSource(globalObject, scope, ctx);
+    }
+};
+
+template<> struct WebCore::Converter<WebCore::IDLAllowSharedAdaptor<Bun::Bindgen::IDLBufferSourceBytes>> : Bun::DefaultTryConverter<WebCore::IDLAllowSharedAdaptor<Bun::Bindgen::IDLBufferSourceBytes>> {
+    template<Bun::IDLConversionContext Ctx>
+    static std::optional<std::span<const uint8_t>> tryConvert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx&)
+    {
+        return Bun::Bindgen::withNonNullData(Bun::Bindgen::possiblySharedBufferSourceSpan(JSC::getVM(&globalObject), value));
+    }
+
+    template<Bun::IDLConversionContext Ctx>
+    static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
+    {
+        ctx.throwTypeMustBe(globalObject, scope, "an ArrayBuffer or ArrayBufferView"_s);
     }
 };
 

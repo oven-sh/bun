@@ -624,7 +624,7 @@ impl CreateCommand {
                     progress.refresh();
 
                     pretty_errorln!(
-                        "<r><red>error<r>: the destination <b>{}<r> is inside the template <b>{}<r>",
+                        "<r><red>error<r>: destination <b>{}<r> is inside template <b>{}<r>",
                         bstr::BStr::new(destination),
                         bstr::BStr::new(abs_template_path),
                     );
@@ -1129,7 +1129,7 @@ impl CreateCommand {
             let status = process??.status;
             if !status.is_ok() {
                 pretty_errorln!(
-                    "<r><red>error<r><d>:<r> <b>bun install<r> failed in {} ({})\n<blue>note<r><d>:<r> the template files were written; run <b>bun install<r> in that directory once the error is fixed",
+                    "<r><red>error<r><d>:<r> <b>bun install<r> failed in {} ({})\n<blue>note<r><d>:<r> template files were written. run <b>bun install<r> there once the error is fixed",
                     bun_core::fmt::quote(destination),
                     status,
                 );
@@ -1268,7 +1268,7 @@ impl CreateCommand {
 
             let parts = [filesystem.top_level_dir, positional];
             let Some(len) = join(&parts, home_dir_buf) else {
-                pretty_errorln!("<r><red>error<r>: the template name is too long");
+                pretty_errorln!("<r><red>error<r>: template name too long");
                 Global::exit(1);
             };
             let outdir_path_ = bun_core::ZStr::from_buf(&home_dir_buf[..], len);
@@ -2152,7 +2152,7 @@ impl GitHandler {
                     );
                 } else {
                     bun_core::pretty_errorln!(
-                        "<r><blue>note<r><d>:<r> git has no <b>user.name<r> and <b>user.email<r>, so the files are staged but not committed",
+                        "<r><blue>note<r><d>:<r> git has no <b>user.name<r> and <b>user.email<r>, files staged but not committed",
                     );
                 }
             }

@@ -427,11 +427,11 @@ describe.concurrent("syntax", () => {
       { rules: { overrides: { "one-dep": { "": "2.0.0" } } }, warning: "Missing overridden package name" },
       { rules: { resolutions: { "one-dep/**": "2.0.0" } }, warning: "Missing resolution package name" },
       { rules: { resolutions: { "one-dep/": "2.0.0" } }, warning: "Missing resolution package name" },
-      { rules: { resolutions: { "one-dep/@scope": "2.0.0" } }, warning: 'Invalid package name "one-dep/@scope"' },
-      { rules: { overrides: { "@types": "2.0.0" } }, warning: 'Invalid package name "@types"' },
-      { rules: { overrides: { "@types": { "no-deps": "2.0.0" } } }, warning: 'Invalid package name "@types"' },
-      { rules: { overrides: { "one-dep": { "@types": "2.0.0" } } }, warning: 'Invalid package name "@types"' },
-      { rules: { resolutions: { "@types": "2.0.0" } }, warning: 'Invalid package name "@types"' },
+      { rules: { resolutions: { "one-dep/@scope": "2.0.0" } }, warning: 'invalid package name "one-dep/@scope"' },
+      { rules: { overrides: { "@types": "2.0.0" } }, warning: 'invalid package name "@types"' },
+      { rules: { overrides: { "@types": { "no-deps": "2.0.0" } } }, warning: 'invalid package name "@types"' },
+      { rules: { overrides: { "one-dep": { "@types": "2.0.0" } } }, warning: 'invalid package name "@types"' },
+      { rules: { resolutions: { "@types": "2.0.0" } }, warning: 'invalid package name "@types"' },
     ])("selector %j", async ({ rules, warning }) => {
       const dir = await project({ dependencies: { "one-dep": "1.0.0" }, ...rules });
       const { err, exitCode } = await install(dir);
@@ -2263,7 +2263,7 @@ one-range-dep@1.0.0:
 
       const frozen = await install(dir, "--frozen-lockfile");
       expect(diagnostics(frozen.err)).toContain(
-        `note: ${name} has no-deps@1.1.0, and overrides in package.json asks for 1.0.0`,
+        `note: ${name} has no-deps@1.1.0, overrides in package.json wants 1.0.0`,
       );
       expect(frozen.exitCode).toBe(1);
 
@@ -2648,7 +2648,7 @@ describe.concurrent("flat override fixes", () => {
       const dir = await project({ dependencies: { "one-dep": "1.0.0" }, ...catalogs, overrides: { "no-deps": rule } });
       const { err, exitCode } = await install(dir);
       expect(diagnostics(err)).toEqual([
-        `warn: no-deps@${rule} is not in the catalog${why}`,
+        `warn: no-deps@${rule} not in catalog${why}`,
         "error: no-deps@1.0.1 failed to resolve",
       ]);
       expect(err).toMatch(/package\.json:\d+:\d+/);
@@ -2662,7 +2662,7 @@ describe.concurrent("flat override fixes", () => {
         overrides: { "no-deps": "catalog:" },
       });
       const { err, exitCode } = await install(dir);
-      expect(diagnostics(err)).toEqual([`warn: no-deps@catalog: is not in the catalog${needsWorkspaces}`]);
+      expect(diagnostics(err)).toEqual([`warn: no-deps@catalog: not in catalog${needsWorkspaces}`]);
       expect(exitCode).toBe(0);
     });
   });

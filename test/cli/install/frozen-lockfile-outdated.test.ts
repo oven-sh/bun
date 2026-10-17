@@ -429,7 +429,7 @@ describe.concurrent("--frozen-lockfile still passes after an edit of", () => {
 
       expect(frozen.stderr.split("\n").filter(Boolean)).toEqual([
         ...hashedThePatch,
-        "warn: the dependencies in vendor/vendored/package.json changed since the lockfile was saved (run 'bun install' to update it)",
+        "warn: dependencies in vendor/vendored/package.json changed since lockfile was saved (run 'bun install')",
       ]);
       expect(await lockText(packageDir)).toBe(lock);
       expect(frozen.exitCode).toBe(0);

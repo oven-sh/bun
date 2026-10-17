@@ -39,9 +39,9 @@ use crate::postgres::sasl::{self, ChannelBinding, Gs2Flag, Refusal, SASL, SASLSt
 use crate::shared::CachedStructure as PostgresCachedStructure;
 use crate::shared::connection_ctor_args::ConnectionCtorArgs;
 use crate::shared::connection_timers::{ConnectionTimers, Phase, TimedConnection};
+use crate::shared::row_decoder::RowDecoder;
 use crate::shared::server_identity;
 use crate::shared::start_tls::{start_tls, verifies_certificate};
-use crate::shared::row_decoder::RowDecoder;
 use bun_sql::postgres::AnyPostgresError;
 use bun_sql::postgres::PostgresErrorOptions;
 use bun_sql::postgres::Status;

@@ -9,7 +9,9 @@ import { built, spawned } from "./run-programs";
 import { test } from "./supported";
 
 const files = {
-  "tsconfig.json": JSON.stringify({ compilerOptions: { typeRoots: [join(import.meta.dir, "../../packages")], types: ["bun-types"] } }),
+  "tsconfig.json": JSON.stringify({
+    compilerOptions: { typeRoots: [join(import.meta.dir, "../../packages")], types: ["bun-types"] },
+  }),
   "app/src/deep.ts": `export function deep(n: number): number {
   if (n === 0) throw new TypeError("at the bottom");
   return deep(n - 1) + 1;
@@ -38,11 +40,19 @@ test("the lines under an error come from the file on disk, unparsed", async () =
   const root = realpathSync(String(dir));
   const env = { ...bunEnv, NO_COLOR: "1" };
   const executable = join(root, "program");
-  built(await spawned([bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", executable], join(root, "app"), env));
+  built(
+    await spawned(
+      [bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", executable],
+      join(root, "app"),
+      env,
+    ),
+  );
 
   const whereBuilt = await spawned([executable], join(root, "app"), env);
   expect(whereBuilt.stdout).toStartWith(shown);
-  expect(whereBuilt.stderr).toContain(`7 | console.error(new RangeError("printed"));\n                      ^\nRangeError: printed\n`);
+  expect(whereBuilt.stderr).toContain(
+    `7 | console.error(new RangeError("printed"));\n                      ^\nRangeError: printed\n`,
+  );
   expect(whereBuilt.stderr).toContain(shown);
   expect(whereBuilt.exitCode).toBe(1);
 

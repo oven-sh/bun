@@ -79,7 +79,9 @@ pub const fn count_multi<Id>(params: &[Param<Id>]) -> usize {
     let mut n = 0;
     let mut i = 0;
     while i < params.len() {
-        if is_named(&params[i]) && matches!(params[i].takes_value, Values::Many | Values::ManyOptional) {
+        if is_named(&params[i])
+            && matches!(params[i].takes_value, Values::Many | Values::ManyOptional)
+        {
             n += 1;
         }
         i += 1;
@@ -574,7 +576,8 @@ impl<Id> ComptimeClap<Id> {
                 if single_options.len() != 0 {
                     single_options[param.id] = Some(arg.value.unwrap_or(b""));
                 }
-            } else if param.takes_value == Values::Many || param.takes_value == Values::ManyOptional {
+            } else if param.takes_value == Values::Many || param.takes_value == Values::ManyOptional
+            {
                 debug_assert!(multis.len() != 0);
                 if multis.len() != 0 {
                     multis[param.id].push(arg.value.unwrap_or(b""));

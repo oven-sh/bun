@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { test } from "./supported";
 
 // Under --aot the prototypes of six classes that Bun provides are locked like the prototypes of the language.
 // programs/host-classes has what a compiled program prints. Here: what the refusal says, and the other ways to run with --aot.
@@ -9,7 +9,13 @@ import { join } from "node:path";
 const classes = ["Request", "Response", "Blob", "Headers", "URL", "URLSearchParams"];
 
 async function bun(cwd: string, ...args: string[]) {
-  await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: { ...bunEnv, NO_COLOR: "1" }, stdout: "pipe", stderr: "pipe" });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    cwd,
+    env: { ...bunEnv, NO_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
@@ -36,13 +42,20 @@ const refusals = classes.flatMap(name => {
     `${name} reparent TypeError: Cannot change the prototype of ${name}.prototype: ${why}`,
   ];
 });
-const withoutNote = (text: string) => text.replace(/ \(bun --aot: [^)]*\)$/gm, "").trim().split("\n");
+const withoutNote = (text: string) =>
+  text
+    .replace(/ \(bun --aot: [^)]*\)$/gm, "")
+    .trim()
+    .split("\n");
 
 test("the refusal names the prototype and the property and says what to do instead", async () => {
   using dir = tempDir("locked-host-prototypes", { "main.mjs": attempts });
   const cwd = String(dir);
   const build = await bun(cwd, "build", "--compile", "--aot", "main.mjs", "--outfile", "program");
-  expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
+  expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({
+    stderr: expect.not.stringMatching(/^error\b/m),
+    exitCode: 0,
+  });
   await using program = Bun.spawn({ cmd: [join(cwd, "program")], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
   expect(withoutNote(await program.stdout.text())).toEqual(refusals);
   expect(await program.exited).toBe(0);
@@ -53,21 +66,35 @@ test("the refusal names the prototype and the property and says what to do inste
 test("bun --aot-audit reports the writes and lets them through", async () => {
   using dir = tempDir("locked-host-prototypes-audit", { "main.mjs": attempts });
   const audit = await bun(String(dir), "--aot-audit", "main.mjs");
-  expect(audit.stdout.trim().split("\n")).toEqual(classes.flatMap(name => ["add", "replace", "define", "reparent"].map(kind => `${name} ${kind} was allowed`)));
+  expect(audit.stdout.trim().split("\n")).toEqual(
+    classes.flatMap(name => ["add", "replace", "define", "reparent"].map(kind => `${name} ${kind} was allowed`)),
+  );
   for (const name of classes) expect(audit.stderr).toContain(`${name}.prototype`);
   expect(audit.exitCode).toBe(0);
 }, 120_000);
 
-const declarations = { typeRoots: [join(import.meta.dir, "..", "..", "packages")], types: ["bun-types"], skipLibCheck: true };
-const compilerOptions = { target: "esnext", module: "preserve", moduleResolution: "bundler", noEmit: true, ...declarations };
+const declarations = {
+  typeRoots: [join(import.meta.dir, "..", "..", "packages")],
+  types: ["bun-types"],
+  skipLibCheck: true,
+};
+const compilerOptions = {
+  target: "esnext",
+  module: "preserve",
+  moduleResolution: "bundler",
+  noEmit: true,
+  ...declarations,
+};
 
 test.each([
   ["without type declarations", {}],
   ["with Bun's type declarations", { "tsconfig.json": JSON.stringify({ compilerOptions }) }],
-])("bun test --aot can spy on their methods, as bun test can, %s", async (_, configuration) => {
-  using dir = tempDir("locked-host-prototypes-spies", {
-    ...configuration,
-    "reads.ts": `
+])(
+  "bun test --aot can spy on their methods, as bun test can, %s",
+  async (_, configuration) => {
+    using dir = tempDir("locked-host-prototypes-spies", {
+      ...configuration,
+      "reads.ts": `
       export const header = (headers: Headers, name: string) => headers.get(name);
       export const param = (params: URLSearchParams, name: string) => params.get(name);
       export const query = (text: string, name: string) => new URL(text).searchParams.get(name);
@@ -76,7 +103,7 @@ test.each([
       export const part = (blob: Blob) => blob.slice(0, 1).size;
       export const copy = (request: Request) => request.clone().url;
     `,
-    "main.test.ts": `
+      "main.test.ts": `
       import { expect, spyOn, test } from "bun:test";
       import * as reads from "./reads";
       test("spies", async () => {
@@ -103,14 +130,20 @@ test.each([
         console.log("see:", JSON.stringify(await all()), spies.map(spy => spy.mock.calls.length).join());
       });
     `,
-  });
-  const seen = async (...args: string[]) => {
-    const ran = await bun(String(dir), ...args);
-    const printed = ran.stdout + ran.stderr;
-    return { seen: printed.split("\n").filter(line => line.startsWith("see:")), exitCode: ran.exitCode, printedByFailure: ran.exitCode ? printed : "" };
-  };
-  const plain = await seen("test", "./main.test.ts");
-  expect(plain).toEqual({ seen: expect.any(Array), exitCode: 0, printedByFailure: "" });
-  expect(plain.seen.length).toBe(3);
-  expect(await seen("test", "--aot", "./main.test.ts")).toEqual(plain);
-}, 120_000);
+    });
+    const seen = async (...args: string[]) => {
+      const ran = await bun(String(dir), ...args);
+      const printed = ran.stdout + ran.stderr;
+      return {
+        seen: printed.split("\n").filter(line => line.startsWith("see:")),
+        exitCode: ran.exitCode,
+        printedByFailure: ran.exitCode ? printed : "",
+      };
+    };
+    const plain = await seen("test", "./main.test.ts");
+    expect(plain).toEqual({ seen: expect.any(Array), exitCode: 0, printedByFailure: "" });
+    expect(plain.seen.length).toBe(3);
+    expect(await seen("test", "--aot", "./main.test.ts")).toEqual(plain);
+  },
+  120_000,
+);

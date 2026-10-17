@@ -3,7 +3,16 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { test } from "./supported";
 
 const tsconfig = JSON.stringify({
-  compilerOptions: { lib: ["ESNext"], target: "ESNext", module: "Preserve", moduleResolution: "bundler", strict: true, noEmit: true, skipLibCheck: true, types: [] },
+  compilerOptions: {
+    lib: ["ESNext"],
+    target: "ESNext",
+    module: "Preserve",
+    moduleResolution: "bundler",
+    strict: true,
+    noEmit: true,
+    skipLibCheck: true,
+    types: [],
+  },
 });
 
 async function rulesOf(body: string) {
@@ -35,7 +44,11 @@ ${body}
     .split("\n")
     .filter(line => line.startsWith('{"rank"'))
     .map(line => JSON.parse(line));
-  return { exitCode, stderr, freezesAnything: rows.some(row => row.message.includes("can freeze any object of the program")) };
+  return {
+    exitCode,
+    stderr,
+    freezesAnything: rows.some(row => row.message.includes("can freeze any object of the program")),
+  };
 }
 
 describe("freezing what Object.create made concerns that object alone", () => {

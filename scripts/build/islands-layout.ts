@@ -39,7 +39,11 @@ export function readPlan(path: string | undefined, features: string[]): Plan | u
 }
 
 export function writePlan(path: string, plan: Plan): void {
-  const lines = [planHeader, ...plan.doors.map(name => "door " + name), ...plan.islands.flatMap(island => ["island " + island.features, ...island.names])];
+  const lines = [
+    planHeader,
+    ...plan.doors.map(name => "door " + name),
+    ...plan.islands.flatMap(island => ["island " + island.features, ...island.names]),
+  ];
   writeFileSync(path, lines.join("\n") + "\n", "latin1");
 }
 
@@ -58,13 +62,17 @@ export function rangesThatCanGo(graph: Layout, analysis: Needs, isMovable: (outp
     run = [];
   };
   for (let node = 0; node < graph.address.length; node++) {
-    const features = isMovable(graph.output[node]!) && !analysis.core.has(node) ? analysis.neededBy.get(node) : undefined;
+    const features =
+      isMovable(graph.output[node]!) && !analysis.core.has(node) ? analysis.neededBy.get(node) : undefined;
     if (features === undefined) {
       close();
       continue;
     }
     const start = graph.address[node]!;
-    const isNextToTheLast = node > 0 && graph.output[node - 1] === graph.output[node] && start - (graph.address[node - 1]! + graph.size[node - 1]!) < graph.alignment[node]!;
+    const isNextToTheLast =
+      node > 0 &&
+      graph.output[node - 1] === graph.output[node] &&
+      start - (graph.address[node - 1]! + graph.size[node - 1]!) < graph.alignment[node]!;
     if (!isNextToTheLast) close();
     const last = run.at(-1);
     if (last?.features === features) last.end = start + graph.size[node]!;
@@ -100,7 +108,8 @@ export function wholePages(ranges: Range[]): number {
   const holes: number[] = [];
   let start = -1;
   let end = -1;
-  const close = () => void holes.push(Math.max(0, Math.floor(end / pageSize) * pageSize - Math.ceil(start / pageSize) * pageSize));
+  const close = () =>
+    void holes.push(Math.max(0, Math.floor(end / pageSize) * pageSize - Math.ceil(start / pageSize) * pageSize));
   for (const range of ranges) {
     if (range.start === end) end = range.end;
     else {
@@ -194,9 +203,13 @@ export function encodeTable(table: Table, room = tableRoom): Buffer {
   const kinds = distinct(table.conditions.map(condition => condition.kind));
   const facts = distinct(table.conditions.map(spell));
   const packages = table.packages ?? [];
-  const sets = distinct([...table.islands, ...packages.flatMap(dataPackage => dataPackage.runs)].map(({ features }) => features));
-  for (const { feature } of [...table.conditions, ...table.doors]) if (!table.features.includes(feature)) throw new Error(`the table does not list ${feature}`);
-  if (inTableOrder(table.features, table.doors).some((door, index) => door !== table.doors[index])) throw new Error("the doors are not in the order of the table");
+  const sets = distinct(
+    [...table.islands, ...packages.flatMap(dataPackage => dataPackage.runs)].map(({ features }) => features),
+  );
+  for (const { feature } of [...table.conditions, ...table.doors])
+    if (!table.features.includes(feature)) throw new Error(`the table does not list ${feature}`);
+  if (inTableOrder(table.features, table.doors).some((door, index) => door !== table.doors[index]))
+    throw new Error("the doors are not in the order of the table");
 
   number(table.stub);
   number(table.smallestDoor.exit);
@@ -230,7 +243,9 @@ export function encodeTable(table: Table, room = tableRoom): Buffer {
       ascending(doors.map(door => door.address));
     }
   }
-  const thin = table.doors.map((door, index) => ({ index, places: door.places ?? [] })).filter(door => door.places.length > 0);
+  const thin = table.doors
+    .map((door, index) => ({ index, places: door.places ?? [] }))
+    .filter(door => door.places.length > 0);
   let next = 0;
   list(thin, ({ index, places }) => {
     number(index - next);
@@ -326,18 +341,21 @@ export function decodeTable(bytes: Uint8Array): Table {
     });
     next = index + 1;
   });
-  const packages = at === bytes.length ? [] : list(() => {
-    const start = number();
-    const end = sum(start, number());
-    let next = 0;
-    const runs = list(() => {
-      const first = sum(next, number());
-      const count = sum(number(), 1);
-      next = sum(first, count);
-      return { first, count, features: oneOf(sets) };
-    });
-    return { start, end, runs };
-  });
+  const packages =
+    at === bytes.length
+      ? []
+      : list(() => {
+          const start = number();
+          const end = sum(start, number());
+          let next = 0;
+          const runs = list(() => {
+            const first = sum(next, number());
+            const count = sum(number(), 1);
+            next = sum(first, count);
+            return { first, count, features: oneOf(sets) };
+          });
+          return { start, end, runs };
+        });
   if (bytes.subarray(at).some(byte => byte !== 0)) malformed();
   return { stub, smallestDoor, features, conditions, islands, doors, ...(packages.length > 0 ? { packages } : {}) };
 }
@@ -356,7 +374,11 @@ export function itemsOf(dataPackage: Buffer): Item[] {
   const malformed = (): never => {
     throw new Error("ICU's data package is malformed");
   };
-  const isCommonData = dataPackage.length >= 32 && dataPackage.readUInt16BE(2) === 0xda27 && dataPackage[8] === 0 && dataPackage.toString("latin1", 12, 17) === "CmnD\x01";
+  const isCommonData =
+    dataPackage.length >= 32 &&
+    dataPackage.readUInt16BE(2) === 0xda27 &&
+    dataPackage[8] === 0 &&
+    dataPackage.toString("latin1", 12, 17) === "CmnD\x01";
   if (!isCommonData) malformed();
   const contents = dataPackage.subarray(dataPackage.readUInt16LE(0));
   const count = contents.length >= 4 ? contents.readUInt32LE(0) : malformed();

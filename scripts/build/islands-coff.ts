@@ -1,5 +1,14 @@
 import { spawnSync } from "node:child_process";
-import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, readdirSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  fstatSync,
+  openSync,
+  readFileSync,
+  readSync,
+  readdirSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, join } from "node:path";
 
 export interface CoffGraph {
@@ -66,7 +75,7 @@ function readChunks(path: string): Chunk[] {
   const text = readFileSync(path, "latin1");
   const chunks: Chunk[] = [];
   let output = "";
-  for (let at = text.indexOf("\n") + 1; at < text.length; ) {
+  for (let at = text.indexOf("\n") + 1; at < text.length;) {
     let end = text.indexOf("\n", at);
     if (end < 0) end = text.length;
     if (text.charCodeAt(at + 24) !== 32) output = text.slice(at + 24, end).trim();
@@ -131,7 +140,7 @@ function readArchive(path: string, members: Map<string, Member[]>): void {
   const end = fstatSync(fd).size;
   if (end >= 8 && readAt(fd, 0, 8).toString("latin1") === "!<arch>\n") {
     let longNames: Buffer = Buffer.alloc(0);
-    for (let at = 8; at + 60 <= end; ) {
+    for (let at = 8; at + 60 <= end;) {
       const header = readAt(fd, at, 60).toString("latin1");
       const size = Number(header.slice(48, 58));
       let name = header.slice(0, 16).trimEnd();
@@ -202,7 +211,17 @@ class CoffObject {
         relocationCount = readAt(fd, base + relocations, 4).readUInt32LE(0) - 1;
         relocations += 10;
       }
-      this.sections.push({ name, size: table.readUInt32LE(at + 16), contents: table.readUInt32LE(at + 20), flags, relocations, relocationCount, selection: 0, parent: 0, leader: -1 });
+      this.sections.push({
+        name,
+        size: table.readUInt32LE(at + 16),
+        contents: table.readUInt32LE(at + 20),
+        flags,
+        relocations,
+        relocationCount,
+        selection: 0,
+        parent: 0,
+        leader: -1,
+      });
     }
     this.symbolSection = new Int32Array(symbolCount);
     this.symbolValue = new Uint32Array(symbolCount);
@@ -217,15 +236,22 @@ class CoffObject {
       this.symbolSection[index] = section;
       this.symbolValue[index] = this.symbols.readUInt32LE(at + 8);
       this.symbolClass[index] = storage;
-      if (storage === weakExternal && auxiliaries > 0) this.symbolDefault[index] = this.symbols.readUInt32LE(at + this.entry);
+      if (storage === weakExternal && auxiliaries > 0)
+        this.symbolDefault[index] = this.symbols.readUInt32LE(at + this.entry);
       if (section > 0 && section <= sectionCount) {
         const found = this.sections[section - 1]!;
-        const isDefinition = storage === 3 && auxiliaries > 0 && this.symbolValue[index] === 0 && !defined.has(section) && this.nameOf(index) === found.name;
+        const isDefinition =
+          storage === 3 &&
+          auxiliaries > 0 &&
+          this.symbolValue[index] === 0 &&
+          !defined.has(section) &&
+          this.nameOf(index) === found.name;
         if (isDefinition) {
           defined.add(section);
           const auxiliary = at + this.entry;
           found.selection = this.symbols[auxiliary + 14]!;
-          found.parent = this.symbols.readUInt16LE(auxiliary + 12) | (isBig ? this.symbols.readUInt16LE(auxiliary + 16) << 16 : 0);
+          found.parent =
+            this.symbols.readUInt16LE(auxiliary + 12) | (isBig ? this.symbols.readUInt16LE(auxiliary + 16) << 16 : 0);
         } else {
           if (found.leader < 0 && found.flags & isComdat && found.selection !== associative) found.leader = index;
           const name = this.nameOf(index);
@@ -263,7 +289,10 @@ class CoffObject {
   }
 
   contentsOf(section: Section): string {
-    return `${section.name}\0${section.relocationCount}\0` + readAt(this.fd, this.base + section.contents, section.size).toString("latin1");
+    return (
+      `${section.name}\0${section.relocationCount}\0` +
+      readAt(this.fd, this.base + section.contents, section.size).toString("latin1")
+    );
   }
 
   bytesOf(section: Section): Buffer {
@@ -297,7 +326,8 @@ function imageOf(executable: string): Image {
   const parts: { start: number; data: Buffer }[] = [];
   for (let at = 0; at < sections.length; at += 40) {
     const length = Math.min(sections.readUInt32LE(at + 8), sections.readUInt32LE(at + 16));
-    if (length > 0) parts.push({ start: sections.readUInt32LE(at + 12), data: readAt(fd, sections.readUInt32LE(at + 20), length) });
+    if (length > 0)
+      parts.push({ start: sections.readUInt32LE(at + 12), data: readAt(fd, sections.readUInt32LE(at + 20), length) });
   }
   closeSync(fd);
   let last = parts[0];
@@ -305,7 +335,8 @@ function imageOf(executable: string): Image {
     isArm64: header.readUInt16LE(4) === 0xaa64,
     base: header.readUInt32LE(24 + 24) + header.readUInt32LE(24 + 28) * 0x100000000,
     at(address, length) {
-      const holds = (part: { start: number; data: Buffer }) => part.start <= address && address + length <= part.start + part.data.length;
+      const holds = (part: { start: number; data: Buffer }) =>
+        part.start <= address && address + length <= part.start + part.data.length;
       if (last === undefined || !holds(last)) last = parts.find(holds);
       return last && [last.data, address - last.start];
     },
@@ -366,7 +397,8 @@ function exportedAddresses(executable: string): number[] {
   const offsetOf = (address: number) => {
     for (let at = 0; at < sections.length; at += 40) {
       const start = sections.readUInt32LE(at + 12);
-      if (address >= start && address - start < sections.readUInt32LE(at + 16)) return sections.readUInt32LE(at + 20) + address - start;
+      if (address >= start && address - start < sections.readUInt32LE(at + 16))
+        return sections.readUInt32LE(at + 20) + address - start;
     }
     return -1;
   };
@@ -388,7 +420,8 @@ export function sectionInFile(executable: string, name: string): { offset: numbe
   const sections = readAt(fd, pe + 24 + header.readUInt16LE(20), header.readUInt16LE(6) * 40);
   closeSync(fd);
   for (let at = 0; at < sections.length; at += 40) {
-    if (sections.toString("latin1", at, at + 8).replace(/\0.*$/, "") === name) return { offset: sections.readUInt32LE(at + 20), size: sections.readUInt32LE(at + 16) };
+    if (sections.toString("latin1", at, at + 8).replace(/\0.*$/, "") === name)
+      return { offset: sections.readUInt32LE(at + 20), size: sections.readUInt32LE(at + 16) };
   }
   return undefined;
 }
@@ -466,11 +499,18 @@ export function readCoffGraph(link: CoffLink): CoffGraph {
 
   const members = new Map<string, Member[]>();
   const archives = new Set(link.inputs.filter(path => /\.(lib|rlib|a)$/i.test(path) && existsSync(path)));
-  const stems = new Set([...archives].map(path => basename(path).replace(/\.[^.]*$/, "").toLowerCase()));
+  const stems = new Set(
+    [...archives].map(path =>
+      basename(path)
+        .replace(/\.[^.]*$/, "")
+        .toLowerCase(),
+    ),
+  );
   const wanted = new Set<string>();
   for (const symbol of symbols) {
     const colon = symbol.object.indexOf(":");
-    if (colon > 1 && !stems.has(symbol.object.slice(0, colon).toLowerCase())) wanted.add(symbol.object.slice(0, colon).toLowerCase() + ".lib");
+    if (colon > 1 && !stems.has(symbol.object.slice(0, colon).toLowerCase()))
+      wanted.add(symbol.object.slice(0, colon).toLowerCase() + ".lib");
   }
   for (const folder of link.libraryFolders) {
     if (!existsSync(folder)) continue;
@@ -532,7 +572,11 @@ export function readCoffGraph(link: CoffLink): CoffGraph {
     const own = isHere
       ? object?.byName.get(symbol.name)?.find(index => {
           const section = object.sections[object.symbolSection[index]! - 1]!;
-          return symbol.address - object.symbolValue[index]! === graph.address[node] && section.size === graph.size[node] && (object.symbolClass[index] === external) !== symbol.isStatic;
+          return (
+            symbol.address - object.symbolValue[index]! === graph.address[node] &&
+            section.size === graph.size[node] &&
+            (object.symbolClass[index] === external) !== symbol.isStatic
+          );
         })
       : undefined;
     if (object !== undefined && own !== undefined) placeOf(object).set(object.symbolSection[own]!, node);
@@ -578,7 +622,9 @@ export function readCoffGraph(link: CoffLink): CoffGraph {
     const { leader } = object.sections[section - 1]!;
     if (leader >= 0) {
       const elsewhere =
-        object.symbolClass[leader] === external ? externalNode.get(object.nameOf(leader)) : staticNodes.get(nameInSymbolMap.get(name) + "\0" + object.nameOf(leader));
+        object.symbolClass[leader] === external
+          ? externalNode.get(object.nameOf(leader))
+          : staticNodes.get(nameInSymbolMap.get(name) + "\0" + object.nameOf(leader));
       if (elsewhere !== undefined) return typeof elsewhere === "number" ? [elsewhere] : elsewhere;
     }
     return [withoutAddress(object, name, section)];
@@ -609,7 +655,8 @@ export function readCoffGraph(link: CoffLink): CoffGraph {
       const node = placed.get(object)?.get(index + 1);
       const parent = section.selection === associative ? placed.get(object)?.get(section.parent) : undefined;
       const isInTheImage = node !== undefined || parent !== undefined;
-      if (!(section.flags & isComdat) || (isInTheImage && !isOrdinary.test(section.name))) graph.roots.add(node ?? withoutAddress(object, name, index + 1));
+      if (!(section.flags & isComdat) || (isInTheImage && !isOrdinary.test(section.name)))
+        graph.roots.add(node ?? withoutAddress(object, name, index + 1));
       if (node !== undefined) refer(object, name, index + 1, node);
       if (parent !== undefined) successors[parent]!.add(node ?? withoutAddress(object, name, index + 1));
     });
@@ -626,7 +673,10 @@ export function readCoffGraph(link: CoffLink): CoffGraph {
   for (const [name, kinds] of withoutPlace) {
     const object = objects.get(name)!;
     object.sections.forEach((section, index) => {
-      const couldBeOne = section.selection !== associative && kinds.has(section.name + "\0" + section.size) && !placed.get(object)?.has(index + 1);
+      const couldBeOne =
+        section.selection !== associative &&
+        kinds.has(section.name + "\0" + section.size) &&
+        !placed.get(object)?.has(index + 1);
       if (couldBeOne) graph.roots.add(withoutAddress(object, name, index + 1));
     });
   }
@@ -660,7 +710,9 @@ export function readCoffGraph(link: CoffLink): CoffGraph {
           continue;
         }
         onlyInTheBytes.push([from, node]);
-        graph.boundElsewhere.push(`${graph.object[from]}:(${section.name}) names ${object.nameOf(symbol)}, which lies in ${graph.object[node]}:(${graph.section[node]})`);
+        graph.boundElsewhere.push(
+          `${graph.object[from]}:(${section.name}) names ${object.nameOf(symbol)}, which lies in ${graph.object[node]}:(${graph.section[node]})`,
+        );
       }
     }
   }
@@ -684,7 +736,8 @@ export function readCoffGraph(link: CoffLink): CoffGraph {
       const section = object.sections[index - 1]!;
       if (!sizes.has(section.size) || !foldable(section)) continue;
       for (const [twin, names] of withoutName.get(object.contentsOf(section)) ?? []) {
-        if (names.length === named(node).length && names.every(next => successors[node]!.has(next))) successors[twin]!.add(node);
+        if (names.length === named(node).length && names.every(next => successors[node]!.has(next)))
+          successors[twin]!.add(node);
       }
     }
   }
@@ -694,7 +747,8 @@ export function readCoffGraph(link: CoffLink): CoffGraph {
   graph.successors = successors.map((set, node) => (set.delete(node), [...set]));
   for (let node = 0; node < count; node++) {
     if (objects.get(graph.object[node]!) !== undefined) continue;
-    if (graph.output[node] !== ".rsrc") throw new Error(`${graph.object[node]}, an input of the link, could not be read`);
+    if (graph.output[node] !== ".rsrc")
+      throw new Error(`${graph.object[node]}, an input of the link, could not be read`);
     graph.roots.add(node);
   }
   for (const address of [entry, ...exportedAddresses(link.executable)]) {
@@ -711,17 +765,26 @@ export function readCoffGraph(link: CoffLink): CoffGraph {
       }
     }
   }
-  const unexplained = graph.size.reduce((sum, size, node) => (graph.output[node] === ".text" && !explained.has(node) ? sum + size : sum), 0);
+  const unexplained = graph.size.reduce(
+    (sum, size, node) => (graph.output[node] === ".text" && !explained.has(node) ? sum + size : sum),
+    0,
+  );
   if (unexplained > mostUnexplainedCode) {
-    throw new Error(`nothing that could be read names ${(unexplained / 1e6).toFixed(2)} MB of the code in ${link.executable}: an input of the link was not understood`);
+    throw new Error(
+      `nothing that could be read names ${(unexplained / 1e6).toFixed(2)} MB of the code in ${link.executable}: an input of the link was not understood`,
+    );
   }
   for (let node = 0; node + 1 < count; node++) {
     const padding = graph.address[node + 1]! - graph.address[node]! - graph.size[node]!;
-    if (graph.output[node] === graph.output[node + 1] && padding > 0 && padding < graph.alignment[node + 1]!) graph.size[node]! += padding;
+    if (graph.output[node] === graph.output[node + 1] && padding > 0 && padding < graph.alignment[node + 1]!)
+      graph.size[node]! += padding;
   }
   const code = [...leaderOf.keys()].filter(node => graph.output[node] === ".text");
   const folded = [...graph.aliases.values()].flat();
-  const spelled = spelledAsElsewhere(link.undname, [...code.map(node => leaderOf.get(node)!), ...folded.map(([, name]) => name.slice(1))]);
+  const spelled = spelledAsElsewhere(link.undname, [
+    ...code.map(node => leaderOf.get(node)!),
+    ...folded.map(([, name]) => name.slice(1)),
+  ]);
   code.forEach((node, index) => graph.functionName.set(node, spelled[index]!));
   folded.forEach((alias, index) => void (alias[1] = "_" + spelled[code.length + index]!));
   writeFileSync(

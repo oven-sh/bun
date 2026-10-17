@@ -819,7 +819,11 @@ impl ExitHandler {
     pub(crate) extern "C" fn Bun__VM__entryRootKey(
         vm: &VirtualMachine,
     ) -> bun_core::StringView<'_> {
-        if !vm.transpiler.options.disable_transpilation && !vm.main_is_html_entrypoint && !vm.main_is_compiled && !vm.starts_server_natively {
+        if !vm.transpiler.options.disable_transpilation
+            && !vm.main_is_html_entrypoint
+            && !vm.main_is_compiled
+            && !vm.starts_server_natively
+        {
             bun_core::StringView::static_(MAIN_FILE_NAME)
         } else {
             bun_core::StringView::borrow_utf8(vm.main())
@@ -3345,7 +3349,10 @@ impl VirtualMachine {
                 let _ = STANDALONE_MODULE_GRAPH.set(graph);
             }
             addr_of_mut!((*vm).standalone_module_graph).write(opts.graph);
-            addr_of_mut!((*vm).finds_entry_points_by_path).write(opts.graph.is_some_and(|graph| graph.has_entry_point_paths()));
+            addr_of_mut!((*vm).finds_entry_points_by_path).write(
+                opts.graph
+                    .is_some_and(|graph| graph.has_entry_point_paths()),
+            );
             addr_of_mut!((*vm).initial_script_execution_context_identifier).write(context_id);
             // Mutex fields: zeroed atomics ARE valid-unlocked, but write the
             // canonical value so the invariant is explicit.
@@ -3573,7 +3580,10 @@ impl VirtualMachine {
         }
 
         let is_compiled = self.is_compiled_entry_point(entry_path);
-        self.has_loaded = is_compiled && self.standalone_module_graph.is_some_and(|graph| graph.preserves_source_paths());
+        self.has_loaded = is_compiled
+            && self
+                .standalone_module_graph
+                .is_some_and(|graph| graph.preserves_source_paths());
         self.main_is_compiled = is_compiled;
         self.starts_server_natively = !is_compiled
             && !self.main_is_html_entrypoint
@@ -3608,7 +3618,14 @@ impl VirtualMachine {
                     bun_core::hint::cold();
                     self.set_pending_internal_promise(None);
                     let global_ref = self.global();
-                    let argv1 = bun_string_jsc::create_utf8_for_js(global_ref, if self.main_is_compiled { self.main() } else { MAIN_FILE_NAME })?;
+                    let argv1 = bun_string_jsc::create_utf8_for_js(
+                        global_ref,
+                        if self.main_is_compiled {
+                            self.main()
+                        } else {
+                            MAIN_FILE_NAME
+                        },
+                    )?;
                     let promise: *mut JSInternalPromise =
                         match jsc::from_js_host_call_generic(global_ref, || {
                             NodeModuleModule__callOverriddenRunMain(global_ref, argv1)
@@ -3654,9 +3671,11 @@ impl VirtualMachine {
             let global_ref = self.global();
             let promise = if self.main_is_compiled || self.starts_server_natively {
                 let main_str = bun_core::String::from_bytes(self.main());
-                let promise = jsc::JSModuleLoader::resolve_and_load_and_evaluate_module_ptr(global, &main_str)
-                    .map(NonNull::as_ptr)
-                    .ok_or(crate::CrateError::JSError)?;
+                let promise = jsc::JSModuleLoader::resolve_and_load_and_evaluate_module_ptr(
+                    global, &main_str,
+                )
+                .map(NonNull::as_ptr)
+                .ok_or(crate::CrateError::JSError)?;
                 if self.starts_server_natively {
                     // SAFETY: `promise` is a live JSC heap cell.
                     unsafe { Bun__lookForServerAfterEvaluation(global_ref, promise) };
@@ -4220,7 +4239,9 @@ pub fn collect_macro_vm_garbage() {
 fn path_from_build_folder(frame_url: &bun_core::String) -> Option<bun_core::String> {
     let url = frame_url.to_utf8();
     let mut rest = url.slice().strip_prefix(b"/$bunfs/root/")?;
-    if standalone_module_graph().is_some_and(|graph| graph.find_assume_standalone_path(url.slice()).is_some()) {
+    if standalone_module_graph()
+        .is_some_and(|graph| graph.find_assume_standalone_path(url.slice()).is_some())
+    {
         return None;
     }
     let mut path = Vec::new();
@@ -5323,14 +5344,17 @@ impl VirtualMachine {
                             .standalone_module_graph
                             .and_then(|graph| graph.source_path(source))
                         {
-                            source_to_use =
-                                bun_resolver::fs::PathName::init(source_path).dir_with_trailing_slash();
+                            source_to_use = bun_resolver::fs::PathName::init(source_path)
+                                .dir_with_trailing_slash();
                             retry_on_not_found = true;
                             continue;
                         }
                     }
                     if core::mem::take(&mut may_retry_from_root)
-                        && let Some(root) = self.standalone_module_graph.map(|graph| graph.base_public_path_with_default_suffix()).filter(|root| !source_to_use.starts_with(root))
+                        && let Some(root) = self
+                            .standalone_module_graph
+                            .map(|graph| graph.base_public_path_with_default_suffix())
+                            .filter(|root| !source_to_use.starts_with(root))
                     {
                         source_to_use = root;
                         retry_on_not_found = true;
@@ -5407,7 +5431,9 @@ impl VirtualMachine {
         // note).
         ret.path = unsafe { bun_ptr::detach_lifetime(result_path.text) };
         if self.finds_entry_points_by_path
-            && let Some(name) = self.standalone_module_graph.and_then(|graph| graph.find_by_source_path(ret.path))
+            && let Some(name) = self
+                .standalone_module_graph
+                .and_then(|graph| graph.find_by_source_path(ret.path))
         {
             ret.path = name;
         }
@@ -5809,7 +5835,10 @@ impl VirtualMachine {
         &mut self,
         entry_path: &[u8],
     ) -> crate::CrateResult<*mut JSInternalPromise> {
-        self.has_loaded = self.is_compiled_entry_point(entry_path) && self.standalone_module_graph.is_some_and(|graph| graph.preserves_source_paths());
+        self.has_loaded = self.is_compiled_entry_point(entry_path)
+            && self
+                .standalone_module_graph
+                .is_some_and(|graph| graph.preserves_source_paths());
         self.set_main(entry_path);
         self.main_resolved_path = bun_core::String::EMPTY;
         self.main_hash = bun_watcher::Watcher::get_hash(entry_path);

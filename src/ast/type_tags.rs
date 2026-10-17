@@ -5,8 +5,16 @@ pub struct EarlyEngine {
 }
 
 impl EarlyEngine {
-    pub fn new(thread: std::thread::JoinHandle<usize>, strings: Option<std::sync::mpsc::Sender<Vec<u8>>>, discard: fn(usize)) -> EarlyEngine {
-        EarlyEngine { thread: Some(thread), strings, discard }
+    pub fn new(
+        thread: std::thread::JoinHandle<usize>,
+        strings: Option<std::sync::mpsc::Sender<Vec<u8>>>,
+        discard: fn(usize),
+    ) -> EarlyEngine {
+        EarlyEngine {
+            thread: Some(thread),
+            strings,
+            discard,
+        }
     }
 
     pub fn replace_strings(&mut self, pairs: &[u8]) {
@@ -40,7 +48,10 @@ pub struct ProgramFacts {
 }
 
 pub fn open_world(runtime_use: &[u8], why: &[u8]) -> Vec<u8> {
-    let Some(facts) = runtime_use.strip_prefix(b"closed").filter(|facts| facts.is_empty() || facts.starts_with(b"\n")) else {
+    let Some(facts) = runtime_use
+        .strip_prefix(b"closed")
+        .filter(|facts| facts.is_empty() || facts.starts_with(b"\n"))
+    else {
         return runtime_use.to_vec();
     };
     let before_last_line: &[u8] = if facts.ends_with(b"\n") { b"" } else { b"\n" };

@@ -98,7 +98,10 @@ fn without_relocations_in(file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>> {
     let start = offset_of(file, u32_at(file, directory)?.into())?;
     let mut block = start;
     while block < start + size {
-        let (page, block_size) = (u64::from(u32_at(file, block)?), u32_at(file, block + 4)? as usize);
+        let (page, block_size) = (
+            u64::from(u32_at(file, block)?),
+            u32_at(file, block + 4)? as usize,
+        );
         if block_size < 8 {
             return Err(Error::InvalidExecutable);
         }

@@ -3149,7 +3149,9 @@ fn transpile_source_code_of_any_provenance<const ONLY_READS_SOURCE: bool>(
                     print_result?;
                     // SAFETY: per fn contract: the printer is live, and the borrows taken for
                     // printing have ended.
-                    crate::cli::aot_audit::end_file(unsafe { (*(*extra).source_code_printer).ctx.get_written() });
+                    crate::cli::aot_audit::end_file(unsafe {
+                        (*(*extra).source_code_printer).ctx.get_written()
+                    });
                 }
 
                 // `module_info.asDeserialized()`: finalize the printer-filled
@@ -4042,13 +4044,15 @@ unsafe fn get_loader_and_virtual_source<'a>(
             None => return Err(crate::Error::BlobNotFound),
         }
     } else if virtual_source.is_none()
-        && let Some(file) = bun_standalone_graph::Graph::get_ref().and_then(|graph| graph.find_module_source(path.text))
+        && let Some(file) = bun_standalone_graph::Graph::get_ref()
+            .and_then(|graph| graph.find_module_source(path.text))
         && !bun_sys::exists(path.text)
     {
         // What an executable that runs in place holds for this path is the module's text, where the disk has no such file: a JSON
         // module is read when it is required, and read again after it is evicted from require.cache, as `bun run` reads it.
         // SAFETY: the specifier outlives the synchronous transpile that this feeds, as for a blob above.
-        let path_text: &'static [u8] = unsafe { core::slice::from_raw_parts(path.text.as_ptr(), path.text.len()) };
+        let path_text: &'static [u8] =
+            unsafe { core::slice::from_raw_parts(path.text.as_ptr(), path.text.len()) };
         *virtual_source_to_use = Some(bun_ast::Source {
             path: bun_paths::fs::Path::init(path_text),
             contents: std::borrow::Cow::Borrowed(file.utf8_contents()),
@@ -4866,7 +4870,9 @@ fn make_or_find_private_folder(path: &[u8], uid: u32) -> bool {
     let path = bun_core::ZBox::from_bytes(path);
     let _ = bun_sys::mkdir(&path, 0o700);
     // `lstat`: a planted link is not followed.
-    bun_sys::lstat(&path).is_ok_and(|it| bun_sys::S::ISDIR(it.st_mode as u32) && it.st_uid == uid && it.st_mode & 0o077 == 0)
+    bun_sys::lstat(&path).is_ok_and(|it| {
+        bun_sys::S::ISDIR(it.st_mode as u32) && it.st_uid == uid && it.st_mode & 0o077 == 0
+    })
 }
 
 #[cfg(windows)]
@@ -4885,7 +4891,8 @@ fn write_next_to_libraries(addon_path: &[u8]) -> Option<Vec<u8>> {
         std::path::PathBuf::from(std::ffi::OsStr::from_bytes(bytes))
     };
     #[cfg(windows)]
-    let as_path = |bytes: &[u8]| std::path::PathBuf::from(String::from_utf8_lossy(bytes).into_owned());
+    let as_path =
+        |bytes: &[u8]| std::path::PathBuf::from(String::from_utf8_lossy(bytes).into_owned());
 
     let addon_path = bun_paths::string_paths::without_nt_prefix::<u8>(addon_path);
     let graph = bun_standalone_graph::Graph::get_ref()?;
@@ -4912,27 +4919,52 @@ fn write_next_to_libraries(addon_path: &[u8]) -> Option<Vec<u8>> {
     }
 
     let uid = extract_owner_uid();
-    let mut kept_between_runs = [Fs::RealFS::tmpdir_path(), bun_paths::SEP_STR.as_bytes(), format!(".bun-{uid}-{hash:x}").as_bytes()].concat();
+    let mut kept_between_runs = [
+        Fs::RealFS::tmpdir_path(),
+        bun_paths::SEP_STR.as_bytes(),
+        format!(".bun-{uid}-{hash:x}").as_bytes(),
+    ]
+    .concat();
     if cfg!(windows) {
         bun_paths::resolve_path::slashes_to_windows_in_place(&mut kept_between_runs);
     }
-    let of_this_run = [&kept_between_runs[..], format!("-{:x}", bun_core::fast_random()).as_bytes()].concat();
-    let folder = [kept_between_runs, of_this_run].into_iter().find(|folder| make_or_find_private_folder(folder, uid))?;
+    let of_this_run = [
+        &kept_between_runs[..],
+        format!("-{:x}", bun_core::fast_random()).as_bytes(),
+    ]
+    .concat();
+    let folder = [kept_between_runs, of_this_run]
+        .into_iter()
+        .find(|folder| make_or_find_private_folder(folder, uid))?;
     let written_path = |path: &[u8]| -> Vec<u8> {
         if cfg!(unix) {
             return [&folder[..], path].concat();
         }
-        let under_folder = path.iter().filter(|&&c| c != b':').map(|&c| if c == b'/' { b'\\' } else { c });
-        folder.iter().copied().chain(std::iter::once(b'\\')).chain(under_folder).collect()
+        let under_folder = path
+            .iter()
+            .filter(|&&c| c != b':')
+            .map(|&c| if c == b'/' { b'\\' } else { c });
+        folder
+            .iter()
+            .copied()
+            .chain(std::iter::once(b'\\'))
+            .chain(under_folder)
+            .collect()
     };
     for (path, contents) in files {
         let to = bun_core::ZBox::from_vec(written_path(path));
-        let is_written = || bun_sys::lstat(&to).is_ok_and(|it| bun_sys::S::ISREG(it.st_mode as u32) && it.st_size as usize == contents.len());
+        let is_written = || {
+            bun_sys::lstat(&to).is_ok_and(|it| {
+                bun_sys::S::ISREG(it.st_mode as u32) && it.st_size as usize == contents.len()
+            })
+        };
         if is_written() {
             continue;
         }
         subfolder.create(as_path(&to).parent()?).ok()?;
-        let scratch = bun_core::ZBox::from_vec([&to[..], format!(".{}", std::process::id()).as_bytes()].concat());
+        let scratch = bun_core::ZBox::from_vec(
+            [&to[..], format!(".{}", std::process::id()).as_bytes()].concat(),
+        );
         let mut file = private_file.open(as_path(&scratch)).ok()?;
         file.write_all(contents).ok()?;
         drop(file);

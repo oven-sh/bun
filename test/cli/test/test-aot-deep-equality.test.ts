@@ -1,8 +1,8 @@
 import { expect, setDefaultTimeout } from "bun:test";
-import { test } from "../../aot/supported";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
+import { test } from "../../aot/supported";
 
 setDefaultTimeout(60_000);
 

@@ -64,6 +64,10 @@ pub struct InternalLoopData {
     // Higher tier (`bun_runtime`) casts this back when reading.
     pub jsc_vm: *const c_void,
     pub tick_depth: c_int,
+    // Total time spent blocked in epoll/kqueue
+    pub idle_time_ns: u64,
+    // Monotonic ns of the first tick (0 = not started); see loop_data.h
+    pub loop_start_ns: u64,
 }
 
 impl InternalLoopData {

@@ -57,10 +57,41 @@ const files = {
   `,
   "styled-route.ts": `
     try {
-      Bun.serve({ port: 0, development: true, routes: { "/*": { dir: process.env.FOLDER, style: "nextjs-pages" } } as never, fetch: () => new Response("") });
+      const server = Bun.serve({ port: 0, development: true, routes: { "/*": { dir: process.env.FOLDER, style: "nextjs-pages" } } as never, fetch: () => new Response("") });
+      console.log("serves", typeof server.port);
     } catch (error) {
       console.log((error as Error).message);
     }
+    process.exit(0);
+  `,
+  "serves.ts": `
+    const server = Bun.serve({
+      port: 0,
+      routes: { "/a": () => new Response("a"), "/b": { GET: () => new Response("b") }, "/c/*": { dir: process.env.FOLDER } } as never,
+      fetch: () => new Response("served"),
+    });
+    for (const path of ["/", "/a", "/b", "/c/bundled.ts"]) console.log(await (await fetch(new URL(path, server.url))).text());
+    server.stop(true);
+  `,
+  "reloads.ts": `
+    const server = Bun.serve({ port: 0, development: true, fetch: () => new Response("first") });
+    const dir = process.env.FOLDER;
+    for (const style of ["nextjs-pages", "no such style", () => {}, 1]) {
+      try {
+        server.reload({ routes: { "/pages/*": { dir, style }, "/by-method/*": { GET: { dir, style } } }, fetch: () => new Response("second") } as never);
+        console.log("reloaded");
+      } catch (error) {
+        console.log((error as Error).message);
+      }
+    }
+    for (const path of ["/", "/pages/bundled.ts"]) console.log(await (await fetch(new URL(path, server.url))).text());
+    try {
+      server.reload({ development: false, routes: { "/pages/*": { dir, style: "nextjs-pages" } } } as never);
+      console.log("reloaded");
+    } catch (error) {
+      console.log((error as Error).message);
+    }
+    server.stop(true);
   `,
   ...Object.fromEntries(Object.entries(features).map(([name, feature]) => [`uses-${name}.ts`, feature.program])),
 };
@@ -192,13 +223,39 @@ describe.skipIf(!hasIslands || !!unsupported)("--compile --aot --compile-trim-ru
     expect(await run([join(folder, "by-use")], folder)).toEqual({ stdout: "function function\n", stderr: "", exitCode: 0 });
   });
 
-  test("a route that asks for the development server by an option gets a TypeError that says why", async () => {
+  async function buildWhole(folder: string, entry: string) {
+    expect(await run([bunExe(), "build", "--compile", "--aot", entry, "--outfile", "whole"], folder)).toMatchObject({ exitCode: 0 });
+  }
+
+  test("a route that asks for the development server by an option keeps it", async () => {
     using dir = tempDir("compile-trim-runtime-by-use", files);
     const folder = String(dir);
-    await build(folder, "styled-route.ts", "styled-route");
-    const ran = await run([join(folder, "styled-route")], folder, { ...bunEnv, FOLDER: folder });
-    expect(ran.stdout).toContain("style: this executable was built with --compile-trim-runtime, without the bundler and the development server");
-    expect(ran.exitCode).toBe(0);
+    const env = { ...bunEnv, FOLDER: folder };
+    await buildWhole(folder, "styled-route.ts");
+    const kept = await build(folder, "styled-route.ts", "kept");
+    expect(await build(folder, "styled-route.ts", "left-out", "bundler")).toBeLessThan(kept);
+    expect(await run([join(folder, "kept")], folder, env)).toEqual(await run([join(folder, "whole")], folder, env));
+    const refused = await run([join(folder, "left-out")], folder, env);
+    expect(refused.stdout).toContain("style: this executable was built with --compile-trim-runtime, without the bundler and the development server");
+    expect(refused.exitCode).toBe(0);
+  });
+
+  test("a server none of whose options asks for them has neither the bundler nor what turns text into code", async () => {
+    using dir = tempDir("compile-trim-runtime-by-use", files);
+    const folder = String(dir);
+    expect(await build(folder, "serves.ts", "by-use")).toBe(await build(folder, "serves.ts", "by-name", "bundler,text"));
+    expect(await run([join(folder, "by-use")], folder, { ...bunEnv, FOLDER: folder })).toEqual({ stdout: `served\na\nb\n${files["bundled.ts"]}\n`, stderr: "", exitCode: 0 });
+  });
+
+  test("reload() never needs the development server, whatever its routes ask for", async () => {
+    using dir = tempDir("compile-trim-runtime-by-use", files);
+    const folder = String(dir);
+    const env = { ...bunEnv, FOLDER: folder };
+    await buildWhole(folder, "reloads.ts");
+    expect(await build(folder, "reloads.ts", "by-use")).toBe(await build(folder, "reloads.ts", "by-name", "bundler,text"));
+    const whole = await run([join(folder, "whole")], folder, env);
+    expect(whole.stdout).toStartWith("reloaded\n");
+    expect(await run([join(folder, "by-use")], folder, env)).toEqual(whole);
   });
 });
 

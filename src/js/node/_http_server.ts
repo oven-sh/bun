@@ -172,7 +172,7 @@ function assignSocketInternal(self, socket) {
   socket._httpMessage = self;
   setCloseCallback(socket, onServerResponseClose);
   self.socket = socket;
-  if (!isUnheardByResponse(self, "socket")) self.emit("socket", socket);
+  self.emit("socket", socket);
 }
 
 function onServerResponseClose() {
@@ -3586,7 +3586,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     this._header = " ";
     this.finished = true;
     queueTick1(process, markResponseEndedNT, this);
-    if (!isUnheardByResponse(this, "prefinish")) this.emit("prefinish");
+    this.emit("prefinish");
     return this;
   }
   const sentState = NodeHTTPHeaderState.sent;
@@ -3651,7 +3651,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   // listener otherwise), so handlers can still reach res.socket after end().
   this.finished = true;
   queueTick1(process, markResponseEndedNT, this);
-  if (!isUnheardByResponse(this, "prefinish")) this.emit("prefinish");
+  this.emit("prefinish");
 
   if (draining) {
     // Native calls back once the body is out; a dying connection finishes from emit("close").
@@ -3672,7 +3672,7 @@ function queueResponseFinished(res, callback) {
 
 // 'close' is queued before the 'finish' listeners run, like Node.js's resOnFinish does.
 function emitResponseFinished(res, callback) {
-  queueTick1(process, emitResponseCloseNT, res);
+  queueTick1(process, emitCloseNT, res);
   res.emit("finish");
   if (callback) {
     try {
@@ -4072,43 +4072,21 @@ ServerResponse.prototype.destroy = function (err?: Error) {
   return this;
 };
 
-function finishesBeforeItCloses(res) {
-  const callback = res[kPendingFinish];
-  if (callback !== undefined) {
-    // The connection died mid-drain: like Node.js, the response still finishes, then closes.
-    res[kPendingFinish] = undefined;
-    res._closed = true;
-    res._callPendingCallbacks();
-    queueTick2(process, emitResponseFinishedThenClose, res, callback);
-    return true;
-  }
-  callCloseCallback(res);
-  return false;
-}
-
 ServerResponse.prototype.emit = function (event) {
-  if (event === "close" && finishesBeforeItCloses(this)) return false;
+  if (event === "close") {
+    const callback = this[kPendingFinish];
+    if (callback !== undefined) {
+      // The connection died mid-drain: like Node.js, the response still finishes, then closes.
+      this[kPendingFinish] = undefined;
+      this._closed = true;
+      this._callPendingCallbacks();
+      queueTick2(process, emitResponseFinishedThenClose, this, callback);
+      return false;
+    }
+    callCloseCallback(this);
+  }
   return StreamPrototype.emit.$apply(this, arguments);
 };
-
-const serverResponseEmit = ServerResponse.prototype.emit;
-const eventEmitterEmit = EventEmitter.prototype.emit;
-
-function isUnheardByResponse(res, name) {
-  if (res.emit !== serverResponseEmit || StreamPrototype.emit !== eventEmitterEmit) return false;
-  const events = res._events;
-  return events === undefined || events[name] === undefined;
-}
-
-function emitResponseCloseNT(res) {
-  if (!res._closed) {
-    res.destroyed = true;
-    res._closed = true;
-    callCloseCallback(res);
-    if (!isUnheardByResponse(res, "close")) res.emit("close");
-    else finishesBeforeItCloses(res);
-  }
-}
 
 function emitResponseFinishedThenClose(res, callback) {
   emitResponseFinished(res, callback);

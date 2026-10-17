@@ -493,7 +493,7 @@ export function Array$reduce<T, A>(a: T[], f: unknown, initial: A): A {
                 for (; k < m && isDoubleArray(a) && k < a.length; k++) {
                     const x: number = $getDoubleIndex(a, k);
                     if (x !== x) continue;
-                    const r = $call<unknown>(f, undefined, sum, x, k & 0x7fffffff, a);
+                    const r = $call<unknown>(f, undefined, sum, x, k, a);
                     if (typeof r !== "number") {
                         acc = r;
                         isSum = false;
@@ -506,7 +506,7 @@ export function Array$reduce<T, A>(a: T[], f: unknown, initial: A): A {
                 for (; k < m && isContiguousArray(a) && k < a.length; k++) {
                     const has: boolean = $hasContiguousIndex(a, k);
                     if (!has) continue;
-                    const r = $call<unknown>(f, undefined, sum, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a);
+                    const r = $call<unknown>(f, undefined, sum, $getContiguousIndex<T>(a, k), k, a);
                     if (typeof r !== "number") {
                         acc = r;
                         isSum = false;
@@ -553,7 +553,7 @@ export function Array$reduceWithoutInitialValue<T>(a: T[], f: unknown): T {
                 for (; k < m && isDoubleArray(a) && k < a.length; k++) {
                     const x: number = $getDoubleIndex(a, k);
                     if (x !== x) continue;
-                    const r = $call<unknown>(f, undefined, sum, x, k & 0x7fffffff, a);
+                    const r = $call<unknown>(f, undefined, sum, x, k, a);
                     if (typeof r !== "number") {
                         acc = r;
                         isSum = false;
@@ -566,7 +566,7 @@ export function Array$reduceWithoutInitialValue<T>(a: T[], f: unknown): T {
                 for (; k < m && isContiguousArray(a) && k < a.length; k++) {
                     const has: boolean = $hasContiguousIndex(a, k);
                     if (!has) continue;
-                    const r = $call<unknown>(f, undefined, sum, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a);
+                    const r = $call<unknown>(f, undefined, sum, $getContiguousIndex<T>(a, k), k, a);
                     if (typeof r !== "number") {
                         acc = r;
                         isSum = false;
@@ -613,7 +613,7 @@ export function Array$reduceRight<T, A>(a: T[], f: unknown, initial: A): A {
             for (; k >= 0 && isDoubleArray(a) && k < a.length; k--) {
                 const x: number = $getDoubleIndex(a, k);
                 if (x !== x) continue;
-                const r = $call<unknown>(f, undefined, sum, x, k & 0x7fffffff, a);
+                const r = $call<unknown>(f, undefined, sum, x, k, a);
                 if (typeof r !== "number") {
                     acc = r;
                     isSum = false;
@@ -626,7 +626,7 @@ export function Array$reduceRight<T, A>(a: T[], f: unknown, initial: A): A {
             for (; k >= 0 && isContiguousArray(a) && k < a.length; k--) {
                 const has: boolean = $hasContiguousIndex(a, k);
                 if (!has) continue;
-                const r = $call<unknown>(f, undefined, sum, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a);
+                const r = $call<unknown>(f, undefined, sum, $getContiguousIndex<T>(a, k), k, a);
                 if (typeof r !== "number") {
                     acc = r;
                     isSum = false;
@@ -670,7 +670,7 @@ export function Array$reduceRightWithoutInitialValue<T>(a: T[], f: unknown): T {
             for (; k >= 0 && isDoubleArray(a) && k < a.length; k--) {
                 const x: number = $getDoubleIndex(a, k);
                 if (x !== x) continue;
-                const r = $call<unknown>(f, undefined, sum, x, k & 0x7fffffff, a);
+                const r = $call<unknown>(f, undefined, sum, x, k, a);
                 if (typeof r !== "number") {
                     acc = r;
                     isSum = false;
@@ -683,7 +683,7 @@ export function Array$reduceRightWithoutInitialValue<T>(a: T[], f: unknown): T {
             for (; k >= 0 && isContiguousArray(a) && k < a.length; k--) {
                 const has: boolean = $hasContiguousIndex(a, k);
                 if (!has) continue;
-                const r = $call<unknown>(f, undefined, sum, $getContiguousIndex<T>(a, k), k & 0x7fffffff, a);
+                const r = $call<unknown>(f, undefined, sum, $getContiguousIndex<T>(a, k), k, a);
                 if (typeof r !== "number") {
                     acc = r;
                     isSum = false;

@@ -608,7 +608,7 @@ pub fn features(file: &[u8]) -> Result<Vec<&[u8]>> {
     Ok(Table::parse(&file[range])?.features)
 }
 
-const KINDS_OF_FACTS: [&[u8]; 14] = [b"world", b"global", b"Bun", b"process", b"console", b"module", b"native", b"loader", b"property", b"option", b"environment", b"autoload", b"performance", b"export"];
+const KINDS_OF_FACTS: [&[u8]; 16] = [b"world", b"global", b"Bun", b"process", b"console", b"module", b"native", b"loader", b"property", b"option", b"environment", b"autoload", b"performance", b"export", b"serve-option", b"serve-route-option"];
 
 pub fn features_unused_by(file: &[u8], facts: &[u8]) -> Result<Vec<Vec<u8>>> {
     let range = Container::of(file)?.table_range(file)?;

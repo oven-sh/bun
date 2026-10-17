@@ -36,32 +36,16 @@ pub(crate) enum DefaultEnvFile {
 }
 
 impl DefaultEnvFile {
-    fn name_z(self) -> &'static ZStr {
-        match self {
-            Self::DevelopmentLocal => bun_core::zstr!(".env.development.local"),
-            Self::ProductionLocal => bun_core::zstr!(".env.production.local"),
-            Self::TestLocal => bun_core::zstr!(".env.test.local"),
-            Self::Local => bun_core::zstr!(".env.local"),
-            Self::Development => bun_core::zstr!(".env.development"),
-            Self::Production => bun_core::zstr!(".env.production"),
-            Self::Test => bun_core::zstr!(".env.test"),
-            Self::Env => bun_core::zstr!(".env"),
-        }
-    }
-
     fn name(self) -> &'static [u8] {
-        self.name_z().as_bytes()
-    }
-
-    fn for_suffix(suffix: DotEnvFileSuffix) -> EnumSet<Self> {
-        match suffix {
-            DotEnvFileSuffix::Development => {
-                Self::DevelopmentLocal | Self::Local | Self::Development | Self::Env
-            }
-            DotEnvFileSuffix::Production => {
-                Self::ProductionLocal | Self::Local | Self::Production | Self::Env
-            }
-            DotEnvFileSuffix::Test => Self::TestLocal | Self::Test | Self::Env,
+        match self {
+            Self::DevelopmentLocal => b".env.development.local",
+            Self::ProductionLocal => b".env.production.local",
+            Self::TestLocal => b".env.test.local",
+            Self::Local => b".env.local",
+            Self::Development => b".env.development",
+            Self::Production => b".env.production",
+            Self::Test => b".env.test",
+            Self::Env => b".env",
         }
     }
 }
@@ -639,15 +623,6 @@ impl Loader {
             self.print_loaded(start);
         }
         Ok(())
-    }
-
-    pub fn may_have_default_files(suffix: DotEnvFileSuffix) -> bool {
-        DefaultEnvFile::for_suffix(suffix).iter().any(|env_file| {
-            !matches!(
-                bun_sys::lstatat(bun_sys::Fd::cwd(), env_file.name_z()),
-                Err(err) if err.get_errno() == bun_sys::E::ENOENT
-            )
-        })
     }
 
     fn loaded_count(&self) -> usize {

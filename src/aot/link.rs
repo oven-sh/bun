@@ -4244,6 +4244,7 @@ fn link_with_helper_threads<'scope>(
     let reads = keys::reads_without_a_name(&program, &modules, &files_of_prelude, in_parallel);
     *checked.reads_of_any_property.lock() = reads.of_any_property;
     *checked.reads_that_may_find_the_constructor_of_functions.lock() = reads.that_may_find_the_constructor_of_functions;
+    *checked.reads_that_may_find_what_makes_or_loads_code.lock() = reads.that_may_find_what_makes_or_loads_code;
     let failure_check = Some(FailureCheck { setup: setup_of_what_always_fails, modules });
     Linked { program, problems, members, explained, errors, skipped_builtin_modules, skipped_builtin_functions, found, typedness, times, failure_check }
 }

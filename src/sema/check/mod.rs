@@ -248,6 +248,7 @@ pub struct Program<'s> {
     pub uncompiled_runtime_sources: Guarded<Vec<FileId>>,
     pub reads_of_any_property: Guarded<Vec<(FileId, u32)>>,
     pub reads_that_may_find_the_constructor_of_functions: Guarded<Vec<(FileId, u32)>>,
+    pub reads_that_may_find_what_makes_or_loads_code: Guarded<Vec<(FileId, u32)>>,
     /// `autoArrayType`
     auto_array_type: TypeId,
     /// See `Services::file_info`. Made when it is first asked for.
@@ -532,6 +533,7 @@ impl<'s> Program<'s> {
             uncompiled_runtime_sources: Default::default(),
             reads_of_any_property: Default::default(),
             reads_that_may_find_the_constructor_of_functions: Default::default(),
+            reads_that_may_find_what_makes_or_loads_code: Default::default(),
             auto_array_type,
             package_names_of_linked_files: Default::default(),
             types,
@@ -643,6 +645,7 @@ impl<'s> Program<'s> {
         *self.uncompiled_runtime_sources.get_mut() = Default::default();
         *self.reads_of_any_property.get_mut() = Default::default();
         *self.reads_that_may_find_the_constructor_of_functions.get_mut() = Default::default();
+        *self.reads_that_may_find_what_makes_or_loads_code.get_mut() = Default::default();
         self.rule_scopes = Default::default();
         // SAFETY: the driver calls this once, as its last use of the program, and the arena that holds the program drops nothing.
         unsafe { core::mem::ManuallyDrop::drop(&mut self.aot) };

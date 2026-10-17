@@ -326,8 +326,6 @@ impl RuntimeTranspilerStore {
         package_json: Option<&PackageJSON>,
         module_loader: JSValue,
     ) -> *mut c_void {
-        // SAFETY: `vm` is the live per-thread VM and this is its thread. Jobs copy `vm.transpiler` bytewise.
-        bun_core::handle_oom(unsafe { (*vm).transpiler.load_deferred_defines() });
         // The path text is heap-duplicated here and freed in `reset_for_pool` via
         // heap::take on `path.text`.
         let owned_text: *mut [u8] = bun_core::heap::into_raw(Box::<[u8]>::from(path.text));

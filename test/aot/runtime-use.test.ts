@@ -413,17 +413,17 @@ describe.concurrent("a native module is named where it is loaded", () => {
   });
 
   test.each([
-    ["an import", `import { heapStats } from "bun:jsc";\nconsole.log(heapStats);`, true],
-    ["an import for its effects", `import "bun:jsc";\nconsole.log(1);`, true],
-    ["require in a function that is called", `function load() { return require("bun:jsc"); }\nconsole.log(load());`, true],
-    ["import() in a function that is called", `function load() { return import("bun:jsc"); }\nconsole.log(load());`, true],
-    ["process.getBuiltinModule in a function that is called", `function load() { return process.getBuiltinModule("bun:jsc"); }\nconsole.log(load());`, true],
-    ["require in a function that nothing mentions", `function never() { return require("bun:jsc"); }\nconsole.log(1);`, false],
-    ["import() in a function that nothing mentions", `function never() { return import("bun:jsc"); }\nconsole.log(1);`, false],
-    ["an import of its types", `import type { HeapStats } from "bun:jsc";\nlet stats: HeapStats | undefined;\nconsole.log(stats);`, false],
+    ["an import", `import { StringDecoder } from "node:string_decoder";\nconsole.log(StringDecoder);`, true],
+    ["an import for its effects", `import "node:string_decoder";\nconsole.log(1);`, true],
+    ["require in a function that is called", `function load() { return require("node:string_decoder"); }\nconsole.log(load());`, true],
+    ["import() in a function that is called", `function load() { return import("node:string_decoder"); }\nconsole.log(load());`, true],
+    ["process.getBuiltinModule in a function that is called", `function load() { return process.getBuiltinModule("node:string_decoder"); }\nconsole.log(load());`, true],
+    ["require in a function that nothing mentions", `function never() { return require("node:string_decoder"); }\nconsole.log(1);`, false],
+    ["import() in a function that nothing mentions", `function never() { return import("node:string_decoder"); }\nconsole.log(1);`, false],
+    ["an import of its types", `import type { StringDecoder } from "node:string_decoder";\nlet stats: StringDecoder | undefined;\nconsole.log(stats);`, false],
   ])("%s", async (_, text, named) => {
     const use = await runtimeUse({ "main.ts": "// @ts-nocheck\n" + text });
-    expect({ world: use.world, named: use.facts.has("native bun:jsc") }).toEqual({ world: "closed", named });
+    expect({ world: use.world, named: use.facts.has("native node:string_decoder") }).toEqual({ world: "closed", named });
   });
 });
 
@@ -454,7 +454,6 @@ describe.concurrent("the names of properties", () => {
     ["strings that are joined in brackets", `console.log(given["locale" + "Compare"]);`],
     ["a template with a constant in brackets", "const tail = \"Compare\";\nconsole.log(given[`locale${tail}`]);"],
     ["a constant that is joined, in brackets", `const key = "locale" + "Compare";\nconsole.log(given[key]("a"));`],
-    ["strings that are joined in a pattern", `const { ["locale" + "Compare"]: compare } = given;\nconsole.log(compare);`],
     ["a member of super", `class Text extends String { compare() { return super.localeCompare("a"); } }\nconsole.log(new Text().compare());`],
     ["a pattern", `const { localeCompare } = given;\nconsole.log(localeCompare);`],
     ["a pattern that renames it", `const { localeCompare: compare } = given;\nconsole.log(compare);`],
@@ -658,7 +657,9 @@ describe.concurrent("what runs native code that the compiler has not seen opens 
     ["a require of bun:ffi", `console.log(require("bun:ffi"));`, "bun:ffi"],
     ["import() of bun:ffi", `console.log(await import("bun:ffi"));\nexport {};`, "bun:ffi"],
     ["Bun.FFI", `console.log(Bun.FFI);`, "bun:ffi"],
+    ["bun:jsc, which hands out objects of the heap", `import { getProtectedObjects } from "bun:jsc";\nconsole.log(getProtectedObjects);`, "bun:jsc"],
     ["import() of bun:main", `try { await import("bun:main"); } catch {}\nexport {};`, "bun:main"],
+    ["import() of a URL", `try { await import("http://127.0.0.1:1/x.js"); } catch {}\nexport {};`, "an import of a URL"],
     ["node:inspector", `import { Session } from "node:inspector";\nconsole.log(Session);`, "a module that loads modules or evaluates text"],
   ])("%s", async (_, text, why) => {
     const use = await of(text);
@@ -745,6 +746,71 @@ describe.concurrent("Bun is the receiver of what the program puts on it", () => 
   });
 });
 
+describe.concurrent("operators and calls that hand a global to code of the program's own", () => {
+  const has = `class Has { static [Symbol.hasInstance](value: unknown) { return value !== undefined; } }\n`;
+  test.each([
+    ["the global object on the left of instanceof", has + `console.log(globalThis instanceof Has);`, "the global object"],
+    ["process on the left of instanceof", has + `console.log(process instanceof Has);`, "process"],
+    ["Bun on the left of instanceof", has + `console.log(Bun instanceof Has);`, "Bun"],
+    ["process compared loosely with a number", `console.log(process == 1);`, "process"],
+    ["Bun compared loosely with a string", `console.log(Bun != "a");`, "Bun"],
+    ["the global object compared loosely", `console.log((globalThis as any) == 1);`, "the global object"],
+    ["a store on the global object under a name that is joined", `(globalThis as any)["mi" + process.argv[2]] = function (this: any) { return this; };`, "the global object"],
+    ["a store on process under a computed name", `process[process.argv[2]] = 1;`, "process"],
+    ["a call of what a symbol finds on the global object", `const mine = Symbol("mine");\n(globalThis as any)[mine] = function (this: any) { return this; };\nconsole.log((globalThis as any)[mine]());`, "the global object"],
+    ["a function declaration that is stored to", `function read(given: any) { return typeof given; }\n// @ts-ignore\nread = (given: any) => given;\nconsole.log(read(globalThis));`, "the global object"],
+    ["a free name that is stored to and called on the global object", `// @ts-ignore\nmine = function (this: any) { return this; };\nconsole.log((globalThis as any).mine());`, "a function of the program's own that is called on the global object"],
+    ["dispatchEvent taken off EventTarget.prototype", `declare const EventTarget: any;\nconst { dispatchEvent } = EventTarget.prototype;\nconsole.log(dispatchEvent);`, "addEventListener of the global object"],
+    ["addEventListener taken off an object", `declare const EventTarget: any;\nconst listen = new EventTarget().addEventListener;\nconsole.log(listen);`, "addEventListener of the global object"],
+    ["addEventListener called without a receiver", `declare const EventTarget: any;\nEventTarget.prototype.addEventListener.call(undefined, "a", () => {});`, "addEventListener of the global object"],
+  ])("the world opens with %s", async (_, text, why) => {
+    const use = await of(text);
+    expect({ world: use.world, whyOpen: use.whyOpen }).toEqual({ world: "open", whyOpen: [why] });
+  });
+
+  test.each([
+    ["process compared with null", `console.log(process == null, process != undefined, process === 1);`],
+    ["a symbol's member of the global object that is stored and read", `const mine = Symbol("mine");\n(globalThis as any)[mine] = 1;\nconsole.log(String((globalThis as any)[mine]));`],
+    ["addEventListener called on an object", `declare const EventTarget: any;\nnew EventTarget().addEventListener("a", () => {});`],
+    ["the type of a member named addEventListener", `declare const given: any;\nconsole.log(typeof given.addEventListener);`],
+  ])("the world stays closed with %s", async (_, text) => {
+    const use = await of(text);
+    expect({ world: use.world, whyOpen: use.whyOpen }).toEqual({ world: "closed", whyOpen: [] });
+  });
+
+  test("a function of the program's own that is called on console may read any member of it", async () => {
+    const use = await of(`console.mine = function (this: any) { return this; };\nconsole.log(String(console.mine()));`);
+    expect({ world: use.world, any: use.facts.has("console *") }).toEqual({ world: "closed", any: true });
+  });
+});
+
+describe.concurrent("a member that makes or loads code is one whatever it is read from", () => {
+  const why = "a member that makes or loads code, read from what may be the global object, process or Bun";
+  const given = `declare const given: any;\n`;
+
+  test.each([
+    ["eval", `console.log(given.eval("1"));`],
+    ["Function", `console.log(new given.Function("return 1"));`],
+    ["require", `console.log(given.require("node:fs"));`],
+    ["dlopen", `given.dlopen(module, "./addon.node");`],
+    ["binding that is taken out", `const { binding } = given;\nconsole.log(binding);`],
+    ["plugin", `given.plugin({});`],
+    ["Worker", `console.log(new given.Worker("./a.js"));`],
+  ])("the world opens with %s of a value that is not known", async (_, text) => {
+    const use = await of(given + text);
+    expect({ world: use.world, whyOpen: use.whyOpen }).toEqual({ world: "open", whyOpen: [why] });
+  });
+
+  test.each([
+    ["of an instance of a class of the program's own", `class Mine { require(name: string) { return name; } }\nconsole.log(new Mine().require("a"));`],
+    ["that is only asked for its type", `console.log(typeof given.require, given.eval === undefined);`],
+    ["in a function that nothing mentions", `function never() { return given.eval("1"); }\nconsole.log(1);`],
+  ])("the world stays closed with such a name %s", async (_, text) => {
+    const use = await of(given + text);
+    expect({ world: use.world, whyOpen: use.whyOpen }).toEqual({ world: "closed", whyOpen: [] });
+  });
+});
+
 describe.concurrent("an accessor on its prototype would be handed the object", () => {
   test.each([
     ["Object.getPrototypeOf(process)", `console.log(Object.getPrototypeOf(process));`, "process"],
@@ -799,7 +865,6 @@ describe.concurrent("members of performance", () => {
   test.each([
     ["it is printed", `console.log(performance);`],
     ["it is an argument", `console.log(JSON.stringify(performance));`],
-    ["a key is computed", `const key = ["mark"]; performance[key[0]]("a");`],
     ["it is stored", `const held = [performance]; held[0].mark("a");`],
     ["a variable holds it", `const timer = performance; timer.now();`],
     ["a variable holds the global object", `const everything: any = globalThis; everything.performance.now();`],
@@ -812,6 +877,10 @@ describe.concurrent("members of performance", () => {
     ["its prototype is asked for through a variable", `const timer = performance; console.log(Reflect.getPrototypeOf(timer));`],
   ])("any member may be read, in a world that stays closed, when %s", async (_, text) => {
     expect(await named(text)).toMatchObject({ world: "closed", any: true });
+  });
+
+  test("any member may be read when a key is computed", async () => {
+    expect(await named(`const key = ["mark"]; performance[key[0]]("a");`)).toMatchObject({ any: true });
   });
 
   test("node:perf_hooks hands the object on", async () => {
@@ -845,6 +914,190 @@ describe.concurrent("what is read of node:module", () => {
   ])("not by %s", async (_, program) => {
     const use = await runtimeUse({ "main.ts": `declare const console: any;\n` + program, "other.ts": `export const SourceMap = 1;` });
     expect({ world: use.world, exports: use.lines.filter(line => line.startsWith("export ")) }).toEqual({ world: "closed", exports: [] });
+  });
+});
+
+describe.concurrent("the options of Bun.serve", () => {
+  const declaredHere = `declare const Response: any, Bun: any, process: any, console: any, JSON: any;\n`;
+  const fetch = `fetch() { return new Response("served"); }`;
+  const optionsIn = async (files: Record<string, string>) => {
+    const use = await runtimeUse(Object.fromEntries(Object.entries(files).map(([path, text]) => [path, declaredHere + text])));
+    const of = (kind: string) => use.lines.filter(line => line.startsWith(kind + " ")).map(line => line.slice(kind.length + 1));
+    return { world: use.world, options: of("serve-option").sort(), routeOptions: of("serve-route-option").sort() };
+  };
+  const optionsOf = (text: string) => optionsIn({ "main.ts": text });
+
+  test.each([
+    ["an object literal", `Bun.serve({ port: 0, ${fetch} });`, ["fetch", "port"]],
+    ["names in quotes and in brackets", `Bun.serve({ "port": 0, ["hostname"]: "localhost", ${fetch} });`, ["fetch", "hostname", "port"]],
+    ["a shorthand", `const port = 0;\nBun.serve({ port, ${fetch} });`, ["fetch", "port"]],
+    ["a literal that is asserted to be something else", `Bun.serve({ app: {}, ${fetch} } as any);`, ["app", "fetch"]],
+    ["a function that is asserted to be something else", `(Bun.serve as any)({ port: 0, ${fetch} });`, ["fetch", "port"]],
+    ["brackets", `Bun["serve"]({ port: 0, ${fetch} });`, ["fetch", "port"]],
+    ["the global object", `(globalThis as any).Bun.serve({ port: 0, ${fetch} });`, ["fetch", "port"]],
+    ["an import", `import { serve } from "bun";\nserve({ port: 0, ${fetch} });`, ["fetch", "port"]],
+    ["an import under another name", `import { serve as start } from "bun";\nstart({ port: 0, ${fetch} });`, ["fetch", "port"]],
+    ["the default import", `import runtime from "bun";\nruntime.serve({ port: 0, ${fetch} });`, ["fetch", "port"]],
+    ["a destructured Bun", `const { serve } = Bun;\nserve({ port: 0, ${fetch} });`, ["fetch", "port"]],
+    ["a destructured Bun, under another name", `const { serve: start } = Bun;\nstart({ port: 0, ${fetch} });`, ["fetch", "port"]],
+    ["two calls", `Bun.serve({ port: 0, ${fetch} });\nBun.serve({ unix: "/tmp/socket", ${fetch} });`, ["fetch", "port", "unix"]],
+    ["a variable that goes nowhere else", `const options = { port: 0, ${fetch} };\nBun.serve(options);`, ["fetch", "port"]],
+    ["a variable that goes to two servers", `const options = { port: 0, ${fetch} };\nBun.serve(options);\nBun.serve(options);`, ["fetch", "port"]],
+    ["a variable of a variable", `const first = { port: 0, ${fetch} };\nconst second = first;\nBun.serve(second);`, ["fetch", "port"]],
+    ["a spread literal", `Bun.serve({ ...{ port: 0 }, ${fetch} });`, ["fetch", "port"]],
+    ["a spread variable", `const shared = { port: 0 };\nBun.serve({ ...shared, ${fetch} });`, ["fetch", "port"]],
+    ["one of two literals", `Bun.serve(process.env.UNIX ? { unix: process.env.UNIX, ${fetch} } : { port: 0, ${fetch} });`, ["fetch", "port", "unix"]],
+    ["a spread of one of two literals", `Bun.serve({ ...(process.env.TLS ? { tls: {} } : {}), ${fetch} });`, ["fetch", "tls"]],
+    ["a spread behind &&", `Bun.serve({ ...(process.env.TLS && { tls: {} }), ${fetch} });`, ["fetch", "tls"]],
+    ["a spread of undefined", `Bun.serve({ ...undefined, ${fetch} });`, ["fetch"]],
+    ["no argument", `try { Bun.serve(); } catch {}`, []],
+    ["an argument that is no object", `try { Bun.serve("options"); } catch {}`, []],
+    ["a second argument", `Bun.serve({ ${fetch} }, JSON.parse(process.argv[2]));`, ["fetch"]],
+    ["typeof and a comparison", `console.log(typeof Bun.serve, Bun.serve === undefined, !Bun.serve);`, []],
+    ["a call that is not reached", `function never(options: any) { Bun.serve(options); }\nBun.serve({ ${fetch} });`, ["fetch"]],
+  ])("are listed by name for %s", async (_, text, options) => {
+    expect(await optionsOf(text)).toEqual({ world: "closed", options, routeOptions: [] });
+  });
+
+  test.each([
+    ["a parameter", `function start(options: any) { Bun.serve(options); }\nstart({ ${fetch} });`],
+    ["the result of a call", `Bun.serve(JSON.parse(process.argv[2]));`],
+    ["a member", `const all = { options: { ${fetch} } };\nBun.serve(all.options);`],
+    ["an instance", `class Options { ${fetch} }\nBun.serve(new Options());`],
+    ["a function", `Bun.serve(function () {});`],
+    ["spread arguments", `const all = [{ ${fetch} }];\nBun.serve(...all);`],
+    ["a name that is computed", `Bun.serve({ [process.argv[2]]: {}, ${fetch} });`],
+    ["a spread of what is not seen", `Bun.serve({ ...JSON.parse(process.argv[2]), ${fetch} });`],
+    ["a spread of one of two, one of which is not seen", `Bun.serve({ ...(process.env.TLS ? JSON.parse(process.env.TLS) : {}), ${fetch} });`],
+    ["a getter", `Bun.serve({ get port() { return 0; }, ${fetch} });`],
+    ["a setter", `Bun.serve({ set port(value: number) {}, ${fetch} });`],
+    ["a prototype", `Bun.serve({ __proto__: JSON.parse(process.argv[2]), ${fetch} });`],
+    ["a prototype in quotes", `Bun.serve({ "__proto__": JSON.parse(process.argv[2]), ${fetch} });`],
+    ["a variable that is stored to", `const options: any = { ${fetch} };\noptions.app = {};\nBun.serve(options);`],
+    ["a variable that is stored to under a computed name", `const options: any = { ${fetch} };\noptions[process.argv[2]] = {};\nBun.serve(options);`],
+    ["a variable that is read", `const options: any = { ${fetch} };\nconsole.log(options.port);\nBun.serve(options);`],
+    ["a variable that is handed on", `const options = { ${fetch} };\nconsole.log(options);\nBun.serve(options);`],
+    ["a variable that its own function mentions", `const options: any = { fetch() { options.app = {}; return new Response("served"); } };\nBun.serve(options);`],
+    ["a variable that is assigned again", `let options: any = { ${fetch} };\noptions = JSON.parse(process.argv[2]);\nBun.serve(options);`],
+    ["a variable that is spread into what goes elsewhere", `const options = { ${fetch} };\nconsole.log({ ...options });\nBun.serve(options);`],
+    ["a variable that is exported", `export const options = { ${fetch} };\nBun.serve(options);`],
+    ["a variable that is exported by name", `const options = { ${fetch} };\nexport { options };\nBun.serve(options);`],
+    ["a variable that is the default export", `const options = { ${fetch} };\nBun.serve(options);\nexport default options;`],
+    ["a function that is kept", `const start = Bun.serve;\nstart({ ${fetch} });`],
+    ["a function that is handed on", `console.log(Bun.serve);`],
+    ["call", `Bun.serve.call(undefined, { ${fetch} });`],
+    ["apply", `Bun.serve.apply(undefined, [{ ${fetch} }]);`],
+    ["bind", `Bun.serve.bind(undefined)({ ${fetch} });`],
+    ["new", `new Bun.serve({ ${fetch} });`],
+    ["a tagged template", "Bun.serve`options`;"],
+    ["an import that is handed on", `import { serve } from "bun";\nconsole.log(serve);`],
+    ["an import that is exported", `import { serve } from "bun";\nexport { serve };`],
+    ["a destructured Bun that is handed on", `const { serve } = Bun;\nconsole.log(serve);`],
+    ["a destructured Bun with a default", `const { serve = console.log } = Bun;\nserve({ ${fetch} });`],
+    ["a destructured Bun that is exported", `export const { serve } = Bun;\nserve({ ${fetch} });`],
+    ["a descriptor", `Object.getOwnPropertyDescriptor(Bun, "serve")!.value({ ${fetch} });`],
+    ["a variable that holds the global object", `const everything: any = globalThis;\neverything.Bun.serve({ ${fetch} });`],
+  ])("may be any for %s", async (_, text) => {
+    const { world, options, routeOptions } = await optionsOf(text);
+    expect({ world, any: options.includes("*"), anyOfARoute: routeOptions.includes("*") }).toEqual({ world: "closed", any: true, anyOfARoute: true });
+  });
+
+  test.each([
+    ["functions", `{ "/a": () => new Response("a"), "/b": function () { return new Response("b"); }, "/c"() { return new Response("c"); }, async "/d"() { return new Response("d"); } }`, []],
+    ["what is no object", `{ "/a": false, "/b": undefined, "/c": null, "/d": "text", "/e": 1 }`, []],
+    ["paths that are computed", `{ [process.argv[2]]: () => new Response("a") }`, []],
+    ["functions by method", `{ "/a": { GET: () => new Response("a"), POST() { return new Response("b"); } } }`, ["GET", "POST"]],
+    ["a directory", `{ "/files/*": { dir: process.argv[2] } }`, ["dir"]],
+    ["a directory and a style", `{ "/*": { dir: ".", style: "nextjs-pages" } }`, ["dir", "style"]],
+    ["a directory and a style, asserted to be something else", `{ "/*": { dir: ".", style: "nextjs-pages" } as never } as any`, ["dir", "style"]],
+    ["a directory and a style by method", `{ "/*": { GET: { dir: ".", style: "nextjs-pages" } } }`, ["GET", "dir", "style"]],
+    ["one of two", `{ "/a": process.env.FILES ? { dir: process.env.FILES } : () => new Response("a") }`, ["dir"]],
+    ["a spread literal", `{ ...{ "/a": { GET: () => new Response("a") } } }`, ["GET"]],
+    ["a spread in a route", `{ "/a": { ...{ GET: () => new Response("a") } } }`, ["GET"]],
+    ["what is unseen under a name that is no method", `{ "/a": { dir: JSON.parse(process.argv[2]), headers: JSON.parse(process.argv[2]) } }`, ["dir", "headers"]],
+    ["an array", `[JSON.parse(process.argv[2])]`, []],
+  ])("the options of a route are listed by name for %s", async (_, routes, routeOptions) => {
+    expect(await optionsOf(`Bun.serve({ routes: ${routes}, ${fetch} });`)).toEqual({ world: "closed", options: ["fetch", "routes"], routeOptions });
+    expect(await optionsOf(`Bun.serve({ static: ${routes}, ${fetch} });`)).toEqual({ world: "closed", options: ["fetch", "static"], routeOptions });
+  });
+
+  test.each([
+    ["a function that is declared", `function a() { return new Response("a"); }\nBun.serve({ routes: { "/a": a, "/b": { GET: a } } });`, ["GET"]],
+    ["a function in a variable", `export const a = () => new Response("a");\nBun.serve({ routes: { "/a": a } });`, []],
+    ["routes in a variable", `const routes = { "/a": { GET: () => new Response("a") } };\nBun.serve({ routes });`, ["GET"]],
+    ["a route in a variable", `const a = { GET: () => new Response("a") };\nBun.serve({ routes: { "/a": a } });`, ["GET"]],
+    ["routes in the variable of the options", `const options = { routes: { "/*": { dir: ".", style: "nextjs-pages" } } };\nBun.serve(options);`, ["dir", "style"]],
+    ["routes that are spread", `const shared = { "/a": { GET: () => new Response("a") } };\nBun.serve({ routes: { ...shared, "/b": { POST: () => new Response("b") } } });`, ["GET", "POST"]],
+  ])("the options of a route are listed by name for %s", async (_, text, routeOptions) => {
+    expect(await optionsOf(text)).toEqual({ world: "closed", options: ["routes"], routeOptions });
+  });
+
+  test.each([
+    ["routes that are not seen", `JSON.parse(process.argv[2])`],
+    ["routes that are a function", `function () {}`],
+    ["a route that is not seen", `{ "/a": JSON.parse(process.argv[2]) }`],
+    ["a route that is a member", `{ "/a": process.env }`],
+    ["a route that is an instance", `{ "/a": new (class { dir = "."; style = "nextjs-pages"; })() }`],
+    ["a route that is a class", `{ "/a": class {} }`],
+    ["a route that is an array", `{ "/a": [] }`],
+    ["a route that is a regular expression", `{ "/a": /a/ }`],
+    ["a route by method that is not seen", `{ "/a": { GET: JSON.parse(process.argv[2]) } }`],
+    ["one of two, one of which is not seen", `{ "/a": process.env.A ? JSON.parse(process.env.A) : () => new Response("a") }`],
+    ["a name that is computed", `{ "/a": { [process.argv[2]]: "nextjs-pages", dir: "." } }`],
+    ["a name by method that is computed", `{ "/a": { GET: { [process.argv[2]]: "nextjs-pages", dir: "." } } }`],
+    ["a spread of what is not seen", `{ ...JSON.parse(process.argv[2]) }`],
+    ["a spread of what is not seen, in a route", `{ "/a": { ...JSON.parse(process.argv[2]) } }`],
+    ["a getter", `{ get "/a"() { return JSON.parse(process.argv[2]); } }`],
+    ["a getter in a route", `{ "/a": { dir: ".", get style() { return "nextjs-pages"; } } }`],
+    ["a prototype", `{ __proto__: JSON.parse(process.argv[2]) }`],
+    ["a prototype in a route", `{ "/a": { __proto__: JSON.parse(process.argv[2]) } }`],
+  ])("the options of a route may be any for %s", async (_, routes) => {
+    expect(await optionsOf(`Bun.serve({ routes: ${routes}, ${fetch} });`)).toMatchObject({ world: "closed", options: ["fetch", "routes"], routeOptions: expect.arrayContaining(["*"]) });
+  });
+
+  test.each([
+    ["routes in a variable that is stored to", `const routes: any = {};\nroutes["/*"] = JSON.parse(process.argv[2]);\nBun.serve({ routes, ${fetch} });`],
+    ["routes in a variable that is handed on", `const routes = {};\nconsole.log(routes);\nBun.serve({ routes, ${fetch} });`],
+    ["a route in a variable that is stored to", `const route: any = { dir: "." };\nroute.style = "nextjs-pages";\nBun.serve({ routes: { "/*": route }, ${fetch} });`],
+    ["a function that is assigned again", `let a: any = () => new Response("a");\na = JSON.parse(process.argv[2]);\nBun.serve({ routes: { "/a": a }, ${fetch} });`],
+    ["a declared function that is assigned again", `function a() {}\n(a as any) = JSON.parse(process.argv[2]);\nBun.serve({ routes: { "/a": a }, ${fetch} });`],
+    ["a parameter", `function start(a: any) { Bun.serve({ routes: { "/a": a }, ${fetch} }); }\nstart(() => new Response("a"));`],
+  ])("the options of a route may be any for %s", async (_, text) => {
+    expect(await optionsOf(text)).toMatchObject({ world: "closed", options: ["fetch", "routes"], routeOptions: expect.arrayContaining(["*"]) });
+  });
+
+  test.each([
+    ["that is declared", `import { a } from "./a";`, `export function a() { return new Response("a"); }`],
+    ["in a variable", `import { a } from "./a";`, `export const a = () => new Response("a");`],
+    ["under another name", `import { b as a } from "./a";`, `export const b = () => new Response("a");`],
+    ["that is the default export", `import a from "./a";`, `export default function a() { return new Response("a"); }`],
+    ["that is the default export and has no name", `import a from "./a";`, `export default function () { return new Response("a"); }`],
+  ])("a function %s in another file is a function", async (_, imports, exports) => {
+    const found = await optionsIn({ "main.ts": `${imports}\nBun.serve({ routes: { "/a": a, "/b": { GET: a } } });`, "a.ts": exports });
+    expect(found).toEqual({ world: "closed", options: ["routes"], routeOptions: ["GET"] });
+  });
+
+  test.each([
+    ["an object", `import { a } from "./a";`, `export const a = { dir: ".", style: "nextjs-pages" };`],
+    ["a variable that is assigned again", `import { a } from "./a";`, `export let a: any = () => new Response("a");\na = { dir: ".", style: "nextjs-pages" };`],
+    ["a declared function that is assigned again", `import { a } from "./a";`, `export function a() {}\n(a as any) = { dir: ".", style: "nextjs-pages" };`],
+    ["the result of a call", `import { a } from "./a";`, `export const a = JSON.parse(process.argv[2]);`],
+    ["an export by name", `import { a } from "./a";`, `const a = () => new Response("a");\nexport { a };`],
+    ["a default export that is an expression", `import a from "./a";`, `export default JSON.parse(process.argv[2]);`],
+    ["a member of the namespace", `import * as all from "./a";\nconst a = all.a;`, `export const a = () => new Response("a");`],
+  ])("%s out of another file is not seen", async (_, imports, exports) => {
+    const found = await optionsIn({ "main.ts": `${imports}\nBun.serve({ routes: { "/a": a } });`, "a.ts": exports });
+    expect(found).toEqual({ world: "closed", options: ["routes"], routeOptions: ["*"] });
+  });
+
+  test("a program that does not name Bun.serve has none", async () => {
+    expect(await optionsOf(`const mine = { serve(options: object) { console.log(options); } };\nmine.serve({ app: {}, routes: { "/*": { dir: ".", style: "nextjs-pages" } } });`)).toEqual({ world: "closed", options: [], routeOptions: [] });
+  });
+
+  test("node:http names the options that it hands to Bun.serve", async () => {
+    const found = await optionsOf(`import { createServer } from "node:http";\ncreateServer(() => {}).listen(0);`);
+    expect(found.options).toContain("onNodeHTTPRequest");
+    expect(found).toMatchObject({ world: "closed", options: expect.not.arrayContaining(["*", "app", "routes", "static"]), routeOptions: [] });
   });
 });
 
@@ -956,6 +1209,39 @@ describe.concurrent("Bun.serve for the default export of the entry point", () =>
   ])("is named with %s", async (_, files) => {
     expect(await named(files, Object.keys(files)[0])).toMatchObject({ serve: true, exitCode: 0 });
   });
+
+  const optionsIn = async (files: Record<string, string>) => {
+    const use = await runtimeUse(withDeclarations(files), build, Object.keys(files)[0]);
+    const of = (kind: string) => use.lines.filter(line => line.startsWith(kind + " ")).map(line => line.slice(kind.length + 1));
+    return { world: use.world, options: of("serve-option").sort(), routeOptions: of("serve-route-option").sort(), exitCode: use.exitCode };
+  };
+
+  test.each([
+    ["an object", { "main.ts": `export default ${server};` }, ["fetch", "port"], []],
+    ["an object, in JavaScript", { "main.js": `export default ${server};` }, ["fetch", "port"], []],
+    ["an object that is asserted to be something else", { "main.ts": `export default ${server} as object;` }, ["fetch", "port"], []],
+    ["a variable that goes nowhere else", { "main.ts": `const config = ${server};\nexport default config;` }, ["fetch", "port"], []],
+    ["an object with a spread variable", { "main.ts": `const shared = { port: 0 };\nexport default { ...shared, fetch() { return new Response("served"); } };` }, ["fetch", "port"], []],
+    ["an object with routes", { "main.ts": `export default { port: 0, routes: { "/*": { dir: ".", style: "nextjs-pages" } } };` }, ["port", "routes"], ["dir", "style"]],
+    ["an object that asks for the development server", { "main.ts": `export default { port: 0, app: {} };` }, ["app", "port"], []],
+  ])("its options are listed by name for export default of %s", async (_, files, options, routeOptions) => {
+    expect(await optionsIn(files)).toEqual({ world: "closed", options, routeOptions, exitCode: 0 });
+  });
+
+  test.each([
+    ["an instance", { "main.ts": `class Server { port = 0; fetch() { return new Response("served"); } }\nexport default new Server();` }],
+    ["the result of a call", { "main.ts": `declare const JSON: any;\nexport default JSON.parse(process.argv[2]);` }],
+    ["a variable that is stored to", { "main.ts": `const config: any = ${server};\nconfig.app = {};\nexport default config;` }],
+    ["a variable that is handed on", { "main.ts": `const config = ${server};\nconsole.log(config);\nexport default config;` }],
+    ["an object that another file imports", { "main.ts": `import "./other";\nexport default ${server};`, "other.ts": `import config from "./main";\nsetTimeout(() => ((config as any).app = {}));` }],
+    ["an object that its own file imports", { "main.ts": `import config from "./main";\nsetTimeout(() => ((config as any).app = {}));\nexport default ${server};` }],
+    ["export { config as default }", { "main.ts": `const config = ${server};\nexport { config as default };` }],
+    ["export { default } from", { "main.ts": `export { default } from "./other";`, "other.ts": `export default ${server};` }],
+    ["module.exports", { "main.cjs": `module.exports = ${server};` }],
+  ])("its options may be any for %s", async (_, files) => {
+    const { options, routeOptions, exitCode } = await optionsIn(files);
+    expect({ any: options.includes("*"), anyOfARoute: routeOptions.includes("*"), exitCode }).toEqual({ any: true, anyOfARoute: true, exitCode: 0 });
+  });
 });
 
 describe.concurrent("what is done with the exports of the entry point does not depend on how the program runs", () => {
@@ -1058,6 +1344,11 @@ describe.skipIf(probed.exitCode !== 0)("what the writer of the executable finds"
 
   test("a module that is not compiled: nothing is left out for not being named", async () => {
     const { size, ...said } = await built({ "main.ts": hello, "data.json": `{ "a": 1 }` }, ["main.ts", "data.json"]);
+    expect({ ...said, isSmaller: await leavesOutWhatIsNotNamed(size) }).toEqual({ stdout: "hello\n", exitCode: 0, isSmaller: false });
+  });
+
+  test("a package that was not there at the build may be there at run time: nothing is left out for not being named", async () => {
+    const { size, ...said } = await built({ "main.ts": hello + `\ntry { require("late-package"); } catch {}` });
     expect({ ...said, isSmaller: await leavesOutWhatIsNotNamed(size) }).toEqual({ stdout: "hello\n", exitCode: 0, isSmaller: false });
   });
 

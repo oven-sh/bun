@@ -562,6 +562,13 @@ fn validate_route_name(global: &JSGlobalObject, path: &[u8]) -> JsResult<()> {
     Ok(())
 }
 
+pub(crate) fn has_bundler() -> bool {
+    unsafe extern "C" {
+        safe fn Bun__hasBundler() -> bool;
+    }
+    Bun__hasBundler()
+}
+
 fn get_routes_object(global: &JSGlobalObject, arg: JSValue) -> JsResult<Option<JSValue>> {
     for key in ["routes", "static"] {
         if let Some(routes) = arg.get(global, key)? {
@@ -711,6 +718,7 @@ impl ServerConfig {
                 framework_router_list: Vec::new(),
                 user_routes: &mut args.static_routes,
                 global,
+                may_start_development_server: opts.may_start_development_server,
             };
             let init_ctx = &mut init_ctx_;
 
@@ -882,8 +890,9 @@ impl ServerConfig {
 
             // When HTML bundles are provided, ensure DevServer options are ready
             // The presence of these options causes Bun.serve to initialize things.
-            if !init_ctx.dedupe_html_bundle_map.is_empty()
-                || !init_ctx.framework_router_list.is_empty()
+            if (!init_ctx.dedupe_html_bundle_map.is_empty()
+                || !init_ctx.framework_router_list.is_empty())
+                && (has_bundler() || !args.development.is_hmr_enabled())
             {
                 if args.development.is_hmr_enabled() {
                     use bun_options_types::schema::api::DotEnvBehavior;
@@ -1062,15 +1071,10 @@ impl ServerConfig {
                     if !bun_core::FeatureFlags::bake() {
                         break 'brk;
                     }
-                    {
-                        unsafe extern "C" {
-                            safe fn Bun__hasBundler() -> bool;
-                        }
-                        if !Bun__hasBundler() {
-                            return Err(global.throw_invalid_arguments(format_args!(
-                                "app: this executable was built with --compile-trim-runtime, without the bundler and the development server, because the program neither calls Bun.build nor imports an HTML file"
-                            )));
-                        }
+                    if !has_bundler() {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "app: this executable was built with --compile-trim-runtime, without the bundler and the development server, because the program neither calls Bun.build nor imports an HTML file"
+                        )));
                     }
                     if args.bake.is_some() {
                         // "app" is likely to be removed in favor of the HTML loader.
@@ -1407,6 +1411,7 @@ impl ServerConfig {
 #[derive(Clone, Copy)]
 pub(crate) struct FromJSOptions {
     pub(crate) allow_bake_config: bool,
+    pub(crate) may_start_development_server: bool,
     pub(crate) is_fetch_required: bool,
     /// What the running server keeps answering with when a `reload()` config
     /// names no handler, as `on_reload_from_zig` applies it: `fetch` stays

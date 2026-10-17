@@ -20,8 +20,6 @@ pub(crate) fn apply_standalone_runtime_flags(
         DotEnvBehavior::LoadAllWithoutInlining
     };
 
-    b.options.defer_defines = true;
-
     b.resolver.opts.load_tsconfig_json =
         !graph.flags.contains(GraphFlags::DISABLE_AUTOLOAD_TSCONFIG);
     b.resolver.opts.load_package_json = !graph

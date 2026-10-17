@@ -9,13 +9,13 @@ export type Measurement = {
   privateBytes: number;
   residentBytes: number;
 };
-export type Request = { command: string[]; cwd?: string; env: Record<string, string | undefined>; afterMark?: boolean; forcePtrace?: boolean };
+export type Request = { command: string[]; env: Record<string, string | undefined>; afterMark?: boolean; forcePtrace?: boolean };
 
 const timeoutSeconds = 120;
 const canCountBySingleSteps = process.arch !== "arm64";
 
-function spawnBlockedOnStdin({ command, cwd, env }: Request) {
-  return Bun.spawn({ cmd: ["/bin/sh", "-c", 'read line; exec "$0" "$@"', ...command], cwd: cwd ?? dirname(command[0]), env, stdin: "pipe", stdout: "ignore", stderr: "inherit" });
+function spawnBlockedOnStdin({ command, env }: Request) {
+  return Bun.spawn({ cmd: ["/bin/sh", "-c", 'read line; exec "$0" "$@"', ...command], cwd: dirname(command[0]), env, stdin: "pipe", stdout: "ignore", stderr: "inherit" });
 }
 
 async function waitUntilStopped(isStopped: () => boolean, child: Bun.Subprocess, command: string[]) {
@@ -42,7 +42,7 @@ async function measureWithRusage(request: Request): Promise<Measurement> {
     ri_instructions = 31;
   const bsdInfo = new Uint32Array(sizeofBsdInfo / 4);
   const usage = new BigUint64Array(40);
-  const child = Bun.spawn({ cmd: request.command, cwd: request.cwd ?? dirname(request.command[0]), env: request.env, stdin: "ignore", stdout: "ignore", stderr: "inherit" });
+  const child = Bun.spawn({ cmd: request.command, cwd: dirname(request.command[0]), env: request.env, stdin: "ignore", stdout: "ignore", stderr: "inherit" });
   try {
     await waitUntilStopped(() => proc_pidinfo(child.pid, PROC_PIDTBSDINFO, 0, ptr(bsdInfo), sizeofBsdInfo) === sizeofBsdInfo && bsdInfo[pbi_status] === SSTOP, child, request.command);
     if (proc_pid_rusage(child.pid, RUSAGE_INFO_V4, ptr(usage))) throw new Error("proc_pid_rusage failed");

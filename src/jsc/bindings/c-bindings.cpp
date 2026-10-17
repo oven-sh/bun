@@ -3,6 +3,7 @@
 #include <cstdio>
 
 #if !OS(WINDOWS)
+#include <wtf/StackBounds.h>
 #include <wtf/WTFConfig.h>
 #include <sys/resource.h>
 #include <fcntl.h>
@@ -725,6 +726,8 @@ static void makePiecesOfConstantsReadOnly()
 }
 #endif
 
+extern "C" bool Bun__hasTypeChecker();
+
 extern "C" void bun_initialize_process()
 {
 #if OS(DARWIN)
@@ -743,6 +746,10 @@ extern "C" void bun_initialize_process()
     bun_close_range(4, ~0U, CLOSE_RANGE_CLOEXEC);
 
     execve_counting_pid = getpid();
+
+    bool isTrimmed = !Bun__hasTypeChecker();
+    if (isTrimmed)
+        WTF::StackBounds::useAuxiliaryVectorForMainThread();
 #endif
 
 #if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)

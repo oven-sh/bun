@@ -24,11 +24,7 @@ export const mimalloc: Dependency = {
     commit: MIMALLOC_COMMIT,
   }),
 
-  patches: [
-    "patches/mimalloc/hand-out-last-freed.patch",
-    "patches/mimalloc/hand-out-resident-slices.patch",
-    "patches/mimalloc/options-from-one-pass-over-the-environment.patch",
-  ],
+  patches: ["patches/mimalloc/hand-out-last-freed.patch", "patches/mimalloc/hand-out-resident-slices.patch"],
 
   build: cfg => {
     // ─── Override behavior (global malloc replacement) ───
@@ -80,11 +76,6 @@ export const mimalloc: Dependency = {
     // spawned children keep the system THP policy. JSC's reservations and
     // bun_alloc's lazy arena opt out the same way on their side.
     if (cfg.linux) defines.MI_DEFAULT_ALLOW_THP = 0;
-
-    // The count of NUMA nodes only matters for arenas bound to a node, which bun
-    // never makes. Detecting it probes /sys/devices/system/node/node1..N before
-    // main() in every process. MIMALLOC_USE_NUMA_NODES=0 asks for the detection.
-    if (cfg.linux) defines.MI_DEFAULT_USE_NUMA_NODES = 1;
 
     if (cfg.abi === "musl") defines.MI_LIBC_MUSL = 1;
     if (override) defines.MI_MALLOC_OVERRIDE = true;

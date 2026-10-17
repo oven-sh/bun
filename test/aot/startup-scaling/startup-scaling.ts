@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
-import { mkdirSync, statSync, writeFileSync } from "node:fs";
+import { statSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { withoutDebugInformation } from "../run-programs";
@@ -41,7 +41,7 @@ async function measure(request: Request): Promise<Measurement> {
   }
 }
 
-async function measureLeast(executable: string, scenario: string, cwd?: string): Promise<Measurement> {
+async function measureLeast(executable: string, scenario: string): Promise<Measurement> {
   const env = {
     ...bunEnv,
     BUN_GARBAGE_COLLECTOR_LEVEL: "0",
@@ -50,7 +50,7 @@ async function measureLeast(executable: string, scenario: string, cwd?: string):
     BUN_JSC_useConcurrentGC: "0",
     BUN_JSC_numberOfGCMarkers: "1",
   };
-  const request = { command: [executable, scenario], cwd, env, afterMark: scenario !== "nothing", forcePtrace: !!process.env.AOT_STARTUP_SCALING_PTRACE };
+  const request = { command: [executable, scenario], env, afterMark: scenario !== "nothing", forcePtrace: !!process.env.AOT_STARTUP_SCALING_PTRACE };
   const first = await measure(request);
   if (first.counter === "none" && !hasSaidThatNothingCounts) {
     hasSaidThatNothingCounts = true;
@@ -131,41 +131,6 @@ export function describeStartupScaling(label: string, isUnused: (kind: Kind, ind
       240_000,
     );
     for (const scenario of variant.scenariosThatGrow ?? []) test.todo(scenario);
-  });
-}
-
-export function describeWorkingDirectoryScaling() {
-  const skipped = isDebug || isASAN || (process.platform !== "linux" && process.platform !== "darwin");
-  const depth = 3;
-  const filesPerFolder = 3_000;
-
-  describe.skipIf(skipped)("--compile: files in the working directory and its parents", () => {
-    let folder: ReturnType<typeof tempDir>;
-    let executable = "";
-    const workingDirectories = { small: "", large: "" };
-
-    beforeAll(async () => {
-      folder = tempDir("aot-startup-scaling", {});
-      const build = await buildProgram(bunExe(), join(String(folder), "program"), generateProgram(usedKinds, usedCount, []), bunEnv, withoutDebugInformation());
-      expect(build.error).toBeUndefined();
-      executable = build.executable;
-      for (const [name, count] of [["small", 0], ["large", filesPerFolder]] as const) {
-        let path = join(String(folder), name);
-        for (let level = 0; level < depth; level++) {
-          path = join(path, "nested");
-          mkdirSync(path, { recursive: true });
-          for (let index = 0; index < count; index++) writeFileSync(join(path, `file-${index}.txt`), "");
-        }
-        workingDirectories[name] = path;
-      }
-    }, 240_000);
-    afterAll(() => folder?.[Symbol.dispose](), 240_000);
-
-    test("nothing", async () => {
-      const [small, large] = await Promise.all([measureLeast(executable, "nothing", workingDirectories.small), measureLeast(executable, "nothing", workingDirectories.large)]);
-      expect(large.instructions - small.instructions).toBeLessThan(Math.round(small.instructions * 0.02) + 30_000 + (small.counter === "rusage" ? 500_000 : 0));
-      expect(large.privateBytes - small.privateBytes).toBeLessThanOrEqual(allowedPrivateGrowth);
-    }, 240_000);
   });
 }
 

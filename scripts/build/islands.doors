@@ -53,6 +53,17 @@ feature intl Intl.DisplayNames, ListFormat, Locale, PluralRules, RelativeTimeFor
 feature libdeflate_compressor gzip and deflate compression in one call
 feature compression_calls Bun.gzipSync, gunzipSync, deflateSync, inflateSync, zstdCompress, zstdDecompress and their Sync forms
 feature compression_streams CompressionStream and DecompressionStream
+feature float16array Float16Array
+feature biguint64array BigUint64Array
+feature bigint64array BigInt64Array
+feature uint8clampedarray Uint8ClampedArray
+feature int16array Int16Array
+feature int8array Int8Array
+feature uint16array Uint16Array
+feature float32array Float32Array
+feature int32array Int32Array
+feature float64array Float64Array
+feature uint32array Uint32Array
 feature inspector the debugger and node:inspector
 feature napi native addons: N-API and the V8 and libuv symbols
 feature node_vm node:vm
@@ -179,13 +190,15 @@ door text exit ^<bun_install::lifecycle_script_runner::LifecycleScriptSubprocess
 door text exit ^Bun::generateInternalModuleFromText\(
 door text return ^Bun__textOfBuiltinFunctions$
 door text return ^JSC::textOfBuiltinFunctions\(\)$
+door text return ^JSC::VM::createBytecodeIntrinsicRegistry\(
 door text exit ^Bun::jsInternalModuleBytecode\(
 when bundler Bun build
 when bundler loader html
-when bundler Bun serve
+when bundler serve-option app
+when bundler serve-route-option style
 smallest bundler 450000
 door bundler return ^Bun__hasBundler$
-door bundler exit ^<*bun_runtime::bake::(?!dev_server::http::(is_allowed_|host_without_port))
+door bundler exit ^<*bun_runtime::bake::(?!dev_server::http::(is_allowed_|host_without_port)|router::style::Style>::from_js$)
 door bundler exit ^<*bun_runtime::server::html_bundle::
 door bundler exit ^<*bun_runtime::api::js_bundle_completion_task::
 door bundler exit ^<*bun_runtime::api::js_bundler::
@@ -1226,3 +1239,136 @@ door text exit ^JSC::LLInt::copyInlineCaches?IntoPredecodedInstructions?\(
 door text exit ^JSC::LLIntPrototypeLoadAdaptiveStructureWatchpoint::fireInternal\(
 door jit exit ^std::once_flag::_Prepare_execution::_Prepare_execution<void std::call_once<JSC::LLInt::(arityFixupThunk|getHostCallReturnValueThunk|fuzzerReturnEarlyFromLoopHintThunk)\(\)::\$_0>
 door jit exit ^void std::__1::__call_once_proxy\S*<std::__1::tuple<JSC::LLInt::(arityFixupThunk|getHostCallReturnValueThunk|fuzzerReturnEarlyFromLoopHintThunk)\(\)::\$_0&&>>\(
+when float16array global Float16Array
+when float16array feature outside_bytes
+when float16array feature napi
+when float16array feature udp
+smallest float16array 0
+door float16array exit ^(long long |[\w:*]+ )?JSC::genericTypedArrayView(Proto|Private)Func\w+<JSC::JSGenericTypedArrayView<JSC::Float16Adaptor>>\(
+door float16array exit ^(long long |[\w:*]+ )?JSC::JSGenericTypedArrayView<JSC::Float16Adaptor>::(?!createStructure\(|info\(|toWrapped\w*\(|subspaceFor)
+door float16array exit ^(long long |[\w:*]+ )?JSC::JSGenericTypedArrayView<JSC::\w+Adaptor>::setWithSpecificType<JSC::Float16Adaptor>\(
+door float16array exit ^JSC::JSGenericResizableOrGrowableSharedTypedArrayView<JSC::Float16Adaptor>::preventExtensions\(
+door float16array exit ^JSC::constructFloat16Array\(
+door float16array exit ^(long long |[\w:*]+ )?JSC::constructGenericTypedArrayView\w*<JSC::JSGenericTypedArrayView<JSC::Float16Adaptor>>\(
+door float16array exit ^(long long |[\w:*]+ )?JSC::GenericTypedArrayView<JSC::Float16Adaptor>::
+when biguint64array global BigUint64Array
+when biguint64array feature outside_bytes
+when biguint64array feature napi
+smallest biguint64array 0
+door biguint64array exit ^(long long |[\w:*]+ )?JSC::genericTypedArrayView(Proto|Private)Func\w+<JSC::JSGenericTypedArrayView<JSC::BigUint64Adaptor>>\(
+door biguint64array exit ^(long long |[\w:*]+ )?JSC::JSGenericTypedArrayView<JSC::BigUint64Adaptor>::(?!createStructure\(|info\(|toWrapped\w*\(|subspaceFor)
+door biguint64array exit ^(long long |[\w:*]+ )?JSC::JSGenericTypedArrayView<JSC::\w+Adaptor>::setWithSpecificType<JSC::BigUint64Adaptor>\(
+door biguint64array exit ^JSC::JSGenericResizableOrGrowableSharedTypedArrayView<JSC::BigUint64Adaptor>::preventExtensions\(
+door biguint64array exit ^JSC::constructBigUint64Array\(
+door biguint64array exit ^(long long |[\w:*]+ )?JSC::constructGenericTypedArrayView\w*<JSC::JSGenericTypedArrayView<JSC::BigUint64Adaptor>>\(
+door biguint64array exit ^(long long |[\w:*]+ )?JSC::GenericTypedArrayView<JSC::BigUint64Adaptor>::
+when bigint64array global BigInt64Array
+when bigint64array feature outside_bytes
+when bigint64array feature napi
+when bigint64array process binding
+smallest bigint64array 0
+door bigint64array exit ^(long long |[\w:*]+ )?JSC::genericTypedArrayView(Proto|Private)Func\w+<JSC::JSGenericTypedArrayView<JSC::BigInt64Adaptor>>\(
+door bigint64array exit ^(long long |[\w:*]+ )?JSC::JSGenericTypedArrayView<JSC::BigInt64Adaptor>::(?!createStructure\(|info\(|toWrapped\w*\(|subspaceFor)
+door bigint64array exit ^(long long |[\w:*]+ )?JSC::JSGenericTypedArrayView<JSC::\w+Adaptor>::setWithSpecificType<JSC::BigInt64Adaptor>\(
+door bigint64array exit ^JSC::JSGenericResizableOrGrowableSharedTypedArrayView<JSC::BigInt64Adaptor>::preventExtensions\(
+door bigint64array exit ^JSC::constructBigInt64Array\(
+door bigint64array exit ^(long long |[\w:*]+ )?JSC::constructGenericTypedArrayView\w*<JSC::JSGenericTypedArrayView<JSC::BigInt64Adaptor>>\(
+door bigint64array exit ^(long long |[\w:*]+ )?JSC::GenericTypedArrayView<JSC::BigInt64Adaptor>::
+when uint8clampedarray global Uint8ClampedArray
+when uint8clampedarray feature outside_bytes
+when uint8clampedarray feature napi
+smallest uint8clampedarray 0
+door uint8clampedarray exit ^(long long |[\w:*]+ )?JSC::genericTypedArrayView(Proto|Private)Func\w+<JSC::JSGenericTypedArrayView<JSC::Uint8ClampedAdaptor>>\(
+door uint8clampedarray exit ^(long long |[\w:*]+ )?JSC::JSGenericTypedArrayView<JSC::Uint8ClampedAdaptor>::(?!createStructure\(|info\(|toWrapped\w*\(|subspaceFor)
+door uint8clampedarray exit ^(long long |[\w:*]+ )?JSC::JSGenericTypedArrayView<JSC::\w+Adaptor>::setWithSpecificType<JSC::Uint8ClampedAdaptor>\(
+door uint8clampedarray exit ^JSC::JSGenericResizableOrGrowableSharedTypedArrayView<JSC::Uint8ClampedAdaptor>::preventExtensions\(
+door uint8clampedarray exit ^JSC::constructUint8ClampedArray\(
+door uint8clampedarray exit ^(long long |[\w:*]+ )?JSC::constructGenericTypedArrayView\w*<JSC::JSGenericTypedArrayView<JSC::Uint8ClampedAdaptor>>\(
+door uint8clampedarray exit ^(long long |[\w:*]+ )?JSC::GenericTypedArrayView<JSC::Uint8ClampedAdaptor>::
+when int16array global Int16Array
+when int16array feature outside_bytes
+when int16array feature napi
+when int16array feature udp
+smallest int16array 0
+door int16array exit ^(long long |[\w:*]+ )?JSC::genericTypedArrayView(Proto|Private)Func\w+<JSC::JSGenericTypedArrayView<JSC::Int16Adaptor>>\(
+door int16array exit ^(long long |[\w:*]+ )?JSC::JSGenericTypedArrayView<JSC::Int16Adaptor>::(?!createStructure\(|info\(|toWrapped\w*\(|subspaceFor)
+door int16array exit ^(long long |[\w:*]+ )?JSC::JSGenericTypedArrayView<JSC::\w+Adaptor>::setWithSpecificType<JSC::Int16Adaptor>\(
+door int16array exit ^JSC::JSGenericResizableOrGrowableSharedTypedArrayView<JSC::Int16Adaptor>::preventExtensions\(
+door int16array exit ^JSC::constructInt16Array\(
+door int16array exit ^(long long |[\w:*]+ )?JSC::constructGenericTypedArrayView\w*<JSC::JSGenericTypedArrayView<JSC::Int16Adaptor>>\(
+door int16array exit ^(long long |[\w:*]+ )?JSC::GenericTypedArrayView<JSC::Int16Adaptor>::
+when int8array global Int8Array
+when int8array feature outside_bytes
+when int8array feature napi
+when int8array feature udp
+smallest int8array 0
+door int8array exit ^(long long |[\w:*]+ )?JSC::genericTypedArrayView(Proto|Private)Func\w+<JSC::JSGenericTypedArrayView<JSC::Int8Adaptor>>\(
+door int8array exit ^(long long |[\w:*]+ )?JSC::JSGenericTypedArrayView<JSC::Int8Adaptor>::(?!createStructure\(|info\(|toWrapped\w*\(|subspaceFor)
+door int8array exit ^(long long |[\w:*]+ )?JSC::JSGenericTypedArrayView<JSC::\w+Adaptor>::setWithSpecificType<JSC::Int8Adaptor>\(
+door int8array exit ^JSC::JSGenericResizableOrGrowableSharedTypedArrayView<JSC::Int8Adaptor>::preventExtensions\(
+door int8array exit ^JSC::constructInt8Array\(
+door int8array exit ^(long long |[\w:*]+ )?JSC::constructGenericTypedArrayView\w*<JSC::JSGenericTypedArrayView<JSC::Int8Adaptor>>\(
+door int8array exit ^(long long |[\w:*]+ )?JSC::GenericTypedArrayView<JSC::Int8Adaptor>::
+when uint16array global Uint16Array
+when uint16array feature outside_bytes
+when uint16array feature napi
+when uint16array feature udp
+smallest uint16array 0
+door uint16array exit ^(long long |[\w:*]+ )?JSC::genericTypedArrayView(Proto|Private)Func\w+<JSC::JSGenericTypedArrayView<JSC::Uint16Adaptor>>\(
+door uint16array exit ^(long long |[\w:*]+ )?JSC::JSGenericTypedArrayView<JSC::Uint16Adaptor>::(?!createStructure\(|info\(|toWrapped\w*\(|subspaceFor)
+door uint16array exit ^(long long |[\w:*]+ )?JSC::JSGenericTypedArrayView<JSC::\w+Adaptor>::setWithSpecificType<JSC::Uint16Adaptor>\(
+door uint16array exit ^JSC::JSGenericResizableOrGrowableSharedTypedArrayView<JSC::Uint16Adaptor>::preventExtensions\(
+door uint16array exit ^JSC::constructUint16Array\(
+door uint16array exit ^(long long |[\w:*]+ )?JSC::constructGenericTypedArrayView\w*<JSC::JSGenericTypedArrayView<JSC::Uint16Adaptor>>\(
+door uint16array exit ^(long long |[\w:*]+ )?JSC::GenericTypedArrayView<JSC::Uint16Adaptor>::
+when float32array global Float32Array
+when float32array feature outside_bytes
+when float32array feature napi
+when float32array feature udp
+when float32array feature sql
+smallest float32array 0
+door float32array exit ^(long long |[\w:*]+ )?JSC::genericTypedArrayView(Proto|Private)Func\w+<JSC::JSGenericTypedArrayView<JSC::Float32Adaptor>>\(
+door float32array exit ^(long long |[\w:*]+ )?JSC::JSGenericTypedArrayView<JSC::Float32Adaptor>::(?!createStructure\(|info\(|toWrapped\w*\(|subspaceFor)
+door float32array exit ^(long long |[\w:*]+ )?JSC::JSGenericTypedArrayView<JSC::\w+Adaptor>::setWithSpecificType<JSC::Float32Adaptor>\(
+door float32array exit ^JSC::JSGenericResizableOrGrowableSharedTypedArrayView<JSC::Float32Adaptor>::preventExtensions\(
+door float32array exit ^JSC::constructFloat32Array\(
+door float32array exit ^(long long |[\w:*]+ )?JSC::constructGenericTypedArrayView\w*<JSC::JSGenericTypedArrayView<JSC::Float32Adaptor>>\(
+door float32array exit ^(long long |[\w:*]+ )?JSC::GenericTypedArrayView<JSC::Float32Adaptor>::
+when int32array global Int32Array
+when int32array feature outside_bytes
+when int32array feature napi
+when int32array feature udp
+when int32array feature sql
+smallest int32array 0
+door int32array exit ^(long long |[\w:*]+ )?JSC::genericTypedArrayView(Proto|Private)Func\w+<JSC::JSGenericTypedArrayView<JSC::Int32Adaptor>>\(
+door int32array exit ^(long long |[\w:*]+ )?JSC::JSGenericTypedArrayView<JSC::Int32Adaptor>::(?!createStructure\(|info\(|toWrapped\w*\(|subspaceFor)
+door int32array exit ^(long long |[\w:*]+ )?JSC::JSGenericTypedArrayView<JSC::\w+Adaptor>::setWithSpecificType<JSC::Int32Adaptor>\(
+door int32array exit ^JSC::JSGenericResizableOrGrowableSharedTypedArrayView<JSC::Int32Adaptor>::preventExtensions\(
+door int32array exit ^JSC::constructInt32Array\(
+door int32array exit ^(long long |[\w:*]+ )?JSC::constructGenericTypedArrayView\w*<JSC::JSGenericTypedArrayView<JSC::Int32Adaptor>>\(
+door int32array exit ^(long long |[\w:*]+ )?JSC::GenericTypedArrayView<JSC::Int32Adaptor>::
+when float64array global Float64Array
+when float64array feature outside_bytes
+when float64array feature napi
+when float64array feature udp
+when float64array process binding
+smallest float64array 0
+door float64array exit ^(long long |[\w:*]+ )?JSC::genericTypedArrayView(Proto|Private)Func\w+<JSC::JSGenericTypedArrayView<JSC::Float64Adaptor>>\(
+door float64array exit ^(long long |[\w:*]+ )?JSC::JSGenericTypedArrayView<JSC::Float64Adaptor>::(?!createStructure\(|info\(|toWrapped\w*\(|subspaceFor)
+door float64array exit ^(long long |[\w:*]+ )?JSC::JSGenericTypedArrayView<JSC::\w+Adaptor>::setWithSpecificType<JSC::Float64Adaptor>\(
+door float64array exit ^JSC::JSGenericResizableOrGrowableSharedTypedArrayView<JSC::Float64Adaptor>::preventExtensions\(
+door float64array exit ^JSC::constructFloat64Array\(
+door float64array exit ^(long long |[\w:*]+ )?JSC::constructGenericTypedArrayView\w*<JSC::JSGenericTypedArrayView<JSC::Float64Adaptor>>\(
+door float64array exit ^(long long |[\w:*]+ )?JSC::GenericTypedArrayView<JSC::Float64Adaptor>::
+when uint32array global Uint32Array
+when uint32array feature outside_bytes
+when uint32array feature napi
+when uint32array feature udp
+smallest uint32array 0
+door uint32array exit ^(long long |[\w:*]+ )?JSC::genericTypedArrayView(Proto|Private)Func\w+<JSC::JSGenericTypedArrayView<JSC::Uint32Adaptor>>\(
+door uint32array exit ^(long long |[\w:*]+ )?JSC::JSGenericTypedArrayView<JSC::Uint32Adaptor>::(?!createStructure\(|info\(|toWrapped\w*\(|subspaceFor)
+door uint32array exit ^(long long |[\w:*]+ )?JSC::JSGenericTypedArrayView<JSC::\w+Adaptor>::setWithSpecificType<JSC::Uint32Adaptor>\(
+door uint32array exit ^JSC::JSGenericResizableOrGrowableSharedTypedArrayView<JSC::Uint32Adaptor>::preventExtensions\(
+door uint32array exit ^JSC::constructUint32Array\(
+door uint32array exit ^(long long |[\w:*]+ )?JSC::constructGenericTypedArrayView\w*<JSC::JSGenericTypedArrayView<JSC::Uint32Adaptor>>\(
+door uint32array exit ^(long long |[\w:*]+ )?JSC::GenericTypedArrayView<JSC::Uint32Adaptor>::

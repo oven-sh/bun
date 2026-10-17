@@ -1137,6 +1137,7 @@ function readMachOGraph(executable: string, mapPath: string, compiledFromBitcode
   const local = new Map<string, number>();
   const byName = new Map<string, number>();
   found.forEach((node, index) => {
+    if (graph.output[index] === "__TEXT,__stubs" && local.has(node.file + "\0" + node.name)) return;
     local.set(node.file + "\0" + node.name, index);
     if (!byName.has(node.name)) byName.set(node.name, index);
     if (graph.output[index] === "__TEXT,__text") graph.functionName.set(index, node.name.replace(/^_/, ""));

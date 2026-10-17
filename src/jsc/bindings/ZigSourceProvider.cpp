@@ -529,15 +529,13 @@ static std::optional<off_t> offsetInExecutableFile(const void* address)
     } context { target, result };
     dl_iterate_phdr([](struct dl_phdr_info* info, size_t, void* data) -> int {
         auto& context = *static_cast<Context*>(data);
-        for (unsigned i = info->dlpi_phnum; i--;) {
+        for (unsigned i = 0; i < info->dlpi_phnum; ++i) {
             auto& segment = info->dlpi_phdr[i];
             uintptr_t start = info->dlpi_addr + segment.p_vaddr;
-            if (segment.p_type == PT_LOAD && context.target >= start && context.target - start < segment.p_filesz) {
+            if (segment.p_type == PT_LOAD && context.target >= start && context.target - start < segment.p_filesz)
                 context.result = static_cast<off_t>(segment.p_offset + (context.target - start));
-                return 1;
-            }
         }
-        return 0;
+        return context.result ? 1 : 0;
     }, &context);
     return result;
 #endif

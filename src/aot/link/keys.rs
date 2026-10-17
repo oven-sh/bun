@@ -134,21 +134,52 @@ fn may_find_the_constructor_of_functions(program: &Program, func: &Func, at: V, 
     }
 }
 
+const MAKE_OR_LOAD_CODE: [&[u8]; 14] = [
+    b"FFI",
+    b"Function",
+    b"ModuleGraph",
+    b"ShadowRealm",
+    b"Worker",
+    b"_linkedBinding",
+    b"binding",
+    b"dlopen",
+    b"eval",
+    b"getBuiltinModule",
+    b"getProtectedObjects",
+    b"mainModule",
+    b"plugin",
+    b"require",
+];
+
+fn may_find_what_makes_or_loads_code(program: &Program, func: &Func, at: V, op: &Op, is_own: &[bool]) -> bool {
+    let is_such = |obj: V, name: StrId| MAKE_OR_LOAD_CODE.contains(&program.strs.get(name)) && !matches!(func.op(obj), Some(Op::FreeGet { .. })) && may_be_a_function(program.tys.get(func.ty(obj)), is_own);
+    match op {
+        &Op::CallMethod { obj, name, .. } => is_such(obj, name),
+        &Op::PropGet { obj, name } => is_such(obj, name) && !is_only_looked_at(func, at, 2),
+        _ => false,
+    }
+}
+
 pub(super) struct Reads {
     pub(super) of_any_property: Vec<(FileId, u32)>,
     pub(super) that_may_find_the_constructor_of_functions: Vec<(FileId, u32)>,
+    pub(super) that_may_find_what_makes_or_loads_code: Vec<(FileId, u32)>,
 }
 
 pub(super) fn reads_without_a_name(program: &Program, modules: &[FileId], files_of_prelude: &FxHashSet<FileId>, in_parallel: InParallel<'_>) -> Reads {
     let is_own = layouts_of_own_objects(program);
-    let mut tasks: Vec<(&[Func], Vec<(FileId, u32)>, Vec<(FileId, u32)>)> = program.funcs.chunks(FUNCTIONS_PER_TASK).map(|funcs| (funcs, Vec::new(), Vec::new())).collect();
-    for_each_mut(&mut tasks, in_parallel, &|(funcs, found, finding_constructor)| {
+    let mut tasks: Vec<(&[Func], Vec<(FileId, u32)>, Vec<(FileId, u32)>, Vec<(FileId, u32)>)> = program.funcs.chunks(FUNCTIONS_PER_TASK).map(|funcs| (funcs, Vec::new(), Vec::new(), Vec::new())).collect();
+    for_each_mut(&mut tasks, in_parallel, &|(funcs, found, finding_constructor, finding_loaders)| {
         for func in funcs.iter().filter(|func| func.module.is_some()) {
             let file = modules[func.module.idx()];
             let is_of_runtime = func.has(func_flags::IS_BUILTIN) || func.has(func_flags::IS_IN_BUILTIN_MODULE);
             if !is_of_runtime && !files_of_prelude.contains(&file) && finding_constructor.last().is_none_or(|last| last.0 != file) {
                 let finds = func.values.iter().enumerate().find(|(index, value)| matches!(&value.def, Def::Op(op) if may_find_the_constructor_of_functions(program, func, V::new(*index), op, &is_own)));
                 finding_constructor.extend(finds.map(|(_, value)| (file, value.pos)));
+            }
+            if !is_of_runtime && !files_of_prelude.contains(&file) && finding_loaders.last().is_none_or(|last| last.0 != file) {
+                let finds = func.values.iter().enumerate().find(|(index, value)| matches!(&value.def, Def::Op(op) if may_find_what_makes_or_loads_code(program, func, V::new(*index), op, &is_own)));
+                finding_loaders.extend(finds.map(|(_, value)| (file, value.pos)));
             }
             for value in &func.values {
                 if let Def::Op(op) = &value.def
@@ -165,10 +196,11 @@ pub(super) fn reads_without_a_name(program: &Program, modules: &[FileId], files_
             }
         }
     });
-    let mut reads = Reads { of_any_property: Vec::new(), that_may_find_the_constructor_of_functions: Vec::new() };
-    for (_, of_any_property, finding_constructor) in tasks {
+    let mut reads = Reads { of_any_property: Vec::new(), that_may_find_the_constructor_of_functions: Vec::new(), that_may_find_what_makes_or_loads_code: Vec::new() };
+    for (_, of_any_property, finding_constructor, finding_loaders) in tasks {
         reads.of_any_property.extend(of_any_property);
         reads.that_may_find_the_constructor_of_functions.extend(finding_constructor);
+        reads.that_may_find_what_makes_or_loads_code.extend(finding_loaders);
     }
     reads
 }

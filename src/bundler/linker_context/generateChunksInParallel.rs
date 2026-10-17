@@ -1840,7 +1840,7 @@ fn import_resolved_at_run_time(c: &LinkerContext) -> Option<&'static [u8]> {
         let is_left = loads_code
             && !record.source_index.is_valid()
             && !specifier.is_empty()
-            && !record.path.is_disabled
+            && (!record.path.is_disabled || record.flags.contains(bun_ast::ImportRecordFlags::WAS_UNRESOLVED))
             && !record.flags.contains(bun_ast::ImportRecordFlags::IS_UNUSED)
             && !is_builtin;
         is_left.then_some(specifier)

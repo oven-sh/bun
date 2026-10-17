@@ -2649,8 +2649,6 @@ fn transpile_source_code_of_any_provenance<const ONLY_READS_SOURCE: bool>(
                 // `parse_maybe_return_file_only_allow_shared_buffer` body, so
                 // dispatch at runtime via the const-generic bool.
                 let return_file_only = disable_transpilying || loader == L::Json;
-                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                bun_core::handle_oom(unsafe { (*jsc_vm).transpiler.load_deferred_defines() });
                 let parse_result: Option<ParseResult> = if return_file_only {
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                     unsafe {

@@ -825,15 +825,10 @@ impl AnyRoute {
                     return Ok(Some(AnyRoute::Directory(route)));
                 }
 
-                {
-                    unsafe extern "C" {
-                        safe fn Bun__hasBundler() -> bool;
-                    }
-                    if !Bun__hasBundler() {
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "style: this executable was built with --compile-trim-runtime, without the bundler and the development server, because the program neither calls Bun.build nor imports an HTML file"
-                        )));
-                    }
+                if init_ctx.may_start_development_server && !server_config::has_bundler() {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "style: this executable was built with --compile-trim-runtime, without the bundler and the development server, because the program neither calls Bun.build nor imports an HTML file"
+                    )));
                 }
                 let style: FrameworkRouter::Style =
                     FrameworkRouter::Style::from_js(style_js.unwrap(), global)?;
@@ -894,6 +889,7 @@ pub(crate) struct ServerInitContext<'a> {
     pub global: &'a JSGlobalObject,
     pub(crate) framework_router_list: Vec<bake::FileSystemRouterType>,
     pub(crate) user_routes: &'a mut Vec<server_config::StaticRouteEntry>,
+    pub(crate) may_start_development_server: bool,
 }
 
 // ─── ServePlugins ────────────────────────────────────────────────────────────
@@ -2032,6 +2028,7 @@ where
             &mut args_slice,
             server_config::FromJSOptions {
                 allow_bake_config: false,
+                may_start_development_server: false,
                 is_fetch_required: true,
                 previous_fetch: !self.config.on_request.is_empty_or_undefined_or_null(),
                 previous_routes: !self.user_routes.is_empty(),

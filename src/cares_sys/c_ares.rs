@@ -1200,9 +1200,7 @@ impl AresReply for struct_ares_mx_reply {
     }
 }
 
-/// One node per character string of a TXT record. `record_start` marks the
-/// first string of each record. The plain `ares_parse_txt_reply` has no such
-/// flag, so it is not bound.
+/// One node per TXT character string. `record_start` marks the first string of each record.
 #[repr(C)]
 pub struct struct_ares_txt_ext {
     pub next: *mut struct_ares_txt_ext,

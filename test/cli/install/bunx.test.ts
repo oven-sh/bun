@@ -1674,6 +1674,25 @@ describe.skipIf(isWindows)("cache directory", () => {
     expect(await box.run(["tool"])).toMatchObject({ stdout: ran, stderr: "", exitCode: 0, requests: [] });
   });
 
+  it.concurrent.skipIf(!isLinux)("can be below a home directory whose name is not UTF-8", async () => {
+    using registry = await localRegistry(...toolWithDep());
+    using box = sandbox(registry);
+    // A JavaScript string cannot hold the byte E9 alone, so a shell script that is written as bytes sets HOME.
+    writeFileSync(
+      join(box.dir, "bunx.sh"),
+      Buffer.concat([
+        Buffer.from(`HOME='${box.dir}/jos`),
+        Buffer.from([0xe9]),
+        Buffer.from(`'; export HOME; mkdir -p "$HOME"; exec '${bunExe()}' x "$@"\n`),
+      ]),
+    );
+
+    expect(await box.run(["tool"], { bunx: ["sh", join(box.dir, "bunx.sh")] })).toMatchObject({
+      stdout: ran,
+      exitCode: 0,
+    });
+  });
+
   // The files of the user, which the install that bunx spawns reads too. Not those of the project.
   it.concurrent.each([
     [".bunfig.toml", (dir: string) => `[install.cache]\ndir = ${JSON.stringify(dir)}\n`],

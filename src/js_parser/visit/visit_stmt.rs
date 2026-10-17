@@ -865,9 +865,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .expect("decorator lowering names the class");
                             stmts.push(class_stmts[class_stmt_idx]);
                             stmts.extend_from_slice(after_class);
-                            // The export gets its own symbol: a bundle declares it with `var`.
-                            p.record_declared_symbol(name.ref_);
-                            data.default_name = p.create_default_name(data.default_name.loc);
                             p.record_usage(name.ref_);
                             data.value = js_ast::StmtOrExpr::Expr(
                                 p.wrap_value_for_server_component_reference(

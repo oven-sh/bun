@@ -621,6 +621,16 @@ impl Stream {
         // SAFETY: `self.0` is a live stream (constructor contract).
         unsafe { lsquic_stream_has_unacked_data(self.0) != 0 }
     }
+    /// Whether the stream completed on its own (both sides closed and all
+    /// data acknowledged). Inside `on_close`, `false` means the connection's
+    /// teardown closed the stream.
+    pub fn is_finished(&self) -> bool {
+        unsafe extern "C" {
+            fn lsquic_stream_is_finished(s: *const lsquic_stream) -> c_int;
+        }
+        // SAFETY: `self.0` is a live stream (constructor contract).
+        unsafe { lsquic_stream_is_finished(self.0) != 0 }
+    }
     pub fn reset_received(&self) -> bool {
         unsafe extern "C" {
             fn lsquic_stream_reset_received(s: *const lsquic_stream) -> c_int;

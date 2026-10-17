@@ -824,10 +824,11 @@ impl QuicSession {
     }
 
     /// `on_conn_closed` nulls `conn` before any event drains, so a stream
-    /// whose `StreamClosed` is dispatched with no conn was closed by the
-    /// connection's death. Its close is the session's to report.
+    /// that lsquic did not finish, whose `StreamClosed` is dispatched with
+    /// no conn, was closed by the connection's death. Its close is the
+    /// session's to report.
     fn defers_stream_close(&self, stream: &super::stream::QuicStream) -> bool {
-        self.conn.get().is_null() && stream.is_open_at_conn_death()
+        self.conn.get().is_null() && stream.closed_by_conn()
     }
 
     pub(super) fn apply_peer_datagram_budget(&self) {

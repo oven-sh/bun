@@ -385,13 +385,17 @@ describe("a stream left open when the connection closes", () => {
   // stream on the other side. The client wrote one byte so the server sees
   // the stream.
   async function openPair() {
-    const accepted = Promise.withResolvers<{ session: any; stream: any }>();
+    const accepted: { session: any; stream: any }[] = [];
+    const waiters: ((pair: { session: any; stream: any }) => void)[] = [];
     const server = await listen(
       (session: any) => {
         session.closed.catch(() => {});
         session.onstream = (stream: any) => {
           stream.closed.catch(() => {});
-          accepted.resolve({ session, stream });
+          const pair = { session, stream };
+          const waiter = waiters.shift();
+          if (waiter) waiter(pair);
+          else accepted.push(pair);
         };
       },
       { sni: { "*": { keys: [key], certs: [cert] } }, alpn, transportParams: { maxIdleTimeout: 1 } },
@@ -403,10 +407,16 @@ describe("a stream left open when the connection closes", () => {
       transportParams: { maxIdleTimeout: 1 },
     } as SessionOptions);
     await client.opened;
-    const stream = await client.createBidirectionalStream();
-    stream.writer.writeSync(Uint8Array.of(1));
-    const peer = await accepted.promise;
-    return { server, client, stream, peer };
+    // Opens a client stream, writes one byte, and returns its server side.
+    async function open() {
+      const stream = await client.createBidirectionalStream();
+      stream.closed.catch(() => {});
+      stream.writer.writeSync(Uint8Array.of(1));
+      const peer = accepted.shift() ?? (await new Promise<{ session: any; stream: any }>(r => waiters.push(r)));
+      return { stream, peer };
+    }
+    const { stream, peer } = await open();
+    return { server, client, stream, peer, open };
   }
 
   const settle = (p: Promise<unknown>) =>
@@ -449,6 +459,9 @@ describe("a stream left open when the connection closes", () => {
 
     peer.session.destroy(undefined, { code: 2n, type: "application" });
 
+    // The closing peer fails its writer, which sends RESET_STREAM before the
+    // CONNECTION_CLOSE (Node's writer does the same), so the read reports
+    // the reset. The close carries the connection's error.
     expect({ first: first.done, read: await read, streamClosed: await streamClosed }).toEqual({
       first: false,
       read: "rejected ERR_QUIC_STREAM_RESET",
@@ -456,21 +469,70 @@ describe("a stream left open when the connection closes", () => {
     });
   });
 
-  test("the stream's onerror sees the connection's error", async () => {
+  test("a body received before the connection error is still delivered", async () => {
     const { server, client, stream, peer } = await openPair();
     await using _server = server;
-    const onerror = Promise.withResolvers<any>();
-    stream.onerror = (err: any) => onerror.resolve(err);
+    const streamClosed = settle(stream.closed);
+    client.closed.catch(() => {});
+    // The peer finishes its side of the stream. The client has not read yet.
+    peer.stream.writer.writeSync(Uint8Array.of(2, 3));
+    peer.stream.writer.writeSync(Uint8Array.of(4, 5));
+    peer.stream.writer.endSync();
+    const serverClosed = settle(peer.stream.closed);
+    // Wait until the body (the FIN rides on its last frame) reached the
+    // client before the peer dies.
+    while (stream.stats.bytesReceived < 4n) await new Promise(r => setImmediate(r));
+
+    peer.session.destroy(undefined, { code: 2n, type: "application" });
+    await streamClosed;
+
+    const chunks: number[] = [];
+    let end = "not reached";
+    try {
+      for await (const batch of stream) for (const chunk of batch) chunks.push(...chunk);
+      end = "ended cleanly";
+    } catch (e: any) {
+      end = `rejected ${e.code}`;
+    }
+    expect({ chunks, end, streamClosed: await streamClosed }).toEqual({
+      chunks: [2, 3, 4, 5],
+      end: "ended cleanly",
+      streamClosed: "rejected ERR_QUIC_APPLICATION_ERROR 2",
+    });
+    expect(await serverClosed).toBe("resolved");
+  });
+
+  test("the stream's closed rejects without an onerror call, as in Node", async () => {
+    const { server, client, stream, peer } = await openPair();
+    await using _server = server;
+    let onerrorCalls = 0;
+    stream.onerror = () => onerrorCalls++;
     const streamClosed = settle(stream.closed);
     client.closed.catch(() => {});
 
     peer.session.destroy(undefined, { code: 7n, type: "application" });
 
-    const err = await onerror.promise;
-    expect({ code: err.code, errorCode: err.errorCode, streamClosed: await streamClosed }).toEqual({
-      code: "ERR_QUIC_APPLICATION_ERROR",
-      errorCode: 7n,
+    // A destroy(error) calls onerror before it settles closed, so by now a
+    // call would have happened.
+    expect({ streamClosed: await streamClosed, onerrorCalls }).toEqual({
       streamClosed: "rejected ERR_QUIC_APPLICATION_ERROR 7",
+      onerrorCalls: 0,
+    });
+  });
+
+  test("a transport error on the connection reaches the stream", async () => {
+    const { server, client, stream, peer } = await openPair();
+    await using _server = server;
+    const read = settleRead(stream[Symbol.asyncIterator]().next());
+    const streamClosed = settle(stream.closed);
+    const sessionClosed = settle(client.closed);
+
+    peer.session.destroy(undefined, { code: 5n, type: "transport" });
+
+    expect({ read: await read, streamClosed: await streamClosed, sessionClosed: await sessionClosed }).toEqual({
+      read: "rejected ERR_QUIC_TRANSPORT_ERROR",
+      streamClosed: "rejected ERR_QUIC_TRANSPORT_ERROR 5",
+      sessionClosed: "rejected ERR_QUIC_TRANSPORT_ERROR 5",
     });
   });
 
@@ -495,7 +557,6 @@ describe("a stream left open when the connection closes", () => {
   test("the server side sees the client's connection error on its open stream", async () => {
     const { server, client, stream, peer } = await openPair();
     await using _server = server;
-    stream.closed.catch(() => {});
     client.closed.catch(() => {});
     // The server already holds the byte the client wrote; take it first so
     // the next read is the pending one.
@@ -506,13 +567,71 @@ describe("a stream left open when the connection closes", () => {
 
     client.destroy(undefined, { code: 3n, type: "application" });
 
-    // The closing client's writer sends RESET_STREAM first, so the read
-    // reports the reset. The close carries the connection's error.
+    // As above: the closing client's writer sends RESET_STREAM first.
     expect({ first: first.done, read: await read, streamClosed: await streamClosed }).toEqual({
       first: false,
       read: "rejected ERR_QUIC_STREAM_RESET",
       streamClosed: "rejected ERR_QUIC_APPLICATION_ERROR 3",
     });
+  });
+
+  test("a locally reset write side does not hide the connection's error", async () => {
+    const { server, client, stream, peer } = await openPair();
+    await using _server = server;
+    stream.resetStream(3n);
+    const read = settleRead(stream[Symbol.asyncIterator]().next());
+    const streamClosed = settle(stream.closed);
+    client.closed.catch(() => {});
+
+    peer.session.destroy(undefined, { code: 2n, type: "application" });
+
+    expect({ read: await read, streamClosed: await streamClosed }).toEqual({
+      read: "rejected ERR_QUIC_APPLICATION_ERROR",
+      streamClosed: "rejected ERR_QUIC_APPLICATION_ERROR 2",
+    });
+  });
+
+  test("every open stream gets the error in the same turn as the session", async () => {
+    const { server, client, stream: s1, peer, open } = await openPair();
+    await using _server = server;
+    const { stream: s2, peer: peer2 } = await open();
+    const { stream: s3 } = await open();
+    // s2 completes in both directions before the connection dies.
+    peer2.stream.writer.endSync();
+    s2.writer.endSync();
+    for await (const _ of s2) {
+    }
+    await s2.closed;
+
+    const read1 = settleRead(s1[Symbol.asyncIterator]().next());
+    let tick = 0;
+    const ticks: Record<string, number> = {};
+    const mark = (name: string) => (outcome: string) => {
+      ticks[name] = tick;
+      return outcome;
+    };
+    const results = Promise.all([
+      settle(s1.closed).then(mark("s1")),
+      settle(s3.closed).then(mark("s3")),
+      settle(client.closed).then(mark("session")),
+    ]);
+    const bump = () => {
+      tick++;
+      timer = setImmediate(bump);
+    };
+    let timer = setImmediate(bump);
+
+    peer.session.destroy(undefined, { code: 2n, type: "application" });
+
+    const [s1Closed, s3Closed, sessionClosed] = await results;
+    clearImmediate(timer);
+    expect({ read1: await read1, s1Closed, s3Closed, sessionClosed }).toEqual({
+      read1: "rejected ERR_QUIC_APPLICATION_ERROR",
+      s1Closed: "rejected ERR_QUIC_APPLICATION_ERROR 2",
+      s3Closed: "rejected ERR_QUIC_APPLICATION_ERROR 2",
+      sessionClosed: "rejected ERR_QUIC_APPLICATION_ERROR 2",
+    });
+    expect(ticks).toEqual({ s1: ticks.session, s3: ticks.session, session: ticks.session });
   });
 
   test("an iterator taken after the connection error rethrows it", async () => {
@@ -536,7 +655,6 @@ describe("a stream left open when the connection closes", () => {
         () => "ended",
         (e: any) => e.message,
       );
-    stream.closed.catch(() => {});
 
     stream.destroy(new Error("local abort"));
     expect(await read).toBe("local abort");

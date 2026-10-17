@@ -307,6 +307,19 @@ describe.skipIf(!supported)("bun run --aot", () => {
     expect(exitCode).toBe(1);
   });
 
+  test.concurrent("a file in a folder that has node_modules", async () => {
+    const { stdout } = await expectSameAsBunRun(
+      {
+        "entry.ts": `import which from "pkg"; console.log(which);`,
+        "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", main: "./index.js", types: "./index.d.ts" }),
+        "node_modules/pkg/index.d.ts": `declare const which: string; export default which;`,
+        "node_modules/pkg/index.js": `export default "the package";`,
+      },
+      "entry.ts",
+    );
+    expect(stdout).toBe("the package\n");
+  });
+
   test.concurrent("other options mean what they mean without it", async () => {
     const { stdout } = await expectSameAsBunRun(
       {

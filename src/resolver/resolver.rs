@@ -4518,13 +4518,13 @@ impl<'a> Resolver<'a> {
             let queue_top_safe_path: &[u8] = qt_safe_path.slice();
             queue_slice_len -= 1;
 
-            let has_current_entries = !queue_top.fd.is_valid()
-                && !self.store_fd
+            let may_skip_opening = !queue_top.fd.is_valid() && !self.store_fd && !self.care_about_bin_folder;
+            let has_current_entries = may_skip_opening
                 && matches!(
                     rfs!().entries.get(queue_top_unsafe_path),
                     Some(Fs::file_system::real_fs::EntriesOption::Entries(entries)) if entries.generation >= self.generation
                 );
-            let shared_listing = if has_current_entries || queue_top.fd.is_valid() || self.store_fd { None } else { crate::fs_full::list_from_source(queue_top_unsafe_path) };
+            let shared_listing = if has_current_entries || !may_skip_opening { None } else { crate::fs_full::list_from_source(queue_top_unsafe_path) };
             let open_dir: FD = if queue_top.fd.is_valid() {
                 queue_top.fd
             } else if has_current_entries || shared_listing.is_some() {

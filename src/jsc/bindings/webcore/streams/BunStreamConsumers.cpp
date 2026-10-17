@@ -159,6 +159,7 @@ void JSOneShotDirectSink::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::ArrayBufferSink), "arrayBufferSink"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::CapabilityPromise), "capabilityPromise"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::Source), "source"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::CloseReason), "closeReason"_s);
 }
 
 // JSReadableStreamIntoArrayOperation — the queue-backed array pump's persistent state.
@@ -215,6 +216,9 @@ void JSReadableStreamIntoArrayOperation::analyzeHeap(JSCell* cell, HeapAnalyzer&
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::Chunks), "chunks"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::Result), "result"_s);
 }
+
+static void oneShotDirectFinish(JSC::VM&, JSC::JSGlobalObject*, JSOneShotDirectSink*);
+static void oneShotDirectFail(JSC::VM&, JSC::JSGlobalObject*, JSOneShotDirectSink*, JSC::JSValue error);
 
 } // namespace WebCore
 
@@ -1116,12 +1120,20 @@ JSValue consumeDirectStreamToArrayBuffer(JSGlobalObject* globalObject, WebCore::
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, exception->value()));
     }
     if (auto* pullPromise = dynamicDowncast<JSPromise>(firstPull)) {
-        // The caller holds the capability that close()/end() settle, so it does not wait for a pull() that outlives them. The reactions settle it only when pull() settles first.
+        // The caller holds the capability that close()/end() settle, so it does not wait for a pull() that outlives them. The reactions settle it only when pull() settles first, or when a close() hook threw and left the finish owed.
         pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onConsumeDirectToArrayBufferPullFulfilled(), runtime->onConsumeDirectToArrayBufferPullRejected(), jsUndefined(), sink);
         if (capability->status() == JSPromise::Status::Pending)
             return capability;
     }
     // A synchronous (non-promise) producer, or a result that close()/end() settled inside the pull() call: close the stream and return the capability.
+    // pull() returned normally after a close()/end() whose hook threw: the owed finish runs here. Without a close() the capability keeps waiting for one.
+    WebCore::oneShotDirectFinish(vm, globalObject, sink);
+    if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
+        TRY_CLEAR_EXCEPTION(scope, {});
+        WebCore::oneShotDirectFail(vm, globalObject, sink, exception->value());
+        RETURN_IF_EXCEPTION(scope, {});
+        return capability;
+    }
     stream->m_lockedWithoutReader = false;
     readableStreamCloseIfPossible(globalObject, stream);
     RETURN_IF_EXCEPTION(scope, {});
@@ -1650,18 +1662,15 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectConsumeLoopReadRejected, (J
     return {};
 }
 
-// close()/end(), and the implicit close when an async pull() resolves without calling either. A truthy reason is close(error): the consumer rejects with it.
-static void oneShotDirectClose(JSC::VM& vm, JSGlobalObject* globalObject, JSOneShotDirectSink* sink, JSValue reason)
+// The second half of close()/end(): ends the ArrayBufferSink and settles the result with the stored close reason. Runs at most once per sink.
+static void oneShotDirectFinish(JSC::VM& vm, JSGlobalObject* globalObject, JSOneShotDirectSink* sink)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (sink->m_closed)
+    if (!sink->m_finishOwed)
         return;
-    sink->m_closed = true;
-    if (auto* source = sink->source()) {
-        sink->clearSource();
-        source->close(globalObject, reason);
-        RETURN_IF_EXCEPTION(scope, );
-    }
+    sink->m_finishOwed = false;
+    JSValue reason = sink->closeReason();
+    sink->clearCloseReason();
     MarkedArgumentBuffer noArguments;
     JSValue endResult = Bun::WebStreams::invokeMethod(vm, globalObject, sink->arrayBufferSink(), builtinNames(vm).endPublicName(), noArguments);
     RETURN_IF_EXCEPTION(scope, );
@@ -1686,6 +1695,23 @@ static void oneShotDirectClose(JSC::VM& vm, JSGlobalObject* globalObject, JSOneS
         RETURN_IF_EXCEPTION(scope, );
     }
     capability->fulfill(vm, endResult);
+}
+
+// close()/end(), and the implicit close when an async pull() resolves without calling either. A truthy reason is close(error): the consumer rejects with it.
+static void oneShotDirectClose(JSC::VM& vm, JSGlobalObject* globalObject, JSOneShotDirectSink* sink, JSValue reason)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (sink->m_closed)
+        return;
+    sink->m_closed = true;
+    sink->m_finishOwed = true;
+    sink->setCloseReason(vm, reason);
+    if (auto* source = sink->source()) {
+        sink->clearSource();
+        source->close(globalObject, reason);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+    RELEASE_AND_RETURN(scope, oneShotDirectFinish(vm, globalObject, sink));
 }
 
 // pull() failed: the stream errors and the consumer rejects, unless close()/end() already settled the result.
@@ -1713,6 +1739,9 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onConsumeDirectToArrayBufferPullFul
     return enterStreams(globalObject, [&] {
         auto scope = DECLARE_THROW_SCOPE(vm);
         oneShotDirectClose(vm, globalObject, sink, jsUndefined());
+        RETURN_IF_EXCEPTION(scope, );
+        // An earlier close()/end() whose hook threw left the finish owed, and pull() still resolved: finish it, without the hook.
+        oneShotDirectFinish(vm, globalObject, sink);
         RETURN_IF_EXCEPTION(scope, );
         if (auto* stream = sink->stream()) {
             stream->m_lockedWithoutReader = false;

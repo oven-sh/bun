@@ -8,6 +8,7 @@
 
 namespace WebCore {
 class CryptoKey;
+class JSCryptoKey;
 }
 
 namespace Bun {
@@ -110,6 +111,10 @@ public:
     JSC::JSObject* asymmetricKeyDetails(JSC::JSGlobalObject*, JSC::ThrowScope&);
 
     std::optional<bool> equals(const KeyObject& other) const;
+    // `equals` that throws ERR_CRYPTO_UNSUPPORTED_OPERATION instead of returning nullopt.
+    bool deepEquals(JSC::JSGlobalObject*, JSC::ThrowScope&, const KeyObject& other) const;
+    // node's CryptoKey deep equality. `algorithmsEqual` is the caller's recursion.
+    static bool cryptoKeysDeepEqual(JSC::JSGlobalObject*, JSC::ThrowScope&, WebCore::JSCryptoKey*, WebCore::JSCryptoKey*, const WTF::Function<bool(JSC::JSValue, JSC::JSValue)>& algorithmsEqual);
     JSC::JSValue toCryptoKey(JSC::JSGlobalObject*, JSC::ThrowScope&,
         JSC::JSValue algorithmValue, JSC::JSValue extractableValue, JSC::JSValue keyUsagesValue);
 

@@ -445,6 +445,8 @@ pub struct TreeContext {
     pub(crate) inside_replaced_folder: bool,
     /// See `PackageInstaller::set_outlived_root`.
     pub(crate) outlived_root: bool,
+    /// The bins that each package in this tree declared before this install replaced it.
+    pub(crate) outgoing_bins: Vec<(DependencyID, bin::InstalledBins)>,
 }
 
 type TreeContextId = lockfile::tree::Id;
@@ -670,6 +672,9 @@ impl<'a> PackageInstaller<'a> {
 
         self.completed_trees.set(tree_id as usize);
 
+        if !self.trees[tree_id as usize].outgoing_bins.is_empty() {
+            self.unlink_dropped_bins(tree_id);
+        }
         if self.trees[tree_id as usize].binaries.count() > 0 {
             self.seen_bin_links.clear();
 
@@ -690,6 +695,43 @@ impl<'a> PackageInstaller<'a> {
             self.install_available_packages::<FORCE>(log_level);
         }
         self.run_available_scripts(log_level);
+    }
+
+    /// Unlinks the bins that the tree's replaced packages dropped. Call before its bins are linked.
+    #[cold]
+    fn unlink_dropped_bins(&mut self, tree_id: TreeContextId) {
+        let outgoing_bins = core::mem::take(&mut self.trees[tree_id as usize].outgoing_bins);
+        let (lockfile, manager) = (self.lockfile(), self.manager());
+        // Don't remove anything behind a `node_modules` that's a symlink.
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        if lockfile.is_importer_tree_id(tree_id)
+            && crate::prune::LinkedNodeModules::is_at(bun_paths::resolve_path::z(
+                strings::without_trailing_slash(&self.node_modules.path),
+                &mut path_buf,
+            )) == Some(true)
+        {
+            return;
+        }
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+        let global_bin_path =
+            (tree_id == 0 && manager.options.global).then_some(manager.options.bin_path.as_bytes());
+        for (dependency_id, bins) in &outgoing_bins {
+            let package_id = lockfile.buffers.resolutions.as_slice()[*dependency_id as usize];
+            if !(self.successfully_installed).is_set_allow_out_of_bound(package_id as usize, false)
+            {
+                continue;
+            }
+            bins.unlink_dropped(
+                &self.bins[package_id as usize],
+                string_buf,
+                lockfile.buffers.extern_strings.as_slice(),
+                lockfile.buffers.dependencies.as_slice()[*dependency_id as usize]
+                    .name
+                    .slice(string_buf),
+                &self.node_modules.path,
+                global_bin_path,
+            );
+        }
     }
 
     fn fail(&mut self, is_pending_package_install: bool, log_level: Options::LogLevel) {
@@ -961,7 +1003,9 @@ impl<'a> PackageInstaller<'a> {
 
         let trees_len = self.trees.len();
         for tree_id in 0..trees_len {
-            if self.trees[tree_id].binaries.count() > 0 {
+            // A tree with a failed download never completed, so its dropped bins are still linked.
+            let has_outgoing_bins = !self.trees[tree_id].outgoing_bins.is_empty();
+            if self.trees[tree_id].binaries.count() > 0 || has_outgoing_bins {
                 self.seen_bin_links.clear();
                 self.node_modules.path.truncate(
                     strings::without_trailing_slash(FileSystem::instance().top_level_dir()).len()
@@ -983,13 +1027,18 @@ impl<'a> PackageInstaller<'a> {
                     .path
                     .extend_from_slice(rel_path.as_bytes());
 
-                self.link_tree_bins(
-                    tree_id as u32,
-                    pass,
-                    link_target_buf.as_mut_slice(),
-                    link_dest_buf.as_mut_slice(),
-                    link_rel_buf.as_mut_slice(),
-                );
+                if has_outgoing_bins {
+                    self.unlink_dropped_bins(tree_id as u32);
+                }
+                if self.trees[tree_id].binaries.count() > 0 {
+                    self.link_tree_bins(
+                        tree_id as u32,
+                        pass,
+                        link_target_buf.as_mut_slice(),
+                        link_dest_buf.as_mut_slice(),
+                        link_rel_buf.as_mut_slice(),
+                    );
+                }
             }
         }
     }
@@ -1983,6 +2032,7 @@ impl<'a> PackageInstaller<'a> {
         let (inside_replaced_folder, outlived_root) =
             (tree.inside_replaced_folder, tree.outlived_root);
         let verifying = needs_verify && !self.skip_verify_installed_version_number;
+        let mut outgoing_bins = package_install::OutgoingBins::Unread;
         let needs_install = !verifying
             || remove_patch
             || inside_replaced_folder
@@ -1991,10 +2041,30 @@ impl<'a> PackageInstaller<'a> {
                 &self.metas[package_id as usize].integrity,
                 self.manager().skips_verify(resolution.tag),
                 &self.root_node_modules_folder,
+                &mut outgoing_bins,
             );
         self.summary.skipped += (!needs_install) as u32;
         if !needs_install && log_level.show_progress() {
             self.node.complete_one();
+        }
+        let skip_delete = self.skip_delete && !outlived_root;
+
+        // `--force` replaces every package's folder, so only an importer's `.bin` survives it.
+        let bin_dir_survives = !inside_replaced_folder
+            && (verifying || self.lockfile().is_importer_tree_id(self.current_tree_id));
+        // The old package.json is replaced along with the package, so its bins are read now.
+        if needs_install && needs_verify && !skip_delete && bin_dir_survives {
+            let bins = match outgoing_bins {
+                package_install::OutgoingBins::Read(bins) => bins,
+                package_install::OutgoingBins::Unread => {
+                    installer.read_outgoing_bins(&self.root_node_modules_folder)
+                }
+            };
+            if let Some(bins) = bins.filter(|bins| !bins.is_empty()) {
+                self.trees[self.current_tree_id as usize]
+                    .outgoing_bins
+                    .push((dependency_id, bins));
+            }
         }
 
         // `install_from_link` only re-points one symlink. Everything else replaces the folder.
@@ -2185,7 +2255,6 @@ impl<'a> PackageInstaller<'a> {
                 }
             };
             let destination_dir = Dir::borrow(&destination_fd);
-            let skip_delete = self.skip_delete && !outlived_root;
 
             let install_result: package_install::InstallResult = match resolution.tag {
                 resolution::Tag::Symlink | resolution::Tag::Workspace => {

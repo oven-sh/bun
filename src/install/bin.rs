@@ -419,6 +419,64 @@ impl Bin {
         }
     }
 
+    /// Calls `each` with each name `Linker::link` links for this bin. `package_dir` is absolute.
+    fn for_each_name(
+        &self,
+        alias: &[u8],
+        package_dir: &[u8],
+        string_buf: &[u8],
+        extern_strings: &[ExternalString],
+        each: &mut dyn FnMut(&[u8]),
+    ) {
+        let mut each_linked = |name: &[u8], target: &[u8]| {
+            if !name.is_empty() && !target.is_empty() && !bin_target_escapes_package_dir(target) {
+                each(name);
+            }
+        };
+        match self.tag {
+            Tag::None => {}
+            Tag::File => each_linked(
+                Dependency::unscoped_package_name(alias),
+                self.file().slice(string_buf),
+            ),
+            Tag::NamedFile => {
+                let [name, target] = self.named_file();
+                each_linked(
+                    normalized_bin_name(name.slice(string_buf)),
+                    target.slice(string_buf),
+                );
+            }
+            Tag::Map => {
+                for [name, target] in self.map().get(extern_strings).as_chunks::<2>().0 {
+                    each_linked(
+                        normalized_bin_name(name.slice(string_buf)),
+                        target.slice(string_buf),
+                    );
+                }
+            }
+            Tag::Dir => {
+                let target = self.dir().slice(string_buf);
+                if target.is_empty() || bin_target_escapes_package_dir(target) {
+                    return;
+                }
+                let mut dir_buf = path::path_buffer_pool::get();
+                let Some(dir) =
+                    join_z_checked::<PlatformAuto>(package_dir, dir_buf.as_mut_slice(), &[target])
+                        .and_then(|abs_dir| sys::open_dir_absolute(abs_dir.as_bytes()).ok())
+                        .map(sys::Dir::from_fd)
+                else {
+                    return;
+                };
+                let mut iter = sys::iterate_dir(dir.fd());
+                while let Some(entry) = iter.next().unwrap_or(None) {
+                    if matches!(entry.kind, sys::EntryKind::SymLink | sys::EntryKind::File) {
+                        each(entry.name.slice_u8());
+                    }
+                }
+            }
+        }
+    }
+
     // ── Tag-checked union accessors ────────────────────────────────────────
     // `Value` is a `Copy` POD union (largest member `ExternalStringList` is two
     // `u32`s); reading the wrong variant is well-defined garbage.
@@ -887,47 +945,96 @@ impl<'a> Linker<'a> {
         })
     }
 
-    /// The global bin directory also has files that Bun didn't create, so only a link into
-    /// `global_owner` is removed.
-    fn unlink_bin_or_shim(abs_dest: &ZStr, global_owner: Option<&[u8]>) {
+    /// Removes the bin at `abs_dest` only if it points into the directory `owner`.
+    fn unlink_bin_or_shim(abs_dest: &ZStr, owner: &[u8]) {
         #[cfg(not(windows))]
         {
-            if let Some(owner) = global_owner {
-                let mut link_buf = path::path_buffer_pool::get();
-                match sys::readlink(abs_dest, link_buf.as_mut_slice()) {
-                    Ok(len) if Self::link_leads_into(abs_dest, &link_buf[..len], owner) => {}
-                    _ => return,
-                }
+            let mut link_buf = path::path_buffer_pool::get();
+            if sys::readlink(abs_dest, link_buf.as_mut_slice())
+                .is_ok_and(|len| Self::link_leads_into(abs_dest, &link_buf[..len], owner))
+            {
+                let _ = sys::unlink(abs_dest);
             }
-            let _ = sys::unlink(abs_dest);
         }
 
         #[cfg(windows)]
-        {
-            let mut dest_buf = bun_paths::w_path_buffer_pool::get();
-            let abs_dest_w = strings::convert_utf8_to_utf16_in_buffer(
-                dest_buf.as_mut_slice(),
-                abs_dest.as_bytes(),
-            );
-            let abs_dest_w_len = abs_dest_w.len();
-            let bunx_suffix = w!(".bunx\x00");
-            dest_buf[abs_dest_w_len..abs_dest_w_len + bunx_suffix.len()]
-                .copy_from_slice(bunx_suffix);
-            // SAFETY: dest_buf[abs_dest_w_len + ".bunx".len()] == 0 written above
-            let abs_bunx_file =
-                bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".bunx".len());
-            let had_bunx_file = sys::unlink_w(abs_bunx_file).is_ok();
-            // An `.exe` without its `.bunx` is a program, `bun.exe` for one.
-            if global_owner.is_some() && !had_bunx_file {
-                return;
-            }
-            let exe_suffix = w!(".exe\x00");
-            dest_buf[abs_dest_w_len..abs_dest_w_len + exe_suffix.len()].copy_from_slice(exe_suffix);
-            // SAFETY: dest_buf[abs_dest_w_len + ".exe".len()] == 0 written above
-            let abs_exe_file =
-                bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".exe".len());
-            let _ = sys::unlink_w(abs_exe_file);
+        if Self::shim_leads_into(abs_dest, owner) {
+            Self::unlink_shim(abs_dest, false);
         }
+    }
+
+    /// With `keep_program`, an `.exe` without a `.bunx` stays: it's a program such as `bun.exe`.
+    #[cfg(windows)]
+    fn unlink_shim(abs_dest: &ZStr, keep_program: bool) {
+        let mut dest_buf = bun_paths::w_path_buffer_pool::get();
+        let abs_dest_w =
+            strings::convert_utf8_to_utf16_in_buffer(dest_buf.as_mut_slice(), abs_dest.as_bytes());
+        let abs_dest_w_len = abs_dest_w.len();
+        let bunx_suffix = w!(".bunx\x00");
+        dest_buf[abs_dest_w_len..abs_dest_w_len + bunx_suffix.len()].copy_from_slice(bunx_suffix);
+        // SAFETY: dest_buf[abs_dest_w_len + ".bunx".len()] == 0 written above
+        let abs_bunx_file =
+            bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".bunx".len());
+        if keep_program && !sys::exists_os_path(abs_bunx_file, false) {
+            return;
+        }
+        // The `.exe` goes first: if it's running and can't be deleted, its `.bunx` has to stay too.
+        let exe_suffix = w!(".exe\x00");
+        dest_buf[abs_dest_w_len..abs_dest_w_len + exe_suffix.len()].copy_from_slice(exe_suffix);
+        // SAFETY: dest_buf[abs_dest_w_len + ".exe".len()] == 0 written above
+        let abs_exe_file = bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".exe".len());
+        if sys::unlink_w(abs_exe_file).is_err_and(|err| err.get_errno() != sys::Errno::ENOENT) {
+            return;
+        }
+        dest_buf[abs_dest_w_len..abs_dest_w_len + bunx_suffix.len()].copy_from_slice(bunx_suffix);
+        // SAFETY: dest_buf[abs_dest_w_len + ".bunx".len()] == 0 written above
+        let abs_bunx_file =
+            bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".bunx".len());
+        let _ = sys::unlink_w(abs_bunx_file);
+    }
+
+    /// Returns the shim's target: the start of its `.bunx` file, UTF-16 up to a `"`.
+    #[cfg(windows)]
+    pub(crate) fn shim_target(dir: Fd, bunx_path: &[u8]) -> Option<Vec<u8>> {
+        let shim = sys::File::read_from(dir, bunx_path).ok()?;
+        let (units, _) = shim.as_chunks::<2>();
+        let target_len = units.iter().position(|unit| *unit == [b'"', 0])?;
+        Some(strings::to_utf8_alloc_from_le_bytes(
+            &shim[..target_len * 2],
+        ))
+    }
+
+    /// Like `link_leads_into`, for the shim at `abs_dest`.
+    #[cfg(windows)]
+    fn shim_leads_into(abs_dest: &ZStr, abs_dir: &[u8]) -> bool {
+        let dest = abs_dest.as_bytes();
+        let mut bunx_buf = path::path_buffer_pool::get();
+        let bunx_len = dest.len() + b".bunx".len();
+        if bunx_len > bunx_buf.len() {
+            return false;
+        }
+        bunx_buf[..dest.len()].copy_from_slice(dest);
+        bunx_buf[dest.len()..bunx_len].copy_from_slice(b".bunx");
+        let Some(target) = Self::shim_target(Fd::cwd(), &bunx_buf[..bunx_len]) else {
+            return false;
+        };
+        // `create_windows_shim` writes the target relative to the parent of the bin directory.
+        let bin_dir = resolve_path::dirname::<PlatformAuto>(dest);
+        let mut resolved_buf = path::path_buffer_pool::get();
+        let Some(resolved) = resolve_path::join_abs_string_buf_checked::<PlatformAuto>(
+            resolve_path::dirname::<PlatformAuto>(bin_dir),
+            resolved_buf.as_mut_slice(),
+            &[&target],
+        ) else {
+            return false;
+        };
+        // By component, because the scoped name at the end of `abs_dir` has a `/`.
+        let mut parts = strings::tokenize_any(resolved, b"/\\");
+        strings::tokenize_any(abs_dir, b"/\\").all(|dir_part| {
+            parts
+                .next()
+                .is_some_and(|part| strings::eql_case_insensitive_ascii(part, dir_part, true))
+        }) && parts.next().is_some()
     }
 
     /// Returns true if the symlink at `abs_dest` with the target `link` points into `abs_dir`. The
@@ -1011,10 +1118,9 @@ impl<'a> Linker<'a> {
         if let Err(err) = result {
             self.err.get_or_insert(err);
             #[cfg(windows)]
-            Self::unlink_bin_or_shim(
+            Self::unlink_shim(
                 abs_dest,
-                (global || Self::is_behind_link(&mut self.is_behind_link, self.node_modules_path))
-                    .then_some(&b""[..]),
+                global || Self::is_behind_link(&mut self.is_behind_link, self.node_modules_path),
             );
             if let Some(seen) = self.seen.as_deref_mut() {
                 seen.remove(abs_dest.as_bytes());
@@ -1806,7 +1912,7 @@ impl<'a> Linker<'a> {
                 return false;
             };
             let package_dir = &this.abs_target_buf[0..package_dir_len];
-            Self::unlink_bin_or_shim(abs_dest, global.then_some(package_dir));
+            Self::unlink_bin_or_shim(abs_dest, package_dir);
             true
         };
 
@@ -1868,6 +1974,200 @@ impl<'a> Linker<'a> {
             }
         }
     }
+}
+
+/// The bin names that an installed package's package.json declares.
+pub struct InstalledBins {
+    /// Each name is followed by a NUL.
+    names: Vec<u8>,
+    /// True if the names are the files in a `directories.bin` folder.
+    is_folder: bool,
+}
+
+impl InstalledBins {
+    /// `root` is the package.json of the package installed as `alias` in `package_dir` (absolute).
+    fn from_json(root: &Expr, alias: &[u8], package_dir: &[u8]) -> InstalledBins {
+        let mut names = Vec::new();
+        let bin_expr = root.get(b"bin");
+        // Like `Package::parse`: an object or a non-empty string `bin` overrides `directories.bin`.
+        let directories_bin = match &bin_expr {
+            Some(bin_expr)
+                if matches!(
+                    bin_expr.data,
+                    ExprData::EObject(_) | ExprData::EObjectJSON(_)
+                ) || bin_expr
+                    .as_utf8_string_literal()
+                    .is_some_and(|file| !file.is_empty()) =>
+            {
+                None
+            }
+            _ => root.get(b"directories").and_then(|dirs| dirs.get(b"bin")),
+        };
+
+        let mut string_buf = Vec::new();
+        let mut extern_strings = Vec::new();
+        let mut string_pool = bun_semver::string::StringPool::default();
+        let mut buf = bun_semver::string::Buf {
+            bytes: &mut string_buf,
+            pool: &mut string_pool,
+        };
+        let bin = bun_core::handle_oom(match (&directories_bin, &bin_expr) {
+            (Some(dir_expr), _) => Bin::parse_append_from_directories(dir_expr, &mut buf),
+            (None, Some(bin_expr)) => Bin::parse_append(bin_expr, &mut buf, &mut extern_strings),
+            (None, None) => Ok(Bin::default()),
+        });
+
+        let mut push = |name: &[u8]| {
+            names.extend_from_slice(name);
+            names.push(0);
+        };
+        bin.for_each_name(alias, package_dir, &string_buf, &extern_strings, &mut push);
+        // A registry keys a string `bin` by the package's name, so that name may be linked too.
+        let name_expr = root.get(b"name");
+        if bin.tag == Tag::File
+            && let Some(name) = name_expr.as_ref().and_then(Expr::as_utf8_string_literal)
+        {
+            let name = normalized_bin_name(name);
+            if !name.is_empty() && name != Dependency::unscoped_package_name(alias) {
+                push(name);
+            }
+        }
+        InstalledBins {
+            names,
+            is_folder: bin.tag == Tag::Dir,
+        }
+    }
+
+    /// `contents` is the package.json of the package in `package_dir`. `None` if it doesn't parse.
+    pub fn parse(contents: &[u8], alias: &[u8], package_dir: &[u8]) -> Option<InstalledBins> {
+        // Most packages don't declare a bin, and a file without the key doesn't need to be parsed.
+        if !strings::contains(contents, b"\"bin\"") {
+            return Some(InstalledBins {
+                names: Vec::new(),
+                is_folder: false,
+            });
+        }
+        let source = bun_ast::Source::init_path_string(b"package.json", contents);
+        let mut log = bun_ast::Log::init();
+        crate::initialize_store();
+        let json = crate::bun_json::ParsedJson::parse_package_json(&source, &mut log).ok()?;
+        Some(Self::from_json(&json.root, alias, package_dir))
+    }
+
+    /// Reads the package.json in `package_dir`. Returns `None` if it's missing or doesn't parse.
+    pub fn read(alias: &[u8], package_dir: &[u8]) -> Option<InstalledBins> {
+        let mut path_buf = path::path_buffer_pool::get();
+        let package_json_path = join_z_checked::<PlatformAuto>(
+            package_dir,
+            path_buf.as_mut_slice(),
+            &[b"package.json"],
+        )?;
+        let contents = sys::File::read_from(Fd::cwd(), package_json_path.as_bytes()).ok()?;
+        Self::parse(&contents, alias, package_dir)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.names.is_empty()
+    }
+
+    fn names(&self) -> impl Iterator<Item = &[u8]> {
+        strings::tokenize(&self.names, b"\0")
+    }
+
+    /// Unlinks the bins of the old package (`self`) that the new one (`incoming`) doesn't declare.
+    #[cold]
+    pub fn unlink_dropped(
+        &self,
+        incoming: &Bin,
+        string_buf: &[u8],
+        extern_strings: &[ExternalString],
+        alias: &[u8],
+        node_modules_path: &[u8],
+        global_bin_path: Option<&[u8]>,
+    ) {
+        // The bins of a `directories.bin` are its files, and a build step may still create them.
+        if incoming.tag == Tag::Dir {
+            return;
+        }
+        let node_modules_path = strings::without_trailing_slash(node_modules_path);
+        let mut package_dir_buf = path::path_buffer_pool::get();
+        let Some(package_dir) = resolve_path::join_abs_string_buf_checked::<PlatformAuto>(
+            node_modules_path,
+            package_dir_buf.as_mut_slice(),
+            &[alias],
+        ) else {
+            return;
+        };
+
+        let mut dropped: Vec<&[u8]> = self.names().collect();
+        incoming.for_each_name(
+            alias,
+            package_dir,
+            string_buf,
+            extern_strings,
+            &mut |declared| dropped.retain(|name| !may_be_one_entry(name, declared)),
+        );
+        if dropped.is_empty() {
+            return;
+        }
+        // A migrated lockfile may have no bin, so also keep what the package.json on disk declares.
+        match Self::read(alias, package_dir) {
+            Some(installed) if !installed.is_folder => {
+                for declared in installed.names() {
+                    dropped.retain(|name| !may_be_one_entry(name, declared));
+                }
+            }
+            _ => return,
+        }
+
+        let mut dest_buf = path::path_buffer_pool::get();
+        // Bun creates `.bin` as a directory. Nothing is removed through a `.bin` that's a symlink.
+        let has_bin_dir = bin_dest(dest_buf.as_mut_slice(), &[node_modules_path, b".bin"])
+            .is_some_and(|bin_dir| {
+                sys::lstat(bin_dir).is_ok_and(|stat| {
+                    sys::kind_from_mode(stat.st_mode as sys::Mode) == sys::EntryKind::Directory
+                })
+            });
+        let mut unlink = |components: &[&[u8]]| {
+            if let Some(abs_dest) = bin_dest(dest_buf.as_mut_slice(), components) {
+                Linker::unlink_bin_or_shim(abs_dest, package_dir);
+            }
+        };
+        for name in dropped {
+            if has_bin_dir {
+                unlink(&[node_modules_path, b".bin", name]);
+            }
+            if let Some(global_bin_path) = global_bin_path {
+                unlink(&[strings::without_trailing_slash(global_bin_path), name]);
+            }
+        }
+    }
+}
+
+/// Returns true if a case-insensitive volume could store `a` and `b` as the same entry.
+fn may_be_one_entry(a: &[u8], b: &[u8]) -> bool {
+    // Those volumes fold non-ASCII letters too, so any two non-ASCII names count as a match.
+    a.eq_ignore_ascii_case(b)
+        || (strings::first_non_ascii(a).is_some() && strings::first_non_ascii(b).is_some())
+}
+
+/// Joins `components` like `Linker::link`. `None` if the path and a shim suffix don't fit.
+fn bin_dest<'a>(buf: &'a mut [u8], components: &[&[u8]]) -> Option<&'a ZStr> {
+    let mut len = 0;
+    for component in components {
+        let start = if len > 0 { len + 1 } else { 0 };
+        let end = start + component.len();
+        if end + b".bunx".len() >= buf.len() {
+            return None;
+        }
+        if len > 0 {
+            buf[len] = SEP;
+        }
+        buf[start..end].copy_from_slice(component);
+        len = end;
+    }
+    buf[len] = 0;
+    Some(ZStr::from_buf(buf, len))
 }
 
 /// The installers only link the bins of packages that the command names or installs. This links

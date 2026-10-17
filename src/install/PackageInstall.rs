@@ -16,7 +16,8 @@ use bun_threading::{IntrusiveWorkTask, ThreadPool, WaitGroup};
 use crate::package_installer::NodeModulesFolder;
 use crate::{
     BuntagHashBuf, DependencyID, Integrity, Lockfile, Npm, PackageID, PackageManager, Resolution,
-    TruncatedPackageNameHash, bun_fs, bun_json, buntaghashbuf_make, initialize_store, resolution,
+    TruncatedPackageNameHash, bin, bun_fs, bun_json, buntaghashbuf_make, initialize_store,
+    resolution,
 };
 
 bun_output::declare_scope!(install, hidden);
@@ -48,6 +49,14 @@ pub(crate) struct PackageFiles<'a> {
 #[derive(Clone, Copy)]
 pub struct Patch {
     pub(crate) contents_hash: u64,
+}
+
+/// The bins of the package that `verify` found at the destination, which is about to be replaced.
+pub(crate) enum OutgoingBins {
+    /// `verify` didn't read a package.json there.
+    Unread,
+    /// The bins its package.json declares, or `None` if it's missing or doesn't parse.
+    Read(Option<bin::InstalledBins>),
 }
 
 #[derive(Default)]
@@ -1229,12 +1238,14 @@ impl<'a> PackageInstall<'a> {
         matches(&bun_tag_file.bytes)
     }
 
+    /// Sets `outgoing_bins` if this reads the package.json of the package that's already there.
     pub(crate) fn verify(
         &mut self,
         resolution: &Resolution,
         integrity: &Integrity,
         skips_verify: bool,
         root_node_modules_dir: &Dir,
+        outgoing_bins: &mut OutgoingBins,
     ) -> bool {
         let verified = match resolution.tag {
             resolution::Tag::Git | resolution::Tag::Github => {
@@ -1267,7 +1278,7 @@ impl<'a> PackageInstall<'a> {
                     self.verify_directory_exists(root_node_modules_dir)
                 }
             }
-            _ => self.verify_package_json_name_and_version(root_node_modules_dir),
+            _ => self.verify_package_json_name_and_version(root_node_modules_dir, outgoing_bins),
         };
 
         verified
@@ -1349,11 +1360,17 @@ impl<'a> PackageInstall<'a> {
         ))
     }
 
-    fn verify_package_json_name_and_version(&mut self, root_node_modules_dir: &Dir) -> bool {
+    fn verify_package_json_name_and_version(
+        &mut self,
+        root_node_modules_dir: &Dir,
+        outgoing_bins: &mut OutgoingBins,
+    ) -> bool {
         // The first attempt treats a short read as the end of the file, which saves a `read` call.
         // A few file systems return short reads earlier and truncate the JSON, so retry until EOF.
-        self.verify_installed_package_json(root_node_modules_dir, false)
-            .or_else(|| self.verify_installed_package_json(root_node_modules_dir, true))
+        self.verify_installed_package_json(root_node_modules_dir, false, outgoing_bins)
+            .or_else(|| {
+                self.verify_installed_package_json(root_node_modules_dir, true, outgoing_bins)
+            })
             .unwrap_or(false)
     }
 
@@ -1362,7 +1379,9 @@ impl<'a> PackageInstall<'a> {
         &mut self,
         root_node_modules_dir: &Dir,
         until_eof: bool,
+        outgoing_bins: &mut OutgoingBins,
     ) -> Option<bool> {
+        *outgoing_bins = OutgoingBins::Read(None);
         let mut body_pool = Npm::Registry::BodyPool::get();
         let mutable: &mut MutableString = &mut body_pool;
 
@@ -1376,8 +1395,27 @@ impl<'a> PackageInstall<'a> {
         else {
             return Some(false);
         };
-        let source = &source;
 
+        let verified = self.name_and_version_match(&source);
+        if verified != Some(true) {
+            let alias = self.destination_dir_subpath.as_bytes();
+            let mut package_dir_buf = bun_paths::path_buffer_pool::get();
+            *outgoing_bins = OutgoingBins::Read(
+                path::resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
+                    &self.node_modules.path,
+                    package_dir_buf.as_mut_slice(),
+                    &[alias],
+                )
+                .and_then(|package_dir| {
+                    bin::InstalledBins::parse(source.contents(), alias, package_dir)
+                }),
+            );
+        }
+        verified
+    }
+
+    /// Returns `None` if `source` is not a complete JSON document.
+    fn name_and_version_match(&self, source: &bun_ast::Source) -> Option<bool> {
         // If it's not long enough to have {"name": "foo", "version": "1.2.0"}, there's no way it's valid
         let minimum = br#"{"name":"","version":""}"#.len()
             + self.package_name.len()
@@ -1437,6 +1475,30 @@ impl<'a> PackageInstall<'a> {
             package_json_checker.found_name()
                 == self.package_name.slice(&self.lockfile.buffers.string_bytes),
         )
+    }
+
+    /// Reads the bins of the package at the destination, for when `verify` didn't read them.
+    pub(crate) fn read_outgoing_bins(
+        &self,
+        root_node_modules_dir: &Dir,
+    ) -> Option<bin::InstalledBins> {
+        let alias = self.destination_dir_subpath.as_bytes();
+        let mut spill = Vec::new();
+        let package_json_path = path::resolve_path::join_z_spill::<path::platform::Posix>(
+            &mut spill,
+            &[alias, b"package.json"],
+        );
+        let package_json = self
+            .node_modules
+            .read_small_file(root_node_modules_dir, package_json_path)
+            .ok()?;
+        let mut package_dir_buf = bun_paths::path_buffer_pool::get();
+        let package_dir = path::resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
+            &self.node_modules.path,
+            package_dir_buf.as_mut_slice(),
+            &[alias],
+        )?;
+        bin::InstalledBins::parse(&package_json.bytes, alias, package_dir)
     }
 }
 

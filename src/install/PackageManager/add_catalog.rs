@@ -669,7 +669,6 @@ pub(crate) fn refuse_declared_positionals(manager: &PackageManager) {
 fn settle_resolved_positional(
     state: &mut State,
     request: &UpdateRequest,
-    lockfile: &Lockfile,
     package_json: &Expr,
     dependency_list: &[u8],
     flag: &[u8],
@@ -677,8 +676,8 @@ fn settle_resolved_positional(
     target: &[u8],
     quiet: bool,
 ) -> Decision {
-    let name: &[u8] = request.get_resolved_name(lockfile);
-    let name_hash = lockfile.packages.items_name_hash()[request.package_id as usize];
+    let name: &[u8] = request.get_resolved_name();
+    let name_hash = Semver::string::Builder::string_hash(name);
     // SAFETY: same slot `edit` just wrote through; see the write in `edit_target`.
     let literal: &[u8] = unsafe { (*e_string).data }.slice();
 
@@ -754,7 +753,6 @@ pub(crate) fn edit_target(
     PackageJSONEditor::edit(manager, updates, package_json, dependency_list, options)?;
 
     let arena = &manager.ast_arena;
-    let lockfile: &Lockfile = &manager.lockfile;
     let state = &mut manager.catalog_add;
     let flag_literal = flag.map(|name| StoreStr::new(reference_literal(arena, name)));
 
@@ -772,7 +770,6 @@ pub(crate) fn edit_target(
             let decision = settle_resolved_positional(
                 state,
                 request,
-                lockfile,
                 package_json,
                 dependency_list,
                 flag,

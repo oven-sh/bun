@@ -537,13 +537,12 @@ pub fn install_with_manager(
                             catalog_overridden.dedup();
                         }
                         // `all_name_hashes` is empty unless the overrides changed.
-                        reresolve_owned_rows(manager, &pinned_rows, |dependency| {
-                            all_name_hashes.binary_search(&dependency.name_hash).is_ok()
+                        reresolve_owned_rows(manager, &pinned_rows, |dependency, buf| {
+                            let key = lockfile::override_map::rule_key(dependency, buf);
+                            all_name_hashes.binary_search(&key).is_ok()
                                 || (catalogs_changed
                                     && dependency.version.tag == DependencyVersionTag::Catalog)
-                                || catalog_overridden
-                                    .binary_search(&dependency.name_hash)
-                                    .is_ok()
+                                || catalog_overridden.binary_search(&key).is_ok()
                         });
                     }
 
@@ -1690,15 +1689,20 @@ fn report_lockfile_load_error(
 fn reresolve_owned_rows(
     manager: &mut PackageManager,
     pinned_rows: &DynamicBitSet,
-    selects: impl Fn(&Dependency) -> bool,
+    // The dependency, and the string buffer of its lockfile.
+    selects: impl Fn(&Dependency, &[u8]) -> bool,
 ) {
     // Resolving appends packages and rows; only the lists present now are walked.
     let lists: Vec<lockfile::DependencySlice> =
         manager.lockfile.packages.items_dependencies().to_vec();
     for list in lists {
         for dep_id in list.begin()..list.end() {
+            let buffers = &manager.lockfile.buffers;
             if pinned_rows.is_set_allow_out_of_bound(dep_id as usize, false)
-                || !selects(&manager.lockfile.buffers.dependencies[dep_id as usize])
+                || !selects(
+                    &buffers.dependencies[dep_id as usize],
+                    buffers.string_bytes.as_slice(),
+                )
             {
                 continue;
             }
@@ -2356,12 +2360,14 @@ fn rows_outside_overrides(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)>
         .zip(lockfile.buffers.resolutions.iter())
         .enumerate()
         .filter(|&(row, (dependency, &package_id))| {
-            lockfile.overrides.has_rule_for_name(dependency.name_hash)
+            (lockfile.overrides)
+                .has_rule_for_name(lockfile::override_map::rule_key(dependency, buf))
                 && !dependency.behavior.is_bundled()
                 && !dependency.behavior.is_optional_peer()
                 && (package_id as usize) < resolutions.len()
                 && resolutions[package_id as usize].tag == ResolutionTag::Npm
-                && crate::dedupe::applied_override(lockfile, row as DependencyID, dependency)
+                && (lockfile.overrides)
+                    .rule_for(lockfile, row as DependencyID, dependency)
                     .is_some()
                 && crate::dedupe::effective_version(lockfile, row as DependencyID, dependency)
                     .is_some_and(|version| {

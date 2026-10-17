@@ -659,23 +659,22 @@ pub fn enqueue_dependency_to_root(
 
     // A failed lookup stands until the event loop has gone around; a 404 as long as a manifest.
     let turn = this.event_loop.iteration_number();
-    let manifest_task_id = {
-        let real_name = this.lockfile.buffers.dependencies[dep_id as usize].realname();
-        Task::Id::for_manifest(this.lockfile.str(&real_name))
-    };
 
     if this.lockfile.buffers.resolutions[dep_id as usize] == invalid_package_id {
-        if (this.network_dedupe_map.get(&manifest_task_id)).is_some_and(|entry| {
-            entry.missed_in.is_some_and(|missed_in| missed_in != turn)
-                && i64::from(entry.missing_until) <= bun_core::time::timestamp()
-        }) {
-            let _ = this.network_dedupe_map.remove(&manifest_task_id);
-        }
-
         // Copy to the stack: `bind_row` can call `Package::from_npm`, which grows
         // `buffers.dependencies` and would invalidate a pointer taken directly into it.
         let dependency = this.lockfile.buffers.dependencies[dep_id as usize].clone();
         let (install_peer, is_root) = (false, true);
+
+        if let Some(manifest_task_id) = manifest_task_of_import(this, dep_id, &dependency)
+            && (this.network_dedupe_map.get(&manifest_task_id)).is_some_and(|entry| {
+                entry.missed_in.is_some_and(|missed_in| missed_in != turn)
+                    && i64::from(entry.missing_until) <= bun_core::time::timestamp()
+            })
+        {
+            let _ = this.network_dedupe_map.remove(&manifest_task_id);
+        }
+
         if let Err(err) = bind_row(
             this,
             dep_id,
@@ -704,16 +703,35 @@ pub fn enqueue_dependency_to_root(
     };
 
     if resolution_id == invalid_package_id {
-        if let Some(entry) = this.network_dedupe_map.get_mut(&manifest_task_id) {
-            entry.missed_in = Some(turn);
+        // Asked again: an alias's manifest that came in between says if the import follows it.
+        let dependency = this.lockfile.buffers.dependencies[dep_id as usize].clone();
+        if let Some(manifest_task_id) = manifest_task_of_import(this, dep_id, &dependency) {
+            if let Some(entry) = this.network_dedupe_map.get_mut(&manifest_task_id) {
+                entry.missed_in = Some(turn);
+            }
+            let _ = this.task_queue.remove(&manifest_task_id);
         }
-        let _ = this.task_queue.remove(&manifest_task_id);
         return DependencyToEnqueue::NotFound;
     }
 
     DependencyToEnqueue::Resolution {
         resolution: this.lockfile.packages.items_resolution()[resolution_id as usize],
         package_id: resolution_id,
+    }
+}
+
+/// The manifest that an import asks for now: its own, a rule's, or an alias's that it waits for.
+#[inline(never)]
+fn manifest_task_of_import(
+    this: &mut PackageManager,
+    id: DependencyID,
+    dependency: &Dependency,
+) -> Option<Task::Id> {
+    let (is_root, mut replacement) = (true, None);
+    match asked_version(this, id, dependency, is_root, &mut replacement) {
+        Ok(asked) => (asked.version.tag.is_npm())
+            .then(|| Task::Id::for_manifest(this.lockfile.str(&asked.name))),
+        Err(task_id) => Some(task_id),
     }
 }
 
@@ -831,39 +849,10 @@ pub fn enqueue_patch_task_pre(this: &mut PackageManager, mut task: Box<PatchTask
 }
 
 /// A resolve task's callback queue is drained exactly once. If `task_id`
-/// already completed and appended a package, resolve `id` against it directly:
+/// already completed and appended a package, a dependency binds to it directly:
 /// a context queued now would never be processed.
-fn resolve_from_appended_task(
-    this: &mut PackageManager,
-    task_id: Task::Id,
-    id: DependencyID,
-) -> Option<PackageID> {
-    let &pkg_id = this.appended_task_packages.get(&task_id)?;
-    let pkg_name = this.lockfile.packages.items_name()[pkg_id as usize];
-    let pkg_res = this.lockfile.packages.items_resolution()[pkg_id as usize];
-    let version = &mut this.lockfile.buffers.dependencies[id as usize].version;
-    name_resolved_row(version, pkg_name, &pkg_res);
-    Some(pkg_id)
-}
-
-/// A git / tarball row learns its name at extraction. Under `overrides` its tag is not its task's.
-pub(crate) fn name_resolved_row(
-    v: &mut dependency::Version,
-    pkg_name: SemverString,
-    pkg_res: &Resolution,
-) {
-    match v.tag {
-        dependency::version::Tag::Git => {
-            let repo = v.git_mut();
-            if pkg_res.tag == ResolutionTag::Git {
-                repo.resolved = pkg_res.git().resolved;
-            }
-            repo.package_name = pkg_name;
-        }
-        dependency::version::Tag::Github => v.github_mut().package_name = pkg_name,
-        dependency::version::Tag::Tarball => v.tarball_mut().package_name = pkg_name,
-        _ => {}
-    }
+fn appended_by_task(this: &PackageManager, task_id: Task::Id) -> Option<PackageID> {
+    this.appended_task_packages.get(&task_id).copied()
 }
 
 /// `cached` makes the request conditional on its etag / last-modified.
@@ -1670,10 +1659,7 @@ fn asked_version<'a>(
     let mut name = dependency.realname();
     let mut name_hash = match dependency.version.tag {
         dependency::version::Tag::DistTag
-        | dependency::version::Tag::Git
-        | dependency::version::Tag::Github
         | dependency::version::Tag::Npm
-        | dependency::version::Tag::Tarball
         | dependency::version::Tag::Workspace => {
             Semver::string::Builder::string_hash(this.lockfile.str(&name))
         }
@@ -1695,10 +1681,9 @@ fn asked_version<'a>(
                 if (dependency.behavior.is_peer() || group.intersects(buf, alias_group, buf))
                     && group.is_satisfied_by_a_bound_of(buf, alias_group, buf)
                     // A rule for this dependency wins over the alias.
-                    && (dependency.behavior.is_workspace()
-                        || (this.lockfile.overrides)
-                            .lookup(&this.lockfile, id, name_hash)
-                            .is_none())
+                    && (this.lockfile.overrides)
+                        .rule_for(&this.lockfile, id, dependency)
+                        .is_none()
                     && (dependency.behavior.is_peer()
                         || group.is_star()
                         || takes_alias_target(this, group, &aliased)?)
@@ -1713,18 +1698,10 @@ fn asked_version<'a>(
             }
         }
 
-        // A workspaceOnly dependency is never overridden. `lookup` decides which rules reach an alias.
+        // A workspaceOnly dependency is never overridden. `rule_for` decides which rules reach an alias.
         if !dependency.behavior.is_workspace() {
-            let is_alias = dependency.version.tag == dependency::version::Tag::Npm
-                && dependency.version.npm().is_alias;
-            // Rules for an alias are keyed by the alias, not by the package it points at.
-            let rule_name_hash = if is_alias {
-                dependency.name_hash
-            } else {
-                name_hash
-            };
             let overridden = (this.lockfile.overrides)
-                .lookup_declared(&this.lockfile, id, rule_name_hash, &dependency.version)
+                .rule_for(&this.lockfile, id, dependency)
                 .map(|rule| rule.version().clone())
                 // Auto-install follows a rule to the registry. Any other, such as `file:`, is
                 // passed over.
@@ -2116,11 +2093,7 @@ fn bind_row_without_manifest(
             let res = Resolution::init(ResolutionTagged::Git(dep));
 
             // First: see if we already loaded the git package in-memory
-            if let Some(pkg_id) = this
-                .lockfile
-                .get_package_id(name_hash, None, &res)
-                .or_else(|| locked_repository(this, dependency, &res))
-            {
+            if let Some(pkg_id) = locked_repository(this, dependency, &res) {
                 success_fn(this, id, pkg_id);
                 return Ok(());
             }
@@ -2179,11 +2152,12 @@ fn bind_row_without_manifest(
                 };
                 let checkout_id = Task::Id::for_git_checkout(url, &resolved);
 
-                if needs_ctx {
-                    if let Some(pkg_id) = resolve_from_appended_task(this, checkout_id, id) {
+                // Done already: a dependency bound before its turn must not wait for it again.
+                if let Some(pkg_id) = appended_by_task(this, checkout_id) {
+                    if needs_ctx {
                         success_fn(this, id, pkg_id);
-                        return Ok(());
                     }
+                    return Ok(());
                 }
 
                 task_callback_list(this, checkout_id);
@@ -2331,11 +2305,7 @@ fn bind_row_without_manifest(
             }
 
             // First: see if we already loaded the package in-memory
-            if let Some(pkg_id) = this
-                .lockfile
-                .get_package_id(name_hash, None, &res)
-                .or_else(|| locked_repository(this, dependency, &res))
-            {
+            if let Some(pkg_id) = locked_repository(this, dependency, &res) {
                 success_fn(this, id, pkg_id);
                 return Ok(());
             }
@@ -2352,11 +2322,12 @@ fn bind_row_without_manifest(
             };
             let task_id = Task::Id::for_tarball(url);
 
-            if this.lockfile.buffers.resolutions[id as usize] == invalid_package_id {
-                if let Some(pkg_id) = resolve_from_appended_task(this, task_id, id) {
+            // Done already: a dependency bound before its turn must not wait for it again.
+            if let Some(pkg_id) = appended_by_task(this, task_id) {
+                if this.lockfile.buffers.resolutions[id as usize] == invalid_package_id {
                     success_fn(this, id, pkg_id);
-                    return Ok(());
                 }
+                return Ok(());
             }
 
             wait_for_remote_task(this, task_id, waiter());
@@ -2934,7 +2905,7 @@ fn update_name_and_name_hash_from_version_replacement(
     new_version: &dependency::Version,
 ) -> (SemverString, PackageNameHash) {
     match new_version.tag {
-        // only get name hash for npm and dist_tag. git, github, tarball don't have names until after extracting tarball
+        // Only a registry version carries the name of its package.
         dependency::version::Tag::DistTag => (
             new_version.dist_tag().name,
             Semver::string::Builder::string_hash(lockfile.str(&new_version.dist_tag().name)),
@@ -2943,11 +2914,6 @@ fn update_name_and_name_hash_from_version_replacement(
             new_version.npm().name,
             Semver::string::Builder::string_hash(lockfile.str(&new_version.npm().name)),
         ),
-        dependency::version::Tag::Git => (new_version.git().package_name, original_name_hash),
-        dependency::version::Tag::Github => (new_version.github().package_name, original_name_hash),
-        dependency::version::Tag::Tarball => {
-            (new_version.tarball().package_name, original_name_hash)
-        }
         _ => (original_name, original_name_hash),
     }
 }

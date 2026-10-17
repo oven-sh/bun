@@ -606,7 +606,7 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
             let rule = if dep.behavior.is_bundled() {
                 None
             } else {
-                crate::dedupe::applied_override(lockfile, dep_id as DependencyID, dep)
+                (lockfile.overrides).rule_for(lockfile, dep_id as DependencyID, dep)
             };
             let mut pin = pin_for(lockfile, root_json.as_ref(), dep, parent, rule, true);
             let latest_fixes = !latest && pin.is_some();

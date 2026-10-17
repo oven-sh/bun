@@ -1033,7 +1033,7 @@ pub(crate) fn edit(
                         .is_some()
                 {
                     request
-                        .get_name_in_lockfile(&manager.lockfile)
+                        .get_name_in_lockfile()
                         .filter(|name| !name.is_empty() && *name != request.get_name())
                         .map(|name| arena_dup(arena, name))
                 } else {
@@ -1293,10 +1293,7 @@ pub(crate) fn edit(
 
                 new_dependencies[k].key = Some(Expr::allocate(
                     arena,
-                    E::EString::init(arena_dup(
-                        arena,
-                        request.get_resolved_name(&manager.lockfile),
-                    )),
+                    E::EString::init(arena_dup(arena, request.get_resolved_name())),
                     bun_ast::Loc::EMPTY,
                 ));
 
@@ -1335,7 +1332,7 @@ pub(crate) fn edit(
             // with a different literal (e.g. a new commit hash), that stale entry is
             // still present, so drop it or the file ends up with a duplicate key.
             if !request.is_aliased && k < new_dependencies.len() {
-                let resolved_name = request.get_resolved_name(&manager.lockfile);
+                let resolved_name = request.get_resolved_name();
                 let mut j = new_dependencies.len();
                 while j > 0 {
                     j -= 1;
@@ -1589,7 +1586,7 @@ pub(crate) fn edit(
     }
     if move_to_target && dependency_list == DependencyGroup::PEER.prop {
         for request in updates.iter() {
-            let name = request.get_resolved_name(&manager.lockfile);
+            let name = request.get_resolved_name();
             also_declared.extend(
                 string_entry(current_package_json, dependency_list, name).zip(string_entry(
                     current_package_json,
@@ -1604,7 +1601,7 @@ pub(crate) fn edit(
     if !move_to_target && manager.subcommand == Subcommand::Add {
         let features = manager.options.local_package_features;
         for request in updates.iter() {
-            let name = request.get_resolved_name(&manager.lockfile);
+            let name = request.get_resolved_name();
             let groups = [
                 (DependencyGroup::DEPENDENCIES, true),
                 (DependencyGroup::DEV, features.dev_dependencies),

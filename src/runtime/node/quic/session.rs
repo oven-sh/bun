@@ -775,6 +775,12 @@ impl QuicSession {
                 if let Some(code) = unsafe { (*qs).pre_reset_code() } {
                     self.push_event(SessionEvent::StreamReset { stream: qs, code });
                 }
+                // lsquic applies a STOP_SENDING that opens the stream before
+                // `on_new_stream`, so its `on_reset(how = 1)` ran with no ctx.
+                // SAFETY: as above.
+                if let Some(code) = unsafe { (*qs).peer_stop_sending_code() } {
+                    self.push_event(SessionEvent::StreamStopSending { stream: qs, code });
+                }
                 qs
             }
             Err(e) => {
@@ -1040,8 +1046,7 @@ impl QuicSession {
                             &[handle, direction],
                         );
                     }
-                } else {
-                    // Only a formerly pending local stream gets here.
+                } else if stream.was_pending() {
                     let handle = stream.handle();
                     if let Some(cb) = callbacks::get(global, "onStreamAvailable") {
                         let vm = global.bun_vm().as_mut();
@@ -2131,6 +2136,8 @@ impl QuicSession {
                 conn.make_stream();
             }
         }
+        // SAFETY: `qs` is live; `remove_stream` has not run for it yet.
+        unsafe { (*qs).mark_pending_if_unbound() };
         self.schedule_process();
         Ok(handle)
     }

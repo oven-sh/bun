@@ -9,6 +9,7 @@ use super::quic::{callbacks, endpoint, session, stream};
 /// prefix (Node: `QUIC_JS_CALLBACKS` in node/src/quic/bindingdata.h).
 const QUIC_CALLBACK_NAMES: &[&str] = &[
     "EndpointClose",
+    "SessionApplication",
     "SessionClose",
     "SessionEarlyDataRejected",
     "SessionGoaway",

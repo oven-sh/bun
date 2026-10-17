@@ -519,6 +519,46 @@ describe("QuicStream.onstopsending", () => {
     client.close();
   });
 
+  // lsquic applies a STOP_SENDING that opens a stream before it announces the
+  // stream, so the native side has to report it from the announce path.
+  test("is called when STOP_SENDING is the first frame of a peer-opened stream", async () => {
+    const stopped = Promise.withResolvers<{ before: number | null; error: any; after: number | null }>();
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+          const before = stream.writer.desiredSize;
+          stream.onstopsending = (error: any) => {
+            stopped.resolve({ before, error, after: stream.writer.desiredSize });
+          };
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        alpn: "quic-test",
+        transportParams: { maxIdleTimeout: 1 },
+      },
+    );
+    const client = await connect(server.address!, {
+      alpn: "quic-test",
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 1 },
+    } as SessionOptions);
+    await client.opened;
+
+    const stream = await client.createBidirectionalStream();
+    stream.closed.catch(() => {});
+    stream.stopSending(11n);
+
+    const { before, error, after } = await stopped.promise;
+    expect(before).toBeGreaterThan(0);
+    expect(error).toMatchObject({ code: "ERR_QUIC_APPLICATION_ERROR", errorCode: 11n });
+    expect(after).toBeNull();
+    client.close();
+  });
+
   // The writer marks `closed` handled when it fails. The STOP_SENDING path
   // errors the writer first, so it has to do the same, or a peer reset on a
   // stream with a handler turns into an unhandled rejection.
@@ -555,11 +595,18 @@ describe("QuicStream.onstopsending", () => {
         const remote = await accepted.promise;
         remote.destroy(new Error("peer error"), { code: 9n });
         await stopped.promise;
-        // Let the close settle. The closed promise is never observed on purpose.
-        while (!stream.destroyed) await new Promise(r => setTimeout(r, 5));
-        await new Promise(r => setTimeout(r, 20));
+        // The closed promise is never observed on purpose.
+        for (let i = 0; !stream.destroyed; i++) {
+          if (i === 5000) {
+            console.log("stream never closed");
+            process.exit(1);
+          }
+          await new Promise(r => setImmediate(r));
+        }
+        client.close();
+        await client.closed.catch(() => {});
+        await server.close();
         console.log("ok");
-        process.exit(0);
       `,
     });
     await using proc = Bun.spawn({

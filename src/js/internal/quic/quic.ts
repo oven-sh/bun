@@ -849,6 +849,11 @@ setCallbacks({
     this[kOwner][kFinishClose](errorType, code, reason, errorName);
   },
 
+  /** Reserved for `session.onapplication`, which native does not emit yet. */
+  onSessionApplication(settings) {
+    debug("session application callback", settings, this[kOwner]);
+  },
+
   /**
    * Called when the peer sends a GOAWAY frame (HTTP/3 only).
    * @param {bigint} lastStreamId The highest stream ID the peer may have
@@ -1735,6 +1740,9 @@ class QuicStream {
     inner.direction = direction;
     inner.isLocal = isLocal;
     inner.state = new QuicStreamState(kPrivateConstructor, handle.state, handle.stateByteOffset);
+    if (inner.state.pending) {
+      inner.pendingOpen = PromiseWithResolvers();
+    }
 
     if (hasObserver("quic")) {
       startPerf(this, kPerfEntry, { type: "quic", name: "QuicStream" });
@@ -1794,16 +1802,9 @@ class QuicStream {
   get opened() {
     assertIsQuicStream(this);
     const inner = this.#inner;
-    let pendingOpen = inner.pendingOpen;
-    if (pendingOpen === undefined) {
-      pendingOpen = inner.pendingOpen = PromiseWithResolvers();
-      if (!inner.state.pending) {
-        pendingOpen.resolve!();
-        pendingOpen.resolve = undefined;
-        pendingOpen.reject = undefined;
-      }
-    }
-    return pendingOpen.promise;
+    // Only a stream that was pending at creation gets a deferred.
+    inner.pendingOpen ??= { __proto__: null, promise: PromiseResolve(), resolve: undefined, reject: undefined };
+    return inner.pendingOpen.promise;
   }
 
   /**
@@ -2557,18 +2558,16 @@ class QuicStream {
       inner.pendingClose.resolve!();
     }
     const { pendingOpen } = inner;
-    if (pendingOpen !== undefined) {
-      if (error !== undefined) {
+    if (pendingOpen?.resolve !== undefined) {
+      // A stream that got its ID opened, even if kAvailable has not run yet.
+      if (error !== undefined && inner.state.pending) {
         markPromiseAsHandled(pendingOpen.promise);
-        pendingOpen.reject?.(error);
+        pendingOpen.reject!(error);
       } else {
-        pendingOpen.resolve?.();
+        pendingOpen.resolve();
       }
       pendingOpen.resolve = undefined;
       pendingOpen.reject = undefined;
-    } else if (inner.state.pending) {
-      // Closed while pending: a later `opened` read settles like `closed`.
-      inner.pendingOpen = inner.pendingClose;
     }
     debug("stream closed");
     if (onStreamClosedChannel.hasSubscribers) {
@@ -2617,8 +2616,8 @@ class QuicStream {
 
   [kAvailable]() {
     const { pendingOpen } = this.#inner;
-    if (pendingOpen === undefined) return;
-    pendingOpen.resolve?.();
+    if (pendingOpen?.resolve === undefined) return;
+    pendingOpen.resolve();
     pendingOpen.resolve = undefined;
     pendingOpen.reject = undefined;
   }

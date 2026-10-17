@@ -197,6 +197,7 @@ const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypePush = Array.prototype.push;
 const MathMax = Math.max;
 const MathMin = Math.min;
+const StringPrototypeIncludes = String.prototype.includes;
 const reportError = globalThis.reportError;
 
 let uvBinding;
@@ -278,6 +279,8 @@ const checkServerIdentityInHandshake = $newRustFunction(
 const releaseHeldFlight = $newRustFunction("runtime/socket/socket.rs", "jsReleaseHeldFlight", 1);
 const isNamedPipeSocket = $newRustFunction("runtime/socket/socket.rs", "jsIsNamedPipeSocket", 1);
 const getBufferedAmount = $newRustFunction("runtime/socket/socket.rs", "jsGetBufferedAmount", 1);
+// Not the global: a fake clock replaces that one, and it must not hold what libuv reports from the loop.
+const setImmediateNative = $newCppFunction("node/NodeTimers.cpp", "functionSetImmediate", 1);
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
@@ -298,6 +301,10 @@ const kReinitializeHandle = Symbol("kReinitializeHandle");
 const kRealListen = Symbol("kRealListen");
 const kSetNoDelay = Symbol("kSetNoDelay");
 const kSetTOS = Symbol("kSetTOS");
+// On the handle: the `data` of a pipe connect that failed at connect(2). A later dial replaces `handle.data`.
+const kFailedPipeConnect = Symbol("kFailedPipeConnect");
+// On the socket: connect(path) dials on the handle of an earlier connect(), which can still have a deferred dial.
+const kEarlierConnectPending = Symbol("kEarlierConnectPending");
 const kSetKeepAlive = Symbol("kSetKeepAlive");
 const kSyncWriteFd = Symbol("kSyncWriteFd");
 const kSetKeepAliveInitialDelay = Symbol("kSetKeepAliveInitialDelay");
@@ -1906,16 +1913,44 @@ function kConnectTcp(self, addressType, req, address, port) {
 
 function kConnectPipe(self, req, address) {
   $debug("SocketHandle.kConnectPipe");
-  return kConnectDispatch(self, req, {
+  // uv_pipe_connect2 refuses a NUL in the name, except in a Linux abstract name, which starts with one: https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/pipe.c#L34-L46
+  if (StringPrototypeIncludes.$call(address, "\0") && (process.platform !== "linux" || address[0] !== "\0"))
+    return uv().UV_EINVAL;
+  traceConnectStart(req, address);
+  // Read before the dial: ticks can run inside it, and one of them can call connect() again.
+  const earlierConnectPending = self[kEarlierConnectPending];
+  const data = { self, req };
+  const errno = kConnectDispatch(self, req, {
     hostname: address,
     unix: address,
     // Always half-open natively; see kConnect.
     allowHalfOpen: true,
     tls: req.tls,
     pauseOnConnect: req.pauseOnConnect,
-    data: { self, req },
+    data,
     socket: self[khandlers],
   });
+  // libuv queues a connect(2) error on the loop and returns only a name it cannot express: https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/pipe.c#L333-L343
+  if (errno === 0 || errno === uv().UV_EINVAL) return errno;
+  // A queued failure would leave the socket connecting, and the deferred dial of an earlier connect() would run.
+  if (earlierConnectPending) return errno;
+  const handle = self._handle;
+  // A 'connectionAttempt' listener destroyed the socket.
+  if (!handle) return errno;
+  handle[kFailedPipeConnect] = data;
+  setImmediateNative(afterPipeConnectFailed, self, handle, data, req, errno);
+  return 0;
+}
+
+function afterPipeConnectFailed(self, handle, data, req, errno) {
+  // A destroy() or a later connect() ended this request, as uv_pipe_connect2 replaces connect_req.
+  if (self._handle === handle && handle.data === data) req.oncomplete(errno, handle, req, true, true);
+}
+
+// A pipe handle whose connect failed has no fd, and Node's Pipe handle has no type of service.
+function isFailedPipeConnect(handle) {
+  const data = handle[kFailedPipeConnect];
+  return data !== undefined && data === handle.data;
 }
 
 function kConnectDispatch(self, req, opts) {
@@ -2436,6 +2471,7 @@ Socket.prototype.connect = function connect(...args) {
   const pipe = !!path;
   $debug("pipe", pipe, path);
 
+  if (pipe) this[kEarlierConnectPending] = !!this._handle;
   if (!this._handle) {
     this._handle = newDetachedSocket(typeof this[bunTlsSymbol] === "function");
     initSocketHandle(this);
@@ -2899,7 +2935,7 @@ Socket.prototype.setTypeOfService = function setTypeOfService(tos) {
   }
   validateInt32(tos, "tos", 0, 255);
 
-  if (!this._handle || !this._handle.setTypeOfService) {
+  if (!this._handle || !this._handle.setTypeOfService || isFailedPipeConnect(this._handle)) {
     this[kSetTOS] = tos;
     return this;
   }
@@ -2917,7 +2953,7 @@ Socket.prototype.setTypeOfService = function setTypeOfService(tos) {
 };
 
 Socket.prototype.getTypeOfService = function getTypeOfService() {
-  if (!this._handle || !this._handle.getTypeOfService) {
+  if (!this._handle || !this._handle.getTypeOfService || isFailedPipeConnect(this._handle)) {
     return this[kSetTOS] !== undefined ? this[kSetTOS] : 0;
   }
   const res = this._handle.getTypeOfService();
@@ -3408,7 +3444,6 @@ function internalConnect(self, options, address, port?, addressType?, localAddre
     req.tls = tls;
     req.pauseOnConnect = options.pauseOnConnect;
 
-    traceConnectStart(req, address);
     err = kConnectPipe(self, req, address);
   }
 

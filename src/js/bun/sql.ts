@@ -28,11 +28,11 @@ const { MySQLAdapter } = require("internal/sql/mysql");
 const { SQLiteAdapter } = require("internal/sql/sqlite");
 const { SQLHelper, SQLResultArray, transforms } = require("internal/sql/shared");
 const { closeTimeoutMs } = require("internal/sql/pool");
-const { parseOptions } = require("internal/sql/options");
+const { parseOptions, readOption } = require("internal/sql/options");
 
 const { SQLError, PostgresError, SQLiteError, MySQLError } = require("internal/sql/errors");
 const { validateAbortSignal } = require("internal/validators");
-const { resistStopPropagation } = require("internal/shared");
+const { kEmptyObject, resistStopPropagation } = require("internal/shared");
 const AsyncContextFrame = require("internal/async_context_frame");
 
 const defineProperty = Object.defineProperty;
@@ -718,6 +718,7 @@ function savepoint(this: Scope, nameOrFn: unknown, fnOrName?: unknown) {
   const scope = new Scope(this.client, Kind.savepoint, this, this.connection);
   scope.statements = {
     BEGIN: `SAVEPOINT ${id}`,
+    BEFORE_COMMIT_OR_ROLLBACK: undefined,
     COMMIT: `RELEASE SAVEPOINT ${id}`,
     ROLLBACK: `ROLLBACK TO SAVEPOINT ${id}`,
   };
@@ -829,7 +830,7 @@ function reserve(this: Client, options?: { signal?: AbortSignal }) {
     return Promise.$reject(new Error("This adapter doesn't support connection reservation"));
   }
 
-  const signal = options?.signal;
+  const signal = $isObject(options) ? readOption(options, "signal") : undefined;
   if (signal !== undefined) {
     try {
       validateAbortSignal(signal, "options.signal");
@@ -1019,7 +1020,7 @@ function makeHandle(target: Client | Scope) {
 
 function SQL(
   stringOrUrlOrOptions: Bun.SQL.Options | string | undefined = undefined,
-  definitelyOptionsButMaybeEmpty: Bun.SQL.Options = {},
+  definitelyOptionsButMaybeEmpty: Bun.SQL.Options = kEmptyObject,
 ): Bun.SQL {
   // Not `new.target !== SQL`: `new` on a Proxy of SQL works.
   if (new.target !== undefined && new.target.prototype !== SQLPrototype) {

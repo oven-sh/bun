@@ -12,9 +12,42 @@ type AnyOptions = Bun.SQL.__internal.AnyOptions;
 type TLSOptions = Bun.SQL.TLSOptions;
 
 const ObjectDefineProperty = Object.defineProperty;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectGetOwnPropertyNames = Object.getOwnPropertyNames;
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectHasOwn = Object.hasOwn;
+const ObjectKeys = Object.keys;
+const ObjectPrototype = Object.prototype;
 const kInspectCustom = Symbol.for("nodejs.util.inspect.custom");
 const env = Bun.env;
+const { kEmptyObject } = require("internal/shared");
+
+/** A variable that is set. Object.prototype sets none. */
+function ownEnv(name: string): string | undefined {
+  return ObjectHasOwn(env, name) ? env[name] : undefined;
+}
+
+/** Whether `value` is what Object.prototype itself holds under `name`. */
+function isFromObjectPrototype(name: string, value: unknown): boolean {
+  const descriptor = ObjectGetOwnPropertyDescriptor(ObjectPrototype, name);
+  return descriptor !== undefined && ObjectHasOwn(descriptor, "value") && descriptor.value === value;
+}
+
+/**
+ * What an object of the caller has, or inherits from a prototype of its own. Object.prototype gives nothing.
+ * A Proxy is asked once, as it always was, and cannot pass on what Object.prototype holds.
+ */
+function readOption(object: object, name: string): any {
+  for (let link: object | null = object; link !== null; link = ObjectGetPrototypeOf(link)) {
+    if (link === ObjectPrototype) return undefined;
+    if ($isProxyObject(link)) {
+      const value = (object as $AnyObject)[name];
+      return isFromObjectPrototype(name, value) ? undefined : value;
+    }
+    if (ObjectHasOwn(link, name)) return (object as $AnyObject)[name];
+  }
+  return undefined;
+}
 
 const SQLITE_MEMORY = ":memory:";
 const SUPPORTED_ADAPTERS = `"postgres", "sqlite", "mysql", "mariadb"`;
@@ -143,7 +176,7 @@ function urlFromEnvironment(
 
     for (let i = 1; i < row.length; i++) {
       const name = row[i] as string;
-      const url = env[name];
+      const url = ownEnv(name);
       if (!url) continue;
 
       const tls = name.startsWith("TLS_");
@@ -221,17 +254,17 @@ const SERVER_OPTIONS = [
 ];
 
 /** `options` has the own keys of `source` already. Every key is read once: a getter is the caller's code. */
-function readInherited(options: AnyOptions, source: AnyOptions, names: string[]) {
+function readInherited(options: AnyOptions, source: object, names: string[]) {
   for (const name of names) {
     if (ObjectHasOwn(options, name)) continue;
-    const value = source[name];
+    const value = readOption(source, name);
     if (value !== undefined) options[name] = value;
   }
 }
 
 function resolveTarget(
-  first: AnyOptions | string | URL | null | undefined,
-  second: AnyOptions,
+  first: Bun.SQL.Options | string | URL | null | undefined,
+  second: Bun.SQL.Options,
 ): [
   adapter: Adapter,
   options: AnyOptions,
@@ -245,9 +278,9 @@ function resolveTarget(
     first = undefined;
   }
   const readsEnvironment = target === null;
-  const options: AnyOptions = { ...first, ...second };
+  const options: AnyOptions = { __proto__: null, ...first, ...second };
   // An options object that stands alone behind a URL, or behind nothing, also gives what it inherits.
-  const inherits = first ? null : second;
+  const inherits = first || second === kEmptyObject ? null : second;
   if (inherits) readInherited(options, inherits, TARGET_OPTIONS);
 
   const adapterOption: Adapter | null = options.adapter || null;
@@ -363,7 +396,9 @@ function parseSQLiteOptions(target: string | URL | null, options: AnyOptions): B
     ...options,
     adapter: "sqlite",
     filename: filename || SQLITE_MEMORY,
+    __proto__: null,
   };
+  ObjectDefineProperty(sqliteOptions, kInspectCustom, inspectOptionsDescriptor);
 
   // An option that is given replaces what `mode` says.
   if (access !== 0) {
@@ -434,7 +469,7 @@ interface UrlQuery {
   foundRows?: string;
   channelBinding?: string;
   sslMode?: SSLMode;
-  tls?: true | TLSOptions;
+  tls?: true | (TLSOptions & { __proto__: null });
 }
 
 const QUERY_OPTIONS = {
@@ -496,10 +531,43 @@ function setStartupParameter(parameters: Record<string, string>, name: string, k
   parameters[key] = value;
 }
 
+/**
+ * The startup parameters in the caller's `connection`: the keys a for-in gives, in its order, but none of
+ * Object.prototype's. Each value is read once.
+ */
+function readConnectionParameters(parameters: Record<string, string>, connection: $AnyObject) {
+  // As in a for-in, a name that a nearer object has hides the same name further up, enumerable or not.
+  let hidden: Record<string, true> | undefined;
+  let link: object | null = connection;
+  while (link !== null && link !== ObjectPrototype) {
+    if ($isProxyObject(link)) {
+      // A Proxy lists what it has and inherits itself.
+      for (const key in link) {
+        if (hidden !== undefined && hidden[key] === true) continue;
+        const value = connection[key];
+        if (value !== undefined && !isFromObjectPrototype(key, value)) {
+          setStartupParameter(parameters, `options.connection.${key}`, key, value);
+        }
+      }
+      return;
+    }
+    for (const key of ObjectKeys(link)) {
+      if (hidden !== undefined && hidden[key] === true) continue;
+      const value = connection[key];
+      if (value !== undefined) setStartupParameter(parameters, `options.connection.${key}`, key, value);
+    }
+    const next = ObjectGetPrototypeOf(link);
+    if (next === null || next === ObjectPrototype) return;
+    hidden ??= { __proto__: null } as unknown as Record<string, true>;
+    for (const name of ObjectGetOwnPropertyNames(link)) hidden[name] = true;
+    link = next;
+  }
+}
+
 function readUrlQuery(url: URL, isPostgres: boolean, parameters: Record<string, string>): UrlQuery {
   const query: UrlQuery = { __proto__: null };
   const queryObject = url.searchParams.toJSON();
-  for (const key in queryObject) {
+  for (const key of ObjectKeys(queryObject)) {
     const value = `${queryObject[key]}`;
     const lowerKey = key.toLowerCase();
     let option: string | false | undefined;
@@ -519,7 +587,7 @@ function readUrlQuery(url: URL, isPostgres: boolean, parameters: Record<string, 
       if (value) query[option] ||= value;
     } else if (isPostgres && (option = LIBPQ_TLS_OPTIONS[lowerKey])) {
       if (!value) continue;
-      const tls = $isObject(query.tls) ? query.tls : (query.tls = {});
+      const tls = $isObject(query.tls) ? query.tls : (query.tls = { __proto__: null });
       if (lowerKey === "sslrootcert" && value === "system") tls.rejectUnauthorized = true;
       else tls[option] = value;
     } else if (!isPostgres || !isLibpqClientKeyword(lowerKey, value)) {
@@ -532,7 +600,7 @@ function readUrlQuery(url: URL, isPostgres: boolean, parameters: Record<string, 
 const NO_QUERY: UrlQuery = { __proto__: null };
 
 function envOf(prefix: string, name: string): string | undefined {
-  return env[`${prefix}_${name}`] || env[prefix + name];
+  return ownEnv(`${prefix}_${name}`) || ownEnv(prefix + name);
 }
 
 function isDirectory(path: string): boolean {
@@ -557,7 +625,7 @@ function secondsToMilliseconds(name: string, value: unknown): number | undefined
 }
 
 function parseTransform(transform: any): import("./shared").Transform {
-  const column = $isObject(transform) ? transform.column : undefined;
+  const column = $isObject(transform) ? readOption(transform, "column") : undefined;
   // A function is one of SQL.toCamel ... SQL.fromKebab, which say in `column` which direction they are for.
   if (!$isObject(transform) || ($isCallable(transform) && column === undefined)) {
     throw $ERR_INVALID_ARG_TYPE("transform", "object", transform);
@@ -566,7 +634,8 @@ function parseTransform(transform: any): import("./shared").Transform {
   if ($isCallable(column)) {
     from = column;
   } else if ($isObject(column)) {
-    ({ from, to } = column);
+    from = readOption(column, "from");
+    to = readOption(column, "to");
   } else if (column != null) {
     throw $ERR_INVALID_ARG_TYPE("transform.column", ["function", "object"], column);
   }
@@ -576,17 +645,20 @@ function parseTransform(transform: any): import("./shared").Transform {
   if (to != null && !$isCallable(to)) {
     throw $ERR_INVALID_ARG_TYPE("transform.column.to", "function", to);
   }
-  return { undefined: (transform as $AnyObject).undefined, column: { from: from ?? undefined, to: to ?? undefined } };
+  return { undefined: readOption(transform, "undefined"), column: { from: from ?? undefined, to: to ?? undefined } };
 }
 
-function inspectOptions(this: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions) {
-  const copy = { ...this };
-  if (copy.password) copy.password = "[REDACTED]";
-  if ($isObject(copy.tls)) {
-    const tls = { ...(copy.tls as TLSOptions) };
-    if (tls.key) tls.key = "[REDACTED]";
-    if (tls.passphrase) tls.passphrase = "[REDACTED]";
-    copy.tls = tls;
+function inspectOptions(this: Bun.SQL.__internal.DefinedOptions) {
+  // The copy has Object.prototype, so what is set is asked of the record.
+  const { password, tls } = this as Bun.SQL.__internal.DefinedPostgresOrMySQLOptions;
+  const copy: $AnyObject = { ...this };
+  if (password) copy.password = "[REDACTED]";
+  if ($isObject(tls)) {
+    const key = readOption(tls, "key");
+    const passphrase = readOption(tls, "passphrase");
+    copy.tls = { ...(tls as TLSOptions) };
+    if (key) copy.tls.key = "[REDACTED]";
+    if (passphrase) copy.tls.passphrase = "[REDACTED]";
   }
   return copy;
 }
@@ -619,7 +691,8 @@ function parseOptions(
 
   const parameters = { __proto__: null } as unknown as Record<string, string>;
   if (isPostgres) {
-    const { PGAPPNAME, PGOPTIONS } = env;
+    const PGAPPNAME = ownEnv("PGAPPNAME");
+    const PGOPTIONS = ownEnv("PGOPTIONS");
     if (PGAPPNAME) parameters.application_name = PGAPPNAME;
     if (PGOPTIONS) parameters.options = PGOPTIONS;
   }
@@ -636,13 +709,7 @@ function parseOptions(
   const isUnixUrl = url !== null && url.protocol === "unix:";
 
   const connection = options.connection;
-  if (connection && $isObject(connection)) {
-    for (const key in connection) {
-      if (connection[key] !== undefined) {
-        setStartupParameter(parameters, `options.connection.${key}`, key, connection[key]);
-      }
-    }
-  }
+  if (connection && $isObject(connection)) readConnectionParameters(parameters, connection);
   let startupParameters = "";
   for (const key in parameters) {
     startupParameters += `${key}\0${parameters[key]}\0`;
@@ -664,10 +731,10 @@ function parseOptions(
     options.user ||
     query.username ||
     decodeIfValid(url?.username) ||
-    (isPostgres && env.PGUSERNAME) ||
+    (isPostgres && ownEnv("PGUSERNAME")) ||
     envOf(prefix, "USER") ||
-    env.USER ||
-    env.USERNAME ||
+    ownEnv("USER") ||
+    ownEnv("USERNAME") ||
     (isPostgres ? "postgres" : "root");
 
   const password =
@@ -714,7 +781,7 @@ function parseOptions(
       options.connectTimeout ??
       options.connect_timeout ??
       query.connectionTimeout ??
-      ((isPostgres && env.PGCONNECT_TIMEOUT) || undefined),
+      ((isPostgres && ownEnv("PGCONNECT_TIMEOUT")) || undefined),
   );
   const maxLifetime = secondsToMilliseconds(
     "options.max_lifetime",
@@ -733,7 +800,7 @@ function parseOptions(
 
   const channelBinding = (options.channelBinding ||
     query.channelBinding ||
-    (isPostgres && env.PGCHANNELBINDING) ||
+    (isPostgres && ownEnv("PGCHANNELBINDING")) ||
     "disable") as Bun.SQL.__internal.ChannelBinding;
   if (channelBinding !== "disable" && channelBinding !== "prefer" && channelBinding !== "require") {
     throw $ERR_INVALID_ARG_VALUE("channelBinding", channelBinding, "must be one of: disable, prefer, require");
@@ -830,6 +897,7 @@ function parseOptions(
   }
 
   const ret: Bun.SQL.__internal.DefinedOptions = {
+    __proto__: null,
     adapter,
     hostname,
     port,
@@ -881,4 +949,5 @@ function parseOptions(
 
 export default {
   parseOptions,
+  readOption,
 };

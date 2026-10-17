@@ -1,6 +1,6 @@
 import type * as BunSQLiteModule from "bun:sqlite";
 import type { BaseQueryHandle, Query } from "./query";
-import type { DatabaseAdapter, OnConnected } from "./shared";
+import type { DatabaseAdapter, OnConnected, Transform } from "./shared";
 
 type SQLQueryResultMode = import("./query").SQLQueryResultMode;
 type SQLResultArray<T> = import("./shared").SQLResultArray<T>;
@@ -69,7 +69,7 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
               } else if (mode === SQLQueryResultMode.raw) {
                 rows = stmt.raw(values);
               } else {
-                const columnFrom = adapter.connectionInfo.transform?.column.from;
+                const columnFrom = adapter.transform?.column.from;
                 if (columnFrom !== undefined) stmt.native.$setColumnNameTransform(columnFrom);
                 rows = stmt.all(values);
               }
@@ -115,6 +115,7 @@ class SQLiteAdapter
   implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLiteModule.Database, SQLiteQueryHandle>
 {
   public readonly connectionInfo: Bun.SQL.__internal.DefinedSQLiteOptions;
+  public readonly transform: Transform | undefined;
   public db: BunSQLiteModule.Database | null = null;
   public storedError: Error | null = null;
   public closed: boolean = false;
@@ -131,17 +132,16 @@ class SQLiteAdapter
     super();
     this.connectionInfo = connectionInfo;
 
-    const { filename, readonly, create, safeIntegers, strict, onconnect } = connectionInfo;
+    const { filename, readonly, create, safeIntegers, strict, onconnect, transform } = connectionInfo;
+    this.transform = transform;
     try {
       // not before an SQLite client is made
       const { Database } = require("../../bun/sqlite.ts") as typeof BunSQLiteModule;
-      this.db = new Database(
-        filename,
-        // Read-only wins over `create` and `readwrite`. Else a file that is not there is made, unless `create` is false.
-        readonly
-          ? { readonly: true, safeIntegers, strict }
-          : { readwrite: true, create: create !== false, safeIntegers, strict },
-      );
+      // Read-only wins over `create` and `readwrite`. Else a file that is not there is made, unless `create` is false.
+      const open: BunSQLiteModule.DatabaseOptions & { __proto__: null } = readonly
+        ? { __proto__: null, readonly: true, safeIntegers, strict }
+        : { __proto__: null, readwrite: true, create: create !== false, safeIntegers, strict };
+      this.db = new Database(filename, open);
     } catch (err) {
       // A mistake in the options, not a database that cannot be opened: `new SQL()` throws it.
       if (err instanceof TypeError) throw err;

@@ -302,7 +302,8 @@ fromKebab.column = { to: fromKebab };
 
 /// What the three adapters say in the same words.
 abstract class SQLDialect {
-  abstract readonly connectionInfo: { transform?: Transform };
+  /// `options.transform` as it was when the client was made: a query does not read the options again.
+  abstract readonly transform: Transform | undefined;
   /// around an identifier
   readonly quote: string = '"';
   readonly begin: string = "BEGIN";
@@ -341,7 +342,12 @@ abstract class SQLDialect {
     if (options && !/^[A-Za-z ,]*$/.test(options)) {
       throw new Error("Transaction options can only contain letters, spaces, and commas.");
     }
-    return { BEGIN: options ? `${this.begin} ${options}` : this.begin, COMMIT: "COMMIT", ROLLBACK: "ROLLBACK" };
+    return {
+      BEGIN: options ? `${this.begin} ${options}` : this.begin,
+      BEFORE_COMMIT_OR_ROLLBACK: undefined,
+      COMMIT: "COMMIT",
+      ROLLBACK: "ROLLBACK",
+    };
   }
 }
 
@@ -393,12 +399,12 @@ class QueryBuilder {
   }
 
   undefinedValue(): unknown {
-    return this.adapter.connectionInfo.transform?.undefined;
+    return this.adapter.transform?.undefined;
   }
 
   identifier(name: string | number): string {
-    const { quote, connectionInfo } = this.adapter;
-    const to = connectionInfo.transform?.column.to;
+    const { quote, transform } = this.adapter;
+    const to = transform?.column.to;
     name = String(to === undefined ? name : to(String(name)));
     if (name.includes("\0")) {
       throw $ERR_INVALID_ARG_VALUE("name", name, "must not contain null bytes");
@@ -592,8 +598,8 @@ export type OnConnected<Connection> = (
 
 export interface TransactionCommands {
   BEGIN: string;
-  /// XA END
-  BEFORE_COMMIT_OR_ROLLBACK?: string;
+  /// XA END. Always a key of its own, so that what ends a transaction is never looked up on Object.prototype.
+  BEFORE_COMMIT_OR_ROLLBACK: string | undefined;
   COMMIT: string;
   ROLLBACK: string;
 }

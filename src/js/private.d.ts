@@ -19,6 +19,8 @@ declare module "bun" {
 
     type AnyOptions = Omit<Bun.SQL.PostgresOrMySQLOptions, "adapter"> &
       Omit<Bun.SQL.SQLiteOptions, "adapter"> & {
+        // The objects the option parser makes have no prototype: an option that is not set is not read from Object.prototype.
+        __proto__: null;
         adapter?: Adapter;
         socket?: unknown;
         channelBinding?: ChannelBinding;
@@ -30,6 +32,7 @@ declare module "bun" {
      * Represents the result of the `parseOptions()` function in the sqlite path
      */
     type DefinedSQLiteOptions = Define<Bun.SQL.SQLiteOptions> & {
+      __proto__: null;
       filename: string;
       transform?: import("internal/sql/shared").Transform;
     };
@@ -38,6 +41,7 @@ declare module "bun" {
      * Represents the result of the `parseOptions()` function in the postgres, mysql or mariadb path
      */
     type DefinedPostgresOrMySQLOptions = Define<Bun.SQL.PostgresOrMySQLOptions, "max" | "prepare"> & {
+      __proto__: null;
       sslMode: import("internal/sql/options").SSLMode;
       channelBinding: ChannelBinding;
       foundRows: boolean;

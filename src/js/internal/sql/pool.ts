@@ -1,6 +1,6 @@
 import type { SSLMode } from "./options";
 import type { Query as QueryType } from "./query";
-import type { ArrayType, DatabaseAdapter, SQLArrayParameter, TransactionCommands } from "./shared";
+import type { ArrayType, DatabaseAdapter, SQLArrayParameter, TransactionCommands, Transform } from "./shared";
 
 type SQLResultArray<T> = import("./shared").SQLResultArray<T>;
 
@@ -11,6 +11,7 @@ const {
 } = require("internal/sql/query");
 const { SQLDialect, SQLResultArray, isUnsafeTransactionStart } = require("internal/sql/shared");
 const AsyncContextFrame = require("internal/async_context_frame");
+const { readOption } = require("internal/sql/options");
 const { isStoppedModuleGraphRunning } = require("internal/shared");
 const monotonicNowMs = $newRustFunction("runtime/timer/Timer.rs", "internal_bindings.monotonicNowMs", 0);
 /// how many times `bun --hot` has reloaded the program, -1 without --hot
@@ -247,7 +248,7 @@ class PooledConnection<ConnectionHandle extends NativeConnection = any> {
 }
 
 function closeTimeoutMs(options?: { timeout?: number }): number | undefined {
-  const timeout = options?.timeout;
+  const timeout = $isObject(options) ? readOption(options, "timeout") : undefined;
   if (timeout == null) {
     return undefined;
   }
@@ -394,7 +395,7 @@ async function createPooledConnectionHandle<ConnectionHandle>(
   onConnected: (err: Error | null, connection: ConnectionHandle) => void,
   onClose: (err: Error | null) => void,
   onRetire: (() => void) | undefined,
-  login: Login & { state?: PooledConnectionState },
+  login: PooledConnection | (Login & { __proto__: null; state?: undefined }),
 ): Promise<ConnectionHandle | null> {
   const {
     hostname,
@@ -482,6 +483,7 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   implements DatabaseAdapter<PooledConnection, ConnectionHandle, QueryHandle>
 {
   public readonly connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions;
+  public readonly transform: Transform | undefined;
   public readonly supportsReservedConnections = true;
 
   abstract readonly createNativeConnection: NativeCreateConnection<ConnectionHandle>;
@@ -551,6 +553,7 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   constructor(connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions) {
     super();
     this.connectionInfo = connectionInfo;
+    this.transform = connectionInfo.transform;
     this.ownerGraphFrame = AsyncContextFrame.currentGraphFrame();
     this.callbackAsyncContext =
       connectionInfo.onconnect || connectionInfo.onclose ? AsyncContextFrame.current() : undefined;

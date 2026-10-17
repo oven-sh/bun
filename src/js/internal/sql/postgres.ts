@@ -260,7 +260,12 @@ class PostgresAdapter extends BaseSQLAdapter<
 
   getDistributedTransactionCommands(name: string): TransactionCommands | null {
     this.checkDistributedName(name);
-    return { BEGIN: "BEGIN", COMMIT: `PREPARE TRANSACTION '${name}'`, ROLLBACK: "ROLLBACK" };
+    return {
+      BEGIN: "BEGIN",
+      BEFORE_COMMIT_OR_ROLLBACK: undefined,
+      COMMIT: `PREPARE TRANSACTION '${name}'`,
+      ROLLBACK: "ROLLBACK",
+    };
   }
 
   placeholder(index: number): string {
@@ -573,7 +578,7 @@ class ListenConnection {
     }));
   }
 
-  #connect(login = { saslprep: this.#adapter.saslprep === true }): Promise<ListenHandle> {
+  #connect(login = { __proto__: null, saslprep: this.#adapter.saslprep === true }): Promise<ListenHandle> {
     const adapter = this.#adapter;
     const { promise, resolve, reject } = Promise.withResolvers<ListenHandle>();
     let live: ListenHandle | null = null;
@@ -583,7 +588,7 @@ class ListenConnection {
         () =>
           createPooledConnectionHandle(
             createPostgresConnection,
-            { ...adapter.connectionInfo, idleTimeout: 0, maxLifetime: 0 },
+            { ...adapter.connectionInfo, idleTimeout: 0, maxLifetime: 0, __proto__: null },
             adapter.ownerCallback((err, conn) => {
               this.#handshake = null;
               if (err) return reject(err);

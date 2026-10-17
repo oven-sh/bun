@@ -405,15 +405,6 @@ impl PublishCommand {
 
         let cli = install::CommandLineArguments::parse(Subcommand::Publish)?;
 
-        // The first positional is the command itself, unless a flag took that word for its value.
-        if cli.positionals.first().copied() != Some(b"publish".as_slice()) {
-            Output::err_generic(
-                "refusing to publish: \"publish\" is the value of a flag, not the command",
-                (),
-            );
-            Global::crash();
-        }
-
         // `bun --filter='*' publish` reads as "run the `publish` script of every workspace".
         let mut flags_before =
             (bun_core::argv().into_iter().skip(1)).take_while(|arg| *arg != b"publish");

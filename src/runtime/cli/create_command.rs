@@ -368,18 +368,12 @@ impl CreateCommand {
             positionals[1]
         };
 
-        let mut destination_buf = bun_paths::path_buffer_pool::get();
-        let Some(destination) =
-            bun_paths::resolve_path::join_abs_string_buf_z_checked::<bun_paths::platform::Loose>(
-                filesystem.top_level_dir,
-                &mut destination_buf[..],
-                &[dirname],
-            )
-        else {
-            pretty_errorln!("<r><red>error<r>: destination too long");
-            Global::exit(1);
-        };
-        let destination = (filesystem.dirname_store).append_slice(destination.as_bytes())?;
+        let destination =
+            filesystem
+                .dirname_store
+                .append_slice(bun_paths::resolve_path::join_abs::<
+                    bun_paths::platform::Loose,
+                >(filesystem.top_level_dir, dirname))?;
 
         let mut progress = Progress {
             supports_ansi_escape_codes: Output::enable_ansi_colors_stderr(),

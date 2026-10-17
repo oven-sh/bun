@@ -18,7 +18,8 @@ use crate::pe::{DOSHeader, PEHeader, SectionHeader};
 use crate::read_struct;
 
 const MAGIC: &[u8; 8] = b"BUNBLTNS";
-const FORMAT_VERSION: u32 = 1;
+/// Keep equal to `BUILTINS_FORMAT_VERSION` in src/codegen/bundle-modules.ts.
+pub const FORMAT_VERSION: u32 = 2;
 const HEADER_SIZE: usize = 48;
 const RECORD_SIZE: usize = 6 * 4;
 
@@ -38,8 +39,12 @@ pub enum BuiltinsError {
     /// The section is there but not in a layout this bun understands.
     #[error("InvalidBuiltinsSection")]
     Invalid,
+    /// The section has another format version than `FORMAT_VERSION`.
     #[error("UnsupportedBuiltinsVersion")]
-    UnsupportedVersion,
+    UnsupportedVersion(u32),
+    /// The sources are for another JavaScriptCore, or for other private names, than this bun's.
+    #[error("BuiltinsOfAnotherEngine")]
+    OtherEngine,
 }
 
 #[derive(Clone, Copy)]
@@ -57,6 +62,8 @@ pub struct Module<'a> {
 pub struct Builtins<'a> {
     /// Identifies these sources to bytecode generated from them (JSC's `decodeBuiltinFunction` stamp).
     pub source_stamp: u32,
+    /// The JavaScriptCore and private names of the bun that wrote the section (`engineStamp`). `None`: no stamp.
+    pub engine_stamp: Option<core::num::NonZeroU32>,
     count: u32,
     records: &'a [u8],
     dep_offsets: &'a [u8],
@@ -73,7 +80,7 @@ impl<'a> Builtins<'a> {
         }
         let field = |i: usize| u32_at(section, 8 + i * 4);
         if field(0) != FORMAT_VERSION {
-            return Err(BuiltinsError::UnsupportedVersion);
+            return Err(BuiltinsError::UnsupportedVersion(field(0)));
         }
         let source_stamp = field(1);
         let count = field(2);
@@ -82,6 +89,7 @@ impl<'a> Builtins<'a> {
         let deps_offset = field(5) as usize;
         let data_offset = field(6) as usize;
         let data_len = field(7) as usize;
+        let engine_stamp = core::num::NonZeroU32::new(field(8));
 
         let n = count as usize;
         let records = sub(
@@ -120,12 +128,22 @@ impl<'a> Builtins<'a> {
 
         Ok(Self {
             source_stamp,
+            engine_stamp,
             count,
             records,
             dep_offsets,
             deps,
             data,
         })
+    }
+
+    /// These sources, if the bun whose section is `host` can compile them: same JavaScriptCore, same private names.
+    pub fn for_engine_of(self, host: &Builtins<'_>) -> Result<Self, BuiltinsError> {
+        if self.engine_stamp.is_some() && self.engine_stamp == host.engine_stamp {
+            Ok(self)
+        } else {
+            Err(BuiltinsError::OtherEngine)
+        }
     }
 
     pub fn module(&self, id: u32) -> Option<Module<'a>> {

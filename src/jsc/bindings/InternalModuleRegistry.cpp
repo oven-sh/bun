@@ -59,6 +59,22 @@ JSC_DEFINE_HOST_FUNCTION(jsInternalModulesLoadedFromBytecode, (JSC::JSGlobalObje
     return JSValue::encode(jsNumber(s_internalModulesFromBytecode.load(std::memory_order_relaxed)));
 }
 
+// bun:internal-for-testing: every private name that BunBuiltinNames registers in this build.
+JSC_DEFINE_HOST_FUNCTION(jsBuiltinPrivateNames, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    const auto& builtinNames = WebCore::builtinNames(vm);
+    JSC::MarkedArgumentBuffer names;
+    for (size_t i = 0; i < WebCore::BunBuiltinNames::count; ++i)
+        names.append(JSC::jsString(vm, builtinNames.publicName(static_cast<WebCore::BunBuiltinNames::Name>(i)).string()));
+    if (names.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), names)));
+}
+
 static SourceCode makeInternalModuleSource(const String& text, const String& moduleName, const String& urlString)
 {
     return JSC::makeSource(text, SourceOrigin(WTF::URL(urlString)), JSC::SourceTaintedOrigin::Untainted, moduleName, TextPosition(), JSC::SourceProviderSourceType::Program, JSC::SourceProvenance::Static);

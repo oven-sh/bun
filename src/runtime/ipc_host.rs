@@ -472,7 +472,6 @@ impl IPCInstance {
         event_loop.exit();
         // Group is embedded in RareData and shared with subprocess IPC; nothing
         // to free here.
-        vm.channel_ref.disable();
     }
 }
 
@@ -593,12 +592,4 @@ pub(crate) fn global_object_connected_ipc(global: &JSGlobalObject) -> bool {
 pub(crate) fn global_object_has_ipc(global: &JSGlobalObject) -> bool {
     // JSGlobalObject::bun_vm contract.
     CHANNEL.get().is_some() || global.bun_vm().as_mut().pending_ipc.is_some()
-}
-
-/// When IPC environment variables are passed, the socket is not immediately opened,
-/// but rather we wait for process.on('message') or process.send() to be called, THEN
-/// we open the socket. This is to avoid missing messages at the start of the program.
-// HOST_EXPORT(Bun__ensureProcessIPCInitialized, c)
-pub(crate) fn ensure_process_ipc_initialized(global: &JSGlobalObject) {
-    let _ = get_ipc_instance(global.bun_vm().as_mut());
 }

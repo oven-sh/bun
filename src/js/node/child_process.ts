@@ -1,6 +1,7 @@
 // Hardcoded module "node:child_process"
 const EventEmitter = require("node:events");
 const { kHandle } = require("internal/shared");
+const Control = require("internal/process/channel_control");
 const {
   validateBoolean,
   validateFunction,
@@ -684,6 +685,7 @@ function spawnSync(file, args, options?): SpawnSyncResult {
 }
 const etimedoutErrorCode = $newRustFunction("node_util_binding.rs", "etimedoutErrorCode", 0);
 const enobufsErrorCode = $newRustFunction("node_util_binding.rs", "enobufsErrorCode", 0);
+const holdChannel = $newRustFunction("node_cluster_binding.rs", "holdChannel", 1);
 
 /**
  * Spawns a file as a shell synchronously.
@@ -1512,6 +1514,7 @@ class ChildProcess extends EventEmitter {
         this.send = this.#send;
         this.disconnect = this.#disconnect;
         this.channel = new Control(this.#handle);
+        holdChannel(this.#handle);
         Object.defineProperty(this, "_channel", {
           get() {
             return this.channel;
@@ -1918,43 +1921,6 @@ function abortChildProcess(child, killSignal, reason) {
     }
   } catch (err) {
     child.emit("error", err);
-  }
-}
-
-const setRefSubprocess = $newRustFunction("node_cluster_binding.rs", "setRefSubprocess", 2);
-
-// Node's Control in lib/internal/child_process.js.
-class Control extends EventEmitter {
-  #handle;
-  #refs = 0;
-  #refExplicitlySet = false;
-
-  constructor(handle) {
-    super();
-    this.#handle = handle;
-    setRefSubprocess(handle, true);
-  }
-
-  refCounted() {
-    if (++this.#refs === 1 && !this.#refExplicitlySet) {
-      setRefSubprocess(this.#handle, true);
-    }
-  }
-
-  unrefCounted() {
-    if (--this.#refs === 0 && !this.#refExplicitlySet) {
-      setRefSubprocess(this.#handle, false);
-    }
-  }
-
-  ref() {
-    this.#refExplicitlySet = true;
-    setRefSubprocess(this.#handle, true);
-  }
-
-  unref() {
-    this.#refExplicitlySet = true;
-    setRefSubprocess(this.#handle, false);
   }
 }
 

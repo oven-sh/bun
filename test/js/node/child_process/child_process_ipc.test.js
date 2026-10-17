@@ -14,42 +14,75 @@ test("child_process ipc", async () => {
   `);
 });
 
-test("which channel ref states hold the event loop", async () => {
-  const output = await $`${bunExe()} ${import.meta.dir}/fixtures/ipc_channel_ref.mjs`.env(bunEnv).text();
-  // node (v26.7.0) has identical output
+test.concurrent("which operations on subprocess.channel hold the event loop", async () => {
+  const output = await $`${bunExe()} ${import.meta.dir}/fixtures/ipc-channel-ref-fixture.mjs rows parent`
+    .env(bunEnv)
+    .text();
+  // node (v26.7.0) has identical output, without the Bun.spawn row
   expect(output).toMatchInlineSnapshot(`
-    "parent: none                                             stays
-    parent: child.unref                                      stays
-    parent: unref                                            stays
-    parent: child.unref unref                                exits
-    parent: child.unref unref ref                            stays
-    parent: child.unref disconnect                           exits
-    parent: child.unref unrefCounted                         stays
-    parent: child.unref refCounted unrefCounted              exits
-    parent: child.unref refCounted refCounted unrefCounted   stays
-    parent: child.unref unref refCounted                     exits
-    parent: child.unref ref refCounted unrefCounted          stays
-    child:  none                                                                       exits
-    child:  on(message,a)                                                              stays
-    child:  once(message,a)                                                            stays
-    child:  on(disconnect,a)                                                           stays
-    child:  on(message,a) off(message,a)                                               exits
-    child:  on(message,a) on(message,b) off(message,a)                                 stays
-    child:  on(message,a) on(message,b) removeAll(message)                             exits
-    child:  on(message,a) unrefCounted                                                 exits
-    child:  on(message,a) on(disconnect,a) unrefCounted                                stays
-    child:  on(message,a) on(disconnect,a) unrefCounted unrefCounted                   exits
-    child:  on(message,a) on(message,b) unrefCounted removeAll(message) on(message,a)  exits
-    child:  refCounted                                                                 stays
-    child:  refCounted unrefCounted                                                    exits
-    child:  unrefCounted refCounted                                                    exits
-    child:  unrefCounted on(message,a)                                                 exits
-    child:  ref                                                                        stays
-    child:  ref unrefCounted                                                           stays
-    child:  ref on(message,a) off(message,a)                                           stays
-    child:  on(message,a) unref                                                        exits
-    child:  on(message,a) unref refCounted                                             exits
-    child:  unref on(message,a)                                                        exits
+    "parent: child.unref: held
+    parent: child.unref unref: not held
+    parent: child.unref unref ref: held
+    parent: child.unref refCounted unrefCounted: not held
+    parent: child.unref disconnect: not held
+    parent: child.unref disconnect ref: not held
+    parent: child.unref send(big): not held
+    parent: child.unref ref send(big): held
+    Bun.spawn: child.unref: not held
     "
   `);
+});
+
+test.concurrent("which operations on process.channel hold the event loop", async () => {
+  const output = await $`${bunExe()} ${import.meta.dir}/fixtures/ipc-channel-ref-fixture.mjs rows child`
+    .env(bunEnv)
+    .text();
+  // node (v26.7.0) has identical output
+  expect(output).toMatchInlineSnapshot(`
+    "child: none: not held
+    child: on(message,a): held
+    child: on(disconnect,a): held
+    child: on(message,a) off(message,a): not held
+    child: on(message,a) on(message,b) off(message,a): held
+    child: on(message,a) on(message,b) removeAll(message): not held
+    child: on(message,a) unrefCounted: not held
+    child: on(message,a) on(disconnect,a) unrefCounted: held
+    child: on(message,a) on(message,b) unrefCounted removeAll(message) on(message,a): not held
+    child: refCounted: held
+    child: refCounted unrefCounted: not held
+    child: refCounted refCounted unrefCounted: held
+    child: unrefCounted refCounted: not held
+    child: unrefCounted on(message,a): not held
+    child: ref: held
+    child: ref unrefCounted: held
+    child: ref on(message,a) off(message,a): held
+    child: on(message,a) unref: not held
+    child: on(message,a) unref refCounted: not held
+    child: unref on(message,a): not held
+    child: send(big): not held
+    child: on(message,a) send(big): held
+    child: on(message,a) disconnect: not held
+    child: disconnect ref: not held
+    "
+  `);
+});
+
+test.concurrent("a child held only by process.channel.ref() leaves when the parent disconnects", async () => {
+  await using child = Bun.spawn({
+    cmd: [bunExe(), "-e", `process.channel.ref(); console.log("ready");`],
+    env: bunEnv,
+    stdout: "pipe",
+    ipc() {},
+  });
+  for await (const ready of child.stdout) break;
+  child.disconnect();
+  expect(await child.exited).toBe(0);
+});
+
+test.concurrent("a channel that could not be opened does not hold the event loop", async () => {
+  await using child = Bun.spawn({
+    cmd: [bunExe(), "-e", `process.on("message", () => {});`],
+    env: { ...bunEnv, NODE_CHANNEL_FD: "99", NODE_CHANNEL_SERIALIZATION_MODE: "json" },
+  });
+  expect(await child.exited).toBe(0);
 });

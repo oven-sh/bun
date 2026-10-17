@@ -4,7 +4,7 @@
 //   at all. It should happen in the protocol before it reaches JS.
 // - We should not be creating JSFunction's in process.nextTick.
 
-use crate::ipc::{IsInternal, SerializeAndSendResult};
+use crate::ipc::{IsInternal, SendQueue, SerializeAndSendResult};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StrongOptional};
 
 use crate::api::bun::subprocess::Subprocess;
@@ -267,75 +267,46 @@ pub(crate) fn handle_internal_message_primary(
 //
 //
 
-/// Starts reading the channel too: one that holds the event loop unread never sees the parent disconnect.
-fn ref_channel(global: &JSGlobalObject) {
-    crate::ipc_host::ensure_process_ipc_initialized(global);
-    let vm = global.bun_vm().as_mut();
-    vm.channel_ref.ref_(bun_io::js_vm_ctx());
+/// The channel of `subprocess`, or this process's own (opened if it was not yet) when that is not a `Subprocess`.
+fn with_channel(global: &JSGlobalObject, subprocess: JSValue, f: impl FnOnce(&SendQueue)) {
+    if let Some(subprocess) = subprocess.as_class_ref::<Subprocess<'_>>() {
+        if let Some(channel) = subprocess.ipc() {
+            f(channel);
+        }
+    } else if let Some(instance) = crate::ipc_host::get_ipc_instance(global.bun_vm().as_mut()) {
+        // SAFETY: `get_ipc_instance` returns the live boxed instance that `CHANNEL` holds.
+        f(unsafe { (*instance).data() });
+    }
 }
 
+/// `(subprocess | undefined, enabled, counted)`: the four methods of `Control`.
 #[bun_jsc::host_fn]
-pub(crate) fn set_ref(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let arguments = frame.arguments_as_array::<1>();
-
-    if arguments.len() == 0 {
-        return Err(global.throw_missing_arguments_value(&["enabled"]));
-    }
-    if !arguments[0].is_boolean() {
-        return Err(global.throw_invalid_argument_type_value("enabled", "boolean", arguments[0]));
-    }
-
-    let enabled = arguments[0].to_boolean();
-    let vm = global.bun_vm().as_mut();
-    vm.channel_ref_overridden = true;
-    if enabled {
-        ref_channel(global);
-    } else {
-        vm.channel_ref.unref(bun_io::js_vm_ctx());
-    }
+pub(crate) fn set_channel_ref(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let [subprocess, enabled, counted] = frame.arguments_as_array::<3>();
+    let enabled = enabled.to_boolean();
+    with_channel(global, subprocess, |channel| {
+        if counted.to_boolean() {
+            channel.ref_counted(global, if enabled { 1 } else { -1 });
+        } else {
+            channel.set_ref(global, enabled);
+        }
+    });
     Ok(JSValue::UNDEFINED)
 }
 
-/// `by` calls of Node's `Control#refCounted`, or of `#unrefCounted` when negative.
-fn channel_ref_counted(global: &JSGlobalObject, by: i32) {
-    let vm = global.bun_vm().as_mut();
-    let before = vm.channel_ref_count;
-    let after = before.saturating_add(by);
-    vm.channel_ref_count = after;
-    if vm.channel_ref_overridden {
-        return;
-    }
-    if before < 1 && after >= 1 {
-        ref_channel(global);
-    } else if before > 0 && after <= 0 {
-        vm.channel_ref.unref(bun_io::js_vm_ctx());
-    }
-}
-
+/// A channel made by node:child_process holds the event loop from the start. One made by `Bun.spawn({ ipc })` does not.
 #[bun_jsc::host_fn]
-pub(crate) fn set_ref_counted(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let [enabled] = frame.arguments_as_array::<1>();
-    channel_ref_counted(global, if enabled.to_boolean() { 1 } else { -1 });
+pub(crate) fn hold_channel(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let [subprocess] = frame.arguments_as_array::<1>();
+    with_channel(global, subprocess, |channel| channel.hold(global));
     Ok(JSValue::UNDEFINED)
 }
 
 // HOST_EXPORT(Bun__setChannelListenerCount, c)
-pub(crate) fn set_channel_listener_count(global: &JSGlobalObject, count: u32) {
-    let vm = global.bun_vm().as_mut();
-    let by = count as i32 - vm.channel_listener_count as i32;
-    vm.channel_listener_count = count;
-    channel_ref_counted(global, by);
-}
-
-#[bun_jsc::host_fn]
-pub(crate) fn set_ref_subprocess(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let [subprocess, enabled] = frame.arguments_as_array::<2>();
-    let subprocess = subprocess.as_class_ref::<Subprocess<'_>>();
-    if let Some(ipc_data) = subprocess.and_then(|s| s.ipc()) {
-        ipc_data.channel_ref.set(enabled.to_boolean());
-        ipc_data.update_ref(global);
-    }
-    Ok(JSValue::UNDEFINED)
+pub(crate) fn set_channel_listener_count(global: &JSGlobalObject, count: i32) {
+    with_channel(global, JSValue::UNDEFINED, |channel| {
+        channel.set_listener_count(global, count)
+    });
 }
 
 #[bun_jsc::host_fn]

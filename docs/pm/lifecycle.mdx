@@ -44,6 +44,8 @@ Bun is "default-secure": it only runs lifecycle scripts for packages on an allow
 
 After adding the package to `trustedDependencies`, run `bun install`. Bun reads the field, runs its lifecycle scripts and records the name in the lockfile. `bun install --frozen-lockfile` and `bun ci` run them only for packages they install, not for one that is already in `node_modules`. For a dependency installed under another name (`"alias": "npm:node-sass@^6.0.1"`), list the name of the package, not the alias.
 
+Bun runs the lifecycle scripts of a trusted `link:` dependency in the linked directory when it links that directory, not on every install. With the [isolated linker](/pm/isolated-installs), an install that ends before those scripts finish leaves them to the next install.
+
 A curated list of popular npm packages with lifecycle scripts is allowed by default. See [the full list](https://github.com/oven-sh/bun/blob/main/src/install/default-trusted-dependencies.txt).
 
 <Note>

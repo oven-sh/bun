@@ -1654,22 +1654,35 @@ fn move_or_delete(from: &bun_core::ZStr, to: &bun_core::ZStr) -> sys::Result<()>
     Err(err)
 }
 
-/// Fails unless `path`, links followed, is a directory.
-fn expect_directory(path: &bun_core::ZStr) -> sys::Result<()> {
+/// The stat of `path`, links followed. Fails unless that is a directory.
+fn stat_directory(path: &bun_core::ZStr) -> sys::Result<sys::Stat> {
     // `exists_at_type` reports a junction itself, so a dangling one would pass.
     #[cfg(windows)]
     {
         use bun_sys::FdExt as _;
-        sys::openat(Fd::cwd(), path, sys::O::RDONLY | sys::O::DIRECTORY, 0).map(|fd| fd.close())
+        sys::openat(Fd::cwd(), path, sys::O::RDONLY | sys::O::DIRECTORY, 0).map(|fd| fd.close())?;
+        sys::stat(path)
     }
     #[cfg(not(windows))]
     {
-        match sys::exists_at_type(Fd::cwd(), path)? {
-            sys::ExistsAtType::Directory => Ok(()),
-            sys::ExistsAtType::File => {
-                Err(sys::Error::from_code(sys::E::ENOTDIR, sys::Tag::fstatat))
-            }
+        let stat = sys::fstatat(Fd::cwd(), path)?;
+        if !sys::S::ISDIR(stat.st_mode as _) {
+            return Err(sys::Error::from_code(sys::E::ENOTDIR, sys::Tag::fstatat));
         }
+        Ok(stat)
+    }
+}
+
+/// `bun pm trust` ran the lifecycle scripts of the `link:` package `pkg_id`: an install with the
+/// isolated linker does not owe them any more.
+pub fn link_scripts_finished(lockfile: &Lockfile, pkg_id: PackageID) {
+    match installer::LinkScripts::of(lockfile, pkg_id).create(0) {
+        // Without `node_modules/.bun`, the project is the other linker's.
+        Err(err) if err.get_errno() != sys::E::ENOENT => {
+            let name = lockfile.str(&lockfile.packages.items_name()[pkg_id as usize]);
+            installer::LinkScripts::warn_unrecorded(name, &err);
+        }
+        _ => {}
     }
 }
 
@@ -2233,6 +2246,7 @@ pub(crate) fn install_isolated_packages(
             task_queue: Default::default(),
             held_members: Some(Vec::new()),
             left_out_entries: Vec::new(),
+            link_runs: Vec::new(),
             pending_lifecycle_scripts: Default::default(),
         };
         // From here on no `&mut PackageManager` is held across a call on `installer`: it would alias.
@@ -2328,8 +2342,8 @@ pub(crate) fn install_isolated_packages(
                     // Same target check as the hoisted linker's `install_from_link`.
                     let mut link_target = bun_paths::AutoAbsPath::init_top_level_dir();
                     installer.append_store_path(&mut link_target, entry_id);
-                    match expect_directory(link_target.slice_z()) {
-                        Ok(()) => installer.start_link_task(entry_id, link_target.slice_z()),
+                    match stat_directory(link_target.slice_z()) {
+                        Ok(target) => installer.start_link_task(entry_id, &target),
                         Err(err) => installer.on_task_fail(entry_id, &TaskError::LinkPackage(err)),
                     }
                 }

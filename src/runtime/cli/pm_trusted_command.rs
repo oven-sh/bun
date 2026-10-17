@@ -639,6 +639,13 @@ impl TrustCommand {
                             as install::TruncatedPackageNameHash,
                         Box::<[u8]>::from(trusted_name),
                     )?;
+                    let resolutions = lockfile.packages.items_resolution();
+                    if resolutions[info.package_id as usize].tag == ResolutionTag::Symlink {
+                        bun_install::isolated_install::link_scripts_finished(
+                            lockfile,
+                            info.package_id,
+                        );
+                    }
                 }
             }
             info.print(

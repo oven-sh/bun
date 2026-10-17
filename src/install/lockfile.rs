@@ -3667,14 +3667,9 @@ impl Lockfile {
         pkg_name: &[u8],
         resolution: &Resolution,
     ) -> bool {
-        if let Some(trusted_dependencies) = &self.trusted_dependencies {
-            let trusted_name = resolution.trusted_name(alias, pkg_name);
-            let hash = SemverStringBuilder::string_hash(trusted_name) as u32;
-            let name_is_trusted = match trusted_dependencies.get(&hash) {
-                Some(name) => !name.is_empty() && **name == *trusted_name,
-                None => false,
-            };
-            return name_is_trusted && self.can_trust_by_name(alias, resolution);
+        if self.trusted_dependencies.is_some() {
+            return self.lists_trusted_dependency(alias, pkg_name, resolution)
+                && self.can_trust_by_name(alias, resolution);
         }
 
         // Only allow default trusted dependencies for npm packages. Check the
@@ -3696,6 +3691,23 @@ impl Lockfile {
             .url
             .href();
         url == registry_tarball_url(registry, pkg_name, npm.version, buf).as_slice()
+    }
+
+    /// Whether `trustedDependencies` has the name `has_trusted_dependency` looks for. Unlike
+    /// `can_trust_by_name`, it does not walk the packages.
+    pub fn lists_trusted_dependency(
+        &self,
+        alias: &[u8],
+        pkg_name: &[u8],
+        resolution: &Resolution,
+    ) -> bool {
+        let Some(trusted_dependencies) = &self.trusted_dependencies else {
+            return false;
+        };
+        let trusted_name = resolution.trusted_name(alias, pkg_name);
+        let hash = SemverStringBuilder::string_hash(trusted_name) as u32;
+        (trusted_dependencies.get(&hash))
+            .is_some_and(|name| !name.is_empty() && **name == *trusted_name)
     }
 
     /// Whether listing `alias` in `trustedDependencies` can make `has_trusted_dependency` return

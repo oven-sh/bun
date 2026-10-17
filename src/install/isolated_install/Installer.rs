@@ -10,6 +10,7 @@ use bun_core::{ZStr, strings};
 use bun_paths::{self as paths, AbsPath, AutoAbsPath, AutoRelPath};
 use bun_sys::{self as sys, Fd};
 use bun_threading::{UnboundedQueue, WaitGroup, thread_pool};
+use bun_wyhash::Wyhash;
 
 use bun_sys::{FdDirExt as _, FdExt as _};
 
@@ -105,6 +106,10 @@ pub struct Installer<'a> {
     /// Main-thread only: see `leave_out_entry`.
     pub(crate) left_out_entries: Vec<StoreEntryId>,
 
+    /// Main-thread only: the `link:` entries that write their `LinkScripts` once they finish, each
+    /// with the lock it holds on it. `None`: it creates the file then.
+    pub(crate) link_runs: Vec<(StoreEntryId, Option<sys::File>)>,
+
     /// Main-thread only: entries that returned `Result::RunScripts`, in that order.
     pub(crate) pending_lifecycle_scripts: VecDeque<StoreEntryId>,
 }
@@ -187,16 +192,66 @@ impl<'a> Installer<'a> {
         self.start_task(entry_id);
     }
 
-    /// Like the hoisted linker, runs a `link:` dependency's scripts if no dependent links to
-    /// `target` yet. Call this before the dependents' tasks start, because they create those links.
-    pub(crate) fn start_link_task(&mut self, entry_id: StoreEntryId, target: &ZStr) {
-        let linked = !self.manager().options.enable.force_install()
-            && self.has_link_from_dependent(entry_id, target);
-        if linked && !self.is_newly_trusted(entry_id) {
-            self.set_step(entry_id, Step::Done);
-            self.on_task_complete(entry_id, CompleteState::Skipped);
-            return;
+    /// Like the hoisted linker, runs a `link:` dependency's scripts if no dependent links to its
+    /// folder yet. Those of a trusted one are also owed until `LinkScripts` says they finished.
+    /// Call this before the dependents' tasks start, because they create those links.
+    pub(crate) fn start_link_task(&mut self, entry_id: StoreEntryId, target: &sys::Stat) {
+        let options = &self.manager().options;
+        let force = options.enable.force_install();
+        let runs_scripts = options.do_.contains(Do::RUN_SCRIPTS);
+        let pkg_id = self.store.ids(entry_id).pkg_id;
+
+        let linked = !force && self.has_link_from_dependent(entry_id, target);
+        // The dependents link while the scripts run. So for a trusted folder the links are not
+        // enough: `LinkScripts` has to say that the scripts finished.
+        let placed = linked && !self.is_newly_trusted(entry_id);
+        let owed = placed
+            && runs_scripts
+            && self.is_listed_as_trusted(entry_id)
+            && (self.is_new_bun_modules || !LinkScripts::of(self.lockfile(), pkg_id).finished())
+            && self.is_trusted(entry_id);
+        if placed && !owed {
+            return self.skip_link_task(entry_id);
         }
+
+        if owed || self.is_trusted(entry_id) {
+            let mut scripts = LinkScripts::of(self.lockfile(), pkg_id);
+            if runs_scripts {
+                match scripts.lock() {
+                    Ok(Some(run)) => {
+                        let finished = run.stat().is_ok_and(|st| st.st_size > 0);
+                        // Another install finished them after the look at the file above.
+                        if finished && owed {
+                            return self.skip_link_task(entry_id);
+                        }
+                        // While they run again, nothing says that they finished.
+                        if finished && let Err(err) = sys::ftruncate(run.fd(), 0) {
+                            return self.on_task_fail(entry_id, &TaskError::LinkPackage(err));
+                        }
+                        self.link_runs.push((entry_id, Some(run)));
+                    }
+                    // Another install runs them now. `--force` runs them all the same.
+                    Ok(None) if !force => return self.skip_link_task(entry_id),
+                    Ok(None) => {}
+                    Err(err) if scripts.finished() => {
+                        return self.on_task_fail(entry_id, &TaskError::LinkPackage(err));
+                    }
+                    Err(err) => {
+                        if !options.log_level.is_silent() {
+                            LinkScripts::warn_unrecorded(self.pkg_name(entry_id), &err);
+                        }
+                    }
+                }
+            } else if !linked
+                && !(force && self.has_link_from_dependent(entry_id, target))
+                && scripts.is_missing()
+            {
+                // A folder that `--ignore-scripts` links for the first time counts as built, like
+                // a package that it places.
+                self.link_runs.push((entry_id, None));
+            }
+        }
+
         if linked {
             self.tasks[entry_id.get() as usize].relink = Relink::Unchanged;
         }
@@ -204,10 +259,35 @@ impl<'a> Installer<'a> {
         self.start_task(entry_id);
     }
 
-    fn has_link_from_dependent(&self, entry_id: StoreEntryId, target: &ZStr) -> bool {
-        let Ok(target) = sys::stat(target) else {
-            return false;
+    fn skip_link_task(&mut self, entry_id: StoreEntryId) {
+        self.set_step(entry_id, Step::Done);
+        self.on_task_complete(entry_id, CompleteState::Skipped);
+    }
+
+    /// Main thread, once the entry finished with success: after its last script, if it has one.
+    fn record_link_scripts(&mut self, entry_id: StoreEntryId) {
+        let Some(index) = (self.link_runs.iter()).position(|&(id, _)| id == entry_id) else {
+            return;
         };
+        let recorded = match self.link_runs.swap_remove(index).1 {
+            Some(run) => run.write_all(LinkScripts::FINISHED),
+            None => {
+                let pkg_id = self.store.ids(entry_id).pkg_id;
+                match LinkScripts::of(self.lockfile(), pkg_id).create(sys::O::EXCL) {
+                    // An install that runs scripts began meanwhile.
+                    Err(err) if err.get_errno() == sys::E::EEXIST => Ok(()),
+                    created => created,
+                }
+            }
+        };
+        if let Err(err) = recorded
+            && !self.manager().options.log_level.is_silent()
+        {
+            LinkScripts::warn_unrecorded(self.pkg_name(entry_id), &err);
+        }
+    }
+
+    fn has_link_from_dependent(&self, entry_id: StoreEntryId, target: &sys::Stat) -> bool {
         let lockfile = self.lockfile();
         let entry_dependencies = self.store.entries.items_dependencies();
         let dependents = &self.store.entries.items_parents()[entry_id.get() as usize];
@@ -515,8 +595,8 @@ impl<'a> Installer<'a> {
             Global::exit(1);
         }
 
-        // Remove the symlinks to this `link:` dependency. Otherwise `start_link_task` in the next
-        // install would consider it already linked and never run its scripts.
+        // No dependent keeps a link to a trusted `link:` dependency that failed, as no package that
+        // failed stays in place.
         if pkg_res.tag == ResolutionTag::Symlink && self.is_trusted(entry_id) {
             self.left_out_entries.push(entry_id);
         }
@@ -649,6 +729,9 @@ impl<'a> Installer<'a> {
 
     /// Called from main thread
     pub(crate) fn on_task_complete(&mut self, entry_id: StoreEntryId, state: CompleteState) {
+        if state == CompleteState::Success && !self.link_runs.is_empty() {
+            self.record_link_scripts(entry_id);
+        }
         self.manager_mut().decrement_pending_tasks();
         self.resume_unblocked_tasks(entry_id);
 
@@ -790,8 +873,7 @@ impl<'a> Installer<'a> {
                 || (step.load(Ordering::Acquire) != Step::Done as u32 && self.is_trusted(entry_id))
             {
                 self.delete_store_copy(entry_id);
-                // Also remove the symlinks to a `link:` dependency, because `start_link_task` takes
-                // them to mean that its scripts already ran.
+                // A `link:` dependency has no copy. Its dependents lose their links to it instead.
                 if self.resolution(entry_id).tag == ResolutionTag::Symlink {
                     self.left_out_entries.push(entry_id);
                 }
@@ -802,6 +884,20 @@ impl<'a> Installer<'a> {
 
     /// Whether the scripts of a dependency's entry may run. Main and task threads.
     fn is_trusted(&self, entry_id: StoreEntryId) -> bool {
+        self.is_trusted_by(entry_id, Lockfile::has_trusted_dependency)
+    }
+
+    /// Whether `trustedDependencies` or `--trust` names the entry. `is_trusted` also looks at who
+    /// declares it, which costs a walk over the packages.
+    fn is_listed_as_trusted(&self, entry_id: StoreEntryId) -> bool {
+        self.is_trusted_by(entry_id, Lockfile::lists_trusted_dependency)
+    }
+
+    fn is_trusted_by(
+        &self,
+        entry_id: StoreEntryId,
+        lockfile_trusts: fn(&Lockfile, &[u8], &[u8], &Resolution) -> bool,
+    ) -> bool {
         let store::Ids { dep_id, pkg_id } = self.store.ids(entry_id);
         if dep_id == invalid_dependency_id {
             return false;
@@ -809,7 +905,8 @@ impl<'a> Installer<'a> {
         let lockfile = self.lockfile();
         self.trusted_dependencies_from_update_requests
             .contains(&pkg_id)
-            || lockfile.has_trusted_dependency(
+            || lockfile_trusts(
+                lockfile,
                 lockfile.str(&lockfile.buffers.dependencies[dep_id as usize].name),
                 self.pkg_name(entry_id),
                 self.resolution(entry_id),
@@ -2820,6 +2917,104 @@ struct BinLinks {
     abs_target_buf: paths::path_buffer_pool::Guard,
     abs_dest_buf: paths::path_buffer_pool::Guard,
     rel_buf: paths::path_buffer_pool::Guard,
+}
+
+/// `node_modules/.bun/.link-scripts/<package>`: whether the lifecycle scripts of a trusted `link:`
+/// dependency finished. They are owed until the file has content. The install that runs them
+/// holds a `flock` on the file, and writes to it after the last one. Nothing removes the file.
+pub(crate) struct LinkScripts {
+    /// Empty if the project's path leaves no room for it.
+    path: paths::AutoAbsPathChecked,
+}
+
+impl LinkScripts {
+    const FINISHED: &'static [u8] = b"finished\n";
+
+    pub(crate) fn of(lockfile: &Lockfile, pkg_id: PackageID) -> LinkScripts {
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+        let pkgs = lockfile.packages.slice();
+        let name = pkgs.items_name()[pkg_id as usize];
+        let resolution = &pkgs.items_resolution()[pkg_id as usize];
+
+        // The store key spells `/`, `\`, `:`, `#` and `?` alike.
+        let mut exact = Wyhash::init(0);
+        exact.update(name.slice(string_buf));
+        exact.update(&[0]);
+        exact.update(resolution.symlink().slice(string_buf));
+
+        let mut path = AutoAbsPath::init_top_level_dir().into_checked();
+        let fits = path.append_fmt(format_args!(
+            "node_modules/.bun/.link-scripts/{}+{:016x}",
+            store::entry::fmt_store_key(name, resolution, string_buf),
+            exact.final_(),
+        ));
+        if fits.is_err() {
+            path.set_length(0);
+        }
+        LinkScripts { path }
+    }
+
+    /// False while the scripts run, and after an install that ended before the last one did.
+    fn finished(&mut self) -> bool {
+        sys::lstat(self.path.slice_z()).is_ok_and(|st| {
+            sys::kind_from_mode(st.st_mode as sys::Mode) == sys::EntryKind::File && st.st_size > 0
+        })
+    }
+
+    /// True if no install that runs scripts came to the package yet.
+    fn is_missing(&mut self) -> bool {
+        is_link(self.path.slice_z()).is_none()
+    }
+
+    fn open(&mut self, flags: i32) -> sys::Result<sys::File> {
+        if self.path.len() == 0 {
+            return Err(sys::Error::from_code(sys::E::ENAMETOOLONG, sys::Tag::open));
+        }
+        // A link at either name came with the project. A write would go through it.
+        crate::prune::remove_planted_links(self.path.slice(), Installer::store_path_len())?;
+        let flags = flags | sys::O::CREAT | sys::O::CLOEXEC | sys::O::NOFOLLOW;
+        match sys::File::openat(Fd::cwd(), self.path.slice(), flags, 0o644) {
+            Err(err) if err.get_errno() == sys::E::ENOENT => {
+                let mut buf = paths::path_buffer_pool::get();
+                let dir = self.path.dirname().unwrap_or_default();
+                // Not `make_path`: a project of the other linker gets no `node_modules/.bun`.
+                if let Err(err) = sys::mkdir(paths::resolve_path::z(dir, &mut buf), 0o755)
+                    && err.get_errno() != sys::E::EEXIST
+                {
+                    return Err(err);
+                }
+                sys::File::openat(Fd::cwd(), self.path.slice(), flags, 0o644)
+            }
+            opened => opened,
+        }
+    }
+
+    /// For the install that runs the scripts. `Ok(None)`: another install has the lock, so it
+    /// runs them now.
+    fn lock(&mut self) -> sys::Result<Option<sys::File>> {
+        let file = self.open(sys::O::RDWR)?;
+        // A file system without locks cannot tell a live install from a dead one.
+        let is_busy = matches!(
+            sys::flock(file.fd(), sys::FileLockMode::Exclusive, true),
+            Ok(false)
+        );
+        Ok((!is_busy).then_some(file))
+    }
+
+    /// Says that the scripts finished, for a caller that did not `lock`. With `sys::O::EXCL`, it
+    /// fails if an install that runs scripts came to the package before.
+    pub(crate) fn create(&mut self, flags: i32) -> sys::Result<()> {
+        self.open(sys::O::WRONLY | flags)?.write_all(Self::FINISHED)
+    }
+
+    #[cold]
+    pub(crate) fn warn_unrecorded(name: &[u8], err: &sys::Error) {
+        bun_core::warn!(
+            "the lifecycle scripts of <b>{}<r> cannot be recorded as finished, so the next install runs them again: {}",
+            bun_core::fmt::escape_control_chars(name),
+            err,
+        );
+    }
 }
 
 fn append_dependency_link_name(

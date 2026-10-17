@@ -7,6 +7,76 @@ import fs from "node:fs";
 // on POSIX-only behaviour (termios echo, SIGWINCH, cat/echo binaries). The
 // remaining POSIX-specific coverage lives in terminal.test.ts.
 describe("Bun.Terminal subprocess integration", () => {
+  // ConPTY has no POSIX signal mask or terminal-generated SIGINT.
+  test.skipIf(isWindows)("concurrent Worker terminals preserve child signal masks", async () => {
+    using dir = tempDir("terminal-worker-signals", {
+      "worker.ts": `
+        onmessage = async ({ data: gate }) => {
+          for (let round = 0; round < 8; round++) {
+            const previous = Atomics.add(gate, 0, 1);
+            if (previous % 2 === 0) Atomics.wait(gate, 0, previous + 1);
+            else Atomics.notify(gate, 0);
+            let output = "";
+            const interrupted = Promise.withResolvers();
+            let sent = false;
+            const proc = Bun.spawn(["/bin/sh", "-c",
+              "trap 'printf SIGNAL_RECEIVED; exit 0' INT; printf READY; read line"], {
+              terminal: { data(terminal, bytes) {
+                output += new TextDecoder().decode(bytes);
+                if (!sent && output.includes("READY")) {
+                  sent = true;
+                  terminal.write("\\x03");
+                }
+                if (output.includes("SIGNAL_RECEIVED")) interrupted.resolve();
+              } },
+            });
+            postMessage({ pid: proc.pid });
+            await interrupted.promise;
+            await proc.exited;
+            proc.terminal.close();
+            postMessage({ exited: proc.pid });
+          }
+          postMessage({ done: true });
+        };
+      `,
+      "main.ts": `
+        const pids = new Set();
+        const workers = [];
+        const watchdog = setTimeout(() => {
+          for (const pid of pids) { try { process.kill(pid, "SIGKILL"); } catch {} }
+          console.error("terminal SIGINT watchdog expired");
+          process.exit(1);
+        }, 4000);
+        const gate = new Int32Array(new SharedArrayBuffer(4));
+        await Promise.all(Array.from({ length: 2 }, () => new Promise((resolve, reject) => {
+          const worker = new Worker(new URL("./worker.ts", import.meta.url));
+          workers.push(worker);
+          worker.onerror = reject;
+          worker.onmessage = ({ data }) => {
+            if (data.pid) pids.add(data.pid);
+            if (data.exited) pids.delete(data.exited);
+            if (data.done) resolve();
+          };
+          worker.postMessage(gate);
+        })));
+        clearTimeout(watchdog);
+        for (const worker of workers) worker.terminate();
+        console.log("all terminal interrupts delivered");
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("all terminal interrupts delivered");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   test("constructor creates a PTY", async () => {
     await using terminal = new Bun.Terminal({});
     expect(terminal.closed).toBe(false);

@@ -151,20 +151,13 @@ fn prebuilt_ssl_ctx(
     if !tls_js.is_object() {
         return Ok(None);
     }
-    let Some(sc_js) = tls_js.get_truthy(global, "secureContext")? else {
+    let Some(ctx) = SecureContext::from_tls_option(global, tls_js)? else {
         return Ok(None);
-    };
-    let Some(sc) = sc_js.as_class_ref::<SecureContext>() else {
-        return Err(global.throw_invalid_argument_type_value(
-            b"secureContext",
-            b"SecureContext",
-            sc_js,
-        ));
     };
     // The context is served as it is: its trust store would not be the `ca` written next to `requestCert`.
     if is_server
         && config.ssl.as_ref().is_some_and(|ssl| ssl.request_cert != 0)
-        && !crate::socket::server_ctx_requests_cert(Some(sc.ctx.as_ptr()))
+        && !crate::socket::server_ctx_requests_cert(Some(ctx.as_ptr()))
     {
         return Err(global
             .err(
@@ -178,7 +171,7 @@ fn prebuilt_ssl_ctx(
     if config.ssl.is_none() {
         config.ssl = Some(crate::socket::tls_true_defaults(vm, is_server));
     }
-    Ok(Some(sc.ctx.clone()))
+    Ok(Some(ctx))
 }
 
 /// Tears down the half-built `Listener` of `listen()`, unless `disarm()` runs first.
@@ -321,10 +314,13 @@ impl Listener {
                     ssl: ssl_enabled,
                     listener: Cell::new(ListenerType::None),
                     protos: protos_taken,
+                    // The pipe holds the context, not `secure_ctx`, so its own policy is read here.
                     reject_unauthorized: crate::socket::resolve_reject_unauthorized(
                         vm,
                         ssl_cfg_taken.as_ref(),
                         true,
+                    ) || crate::socket::server_ctx_rejects_unauthorized(
+                        prebuilt_ctx.as_ref().map(|ctx| ctx.as_ptr()),
                     ),
                     pause_on_connect,
                     poll_ref: JsCell::new(KeepAlive::init()),
@@ -353,6 +349,7 @@ impl Listener {
                     &pipe_buf[..pipe_len],
                     511,
                     ssl_cfg_taken.as_ref(),
+                    prebuilt_ctx,
                     this,
                 ) {
                     Ok(named_pipe) => {
@@ -1928,6 +1925,7 @@ impl WindowsNamedPipeListeningContext {
         path: &[u8],
         backlog: i32,
         ssl_config: Option<&SSLConfig>,
+        prebuilt_ctx: Option<boring_sys::OwnedSslCtx>,
         listener: *mut Listener,
     ) -> Result<*mut WindowsNamedPipeListeningContext, ListenPipeError> {
         // Heap-allocate at the final address so libuv can
@@ -1952,7 +1950,10 @@ impl WindowsNamedPipeListeningContext {
             }
         });
 
-        if let Some(ssl_options) = ssl_config {
+        if prebuilt_ctx.is_some() {
+            // SAFETY: `this` was just allocated above; scoped field write.
+            unsafe { (*this).ctx.set(prebuilt_ctx) };
+        } else if let Some(ssl_options) = ssl_config {
             boringssl::load();
 
             let ctx_opts = ssl_options.as_usockets();

@@ -18,6 +18,7 @@ use super::{AnyRoute, AnyServer};
 use crate::server::jsc::{JSGlobalObject, JSPropertyIterator, JSValue, JsResult, Strong};
 use bun_core::fmt as bun_fmt;
 
+use crate::api::bun_secure_context::SecureContext;
 pub(crate) use crate::socket::ssl_config::SSLConfig;
 use crate::socket::ssl_config::SSLConfigFromJs;
 use bun_collections::index_sort;
@@ -33,6 +34,8 @@ pub(crate) struct ServerConfig {
     pub(crate) base_uri: Box<[u8]>,
 
     pub(crate) ssl_config: Option<SSLConfig>,
+    /// The context a node:http server built when it was constructed. `ssl_config` then holds no key material.
+    pub(crate) ssl_ctx: Option<bun_boringssl_sys::OwnedSslCtx>,
     // Vec drop runs each element's `Drop`, and `SSLConfig: Drop` calls
     // `deinit()` (frees the owned C strings).
     pub(crate) sni: Option<Vec<SSLConfig>>,
@@ -83,6 +86,7 @@ impl Default for ServerConfig {
             has_idle_timeout: false,
             base_uri: Box::default(),
             ssl_config: None,
+            ssl_ctx: None,
             sni: None,
             max_request_body_size: 1024 * 1024 * 128,
             development: DevelopmentOption::Development,
@@ -283,6 +287,7 @@ impl ServerConfig {
             has_idle_timeout: self.has_idle_timeout,
             base_uri: core::mem::take(&mut self.base_uri),
             ssl_config: self.ssl_config.take(),
+            ssl_ctx: self.ssl_ctx.take(),
             sni: self.sni.take(),
             max_request_body_size: self.max_request_body_size,
             development: self.development,
@@ -573,6 +578,26 @@ fn get_routes_object(global: &JSGlobalObject, arg: JSValue) -> JsResult<Option<J
         }
     }
     Ok(None)
+}
+
+/// Whether `tls`, or an entry of it when it is an array, has a `secureContext` that is truthy in JS.
+fn names_secure_context(global: &JSGlobalObject, tls: JSValue) -> JsResult<bool> {
+    let names_one = |tls: JSValue| -> JsResult<bool> {
+        Ok(tls.is_object()
+            && tls
+                .get(global, "secureContext")?
+                .is_some_and(|value| value.to_boolean()))
+    };
+    if !tls.js_type().is_array() {
+        return names_one(tls);
+    }
+    let mut entries = tls.array_iterator(global)?;
+    while let Some(entry) = entries.next()? {
+        if names_one(entry)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 impl ServerConfig {
@@ -1158,7 +1183,17 @@ impl ServerConfig {
             )));
         }
 
-        if let Some(tls) = arg.get_truthy(global, "tls")? {
+        let tls = arg.get_truthy(global, "tls")?;
+        if let Some(tls) = tls {
+            // A node:http server hands over the context it built. It is served as it is: no option may sit next to it.
+            let is_node_http_server = args.is_node_http_server;
+            let secure_context = |tls: JSValue| {
+                if is_node_http_server && tls.is_object() {
+                    SecureContext::from_tls_option(global, tls)
+                } else {
+                    Ok(None)
+                }
+            };
             if tls.is_falsey() {
                 args.ssl_config = None;
             } else if tls.js_type().is_array() {
@@ -1167,6 +1202,16 @@ impl ServerConfig {
                     // Empty TLS array means no TLS - this is valid
                 } else {
                     while let Some(item) = value_iter.next()? {
+                        if secure_context(item)?.is_some() {
+                            return Err(global
+                                .err(
+                                    bun_jsc::ErrorCode::INVALID_ARG_VALUE,
+                                    format_args!(
+                                        "TLSOptions.secureContext cannot be set in an array of TLS options"
+                                    ),
+                                )
+                                .throw());
+                        }
                         let Some(ssl_config) = SSLConfig::from_js(vm, global, item, true)? else {
                             // Backwards-compatibility; we ignored empty tls objects.
                             continue;
@@ -1189,10 +1234,22 @@ impl ServerConfig {
                         }
                     }
                 }
-            } else {
-                if let Some(ssl_config) = SSLConfig::from_js(vm, global, tls, true)? {
-                    args.ssl_config = Some(ssl_config);
+            } else if let Some(ctx) = secure_context(tls)? {
+                if SSLConfig::from_js(vm, global, tls, true)?.is_some() {
+                    return Err(global
+                        .err(
+                            bun_jsc::ErrorCode::INVALID_ARG_VALUE,
+                            format_args!(
+                                "TLSOptions.secureContext cannot be set with other TLS options"
+                            ),
+                        )
+                        .throw());
                 }
+                args.ssl_ctx = Some(ctx);
+                // Holds no name and no key material: it marks the server as TLS for every reader of `ssl_config`.
+                args.ssl_config = Some(crate::socket::tls_true_defaults(vm, true));
+            } else if let Some(ssl_config) = SSLConfig::from_js(vm, global, tls, true)? {
+                args.ssl_config = Some(ssl_config);
             }
         }
 
@@ -1204,10 +1261,35 @@ impl ServerConfig {
             }
         }
 
+        // No other server reads `tls.secureContext`: with no TLS option next to it, the server would listen without TLS.
+        if args.ssl_config.is_none() && !args.is_node_http_server {
+            if let Some(tls) = tls {
+                if names_secure_context(global, tls)? {
+                    return Err(global
+                        .err(
+                            bun_jsc::ErrorCode::INVALID_ARG_VALUE,
+                            format_args!(
+                                "TLSOptions.secureContext is not supported by Bun.serve()"
+                            ),
+                        )
+                        .throw());
+                }
+            }
+        }
+
         if args.http3 && args.ssl_config.is_none() {
             return Err(
                 global.throw_invalid_arguments(format_args!("HTTP/3 requires 'tls' to be set"))
             );
+        }
+        // The HTTP/3 app builds a context of its own from the options, and there are none.
+        if args.http3 && args.ssl_ctx.is_some() {
+            return Err(global
+                .err(
+                    bun_jsc::ErrorCode::INVALID_ARG_VALUE,
+                    format_args!("TLSOptions.secureContext cannot be set with http3"),
+                )
+                .throw());
         }
         if !args.http1 && !args.http2 && !args.http3 {
             return Err(global.throw_invalid_arguments(format_args!(

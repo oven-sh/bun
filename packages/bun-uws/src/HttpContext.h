@@ -1156,8 +1156,7 @@ private:
     };
 
 public:
-    /* Construct a new HttpContext using specified loop. SSL_CTX is built and
-     * owned by TemplatedApp; we only learn about it at listen() time. */
+    /* Construct a new HttpContext using specified loop. TemplatedApp holds the SSL_CTX; we only learn about it at listen() time. */
     static HttpContext *create(Loop *loop, bool requestCert = false, bool rejectUnauthorized = false) {
         HttpContext *httpContext = new HttpContext;
         us_socket_group_init(&httpContext->group, (us_loop_t *) loop, &httpVTable<false>, httpContext);

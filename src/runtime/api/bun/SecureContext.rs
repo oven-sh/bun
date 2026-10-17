@@ -43,7 +43,7 @@ pub(crate) struct SecureContext {
     /// Also `ctx`'s session id context, so `addCACert` folds each added certificate into it.
     pub(crate) digest: Cell<[u8; 32]>,
     /// Approximate cert/key/CA byte length plus the BoringSSL `SSL_CTX` floor
-    /// (~50 KB), so the GC can account for the off-heap allocation.
+    /// (`SSL_CTX_BASE_COST`), so the GC can account for the off-heap allocation.
     pub(crate) extra_memory: usize,
     /// True when `ctx` is a digest-interned `SSL_CTX*` shared with other consumers.
     pub(crate) shared: bool,
@@ -59,6 +59,24 @@ pub(crate) fn js_live_count(_global: &JSGlobalObject, _callframe: &CallFrame) ->
 }
 
 impl SecureContext {
+    /// The `SSL_CTX` of `tls.secureContext`, or `None` when `tls` names no context.
+    pub(crate) fn from_tls_option(
+        global: &JSGlobalObject,
+        tls: JSValue,
+    ) -> JsResult<Option<boringssl::OwnedSslCtx>> {
+        let Some(value) = tls.get_truthy(global, "secureContext")? else {
+            return Ok(None);
+        };
+        match value.as_class_ref::<SecureContext>() {
+            Some(secure_context) => Ok(Some(secure_context.ctx.clone())),
+            None => Err(global.throw_invalid_argument_type_value(
+                b"secureContext",
+                b"SecureContext",
+                value,
+            )),
+        }
+    }
+
     // Note: no `#[bun_jsc::host_fn]` here — the `Free` shim it emits calls
     // a bare `constructor(...)` which cannot resolve inside an `impl`. The
     // `#[bun_jsc::JsClass]` macro already emits the `<Self>::constructor` shim.
@@ -438,9 +456,15 @@ impl SecureContext {
     pub(crate) fn memory_cost(&self) -> usize {
         core::mem::size_of::<SecureContext>() + self.extra_memory
     }
+
+    /// What the collector is told this cell keeps alive off its heap. Read from GC threads.
+    pub(crate) fn estimated_size(&self) -> usize {
+        self.memory_cost()
+    }
 }
 
-const SSL_CTX_BASE_COST: usize = 50 * 1024;
+/// Measured: a context holds 2 to 7 KB beside its PEM bytes. The collector sizes its next cycle from what is reported.
+const SSL_CTX_BASE_COST: usize = 4 * 1024;
 
 use bun_uws_sys::socket_context::c;
 

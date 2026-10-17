@@ -1,0 +1,27 @@
+{
+  "_id": "typed-peer-lib-too",
+  "name": "typed-peer-lib-too",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "typed-peer-lib-too",
+      "version": "1.0.0",
+      "main": "index.js",
+      "types": "index.d.ts",
+      "dependencies": {
+        "peers-on-typed-peer-types": "1.0.0"
+      },
+      "peerDependencies": {
+        "typed-peer": "*"
+      },
+      "_id": "typed-peer-lib-too@1.0.0",
+      "dist": {
+        "integrity": "sha512-ucT8hilaGGxhmXsgmgByYmaRZo5tRB6ZpRsJhP9+R1ot14KZgpsbXJT8My00xeS4/6gbqn8SIB0nEPwLoTJ2jw==",
+        "shasum": "61368a1246ec252a0b724e99ffae2f6c2b76b23d",
+        "tarball": "http://localhost:4873/typed-peer-lib-too/-/typed-peer-lib-too-1.0.0.tgz"
+      }
+    }
+  }
+}

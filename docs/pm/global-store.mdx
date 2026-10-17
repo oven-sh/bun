@@ -137,9 +137,9 @@ TypeScript checks a declaration file at its real path and resolves its imports b
         └── @types/react -> ../../@types+react@18.3.1-…/node_modules/react
 ```
 
-The `@types` package is the one installed next to the peer, not the nearest one: a dependency of the package that has an older `@types/react` does not change which one the entry links. The link is part of the entry's peer hash, so a project with another `@types/react` version gets another entry. The link is not a lockfile dependency: `bun.lock`, `bun why`, and `--frozen-lockfile` do not see it. A package that depends on the `@types/*` package itself links its own.
+The `@types` package is the one installed next to the peer, not the nearest one: a dependency of the package that has an older `@types/react` does not change which one the entry links. The link is part of the entry's peer hash, so a project with another `@types/react` version gets another entry. The link is not a lockfile dependency: `bun.lock`, `bun why`, and `--frozen-lockfile` do not see it, and a package that peers on `@types/react` itself does not bind to it. A package that depends on the `@types/*` package itself links its own.
 
-When the package that provides the peer has no `@types/*` for it, the entry stays project-local, as before. A `packageExtensions` entry in `package.json` that adds the `@types/*` package as an optional peer of the package is the manual form of the same link.
+When the package that provides the peer has no `@types/*` for it (the root declares `react` and only a dependency has `@types/react`, or `--production` left a dev `@types/react` out), the entry stays project-local, as before. A `packageExtensions` entry in `package.json` that adds the `@types/*` package as an optional peer of the package is the manual alternative. It is a lockfile dependency, and it binds to the nearest `@types/*` package, as every peer does.
 
 The link changes the peer hash of the entries it is in. After an upgrade, or after `globalStore` is turned on or off, `bun install` builds those entries under their new names, and the old `node_modules/.bun/<name>@<version>+<peerhash>/` directories stay until [`bun prune`](/pm/cli/prune).
 

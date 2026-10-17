@@ -30,7 +30,6 @@ pub struct Store {
     pub(crate) nodes: node::List,
     /// `node_modules/.bun/node_modules` names other than that of the entry's `node_id`.
     pub(crate) hidden_hoist_keys: Vec<entry::DependenciesItem>,
-    pub(crate) peer_types: PeerTypes,
 }
 
 /// The `@types/<peer>` package of each peer name, for the `@types` packages in the lockfile.
@@ -633,6 +632,10 @@ pub mod node {
 
         // each node in this list becomes a symlink in the package's node_modules
         pub nodes: Vec<Id>,
+
+        /// A peer of the node has an `@types` package in the lockfile, but the node that binds
+        /// the peer has none to lend (see `PeerTypes`). Only the project can serve the types.
+        pub missing_peer_types: bool,
     }
 
     bun_collections::multi_array_columns! {
@@ -643,6 +646,7 @@ pub mod node {
             dependencies: Vec<Ids>,
             peers: Peers,
             nodes: Vec<Id>,
+            missing_peer_types: bool,
         }
     }
 
@@ -655,15 +659,20 @@ pub mod node {
                 dependencies: Vec::new(),
                 peers: Peers::EMPTY,
                 nodes: Vec::new(),
+                missing_peer_types: false,
             }
         }
     }
 
+    /// A node holds one peer per name, and one companion per name beside it.
     #[derive(Copy, Clone)]
     pub struct TransitivePeer {
         pub(crate) dep_id: DependencyID,
         pub(crate) pkg_id: PackageID,
         pub(crate) auto_installed: bool,
+        /// The `@types/<peer>` lent with a peer (see `PeerTypes`). It serves no peer of its own
+        /// name: a dependent that peers on `@types/<peer>` binds to the nearest real one.
+        pub(crate) companion: bool,
     }
 
     pub(crate) struct TransitivePeerOrderedArraySetCtx<'a> {
@@ -674,13 +683,13 @@ pub mod node {
     impl<'a> OrderedArraySetCtx<TransitivePeer> for TransitivePeerOrderedArraySetCtx<'a> {
         fn eql(&self, l_item: TransitivePeer, r_item: TransitivePeer) -> bool {
             let _ = self;
-            l_item.pkg_id == r_item.pkg_id
+            l_item.pkg_id == r_item.pkg_id && l_item.companion == r_item.companion
         }
 
         fn order(&self, l: TransitivePeer, r: TransitivePeer) -> Ordering {
             let l_pkg_id = l.pkg_id;
             let r_pkg_id = r.pkg_id;
-            if l_pkg_id == r_pkg_id {
+            if l_pkg_id == r_pkg_id && l.companion == r.companion {
                 return Ordering::Equal;
             }
 
@@ -689,7 +698,9 @@ pub mod node {
             let l_pkg_name = pkg_names[l_pkg_id as usize];
             let r_pkg_name = pkg_names[r_pkg_id as usize];
 
-            l_pkg_name.order(r_pkg_name, string_buf, string_buf)
+            l_pkg_name
+                .order(r_pkg_name, string_buf, string_buf)
+                .then(l.companion.cmp(&r.companion))
         }
     }
 }

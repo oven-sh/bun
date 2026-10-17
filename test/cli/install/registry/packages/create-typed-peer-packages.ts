@@ -7,6 +7,12 @@
  * declaration file imports it, so the type of `takes` depends on which `@types/typed-peer`
  * TypeScript finds next to the library. `depends-on-old-typed-peer` depends on the library and
  * on the older `@types/typed-peer`. `depends-on-typed-peer-lib` depends on the library alone.
+ * `provides-typed-peer` depends on the library, on `typed-peer@1.0.0` and on `@types/typed-peer@1.0.0`.
+ *
+ * `typed-peer-lib-too` is a second library with the same peer, and it depends on
+ * `peers-on-typed-peer-types`, which peers on `@types/typed-peer` itself. `typed-peer-libs` depends
+ * on both libraries. `depends-on-old-typed-peer-too` depends on the second library and on the
+ * older `@types/typed-peer`.
  */
 
 import { mkdir, writeFile } from "fs/promises";
@@ -133,6 +139,98 @@ async function writeManifest(name: string, versions: Record<string, unknown>) {
       {
         "index.js": `module.exports = require("typed-peer-lib");\n`,
         "index.d.ts": `export { takes } from "typed-peer-lib";\n`,
+      },
+    ),
+  });
+}
+
+{
+  const name = "provides-typed-peer";
+  const version = "1.0.0";
+  await writeManifest(name, {
+    [version]: await createPackage(
+      {
+        name,
+        version,
+        main: "index.js",
+        types: "index.d.ts",
+        dependencies: { "typed-peer": "1.0.0", "@types/typed-peer": "1.0.0", "typed-peer-lib": "1.0.0" },
+      },
+      {
+        "index.js": `module.exports = require("typed-peer-lib");\n`,
+        "index.d.ts": `export { takes } from "typed-peer-lib";\n`,
+      },
+    ),
+  });
+}
+
+{
+  const name = "peers-on-typed-peer-types";
+  const version = "1.0.0";
+  await writeManifest(name, {
+    [version]: await createPackage(
+      { name, version, main: "index.js", peerDependencies: { "@types/typed-peer": "*" } },
+      { "index.js": `module.exports = {};\n` },
+    ),
+  });
+}
+
+{
+  const name = "typed-peer-lib-too";
+  const version = "1.0.0";
+  await writeManifest(name, {
+    [version]: await createPackage(
+      {
+        name,
+        version,
+        main: "index.js",
+        types: "index.d.ts",
+        dependencies: { "peers-on-typed-peer-types": "1.0.0" },
+        peerDependencies: { "typed-peer": "*" },
+      },
+      {
+        "index.js": `module.exports = { takesToo(v) { return require("typed-peer").value === v; } };\n`,
+        "index.d.ts": `import { value } from "typed-peer";\nexport declare function takesToo(v: typeof value): boolean;\n`,
+      },
+    ),
+  });
+}
+
+{
+  const name = "typed-peer-libs";
+  const version = "1.0.0";
+  await writeManifest(name, {
+    [version]: await createPackage(
+      {
+        name,
+        version,
+        main: "index.js",
+        types: "index.d.ts",
+        dependencies: { "typed-peer-lib": "1.0.0", "typed-peer-lib-too": "1.0.0" },
+      },
+      {
+        "index.js": `module.exports = { ...require("typed-peer-lib"), ...require("typed-peer-lib-too") };\n`,
+        "index.d.ts": `export { takes } from "typed-peer-lib";\nexport { takesToo } from "typed-peer-lib-too";\n`,
+      },
+    ),
+  });
+}
+
+{
+  const name = "depends-on-old-typed-peer-too";
+  const version = "1.0.0";
+  await writeManifest(name, {
+    [version]: await createPackage(
+      {
+        name,
+        version,
+        main: "index.js",
+        types: "index.d.ts",
+        dependencies: { "@types/typed-peer": "1.0.0", "typed-peer-lib-too": "1.0.0" },
+      },
+      {
+        "index.js": `module.exports = require("typed-peer-lib-too");\n`,
+        "index.d.ts": `export { takesToo } from "typed-peer-lib-too";\n`,
       },
     ),
   });

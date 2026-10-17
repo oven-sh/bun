@@ -543,12 +543,14 @@ struct Ancestors<'a> {
     first_named: &'a FirstNamed,
     node_dependencies: &'a [Vec<store::node::DependencyIds>],
     node_parent_ids: &'a [store::node::Id],
+    node_pkg_ids: &'a [PackageID],
+    pkg_dependencies: &'a [lockfile::DependencySlice],
     dependencies: &'a [install::Dependency],
     contained: &'a DynamicBitSet,
 }
 
 impl Ancestors<'_> {
-    /// The dependency of `node_id` named `name_hash` that a descendant's peer binds to.
+    /// The dependency of `node_id` named `name_hash`, a row of its own package or a companion.
     fn named(
         &self,
         node_id: store::node::Id,
@@ -563,26 +565,68 @@ impl Ancestors<'_> {
             })
     }
 
-    /// The `@types/<peer>` of the peer bound at `binder`: the binder's own dependency of that name,
-    /// so that a dependent never pairs one node's peer with another node's types.
+    /// Whether `ids`, a dependency of `node_id`, is a row of the node's own package. A companion
+    /// is lent, not declared: it binds nothing.
+    fn binds_row(&self, node_id: store::node::Id, ids: store::node::DependencyIds) -> bool {
+        self.pkg_dependencies[self.node_pkg_ids[node_id.get() as usize] as usize]
+            .contains(ids.dep_id)
+    }
+
+    /// The dependency of `node_id` named `name_hash` that a descendant's peer binds to.
+    fn binds(
+        &self,
+        node_id: store::node::Id,
+        name_hash: PackageNameHash,
+    ) -> Option<store::node::DependencyIds> {
+        self.named(node_id, name_hash)
+            .filter(|&ids| self.binds_row(node_id, ids))
+    }
+
+    /// The `@types/<peer>` of the peer that `binder` binds with `peer_row`: the binder's own row of
+    /// that name, or the companion it was lent. A binder that only passes the peer on (a workspace
+    /// peers on it) has the companion of the node it got the peer from. A dependent never pairs
+    /// one node's peer with another node's types.
     fn companion_at(
         &self,
         binder: store::node::Id,
+        peer_row: store::node::DependencyIds,
+        peer_name_hash: PackageNameHash,
         types_name_hash: PackageNameHash,
     ) -> Option<store::node::DependencyIds> {
-        self.named(binder, types_name_hash)
+        if let Some(companion) = self.named(binder, types_name_hash) {
+            // A workspace is linked by the linker, never through another entry's `node_modules`.
+            return (!self.dependencies[companion.dep_id as usize]
+                .behavior
+                .is_workspace())
+            .then_some(companion);
+        }
+        if self.dependencies[peer_row.dep_id as usize]
+            .behavior
+            .is_peer()
+        {
+            return self
+                .companion_above(
+                    self.node_parent_ids[binder.get() as usize],
+                    peer_name_hash,
+                    types_name_hash,
+                )
+                .map(|(_, companion)| companion);
+        }
+        None
     }
 
-    /// The companion of a peer that a dependency named `peer_name_hash` binds at or above `from`.
+    /// The binder of the peer at or above `from`, and the companion it has for it.
     fn companion_above(
         &self,
         mut from: store::node::Id,
         peer_name_hash: PackageNameHash,
         types_name_hash: PackageNameHash,
-    ) -> Option<store::node::DependencyIds> {
+    ) -> Option<(store::node::Id, store::node::DependencyIds)> {
         while from != store::node::Id::INVALID {
-            if self.named(from, peer_name_hash).is_some() {
-                return self.companion_at(from, types_name_hash);
+            if let Some(peer_row) = self.binds(from, peer_name_hash) {
+                return self
+                    .companion_at(from, peer_row, peer_name_hash, types_name_hash)
+                    .map(|companion| (from, companion));
             }
             from = self.node_parent_ids[from.get() as usize];
         }
@@ -603,7 +647,7 @@ fn mark_peer_until_named(
 ) -> Result<Option<store::node::Id>, AllocError> {
     let mut curr_id = from;
     while curr_id != store::node::Id::INVALID {
-        if ancestors.named(curr_id, peer_name_hash).is_some() {
+        if ancestors.binds(curr_id, peer_name_hash).is_some() {
             return Ok(Some(curr_id));
         }
         // A package is never its own peer.
@@ -938,6 +982,8 @@ fn build_store(
                     first_named: &first_named,
                     node_dependencies,
                     node_parent_ids,
+                    node_pkg_ids,
+                    pkg_dependencies: pkg_dependency_slices,
                     dependencies,
                     contained: &contained,
                 };
@@ -963,16 +1009,22 @@ fn build_store(
                             let (resolved, companion): (PackageID, Option<PackageID>) = 'resolved: {
                                 let mut curr_id = entry.parent_id;
                                 while curr_id != store::node::Id::INVALID {
-                                    if let Some(ids) = ancestors.named(curr_id, peer_name_hash) {
+                                    if let Some(ids) = ancestors.binds(curr_id, peer_name_hash) {
                                         let companion = types_name_hash.map(|types_name_hash| {
                                             ancestors
-                                                .companion_at(curr_id, types_name_hash)
+                                                .companion_at(
+                                                    curr_id,
+                                                    ids,
+                                                    peer_name_hash,
+                                                    types_name_hash,
+                                                )
                                                 .map_or(invalid_package_id, |ids| ids.pkg_id)
                                         });
                                         break 'resolved (ids.pkg_id, companion);
                                     }
                                     for ids in &node_peers[curr_id.get() as usize].list {
                                         if !ids.auto_installed
+                                            && !ids.companion
                                             && dependencies[ids.dep_id as usize].name_hash
                                                 == peer_name_hash
                                         {
@@ -984,7 +1036,7 @@ fn build_store(
                                                             peer_name_hash,
                                                             types_name_hash,
                                                         )
-                                                        .map_or(invalid_package_id, |ids| {
+                                                        .map_or(invalid_package_id, |(_, ids)| {
                                                             ids.pkg_id
                                                         })
                                                 });
@@ -1061,6 +1113,9 @@ fn build_store(
                             else {
                                 continue;
                             };
+                            if peer.companion {
+                                continue;
+                            }
                             companion_marks[i] = true;
                             let binder = mark_peer_until_named(
                                 node_peers,
@@ -1071,15 +1126,19 @@ fn build_store(
                                 peer_name_hash,
                                 &peer_ctx,
                             )?;
-                            let Some(companion) = binder
-                                .and_then(|binder| ancestors.companion_at(binder, types_name_hash))
-                            else {
+                            let Some(companion) = binder.and_then(|binder| {
+                                let peer_row = ancestors.binds(binder, peer_name_hash)?;
+                                ancestors.companion_at(
+                                    binder,
+                                    peer_row,
+                                    peer_name_hash,
+                                    types_name_hash,
+                                )
+                            }) else {
                                 continue;
                             };
                             let Some(j) = dedupe_peers.iter().position(|other| {
-                                other.pkg_id == companion.pkg_id
-                                    && dependencies[other.dep_id as usize].name_hash
-                                        == types_name_hash
+                                other.companion && other.pkg_id == companion.pkg_id
                             }) else {
                                 continue;
                             };
@@ -1099,7 +1158,8 @@ fn build_store(
                         }
                     }
                     for (i, peer) in dedupe_peers.iter().enumerate() {
-                        if companion_marks.get(i) == Some(&true) {
+                        // A companion without its peer here has no binder to stop at.
+                        if peer.companion || companion_marks.get(i) == Some(&true) {
                             continue;
                         }
                         mark_peer_until_named(
@@ -1146,6 +1206,7 @@ fn build_store(
             dependencies: node_dependencies,
             peers: node_peers,
             nodes: node_nodes,
+            missing_peer_types: node_missing_peer_types,
             ..
         } = nodes_slice.split_mut();
 
@@ -1268,18 +1329,22 @@ fn build_store(
         };
 
         for &peer_dep_id in &peer_dep_ids {
-            let (resolved_pkg_id, auto_installed, companion) = 'resolved_pkg_id: {
+            // `marked_above`: the nodes from the one where the peer was found marked, up to the
+            // binder. They carry the peer already, and get the companion too.
+            let types_name_hash = companion_of(&dependencies[peer_dep_id as usize]);
+            let (resolved_pkg_id, auto_installed, companion, marked_above) = 'resolved_pkg_id: {
                 // Go through the peers parents looking for a package with the same name.
                 // If none is found, use current best version. Parents visited must have
                 // the package id for the chosen peer marked as a transitive peer. Nodes
                 // are deduplicated only if their package id and their transitive peer package
                 // ids are equal.
                 let peer_dep = &dependencies[peer_dep_id as usize];
-                let types_name_hash = companion_of(peer_dep);
                 let ancestors = Ancestors {
                     first_named: &first_named,
                     node_dependencies,
                     node_parent_ids,
+                    node_pkg_ids,
+                    pkg_dependencies: pkg_dependency_slices,
                     dependencies,
                     contained: &contained,
                 };
@@ -1317,6 +1382,11 @@ fn build_store(
                             continue;
                         }
 
+                        // lent to the ancestor (a companion), so it binds nothing
+                        if curr_id != node_id && !ancestors.binds_row(curr_id, *ids) {
+                            continue;
+                        }
+
                         // As in `hoist_dependency`: no other package serves an overridden peer.
                         if curr_id != node_id
                             && best_version != invalid_package_id
@@ -1324,24 +1394,29 @@ fn build_store(
                                 != pkgs.items_name_hash()[best_version as usize]
                             && lockfile.is_overridden_dependency(peer_dep_id)
                         {
-                            break 'resolved_pkg_id (best_version, true, None);
+                            break 'resolved_pkg_id (best_version, true, None, None);
                         }
 
                         let companion = if curr_id == node_id {
                             None
                         } else {
                             types_name_hash.and_then(|types_name_hash| {
-                                ancestors.companion_at(curr_id, types_name_hash)
+                                ancestors.companion_at(
+                                    curr_id,
+                                    *ids,
+                                    peer_dep.name_hash,
+                                    types_name_hash,
+                                )
                             })
                         };
-                        break 'resolved_pkg_id (ids.pkg_id, false, companion);
+                        break 'resolved_pkg_id (ids.pkg_id, false, companion, None);
                     }
 
                     let curr_peers = &node_peers[curr_id.get() as usize];
                     for ids in &curr_peers.list {
                         let transitive_peer_dep = &dependencies[ids.dep_id as usize];
 
-                        if transitive_peer_dep.name_hash != peer_dep.name_hash {
+                        if ids.companion || transitive_peer_dep.name_hash != peer_dep.name_hash {
                             continue;
                         }
 
@@ -1358,7 +1433,13 @@ fn build_store(
                                     types_name_hash,
                                 )
                             });
-                            break 'resolved_pkg_id (ids.pkg_id, false, companion);
+                            let (companion, marked_above) = match companion {
+                                Some((binder, companion)) => {
+                                    (Some(companion), Some((curr_id, binder)))
+                                }
+                                None => (None, None),
+                            };
+                            break 'resolved_pkg_id (ids.pkg_id, false, companion, marked_above);
                         }
 
                         // It didn't find a matching name and auto installed
@@ -1367,11 +1448,11 @@ fn build_store(
                         // different from this transitive peer.
 
                         if best_version == invalid_package_id {
-                            break 'resolved_pkg_id (invalid_package_id, true, None);
+                            break 'resolved_pkg_id (invalid_package_id, true, None, None);
                         }
 
                         if best_version == ids.pkg_id {
-                            break 'resolved_pkg_id (ids.pkg_id, true, None);
+                            break 'resolved_pkg_id (ids.pkg_id, true, None, None);
                         }
 
                         // add the remaining parent ids
@@ -1380,7 +1461,7 @@ fn build_store(
                             curr_id = node_parent_ids[curr_id.get() as usize];
                         }
 
-                        break 'resolved_pkg_id (best_version, true, None);
+                        break 'resolved_pkg_id (best_version, true, None, None);
                     }
 
                     // TODO: prevent marking workspace and symlink deps with transitive peers
@@ -1392,7 +1473,7 @@ fn build_store(
                 }
 
                 // choose the current best version
-                break 'resolved_pkg_id (best_version, true, None);
+                break 'resolved_pkg_id (best_version, true, None, None);
             };
 
             if resolved_pkg_id == invalid_package_id {
@@ -1419,6 +1500,7 @@ fn build_store(
                     dep_id: peer_dep_id,
                     pkg_id: resolved_pkg_id,
                     auto_installed,
+                    companion: false,
                 };
                 node_peers[visited_parent_id.get() as usize].insert(peer, &peer_ctx)?;
             }
@@ -1437,31 +1519,43 @@ fn build_store(
                 });
             }
 
-            // The companion travels with its peer: the same ancestors, and a link of its own.
-            let Some(companion) = companion else {
-                continue;
-            };
-            if visited_parent_node_ids.is_empty()
-                || lockfile::pruned_workspaces::skips_link_to_pruned_workspace(
-                    manager,
-                    lockfile,
-                    entry.pkg_id,
-                    &dependencies[companion.dep_id as usize],
-                    companion.pkg_id,
-                )
-            {
+            if visited_parent_node_ids.is_empty() || types_name_hash.is_none() {
                 continue;
             }
+            // The companion travels with its peer: the same ancestors, and a link of its own.
+            let Some(companion) = companion else {
+                node_missing_peer_types[node_id.get() as usize] = true;
+                continue;
+            };
+            if lockfile::pruned_workspaces::skips_link_to_pruned_workspace(
+                manager,
+                lockfile,
+                entry.pkg_id,
+                &dependencies[companion.dep_id as usize],
+                companion.pkg_id,
+            ) {
+                node_missing_peer_types[node_id.get() as usize] = true;
+                continue;
+            }
+            let peer = store::node::TransitivePeer {
+                dep_id: companion.dep_id,
+                pkg_id: companion.pkg_id,
+                auto_installed: false,
+                companion: true,
+            };
             for &visited_parent_id in &visited_parent_node_ids {
-                if node_pkg_ids[visited_parent_id.get() as usize] == companion.pkg_id {
-                    continue;
+                // A package is never its own peer.
+                if node_pkg_ids[visited_parent_id.get() as usize] != companion.pkg_id {
+                    node_peers[visited_parent_id.get() as usize].insert(peer, &peer_ctx)?;
                 }
-                let peer = store::node::TransitivePeer {
-                    dep_id: companion.dep_id,
-                    pkg_id: companion.pkg_id,
-                    auto_installed: false,
-                };
-                node_peers[visited_parent_id.get() as usize].insert(peer, &peer_ctx)?;
+            }
+            if let Some((mut curr_id, binder)) = marked_above {
+                while curr_id != binder {
+                    if node_pkg_ids[curr_id.get() as usize] != companion.pkg_id {
+                        node_peers[curr_id.get() as usize].insert(peer, &peer_ctx)?;
+                    }
+                    curr_id = node_parent_ids[curr_id.get() as usize];
+                }
             }
             node_dependencies[node_id.get() as usize].push(companion);
             node_queue.push(QueuedNode {
@@ -1617,6 +1711,10 @@ fn build_store(
             let mut hasher = Wyhash11::init(0);
             hasher.update(pinned);
             for peer_ids in peers.slice() {
+                // Only a set with a companion hashes differently from before there were any.
+                if peer_ids.companion {
+                    hasher.update(b"+");
+                }
                 let pkg_name = pkg_names[peer_ids.pkg_id as usize];
                 hasher.update(pkg_name.slice(string_buf));
                 let pkg_res = &pkg_resolutions[peer_ids.pkg_id as usize];
@@ -1727,7 +1825,6 @@ fn build_store(
         entries: store_entries,
         nodes,
         hidden_hoist_keys,
-        peer_types,
     })
 }
 
@@ -2101,27 +2198,9 @@ pub(crate) fn install_isolated_packages(
                                 break 'eligible false;
                             }
                         }
-                        // From the cache TypeScript cannot reach the project's `@types`: the
-                        // peer's companion is linked into the entry, or travels with the entry's
-                        // peers to the dependent that links it.
-                        if !store.peer_types.is_empty() {
-                            let peers = store.nodes.items_peers()[node_id.get() as usize].slice();
-                            let named = |name_hash: PackageNameHash| {
-                                entry_dependencies[entry_idx].slice().iter().any(|dep| {
-                                    dependencies[dep.dep_id as usize].name_hash == name_hash
-                                }) || peers.iter().any(|peer| {
-                                    dependencies[peer.dep_id as usize].name_hash == name_hash
-                                })
-                            };
-                            for peer in peers {
-                                if let Some(types_name_hash) = store
-                                    .peer_types
-                                    .companion_of(dependencies[peer.dep_id as usize].name_hash)
-                                    && !named(types_name_hash)
-                                {
-                                    break 'eligible false;
-                                }
-                            }
+                        // From the cache TypeScript cannot reach the project's `@types`.
+                        if store.nodes.items_missing_peer_types()[node_id.get() as usize] {
+                            break 'eligible false;
                         }
                         true
                     }

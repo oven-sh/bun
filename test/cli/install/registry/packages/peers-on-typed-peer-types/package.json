@@ -1,0 +1,23 @@
+{
+  "_id": "peers-on-typed-peer-types",
+  "name": "peers-on-typed-peer-types",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "peers-on-typed-peer-types",
+      "version": "1.0.0",
+      "main": "index.js",
+      "peerDependencies": {
+        "@types/typed-peer": "*"
+      },
+      "_id": "peers-on-typed-peer-types@1.0.0",
+      "dist": {
+        "integrity": "sha512-47IpAIcgom1UuQLZ7LqK20oLTAj7dyOsJ2ke5huWDg3eJs/5G0AZbt4ERBrc8EIMschoudqTDAXaxXf0k53Jsw==",
+        "shasum": "0837e00671ed704089bdd023c05b490c8c9a0054",
+        "tarball": "http://localhost:4873/peers-on-typed-peer-types/-/peers-on-typed-peer-types-1.0.0.tgz"
+      }
+    }
+  }
+}

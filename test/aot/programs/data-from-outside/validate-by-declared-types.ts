@@ -1,5 +1,5 @@
 // Bun.validate<T>(), Bun.safeValidate<T>() and Bun.parse<T>() check a value against the TypeScript type T: what they accept, what they refuse and why, and what the copy they return holds.
-import type { Int, Min, Max, MinLength, MaxLength, MinItems, MaxItems, Pattern, Message, Default, Strict, StrictAllTheWayDown, Format, MultipleOf, Above, Below } from "bun";
+import type { Int, Min, Max, MinLength, MaxLength, MinItems, MaxItems, Pattern, Message, Default, Strict, DeepStrict, Format, MultipleOf, Above, Below } from "bun";
 
 interface Order {
   customer: { id: number & Int & Min<1>; name: string & MinLength<1> & MaxLength<100>; email: string & Pattern<"^[^@\\s]+@[^@\\s]+$"> };
@@ -13,7 +13,7 @@ const shown = (result: { success: true; data: unknown } | { success: false; issu
   result.success ? "accepted " + JSON.stringify(result.data) : "refused " + result.issues.map(issue => issue.path.join(".") + " " + issue.code + " " + issue.expected + " " + issue.received).join("; ");
 
 console.log(shown(Bun.safeValidate<Order>(fresh())));
-console.log(shown(Bun.safeValidate<Order & StrictAllTheWayDown>(fresh())));
+console.log(shown(Bun.safeValidate<Order & DeepStrict>(fresh())));
 console.log(shown(Bun.safeValidate<Order>(altered(body => { body.customer.id = 0; }))));
 console.log(shown(Bun.safeValidate<Order>(altered(body => { body.customer.id = 1.5; }))));
 console.log(shown(Bun.safeValidate<Order>(altered(body => { body.customer.id = "1"; }))));

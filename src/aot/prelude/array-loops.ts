@@ -1,9 +1,3 @@
-// Transcribed from Source/JavaScriptCore/builtins/ArrayPrototype.js and ArrayConstructor.js. `a` is an array that had its original structure when the function was entered.
-//
-// A loop comes three times: for an ArrayWithDouble, for an ArrayWithInt32 or ArrayWithContiguous, and for whatever the array has become. The first two test, before
-// the loop and before every element, that the array still is what they are for and still has the element, and are left for the third where it is not. They call
-// nothing but the callback, so where that is inlined and harmless the back end finds every test but the first redundant.
-
 declare function $hasIndex(a: unknown, k: number): boolean;
 declare function $getIndex<T>(a: unknown, k: number): T;
 declare function $call<R>(f: unknown, thisArg: unknown, ...args: unknown[]): R;
@@ -54,7 +48,7 @@ function saysLess(answer: unknown): boolean {
     return +(answer as any) < 0;
 }
 
-function restOfForEach<T>(a: T[], f: unknown, thisArg: unknown, k: number, n: number): void {
+function forEachFrom<T>(a: T[], f: unknown, thisArg: unknown, k: number, n: number): void {
     for (; k < n; k++) {
         const has: boolean = $hasIndex(a, k);
         if (has) $callNoInline<unknown>(f, thisArg, $getIndex<T>(a, k), k, a);
@@ -77,10 +71,10 @@ export function Array$forEach<T>(a: T[], f: unknown, thisArg: unknown): void {
             if (has) $call<unknown>(f, thisArg, $getContiguousIndex<T>(a, k), k, a);
         }
     }
-    if (k < n) restOfForEach(a, f, thisArg, k, n);
+    if (k < n) forEachFrom(a, f, thisArg, k, n);
 }
 
-function restOfMap<T, U>(a: T[], f: unknown, thisArg: unknown, out: U[], k: number, n: number): void {
+function mapFrom<T, U>(a: T[], f: unknown, thisArg: unknown, out: U[], k: number, n: number): void {
     for (; k < n; k++) {
         const has: boolean = $hasIndex(a, k);
         if (has) out[k] = $callNoInline<U>(f, thisArg, $getIndex<T>(a, k), k, a);
@@ -116,8 +110,70 @@ export function Array$map<T, U>(a: T[], f: unknown, thisArg: unknown): U[] {
             }
         }
     }
-    if (k < n) restOfMap(a, f, thisArg, out, k, n);
+    if (k < n) mapFrom(a, f, thisArg, out, k, n);
     return $truncateNewArray<U>(out, n);
+}
+
+export function Array$mapJoin<T>(items: unknown, f: unknown, separator: string): string {
+    const isOriginal: boolean = $isOriginalArray(items);
+    if (!isOriginal) return (items as any).map(f).join(separator);
+    const a = items as T[];
+    const n = a.length;
+    if (!isCallable(f)) throw new TypeError("Array.prototype.map callback must be a function");
+    const m = a.length;
+    const separatorLength = separator.length;
+    let remaining = 0x7fffffff;
+    let joined = "";
+    let hasResult = false;
+    let result: unknown = undefined;
+    let k = 0;
+    if (isDoubleArray(a)) {
+        for (; k < m && isDoubleArray(a) && k < a.length; k++) {
+            const x: number = $getDoubleIndex(a, k);
+            result = "";
+            if (x === x) result = $call<unknown>(f, undefined, x, k, a);
+            hasResult = x === x;
+            if (typeof result !== "string") break;
+            remaining = (remaining - result.length) | 0;
+            if (remaining < 0) break;
+            if (k) {
+                remaining = (remaining - separatorLength) | 0;
+                if (remaining < 0) break;
+                joined = `${joined}${separator}${result}`;
+            } else joined = result;
+            hasResult = false;
+        }
+    } else if (isContiguousArray(a)) {
+        for (; k < m && isContiguousArray(a) && k < a.length; k++) {
+            const has: boolean = $hasContiguousIndex(a, k);
+            result = "";
+            if (has) result = $call<unknown>(f, undefined, $getContiguousIndex<T>(a, k), k, a);
+            hasResult = has;
+            if (typeof result !== "string") break;
+            remaining = (remaining - result.length) | 0;
+            if (remaining < 0) break;
+            if (k) {
+                remaining = (remaining - separatorLength) | 0;
+                if (remaining < 0) break;
+                joined = `${joined}${separator}${result}`;
+            } else joined = result;
+            hasResult = false;
+        }
+    }
+    if (k === n) return joined;
+    const start = k;
+    const rest: unknown[] = $newArrayWithSpecies<unknown>(n - k, undefined);
+    if (hasResult) rest[k++ - start] = result;
+    for (; k < n; k++) {
+        const has: boolean = $hasIndex(a, k);
+        if (has) rest[k - start] = $callNoInline<unknown>(f, undefined, $getIndex<T>(a, k), k, a);
+    }
+    for (k = start; k < n; k++) {
+        const element = rest[k - start];
+        const piece = element === undefined || element === null ? "" : `${element}`;
+        joined = k ? `${joined}${separator}${piece}` : piece;
+    }
+    return joined;
 }
 
 export function Array$mapByNumber<T>(a: T[], f: unknown, thisArg: unknown): unknown[] {
@@ -144,11 +200,11 @@ export function Array$mapByNumber<T>(a: T[], f: unknown, thisArg: unknown): unkn
             if (!isStored) break;
         }
     }
-    if (k < n) restOfMap(a, f, thisArg, out, k, n);
+    if (k < n) mapFrom(a, f, thisArg, out, k, n);
     return $truncateNewArray<unknown>(out, n);
 }
 
-function restOfFilter<T>(a: T[], f: unknown, thisArg: unknown, out: T[], to: number, k: number, n: number): number {
+function filterFrom<T>(a: T[], f: unknown, thisArg: unknown, out: T[], to: number, k: number, n: number): number {
     for (; k < n; k++) {
         const has: boolean = $hasIndex(a, k);
         if (!has) continue;
@@ -198,7 +254,7 @@ export function Array$filter<T>(a: T[], f: unknown, thisArg: unknown): T[] {
             to = (to + 1) >>> 0;
         }
     }
-    if (k < n) to = restOfFilter(a, f, thisArg, out, to, k, n) >>> 0;
+    if (k < n) to = filterFrom(a, f, thisArg, out, to, k, n) >>> 0;
     return $truncateNewArray<T>(out, to);
 }
 
@@ -226,11 +282,11 @@ export function Array$filterTruthy<T>(a: T[], f: unknown, thisArg: unknown): T[]
             to = (to + 1) >>> 0;
         }
     }
-    if (k < n) to = restOfFilter(a, f, thisArg, out, to, k, n) >>> 0;
+    if (k < n) to = filterFrom(a, f, thisArg, out, to, k, n) >>> 0;
     return $truncateNewArray<T>(out, to);
 }
 
-function restOfSome<T>(a: T[], f: unknown, thisArg: unknown, k: number, n: number): boolean {
+function someFrom<T>(a: T[], f: unknown, thisArg: unknown, k: number, n: number): boolean {
     for (; k < n; k++) {
         const has: boolean = $hasIndex(a, k);
         if (has && $callNoInline<unknown>(f, thisArg, $getIndex<T>(a, k), k, a)) return true;
@@ -254,10 +310,10 @@ export function Array$some<T>(a: T[], f: unknown, thisArg: unknown): boolean {
             if (has && $call<unknown>(f, thisArg, $getContiguousIndex<T>(a, k), k, a)) return true;
         }
     }
-    return k < n && restOfSome(a, f, thisArg, k, n);
+    return k < n && someFrom(a, f, thisArg, k, n);
 }
 
-function restOfEvery<T>(a: T[], f: unknown, thisArg: unknown, k: number, n: number): boolean {
+function everyFrom<T>(a: T[], f: unknown, thisArg: unknown, k: number, n: number): boolean {
     for (; k < n; k++) {
         const has: boolean = $hasIndex(a, k);
         if (has && !$callNoInline<unknown>(f, thisArg, $getIndex<T>(a, k), k, a)) return false;
@@ -281,10 +337,10 @@ export function Array$every<T>(a: T[], f: unknown, thisArg: unknown): boolean {
             if (has && !$call<unknown>(f, thisArg, $getContiguousIndex<T>(a, k), k, a)) return false;
         }
     }
-    return k >= n || restOfEvery(a, f, thisArg, k, n);
+    return k >= n || everyFrom(a, f, thisArg, k, n);
 }
 
-function restOfFind<T>(a: T[], f: unknown, thisArg: unknown, k: number, n: number): T | undefined {
+function findFrom<T>(a: T[], f: unknown, thisArg: unknown, k: number, n: number): T | undefined {
     for (; k < n; k++) {
         const x = $getIndex<T>(a, k);
         if ($callNoInline<unknown>(f, thisArg, x, k, a)) return x;
@@ -311,10 +367,10 @@ export function Array$find<T>(a: T[], f: unknown, thisArg: unknown): T | undefin
             if ($call<unknown>(f, thisArg, x, k, a)) return x;
         }
     }
-    return k < n ? restOfFind(a, f, thisArg, k, n) : undefined;
+    return k < n ? findFrom(a, f, thisArg, k, n) : undefined;
 }
 
-function restOfFindLast<T>(a: T[], f: unknown, thisArg: unknown, k: number): T | undefined {
+function findLastFrom<T>(a: T[], f: unknown, thisArg: unknown, k: number): T | undefined {
     for (; k >= 0; k--) {
         const x = $getIndex<T>(a, k);
         if ($callNoInline<unknown>(f, thisArg, x, k, a)) return x;
@@ -340,10 +396,10 @@ export function Array$findLast<T>(a: T[], f: unknown, thisArg: unknown): T | und
             if ($call<unknown>(f, thisArg, x, k, a)) return x;
         }
     }
-    return k >= 0 ? restOfFindLast(a, f, thisArg, k) : undefined;
+    return k >= 0 ? findLastFrom(a, f, thisArg, k) : undefined;
 }
 
-function restOfFindIndex<T>(a: T[], f: unknown, thisArg: unknown, k: number, n: number): number {
+function findIndexFrom<T>(a: T[], f: unknown, thisArg: unknown, k: number, n: number): number {
     for (; k < n; k++) {
         if ($callNoInline<unknown>(f, thisArg, $getIndex<T>(a, k), k, a)) return k;
     }
@@ -368,10 +424,10 @@ export function Array$findIndex<T>(a: T[], f: unknown, thisArg: unknown): number
             if ($call<unknown>(f, thisArg, $getContiguousIndex<T>(a, k), k, a)) return k;
         }
     }
-    return k < n ? restOfFindIndex(a, f, thisArg, k, n) : -1;
+    return k < n ? findIndexFrom(a, f, thisArg, k, n) : -1;
 }
 
-function restOfFindLastIndex<T>(a: T[], f: unknown, thisArg: unknown, k: number): number {
+function findLastIndexFrom<T>(a: T[], f: unknown, thisArg: unknown, k: number): number {
     for (; k >= 0; k--) {
         if ($callNoInline<unknown>(f, thisArg, $getIndex<T>(a, k), k, a)) return k;
     }
@@ -395,10 +451,10 @@ export function Array$findLastIndex<T>(a: T[], f: unknown, thisArg: unknown): nu
             if ($call<unknown>(f, thisArg, $getContiguousIndex<T>(a, k), k, a)) return k;
         }
     }
-    return k >= 0 ? restOfFindLastIndex(a, f, thisArg, k) : -1;
+    return k >= 0 ? findLastIndexFrom(a, f, thisArg, k) : -1;
 }
 
-function restOfReduce<T>(a: T[], f: unknown, acc: unknown, k: number, n: number): unknown {
+function reduceFrom<T>(a: T[], f: unknown, acc: unknown, k: number, n: number): unknown {
     for (; k < n; k++) {
         const has: boolean = $hasIndex(a, k);
         if (has) acc = $callNoInline<unknown>(f, undefined, acc, $getIndex<T>(a, k), k, a);
@@ -406,7 +462,6 @@ function restOfReduce<T>(a: T[], f: unknown, acc: unknown, k: number, n: number)
     return acc;
 }
 
-// While what is accumulated is a number it is kept as one.
 export function Array$reduce<T, A>(a: T[], f: unknown, initial: A): A {
     const n = a.length;
     if (!isCallable(f)) throw new TypeError("Array.prototype.reduce callback must be a function");
@@ -455,7 +510,7 @@ export function Array$reduce<T, A>(a: T[], f: unknown, initial: A): A {
             if (has) acc = $call<unknown>(f, undefined, acc, $getContiguousIndex<T>(a, k), k, a);
         }
     }
-    if (k < n) acc = restOfReduce(a, f, acc, k, n);
+    if (k < n) acc = reduceFrom(a, f, acc, k, n);
     return acc as A;
 }
 
@@ -513,11 +568,11 @@ export function Array$reduceWithoutInitialValue<T>(a: T[], f: unknown): T {
             if (has) acc = $call<unknown>(f, undefined, acc, $getContiguousIndex<T>(a, k), k, a);
         }
     }
-    if (k < n) acc = restOfReduce(a, f, acc, k, n);
+    if (k < n) acc = reduceFrom(a, f, acc, k, n);
     return acc as T;
 }
 
-function restOfReduceRight<T>(a: T[], f: unknown, acc: unknown, k: number): unknown {
+function reduceRightFrom<T>(a: T[], f: unknown, acc: unknown, k: number): unknown {
     for (; k >= 0; k--) {
         const has: boolean = $hasIndex(a, k);
         if (has) acc = $callNoInline<unknown>(f, undefined, acc, $getIndex<T>(a, k), k, a);
@@ -572,7 +627,7 @@ export function Array$reduceRight<T, A>(a: T[], f: unknown, initial: A): A {
             if (has) acc = $call<unknown>(f, undefined, acc, $getContiguousIndex<T>(a, k), k, a);
         }
     }
-    if (k >= 0) acc = restOfReduceRight(a, f, acc, k);
+    if (k >= 0) acc = reduceRightFrom(a, f, acc, k);
     return acc as A;
 }
 
@@ -629,11 +684,11 @@ export function Array$reduceRightWithoutInitialValue<T>(a: T[], f: unknown): T {
             if (has) acc = $call<unknown>(f, undefined, acc, $getContiguousIndex<T>(a, k), k, a);
         }
     }
-    if (k >= 0) acc = restOfReduceRight(a, f, acc, k);
+    if (k >= 0) acc = reduceRightFrom(a, f, acc, k);
     return acc as T;
 }
 
-function restOfFlatMap<T, U>(a: T[], f: unknown, thisArg: unknown, out: U[], to: number, k: number, n: number): number {
+function flatMapFrom<T, U>(a: T[], f: unknown, thisArg: unknown, out: U[], to: number, k: number, n: number): number {
     for (; k < n; k++) {
         const has: boolean = $hasIndex(a, k);
         if (!has) continue;
@@ -761,11 +816,10 @@ export function Array$flatMap<T, U>(a: T[], f: unknown, thisArg: unknown): U[] {
             }
         }
     }
-    if (k < n) to = restOfFlatMap(a, f, thisArg, out, to, k, n) >>> 0;
+    if (k < n) to = flatMapFrom(a, f, thisArg, out, to, k, n) >>> 0;
     return $truncateNewArray<U>(out, to);
 }
 
-// The elements are read, then sorted where nobody sees them, then stored: a comparator that looks at the array finds it as it was.
 export function Array$sort<T>(a: T[], f: unknown): T[] {
     if (!isCallable(f)) return (a as any).sort(f, undefined);
     const n = a.length;
@@ -1134,7 +1188,6 @@ export function Array$toSorted<T>(a: T[], f: unknown): T[] {
         return $truncateNewArray<T>(from, n);
 }
 
-// The iteration of an array with its original structure cannot be observed: it asks for the length and then for the element, every time.
 export function Array$from<T, U>(items: unknown, f: unknown, thisArg: unknown): U[] {
     if (f !== undefined && !isCallable(f)) throw new TypeError("Array.from requires that the second argument, when provided, be a function");
     const isOriginal: boolean = $isOriginalArray(items);

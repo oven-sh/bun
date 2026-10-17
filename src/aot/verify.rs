@@ -1,9 +1,3 @@
-//! A check of the linked program against the subtype sets of the soundness closure.
-//!
-//! The type `Class(a)` stands for every subtype of `a`. A value of that type may reach a place of type `Class(b)` untested only if every
-//! subtype of `a` is a subtype of `b`. The closure sees to that for each upcast it is told of, so an upcast that nobody noted shows here.
-//! The engine's verifier makes the same comparison (`Type::isSubsetOf`), after the build.
-
 use crate::declared::Part;
 use crate::id::{LayoutId, TyId};
 use crate::id::V;
@@ -13,7 +7,6 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::borrow::Cow;
 
-/// The values of the block that are used, untested, as of a type that is given, each with that type and what it is used as.
 fn for_each_typed_use(program: &Program, func: &Func, block: usize, each: &mut impl FnMut(V, TyId, &'static str)) {
     for &v in &func.blocks[block].ops {
         match func.op(v) {
@@ -29,7 +22,6 @@ fn for_each_typed_use(program: &Program, func: &Func, block: usize, each: &mut i
             _ => {}
         }
     }
-    // What an async function or a generator is declared to yield is not what `return` carries in its body.
     if let Some(&Term::Return(value)) = func.blocks[block].term.as_ref()
         && !func.has(func_flags::ASYNC | func_flags::GENERATOR)
     {
@@ -40,18 +32,14 @@ fn for_each_typed_use(program: &Program, func: &Func, block: usize, each: &mut i
     }
 }
 
-/// A value that is used as of a type that its own is not within.
 pub(crate) struct UnsoundUse {
     pub(crate) what: String,
-    /// The type of the value and the type it is used as.
     types: (TyId, TyId),
 }
 
-/// How many functions a task looks at.
 const FUNCTIONS_PER_TASK: usize = 1024;
 
-/// The first of them, at most `most`, each pair of types once, in the order of the program.
-pub(crate) fn unsound_uses(program: &Program, most: usize, in_parallel: InParallel<'_>) -> Vec<UnsoundUse> {
+pub(crate) fn unsound_uses(program: &Program, maximum: usize, in_parallel: InParallel<'_>) -> Vec<UnsoundUse> {
     let subtypes: Vec<Cow<'_, [LayoutId]>> = (program.layouts.iter())
         .map(|layout| {
             if layout.members.is_sorted() {
@@ -70,8 +58,7 @@ pub(crate) fn unsound_uses(program: &Program, most: usize, in_parallel: InParall
             let mut has_reachability = false;
             for block in 0..func.blocks.len() {
                 for_each_typed_use(program, func, block, &mut |argument, want, what| {
-                    // `return;`, a receiver that is not there.
-                    if argument.is_none() || found.len() == most {
+                    if argument.is_none() || found.len() == maximum {
                         return;
                     }
                     let have = func.ty(argument);
@@ -100,18 +87,16 @@ pub(crate) fn unsound_uses(program: &Program, most: usize, in_parallel: InParall
                     found.push(UnsoundUse { what, types: (have, want) });
                 });
             }
-            if found.len() == most {
+            if found.len() == maximum {
                 return;
             }
         }
     });
     let mut seen: FxHashSet<(TyId, TyId)> = FxHashSet::default();
-    slices.into_iter().flat_map(|slice| slice.1).filter(|found| seen.insert(found.types)).take(most).collect()
+    slices.into_iter().flat_map(|slice| slice.1).filter(|found| seen.insert(found.types)).take(maximum).collect()
 }
 
-/// A layout of `have` and the first of its subtypes that no layout of `want` has along with all the others.
 fn lost_subtype(program: &Program, subtypes: &[Cow<'_, [LayoutId]>], have: TyId, want: TyId) -> Option<(LayoutId, LayoutId)> {
-    // Any object is within either.
     if program.tys.get(want).any_object || layouts_in(program, want).any(|sup| program.layouts[sup.idx()].accepts_untyped) {
         return None;
     }
@@ -127,7 +112,6 @@ fn lost_subtype(program: &Program, subtypes: &[Cow<'_, [LayoutId]>], have: TyId,
 }
 
 fn layouts_in(program: &Program, ty: TyId) -> impl Iterator<Item = LayoutId> + '_ {
-    // A type that is only expected of a value does not keep its layouts in the program.
     program.tys.get(ty).parts.iter().filter_map(|part| if let Part::Class(layout) = part { layout.is_some().then_some(*layout) } else { None })
 }
 
@@ -147,7 +131,6 @@ fn targets_of(term: Option<&Term>) -> SmallVec<[&Target; 2]> {
     }
 }
 
-/// What nothing gets to is not lowered, and its types are not looked at.
 fn find_reachable_blocks(func: &Func, is_reached: &mut Vec<bool>, worklist: &mut Vec<usize>) {
     is_reached.clear();
     is_reached.resize(func.blocks.len(), false);

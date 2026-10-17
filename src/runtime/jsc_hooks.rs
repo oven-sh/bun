@@ -4855,7 +4855,7 @@ fn extract_owner_uid() -> u32 {
 /// shared libraries at their paths, the addon and they are written out at those paths under one folder, which only this user can
 /// write to. `None` where it holds none, or a step fails.
 #[cfg(unix)]
-fn write_out_beside_its_libraries(addon_path: &[u8]) -> Option<Vec<u8>> {
+fn write_next_to_libraries(addon_path: &[u8]) -> Option<Vec<u8>> {
     use std::io::Write as _;
     use std::os::unix::ffi::OsStrExt as _;
     use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _, OpenOptionsExt as _};
@@ -4910,7 +4910,7 @@ pub(crate) extern "C" fn Bun__resolveEmbeddedNodeFile(path: &bun_core::String) -
             return bun_core::String::DEAD;
         }
         #[cfg(unix)]
-        if let Some(path) = write_out_beside_its_libraries(input_path.slice()) {
+        if let Some(path) = write_next_to_libraries(input_path.slice()) {
             return bun_core::String::clone_utf8(&path);
         }
     }

@@ -2,6 +2,9 @@
 // IR= 0 validate String "invalid_type"
 // IR= 0 validate String "unrecognized_keys"
 // IR= 0 validate String "path"
+// IR= 0 report NewObjectWithShape
+// SIZE< report 14000
+// IR- ^function \d+ "build"
 import type { Default, Int, MaxLength, Message, Min, MinItems, Strict } from "bun";
 interface Address { street: string; zip: string & MaxLength<5> }
 interface Person {

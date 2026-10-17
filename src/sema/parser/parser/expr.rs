@@ -1537,7 +1537,10 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     }
 
     fn source_path_after_dirname(&mut self, e: ExprId, depth: u32) -> Option<Vec<u8>> {
-        if self.is_too_deep() || depth > 64 {
+        if self.is_too_deep() {
+            return None;
+        }
+        if depth > 64 {
             return None;
         }
         match self.f.exprs.get(e.idx())?.kind {

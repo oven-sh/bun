@@ -104,7 +104,7 @@ impl Checker<'_, '_> {
         let ExprKind::ImportCall { args, .. } = hir[e].kind else {
             return false;
         };
-        if self.p.files.options.verbatim_module_syntax && kind == ModuleKind::CommonJs {
+        if self.check_options(file).verbatim_module_syntax && kind == ModuleKind::CommonJs {
             let message = self.verbatim_module_syntax_error_message(file);
             return self.grammar_error_on_node(file, e, message, &[]);
         }
@@ -169,7 +169,7 @@ impl Checker<'_, '_> {
         left: ExprId,
         right: ExprId,
     ) {
-        if self.p.files.options.allow_unreachable_code == Some(true)
+        if self.check_options(file).allow_unreachable_code == Some(true)
             || !self.is_side_effect_free(file, left)
             || self.is_indirect_call(file, id, left, right)
         {

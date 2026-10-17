@@ -1,20 +1,15 @@
-//! How the linked program describes the fields of its layouts, for the soundness closure: what the engine compares where a field that is
-//! stored through one layout is read through another.
-
 use crate::declared::Part;
 use crate::id::{LayoutId, TyId};
 use crate::ir::{Program, field_flags};
 use bun_sema::check::FieldTypes;
 use bun_sema::types::TypeId;
 
-/// `views`: the layouts that a type of the checker stands for.
 pub(crate) fn field_types(program: &Program, views: &[(LayoutId, TypeId)], copy_targets: Vec<u32>) -> FieldTypes {
     let mut layout_index = vec![u32::MAX; program.layouts.len()];
     for (index, view) in views.iter().enumerate() {
         layout_index[view.0.idx()] = index as u32;
     }
     let mut together: Vec<Vec<u32>> = Vec::new();
-    // By type: its number in `together`.
     let mut union_of = vec![u32::MAX; program.tys.list.len()];
     let mut part_layouts: Vec<u32> = Vec::new();
     for (ty, number) in union_of.iter_mut().enumerate() {
@@ -36,7 +31,6 @@ pub(crate) fn field_types(program: &Program, views: &[(LayoutId, TypeId)], copy_
         passed.push(TyId::new(ty));
         pending.push(TyId::new(ty));
         while let Some(at) = pending.pop() {
-            // What comes before this one has been gone through, all the way down.
             if at.idx() < ty {
                 found.extend_from_slice(&layouts_in_type[at.idx()]);
                 unions.extend_from_slice(&unions_in_type[at.idx()]);
@@ -45,7 +39,6 @@ pub(crate) fn field_types(program: &Program, views: &[(LayoutId, TypeId)], copy_
             unions.extend(Some(union_of[at.idx()]).filter(|&number| number != u32::MAX));
             for part in &program.tys.get(at).parts {
                 let held: &[TyId] = match part {
-                    // A type that is only expected of a value does not keep its layouts in the program.
                     Part::Class(layout) => {
                         found.extend(layout.is_some().then(|| layout_index[layout.idx()]).filter(|&view| view != u32::MAX));
                         &[]

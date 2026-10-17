@@ -235,7 +235,7 @@ Writable.prototype.write = function (chunk, encoding, cb) {
 };
 
 internals.writeToWritable = _write;
-internals.methodThatWrites = Writable.prototype.write;
+internals.writingMethod = Writable.prototype.write;
 
 Writable.prototype.cork = function () {
   const state: WritableState = this._writableState;

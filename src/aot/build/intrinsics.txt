@@ -89,6 +89,7 @@ fastPath	Member
 flatIntoArray	Call
 flatIntoArrayWithCallback	Call
 forEach	Member
+generatorStepStatus	Call
 get	Member
 getArrayIteratorInternalField	Call
 getAsyncDisposableStackInternalField	Call
@@ -150,6 +151,7 @@ keys	Member
 linkTimeConstant	Value
 loadEsmIntoCjs	Call
 makeAbortError	Call
+makeIteratorResult	Call
 makeTypeError	Call
 mapIterationEntry	Call
 mapIterationEntryKey	Call
@@ -210,6 +212,7 @@ setIterationNext	Call
 setStorage	Call
 size	Member
 start	Member
+stepGenerator	Call
 then	Member
 toClass	Call
 toIntegerOrInfinity	Call

@@ -1,4 +1,4 @@
-import { program, roads } from "./generated/objects-handed-out";
+import { program, roads } from "./generated/escaping-objects";
 import { generated } from "./generated/run-generated";
 
 const alwaysRun = new Set(["JSON.parse", "a name without code", "JSON.parse in a function of the program", "a message's data, read of the event", "a row of sqlite, straight"]);

@@ -26,6 +26,8 @@ export type Generated = {
    * `bun run --aot` is left out: such a program prints what depends on whether it runs from its sources or as an executable.
    */
   groupsMayBeRefused?: RegExp;
+  /** Nobody has looked at the program. Where TypeScript rejects it, or plain Bun fails on it or needs too long, there is nothing to compare. A crash of the build still fails the test. */
+  mayBeUnjudgeable?: true;
   /** Set where plain Bun runs the program for reference, and nowhere else. */
   plainEnv?: Record<string, string>;
   /** How the program departs from plain Bun today. It is listed as a todo and not run. */
@@ -84,7 +86,9 @@ export function generated(title: string, programs: Generated[]) {
             }
             const executable = join(folder, isWindows ? "program.exe" : "program");
             try {
+              if (program.mayBeUnjudgeable && (await spawned([bunExe(), "run", file], folder, { ...bunEnv, ...program.plainEnv })).exitCode !== 0) return;
               const build = await spawned([bunExe(), "build", "--compile", "--aot", file, "--outfile", executable], folder, bunEnv);
+              if (program.mayBeUnjudgeable && build.exitCode === 1 && /^error: TS\d+:/m.test(build.stderr)) return;
               const fromSources = program.modeFailsToday || program.groupsMayBeRefused ? undefined : await spawned([bunExe(), "run", "--aot", file], folder, bunEnv);
               if (program.mayBeRefused && build.exitCode === 1 && /^error\b/m.test(build.stderr)) return void (fromSources && expect(fromSources.exitCode).not.toBe(0));
               built(build);

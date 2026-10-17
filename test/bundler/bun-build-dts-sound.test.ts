@@ -135,12 +135,12 @@ describe("bun build --dts: the typed JavaScript", () => {
     [
       "constants",
       [
-        'var KEY: typeof KEY2 = Symbol.for("key") as typeof KEY2;',
-        "declare const KEY2: unique symbol;",
-        'var NAME = "name" as const;',
-        "var COUNT = -3 as const;",
-        "var NIL: undefined = undefined;",
-        "var NOTHING: null = null;",
+        'var KEY: unique symbol = Symbol.for("key");',
+        'var OTHER = Symbol("other");',
+        'var NAME = "name";',
+        "var COUNT = -3;",
+        "var NIL = undefined;",
+        "var NOTHING = null;",
         "interface Marked { [KEY]?: boolean; [OTHER]: number; name: string }",
         "type Tools = { Unused: typeof Unused; used: typeof used };",
         "var exports_keys: any = {};",
@@ -155,6 +155,82 @@ describe("bun build --dts: the typed JavaScript", () => {
         "  const first = tree.kind === (1 as Kind3.Branch) /* Branch */ ? +flag : -flag;",
         "  state: Kind3 = 0 as Kind3.Leaf /* Leaf */;",
         "  readonly first = 0 as Kind3.Leaf /* Leaf */;",
+      ],
+    ],
+    [
+      "removed-declarations",
+      [
+        "declare function canonical(value: string): string;\ndeclare function canonical(value: number): number;",
+        "declare function measure(value: string, from?: number): number;",
+        'declare const LocalId: "~fixture/Local";',
+        'declare const TypeId2: "~fixture/Cache";',
+        "declare const Version: 3;",
+        'declare const Prefixed: "~fixture/Cache/entry";',
+        'declare const Checked: "~fixture/checked";',
+        "declare const Annotated: Annotated;",
+        "declare const absent: symbol;",
+        "declare const missing: unique symbol;",
+        "declare const marker: unique symbol;",
+        "declare class Unused {\n    size: number;\n}",
+      ],
+    ],
+    [
+      "cast-operands",
+      [
+        "  return [pairs.map((pair) => pair[0]), pairs.map((pair) => pair[1])];\n}) as any;",
+        "  readonly tag = tag;\n} as any;",
+        "var smaller2: (left: Size, right: Size) => Size = smaller as any;",
+        "var succeed2 = succeed as <A>(value: A) => { value: A; readonly exact: true };",
+        "reduce(values, undefined as void, (_, value) => visit(value));",
+        "var nothing: undefined = call((): undefined => {",
+        "  return sql<{ name: string }>`SELECT name FROM ${table}`.map((row) => row.name);",
+        'var text = (identity<string>).bind(undefined, "text");',
+        "  const first = (yield* encode(1)) as string;",
+        "  second = (yield* encode(2)) as string;",
+        "  return zero as any;",
+        'function pick<A extends boolean>(first2: A, again: typeof first2 = first2): A extends true ? "first" : "second" {',
+        '  return (first2 && again ? first() : second()) as A extends true ? "first" : "second";',
+      ],
+    ],
+    [
+      "global-names",
+      [
+        "interface Field<T> extends Codec<T> {",
+        "type Decoded = { symbol: typeof Symbol2; text: typeof Text };",
+        "declare const Symbol2: Codec<symbol>;",
+        "declare const Text: Field<string>;",
+        "  [Symbol.iterator](): Iterator<number>;\n  steps(): globalThis.Generator<number, void>;",
+        "function* count(limit: number): globalThis.Generator<number, void> {",
+        'var key = Symbol.for("key");',
+      ],
+    ],
+    [
+      "ambient-values",
+      [
+        "var LIMIT = 10;",
+        'declare const LIMIT2: "import it from ./limits";',
+        "declare const injected: number;",
+        "var visit: { (node: string): void; BREAK: symbol; SKIP: symbol } = function visit(node) {",
+      ],
+    ],
+    [
+      "augmented-modules",
+      [
+        "declare namespace Annotations2 {\n  interface Augment {}",
+        "declare namespace Annotations2 {\n    interface Augment {\n      readonly status?: number;",
+        "interface Options2 {\n    readonly loud?: boolean;",
+      ],
+    ],
+    ["declaration-modules", ["interface Parsed { value: string }", 'type Kind = "a" | "b";', "function parse(text: string, kind: Kind): Parsed {"]],
+    [
+      "shadowed-names",
+      [
+        "declare namespace outer { export type { Objects }; }",
+        "  type Objects = { readonly ast: outer.Objects<number>; readonly options: Options2 };",
+        "function pick<Objects extends string>(name: Objects, from: outer.Objects<Objects>): Objects | undefined {",
+        "type infer2<T> = T extends readonly (infer Item)[] ? Item : never;",
+        "function first<T extends readonly unknown[]>(list: T): infer2<T> | undefined {",
+        "interface Scope2 {\n  readonly name: string;\n}\nfunction trace(parent: Scope, name: string): Scope2 | undefined {\n  const scope: Scope2 = { name };",
       ],
     ],
   ];
@@ -226,6 +302,39 @@ console.log(serve(server, "a", "b"), new Polite("hi").greet({ name: "you" }, 2))
     expect(await spawned([join(String(app), "app")], String(app))).toEqual(plain);
   });
 
+  test.skipIf(!!unsupported)("--no-bundle with rewriteRelativeImportExtensions: the typed files import the JavaScript files, for types too", async () => {
+    using dir = tempDir("build-sound-rewritten-imports", {
+      "package.json": JSON.stringify({ name: "welcome", version: "1.0.0", type: "module", main: "./dist/index.js", types: "./dist/index.d.ts" }),
+      "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, module: "nodenext", target: "esnext", types: [], lib: ["esnext"], rewriteRelativeImportExtensions: true, verbatimModuleSyntax: true } }),
+      "src/index.ts": `import { greet } from "./greet.ts";\nimport type { Error } from "./greet.ts";\nimport type { Options } from "./options.ts";\nexport type { Options } from "./options.ts";\nexport type Loud = import("./options.ts").Options & { loud: true };\nexport function welcome(options: Options, error?: Error): string {\n  return greet(options, error) + "!";\n}\n`,
+      "src/greet.ts": `import type { Options } from "./options.ts";\nexport type Error = { reason: string };\nexport function isError(value: unknown): value is globalThis.Error {\n  return value instanceof Error;\n}\nexport function greet(options: Options, error?: Error): string {\n  return "hello " + options.name + (error?.reason ?? "");\n}\n`,
+      "src/options.ts": `export type Options = { name: string };\n`,
+    });
+    const built = await spawned([bunExe(), "build", "src/index.ts", "src/greet.ts", "src/options.ts", "--no-bundle", "--outdir", "dist", "--target", "bun", "--dts"], String(dir));
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(await text(String(dir), "dist", "index.js")).toContain('import { greet } from "./greet.js";');
+    const typed = await text(String(dir), "dist", "index.sound.ts");
+    expect(typed).toContain('import { greet } from "./greet.js";');
+    expect(typed).toContain('import type { Error } from "./greet.js";');
+    expect(typed).toContain('import type { Options } from "./options.js";');
+    expect(typed).toContain('export type { Options } from "./options.js";');
+    expect(typed).toContain('export type Loud = import("./options.js").Options & { loud: true };');
+    expect(await text(String(dir), "dist", "greet.sound.ts")).toContain("export type Error = { reason: string };\n");
+    using app = tempDir("build-sound-rewritten-imports-application", {
+      ...application,
+      "app.ts": `import { welcome, type Options } from "welcome";\nconst options: Options = { name: "you" };\nconsole.log(welcome(options));\n`,
+    });
+    await install(String(dir), String(app), "welcome");
+    const plain = await spawned([bunExe(), "app.ts"], String(app));
+    expect(plain).toEqual({ stdout: "hello you!\n", stderr: "", exitCode: 0 });
+    const compiled = await spawned([bunExe(), "build", "--compile", "--aot", "app.ts", "--outfile", "app"], String(app));
+    expect({ said: (compiled.stdout + compiled.stderr).split("\n").filter(line => /^(note|warn|error)/.test(line)), exitCode: compiled.exitCode }).toEqual({
+      said: [`note: "welcome" 1.0.0 is compiled from its typed version in node_modules/welcome/dist`],
+      exitCode: 0,
+    });
+    expect(await spawned([join(String(app), "app")], String(app))).toEqual(plain);
+  });
+
   test("require() in a bundle for the browser", async () => {
     using dir = library("odd-names");
     expect(await spawned([bunExe(), "build", "src/index.ts", "--outdir", "dist", "--packages", "external", "--dts"], String(dir))).toMatchObject({ stderr: "", exitCode: 0 });
@@ -246,6 +355,44 @@ console.log(serve(server, "a", "b"), new Polite("hi").greet({ name: "you" }, 2))
     const below = await text(String(dir), "dist", "helper", "index.sound.ts");
     expect(below).toContain("type Input = { in?: {} };\ninterface Result<T> { value: T; input: Input }");
     expect(await text(String(dir), "dist", "helper", "index.d.ts")).toStartWith("// @sound index.sound.ts ");
+  });
+
+  test("a constant of the sources is checked as a constant, though the bundle declares it with var", async () => {
+    using dir = library("greeter", {
+      "src/index.ts": `const ROOT = "root";
+const KEY = "key";
+const LIMIT = 4;
+export function resolve(name?: string): string {
+  let found = ROOT;
+  found = name ?? found;
+  return found;
+}
+export function read(bag: { [KEY]?: unknown }): string | undefined {
+  return typeof bag[KEY] === "string" ? bag[KEY] : undefined;
+}
+export function clamp(value: number, limit = LIMIT): number {
+  return Math.min(value, (limit = limit + 1));
+}
+`,
+    });
+    expect(await build(String(dir), "--dts")).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(await text(String(dir), "dist", "index.sound.ts")).toContain('var ROOT = "root";\nvar KEY = "key";\nvar LIMIT = 4;');
+  });
+
+  test("is judged as --aot judges it: not by noUnusedLocals, as an ES module and under the tsconfig.json of its sources wherever --outdir is", async () => {
+    using dir = library("greeter", {
+      "package.json": JSON.stringify({ name: "greeter", version: "1.2.3", type: "module" }),
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { strict: true, module: "nodenext", target: "esnext", types: [], lib: ["esnext", "dom"], noUnusedLocals: true, noUnusedParameters: true, verbatimModuleSyntax: true, allowImportingTsExtensions: true, noEmit: true },
+      }),
+      "src/index.ts": `import { used, type Shape } from "./shapes.ts";\nexport const meta: ImportMeta = import.meta;\nexport const later = (run: () => void): number => setTimeout(run, 1);\nexport function area(shape: Shape): number {\n  return used(shape);\n}\n`,
+      "src/shapes.ts": `export interface Shape { side: number }\nexport interface Unused { name: string }\nexport function used(shape: Shape): number {\n  return shape.side ** 2;\n}\n`,
+    });
+    using out = tempDir("build-sound-outside", {});
+    const built = await spawned([bunExe(), "build", "src/index.ts", "--outdir", String(out), "--target", "bun", "--dts"], String(dir));
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(readdirSync(String(out)).sort()).toEqual(["index.d.ts", "index.js", "index.sound.ts"]);
+    expect(await text(String(out), "index.sound.ts")).toContain("interface Unused { name: string }");
   });
 
   test("needs no package.json", async () => {
@@ -271,13 +418,26 @@ console.log(serve(server, "a", "b"), new Polite("hi").greet({ name: "you" }, 2))
 
   test("a type error that only the typed JavaScript has is a warning", async () => {
     using dir = library("greeter", {
-      "src/index.ts": `// @ts-nocheck\nexport function twice(value) {\n  const text: number = "a";\n  return [value, text];\n}\n`,
+      "src/index.ts": `export { length } from "./other";\ndeclare const injected: { on: boolean };\nexport const on = injected.on;\n`,
+      "src/other.ts": `declare const injected: string;\nexport const length = injected.length;\n`,
     });
     const { stderr, exitCode } = await build(String(dir), "--dts");
     expect(stderr).toStartWith(`${leftOut}with its types put back it has type errors, the first at index.sound.ts:`);
     expect(stderr.trim().split("\n").length).toBe(1);
     expect(exitCode).toBe(0);
-    expect(readdirSync(join(String(dir), "dist")).sort()).toEqual(["index.d.ts", "index.js"]);
+    expect(readdirSync(join(String(dir), "dist")).sort()).toEqual(["index.d.ts", "index.js", "other.d.ts"]);
+  });
+
+  test("a file with @ts-nocheck stays untyped in the bundle, and its errors are not reported", async () => {
+    using dir = library("greeter", {
+      "src/index.ts": `import { twice } from "./vendored";\nexport function four(value: number): number[] {\n  return [...twice(value), ...twice(value)];\n}\n`,
+      "src/vendored.ts": `// @ts-nocheck\nexport function twice(value: number) {\n  const text: number = "a" * value;\n  return [value, text];\n}\n`,
+    });
+    expect(await build(String(dir), "--dts")).toMatchObject({ stderr: "", exitCode: 0 });
+    const typed = await text(String(dir), "dist", "index.sound.ts");
+    expect(typed).toContain('// @ts-ignore\nfunction twice(value) {\n  // @ts-ignore\n  const text = "a" * value;');
+    expect(typed).toContain("function four(value: number): number[] {");
+    expect(withoutTypes(typed)).toBe(withoutTypes(await text(String(dir), "dist", "index.js")));
   });
 
   test("takes no value", async () => {

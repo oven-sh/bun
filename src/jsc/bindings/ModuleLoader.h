@@ -100,13 +100,13 @@ JSValue fetchESMSourceCodeAsync(
     BunString* referrer,
     BunString* typeAttribute);
 
-bool hasFilesOfCompiledProgram(JSC::JSGlobalObject*);
+bool hasCompiledProgramFiles(JSC::JSGlobalObject*);
 JSC::JSObject* compiledRuntimeHelpers(JSC::JSGlobalObject*, const String& key);
 JSC::JSPromise* importCompiledProgramFile(Zig::GlobalObject*, JSC::JSModuleLoader*, const String& name, const String& referrer);
 JSC::JSSourceCode* compiledProgramFileSource(Zig::GlobalObject*, const String& key);
 JSC::JSPromise* asyncCompiledProgramFileSource(Zig::GlobalObject*, const String& key);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionCompiledNamespaceSource);
-void noteThatRequireCacheIsRead(Zig::GlobalObject*);
+void recordRequireCacheRead(Zig::GlobalObject*);
 void evictCompiledModule(Zig::GlobalObject*, const String& path);
 JSC::JSObject* evaluatedCompiledModuleNamespace(Zig::GlobalObject*, const String& path);
 void appendEvaluatedCompiledModules(Zig::GlobalObject*, JSC::MarkedArgumentBuffer& keys, const WTF::Function<bool(const JSC::Identifier&)>& isAlreadyListed);

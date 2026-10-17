@@ -1678,6 +1678,9 @@ impl<'a> Resolver<'a> {
                 if let Some(v) = tsconfig.use_define_for_class_fields {
                     result.flags.set_use_define_for_class_fields(v);
                 }
+                if let Some(v) = tsconfig.rewrite_relative_import_extensions {
+                    result.flags.set_rewrite_relative_import_extensions(v);
+                }
             }
 
             // Probe the listing in one `entries_mutex` critical section: a
@@ -4515,8 +4518,17 @@ impl<'a> Resolver<'a> {
             let queue_top_safe_path: &[u8] = qt_safe_path.slice();
             queue_slice_len -= 1;
 
+            let has_current_entries = !queue_top.fd.is_valid()
+                && !self.store_fd
+                && matches!(
+                    rfs!().entries.get(queue_top_unsafe_path),
+                    Some(Fs::file_system::real_fs::EntriesOption::Entries(entries)) if entries.generation >= self.generation
+                );
+            let shared_listing = if has_current_entries || queue_top.fd.is_valid() || self.store_fd { None } else { crate::fs_full::list_from_source(queue_top_unsafe_path) };
             let open_dir: FD = if queue_top.fd.is_valid() {
                 queue_top.fd
+            } else if has_current_entries || shared_listing.is_some() {
+                FD::INVALID
             } else {
                 'open_dir: {
                     // This saves us N copies of .toPosixPath
@@ -4742,6 +4754,20 @@ impl<'a> Resolver<'a> {
                                 // SAFETY: see block-wide note above.
                                 in_place.map(|existing| unsafe { &mut (*existing).data }),
                                 &_value,
+                                &mut filename_store,
+                                (),
+                            )
+                            .expect("unreachable");
+                    }
+                } else if let Some(shared_listing) = &shared_listing {
+                    let mut filename_store = FilenameStoreAppender::new();
+                    for (name, kind) in shared_listing {
+                        new_entry
+                            .add_named_entry_with_store(
+                                // SAFETY: see block-wide note above.
+                                in_place.map(|existing| unsafe { &mut (*existing).data }),
+                                name,
+                                *kind,
                                 &mut filename_store,
                                 (),
                             )
@@ -6638,6 +6664,9 @@ impl<'a> Resolver<'a> {
                     mc.emit_decorator_metadata || parent_config.emit_decorator_metadata;
                 if let Some(v) = parent_config.use_define_for_class_fields {
                     mc.use_define_for_class_fields = Some(v);
+                }
+                if let Some(v) = parent_config.rewrite_relative_import_extensions {
+                    mc.rewrite_relative_import_extensions = Some(v);
                 }
                 if !parent_config.base_url.is_empty() {
                     mc.base_url = core::mem::take(&mut parent_config.base_url);

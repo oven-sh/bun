@@ -40,6 +40,20 @@ test("a package that ships its TypeScript is not held to the application's rules
   expect({ exitCode, stdout }).toEqual({ exitCode: 0, stdout: "3\n" });
 }, 120_000);
 
+test("a package that ships its TypeScript stays typed when it only disagrees with the application's ambient declarations", async () => {
+  using dir = tempDir("aot-dependency-ambient", {
+    "package.json": JSON.stringify({ name: "app" }),
+    "tsconfig.json": strict(),
+    "host.d.ts": `interface HostInit { name?: string; dispatcher: number }\ninterface HostThing { id: number; extra(): void }\ndeclare function describeHost(init: HostInit): string;\ndeclare function makeThing(): { id: number };\ndeclare function hostReader(): { read(): number };\n`,
+    "main.ts": `(globalThis as any).describeHost = (init: object) => JSON.stringify(init);\n(globalThis as any).makeThing = () => ({ id: 7 });\n(globalThis as any).hostReader = () => ({ read: () => 1, readMany: () => 5 });\nconst { Wrapper } = await import("ships-typescript");\nconst wrapper = new Wrapper("a");\nconsole.log(wrapper.describe(), wrapper.thing().id, wrapper.init().name, wrapper.many());\n`,
+    "node_modules/ships-typescript/package.json": JSON.stringify({ name: "ships-typescript", main: "index.ts", types: "index.ts" }),
+    "node_modules/ships-typescript/index.ts": `export class Wrapper {\n  name: string;\n  constructor(name: string) { this.name = name; }\n  describe(): string { return describeHost({ name: this.name }); }\n  thing(): HostThing { return makeThing(); }\n  init(): HostInit { const init: HostInit = { name: this.name }; return init; }\n  many(): number { return hostReader().readMany(); }\n}\n`,
+  });
+  const { said, exitCode, stdout } = await build(String(dir), "./main.ts");
+  expect(said).not.toContain("ships-typescript");
+  expect({ exitCode, stdout }).toEqual({ exitCode: 0, stdout: '{"name":"a"} 7 a 5\n' });
+}, 120_000);
+
 test("a type error beside a decorated class of a dependency does not stop the build either", async () => {
   using dir = tempDir("aot-dependency-decorated", {
     "package.json": JSON.stringify({ name: "app" }),

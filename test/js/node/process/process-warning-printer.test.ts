@@ -51,6 +51,11 @@ const cases: Record<string, Case> = {
     stdout: "getter true\ngetter true\n",
     stderr: "",
   },
+  "process.stderr replaced by defineProperty under a computed name": {
+    source: `const name = ["std", "err"].join(""); Object.defineProperty(process, name, { configurable: true, get() { return { write(chunk) { console.log("getter", String(chunk).length > 0); } }; } }); process.emitWarning("replaced"); ${settle}`,
+    stdout: "getter true\ngetter true\n",
+    stderr: "",
+  },
   "process.stderr only read": {
     source: `void process.stderr; process.emitWarning("through the stream"); ${settle} console.log("done");`,
     stdout: "done\n",

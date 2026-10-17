@@ -1,13 +1,14 @@
 use bstr::BStr;
 use bun_sema::atom::Interner;
 use bun_sema::check::Checker;
-use bun_sema::check::services::{Child, NodeRef, Services, SymbolFlags, SymbolOp, SymbolRef, SymbolTable};
+use bun_sema::check::services::{Child, NodeRef, Services, SymbolFlags, SymbolOp, SymbolRef, SymbolTable, TypeFlags, TypeFormatFlags};
 use bun_sema::check::spans::{compute_ecma_line_starts, skip_trivia, skip_trivia_back, token_end};
 use bun_sema::hir::*;
 use bun_sema::json::Json;
 use bun_sema::program::FileId;
 use bun_sema::resolve::{Dialect, ScriptKind};
 use bun_sema::session::Session;
+use bun_sema::types::TypeId;
 use bun_sema::util::{FxHashMap, FxHashSet};
 
 pub struct Source<'a> {
@@ -134,6 +135,11 @@ fn line_start(text: &[u8], at: usize) -> usize {
 fn is_inside(sorted_ranges: &[(u32, u32)], at: u32) -> bool {
     let until = sorted_ranges.partition_point(|range| range.0 <= at);
     sorted_ranges[..until].last().is_some_and(|range| at < range.1)
+}
+
+fn is_covered(sorted_ranges: &[(u32, u32)], start: u32, end: u32) -> bool {
+    let until = sorted_ranges.partition_point(|range| range.0 <= start);
+    sorted_ranges[..until].last().is_some_and(|range| end <= range.1)
 }
 
 fn merged(mut ranges: Vec<(u32, u32)>) -> Vec<(u32, u32)> {
@@ -437,7 +443,7 @@ impl<'a, 's> Syntax<'a, 's> {
     fn call_slot(&self, expr: &Expr) -> Option<Slot> {
         let (call, key) = match expr.kind {
             ExprKind::Call(call) => (&self.file[call], self.file[call].close_pos),
-            ExprKind::New(call) => (&self.file[call], expr.pos),
+            ExprKind::New(call) | ExprKind::TaggedTemplate(call) => (&self.file[call], expr.pos),
             _ => return None,
         };
         let mut at = self.outer_span(call.callee).1;
@@ -561,6 +567,10 @@ impl<'a, 's> Syntax<'a, 's> {
             ExprKind::Cond { test, yes, no } => vec![test, yes, no],
             ExprKind::Template { exprs } | ExprKind::Array(exprs) | ExprKind::ImportCall { args: exprs } => file.ids(exprs).collect(),
             ExprKind::Object(properties) => properties.iter().map(|property| file[property].value).collect(),
+            ExprKind::Fn(function) => match file[function].body {
+                FnBody::Expr(body) => vec![body],
+                _ => Vec::new(),
+            },
             _ => self.operand_of_cast(expr).into_iter().collect(),
         }
     }
@@ -615,6 +625,7 @@ impl<'a, 's> Syntax<'a, 's> {
             ExprKind::New(call) if self.file[call].close_pos == u32::MAX => Level::New,
             ExprKind::Call(_) | ExprKind::ImportCall { .. } => Level::Call,
             ExprKind::As { .. } | ExprKind::Satisfies { .. } | ExprKind::AsConst(_) => Level::Compare,
+            ExprKind::Instantiation { .. } => Level::Postfix,
             _ => Level::Member,
         }
     }
@@ -629,7 +640,7 @@ impl<'a, 's> Syntax<'a, 's> {
     fn context(&self) -> Context {
         let file = self.file;
         let count = file.exprs.len();
-        let mut context = Context { required: vec![Level::Assign; count], parent: vec![ExprId::NONE; count], is_before_operator: vec![false; count] };
+        let mut context = Context { required: vec![Level::Yield; count], parent: vec![ExprId::NONE; count], is_before_operator: vec![false; count] };
         for (index, expr) in file.exprs.iter().enumerate() {
             let parent = ExprId(index as u32);
             let mut set = |child: ExprId, level: Level| {
@@ -658,12 +669,12 @@ impl<'a, 's> Syntax<'a, 's> {
                 }
                 ExprKind::Assign { target, value, .. } => {
                     set(target, Level::Postfix);
-                    set(value, Level::Assign);
+                    set(value, Level::Yield);
                 }
                 ExprKind::Cond { test, yes, no } => {
                     set(test, Level::Nullish);
-                    set(yes, Level::Assign);
-                    set(no, Level::Assign);
+                    set(yes, Level::Yield);
+                    set(no, Level::Yield);
                 }
                 ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::AsConst(expr) => set(expr, Level::Compare),
                 ExprKind::NonNull(expr) | ExprKind::Instantiation { expr, .. } => set(expr, Level::Call),
@@ -704,7 +715,7 @@ impl<'a, 's> Syntax<'a, 's> {
         context
     }
 
-    fn starts_a_statement(&self, mut at: u32) -> bool {
+    fn starts_a_statement(&self, mut at: u32, is_object: bool) -> bool {
         loop {
             let before = self.before_trivia(at);
             if before == 0 {
@@ -713,7 +724,7 @@ impl<'a, 's> Syntax<'a, 's> {
             match self.byte(before - 1) {
                 b'(' => at = before - 1,
                 b';' | b'{' | b'}' => return true,
-                b'>' => return before >= 2 && self.byte(before - 2) == b'=',
+                b'>' => return is_object && before >= 2 && self.byte(before - 2) == b'=',
                 _ => return self.text[..before as usize].ends_with(b"export default"),
             }
         }
@@ -754,7 +765,7 @@ impl<'a, 's> Syntax<'a, 's> {
             ExprKind::Fn(function) => self.file[function].kind != FnKind::Arrow,
             _ => false,
         };
-        is_ambiguous_at_statement_start && self.starts_a_statement(self.file[operand].pos)
+        is_ambiguous_at_statement_start && self.starts_a_statement(self.file[operand].pos, matches!(kind, ExprKind::Object(_)))
     }
 
     fn shape(&self, expr: ExprId) -> (Shape, u32) {
@@ -863,6 +874,7 @@ impl<'a, 's> Syntax<'a, 's> {
 pub struct Erased {
     pub javascript: Vec<u8>,
     pub has_default_export: bool,
+    pub has_untyped_exports: bool,
     pub relative_imports: Vec<Vec<u8>>,
 }
 
@@ -895,7 +907,7 @@ pub fn erase(path: &[u8], typescript: &[u8]) -> Result<Erased, String> {
     let mut relative_imports: Vec<Vec<u8>> = specifiers.filter(|specifier| specifier.is_some()).map(|specifier| atoms.bytes(specifier).to_vec()).filter(|specifier| specifier.starts_with(b"./") || specifier.starts_with(b"../")).collect();
     relative_imports.sort_unstable();
     relative_imports.dedup();
-    Ok(Erased { javascript, has_default_export: syntax.has_default_export(), relative_imports })
+    Ok(Erased { javascript, has_default_export: syntax.has_default_export(), has_untyped_exports: syntax.has_untyped_exports(), relative_imports })
 }
 
 struct Mappings {
@@ -1035,16 +1047,16 @@ fn trimmed(text: &[u8]) -> &[u8] {
 fn outermost_only(mut slots: Vec<Slot>, regions: &[(u32, u32)]) -> Vec<Slot> {
     slots.retain(|slot| slot.end > slot.start);
     slots.sort_by_key(|slot| (slot.start, std::cmp::Reverse(slot.end)));
-    let mut kept: Vec<Slot> = Vec::new();
+    let mut retained: Vec<Slot> = Vec::new();
     let mut covered = 0;
     for slot in slots {
         let is_in_region = regions.iter().any(|region| region.0 <= slot.start && slot.end <= region.1);
         if slot.start >= covered && !is_in_region {
             covered = slot.end;
-            kept.push(slot);
+            retained.push(slot);
         }
     }
-    kept
+    retained
 }
 
 pub struct TypedText {
@@ -1052,10 +1064,12 @@ pub struct TypedText {
     pub dropped_casts: usize,
     pub has_default_export: bool,
     pub untyped_exports: Vec<Vec<u8>>,
+    pub modules_of_untyped_values: Vec<Vec<u8>>,
 }
 
 pub struct Bundle<'a> {
     pub modules: &'a [ModuleTypes],
+    pub emitted_declarations: &'a [ModuleTypes],
     pub entry_point: Option<&'a [u8]>,
     pub is_for_declarations: bool,
     pub keeps_modules_apart: bool,
@@ -1070,6 +1084,10 @@ struct Written<'a, 's> {
 }
 
 impl Written<'_, '_> {
+    fn is_unchecked(&self) -> bool {
+        self.syntax.file.check_directive == Some(false)
+    }
+
     fn text(&self, start: u32, end: u32) -> Vec<u8> {
         let (mut text, mut at) = (Vec::new(), start);
         let from = self.edits.partition_point(|edit| edit.0 < start);
@@ -1100,6 +1118,17 @@ impl Written<'_, '_> {
         Some([if is_exported { &b"export namespace "[..] } else { b"namespace " }, &name, b" {\n", &inside.join(&b"\n"[..]), b"\n}"].concat())
     }
 
+    fn merged_augmentation_text(&self, statement: &Stmt) -> Option<Vec<u8>> {
+        let file = self.syntax.file;
+        let StmtKind::Module(declared) = statement.kind else { return None };
+        self.types?.augmented_modules.iter().find(|augmented| augmented.0 == statement.start)?;
+        let inside = file.ids(file[declared].body).map(|inner| &file[inner]).map(|inner| {
+            let declare: &[u8] = if matches!(inner.kind, StmtKind::Interface(_) | StmtKind::TypeAlias(_)) { b"" } else { b"declare " };
+            [declare, &self.statement_text(inner, Flags::EXPORT | Flags::DEFAULT | Flags::AMBIENT)[..]].concat()
+        });
+        Some(inside.collect::<Vec<_>>().join(&b"\n"[..]))
+    }
+
     fn statement_text(&self, statement: &Stmt, dropped_modifiers: Flags) -> Vec<u8> {
         let (mut text, mut at) = (Vec::new(), statement.start);
         for modifier in self.syntax.file.modifier_list(statement.modifiers) {
@@ -1119,6 +1148,11 @@ enum ImportedAs {
     Default,
     Namespace,
     Named(ImportSpecId),
+}
+
+enum Piece {
+    Text(Vec<u8>),
+    Source(u32, u32),
 }
 
 #[derive(Default)]
@@ -1141,6 +1175,22 @@ impl<'a, 's> Syntax<'a, 's> {
     fn has_default_export(&self) -> bool {
         self.file.export_specs.iter().any(|specifier| self.word(specifier.pos) == b"default")
             || self.file.stmts.iter().any(|statement| matches!(statement.kind, StmtKind::ExportDefault(_)) || self.file.modifiers_to_flags(statement.modifiers).contains(Flags::DEFAULT))
+    }
+
+    fn has_untyped_exports(&self) -> bool {
+        let file = self.file;
+        let mut untyped: FxHashSet<&[u8]> = FxHashSet::default();
+        for statement in file.ids(file.body).map(|id| &file[id]) {
+            let StmtKind::Var(declarations) = statement.kind else { continue };
+            let is_any = |declaration: &&VarDecl| file.types.get(declaration.ty.idx()).is_some_and(|node| matches!(node.kind, TypeNodeKind::Keyword(Keyword::Any)));
+            let names = declarations.iter().map(|declaration| &file[declaration]).filter(is_any).filter_map(|declaration| self.first_identifier(declaration.pat));
+            let names: Vec<&[u8]> = names.map(|at| self.word(at)).collect();
+            if !names.is_empty() && file.modifiers_to_flags(statement.modifiers).contains(Flags::EXPORT) {
+                return true;
+            }
+            untyped.extend(names);
+        }
+        file.export_specs.iter().any(|specifier| !specifier.type_only && file[specifier.export].spec.is_none() && untyped.contains(self.word(specifier.local_pos)))
     }
 
     fn identifiers(&self, pattern: PatId, found: &mut Vec<u32>) {
@@ -1178,26 +1228,88 @@ impl<'a, 's> Syntax<'a, 's> {
         found
     }
 
-    fn top_level_constants(&self) -> Vec<&'a VarDecl> {
+    fn ambient_variable(&self, binding: u32, local: &[u8], types: Option<&ModuleTypes>) -> Option<Vec<Piece>> {
         let file = self.file;
-        let lists = file.ids(file.body).filter_map(|id| match file[id].kind {
-            StmtKind::Var(declarations) => Some(declarations),
-            _ => None,
-        });
-        let declarations = lists.flat_map(|declarations| declarations.iter()).map(|declaration: VarDeclId| &file[declaration]);
-        declarations.filter(|declaration| declaration.kind == VarKind::Const && !declaration.flags.contains(Flags::AMBIENT) && matches!(file[declaration.pat].kind, PatKind::Ident(_))).collect()
+        let declaration = file.var_decls.iter().find(|declaration| file[declaration.pat].pos == binding && matches!(file[declaration.pat].kind, PatKind::Ident(_)))?;
+        let keyword: &[u8] = match declaration.kind {
+            VarKind::Var => b"var ",
+            VarKind::Let => b"let ",
+            VarKind::Const => b"const ",
+            VarKind::Using | VarKind::AwaitUsing => return None,
+        };
+        let head = Piece::Text([&b"declare "[..], keyword, local, b": "].concat());
+        let annotation = match declaration.ty.some() {
+            Some(annotation) => {
+                let (start, end) = self.type_span(annotation);
+                vec![Piece::Source(start, end)]
+            }
+            None => vec![Piece::Text(types?.constant_type(binding)?.to_vec())],
+        };
+        Some(std::iter::once(head).chain(annotation).chain([Piece::Text(b";\n".to_vec())]).collect())
     }
 
-    fn is_unique_symbol(&self, declaration: &VarDecl) -> bool {
+    fn ambient_function(&self, binding: u32, local: &[u8]) -> Option<Vec<Piece>> {
         let file = self.file;
-        match (declaration.ty.some(), file.exprs.get(declaration.init.idx()).map(|init| init.kind)) {
-            (Some(annotation), _) => matches!(file[annotation].kind, TypeNodeKind::UniqueSymbol),
-            (None, Some(ExprKind::Call(call))) => {
-                let callee = &file[file[call].callee];
-                matches!(&self.text[callee.pos as usize..callee.end as usize], b"Symbol" | b"Symbol.for")
-            }
-            _ => false,
+        let function = file.fns.iter().find(|function| function.kind == FnKind::Decl && function.name_pos == binding && !matches!(function.body, FnBody::None))?;
+        let is_declared = |parameter: ParamId| {
+            let parameter = &file[parameter];
+            parameter.ty.is_some() && parameter.default.is_none() && matches!(file[parameter.pat].kind, PatKind::Ident(_))
+        };
+        let end = self.type_span(function.ret.some()?).1;
+        function.params.iter().all(is_declared).then(|| vec![Piece::Text([&b"declare function "[..], local].concat()), Piece::Source(self.token_end(binding), end), Piece::Text(b";\n".to_vec())])
+    }
+
+    fn overload_signatures(&self, found: &Declared) -> Vec<StmtId> {
+        let file = self.file;
+        let is_signature = |id: &StmtId| matches!(file[*id].kind, StmtKind::Fn(function) if matches!(file[function].body, FnBody::None)) && !file.modifiers_to_flags(file[*id].modifiers).contains(Flags::AMBIENT);
+        found.statements.iter().copied().filter(is_signature).collect()
+    }
+
+    fn javascript_extension_edit(&self, literal: u32) -> Option<(u32, u32, Vec<u8>)> {
+        const EXTENSIONS: [(&[u8], &[u8], &[u8]); 4] = [(b".ts", b".d.ts", b".js"), (b".tsx", b".d.tsx", b".js"), (b".mts", b".d.mts", b".mjs"), (b".cts", b".d.cts", b".cjs")];
+        let end = self.token_end(literal).checked_sub(1)?;
+        let specifier = self.text.get(literal as usize + 1..end as usize)?;
+        if !specifier.starts_with(b"./") && !specifier.starts_with(b"../") {
+            return None;
         }
+        let (typescript, _, javascript) = EXTENSIONS.iter().find(|(typescript, declarations, _)| specifier.ends_with(typescript) && !specifier.ends_with(declarations))?;
+        Some((end - typescript.len() as u32, end, javascript.to_vec()))
+    }
+
+    fn anchored_expressions(&self) -> impl Iterator<Item = (u32, ExprId)> + '_ {
+        let file = self.file;
+        let initializers = file.var_decls.iter().filter(|declaration| declaration.init.is_some()).filter_map(|declaration| Some((self.first_identifier(declaration.pat)?, declaration.init)));
+        let statements = file.stmts.iter().filter_map(|statement| match statement.kind {
+            StmtKind::Return(value) | StmtKind::Throw(value) | StmtKind::Expr(value) if value.is_some() => Some((statement.start, value)),
+            _ => None,
+        });
+        initializers.chain(statements)
+    }
+
+    fn nested_names(&self) -> FxHashSet<&'a [u8]> {
+        let file = self.file;
+        let top_level: FxHashSet<StmtId> = file.ids(file.body).collect();
+        let mut at_top_level = Vec::new();
+        for &id in &top_level {
+            match file[id].kind {
+                StmtKind::Var(declarations) => declarations.iter().for_each(|declaration: VarDeclId| self.identifiers(file[declaration].pat, &mut at_top_level)),
+                StmtKind::Fn(function) => at_top_level.push(file[function].name_pos),
+                StmtKind::Class(class) => at_top_level.push(file[class].name_pos),
+                _ => {}
+            }
+        }
+        let at_top_level: FxHashSet<u32> = at_top_level.into_iter().collect();
+        let is_nested = |statement: &StmtId| !top_level.contains(statement);
+        let values = (file.pats.iter().filter(|pattern| matches!(pattern.kind, PatKind::Ident(_))).map(|pattern| pattern.pos))
+            .chain(file.fns.iter().filter(|function| function.name.is_some() && matches!(function.kind, FnKind::Decl | FnKind::Expr)).map(|function| function.name_pos))
+            .chain(file.classes.iter().filter(|class| class.name.is_some()).map(|class| class.name_pos))
+            .filter(|at| !at_top_level.contains(at));
+        let types = (file.type_params.iter().map(|parameter| parameter.pos))
+            .chain(file.interfaces.iter().filter(|declared| is_nested(&declared.stmt)).map(|declared| declared.name_pos))
+            .chain(file.aliases.iter().filter(|declared| is_nested(&declared.stmt)).map(|declared| declared.name_pos))
+            .chain(file.enums.iter().filter(|declared| is_nested(&declared.stmt)).map(|declared| declared.name_pos))
+            .chain(file.modules.iter().filter(|declared| is_nested(&declared.stmt) && matches!(declared.name, ModuleName::Ident(_))).map(|declared| declared.name_pos));
+        values.chain(types).map(|at| self.word(at)).collect()
     }
 
     fn top_level_declarations(&self) -> FxHashMap<&'a [u8], Declared> {
@@ -1254,18 +1366,21 @@ struct NamespaceObject<'a> {
     members: Vec<(&'a [u8], &'a [u8])>,
 }
 
-const RESERVED_WORDS: [&[u8]; 51] = [
+const RESERVED_WORDS: [&[u8]; 57] = [
     b"any", b"bigint", b"boolean", b"break", b"case", b"catch", b"class", b"const", b"continue", b"debugger", b"default", b"delete", b"do", b"else", b"enum", b"export", b"extends",
     b"false", b"finally", b"for", b"function", b"if", b"import", b"in", b"instanceof", b"never", b"new", b"null", b"number", b"object", b"return", b"string", b"super", b"switch",
     b"symbol", b"this", b"throw", b"true", b"try", b"typeof", b"undefined", b"unknown", b"var", b"void", b"while", b"with", b"yield", b"let", b"static", b"await", b"intrinsic",
+    b"infer", b"keyof", b"readonly", b"unique", b"asserts", b"abstract",
 ];
 
 #[derive(Default)]
 struct Linked {
     hoisted: Vec<u8>,
     ambient_enums: FxHashSet<(usize, u32)>,
+    ambient_signatures: FxHashSet<(usize, u32)>,
+    replaced_statements: FxHashSet<(usize, u32)>,
+    modules_of_untyped_values: Vec<Vec<u8>>,
     emitted_enums: FxHashMap<(u32, u32), Vec<u8>>,
-    unique_symbols: FxHashMap<(u32, u32), Vec<u8>>,
     enum_names: FxHashMap<(u32, u32), Vec<u8>>,
     untyped_exports: Vec<Vec<u8>>,
 }
@@ -1280,11 +1395,12 @@ fn link(written: &mut [Option<Written<'_, '_>>], paths: &[&[u8]], mapped: usize,
     }
     let name_in_output = |module: usize, declared: &Declared| declared.bindings.iter().find_map(|&at| generated.get(&(module as u32, at))).map(|&offset| output.word(offset));
 
-    let mut taken: FxHashSet<Vec<u8>> = FxHashSet::default();
+    let mut taken: FxHashSet<Vec<u8>> = RESERVED_WORDS.iter().map(|word| word.to_vec()).collect();
     let file = output.file;
     taken.extend(file.pats.iter().filter(|pattern| matches!(pattern.kind, PatKind::Ident(_))).map(|pattern| output.word(pattern.pos).to_vec()));
     taken.extend(file.fns.iter().filter(|function| function.name.is_some() && matches!(function.kind, FnKind::Decl | FnKind::Expr)).map(|function| output.word(function.name_pos).to_vec()));
     taken.extend(file.classes.iter().filter(|class| class.name.is_some()).map(|class| output.word(class.name_pos).to_vec()));
+    taken.extend(file.exprs.iter().filter(|expr| matches!(expr.kind, ExprKind::Ident(_))).map(|expr| output.word(expr.pos).to_vec()));
     taken.extend(file.import_specs.iter().map(|specifier| output.word(specifier.pos).to_vec()));
     taken.extend(file.imports.iter().filter(|import| import.default.is_some()).map(|import| output.word(import.default_pos).to_vec()));
     taken.extend(file.imports.iter().filter(|import| import.namespace.is_some()).map(|import| output.word(import.namespace_pos).to_vec()));
@@ -1295,8 +1411,26 @@ fn link(written: &mut [Option<Written<'_, '_>>], paths: &[&[u8]], mapped: usize,
         taken.extend(heads.map(|name| module.syntax.word(name.pos()).to_vec()));
     }
 
+    let nested_names: Vec<FxHashSet<&[u8]>> = written.iter().map(|module| module.as_ref().map_or_else(FxHashSet::default, |module| module.syntax.nested_names())).collect();
+    taken.extend(nested_names.iter().flatten().map(|name| name.to_vec()));
+
+    let emitted: FxHashMap<usize, usize> = paths.iter().enumerate().filter_map(|(index, path)| Some((index, *index_of.get(&emitted_declarations_path(path)?[..])?))).collect();
+    let emitted_from: FxHashMap<usize, usize> = emitted.iter().map(|(&source, &declarations)| (declarations, source)).collect();
+    let is_removed_without_written_type = |index: usize, name: &[u8]| {
+        let (Some(found), Some(module)) = (declared[index].get(name), written[index].as_ref()) else { return false };
+        let Some(&binding) = found.bindings.first().filter(|_| found.import.is_none() && found.enum_statement.is_none()) else { return false };
+        name_in_output(index, found).filter(|_| index < mapped).is_none()
+            && module.syntax.overload_signatures(found).is_empty()
+            && module.syntax.ambient_variable(binding, b"", module.types).is_none()
+            && module.syntax.ambient_function(binding, b"").is_none()
+    };
+    let declaring_place = |index: usize, name: Box<[u8]>| match (emitted.get(&index), emitted_from.get(&index)) {
+        (Some(&declarations), _) if declared[declarations].contains_key(&name[..]) && is_removed_without_written_type(index, &name) => (declarations, name),
+        (_, Some(&source)) if declared[source].contains_key(&name[..]) && !is_removed_without_written_type(source, &name) => (source, name),
+        _ => (index, name),
+    };
     let place_of = |target: &Target| match target {
-        Target::Declaration { path, name } => Some((*index_of.get(&path[..])?, name.clone())),
+        Target::Declaration { path, name } => Some(declaring_place(*index_of.get(&path[..])?, name.clone())),
         Target::Module { .. } => None,
     };
     let mut wanted: FxHashSet<(usize, Box<[u8]>)> = FxHashSet::default();
@@ -1332,17 +1466,33 @@ fn link(written: &mut [Option<Written<'_, '_>>], paths: &[&[u8]], mapped: usize,
         let (index, name) = place;
         let (Some(found), Some(module)) = (declared[index].get(&name[..]), written[index].as_ref()) else { continue };
         let Some(types) = module.types.filter(|_| index >= mapped) else { continue };
-        for &statement in found.statements.iter().chain(&found.enum_statement) {
-            let statement = &module.syntax.file[statement];
-            let inside = types.references.iter().filter(|reference| statement.start <= reference.0 && reference.0 < statement.loc.end);
+        let statements = found.statements.iter().chain(&found.enum_statement).map(|&statement| (module.syntax.file[statement].start, module.syntax.file[statement].loc.end));
+        let ambient = found.bindings.first().and_then(|&binding| module.syntax.ambient_variable(binding, b"", module.types).or_else(|| module.syntax.ambient_function(binding, b"")));
+        let ambient = ambient.into_iter().flatten().filter_map(|piece| match piece {
+            Piece::Source(start, end) => Some((start, end)),
+            Piece::Text(_) => None,
+        });
+        for (start, end) in statements.chain(ambient) {
+            let inside = types.references.iter().filter(|reference| start <= reference.0 && reference.0 < end);
             queue.extend(inside.filter_map(|reference| place_of(&reference.1)));
         }
     }
 
+    let mut declared_in_output: Vec<u32> = Vec::new();
+    for statement in output.file.ids(output.file.body).map(|id| &output.file[id]) {
+        match statement.kind {
+            StmtKind::Var(declarations) => declarations.iter().for_each(|declaration: VarDeclId| output.identifiers(output.file[declaration].pat, &mut declared_in_output)),
+            StmtKind::Fn(function) => declared_in_output.push(output.file[function].name_pos),
+            StmtKind::Class(class) => declared_in_output.push(output.file[class].name_pos),
+            _ => {}
+        }
+    }
+    let declared_in_output: FxHashSet<&[u8]> = declared_in_output.into_iter().map(|at| output.word(at)).collect();
     let mut names: Vec<FxHashMap<&[u8], Vec<u8>>> = vec![FxHashMap::default(); written.len()];
     let mut values: Vec<FxHashMap<&[u8], &[u8]>> = vec![FxHashMap::default(); written.len()];
     let mut imports: FxHashMap<Vec<u8>, Vec<u8>> = FxHashMap::default();
     let mut linked = Linked { untyped_exports: namespaces_with_code, ..Default::default() };
+    let mut ambient_values: Vec<(usize, Vec<Piece>)> = Vec::new();
     let unique = |name: &[u8], taken: &mut FxHashSet<Vec<u8>>| {
         let mut candidate = name.to_vec();
         let mut number = 1;
@@ -1357,6 +1507,10 @@ fn link(written: &mut [Option<Written<'_, '_>>], paths: &[&[u8]], mapped: usize,
         let mut in_order: Vec<(&[u8], &Declared)> = declared[index].iter().map(|(&name, found)| (name, found)).collect();
         in_order.sort_by_key(|(_, found)| found.names.first().or(found.bindings.first()).copied());
         for (name, found) in in_order {
+            if declaring_place(index, Box::from(name)).0 != index {
+                linked.replaced_statements.extend(found.statements.iter().map(|statement| (index, statement.0)));
+                continue;
+            }
             let is_wanted = wanted.contains(&(index, Box::from(name)));
             if let Some(in_output) = name_in_output(index, found).filter(|_| index < mapped) {
                 values[index].insert(name, in_output);
@@ -1390,7 +1544,12 @@ fn link(written: &mut [Option<Written<'_, '_>>], paths: &[&[u8]], mapped: usize,
                 let (file, statement) = (module.syntax.file, &module.syntax.file[statement]);
                 let StmtKind::Import(import) = statement.kind else { continue };
                 let tail = trimmed(&module.syntax.text[file[import].clause_end as usize..statement.loc.end as usize]);
-                if bun_core::strings::index_of_any(tail, b"\"'").is_some_and(|quote| matches!(tail.get(quote + 1), Some(b'.' | b'/'))) {
+                let is_relative = bun_core::strings::index_of_any(tail, b"\"'").is_some_and(|quote| matches!(tail.get(quote + 1), Some(b'.' | b'/')));
+                if is_relative && found.statements.is_empty() {
+                    continue;
+                }
+                if is_relative {
+                    names[index].insert(name, unique(name, &mut taken));
                     continue;
                 }
                 let imported = match imported_as {
@@ -1416,16 +1575,23 @@ fn link(written: &mut [Option<Written<'_, '_>>], paths: &[&[u8]], mapped: usize,
                 names[index].insert(name, local);
                 continue;
             }
-            if found.is_ambient_value && found.bindings.is_empty() {
+            if found.is_ambient_value && found.bindings.is_empty() && !emitted_from.contains_key(&index) && !declared_in_output.contains(name) {
                 taken.insert(name.to_vec());
                 names[index].insert(name, name.to_vec());
                 continue;
             }
-            let local = unique(name, &mut taken);
+            let local = if bundle.keeps_modules_apart { name.to_vec() } else { unique(name, &mut taken) };
             if let Some(enum_statement) = found.enum_statement {
                 linked.ambient_enums.insert((index, enum_statement.0));
+            } else if let signatures = module.syntax.overload_signatures(found)
+                && !signatures.is_empty()
+            {
+                linked.ambient_signatures.extend(signatures.iter().map(|signature| (index, signature.0)));
+            } else if let Some(pieces) = found.bindings.first().and_then(|&binding| module.syntax.ambient_variable(binding, &local, module.types).or_else(|| module.syntax.ambient_function(binding, &local))) {
+                ambient_values.push((index, pieces));
             } else if !found.bindings.is_empty() {
                 linked.untyped_exports.push(name.to_vec());
+                linked.modules_of_untyped_values.push(paths[index].to_vec());
                 let parameters: Vec<Vec<u8>> = (0..found.type_parameters).map(|number| format!("T{number} = any").into_bytes()).collect();
                 let parameters = if parameters.is_empty() { Vec::new() } else { [&b"<"[..], &parameters.join(&b", "[..])[..], b">"].concat() };
                 if found.is_function {
@@ -1441,23 +1607,7 @@ fn link(written: &mut [Option<Written<'_, '_>>], paths: &[&[u8]], mapped: usize,
         }
     }
 
-    for (index, module) in written.iter().enumerate().take(mapped) {
-        let Some(module) = module else { continue };
-        for declaration in module.syntax.top_level_constants().into_iter().filter(|declaration| module.syntax.is_unique_symbol(declaration)) {
-            let name = module.syntax.file[declaration.pat].pos;
-            let is_variable = |&at: &u32| output.file.var_decls.iter().any(|declared| declared.kind == VarKind::Var && output.file[declared.pat].pos == at);
-            if generated.get(&(index as u32, name)).is_some_and(is_variable) {
-                let twin = unique(module.syntax.word(name), &mut taken);
-                linked.hoisted.extend_from_slice(&[&b"declare const "[..], &twin, b": unique symbol;\n"].concat());
-                linked.unique_symbols.insert((index as u32, name), twin);
-            }
-        }
-    }
-
-    let final_name = |target: &Target| match target {
-        Target::Declaration { path, name } => names[*index_of.get(&path[..])?].get(&name[..]),
-        Target::Module { .. } => None,
-    };
+    let final_name = |target: &Target| place_of(target).and_then(|(index, name)| names[index].get(&name[..]));
     let mut namespace_objects: FxHashMap<&[u8], &[u8]> = FxHashMap::default();
     let objects = output.namespace_objects();
     let mut matched_objects: FxHashSet<&[u8]> = FxHashSet::default();
@@ -1477,15 +1627,17 @@ fn link(written: &mut [Option<Written<'_, '_>>], paths: &[&[u8]], mapped: usize,
         namespace_objects.insert(&types.path[..], object.name);
         matched_objects.insert(object.name);
         let values: FxHashSet<&[u8]> = object.members.iter().map(|member| member.0).collect();
-        let is_only_a_type = |target: &Target| place_of(target).and_then(|(index, name)| Some(declared[index].get(&name[..])?.bindings.is_empty())).unwrap_or(false);
+        let is_only_a_type = |target: &Target| place_of(target).and_then(|(index, name)| declared[index].get(&name[..]).map(|found| found.bindings.is_empty() && !found.is_ambient_value)).unwrap_or(false);
         let only_types = types.exports.iter().filter(|export| !values.contains(&export.0[..]) && is_only_a_type(&export.1)).filter_map(|export| Some((&export.0[..], final_name(&export.1)?)));
         let only_types: Vec<Vec<u8>> = only_types.map(|(name, local)| if &local[..] == name { local.clone() } else { [&local[..], b" as ", name].concat() }).collect();
         if !only_types.is_empty() {
             linked.hoisted.extend_from_slice(&[&b"declare namespace "[..], object.name, b" { export type { ", &only_types.join(&b", "[..]), b" }; }\n"].concat());
         }
     }
-    let namespace_twins: FxHashMap<&[u8], Vec<u8>> = objects.iter().map(|object| (object.name, if is_for_declarations { object.name.to_vec() } else { unique(object.name, &mut taken) })).collect();
-    let mut pending_twins: Vec<&[u8]> = Vec::new();
+    let outer_scope = unique(b"outer", &mut taken);
+    let mut shadowed: Vec<Vec<u8>> = Vec::new();
+    let namespace_pairs: FxHashMap<&[u8], Vec<u8>> = objects.iter().map(|object| (object.name, if is_for_declarations { object.name.to_vec() } else { unique(object.name, &mut taken) })).collect();
+    let mut pending_pairs: Vec<&[u8]> = Vec::new();
     let mut all_edits: Vec<Vec<(u32, u32, Vec<u8>)>> = Vec::new();
     for (index, module) in written.iter().enumerate() {
         let mut edits: Vec<(u32, u32, Vec<u8>)> = Vec::new();
@@ -1528,8 +1680,8 @@ fn link(written: &mut [Option<Written<'_, '_>>], paths: &[&[u8]], mapped: usize,
                         let new = match member {
                             Some(member) => targets.get(&member.pos()).and_then(|target| final_name(target)).cloned(),
                             None => namespace_objects.get(&module[..]).map(|&object| {
-                                pending_twins.push(object);
-                                namespace_twins[object].clone()
+                                pending_pairs.push(object);
+                                namespace_pairs[object].clone()
                             }),
                         };
                         if let Some(new) = new {
@@ -1555,6 +1707,33 @@ fn link(written: &mut [Option<Written<'_, '_>>], paths: &[&[u8]], mapped: usize,
                     _ => {}
                 }
             }
+            if types.rewrites_relative_import_extensions && bundle.keeps_modules_apart {
+                edits.extend(syntax.file.specifier_uses.iter().filter_map(|used| syntax.javascript_extension_edit(used.pos)));
+            }
+            for (start, path) in types.augmented_modules.iter().filter(|_| !bundle.keeps_modules_apart) {
+                let Some(&augmented) = index_of.get(&path[..]) else { continue };
+                let Some(StmtKind::Module(declared)) = syntax.file.stmts.iter().find(|statement| statement.start == *start).map(|statement| statement.kind) else { continue };
+                for inner in syntax.file.ids(syntax.file[declared].body).map(|inner| &syntax.file[inner]) {
+                    let at = match inner.kind {
+                        StmtKind::Interface(interface) => syntax.file[interface].name_pos,
+                        StmtKind::Module(module) => syntax.file[module].name_pos,
+                        StmtKind::Class(class) => syntax.file[class].name_pos,
+                        StmtKind::Enum(declared) => syntax.file[declared].name_pos,
+                        StmtKind::Fn(function) => syntax.file[function].name_pos,
+                        _ => continue,
+                    };
+                    let (place, name) = declaring_place(augmented, Box::from(syntax.word(at)));
+                    if let Some(new) = names[place].get(&name[..]) {
+                        edits.push((at, syntax.token_end(at), new.clone()));
+                    }
+                }
+            }
+            for &(at, binding) in types.locals.iter().filter(|_| index < mapped) {
+                if let Some(new) = generated.get(&(index as u32, binding)).map(|&offset| output.word(offset)).filter(|new| *new != syntax.word(at)) {
+                    edits.push((at, syntax.token_end(at), new.to_vec()));
+                }
+            }
+            edits.extend(types.globals.iter().filter(|&&at| declared_in_output.contains(syntax.word(at))).map(|&at| (at, at, b"globalThis.".to_vec())));
             for &at in &types.enum_objects {
                 if let Some(new) = targets.get(&at).and_then(|target| final_name(target)) {
                     linked.enum_names.insert((index as u32, at), new.clone());
@@ -1568,22 +1747,31 @@ fn link(written: &mut [Option<Written<'_, '_>>], paths: &[&[u8]], mapped: usize,
             }
             edits.sort();
             edits.dedup_by_key(|edit| edit.0);
+            for edit in edits.iter_mut().filter(|edit| nested_names[index].contains(&edit.2[..]) && !declared[index].values().any(|found| found.names.contains(&edit.0))) {
+                shadowed.push(edit.2.clone());
+                edit.2 = [&outer_scope[..], b".", &edit.2].concat();
+            }
         }
         all_edits.push(edits);
     }
 
-    let mut declared_twins: FxHashSet<&[u8]> = FxHashSet::default();
-    while let Some(name) = pending_twins.pop().filter(|_| !is_for_declarations) {
-        let Some(object) = objects.iter().find(|object| object.name == name).filter(|_| declared_twins.insert(name)) else { continue };
-        let members = object.members.iter().map(|&(name, local)| match namespace_twins.get(local) {
+    shadowed.sort();
+    shadowed.dedup();
+    if !shadowed.is_empty() {
+        linked.hoisted.extend_from_slice(&[&b"declare namespace "[..], &outer_scope, b" { export type { ", &shadowed.join(&b", "[..]), b" }; }\n"].concat());
+    }
+    let mut declared_pairs: FxHashSet<&[u8]> = FxHashSet::default();
+    while let Some(name) = pending_pairs.pop().filter(|_| !is_for_declarations) {
+        let Some(object) = objects.iter().find(|object| object.name == name).filter(|_| declared_pairs.insert(name)) else { continue };
+        let members = object.members.iter().map(|&(name, local)| match namespace_pairs.get(local) {
             Some(twin) => {
-                pending_twins.push(local);
+                pending_pairs.push(local);
                 [name, &b": typeof "[..], twin].concat()
             }
             None => [name, &b": typeof "[..], local].concat(),
         });
         let members: Vec<Vec<u8>> = members.collect();
-        linked.hoisted.extend_from_slice(&[&b"declare const "[..], &namespace_twins[name], b": { ", &members.join(&b"; "[..]), b" };\n"].concat());
+        linked.hoisted.extend_from_slice(&[&b"declare const "[..], &namespace_pairs[name], b": { ", &members.join(&b"; "[..]), b" };\n"].concat());
     }
     let exported: FxHashSet<&[u8]> = output.file.export_specs.iter().map(|specifier| output.word(specifier.pos)).collect();
     for (name, target) in entry.iter().flat_map(|types| types.exports.iter()) {
@@ -1600,9 +1788,10 @@ fn link(written: &mut [Option<Written<'_, '_>>], paths: &[&[u8]], mapped: usize,
     let mut hoisted_statements = augmentations;
     for (index, name) in &wanted {
         if *index >= mapped && let Some(found) = declared[*index].get(&name[..]) {
-            hoisted_statements.extend(found.statements.iter().chain(&found.enum_statement).map(|&statement| (*index, statement)));
+            hoisted_statements.extend(found.statements.iter().chain(&found.enum_statement).map(|&statement| (*index, statement)).filter(|&(index, statement)| !linked.replaced_statements.contains(&(index, statement.0))));
         }
     }
+    hoisted_statements.extend(linked.ambient_signatures.iter().map(|&(index, statement)| (index, StmtId(statement))));
     hoisted_statements.sort();
     hoisted_statements.dedup();
     drop(names);
@@ -1621,11 +1810,21 @@ fn link(written: &mut [Option<Written<'_, '_>>], paths: &[&[u8]], mapped: usize,
         if let Some(documentation) = module.syntax.documentation_before(module.syntax.file[statement].start).filter(|_| is_for_declarations) {
             declarations.extend_from_slice(&[documentation, b"\n"].concat());
         }
-        if linked.ambient_enums.contains(&(index, statement.0)) {
+        if linked.ambient_enums.contains(&(index, statement.0)) || linked.ambient_signatures.contains(&(index, statement.0)) {
             declarations.extend_from_slice(b"declare ");
         }
-        declarations.extend_from_slice(&module.statement_text(&module.syntax.file[statement], Flags::EXPORT | Flags::DEFAULT));
+        let merged = module.merged_augmentation_text(&module.syntax.file[statement]).filter(|_| !bundle.keeps_modules_apart);
+        declarations.extend_from_slice(&merged.unwrap_or_else(|| module.statement_text(&module.syntax.file[statement], Flags::EXPORT | Flags::DEFAULT)));
         declarations.push(b'\n');
+    }
+    for (index, pieces) in ambient_values {
+        let Some(module) = &written[index] else { continue };
+        for piece in pieces {
+            match piece {
+                Piece::Text(text) => declarations.extend_from_slice(&text),
+                Piece::Source(start, end) => declarations.extend_from_slice(&module.text(start, end)),
+            }
+        }
     }
     linked.hoisted = [declarations, std::mem::take(&mut linked.hoisted)].concat();
     linked
@@ -1640,7 +1839,8 @@ pub fn add_types(path: &[u8], javascript: &[u8], mappings: &[u8], sources: &[Sou
     let modules = bundle.map_or(&[][..], |bundle| bundle.modules);
     let mut texts: Vec<(&[u8], &[u8], Option<&ModuleTypes>)> = sources.iter().map(|source| (source.path, source.text, modules.iter().find(|module| &module.path[..] == source.path))).collect();
     if !bundle.is_some_and(|bundle| bundle.keeps_modules_apart) {
-        texts.extend(modules.iter().filter(|module| !sources.iter().any(|source| source.path == &module.path[..])).map(|module| (&module.path[..], &module.text[..], Some(module))));
+        let emitted_declarations = bundle.map_or(&[][..], |bundle| bundle.emitted_declarations);
+        texts.extend(modules.iter().chain(emitted_declarations).filter(|module| !sources.iter().any(|source| source.path == &module.path[..])).map(|module| (&module.path[..], &module.text[..], Some(module))));
     }
     let mut files = Vec::new();
     for &(path, text, _) in &texts {
@@ -1701,7 +1901,6 @@ pub fn add_types(path: &[u8], javascript: &[u8], mappings: &[u8], sources: &[Sou
     transfer.copy_slots(&source_slots);
     transfer.annotate_generated_code();
     transfer.copy_casts();
-    transfer.keep_types_of_constants();
     transfer.type_enum_and_namespace_objects();
     transfer.copy_statements();
     transfer.copy_directives();
@@ -1723,16 +1922,15 @@ struct Transfer<'t, 'a, 's> {
 }
 
 impl<'a> Transfer<'_, 'a, '_> {
-    fn initializers(&self) -> FxHashMap<(u32, u32), &'a VarDecl> {
+    fn anchored_expressions(&self) -> FxHashMap<(u32, u32), ExprId> {
         let (output, mappings) = (self.output, self.mappings);
-        let output_file = output.file;
-        let mut output_initializers: FxHashMap<(u32, u32), &VarDecl> = FxHashMap::default();
-        for declaration in output_file.var_decls.iter().filter(|declaration| declaration.init.is_some()) {
-            if let Some(original) = output.first_identifier(declaration.pat).and_then(|name| mappings.original(name)) {
-                output_initializers.entry(original).or_insert(declaration);
+        let mut anchored: FxHashMap<(u32, u32), ExprId> = FxHashMap::default();
+        for (key, value) in output.anchored_expressions() {
+            if let Some(original) = mappings.original(key) {
+                anchored.entry(original).or_insert(value);
             }
         }
-        output_initializers
+        anchored
     }
 
     fn copy_slots(&mut self, source_slots: &FxHashMap<(Place, u32, u32), Slot>) {
@@ -1746,11 +1944,13 @@ impl<'a> Transfer<'_, 'a, '_> {
                 insertions.add(slot.start, Order::Slot, if is_variable { [&b"!: typeof "[..], ambient].concat() } else { b": any".to_vec() });
                 continue;
             }
-            if slot.place == Place::Binding && let Some(twin) = linked.unique_symbols.get(&(source, key)) {
-                insertions.add(slot.start, Order::Slot, [&b": typeof "[..], twin].concat());
+            let Some(module) = written[source as usize].as_ref().filter(|module| !module.is_unchecked()) else { continue };
+            let Some(found) = source_slots.get(&(slot.place, source, key)) else {
+                if slot.place == Place::ReturnType && module.types.is_some_and(|types| types.functions_returning_undefined.contains(&key)) {
+                    insertions.add(slot.start, Order::Slot, b": undefined".to_vec());
+                }
                 continue;
-            }
-            let (Some(found), Some(module)) = (source_slots.get(&(slot.place, source, key)), &written[source as usize]) else { continue };
+            };
             let text = module.trimmed_text(found.start, found.end);
             let is_computed = module.syntax.is_in_computed_key(found.key);
             let (order, text) = match slot.place {
@@ -1807,7 +2007,7 @@ impl<'a> Transfer<'_, 'a, '_> {
     }
 
     fn copy_casts(&mut self) {
-        let output_initializers = self.initializers();
+        let output_anchored = self.anchored_expressions();
         let (output, mappings, written, linked) = (self.output, self.mappings, self.modules, self.linked);
         let (output_file, insertions) = (output.file, &mut self.insertions);
         let output_context = output.context();
@@ -1832,7 +2032,7 @@ impl<'a> Transfer<'_, 'a, '_> {
         }
         let shorthand_values: FxHashSet<ExprId> = output_file.props.iter().filter(|property| property.kind == PropKind::Shorthand).map(|property| property.value).collect();
         for (index, module) in written.iter().enumerate() {
-            let Some(module) = module else { continue };
+            let Some(module) = module.as_ref().filter(|module| !module.is_unchecked()) else { continue };
             let syntax = &module.syntax;
             let places = syntax.parent_links();
             let without_casts = |mut expr: ExprId| {
@@ -1845,10 +2045,7 @@ impl<'a> Transfer<'_, 'a, '_> {
                 StmtKind::ExportDefault(value) => Some((value, syntax.file.exprs.get(without_casts(value).idx())?.pos)),
                 _ => None,
             });
-            let initialized: FxHashMap<ExprId, u32> = (syntax.file.var_decls.iter().filter(|declaration| declaration.init.is_some()))
-                .filter_map(|declaration| Some((declaration.init, syntax.first_identifier(declaration.pat)?)))
-                .chain(default_exports)
-                .collect();
+            let anchored: FxHashMap<ExprId, u32> = syntax.anchored_expressions().map(|(key, value)| (value, key)).chain(default_exports).collect();
             let find = |expr: ExprId| {
                 let (shape, key) = syntax.shape(expr);
                 [Some(key), syntax.name_of_dotted_index(expr)].into_iter().flatten().find_map(|key| output_expressions.get(&(shape, index as u32, key)).copied())
@@ -1856,8 +2053,8 @@ impl<'a> Transfer<'_, 'a, '_> {
             let find_via_ancestor = |chain: &CastChain| {
                 let (mut at, mut way) = (chain.outermost, Vec::new());
                 let mut found = loop {
-                    if let Some(found) = initialized.get(&at).and_then(|&name| output_initializers.get(&(index as u32, name))) {
-                        break found.init;
+                    if let Some(&found) = anchored.get(&at).and_then(|&key| output_anchored.get(&(index as u32, key))) {
+                        break found;
                     }
                     let (parent, place) = places[at.idx()]?;
                     at = parent;
@@ -1876,8 +2073,7 @@ impl<'a> Transfer<'_, 'a, '_> {
                     }
                     found = children[place];
                 }
-                let is_alike = std::mem::discriminant(&syntax.file[chain.operand].kind) == std::mem::discriminant(&output_file[found].kind);
-                (is_alike || is_literal(found)).then_some(found)
+                Some(found)
             };
             let file = syntax.file;
             let variables = file.var_decls.iter().filter(|declaration| declaration.kind != VarKind::Const && declaration.ty.is_none()).map(|declaration| (declaration.init, Place::Binding, syntax.first_identifier(declaration.pat)));
@@ -1895,7 +2091,7 @@ impl<'a> Transfer<'_, 'a, '_> {
             let members = (0..syntax.file.exprs.len() as u32).map(ExprId).filter(|&expr| !operands.contains(&expr) && enum_member_cast(expr).is_some());
             chains.extend(members.map(|expr| CastChain { operand: expr, outermost: expr, casts: Vec::new() }));
             for chain in chains {
-                if is_inside(&module.type_ranges, syntax.file[chain.operand].pos) {
+                if is_covered(&module.type_ranges, syntax.file[chain.operand].pos, syntax.file[chain.operand].end) {
                     continue;
                 }
                 let source_position = syntax.file[chain.operand].pos;
@@ -1959,41 +2155,6 @@ impl<'a> Transfer<'_, 'a, '_> {
                 }
                 insertions.add(start, Order::Open(u32::MAX - (end - start)), vec![b'('; opens]);
                 insertions.add(end, Order::Close(end - start), suffix);
-            }
-        }
-    }
-
-    fn keep_types_of_constants(&mut self) {
-        let output_initializers = self.initializers();
-        let (output, written, linked) = (self.output, self.modules, self.linked);
-        let (output_file, insertions) = (output.file, &mut self.insertions);
-        for (index, module) in written.iter().enumerate() {
-            let Some(module) = module else { continue };
-            for declaration in module.syntax.top_level_constants() {
-                let key = (index as u32, module.syntax.file[declaration.pat].pos);
-                let Some(&variable) = output_initializers.get(&key).filter(|variable| variable.kind == VarKind::Var) else { continue };
-                let initializer = variable.init;
-                let (start, end) = output.outer_span(initializer);
-                let is_literal_initializer = match output_file[initializer].kind {
-                    ExprKind::String(_) | ExprKind::Number(_) | ExprKind::BigInt(_) | ExprKind::True | ExprKind::False => true,
-                    ExprKind::Unary { op: UnOp::Minus, operand } => matches!(output_file[operand].kind, ExprKind::Number(_) | ExprKind::BigInt(_)),
-                    ExprKind::Template { exprs } => exprs.is_empty(),
-                    _ => false,
-                };
-                if let Some(twin) = linked.unique_symbols.get(&key) {
-                    insertions.add(end, Order::Close(end - start), [&b" as typeof "[..], twin].concat());
-                } else if declaration.ty.is_some()
-                    || module.syntax.file.exprs.get(declaration.init.idx()).is_none_or(|written| linked.enum_names.contains_key(&(key.0, written.pos)))
-                    || module.syntax.operand_of_cast(declaration.init).is_some()
-                {
-                    continue;
-                } else if is_literal_initializer {
-                    insertions.add(end, Order::Close(end - start), b" as const".to_vec());
-                } else if matches!(output_file[initializer].kind, ExprKind::Null) {
-                    insertions.add(output_file[variable.pat].end, Order::Slot, b": null".to_vec());
-                } else if matches!(output_file[initializer].kind, ExprKind::Ident(_)) && output.word(output_file[initializer].pos) == b"undefined" {
-                    insertions.add(output_file[variable.pat].end, Order::Slot, b": undefined".to_vec());
-                }
             }
         }
     }
@@ -2082,6 +2243,9 @@ impl<'a> Transfer<'_, 'a, '_> {
                             }
                             module.statement_text(statement, Flags::EXPORT | Flags::DEFAULT)
                         }
+                        StmtKind::Fn(_) if linked.ambient_signatures.contains(&(index, id.0)) => continue,
+                        _ if linked.replaced_statements.contains(&(index, id.0)) => continue,
+                        StmtKind::Module(_) if depth == 0 && self.is_bundle && module.merged_augmentation_text(statement).is_some() => module.merged_augmentation_text(statement).unwrap_or_default(),
                         StmtKind::Module(_) if depth > 0 => continue,
                         StmtKind::Module(declared) if !syntax.is_type_only_statement(id) => {
                             let is_exported_below = self.is_bundle || exported_names.contains(syntax.word(file[declared].name_pos));
@@ -2093,7 +2257,7 @@ impl<'a> Transfer<'_, 'a, '_> {
                         _ if syntax.is_type_only_statement(id) => module.statement_text(statement, if self.is_bundle || depth > 0 { Flags::EXPORT | Flags::DEFAULT } else { Flags::empty() }),
                         StmtKind::Import(import) => {
                             let import = &file[import];
-                            let tail = trimmed(&syntax.text[import.clause_end as usize..statement.loc.end as usize]);
+                            let tail = &module.trimmed_text(import.clause_end, statement.loc.end)[..];
                             let mut lines: Vec<Vec<u8>> = Vec::new();
                             if import.default.is_some() && !imported_names.contains(syntax.word(import.default_pos)) {
                                 lines.push([&b"import type "[..], syntax.word(import.default_pos), b" ", tail].concat());
@@ -2127,7 +2291,7 @@ impl<'a> Transfer<'_, 'a, '_> {
                             if syntax.byte(behind) == b',' {
                                 behind = syntax.after_trivia(behind + 1);
                             }
-                            let tail = trimmed(&syntax.text[behind as usize + 1..statement.loc.end as usize]);
+                            let tail = &module.trimmed_text(behind + 1, statement.loc.end)[..];
                             let space: &[u8] = if tail.is_empty() || tail.starts_with(b";") { b"" } else { b" " };
                             [&b"export type { "[..], &names.join(&b", "[..])[..], b" }", space, tail].concat()
                         }
@@ -2162,7 +2326,7 @@ impl<'a> Transfer<'_, 'a, '_> {
                 }
                 let from = by_original.partition_point(|entry| (entry.0, entry.1) < (index as u32, next));
                 let text = module.syntax.text;
-                let end_of_line = text[next as usize..].iter().position(|&byte| byte == b'\n').map_or(text.len(), |length| next as usize + length) as u32;
+                let end_of_line = bun_core::strings::index_of_char_usize(&text[next as usize..], b'\n').map_or(text.len(), |length| next as usize + length) as u32;
                 let is_at_a_token = |entry: &&(u32, u32, u32)| !javascript.get(entry.2 as usize).is_some_and(u8::is_ascii_whitespace);
                 let on_the_line = by_original[from..].iter().take_while(|entry| entry.0 == index as u32 && entry.1 < end_of_line).filter(is_at_a_token);
                 ignored.extend(on_the_line.chain(by_original.get(from).filter(|entry| entry.0 == index as u32)).map(|entry| line_start(javascript, entry.2 as usize)));
@@ -2172,6 +2336,8 @@ impl<'a> Transfer<'_, 'a, '_> {
             let returns_nothing = self.output.file.stmts.iter().filter(|statement| matches!(statement.kind, StmtKind::Return(value) if value.is_none()));
             ignored.extend(returns_nothing.filter(|statement| mappings.original(statement.start).is_some_and(|original| original.0 == index as u32 && returned.contains(&original.1))).map(|statement| line_start(javascript, statement.start as usize)));
         }
+        let is_unchecked = |source: u32| written.get(source as usize).is_some_and(|module| module.as_ref().is_none_or(Written::is_unchecked));
+        ignored.extend(mappings.entries.iter().filter(|entry| is_unchecked(entry.1)).map(|entry| line_start(javascript, entry.0 as usize)));
         ignored.sort_unstable();
         ignored.dedup();
         for line in ignored {
@@ -2260,7 +2426,7 @@ impl<'a> Transfer<'_, 'a, '_> {
         }
         text.extend_from_slice(&self.hoisted);
         let has_default_export = output.has_default_export();
-        Ok(TypedText { text, dropped_casts: self.dropped_casts, has_default_export, untyped_exports: self.linked.untyped_exports.clone() })
+        Ok(TypedText { text, dropped_casts: self.dropped_casts, has_default_export, untyped_exports: self.linked.untyped_exports.clone(), modules_of_untyped_values: self.linked.modules_of_untyped_values.clone() })
     }
 }
 
@@ -2305,11 +2471,24 @@ pub struct ModuleTypes {
     pub references: Vec<(u32, Target)>,
     pub enum_objects: Vec<u32>,
     pub exports: Vec<(Box<[u8]>, Target)>,
+    pub constants: Vec<(u32, Box<[u8]>)>,
+    pub functions_returning_undefined: Vec<u32>,
+    pub globals: Vec<u32>,
+    pub rewrites_relative_import_extensions: bool,
+    pub augmented_modules: Vec<(u32, Box<[u8]>)>,
+    pub locals: Vec<(u32, u32)>,
+    pub emitted_declarations: Box<[u8]>,
 }
 
-fn is_source_of_the_project(checker: &Checker<'_, '_>, file: FileId) -> bool {
+impl ModuleTypes {
+    fn constant_type(&self, binding: u32) -> Option<&[u8]> {
+        self.constants.iter().find(|constant| constant.0 == binding).map(|constant| &constant.1[..])
+    }
+}
+
+fn is_project_source(checker: &Checker<'_, '_>, file: FileId) -> bool {
     let module = checker.p.files.module(file);
-    matches!(module.hir.kind, FileKind::Ts | FileKind::Tsx) && !module.hir.is_js && !module.is_from_external_library && module.builtin.is_none()
+    (matches!(module.hir.kind, FileKind::Ts | FileKind::Tsx) || module.hir.kind == FileKind::Declaration && !module.is_lib && module.is_module()) && !module.hir.is_js && !module.is_from_external_library && module.builtin.is_none()
 }
 
 fn target_of(services: &mut Services<'_, '_, '_>, is_source: &dyn Fn(FileId) -> Option<Box<[u8]>>, symbol: SymbolRef) -> Option<Target> {
@@ -2341,22 +2520,38 @@ fn target_declared_by(services: &mut Services<'_, '_, '_>, is_source: &dyn Fn(Fi
 }
 
 pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<ModuleTypes> {
-    if !is_source_of_the_project(checker, file) {
+    if !is_project_source(checker, file) {
         return None;
     }
     let count = checker.p.files.modules.len();
     let paths: Vec<Option<Box<[u8]>>> = (0..count as u32)
-        .map(|other| is_source_of_the_project(checker, FileId(other)).then(|| checker.p.files.module(FileId(other)).file_name().into()))
+        .map(|other| is_project_source(checker, FileId(other)).then(|| checker.p.files.module(FileId(other)).file_name().into()))
         .collect();
     let is_source = |file: FileId| paths.get(file.idx()).cloned().flatten();
     let hir = checker.hir(file);
     let type_ranges = Syntax { file: hir, text: &hir.text[..] }.type_ranges();
-    let (references, enum_objects, exports) = checker.with_services(file, None, |services| {
+    let (references, enum_objects, exports, constants, functions_returning_undefined, globals, augmented_modules, locals) = checker.with_services(file, None, |services| {
         let mut references = Vec::new();
+        let mut globals = Vec::new();
+        let mut locals = Vec::new();
+        let mut note = |services: &mut Services<'_, '_, '_>, at: u32, symbol: SymbolRef, is_head: bool, is_own_type: bool| match if is_own_type { target_declared_by(services, &is_source, symbol) } else { target_of(services, &is_source, symbol) } {
+            Some(target) => references.push((at, target)),
+            None if is_head => match services.declarations(symbol).first().copied() {
+                Some(declaration) if is_source(declaration.file).is_none() => globals.push(at),
+                Some(declaration) if declaration.file == file => {
+                    let name = services.node_child(declaration, Child::Name);
+                    locals.push((at, services.node_span(NodeRef { file, node: name }).0));
+                }
+                _ => {}
+            },
+            None => {}
+        };
         for (index, name) in hir.names.iter().enumerate() {
             let node = NodeRef { file, node: hir.node(NameId(index as u32)) };
-            let target = services.symbol_at_location(node).and_then(|symbol| target_of(services, &is_source, symbol));
-            references.extend(target.map(|target| (name.pos(), target)));
+            let Some(symbol) = services.symbol_at_location(node) else { continue };
+            let is_whole_name = !name.is_qualified() && !hir.names.get(index + 1).is_some_and(|next| next.is_qualified());
+            let flags = services.symbol_info(symbol).flags;
+            note(services, name.pos(), symbol, !name.is_qualified(), is_whole_name && flags.contains(SymbolFlags::ALIAS) && flags.intersects(SymbolFlags::TYPE));
         }
         for (index, expr) in hir.exprs.iter().enumerate().filter(|(_, expr)| is_inside(&type_ranges, expr.pos)) {
             let at = match expr.kind {
@@ -2364,8 +2559,9 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
                 ExprKind::Dot { name_pos, .. } => name_pos,
                 _ => continue,
             };
-            let symbol = services.symbol_at_location(NodeRef { file, node: hir.node(ExprId(index as u32)) });
-            references.extend(symbol.and_then(|symbol| target_of(services, &is_source, symbol)).map(|target| (at, target)));
+            if let Some(symbol) = services.symbol_at_location(NodeRef { file, node: hir.node(ExprId(index as u32)) }) {
+                note(services, at, symbol, matches!(expr.kind, ExprKind::Ident(_)), false);
+            }
         }
         let mut enum_objects = Vec::new();
         for expr in hir.exprs.iter() {
@@ -2387,9 +2583,47 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
                 exports.extend(target_of(services, &is_source, exported).map(|target| (name, target)));
             }
         }
-        (references, enum_objects, exports)
+        let mut constants = Vec::new();
+        let lists = hir.ids(hir.body).filter_map(|id| match hir[id].kind {
+            StmtKind::Var(declarations) => Some(declarations),
+            _ => None,
+        });
+        for id in lists.flat_map(|declarations| declarations.iter()) {
+            let id: VarDeclId = id;
+            let declaration = &hir[id];
+            if declaration.kind != VarKind::Const || declaration.ty.is_some() || declaration.flags.contains(Flags::AMBIENT) || !matches!(hir[declaration.pat].kind, PatKind::Ident(_)) {
+                continue;
+            }
+            let ty = services.type_at_location(NodeRef { file, node: hir.node(id) });
+            let flags = services.type_flags(ty);
+            let names_nothing = TypeFlags::STRING_LITERAL | TypeFlags::NUMBER_LITERAL | TypeFlags::BIG_INT_LITERAL | TypeFlags::INTRINSIC;
+            if flags.contains(TypeFlags::UNIQUE_ES_SYMBOL) {
+                constants.push((hir[declaration.pat].pos, b"unique symbol"[..].into()));
+            } else if flags.intersects(names_nothing) && !flags.contains(TypeFlags::ENUM_LITERAL) {
+                constants.push((hir[declaration.pat].pos, services.type_to_string(ty, None, TypeFormatFlags::DEFAULT | TypeFormatFlags::NO_TRUNCATION).into()));
+            }
+        }
+        let mut functions_returning_undefined = Vec::new();
+        for (index, function) in hir.fns.iter().enumerate().filter(|(_, function)| function.ret.is_none() && Syntax::has_javascript(function)) {
+            let signature = services.signature_from_declaration(NodeRef { file, node: hir.node(FnId(index as u32)) });
+            if signature.is_some_and(|signature| services.return_type_of_signature(signature) == TypeId::UNDEFINED) {
+                functions_returning_undefined.push(Syntax::function_key(function));
+            }
+        }
+        let syntax = Syntax { file: hir, text: &hir.text[..] };
+        let mut augmented_modules = Vec::new();
+        for statement in hir.ids(hir.body).map(|id| &hir[id]) {
+            let StmtKind::Module(declared) = statement.kind else { continue };
+            if let ModuleName::String(_) = hir[declared].name
+                && let [_, specifier @ .., _] = syntax.word(hir[declared].name_pos)
+                && let Some(path) = services.resolve_module_name(specifier).and_then(&is_source)
+            {
+                augmented_modules.push((statement.start, path));
+            }
+        }
+        (references, enum_objects, exports, constants, functions_returning_undefined, globals, augmented_modules, locals)
     });
-    Some(ModuleTypes { path: paths[file.idx()].clone()?, text: hir.text[..].into(), references, enum_objects, exports })
+    Some(ModuleTypes { path: paths[file.idx()].clone()?, text: hir.text[..].into(), references, enum_objects, exports, constants, functions_returning_undefined, globals, rewrites_relative_import_extensions: checker.p.files.options.rewrite_relative_import_extensions, augmented_modules, locals, emitted_declarations: Box::default() })
 }
 
 pub struct Output<'a> {
@@ -2400,6 +2634,7 @@ pub struct Output<'a> {
 }
 
 pub struct SoundFiles {
+    pub modules_of_untyped_values: Vec<Vec<u8>>,
     pub typed: Vec<(Vec<u8>, Vec<u8>)>,
     pub declarations_while_checked: Vec<(Vec<u8>, Vec<u8>)>,
     pub marks: Vec<(Vec<u8>, Vec<u8>)>,
@@ -2410,12 +2645,29 @@ fn inside<'a>(directory: &[u8], path: &'a [u8]) -> Option<&'a [u8]> {
     path.strip_prefix(directory)?.strip_prefix(b"/")
 }
 
-pub fn typed_outputs(outdir: &[u8], outputs: &[Output<'_>], modules: Option<&[ModuleTypes]>, is_for_declarations: bool, keeps_modules_apart: bool) -> Result<Vec<(Vec<u8>, TypedText)>, String> {
+pub fn emitted_declarations_path(source: &[u8]) -> Option<Vec<u8>> {
+    const EXTENSIONS: [(&[u8], &[u8]); 7] = [(b".d.ts", b""), (b".d.mts", b""), (b".d.cts", b""), (b".ts", b".d.ts"), (b".tsx", b".d.ts"), (b".mts", b".d.mts"), (b".cts", b".d.cts")];
+    let (from, to) = EXTENSIONS.iter().find(|(from, _)| source.ends_with(from))?;
+    (!to.is_empty()).then(|| [&source[..source.len() - from.len()], *to].concat())
+}
+
+pub fn tsconfig_of_sources(outputs: &[Output<'_>], modules: &[ModuleTypes]) -> Option<Vec<u8>> {
+    let source = outputs.iter().find_map(|output| output.entry_point).or_else(|| modules.first().map(|module| &module.path[..]))?;
+    let candidates = crate::typed_packages::ancestors(source).skip(1).flat_map(|directory| [&b"tsconfig.json"[..], b"jsconfig.json"].map(|name| crate::typed_packages::join(&[directory, name])));
+    candidates.into_iter().find(|candidate| crate::fs_queries::exists(candidate))
+}
+
+pub fn emitted_declarations_of(modules: &[ModuleTypes], sources: &[Vec<u8>]) -> Vec<(Vec<u8>, Vec<u8>)> {
+    let wanted = modules.iter().filter(|module| !module.emitted_declarations.is_empty() && sources.iter().any(|source| source[..] == module.path[..]));
+    wanted.filter_map(|module| Some((emitted_declarations_path(&module.path)?, module.emitted_declarations.to_vec()))).collect()
+}
+
+pub fn typed_outputs(outdir: &[u8], outputs: &[Output<'_>], modules: Option<&[ModuleTypes]>, emitted_declarations: &[ModuleTypes], is_for_declarations: bool, keeps_modules_apart: bool) -> Result<Vec<(Vec<u8>, TypedText)>, String> {
     let outdir = outdir.strip_suffix(b"/").unwrap_or(outdir);
     let mut found = Vec::new();
     for output in outputs {
         let shown = BStr::new(inside(outdir, output.path).unwrap_or(output.path));
-        let bundle = modules.map(|modules| Bundle { modules, entry_point: output.entry_point, is_for_declarations, keeps_modules_apart });
+        let bundle = modules.map(|modules| Bundle { modules, emitted_declarations, entry_point: output.entry_point, is_for_declarations, keeps_modules_apart });
         let typed = add_types_by_source_map(output.path, output.javascript, output.source_map, bundle.as_ref()).map_err(|why| format!("{shown}: {why}"))?;
         let typed_path = crate::typed_packages::typed_path_beside(output.path).ok_or_else(|| format!("{shown} is not named .js, .mjs or .cjs"))?;
         let erased = erase_types(&typed_path, &typed.text).map_err(|why| format!("{shown}: {why}"))?;
@@ -2454,20 +2706,21 @@ pub fn annotate_implicit_any(typed: &mut [(Vec<u8>, Vec<u8>)], diagnostics: &[cr
     is_changed
 }
 
-pub fn sound_files(outdir: &[u8], outputs: &[Output<'_>], modules: Option<&[ModuleTypes]>, keeps_modules_apart: bool) -> Result<SoundFiles, String> {
+pub fn sound_files(outdir: &[u8], outputs: &[Output<'_>], modules: Option<&[ModuleTypes]>, emitted_declarations: &[ModuleTypes], keeps_modules_apart: bool) -> Result<SoundFiles, String> {
     use crate::typed_packages::{declarations_path_beside, hex, mark, sha256};
     let outdir = outdir.strip_suffix(b"/").unwrap_or(outdir);
-    let mut found = SoundFiles { typed: Vec::new(), declarations_while_checked: Vec::new(), marks: Vec::new(), dropped_casts: 0 };
-    for (output, (typed_path, typed)) in outputs.iter().zip(typed_outputs(outdir, outputs, modules, false, keeps_modules_apart)?) {
+    let mut found = SoundFiles { modules_of_untyped_values: Vec::new(), typed: Vec::new(), declarations_while_checked: Vec::new(), marks: Vec::new(), dropped_casts: 0 };
+    for (output, (typed_path, typed)) in outputs.iter().zip(typed_outputs(outdir, outputs, modules, emitted_declarations, false, keeps_modules_apart)?) {
         let name_of = |path: &[u8]| path[bun_core::strings::last_index_of_char(path, b'/').map_or(0, |slash| slash + 1)..].to_vec();
         let Some(declarations) = declarations_path_beside(output.path) else { continue };
         found.marks.push((declarations, mark(&name_of(&typed_path), &hex(&sha256(output.javascript)))));
         found.dropped_casts += typed.dropped_casts;
+        found.modules_of_untyped_values.extend(typed.modules_of_untyped_values);
         if keeps_modules_apart && let Some(stem) = output.path.strip_suffix(b".js") {
             let name = name_of(stem);
             let name = BStr::new(&name);
-            let default = if typed.has_default_export { format!("export {{ default }} from \"./{name}.sound\";\n") } else { String::new() };
-            found.declarations_while_checked.push(([stem, b".d.ts"].concat(), format!("export * from \"./{name}.sound\";\n{default}").into_bytes()));
+            let default = if typed.has_default_export { format!("export {{ default }} from \"./{name}.sound.ts\";\n") } else { String::new() };
+            found.declarations_while_checked.push(([stem, b".d.ts"].concat(), format!("export * from \"./{name}.sound.ts\";\n{default}").into_bytes()));
         }
         found.typed.push((typed_path, typed.text));
     }

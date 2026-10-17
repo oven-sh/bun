@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 const FUNCTIONS_PER_SLICE: usize = 256;
 
-pub(crate) const TDZ_MARKER: u8 = 0xfc;
+pub(crate) const TDZ_MARKER: u8 = 0xfb;
 const MEMBER_MARKER: u8 = 1;
 
 pub(crate) fn tdz_error_message(name: &[u8]) -> Vec<u8> {
@@ -45,7 +45,7 @@ fn has_four_letter_run(text: &[u8]) -> bool {
 #[derive(Default)]
 struct Tokens {
     next: usize,
-    said: Vec<(Vec<u8>, Vec<u8>)>,
+    name_table: Vec<(Vec<u8>, Vec<u8>)>,
 }
 
 #[derive(Default)]
@@ -66,7 +66,7 @@ impl Tokens {
             let text = token_for_index(self.next);
             self.next += 1;
             if is_free_token(strs, &text) {
-                self.said.push((text.clone(), original.to_vec()));
+                self.name_table.push((text.clone(), original.to_vec()));
                 return text;
             }
         }
@@ -105,7 +105,7 @@ impl Tokens {
     }
 }
 
-pub(crate) struct Said {
+pub(crate) struct NameTable {
     short_names: Vec<(StrId, StrId)>,
     tokens: Vec<(Vec<u8>, Vec<u8>)>,
     types: Vec<TypeNames>,
@@ -135,30 +135,30 @@ fn push_quoted(json: &mut String, text: &[u8]) {
     json.push('"');
 }
 
-pub(crate) fn as_json(said: &Said) -> Vec<u8> {
+pub(crate) fn as_json(name_table: &NameTable) -> Vec<u8> {
     let mut json = String::from("{\n    \"positions\": \"original\",\n    \"tokens\": {");
-    let short_names = said.short_names.iter().map(|&(short, original)| (said.strs.get(short), said.strs.get(original)));
-    for (number, (short, original)) in short_names.chain(said.tokens.iter().map(|(short, original)| (&short[..], &original[..]))).enumerate() {
+    let short_names = name_table.short_names.iter().map(|&(short, original)| (name_table.strs.get(short), name_table.strs.get(original)));
+    for (number, (short, original)) in short_names.chain(name_table.tokens.iter().map(|(short, original)| (&short[..], &original[..]))).enumerate() {
         json.push_str(if number == 0 { "\n      " } else { ",\n      " });
         push_quoted(&mut json, short);
         json.push_str(": ");
         push_quoted(&mut json, original);
     }
     json.push_str("\n    },\n    \"types\": [");
-    for (number, of_type) in said.types.iter().enumerate() {
+    for (number, of_type) in name_table.types.iter().enumerate() {
         json.push_str(if number == 0 { "\n      " } else { ",\n      " });
         json.push_str("{ \"name\": ");
-        push_quoted(&mut json, if of_type.name.is_some() { said.strs.get(of_type.name) } else { b"" });
+        push_quoted(&mut json, if of_type.name.is_some() { name_table.strs.get(of_type.name) } else { b"" });
         if let Some((path, line)) = of_type.declared_at {
             json.push_str(", \"at\": ");
-            push_quoted(&mut json, &[said.strs.get(path), line.to_string().as_bytes()].join(&b':'));
+            push_quoted(&mut json, &[name_table.strs.get(path), line.to_string().as_bytes()].join(&b':'));
         }
         json.push_str(", \"members\": {");
         for (number, &(name, type_text)) in of_type.members.iter().enumerate() {
             json.push_str(if number == 0 { " " } else { ", " });
-            push_quoted(&mut json, said.strs.get(name));
+            push_quoted(&mut json, name_table.strs.get(name));
             json.push_str(": ");
-            push_quoted(&mut json, said.strs.get(type_text));
+            push_quoted(&mut json, name_table.strs.get(type_text));
         }
         json.push_str(" } }");
     }
@@ -208,14 +208,9 @@ fn for_each_type_string(tys: &mut DeclaredTable, changes_names: bool, each: &imp
             each(name);
         }
     }
+    tys.list = list;
     if changes_names {
-        let mut renumbered = DeclaredTable::default();
-        for (number, declared) in list.into_iter().enumerate() {
-            assert_eq!(renumbered.intern(declared).idx(), number);
-        }
-        *tys = renumbered;
-    } else {
-        tys.list = list;
+        tys.close();
     }
 }
 
@@ -365,7 +360,7 @@ pub(crate) fn count_uses(program: &Program, messages: &[(StrId, StrId)], in_para
             }
             let Def::Op(op) = &value.def else { continue };
             match *op {
-                Op::Str(text) | Op::BigInt(text) | Op::ExternalModule(text) => spell(text),
+                Op::Str(text) | Op::BigInt(text) | Op::Symbol(text) | Op::ExternalModule(text) => spell(text),
                 Op::FreeGet { name, .. }
                 | Op::FreeSet { name, .. }
                 | Op::PropGet { name, .. }
@@ -452,7 +447,7 @@ pub(crate) fn count_uses(program: &Program, messages: &[(StrId, StrId)], in_para
     NameUses { is_runtime_module, is_runtime_layout, is_name_used, is_never_stored_member, bearers, tokens, free }
 }
 
-pub(crate) fn shorten(program: &mut Program, messages: &[(StrId, StrId)], uses: NameUses, in_parallel: InParallel<'_>) -> Said {
+pub(crate) fn shorten(program: &mut Program, messages: &[(StrId, StrId)], uses: NameUses, in_parallel: InParallel<'_>) -> NameTable {
     let NameUses { is_runtime_module, is_runtime_layout, is_name_used, is_never_stored_member, bearers, mut tokens, free } = uses;
     let mut short = vec![StrId::NONE; program.strs.len()];
     let first_token = program.strs.len();
@@ -595,17 +590,17 @@ pub(crate) fn shorten(program: &mut Program, messages: &[(StrId, StrId)], uses: 
         }
     }
     program.strs = std::thread::scope(|scope| {
-        let kept = scope.spawn(|| {
-            let mut kept = Strs::with_capacities(kept_ids.len(), kept_ids.iter().map(|&id| strs.get(id).len()).sum());
+        let retained = scope.spawn(|| {
+            let mut retained = Strs::unindexed_with_capacities(kept_ids.len(), kept_ids.iter().map(|&id| strs.get(id).len()).sum());
             for &id in &kept_ids {
-                kept.add(strs.hash(id), strs.get(id));
+                retained.add_unindexed(strs.hash(id), strs.get(id));
             }
-            kept
+            retained
         });
         for_each_string(program, true, in_parallel, &|id| *id = numbers[id.idx()]);
-        kept.join().expect("the thread that lays the strings that are kept panicked")
+        retained.join().expect("the thread that lays the strings that are kept panicked")
     });
-    Said { short_names, tokens: tokens.said, types, strs }
+    NameTable { short_names, tokens: tokens.name_table, types, strs }
 }
 
 #[cfg(test)]

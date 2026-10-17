@@ -3,7 +3,7 @@ title: "Debugging and profiling with --aot"
 description: "Stack traces, crashes, CPU and heap profiles, the inspector and instrumentation in an executable that was compiled ahead of time"
 ---
 
-<Warning>Ahead-of-time compilation is experimental. It works on macOS arm64 and on Linux x64 with glibc.</Warning>
+<Warning>Ahead-of-time compilation is experimental.</Warning>
 
 An executable built with [`--aot`](/bundler/executables#ahead-of-time-compilation) has no bytecode and no JIT. Most tools work as they do for any other executable. The debugger does not. This page lists what to expect from each.
 
@@ -33,13 +33,14 @@ bun build --compile --aot ./app.ts --outfile app && ./app
 3 |     if (id < 0) throw new RangeError("bad id " + id);
                               ^
 RangeError: bad id -1
-      at find (app.ts:3:27)
-      at app.ts:7:12
+      at find (/$bunfs/root/app.ts:3:27)
+      at /$bunfs/root/app.ts:7:12
 ```
 
 - **`--minify` shortens names and paths**, as it does without `--aot`. See [Minified executables](#minified-executables).
 - **Without `--minify`, `--sourcemap` adds nothing.** `bun build` prints a note, and any map that it writes is empty.
-- **The source excerpt is read from disk.** Bun prints it when the file lies at the path in the frame, relative to the working directory. On a machine without your sources you get the frames alone.
+- **The path in a frame starts with `/$bunfs/root/`.** What follows is the path of the source file from the directory where you ran `bun build`. A file above that directory has `_.._/` for each `../`. The executable does not contain the path of that directory.
+- **The source excerpt is read from disk.** Bun prints it when the file lies at the path that follows `/$bunfs/root/` in the frame, relative to the working directory. On a machine without your sources you get the frames alone.
 - **Inlined functions keep their frames.** A strict-mode function that ends in `return f(x)` makes a tail call, so it has no frame while `f` runs, with or without `--aot`.
 - `Error.captureStackTrace`, `Error.prepareStackTrace`, `Error.stackTraceLimit`, `console.trace`, async frames, `process.on("uncaughtException")` and `process.on("unhandledRejection")` work as they do without `--aot`.
 
@@ -71,8 +72,8 @@ If the build removes every expression that produces `"debug"` or compares with i
 
 ```txt
 RangeError: bad id -1
-      at find (bA:3:27)
-      at bA:7:12
+      at find (/$bunfs/root/bA:3:27)
+      at /$bunfs/root/bA:7:12
 ```
 
 To read such a trace, build with `--sourcemap=external`, or `sourcemap: "external"` in `Bun.build`. Bun writes `app.map` next to the executable. The executable contains nothing of that file, and your program does not read it. It is a source map without mappings, because the positions are already the original ones. Its `x_bun_aot.tokens` says what each token stands for:
@@ -124,10 +125,10 @@ please file a GitHub issue using the link below:
  https://bun.report/1.4.4/M_24eaedc6E…CGaotmh6QCGaot+kmTCGaot+7iT…
 
 Compiled JavaScript on the stack:
-    at peek (app.ts:6:17)
-    at sum (app.ts:11:47)
-    at start (app.ts:15:17)
-    at app.ts:19:13
+    at peek (/$bunfs/root/app.ts:6:17)
+    at sum (/$bunfs/root/app.ts:11:47)
+    at start (/$bunfs/root/app.ts:15:17)
+    at /$bunfs/root/app.ts:19:13
 ```
 
 These lines go to stderr only. The link holds offsets into your executable, and none of your names or paths.

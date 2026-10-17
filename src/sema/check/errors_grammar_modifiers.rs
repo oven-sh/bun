@@ -582,7 +582,7 @@ impl Checker<'_, '_> {
                     return error(1243, [text, "accessor"]);
                 }
             } else if modifier == Flags::EXPORT {
-                if self.files().options.verbatim_module_syntax
+                if self.check_options(file).verbatim_module_syntax
                     && !hir.is_ambient(location)
                     && !matches!(
                         kind,

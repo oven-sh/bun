@@ -1,7 +1,3 @@
-//! The program as one buffer of 32-bit words that the engine reads in place. This mirrors
-//! Source/JavaScriptCore/aot/AOTTypedFormat.h of the engine: the order of the operations, of the sections and of the words of a
-//! record is that of the header. The sizes of the records travel along, so that a difference is an error and not a wrong program.
-
 use crate::declared::Part;
 use crate::id::{FuncId, V};
 use crate::ir::{BinOp, Def, Func, Literal, Op, Prediction, Program, RelOp, Target, Term, UnOp, CoerceReason};
@@ -13,13 +9,13 @@ pub const MAGIC: u32 = 0x5249_5442;
 pub const VERSION: u32 = 37;
 pub const PROGRAM_LOGS_TYPE_ERRORS: u32 = 1;
 pub const NONE: u32 = u32::MAX;
-/// In the prediction of a value: the other bits number a function, which the value is expected to be a closure of, and not a type.
 pub const PREDICTION_IS_CLOSURE: u32 = 1 << 31;
 pub const PREDICTION_IS_BY_KEY: u32 = 1 << 30;
 pub const RECEIVER_HAS_SINGLE_STRUCTURE: u32 = 1 << 29;
 pub const VARIABLE_IS_INITIALIZED: u32 = 1;
 pub const CALL_IS_IN_TAIL_POSITION: u32 = 1;
-/// In the type of a parameter of a function: it is written down. The other bits number the type. Not in `NONE`.
+pub const CALL_IS_FUSED_WITH_MAP: u32 = 0;
+pub const CAST_KEEPS_UNCONVERTIBLE_OBJECTS: u32 = 1 << 20;
 pub const PARAMETER_IS_ANNOTATED: u32 = 1 << 31;
 
 macro_rules! opcodes {
@@ -111,10 +107,9 @@ opcodes! {
     GetExternalModule,
     Yield,
     GetResumeMode,
+    ConstantSymbol,
 }
 
-/// Of the names of the operations in their order, each followed by a line feed: FNV-1a. The engine turns away a program whose
-/// operations are numbered another way than its own.
 fn opcode_names_hash() -> u32 {
     let mut hash = 2_166_136_261u32;
     for name in OPCODE_NAMES {
@@ -125,7 +120,6 @@ fn opcode_names_hash() -> u32 {
     hash
 }
 
-/// A value as a record of the format.
 pub struct Record<'a> {
     pub opcode: Opcode,
     pub children: [V; 3],
@@ -152,6 +146,7 @@ pub fn record(def: &Def) -> Record<'_> {
         Op::Double(d) => (r.opcode, r.immediates) = (Opcode::Double, bits(*d)),
         Op::Str(s) => (r.opcode, r.immediates[0]) = (Opcode::String, s.0),
         Op::BigInt(s) => (r.opcode, r.immediates[0]) = (Opcode::BigInt, s.0),
+        Op::Symbol(s) => (r.opcode, r.immediates[0]) = (Opcode::ConstantSymbol, s.0),
         Op::FuncRef(f) => (r.opcode, r.immediates[0]) = (Opcode::FunctionReference, f.0),
         Op::GlobalGet(g) => (r.opcode, r.immediates[0]) = (Opcode::GetModuleVariable, g.0),
         Op::GlobalSet(g, v) => (r.opcode, r.immediates[0], r.children[0]) = (Opcode::PutModuleVariable, g.0, *v),
@@ -241,7 +236,6 @@ pub fn record(def: &Def) -> Record<'_> {
                 CoerceReason::Coerce => 6,
                 CoerceReason::CoerceFreshGraph => 6 | 2 << 8,
             };
-            // The type is that of the value, but for `CoerceReason::Coerce`.
             let first = if let CoerceReason::NonNull(text) = asserted { text.0 } else { to.0 };
             (r.opcode, r.children[0], r.immediates) = (Opcode::Cast, *value, [first, why]);
         }
@@ -257,7 +251,6 @@ pub fn record(def: &Def) -> Record<'_> {
     r
 }
 
-/// The end of a block as the format has it: its kind, its value, its targets in order, and the cases of a switch.
 pub fn end_of(term: &Term) -> (u32, V, SmallVec<[&Target; 2]>, SmallVec<[i64; 1]>) {
     match term {
         Term::Jump(t) => (0, V::NONE, SmallVec::from_iter([t]), SmallVec::new()),
@@ -282,13 +275,6 @@ fn write_uleb128(out: &mut Vec<u8>, mut value: u32) {
     out.push(value as u8);
 }
 
-/// What it takes to get from a position in `text`, which counts bytes, to a line and a column, which counts UTF-16 code units.
-/// `line_starts`: where each line starts, the first at 0. All numbers are ULEB128:
-///
-/// * How many lines there are, and the length in bytes of each but the last, with what ends it.
-/// * How many lines have a character that is not ASCII. For each, in order: how many lines after the one before it it is, the first
-///   counting from line 0; how many such characters it has; and for each of those `gap << 2 | length - 2`. `gap`: the bytes between the
-///   end of the one before it, or the start of the line, and this one. `length`: the bytes it takes, 2 to 4.
 pub fn line_table(text: &[u8], line_starts: &[u32]) -> Vec<u8> {
     let mut table = Vec::with_capacity(line_starts.len() + 16);
     write_uleb128(&mut table, line_starts.len() as u32);
@@ -311,7 +297,6 @@ pub fn line_table(text: &[u8], line_starts: &[u32]) -> Vec<u8> {
                 0xC0..=0xDF => 2,
                 0xE0..=0xEF => 3,
                 0xF0..=0xFF => 4,
-                // ASCII, or a byte that no character starts with where one should start.
                 _ => {
                     at += 1;
                     continue;
@@ -432,7 +417,6 @@ fn table_lengths(funcs: &[Func]) -> [u32; 4] {
 const SIZES: [u32; 12] = [2, 8, 4, 20, 8, 5, 6, 7, 18, 10, 11, 3];
 
 impl Writer {
-    /// The words as a list in the pool: where it starts and how long it is.
     fn list(&mut self, words: impl IntoIterator<Item = u32>) -> [u32; 2] {
         let start = self.words.len() as u32;
         self.words.extend(words);
@@ -480,8 +464,11 @@ impl FunctionWriter<'_> {
                 if value.is_in_tail_position() && matches!(r.opcode, Opcode::Call | Opcode::CallMethod | Opcode::CallDirect | Opcode::Operation) {
                     r.immediates[1] = CALL_IS_IN_TAIL_POSITION;
                 }
+                if value.keeps_unconvertible_objects() && matches!(r.opcode, Opcode::Cast) {
+                    r.immediates[1] |= CAST_KEEPS_UNCONVERTIBLE_OBJECTS;
+                }
                 if is_marked.get(number) == Some(&true) {
-                    r.immediates[1] = 1;
+                    r.immediates[1] = if matches!(r.opcode, Opcode::CallMethod) { CALL_IS_FUSED_WITH_MAP } else { 1 };
                 }
                 if value.signature.is_some() && matches!(r.opcode, Opcode::Call | Opcode::CallMethod) {
                     r.immediates[1] = 2 + (value.signature.0 << 1 | u32::from(value.is_in_tail_position()));
@@ -552,7 +539,6 @@ impl FunctionWriter<'_> {
     }
 }
 
-/// How many functions are written at a time. The number does not show in what is written.
 const FUNCTIONS_PER_SLICE: usize = 256;
 
 fn site_table(p: &Program, in_parallel: InParallel<'_>) -> Vec<u32> {
@@ -658,7 +644,7 @@ fn write_slices(p: &Program, func_count: usize, funcs: Vec<Slice<'_>>, site_tabl
     }
     for declared in &p.tys.list {
         let flags = u32::from(declared.any_object) | u32::from(declared.any_function) << 1 | u32::from(declared.ints.is_some()) << 2;
-        let (least, most) = declared.ints.unwrap_or((0, 0));
+        let (minimum, maximum) = declared.ints.unwrap_or((0, 0));
         let first = w.parts.len() as u32 / SIZES[2];
         for part in &declared.parts {
             let (kind, index, arguments) = match part {
@@ -668,7 +654,7 @@ fn write_slices(p: &Program, func_count: usize, funcs: Vec<Slice<'_>>, site_tabl
             };
             w.parts.extend([kind, index, arguments[0], arguments[1]]);
         }
-        w.declared.extend([declared.prims, flags, least as u32, (least as u64 >> 32) as u32, most as u32, (most as u64 >> 32) as u32, first, declared.parts.len() as u32]);
+        w.declared.extend([declared.prims, flags, minimum as u32, (minimum as u64 >> 32) as u32, maximum as u32, (maximum as u64 >> 32) as u32, first, declared.parts.len() as u32]);
     }
     for layout in &p.layouts {
         let (fields, methods) = (w.fields.len() as u32 / SIZES[4], w.methods.len() as u32 / SIZES[5]);
@@ -862,11 +848,8 @@ mod tests {
 
     #[test]
     fn line_table_non_ascii() {
-        // Line 1 starts with a character of two bytes, line 2 with one of four.
         assert_eq!(line_table("a\n\u{e9}=1\n\u{1f600}x".as_bytes(), &[0, 2, 7]), [3, 2, 5, 2, 1, 1, 0, 1, 1, 2]);
-        // Two of three bytes, after two bytes and after one.
         assert_eq!(line_table("ab\u{20ac}c\u{20ac}".as_bytes(), &[0]), [1, 1, 0, 2, 2 << 2 | 1, 1 << 2 | 1]);
-        // The lines in between are not listed.
         assert_eq!(line_table("\u{e9}\n\n\n\u{e9}".as_bytes(), &[0, 3, 4, 5]), [4, 3, 1, 1, 2, 0, 1, 0, 3, 1, 0]);
     }
 }

@@ -241,9 +241,27 @@ impl StandaloneModuleGraph {
         self.lookup_file(self.embedded_name(name, &mut held)?)
     }
 
+    fn compiled_program_lists(&self) -> &'static CompiledProgramLists {
+        static LISTS: std::sync::OnceLock<CompiledProgramLists> = std::sync::OnceLock::new();
+        LISTS.get_or_init(|| {
+            let contents = |name: &str| -> &'static [u8] {
+                self.find_ref(&[BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes(), name.as_bytes()].concat()).map_or(&[][..], |file| file.contents.as_bytes())
+            };
+            CompiledProgramLists {
+                sources: contents("sources-of-the-compiled-program"),
+                source_index: contents(bun_bundler::compiled_source_index::FILE_NAME),
+                resolutions: contents("resolutions-of-the-compiled-program"),
+            }
+        })
+    }
+
     fn sorted_sources(&self) -> SortedLines {
-        let name = const_format::concatcp!(BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX, "sources-of-the-compiled-program");
-        SortedLines(self.find_ref(name.as_bytes()).map_or(&[][..], |file| file.contents.as_bytes()))
+        SortedLines(self.compiled_program_lists().sources)
+    }
+
+    fn find_compiled_source(&self, path: &[u8]) -> Option<(&'static [u8], bun_bundler::compiled_source_index::Entry)> {
+        let lists = self.compiled_program_lists();
+        bun_bundler::compiled_source_index::find(lists.source_index, lists.sources, path)
     }
 
     fn is_json_module(&self, path: &[u8]) -> bool {
@@ -260,9 +278,14 @@ impl StandaloneModuleGraph {
     }
 
     fn compiled_source(&self, path: &[u8]) -> Option<&'static [u8]> {
-        self.sorted_sources().get(path).or_else(|| self.entry_point_paths().find(|source| *source == path))
+        use bun_bundler::compiled_source_index::Entry;
+        match self.find_compiled_source(path) {
+            Some((source, Entry::File | Entry::JsonModule)) => Some(source),
+            _ => self.entry_point_paths().find(|source| *source == path),
+        }
     }
 
+    #[cfg(unix)]
     fn has_compiled_source_in(&self, folder: &[u8]) -> bool {
         let prefix = [folder, b"/"].concat();
         self.sorted_sources().with_prefix(&prefix).next().is_some() || self.entry_point_paths().any(|source| source.starts_with(&prefix))
@@ -273,7 +296,7 @@ impl StandaloneModuleGraph {
         let name = const_format::concatcp!(BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX, "sources-of-the-compiled-program");
         let paths: &'static [u8] = self.find_ref(name.as_bytes()).map_or(&[][..], |file| file.contents.as_bytes());
         let of_entry_points = self.files.values().iter().map(|file| file.source_path);
-        paths.split(|&c| c == b'\n').chain(of_entry_points).filter(|path| {
+        strings::split(paths, b"\n").chain(of_entry_points).filter(|path| {
             !path.is_empty() && self.lookup_file(&[BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes(), b".modules-of-the-program", path].concat()).is_none()
         })
     }
@@ -289,10 +312,12 @@ impl StandaloneModuleGraph {
             while path.len() > 1 && path.last() == Some(&b'/') {
                 path = &path[..path.len() - 1];
             }
-            if self.sorted_sources().get(path).is_some() && !self.is_json_module(path) {
-                return Some(false);
-            }
-            return self.compiled_sources_in(&[path, b"/"].concat()).next().map(|_| true);
+            use bun_bundler::compiled_source_index::Entry;
+            return match self.find_compiled_source(path)?.1 {
+                Entry::File => Some(false),
+                Entry::Folder => Some(true),
+                Entry::JsonModule => None,
+            };
         }
         static NAMES: std::sync::OnceLock<std::collections::HashMap<&'static [u8], bool>> = std::sync::OnceLock::new();
         let names = NAMES.get_or_init(|| {
@@ -300,7 +325,7 @@ impl StandaloneModuleGraph {
             for path in self.compiled_sources() {
                 names.insert(path, false);
                 let mut folder = path;
-                while let Some(at) = folder.iter().rposition(|&c| c == b'/') {
+                while let Some(at) = strings::last_index_of_char(folder, b'/') {
                     folder = &folder[..at];
                     if folder.is_empty() || names.insert(folder, true).is_some() {
                         break;
@@ -369,7 +394,7 @@ impl StandaloneModuleGraph {
             return Some(file.stat());
         }
         // A folder that is on the disk too is what the disk says of it.
-        if self.lists(name) && self.find_dir(name) {
+        if self.find_dir(name) && self.lists(name) {
             return Some(dir_stat());
         }
         None
@@ -485,6 +510,12 @@ impl StandaloneModuleGraph {
     }
 }
 
+struct CompiledProgramLists {
+    sources: &'static [u8],
+    source_index: &'static [u8],
+    resolutions: &'static [u8],
+}
+
 #[derive(Clone, Copy)]
 struct SortedLines(&'static [u8]);
 
@@ -506,15 +537,11 @@ impl SortedLines {
     }
 
     fn with_prefix<'a>(self, prefix: &'a [u8]) -> impl Iterator<Item = &'static [u8]> + 'a {
-        self.lower_bound(|line| line < prefix).split(|&c| c == b'\n').take_while(move |line| line.starts_with(prefix))
-    }
-
-    fn get(self, line: &[u8]) -> Option<&'static [u8]> {
-        self.with_prefix(line).next().filter(|found| found.len() == line.len())
+        strings::split(self.lower_bound(|line| line < prefix), b"\n").take_while(move |line| line.starts_with(prefix))
     }
 
     fn value_of(self, key: &[u8]) -> Option<&'static [u8]> {
-        let line = self.lower_bound(|line| line.get(..key.len()).map_or(line < key, |head| head < key)).split(|&c| c == b'\n').next()?;
+        let line = strings::split(self.lower_bound(|line| line.get(..key.len()).map_or(line < key, |head| head < key)), b"\n").next()?;
         line.strip_prefix(key)?.strip_prefix(&[0])?.strip_suffix(&[0])
     }
 }
@@ -568,13 +595,13 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
     }
     fn resolution(&self, source_dir: &[u8], specifier: &[u8], is_require: bool) -> Option<&'static [u8]> {
         /// `@scope/name/sub` -> `@scope/name`.
+        #[cfg(unix)]
         fn package_of(specifier: &[u8]) -> &[u8] {
             let mut slashes = specifier.iter().enumerate().filter(|(_, c)| **c == b'/').map(|(at, _)| at);
             let end = if specifier.first() == Some(&b'@') { slashes.nth(1) } else { slashes.next() };
             &specifier[..end.unwrap_or(specifier.len())]
         }
-        let name = const_format::concatcp!(BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX, "resolutions-of-the-compiled-program");
-        let resolutions = SortedLines(self.find_ref(name.as_bytes()).map_or(&[][..], |file| file.contents.as_bytes()));
+        let resolutions = SortedLines(self.compiled_program_lists().resolutions);
         let source_dir = source_dir.strip_suffix(b"/").unwrap_or(source_dir);
         let mut key: Vec<u8> = Vec::with_capacity(source_dir.len() + specifier.len() + 3);
         key.extend_from_slice(source_dir);
@@ -624,7 +651,7 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
                             is_inside_program_package = true;
                             break;
                         }
-                        folder = &folder[..folder.iter().rposition(|&c| c == b'/').unwrap_or(0)];
+                        folder = &folder[..strings::last_index_of_char(folder, b'/').unwrap_or(0)];
                     }
                 }
                 if !is_inside_program_package {
@@ -1086,6 +1113,7 @@ impl File {
         !self.is_text_module()
             && !self.name.ends_with(b"/sources-of-the-compiled-program")
             && !self.name.ends_with(b"/resolutions-of-the-compiled-program")
+            && !self.name.ends_with(b"/index-of-the-compiled-program")
             && !self.name.starts_with(const_format::concatcp!(BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX, ".modules-of-the-program/").as_bytes())
             && (self.side == FileSide::Client || !self.loader.is_javascript_like())
     }
@@ -1322,6 +1350,7 @@ const TRAILER: &[u8] = b"\n---- Bun! ----\n";
 unsafe extern "C" {
     safe fn Bun__AOT__imageAlignment() -> usize;
     fn Bun__AOT__imageStringTable(bytes: *const u8, len: usize, result: *mut usize) -> bool;
+    #[cfg(unix)]
     fn Bun__AOT__imageSymbols(
         image: *const u8,
         length: usize,
@@ -3759,7 +3788,6 @@ pub fn target_builtins(
     }
 }
 
-#[cfg(unix)]
 pub fn to_graph_fd(
     target: &CompileTarget,
     output_files: &[OutputFile],
@@ -3768,6 +3796,7 @@ pub fn to_graph_fd(
     compile_exec_argv: &[u8],
     flags: Flags,
     runtime_options: RuntimeOptions,
+    #[cfg(windows)] fd: Fd,
 ) -> core::result::Result<Fd, CompileError> {
     let message = |what: &str, name: &[u8]| {
         CompileError::Message(format!("{}: {}", what, bstr::BStr::new(name)).into_bytes())
@@ -3787,24 +3816,27 @@ pub fn to_graph_fd(
         return Err(CompileError::Reason(CompileErrorReason::NoOutputFiles));
     }
 
-    let mut name_buf = bun_paths::path_buffer_pool::get();
-    let name = bun_fs::FileSystem::tmpname(b"aot", &mut name_buf[..], bun_core::fast_random())
-        .map_err(|e| message("failed to name a temporary file", e.name().as_ref()))?;
-    let mut path: Vec<u8> = bun_bundler::bun_fs::RealFS::tmpdir_path().to_vec();
-    if path.last() != Some(&path::SEP) {
-        path.push(path::SEP);
-    }
-    path.extend_from_slice(name.as_bytes());
-    let path = bun_core::ZBox::from_vec(path);
-
     let failed = |e: bun_sys::Error| message("failed to write a temporary file", e.name().as_ref());
-    let fd = Syscall::open(
-        path.as_zstr(),
-        bun_sys::O::RDWR | bun_sys::O::CREAT | bun_sys::O::EXCL | bun_sys::O::CLOEXEC,
-        0o600,
-    )
-    .map_err(failed)?;
-    let _ = Syscall::unlink(path.as_zstr());
+    #[cfg(unix)]
+    let fd = {
+        let mut name_buf = bun_paths::path_buffer_pool::get();
+        let name = bun_fs::FileSystem::tmpname(b"aot", &mut name_buf[..], bun_core::fast_random())
+            .map_err(|e| message("failed to name a temporary file", e.name().as_ref()))?;
+        let mut path: Vec<u8> = bun_bundler::bun_fs::RealFS::tmpdir_path().to_vec();
+        if path.last() != Some(&path::SEP) {
+            path.push(path::SEP);
+        }
+        path.extend_from_slice(name.as_bytes());
+        let path = bun_core::ZBox::from_vec(path);
+        let fd = Syscall::open(
+            path.as_zstr(),
+            bun_sys::O::RDWR | bun_sys::O::CREAT | bun_sys::O::EXCL | bun_sys::O::CLOEXEC,
+            0o600,
+        )
+        .map_err(failed)?;
+        let _ = Syscall::unlink(path.as_zstr());
+        fd
+    };
     let file = bun_sys::File::from_fd(fd);
     file.write_all(&(bytes.len() as u64).to_le_bytes())
         .and_then(|()| file.write_all(&bytes))
@@ -3883,6 +3915,8 @@ pub fn to_executable(
         );
         (injected, aot_symbols)
     });
+    #[cfg(not(unix))]
+    let _ = aot_symbols;
     let Some(injected) = injected else {
         // inject() has already printed the specific error.
         return Ok(CompileResult::fail_fmt(format_args!(
@@ -4093,6 +4127,43 @@ impl StandaloneModuleGraph {
             return Ok(None);
         }
         // SAFETY: within the mapping: checked above.
+        let graph = Self::from_mapped(unsafe { map.add(size_of::<u64>()) }, len)?;
+        if let Some(graph) = graph {
+            // SAFETY: `from_mapped` just allocated `graph`, and nobody else has the pointer yet.
+            unsafe { &mut *graph }.file = Some((fd, map.cast_const()));
+        }
+        Ok(graph)
+    }
+
+    #[cfg(windows)]
+    pub fn from_fd(fd: Fd) -> crate::Result<Option<*mut StandaloneModuleGraph>> {
+        const PAGE_READONLY: u32 = 2;
+        const FILE_MAP_READ: u32 = 4;
+        unsafe extern "system" {
+            fn CreateFileMappingW(file: *mut core::ffi::c_void, attributes: *mut core::ffi::c_void, protection: u32, size_high: u32, size_low: u32, name: *const u16) -> *mut core::ffi::c_void;
+            fn MapViewOfFile(mapping: *mut core::ffi::c_void, access: u32, offset_high: u32, offset_low: u32, size: usize) -> *mut core::ffi::c_void;
+        }
+        let size = usize::try_from(Syscall::get_file_size(fd)?).unwrap_or(0);
+        if size <= size_of::<u64>() {
+            return Ok(None);
+        }
+        // SAFETY: `fd` is an open file handle; the other arguments ask for the whole file, read-only.
+        let map = unsafe {
+            let mapping = CreateFileMappingW(fd.native().cast(), core::ptr::null_mut(), PAGE_READONLY, 0, 0, core::ptr::null());
+            if mapping.is_null() {
+                return Ok(None);
+            }
+            MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0).cast::<u8>()
+        };
+        if map.is_null() {
+            return Ok(None);
+        }
+        // SAFETY: the view is aligned to the allocation granularity and longer than eight bytes: checked above.
+        let len = usize::try_from(u64::from_le(unsafe { map.cast::<u64>().read() })).unwrap_or(usize::MAX);
+        if len > size - size_of::<u64>() {
+            return Ok(None);
+        }
+        // SAFETY: within the view: checked above.
         let graph = Self::from_mapped(unsafe { map.add(size_of::<u64>()) }, len)?;
         if let Some(graph) = graph {
             // SAFETY: `from_mapped` just allocated `graph`, and nobody else has the pointer yet.

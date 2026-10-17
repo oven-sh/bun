@@ -59,3 +59,38 @@ test("an error in a preload stops the run", async () => {
   expect(said).not.toContain("(pass)");
   expect(exitCode).toBe(1);
 });
+
+const passed = (said: string) => [...said.matchAll(/^\(pass\) (.*?)(?: \[.*\])?$/gm)].map(match => match[1]).sort();
+const errors = (said: string) => [...said.matchAll(/^(\S+)\(\d+,\d+\): error (TS\d+)/gm)].map(match => `${match[1]} ${match[2]}`).sort();
+
+test("what only a refused test file imports is still declared for the others", async () => {
+  using dir = tempDir("run-aot-fails-file-with-type-error", {
+    "tsconfig.json": files["tsconfig.json"],
+    "global.ts": `export {}; declare global { var added: number | undefined; interface Settings { depth?: number } }`,
+    "shape.ts": `export interface Shape { side: number }\nexport const square: Shape = { side: 2 };`,
+    "wider.ts": `declare module "./shape" { interface Shape { label?: string } }\nexport {};`,
+    "1-wrong.test.ts": `import "./global"; import "./wider"; const n: number = "text"; test("never run", () => { expect(n).toBe(1); });`,
+    "2-global.test.ts": `export {}; test("a global variable", () => { expect(typeof added).toBe("undefined"); });`,
+    "3-interface.test.ts": `export {}; const settings: Settings = {}; test("a global interface", () => { expect(settings.depth).toBeUndefined(); });`,
+    "4-module.test.ts": `import { square } from "./shape"; test("a member added to a module's interface", () => { expect(square.label).toBeUndefined(); });`,
+  });
+  const { said, exitCode } = await run(String(dir));
+  expect(errors(said)).toEqual(["1-wrong.test.ts TS2322"]);
+  expect(passed(said)).toEqual(["a global interface", "a global variable", "a member added to a module's interface"]);
+  expect(said.split("bun test --aot does not run this file").length - 1).toBe(1);
+  expect(exitCode).toBe(1);
+});
+
+test("refusing one test file after another does not refuse a third", async () => {
+  using dir = tempDir("run-aot-fails-file-with-type-error", {
+    "tsconfig.json": files["tsconfig.json"],
+    "first.ts": `export {}; declare global { var first: number | undefined; }`,
+    "second.ts": `export {}; declare global { var second: number | undefined; }`,
+    "1-wrong.test.ts": `import "./first"; const n: number = "text"; test("never run", () => { expect(n).toBe(1); });`,
+    "2-uses-first.test.ts": `import "./second"; test("uses the first", () => { expect(typeof first).toBe("undefined"); });`,
+    "3-uses-second.test.ts": `export {}; test("uses the second", () => { expect(typeof second).toBe("undefined"); });`,
+  });
+  const { said } = await run(String(dir));
+  expect(errors(said)).toEqual(["1-wrong.test.ts TS2322"]);
+  expect(passed(said)).toEqual(["uses the first", "uses the second"]);
+});

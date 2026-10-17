@@ -1,6 +1,4 @@
-//! Variables: which are values of the function being built, which live in an environment, which are static.
-
-use super::fit::{Signature, Ty};
+use super::coerce::{Signature, Ty};
 use super::{FileBuild, Fx, ImportSource, Place, Problem, Role, UsingArguments};
 use crate::declared::{Declared, prim};
 use crate::fragment::GlobalKey;
@@ -13,7 +11,6 @@ use bun_sema::check::{Activation, Capture, CapturedVariable, DeclaredClosure, Re
 use bun_sema::hir::{self, ExprId, Flags, FnId, IdList, PatId, PatKind, StmtId, StmtKind, VarKind};
 use bun_sema::program::{FileId, Sym};
 
-/// `Closure::maxNumberOfCaptures` of the engine, which has a byte for the number.
 const MAX_CAPTURES: usize = 255;
 
 #[derive(Copy, Clone)]
@@ -21,16 +18,14 @@ pub(super) enum CachedIdent {
     Unknown,
     OwnSymbol,
     ValueSymbol(Sym),
+    PlainVariable(Sym),
 }
 
 impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
-    /// `export default e` takes the value of `e` when it is evaluated. Where `e` names a binding of the program that never changes,
-    /// the export is as good as that binding, which is returned.
     pub(crate) fn default_export_binding(&mut self, file: FileId, e: hir::ExprId) -> Option<Sym> {
         self.default_export_binding_inner(file, e, &mut Vec::new())
     }
 
-    /// `seen`: see `export_value_symbol_inner`.
     pub(crate) fn default_export_binding_inner(&mut self, file: FileId, e: hir::ExprId, seen: &mut Vec<Sym>) -> Option<Sym> {
         let hir::ExprKind::Ident(name) = self.hir(file)[e].kind else { return None };
         let named = self.ident_binding(file, e, name)?;
@@ -39,8 +34,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         (!self.is_ambient(sym) && !self.is_assigned(sym) && !is_assigned_later).then_some(sym)
     }
 
-    /// Whether something assigns to the binding after its declaration.
-    /// Whether it is the own name of a function expression, which nothing can be stored to.
     fn is_var_initialized_once_before(&self, sym: Sym, file: FileId, pos: u32) -> bool {
         let Some((of, Decl::Var(pat))) = self.value_declaration(sym) else { return false };
         if of != file {
@@ -84,7 +77,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     pub(crate) fn ident_symbol(&mut self, file: FileId, e: ExprId, name: Atom) -> Option<Sym> {
         let local = if file == self.file { self.c.bound(file).expr_symbol[e.idx()] } else { bun_sema::bind::SymbolId::NONE };
-        if let Some(&CachedIdent::ValueSymbol(known)) = self.ident_cache.get(local.idx()) {
+        if let Some(&(CachedIdent::ValueSymbol(known) | CachedIdent::PlainVariable(known))) = self.ident_cache.get(local.idx()) {
             return Some(known);
         }
         let binding = self.ident_binding(file, e, name)?;
@@ -93,6 +86,25 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             *cached = CachedIdent::ValueSymbol(sym);
         }
         Some(sym)
+    }
+
+    pub(crate) fn cached_plain_variable(&self, file: FileId, e: ExprId) -> Option<Sym> {
+        if file != self.file {
+            return None;
+        }
+        match self.ident_cache.get(self.c.bound(file).expr_symbol[e.idx()].idx()) {
+            Some(&CachedIdent::PlainVariable(sym)) => Some(sym),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn cache_plain_variable(&mut self, file: FileId, e: ExprId) {
+        if file == self.file
+            && let Some(cached) = self.ident_cache.get_mut(self.c.bound(file).expr_symbol[e.idx()].idx())
+            && let CachedIdent::ValueSymbol(sym) = *cached
+        {
+            *cached = CachedIdent::PlainVariable(sym);
+        }
     }
 
     pub(crate) fn is_assigned(&self, sym: Sym) -> bool {
@@ -110,7 +122,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.files.export_symbol_of_value_symbol_if_exported(self.files.sym(file, id))
     }
 
-    /// `import a from "./a.txt" with { type: "text" }`: the bundler provides the value, whatever the file is.
     pub(crate) fn is_asset_import(&self, file: FileId, stmt: StmtId) -> bool {
         let hir = self.hir(file);
         let (start, end) = (hir[stmt].start, hir[stmt].loc.end);
@@ -142,21 +153,17 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         })
     }
 
-    /// `symbol.ValueDeclaration`, also of `const a = require("a")` in JavaScript, which the type checker takes for an import.
     pub(crate) fn value_declaration(&self, sym: Sym) -> Option<(FileId, Decl)> {
         self.files.value_declaration(sym).or_else(|| {
             self.files.decls_of(sym).iter().copied().find_map(|(file, decl)| match decl {
                 Decl::Require(pat) => Some((file, Decl::Var(pat))),
-                // `export default a`, which the type checker takes for an alias of `a`, and which holds the value `a` had.
                 Decl::ExportExpr(_) => Some((file, decl)),
                 _ => None,
             })
         })
     }
 
-    /// Not `const a = require("a")` in JavaScript, which the type checker takes for an import and which is a variable.
     pub(crate) fn is_declared_by_import(&self, sym: Sym) -> bool {
-        // `import { Node }` of a type next to `function Node() {}`: one symbol, whose value is the function.
         if matches!(self.files.value_declaration(sym), Some((_, Decl::Fn(_) | Decl::Var(_) | Decl::Class(_)))) {
             return false;
         }
@@ -168,9 +175,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         })
     }
 
-    /// Whether the symbol is declared and nothing in the program defines it: the declaration has no body, or its file is not compiled with the
-    /// program. That is a declaration file, a file that stands in for one, and a file that is only imported for its types. A value of such
-    /// a type comes from outside the program if there is any.
     pub(crate) fn is_ambient(&self, sym: Sym) -> bool {
         if let Some(&known) = self.ambient.borrow().get(&sym) {
             return known;
@@ -193,7 +197,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         !self.shared.is_compiled(file) || self.c.bound(file).modifier_flags(self.hir(file), decl).contains(Flags::AMBIENT)
     }
 
-    /// The function whose activation holds the variable. `Some(NONE)`: the file. `None`: it is not a variable of the program.
     pub(crate) fn declaring_function(&self, sym: Sym) -> Option<FnId> {
         let (file, decl) = self.value_declaration(sym)?;
         let bound = self.c.bound(file);
@@ -224,12 +227,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// The function whose activation evaluates the expression.
     pub(crate) fn enclosing_function(&self, file: FileId, e: ExprId) -> FnId {
         self.c.enclosing_fn_of_expr(file, e).unwrap_or(FnId::NONE)
     }
 
-    /// An instance field initializer is evaluated by the constructor, not by the function the class is defined in.
     pub(crate) fn is_in_instance_field_initializer(&self, file: FileId, e: ExprId) -> bool {
         let mut parent = self.c.expr_parent_link(file, e);
         loop {
@@ -242,8 +243,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             };
         }
     }
-
-    // ───────────────────────────── static variables ─────────────────────────────
 
     pub(crate) fn add_global(&mut self, name: StrId, file: FileId, declared: Ty, key: GlobalKey) -> GlobalId {
         let id = GlobalId::new(self.out.globals.len());
@@ -262,7 +261,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         let name = self.str(self.files.symbol(sym).name);
         let mut declared = self.symbol_ty(sym);
-        // A `var` is `undefined` from the time its module is linked, before any code runs, whether or not anybody gets to see that.
         let is_var = self.files.flags(sym).contains(SymFlags::FUNCTION_SCOPED_VARIABLE) || self.has_local_flags(sym, SymFlags::FUNCTION_SCOPED_VARIABLE) || self.c.is_hoisted(sym);
         if is_var && declared.id.is_some() {
             declared.id = self.or_undefined(declared.id);
@@ -295,7 +293,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         let (single_function, single_function_flags) = self.symbol_single_function(sym);
         self.out.globals[g.idx()].single_function = single_function;
-        // The slot of a lazy variable holds nil at first.
         self.out.globals[g.idx()].single_function_flags = if is_lazy && single_function_flags & ir::single_function_flags::IS_PROVEN != 0 { ir::single_function_flags::OR_NULLISH } else { single_function_flags };
         g
     }
@@ -319,10 +316,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         true
     }
 
-    /// `Field::single_function` and `Field::single_function_flags` for a variable. Every store to a variable is seen, so each function that it ever
-    /// holds is a closure of that one. It is a fact unless a read may find nil, which is then the only other value.
     fn symbol_single_function(&mut self, sym: Sym) -> (FuncId, u8) {
-        // A class object is a closure of the constructor.
         if let Some((file, class)) = self.c.class_for_variable(sym) {
             return (self.forward_declare_constructor(file, class), ir::single_function_flags::IS_PROVEN);
         }
@@ -336,7 +330,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// The flags are on the symbol the file itself refers to, which is another one if the binding is exported.
     fn has_local_flags(&self, sym: Sym, flags: SymFlags) -> bool {
         self.files.decls_of(sym).iter().copied().any(|(file, decl)| {
             let bound = self.c.bound(file);
@@ -345,10 +338,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         })
     }
 
-    // ───────────────────────────── captures and environments ─────────────────────────────
-
-    /// Gives each of `syms` its place. What there is one of for as long as the program runs is a module variable. What lives in the environment
-    /// of its activation has a field there. Anything else is a value of the function, whether or not inner functions have copies of it.
     pub(crate) fn declare(&mut self, fx: &mut Fx, syms: &[Sym]) {
         let captured = self.captured(fx.file);
         for &sym in syms {
@@ -361,8 +350,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
             if let Some(CapturedVariable::InEnvironment(activation, _)) = self.c.captured_variable(sym) {
                 self.activation_layout(activation);
-                // A `var` is there from the start. What is left as it is counts as being in its temporal dead zone. A parameter is bound
-                // right away.
                 let is_var = matches!(self.value_declaration(sym), Some((_, Decl::Var(_))));
                 if is_var && !self.c.has_tdz(sym) && self.files.flags(sym).contains(SymFlags::FUNCTION_SCOPED_VARIABLE) {
                     self.initialize_sym_without_value(fx, sym, 0);
@@ -381,7 +368,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// The layout of the environment of an activation that has one. It has the variables of the blocks that share it as well.
     pub(crate) fn activation_layout(&mut self, activation: Activation) -> LayoutId {
         if let Some(&layout) = self.activation_layouts.get(&activation) {
             return layout;
@@ -393,6 +379,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let key = self.next_environment_key();
         let layout = self.add_layout(LayoutKind::Environment, StrId::NONE, key);
         let was = self.activation_layouts.insert(activation, layout);
+        self.index_activation_layout(activation);
         if let Some(undo) = &mut self.undo {
             undo.activation_layouts.push((activation, was));
         }
@@ -401,7 +388,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         for (index, &sym) in self.c.environment_of(self.file, activation).iter().enumerate() {
             let index = index as u32;
             let name = self.str(self.files.symbol(sym).name);
-            // What keeps the closure of a function declaration. Only `ClosureOnce` looks at it.
             if let Some((file, func)) = self.function_declaration_for(sym)
                 && self.c.declared_closure(file, func) == Some(DeclaredClosure::KeptInEnvironment(activation, index))
             {
@@ -451,12 +437,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         layout
     }
 
-    /// Makes the environments of the activation that is being entered, if it has any. `close_env` then closes them.
     pub(crate) fn open_activation(&mut self, fx: &mut Fx, activation: Activation) -> bool {
         let environments = self.c.activation_environments(fx.file, activation);
         let Some(&last) = environments.last() else { return false };
         let layout = self.activation_layout(last);
-        // The block of a `catch` clause: what the clause binds has opened it.
         if fx.envs.last().is_some_and(|scope| scope.layout == layout) {
             return false;
         }
@@ -469,7 +453,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         true
     }
 
-    /// No closure has been asked for yet.
     pub(crate) fn new_environment(&mut self, fx: &mut Fx, layout: LayoutId) -> V {
         let env = self.emit(fx, Op::New(layout));
         for field in 0..self.out.layouts[layout.idx()].fields.len() as u32 {
@@ -485,7 +468,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         while fx.envs.pop().is_some_and(|scope| scope.shares_activation_with_previous) {}
     }
 
-    /// Where the environment of a class that is at hand holds the capture for the members of the class.
     fn imported(&self, fx: &Fx, capture: Capture) -> Option<(LayoutId, u32)> {
         fx.envs.iter().rev().find_map(|scope| {
             let index = self.imports.get(&scope.layout)?.iter().position(|&held| held == capture)?;
@@ -493,14 +475,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         })
     }
 
-    /// Whether the code being built can get at an environment of the layout. `NONE`: there is nothing to get at.
     pub(crate) fn can_reach_env(&self, fx: &Fx, layout: LayoutId) -> bool {
         layout.is_none()
             || fx.envs.iter().any(|scope| scope.layout == layout)
             || self.activations.get(&layout).is_some_and(|&activation| self.imported(fx, Capture::Environment(activation)).is_some())
     }
 
-    /// The environment of that layout, as seen from the code being built.
     pub(crate) fn env_for_layout(&mut self, fx: &mut Fx, layout: LayoutId) -> V {
         if let Some(scope) = fx.envs.iter().rev().find(|scope| scope.layout == layout) {
             let var = scope.var;
@@ -515,7 +495,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// Whose `this` the code being built has for its own.
     fn is_own_receiver(&self, fx: &Fx, receiver: Receiver) -> bool {
         match receiver {
             Receiver::Function(func) => fx.func == func,
@@ -539,7 +518,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.has_own_capture(fx, capture) || self.imported(fx, capture).is_some()
     }
 
-    /// Whether the code being built has all that a direct call of the function passes ahead of `this`.
     pub(crate) fn has_captures_available(&self, fx: &Fx, func: FuncId) -> bool {
         self.captures.get(&func).is_none_or(|captures| captures.iter().all(|&capture| self.has_capture_available(fx, capture)))
     }
@@ -582,12 +560,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// What a closure of the function holds and a direct call passes ahead of `this`, as seen from the code being built.
     pub(crate) fn capture_values(&mut self, fx: &mut Fx, func: FuncId, pos: u32) -> ir::Args {
         let captures = self.captures.get(&func).cloned().unwrap_or_default();
-        let held_to = self.out.funcs[func.idx()].captures.clone();
+        let capture_tys = self.out.funcs[func.idx()].captures.clone();
         let anything = self.out.tys.anything;
-        (captures.into_iter().zip(held_to))
+        (captures.into_iter().zip(capture_tys))
             .map(|(capture, to)| {
                 let value = self.capture_value(fx, capture, pos);
                 if matches!(capture, Capture::Variable(_)) && to != anything && self.ty(fx, value) == anything {
@@ -603,18 +580,17 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         match capture {
             Capture::Environment(activation) => {
                 let layout = self.activation_layout(activation);
-                Ty::of(self.layout_ty(layout))
+                Ty::from_id(self.layout_ty(layout))
             }
             Capture::Variable(sym) => self.symbol_ty(sym),
             Capture::This(receiver) => match self.this_binding_layout(receiver) {
-                Some(layout) => Ty::of(self.layout_ty(layout)),
+                Some(layout) => Ty::from_id(self.layout_ty(layout)),
                 None => self.receiver_ty(receiver),
             },
             Capture::Arguments(_) | Capture::NewTarget(_) | Capture::HomeObject(_) => Ty::NONE,
         }
     }
 
-    /// Where `this` of the constructor may be uninitialized: what holds it, and `new.target`, for the constructor and the arrow functions in it.
     pub(crate) fn this_binding_layout(&mut self, receiver: Receiver) -> Option<LayoutId> {
         let Receiver::Function(func) = receiver else { return None };
         if !self.c.this_may_be_uninitialized(self.file, func) {
@@ -634,7 +610,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         Some(layout)
     }
 
-    /// The type of `this` in the function, or in the constructor of the class.
     pub(crate) fn receiver_ty(&mut self, receiver: Receiver) -> Ty {
         let id = match receiver {
             Receiver::Function(func) => self.funcs.get(&(self.file, func)).copied(),
@@ -650,7 +625,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// Says what the function is handed ahead of `this`.
     pub(crate) fn set_captures(&mut self, id: FuncId, captures: &[Capture]) {
         if captures.is_empty() {
             return;
@@ -668,7 +642,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.captures.insert(id, captures.to_vec());
     }
 
-    /// The captures as the function being built is handed them.
     pub(crate) fn add_captures(&mut self, fx: &mut Fx) {
         let is_arrow = fx.func.is_some() && self.hir(fx.file)[fx.func].kind == hir::FnKind::Arrow;
         let seen = if is_arrow { self.c.arrow_receiver(fx.file, fx.func) } else { Receiver::None };
@@ -720,14 +693,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    // ───────────────────────────── reads and writes ─────────────────────────────
-
-    /// What the name stands for, for a reference that is not in the source, or that gets at it through a namespace.
     pub(crate) fn read_sym(&mut self, fx: &mut Fx, sym: Sym, pos: u32) -> V {
         self.read_sym_at(fx, sym, ExprId::NONE, pos)
     }
 
-    /// The same for the identifier `e` of the source.
     pub(crate) fn read_reference(&mut self, fx: &mut Fx, sym: Sym, e: ExprId) -> V {
         let pos = self.hir(fx.file)[e].pos;
         self.read_sym_at(fx, sym, e, pos)
@@ -801,7 +770,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return self.read(fx, var);
         }
         if let Some(value) = self.c.const_value(sym) {
-            // What it holds is known. Whether it holds it yet is not always: then the variable is read for the test alone.
             if self.is_lazy(sym) {
                 self.emit_lazy_tdz_check(fx, sym, e);
             } else if self.may_be_in_tdz(fx, sym, e) {
@@ -844,7 +812,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let env = self.env_for_layout(fx, layout);
             return self.emit(fx, Op::FieldGet { obj: env, layout, field });
         }
-        // Within a class that is not evaluated once, its name stands for what the environment of the class holds.
         if matches!(self.places.get(&sym), Some(Place::Env(..)))
             && let Some((file, Decl::Class(class))) = self.value_declaration(sym)
             && self.is_within_class_environment(fx, file, class)
@@ -861,12 +828,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         match self.value_declaration(sym) {
             Some((file, Decl::Fn(func))) => {
-                // In another module, where it is assigned to: it is a variable of that module, see `block_body`.
                 if file != self.file && self.is_assigned(sym) && self.function_values(file).contains(&sym) {
                     let g = self.symbol_global(sym);
                     return self.read_slot(fx, sym, Op::GlobalGet(g), e);
                 }
-                // Of an overloaded function, the declaration with the body.
                 if let Some((file, func)) = self.function_declaration_for(sym)
                     && let Some(id) = self.function_of_declaration(fx, file, func)
                 {
@@ -882,7 +847,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let g = self.symbol_global(sym);
                 self.read_slot(fx, sym, Op::GlobalGet(g), e)
             }
-            // One that is evaluated once, or the name of a class expression within it: no variable holds the class object.
             Some((file, Decl::Class(class))) => {
                 self.emit_class_tdz_check(fx, file, class, e);
                 self.class_as_value(fx, file, class)
@@ -916,7 +880,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// The read of a module variable or of a variable in an environment. The engine throws if it holds nothing yet.
     fn read_slot(&mut self, fx: &mut Fx, sym: Sym, read: Op, e: ExprId) -> V {
         if let Op::GlobalGet(global) = read
             && self.lazy_globals.contains_key(&global)
@@ -933,14 +896,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         found
     }
 
-    /// Whether the reference `e` may find what it refers to in its temporal dead zone. `NONE`: a reference that is not in the source.
     pub(crate) fn may_be_in_tdz(&mut self, fx: &Fx, sym: Sym, e: ExprId) -> bool {
         (!fx.locals.contains_key(&sym) || fx.initialized.contains_key(&sym)) && self.c.may_be_in_tdz(sym, fx.file, e)
     }
 
-    // ───────────────────────────── the temporal dead zone of local variables ─────────────────────────────
-
-    /// The scope of the variable is entered.
     fn enter_tdz(&mut self, fx: &mut Fx, sym: Sym) {
         let boolean = self.known.boolean;
         let flag = *fx.initialized.entry(sym).or_insert_with(|| fx.b.new_var(boolean));
@@ -959,7 +918,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// The reference `e` to a local variable throws if the variable has not been initialized.
     fn emit_local_tdz_check(&mut self, fx: &mut Fx, sym: Sym, e: ExprId) {
         let Some(&flag) = fx.initialized.get(&sym) else { return };
         if !self.c.may_be_in_tdz(sym, fx.file, e) {
@@ -978,15 +936,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.switch_to(fine);
     }
 
-    /// The initialization of a binding, as opposed to an assignment to it.
     pub(crate) fn initialize_sym(&mut self, fx: &mut Fx, sym: Sym, value: V, pos: u32) {
         self.leave_tdz(fx, sym);
         self.write_sym(fx, sym, value, pos);
     }
 
-    /// `let name;`, and a `var` where its scope is entered.
     pub(crate) fn initialize_sym_without_value(&mut self, fx: &mut Fx, sym: Sym, pos: u32) {
-        // `export let name;`: there is no such property until something is stored.
         if self.namespace_with_property(sym).is_some() {
             return;
         }
@@ -1002,7 +957,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.is_storing_default = false;
     }
 
-    /// `name = value`, where `e` is the name.
     pub(crate) fn assign_sym(&mut self, fx: &mut Fx, sym: Sym, value: V, e: ExprId) {
         let pos = self.hir(fx.file)[e].pos;
         if self.namespace_with_property(sym).is_some() {
@@ -1011,10 +965,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if fx.locals.contains_key(&sym) {
             self.emit_local_tdz_check(fx, sym, e);
         } else if self.c.has_tdz(sym) && self.may_be_in_tdz(fx, sym, e) {
-            // Whether the variable holds anything yet the engine looks at when it is read.
             self.read_sym_at(fx, sym, e, pos);
         }
-        // Sloppy code goes on as if nothing had been written.
         if self.is_function_expression_name(sym) && fx.func.is_some() && self.c.is_sloppy_function(fx.file, fx.func) {
             return;
         }
@@ -1029,8 +981,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.write_sym(fx, sym, value, pos);
     }
 
-    /// `value` is stored to the variable, which is kept in a place of the type `place`. Where that has room besides the type of the variable,
-    /// the value is held to the type first: see `symbol_store_ty`.
     fn coerce_to_variable_type(&mut self, fx: &mut Fx, sym: Sym, value: V, place: TyId, why: CoerceReason) -> V {
         if fx.is_storing_default {
             return value;
@@ -1039,7 +989,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if held.id == place { value } else { self.coerce_to(fx, value, held, why) }
     }
 
-    /// What enters a variable whose type is written down is held to it as by `as`.
     pub(crate) fn write_sym(&mut self, fx: &mut Fx, sym: Sym, value: V, pos: u32) {
         if let Some(namespace) = self.namespace_with_property(sym) {
             let obj = self.namespace_object(fx, namespace);
@@ -1096,9 +1045,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    // ───────────────────────────── enums ─────────────────────────────
-
-    /// Where the first declaration of the enum or the namespace in the file of the symbol has its name. 0: a file is what declares it.
     fn declared_name_pos(&self, sym: Sym) -> u32 {
         let named = self.files.decls_of(sym).iter().copied().filter(|declared| declared.0 == sym.file).find_map(|(file, decl)| match decl {
             Decl::Enum(declaration) => Some(self.hir(file)[declaration].name_pos),
@@ -1108,7 +1054,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         named.unwrap_or(0)
     }
 
-    /// The function that yields the object an enum is as a value. It makes it when it is first asked for.
     fn enum_object_getter(&mut self, sym: Sym) -> FuncId {
         if let Some(&known) = self.enum_objects.get(&sym) {
             return known;
@@ -1129,7 +1074,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let global = self.add_global(name, sym.file, Ty::NONE, GlobalKey::Enum(sym.file, sym.id));
         let is_in_file = self.files.decls_of(sym).iter().copied().any(|(file, decl)| {
             let hir = self.hir(file);
-            matches!(decl, Decl::Enum(declaration) if hir.ids(hir.body).any(|stmt: StmtId| matches!(hir[stmt].kind, StmtKind::Enum(it) if it == declaration)))
+            matches!(decl, Decl::Enum(declaration) if matches!(self.c.bound(file).stmt_parent[hir[declaration].stmt.idx()], Parent::File))
         });
         if is_in_file {
             self.out.globals[global.idx()].initialization = ir::Initialization::Undefined;
@@ -1148,14 +1093,23 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return;
         };
         let (file, declaration) = (*file, *declaration);
-        let null = self.emit(fx, Op::Null);
-        let is_missing = self.emit(fx, Op::StrictEq { a: known, b: null });
-        let (make, done) = (fx.b.new_block(), fx.b.new_block());
-        self.branch(fx, is_missing, make, done);
-        fx.b.seal(make);
+        let is_nullish = self.emit(fx, Op::IsNullish(known));
+        let (nullish, done) = (fx.b.new_block(), fx.b.new_block());
+        self.branch(fx, is_nullish, nullish, done);
+        fx.b.seal(nullish);
         fx.b.seal(done);
         fx.b.switch_to(done);
         self.terminate_with_return(fx, known);
+        fx.b.switch_to(nullish);
+        let null = self.emit(fx, Op::Null);
+        let is_missing = self.emit(fx, Op::StrictEq { a: known, b: null });
+        let (make, not_evaluated) = (fx.b.new_block(), fx.b.new_block());
+        self.branch(fx, is_missing, make, not_evaluated);
+        fx.b.seal(make);
+        fx.b.seal(not_evaluated);
+        fx.b.switch_to(not_evaluated);
+        let undefined = self.emit(fx, Op::Undefined);
+        self.terminate_with_return(fx, undefined);
         fx.b.switch_to(make);
         let obj = self.emit(fx, Op::NewObject);
         self.emit_enum_members(fx, obj, file, declaration);
@@ -1212,10 +1166,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    // ───────────────────────────── namespace objects ─────────────────────────────
-
-    /// The namespace that exports what `sym` stands for, if that is reified (`Checker::is_reified_namespace`): it is an object, and what it
-    /// exports are its properties.
     pub(crate) fn exporting_reified_namespace(&self, sym: Sym) -> Option<Sym> {
         if !self.c.has_reified_namespaces() {
             return None;
@@ -1224,24 +1174,23 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     pub(crate) fn is_exported_by_namespace(&self, sym: Sym) -> bool {
-        self.files.parent_of_symbol(sym).is_some_and(|parent| self.files.decls_of(parent).iter().any(|(_, decl)| matches!(decl, Decl::Module(_))))
+        self.files.parent_of_symbol(sym).is_some_and(|parent| {
+            let decls = self.files.decls_of(parent);
+            decls.iter().any(|(_, decl)| matches!(decl, Decl::Module(_))) && !decls.iter().any(|(_, decl)| matches!(decl, Decl::File))
+        })
     }
 
-    /// The same for a variable: the property is all there is of it, within the namespace too.
     pub(crate) fn namespace_with_property(&self, sym: Sym) -> Option<Sym> {
         let namespace = self.exporting_reified_namespace(sym)?;
         matches!(self.value_declaration(sym), Some((_, Decl::Var(_)))).then_some(namespace)
     }
 
-    /// The same for a function, a class, an enum or a namespace that the identifier `e` names from outside the block that declares it.
-    /// Within the block the name stands for the binding of the block.
     pub(crate) fn namespace_for_outside_ref(&mut self, fx: &Fx, e: ExprId, sym: Sym) -> Option<Sym> {
         let namespace = self.exporting_reified_namespace(sym)?;
         let is_bound_by_block = matches!(self.value_declaration(sym), Some((_, Decl::Fn(_) | Decl::Class(_) | Decl::Enum(_) | Decl::Module(_))));
         (is_bound_by_block && !self.c.is_within_declaring_block(fx.file, e, sym)).then_some(namespace)
     }
 
-    /// What the objects of the reified namespace are made as. `None`: an ordinary object.
     pub(crate) fn namespace_layout(&mut self, namespace: Sym) -> Option<LayoutId> {
         if self.is_merged_namespace(namespace) {
             return None;
@@ -1250,7 +1199,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if self.is_record_type(checked) { self.record_layout(checked) } else { None }
     }
 
-    /// Where the object of a reified namespace is kept. It holds `undefined` until the first block of the namespace is evaluated.
     pub(crate) fn namespace_global(&mut self, namespace: Sym) -> GlobalId {
         if let Some(&known) = self.namespace_globals.get(&namespace) {
             return known;
@@ -1284,21 +1232,20 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.emit_throwing(fx, Op::PropGet { obj, name })
     }
 
-    /// A block of the reified namespace is entered: the first one makes the object.
     pub(crate) fn ensure_enum_object(&mut self, fx: &mut Fx, sym: Sym) {
         let global = self.enum_global(sym);
         let known = self.emit(fx, Op::GlobalGet(global));
         let undefined = self.emit(fx, Op::Undefined);
         let is_missing = self.emit(fx, Op::StrictEq { a: known, b: undefined });
-        let (make, made) = (fx.b.new_block(), fx.b.new_block());
-        self.branch(fx, is_missing, make, made);
+        let (make, created) = (fx.b.new_block(), fx.b.new_block());
+        self.branch(fx, is_missing, make, created);
         fx.b.seal(make);
         fx.b.switch_to(make);
         let fresh = self.emit(fx, Op::NewObject);
         self.emit(fx, Op::GlobalSet(global, fresh));
-        fx.b.jump(made);
-        fx.b.seal(made);
-        fx.b.switch_to(made);
+        fx.b.jump(created);
+        fx.b.seal(created);
+        fx.b.switch_to(created);
     }
 
     pub(crate) fn enter_namespace_block(&mut self, fx: &mut Fx, namespace: Sym) {
@@ -1309,8 +1256,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let known = self.emit(fx, Op::GlobalGet(global));
         let undefined = self.emit(fx, Op::Undefined);
         let is_missing = self.emit(fx, Op::StrictEq { a: known, b: undefined });
-        let (make, made) = (fx.b.new_block(), fx.b.new_block());
-        self.branch(fx, is_missing, make, made);
+        let (make, created) = (fx.b.new_block(), fx.b.new_block());
+        self.branch(fx, is_missing, make, created);
         fx.b.seal(make);
         fx.b.switch_to(make);
         let obj = match self.namespace_layout(namespace) {
@@ -1331,12 +1278,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let name = self.str(self.files.symbol(namespace).name);
             self.emit_throwing(fx, Op::PropSet { obj: outer, name, value: obj });
         }
-        fx.b.jump(made);
-        fx.b.seal(made);
-        fx.b.switch_to(made);
+        fx.b.jump(created);
+        fx.b.seal(created);
+        fx.b.switch_to(created);
     }
 
-    /// `export const name = init` in a reified namespace: what the field by the name is expected to hold.
     pub(crate) fn record_exported_variable_callee(&mut self, fx: &Fx, pat: PatId, init: ExprId) {
         let PatKind::Ident(name) = self.hir(fx.file)[pat].kind else { return };
         let Some(id) = self.c.bound(fx.file).pat_symbol[pat.idx()].some() else { return };
@@ -1346,11 +1292,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// The declaration of the function, the class or the enum `sym` has been evaluated. Where a reified namespace exports it: `N.name = name`.
     pub(crate) fn export_from_namespace(&mut self, fx: &mut Fx, sym: Sym, pos: u32) {
         let Some(namespace) = self.exporting_reified_namespace(sym) else { return };
         let member = self.files.symbol(sym).name;
-        // `export import a = b.c`
         let declared = self.value_symbol(sym);
         if !self.files.symbol_flags(declared).intersects(SymFlags::VALUE) {
             return;
@@ -1369,7 +1313,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.emit_throwing(fx, Op::PropSet { obj, name, value });
     }
 
-    /// The function that returns the object for `import * as ns` or `namespace N` used as a value. It creates the object on first use.
     fn namespace_object_getter(&mut self, sym: Sym) -> FuncId {
         if let Some(&known) = self.namespace_objects.get(&sym) {
             return known;
@@ -1396,7 +1339,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.switch_to(done);
         self.terminate_with_return(fx, known);
         fx.b.switch_to(create);
-        // Of a module: nothing is read now. Each export is read when the property is.
         if matches!(self.value_declaration(sym), Some((_, Decl::File))) {
             let obj = self.make_module_namespace(fx, sym.file, false);
             self.emit(fx, Op::GlobalSet(global, obj));
@@ -1405,7 +1347,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         let members = self.namespace_members(sym);
         let obj = self.emit(fx, Op::NewObject);
-        // Before the properties are read: a cycle of namespaces that export each other ends here.
         self.emit(fx, Op::GlobalSet(global, obj));
         for (name, source) in members {
             let value = self.read_namespace_member(fx, source);
@@ -1467,16 +1408,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.branch(fx, is_missing, create, join);
         fx.b.seal(create);
         fx.b.switch_to(create);
-        let made = self.make_module_namespace(fx, file, true);
-        self.emit(fx, Op::GlobalSet(global, made));
-        self.write(fx, result, made);
+        let created = self.make_module_namespace(fx, file, true);
+        self.emit(fx, Op::GlobalSet(global, created));
+        self.write(fx, result, created);
         fx.b.jump(join);
         fx.b.seal(join);
         fx.b.switch_to(join);
         self.read(fx, result)
     }
 
-    /// What the object for a module or a TypeScript namespace has, in the order of the names.
     pub(crate) fn namespace_members(&mut self, sym: Sym) -> Vec<(Atom, ImportSource)> {
         let exports: Vec<(Atom, ImportSource)> = if matches!(self.value_declaration(sym), Some((_, Decl::File))) {
             self.file_exports(sym.file)
@@ -1492,7 +1432,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let is_value = match source {
                 ImportSource::Declaration(member) => {
                     let member = self.export_value_symbol(member);
-                    // `export default a.b`, `export default console`: an alias by its own flags, and it holds the value itself.
                     let is_expression = self.files.decls_of(member).iter().copied().any(|(_, decl)| matches!(decl, Decl::ExportExpr(_)));
                     let flags = if is_expression { self.files.symbol_flags(member) } else { self.files.flags(member) };
                     flags.intersects(SymFlags::VALUE) && !self.is_ambient(member)
@@ -1506,7 +1445,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 members.push((name, source));
             }
         }
-        // By code unit, as the specification has the keys of a module namespace, and as the engine looks them up.
         members.sort_by_cached_key(|member| bstr::BStr::new(self.c.atoms().bytes(member.0)).to_string().encode_utf16().collect::<Vec<u16>>());
         members
     }
@@ -1527,7 +1465,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// `(number) => value`: the numbers are the places in `namespace_members`.
     pub(crate) fn emit_module_namespace_reader(&mut self, fx: &mut Fx, file: FileId) {
         let number = self.add_entry_param(fx, Ty::NONE);
         let number = self.emit_throwing(fx, Op::Coerce { value: number, to: self.known.int32, why: CoerceReason::Claim });
@@ -1551,9 +1488,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.terminate_with_return(fx, undefined);
     }
 
-    // ───────────────────────────── functions ─────────────────────────────
-
-    /// The function of the program for a function of the source.
     pub(crate) fn declare_function(&mut self, file: FileId, func: FnId, class: Option<(FileId, hir::ClassId)>) -> FuncId {
         if let Some(&id) = self.funcs.get(&(file, func)) {
             return id;
@@ -1584,6 +1518,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     self.untyped_clones.insert(entry, second);
                 }
                 self.generic_entrypoints.insert(whole, entry);
+                self.generic_entrypoint_ids.insert(entry);
             }
             return whole;
         }
@@ -1635,8 +1570,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         let parameters: Vec<hir::ParamId> = self.hir(file)[func].params.iter().collect();
         parameters.into_iter().any(|p| {
-            let held_to = self.param_ty(file, p).id;
-            held_to.is_some() && held_to != self.out.tys.anything && self.param_cast_reason(file, p) == CoerceReason::Cast
+            let target_ty = self.param_ty(file, p).id;
+            target_ty.is_some() && target_ty != self.out.tys.anything && self.param_cast_reason(file, p) == CoerceReason::Cast
         })
     }
 
@@ -1741,7 +1676,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if kind == ir::FuncKind::Plain && self.query(|c| c.has_no_field_names_on_prototype(file, func)) {
             flags |= func_flags::HAS_NO_FIELD_NAMES_ON_PROTOTYPE;
         }
-        // For a method, an object of its class. For another function, what it declares `this` to be, or what it is a member of.
         let declared_this_type = if has_this && !self.is_untyped_file(file) && !is_uninformative {
             match self.query(|c| c.fn_this_type(file, func)) {
                 Some(this) => {
@@ -1756,16 +1690,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let result = if is_uninformative || matches!(f.kind, hir::FnKind::Constructor | hir::FnKind::Setter | hir::FnKind::StaticBlock) {
             TyId::NONE
         } else if self.is_untyped_file(file) {
-            // What its `return`s are shown to yield.
             let kinds = self.query(|c| c.returned_kinds(file, func));
             let described = self.kinds_ty(kinds);
             self.none_if_unranged_number(described)
+        } else if self.query(|c| c.never_returns(file, func)) {
+            TyId::NONE
         } else if self.query(|c| c.returns_no_value(file, func)) {
-            // `void` leaves open what a function yields. The text of this one does not.
             signature.result = Some(TypeId::UNDEFINED);
             self.declared(TypeId::UNDEFINED)
         } else {
-            // `never`: it is not expected to come back. If it does, with whatever.
             let (result, is_annotated) = self.query(|c| c.fn_result_type(file, func));
             if result.is_never() {
                 TyId::NONE
@@ -1786,7 +1719,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         out.result = result;
         out.flags = flags | if is_sloppy { func_flags::IS_SLOPPY } else { 0 };
         out.length = f.params.iter().take_while(|&p| hir[p].default.is_none() && !hir[p].flags.contains(Flags::REST)).count() as u16;
-        // What another file declares is at the level of its module.
         if file == self.file {
             let captures = self.c.fn_captures(file, func);
             self.set_captures(id, &captures);
@@ -1794,7 +1726,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         id
     }
 
-    /// Whether the function refers to its `arguments` object.
     pub(crate) fn uses_arguments(&self, file: FileId, func: FnId) -> bool {
         func.is_some() && self.using_arguments(file).functions.contains(&func)
     }
@@ -1811,7 +1742,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 if !is_object && !is_intrinsic {
                     continue;
                 }
-                // An arrow function sees the object of the function around it.
                 let mut at = self.enclosing_function(file, id);
                 while at.is_some() && hir[at].kind == hir::FnKind::Arrow {
                     found.arrows.insert(at);
@@ -1826,7 +1756,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         })
     }
 
-    /// The function a declaration at the top level of a file, or around the code being built, stands for.
     pub(crate) fn function_of_declaration(&mut self, fx: &Fx, file: FileId, func: FnId) -> Option<FuncId> {
         if let Some(&id) = self.funcs.get(&(file, func)) {
             return Some(id);
@@ -1845,7 +1774,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.make_closure(fx, id)
     }
 
-    /// The function as a value, where nothing tells one closure of it from another.
     pub(crate) fn make_closure(&mut self, fx: &mut Fx, id: FuncId) -> V {
         let captures = self.capture_values(fx, id, 0);
         if captures.is_empty() {
@@ -1854,21 +1782,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.emit(fx, Op::Closure { func: id, captures })
     }
 
-    /// The declaration with a body of a function that nothing is stored to.
     pub(crate) fn function_declaration_for(&self, sym: Sym) -> Option<(FileId, FnId)> {
-        let decls = self.files.decls(sym);
-        if self.is_ambient(sym) || self.is_assigned(sym) || decls.iter().any(|declared| matches!(declared.1, Decl::Var(_) | Decl::Param(_))) {
+        let decls = self.files.decls_of(sym);
+        if decls.iter().any(|declared| matches!(declared.1, Decl::Var(_) | Decl::Param(_))) {
             return None;
         }
         let with_body = |&(file, decl): &(FileId, Decl)| matches!(decl, Decl::Fn(func) if !matches!(self.hir(file)[func].body, hir::FnBody::None));
-        match decls.into_iter().filter(with_body).next_back() {
-            Some((file, Decl::Fn(func))) => Some((file, func)),
-            _ => None,
-        }
+        let Some((file, Decl::Fn(func))) = decls.iter().copied().filter(with_body).next_back() else { return None };
+        (!self.is_ambient(sym) && !self.is_assigned(sym)).then_some((file, func))
     }
 
-    /// The closure of the function declaration `sym`, which is `id`, where the name is used as a value. It is the same object for as long
-    /// as the scope of the declaration is not entered anew.
     fn declaration_closure(&mut self, fx: &mut Fx, sym: Sym, id: FuncId, pos: u32) -> V {
         let declared = self.function_declaration_for(sym).filter(|declared| declared.0 == self.file);
         if let Some((file, func)) = declared
@@ -1881,7 +1804,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return self.emit(fx, Op::ClosureOnce { func: id, captures, env, field });
         }
         match declared.and_then(|(file, func)| self.c.declared_closure(file, func)) {
-            // `CreatedAtEntry`: a local variable holds it, which is read before it gets here.
             None | Some(DeclaredClosure::Unobserved | DeclaredClosure::CreatedAtEntry) => self.make_closure(fx, id),
             Some(DeclaredClosure::CreatedAtUse) => {
                 let captures = self.capture_values(fx, id, pos);
@@ -1896,16 +1818,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// The scope of its own that an evaluation of the function expression enters, and the field of its environment that keeps the closure: the expression names itself,
-    /// or its `arguments` object shows it.
     pub(crate) fn function_expression_scope(&mut self, file: FileId, func: FnId) -> Option<(Activation, u32)> {
         match self.c.declared_closure(file, func) {
             Some(DeclaredClosure::KeptInEnvironment(activation @ Activation::Expression(_), field)) => Some((activation, field)),
-            _ => self.c.cached_function_expression(file, func).filter(|kept| matches!(kept.0, Activation::Expression(_))),
+            _ => self.c.cached_function_expression(file, func).filter(|retained| matches!(retained.0, Activation::Expression(_))),
         }
     }
 
-    /// The closure that runs, for `arguments.callee`: see `Checker::keeps_parameters_in_arguments`.
     pub(crate) fn current_closure(&mut self, fx: &mut Fx) -> V {
         let (file, func, id) = (fx.file, fx.func, fx.id);
         let pos = self.hir(file)[func].start;
@@ -1923,8 +1842,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         self.unsupported(fx, pos, "the `arguments` object of sloppy-mode code, which exposes the function, in a function whose name is assigned to")
     }
-
-    // ───────────────────────────── what a scope declares ─────────────────────────────
 
     pub(crate) fn pattern_names(&self, file: FileId, pat: PatId, out: &mut Vec<Sym>) {
         let hir = self.hir(file);
@@ -1949,7 +1866,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// `let`, `const` and classes declared directly by the statements.
     pub(crate) fn lexical_names(&self, file: FileId, stmts: IdList<StmtId>, out: &mut Vec<Sym>) {
         let hir = self.hir(file);
         for stmt in hir.ids(stmts) {
@@ -1961,7 +1877,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                         }
                     }
                 }
-                // Where there is one class object for as long as the program runs, no variable holds it.
                 StmtKind::Class(class) if !hir[class].flags.contains(Flags::AMBIENT) && !self.c.is_evaluated_once(file, Parent::Stmt(stmt)) => {
                     out.push(self.class_symbol(file, class));
                 }
@@ -1975,7 +1890,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.files.export_symbol_of_value_symbol_if_exported(self.files.sym(file, id))
     }
 
-    /// `var`s declared anywhere in the statements, inner functions aside.
     pub(crate) fn var_names(&self, file: FileId, stmt: StmtId, out: &mut Vec<Sym>) {
         if stmt.is_none() {
             return;

@@ -11,13 +11,26 @@ Two builds of Bun on the small routes of one server, in about four minutes:
 
 A column is a name, the Bun that builds the executable with `bun build --compile`, and extra flags for that build.
 `--run-env aot:NAME=value` sets an environment variable for the servers of one column.
+`name=/path/to/bun:--aot@effect-plain` makes a column serve another server's program, so that two programs with the same routes
+are measured seconds apart. `name=/path/to/node:run` runs the entry point with that executable instead of compiling it.
+
+The three servers under ../effect have routes of their own (`effectRoutes` in ../answers.ts): `effect` is an API written with
+Effect, `effect-sources` is the same program with the Effect packages resolved to the TypeScript sources that they ship, and
+`effect-plain` has the same routes written by hand on Bun.serve:
+
+    python3 measure.py --servers effect --column aot=/path/to/bun:--aot --column sources=/path/to/bun:--aot@effect-sources \
+        --column released=/path/to/released/bun --column node=/usr/local/bin/node:run --column plain=/path/to/bun:--aot@effect-plain --out rows.jsonl
 
 A job is one server and one route. Jobs are distributed over lanes. A lane is four consecutive cores: the server is pinned to
 the first one and the client (load.c) to the other three. Servers are told they have one core (WTF_numberOfProcessorCores=1).
 
 Different runs of the same executable differ by up to 4% in cycles per request on the small routes, while a single process is
 stable within 1%: it depends on where its pages end up. One process per column therefore cannot resolve a change below 5%, so
-every job is measured `--starts` times, each time with a fresh process for every column:
+every job is measured `--starts` times, each time with a fresh process for every column.
+That holds for the pages of the executable file as well. They stay where they are in the page cache for as long as the file lives,
+so all processes of one file share one placement of its code in physical memory: two files with the same bytes have differed by 6%
+in cycles per request on Express while three processes of either agreed within 0.5%. Every process therefore runs a copy of its
+executable that was made for it, in /dev/shm (nothing is written to a disk), under a path that has the same length for every column:
 
   1. Each column is started and polled until the first correct response (time to first response is the median of
      `--first-responses` starts). RSS is read at that point. On the POST routes the invalid orders from ../answers.ts are sent.
@@ -47,22 +60,49 @@ and column serves that many requests, cycling through all routes. Its line has R
 the run and the instructions per request of every twentieth. A cost that depends on the number of full GCs shows up a hundred
 times sooner with `--run-env aot:BUN_JSC_useGenerationalGC=0`, which makes every GC a full one.
 
+Guests. The cores must be free of other work, and on a shared machine they sometimes are not. Every window compares the time the
+kernel charged to the lane's four cores (user, nice and system in /proc/stat) with the time it charged to the server and the client. What is
+left over ran for somebody else. A round in which that is more than 1% of the server's core, or 3% of the client's cores, is
+dropped like a disturbed one; a start without a clean round makes the row void ("void": true, no numbers compared by compare.py).
+"guests" is the largest share seen on the server's core in a round that was kept.
+
+`--events ic_cache_fill_l2,l2_cache_req_stat.ic_fill_miss` counts more hardware events, by perf's names, in the window that counts
+instructions and cycles. On AMD Zen 4 these two are the lines of code fetched into the first-level cache and those that the L2 did not
+have either. A server whose requests run through more code than that cache holds is bound by them, not by its instructions.
+
+`--layers` shows where the cycles and instructions of a request go. One process per server, route and column is warmed up and
+then profiled with `perf record` under the same load. Every sample is charged to the layer that owns the code it fell in (see
+layers.py): the compiled application, stubs, Bun's own JavaScript modules, Bun's native code, the engine's C++, ICU, GC, malloc,
+libc. Samples in the stubs are also charged to the single stubs. For an --aot column a second profile with call chains says who
+asked for the work of every layer: the application's compiled code, Bun's own modules, or nobody (native code on its own).
+"sampled" is samples times period over the counted total: well under 1 means the kernel dropped samples, and then threads that
+mostly sleep (GC helpers) look larger than they are. Kernel cycles are estimated as user cycles times kernel CPU time over user CPU time, read in a window without hardware
+counters. The Buns must not be stripped.
+`compare.py rows.jsonl aot jit` prints the layers side by side and the difference, largest first.
+
     requests_per_second, instructions, cycles, cpu_us       per request; instructions and cycles in user mode
     counted_requests_per_second                             throughput while the hardware counters were running
     first_response_ms, ready_rss_mb                         from process start to the first correct response
     peak_rss_mb                                             VmHWM at the end
     private_mb                                              Anonymous minus LazyFree in smaps_rollup, the maximum of samples 50 ms apart
+    idle_anon_mb, load_anon_mb, after_anon_mb               RssAnon after the first response, its maximum under load, and two seconds after the last request
 """
-import argparse, json, multiprocessing, os, re, resource, shutil, signal, socket, statistics, subprocess, sys, tempfile, threading, time
+import argparse, fcntl, glob, json, multiprocessing, os, re, resource, shutil, signal, socket, statistics, subprocess, sys, tempfile, threading, time
+
+import layers
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SERVERS = ["bun", "hono", "elysia", "node", "express", "fastify", "tanstack"]
+SERVERS = ["bun", "thin", "hono", "elysia", "node", "express", "fastify", "tanstack"]
+API_SERVERS = ["api-bun", "api-thin", "api-hono"]
+EFFECT = {"effect": "./bun.ts", "effect-sources": "./bun.ts", "effect-plain": "./plain.ts"}
 PAGES = [{"name": "static", "method": "GET", "path": "/", "type": "text/html"}, {"name": "list", "method": "GET", "path": "/items", "type": "text/html"}]
 VALIDATING = ("post", "hand")
 NATIVE = {"go": ["go", "build", "-o"], "rust": ["cargo", "build", "--release"]}
 NATIVE_ROUTES = ("text", "json", "params", "post", "async", "stream")
 NATIVE_COLUMN = {"name": "native", "run_env": {}}
-PER_START = ("requests_per_second", "counted_requests_per_second", "instructions", "cycles", "cpu_us", "first_response_ms", "ready_rss_mb", "peak_rss_mb", "private_mb")
+# The kernel drops samples silently above kernel.perf_event_max_sample_rate, which it lowers by itself under load (seen: 5,300).
+SAMPLES_PER_SECOND = 3000
+PER_START = ("requests_per_second", "counted_requests_per_second", "instructions", "cycles", "cpu_us", "first_response_ms", "ready_rss_mb", "peak_rss_mb", "private_mb", "idle_anon_mb", "load_anon_mb", "after_anon_mb")
 
 
 class MeasurementError(Exception):
@@ -82,6 +122,7 @@ def send_request(port, route, body=USE_ROUTE_BODY):
     if body is USE_ROUTE_BODY:
         body = route.get("request")
     head = "%s %s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nConnection: close\r\n" % (route["method"], route["path"], port)
+    head += "".join("%s: %s\r\n" % pair for pair in route.get("headers", {}).items())
     data = b"" if body is None else body.encode()
     if body is not None:
         head += "Content-Type: application/json\r\nContent-Length: %d\r\n" % len(data)
@@ -118,6 +159,12 @@ def private_mb(pid):
     return (kb.get("Anonymous", 0) - kb.get("LazyFree", 0)) / 1024
 
 
+def core_ticks(cores):
+    """Clock ticks that the kernel charged to user, nice and system time on these cores."""
+    wanted = {"cpu%d" % core for core in cores}
+    return sum(sum(int(field) for field in line.split()[1:4]) for line in open("/proc/stat") if line.split(" ", 1)[0] in wanted)
+
+
 def proc_status_mb(pid, name):
     return int(re.search(r"^%s:\s+(\d+)" % name, open("/proc/%d/status" % pid).read(), re.M).group(1)) / 1024
 
@@ -126,16 +173,19 @@ class Server:
     def __init__(self, options, lane, spec, server, route, column):
         self.options, self.lane, self.spec, self.route, self.column = options, lane, spec, route, column
         self.name = "%s/%s/%s" % (server, route["name"], column["name"])
-        self.executable = os.path.join(options.work, "bin", "%s-%s" % (server, column["name"]))
+        self.executable = os.path.join(options.work, "bin", "%s-%s" % (column.get("server") or server, column["name"]))
         self.folder = os.path.join(options.work, "lane-%d" % lane["server"], column["name"])
+        self.copy = os.path.join("/dev/shm" if os.access("/dev/shm", os.W_OK) else options.work, "aot-servers-lane-%03d-column-%02d" % (lane["server"], options.columns.index(column) if column in options.columns else 99))
         os.makedirs(self.folder, exist_ok=True)
         self.cwd = os.path.join(options.work, "tanstack") if server == "tanstack" else self.folder
-        self.process, self.rounds, self.max_private_mb = None, [], 0.0
+        self.process, self.rounds, self.max_private_mb, self.max_anon_mb, self.sampled = None, [], 0.0, 0.0, {}
 
     def kill(self):
         if self.process and self.process.poll() is None:
             self.process.kill()
             self.process.wait()
+        if os.path.exists(self.copy):
+            os.remove(self.copy)
 
     def pause(self):
         self.process.send_signal(signal.SIGSTOP)
@@ -156,8 +206,9 @@ class Server:
             self.port = 20000 + self.lane["server"] * 64 + self.lane["spawned"] % 64
             env["PORT"] = str(self.port)
             log = open(os.path.join(self.folder, "server.log"), "wb")
+            shutil.copy(self.executable, self.copy)
             start_time = time.perf_counter()
-            self.process = subprocess.Popen(["taskset", "-c", str(self.lane["server"]), self.executable], env=env, cwd=self.cwd, stdin=subprocess.DEVNULL, stdout=log, stderr=log)
+            self.process = subprocess.Popen(["taskset", "-c", str(self.lane["server"]), self.copy], env=env, cwd=self.cwd, stdin=subprocess.DEVNULL, stdout=log, stderr=log)
             response = None
             while time.perf_counter() - start_time < 30 and self.process.poll() is None:
                 try:
@@ -170,12 +221,13 @@ class Server:
             first_response_times.append((time.perf_counter() - start_time) * 1e3)
             if "expectedBody" not in self.route and response[0] == 200:
                 self.route["expectedBody"] = strip_timestamps(response[2]).decode()
-            if (response[0], response[1], strip_timestamps(response[2])) != (200, self.route["type"], self.route["expectedBody"].encode()):
+            if (response[0], self.route["type"] if self.route["type"] == "-" else response[1], strip_timestamps(response[2])) != (self.route.get("status", 200), self.route["type"], self.route["expectedBody"].encode()):
                 raise MeasurementError("unexpected response: %d %s %r" % (response[0], response[1], response[2][:80]))
         self.first_response_ms = statistics.median(first_response_times)
         self.ready_rss_mb = proc_status_mb(self.process.pid, "VmRSS")
+        self.idle_anon_mb = proc_status_mb(self.process.pid, "RssAnon")
         self.invalid_order_statuses = {}
-        if self.route["method"] == "POST":
+        if self.route["method"] == "POST" and self.route.get("status", 200) == 200:
             for description, body in self.spec["invalidOrders"].items():
                 self.invalid_order_statuses[description] = send_request(self.port, self.route, body)[0]
                 # encoding/json and serde treat a null optional field like a missing one.
@@ -186,13 +238,14 @@ class Server:
     def write_load_files(self, route, expected_body):
         """Writes the request and expected-response files that load.c reads for one route. Returns the two paths."""
         request = "%s %s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n" % (route["method"], route["path"], self.port)
+        request += "".join("%s: %s\r\n" % pair for pair in route.get("headers", {}).items())
         body = route.get("request", "").encode()
         if body:
             request += "Content-Type: application/json\r\nContent-Length: %d\r\n" % len(body)
         paths = [os.path.join(self.folder, "request-" + route["name"]), os.path.join(self.folder, "expected-" + route["name"])]
         open(paths[0], "wb").write(request.encode() + b"\r\n" + body)
         comparison = "exact" if strip_timestamps(expected_body) == expected_body else "length"
-        open(paths[1], "wb").write(("200\n%s\n%s\n" % (route["type"], comparison)).encode() + expected_body)
+        open(paths[1], "wb").write(("%d\n%s\n%s\n" % (route.get("status", 200), route["type"], comparison)).encode() + expected_body)
         return paths
 
     def run_window(self, requests, counters=True):
@@ -202,14 +255,17 @@ class Server:
         def sample():
             while not done.wait(0.05):
                 self.max_private_mb = max(self.max_private_mb, private_mb(pid))
+                self.max_anon_mb = max(self.max_anon_mb, proc_status_mb(pid, "RssAnon"))
 
         sampler = threading.Thread(target=sample, daemon=True)
         sampler.start()
         client = ["taskset", "-c", self.lane["client"], os.path.join(self.options.work, "bin", "load"), str(self.port), str(self.options.connections), str(requests), "3"]
+        client_cores = parse_core_range(self.lane["client"])
+        ticks_before = (core_ticks([self.lane["server"]]), sum(self.cpu_ticks()), core_ticks(client_cores), sum(os.times()[:4]), time.perf_counter())
         try:
             # perf enumerates the threads and then opens a counter on each; a thread that exits in between fails the whole call.
             for _ in range(4):
-                run = subprocess.run(["perf", "stat", "-x,", "-o", report, "-e", "instructions:u,cycles:u,task-clock" if counters else "task-clock", "-p", str(pid), "--"] + client + self.load_files, capture_output=True, text=True)
+                run = subprocess.run(["perf", "stat", "-x,", "-o", report, "-e", ",".join(["instructions:u", "cycles:u", "task-clock"] + [event + ":u" for event in self.options.events]) if counters else "task-clock", "-p", str(pid), "--"] + client + self.load_files, capture_output=True, text=True)
                 if "sys_perf_event_open" not in run.stderr:
                     break
         finally:
@@ -217,6 +273,10 @@ class Server:
             sampler.join()
         if self.process.poll() is not None:
             raise MeasurementError("the server exited with code %s: %s" % (self.process.returncode, self.log_tail()))
+        ticks = os.sysconf("SC_CLK_TCK")
+        elapsed = (time.perf_counter() - ticks_before[4]) * ticks
+        server_guests = (core_ticks([self.lane["server"]]) - ticks_before[0] - (sum(self.cpu_ticks()) - ticks_before[1])) / elapsed
+        client_guests = (core_ticks(client_cores) - ticks_before[2] - (sum(os.times()[:4]) - ticks_before[3]) * ticks) / (elapsed * len(client_cores))
         words = run.stdout.split()
         printed = dict(zip(words[0::2], words[1::2]))
         if run.returncode != 0 or printed.get("requests") != str(requests):
@@ -226,7 +286,7 @@ class Server:
             fields = line.strip().split(",")
             if len(fields) > 4 and fields[0].replace(".", "").isdigit():
                 counted[fields[2].split(":")[0]] = float(fields[0])
-        if len(counted) < (3 if counters else 1):
+        if len(counted) < (3 + len(self.options.events) if counters else 1):
             raise MeasurementError("perf: " + open(report).read()[-160:].replace("\n", " "))
         return {
             "requests": requests,
@@ -234,7 +294,61 @@ class Server:
             "instructions": counted.get("instructions", 0) / requests,
             "cycles": counted.get("cycles", 0) / requests,
             "cpu_us": counted["task-clock"] * 1e3 / requests,
+            "events": {event: counted.get(event, 0) / requests for event in self.options.events},
+            "guests": max(0.0, server_guests),
+            "disturbed": server_guests > 0.01 or client_guests > 0.03,
         }
+
+    def cpu_ticks(self):
+        fields = open("/proc/%d/stat" % self.process.pid).read().rsplit(")", 1)[1].split()
+        return int(fields[11]), int(fields[12])
+
+    def profile(self, event, per_request):
+        """Samples one window of load. Returns the per-request cost by layer and the heaviest symbols of every layer."""
+        data = os.path.join(self.folder, "perf.data")
+        requests = self.window_size * 2
+        period = int(per_request * self.window_size / (SAMPLES_PER_SECOND * self.options.window_seconds))
+        client = ["taskset", "-c", self.lane["client"], os.path.join(self.options.work, "bin", "load"), str(self.port), str(self.options.connections), str(requests), "3"]
+        for _ in range(6):
+            run = subprocess.run(["perf", "record", "-N", "-B", "-e", event + ":u", "-c", str(period), "-o", data, "-p", str(self.process.pid), "--"] + client + self.load_files, capture_output=True, text=True)
+            if run.returncode == 0:
+                break
+        if run.returncode != 0:
+            raise MeasurementError("perf record: " + (run.stderr or run.stdout)[-200:].replace("\n", " "))
+        report = subprocess.run(["perf", "report", "-q", "-i", data, "--stdio", "--sort", "dso,symbol", "-n", "-F", "sample,dso,symbol", "--percent-limit", "0", "-g", "none"], capture_output=True, text=True, errors="replace").stdout
+        image_map, perf_map = self.executable + ".map", "/tmp/perf-%d.map" % self.process.pid
+        by_stub = {}
+        if os.path.exists(image_map) and os.path.exists(perf_map):
+            addresses = subprocess.run(["perf", "script", "-i", data, "-F", "ip"], capture_output=True, text=True).stdout.split()
+            by_stub = layers.count_stubs([int(address, 16) for address in addresses], perf_map, image_map)
+        os.remove(data)
+        by_layer, by_symbol = layers.read_report(report.split("\n"), layers.kind_of(self.name.split("/")[0] if self.column is NATIVE_COLUMN else self.column.get("kind", "")))
+        scale = per_request / sum(by_layer.values())
+        self.sampled[event] = round(sum(by_layer.values()) * period / (per_request * requests), 3)
+        heaviest = {layer: [[symbol, round(samples * scale)] for (owner, symbol), samples in by_symbol.most_common() if owner == layer][:12] for layer in by_layer}
+        if by_stub:
+            heaviest["stubs"] = [[name, round(samples * scale)] for name, samples in by_stub.most_common(40)]
+        return {layer: round(samples * scale) for layer, samples in by_layer.items()}, heaviest
+
+    def profile_callers(self, per_request):
+        """Samples one window with call chains. Returns cycles per request by layer and by the compiled code that asked for them."""
+        data = os.path.join(self.folder, "perf.data")
+        requests = self.window_size * 2
+        period = int(per_request * self.window_size / (SAMPLES_PER_SECOND * self.options.window_seconds))
+        client = ["taskset", "-c", self.lane["client"], os.path.join(self.options.work, "bin", "load"), str(self.port), str(self.options.connections), str(requests), "3"]
+        for _ in range(6):
+            run = subprocess.run(["perf", "record", "-N", "-B", "-g", "-e", "cycles:u", "-c", str(period), "-o", data, "-p", str(self.process.pid), "--"] + client + self.load_files, capture_output=True, text=True)
+            if run.returncode == 0:
+                break
+        if run.returncode != 0:
+            raise MeasurementError("perf record -g: " + (run.stderr or run.stdout)[-200:].replace("\n", " "))
+        counts = layers.read_call_chains(subprocess.run(["perf", "script", "-i", data, "-F", "ip,sym,dso"], capture_output=True, text=True, errors="replace").stdout.split("\n"))
+        os.remove(data)
+        scale = per_request / sum(counts.values())
+        asked = {}
+        for (layer, who), samples in counts.items():
+            asked.setdefault(who, {})[layer] = round(samples * scale)
+        return asked
 
     def warm_up(self):
         start_time, total, size, windows = time.perf_counter(), 0, 2000, []
@@ -252,21 +366,28 @@ class Server:
         self.run_window(self.window_size, counters=False)  # Discarded: the first window after SIGCONT.
         timed = self.run_window(self.window_size, counters=False)
         counted = self.run_window(self.window_size)
-        return dict(timed, instructions=counted["instructions"], cycles=counted["cycles"], counted_requests_per_second=counted["requests_per_second"])
+        return dict(timed, instructions=counted["instructions"], cycles=counted["cycles"], counted_requests_per_second=counted["requests_per_second"], events=counted["events"],
+                    guests=max(timed["guests"], counted["guests"]), disturbed=timed["disturbed"] or counted["disturbed"])
 
     def is_stable(self):
         best = max(each["requests_per_second"] for each in self.rounds)
-        return sum(1 for each in self.rounds if each["requests_per_second"] >= 0.97 * best) >= min(3, self.options.rounds)
+        return sum(1 for each in self.rounds if each["requests_per_second"] >= 0.97 * best and not each["disturbed"]) >= min(3, self.options.rounds)
 
     def result(self):
         if strip_timestamps(send_request(self.port, self.route)[2]) != self.route["expectedBody"].encode():
             raise MeasurementError("unexpected response after the last round")
         peak = proc_status_mb(self.process.pid, "VmHWM")
+        time.sleep(2)
+        after_anon_mb = proc_status_mb(self.process.pid, "RssAnon")
         self.kill()
         best = max(each["requests_per_second"] for each in self.rounds)
-        valid_rounds = [each for each in self.rounds if each["requests_per_second"] >= 0.9 * best]
+        clean_rounds = [each for each in self.rounds if not each["disturbed"]]
+        valid_rounds = [each for each in clean_rounds or self.rounds if each["requests_per_second"] >= 0.9 * best] or self.rounds
         result = {name: statistics.median(each[name] for each in valid_rounds) for name in ("requests_per_second", "counted_requests_per_second", "instructions", "cycles", "cpu_us")}
         result.update(first_response_ms=self.first_response_ms, ready_rss_mb=self.ready_rss_mb, peak_rss_mb=peak, private_mb=self.max_private_mb)
+        result.update(void=not clean_rounds, guests=max(each["guests"] for each in valid_rounds))
+        result["events"] = {event: round(statistics.median(each["events"][event] for each in valid_rounds), 2) for event in self.options.events}
+        result.update(idle_anon_mb=self.idle_anon_mb, load_anon_mb=self.max_anon_mb, after_anon_mb=after_anon_mb)
         result.update(settled=self.settled, stable=self.is_stable(), rounds=len(self.rounds), rounds_kept=len(valid_rounds), invalid_order_statuses=self.invalid_order_statuses)
         return result
 
@@ -313,14 +434,18 @@ def measure_job(options, lane, spec, server, route):
         line = {"server": server, "route": route["name"], "column": column["name"], "failures": failures.get(column["name"], [])}
         if starts:
             line.update({name: statistics.median(each[name] for each in starts.values()) for name in PER_START})
-            line["starts"] = {str(start): {name: round(each[name], 2) for name in PER_START} for start, each in starts.items()}
+            line["starts"] = {str(start): dict({name: round(each[name], 2) for name in PER_START}, **each["events"]) for start, each in starts.items()}
             line["settled"] = all(each["settled"] for each in starts.values())
             line["stable"] = all(each["stable"] for each in starts.values())
+            line["void"] = any(each["void"] for each in starts.values())
+            line["events"] = options.events
+            line["guests"] = round(max(each["guests"] for each in starts.values()), 4)
             line["invalid_order_statuses"] = next(iter(starts.values()))["invalid_order_statuses"]
-            line["executable_mb"] = os.path.getsize(os.path.join(options.work, "bin", "%s-%s" % (server, column["name"]))) / 1e6
+            line["executable_mb"] = os.path.getsize(os.path.join(options.work, "bin", "%s-%s" % (column.get("server") or server, column["name"]))) / 1e6
+            line["build_seconds"] = column.get("build_seconds", {}).get(column.get("server") or server)
             print("%-32s %8.0f/s | %9.0f instructions %9.0f cycles %7.2f us CPU | peak RSS %6.1f private %6.1f ready %5.1f MB | first %6.1f ms | %d starts" % (
                 "%s/%s/%s" % (server, route["name"], column["name"]), line["requests_per_second"], line["instructions"], line["cycles"], line["cpu_us"],
-                line["peak_rss_mb"], line["private_mb"], line["ready_rss_mb"], line["first_response_ms"], len(starts)), flush=True)
+                line["peak_rss_mb"], line["private_mb"], line["ready_rss_mb"], line["first_response_ms"], len(starts)) + (" VOID: guests on its cores" if line["void"] else ""), flush=True)
         lines.append(line)
     return lines
 
@@ -347,14 +472,44 @@ def soak_job(options, lane, spec, server, routes):
     return lines
 
 
+def layers_job(options, lane, spec, server, route):
+    """Profiles one process per column under load. Returns cycles and instructions per request by layer."""
+    lines = []
+    for column in [NATIVE_COLUMN] if server in NATIVE else options.columns:
+        each = Server(options, lane, spec, server, route, column)
+        line = {"server": server, "route": route["name"], "column": column["name"], "failures": [], "layers": {}, "heaviest": {}}
+        try:
+            each.start()
+            each.warm_up()
+            before = each.cpu_ticks()
+            each.run_window(each.window_size * 2, counters=False)
+            after = each.cpu_ticks()
+            line.update(each.run_window(each.window_size * 2))
+            line["void"] = line.pop("disturbed")
+            for event in ("cycles", "instructions"):
+                line["layers"][event], line["heaviest"][event] = each.profile(event, line[event])
+            if "--aot" in column.get("flags", []):
+                line["asked"] = each.profile_callers(line["cycles"])
+            line["sampled"] = each.sampled
+            line["layers"]["cycles"]["kernel"] = round(line["cycles"] * (after[1] - before[1]) / max(1, after[0] - before[0]))
+        except Exception as error:
+            line["failures"].append(str(error) if isinstance(error, MeasurementError) else repr(error))
+        each.kill()
+        print("%-32s %s%s" % (each.name, " ".join("%s %d" % pair for pair in line["layers"].get("cycles", {}).items()), " FAILED: " + line["failures"][0][:160] if line["failures"] else ""), flush=True)
+        lines.append(line)
+    return lines
+
+
 def run_lane(options, spec, first_core, jobs, results_queue):
     os.sched_setaffinity(0, set(range(first_core + 1, first_core + 4)))
     lane = {"server": first_core, "client": "%d-%d" % (first_core + 1, first_core + 3), "spawned": 0}
+    for stale_copy in glob.glob("/dev/shm/aot-servers-lane-%03d-column-*" % first_core):
+        os.remove(stale_copy)
     while True:
         job = jobs.get()
         if job is None:
             return
-        results_queue.put((soak_job if options.soak else measure_job)(options, lane, spec, *job))
+        results_queue.put((soak_job if options.soak else layers_job if options.layers else measure_job)(options, lane, spec, *job))
 
 
 def run_checked(command, **more):
@@ -366,7 +521,7 @@ def run_checked(command, **more):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--column", action="append", required=True, metavar="NAME=BUN[:FLAGS]")
+    parser.add_argument("--column", action="append", required=True, metavar="NAME=BUN[:FLAGS][@SERVER]")
     parser.add_argument("--run-env", action="append", default=[], metavar="COLUMN:NAME=VALUE")
     parser.add_argument("--build-env", action="append", default=[], metavar="COLUMN:NAME=VALUE")
     parser.add_argument("--out", required=True, help="output file; lines are appended")
@@ -374,6 +529,8 @@ def main():
     parser.add_argument("--routes", default="", help="names from ../answers.ts, static, list; all by default")
     parser.add_argument("--cores", default="0-3", help="a range of consecutive cores, a multiple of four; every four cores form a lane")
     parser.add_argument("--modules", help="a node_modules folder with the packages from ../app/package.json and ../tanstack/package.json; skips `bun install`")
+    parser.add_argument("--effect-modules", help="a node_modules folder with the packages from ../effect/package.json; skips `bun install`")
+    parser.add_argument("--lock", help="a file to hold an exclusive lock on while measuring, for cores that are shared with other measurements; building does not hold it")
     parser.add_argument("--work", help="working directory for executables and logs; a temporary one by default")
     parser.add_argument("--starts", type=int, default=3)
     parser.add_argument("--first-responses", type=int, default=3)
@@ -382,18 +539,29 @@ def main():
     parser.add_argument("--max-rounds", type=int, default=6)
     parser.add_argument("--window-seconds", type=float, default=1.5)
     parser.add_argument("--connections", type=int, default=64)
+    parser.add_argument("--events", default="", help="more hardware events by perf's names, separated by commas: counted with instructions and cycles, per request, in every start's entry; at most four, or perf takes turns")
     parser.add_argument("--soak", type=int, default=0, metavar="REQUESTS", help="soak mode: one process per server and column serves this many requests over all routes")
+    parser.add_argument("--layers", action="store_true", help="layers mode: cycles and instructions per request by the layer that owns the code")
     options = parser.parse_args()
+    options.events = [event for event in options.events.split(",") if event]
 
     options.columns = []
     for text in options.column:
         name, _, rest = text.partition("=")
+        before, _, server = rest.rpartition("@")
+        rest, server = (before, server) if server in SERVERS or server in EFFECT or server in API_SERVERS else (rest, "")
         bun, _, flags = rest.partition(":")
-        options.columns.append({"name": name, "bun": os.path.abspath(bun), "flags": flags.split(), "run_env": {}, "build_env": {}})
+        options.columns.append({"name": name, "bun": os.path.abspath(bun), "flags": flags.split(), "server": server, "run_env": {}, "build_env": {}, "build_seconds": {}})
     for kind, values in (("run_env", options.run_env), ("build_env", options.build_env)):
         for text in values:
             name, _, pair = text.partition(":")
             next(column for column in options.columns if column["name"] == name)[kind].update([pair.split("=", 1)])
+    for column in options.columns if options.layers else []:
+        if "--aot" in column["flags"]:
+            column["run_env"].setdefault("BUN_JSC_useAOTPerfMap", "1")
+            column["write_map"] = True
+        if b".symtab" not in subprocess.run(["readelf", "-S", "-W", column["bun"]], capture_output=True).stdout:
+            column["kind"] = "stripped"
     cores = parse_core_range(options.cores)
     if len(cores) % 4:
         sys.exit("--cores must be a multiple of four cores")
@@ -403,9 +571,10 @@ def main():
     os.makedirs(os.path.join(options.work, "bin"), exist_ok=True)
     build_env = dict(os.environ, NO_COLOR="1", BUN_ENABLE_CRASH_REPORTING="0", DO_NOT_TRACK="1")
     servers = options.servers.split(",")
+    installer = next(column["bun"] for column in options.columns if column["flags"] != ["run"])
     folders = {}
     for name in ("app", "tanstack"):
-        if not any((server == "tanstack") == (name == "tanstack") for server in servers if server not in NATIVE):
+        if not any((server == "tanstack") == (name == "tanstack") for server in servers if server not in NATIVE and server not in EFFECT):
             continue
         folders[name] = os.path.join(options.work, name)
         shutil.rmtree(folders[name], ignore_errors=True)
@@ -413,11 +582,22 @@ def main():
         if options.modules:
             os.symlink(os.path.abspath(options.modules), os.path.join(folders[name], "node_modules"))
         else:
-            run_checked([options.columns[0]["bun"], "install", "--ignore-scripts"], cwd=folders[name], env=build_env)
+            run_checked([installer, "install", "--ignore-scripts"], cwd=folders[name], env=build_env)
+    if any(server in EFFECT for server in servers):
+        folders["effect"], folders["effect-sources"] = os.path.join(options.work, "effect"), os.path.join(options.work, "effect-sources")
+        shutil.rmtree(folders["effect"], ignore_errors=True)
+        shutil.rmtree(folders["effect-sources"], ignore_errors=True)
+        shutil.copytree(os.path.join(HERE, "..", "effect"), folders["effect"], ignore=shutil.ignore_patterns("node_modules"))
+        if options.effect_modules:
+            shutil.copytree(os.path.abspath(options.effect_modules), os.path.join(folders["effect"], "node_modules"), symlinks=True)
+        else:
+            run_checked([installer, "install", "--ignore-scripts"], cwd=folders["effect"], env=build_env)
+        shutil.copytree(folders["effect"], folders["effect-sources"], symlinks=True)
+        run_checked([installer, "./resolve-to-sources.ts"], cwd=folders["effect-sources"], env=build_env)
     if "tanstack" in folders:
         shutil.copy(os.path.join(HERE, "..", "app", "shared.ts"), os.path.join(folders["tanstack"], "src", "utils", "shared.ts"))
-        run_checked([options.columns[0]["bun"], "node_modules/vite/bin/vite.js", "build"], cwd=folders["tanstack"], env=build_env)
-    spec = json.loads(run_checked([options.columns[0]["bun"], os.path.join(HERE, "..", "answers.ts")], env=build_env))
+        run_checked([installer, "node_modules/vite/bin/vite.js", "build"], cwd=folders["tanstack"], env=build_env)
+    spec = json.loads(run_checked([installer, os.path.join(HERE, "..", "answers.ts")], env=build_env))
     run_checked(["cc", "-O2", "-pthread", "-o", os.path.join(options.work, "bin", "load"), os.path.join(HERE, "load.c")])
 
     for server in servers:
@@ -432,17 +612,33 @@ def main():
                 shutil.copy(os.path.join(target, "release", "servers"), executable)
             continue
         # The bundler inlines process.env.NODE_ENV and defaults it to "development".
-        entry = ["--define", 'process.env.NODE_ENV="production"', "./serve.ts" if server == "tanstack" else "./%s.ts" % server]
         for column in options.columns:
-            executable = os.path.join(options.work, "bin", "%s-%s" % (server, column["name"]))
-            run_checked([column["bun"], "build", "--compile", *column["flags"], "--target=bun", *entry, "--outfile", executable], cwd=folders["tanstack" if server == "tanstack" else "app"], env=dict(build_env, **column["build_env"]))
+            program = column["server"] or server
+            folder = folders["tanstack" if program == "tanstack" else "effect-sources" if program == "effect-sources" else "effect" if program in EFFECT else "app"]
+            entry = "./serve.ts" if program == "tanstack" else EFFECT.get(program, "./%s.ts" % program)
+            executable = os.path.join(options.work, "bin", "%s-%s" % (program, column["name"]))
+            if column["flags"] == ["run"]:
+                if program in EFFECT and os.path.basename(column["bun"]).startswith("node"):
+                    entry = "./node.ts"
+                with open(executable, "w") as script:
+                    script.write("#!/bin/sh\nexec %s %s\n" % (column["bun"], os.path.join(folder, entry)))
+                os.chmod(executable, 0o755)
+                continue
+            image_map = {"BUN_JSC_aotMapFilePath": executable + ".map"} if column.get("write_map") else {}
+            start_time = time.perf_counter()
+            run_checked([column["bun"], "build", "--compile", *column["flags"], "--target=bun", "--define", 'process.env.NODE_ENV="production"', entry, "--outfile", executable], cwd=folder, env=dict(build_env, **image_map, **column["build_env"]))
+            column["build_seconds"][program] = round(time.perf_counter() - start_time, 2)
 
+    if options.lock:
+        lock = open(options.lock, "a")
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        print("locked %s" % options.lock, flush=True)
     jobs, results_queue = multiprocessing.Queue(), multiprocessing.Queue()
     count = 0
     for server in servers:
         routes = [
             route
-            for route in spec["routes"] + (PAGES if server == "tanstack" and not options.soak else [])
+            for route in (spec["effectRoutes"] if server in EFFECT else spec["apiRoutes"] if server in API_SERVERS else spec["routes"]) + (PAGES if server == "tanstack" and not options.soak else [])
             if (not options.routes or route["name"] in options.routes.split(",")) and (server not in NATIVE or route["name"] in NATIVE_ROUTES)
         ]
         for job in [routes] if options.soak else routes:

@@ -2,7 +2,7 @@
 // IRT= 1 formatMinute CallBuiltin FormatDateTime
 // IR= 1 formatCount CallBuiltin FormatNumber
 // IR= 0 formatBuddhist FormatDateTime
-// IR= 0 formatLocalTime FormatDateTime
+// IRT= 1 formatLocalTime CallBuiltin FormatDateTime
 // IR= 0 formatCompact FormatNumber
 // IR= 1 formatRow CallBuiltin FormatDateTime
 // IR= 1 formatRow CallBuiltin FormatNumber
@@ -193,6 +193,7 @@ const numberCases: NumberCase[] = [
 const numbers: unknown[] = [
   0, -0, 1, -1, 7, 10, 99, 100, 999, 1000, -1000, 1234, 9999, 10000, 12345, 99999, 100000, 123456, 999999, 1000000, 1234567, -1234567, 12345678, 123456789, 2147483647, 2147483648,
   -2147483648, 4294967296, 1234567890123, 9007199254740991, -9007199254740991, 9007199254740992, 1e21, 0.5, -0.5, 1.005, 1234.5678, 0.1 + 0.2, 1e-7, NaN, Infinity, -Infinity,
+  12.5, -12.5, 12.345, 12.3456, 0.005, 0.015, 0.025, 0.125, 0.375, 2.675, 1.255, 8.345, 1.45, 999.995, 999.9995, 0.9995, 0.0005, -0.0004, -0.0005, 0.0000015, 1e-6, 9.9e-7, 1234567.891, 1 / 3, 2 / 3, 4503599627370495.5,
   "12", "1234567", "x", null, undefined, true, 10n, 123456789012345678901234567890n, { valueOf: () => 4321 }, [5],
 ];
 for (const [name, format, locale, options] of numberCases) {

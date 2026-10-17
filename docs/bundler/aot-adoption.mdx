@@ -3,11 +3,12 @@ title: "Adopting --aot"
 description: "Find what changes when your program is compiled ahead of time, fix it, and roll it out in four steps"
 ---
 
-<Warning>Ahead-of-time compilation is experimental. It works on macOS arm64 and on Linux x64 with glibc.</Warning>
+<Warning>Ahead-of-time compilation is experimental.</Warning>
 
 [`--aot`](/bundler/executables#ahead-of-time-compilation) does not erase your TypeScript types. It uses them to generate machine code, so it also holds your program to them:
 
 - A value that does not match its type throws a `TypeError` at the first parameter, variable, property or return type that it reaches.
+- A parameter that its function never reads is not checked: nothing depends on its type. The check is there as soon as the function reads the parameter or passes it on.
 - `value as number` converts: if `value` is `"4"` when the program runs, the result is `4`. The same goes for `as string` and `as boolean`.
 - `{ name: "x" } as User` is not checked at the cast. If the literal lacks a property of `User`, the `TypeError` comes later, when your code reads a missing `number`, `boolean` or numeric enum property. Any other missing property reads `undefined`, as in JavaScript.
 - `x!` throws if `x` is `null` or `undefined`.
@@ -116,7 +117,7 @@ BUN_AOT_TYPE_ERROR_LOG=audit.jsonl bun test --aot-audit && test ! -s audit.jsonl
 
 ## 2. Report when you build
 
-`bun check --aot` type checks your entry points and reports what can never work under `--aot`. `bun build --compile --aot` reports the same errors and stops.
+`bun check --aot` type checks your entry points and reports what can never work under `--aot`. Every error that `bun build --compile --aot` reports is one that `bun check --aot` reports too, and the build stops at it. The build does not report errors in code that it removes, such as the `process.platform === "win32"` branch in a build for Linux.
 
 One group of type errors does not stop the build. When `@types/bun` is not installed, TypeScript does not know the names that Bun provides when your program runs. Errors about those names become warnings, Bun prints the first of them with a note to run `bun add -d @types/bun`, and the compiler treats each such name as `any`. The group is: `TS2580`, `TS2582`, `TS2584`, `TS2591`, `TS2593`, `TS2867` and `TS2868`, which TypeScript reports for names such as `console`, `process`, `require`, `describe` and `Bun`; `TS2304` and `TS2552` for the globals `AbortController`, `AbortSignal`, `Blob`, `BroadcastChannel`, `Buffer`, `Bun`, `ByteLengthQueuingStrategy`, `CloseEvent`, `CompressionStream`, `CountQueuingStrategy`, `Crypto`, `CryptoKey`, `CustomEvent`, `DOMException`, `DecompressionStream`, `ErrorEvent`, `Event`, `EventSource`, `EventTarget`, `File`, `FormData`, `HTMLRewriter`, `Headers`, `MessageChannel`, `MessageEvent`, `MessagePort`, `Performance`, `ReadableStream`, `Request`, `Response`, `SubtleCrypto`, `TextDecoder`, `TextDecoderStream`, `TextEncoder`, `TextEncoderStream`, `TransformStream`, `URL`, `URLSearchParams`, `WebAssembly`, `WebSocket`, `Worker`, `WritableStream`, `__dirname`, `__filename`, `addEventListener`, `alert`, `atob`, `btoa`, `clearImmediate`, `clearInterval`, `clearTimeout`, `confirm`, `console`, `crypto`, `exports`, `fetch`, `global`, `module`, `navigator`, `performance`, `postMessage`, `process`, `prompt`, `queueMicrotask`, `removeEventListener`, `reportError`, `require`, `self`, `setImmediate`, `setInterval`, `setTimeout` and `structuredClone`; `TS2307` for `bun`, any `bun:` or `node:` module, the Node.js modules `assert`, `async_hooks`, `buffer`, `child_process`, `cluster`, `console`, `constants`, `crypto`, `dgram`, `diagnostics_channel`, `dns`, `domain`, `events`, `fs`, `http`, `http2`, `https`, `inspector`, `module`, `net`, `os`, `path`, `perf_hooks`, `process`, `punycode`, `querystring`, `readline`, `repl`, `stream`, `string_decoder`, `timers`, `tls`, `tty`, `url`, `util`, `v8`, `vm`, `wasi`, `worker_threads` and `zlib` with their subpaths, and an import that ends in `.txt`, `.toml`, `.yaml`, `.yml`, `.jsonc`, `.json5`, `.xml`, `.html` or `/bun.lock`; and `TS2339` for a property of `import.meta`. With `@types/bun` installed, all of these are errors again and stop the build.
 
@@ -284,7 +285,7 @@ bun build --compile --aot app.ts --outfile app
 6 | console.log(double(body.visits));
                        ^
 TypeError: expected number | undefined, got string "3" (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-      at app.ts:6:20
+      at /$bunfs/root/app.ts:6:20
 ```
 
 Unlike a line of the log, the message of the `TypeError` contains the value. If you send error messages to a service, it receives that data.

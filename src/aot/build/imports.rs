@@ -1,11 +1,4 @@
-//! Imports: which code an import stands for.
-//!
-//! Every import is resolved twice. The checker resolves it for its types, as `bun check` does: `react` is `@types/react/index.d.ts`.
-//! The bundler resolves it for the code that runs: `react/index.js`. The symbol the checker has for an imported name says what type
-//! its value is of. The value is what the bundler's file exports under that name. Nothing here follows the checker from one module
-//! to the next: an import, a re-export and `export *` all go where the bundler has them go.
-
-use super::fit::Ty;
+use super::coerce::Ty;
 use super::{FileBuild, Fx, Place};
 use crate::fragment::GlobalKey;
 use crate::id::{GlobalId, V};
@@ -47,22 +40,14 @@ impl Stars {
     }
 }
 
-/// Where an import gets its value from.
 #[derive(Copy, Clone)]
 pub(crate) enum ImportSource {
-    /// What an ES module of the program exports under the name the import asks for, which is no import itself.
     Declaration(Sym),
-    /// All that an ES module of the program exports: `import * as ns`.
     Namespace(FileId),
-    /// `import defer * as ns`, of a module in `Shared::modules_deferred`.
     DeferredNamespace(FileId),
-    /// `import a = b.c`: what the checker has `b.c` stand for.
     Entity(Sym),
-    /// A property of what a CommonJS or JSON module exports, as an ES module sees it. No name: all of it.
     ExportedObject { importer: FileId, file: FileId, name: Option<Atom> },
-    /// A module that is not compiled with the program.
     External { specifier: Atom, name: Option<Atom> },
-    /// The default export of a file that is imported as a string, which `file` imports as `specifier`.
     Text { file: FileId, specifier: Atom },
     Required(FileId),
     Unknown,
@@ -102,19 +87,14 @@ pub(crate) fn original_source_of(files: &Files<'_>, code: FileId) -> FileId {
     written.filter(|&written| files.lowers_decorators(written)).unwrap_or(code)
 }
 
-/// What the bundler has decided about the imports of the program, in terms of the files of the program.
 pub(crate) struct Bundle<'p> {
-    /// By importing file and specifier: the path the import is resolved to, and the file at it if that is one of the program.
     resolved: FxHashMap<(FileId, &'p [u8]), (&'p [u8], Option<FileId>)>,
-    /// `Constants::dropped_imports`
     pub(super) dropped: FxHashSet<(FileId, &'p [u8])>,
-    /// See `FileBuild::is_declaration_only`.
     declaring: FxHashSet<FileId>,
     has_require_specific_resolutions: bool,
 }
 
 impl<'p> Bundle<'p> {
-    /// `None`: there is no bundler.
     pub(crate) fn new(files: &Files<'_>, roots: &[FileId], constants: &'p crate::Constants) -> Option<Bundle<'p>> {
         let mut resolved: FxHashMap<(FileId, &'p [u8]), (&'p [u8], Option<FileId>)> = FxHashMap::default();
         let imports = constants.resolved.as_ref()?;
@@ -128,7 +108,6 @@ impl<'p> Bundle<'p> {
         for (from, specifier, to) in imports.by_number() {
             let Some(from) = files_by_path_list[from as usize] else { continue };
             let found = found_at[to as usize];
-            // Two paths can be one file of the program. Then it is the lesser one, in whichever order they come here.
             let known = resolved.entry((from, specifier)).or_insert(found);
             if found.0 < known.0 {
                 *known = found;
@@ -152,8 +131,6 @@ impl<'p> Bundle<'p> {
         self.declaring.iter().copied()
     }
 
-    /// What the checker resolves an import to for which other code runs, or code that is not compiled, and what that refers to in turn.
-    /// Not a file of the bundle. Not a file that is only imported for its types either: nothing runs in its place.
     fn declaration_only_files(&self, files: &Files<'_>, roots: &[FileId]) -> FxHashSet<FileId> {
         let mut compiled: FxHashSet<FileId> = roots.iter().copied().collect();
         compiled.extend(self.resolved.values().filter_map(|found| found.1));
@@ -163,6 +140,7 @@ impl<'p> Bundle<'p> {
             pending.extend(typed_by.filter(|&typed_by| Some(typed_by) != code));
         }
         for &file in &compiled {
+            pending.extend(files.module(file).file_name().strip_suffix(b".js").and_then(|written| files.by_path.get(written)));
             let hir = files.hir(file);
             for stmt in hir.ids(hir.body) {
                 let specifier = match hir[stmt].kind {
@@ -190,7 +168,6 @@ impl<'p> Bundle<'p> {
     }
 }
 
-/// `import { type A, type B } from "m"`, `export { type A } from "m"`: nothing is left of it once the types are taken out.
 pub(crate) fn is_type_only_statement(hir: &hir::File<'_>, stmt: hir::StmtId) -> bool {
     match hir[stmt].kind {
         StmtKind::Import(import) => {
@@ -215,14 +192,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.shared.bundle.as_ref().is_some_and(|bundle| bundle.resolved.contains_key(&(file, self.c.atoms().bytes(specifier))))
     }
 
-    /// Whether the file says what there is and the program has no code for it: a declaration file, or a TypeScript file that stands in
-    /// for one, as where a package has `"types": "src/index.ts"` and `"main": "dist/index.js"`. What it declares is made by code that
-    /// nobody has held to it.
     pub(crate) fn is_declaration_only(&self, file: FileId) -> bool {
         self.hir(file).kind == FileKind::Declaration || self.shared.bundle.as_ref().is_some_and(|bundle| bundle.declaring.contains(&file))
     }
 
-    /// The file whose code an import, an `import()` or a `require()` in `file` runs. `None`: it is not compiled with the program.
     pub(crate) fn imported_file(&self, file: FileId, specifier: Atom) -> Option<FileId> {
         if specifier.is_none() {
             return None;
@@ -272,13 +245,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         is_any_unknown
     }
 
-    /// Without a bundler.
     fn checker_resolved_file(&self, file: FileId, specifier: Atom) -> Option<FileId> {
         let module = self.files.module(file);
         if let Some(imported) = module.imported_file(specifier) {
             return Some(imported);
         }
-        // The checker does not look at `require()` in TypeScript: a relative path to a file of the program, as it is written.
         let text = self.c.atoms().bytes(specifier);
         if !text.starts_with(b"./") && !text.starts_with(b"../") {
             return None;
@@ -303,13 +274,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// The text of the file that `file` imports as `specifier`, if the bundler loads it as a string.
     pub(crate) fn imported_text(&self, file: FileId, specifier: Atom) -> Option<&'c [u8]> {
         if specifier.is_none() {
             return None;
         }
         let path = self.shared.bundle.as_ref()?.resolved.get(&(file, self.c.atoms().bytes(specifier)))?.0;
-        // A file that is imported for its path is a string as well.
         self.shared.constants.assets.get(path).or_else(|| self.shared.constants.texts.get(path)).map(Vec::as_slice)
     }
 
@@ -413,20 +382,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// Whether the bundle has what `file` imports as `specifier` and the program has not: it is neither code nor a constant.
     pub(crate) fn is_bundle_only_import(&self, file: FileId, specifier: Atom) -> bool {
         specifier.is_some()
             && self.imported_text(file, specifier).is_none()
             && (self.shared.bundle.as_ref()).is_some_and(|bundle| bundle.resolved.get(&(file, self.c.atoms().bytes(specifier))).is_some_and(|found| found.1.is_none()))
     }
 
-    /// Whether the bundler has left the import out: nothing is evaluated for it.
     pub(crate) fn is_dropped_import(&self, file: FileId, specifier: Atom) -> bool {
         specifier.is_some() && self.shared.bundle.as_ref().is_some_and(|bundle| bundle.dropped.contains(&(file, self.c.atoms().bytes(specifier))))
     }
 
-    /// The module that `file` imports implicitly for its JSX. The checker has it from the options of the project. Which of the two
-    /// runtimes of the package runs, the one for development or the other, is up to the bundler.
     pub(crate) fn jsx_runtime(&self, file: FileId) -> Option<Atom> {
         let runtime = self.files.jsx_runtime(file)?;
         let Some(bundle) = &self.shared.bundle else { return Some(runtime) };
@@ -443,12 +408,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         Some(if is_imported { self.c.atoms().intern(&other) } else { runtime })
     }
 
-    /// Whether the symbol is an import or a re-export, which has its value from another module.
     pub(crate) fn is_import(&self, sym: Sym) -> bool {
         self.files.flags(sym).contains(SymFlags::ALIAS) && self.is_declared_by_import(sym)
     }
 
-    /// The symbol that stands for the value `sym` refers to: the end of a chain of imports, and the export of a declaration.
     pub(crate) fn value_symbol(&mut self, sym: Sym) -> Sym {
         if !self.files.flags(sym).contains(SymFlags::ALIAS) {
             return self.value_symbol_inner(sym, &mut Vec::new());
@@ -461,7 +424,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         found
     }
 
-    /// `seen`: see `export_value_symbol_inner`.
     pub(crate) fn value_symbol_inner(&mut self, sym: Sym, seen: &mut Vec<Sym>) -> Sym {
         let mut sym = sym;
         if self.is_import(sym) {
@@ -476,7 +438,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     EntityAlias::CopiedValue => return alias,
                     EntityAlias::TypeOnly => {}
                 },
-                // What a CommonJS module exports is not known before it has run: the import stays an import.
                 _ => return sym,
             }
             if let Some(target) = self.files.resolve_alias(sym) {
@@ -486,13 +447,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.files.export_symbol_of_value_symbol_if_exported(sym)
     }
 
-    /// What holds the value of an export of an ES module of the program.
     pub(crate) fn export_value_symbol(&mut self, exported: Sym) -> Sym {
         self.export_value_symbol_inner(exported, &mut Vec::new())
     }
 
-    /// `seen`: the exports `export default name` that have led here. Where each of them names what it imports from the next, round in
-    /// a circle, the one that is come by again holds its value itself.
     fn export_value_symbol_inner(&mut self, exported: Sym, seen: &mut Vec<Sym>) -> Sym {
         for &(file, decl) in self.files.decls_of(exported).iter() {
             let Decl::ExportExpr(stmt) = decl else { continue };
@@ -518,8 +476,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.files.export_symbol_of_value_symbol_if_exported(sym)
     }
 
-    /// The binding of the program that the ES module `file` exports as `name`. `None`: there is none, or its value is only known when
-    /// the program runs.
     pub(crate) fn exported_binding(&mut self, file: FileId, name: Atom) -> Option<Sym> {
         match self.export_source(file, name) {
             ImportSource::Declaration(exported) => Some(self.export_value_symbol(exported)),
@@ -528,8 +484,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// Whether the object that stands for the ES module `file` has no property `name`, whatever happens when the program runs: the module exports nothing by the name, or only a type, and all
-    /// that it re-exports whole is ES modules of the program.
     pub(crate) fn definitely_lacks_export(&mut self, file: FileId, name: Atom) -> bool {
         if self.files.export(self.files.file_symbol(file), known::export_equals).is_some() {
             return false;
@@ -544,7 +498,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// Not a type or what is only declared.
     pub(crate) fn has_value_at_runtime(&self, member: Sym) -> bool {
         let flags = self.files.flags(member);
         flags.intersects(SymFlags::VALUE) && !self.is_ambient(member)
@@ -562,12 +515,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         })
     }
 
-    /// Where an import gets its value from, through the re-exports of the ES modules of the program.
     pub(crate) fn import_source(&self, alias: Sym) -> ImportSource {
         if let Some(&known) = self.import_sources.borrow().get(&alias) {
             return known;
         }
-        // A cycle of re-exports, which is an error that the type checker reports, ends here.
         self.import_sources.borrow_mut().insert(alias, ImportSource::Unknown);
         let source = self.import_source_uncached(alias);
         self.import_sources.borrow_mut().insert(alias, source);
@@ -582,21 +533,17 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 Decl::ImportDefault(import) => (hir[import].spec, Some(known::default)),
                 Decl::ImportNamespace(import) => (hir[import].spec, None),
                 Decl::ImportSpec(spec) => (hir[hir[spec].import].spec, Some(hir[spec].imported)),
-                // `export { a as b } from "m"`
                 Decl::ExportSpec(spec) if hir[hir[spec].export].spec.is_some() => (hir[hir[spec].export].spec, Some(hir[spec].local)),
-                // `import { a } from "m"; export { a }`
                 Decl::ExportSpec(_) => match self.files.alias_target(alias) {
                     Some(next) if next == alias => return ImportSource::Unknown,
                     Some(next) if self.is_import(next) => return self.import_source(next),
                     Some(next) => return ImportSource::Declaration(next),
                     None => continue,
                 },
-                // `export * as ns from "m"`
                 Decl::ExportStarAs(stmt) => match hir[stmt].kind {
                     StmtKind::ExportStar { spec, .. } => (spec, None),
                     _ => continue,
                 },
-                // `import a = require("m")`
                 Decl::ImportEquals(import) => match hir[import].target {
                     hir::ImportEqualsTarget::Require(spec) if spec.is_some() => {
                         match self.imported_file(file, spec).filter(|&imported| !self.has_exports_object(imported) && self.builtin_id(imported).is_none()) {
@@ -707,7 +654,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         found.map_or(ImportSource::Unknown, |(importer, object)| ImportSource::ExportedObject { importer, file: object, name: Some(name) })
     }
 
-    /// Where the value comes from that the ES module `file` of the program exports as `name`.
     fn export_source(&self, file: FileId, name: Atom) -> ImportSource {
         match self.resolve_module_export(file, name, &mut vec![file]) {
             ImportSource::Declaration(exported) if self.is_import(exported) => self.import_source(exported),
@@ -715,8 +661,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// The same, one step of it: an export of the module itself, which may be an import, or else of a module that it re-exports all of.
-    /// `seen`: the modules that have been asked.
     fn resolve_module_export(&self, file: FileId, name: Atom, seen: &mut Vec<FileId>) -> ImportSource {
         if let Some(own) = self.files.export(self.files.file_symbol(file), name) {
             return ImportSource::Declaration(own);
@@ -726,16 +670,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         {
             return ImportSource::Declaration(assigned);
         }
-        // `export *` leaves it out.
         if name == known::default {
             return ImportSource::Unknown;
         }
         let has_it = |module: Sym| self.files.module_export(module, name).is_some();
-        // What a star of an ES module of the program has brought: another star may bring the same binding, and no other.
         let mut brought: Option<ImportSource> = None;
         for star in self.star_exports(file).candidates_for(name) {
             match star {
-                // What such a module exports is only known once it has run. Whether the name is among it is what the checker makes of it.
                 Star::Object(imported) => {
                     if brought.is_none() && has_it(self.files.file_symbol(imported)) {
                         return ImportSource::ExportedObject { importer: file, file: imported, name: Some(name) };
@@ -825,7 +766,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// `export * from "m"`: the specifiers, in order.
     fn star_export_specifiers(&self, file: FileId) -> Vec<Atom> {
         let (hir, bound) = (self.hir(file), self.c.bound(file));
         let stars = bound.export_stars.iter().filter(|star| star.0 == bound.file_symbol);
@@ -838,7 +778,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             .collect()
     }
 
-    /// What the ES module `file` of the program exports, but for what is only a type: each name, and where its value comes from.
     pub(crate) fn file_exports(&self, file: FileId) -> Vec<(Atom, ImportSource)> {
         let mut names = Vec::new();
         self.add_exported_names(file, false, &mut names, &mut FxHashSet::default(), &mut vec![file]);
@@ -855,7 +794,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             })
     }
 
-    /// `is_exported_whole`: by way of an `export *`, which leaves out `default`.
     fn add_exported_names(&self, file: FileId, is_exported_whole: bool, names: &mut Vec<Atom>, added: &mut FxHashSet<Atom>, seen: &mut Vec<FileId>) {
         let mut add = |name: Atom, exported: Sym, is_exported_whole: bool| {
             let flags = self.files.symbol_flags(exported);
@@ -881,7 +819,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     modules.push(imported);
                     continue;
                 }
-                // The names are what the checker makes of the module.
                 Some(imported) => Some(self.files.file_symbol(imported)),
                 None => self.files.module_of_specifier(file, specifier),
             };
@@ -901,10 +838,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let Some((module, known)) = known_builtin_exports(self.c.atoms().bytes(specifier)) else { return (b"", Vec::new()) };
         let (hir, bound) = (self.hir(file), self.c.bound(file));
         let mut unproven: Vec<(Atom, Atom)> = Vec::new();
-        let mut kept: Vec<(Atom, bool)> = Vec::new();
+        let mut retained: Vec<(Atom, bool)> = Vec::new();
         for export in hir.exports.iter().filter(|export| export.spec == specifier && !export.type_only) {
             let is_known = |name: Atom| known.binary_search_by(|probe| (*probe).cmp(self.c.atoms().bytes(name))).is_ok();
-            kept.extend(export.items.iter().map(|item| &hir[item]).filter(|item| !item.type_only && !is_known(item.local)).map(|item| (item.local, true)));
+            retained.extend(export.items.iter().map(|item| &hir[item]).filter(|item| !item.type_only && !is_known(item.local)).map(|item| (item.local, true)));
         }
         let is_reexported = |local: Atom| hir.exports.iter().any(|export| export.spec.is_none() && export.items.iter().any(|item| hir[item].local == local));
         for stmt in hir.ids(hir.body) {
@@ -918,8 +855,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         let drops_unused_imports = !hir.is_js || self.shared.constants.source_path_to_url.is_none();
         if unproven.is_empty() || !drops_unused_imports {
-            kept.extend(unproven.into_iter().map(|(imported, local)| (imported, is_reexported(local))));
-            return (module, kept);
+            retained.extend(unproven.into_iter().map(|(imported, local)| (imported, is_reexported(local))));
+            return (module, retained);
         }
         for (imported, local) in unproven {
             let is_exported = is_reexported(local);
@@ -933,10 +870,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 is_used = self.is_import(sym);
             }
             if is_used {
-                kept.push((imported, is_exported));
+                retained.push((imported, is_exported));
             }
         }
-        (module, kept)
+        (module, retained)
     }
 
     pub(crate) fn is_namespace_used_as_value(&mut self, importer: FileId, imported: FileId) -> bool {
@@ -984,7 +921,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         false
     }
 
-    /// `ns` of `import * as ns from "./commonjs"`: who imports it, and the module.
     pub(crate) fn namespace_import_of_exported_object(&mut self, fx: &Fx, e: hir::ExprId) -> Option<(FileId, FileId)> {
         let hir::ExprKind::Ident(name) = self.hir(fx.file)[e].kind else { return None };
         let sym = self.ident_binding(fx.file, e, name)?;
@@ -1181,7 +1117,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.emit_throwing(fx, Op::PropSet { obj, name, value });
     }
 
-    /// The value of an import that no binding of the program holds. It is read on each use, which keeps it live.
     pub(crate) fn read_import(&mut self, fx: &mut Fx, source: ImportSource, pos: u32) -> V {
         let (namespace, name) = match source {
             ImportSource::Text { file, specifier } => {

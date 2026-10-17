@@ -1556,7 +1556,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
         RETURN_IF_EXCEPTION(scope, {});
         if (builtin && dynamicDowncast<JSMockFunction>(builtin))
             return JSValue::encode(builtin);
-        if (!builtin || !builtin.isCallable() || Bun::hasFilesOfCompiledProgram(globalObject)) {
+        if (!builtin || !builtin.isCallable() || Bun::hasCompiledProgramFiles(globalObject)) {
             throwTypeError(globalObject, scope, makeString("Cannot spy on `"_s, String(propertyKey.uid()), "`: built-in objects are immutable in ahead-of-time compiled programs, and so are the prototype objects of compiled classes"_s));
             return {};
         }

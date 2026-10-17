@@ -1,4 +1,4 @@
-use super::fit::Ty;
+use super::coerce::Ty;
 use super::{FileBuild, Fx, Problem, Source};
 use crate::id::{BlockId, FuncId, GlobalId, TyId, V};
 use crate::ir::{self, Args, BinOp, Op, Operation, RelOp, Term, CoerceReason};
@@ -13,9 +13,11 @@ mod parse;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 enum GeneratedFunction {
-    Validator(u32, u32),
+    Validator { plan: u32, node: u32, records_issues: bool },
     Parser(u32, u32),
     SchemaValidator(u32),
+    Plan(u32),
+    PendingIssues,
     Failure(u32),
     SchemaFailure(u32),
     Refusal(u32),
@@ -62,11 +64,12 @@ pub(crate) struct Validators {
     plans: Vec<Rc<ValidationPlan>>,
     plan_numbers: FxHashMap<(TypeId, bool), u32>,
     functions: FxHashMap<GeneratedFunction, FuncId>,
-    functions_by_type: FxHashMap<(TypeId, bool, bool, bool), GeneratedFunction>,
+    functions_by_type: FxHashMap<(TypeId, bool, bool, bool, bool), GeneratedFunction>,
     sources: Vec<GeneratedFunction>,
     rejection_marker: Option<GlobalId>,
     is_building_recursive_node: bool,
     is_at_call_site: bool,
+    is_speculative: bool,
     plans_with_inlined_root: Vec<u32>,
     patterns: FxHashMap<Vec<u8>, GlobalId>,
     templates: Vec<(Vec<Vec<u8>>, Vec<Placeholder>)>,
@@ -99,13 +102,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return Some(self.emit(fx, Op::Undefined));
         }
         if self.shared.constants.records_spans {
-            let mut noted = vec![b'0' + which as u8];
-            noted.extend_from_slice(&plan.to_json());
-            let value = self.emit_text(fx, &noted);
+            let mut recorded = vec![b'0' + which as u8];
+            recorded.extend_from_slice(&plan.to_json());
+            let value = self.emit_text(fx, &recorded);
             fx.operand_spans.push(ir::Span { value, start: hir[e].pos, end: hir[e].end, step: crate::audit::VALIDATION });
         }
-        let made = self.ty_of(ty);
-        let to = self.cast_target_ty(made);
+        let created = self.ty_of(ty);
+        let to = self.cast_target_ty(created);
         self.record_cast(Ty { id: self.out.tys.anything, checked: TypeId::UNKNOWN }, to, CoerceReason::Coerce);
         if which == ValidationCall::Schema {
             if !arguments.is_empty() {
@@ -124,7 +127,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         let mut value = self.expr(fx, given);
         if which == ValidationCall::Parse && parse::is_parsed_by_type(&plan) {
-            return Some(self.emit_parse_by_type(fx, &plan, number, value, Ty { id: made, checked: ty }));
+            return Some(self.emit_parse_by_type(fx, &plan, number, value, Ty { id: created, checked: ty }));
         }
         if which == ValidationCall::Parse {
             value = self.emit_global_method_call(fx, b"JSON", b"parse", &[value]);
@@ -136,7 +139,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return Some(self.emit_root_validation(fx, &plan, number, Some(result), value, true));
         }
         let validated = self.emit_root_validation(fx, &plan, number, None, value, which != ValidationCall::Parse);
-        Some(self.coerce_to(fx, validated, Ty { id: made, checked: ty }, CoerceReason::Cast))
+        Some(self.coerce_to(fx, validated, Ty { id: created, checked: ty }, CoerceReason::Cast))
     }
 
     fn emit_safe_result(&mut self, fx: &mut Fx, declared: Option<TypeId>, is_success: bool, name: &[u8], value: V) -> V {
@@ -144,7 +147,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let names = [self.out.strs.intern(b"success"), self.out.strs.intern(name)];
         for member in declared.map(|declared| self.c.parts(declared).to_vec()).unwrap_or_default() {
             if self.is_record_type(member)
-                && let Some(layout) = self.record_layout(member).filter(|&layout| self.fits(layout, &names))
+                && let Some(layout) = self.record_layout(member).filter(|&layout| self.names_fit_layout(layout, &names))
             {
                 return self.emit_typed_object(fx, layout, &names, &[success, value], None);
             }
@@ -177,8 +180,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.jump(done);
         fx.b.seal(fails);
         fx.b.switch_to(fails);
-        let refused = self.emit_rejection(fx, GeneratedFunction::Failure(number), value);
-        let refused = self.claim_type(fx, refused, safe_result.id);
+        let failure = self.helper_function(fx, GeneratedFunction::Failure(number), 1);
+        self.out.funcs[failure.idx()].result = safe_result.id;
+        let refused = self.emit_throwing(fx, Op::CallDirect { func: failure, args: [value].into_iter().collect() });
         fx.b.write(result, refused);
         fx.b.jump(done);
         fx.b.seal(done);
@@ -195,22 +199,22 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn emit_initialized_once(&mut self, fx: &mut Fx, variable: GlobalId, make: impl FnOnce(&mut Self, &mut Fx) -> V) -> V {
-        let kept = self.new_temporary(fx);
+        let retained = self.new_temporary(fx);
         let known = self.emit(fx, Op::GlobalGet(variable));
-        fx.b.write(kept, known);
+        fx.b.write(retained, known);
         let undefined = self.emit(fx, Op::Undefined);
         let is_first = self.emit(fx, Op::StrictEq { a: known, b: undefined });
         let (makes, next) = (fx.b.new_block(), fx.b.new_block());
         self.branch(fx, is_first, makes, next);
         fx.b.seal(makes);
         fx.b.switch_to(makes);
-        let made = make(self, fx);
-        self.emit(fx, Op::GlobalSet(variable, made));
-        fx.b.write(kept, made);
+        let created = make(self, fx);
+        self.emit(fx, Op::GlobalSet(variable, created));
+        fx.b.write(retained, created);
         fx.b.jump(next);
         fx.b.seal(next);
         fx.b.switch_to(next);
-        fx.b.read(kept)
+        fx.b.read(retained)
     }
 
     fn emit_text(&mut self, fx: &mut Fx, text: &[u8]) -> V {
@@ -233,12 +237,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn emit_plain_object(&mut self, fx: &mut Fx, members: &[(&[u8], V)]) -> V {
-        let made = self.emit(fx, Op::NewObject);
+        let created = self.emit(fx, Op::NewObject);
         for &(name, value) in members {
             let key = self.emit_text(fx, name);
-            self.operation(fx, Operation::DefineField, &[made, key, value]);
+            self.operation(fx, Operation::DefineField, &[created, key, value]);
         }
-        made
+        created
     }
 
     fn continue_if(&mut self, fx: &mut Fx, holds: V, otherwise: BlockId) {
@@ -443,7 +447,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     fn emit_template_matcher(&mut self, fx: &mut Fx, index: u32) {
         let (texts, placeholders) = self.validators.templates[index as usize].clone();
-        let text = self.add_entry_param(fx, Ty::of(self.known.string));
+        let text = self.add_entry_param(fx, Ty::from_id(self.known.string));
         let fails = fx.b.new_block();
         let (prefix, suffix) = (&texts[0], &texts[texts.len() - 1]);
         let length = self.emit_member(fx, text, b"length");
@@ -506,14 +510,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let described = &plan.nodes[node as usize];
         let is_at_call_site = std::mem::take(&mut self.validators.is_at_call_site);
         if described.is_recursive && !std::mem::take(&mut self.validators.is_building_recursive_node) {
-            let function = self.validator_for(fx, number, node, TypeId::UNRESOLVED);
-            let made = self.emit_throwing(fx, Op::CallDirect { func: function, args: [input].into_iter().collect() });
+            let function = self.validator_for(fx, number, node, TypeId::UNRESOLVED, false);
+            let created = self.emit_throwing(fx, Op::CallDirect { func: function, args: [input].into_iter().collect() });
             let mark = self.emit_rejection_marker(fx);
-            let is_refused = self.emit(fx, Op::StrictEq { a: made, b: mark });
+            let is_refused = self.emit(fx, Op::StrictEq { a: created, b: mark });
             self.continue_unless(fx, is_refused, fails);
-            return made;
+            return created;
         }
         let input = self.emit_with_default(fx, &described.default, input);
+        let records_issues = self.records_issues(plan, node);
+        let was_speculative = std::mem::replace(&mut self.validators.is_speculative, !records_issues);
         let checked = match &described.planned {
             Planned::Anything => input,
             Planned::Nothing => {
@@ -557,11 +563,26 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let list = self.emit_throwing(fx, Op::NewArray(Args::new()));
                 let list = self.coerce_to(fx, list, want, CoerceReason::Cast);
                 let (plan, element) = (plan.clone(), *element);
-                self.emit_loop(fx, input, |build, fx, _, item| {
-                    let checked = build.emit_validation(fx, &plan, number, element, item, fails);
+                let element_fails = if records_issues { fx.b.new_block() } else { fails };
+                let mut failed_at = V::NONE;
+                self.emit_loop(fx, input, |build, fx, at, item| {
+                    failed_at = at;
+                    let checked = build.emit_validation(fx, &plan, number, element, item, element_fails);
                     let push = build.out.strs.intern(b"push");
                     build.emit_throwing(fx, Op::CallMethod { obj: list, name: push, args: [checked].into_iter().collect() });
                 });
+                if records_issues {
+                    let validator = self.recording_validator_below(fx, &plan, number, node);
+                    self.emit_failure_landing(fx, element_fails, |build, fx| {
+                        let validator = match validator {
+                            Some(validator) => build.emit(fx, Op::FuncRef(validator)),
+                            None => build.emit(fx, Op::Undefined),
+                        };
+                        build.emit_issue_record(fx, number, node, failed_at, input, validator);
+                        fx.b.jump(fails);
+                    });
+                }
+                self.validators.is_speculative = was_speculative;
                 return list;
             }
             Planned::Tuple { ty, elements } => {
@@ -577,31 +598,31 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     let item = self.emit_throwing(fx, Op::ElemGet { obj: input, key });
                     checked.push(self.emit_validation(fx, plan, number, element, item, fails));
                 }
-                let made = self.emit_list(fx, &checked);
+                let created = self.emit_list(fx, &checked);
                 let want = Ty { id: self.ty_of(*ty), checked: *ty };
-                self.coerce_to(fx, made, want, CoerceReason::Cast)
+                self.coerce_to(fx, created, want, CoerceReason::Cast)
             }
             Planned::Dictionary { held, .. } => {
                 self.continue_if_object(fx, input, true, fails);
-                let made = self.emit(fx, Op::NewObject);
+                let created = self.emit(fx, Op::NewObject);
                 let keys = self.emit_global_method_call(fx, b"Object", b"keys", &[input]);
                 let (plan, held) = (plan.clone(), *held);
                 self.emit_loop(fx, keys, |build, fx, _, key| {
                     let key = build.claim_type(fx, key, build.known.string);
                     let item = build.emit_throwing(fx, Op::ElemGet { obj: input, key });
                     let checked = build.emit_validation(fx, &plan, number, held, item, fails);
-                    build.operation(fx, Operation::PutByValDirect, &[made, key, checked]);
+                    build.operation(fx, Operation::PutByValDirect, &[created, key, checked]);
                 });
-                made
+                created
             }
             Planned::Object { .. } if is_at_call_site => self.emit_object(fx, plan, number, node, input, fails),
             Planned::Object { ty, .. } => {
-                let function = self.validator_for(fx, number, node, *ty);
-                let made = self.emit_throwing(fx, Op::CallDirect { func: function, args: [input].into_iter().collect() });
+                let function = self.validator_for(fx, number, node, *ty, records_issues);
+                let created = self.emit_throwing(fx, Op::CallDirect { func: function, args: [input].into_iter().collect() });
                 let undefined = self.emit(fx, Op::Undefined);
-                let is_refused = self.emit(fx, Op::StrictEq { a: made, b: undefined });
+                let is_refused = self.emit(fx, Op::StrictEq { a: created, b: undefined });
                 self.continue_unless(fx, is_refused, fails);
-                made
+                created
             }
             Planned::Union { arms, .. } => {
                 let result = self.new_temporary(fx);
@@ -648,70 +669,110 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 fx.b.read(result)
             }
         };
+        self.validators.is_speculative = was_speculative;
         self.emit_rules(fx, &described.rules, checked, fails);
         checked
     }
 
-    fn validator_for(&mut self, fx: &Fx, number: u32, node: u32, ty: TypeId) -> FuncId {
-        let function = self.helper_function(fx, GeneratedFunction::Validator(number, node), 1);
+    fn records_issues(&self, plan: &ValidationPlan, node: u32) -> bool {
+        let described = &plan.nodes[node as usize];
+        !self.validators.is_speculative
+            && matches!(described.planned, Planned::Object { .. } | Planned::Array { .. })
+            && described.default.is_none()
+            && !described.is_recursive
+            && (described.rules.is_empty() || matches!(described.planned, Planned::Array { .. }))
+    }
+
+    fn emit_failure_landing(&mut self, fx: &mut Fx, landing: BlockId, fill: impl FnOnce(&mut Self, &mut Fx)) {
+        let resumed = fx.b.block;
+        fx.b.seal(landing);
+        fx.b.switch_to(landing);
+        fill(self, fx);
+        fx.b.switch_to(resumed);
+    }
+
+    fn recording_validator_below(&mut self, fx: &Fx, plan: &ValidationPlan, number: u32, node: u32) -> Option<FuncId> {
+        if !self.records_issues(plan, node) {
+            return None;
+        }
+        match plan.nodes[node as usize].planned {
+            Planned::Object { ty, .. } => Some(self.validator_for(fx, number, node, ty, true)),
+            Planned::Array { element, .. } if matches!(plan.nodes[element as usize].planned, Planned::Object { .. }) => self.recording_validator_below(fx, plan, number, element),
+            _ => None,
+        }
+    }
+
+    fn emit_issue_record(&mut self, fx: &mut Fx, number: u32, node: u32, position: V, value: V, compiled: V) {
+        let plan = self.emit_call_without_arguments(fx, GeneratedFunction::Plan(number));
+        let node = self.emit(fx, Op::Int(i64::from(node)));
+        self.call_validation_helper(fx, b"recordFailure", &[plan, node, position, value, compiled]);
+    }
+
+    fn validator_for(&mut self, fx: &Fx, number: u32, node: u32, ty: TypeId, records_issues: bool) -> FuncId {
+        let function = self.helper_function(fx, GeneratedFunction::Validator { plan: number, node, records_issues }, 1);
         if ty != TypeId::UNRESOLVED {
-            let made = self.ty_of(ty);
-            self.out.funcs[function.idx()].result = self.or_undefined(made);
+            let created = self.ty_of(ty);
+            self.out.funcs[function.idx()].result = self.or_undefined(created);
         }
         function
     }
 
-    fn first_emitted_for_same_type(&mut self, made: GeneratedFunction) -> GeneratedFunction {
-        let (number, node, is_parser) = match made {
-            GeneratedFunction::Validator(number, node) => (number, node, false),
-            GeneratedFunction::Parser(number, node) => (number, node, true),
-            _ => return made,
+    fn first_emitted_for_same_type(&mut self, created: GeneratedFunction) -> GeneratedFunction {
+        let (number, node, is_parser, records_issues) = match created {
+            GeneratedFunction::Validator { plan, node, records_issues } => (plan, node, false, records_issues),
+            GeneratedFunction::Parser(number, node) => (number, node, true, false),
+            _ => return created,
         };
         match self.validators.plans[number as usize].node_identity(node) {
-            Some((ty, is_strict, omits_members)) => *self.validators.functions_by_type.entry((ty, is_strict, omits_members, is_parser)).or_insert(made),
-            None => made,
+            Some((ty, is_strict, omits_members)) => *self.validators.functions_by_type.entry((ty, is_strict, omits_members, is_parser, records_issues)).or_insert(created),
+            None => created,
         }
     }
 
-    fn helper_function(&mut self, fx: &Fx, made: GeneratedFunction, parameters: u16) -> FuncId {
-        let made = self.first_emitted_for_same_type(made);
-        if let Some(&known) = self.validators.functions.get(&made) {
+    fn helper_function(&mut self, fx: &Fx, created: GeneratedFunction, parameters: u16) -> FuncId {
+        let created = self.first_emitted_for_same_type(created);
+        if let Some(&known) = self.validators.functions.get(&created) {
             return known;
         }
         let name = self.out.strs.intern(b"validate");
         let module = self.module_of(fx.file);
         let at = self.validators.sources.len() as u32;
-        self.validators.sources.push(made);
+        self.validators.sources.push(created);
         let function = self.add_func(name, module, 0, ir::FuncKind::Plain, Source::Validator(fx.file, at));
         self.out.funcs[function.idx()].params = vec![TyId::NONE; usize::from(parameters)];
         self.out.funcs[function.idx()].length = parameters;
         self.out.funcs[function.idx()].flags |= ir::func_flags::IS_HIDDEN_IN_STACK_TRACES;
-        self.validators.functions.insert(made, function);
+        self.validators.functions.insert(created, function);
         function
     }
 
     pub(crate) fn emit_validator(&mut self, fx: &mut Fx, at: u32) {
-        let (number, node) = match self.validators.sources[at as usize] {
-            GeneratedFunction::Validator(number, node) => (number, node),
+        let (number, node, records_issues) = match self.validators.sources[at as usize] {
+            GeneratedFunction::Validator { plan, node, records_issues } => (plan, node, records_issues),
             GeneratedFunction::Parser(number, node) => return self.emit_parser(fx, number, node),
             GeneratedFunction::SchemaValidator(number) => return self.emit_schema_validator(fx, number),
-            made @ (GeneratedFunction::Failure(number) | GeneratedFunction::SchemaFailure(number) | GeneratedFunction::Refusal(number)) => return self.emit_type_mismatch_result(fx, made, number),
+            GeneratedFunction::Plan(number) => return self.emit_plan(fx, number),
+            GeneratedFunction::PendingIssues => return self.emit_pending_issues(fx),
+            created @ (GeneratedFunction::Failure(number) | GeneratedFunction::SchemaFailure(number) | GeneratedFunction::Refusal(number)) => return self.emit_type_mismatch_result(fx, created, number),
             GeneratedFunction::TemplateMatcher(index) => return self.emit_template_matcher(fx, index),
         };
         let plan = self.validators.plans[number as usize].clone();
         let value = self.add_entry_param(fx, Ty::NONE);
         let fails = fx.b.new_block();
+        let was_speculative = std::mem::replace(&mut self.validators.is_speculative, !records_issues);
         if !matches!(plan.nodes[node as usize].planned, Planned::Object { .. }) {
             self.validators.is_building_recursive_node = true;
             let checked = self.emit_validation(fx, &plan, number, node, value, fails);
+            self.validators.is_speculative = was_speculative;
             self.terminate_with_return(fx, checked);
             fx.b.seal(fails);
             fx.b.switch_to(fails);
             let mark = self.emit_rejection_marker(fx);
             return fx.b.terminate(Term::Return(mark));
         }
-        let made = self.emit_object(fx, &plan, number, node, value, fails);
-        self.terminate_with_return(fx, made);
+        let created = self.emit_object(fx, &plan, number, node, value, fails);
+        self.validators.is_speculative = was_speculative;
+        self.terminate_with_return(fx, created);
         fx.b.seal(fails);
         fx.b.switch_to(fails);
         let undefined = self.emit(fx, Op::Undefined);
@@ -720,17 +781,34 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     fn emit_object(&mut self, fx: &mut Fx, plan: &Rc<ValidationPlan>, number: u32, node: u32, value: V, fails: BlockId) -> V {
         let Planned::Object { members, .. } = &plan.nodes[node as usize].planned else { return value };
-        self.continue_if_object(fx, value, true, fails);
+        let records_issues = self.records_issues(plan, node);
+        let (position, recorded) = (self.new_temporary(fx), if records_issues { fx.b.new_block() } else { fails });
+        let land = |build: &mut Self, fx: &mut Fx, landing: BlockId, at: usize| {
+            if records_issues {
+                build.emit_failure_landing(fx, landing, |build, fx| {
+                    let at = build.emit(fx, Op::Int(at as i64));
+                    fx.b.write(position, at);
+                    fx.b.jump(recorded);
+                });
+            }
+        };
+        let landing = if records_issues { fx.b.new_block() } else { fails };
+        self.continue_if_object(fx, value, true, landing);
+        land(self, fx, landing, 0);
         let mut checked = Vec::with_capacity(members.len());
-        for member in members {
+        for (at, member) in members.iter().enumerate() {
             let given = self.emit_member(fx, value, &member.name);
             if !member.is_omitted_when_invalid {
-                checked.push(self.emit_validation(fx, plan, number, member.node, given, fails));
+                let landing = if records_issues { fx.b.new_block() } else { fails };
+                checked.push(self.emit_validation(fx, plan, number, member.node, given, landing));
+                land(self, fx, landing, at);
                 continue;
             }
             let held = self.new_temporary(fx);
             let (invalid, next) = (fx.b.new_block(), fx.b.new_block());
+            let was_speculative = std::mem::replace(&mut self.validators.is_speculative, true);
             let conforming = self.emit_validation(fx, plan, number, member.node, given, invalid);
+            self.validators.is_speculative = was_speculative;
             fx.b.write(held, conforming);
             fx.b.jump(next);
             fx.b.seal(invalid);
@@ -742,7 +820,26 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             fx.b.switch_to(next);
             checked.push(fx.b.read(held));
         }
-        self.emit_object_from_checked_members(fx, plan, number, node, Some(value), &checked, fails)
+        let landing = if records_issues { fx.b.new_block() } else { fails };
+        let was_speculative = std::mem::replace(&mut self.validators.is_speculative, true);
+        let created = self.emit_object_from_checked_members(fx, plan, number, node, Some(value), &checked, landing);
+        self.validators.is_speculative = was_speculative;
+        land(self, fx, landing, members.len());
+        if records_issues {
+            let below: Vec<(usize, FuncId)> = members.iter().enumerate().filter(|(_, member)| !member.is_omitted_when_invalid).filter_map(|(at, member)| Some((at, self.recording_validator_below(fx, plan, number, member.node)?))).collect();
+            self.emit_failure_landing(fx, recorded, |build, fx| {
+                let position = fx.b.read(position);
+                let mut listed = Vec::with_capacity(2 * below.len());
+                for &(at, validator) in &below {
+                    listed.push(build.emit(fx, Op::Int(at as i64)));
+                    listed.push(build.emit(fx, Op::FuncRef(validator)));
+                }
+                let compiled = if listed.is_empty() { build.emit(fx, Op::Undefined) } else { build.emit_list(fx, &listed) };
+                build.emit_issue_record(fx, number, node, position, value, compiled);
+                fx.b.jump(fails);
+            });
+        }
+        created
     }
 
     fn emit_object_from_checked_members(&mut self, fx: &mut Fx, plan: &Rc<ValidationPlan>, number: u32, node: u32, source: Option<V>, checked: &[V], fails: BlockId) -> V {
@@ -752,16 +849,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             names.push(self.out.strs.intern(&member.name));
             values.push(checked);
         }
-        let layout = if self.is_record_type(*ty) { self.record_layout(*ty).filter(|&layout| self.fits(layout, &names)) } else { None };
-        let made = match layout {
+        let layout = if self.is_record_type(*ty) { self.record_layout(*ty).filter(|&layout| self.names_fit_layout(layout, &names)) } else { None };
+        let created = match layout {
             Some(layout) => self.emit_typed_object(fx, layout, &names, &values, None),
             None => {
-                let made = self.emit(fx, Op::NewObject);
+                let created = self.emit(fx, Op::NewObject);
                 for (&name, &value) in names.iter().zip(&values) {
                     let key = self.emit(fx, Op::Str(name));
-                    self.operation(fx, Operation::DefineField, &[made, key, value]);
+                    self.operation(fx, Operation::DefineField, &[created, key, value]);
                 }
-                made
+                created
             }
         };
         for (member, &checked) in members.iter().zip(checked).filter(|(member, _)| member.is_optional) {
@@ -773,7 +870,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             fx.b.switch_to(stores);
             if !Self::is_field_name(&member.name) {
                 let key = self.emit_text(fx, &member.name);
-                self.operation(fx, Operation::DefineField, &[made, key, checked]);
+                self.operation(fx, Operation::DefineField, &[created, key, checked]);
                 fx.b.jump(next);
                 fx.b.seal(next);
                 fx.b.switch_to(next);
@@ -787,7 +884,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 }
                 None => checked,
             };
-            self.emit_throwing(fx, Op::PropSet { obj: made, name, value: held });
+            self.emit_throwing(fx, Op::PropSet { obj: created, name, value: held });
             fx.b.jump(next);
             fx.b.seal(next);
             fx.b.switch_to(next);
@@ -811,7 +908,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     OtherKeys::Kept(held) => {
                         let item = build.emit_throwing(fx, Op::ElemGet { obj: value, key });
                         let checked = build.emit_validation(fx, &plan, number, held, item, fails);
-                        build.operation(fx, Operation::PutByValDirect, &[made, key, checked]);
+                        build.operation(fx, Operation::PutByValDirect, &[created, key, checked]);
                         fx.b.jump(is_declared);
                     }
                     _ => fx.b.jump(fails),
@@ -820,7 +917,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 fx.b.switch_to(is_declared);
             });
         }
-        made
+        created
     }
 
     fn emit_schema_validator(&mut self, fx: &mut Fx, number: u32) {
@@ -851,28 +948,48 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         };
         let callee = self.read_sym(fx, helper, 0);
         let this = self.emit(fx, Op::Undefined);
-        self.emit_throwing(fx, Op::Call { callee, this, args: args.iter().copied().collect() })
+        let operands: Vec<V> = [callee, this].into_iter().chain(args.iter().copied()).collect();
+        self.operation(fx, Operation::CallNoInline, &operands)
     }
 
-    fn emit_type_mismatch_result(&mut self, fx: &mut Fx, made: GeneratedFunction, number: u32) {
-        let value = self.add_entry_param(fx, Ty::NONE);
-        let text = self.validators.plans[number as usize].to_json();
+    fn emit_call_without_arguments(&mut self, fx: &mut Fx, function: GeneratedFunction) -> V {
+        let function = self.helper_function(fx, function, 0);
+        let function = self.emit(fx, Op::FuncRef(function));
+        let undefined = self.emit(fx, Op::Undefined);
+        self.operation(fx, Operation::CallNoInline, &[function, undefined])
+    }
+
+    fn emit_plan(&mut self, fx: &mut Fx, number: u32) {
         let variable = self.hidden_variable(fx, b"plan");
+        let text = self.validators.plans[number as usize].to_json();
         let plan = self.emit_initialized_once(fx, variable, |build, fx| {
             let text = build.emit_text(fx, &text);
-            build.emit_global_method_call(fx, b"JSON", b"parse", &[text])
+            let pending = build.emit_call_without_arguments(fx, GeneratedFunction::PendingIssues);
+            build.call_validation_helper(fx, b"preparePlan", &[text, pending])
         });
-        let answer = match made {
+        self.terminate_with_return(fx, plan);
+    }
+
+    fn emit_pending_issues(&mut self, fx: &mut Fx) {
+        let variable = self.hidden_variable(fx, b"pendingIssues");
+        let pending = self.emit_initialized_once(fx, variable, |build, fx| {
+            let undefined = build.emit(fx, Op::Undefined);
+            build.emit_list(fx, &[undefined])
+        });
+        self.terminate_with_return(fx, pending);
+    }
+
+    fn emit_type_mismatch_result(&mut self, fx: &mut Fx, created: GeneratedFunction, number: u32) {
+        let value = self.add_entry_param(fx, Ty::NONE);
+        let plan = self.emit_call_without_arguments(fx, GeneratedFunction::Plan(number));
+        let issues = self.call_validation_helper(fx, b"takeIssues", &[plan, value]);
+        let answer = match created {
             GeneratedFunction::Failure(_) => {
-                let issues = self.call_validation_helper(fx, b"issuesOf", &[plan, value]);
                 let declared = self.validators.safe_result_types.get(&number).copied();
                 self.emit_safe_result(fx, declared, false, b"issues", issues)
             }
-            GeneratedFunction::SchemaFailure(_) => {
-                let issues = self.call_validation_helper(fx, b"issuesOf", &[plan, value]);
-                self.emit_plain_object(fx, &[(b"issues", issues)])
-            }
-            _ => self.call_validation_helper(fx, b"throwIssues", &[plan, value]),
+            GeneratedFunction::SchemaFailure(_) => self.emit_plain_object(fx, &[(b"issues", issues)]),
+            _ => self.call_validation_helper(fx, b"throwIssues", &[issues]),
         };
         self.terminate_with_return(fx, answer);
     }

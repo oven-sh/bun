@@ -102,7 +102,7 @@ declare module "bun" {
   /** `{ id: number } & Strict`: a property that the type does not declare is an issue. */
   type Strict = { readonly "bun.strict"?: true };
   /** {@link Strict} for the type and for every object type within it. */
-  type StrictAllTheWayDown = { readonly "bun.strict"?: "all the way down" };
+  type DeepStrict = { readonly "bun.strict"?: "deep" };
   type PathLike = string | NodeJS.TypedArray | ArrayBufferLike | URL;
   type ArrayBufferView<TArrayBuffer extends ArrayBufferLike = ArrayBufferLike> =
     NodeJS.TypedArray<TArrayBuffer> | DataView<TArrayBuffer>;
@@ -3909,8 +3909,8 @@ declare module "bun" {
      * debugger are not available.
      *
      * Requires `format: "esm"` (the default with `aot`), and a `target` that is the
-     * platform and version of Bun that runs the build. Supported on macOS arm64 and
-     * on Linux x64 with glibc. `Bun.build` throws when it cannot compile ahead of time.
+     * platform and version of Bun that runs the build. `Bun.build` throws when it
+     * cannot compile ahead of time.
      *
      * Equivalent CLI flag: `--aot`
      *

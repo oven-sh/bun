@@ -2,7 +2,6 @@ use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::types::AotCheckKind;
 
-/// Report a value of type `any` where `--aot` checks it against a type when the program runs.
 pub struct AotNoAnyToTyped;
 
 const CHECKED: Message = Message::new(

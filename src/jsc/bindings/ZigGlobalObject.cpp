@@ -873,7 +873,7 @@ static bool isHiddenFromRequireCache(JSC::JSGlobalObject* globalObject, const St
 {
     if (isInternalStandaloneModule(key))
         return true;
-    return key && key->is8Bit() && Bun::hasFilesOfCompiledProgram(globalObject) && Bun__standaloneModuleIsCompiled(key->span8().data(), key->length());
+    return key && key->is8Bit() && Bun::hasCompiledProgramFiles(globalObject) && Bun__standaloneModuleIsCompiled(key->span8().data(), key->length());
 }
 
 // A key that is not an atom already names no module, and does not become one.
@@ -943,7 +943,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryDelete, (JSC::JSGlobalObject * globa
     if (key.impl()->is8Bit() && Bun__standaloneModuleIsCompiled(key.impl()->span8().data(), key.impl()->length()))
         return throwVMTypeError(globalObject, scope, makeString("Cannot evict \""_s, key.string(), "\": it was compiled ahead of time"_s));
     if (moduleLoader == globalObject->moduleLoader()) {
-        Bun::noteThatRequireCacheIsRead(uncheckedDowncast<Zig::GlobalObject>(globalObject));
+        Bun::recordRequireCacheRead(uncheckedDowncast<Zig::GlobalObject>(globalObject));
         RETURN_IF_EXCEPTION(scope, {});
         Bun::evictCompiledModule(uncheckedDowncast<Zig::GlobalObject>(globalObject), key.string());
         RETURN_IF_EXCEPTION(scope, {});
@@ -2688,7 +2688,11 @@ void GlobalObject::finishCreation(VM& vm)
              init.set(obj);
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_bunObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
-             init.set(Bun::createBunObject(init.vm, init.owner));
+             auto* bunObject = Bun::createBunObject(init.vm, init.owner);
+#if ENABLE(AOT)
+             JSC::AOT::Typed::didCreateReplaceableGlobal(init.owner, "Bun"_s, bunObject);
+#endif
+             init.set(bunObject);
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSBunRequestParamsPrototype), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              init.set(Bun::createJSBunRequestParamsPrototype(init.vm, static_cast<Zig::GlobalObject*>(init.owner)));
@@ -3818,7 +3822,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
             RELEASE_AND_RETURN(scope, JSC::JSPromise::resolvedPromise(globalObject, helpers));
     }
 
-    if (Bun::hasFilesOfCompiledProgram(globalObject) && !parameters && !Bun::moduleGraphOfLoader(globalObject, loader)) [[unlikely]] {
+    if (Bun::hasCompiledProgramFiles(globalObject) && !parameters && !Bun::moduleGraphOfLoader(globalObject, loader)) [[unlikely]] {
         JSC::JSPromise* imported = Bun::importCompiledProgramFile(globalObject, loader, moduleName, sourceOriginStringHolder);
         if (scope.exception()) [[unlikely]]
             return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
@@ -3871,7 +3875,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
         return rejectedInternalPromise(globalObject, createTypeError(globalObject, "To load Node-API modules, use require() or process.dlopen instead of import."_s));
     }
 
-    if (Bun::hasFilesOfCompiledProgram(globalObject) && !parameters && !Bun::moduleGraphOfLoader(globalObject, loader)) [[unlikely]] {
+    if (Bun::hasCompiledProgramFiles(globalObject) && !parameters && !Bun::moduleGraphOfLoader(globalObject, loader)) [[unlikely]] {
         JSC::JSSourceCode* compiled = Bun::compiledProgramFileSource(static_cast<Zig::GlobalObject*>(globalObject), moduleKey);
         if (scope.exception()) [[unlikely]] {
             JSPromise* rejected = JSPromise::create(vm, globalObject->promiseStructure());

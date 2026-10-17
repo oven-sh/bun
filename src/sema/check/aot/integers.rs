@@ -1,23 +1,3 @@
-//! Which numbers are integers, and in what range.
-//!
-//! An integer is a number without a fraction, other than `-0`, of a magnitude up to which a double stands for every integer. Compiled
-//! code relies on an answer without a test, so what is not shown to hold is not answered.
-//!
-//! An expression is gone through by its syntax: literals, operators, `.length`, a few built-in functions, and names. A name stands for
-//! what its variable holds, and every store to a variable is in the file that declares it, so all of them are looked at. What a store
-//! stores may depend on what the variable holds (`i++`), or another one does. So there are two steps. The first finds, for all the
-//! variables that depend on each other, the least ranges that every store stays within, with the ends of a range moved outward to one of a
-//! few numbers, so that it ends: whatever the order it is done in, it ends with the same ranges. The second goes through the stores of a
-//! variable once more, with those ranges for what is read, and takes what comes out as it is.
-//!
-//! What is known of a variable where it is read is more than what it holds over its whole life. The control flow nodes of the binder are
-//! followed back from the read to the stores that reach it. At the head of a loop that stores to the variable the walk ends with what
-//! the variable holds over its whole life. The binder makes no node for `i < n`, which narrows no type. Such a test is found by the
-//! syntax, around the read or before it among the statements, and is applied where the walk comes by the flow node at which the
-//! test read the variable: nothing was stored in between on that path. The flow nodes are made for narrowing types, and leave out a few
-//! ways that control takes. A variable that is stored to where that matters, or by other code than the code that declares it, is only
-//! known for what it holds over its whole life: `is_outside_flow_graph`, `Place::is_stored_elsewhere`.
-
 use super::{ByFile, Primitive};
 use super::kinds::kind;
 use crate::atom::{Atom, known};
@@ -35,23 +15,16 @@ use smallvec::SmallVec;
 use std::rc::Rc;
 use super::OnceLock;
 
-/// Up to here a double stands for every integer.
 const MAX_EXACT: i64 = 1 << 53;
 pub(super) const INT32: (i64, i64) = (i32::MIN as i64, i32::MAX as i64);
 const MAX_UINT32: i64 = u32::MAX as i64;
-/// A count does not pass `MAX_EXACT`: what is added to it or taken from it at a time is at most this. See `sum`.
 const MAX_STEP: i64 = 1024;
-/// What is computed in one go, and not counted up to, is an integer up to here: a literal, a product, a sum of two such. So nothing but counting gets near `MAX_EXACT`.
 const MAX_COMPUTED: i64 = 1 << 52;
-/// The engine makes no longer string.
 const MAX_STRING_LENGTH: i64 = i32::MAX as i64;
 const MAX_ARRAY_LENGTH: i64 = u32::MAX as i64;
-/// A walk that takes more steps ends with what the variable holds over its whole life.
 const MAX_STEPS: u32 = 100_000;
-/// A loop with more flow nodes counts as storing to every variable.
 const MAX_NODES_IN_LOOP: usize = 100_000;
 
-/// The typed arrays of integers that are numbers, with the least and the most that an element can be.
 const INTEGER_ARRAYS: [(&[u8], i64, i64); 7] = [
     (b"Int8Array", i8::MIN as i64, i8::MAX as i64),
     (b"Uint8Array", 0, u8::MAX as i64),
@@ -63,42 +36,36 @@ const INTEGER_ARRAYS: [(&[u8], i64, i64); 7] = [
 ];
 
 
-/// What a value can be: an integer from `least` to `most`, none if `least` is the greater, `undefined` or `null` if `nil`, and nothing else.
 #[derive(Copy, Clone, PartialEq, Eq)]
 struct Numbers {
-    least: i64,
-    most: i64,
+    minimum: i64,
+    maximum: i64,
     nil: bool,
     ignores_nullish: bool,
 }
 
-/// `None`: it can be anything.
 type Found = Option<Numbers>;
 
 impl Numbers {
-    /// No value gets there.
-    const NOTHING: Numbers = Numbers { least: 1, most: 0, nil: false, ignores_nullish: false };
-    const NULLISH: Numbers = Numbers { least: 1, most: 0, nil: true, ignores_nullish: false };
+    const NOTHING: Numbers = Numbers { minimum: 1, maximum: 0, nil: false, ignores_nullish: false };
+    const NULLISH: Numbers = Numbers { minimum: 1, maximum: 0, nil: true, ignores_nullish: false };
 
-    fn integers(least: i64, most: i64) -> Numbers {
-        if least > most { Numbers::NOTHING } else { Numbers { least, most, nil: false, ignores_nullish: false } }
+    fn integers(minimum: i64, maximum: i64) -> Numbers {
+        if minimum > maximum { Numbers::NOTHING } else { Numbers { minimum, maximum, nil: false, ignores_nullish: false } }
     }
 
     fn has_no_number(self) -> bool {
-        self.least > self.most
+        self.minimum > self.maximum
     }
 
-    /// The least and the most of the numbers among it.
     fn range(self) -> Option<(i64, i64)> {
-        (!self.has_no_number()).then_some((self.least, self.most))
+        (!self.has_no_number()).then_some((self.minimum, self.maximum))
     }
 
-    /// The same, of what is a number for sure.
     fn numbers(self) -> Option<(i64, i64)> {
         if self.nil { None } else { self.range() }
     }
 
-    /// The one or the other.
     fn or(self, other: Numbers) -> Numbers {
         let (nil, ignores_nullish) = (self.nil || other.nil, self.ignores_nullish || other.ignores_nullish);
         if self.has_no_number() {
@@ -107,50 +74,45 @@ impl Numbers {
         if other.has_no_number() {
             return Numbers { nil, ignores_nullish, ..self };
         }
-        Numbers { least: self.least.min(other.least), most: self.most.max(other.most), nil, ignores_nullish }
+        Numbers { minimum: self.minimum.min(other.minimum), maximum: self.maximum.max(other.maximum), nil, ignores_nullish }
     }
 
-    /// What is both.
     fn and(self, other: Numbers) -> Numbers {
         let ignores_nullish = self.ignores_nullish || other.ignores_nullish;
-        Numbers { nil: self.nil && other.nil || ignores_nullish, ignores_nullish, ..self.within(other.least, other.most) }
+        Numbers { nil: self.nil && other.nil || ignores_nullish, ignores_nullish, ..self.within(other.minimum, other.maximum) }
     }
 
-    /// Without the numbers below `least` or above `most`.
-    fn within(self, least: i64, most: i64) -> Numbers {
-        Numbers { nil: self.nil, ignores_nullish: self.ignores_nullish, ..Numbers::integers(self.least.max(least), self.most.min(most)) }
+    fn within(self, minimum: i64, maximum: i64) -> Numbers {
+        Numbers { nil: self.nil, ignores_nullish: self.ignores_nullish, ..Numbers::integers(self.minimum.max(minimum), self.maximum.min(maximum)) }
     }
 
-    /// What is truthy of it. Zero in the middle of the range stays.
     fn truthy(self) -> Numbers {
-        Numbers::integers(if self.least == 0 { 1 } else { self.least }, if self.most == 0 { -1 } else { self.most })
+        Numbers::integers(if self.minimum == 0 { 1 } else { self.minimum }, if self.maximum == 0 { -1 } else { self.maximum })
     }
 
-    /// As an operator on 32 bits takes it: `undefined` and `null` become zero.
     fn with_nullish_as_zero(self) -> Numbers {
         if self.nil { Numbers { nil: false, ignores_nullish: false, ..self.or(Numbers::integers(0, 0)) } } else { self }
     }
 
-    /// With the least and the most moved outward to one of a few numbers.
     fn rounded(self) -> Numbers {
         if self.has_no_number() {
             return self;
         }
-        let least = if self.least >= 0 {
+        let minimum = if self.minimum >= 0 {
             0
-        } else if self.least >= INT32.0 {
+        } else if self.minimum >= INT32.0 {
             INT32.0
         } else {
             -MAX_EXACT
         };
-        let most = if self.most <= INT32.1 {
+        let maximum = if self.maximum <= INT32.1 {
             INT32.1
-        } else if self.most <= MAX_UINT32 {
+        } else if self.maximum <= MAX_UINT32 {
             MAX_UINT32
         } else {
             MAX_EXACT
         };
-        Numbers { least, most, nil: self.nil, ignores_nullish: self.ignores_nullish }
+        Numbers { minimum, maximum, nil: self.nil, ignores_nullish: self.ignores_nullish }
     }
 }
 
@@ -169,79 +131,55 @@ fn both(a: Found, b: Found) -> Found {
     }
 }
 
-/// How a name is looked at.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 enum View {
-    /// As its value is kept: what the variable holds over its whole life. A narrower answer would have to be tested for.
     Kept,
-    /// With all that is known where it is read. It goes into what is computed from the value, which costs nothing.
     Here,
 }
 
-/// What variables are taken to hold over their whole lives.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 enum Basis {
-    /// What the first step finds.
     Rough,
-    /// What the second step finds.
     Exact,
 }
 
-/// Something that is stored to a place.
 #[derive(Copy, Clone)]
 pub(super) enum Store {
-    /// The value of the expression: an initializer, the right side of `=`, an argument.
     Value(ExprId),
-    /// What the expression, which is `target op= value`, `target++` or the like, computes.
     Computed(ExprId),
-    /// A call passes nothing for the parameter.
     Nil,
 }
 
-/// A variable, a parameter or a `#private` field.
 #[derive(Default)]
 pub(super) struct Place {
-    /// Everything that is ever stored to it is among `stores`.
     pub(super) is_followed: bool,
     pub(super) stores: Vec<Store>,
-    /// It holds `undefined` before anything is stored to it.
     pub(super) starts_undefined: bool,
     is_parameter: bool,
     defaulted: std::ops::Range<usize>,
-    /// Something is stored to it after its declaration.
     is_assigned: bool,
-    /// The code that declares it, as far as one control flow goes.
     container: Option<Container>,
-    /// Other code stores to it, at a time that the control flow of `container` does not tell.
     is_stored_elsewhere: bool,
-    /// What its type says. Every store is held to that.
     by_type: Found,
     declared_range: Found,
 }
 
-/// What a pass over the expressions of a file finds.
 #[derive(Default)]
 struct Uses {
-    /// What is stored to through `as` or `satisfies`, which the binder does not take for a store.
     stored_through_assertions: FxHashSet<SymbolId>,
-    /// By function declaration: the calls by its name. `None`: it is also used as a value.
     calls: FxHashMap<SymbolId, Option<Vec<CallId>>>,
-    /// By `#private` field: the accesses that store to it.
     private_stores: FxHashMap<SymbolId, Vec<ExprId>>,
-    /// `eval(..)`
     has_direct_eval: bool,
 }
 
-/// A test that has turned out so that the variable was from `least` to `most` when it was read at the flow node `at`.
 struct Test {
     at: FlowId,
-    least: i64,
-    most: i64,
+    minimum: i64,
+    maximum: i64,
 }
 
 type Tests = SmallVec<[Test; 4]>;
 
-/// From the read of a variable back to the stores that reach it.
 struct Walk {
     at: Sym,
     basis: Basis,
@@ -249,7 +187,6 @@ struct Walk {
     by_type: Found,
     declared_range: Found,
     is_parameter: bool,
-    /// By join of paths: what was found there.
     joins: FxHashMap<FlowId, Found>,
     steps: u32,
 }
@@ -263,77 +200,60 @@ enum Child {
 
 #[derive(Default)]
 pub(super) struct Shared {
-    /// The names that some file leaves to the other files to declare.
     free_names: OnceLock<FxHashSet<Atom>>,
-    /// `integer_uses_in`
     uses: ByFile<Uses>,
 }
 
 #[derive(Default)]
 pub(super) struct State {
     places: FxHashMap<Sym, Rc<Place>>,
-    /// What the first and the second step have found.
     rough: FxHashMap<Sym, Found>,
     exact: FxHashMap<Sym, Found>,
-    /// While the first step is at it: what the places it has come by hold as far as is known, and those places in the order it came by them.
     assumed: FxHashMap<Sym, Found>,
     settling: Vec<Sym>,
     is_converging: bool,
-    /// Goes up whenever an entry of `assumed` changes.
     round: u32,
-    /// With the `round` that the entry goes for. 0: for good.
     values: FxHashMap<(FileId, ExprId, View, Basis), (Found, u32)>,
-    /// By place and head of a loop: whether the loop stores to the place.
     loops: FxHashMap<(Sym, FlowId), bool>,
     leaving: FxHashMap<(FileId, u32), Rc<[(u32, ExprId, bool)]>>,
 }
-
-// ───────────────────────────── operators ─────────────────────────────
 
 fn integer(value: f64) -> Found {
     let is_integer = value.fract() == 0.0 && value.abs() <= MAX_COMPUTED as f64 && !(value == 0.0 && value.is_sign_negative());
     is_integer.then(|| Numbers::integers(value as i64, value as i64))
 }
 
-/// What `ToInt32` makes of it. `None`: any int32.
 fn to_int32(it: Numbers) -> Option<(i64, i64)> {
-    let (least, most) = it.with_nullish_as_zero().range()?;
-    (least >= INT32.0 && most <= INT32.1).then_some((least, most))
+    let (minimum, maximum) = it.with_nullish_as_zero().range()?;
+    (minimum >= INT32.0 && maximum <= INT32.1).then_some((minimum, maximum))
 }
 
-/// The same for `ToUint32`.
 fn to_uint32(it: Numbers) -> Option<(i64, i64)> {
-    let (least, most) = it.with_nullish_as_zero().range()?;
-    (least >= 0 && most <= MAX_UINT32).then_some((least, most))
+    let (minimum, maximum) = it.with_nullish_as_zero().range()?;
+    (minimum >= 0 && maximum <= MAX_UINT32).then_some((minimum, maximum))
 }
 
-/// The least number of the form 2^k - 1 that `value`, which is not negative, is not above.
 fn ones(value: i64) -> i64 {
     (1i64 << (64 - value.leading_zeros())) - 1
 }
 
-/// Of the sum of two integers. A RULE OF THE LANGUAGE AS IT IS COMPILED: a count does not pass the last integer that is exact. Where one of the two is a step, what
-/// lies beyond is cut off: only a count is that near, and it takes 2^42 steps to get there from what is computed in one go. Compiled code goes on counting exactly then,
-/// where a double is rounded. An end of a range that lies at the limit is where a count was cut off, or moved outward to (`Numbers::rounded`).
 fn sum(a: (i64, i64), b: (i64, i64)) -> Option<(i64, i64)> {
-    let (least, most) = (a.0 + b.0, a.1 + b.1);
+    let (minimum, maximum) = (a.0 + b.0, a.1 + b.1);
     let matches_step = |it: (i64, i64)| it.0 >= -MAX_STEP && it.1 <= MAX_STEP;
     if matches_step(a) || matches_step(b) {
-        return Some((least.clamp(-MAX_EXACT, MAX_EXACT), most.clamp(-MAX_EXACT, MAX_EXACT)));
+        return Some((minimum.clamp(-MAX_EXACT, MAX_EXACT), maximum.clamp(-MAX_EXACT, MAX_EXACT)));
     }
     let is_count = |it: (i64, i64)| it.0 == -MAX_EXACT || it.1 == MAX_EXACT;
     let limit = if is_count(a) || is_count(b) { MAX_EXACT } else { MAX_COMPUTED };
-    (least >= -limit && most <= limit).then_some((least, most))
+    (minimum >= -limit && maximum <= limit).then_some((minimum, maximum))
 }
 
-/// An operator on 32 bits, which yields a number.
 fn bitwise(op: BinOp, a: Found, b: Found) -> (i64, i64) {
     let (x, y) = (a.and_then(to_int32), b.and_then(to_int32));
     let count = y.filter(|y| y.0 == y.1).map(|y| y.0 & 31);
     match op {
-        // What is not negative lets through no more than it has.
         BinOp::BitAnd => match [x, y].into_iter().flatten().filter(|it| it.0 >= 0).map(|it| it.1).min() {
-            Some(most) => (0, most),
+            Some(maximum) => (0, maximum),
             None => INT32,
         },
         BinOp::BitOr => match (x, y) {
@@ -364,15 +284,12 @@ fn bitwise(op: BinOp, a: Found, b: Found) -> (i64, i64) {
     }
 }
 
-/// `a op b`, for an operator on numbers.
 fn combined(op: BinOp, a: Found, b: Found) -> Found {
     if a == Some(Numbers::NOTHING) || b == Some(Numbers::NOTHING) {
         return Some(Numbers::NOTHING);
     }
-    let (least, most) = match op {
-        // It takes no bigint.
+    let (minimum, maximum) = match op {
         BinOp::UShr => bitwise(op, a, b),
-        // These take two bigints or none, and what something is known of is none.
         BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => {
             if a.is_none() && b.is_none() {
                 return None;
@@ -385,20 +302,18 @@ fn combined(op: BinOp, a: Found, b: Found) -> Found {
                 BinOp::Add => sum(a, b)?,
                 BinOp::Sub => sum(a, (-b.1, -b.0))?,
                 BinOp::Mul => {
-                    // Zero times a negative number is negative zero.
                     let has_zero = |it: (i64, i64)| it.0 <= 0 && it.1 >= 0;
                     if has_zero(a) && b.0 < 0 || has_zero(b) && a.0 < 0 {
                         return None;
                     }
                     let products = [a.0 as i128 * b.0 as i128, a.0 as i128 * b.1 as i128, a.1 as i128 * b.0 as i128, a.1 as i128 * b.1 as i128];
-                    let least = products.into_iter().fold(i128::MAX, i128::min);
-                    let most = products.into_iter().fold(i128::MIN, i128::max);
-                    if least < -(MAX_COMPUTED as i128) || most > MAX_COMPUTED as i128 {
+                    let minimum = products.into_iter().fold(i128::MAX, i128::min);
+                    let maximum = products.into_iter().fold(i128::MIN, i128::max);
+                    if minimum < -(MAX_COMPUTED as i128) || maximum > MAX_COMPUTED as i128 {
                         return None;
                     }
-                    (least as i64, most as i64)
+                    (minimum as i64, maximum as i64)
                 }
-                // By zero it is no number. The remainder has the sign of what is divided even where it is zero.
                 BinOp::Rem => {
                     if a.0 < 0 || b.0 <= 0 && b.1 >= 0 {
                         return None;
@@ -409,20 +324,18 @@ fn combined(op: BinOp, a: Found, b: Found) -> Found {
             }
         }
     };
-    Some(Numbers::integers(least, most))
+    Some(Numbers::integers(minimum, maximum))
 }
 
-/// `-a`. Zero negated is negative zero.
 fn negated(a: Found) -> Found {
     let a = a?;
     if a == Numbers::NOTHING {
         return Some(a);
     }
-    let (least, most) = a.numbers()?;
-    (least > 0 || most < 0).then(|| Numbers::integers(-most, -least))
+    let (minimum, maximum) = a.numbers()?;
+    (minimum > 0 || maximum < 0).then(|| Numbers::integers(-maximum, -minimum))
 }
 
-/// `a && b`, `a || b`, `a ?? b`. As it is kept, all of `a` that is a number counts: that is what the value is before it is chosen.
 fn chosen(op: BinOp, a: Found, b: Found, view: View) -> Found {
     let a = a?;
     let stays = match op {
@@ -437,7 +350,6 @@ fn chosen(op: BinOp, a: Found, b: Found, view: View) -> Found {
     Some(stays.or(b?))
 }
 
-/// Whether control never gets from the statement to what follows it.
 fn never_completes(hir: &File, stmt: StmtId) -> bool {
     match hir[stmt].kind {
         StmtKind::Return(_) | StmtKind::Throw(_) | StmtKind::Break(_) | StmtKind::Continue(_) => true,
@@ -448,18 +360,11 @@ fn never_completes(hir: &File, stmt: StmtId) -> bool {
 }
 
 impl<'p, 's> Checker<'p, 's> {
-    // ───────────────────────────── what is asked ─────────────────────────────
 
-    /// Every number that the expression can yield is an integer from the first to the second, and not `-0`. What else it can yield, its
-    /// type says. Of a name: what the variable holds over its whole life, which is how its value is kept. In an untyped file no type is
-    /// gone by, and an answer says besides that the expression yields numbers, `undefined` or `null` and nothing else.
     pub fn expr_integer_range(&mut self, file: FileId, e: ExprId) -> Option<(i64, i64)> {
         self.numbers_of_expr(file, e, View::Kept, Basis::Exact)?.range()
     }
 
-    /// The same for every number that a variable, a parameter or a `#private` field ever holds. Of a parameter it is known where every
-    /// call of the function is: a function declaration that is not exported and only ever called by its name. Of any other field it is
-    /// not: whoever gets hold of the object can store to it.
     pub fn symbol_integer_range(&mut self, sym: Sym) -> Option<(i64, i64)> {
         let written = self.annotated_symbol_integer_range(sym);
         if !self.integer_slot(sym).is_followed {
@@ -531,29 +436,22 @@ impl<'p, 's> Checker<'p, 's> {
         self.is_int32_annotation(file, node, 0).then_some((i32::MIN as i64, i32::MAX as i64))
     }
 
-    /// The same for every number of the type: what is held to the type is one of them. The type `0` is also that of `-0`. A value of the
-    /// type of a member of a numeric enum is not that member, nor one of the members: flags are combined, `A | B`, `~A`.
     pub fn type_integer_range(&mut self, ty: TypeId) -> Option<(i64, i64)> {
         self.numbers_by_type(ty)?.range()
     }
 
-    /// The same for one part of the union `of`, whatever the other parts are.
     pub fn union_part_integer_range(&mut self, part: TypeId, is_next_to_enum: bool) -> Option<(i64, i64)> {
         self.numbers_by_part(part, is_next_to_enum)?.range()
     }
 
-    /// Of `target++`, `--target` and the like: the number that the target holds before.
     pub fn integer_range_before_update(&mut self, file: FileId, e: ExprId) -> Option<(i64, i64)> {
         let ExprKind::Unary { operand, .. } = self.hir(file)[e].kind else { return None };
         self.numbers_of_expr(file, operand, View::Here, Basis::Exact)?.numbers()
     }
 
-    /// Of those, and of `target op= value`: the number that is stored to the target.
     pub fn stored_integer_range(&mut self, file: FileId, e: ExprId) -> Option<(i64, i64)> {
         self.numbers_of_compound_assignment(file, e, Basis::Exact)?.range()
     }
-
-    // ───────────────────────────── types ─────────────────────────────
 
     fn numbers_by_type(&mut self, ty: TypeId) -> Found {
         if ty.is_never() {
@@ -571,13 +469,11 @@ impl<'p, 's> Checker<'p, 's> {
         self.parts(ty).iter().any(|&part| matches!(self.data(part), TypeData::EnumLit { value: EnumValue::Number(_), .. }))
     }
 
-    /// `x === 0` makes a `0` of a number that may be `-0`, and nothing tests it. So the type `0` says nothing. No test makes
-    /// `TypeFlags | 0` of a number: a value of that type comes out of a place of that type, which holds int32s like a place for the enum.
     fn numbers_by_part(&self, part: TypeId, is_next_to_enum: bool) -> Found {
         match self.data(part) {
-            TypeData::NumberLit { bits, .. } => integer(f64::from_bits(*bits)).filter(|it| it.least != 0 || is_next_to_enum),
+            TypeData::NumberLit { bits, .. } => integer(f64::from_bits(*bits)).filter(|it| it.minimum != 0 || is_next_to_enum),
             TypeData::EnumLit { value: EnumValue::Number(bits), .. } => {
-                integer(f64::from_bits(*bits)).filter(|it| it.least >= INT32.0 && it.most <= INT32.1)?;
+                integer(f64::from_bits(*bits)).filter(|it| it.minimum >= INT32.0 && it.maximum <= INT32.1)?;
                 Some(Numbers::integers(INT32.0, INT32.1))
             }
             _ if part.is_undefined() || part.is_null() => Some(Numbers::NULLISH),
@@ -589,28 +485,22 @@ impl<'p, 's> Checker<'p, 's> {
         !ty.is_never() && self.every_type(ty, |c, part| c.is_number_like(part))
     }
 
-    /// Whether the value of the expression is of the checker's type of it. Where nothing holds the program to the types of the file, no type is
-    /// gone by: what an expression is, its text shows (`kinds.rs`) or nothing does.
     fn has_trusted_type(&mut self, file: FileId, e: ExprId) -> bool {
         !self.is_untyped_file(file) && self.has_declared_type(file, e)
     }
 
-    /// The type that the value of the expression is of for a fact, and whether it may be `undefined` besides. What a coercion yields is
-    /// not looked at, and it goes where the value goes: `x as Small`, `const n = x as 1 | 2 | 3; n`, `(foo as Item[]).length`.
     fn trusted_type_of(&mut self, file: FileId, e: ExprId) -> (TypeId, bool) {
         let (held, may_be_undefined) = self.checked_type_of(file, e);
-        let yielded = self.result_type_of(file, e);
-        (if yielded != self.type_of_expr(file, e) { yielded } else { held }, may_be_undefined)
+        let produced = self.result_type_of(file, e);
+        (if produced != self.type_of_expr(file, e) { produced } else { held }, may_be_undefined)
     }
 
     pub(super) fn is_global_instance(&self, ty: TypeId, names: &[&[u8]]) -> bool {
-        // `Int32Array & { 0: number }`: the other types only say more of its properties.
         if let TypeData::Intersection(parts) = self.data(ty) {
             return parts.iter().any(|&part| self.is_global_instance(part, names));
         }
         let TypeData::Ref { target, .. } = self.data(ty) else { return false };
         let name = self.files().symbol(*target).name;
-        // An anonymous class has none.
         if name.is_none() {
             return false;
         }
@@ -618,28 +508,24 @@ impl<'p, 's> Checker<'p, 's> {
         names.iter().any(|&it| it == text) && self.global_type_symbol(name) == Some(*target)
     }
 
-    /// The most that `length` of a value of the type can be. `None`: it is not only strings and arrays. Of those it is their own property, and
-    /// nothing can be put in its place. Of a typed array it is a getter of the prototype, which an own property shadows.
     fn max_length_of(&mut self, ty: TypeId) -> Option<i64> {
-        let mut most = None;
+        let mut maximum = None;
         for &part in self.parts(ty) {
             if part.is_undefined() || part.is_null() {
                 continue;
             }
             let of_part = if self.is_string_like(part) {
                 MAX_STRING_LENGTH
-            // Also what a class that extends `Array` makes. Not `any`, which is assignable to everything.
             } else if !self.is_uninformative(part) && self.is_array_like(part) {
                 MAX_ARRAY_LENGTH
             } else {
                 return None;
             };
-            most = Some(most.map_or(of_part, |most: i64| most.max(of_part)));
+            maximum = Some(maximum.map_or(of_part, |maximum: i64| maximum.max(of_part)));
         }
-        most
+        maximum
     }
 
-    /// The numbers that `obj[index]` can yield, where `obj` is a typed array of integers and `index` a number.
     fn element_numbers(&mut self, file: FileId, obj: ExprId, index: ExprId) -> Found {
         let key = self.trusted_type_of(file, index).0;
         let ty = self.trusted_type_of(file, obj).0;
@@ -648,8 +534,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let mut all = Numbers::NOTHING;
         for &part in self.parts(ty) {
-            let &(_, least, most) = INTEGER_ARRAYS.iter().find(|it| self.is_global_instance(part, &[it.0]))?;
-            all = all.or(Numbers::integers(least, most));
+            let &(_, minimum, maximum) = INTEGER_ARRAYS.iter().find(|it| self.is_global_instance(part, &[it.0]))?;
+            all = all.or(Numbers::integers(minimum, maximum));
         }
         Some(all)
     }
@@ -788,8 +674,6 @@ impl<'p, 's> Checker<'p, 's> {
         (self.numbers_by_type(ty).is_none() && (index.is_none() || self.element_numbers(file, obj, index).is_none())).then_some(read)
     }
 
-    // ───────────────────────────── expressions ─────────────────────────────
-
     fn numbers_of_expr(&mut self, file: FileId, e: ExprId, view: View, basis: Basis) -> Found {
         if e.is_none() {
             return None;
@@ -822,7 +706,6 @@ impl<'p, 's> Checker<'p, 's> {
             let (ty, may_be_undefined) = self.trusted_type_of(file, e);
             let by_type = self.numbers_by_type(ty);
             if let ExprKind::Index { obj, index, .. } = kind {
-                // Outside the array, or where the object has no such key, it yields `undefined`, whatever the type says.
                 let ignores_nullish = self.is_number_type(ty);
                 found = both(by_type, self.element_numbers(file, obj, index)).map(|it| Numbers { nil: true, ignores_nullish, ..it });
             } else {
@@ -854,18 +737,17 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Unary { op, operand } => match op {
                 UnOp::Void => Some(Numbers::NULLISH),
                 UnOp::Minus => negated(self.numbers_of_expr(file, operand, View::Here, basis)),
-                // What is a number stays what it is.
                 UnOp::Plus | UnOp::PostInc | UnOp::PostDec => {
                     let operand = self.numbers_of_expr(file, operand, View::Here, basis)?;
                     if operand == Numbers::NOTHING {
                         return Some(operand);
                     }
-                    operand.numbers().map(|(least, most)| Numbers::integers(least, most))
+                    operand.numbers().map(|(minimum, maximum)| Numbers::integers(minimum, maximum))
                 }
                 UnOp::BitNot => match self.numbers_truncated(file, operand, basis) {
                     Some(Numbers::NOTHING) => Some(Numbers::NOTHING),
                     Some(operand) => Some(match to_int32(operand) {
-                        Some((least, most)) => Numbers::integers(-most - 1, -least - 1),
+                        Some((minimum, maximum)) => Numbers::integers(-maximum - 1, -minimum - 1),
                         None => Numbers::integers(INT32.0, INT32.1),
                     }),
                     None => self.is_number_by_type(file, e).then(|| Numbers::integers(INT32.0, INT32.1)),
@@ -892,8 +774,6 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Cond { yes, no, .. } => either(self.numbers_of_expr(file, yes, view, basis), self.numbers_of_expr(file, no, view, basis)),
             ExprKind::Satisfies { expr, .. } | ExprKind::AsConst(expr) | ExprKind::Instantiation { expr, .. } => self.numbers_of_expr(file, expr, view, basis),
             ExprKind::As { expr, .. } | ExprKind::NonNull(expr) if self.is_untyped_file(file) => self.numbers_of_expr(file, expr, view, basis),
-            // `as` converts what is of no kind that the type has: `undefined as number` is NaN, `null as number` zero, `5 as boolean` true. A
-            // number stays itself where the type has numbers, and anything does where the type says nothing.
             ExprKind::As { expr, .. } => {
                 let operand = self.numbers_of_expr(file, expr, view, basis)?;
                 let target = self.type_of_expr(file, e);
@@ -907,9 +787,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Whether the checker has the expression, which is an operation, yield numbers and nothing else. What compiles it sees to that.
     fn is_number_by_type(&mut self, file: FileId, e: ExprId) -> bool {
-        // `a & 1`: a number and a bigint do not mix.
         if self.is_untyped_file(file) {
             return self.result_kinds_of(file, e) == kind::NUMBER;
         }
@@ -920,7 +798,6 @@ impl<'p, 's> Checker<'p, 's> {
         self.is_number_type(ty)
     }
 
-    /// `left op right`, for an operator on numbers. `e`: the whole, also where it is `left op= right`.
     fn binary_numbers(&mut self, file: FileId, e: ExprId, op: BinOp, left: ExprId, right: ExprId, basis: Basis) -> Found {
         let is_bitwise = matches!(op, BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr | BinOp::UShr);
         if !is_bitwise {
@@ -932,13 +809,11 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let (a, b) = (self.numbers_truncated(file, left, basis), self.numbers_truncated(file, right, basis));
         match combined(op, a, b) {
-            // Of two numbers it is an int32.
             None => self.is_number_by_type(file, e).then(|| Numbers::integers(INT32.0, INT32.1)),
             found => found,
         }
     }
 
-    /// The expression as an operator on 32 bits takes it, which drops what comes after the point.
     fn numbers_truncated(&mut self, file: FileId, e: ExprId, basis: Basis) -> Found {
         match self.hir(file)[e].kind {
             ExprKind::Binary { op: BinOp::Div, left, right } => self.quotient_numbers(file, left, right, basis),
@@ -946,8 +821,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `left / right` without what comes after the point, where neither is negative. The quotient of two integers that are exact is not
-    /// rounded up to the next integer: the two are too far apart for that.
     fn quotient_numbers(&mut self, file: FileId, left: ExprId, right: ExprId, basis: Basis) -> Found {
         let (a, b) = (self.numbers_of_expr(file, left, View::Here, basis)?, self.numbers_of_expr(file, right, View::Here, basis)?);
         if a == Numbers::NOTHING || b == Numbers::NOTHING {
@@ -957,7 +830,6 @@ impl<'p, 's> Checker<'p, 's> {
         (a.0 >= 0 && b.0 > 0).then(|| Numbers::integers(a.0 / b.1, a.1 / b.0))
     }
 
-    /// What `target op= value`, `target++` or the like stores.
     fn numbers_of_compound_assignment(&mut self, file: FileId, e: ExprId, basis: Basis) -> Found {
         let (op, operand) = match self.hir(file)[e].kind {
             ExprKind::Unary { op: UnOp::PreInc | UnOp::PostInc, operand } => (BinOp::Add, operand),
@@ -968,19 +840,15 @@ impl<'p, 's> Checker<'p, 's> {
         combined(op, self.numbers_of_expr(file, operand, View::Here, basis), Some(Numbers::integers(1, 1)))
     }
 
-    // ───────────────────────────── names, properties, calls ─────────────────────────────
-
     fn identifier_numbers(&mut self, file: FileId, e: ExprId, name: Atom, view: View, basis: Basis) -> Found {
         let bound = self.bound(file);
         let local = bound.expr_symbol[e.idx()];
         if local.is_none() {
-            // Nothing can be stored to the `undefined` of the global object.
             return (name == known::undefined).then_some(Numbers::NULLISH);
         }
         let mut at = Sym { file, id: local };
         if bound.symbols[local.idx()].flags.contains(SymFlags::ALIAS) {
             at = self.files().resolve_alias(self.files().sym(file, local))?;
-            // What is found in JavaScript is a prediction.
             if self.is_untyped_file(at.file) && !self.is_untyped_file(file) {
                 return None;
             }
@@ -993,7 +861,6 @@ impl<'p, 's> Checker<'p, 's> {
         if view == View::Kept || at.file != file {
             return held;
         }
-        // Between a test or a store and the read, code that the control flow does not tell of may store to it.
         let is_read_elsewhere = place.container != Some(self.flow_container(file, bound.expr_parent[e.idx()]));
         let is_constant = !place.is_assigned && !place.starts_undefined;
         let learned_nothing = if is_constant { held.is_none() } else { place.is_stored_elsewhere || is_read_elsewhere };
@@ -1002,8 +869,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let Some(tests) = self.dominating_tests(file, e, at, basis) else { return held };
         if is_constant {
-            // It is what it was when it was tested.
-            return held.map(|held| tests.iter().fold(held, |held, test| held.within(test.least, test.most)));
+            return held.map(|held| tests.iter().fold(held, |held, test| held.within(test.minimum, test.maximum)));
         }
         let flow = bound.expr_flow[e.idx()];
         if flow.is_none() || flow == UNREACHABLE {
@@ -1013,7 +879,6 @@ impl<'p, 's> Checker<'p, 's> {
         self.numbers_at(&mut walk, flow)
     }
 
-    /// The `#private` field that `e`, which is `obj.name`, names. `NONE`: it names none.
     pub(super) fn private_field_for_access(&self, file: FileId, e: ExprId, name: Atom) -> SymbolId {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let Some(&class) = bound.private_class.get(&e) else { return SymbolId::NONE };
@@ -1021,7 +886,6 @@ impl<'p, 's> Checker<'p, 's> {
         member.map_or(SymbolId::NONE, |member| bound.member_symbol[member.idx()])
     }
 
-    /// `e`, which is `obj.name`.
     fn property_numbers(&mut self, file: FileId, e: ExprId, obj: ExprId, name: Atom, basis: Basis) -> Found {
         let field = self.private_field_for_access(file, e, name);
         if field.is_some() {
@@ -1043,11 +907,10 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         let ty = self.trusted_type_of(file, obj).0;
-        let most = self.max_length_of(ty)?;
-        Some(Numbers::integers(0, most))
+        let maximum = self.max_length_of(ty)?;
+        Some(Numbers::integers(0, maximum))
     }
 
-    /// Whether the expression is the name of the global object `name`, which a declaration file declares and nothing in the program does.
     pub(super) fn refers_to_global_object(&mut self, file: FileId, e: ExprId, name: &[u8]) -> bool {
         let ExprKind::Ident(written) = self.hir(file)[e].kind else { return false };
         self.bound(file).expr_symbol[e.idx()].is_none()
@@ -1062,9 +925,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// A call of a built-in function that yields an integer whenever it yields. Nothing can be put in the place of one: a function of `Math`, a
-    /// method of a string, which has no properties of its own. Not a method of an array: an own property shadows it, and may yield
-    /// any number.
     fn call_numbers(&mut self, file: FileId, e: ExprId, call: CallId, basis: Basis) -> Found {
         let hir = self.hir(file);
         let call = &hir[call];
@@ -1091,18 +951,15 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         match name {
-            b"codePointAt" => Some(Numbers { least: 0, most: 0x10FFFF, nil: true, ignores_nullish: false }),
-            // It hands over to `Symbol.search` of what it is given, which yields what it likes. A string is made a RegExp of the engine.
+            b"codePointAt" => Some(Numbers { minimum: 0, maximum: 0x10FFFF, nil: true, ignores_nullish: false }),
             b"search" if !hir.ids(call.args).next().is_some_and(|pattern| is_string(self, pattern)) => None,
             _ => Some(Numbers::integers(-1, MAX_STRING_LENGTH)),
         }
     }
 
-    /// `Math.name(args)`
     fn math_call_numbers(&mut self, file: FileId, name: &[u8], args: IdList<ExprId>, basis: Basis) -> Found {
         let hir = self.hir(file);
         match name {
-            // They make an int32 of whatever they are given, and throw for a bigint.
             b"imul" => return Some(Numbers::integers(INT32.0, INT32.1)),
             b"clz32" => return Some(Numbers::integers(0, 32)),
             b"floor" | b"trunc" => {
@@ -1123,23 +980,18 @@ impl<'p, 's> Checker<'p, 's> {
             }
             given.push(arg.numbers()?);
         }
-        let &(least, most) = given.first()?;
+        let &(minimum, maximum) = given.first()?;
         Some(match name {
-            b"min" => Numbers::integers(given.iter().fold(least, |least, it| least.min(it.0)), given.iter().fold(most, |most, it| most.min(it.1))),
-            b"max" => Numbers::integers(given.iter().fold(least, |least, it| least.max(it.0)), given.iter().fold(most, |most, it| most.max(it.1))),
-            b"abs" if least >= 0 => Numbers::integers(least, most),
-            b"abs" if most <= 0 => Numbers::integers(-most, -least),
-            b"abs" => Numbers::integers(0, most.max(-least)),
-            b"sign" => Numbers::integers(least.signum(), most.signum()),
-            // An integer is left as it is.
-            _ => Numbers::integers(least, most),
+            b"min" => Numbers::integers(given.iter().fold(minimum, |minimum, it| minimum.min(it.0)), given.iter().fold(maximum, |maximum, it| maximum.min(it.1))),
+            b"max" => Numbers::integers(given.iter().fold(minimum, |minimum, it| minimum.max(it.0)), given.iter().fold(maximum, |maximum, it| maximum.max(it.1))),
+            b"abs" if minimum >= 0 => Numbers::integers(minimum, maximum),
+            b"abs" if maximum <= 0 => Numbers::integers(-maximum, -minimum),
+            b"abs" => Numbers::integers(0, maximum.max(-minimum)),
+            b"sign" => Numbers::integers(minimum.signum(), maximum.signum()),
+            _ => Numbers::integers(minimum, maximum),
         })
     }
 
-    // ───────────────────────────── places ─────────────────────────────
-
-    /// The code that a direct child of `parent` is part of, as far as one control flow goes. A function that is called where it is written
-    /// counts as a function: an `async` one goes on after the code around it has.
     pub(super) fn flow_container(&self, file: FileId, mut parent: Parent) -> Container {
         let bound = self.bound(file);
         loop {
@@ -1161,9 +1013,6 @@ impl<'p, 's> Checker<'p, 's> {
         matches!(self.bound(file).stmt_parent[stmt.idx()], Parent::Stmt(label) if label.is_some() && matches!(self.hir(file)[label].kind, StmtKind::Labeled { .. }))
     }
 
-    /// Whether the flow nodes do not tell when the expression is evaluated. As the binder has it, `continue` with the label of a `for` loop
-    /// goes to the head of the loop, past the update; `break` and `continue` leave a `try` statement past its `finally` block; and
-    /// every test of a `switch` is the first.
     pub(super) fn is_in_default_of_assignment_pattern(&self, file: FileId, e: ExprId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut child = e;
@@ -1219,7 +1068,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// The variable or the `#private` field that the expression names, whatever it is asserted to be. `NONE`: it names neither.
     fn slot_for_expr(&self, file: FileId, mut e: ExprId) -> SymbolId {
         let hir = self.hir(file);
         loop {
@@ -1232,18 +1080,15 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// The checker that asks first finds them, from the tree and the symbols of the file alone.
     fn integer_uses_in(&self, file: FileId) -> &'p Uses {
         let program = self.p;
         program.aot.integers.uses.get_or_init(program.files.modules.len(), file, || self.find_integer_uses_in(file))
     }
 
-    /// Whether the variable or the parameter is stored to as `(a as T) = value`, which the binder does not take for a store.
     pub(super) fn is_stored_through_assertions(&self, file: FileId, symbol: SymbolId) -> bool {
         self.integer_uses_in(file).stored_through_assertions.contains(&symbol)
     }
 
-    /// Whether the file has an `eval(..)`, which names what it likes.
     pub(super) fn has_direct_eval(&self, file: FileId) -> bool {
         self.integer_uses_in(file).has_direct_eval
     }
@@ -1308,7 +1153,6 @@ impl<'p, 's> Checker<'p, 's> {
         uses
     }
 
-    /// Whether only the file itself refers to what it declares at its top level by the name. What a script declares there, every file sees.
     fn is_file_private(&mut self, file: FileId, name: Atom) -> bool {
         if self.files().module(file).is_module() {
             return true;
@@ -1342,13 +1186,10 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn declared_int32_range(&mut self, at: Sym) -> Found {
-        let (least, most) = self.annotated_symbol_integer_range(at)?;
-        let ty = self.stored_type(self.files().sym(at.file, at.id));
-        let nil = self.accepts_nullish(ty) || self.some_type(ty, |_, part| part.is_undefined() || part.is_null());
-        Some(Numbers { nil, ignores_nullish: nil, ..Numbers::integers(least, most) })
+        let (minimum, maximum) = self.annotated_symbol_integer_range(at)?;
+        Some(Numbers { nil: true, ignores_nullish: true, ..Numbers::integers(minimum, maximum) })
     }
 
-    /// `None`: not every store to it is seen, or it is no place.
     fn slot_stores(&mut self, at: Sym) -> Option<Place> {
         let file = at.file;
         let bound = self.bound(file);
@@ -1386,8 +1227,6 @@ impl<'p, 's> Checker<'p, 's> {
         Some(place)
     }
 
-    /// What is stored to a variable: the values of its initializer and of `=`, `||=`, `&&=`, `??=`, and the expressions `target op= value`, `target++` that compute what they
-    /// store. `None`: not every store to it is seen.
     pub(super) fn stored_expressions(&mut self, at: Sym) -> Option<(Vec<ExprId>, Vec<ExprId>)> {
         let place = self.integer_slot(at);
         if !place.is_followed {
@@ -1404,13 +1243,11 @@ impl<'p, 's> Checker<'p, 's> {
         Some((values, computed))
     }
 
-    /// How `target`, which something is stored to, gets its value. `None`: in a way that is not followed, as part of a pattern.
     pub(super) fn target_store(&self, file: FileId, target: ExprId) -> Option<Store> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let Parent::Expr(parent) = bound.expr_parent[target.idx()] else { return None };
         match hir[parent.some()?].kind {
             ExprKind::Unary { op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec, .. } => Some(Store::Computed(parent)),
-            // Not what a pattern falls back on: `[target = 1] = list`.
             ExprKind::Assign { op, target: to, value } if to == target && !bound.is_shorthand_property_assignment(hir, parent) && bound.get_assignment_target(hir, parent).is_none() => {
                 Some(match op {
                     None | Some(BinOp::And | BinOp::Or | BinOp::Nullish) => Store::Value(value),
@@ -1421,13 +1258,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `pat` is the name that a `var`, `let`, `const` or `using` declares. Yields the code that declares it.
     fn add_variable_initializer(&mut self, file: FileId, pat: PatId, name: Atom, place: &mut Place) -> Option<Container> {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // What a pattern takes out of an object or an iterator is not followed.
         let PatParent::Var(d) = bound.pat_parent[pat.idx()] else { return None };
         let (declaration, stmt) = (&hir[d], bound.var_stmt[d.idx()].some()?);
-        // Nor is what a `catch` clause is handed.
         if declaration.flags.contains(Flags::AMBIENT) || !matches!(hir[stmt].kind, StmtKind::Var(_)) {
             return None;
         }
@@ -1438,7 +1272,6 @@ impl<'p, 's> Checker<'p, 's> {
         let declared_in = self.flow_container(file, around);
         match declared_in {
             Container::File if (matches!(around, Parent::File) || declaration.kind == VarKind::Var) && !self.is_file_private(file, name) => return None,
-            // `N.name = value`, from anywhere.
             Container::Module(_) if declaration.flags.contains(Flags::EXPORT) => return None,
             Container::Other => return None,
             _ => {}
@@ -1450,7 +1283,6 @@ impl<'p, 's> Checker<'p, 's> {
             }
             None => place.starts_undefined = true,
         }
-        // It is there before its declaration is come by. Whether anything reads it by then is known.
         place.starts_undefined |= self.starts_undefined(self.files().sym(file, bound.pat_symbol[pat.idx()]));
         Some(declared_in)
     }
@@ -1466,11 +1298,9 @@ impl<'p, 's> Checker<'p, 's> {
             Some(init) => place.stores.push(Store::Value(init)),
             None => place.starts_undefined = true,
         }
-        // No control flow tells when a field of which object is stored to.
         Some(Container::Other)
     }
 
-    /// Whether the function, or an arrow function in it, mentions its `arguments` object.
     pub(super) fn mentions_arguments_object(&self, file: FileId, func: FnId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         bound.arguments_objects.iter().any(|&e| {
@@ -1482,7 +1312,6 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// `pat` is the name of a parameter. Every call of the function has to be seen.
     fn add_parameter_arguments(&mut self, file: FileId, pat: PatId, uses: &Uses, place: &mut Place) -> Option<Container> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let PatParent::Param(p) = bound.pat_parent[pat.idx()] else { return None };
@@ -1495,7 +1324,6 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return None;
         }
-        // A function and nothing else, with one body.
         let id = bound.fn_symbol[func.idx()];
         let symbol = bound.symbols.get(id.idx())?;
         let is_more = SymFlags::VALUE.difference(SymFlags::FUNCTION) | SymFlags::MERGED | SymFlags::ASSIGNED | SymFlags::ALIAS;
@@ -1503,7 +1331,6 @@ impl<'p, 's> Checker<'p, 's> {
         if symbol.flags.intersects(is_more) || bodies != 1 || !symbol.decls.iter().all(|decl| matches!(decl, Decl::Fn(_))) {
             return None;
         }
-        // `export { name }`
         if hir.exports.iter().any(|export| export.spec.is_none() && export.items.iter().any(|item| hir[item].local == f.name)) {
             return None;
         }
@@ -1511,15 +1338,12 @@ impl<'p, 's> Checker<'p, 's> {
         if matches!(bound.stmt_parent[stmt.idx()], Parent::File) && !self.is_file_private(file, f.name) {
             return None;
         }
-        // In JavaScript a function in a block is a `var` besides, by which it is called from outside the block.
         if hir.is_js && !matches!(bound.stmt_parent[stmt.idx()], Parent::File | Parent::FnBody(_)) {
             return None;
         }
-        // Through `arguments` a parameter can be stored to, and the function be had as a value.
         if self.mentions_arguments_object(file, func) {
             return None;
         }
-        // A function that the body declares by the name takes the place of what is passed. The binder gives it a symbol of its own.
         let name = bound.symbols.get(bound.pat_symbol[pat.idx()].idx())?.name;
         if matches!(f.body, FnBody::Block(body) if hir.ids(body).any(|stmt| matches!(hir[stmt].kind, StmtKind::Fn(inner) if hir[inner].name == name))) {
             return None;
@@ -1541,8 +1365,6 @@ impl<'p, 's> Checker<'p, 's> {
         Some(Container::Fn(func))
     }
 
-    // ───────────────────────────── what a place holds over its whole life ─────────────────────────────
-
     fn slot_numbers(&mut self, at: Sym, basis: Basis) -> Found {
         match basis {
             Basis::Rough => self.slot_numbers_first_pass(at),
@@ -1557,8 +1379,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// The first step. It starts from no place holding anything, and goes through the stores to all the places it comes by until nothing
-    /// is stored anywhere that is not held there already.
     fn slot_numbers_first_pass(&mut self, at: Sym) -> Found {
         let state = &mut self.aot.integers;
         if let Some(&settled) = state.rough.get(&at) {
@@ -1601,18 +1421,16 @@ impl<'p, 's> Checker<'p, 's> {
         found
     }
 
-    /// All that is stored to the place, given what the first step has places hold.
     fn stored_numbers(&mut self, at: Sym) -> Found {
         let place = self.integer_slot(at);
         if !place.is_followed {
             return None;
         }
-        // A type that says which integers is gone by: that is how the place is described.
         let by_type = place.by_type.filter(|by_type| !by_type.has_no_number());
         let mut all = if place.starts_undefined { Numbers::NULLISH } else { Numbers::NOTHING };
         for (index, &store) in place.stores.iter().enumerate() {
             let stored = match (self.store_numbers(at.file, store, View::Kept, Basis::Rough), by_type, place.declared_range) {
-                (Some(stored), _, Some(declared)) => stored.within(declared.least, declared.most),
+                (Some(stored), _, Some(declared)) => stored.within(declared.minimum, declared.maximum),
                 (None, _, Some(declared)) => declared,
                 (Some(stored), _, None) => stored,
                 (None, Some(_), None) => Numbers { nil: true, ignores_nullish: true, ..Numbers::NOTHING },
@@ -1634,12 +1452,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    // ───────────────────────────── what a variable holds where it is read ─────────────────────────────
-
-    /// What the variable holds when control is at the flow node, on its way to the read.
     fn numbers_at(&mut self, walk: &mut Walk, start: FlowId) -> Found {
         let bound = self.bound(walk.at.file);
-        let (mut least, mut most) = (i64::MIN, i64::MAX);
+        let (mut minimum, mut maximum) = (i64::MIN, i64::MAX);
         let mut flow = start;
         let found = loop {
             walk.steps += 1;
@@ -1647,22 +1462,20 @@ impl<'p, 's> Checker<'p, 's> {
                 break self.slot_numbers(walk.at, walk.basis);
             }
             for test in walk.tests.iter().filter(|test| test.at == flow) {
-                (least, most) = (least.max(test.least), most.min(test.most));
+                (minimum, maximum) = (minimum.max(test.minimum), maximum.min(test.maximum));
             }
             match bound.flow[flow.idx()] {
                 Flow::Unreachable => break Some(Numbers::NOTHING),
-                // A parameter has been handed something. Any other variable holds `undefined`, or cannot be read yet.
                 Flow::Start { .. } | Flow::StartInvoked { .. } => {
                     break if walk.is_parameter { self.slot_numbers(walk.at, walk.basis) } else { Some(Numbers::NULLISH) };
                 }
                 Flow::Assign { before, target } => match (self.numbers_at_assignment(walk, target), walk.declared_range) {
                     (Some(None), Some(declared)) => break Some(declared),
-                    (Some(Some(stored)), Some(declared)) => break Some(stored.within(declared.least, declared.most)),
+                    (Some(Some(stored)), Some(declared)) => break Some(stored.within(declared.minimum, declared.maximum)),
                     (Some(None), None) if walk.by_type.is_some() => break walk.by_type.map(|by_type| Numbers { nil: true, ignores_nullish: true, ..by_type }),
                     (Some(stored), None) => break both(stored, walk.by_type),
                     (None, _) => flow = before,
                 },
-                // After a `finally` block only some of the paths into the block count. All of them are taken.
                 Flow::Cond { before, .. } | Flow::Switch { before, .. } | Flow::Call { before, .. } | Flow::Reduce { before, .. } | Flow::ArrayMutation { before, .. } => {
                     flow = before;
                 }
@@ -1680,7 +1493,6 @@ impl<'p, 's> Checker<'p, 's> {
                     walk.joins.insert(flow, all);
                     break all;
                 }
-                // The first edge is the way in.
                 Flow::Loop { start, len } => match *bound.edges(start, len) {
                     [] => break Some(Numbers::NOTHING),
                     [entry] => flow = entry,
@@ -1693,7 +1505,7 @@ impl<'p, 's> Checker<'p, 's> {
                 },
             }
         };
-        found.map(|found| found.within(least, most))
+        found.map(|found| found.within(minimum, maximum))
     }
 
     pub(super) fn is_store_to_slot(&self, at: Sym, target: FlowTarget) -> bool {
@@ -1705,7 +1517,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// What is stored at an assignment node. `None`: it stores to something else.
     fn numbers_at_assignment(&mut self, walk: &Walk, target: FlowTarget) -> Option<Found> {
         if !self.is_store_to_slot(walk.at, target) {
             return None;
@@ -1721,7 +1532,6 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// Whether an assignment node for the place can be come by between one time control is at the head of the loop and the next.
     pub(super) fn is_assigned_in_loop(&mut self, at: Sym, head: FlowId) -> bool {
         if let Some(&known) = self.aot.integers.loops.get(&(at, head)) {
             return known;
@@ -1761,10 +1571,6 @@ impl<'p, 's> Checker<'p, 's> {
         is_stored_to
     }
 
-    // ───────────────────────────── tests ─────────────────────────────
-
-    /// The tests of the variable `at` that have turned out one way whenever control gets to the expression `e`: it is in the branch they
-    /// lead to, or comes after a statement that leaves if they turn out the other way. `None`: the flow nodes do not tell how control gets there.
     fn dominating_tests(&mut self, file: FileId, e: ExprId, at: Sym, basis: Basis) -> Option<Tests> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut passed: SmallVec<[(ExprId, bool); 8]> = SmallVec::new();
@@ -1786,7 +1592,6 @@ impl<'p, 's> Checker<'p, 's> {
                     StmtKind::If { test, no, .. } if child == Child::Stmt(no) => passed.push((test, false)),
                     StmtKind::While { test, body } if child == Child::Stmt(body) => passed.push((test, true)),
                     StmtKind::For { test, update, body, .. } if child == Child::Stmt(body) || child == Child::Expr(update) => {
-                        // See `is_outside_flow_graph`.
                         if child == Child::Expr(update) && self.is_labeled_statement(file, outer) {
                             return None;
                         }
@@ -1795,7 +1600,6 @@ impl<'p, 's> Checker<'p, 's> {
                         }
                     }
                     StmtKind::Block(list) => siblings = list,
-                    // Control gets into the statements of a clause at the first of them.
                     StmtKind::Switch { cases, .. } => {
                         let bodies = cases.iter().map(|case| hir[case].body);
                         siblings = bodies.into_iter().find(|&body| hir.ids(body).any(|it| child == Child::Stmt(it))).unwrap_or(IdList::EMPTY);
@@ -1858,7 +1662,6 @@ impl<'p, 's> Checker<'p, 's> {
         Some(tests)
     }
 
-    /// What follows for the variable from `test` having turned out truthy, if `holds`, or falsy.
     fn add_variable_tests(&mut self, file: FileId, test: ExprId, holds: bool, at: Sym, basis: Basis, tests: &mut Tests) {
         if self.is_half_of_stack_in_use() {
             return;
@@ -1866,7 +1669,6 @@ impl<'p, 's> Checker<'p, 's> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let (op, left, right) = match hir[test].kind {
             ExprKind::Unary { op: UnOp::Not, operand } => return self.add_variable_tests(file, operand, !holds, at, basis, tests),
-            // Both have turned out that way.
             ExprKind::Binary { op: BinOp::And | BinOp::Or, left, right } => {
                 if matches!(hir[test].kind, ExprKind::Binary { op: BinOp::And, .. }) == holds {
                     self.add_variable_tests(file, left, holds, at, basis, tests);
@@ -1883,7 +1685,6 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Binary { op: BinOp::Add, left, right } if references_it(right) && !references_it(left) => Some((right, left)),
             _ => None,
         };
-        // `other < name` is `name > other`.
         let mirrored = match op {
             BinOp::Lt => BinOp::Gt,
             BinOp::Le => BinOp::Ge,
@@ -1910,21 +1711,19 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let Some(other) = self.numbers_of_expr(file, other, View::Here, basis) else { return };
         let flow = bound.expr_flow[name.idx()];
-        // Nothing has been compared with yet, so nothing has passed.
         if other == Numbers::NOTHING {
-            return tests.push(Test { at: flow, least: 1, most: 0 });
+            return tests.push(Test { at: flow, minimum: 1, maximum: 0 });
         }
-        // With what is no number, `<` and the like are false either way.
         let Some((low, mut high)) = other.numbers() else { return };
         if let Some(addend) = addend {
             let Some(addend) = self.numbers_of_expr(file, addend, View::Here, basis) else { return };
             if addend == Numbers::NOTHING {
-                return tests.push(Test { at: flow, least: 1, most: 0 });
+                return tests.push(Test { at: flow, minimum: 1, maximum: 0 });
             }
             let Some((least_added, _)) = addend.numbers() else { return };
             high = high.saturating_sub(least_added);
         }
-        let (least, most) = match (op, holds) {
+        let (minimum, maximum) = match (op, holds) {
             (BinOp::Lt, true) | (BinOp::Ge, false) => (i64::MIN, high - 1),
             (BinOp::Le, true) | (BinOp::Gt, false) => (i64::MIN, high),
             (BinOp::Gt, true) | (BinOp::Le, false) => (low + 1, i64::MAX),
@@ -1932,6 +1731,6 @@ impl<'p, 's> Checker<'p, 's> {
             (BinOp::EqEqEq | BinOp::EqEq, true) | (BinOp::NotEqEq | BinOp::NotEq, false) => (low, high),
             _ => return,
         };
-        tests.push(Test { at: flow, least, most });
+        tests.push(Test { at: flow, minimum, maximum });
     }
 }

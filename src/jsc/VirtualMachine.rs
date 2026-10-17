@@ -4212,6 +4212,21 @@ pub fn collect_macro_vm_garbage() {
     vm_ref.jsc_vm().run_gc(true);
 }
 
+fn path_from_build_folder(frame_url: &bun_core::String) -> Option<bun_core::String> {
+    let url = frame_url.to_utf8();
+    let mut rest = url.slice().strip_prefix(b"/$bunfs/root/")?;
+    if standalone_module_graph().is_some_and(|graph| graph.find_assume_standalone_path(url.slice()).is_some()) {
+        return None;
+    }
+    let mut path = Vec::new();
+    while let Some(inner) = rest.strip_prefix(b"_.._/") {
+        path.extend_from_slice(b"../");
+        rest = inner;
+    }
+    path.extend_from_slice(rest);
+    Some(bun_core::String::clone_utf8(&path))
+}
+
 fn normalize_source(source: &[u8]) -> &[u8] {
     if let Some(rest) = source.strip_prefix(b"file://") {
         return rest;
@@ -6810,10 +6825,11 @@ impl VirtualMachine {
                     break 'code bun_core::Utf8Bytes::EMPTY;
                 }
                 let mut log = bun_ast::Log::default();
+                let on_disk = path_from_build_folder(&frames[top].source_url);
                 let Ok(original_source) = Self::fetch_without_on_load_plugins(
                     self,
                     global,
-                    &frames[top].source_url,
+                    on_disk.as_ref().unwrap_or(&frames[top].source_url),
                     &bun_core::String::EMPTY,
                     &mut log,
                     FetchFlags::PrintSource,

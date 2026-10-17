@@ -13,12 +13,10 @@ pub enum Constant {
     Bool(bool),
     Number(f64),
     String(Vec<u8>),
-    /// A literal: each place it is put in makes an object of its own.
     Object(Vec<(Vec<u8>, Constant)>),
     Array(Vec<Constant>),
 }
 
-/// Reads the text of a define: JSON, and what else a primitive may be written as.
 struct Reader<'a>(&'a [u8]);
 
 impl Reader<'_> {
@@ -139,7 +137,6 @@ impl Reader<'_> {
 }
 
 impl Constant {
-    /// The JavaScript text of the value of a define. `None`: it is neither a primitive nor a literal made of such.
     pub fn parse(text: &[u8]) -> Option<Constant> {
         let mut reader = Reader(text);
         let value = reader.value()?;
@@ -161,7 +158,6 @@ impl Constant {
         !matches!(self, Constant::Object(_) | Constant::Array(_))
     }
 
-    /// Two such are strictly equal where they are equal here.
     pub fn is_non_nan_primitive(&self) -> bool {
         self.is_primitive() && !matches!(self, Constant::Number(value) if value.is_nan())
     }
@@ -1038,8 +1034,8 @@ impl<'s> Files<'s> {
         (decisions, entered_cases, decides_statements)
     }
 
-    pub fn fold_constants(&mut self, session: &'s crate::session::Session, in_parallel: InParallel<'_>) {
-        let Some(constants) = self.options.build_constants.clone() else { return };
+    pub fn fold_constants(&mut self, session: &'s crate::session::Session, constants: Option<std::sync::Arc<BuildConstants>>, in_parallel: InParallel<'_>) {
+        let Some(constants) = constants else { return };
         let is_folded = |module: &crate::program::Module<'s>| !matches!(module.hir.kind, FileKind::Declaration | FileKind::Json) && module.builtin.is_none() && !module.bound.ran_out_of_stack;
         let mut folded: Vec<FoldedFile> = (0..self.modules.len())
             .filter(|&at| is_folded(&self.modules[at]))

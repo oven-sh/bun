@@ -1641,7 +1641,7 @@ impl<'p, 's> Checker<'p, 's> {
         // FOR SPEED: every element of an array literal with a contextual type asks for the name of
         // its index.
         let index = n as usize;
-        if index as f64 != n || index >= 256 {
+        if index as f64 != n || index >= 1 << 16 {
             return intern();
         }
         let mut names = self.names_of_small_numbers.borrow_mut();
@@ -5354,7 +5354,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `reportImplicitAny` for a property whose type resolves to `ty`.
     fn report_implicit_any(&mut self, file: FileId, declaration: UntypedProperty, ty: TypeId) {
-        let no_implicit_any = self.p.files.options.no_implicit_any;
+        let no_implicit_any = self.check_options(file).no_implicit_any;
         if self.hir(file).is_js && !self.is_check_js(file)
             || !no_implicit_any && !self.captures_suggestions()
         {
@@ -6103,14 +6103,14 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     let widened = self.get_widened_type(ty);
                     // `widenTypeForVariableLikeDeclaration`
-                    if reports_errors && self.report_errors_from_widening(ty) {
+                    if reports_errors && self.report_errors_from_widening(file, ty) {
                         self.report_implicit_any(file, UntypedProperty::Member(first), widened);
                     }
                     return widened;
                 }
                 // `getTypeForVariableLikeDeclaration`: where an implicit `any` is an error, the
                 // assignments to it are inspected first.
-                if self.p.files.options.no_implicit_any
+                if self.check_options(file).no_implicit_any
                     && let crate::bind::MemberOwner::Class(c) =
                         self.bound(file).member_owner[first.idx()]
                     // `declaration.Symbol()` is the symbol of the binder, and no reference and no
@@ -6357,7 +6357,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let PatKind::Ident(name) = hir[decl.pat].kind else {
                     return TypeId::SYMBOL;
                 };
-                if decl.kind != VarKind::Const
+                if !bound.is_const(hir, d)
                     || stmt.is_none()
                     || !matches!(hir[stmt].kind, StmtKind::Var(_))
                     || matches!(bound.stmt_parent[stmt.idx()], Parent::Stmt(parent) if parent.is_some() && matches!(hir[parent].kind, StmtKind::For { init, .. } if init == stmt))

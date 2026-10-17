@@ -776,6 +776,15 @@ impl AlreadyBundled {
 // lifetime-free — `runtime_transpiler_cache` is a raw pointer
 // so `AsyncModule.parse_result` / `JSTranspiler`
 // can store this by value without threading a borrow lifetime.
+fn with_javascript_extension(specifier: &[u8]) -> Option<Vec<u8>> {
+    const EXTENSIONS: [(&[u8], &[u8], &[u8]); 4] = [(b".ts", b".d.ts", b".js"), (b".tsx", b".d.tsx", b".js"), (b".mts", b".d.mts", b".mjs"), (b".cts", b".d.cts", b".cjs")];
+    if !specifier.starts_with(b"./") && !specifier.starts_with(b"../") {
+        return None;
+    }
+    let (typescript, _, javascript) = EXTENSIONS.iter().find(|(typescript, declarations, _)| specifier.ends_with(typescript) && !specifier.ends_with(declarations))?;
+    Some([&specifier[..specifier.len() - typescript.len()], *javascript].concat())
+}
+
 pub struct ParseResult<'a> {
     pub source: bun_ast::Source,
     pub loader: options::Loader,
@@ -2915,6 +2924,14 @@ impl<'a> Transpiler<'a> {
                 let Some(mut result) = self.parse(parse_opts, client_entry_point_) else {
                     return Ok(None);
                 };
+
+                if self.options.transform_only && resolve_result.flags.rewrite_relative_import_extensions() {
+                    for record in result.ast.import_records.as_mut_slice() {
+                        if let Some(rewritten) = with_javascript_extension(record.path.text) {
+                            record.path.text = crate::linker::dupe(&rewritten);
+                        }
+                    }
+                }
 
                 if !self.options.transform_only {
                     let origin = self.options.origin.url();

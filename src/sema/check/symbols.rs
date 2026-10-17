@@ -275,6 +275,13 @@ impl<'p, 's> Checker<'p, 's> {
             }
             return ty;
         }
+        if let Some((file, Decl::Var(_))) = value_declaration
+            && self.files().module(file).builtin.is_some()
+            && let Some(symbol) = self.constant_symbol(sym)
+            && symbol.declaration != sym
+        {
+            return self.type_of_symbol(symbol.declaration);
+        }
         // Before the query is entered: `lateBindMember` resolves the names of the other members,
         // which may re-enter this query.
         let mut flags = self.files().flags(sym);
@@ -435,7 +442,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) {
         let code = if ty == TypeId::ERROR {
             2502
-        } else if self.p.files.options.no_implicit_any && !is_bare_parameter {
+        } else if self.check_options(at.0).no_implicit_any && !is_bare_parameter {
             7022
         } else {
             return;
@@ -1778,7 +1785,7 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some((file, pat)) = name
             && self.contains_widening_type(ty)
             && self.value_declaration_of_variable_name(file, pat) == (file, pat)
-            && self.report_errors_from_widening(ty)
+            && self.report_errors_from_widening(file, ty)
         {
             self.report_implicit_any_of_name(file, pat, widened);
         }
@@ -1793,8 +1800,8 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `reportErrorsFromWidening`. Returns whether `reportImplicitAny` remains to be called, which
     /// is left to the caller that knows the declaration.
-    pub(super) fn report_errors_from_widening(&mut self, ty: TypeId) -> bool {
-        self.p.files.options.no_implicit_any
+    pub(super) fn report_errors_from_widening(&mut self, file: FileId, ty: TypeId) -> bool {
+        self.check_options(file).no_implicit_any
             && self.contains_widening_type(ty)
             && !self.report_widening_errors_in_type(ty)
     }
@@ -1874,7 +1881,7 @@ impl<'p, 's> Checker<'p, 's> {
         ty: TypeId,
         kind: WideningKind,
     ) {
-        if !self.p.files.options.no_implicit_any || !self.contains_widening_type(ty) {
+        if !self.check_options(file).no_implicit_any || !self.contains_widening_type(ty) {
             return;
         }
         let f = &self.hir(file)[func];
@@ -1903,7 +1910,7 @@ impl<'p, 's> Checker<'p, 's> {
                 return;
             }
         }
-        if !self.report_errors_from_widening(ty) || self.hir(file).is_js && !self.is_check_js(file)
+        if !self.report_errors_from_widening(file, ty) || self.hir(file).is_js && !self.is_check_js(file)
         {
             return;
         }
@@ -1941,7 +1948,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `pat` and whose type resolves to `ty`: 7005, 7006 7019 7051, 7031.
     pub(super) fn report_implicit_any_of_name(&mut self, file: FileId, pat: PatId, ty: TypeId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        if !self.p.files.options.no_implicit_any || hir.is_js && !self.is_check_js(file) {
+        if !self.check_options(file).no_implicit_any || hir.is_js && !self.is_check_js(file) {
             return;
         }
         let start = hir[pat].pos;
@@ -3555,10 +3562,7 @@ impl<'p, 's> Checker<'p, 's> {
         let hir = self.hir(file);
         let decl = &hir[d];
         let is_name = matches!(hir[decl.pat].kind, PatKind::Ident(_));
-        let is_constant = matches!(
-            decl.kind,
-            VarKind::Const | VarKind::Using | VarKind::AwaitUsing
-        );
+        let is_constant = self.bound(file).is_constant(hir, d);
         // The statement is the `try` for a catch variable, and the head of the loop for a loop variable.
         let stmt = self.bound(file).var_stmt[d.idx()];
         let around = if stmt.is_some() {
@@ -3608,7 +3612,7 @@ impl<'p, 's> Checker<'p, 's> {
         // A catch variable can only be annotated `any` or `unknown`.
         if stmt.is_some() && matches!(hir[stmt].kind, StmtKind::Try { .. }) {
             if decl.ty.is_none() {
-                return if self.p.files.options.use_unknown_in_catch_variables {
+                return if self.check_options(file).use_unknown_in_catch_variables {
                     TypeId::UNKNOWN
                 } else {
                     TypeId::ANY
@@ -3625,7 +3629,7 @@ impl<'p, 's> Checker<'p, 's> {
         // anything else a `unique symbol` is a `symbol`.
         let unique_symbol_name = match hir[decl.pat].kind {
             PatKind::Ident(name)
-                if decl.kind == VarKind::Const
+                if self.bound(file).is_const(hir, d)
                     && stmt.is_some()
                     && matches!(hir[stmt].kind, StmtKind::Var(_))
                     && !matches!(around, Parent::Stmt(parent) if matches!(hir[parent].kind, StmtKind::For { init, .. } if init == stmt)) =>
@@ -3645,7 +3649,7 @@ impl<'p, 's> Checker<'p, 's> {
         // Where an implicit `any` is an error, control flow analysis determines the type of the
         // variable at each position. This depends on the syntax of the initializer, not on its
         // type.
-        if self.p.files.options.no_implicit_any
+        if self.check_options(file).no_implicit_any
             && is_name
             && !decl.flags.intersects(Flags::EXPORT | Flags::AMBIENT)
             && hir.kind != FileKind::Declaration
@@ -3770,7 +3774,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // `reportErrorsFromWidening`. Under strictNullChecks there is no widening type.
         let options = &self.p.files.options;
-        let reports = options.no_implicit_any && !options.strict_null_checks;
+        let reports = self.check_options(file).no_implicit_any && !options.strict_null_checks;
         // One checker has collected the diagnostics of `file` by now, and has resolved the names
         // in the pattern.
         if reports && self.task.checker_count == 0 && !self.is_reported_in_time(None, file) {
@@ -4127,10 +4131,7 @@ impl<'p, 's> Checker<'p, 's> {
         let hir = self.hir(file);
         let is_constant_or_readonly = match root_declaration(self.bound(file), pat) {
             // `NodeFlagsConstant`
-            PatParent::Var(d) => matches!(
-                hir[d].kind,
-                VarKind::Const | VarKind::Using | VarKind::AwaitUsing
-            ),
+            PatParent::Var(d) => self.bound(file).is_constant(hir, d),
             // `isDeclarationReadonly`: a binding element is no parameter property.
             PatParent::Param(p) => {
                 hir[p].flags.contains(Flags::READONLY)
@@ -5285,8 +5286,17 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     pub fn declares_method(&mut self, ty: TypeId, name: Atom) -> bool {
-        let Some((method, false)) = self.declared_property(ty, name) else { return false };
-        self.function_for_type(method).is_some_and(|(file, func)| self.hir(file)[func].kind == FnKind::Method)
+        self.declared_method(ty, name).is_some()
+    }
+
+    pub fn declared_method(&mut self, ty: TypeId, name: Atom) -> Option<(FileId, FnId)> {
+        let Some((method, false)) = self.declared_property(ty, name) else { return None };
+        self.function_for_type(method).filter(|&(file, func)| self.hir(file)[func].kind == FnKind::Method)
+    }
+
+    pub fn declared_iterator_method(&mut self, ty: TypeId) -> Option<(FileId, FnId)> {
+        self.resolve_known_symbol(b"iterator");
+        self.declared_method(ty, known::sym_iterator)
     }
 
     pub fn iterated_type(&mut self, ty: TypeId, is_async: bool) -> TypeId {

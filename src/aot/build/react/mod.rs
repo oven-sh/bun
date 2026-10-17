@@ -1,10 +1,3 @@
-//! The React Compiler on the checker's HIR. The bundler runs it on its own parse of a file, which the code that is compiled ahead of time
-//! is not made from. Here the same compiler runs on the tree that is: `adapter` converts a candidate function, `host` stands in for the
-//! parser, and the lowering and the passes are the bundler's, unchanged.
-//!
-//! The output mode is always the client's: an executable renders, whatever `--target` the bundler was given. The files are the ones the
-//! bundler takes: `.jsx` and `.tsx`, outside of `node_modules`.
-
 mod adapter;
 mod host;
 
@@ -22,10 +15,8 @@ use bun_sema::util::InParallel;
 use std::collections::BTreeMap;
 use bun_threading::{Guarded, RwLock};
 
-/// A function in one of the places where the visit pass hands a function to the compiler.
 struct Candidate {
     func: FnId,
-    /// What the compiler takes for its name.
     name: Option<Vec<u8>>,
     in_react_hoc: bool,
 }
@@ -38,7 +29,6 @@ struct Discovery<'p, 's> {
 }
 
 impl Discovery<'_, '_> {
-    /// `is_react_hoc_callee` of the parser: by name.
     fn is_react_hoc_callee(&self, callee: ExprId) -> bool {
         let hir = self.hir;
         let name = match hir[skip_casts(hir, callee)].kind {
@@ -49,7 +39,6 @@ impl Discovery<'_, '_> {
         matches!(self.atoms.bytes(name), b"forwardRef" | b"memo")
     }
 
-    /// `react_compiler_candidate_expr` of the parser.
     fn expr(&mut self, e: ExprId, binding: Option<Atom>) {
         let hir = self.hir;
         match hir[skip_casts(hir, e)].kind {
@@ -70,7 +59,6 @@ impl Discovery<'_, '_> {
         let own = (declared.kind != FnKind::Arrow && declared.name.is_some()).then_some(declared.name);
         let name = match own.or(binding) {
             Some(name) => Some(self.atoms.bytes(name).to_vec()),
-            // `create_default_name` of the parser.
             None if declared.kind == FnKind::Decl => Some(format!("{}_default", bun_paths::fs::PathName::init(self.path).fmt_identifier()).into_bytes()),
             None => None,
         };
@@ -101,15 +89,12 @@ impl Discovery<'_, '_> {
 
 struct Bailout {
     diagnostic: CompileDiagnostic,
-    /// Where it points to in the source. Only with `Numbering::Dense`.
     pos: Option<u32>,
 }
 
 enum Outcome {
-    /// Its name is not that of a component or a hook, and nothing asks for it.
     Other,
     OptedOut(&'static str),
-    /// It has the name, and does not look like one.
     NotReact,
     BailedOut(Vec<Bailout>),
     Compiled(MemoStats),
@@ -129,7 +114,6 @@ impl Outcome {
     }
 }
 
-/// The compiler on one file, under one numbering.
 struct Run<'a, 'c, 'p, 's> {
     adapter: Adapter<'a, 'c, 'p, 's>,
     state: ReactCompilerState,
@@ -151,7 +135,6 @@ fn run<R>(build: &mut FileBuild<'_, '_, '_>, file: FileId, numbering: Numbering,
 }
 
 impl Run<'_, '_, '_, '_> {
-    /// `Err`: the visit pass does not hand it over.
     fn convert(&mut self, candidate: &Candidate) -> Result<(PendingCompile, Vec<Stmt>), Outcome> {
         let declared = &self.hir[candidate.func];
         let is_suppressed = self.adapter.is_function_suppressed(candidate.func);
@@ -203,7 +186,6 @@ impl Run<'_, '_, '_, '_> {
         }
     }
 
-    /// The reactive function and what it refers to, as text. `None`: there is none.
     fn dump(&mut self, candidate: &Candidate) -> Option<String> {
         let (pending, mut body) = self.convert(candidate).ok()?;
         let analysis = analyze_pending(&mut self.state, &self.adapter.host, &pending, &mut body, candidate.name.as_deref());
@@ -214,7 +196,6 @@ impl Run<'_, '_, '_, '_> {
     }
 }
 
-/// A dump made with `Numbering::Sparse`, as `Numbering::Dense` would have it.
 fn with_dense_locations(dump: &str) -> String {
     const INDEX: &str = "index: Some(";
     let mut dense = String::with_capacity(dump.len());
@@ -233,7 +214,6 @@ fn with_dense_locations(dump: &str) -> String {
     dense
 }
 
-/// Where two dumps part.
 fn first_difference(a: &str, b: &str) -> String {
     let same = a.bytes().zip(b.bytes()).take_while(|(a, b)| a == b).count();
     let excerpt = |text: &str| bstr::BStr::new(&text.as_bytes()[same.saturating_sub(40)..text.len().min(same + 40)]).to_string();
@@ -294,33 +274,26 @@ struct FileReport {
     path: String,
     lines: Vec<String>,
     totals: Totals,
-    /// Category and reason of each bail-out.
     reasons: Vec<String>,
 }
 
-/// `--aot-explain=react` of the standalone checker: what the compiler makes of each file. Each call is for the hook of the driver's
-/// `Request` that its description names.
 pub struct Report<'a> {
     constants: &'a crate::Constants,
     checks_locations: bool,
-    /// `None`: `begin` has not been called.
     shared: RwLock<Option<Shared<'a>>>,
     files: Guarded<Vec<FileReport>>,
 }
 
 impl<'a> Report<'a> {
-    /// `checks_locations`: each function is also compiled with its locations renumbered, which is to make no difference.
     pub fn new(constants: &'a crate::Constants, checks_locations: bool) -> Report<'a> {
         Report { constants, checks_locations, shared: RwLock::new(None), files: Guarded::new(Vec::new()) }
     }
 
-    /// `Request::loaded`
     pub fn begin(&self, program: &Checked<'_>, roots: &[FileId], in_parallel: InParallel<'_>) {
         *self.shared.write() = Some(Shared::new(program, &[roots.to_vec()], self.constants, in_parallel));
         self.files.lock().clear();
     }
 
-    /// `Request::after_file`
     pub fn explain_file(&self, c: &mut Checker<'_, '_>, file: FileId) {
         let path = c.p.files.module(file).file_name();
         if !bun_sema::resolve::is_jsx_file_name(path) || bun_core::strings::contains(path, b"/node_modules/") {
@@ -415,7 +388,6 @@ impl<'a> Report<'a> {
         self.files.lock().push(report);
     }
 
-    /// The lines to print, once all files are checked.
     pub fn finish(&self) -> Vec<String> {
         let mut files = std::mem::take(&mut *self.files.lock());
         files.sort_by(|a, b| a.path.cmp(&b.path));

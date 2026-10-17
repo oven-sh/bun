@@ -6,7 +6,6 @@ use bun_lint::types::utils::{get_type_flags, is_symbol_from_default_library};
 use bun_lint::types::{Type, TypeFlags};
 use bun_lint_oxlint::ast_util::is_global_reference;
 
-/// Disallow `x!` on a value that can be missing, where `--aot` throws and plain JavaScript goes on with `undefined`.
 pub struct AotNonNullEscapes;
 
 const ESCAPES: Message = Message::new(
@@ -14,7 +13,6 @@ const ESCAPES: Message = Message::new(
     "`{{operand}}` can be {{missing}}. Under `--aot` this `!` then throws a `TypeError`, where plain JavaScript goes on with {{missing}}. Use `??` with a fallback, or test the value first.",
 );
 
-/// When the value of an operand of `&&`, `||` and `?:` is the value of all of them.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Kept {
     Always,
@@ -22,13 +20,9 @@ enum Kept {
     IfFalsy,
 }
 
-/// What `--aot` does with the `!`, by where it is written.
 enum Place<'a> {
-    /// It asserts nothing there, or JavaScript throws there too.
     JavaScriptSemantics,
     Asserted,
-    /// These assert nothing if the operand is `a[i]`: an operand of a comparison or of arithmetic, which is the
-    /// expression. The left side of `||`. What a `switch` is about. What a variable starts with.
     Operand(Expr<'a>),
     Fallback,
     Switch,
@@ -53,7 +47,6 @@ fn is_arithmetic(op: BinOp) -> bool {
     )
 }
 
-/// `undefined`, `null` or a literal: what the other operand of `==` is asked about.
 fn is_literal(e: Expr) -> bool {
     let e = e.skip_type_wrappers();
     match e.kind() {
@@ -73,7 +66,6 @@ fn is_literal(e: Expr) -> bool {
     }
 }
 
-/// `Boolean(x)`, which is a test like `!!x`.
 fn is_boolean_of(call: Call) -> bool {
     call.callee().is_ident("Boolean")
         && call.args().len() == 1
@@ -82,7 +74,6 @@ fn is_boolean_of(call: Call) -> bool {
         && is_global_reference(call.callee())
 }
 
-/// `null!`, `undefined!`, `void 0!`: a place that is set later. Nothing is asserted.
 fn is_missing_as_written(operand: Expr) -> bool {
     let operand = operand.skip_type_wrappers();
     matches!(operand.tag(), ExprTag::Null)
@@ -91,7 +82,6 @@ fn is_missing_as_written(operand: Expr) -> bool {
 }
 
 fn destination_in_expression<'a>(top: Expr<'a>, parent: Expr<'a>, is_operand_itself: bool) -> Place<'a> {
-    // These only look at their operands. What `&&`, `||` or `?:` yields for one is a value like any other.
     let looked_at = match is_operand_itself {
         true => Place::JavaScriptSemantics,
         false => Place::Asserted,
@@ -136,12 +126,9 @@ fn destination_in_expression<'a>(top: Expr<'a>, parent: Expr<'a>, is_operand_its
     }
 }
 
-/// Where the value of `e`, which is `x!`, goes.
 fn place(e: Expr) -> Place {
-    let (mut top, mut kept) = (e, Kept::Always);
-    // Nothing but `satisfies` is around it. `x! as T` is not `x!` to what looks for `a[i]!`.
+    let (mut top, mut retained) = (e, Kept::Always);
     let mut is_bare = true;
-    // Only syntax of types is around it.
     let mut is_operand_itself = true;
     let parent = loop {
         let parent = top.parent();
@@ -162,7 +149,6 @@ fn place(e: Expr) -> Place {
             } if right == top => {
                 is_operand_itself = false;
             }
-            // Where the left side decides, it is what the whole yields. Where it does not, it has only been tested.
             ExprKind::Binary {
                 op: op @ (BinOp::And | BinOp::Or),
                 ..
@@ -172,10 +158,10 @@ fn place(e: Expr) -> Place {
                 } else {
                     Kept::IfTruthy
                 };
-                if kept != Kept::Always && kept != decides {
+                if retained != Kept::Always && retained != decides {
                     return Place::JavaScriptSemantics;
                 }
-                (kept, is_operand_itself) = (decides, false);
+                (retained, is_operand_itself) = (decides, false);
             }
             _ => break parent,
         }
@@ -193,7 +179,7 @@ fn place(e: Expr) -> Place {
             return Place::JavaScriptSemantics;
         }
     }
-    match kept {
+    match retained {
         Kept::IfTruthy if is_bare => return Place::Fallback,
         Kept::IfTruthy | Kept::IfFalsy => return Place::Asserted,
         Kept::Always => {}
@@ -206,13 +192,11 @@ fn place(e: Expr) -> Place {
         },
         Node::Stmt(statement) => match statement.kind() {
             StmtKind::Switch { .. } if top == e => Place::Switch,
-            // These throw in JavaScript too.
             StmtKind::Throw(_) | StmtKind::ForOf { .. } | StmtKind::With { .. } => {
                 Place::JavaScriptSemantics
             }
             _ => Place::Asserted,
         },
-        // JavaScript throws for `const { a } = undefined`.
         Node::VarDecl(declaration) if destructures(declaration.pat()) => Place::JavaScriptSemantics,
         Node::Param(param) if destructures(param.pat()) => Place::JavaScriptSemantics,
         Node::VarDecl(_) if top == e => Place::Variable,
@@ -241,8 +225,6 @@ fn is_array_of_integers(ty: Type) -> bool {
     })
 }
 
-/// Whether the compiler keeps the elements as integers: those of an `Int32Array` and the like, and the members of a numeric
-/// enum. There `undefined` has no room, and the `!` stays.
 fn has_known_integer_range(read: Expr, obj: Expr, index: Expr) -> bool {
     let object = obj.ty().get_non_nullable_type();
     if is_number_type(index.ty()) && every_part(object, is_array_of_integers) {
@@ -253,14 +235,13 @@ fn has_known_integer_range(read: Expr, obj: Expr, index: Expr) -> bool {
     };
     let element = read.ty();
     let is_next_to_enum = union_constituents(element).iter().any(is_enum_member);
-    // Nothing holds what is stored in a `(1 | 2)[]` to the numbers.
     let widens_literals = every_part(object, |part| {
         part.symbol().is_some_and(|it| it.name() == b"Array")
     });
     every_part(element, |part| {
-        let is_integer = |least: f64, most: f64| {
+        let is_integer = |minimum: f64, maximum: f64| {
             part.number_value()
-                .is_some_and(|it| it.fract() == 0.0 && it >= least && it <= most)
+                .is_some_and(|it| it.fract() == 0.0 && it >= minimum && it <= maximum)
         };
         if part.has_flags(TypeFlags::NULLABLE) {
             true
@@ -275,7 +256,6 @@ fn has_known_integer_range(read: Expr, obj: Expr, index: Expr) -> bool {
     })
 }
 
-/// What `a?.b` is where `a` is there: where it is not, the `!` of `a?.b!` is not reached.
 fn type_without_optional_chain(operand: Expr) -> Option<Type> {
     match operand.kind() {
         ExprKind::Dot { obj, name, .. } => obj
@@ -362,7 +342,6 @@ impl Rule for AotNonNullEscapes {
     }
 }
 
-/// The first line of the text, if that is short.
 fn shown(text: &[u8]) -> Vec<u8> {
     let line = text
         .get(..strings::index_of_char_usize(text, b'\n').unwrap_or(text.len()))

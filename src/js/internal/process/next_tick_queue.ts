@@ -55,12 +55,11 @@ class TickQueue {
   }
 }
 
-// What an init hook is shown: an ordinary object.
 function newTickObject(callback: unknown, args: unknown, frame: unknown): Record<string, unknown> {
   return { callback, args, frame };
 }
 
-function callWithArgumentsOfAnyKind(callback, args) {
+function callWithAnyArguments(callback, args) {
   switch (args.length) {
     case 1:
       return callback(args[0]);
@@ -105,10 +104,6 @@ function initializeNextTickQueue(process: typeof globalThis.process, nextTickQue
           ran = (ran + 1) | 0;
           var restore = $getInternalField($asyncContext, 0);
           $putInternalField($asyncContext, 0, frame as any);
-          // No catch and no finally: what a tick throws leaves this function as it was thrown, with
-          // the tick's frame still current. JSNextTickQueue::drain reports it there (so an
-          // uncaughtException handler reads the tick's AsyncLocalStorage stores, as in node), puts the
-          // async context back, and calls in again for the ticks after it.
           if (args === undefined) {
             callback();
           } else {
@@ -136,7 +131,6 @@ function initializeNextTickQueue(process: typeof globalThis.process, nextTickQue
         drainMicrotasks();
       } while (queue.read !== queue.write);
       queue.shrink(ran);
-      // Without this, every checkpoint after the first tick calls this function to find an empty queue.
       $putInternalField(nextTickQueue, 0, 0);
     }
 
@@ -145,23 +139,15 @@ function initializeNextTickQueue(process: typeof globalThis.process, nextTickQue
     setup = undefined;
   };
 
-  // node fires one TickObject init per process.nextTick() call, at
-  // construction time (before the callback runs).
   function pushWithInitHooks(cb: unknown, args: unknown[] | undefined, frame: unknown): void {
     const tock = newTickObject(cb, args, frame);
     const asyncHooksTick = require("internal/async_hooks_tick");
     const asyncId = asyncHooksTick.newAsyncId();
-    // Snapshot: enable()/disable() from inside a hook must not affect the
-    // in-flight dispatch (node stages such mutations in tmp_array until
-    // the emit completes).
     const hooks: any[] = tickInitHooks.slice();
     for (let i = 0; i < hooks.length; i++) {
       try {
         hooks[i](asyncId, "TickObject", 0, tock);
       } catch (err) {
-        // node: a throwing init hook is fatal (fatalError: print + exit 1),
-        // never surfaced to the process.nextTick() caller. console is a
-        // user-mutable global, so shield the print; exit regardless.
         try {
           console.error(
             typeof (err as any)?.stack === "string" ? (err as Error).stack : err,
@@ -170,10 +156,9 @@ function initializeNextTickQueue(process: typeof globalThis.process, nextTickQue
         process.exit(1);
       }
     }
-    // A hook may have stored to the object it was shown, and may have done anything to the list in it.
     const list = tock.args;
     if (list === undefined) queue.push(tock.callback, undefined, tock.frame);
-    else queue.push(callWithArgumentsOfAnyKind, [tock.callback, list], tock.frame);
+    else queue.push(callWithAnyArguments, [tock.callback, list], tock.frame);
   }
 
   function nextTick(cb: unknown, ...args: unknown[]) {
@@ -184,8 +169,6 @@ function initializeNextTickQueue(process: typeof globalThis.process, nextTickQue
     }
     if (process._exiting) return;
 
-    // We want to avoid materializing the args if there are none because it's
-    // a waste of memory and Array.prototype.slice shows up in profiling.
     const list = args.length !== 0 ? args : undefined;
     const frame: unknown = $getInternalField($asyncContext, 0);
     if (tickInitHooks.length !== 0) pushWithInitHooks(cb, list, frame);

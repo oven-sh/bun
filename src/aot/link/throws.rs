@@ -1,4 +1,4 @@
-use super::nil::{strip_casts, functions_called, targets_of};
+use super::nullish::{strip_casts, functions_called, targets_of};
 use crate::declared::{Declared, DeclaredTable, Part, prim};
 use crate::id::{FuncId, LayoutId, StrId, TyId, V};
 use crate::ir::{BinOp, Def, Func, FuncKind, Initialization, LayoutKind, MethodKind, NO_VARIABLE, Op, Operation, Prediction, Program, Target, Term, UnOp, CoerceReason, class_flags, field_flags, func_flags, method_flags};
@@ -327,8 +327,8 @@ fn meet(a: &Declared, b: &Declared) -> Declared {
         (true, _, false, within) => within,
         (false, within, true, _) => within,
         (false, Some(x), false, Some(y)) => {
-            let (least, most) = (x.0.max(y.0), x.1.min(y.1));
-            (least <= most).then_some((least, most))
+            let (minimum, maximum) = (x.0.max(y.0), x.1.min(y.1));
+            (minimum <= maximum).then_some((minimum, maximum))
         }
         _ => None,
     };
@@ -369,8 +369,8 @@ fn truthiness(d: &Declared) -> Option<bool> {
     if d.is_never() {
         return None;
     }
-    let may_be_falsy = d.prims & (prim::NULLISH | prim::FALSE | prim::NUMBER | prim::STRING | prim::BIGINT) != 0 || d.ints.is_some_and(|(least, most)| least <= 0 && 0 <= most);
-    let may_be_truthy = d.prims & (prim::TRUE | prim::NUMBER | prim::STRING | prim::BIGINT | prim::SYMBOL) != 0 || d.ints.is_some_and(|(least, most)| least != 0 || most != 0) || d.has_objects();
+    let may_be_falsy = d.prims & (prim::NULLISH | prim::FALSE | prim::NUMBER | prim::STRING | prim::BIGINT) != 0 || d.ints.is_some_and(|(minimum, maximum)| minimum <= 0 && 0 <= maximum);
+    let may_be_truthy = d.prims & (prim::TRUE | prim::NUMBER | prim::STRING | prim::BIGINT | prim::SYMBOL) != 0 || d.ints.is_some_and(|(minimum, maximum)| minimum != 0 || maximum != 0) || d.has_objects();
     match (may_be_truthy, may_be_falsy) {
         (true, false) => Some(true),
         (false, true) => Some(false),
@@ -674,14 +674,14 @@ impl<'a> Flow<'a> {
             return;
         }
         self.at_function = index;
-        let (kept, all) = ((self.own_values - self.skipped) as usize, (self.own_values - self.skipped) as usize + self.program.funcs[index].values.len());
-        self.known.truncate(kept);
+        let (retained, all) = ((self.own_values - self.skipped) as usize, (self.own_values - self.skipped) as usize + self.program.funcs[index].values.len());
+        self.known.truncate(retained);
         self.known.resize(all, TyId::NONE);
-        self.origin.truncate(kept);
+        self.origin.truncate(retained);
         self.origin.resize(all, 0);
-        self.identity.truncate(kept);
+        self.identity.truncate(retained);
         self.identity.resize(all, 0);
-        self.changes.truncate(kept);
+        self.changes.truncate(retained);
         self.changes.resize(all, 0);
     }
 
@@ -775,10 +775,10 @@ impl<'a> Flow<'a> {
         self.join_bounded(node, ty, origin, MAX_CHANGES_BETWEEN, Some(top))
     }
 
-    fn join_bounded(&mut self, node: u32, ty: TyId, origin: u32, most: u8, top: Option<TyId>) -> bool {
+    fn join_bounded(&mut self, node: u32, ty: TyId, origin: u32, maximum: u8, top: Option<TyId>) -> bool {
         let node = self.slot(node) as u32;
         let old = self.known[node as usize];
-        let is_at_the_top = top.is_some() && self.changes[node as usize] > most;
+        let is_at_the_top = top.is_some() && self.changes[node as usize] > maximum;
         let mut new = if is_at_the_top {
             old
         } else if old.is_none() {
@@ -790,7 +790,7 @@ impl<'a> Flow<'a> {
         if has_changed {
             let changes = &mut self.changes[node as usize];
             *changes = changes.saturating_add(1);
-            if *changes > most {
+            if *changes > maximum {
                 new = match top {
                     Some(top) => top,
                     None => self.widened(new),
@@ -1118,7 +1118,7 @@ impl<'a> Flow<'a> {
         let mut joined = self.common.never;
         for &called in found {
             let callee = &self.program.funcs[called.idx()];
-            let yielded = if callee.has(func_flags::ASYNC | func_flags::GENERATOR) || callee.kind == FuncKind::Constructor {
+            let produced = if callee.has(func_flags::ASYNC | func_flags::GENERATOR) || callee.kind == FuncKind::Constructor {
                 self.declared(func, v)
             } else if !self.is_whole {
                 if callee.result.is_none() { self.tys.anything } else { callee.result }
@@ -1127,7 +1127,7 @@ impl<'a> Flow<'a> {
                 let declared = if callee.result.is_none() { self.tys.anything } else { callee.result };
                 if known.is_none() { self.common.never } else { self.meet(known, declared) }
             };
-            joined = self.join(joined, yielded);
+            joined = self.join(joined, produced);
         }
         joined
     }
@@ -1212,32 +1212,32 @@ impl<'a> Flow<'a> {
     }
 
     fn coerced(&mut self, have: TyId, to: TyId, result: TyId) -> TyId {
-        let (had, tried, yielded) = (self.get(have).clone(), self.get(to).clone(), self.get(result).clone());
+        let (had, tried, produced) = (self.get(have).clone(), self.get(to).clone(), self.get(result).clone());
         if had.is_never() {
             return self.common.never;
         }
-        let mut made = Declared { prims: had.prims & prim::NULLISH, ..Declared::default() };
+        let mut created = Declared { prims: had.prims & prim::NULLISH, ..Declared::default() };
         let kinds = kinds_of(&had);
         if kinds != 0 {
             if kinds & !kinds_of(&tried) == 0 {
-                made.prims |= had.prims & !prim::NULLISH;
-                made.ints = had.ints;
+                created.prims |= had.prims & !prim::NULLISH;
+                created.ints = had.ints;
             } else {
-                made.prims |= tried.prims & !prim::NULLISH;
+                created.prims |= tried.prims & !prim::NULLISH;
                 if tried.ints.is_some() {
-                    made.prims |= prim::NUMBER;
+                    created.prims |= prim::NUMBER;
                 }
                 if tried.prims & prim::BOOLEAN != 0 {
-                    made.prims |= prim::BOOLEAN;
+                    created.prims |= prim::BOOLEAN;
                 }
             }
         }
         if had.has_objects() {
-            made.parts = yielded.parts.clone();
-            made.any_object = yielded.any_object;
-            made.any_function = yielded.any_function;
+            created.parts = produced.parts.clone();
+            created.any_object = produced.any_object;
+            created.any_function = produced.any_function;
         }
-        self.tys.intern(made)
+        self.tys.intern(created)
     }
 
     fn transfer(&mut self, index: usize, func: &Func, facts: &Facts, keys: &mut Keys, v: V) -> (TyId, u32) {
@@ -1252,6 +1252,7 @@ impl<'a> Flow<'a> {
             Op::Double(_) => (self.common.number, 0),
             Op::Str(_) | Op::ToStr(_) | Op::StrConcat(_) | Op::TypeOf(_) => (self.common.string, 0),
             Op::BigInt(_) => (self.common.bigint, 0),
+            Op::Symbol(_) => (self.tys.intern(Declared::prims(prim::SYMBOL)), 0),
             Op::FuncRef(_) | Op::Closure { .. } | Op::ClosureOnce { .. } => (self.common.function, 0),
             &(Op::New(layout) | Op::NewWith { layout, .. }) => (self.tys.intern(Declared::part(Part::Class(layout))), 0),
             Op::NewArray(_) => (if self.get(declared).parts.iter().any(|part| matches!(part, Part::Array(_))) && !self.get(declared).any_object { self.meet(declared, self.common.objects) } else { self.common.array }, 0),
@@ -1279,9 +1280,9 @@ impl<'a> Flow<'a> {
                         Some(node) => Some((index as u32, V(node - self.own_values))),
                         None => None,
                     };
-                    let kept = self.stored_at[global.idx()].or(from);
-                    self.stored_at[global.idx()] = kept;
-                    origin & CONTEXTUAL | if kept.is_some() { global.0 + 1 } else { 0 }
+                    let retained = self.stored_at[global.idx()].or(from);
+                    self.stored_at[global.idx()] = retained;
+                    origin & CONTEXTUAL | if retained.is_some() { global.0 + 1 } else { 0 }
                 };
                 let identity = self.raw_identity(index, value);
                 if self.join_between(self.globals + global.0, stored, origin, self.tys.anything) | self.join_identity(self.globals + global.0, identity) {
@@ -1416,8 +1417,8 @@ impl<'a> Flow<'a> {
                         }
                     }
                 }
-                let yielded = self.joined_result_ty(func, v, &[called]);
-                (self.meet(yielded, declared), if self.is_whole { self.origin[(self.results + called.0) as usize] } else { 0 })
+                let produced = self.joined_result_ty(func, v, &[called]);
+                (self.meet(produced, declared), if self.is_whole { self.origin[(self.results + called.0) as usize] } else { 0 })
             }
             &Op::Coerce { value, to, why } => {
                 let have = self.val(index, func, facts, keys, value, false);
@@ -1429,8 +1430,8 @@ impl<'a> Flow<'a> {
                     CoerceReason::Cast | CoerceReason::CastFresh | CoerceReason::Flow if self.get(have).has_objects() => {
                         let met = meet(self.get(have), self.get(declared));
                         let wanted = self.get(declared);
-                        let made = Declared { parts: wanted.parts.clone(), any_object: wanted.any_object, any_function: wanted.any_function, ..met };
-                        self.tys.intern(made)
+                        let created = Declared { parts: wanted.parts.clone(), any_object: wanted.any_object, any_function: wanted.any_function, ..met };
+                        self.tys.intern(created)
                     }
                     _ => self.meet(have, declared),
                 };
@@ -1474,7 +1475,7 @@ impl<'a> Flow<'a> {
             }
             Some(held) => {
                 let before = held.len();
-                let mut kept: Facts = Vec::with_capacity(before);
+                let mut retained: Facts = Vec::with_capacity(before);
                 let mut is_weaker = false;
                 let mut others = leaving.iter().peekable();
                 for &(key, bound) in held.iter() {
@@ -1482,11 +1483,11 @@ impl<'a> Flow<'a> {
                     if let Some(&&(_, other)) = others.peek().filter(|other| other.0 == key) {
                         let joined = self.join(bound, other);
                         is_weaker |= joined != bound;
-                        kept.push((key, joined));
+                        retained.push((key, joined));
                     }
                 }
-                if kept.len() != before || is_weaker {
-                    reached[at] = Some(kept);
+                if retained.len() != before || is_weaker {
+                    reached[at] = Some(retained);
                     self.has_moved = true;
                 }
             }
@@ -1695,17 +1696,17 @@ impl MustExecutePath {
 
     fn grow(&mut self, noreturn: &[bool], func: &Func, reached: Option<&[Option<Facts>]>) {
         let mut next = match self.order.last() {
-            Some(&last) => self.behind(noreturn, func, reached, last),
+            Some(&last) => self.unique_successor(noreturn, func, reached, last),
             None => (!func.blocks.is_empty()).then_some(0),
         };
         while let Some(at) = next.filter(|&at| !self.is_on_path[at]) {
             self.is_on_path[at] = true;
             self.order.push(at);
-            next = self.behind(noreturn, func, reached, at);
+            next = self.unique_successor(noreturn, func, reached, at);
         }
     }
 
-    fn behind(&mut self, noreturn: &[bool], func: &Func, reached: Option<&[Option<Facts>]>, at: usize) -> Option<usize> {
+    fn unique_successor(&mut self, noreturn: &[bool], func: &Func, reached: Option<&[Option<Facts>]>, at: usize) -> Option<usize> {
         let (to, aside) = match func.blocks[at].term.as_ref() {
             Some(Term::Jump(target) | Term::Invoke { normal: target, .. }) => (target.block.idx(), None),
             Some(Term::Branch { then, otherwise, .. }) => match reached.map(|reached| (reached[then.block.idx()].is_some(), reached[otherwise.block.idx()].is_some())) {
@@ -1786,6 +1787,31 @@ fn reverse_postorder(func: &Func) -> (Vec<usize>, bool) {
     (order, has_loops)
 }
 
+fn unused_parameters(func: &Func) -> Vec<bool> {
+    let mut is_used = vec![false; func.values.len()];
+    for block in &func.blocks {
+        for &value in &block.ops {
+            if let Some(op) = func.op(value) {
+                op.clone().for_each_operand_mut(|operand| {
+                    if operand.is_some() {
+                        is_used[operand.idx()] = true;
+                    }
+                });
+            }
+        }
+        if let Some(term) = &block.term {
+            term.for_each_operand(|operand| {
+                if operand.is_some() {
+                    is_used[operand.idx()] = true;
+                }
+            });
+        }
+    }
+    let first = func.captures.len() + usize::from(func.has(func_flags::HAS_THIS));
+    let entry = func.blocks.first().map_or(&[][..], |block| &block.params[..]);
+    (0..func.params.len()).map(|number| entry.get(first + number).is_some_and(|v| !is_used[v.idx()])).collect()
+}
+
 fn text_of(program: &Program, ty: &Declared, depth: u32) -> String {
     if ty.any_object && ty.prims & prim::ALL == prim::ALL {
         return "any".to_owned();
@@ -1823,8 +1849,8 @@ fn text_of(program: &Program, ty: &Declared, depth: u32) -> String {
         parts.push("Function".to_owned());
     }
     match ty.ints.filter(|_| ty.prims & prim::NUMBER == 0) {
-        Some((least, most)) if least == most => parts.push(least.to_string()),
-        Some((least, most)) => parts.push(format!("integer {least}..{most}")),
+        Some((minimum, maximum)) if minimum == maximum => parts.push(minimum.to_string()),
+        Some((minimum, maximum)) => parts.push(format!("integer {minimum}..{maximum}")),
         None => {}
     }
     let has_both = ty.prims & prim::NULLISH == prim::NULLISH;
@@ -2064,14 +2090,14 @@ impl<'a> Report<'a, '_> {
         }
     }
 
-    fn fits(&self, a: &Declared, b: &Declared) -> bool {
+    fn is_contained_in(&self, a: &Declared, b: &Declared) -> bool {
         let layouts = &self.flow.program.layouts;
         if a.prims & !b.prims != 0 || a.any_object && !b.any_object {
             return false;
         }
-        if let Some((least, most)) = a.ints
+        if let Some((minimum, maximum)) = a.ints
             && b.prims & prim::NUMBER == 0
-            && !b.ints.is_some_and(|within| within.0 <= least && most <= within.1)
+            && !b.ints.is_some_and(|within| within.0 <= minimum && maximum <= within.1)
         {
             return false;
         }
@@ -2081,9 +2107,9 @@ impl<'a> Report<'a, '_> {
         }
         b.any_object
             || a.parts.iter().all(|part| match part {
-                Part::Class(made) => {
-                    let is_held = |made: &LayoutId| b.parts.iter().any(|within| matches!(within, Part::Class(view) if view == made || view.is_some() && layouts[view.idx()].members.binary_search(made).is_ok()));
-                    is_held(made) || made.is_some() && (!layouts[made.idx()].accepts_untyped || admits) && layouts[made.idx()].members.iter().all(is_held)
+                Part::Class(created) => {
+                    let is_held = |created: &LayoutId| b.parts.iter().any(|within| matches!(within, Part::Class(view) if view == created || view.is_some() && layouts[view.idx()].members.binary_search(created).is_ok()));
+                    is_held(created) || created.is_some() && (!layouts[created.idx()].accepts_untyped || admits) && layouts[created.idx()].members.iter().all(is_held)
                 }
                 Part::Array(_) => admits || b.parts.iter().any(|within| matches!(within, Part::Array(_))),
                 Part::Global(name, _) => admits || b.parts.iter().any(|within| matches!(within, Part::Global(same, _) if same == name)),
@@ -2097,10 +2123,11 @@ impl<'a> Report<'a, '_> {
         }
         a.parts.iter().all(|x| {
             b.parts.iter().all(|y| match (x, y) {
+                (&Part::Class(view), _) | (_, &Part::Class(view)) if view.is_none() => false,
                 (&Part::Class(p), &Part::Class(q)) => {
                     let (p_as, q_as) = (&layouts[p.idx()], &layouts[q.idx()]);
-                    let holds = |view: &crate::ir::Layout, own: LayoutId, made: LayoutId| own == made || view.members.binary_search(&made).is_ok();
-                    p != q && !p_as.accepts_untyped && !q_as.accepts_untyped && !p_as.members.iter().chain([&p]).any(|&made| holds(q_as, q, made)) && !q_as.members.iter().any(|&made| holds(p_as, p, made))
+                    let holds = |view: &crate::ir::Layout, own: LayoutId, created: LayoutId| own == created || view.members.binary_search(&created).is_ok();
+                    p != q && !p_as.accepts_untyped && !q_as.accepts_untyped && !p_as.members.iter().chain([&p]).any(|&created| holds(q_as, q, created)) && !q_as.members.iter().any(|&created| holds(p_as, p, created))
                 }
                 (&Part::Class(view), _) | (_, &Part::Class(view)) => !layouts[view.idx()].accepts_untyped,
                 _ => false,
@@ -2156,7 +2183,7 @@ impl<'a> Report<'a, '_> {
             }
             _ => {
                 let may_allocate_another = matches!(why, Some(CoerceReason::Cast | CoerceReason::CastFresh | CoerceReason::Flow));
-                if self.fits(likely, to) {
+                if self.is_contained_in(likely, to) {
                     Verdict::Fine
                 } else if are_disjoint(sure, to) || !may_allocate_another && are_disjoint(&Declared { parts: Default::default(), any_object: false, any_function: false, ..sure.clone() }, to) && self.objects_are_disjoint(sure, to) {
                     Verdict::Wrong
@@ -2369,14 +2396,14 @@ impl<'a> Report<'a, '_> {
                         let accepts_integers_only = wanted.ints.is_some() && wanted.prims & prim::NUMBER == 0;
                         if accepts_integers_only
                             && !matches!(why, CoerceReason::Coerce | CoerceReason::CoerceFreshGraph | CoerceReason::NonNull(_))
-                            && let (Some(number), Some((least, most))) = (self.double(func, value), wanted.ints)
+                            && let (Some(number), Some((minimum, maximum))) = (self.double(func, value), wanted.ints)
                         {
-                            let is_within = number.fract() == 0.0 && number >= least as f64 && number <= most as f64 && !(number == 0.0 && number.is_sign_negative());
+                            let is_within = number.fract() == 0.0 && number >= minimum as f64 && number <= maximum as f64 && !(number == 0.0 && number.is_sign_negative());
                             verdict = if is_within { Verdict::Fine } else { Verdict::Wrong };
                         }
                         if verdict != Verdict::Fine && !matches!(why, CoerceReason::Coerce | CoerceReason::CoerceFreshGraph) {
                             let without_nullish = Declared { prims: likely.prims & !prim::NULLISH, ..likely.clone() };
-                            if (matches!(why, CoerceReason::NonNull(_)) || self.fits(&without_nullish, &wanted)) && is_dereferenced_next(func, at, place, v) {
+                            if (matches!(why, CoerceReason::NonNull(_)) || self.is_contained_in(&without_nullish, &wanted)) && is_dereferenced_next(func, at, place, v) {
                                 self.always_throws += 1;
                                 self.passing_sites.insert((func.module.0, pos, if matches!(why, CoerceReason::NonNull(_)) { Kind::NonNull } else { Kind::Narrowing }));
                                 break 'checks;
@@ -2672,8 +2699,8 @@ impl<'a> Report<'a, '_> {
             return self.add(func, pos, Kind::PrototypeWrite, Verdict::Wrong, String::new(), String::new(), format!("`prototype` of the generator function {owner} is {verb}: it is fixed when the program is compiled"), context);
         }
         if let Some(owner) = self.prototype_owner(index, obj) {
-            let (made, named) = (&program.funcs[owner.idx()], self.name_of_function(&program.funcs[owner.idx()]));
-            if made.has(func_flags::GENERATOR) {
+            let (created, named) = (&program.funcs[owner.idx()], self.name_of_function(&program.funcs[owner.idx()]));
+            if created.has(func_flags::GENERATOR) {
                 self.name = Some("generator-prototype-write");
                 return self.add(func, pos, Kind::PrototypeWrite, Verdict::Wrong, String::new(), String::new(), format!("`{shown}` is {verb} on the prototype of the generator function {named}, which is frozen"), context);
             }
@@ -2706,6 +2733,9 @@ impl<'a> Report<'a, '_> {
         let Some(name) = name else { return };
         for part in &receiver.parts {
             let &Part::Class(layout) = part else { continue };
+            if layout.is_none() {
+                continue;
+            }
             let allocated_as = &program.layouts[layout.idx()];
             let Some(field) = allocated_as.field(name) else { continue };
             let field = &allocated_as.fields[field as usize];
@@ -2741,6 +2771,9 @@ impl<'a> Report<'a, '_> {
         }
         for part in &written_as.parts {
             let &Part::Class(view) = part else { continue };
+            if view.is_none() {
+                continue;
+            }
             let looked_at = &program.layouts[view.idx()];
             let Some(seen) = looked_at.field(name) else { continue };
             let seen = looked_at.fields[seen as usize].declared;
@@ -2757,9 +2790,9 @@ impl<'a> Report<'a, '_> {
                 if verdict == Verdict::Fine {
                     continue;
                 }
-                let (shown, through, made) = (bstr::BStr::new(program.strs.get(name)).to_string(), text_of(program, &Declared::part(Part::Class(view)), 0), text_of(program, &Declared::part(Part::Class(member)), 0));
+                let (shown, through, created) = (bstr::BStr::new(program.strs.get(name)).to_string(), text_of(program, &Declared::part(Part::Class(view)), 0), text_of(program, &Declared::part(Part::Class(member)), 0));
                 let found = text_of(program, &stored, 0);
-                self.add(func, pos, Kind::Field, verdict, text_of(program, &wanted, 0), found, format!("`{shown}` is stored through {through}, and the object may have been created as {made}, which declares a narrower type for it"), 0);
+                self.add(func, pos, Kind::Field, verdict, text_of(program, &wanted, 0), found, format!("`{shown}` is stored through {through}, and the object may have been created as {created}, which declares a narrower type for it"), 0);
                 return;
             }
         }
@@ -2827,33 +2860,34 @@ impl<'a> Report<'a, '_> {
 
     fn add_function_parameters(&mut self, handed: FuncId, numbers: &[usize], from: (u32, u32, String)) {
         let program = self.flow.program;
-        let made = &program.funcs[handed.idx()];
-        if !made.has(func_flags::IS_TYPED) || made.module.is_none() {
+        let created = &program.funcs[handed.idx()];
+        if !created.has(func_flags::IS_TYPED) || created.module.is_none() {
             return;
         }
-        let individually = made.params.len() - usize::from(made.has(func_flags::HAS_REST) && !made.params.is_empty());
-        let named = self.name_of_function(made);
-        let written = program.declared_parameter_types.get(&(handed.idx() as u32)).unwrap_or(&made.params);
+        let is_unused = unused_parameters(created);
+        let individually = created.params.len() - usize::from(created.has(func_flags::HAS_REST) && !created.params.is_empty());
+        let named = self.name_of_function(created);
+        let written = program.declared_parameter_types.get(&(handed.idx() as u32)).unwrap_or(&created.params);
         if !self.has_checking_entrypoint[handed.idx()] {
-            let checked: Vec<String> = written[..individually].iter().filter(|&&parameter| self.flow.is_informative(parameter)).map(|&parameter| text_of(program, program.tys.get(parameter), 0)).collect();
+            let checked: Vec<String> = written[..individually].iter().enumerate().filter(|&(number, &parameter)| !is_unused[number] && self.flow.is_informative(parameter)).map(|(_, &parameter)| text_of(program, program.tys.get(parameter), 0)).collect();
             if !checked.is_empty() {
-                let ahead = usize::from(made.kind == FuncKind::Constructor && made.has(func_flags::HAS_NEW_TARGET));
-                let first = made.params.iter().position(|&parameter| self.flow.is_informative(parameter)).map_or(0, |first| first.saturating_sub(ahead));
+                let ahead = usize::from(created.kind == FuncKind::Constructor && created.has(func_flags::HAS_NEW_TARGET));
+                let first = created.params.iter().enumerate().position(|(number, &parameter)| !is_unused[number] && self.flow.is_informative(parameter)).map_or(0, |first| first.saturating_sub(ahead));
                 (self.ordinal, self.handed_over) = (Some(if self.logs_type_errors { first as u32 } else { 0 }), Some(from));
-                self.add(made, made.pos, Kind::Parameter, Verdict::Unknown, checked.join(", "), "any".to_owned(), format!("the parameters of {named}, which is called as a value or with `any`"), 0);
+                self.add(created, created.pos, Kind::Parameter, Verdict::Unknown, checked.join(", "), "any".to_owned(), format!("the parameters of {named}, which is called as a value or with `any`"), 0);
             }
             return;
         }
         for &number in numbers.iter().filter(|&&number| number < individually) {
-            let parameter = made.params[number];
-            if !self.flow.is_informative(parameter) {
+            let parameter = created.params[number];
+            if is_unused[number] || !self.flow.is_informative(parameter) {
                 continue;
             }
             let wanted = program.tys.get(parameter).clone();
             (self.ordinal, self.handed_over) = (Some(number as u32), Some(from.clone()));
             self.risk = self.risk_of(&wanted);
             self.is_at_entrypoint = true;
-            self.add(made, made.pos, Kind::Parameter, Verdict::Unknown, text_of(program, program.tys.get(written[number]), 0), "any".to_owned(), format!("parameter {} of {named}, which is called as a value or with `any`", number + 1), 0);
+            self.add(created, created.pos, Kind::Parameter, Verdict::Unknown, text_of(program, program.tys.get(written[number]), 0), "any".to_owned(), format!("parameter {} of {named}, which is called as a value or with `any`", number + 1), 0);
         }
     }
 
@@ -2886,8 +2920,13 @@ impl<'a> Report<'a, '_> {
     fn find_members(&self, func: &Func, obj: V, known: &Declared, name: StrId, kind: MethodKind) -> SmallVec<[FuncId; 2]> {
         let program = self.flow.program;
         let mut found: SmallVec<[FuncId; 2]> = SmallVec::new();
-        for part in program.tys.get(func.ty(obj)).parts.iter().chain(&known.parts) {
+        let declared = func.ty(obj);
+        let declared_parts: &[Part] = if declared.is_some() { &program.tys.get(declared).parts[..] } else { &[] };
+        for part in declared_parts.iter().chain(&known.parts) {
             let &Part::Class(view) = part else { continue };
+            if view.is_none() {
+                continue;
+            }
             let looked_at = &program.layouts[view.idx()];
             for &member in looked_at.members.iter().chain(looked_at.members.is_empty().then_some(&view)) {
                 let mut at = member;
@@ -3047,8 +3086,8 @@ impl<'a> Report<'a, '_> {
             return;
         }
         if let Some(owner) = self.prototype_owner(index, target) {
-            let (made, named) = (&program.funcs[owner.idx()], self.name_of_function(&program.funcs[owner.idx()]));
-            if made.has(func_flags::GENERATOR) {
+            let (created, named) = (&program.funcs[owner.idx()], self.name_of_function(&program.funcs[owner.idx()]));
+            if created.has(func_flags::GENERATOR) {
                 self.name = Some("generator-prototype-write");
                 self.add(func, pos, Kind::PrototypeWrite, Verdict::Wrong, String::new(), String::new(), format!("`{shown}` on the prototype of the generator function {named}, which is frozen"), context);
             } else if self.class_of.get(&owner).is_some_and(|class| program.layouts[class.idx()].class_flags & class_flags::HAS_FIXED_LAYOUT != 0) {
@@ -3067,6 +3106,9 @@ impl<'a> Report<'a, '_> {
         }
         for part in &receiver.parts {
             let &Part::Class(layout) = part else { continue };
+            if layout.is_none() {
+                continue;
+            }
             let allocated_as = &program.layouts[layout.idx()];
             if !allocated_as.is_allocated || allocated_as.kind == LayoutKind::Environment {
                 continue;
@@ -3114,7 +3156,7 @@ fn find_stored_values(func: &Func) -> Vec<bool> {
             let Some(op) = func.op(v) else { continue };
             let builds = match op {
                 Op::Coerce { .. } => continue,
-                Op::Operation { args, .. } => args.first().copied().filter(|&made| matches!(func.op(made), Some(Op::NewObject))),
+                Op::Operation { args, .. } => args.first().copied().filter(|&created| matches!(func.op(created), Some(Op::NewObject))),
                 _ => None,
             };
             op.for_each_operand(|used| {
@@ -3167,7 +3209,7 @@ fn is_dereferenced_next(func: &Func, block: usize, place: usize, v: V) -> bool {
         for &next in &func.blocks[block].ops[from..] {
             let Some(op) = func.op(next) else { return false };
             match op {
-                Op::Undefined | Op::Null | Op::Bool(_) | Op::Int(_) | Op::Double(_) | Op::Str(_) | Op::BigInt(_) | Op::FuncRef(_) | Op::GlobalGet(_) | Op::FieldGet { .. } => {}
+                Op::Undefined | Op::Null | Op::Bool(_) | Op::Int(_) | Op::Double(_) | Op::Str(_) | Op::BigInt(_) | Op::Symbol(_) | Op::FuncRef(_) | Op::GlobalGet(_) | Op::FieldGet { .. } => {}
                 &Op::Coerce { value, why: CoerceReason::Upcast | CoerceReason::Forced, .. } if aliases.contains(&value) => aliases.push(next),
                 &(Op::PropGet { obj, .. } | Op::PropSet { obj, .. } | Op::ElemGet { obj, .. } | Op::ElemSet { obj, .. } | Op::IterOpen(obj)) => return aliases.contains(&obj),
                 Op::CallMethod { obj, .. } => return aliases.contains(obj),
@@ -3267,7 +3309,7 @@ fn finalize_sites(mut sites: Vec<Site>, passing_sites: &FxHashSet<(u32, u32, Kin
         }
     }
     sites.sort_by(|a, b| (a.module, a.pos, a.kind, a.ordinal, std::cmp::Reverse(a.verdict)).cmp(&(b.module, b.pos, b.kind, b.ordinal, std::cmp::Reverse(b.verdict))));
-    sites.dedup_by(|next, kept| (next.module, next.pos, next.kind, next.ordinal) == (kept.module, kept.pos, kept.kind, kept.ordinal));
+    sites.dedup_by(|next, retained| (next.module, next.pos, next.kind, next.ordinal) == (retained.module, retained.pos, retained.kind, retained.ordinal));
     sites
 }
 

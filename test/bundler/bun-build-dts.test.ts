@@ -61,7 +61,7 @@ interface Server {
     options: Options;
 }
 declare function serve(server: Server): string;
-declare var defaults: {
+declare const defaults: {
     port: number;
     options: {
         name: string;
@@ -97,6 +97,15 @@ describe("bun build --dts", () => {
     expect(stdout).toContain("(declaration)");
     expect(await Bun.file(join(String(dir), "dist", "index.js")).exists()).toBe(true);
     expect(exitCode).toBe(0);
+  });
+
+  test("names no declaration map, which it does not write", async () => {
+    using dir = tempDir("build-dts-no-map", {
+      ...sources,
+      "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, module: "esnext", moduleResolution: "bundler", target: "esnext", types: [], lib: ["esnext"], declaration: true, declarationMap: true } }),
+    });
+    expect(await build(String(dir), "src/index.ts", "--outdir", "dist", "--root", "src", "--dts")).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(await written(join(String(dir), "dist"))).toEqual(declarations);
   });
 
   test("the JavaScript is the same with and without it", async () => {
@@ -187,7 +196,7 @@ declare class Counter {
     increment(): number;
 }
 /** The default name. */
-declare var fallback: "world";
+declare const fallback = "world";
 export { Counter, fallback, greet };
 `,
     });

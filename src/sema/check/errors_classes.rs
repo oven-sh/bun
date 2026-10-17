@@ -240,7 +240,7 @@ impl<'p> Checker<'p, '_> {
         let hir = self.hir(file);
         let class = &hir[c];
         // Otherwise only members with `override` are visited.
-        let visits_all = self.p.files.options.no_implicit_override;
+        let visits_all = self.check_options(file).no_implicit_override;
         for m in class.members.iter() {
             let member = &hir[m];
             // `ModifierFlags()`: what is written before `static { }` is only in its list.
@@ -309,7 +309,7 @@ impl<'p> Checker<'p, '_> {
         let is_js = self.hir(file).is_js;
         let code = |code: u32| if is_js { js_override_code(code) } else { code };
         let has_override = member.flags.contains(Flags::OVERRIDE);
-        let no_implicit_override = self.p.files.options.no_implicit_override;
+        let no_implicit_override = self.check_options(file).no_implicit_override;
         let (constructor, base) = match base {
             ClassBase::Unknown => return,
             ClassBase::Nothing => {

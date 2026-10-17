@@ -24,12 +24,18 @@ const roundsBeforeCounting = [1, 1, 1, 1],
   roundsOfFewerOperations = 1,
   roundsOfMoreOperations = 3;
 
-type Form = { types: "typed" | "untyped"; place: "function" | "module level" };
+type Form = { types: "typed" | "untyped"; place: "function" | "module level" | "function that no loop calls" };
 const forms: Form[] = [
   { types: "typed", place: "function" },
   { types: "typed", place: "module level" },
   { types: "untyped", place: "function" },
   { types: "untyped", place: "module level" },
+];
+const formsOutsideLoops: Form[] = [
+  { types: "typed", place: "function" },
+  { types: "typed", place: "function that no loop calls" },
+  { types: "untyped", place: "function" },
+  { types: "untyped", place: "function that no loop calls" },
 ];
 
 function partsOf(name: string, text: string) {
@@ -58,7 +64,11 @@ ${waits ? "async " : ""}function kernel() {
   }
 ${kernel}
 }
-${windows(`{\n    ${waits ? "await " : ""}kernel();\n    if (rounds < 0) ${waits ? "await " : ""}kernel();\n  }`)}${rest}`;
+${
+  place === "function that no loop calls"
+    ? `function neverCalled() {}\nfunction chosen() {\n  return process.argv.length > 50 ? neverCalled : kernel;\n}\nconst called = chosen();\n${windows(`{\n    ${waits ? "await " : ""}called();\n  }`)}`
+    : windows(`{\n    ${waits ? "await " : ""}kernel();\n    if (rounds < 0) ${waits ? "await " : ""}kernel();\n  }`)
+}${rest}`;
 }
 
 async function run(command: string[], cwd: string, env: Record<string, string | undefined>) {
@@ -134,7 +144,7 @@ async function lineOf(
   dir: string,
   countsInstructions: boolean,
 ) {
-  const stem = `${name}.${form.types}.${form.place.replace(" ", "-")}`;
+  const stem = `${name}.${form.types}.${form.place.replaceAll(" ", "-")}`;
   writeFileSync(join(dir, "tsconfig.json"), tsconfigWithTypesOfBun);
   writeFileSync(join(dir, `${stem}.ts`), programOf(parts, form.place));
   let entry = `${stem}.ts`;
@@ -153,7 +163,7 @@ async function lineOf(
   );
   expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
   const functions = functionsOf(readFileSync(mapFile, "utf8"), entry);
-  const measured = form.place === "function" ? "kernel" : `module ${entry}`;
+  const measured = form.place === "module level" ? `module ${entry}` : "kernel";
   const bytes = functions
     .filter(compiled => compiled.name === measured)
     .reduce((sum, compiled) => sum + compiled.size, 0);
@@ -170,7 +180,7 @@ async function lineOf(
   expect({ stderr: counted.stderr, exitCode: counted.exitCode }).toEqual({ stderr: "", exitCode: 0 });
   const operations = parts.operations * (roundsOfMoreOperations - roundsOfFewerOperations);
   const shares = sharesOf(counted.windows, operations, entry);
-  if (form.place === "function") expect(shares.map(share => share.where)).toContain("kernel");
+  if (form.place !== "module level") expect(shares.map(share => share.where)).toContain("kernel");
   return `${label}: ${shown(shares)}, ${bytes} bytes`;
 }
 
@@ -199,6 +209,9 @@ function describeCasesOf(folder: string, platform: string, isSkipped: boolean, t
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
   const executable = join(dir, "main"),
     mapFile = join(dir, "main.map");
+  const turns: { before: number[]; fewer: number; more: number } = existsSync(join(folder, "turns.json"))
+    ? JSON.parse(readFileSync(join(folder, "turns.json"), "utf8"))
+    : { before: turnsBeforeCounting, fewer: fewerTurns, more: moreTurns };
   let functions: Promise<CompiledFunction[]> | undefined;
   const build = async () => {
     cpSync(folder, dir, { recursive: true });
@@ -225,14 +238,14 @@ function describeCasesOf(folder: string, platform: string, isSkipped: boolean, t
   for (const name of names.stdout.toString().split("\n").filter(Boolean)) {
     const lines = linesOf(async () => {
       const counted = await countInstructions({
-        command: [executable, name, ...[...turnsBeforeCounting, fewerTurns, moreTurns].map(String)],
+        command: [executable, name, ...[...turns.before, turns.fewer, turns.more].map(String)],
         env: { ...bunEnv, BUN_JSC_useGC: "0" },
-        marksBeforeTheFirstWindow: turnsBeforeCounting.length,
+        marksBeforeTheFirstWindow: turns.before.length,
         numberOfWindows: 2,
         functions: await (functions ??= build()),
       });
       expect({ stderr: counted.stderr, exitCode: counted.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-      return [`a turn: ${shown(sharesOf(counted.windows, moreTurns - fewerTurns, "main.ts"))}, 0 bytes`];
+      return [`a turn: ${shown(sharesOf(counted.windows, turns.more - turns.fewer, "main.ts"))}, 0 bytes`];
     });
     test.skipIf(isSkipped)(
       `${title}: ${name}`,
@@ -324,6 +337,24 @@ export async function describeInstructionCounts(platform: string, part: number, 
       formsOfFile: forms.filter(form => form.types === "typed"),
     })),
   ].filter(({ file }) => file.endsWith(".ts") && partOf(basename(file, ".ts"), parts) === part);
+  describeSnippets(files, testFile, isThisPlatform, reason);
+}
+
+export async function describeInstructionCountsOutsideLoops(platform: string) {
+  const { isThisPlatform, reason } = await whetherItCounts(platform);
+  const folder = join(snippets, "outside-loops");
+  const files = readdirSync(folder)
+    .filter(file => file.endsWith(".ts"))
+    .map(file => ({ file, folder, formsOfFile: formsOutsideLoops }));
+  describeSnippets(files, `${platform}-outside-loops`, isThisPlatform, reason);
+}
+
+function describeSnippets(
+  files: { file: string; folder: string; formsOfFile: Form[] }[],
+  testFile: string,
+  isThisPlatform: boolean,
+  reason: string | undefined,
+) {
   for (const { file, folder, formsOfFile } of files.sort((a, b) => (a.file < b.file ? -1 : 1))) {
     const name = basename(file, ".ts");
     const pieces = partsOf(file, readFileSync(join(folder, file), "utf8"));

@@ -58,22 +58,19 @@ pub(super) fn is_published(ty: TypeId) -> bool {
 
 #[derive(Default)]
 pub(super) struct TypeCaches {
-    pub(super) layout_types: ShardedCache<TypeId, TypeId>,
     pub(super) index_and_call_facts: ShardedCache<TypeId, ([Option<TypeId>; 2], [bool; 2])>,
     pub(super) function_members: ShardedCache<TypeId, Box<[(Atom, TypeId)]>>,
     pub(super) nested_pairs_cache: ShardedCache<(TypeId, TypeId), NestedPairs>,
     pub(super) plain_data: ShardedCache<(TypeId, bool), bool>,
-    pub(super) dictionaries: ShardedCache<TypeId, Box<[TypeId]>>,
     pub(super) object_types: ShardedCache<TypeId, super::mutations::ObjectTypes>,
     pub(super) nested_flows: ShardedCache<(TypeId, TypeId), Box<[(TypeId, TypeId)]>>,
-    pub(super) untyped_for_objects: ShardedCache<TypeId, bool>,
 }
 
 impl TypeCaches {
     pub(super) fn release(&self) {
-        let taken = (self.layout_types.take(), self.index_and_call_facts.take(), self.function_members.take(), self.nested_pairs_cache.take(), self.plain_data.take(), self.dictionaries.take());
+        let taken = (self.index_and_call_facts.take(), self.function_members.take(), self.nested_pairs_cache.take(), self.plain_data.take());
         std::thread::spawn(move || drop(taken));
-        let escape_caches = (self.object_types.take(), self.nested_flows.take(), self.untyped_for_objects.take());
+        let escape_caches = (self.object_types.take(), self.nested_flows.take());
         std::thread::spawn(move || drop(escape_caches));
     }
 }

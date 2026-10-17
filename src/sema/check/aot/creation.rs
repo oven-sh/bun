@@ -1,37 +1,17 @@
-//! Which fields an object gets right after its allocation.
-//!
-//! A prediction, for field placement: it decides whether a field is kept inline or out of line, never what the program does.
-//!
-//! An expression is FRESH if it yields an object that was allocated while it was evaluated and that nothing else refers to: `new C(..)`, an
-//! object literal, a call of a factory, any of them under `as`, `!` or `satisfies`. A FACTORY is a function all of whose `return`s yield a
-//! fresh expression or a local that is never reassigned and initialized by one. `a[i] || (a[i] = new C())` is not fresh: a getter is no
-//! factory.
-//!
-//! A fresh object is followed from its allocation: through the constructor, through the statements after `const v = <fresh>` or
-//! `v = <fresh>` in the same block, and out of a factory into its callers. It is followed as long as it is in a local. Where that ends is a
-//! CREATION POINT of every static type that the object has had on the way. A field is set at creation if `this.f = e` or `v.f = e` is
-//! on the way, on every path if it is under no condition, loop or `try`. A fresh object that is stored to a field on every path,
-//! `v.g = <fresh>`, is followed with its holder: `v.g.f = e`.
-//!
-//! Where no creation point of a layout is seen, `new (C as any)()`, its constructor alone stands in for them.
-
-use super::flows::Reach;
-use crate::atom::Atom;
+use super::FieldKey;
+use super::flows::LayoutUsage;
 use crate::bind::{Decl, Parent, PatParent, SymbolId};
 use crate::check::Checker;
-use crate::hir::{Chain, ClassId, ExprId, ExprKind, ExprTag, File, FileKind, Flags, FnBody, FnId, FnKind, MemberKind, PatKind, PropKey, PropKind, StmtId, StmtKind, VarDeclId};
+use crate::hir::{Chain, ClassId, ExprId, ExprKind, ExprTag, File, FileKind, Flags, FnBody, FnId, FnKind, MemberKind, PatKind, PropKind, StmtId, StmtKind, VarDeclId};
 use crate::program::FileId;
 use crate::types::TypeId;
 use crate::util::{FxHashMap, FxHashSet};
 use std::hash::Hash;
 use std::rc::Rc;
 
-/// What has been noted of creation points. `T`: what a type is called by. The types are `layout_defining_type`.
 pub(crate) struct Creations<T = TypeId> {
-    /// By layout, and whether it is the constructor that stands in: the number of creation points.
     points: FxHashMap<(T, bool), u32>,
-    /// By field of such a layout: at how many of them it is set on every path. An entry with 0: at some, on some path.
-    set: FxHashMap<(T, bool, Atom), u32>,
+    set: FxHashMap<(T, bool, FieldKey), u32>,
 }
 
 impl<T> Default for Creations<T> {
@@ -50,7 +30,6 @@ impl<T: Copy + Eq + Hash> Creations<T> {
         }
     }
 
-    /// What `rename` has no name for is left out.
     pub(super) fn renamed<U: Copy + Eq + Hash>(self, rename: &mut impl FnMut(T) -> Option<U>) -> Creations<U> {
         let mut renamed = Creations::default();
         for ((layout, by_constructor), count) in self.points {
@@ -68,7 +47,6 @@ impl<T: Copy + Eq + Hash> Creations<T> {
 }
 
 impl Creations<TypeId> {
-    /// In no order: `IndexedCreations::apply` sorts.
     pub(super) fn by_layout_index(&self, index_of: &FxHashMap<TypeId, u32>) -> IndexedCreations {
         IndexedCreations {
             points: self.points.iter().filter_map(|(&(layout, by_constructor), &count)| Some((*index_of.get(&layout)?, by_constructor, count))).collect(),
@@ -77,15 +55,13 @@ impl Creations<TypeId> {
     }
 }
 
-/// `Creations`, with the index of a view in the place of its type.
 pub(crate) struct IndexedCreations {
     points: Vec<(u32, bool, u32)>,
-    set: Vec<(u32, bool, Atom, u32)>,
+    set: Vec<(u32, bool, FieldKey, u32)>,
 }
 
 impl IndexedCreations {
-    /// `views`: a row for each view. A type that is frozen and no view is numbered after them. It has no layout, so nothing is kept of it.
-    pub(super) fn apply(self, views: &mut [Reach]) {
+    pub(super) fn apply(self, views: &mut [LayoutUsage]) {
         let layout_count = views.len() as u32;
         let mut points = vec![[0u32; 2]; views.len()];
         for (view, by_constructor, count) in self.points.into_iter().filter(|of| of.0 < layout_count) {
@@ -98,25 +74,21 @@ impl IndexedCreations {
             }
         }
         for reach in views.iter_mut() {
-            reach.set_at_creation.sort_unstable_by_key(|field| field.0.0);
+            reach.set_at_creation.sort_unstable_by_key(|field| field.0.order());
         }
     }
 }
 
-/// An object since its allocation.
 #[derive(Clone, Default)]
 struct Fresh {
-    /// `layout_defining_type` of the static types it has had.
     types: Vec<TypeId>,
-    /// The fields that are set on every path, and those that are set on some path only.
-    always: Vec<Atom>,
-    sometimes: Vec<Atom>,
-    /// By field: the fresh object that is stored there on every path.
-    parts: Vec<(Atom, Fresh)>,
+    always: Vec<FieldKey>,
+    sometimes: Vec<FieldKey>,
+    parts: Vec<(FieldKey, Fresh)>,
 }
 
 impl Fresh {
-    fn set(&mut self, name: Atom, is_on_every_path: bool) {
+    fn set(&mut self, name: FieldKey, is_on_every_path: bool) {
         if self.always.contains(&name) {
             return;
         }
@@ -128,7 +100,6 @@ impl Fresh {
         }
     }
 
-    /// Adds what the constructor `other` does to the same object.
     fn extend(&mut self, other: &Fresh) {
         for &name in &other.always {
             self.set(name, true);
@@ -142,7 +113,6 @@ impl Fresh {
         }
     }
 
-    /// What holds whichever of the two the object is.
     fn either(self, mut other: Fresh) -> Fresh {
         let mut both = Fresh { types: self.types, ..Fresh::default() };
         for ty in other.types {
@@ -165,36 +135,32 @@ impl Fresh {
     }
 }
 
-/// The object that stores are looked for.
 #[derive(Copy, Clone)]
 enum Root {
     This,
     Local(SymbolId),
 }
 
-/// A creation point that a function contributes.
 struct Point {
     ty: TypeId,
     by_constructor: bool,
-    always: Vec<Atom>,
-    sometimes: Vec<Atom>,
+    always: Vec<FieldKey>,
+    sometimes: Vec<FieldKey>,
 }
 
 #[derive(Default)]
 pub(super) struct State {
-    /// By function: what it returns, if it is a factory.
     returned: FxHashMap<(FileId, FnId), Option<Rc<Fresh>>>,
-    /// By constructor or constructor function: what it does to `this`.
     constructor_effects: FxHashMap<(FileId, FnId), Rc<Fresh>>,
-    /// By class: what `new` does to the object, with the field initializers and the classes it extends.
     constructed: FxHashMap<(FileId, ClassId), Rc<Fresh>>,
     functions_in_progress: Vec<(FileId, FnId)>,
     classes_in_progress: Vec<(FileId, ClassId)>,
-    /// By file: the notes of its functions, sorted by function. `NONE`: the top level.
     notes: FxHashMap<FileId, Rc<Vec<(FnId, Point)>>>,
+    property_store_roots: Option<(FileId, Rc<FxHashSet<SymbolId>>)>,
 }
 
-/// The expression without `as`, `!` and `satisfies` around it.
+const MAX_SIBLINGS_WALKED_UNCONDITIONALLY: usize = 64;
+
 fn unwrapped(hir: &File, mut e: ExprId) -> ExprId {
     while let ExprKind::As { expr, .. } | ExprKind::NonNull(expr) | ExprKind::Satisfies { expr, .. } = hir[e].kind {
         e = expr;
@@ -203,10 +169,7 @@ fn unwrapped(hir: &File, mut e: ExprId) -> ExprId {
 }
 
 impl<'p, 's> Checker<'p, 's> {
-    // ───────────────────────────── what is noted ─────────────────────────────
 
-    /// Notes the creation points and the allocation sites in the body of the function, nested functions aside. `NONE`: in the top level
-    /// of the file.
     pub fn record_creations_in(&mut self, file: FileId, func: FnId) {
         let notes = self.creation_notes_for(file);
         let from = notes.partition_point(|note| note.0.0 < func.0);
@@ -215,7 +178,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Notes what the constructor of the class does, declared or not, for a layout without creation points.
     pub fn record_construction_of(&mut self, file: FileId, class: ClassId) {
         let mut fresh = (*self.fresh_from_class_constructor(file, class)).clone();
         let instances = self.class_instance_type(file, class);
@@ -228,13 +190,13 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn add_creation_note(&mut self, point: &Point) {
-        let noted = self.recorded_creations();
-        *noted.points.entry((point.ty, point.by_constructor)).or_default() += 1;
+        let recorded = self.recorded_creations();
+        *recorded.points.entry((point.ty, point.by_constructor)).or_default() += 1;
         for &name in &point.always {
-            *noted.set.entry((point.ty, point.by_constructor, name)).or_default() += 1;
+            *recorded.set.entry((point.ty, point.by_constructor, name)).or_default() += 1;
         }
         for &name in &point.sometimes {
-            noted.set.entry((point.ty, point.by_constructor, name)).or_default();
+            recorded.set.entry((point.ty, point.by_constructor, name)).or_default();
         }
     }
 
@@ -256,7 +218,6 @@ impl<'p, 's> Checker<'p, 's> {
             return notes;
         }
         let index = self.file_exprs_by_kind(file);
-        // The allocations and factory calls that are followed from somewhere else.
         let mut followed: FxHashSet<ExprId> = FxHashSet::default();
         for (func, f) in hir.fns.iter().enumerate() {
             let func = FnId(func as u32);
@@ -268,7 +229,7 @@ impl<'p, 's> Checker<'p, 's> {
             let body: Vec<StmtId> = hir.ids(body).collect();
             let mut fresh = Fresh::default();
             self.follow(file, &body, Root::This, true, &mut fresh, &mut followed);
-            if has_this {
+            if has_this && self.allocates_for_unknown_callers(file, func) {
                 let this = self.type_of_this_parameter(file, func);
                 self.add_static_type(&mut fresh, this);
                 add_points(&fresh, true, func, &mut notes);
@@ -315,7 +276,6 @@ impl<'p, 's> Checker<'p, 's> {
                     outer = parent;
                 }
                 let goes_on = match bound.expr_parent[outer.idx()] {
-                    // It is followed with the literal, with the object of the class.
                     Parent::Prop(prop) => hir[prop].kind == PropKind::Init && bound.prop_owner[prop.idx()].is_some() && matches!(hir[bound.prop_owner[prop.idx()]].kind, ExprKind::Object(_)),
                     Parent::MemberInit(_) => true,
                     Parent::FnBody(_) => func.is_some() && self.factory_result(file, func).is_some(),
@@ -330,9 +290,6 @@ impl<'p, 's> Checker<'p, 's> {
         notes
     }
 
-    // ───────────────────────────── fresh expressions ─────────────────────────────
-
-    /// `layout_defining_type` of the type, if it says which properties its objects have.
     pub(super) fn layout_type_of(&mut self, ty: TypeId) -> Option<TypeId> {
         let ty = self.non_nullable(ty);
         if self.is_uninformative(ty) || self.is_union(ty) || !self.declares_properties(ty) {
@@ -349,7 +306,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// The object that the expression yields, if it is fresh.
     fn fresh_from(&mut self, file: FileId, e: ExprId) -> Option<Fresh> {
         if self.is_half_of_stack_in_use() {
             return None;
@@ -360,9 +316,9 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::As { expr, .. } => self.fresh_from(file, expr)?,
             ExprKind::Object(props) => {
                 let mut fresh = Fresh::default();
-                let mut written: FxHashSet<Atom> = FxHashSet::default();
+                let mut written: FxHashSet<FieldKey> = FxHashSet::default();
                 for p in props.iter() {
-                    let PropKey::Name(name) = hir[p].key else { continue };
+                    let Some(name) = self.field_key(file, hir[p].key) else { continue };
                     if hir[p].kind == PropKind::Spread {
                         continue;
                     }
@@ -392,20 +348,18 @@ impl<'p, 's> Checker<'p, 's> {
         Some(fresh)
     }
 
-    /// What `new` has done to the object when the expression `e` yields it.
     fn fresh_from_new(&mut self, file: FileId, e: ExprId) -> Fresh {
-        let made = self.type_of_expr(file, e);
-        let made = self.non_nullable(made);
-        if let Some((of, class)) = self.class_for_type(made, false) {
+        let created = self.type_of_expr(file, e);
+        let created = self.non_nullable(created);
+        if let Some((of, class)) = self.class_for_type(created, false) {
             return (*self.fresh_from_class_constructor(of, class)).clone();
         }
-        if self.is_uninformative(made) {
+        if self.is_uninformative(created) {
             return Fresh::default();
         }
-        // Which function is called is not known. It declares a `this` that the object is of.
         let mut found: Option<Fresh> = None;
         for (of, func) in self.constructor_functions() {
-            if !self.may_construct((of, func), made) {
+            if !self.may_construct((of, func), created) {
                 continue;
             }
             let stored = (*self.constructor_effects_of(of, func)).clone();
@@ -421,7 +375,6 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(known) = self.aot.creation.constructed.get(&(file, class)) {
             return known.clone();
         }
-        // A class that constructs itself while it is constructed.
         if self.aot.creation.classes_in_progress.contains(&(file, class)) {
             return Rc::default();
         }
@@ -436,7 +389,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         for m in hir[class].members.iter() {
             let member = &hir[m];
-            let PropKey::Name(name) = member.key else { continue };
+            let Some(name) = self.field_key(file, member.key) else { continue };
             if member.kind != MemberKind::Property || member.flags.contains(Flags::STATIC) || member.init.is_none() {
                 continue;
             }
@@ -451,7 +404,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if hir[p].flags.contains(Flags::PARAMETER_PROPERTY)
                     && let PatKind::Ident(name) = hir[hir[p].pat].kind
                 {
-                    fresh.set(name, true);
+                    fresh.set(FieldKey::Name(name), true);
                 }
             }
             let stored = self.constructor_effects_of(file, constructor);
@@ -463,7 +416,6 @@ impl<'p, 's> Checker<'p, 's> {
         fresh
     }
 
-    /// What the body of a constructor or a constructor function does to `this`.
     fn constructor_effects_of(&mut self, file: FileId, func: FnId) -> Rc<Fresh> {
         if let Some(known) = self.aot.creation.constructor_effects.get(&(file, func)) {
             return known.clone();
@@ -484,9 +436,6 @@ impl<'p, 's> Checker<'p, 's> {
         fresh
     }
 
-    // ───────────────────────────── factories ─────────────────────────────
-
-    /// What a call of the function yields, if it is a factory. A function that returns what it yields itself is none.
     fn factory_result(&mut self, file: FileId, func: FnId) -> Option<Rc<Fresh>> {
         if let Some(known) = self.aot.creation.returned.get(&(file, func)) {
             return known.clone();
@@ -501,7 +450,6 @@ impl<'p, 's> Checker<'p, 's> {
         found
     }
 
-    /// The values of the `return`s. `NONE` for one without a value.
     pub(super) fn returned_values(&self, file: FileId, func: FnId) -> Vec<ExprId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         match hir[func].body {
@@ -559,7 +507,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Whether the function is a factory and the local is what one of its `return`s yields: the object is followed in the callers.
     fn is_returned_by_factory(&mut self, file: FileId, func: FnId, symbol: SymbolId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let is_returned = self.returned_values(file, func).into_iter().any(|value| {
@@ -569,9 +516,6 @@ impl<'p, 's> Checker<'p, 's> {
         is_returned && self.factory_result(file, func).is_some()
     }
 
-    // ───────────────────────────── following an object ─────────────────────────────
-
-    /// `const v = <fresh>`: the object at the end of the block. `None`: the initializer is not fresh, or a pattern takes it apart.
     fn fresh_in_local(&mut self, file: FileId, d: VarDeclId, followed: &mut FxHashSet<ExprId>) -> Option<Fresh> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let declaration = &hir[d];
@@ -584,14 +528,54 @@ impl<'p, 's> Checker<'p, 's> {
         let declared = self.type_of_symbol(self.files().sym(file, symbol));
         self.add_static_type(&mut fresh, declared);
         let stmt = bound.var_stmt[d.idx()];
-        if stmt.is_some() {
+        if stmt.is_some() && (self.sibling_count(file, stmt) <= MAX_SIBLINGS_WALKED_UNCONDITIONALLY || self.property_store_roots(file).contains(&symbol)) {
             let rest = self.statements_after(file, stmt);
             self.follow(file, &rest, Root::Local(symbol), true, &mut fresh, followed);
         }
         Some(fresh)
     }
 
-    /// The statements that come after the statement in its block.
+    fn property_store_roots(&mut self, file: FileId) -> Rc<FxHashSet<SymbolId>> {
+        if let Some((of, known)) = &self.aot.creation.property_store_roots
+            && *of == file
+        {
+            return known.clone();
+        }
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut roots = FxHashSet::default();
+        for e in hir.exprs.iter() {
+            let ExprKind::Assign { target, .. } = e.kind else { continue };
+            let ExprKind::Dot { obj, chain: Chain::No, .. } = hir[unwrapped(hir, target)].kind else { continue };
+            let obj = unwrapped(hir, obj);
+            let root = match hir[obj].kind {
+                ExprKind::Dot { obj: holder, chain: Chain::No, .. } => unwrapped(hir, holder),
+                _ => obj,
+            };
+            if matches!(hir[root].kind, ExprKind::Ident(_)) {
+                roots.insert(bound.expr_symbol[root.idx()]);
+            }
+        }
+        let roots = Rc::new(roots);
+        self.aot.creation.property_store_roots = Some((file, roots.clone()));
+        roots
+    }
+
+    fn sibling_count(&self, file: FileId, stmt: StmtId) -> usize {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        match bound.stmt_parent[stmt.idx()] {
+            Parent::FnBody(func) => match hir[func].body {
+                FnBody::Block(block) => hir.ids(block).len(),
+                _ => 0,
+            },
+            Parent::Stmt(parent) if parent.is_some() => match hir[parent].kind {
+                StmtKind::Block(block) => hir.ids(block).len(),
+                _ => 0,
+            },
+            Parent::File => hir.ids(hir.body).len(),
+            _ => 0,
+        }
+    }
+
     fn statements_after(&self, file: FileId, stmt: StmtId) -> Vec<StmtId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let block = match bound.stmt_parent[stmt.idx()] {
@@ -609,8 +593,6 @@ impl<'p, 's> Checker<'p, 's> {
         hir.ids(block).skip_while(|&other| other != stmt).skip(1).collect()
     }
 
-    /// Adds what the statements store to the object. Nested functions are not entered. `false`: the object is not followed any further,
-    /// the local is reassigned or control leaves.
     fn follow(&mut self, file: FileId, stmts: &[StmtId], root: Root, is_on_every_path: bool, fresh: &mut Fresh, followed: &mut FxHashSet<ExprId>) -> bool {
         let hir = self.hir(file);
         for &stmt in stmts {
@@ -653,7 +635,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// An expression statement. `false`: it reassigns the local.
     fn follow_store(&mut self, file: FileId, e: ExprId, root: Root, is_on_every_path: bool, fresh: &mut Fresh, followed: &mut FxHashSet<ExprId>) -> bool {
         let hir = self.hir(file);
         let ExprKind::Assign { op, target, value } = hir[e].kind else { return true };
@@ -665,7 +646,14 @@ impl<'p, 's> Checker<'p, 's> {
         if matches!(hir[target].kind, ExprKind::Ident(_)) {
             return !self.is_root(file, target, root);
         }
-        let ExprKind::Dot { obj, name, chain: Chain::No, .. } = hir[target].kind else { return true };
+        let (obj, name) = match hir[target].kind {
+            ExprKind::Dot { obj, name, chain: Chain::No, .. } => (obj, FieldKey::Name(name)),
+            ExprKind::Index { obj, index, chain: Chain::No } => match self.constant_symbol_named_by(file, index) {
+                Some(symbol) => (obj, FieldKey::Symbol(symbol.declaration)),
+                None => return true,
+            },
+            _ => return true,
+        };
         let obj = unwrapped(hir, obj);
         if self.is_root(file, obj, root) {
             fresh.set(name, is_on_every_path);
@@ -679,7 +667,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         } else if let ExprKind::Dot { obj: holder, name: find_stored_values, chain: Chain::No, .. } = hir[obj].kind
             && self.is_root(file, unwrapped(hir, holder), root)
-            && let Some(part) = fresh.parts.iter_mut().find(|part| part.0 == find_stored_values)
+            && let Some(part) = fresh.parts.iter_mut().find(|part| part.0 == FieldKey::Name(find_stored_values))
         {
             part.1.set(name, is_on_every_path);
         }
@@ -687,7 +675,6 @@ impl<'p, 's> Checker<'p, 's> {
     }
 }
 
-/// A creation point of every static type that the object has had, and of the fresh objects in its fields.
 fn add_points(fresh: &Fresh, by_constructor: bool, func: FnId, notes: &mut Vec<(FnId, Point)>) {
     for &ty in &fresh.types {
         notes.push((func, Point { ty, by_constructor, always: fresh.always.clone(), sometimes: fresh.sometimes.clone() }));

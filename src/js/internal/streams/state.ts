@@ -90,15 +90,15 @@ interface AfterWriteTickInfo {
 // What readable.ts, writable.ts and transform.ts hand to each other without a require cycle.
 class Internals {
   pushToReadable: ((stream: any, state: ReadableState, chunk: any, encoding: any) => boolean) | undefined = undefined;
-  methodThatPushes: Function | undefined = undefined;
+  pushingMethod: Function | undefined = undefined;
   bindOnwrite: ((stream: any, state: WritableState) => WriteCallback) | undefined = undefined;
   onReadableConstructed: ((stream: any, state: ReadableState) => void) | undefined = undefined;
   onWritableConstructed: ((stream: any, state: WritableState) => void) | undefined = undefined;
   writeToWritable: ((stream: any, state: WritableState, chunk: any, encoding: any, cb: any) => any) | undefined = undefined;
-  methodThatWrites: Function | undefined = undefined;
+  writingMethod: Function | undefined = undefined;
   constructReadable: ((stream: any, highWaterMark: unknown) => void) | undefined = undefined;
-  resumeInItsTick: ((stream: any, state: ReadableState) => void) | undefined = undefined;
-  endInItsTick: ((state: ReadableState, stream: any) => void) | undefined = undefined;
+  resumeOnNextTick: ((stream: any, state: ReadableState) => void) | undefined = undefined;
+  endOnNextTick: ((state: ReadableState, stream: any) => void) | undefined = undefined;
 }
 
 const internals = new Internals();
@@ -874,7 +874,7 @@ function createReadableState(options, stream, isDuplex: boolean): ReadableState 
   return new ReadableState(options, stream, isDuplex);
 }
 
-function createReadableStateOfBytes(highWaterMark: unknown): ReadableState {
+function createByteReadableState(highWaterMark: unknown): ReadableState {
   const state = new ReadableState(undefined, undefined, false);
   if (highWaterMark != null) {
     if (typeof highWaterMark !== "number" || !NumberIsInteger(highWaterMark) || highWaterMark < 0) {
@@ -919,7 +919,7 @@ export default {
   ReadableState,
   WritableState,
   createReadableState,
-  createReadableStateOfBytes,
+  createByteReadableState,
   createWritableState,
   isReadableState,
   isWritableState,

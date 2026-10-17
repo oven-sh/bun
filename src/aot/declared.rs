@@ -1,6 +1,3 @@
-//! What a value is, in terms the compiler behind the front end can read. It comes from the type checker and from nowhere else, and the
-//! engine takes it for a fact: it tests nothing that a type says.
-
 use crate::id::{LayoutId, StrId, TyId};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
@@ -18,28 +15,21 @@ pub mod prim {
     pub const LITERAL_STRING: u32 = 1 << 8;
     pub const BOOLEAN: u32 = FALSE | TRUE;
     pub const NULLISH: u32 = UNDEFINED | NULL;
-    /// Kept as a reference, as objects and functions are.
     pub const CELLS: u32 = STRING | SYMBOL | BIGINT | LITERAL_STRING;
     pub const ALL: u32 = (1 << 8) - 1;
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub enum Part {
-    /// An object of the type of the program with this layout, a class, an interface, an alias, a type literal: one whose own layout is
-    /// among the members of this one.
     Class(LayoutId),
-    /// An instance of a class that the program only knows the declaration of, by its name, with its type arguments.
     Global(StrId, SmallVec<[TyId; 2]>),
-    /// `T[]`, a tuple. The type of the elements is what they are expected to be: nothing keeps anyone from storing something else.
     Array(TyId),
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Default)]
 pub struct Declared {
     pub prims: u32,
-    /// Only these numbers, all of them integers: the least and the most.
     pub ints: Option<(i64, i64)>,
-    /// Sorted.
     pub parts: SmallVec<[Part; 1]>,
     pub any_object: bool,
     pub any_function: bool,
@@ -55,9 +45,8 @@ impl Declared {
     pub fn int(value: i64) -> Declared {
         Declared::ints(value, value)
     }
-    /// Integers from the least to the most.
-    pub fn ints(least: i64, most: i64) -> Declared {
-        Declared { ints: Some((least, most)), ..Declared::default() }
+    pub fn ints(minimum: i64, maximum: i64) -> Declared {
+        Declared { ints: Some((minimum, maximum)), ..Declared::default() }
     }
     pub fn part(part: Part) -> Declared {
         let mut parts = SmallVec::new();
@@ -79,19 +68,14 @@ impl Declared {
     pub fn has_objects(&self) -> bool {
         self.any_object || self.any_function || !self.parts.is_empty()
     }
-    /// Primitives of more than one kind and no object: `boolean | number | string`. Nil is no kind. It is kept boxed: where it is kept there is room for any value.
     pub fn has_multiple_primitive_kinds(&self) -> bool {
         let kinds = [prim::BOOLEAN, prim::STRING, prim::SYMBOL, prim::BIGINT].iter().filter(|&&kind| self.prims & kind != 0).count();
         let numbers = usize::from(self.prims & prim::NUMBER != 0 || self.ints.is_some());
         !self.has_objects() && kinds + numbers > 1
     }
-    /// Whether some of it is kept as a reference.
     pub fn has_cells(&self) -> bool {
         self.prims & prim::CELLS != 0 || self.has_objects()
     }
-    /// A reference may be nil, whatever the source says: a field that nothing has been stored to yet, `undefined!`, the `parent` of a
-    /// root. What cannot do with `undefined` or `null` tests for them, as the language has it. A number or a boolean is only what its
-    /// type says.
     pub fn nullable(mut self) -> Declared {
         if self.has_cells() {
             self.prims |= prim::NULLISH;
@@ -107,16 +91,13 @@ impl Declared {
         }
         self
     }
-    /// The layout, if it is objects of one type of the program, or nil, and nothing else.
     pub fn single_layout(&self) -> Option<LayoutId> {
         match self.parts[..] {
-            [Part::Class(layout)] if self.prims & !prim::NULLISH == 0 && self.ints.is_none() && !self.any_object && !self.any_function => Some(layout),
+            [Part::Class(layout)] if layout.is_some() && self.prims & !prim::NULLISH == 0 && self.ints.is_none() && !self.any_object && !self.any_function => Some(layout),
             _ => None,
         }
     }
 
-    /// Whether the other description has room for all that this one has, going by the two alone: a layout is within itself only. What an
-    /// array or an instance of a class of the engine holds makes no difference.
     pub fn is_subset_of(&self, other: &Declared) -> bool {
         let is_part_subset = |part: &Part| {
             other.parts.iter().any(|within| match (part, within) {
@@ -128,11 +109,10 @@ impl Declared {
         self.prims & !other.prims == 0
             && (!self.any_object || other.any_object)
             && (!self.any_function || other.any_function)
-            && self.ints.is_none_or(|(least, most)| other.prims & prim::NUMBER != 0 || other.ints.is_some_and(|within| within.0 <= least && most <= within.1))
+            && self.ints.is_none_or(|(minimum, maximum)| other.prims & prim::NUMBER != 0 || other.ints.is_some_and(|within| within.0 <= minimum && maximum <= within.1))
             && (other.any_object || self.parts.iter().all(is_part_subset))
     }
 
-    /// Either.
     pub fn or(&self, other: &Declared) -> Declared {
         let prims = self.prims | other.prims;
         let ints = if prims & prim::NUMBER != 0 {
@@ -245,5 +225,18 @@ impl DeclaredTable {
     pub fn close(&mut self) {
         self.ids = FxHashMap::default();
         self.plain_ids = Vec::new();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Declared, Part};
+    use crate::id::LayoutId;
+
+    #[test]
+    fn class_without_layout_has_no_single_layout() {
+        let of_class = |layout: LayoutId| Declared { parts: [Part::Class(layout)].into_iter().collect(), ..Declared::default() };
+        assert_eq!(of_class(LayoutId::new(3)).single_layout(), Some(LayoutId::new(3)));
+        assert_eq!(of_class(LayoutId::NONE).single_layout(), None);
     }
 }

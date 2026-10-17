@@ -25,7 +25,7 @@ element-getter-read-message: 1 layouts, 0 given, 0 open, places 67 of 93, reads 
 element-getter-read-optional: 0 layouts, 0 given, 0 open, places 38 of 62, reads 6 of 15
 element-getter-read: 1 layouts, 0 given, 0 open, places 87 of 124, reads 19 of 35
 element-reads-with-accessors: 0 layouts, 0 given, 0 open, places 36 of 56, reads 2 of 13
-element-reads-with-double-keys: 2 layouts, 15 given, 2 open, places 96 of 117, reads 7 of 20
+element-reads-with-double-keys: 2 layouts, 1 given, 2 open, places 96 of 117, reads 7 of 20
 entries-loops-around-try: 1 layouts, 0 given, 1 open, places 141 of 159, reads 34 of 65
 frozen-array-error-messages: 2 layouts, 0 given, 2 open, places 207 of 538, reads 25 of 334
 frozen-sealed-non-extensible: 2 layouts, 0 given, 2 open, places 183 of 462, reads 21 of 236
@@ -43,8 +43,8 @@ map-callback-3-index-accessor: 0 layouts, 0 given, 0 open, places 12 of 21, read
 map-in-split-function: 1 layouts, 0 given, 0 open, places 58 of 68, reads 11 of 23
 map-no-index-accessor-control: 0 layouts, 0 given, 0 open, places 12 of 21, reads 7 of 14
 map-small-array: 0 layouts, 0 given, 0 open, places 5 of 13, reads 4 of 8
-method-calls-on-unescaped-receivers-untyped: 1 layouts, 0 given, 0 open, places 2570 of 4164, reads 25 of 1733
-method-calls-on-unescaped-receivers: 1 layouts, 0 given, 0 open, places 2845 of 4164, reads 42 of 1650
+method-calls-on-unescaped-receivers-untyped: 1 layouts, 0 given, 0 open, places 2554 of 4148, reads 25 of 1733
+method-calls-on-unescaped-receivers: 1 layouts, 0 given, 0 open, places 2829 of 4148, reads 42 of 1650
 method-results-every-length: 3 layouts, 0 given, 0 open, places 78 of 91, reads 17 of 24
 methods-on-odd-arrays: 1 layouts, 0 given, 2 open, places 91 of 156, reads 6 of 17
 mutated-arrays-passed-to-runtime: 0 layouts, 0 given, 1 open, places 18 of 56, reads 1 of 38
@@ -93,4 +93,4 @@ spreads-in-loops: 1 layouts, 0 given, 1 open, places 65 of 82, reads 2 of 10
 typed-arrays-in-uncounted-loops: 1 layouts, 0 given, 1 open, places 71 of 83, reads 24 of 34
 typed-element-reads-slow-path: 3 layouts, 0 given, 1 open, places 70 of 118, reads 13 of 28
 typed-reads-by-number-keys: 2 layouts, 0 given, 1 open, places 52 of 65, reads 14 of 20
-untyped-element-reads-slow-path: 2 layouts, 15 given, 2 open, places 105 of 136, reads 8 of 25
+untyped-element-reads-slow-path: 2 layouts, 1 given, 2 open, places 105 of 136, reads 8 of 25

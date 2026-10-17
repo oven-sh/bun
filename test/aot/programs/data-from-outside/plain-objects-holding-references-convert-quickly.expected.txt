@@ -1,0 +1,18 @@
+0 own own r null -
+399 a x+y R n - cached
+70 true id,author,tags,render,note {"id":70,"author":{"nick":"a","editor":null},"tags":["x","y"],"note":"n"}
+{"id":70,"author":{"nick":"a","editor":null},"tags":["x","y"],"note":"n","added":1} 70 a x+y R n -
+2 a x+y R [object Object] -
+3 a x+y R undefined -
+TypeError: expected Post, got untyped object
+TypeError: expected Post, got untyped object
+TypeError: expected Post, got untyped object
+TypeError: expected Post, got untyped object
+TypeError: expected Post, got untyped object
+TypeError: Cannot read properties of null (reading 'nick')
+10.5 a x+y R 0 -
+TypeError: expected Post, got untyped object
+12 a x+y r 0 -
+13 a s R  -
+14 a x+y R Symbol(Symbol.iterator) -
+15 a x+y R 15 -

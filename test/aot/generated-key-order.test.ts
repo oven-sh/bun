@@ -1,4 +1,4 @@
-import { program } from "./generated/order-of-keys";
+import { program } from "./generated/key-order";
 import { generated } from "./generated/run-generated";
 
 generated(

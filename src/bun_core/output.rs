@@ -623,7 +623,7 @@ pub mod stdio {
         pub(crate) safe static bun_is_stdio_null: [AtomicI32; 3];
         /// No preconditions; one-shot stdio fixup at process startup.
         pub(crate) safe fn bun_initialize_process();
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         pub(crate) safe fn bun_remember_inherited_file_descriptors();
         /// No preconditions; restores TTY state on the standard streams.
         #[cfg(not(windows))]
@@ -649,7 +649,7 @@ pub mod stdio {
     }
 
     pub fn init() {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         if super::argv().any(|arg| arg.starts_with(b"--aot") || arg == b"--debug-aot") {
             bun_remember_inherited_file_descriptors();
         }

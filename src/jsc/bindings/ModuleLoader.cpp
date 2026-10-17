@@ -768,10 +768,15 @@ private:
 
 static JSValue compiledFileNumber(JSGlobalObject* globalObject, JSObject* files, const String& path)
 {
-    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Identifier name = Identifier::fromString(vm, path);
+    if (JSValue remembered = files->getDirect(vm, name))
+        return remembered.isInt32() ? remembered : JSValue();
     auto list = CompiledFileList::create(globalObject, files);
     RETURN_IF_EXCEPTION(scope, {});
     auto number = list ? list->find(path) : std::nullopt;
+    files->putDirect(vm, name, number ? jsNumber(*number) : jsNull());
     return number ? jsNumber(*number) : JSValue();
 }
 
@@ -814,7 +819,7 @@ static bool isCompiledProgramFile(Zig::GlobalObject* globalObject, const String&
 
 extern "C" bool Bun__isCompiledProgramFile(Zig::GlobalObject* globalObject, const BunString* path)
 {
-    if (!hasFilesOfCompiledProgram(globalObject)) [[likely]]
+    if (!hasCompiledProgramFiles(globalObject)) [[likely]]
         return false;
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
     bool isFile = isCompiledProgramFile(globalObject, path->toWTFString());
@@ -850,7 +855,7 @@ static bool evaluateCompiledProgramFile(Zig::GlobalObject* globalObject, JSCommo
 
 bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject* globalObject, JSCommonJSModule* target, const String& path, bool isTypeScriptLoader)
 {
-    if (!hasFilesOfCompiledProgram(globalObject) || target->moduleGraph() || target->m_overriddenCompile || globalObject->hasOverriddenModuleWrapper) [[likely]]
+    if (!hasCompiledProgramFiles(globalObject) || target->moduleGraph() || target->m_overriddenCompile || globalObject->hasOverriddenModuleWrapper) [[likely]]
         return false;
     bool isTypeScriptFile = path.endsWith(".ts"_s) || path.endsWith(".tsx"_s) || path.endsWith(".mts"_s) || path.endsWith(".cts"_s);
     if (isTypeScriptFile != isTypeScriptLoader)
@@ -903,30 +908,19 @@ NEVER_INLINE static void registerEvaluatedCompiledProgramFiles(Zig::GlobalObject
     RETURN_IF_EXCEPTION(scope, );
     if (!wasRead.isUndefined())
         return;
-    JSValue table = JSC::AOT::Typed::evaluateBuiltinModule(globalObject, compiledProgramFilesByPath);
-    RETURN_IF_EXCEPTION(scope, );
-    JSObject* files = table.getObject();
-    if (!files)
-        return;
-    auto list = CompiledFileList::create(globalObject, files);
-    RETURN_IF_EXCEPTION(scope, );
-    if (!list)
-        return;
-    list->forEach([&](int32_t number, std::span<const Latin1Character>) {
-        queryCompiledProgram(globalObject, jsNumber(number), jsUndefined(), 8, jsUndefined());
-        return scope.exception() ? IterationStatus::Done : IterationStatus::Continue;
-    });
+    scope.release();
+    queryCompiledProgram(globalObject, jsNumber(0), jsUndefined(), 8, jsUndefined());
 }
 
-void noteThatRequireCacheIsRead(Zig::GlobalObject* globalObject)
+void recordRequireCacheRead(Zig::GlobalObject* globalObject)
 {
-    if (hasFilesOfCompiledProgram(globalObject)) [[unlikely]]
+    if (hasCompiledProgramFiles(globalObject)) [[unlikely]]
         registerEvaluatedCompiledProgramFiles(globalObject);
 }
 
 void evictCompiledModule(Zig::GlobalObject* globalObject, const String& path)
 {
-    if (!hasFilesOfCompiledProgram(globalObject)) [[likely]]
+    if (!hasCompiledProgramFiles(globalObject)) [[likely]]
         return;
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -938,14 +932,14 @@ void evictCompiledModule(Zig::GlobalObject* globalObject, const String& path)
 
 JSC::JSObject* evaluatedCompiledModuleNamespace(Zig::GlobalObject* globalObject, const String& path)
 {
-    if (!hasFilesOfCompiledProgram(globalObject)) [[likely]]
+    if (!hasCompiledProgramFiles(globalObject)) [[likely]]
         return nullptr;
     return queryCompiledProgram(globalObject, jsString(JSC::getVM(globalObject), path), jsUndefined(), 11, jsUndefined()).getObject();
 }
 
 void appendEvaluatedCompiledModules(Zig::GlobalObject* globalObject, JSC::MarkedArgumentBuffer& keys, const WTF::Function<bool(const JSC::Identifier&)>& isAlreadyListed)
 {
-    if (!hasFilesOfCompiledProgram(globalObject)) [[likely]]
+    if (!hasCompiledProgramFiles(globalObject)) [[likely]]
         return;
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -971,7 +965,7 @@ void appendEvaluatedCompiledModules(Zig::GlobalObject* globalObject, JSC::Marked
     });
 }
 
-bool hasFilesOfCompiledProgram(JSC::JSGlobalObject* globalObject)
+bool hasCompiledProgramFiles(JSC::JSGlobalObject* globalObject)
 {
     static const bool has = JSC::AOT::Typed::hasBuiltinModule(globalObject, compiledProgramFilesByPath);
     return has;
@@ -1080,7 +1074,7 @@ JSValue fetchCommonJSModule(
     JSC::JSModuleLoader* loader = Bun::moduleLoaderOf(globalObject, scope, target->moduleGraph());
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (hasFilesOfCompiledProgram(globalObject) && !target->moduleGraph()) [[unlikely]] {
+    if (hasCompiledProgramFiles(globalObject) && !target->moduleGraph()) [[unlikely]] {
         bool hasRun = evaluateCompiledProgramFile(globalObject, target, specifierWtfString);
         RETURN_IF_EXCEPTION(scope, {});
         if (hasRun) {

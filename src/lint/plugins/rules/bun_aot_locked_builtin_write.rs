@@ -10,9 +10,7 @@ use bun_lint_oxlint::ast_util::is_global_reference;
 use smallvec::SmallVec;
 use std::borrow::Cow;
 
-/// Disallow changing the built-in objects that `--aot` makes immutable.
 pub struct AotLockedBuiltinWrite {
-    /// [`root_names`], each with its [`mention_bit`].
     root_names: Box<[(u32, &'static str)]>,
 }
 
@@ -37,11 +35,9 @@ const SET_PROTOTYPE: Message = Message::new(
     "This gives `{{object}}` another prototype, which {{fails}} under `--aot`: built-in objects are immutable there.",
 );
 
-/// What `--aot` does with a change that it rejects_change.
 #[derive(Copy, Clone)]
 enum Refusal {
     Throws,
-    /// The functions of `Reflect`.
     ReturnsFalse,
 }
 
@@ -54,7 +50,6 @@ impl Refusal {
     }
 }
 
-/// A property of a built-in object.
 #[derive(Copy, Clone)]
 struct Place<'p, 'a> {
     builtin: &'static Builtin,
@@ -63,10 +58,8 @@ struct Place<'p, 'a> {
 }
 
 impl<'a> Place<'_, 'a> {
-    /// `Array.prototype.at`, and `Promise` for a property of the global object.
     fn is_named_by(self, e: Expr<'a>) -> bool {
         let e = e.skip_type_wrappers();
-        // It starts as what is written to does.
         let is_this = |object: Expr<'a>| {
             property_name(e).is_some_and(|it| *it == *self.name)
                 && builtin_for_syntax(object, self.alias)
@@ -82,7 +75,6 @@ impl<'a> Place<'_, 'a> {
         }
     }
 
-    /// The `at` of `const at = Array.prototype.at;` and of `const { at } = Array.prototype;`
     fn is_saved_in(self, e: Expr<'a>) -> bool {
         let symbol = e.symbol().filter(|it| !it.has_modifying_references());
         let Some(Declaration::Var(bound)) = symbol.and_then(|it| it.declarations().next()) else {
@@ -104,7 +96,6 @@ impl<'a> Place<'_, 'a> {
         }
     }
 
-    /// `Array.prototype.at`, `Array.prototype.at || function () {}`: what is stored is what is there.
     fn is_kept_by(self, value: Expr<'a>) -> bool {
         let value = value.skip_type_wrappers();
         match value.as_binary() {
@@ -117,8 +108,6 @@ impl<'a> Place<'_, 'a> {
     }
 }
 
-/// What a test asks about the built-in objects, which are all there in Bun. It goes by what is written: where the file declares
-/// an `Array` of its own, what it does to that is not reported either.
 #[derive(Copy, Clone)]
 struct Tests<'a> {
     alias: Alias<'a>,
@@ -143,15 +132,12 @@ impl<'a> Tests<'a> {
         (builtin.zip(name)).and_then(|(builtin, name)| builtin.known_read_result(&name))
     }
 
-    /// `"at"` and `Array.prototype`
     fn has_key(self, key: Expr<'a>, object: Expr<'a>) -> bool {
         (builtin_for_syntax(object, self.alias).zip(key_name(key)))
             .is_some_and(|(object, name)| object.builtin.has(&name))
     }
 
-    /// `Array.prototype.hasOwnProperty("at")`, `Object.hasOwn(Array.prototype, "at")`, `Reflect.has(Array.prototype, "at")`,
-    /// `Object.prototype.hasOwnProperty.call(Array.prototype, "at")`
-    fn is_asked_by(self, call: Call<'a>) -> bool {
+    fn is_tested_by_call(self, call: Call<'a>) -> bool {
         let (callee, args) = (call.callee(), call.args());
         let Some(name) = callee.member_name() else {
             return false;
@@ -163,7 +149,6 @@ impl<'a> Tests<'a> {
         }
     }
 
-    /// `Array.prototype.at`, `typeof Array.prototype.at`
     fn is_compared(self, e: Expr<'a>) -> bool {
         match e.skip_type_wrappers().as_unary() {
             Some((UnOp::Typeof, operand)) => self.known_value(operand).is_some(),
@@ -171,7 +156,6 @@ impl<'a> Tests<'a> {
         }
     }
 
-    /// Whether `test` is always `answer`, because it asks whether something is there that is.
     fn is_always(self, test: Expr<'a>, answer: bool) -> bool {
         let test = test.skip_type_wrappers();
         match test.kind() {
@@ -179,7 +163,6 @@ impl<'a> Tests<'a> {
                 op: UnOp::Not,
                 operand,
             } => self.is_always(operand, !answer),
-            // `a && b` is true only if both are, and false if one is.
             ExprKind::Binary {
                 op: op @ (BinOp::And | BinOp::Or),
                 left,
@@ -230,12 +213,11 @@ impl<'a> Tests<'a> {
                 };
                 self.is_compared(asked) && (is_equal == holds) == answer
             }
-            ExprKind::Call(call) => answer && self.is_asked_by(call),
+            ExprKind::Call(call) => answer && self.is_tested_by_call(call),
             _ => self.known_value(test).is_some_and(|it| it.is_truthy == answer),
         }
     }
 
-    /// Whether `e` never runs: `if (!Array.prototype.at) { e }`
     fn keep_from_running(self, e: Expr<'a>) -> bool {
         let mut child = Node::Expr(e);
         for parent in child.ancestors() {
@@ -272,14 +254,12 @@ impl<'a> Tests<'a> {
     }
 }
 
-/// `Array.prototype`, as `no-extend-native` looks for it: written out, with nothing before or around it.
 fn is_prototype_for_eslint(e: Expr) -> bool {
     let is_builtin = |it: Name| ast_utils::is_ecmascript_global(it.bytes());
     ast_utils::is_specific_member_access(e, None, Some("prototype"))
         && e.object().and_then(Expr::as_ident).is_some_and(is_builtin)
 }
 
-/// What is no object and not `null` is no prototype: `a.__proto__ = 1` does nothing.
 fn is_no_prototype(value: Expr) -> bool {
     let value = value.skip_type_wrappers();
     (ast_utils::is_literal(value) && value.tag() != ExprTag::Null && value.tag() != ExprTag::Regex)
@@ -291,14 +271,12 @@ fn is_current_prototype<'a>(builtin: &Builtin, value: Expr<'a>, alias: Alias<'a>
     builtin_for_syntax(value, alias).is_some_and(|it| it.builtin.name == builtin.inherits)
 }
 
-/// The keys of an object literal, each with where it is. `None`: not all of them are to be seen.
 fn written_keys<'a>(e: Expr<'a>) -> Option<impl Iterator<Item = Prop<'a>>> {
     let properties = e.skip_type_wrappers().as_object()?;
     let is_plain = |it: Prop| it.kind() != PropKind::Spread && literal_key(it).is_some();
     properties.iter().all(is_plain).then(|| properties.iter())
 }
 
-/// The identifier that `e` starts with: the `a` of `(a as any).b.c`.
 #[inline]
 fn root_name(mut e: Expr<'_>) -> Option<Name<'_>> {
     loop {
@@ -315,17 +293,14 @@ fn root_name(mut e: Expr<'_>) -> Option<Name<'_>> {
     }
 }
 
-/// An expression that changes a built-in object, by what is written.
 #[derive(Copy, Clone)]
 struct Write<'a> {
     whole: Expr<'a>,
-    /// The object, and the `Object` of `Object.defineProperty()`.
     written: [Option<Written<'a>>; 2],
     alias: Alias<'a>,
 }
 
 impl Write<'_> {
-    /// Whether it runs, and these are the built-in objects. Asked last.
     fn is_one(self) -> bool {
         let tests = Tests { alias: self.alias };
         !tests.keep_from_running(self.whole)
@@ -334,7 +309,6 @@ impl Write<'_> {
 }
 
 impl AotLockedBuiltinWrite {
-    /// Reports at `at` that `write` makes `change` to the property `name` of `builtin`, if `--aot` rejects_change that.
     fn check_property<'a>(
         at: impl Spanned,
         write: &Write<'a>,
@@ -356,7 +330,6 @@ impl AotLockedBuiltinWrite {
             .data("fails", refusal.text());
     }
 
-    /// Reports at `at` that `write` changes `builtin`.
     fn report_object<'a>(
         at: impl Spanned,
         write: &Write<'a>,
@@ -371,7 +344,6 @@ impl AotLockedBuiltinWrite {
         }
     }
 
-    /// `target = value`, `target += value`, `target++`, `delete target`, which is `whole`. `op` is that of an assignment.
     fn check_target<'a>(
         whole: Expr<'a>,
         target: Expr<'a>,
@@ -421,7 +393,6 @@ impl AotLockedBuiltinWrite {
             },
         );
         let Some(name) = name else {
-            // Whatever the key is, a prototype does not take it.
             if change == Change::Assign && !builtin.is_extensible {
                 Self::report_object(target, &write, (CHANGE, builtin), Refusal::Throws, cx);
             }
@@ -445,7 +416,6 @@ impl AotLockedBuiltinWrite {
         if !builtin.rejects_change(&name, change) {
             return;
         }
-        // `a ||= b` stores nothing over what is there, `a &&= b` nothing where nothing is.
         let place = Place {
             builtin,
             name: &name,
@@ -469,7 +439,6 @@ impl AotLockedBuiltinWrite {
         }
     }
 
-    /// `Object.defineProperty(target, ..)` and the like.
     fn check_call<'a>(e: Expr<'a>, alias: Alias<'a>, cx: &mut Cx<'a, Self>) {
         let Some(call) = e.as_call() else {
             return;
@@ -522,7 +491,6 @@ impl AotLockedBuiltinWrite {
         let is_object = matches!(refusal, Refusal::Throws);
         let change = match called.bytes() {
             b"defineProperty" => return one(Change::Define, cx),
-            // With a receiver of its own it stores there.
             b"set" if !is_object && call.args().len() <= 3 => {
                 let is_kept = |(name, value): (Cow<[u8]>, Expr<'a>)| {
                     let place = Place {
@@ -589,19 +557,14 @@ impl AotLockedBuiltinWrite {
 }
 
 pub struct State<'a> {
-    /// The rules of ESLint that are on and report some of the same places. There this rule says nothing.
     twins: RuleOverlaps,
     prototype: Option<Name<'a>>,
-    /// The `P` of `const P = Array.prototype;`, by what is written.
     aliases: SmallVec<[(VarDecl<'a>, Name<'a>, Written<'a>); 4]>,
-    /// Those of [`root_names`] that the file has.
     root_names: NameSet,
     methods: NameSet,
 }
 
 impl<'a> State<'a> {
-    /// Whether `e` can be a built-in object, a property of one or a global variable that names one, by what it starts with.
-    /// Nearly nothing can, and this is all that is done with the rest.
     #[inline]
     fn can_concern_a_builtin(&self, e: Expr<'a>) -> bool {
         root_name(e).is_some_and(|it| self.root_names.has(it) && self.continues_as_builtin(e))
@@ -735,7 +698,6 @@ impl Rule for AotLockedBuiltinWrite {
         }
     }
 
-    /// `const P = Array.prototype;`
     #[inline]
     fn var_decl<'a>(&self, declaration: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
         let init = match declaration.init() {
@@ -752,7 +714,6 @@ impl Rule for AotLockedBuiltinWrite {
         }
     }
 
-    /// And then `P.last = ..`. Many files have such a `P`, and few write through it: the scopes are asked where one does.
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         if cx.state.aliases.is_empty() {
             return;

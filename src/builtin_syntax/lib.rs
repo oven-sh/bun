@@ -1,31 +1,15 @@
-//! The tables behind `--target=bun_builtins`: which `$name`s exist, what the macros among them
-//! expand to, and which registry id a `require` resolves to. `src/codegen/builtins-manifest.ts`
-//! writes them; every consumer of `src/js` reads them from here.
-//!
-//! And the archive `bun build --compile --aot` compiles the internal modules from, written by the same
-//! script: the number of files as a `u32`, as many records sorted by name, then the files. Each file
-//! is a zstd frame of its own, so only what a program reaches is decompressed. Numbers are
-//! little-endian. The names are paths relative to `src/js`, `manifest`, and `table-` with `BUILTINS_HASH` of
-//! `src/aot/builtins_generated.rs`, an empty file: the hash covers the ids of the engine's functions, and build.rs compares it.
-
 use std::borrow::Cow;
 use std::sync::OnceLock;
 
 const HEADER: &[u8] = b"bun-builtins-manifest\t3";
 
-/// Where the checker and the AoT front end take the files of `src/js` to be.
 pub const VIRTUAL_ROOT: &[u8] = b"/$bun/js/";
 
 pub struct Module {
     pub id: u32,
-    /// Relative to `src/js`. Empty for a native module.
     pub path: Box<[u8]>,
-    /// What `require` takes. Empty if the module is only reachable by path.
     pub specifier: Box<[u8]>,
-    /// The name `$debug` and `$assert` print.
     pub label: Box<[u8]>,
-    /// What the module loader, the builtins section of an executable and stack frames call it:
-    /// `node:fs/promises`, `internal:fifo`, `ws`.
     pub name: Box<[u8]>,
 }
 
@@ -40,34 +24,29 @@ pub struct Manifest {
     native_bindings: Vec<(Box<[u8]>, u32)>,
     modules: Vec<Module>,
     function_files: Vec<Box<[u8]>>,
-    /// By path and name, with a tab between them.
     builtin_functions: Vec<(Box<[u8]>, u32)>,
     requires: Vec<(u32, Box<[u32]>)>,
-    required_besides: Vec<(u32, Box<[u32]>)>,
+    also_required: Vec<(u32, Box<[u32]>)>,
     triggered: Vec<(u32, Box<[u32]>)>,
     evaluated_by_first_tick: Vec<u32>,
     always_included: Vec<u32>,
     triggers: Vec<Trigger>,
 }
 
-/// Native code requires `modules` once the program reads `global.property`.
 pub struct Trigger {
     pub global: Box<[u8]>,
     pub property: Box<[u8]>,
     pub modules: Box<[u32]>,
 }
 
-/// Why a module is in `Manifest::closure`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Reason {
     Root,
     RequiredBy(u32),
 }
 
-/// `$cpp("file", "symbol")` and the like.
 pub struct NativeBinding<'a> {
     pub id: u32,
-    /// The name of the macro, without the `$`.
     pub kind: &'a [u8],
     pub file: &'a [u8],
     pub symbol: &'a [u8],
@@ -85,22 +64,15 @@ pub enum Literal<'a> {
 }
 
 pub enum Macro {
-    /// `callee(constant, ...arguments)`
     Prepend {
         callee: &'static [u8],
         constant: u32,
     },
-    /// `lazy(id)`
     NativeBinding(u32),
-    /// `void 0`
     Undefined,
-    /// `$debug_log(...arguments)` in a debug build, else nothing
     DebugLog,
-    /// `$assert(condition, "condition", ...rest)` in a debug build, else nothing
     Assert,
-    /// `peekPromiseStatus(...arguments) === status`
     PromiseStatus(u32),
-    /// A build error unless the call is dead code.
     BundleError,
 }
 
@@ -175,7 +147,7 @@ impl Manifest {
                 }
                 b"besides" => {
                     let id = number(field()?).ok_or_else(error)?;
-                    manifest.required_besides.push((id, numbers(fields).ok_or_else(error)?));
+                    manifest.also_required.push((id, numbers(fields).ok_or_else(error)?));
                 }
                 b"triggered" => {
                     let id = number(field()?).ok_or_else(error)?;
@@ -217,12 +189,10 @@ impl Manifest {
         self.is_development
     }
 
-    /// Keys are spelled as in the sources: `$name` for a private name.
     pub fn defines(&self) -> &[(Box<[u8]>, Box<[u8]>)] {
         &self.defines
     }
 
-    /// Globals a builtin reads through the private name of the same spelling.
     pub fn hardened_globals(&self) -> &[Box<[u8]>] {
         &self.hardened_globals
     }
@@ -231,7 +201,6 @@ impl Manifest {
         contains(&self.hardened_globals, name)
     }
 
-    /// `name` is what follows the `$`.
     pub fn is_known_name(&self, name: &[u8]) -> bool {
         contains(&self.names, name)
             || is_macro_name(name)
@@ -245,7 +214,6 @@ impl Manifest {
                 .any(|(key, _)| key.strip_prefix(b"$") == Some(name))
     }
 
-    /// What a call of `$name` stands for, or `None` if `$name` is an ordinary function.
     pub fn macro_for_call(
         &self,
         name: &[u8],
@@ -290,8 +258,6 @@ impl Manifest {
         }))
     }
 
-    /// The registry id of `require(specifier)` in the module at `importer`, a path relative to
-    /// `src/js`.
     pub fn resolve(&self, specifier: &[u8], importer: &[u8]) -> Option<u32> {
         if specifier.is_empty() {
             return None;
@@ -342,27 +308,21 @@ impl Manifest {
         self.modules.iter().find(|module| module.id == id)
     }
 
-    /// The module with a source that the module loader runs for `name`, a specifier as
-    /// `HardcodedModule::Alias` spells it.
     pub fn module_for_loader(&self, name: &[u8]) -> Option<u32> {
         let name = if name == b"@vercel/fetch" { b"vercel_fetch" } else { name };
         let with_source = self.modules.iter().filter(|module| !module.path.is_empty());
         with_source.filter(|module| *module.name == *name).map(|module| module.id).next()
     }
 
-    /// The files of builtin functions, relative to `src/js`.
     pub fn function_files(&self) -> &[Box<[u8]>] {
         &self.function_files
     }
 
-    /// What native code asks a compiled program for `export function name` of a file of builtin functions by. `path` is relative
-    /// to `src/js`, or under `VIRTUAL_ROOT`. `None`: only other builtin functions call it.
     pub fn builtin_function_id(&self, path: &[u8], name: &[u8]) -> Option<u32> {
         let path = path.strip_prefix(VIRTUAL_ROOT).unwrap_or(path);
         find(&self.builtin_functions, &[path, name].join(&b'\t'))
     }
 
-    /// In no order.
     pub fn native_bindings(&self) -> impl Iterator<Item = NativeBinding<'_>> {
         self.native_bindings.iter().filter_map(|(key, id)| {
             let mut fields = bun_core::strings::split(key, b"\t");
@@ -375,21 +335,17 @@ impl Manifest {
         })
     }
 
-    /// The modules that the module `id` can require, eagerly or lazily. Ascending.
     pub fn requires(&self, id: u32) -> &[u32] {
         let found = self.requires.binary_search_by_key(&id, |entry| entry.0);
         found.map_or(&[], |index| &self.requires[index].1)
     }
 
-    /// What the first tick of the event loop evaluates.
     pub fn evaluated_by_first_tick(&self) -> &[u32] {
         &self.evaluated_by_first_tick
     }
 
-    /// Those, and what else native code may require, whatever the program does.
-    /// Those of the modules it requires that it requires through native code or a builtin function: no `require("..")` in its text says so.
-    pub fn required_besides(&self, id: u32) -> &[u32] {
-        self.required_besides.iter().find(|module| module.0 == id).map_or(&[], |module| &module.1)
+    pub fn also_required(&self, id: u32) -> &[u32] {
+        self.also_required.iter().find(|module| module.0 == id).map_or(&[], |module| &module.1)
     }
 
     pub fn always_included(&self) -> &[u32] {
@@ -400,11 +356,6 @@ impl Manifest {
         &self.triggers
     }
 
-    /// The roots and all they can come to require, native modules too, each with the first reason
-    /// found. Ascending. `program_roots`: modules the program can get hold of, so any of their
-    /// functions may run, including one that reads a trigger property such as `process.stdout`;
-    /// what that read loads is included. `native_roots`: modules only native code asks for. The
-    /// functions it calls there read no trigger property, so those modules are not followed that way.
     pub fn closure(&self, program_roots: &[u32], native_roots: &[u32]) -> Vec<(u32, Reason)> {
         let mut found: Vec<(u32, Reason)> = Vec::new();
         let mut is_found = vec![false; self.modules.len()];
@@ -446,12 +397,10 @@ impl Manifest {
 static ARCHIVE: &[u8] = include_bytes!(concat!(env!("BUN_CODEGEN_DIR"), "/builtin_sources.bin"));
 
 const NAME_LEN: usize = 63;
-/// The length of the name, the name, where the frame starts in `ARCHIVE`, and its length.
 const RECORD_LEN: usize = 1 + NAME_LEN + 4 + 4;
 
 pub struct Archive {
     manifest: Manifest,
-    /// By id. Empty for a native module.
     paths: Vec<Box<[u8]>>,
 }
 
@@ -476,18 +425,15 @@ impl Archive {
         &self.manifest
     }
 
-    /// `VIRTUAL_ROOT` and the path relative to `src/js`. Empty for a native module.
     pub fn path(&self, id: u32) -> &[u8] {
         self.paths.get(id as usize).map_or(&[], |path| &path[..])
     }
 
-    /// The module as it is written. Empty for a native module.
     pub fn source(&self, id: u32) -> Cow<'static, [u8]> {
         let name = self.path(id).strip_prefix(VIRTUAL_ROOT);
         name.and_then(Archive::read).map_or(Cow::Borrowed(&[]), Cow::Owned)
     }
 
-    /// The file `name`, a path relative to `src/js`.
     pub fn read(name: &[u8]) -> Option<Vec<u8>> {
         let number = |bytes: &[u8]| u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
         let records = &ARCHIVE[4..][..number(ARCHIVE) * RECORD_LEN];
@@ -499,7 +445,6 @@ impl Archive {
 }
 
 impl Module {
-    /// The declarations `$debug` expands to a use of.
     pub fn write_debug_log(&self, out: &mut Vec<u8>) {
         let path = &self.path[..self.path.len().saturating_sub(3)];
         out.extend_from_slice(
@@ -528,7 +473,6 @@ let $debug_log = $debug_log_enabled ? (...args) => {
         out.extend_from_slice(b"]'), ...args);\n} : () => {};\n");
     }
 
-    /// The declaration `$assert` expands to a use of.
     pub fn write_assert(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(
             b"
@@ -614,7 +558,6 @@ fn is_path_suffix(path: &[u8], suffix: &[u8]) -> bool {
             .all(|(&a, &b)| a == b || (is_separator(a) && is_separator(b)))
 }
 
-/// `pathToUpperSnakeCase` of `src/codegen/helpers.ts`.
 fn write_upper_snake_case(text: &[u8], out: &mut Vec<u8>) {
     let start = bun_core::strings::index_of_char_usize(text, b':').map_or(0, |colon| colon + 1);
     out.extend(text[start..].iter().map(|&byte| match byte {

@@ -69,6 +69,16 @@ describe.skipIf(!!unsupported)("compile/aot/open-layouts", () => {
       expect(await openAmong("namespace-block-object.ts", ["typeof Debug", "typeof Inner"])).toEqual([]);
     }), 600_000);
 
+  test("a conditional type that compares an open type with another type opens only the first", () =>
+    slot(async () => {
+      expect(await openAmong("conditional-type-next-to-open-type.ts", ["Settings", "Totals"])).toEqual(["Settings"]);
+    }), 600_000);
+
+  test("an assignment after a conditional type has compared the same two types opens both", () =>
+    slot(async () => {
+      expect(await openAmong("assignment-after-conditional-type.ts", ["Settings", "Totals"])).toEqual(["Settings", "Totals"]);
+    }), 600_000);
+
   test("a look-alike that is held to the type of a namespace still opens it", () =>
     slot(async () => {
       expect(await openAmong("lookalike-checked-against-namespace-type.ts", ["typeof Debug"])).toEqual(["typeof Debug"]);

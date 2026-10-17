@@ -341,7 +341,7 @@ function InterfaceConstructor(input, output, completer, terminal) {
 
 $toClass(InterfaceConstructor, "InterfaceConstructor", EventEmitter);
 
-function normalWriteOfAnything(self, string) {
+function normalWriteUntyped(self, string) {
   if (self[kSawReturnAt] && DateNow() - self[kSawReturnAt] <= self.crlfDelay) {
     if (StringPrototypeCodePointAt(string) === 10) string = StringPrototypeSlice(string, 1);
     self[kSawReturnAt] = 0;
@@ -657,7 +657,7 @@ class Interface extends InterfaceConstructor {
     }
     let string = this[kDecoder].write(b);
     if (typeof string !== "string") {
-      normalWriteOfAnything(this, string);
+      normalWriteUntyped(this, string);
       return;
     }
     if (this[kSawReturnAt] && DateNow() - this[kSawReturnAt] <= this.crlfDelay) {

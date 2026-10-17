@@ -1,5 +1,5 @@
 // Tests on `boolean | undefined` and `boolean | null | undefined` values read from optional fields. An absent field, a field that holds undefined, null, false and true must all answer as in JavaScript.
-// SIZE< truthy 44
+// SIZE< truthy 36
 type Flags = { name: string; verbose?: boolean; strict?: boolean | null };
 function truthy(flags: Flags): number { return flags.verbose ? 1 : 2; }
 function negated(flags: Flags): boolean { return !flags.verbose; }

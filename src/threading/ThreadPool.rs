@@ -440,7 +440,8 @@ impl DeferredStart {
         while started.len < most_at_a_time
             && let Some(task) = waiting.pop()
         {
-            started.push(Batch::from(task.as_ptr()));
+            let task = task.as_ptr();
+            started.push(Batch::from(task));
         }
         let pool = *pool;
         if waiting.len == 0 {

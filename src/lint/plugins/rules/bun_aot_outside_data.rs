@@ -1,7 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
-/// Report `as` on a value of type `any` or `unknown` that comes from outside the typed code of the program.
 pub struct AotOutsideData;
 
 const ENTERS: Message = Message::new(

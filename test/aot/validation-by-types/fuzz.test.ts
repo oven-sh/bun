@@ -17,7 +17,7 @@ function folderOfZod(): string | undefined {
 }
 const zod = folderOfZod();
 
-test.each([1, 2, 3, 4, 5, 6])("60 generated types, seed %d", async seed => {
+test.concurrent.each([1, 2, 3, 4, 5, 6])("60 generated types, seed %d", async seed => {
   using dir = tempDir("validation-by-types", { "program.ts": program(seed, 60, zod !== undefined) });
   if (zod !== undefined) {
     mkdirSync(join(String(dir), "node_modules"));

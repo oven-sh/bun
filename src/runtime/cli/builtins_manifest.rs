@@ -1,5 +1,3 @@
-//! `bun build --target=bun_builtins --builtins-manifest <path>`
-
 use bstr::BStr;
 use bun_ast::Target;
 use bun_builtin_syntax::Manifest;
@@ -12,7 +10,6 @@ fn private_name(name: &[u8]) -> Box<[u8]> {
         .into_boxed_slice()
 }
 
-/// Makes the tables at `path` the ones the parser and the linker read, and adds their defines.
 pub(crate) fn install(path: &[u8], opts: &mut api::TransformOptions) {
     let Ok(text) = bun_sys::File::read_from(bun_core::Fd::cwd(), path) else {
         Output::err_generic(

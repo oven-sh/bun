@@ -1,24 +1,3 @@
-//! Fields of a layout for properties that its type does not declare.
-//!
-//! ```ts
-//! function Symbol(this: Symbol, flags: SymbolFlags, name: __String) {
-//!     this.flags = flags;
-//!     this.escapedName = name;
-//!     ..
-//!     (this as any).links = undefined; // used by TransientSymbol
-//! }
-//! ```
-//!
-//! Every object that the function constructs has the property. `Symbol` does not declare it. `TransientSymbol extends Symbol` does. Without a
-//! field for it the store makes each `Symbol` something else than it was allocated as.
-//!
-//! So where a constructor function stores to `(this as any).name` among its first stores (`first_stores_for`), and an interface that is
-//! declared to extend the type of `this` declares `name`, the type of `this` and every type that is declared to extend it have a field for
-//! the name, of the type that the interface declares, optional. The store is one of the first stores.
-//!
-//! It goes by the text of the program alone, of all its files that are compiled: the functions and the declarations. So every file is
-//! translated with the same layouts.
-
 use super::first_stores::FirstStore;
 use super::subtypes::Facts;
 use crate::atom::Atom;
@@ -30,27 +9,21 @@ use crate::util::{FxHashMap, FxHashSet};
 use std::rc::Rc;
 use std::sync::OnceLock;
 
-/// The type of `this`, the interface that declares the name, the name. The types are `layout_defining_type`.
 type Store = (TypeId, TypeId, Atom);
 
 #[derive(Default)]
 pub(super) struct Shared {
-    /// The functions with a store to `(this as ..).name`, of all the files, in their order, and in the order of the text. Syntax only.
     storing_through_assertions: OnceLock<Vec<(FileId, FnId)>>,
     typed_files: OnceLock<Vec<FileId>>,
 }
 
 #[derive(Default)]
 pub(super) struct State {
-    /// Of all the files, in their order, and in the order of the text.
     stores: Option<Rc<Vec<Store>>>,
-    /// `Checker::undeclared_fields_for`
     fields: FxHashMap<TypeId, Rc<Vec<(Atom, TypeId)>>>,
 }
 
 impl<'p, 's> Checker<'p, 's> {
-    /// The properties that the layout of the type has a field for besides those of the type, each with the interface that declares it.
-    /// They are optional there, whatever they are in the interface. In the order of the names. `ty`: `layout_defining_type`.
     pub fn undeclared_fields_for(&mut self, ty: TypeId) -> Rc<Vec<(Atom, TypeId)>> {
         if let Some(known) = self.aot.undeclared_fields.fields.get(&ty) {
             return known.clone();
@@ -73,7 +46,6 @@ impl<'p, 's> Checker<'p, 's> {
         found
     }
 
-    /// What is compared of the type before the relation is asked goes by the layout. `stored`: see `begin_subtypes`.
     pub(super) fn add_undeclared_fields_to(&mut self, facts: &mut Facts, ty: TypeId, stored: &FxHashSet<Atom>) {
         let fields = self.undeclared_fields_for(ty);
         if fields.is_empty() {
@@ -89,14 +61,12 @@ impl<'p, 's> Checker<'p, 's> {
         facts.live = with(&facts.live, &mut fields.iter().filter(|field| stored.contains(&field.0)).map(|field| field.0.0));
     }
 
-    /// `(this as any)`: the `this`.
     pub(super) fn this_cast_to_any(&mut self, file: FileId, e: ExprId) -> Option<ExprId> {
         let hir = self.hir(file);
         let ExprKind::As { expr, .. } = hir[e].kind else { return None };
         (matches!(hir[expr].kind, ExprKind::This) && self.type_of_expr(file, e) == TypeId::ANY).then_some(expr)
     }
 
-    /// How many of the stores, which are `syntactic_first_stores` the function, go to a field: up to the first through `any` that does not.
     pub(super) fn count_first_stores_to_fields(&mut self, file: FileId, func: FnId, stores: &[FirstStore]) -> usize {
         let hir = self.hir(file);
         let is_through_any = |store: &FirstStore| matches!(hir[store.target].kind, ExprKind::Dot { obj, .. } if obj != store.this);
@@ -110,7 +80,6 @@ impl<'p, 's> Checker<'p, 's> {
         stores.iter().position(|store| is_through_any(store) && fields.iter().all(|field| field.0 != store.name)).unwrap_or(stores.len())
     }
 
-    /// `function F(this: T, ..)`: `T`, `layout_defining_type`.
     fn constructor_function_this_type(&mut self, file: FileId, func: FnId) -> Option<TypeId> {
         let hir = self.hir(file);
         if !matches!(hir[func].kind, FnKind::Decl | FnKind::Expr) || hir[func].this_param.is_none() {
@@ -120,7 +89,6 @@ impl<'p, 's> Checker<'p, 's> {
         self.layout_type_of(this)
     }
 
-    /// The type and what it is declared to extend, all the way up. All `layout_defining_type`.
     fn add_base_types(&mut self, ty: TypeId, out: &mut FxHashSet<TypeId>) {
         let layout_types_cache = self.layout_defining_type(ty);
         if !out.insert(layout_types_cache) {
@@ -154,7 +122,6 @@ impl<'p, 's> Checker<'p, 's> {
                 if matches!(hir[store.target].kind, ExprKind::Dot { obj, .. } if obj == store.this) {
                     continue;
                 }
-                // What comes after a store that is none of the first is none either.
                 let Some(declaring) = self.declaring_interface(files, constructed, store.name) else { break };
                 stores.push((constructed, declaring, store.name));
             }
@@ -185,8 +152,6 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// The first interface without type parameters that is declared to extend `extended` and declares the property itself. None if
-    /// `extended` has the property, or if two such interfaces give it different types.
     fn declaring_interface(&mut self, files: &[FileId], extended: TypeId, name: Atom) -> Option<TypeId> {
         if self.type_of_property(extended, name).is_some() {
             return None;

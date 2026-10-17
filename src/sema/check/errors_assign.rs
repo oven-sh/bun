@@ -1054,7 +1054,7 @@ impl Checker<'_, '_> {
         let return_type = self.return_type_of_fn(file, container);
         if e.is_none() && !self.p.files.options.strict_null_checks && !return_type.is_never() {
             if hir[container].kind != FnKind::Constructor
-                && self.p.files.options.no_implicit_returns
+                && self.check_options(file).no_implicit_returns
                 && !self.is_restricted_to_fixed_set(file)
                 && !self.is_unwrapped_return_type_undefined_void_or_any(
                     file,

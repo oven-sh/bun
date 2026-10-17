@@ -9573,6 +9573,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_commonjs_export_names: self.has_commonjs_export_names,
             has_import_meta: self.has_import_meta,
             has_esm_syntax: self.has_esm_syntax,
+            jsx_pragmas: self.lexer.jsx_pragma.to_ast(),
 
             hashbang: hashbang.into(),
             export_default_alias_of_import: self.export_default_alias_of_import,

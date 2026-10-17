@@ -46,7 +46,7 @@ test.each(["--sourcemap", "--sourcemap=inline", "--sourcemap=external", "--sourc
   async flag => {
     const { said, stdout } = await built(["--aot", flag]);
     expect(said).toContain(note);
-    expect(stdout).toBe("Error: failed\n    at fail (app.ts:3:13)\n    at app.ts:6:3\n");
+    expect(stdout).toBe("Error: failed\n    at fail (/$bunfs/root/app.ts:3:13)\n    at /$bunfs/root/app.ts:6:3\n");
   },
 );
 

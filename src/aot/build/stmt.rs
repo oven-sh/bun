@@ -1,6 +1,4 @@
-//! Statements and binding patterns.
-
-use super::fit::Ty;
+use super::coerce::Ty;
 use super::{Exit, FileBuild, FinallyContext, Fx, Jump};
 use crate::builder::Var;
 use crate::declared::{Declared, Part, prim};
@@ -20,16 +18,11 @@ enum IterationKind {
     Entries,
 }
 
-/// `FileBuild::open_collection_loop`
 struct CollectionLoop {
     collection: V,
-    /// It finds the iteration of the engine. Else all that follows is idle.
     is_pristine: V,
-    /// The table the iteration is at.
     table: Var,
-    /// The number of the entry the iteration is at. Of a collection that is not as it was made: of the step.
     found: Var,
-    /// What the step has come to. See `step_collection_loop`.
     value: Var,
     second: Var,
     is_map: bool,
@@ -37,7 +30,6 @@ struct CollectionLoop {
 }
 
 impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
-    // ───────────────────────────── functions ─────────────────────────────
 
     pub(crate) fn function_body(&mut self, fx: &mut Fx) {
         let hir = self.hir(fx.file);
@@ -103,14 +95,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let Some(&typed) = self.typed_bodies.get(&fx.id) else { return };
         let second = self.untyped_clones.get(&fx.id).copied();
         self.add_captures(fx);
-        let takes_this = self.out.funcs[typed.idx()].has(func_flags::HAS_THIS);
-        let passed_this = if takes_this { self.add_entry_param(fx, Ty::NONE) } else { V::NONE };
+        let accepts_this = self.out.funcs[typed.idx()].has(func_flags::HAS_THIS);
+        let passed_this = if accepts_this { self.add_entry_param(fx, Ty::NONE) } else { V::NONE };
         let count = self.out.funcs[fx.id.idx()].params.len();
         let given: Vec<V> = (0..count).map(|_| self.add_entry_param(fx, Ty::NONE)).collect();
-        let misfit = fx.b.new_block();
-        fx.handlers.push(misfit);
+        let mismatch = fx.b.new_block();
+        fx.handlers.push(mismatch);
         let expected_this = self.out.funcs[typed.idx()].declared_this_type;
-        let checked_this = if takes_this && expected_this.is_some() && expected_this != self.out.tys.anything {
+        let checked_this = if accepts_this && expected_this.is_some() && expected_this != self.out.tys.anything {
             self.emit_throwing(fx, Op::Coerce { value: passed_this, to: expected_this, why: CoerceReason::Claim })
         } else {
             passed_this
@@ -124,7 +116,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 continue;
             }
             if let Some(&p) = written.get(index)
-                && !self.generic_entrypoints.values().any(|&entry| entry == fx.id)
+                && !self.generic_entrypoint_ids.contains(&fx.id)
             {
                 let (no_undefined, no_null, no_objects) = self.c.annotation_exclusions(fx.file, p);
                 let mut claimed = self.out.tys.get(to).clone();
@@ -149,8 +141,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             self.mark_call_in_tail_position(fx, result);
         }
         self.terminate_with_return(fx, result);
-        fx.b.seal(misfit);
-        fx.b.switch_to(misfit);
+        fx.b.seal(mismatch);
+        fx.b.switch_to(mismatch);
         self.emit(fx, Op::Caught);
         let result = match second {
             Some(second) => self.emit_direct_call(fx, second, passed_this, &given),
@@ -197,7 +189,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         Some(self.emit_typed_object(fx, layout, &names, &values, None))
     }
 
-    /// OrdinaryCallBindThis for a function that is not strict: the global object for `undefined` and `null`, an object for a primitive. One operation: an object passes a test in line.
     fn sloppy_this(&mut self, fx: &mut Fx, given: V) -> V {
         self.operation(fx, Operation::SloppyThis, &[given])
     }
@@ -240,10 +231,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// The value of the expression, which the function returns.
     fn expr_for_return(&mut self, fx: &mut Fx, e: ExprId) -> V {
-        // `async function f(): Promise<T> { return { .. } }`: the type of what the promise is fulfilled with is written down. Where that makes something of plain data it is made here:
-        // behind the `await` it is only made sure of.
         if !fx.returns_this
             && let Some(promised) = self.c.promise_fulfillment_type(fx.file, fx.func, e)
             && let want = (Ty { id: self.ty_of(promised), checked: promised })
@@ -268,7 +256,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         match self.return_coercion(fx) {
             Some((want, why)) if !fx.returns_this => self.expr_into(fx, e, want, why),
-            // Nothing is said of what the function returns, so whoever calls it goes by nothing.
             None if !fx.returns_this && !self.out.funcs[fx.id.idx()].has(func_flags::ASYNC | func_flags::GENERATOR) => self.expr_unchecked(fx, e),
             _ => self.expr(fx, e),
         }
@@ -293,7 +280,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// The arguments as they arrive, one for each parameter of the source.
     pub(crate) fn add_parameters(&mut self, fx: &mut Fx) -> Vec<V> {
         let hir = self.hir(fx.file);
         let f = &hir[fx.func];
@@ -312,12 +298,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             self.get_new_target(fx);
             return params;
         }
-        // All arguments arrive as one array, which the parameters are read from, and held to their types as the arguments of a call by
-        // someone who does not know the function are.
         let all = self.add_entry_param(fx, Ty::NONE);
         self.get_new_target(fx);
         fx.all_arguments = all;
-        // The parameters live in the object: nothing is bound.
         if self.c.keeps_parameters_in_arguments(fx.file, fx.func) {
             let callee = self.current_closure(fx);
             let count = self.emit(fx, Op::Int(f.params.iter().count() as i64));
@@ -343,7 +326,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             .collect()
     }
 
-    /// The first operation of a function that mentions `new.target` and is no constructor of a class.
     fn get_new_target(&mut self, fx: &mut Fx) {
         let func = &self.out.funcs[fx.id.idx()];
         if func.kind == ir::FuncKind::Constructor {
@@ -356,7 +338,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// Declares the function-level bindings and binds the parameters. Returns the parameter values after default initializers.
     pub(crate) fn bind_parameters(&mut self, fx: &mut Fx, params: &[V]) -> Vec<V> {
         let hir = self.hir(fx.file);
         let f = &hir[fx.func];
@@ -386,7 +367,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         values
     }
 
-    /// What `value` is where it is not `undefined`, or what the default is. A reference may be nil whatever the source says.
     fn ty_with_default(&mut self, fx: &Fx, value: V, default: ExprId) -> TyId {
         let given = self.ty(fx, value);
         let described = self.out.tys.get(given).clone();
@@ -399,7 +379,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.out.tys.intern(either)
     }
 
-    /// `value`, or what `default` yields if it is `undefined`.
     pub(crate) fn emit_default_initializer(&mut self, fx: &mut Fx, value: V, default: ExprId, name: Atom) -> V {
         let undefined = self.emit(fx, Op::Undefined);
         let is_missing = self.emit(fx, Op::StrictEq { a: value, b: undefined });
@@ -412,9 +391,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.write_as(fx, result, value, CoerceReason::Store);
         fx.b.jump(join);
         fx.b.switch_to(missing);
-        // Where the default is not known to be of the type of what it stands in for, that type does not come from the default: it is
-        // written down.
-        let want = Ty::of(fx.b.var_type(result));
+        let want = Ty::from_id(fx.b.var_type(result));
         let computed = self.expr_with_name_into(fx, default, name, want, CoerceReason::Cast);
         self.write_as(fx, result, computed, CoerceReason::Cast);
         fx.b.jump(join);
@@ -423,9 +400,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.read(fx, result)
     }
 
-    // ───────────────────────────── blocks ─────────────────────────────
-
-    /// The statements of a scope.
     pub(crate) fn block_body(&mut self, fx: &mut Fx, stmts: IdList<StmtId>) {
         let is_module_body = std::mem::take(&mut self.enters_module_body);
         let hir = self.hir(fx.file);
@@ -457,7 +431,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 _ => {}
             }
         }
-        // `function f(p) { function p() {} }`: the name is taken, so the declaration has a symbol that nothing refers to.
         if fx.func.is_some()
             && matches!(hir[fx.func].body, FnBody::Block(body) if body.start == stmts.start && body.len == stmts.len)
         {
@@ -499,11 +472,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// The function declarations among the statements of a scope that are given a place. The places that the scope declares are added to `names`.
-    ///
-    /// A function declaration is a binding of its scope, initialized on entry. It is given a place only where that can be told
-    /// from the function itself: where it is assigned to, or where the code of the scope uses its closure in several places that
-    /// can tell which object it is. See `declaration_closure` for the others.
     fn function_bindings(&mut self, fx: &Fx, stmts: impl Iterator<Item = StmtId>, names: &mut Vec<Sym>) -> Vec<(bun_sema::hir::FnId, Sym)> {
         let hir = self.hir(fx.file);
         let function_values = self.function_values(fx.file);
@@ -525,7 +493,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         function_bindings
     }
 
-    /// Fills the places of `function_bindings`, where their scope is entered.
     fn bind_function_declarations(&mut self, fx: &mut Fx, function_bindings: Vec<(bun_sema::hir::FnId, Sym)>) {
         let hir = self.hir(fx.file);
         for (func, sym) in function_bindings {
@@ -533,7 +500,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 continue;
             }
             let id = self.declare_function(fx.file, func, None);
-            // Its `arguments` object shows it: it finds its closure in a scope of its own, as a function expression does.
             if let Some((activation, field)) = self.function_expression_scope(fx.file, func)
                 && self.open_activation(fx, activation)
             {
@@ -570,7 +536,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             })
     }
 
-    /// What the initializer of the declaration yields.
     pub(crate) fn initial_value(&mut self, fx: &mut Fx, decl: &VarDecl) -> V {
         let hir = self.hir(fx.file);
         let name = self.pat_name(fx, decl.pat);
@@ -582,13 +547,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.pattern_names(fx.file, decl.pat, &mut names);
         let want = match (&hir[decl.pat].kind, names.first()) {
             (PatKind::Ident(_), Some(&sym)) => self.symbol_ty(sym),
-            // In `const { a }: T = value` the annotation is that of what is taken apart.
             _ => {
                 let checked = self.c.type_from_node(fx.file, decl.ty);
                 Ty { id: self.ty_of(checked), checked }
             }
         };
-        self.expr_with_name_into(fx, decl.init, name, want, CoerceReason::Cast)
+        self.expr_with_name_into_if_convertible(fx, decl.init, name, want)
     }
 
     fn take_label(&mut self, fx: &mut Fx) -> Atom {
@@ -600,7 +564,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return;
         }
         let s = &self.hir(fx.file)[stmt];
-        // Control does not come here. What declares a name that other code may use is translated all the same.
         let declares = matches!(s.kind, StmtKind::Fn(_) | StmtKind::Class(_) | StmtKind::Enum(_) | StmtKind::Module(_));
         if fx.func.is_some() && !declares && fx.b.is_unreachable_here() || self.files.is_dead_statement(fx.file, stmt) {
             return self.mark_dead_stmt(fx, stmt);
@@ -623,6 +586,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn stmt_inner(&mut self, fx: &mut Fx, stmt: StmtId) {
+        if std::mem::take(&mut fx.owes_initialize_without_stores) {
+            let this = self.this(fx, self.hir(fx.file)[stmt].start);
+            self.operation(fx, Operation::Initialize, &[this]);
+        }
         if let Some(at) = fx.first_stores.iter().position(|store| store.stmt == stmt) {
             if at == 0 {
                 self.initialize(fx);
@@ -713,7 +680,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
             StmtKind::Enum(e) => {
                 if !hir[e].flags.contains(Flags::AMBIENT) {
-                    // Members are read as constants. The object itself is made when something asks for it.
                     let id = self.c.bound(fx.file).enum_symbol[e.idx()];
                     let sym = self.files.export_symbol_of_value_symbol_if_exported(self.files.sym(fx.file, id));
                     let global = self.enum_global(sym);
@@ -736,7 +702,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
             StmtKind::Module(m) => {
                 if !hir[m].flags.contains(Flags::AMBIENT) && self.c.bound(fx.file).is_instantiated_module(m, true) {
-                    // What it exports is referred to as `N.name`, which names the variable: there is no object unless one is asked for.
                     let id = self.c.bound(fx.file).module_symbol[m.idx()];
                     let namespace = self.files.export_symbol_of_value_symbol_if_exported(self.files.sym(fx.file, id));
                     if self.files.flags(namespace).intersects(bun_sema::bind::SymFlags::ENUM) && !self.enum_declarations(namespace).is_empty() {
@@ -763,7 +728,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 fx.calls_in_tail_position.clear();
                 let flags = self.out.funcs[fx.id.idx()].flags;
                 if flags & func_flags::ASYNC != 0 && flags & func_flags::GENERATOR != 0 && value.is_some() {
-                    // `return value` in an async generator awaits the value.
                     value = self.emit_throwing(fx, Op::Await(value));
                 }
                 self.emit_return(fx, value);
@@ -772,7 +736,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 if self.shared.constants.minifies_syntax && no.is_none() && matches!(hir[yes].kind, StmtKind::Block(stmts) if stmts.is_empty()) && self.can_unwrap_if_unused(fx.file, test) {
                     return self.expr_unused(fx, test);
                 }
-                // What a build leaves out is not translated.
                 if let Some(test) = self.constant(fx, test) {
                     let (taken, left_out) = if test.is_truthy() { (yes, no) } else { (no, yes) };
                     self.mark_dead_stmt(fx, left_out);
@@ -942,7 +905,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     self.c.parts(of_iterable).iter().all(|&part| self.c.is_array_or_tuple(part))
                 };
                 let value = if is_just_read && value.is_some() { self.coerce_iteration_value(fx, value, expr, false) } else { value };
-                // An exception in the binding or in the body closes the iterator.
                 let closing = fx.b.new_block();
                 fx.handlers.push(closing);
                 let value = if !is_just_read && value.is_some() { self.coerce_iteration_value(fx, value, expr, false) } else { value };
@@ -951,7 +913,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let head_unwind_depth = fx.handlers.len() - 1;
                 fx.jumps.push(Jump { label: Atom::NONE, break_to: BlockId::NONE, continue_to: BlockId::NONE, iter, unwind_depth: head_unwind_depth, is_unlabeled_break_target: false, finally_context: None });
                 if let (Some(table), true) = (&table, value.is_none()) {
-                    // Names and nothing else, which are bound on either way: where the key and the value are at hand there is no pair to take apart.
                     let (there, generally, bound) = (fx.b.new_block(), fx.b.new_block(), fx.b.new_block());
                     self.branch(fx, table.is_pristine, there, generally);
                     fx.b.seal(there);
@@ -970,7 +931,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 } else if pat.is_some() {
                     self.bind_pat(fx, pat, value);
                 } else if target.is_some() {
-                    // `for (list[0] of items)`: an element is no place of the translated program.
                     if fx.is_typed {
                         let iterable = self.c.type_of_expr(fx.file, expr);
                         let (source, taking) = (self.c.iterated_type(iterable, false), self.c.type_of_expr(fx.file, target));
@@ -1014,7 +974,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     self.stmt(fx, left);
                 }
                 let object = self.iterated(fx, stmt, expr);
-                // An array the engine has just made.
                 let keys = self.operation(fx, Operation::ForInKeys, &[object]);
                 fx.b.func.values[keys.idx()].ty = self.known.array;
                 let length_name = self.out.strs.intern(b"length");
@@ -1032,8 +991,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 self.emit(fx, Op::Poll);
                 let key = self.emit_throwing(fx, Op::ElemGet { obj: keys, key: at });
                 let string = self.out.tys.intern(Declared::prims(prim::STRING));
-                let key = self.coerce_to(fx, key, Ty::of(string), CoerceReason::Claim);
-                // What has been deleted in the meantime is passed over, and what a property that does not show hides. The value may be a string.
+                let key = self.coerce_to(fx, key, Ty::from_id(string), CoerceReason::Claim);
                 let is_there = self.operation(fx, Operation::HasEnumerableProperty, &[object, key]);
                 self.branch(fx, is_there, there, next);
                 fx.b.seal(there);
@@ -1075,7 +1033,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
             StmtKind::Switch { expr, cases } => {
                 let label = self.take_label(fx);
-                // The body that control goes to, where constants decide that: the first whose test is the value, else the default. `cases.len()`: none.
                 let mut entered = None;
                 if let Some(constant) = self.constant(fx, expr).filter(|constant| constant.is_non_nan_primitive()) {
                     let mut found = cases.iter().position(|case| hir[case].test.is_none()).unwrap_or(cases.len());
@@ -1139,7 +1096,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 for (i, case) in cases.iter().enumerate() {
                     fx.b.seal(bodies[i]);
                     fx.b.switch_to(bodies[i]);
-                    // Constants decide where control goes in, and nothing falls into this body: it falls into none.
                     let is_left_out = entered.is_some() && fx.b.is_unreachable_here();
                     for inner in hir.ids(hir[case].body) {
                         if (is_left_out || (entered.is_some() && fx.b.is_unreachable_here())) && !matches!(hir[inner].kind, StmtKind::Fn(_) | StmtKind::Class(_) | StmtKind::Enum(_) | StmtKind::Module(_)) {
@@ -1153,7 +1109,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     }
                     let next = bodies.get(i + 1).copied().unwrap_or(exit);
                     if i + 1 < bodies.len() {
-                        // The next body has one more predecessor: it is sealed when its turn comes.
                     }
                     fx.b.jump(next);
                 }
@@ -1217,7 +1172,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 ImportEqualsTarget::Entity(_) => self.emit_entity_alias(fx, import, s.start),
                 ImportEqualsTarget::Require(specifier) => self.emit_import_by_require(fx, specifier, s.start),
             },
-            // Of a name: whoever imports it refers to what the name stands for.
             StmtKind::ExportDefault(e) if self.default_export_binding(fx.file, e).is_some_and(|sym| self.c.is_default_export_equivalent_to_binding(fx.file, e, sym)) => {
                 if let Some(sym) = self.default_export_binding(fx.file, e)
                     && self.value_declaration(sym).is_some_and(|(of, _)| of == fx.file)
@@ -1234,7 +1188,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     self.emit(fx, Op::GlobalSet(global, value));
                 }
             }
-            // `export = e`: what `import x = require(..)` and a default import of the module get.
             StmtKind::ExportAssign(e) => {
                 let value = self.expr(fx, e);
                 let module = self.files.file_symbol(fx.file);
@@ -1246,22 +1199,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// A statement that is a scope of its own even without braces.
     fn scoped_stmt(&mut self, fx: &mut Fx, stmt: StmtId) {
         self.stmt(fx, stmt);
     }
 
-    // ───────────────────────────── loops over a Map or a Set ─────────────────────────────
-
-    // A Map or a Set as the engine makes them finds the iteration the engine has for them, which cannot be replaced and which nobody can watch.
-    // The loop then steps through the table itself, as the `forEach` of the prelude does: it is at a table and the number of an entry. There
-    // is no iterator, no result object, and no pair where the pattern takes it apart. One that has been subclassed or given properties
-    // of its own is iterated over as the language says. There is one copy of the body: each step asks which it is.
-
-    /// What is iterated over is evaluated and the iteration is opened. The iterator, and the table if it is a Map or a Set by its type.
     fn open_collection_loop(&mut self, fx: &mut Fx, stmt: StmtId, expr: ExprId) -> (V, Option<CollectionLoop>) {
         let hir = self.hir(fx.file);
-        // `m.keys()`, `m.values()`, `m.entries()`
         let method = match hir[expr].kind {
             ExprKind::Call(call) if hir[call].chain == Chain::No && hir[call].args.is_empty() => match hir[hir[call].callee].kind {
                 ExprKind::Dot { obj, name, chain: Chain::No, .. } if !matches!(hir[obj].kind, ExprKind::Super) => match self.c.atoms().bytes(name) {
@@ -1294,7 +1237,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return (self.emit_throwing(fx, Op::IterOpen(iterable)), None);
         };
         let yields = match method {
-            // The keys of a Set are its values.
             Some((.., IterationKind::Keys)) if !is_map => IterationKind::Values,
             Some((.., yields)) => yields,
             None if is_map => IterationKind::Entries,
@@ -1332,7 +1274,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         (iter, Some(CollectionLoop { collection, is_pristine, table, found, value, second, is_map, yields }))
     }
 
-    /// Whether the type is that of a Map, or of a Set, or nil, and nothing else. `None`: neither.
     fn collection_kind_of_ty(&self, ty: TyId) -> Option<bool> {
         if ty.is_none() {
             return None;
@@ -1348,9 +1289,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// One step: on to `inside` with what it has come to in `value`, or to `exit`. `at`: the number of the entry to go on from, or of the step. `found`: the
-    /// entry, or the step. `destructures_pair`: of a collection as it was made the key is in `value` and the value in `second`.
-    /// All that is read of the table is read on one way, one thing behind the other, so that what the step has found out is not found out again.
     fn step_collection_loop(&mut self, fx: &mut Fx, table: &CollectionLoop, iter: V, at: V, destructures_pair: bool, inside: BlockId, exit: BlockId) {
         let (there, is_there, generally, is_there_generally) = (fx.b.new_block(), fx.b.new_block(), fx.b.new_block(), fx.b.new_block());
         self.branch(fx, table.is_pristine, there, generally);
@@ -1397,7 +1335,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.jump(inside);
     }
 
-    /// The key and the value of the entry. Of a Set: the value twice.
     fn collection_entry_parts(&mut self, fx: &mut Fx, table: &CollectionLoop) -> [V; 2] {
         let entry = self.read(fx, table.found);
         let first = self.operation(fx, if table.is_map { Operation::MapKeyAt } else { Operation::SetKeyAt }, &[table.collection, entry]);
@@ -1406,20 +1343,17 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         [first, second]
     }
 
-    /// The table the collection has by now is the one the entry is in. Behind the reads, which find again what the step has read: this writes.
     fn refresh_collection_table(&mut self, fx: &mut Fx, table: &CollectionLoop) {
         let now = self.operation(fx, Operation::CollectionTable, &[table.collection]);
         self.write(fx, table.table, now);
     }
 
-    /// `[k, v]`, `[, v]`, `[k]`: names for single elements and nothing else: nothing of the program runs while it is bound, and nothing is made.
     fn is_simple_array_pattern(&self, fx: &Fx, pat: PatId) -> bool {
         let hir = self.hir(fx.file);
         let PatKind::Array(elems) = hir[pat].kind else { return false };
         elems.iter().all(|e| !hir[e].is_rest && hir[e].default.is_none() && matches!(hir[hir[e].pat].kind, PatKind::Ident(_) | PatKind::Missing))
     }
 
-    /// Such a pattern, against the elements themselves.
     fn bind_simple_array_pattern(&mut self, fx: &mut Fx, pat: PatId, parts: &[V]) {
         let hir = self.hir(fx.file);
         let PatKind::Array(elems) = hir[pat].kind else { return };
@@ -1435,12 +1369,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 None => self.emit(fx, Op::Undefined),
             };
             let claim = if is_declared { self.ty_for_pat(fx, elem.pat, true) } else { TyId::NONE };
-            let member = self.coerce_to(fx, member, Ty::of(claim), CoerceReason::Claim);
+            let member = self.coerce_to(fx, member, Ty::from_id(claim), CoerceReason::Claim);
             self.bind_pat(fx, elem.pat, member);
         }
     }
 
-    /// IteratorClose of a loop that is left, unless there is no iterator.
     fn close_loop_iterator(&mut self, fx: &mut Fx, iter: V, is_for_throw: bool) {
         let close = |this: &mut Self, fx: &mut Fx| {
             if is_for_throw {
@@ -1465,7 +1398,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn loop_body_with_resource(&mut self, fx: &mut Fx, label: Atom, body: StmtId, break_to: BlockId, continue_to: BlockId, iter: V, resource: Option<(V, bool)>) {
-        // The handler that closes the iterator does not cover the IteratorClose of a `break` or a `return`.
         let unwind_depth = fx.handlers.len() - usize::from(iter.is_some());
         fx.jumps.push(Jump { label, break_to, continue_to, iter, unwind_depth, is_unlabeled_break_target: true, finally_context: None });
         match resource {
@@ -1478,15 +1410,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.jumps.pop();
     }
 
-    /// Closes the iterators of the loops from `from` inwards.
-    /// A return completion: runs the enclosing `finally` blocks and closes the iterators of the enclosing loops.
     pub(crate) fn emit_return(&mut self, fx: &mut Fx, value: V) {
         let all = fx.jumps.len();
         self.emit_abrupt_completion(fx, 0, all, Exit::Return(value));
     }
 
-    /// Leaves the statements `from..to`, innermost first, and goes where `exit` says: iterators are closed, and a finalizer takes over,
-    /// which sees to the rest once it has run.
     fn emit_abrupt_completion(&mut self, fx: &mut Fx, from: usize, to: usize, exit: Exit) {
         for i in (from..to).rev() {
             let iter = fx.jumps[i].iter;
@@ -1521,8 +1449,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// `try { body } finally { finalizer }`. The finalizer is emitted once. It is given the completion it interrupts: whether that is a
-    /// throw completion, and the completion value: what was thrown only if it `inspects_thrown_value`. The exception itself is passed on.
     pub(crate) fn try_finally(
         &mut self,
         fx: &mut Fx,
@@ -1586,7 +1512,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.switch_to(join);
     }
 
-    fn predicted_iterator_class(&mut self, fx: &Fx, iterable: ExprId) -> Option<(Ty, LayoutId)> {
+    pub(crate) fn predicted_iterator_class(&mut self, fx: &Fx, iterable: ExprId) -> Option<(Ty, LayoutId)> {
         if !fx.is_typed {
             return None;
         }
@@ -1607,7 +1533,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         (facts.has_fixed_layout && facts.is_evaluated_once && self.c.declares_method(checked, next)).then_some((Ty { id, checked }, layout))
     }
 
-    /// `for await (left of iterable) body`
     fn loop_binding_pos(&self, fx: &Fx, left: StmtId, iterable: ExprId) -> u32 {
         let hir = self.hir(fx.file);
         match hir[left].kind {
@@ -1650,7 +1575,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             fx.b.switch_to(asked);
             seen
         });
-        // Whether the iterator has to be closed if the loop is left now: not while it is being advanced, nor once it is done.
         let needs_close = self.new_flag(fx);
         let no = self.emit(fx, Op::Bool(false));
         self.write(fx, needs_close, no);
@@ -1746,7 +1670,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 fx.b.switch_to(exit);
             },
             |this, fx, is_throw, _| {
-                // AsyncIteratorClose
                 let (close, done) = (fx.b.new_block(), fx.b.new_block());
                 let needed = this.read(fx, needs_close);
                 this.branch(fx, needed, close, done);
@@ -1756,7 +1679,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 this.branch(fx, is_throw, after_throw, otherwise);
                 fx.b.seal(after_throw);
                 fx.b.seal(otherwise);
-                // The original exception wins over whatever closing throws.
                 fx.b.switch_to(after_throw);
                 let ignored = fx.b.new_block();
                 fx.handlers.push(ignored);
@@ -1816,21 +1738,17 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.operation(fx, Operation::AddDisposableResource, &[stack, value, is_await]);
     }
 
-    /// DisposeResources at the end of a block with `using` declarations.
     fn dispose_resources(&mut self, fx: &mut Fx, stack: V, has_await: bool, is_throw: V, value: V) {
         if has_await {
-            // The exception the block completed with is the first error. Later ones suppress it.
             let (record, header) = (fx.b.new_block(), fx.b.new_block());
             self.branch(fx, is_throw, record, header);
             fx.b.seal(record);
             fx.b.switch_to(record);
             self.operation(fx, Operation::RecordDisposeError, &[stack, value]);
-            // Each `await using` resource is disposed of and awaited in turn. An error is recorded in the stack.
             let (step, awaits, exit) = (fx.b.new_block(), fx.b.new_block(), fx.b.new_block());
             fx.b.jump(header);
             fx.b.switch_to(header);
             self.emit(fx, Op::Poll);
-            // The stack itself: it is empty. `null`: the resource needs no await.
             let result = self.operation(fx, Operation::DisposeNextResource, &[stack]);
             let is_empty = self.emit(fx, Op::StrictEq { a: result, b: stack });
             self.branch(fx, is_empty, exit, step);
@@ -1861,7 +1779,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.operation(fx, Operation::DisposeResources, &[stack, is_throw, value]);
     }
 
-    /// `try` and `catch`.
     fn try_catch(&mut self, fx: &mut Fx, block: StmtId, param: bun_sema::hir::VarDeclId, handler: StmtId) {
         let hir = self.hir(fx.file);
         if handler.is_none() {
@@ -1893,8 +1810,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.switch_to(join);
     }
 
-    /// What the `for-in` or `for-of` statement iterates over. A function made there that refers to what the statement binds has an environment
-    /// of its own, which is left as it is born: in the dead zone.
     fn iterated(&mut self, fx: &mut Fx, stmt: StmtId, expr: ExprId) -> V {
         let opened = self.c.is_captured_before_iterations(fx.file, stmt) && self.open_activation(fx, Activation::Iteration(stmt));
         let hir = self.hir(fx.file);
@@ -1915,7 +1830,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         value
     }
 
-    /// Each iteration of a `for` loop has its own copy of the variables the loop declares, `names`. What its body declares starts anew.
     fn copy_env(&mut self, fx: &mut Fx, names: &[Sym]) {
         for index in (0..fx.envs.len()).rev() {
             let scope = &fx.envs[index];
@@ -1937,11 +1851,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    // ───────────────────────────── patterns ─────────────────────────────
-
-    /// What a loop over `iterable` is handed at each turn.
     fn coerce_iteration_value(&mut self, fx: &mut Fx, value: V, iterable: ExprId, is_await: bool) -> V {
-        if !fx.is_typed || self.is_untyped_file(fx.file) || self.c.is_predicted(fx.file, iterable) {
+        if !fx.is_typed || self.is_untyped_file(fx.file) || self.c.is_predicted(fx.file, iterable) || self.c.holds_unknown_elements(fx.file, iterable) {
             return self.predict_iteration_value(fx, value, iterable, is_await);
         }
         let ty = self.c.type_of_expr(fx.file, iterable);
@@ -1954,21 +1865,18 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.coerce_to(fx, value, element, CoerceReason::Claim)
     }
 
-    /// The checker's type of what the part `pat` of a pattern takes from an object or an iterator. With an initializer, or at the end of
-    /// the iterator, that may be `undefined` as well. `NONE`: it says nothing.
     fn ty_for_pat(&mut self, fx: &Fx, pat: PatId, may_be_missing: bool) -> TyId {
         if !fx.is_typed || self.c.is_destructured_from_prediction(fx.file, pat) {
             return TyId::NONE;
         }
         let ty = self.c.type_of_pat(fx.file, pat);
-        let ty = self.c.without_number_literals_given(ty);
+        let ty = self.c.without_number_literals_deep(ty);
         let ty = self.declared(ty);
         if ty.is_some() && may_be_missing { self.or_undefined(ty) } else { ty }
     }
 
     pub(crate) fn bind_pat(&mut self, fx: &mut Fx, pat: PatId, value: V) {
         let hir = self.hir(fx.file);
-        // What is taken apart may come from JavaScript, where the types are guesses.
         let is_declared = fx.is_typed && !self.is_untyped_file(fx.file) && !matches!(hir[pat].kind, PatKind::Missing | PatKind::Ident(_)) && {
             let ty = self.c.type_of_pat(fx.file, pat);
             !self.c.is_inferred_from_javascript(ty)
@@ -1991,7 +1899,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
             PatKind::Object(props) => {
                 self.require_object_coercible(fx, value);
-                // The keys taken so far, for what takes the rest.
                 let mut taken = vec![value];
                 let has_rest = props.iter().any(|p| hir[p].is_rest);
                 for p in props.iter() {
@@ -2015,7 +1922,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                             }
                             let member = self.emit_throwing(fx, Op::PropGet { obj: value, name });
                             let claim = if is_declared { self.ty_for_pat(fx, prop.value, prop.default.is_some()) } else { TyId::NONE };
-                            self.coerce_to(fx, member, Ty::of(claim), CoerceReason::Claim)
+                            self.coerce_to(fx, member, Ty::from_id(claim), CoerceReason::Claim)
                         }
                         PropKey::Computed(key) => {
                             let key = self.expr(fx, key);
@@ -2023,7 +1930,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                             taken.push(key);
                             let member = self.emit_throwing(fx, Op::ElemGet { obj: value, key });
                             let claim = if is_declared { self.ty_for_pat(fx, prop.value, true) } else { TyId::NONE };
-                            self.coerce_to(fx, member, Ty::of(claim), CoerceReason::Claim)
+                            self.coerce_to(fx, member, Ty::from_id(claim), CoerceReason::Claim)
                         }
                         PropKey::Private(_) => continue,
                     };
@@ -2043,7 +1950,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     let key = self.emit(fx, Op::Int(i as i64));
                     let member = self.emit_throwing(fx, Op::ElemGet { obj: value, key });
                     let claim = if is_declared { self.ty_for_pat(fx, elem.pat, true) } else { TyId::NONE };
-                    let member = self.coerce_to(fx, member, Ty::of(claim), CoerceReason::Claim);
+                    let member = self.coerce_to(fx, member, Ty::from_id(claim), CoerceReason::Claim);
                     self.bind_pat(fx, elem.pat, member);
                 }
             }
@@ -2075,8 +1982,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// Whether the array pattern binds names, at least one, to single elements of what is known for an array, and nothing of the program runs in between. An iterator that has come
-    /// to the end stays there, though a default has made the array longer.
     fn is_read_by_index(&self, fx: &Fx, pat: PatId, value: V) -> bool {
         let hir = self.hir(fx.file);
         let PatKind::Array(elems) = hir[pat].kind else { return false };
@@ -2092,7 +1997,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             && elems.iter().any(|e| matches!(hir[hir[e].pat].kind, PatKind::Ident(_)))
     }
 
-    /// The name of a pattern that is one.
     pub(crate) fn pat_name(&self, fx: &Fx, pat: PatId) -> Atom {
         let PatKind::Ident(name) = self.hir(fx.file)[pat].kind else { return Atom::NONE };
         let mut bound = Vec::new();

@@ -1,5 +1,3 @@
-// Same behavior as __legacyDecorateClassTS, __legacyDecorateParamTS and __legacyMetadataTS in src/runtime.js ("bun:wrap").
-
 export function decorateClass(decorators: any[], target: any): any {
     let result = target;
     if (typeof Reflect === "object" && typeof (Reflect as any).decorate === "function") {

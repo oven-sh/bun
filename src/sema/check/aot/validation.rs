@@ -241,6 +241,22 @@ impl ValidationPlan {
             }
             out.extend_from_slice(if node.default.is_some() { b",true," } else { b",false," });
             write_json_constant(&mut out, node.default.as_ref().unwrap_or(&Constant::Null));
+            if let Planned::Object { members, .. } = &node.planned {
+                let plain_primitives: Vec<u32> = members
+                    .iter()
+                    .map(|member| match &self.nodes[member.node as usize] {
+                        PlanNode { planned: Planned::Primitive(primitive), rules, default: None, .. } if rules.is_empty() => match primitive {
+                            PlannedPrimitive::Number => 1,
+                            PlannedPrimitive::Text => 2,
+                            PlannedPrimitive::Boolean => 3,
+                            PlannedPrimitive::BigInt => 0,
+                        },
+                        _ => 0,
+                    })
+                    .collect();
+                out.push(b',');
+                write_json_list(&mut out, &plain_primitives);
+            }
             out.push(b']');
         }
         out.extend_from_slice(b"]]");
@@ -369,6 +385,13 @@ impl Checker<'_, '_> {
         })
     }
 
+    fn is_primitive_part(&self, ty: TypeId) -> bool {
+        matches!(
+            *self.data(ty),
+            TypeData::Intrinsic(Intrinsic::String | Intrinsic::Number | Intrinsic::BigInt) | TypeData::Template { .. } | TypeData::StringLit { .. } | TypeData::NumberLit { .. } | TypeData::BoolLit { .. } | TypeData::EnumLit { .. }
+        )
+    }
+
     fn read_tag(&mut self, planning: &mut Planning, part: TypeId, tags: &mut Tags, at: &str) -> bool {
         let Some((alias, arguments)) = self.alias_of_type(part) else { return false };
         let Some(name) = self.bun_intrinsic(alias) else { return false };
@@ -403,7 +426,7 @@ impl Checker<'_, '_> {
                 tags.is_strict = true;
                 return true;
             }
-            (b"StrictAllTheWayDown", _) => {
+            (b"DeepStrict", _) => {
                 planning.is_strict_everywhere = true;
                 return true;
             }
@@ -438,6 +461,8 @@ impl Checker<'_, '_> {
         if let TypeData::Intersection(ref parts) = *self.data(ty) {
             let parts: Vec<TypeId> = parts.iter().copied().collect();
             let others: Vec<TypeId> = parts.into_iter().filter(|&part| !self.read_tag(planning, part, &mut tags, at)).collect();
+            let primitives: Vec<TypeId> = others.iter().copied().filter(|&part| self.is_primitive_part(part)).collect();
+            let others = if primitives.is_empty() { others } else { primitives };
             base = match others[..] {
                 [only] => only,
                 _ => self.intersection(&others),
@@ -511,13 +536,13 @@ impl Checker<'_, '_> {
                 if !shape.call.is_empty() || !shape.construct.is_empty() {
                     return unsupported(self, planning);
                 }
-                let kept = shape.index.iter().find(|info| info.key == TypeId::STRING).map(|info| info.value);
+                let retained = shape.index.iter().find(|info| info.key == TypeId::STRING).map(|info| info.value);
                 let props: Vec<_> = shape.props.iter().collect();
                 let is_declared_externally = matches!(*self.data(ty), TypeData::Ref { target, .. } if self.hir(target.file).kind == FileKind::Declaration);
                 if is_declared_externally && props.iter().any(|prop| prop.flags.contains(PropFlags::METHOD)) {
                     return unsupported(self, planning);
                 }
-                if let (true, Some(held)) = (props.is_empty(), kept) {
+                if let (true, Some(held)) = (props.is_empty(), retained) {
                     return Planned::Dictionary { ty, held: self.plan_type(planning, held, &format!("{at}[string]")) };
                 }
                 let mut planned = Vec::with_capacity(props.len());
@@ -528,7 +553,7 @@ impl Checker<'_, '_> {
                     let is_optional = prop.flags.contains(PropFlags::OPTIONAL);
                     planned.push(PlannedMember { name, node, is_optional, is_omitted_when_invalid: is_optional && planning.omits_invalid_optional_members });
                 }
-                let others = match kept {
+                let others = match retained {
                     Some(held) => OtherKeys::Kept(self.plan_type(planning, held, &format!("{at}[string]"))),
                     None if is_strict => OtherKeys::Refused,
                     None => OtherKeys::Omitted,

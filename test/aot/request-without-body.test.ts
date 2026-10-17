@@ -220,7 +220,7 @@ test.skipIf(!!unsupported)(
         .filter(fields => fields[0] === "F" && fields[10] === "node:_http_incoming")
         .map(fields => fields[7]),
     );
-    expect(["endsUnwatched", "resumeUnwatched", "endUnwatched", "destroyUnwatched", "destroyInItsTick"].filter(name => !functions.has(name))).toEqual([]);
+    expect(["endsUnwatched", "resumeUnwatched", "endUnwatched", "destroyUnwatched", "destroyOnNextTick"].filter(name => !functions.has(name))).toEqual([]);
   },
   240_000,
 );

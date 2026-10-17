@@ -1,9 +1,3 @@
-//! JSX. With the automatic runtime: `jsx(type, props, key)`. With the classic one: `createElement(type, props, ...children)`.
-//!
-//! `key` is the last argument, so it is evaluated after the other attributes and the children, wherever it is written. Behind a spread it
-//! has to win over a `key` that the spread brings, which `jsx()` does not see to: such an element is `createElement(type, { ...props, key
-//! }, ...children)` of the package that the runtime belongs to, as TypeScript and the bundler have it.
-
 use super::{FileBuild, Fx};
 use crate::id::{LayoutId, StrId, V};
 use crate::ir::{Op, Operation, Prediction};
@@ -83,7 +77,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
         };
 
-        // With a spread the object is filled as it goes. Else it is made once the values of its properties are there.
         let has_spread = element.attrs.iter().any(|p| hir[p].kind == PropKind::Spread);
         let cloned_as = if has_spread && is_component && automatic.is_some() { self.cloned_jsx_props_layout(fx, e, jsx) } else { None };
         let is_cloned = cloned_as.is_some();
@@ -93,7 +86,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let mut key = None;
         for p in element.attrs.iter() {
             let attr = &hir[p];
-            // `<a key />`: the bundler leaves it out, with a warning.
             if is_named_key(p) && !has_value(p) {
                 continue;
             }
@@ -220,7 +212,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.coerce_to_expr_type(fx, value, e)
     }
 
-    /// `<a b />` is `<a b={true} />`.
     fn jsx_attribute_value(&mut self, fx: &mut Fx, value: ExprId) -> V {
         if value.is_none() || matches!(self.hir(fx.file)[value].kind, ExprKind::Missing) {
             return self.emit(fx, Op::Bool(true));
@@ -236,9 +227,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.expr(fx, value)
     }
 
-    /// The layout of the type a component declares its properties with: of the first parameter of what the checker has the element
-    /// call. What is in between, which hands the object to the component, has no types for it: only an object that is made with that
-    /// very layout is found to be of it there.
     fn jsx_props_layout(&mut self, fx: &Fx, e: ExprId) -> Option<LayoutId> {
         if !fx.is_typed || self.is_untyped_file(fx.file) {
             return None;
@@ -251,8 +239,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.record_layout(props)
     }
 
-    /// The layout of `jsx_props_layout`, if the attributes but a `key` ahead of them start with their only spread, of an object whose properties are all fields of it, and the others and the children
-    /// are fields of it. The checker has held them to the types of those properties.
     fn cloned_jsx_props_layout(&mut self, fx: &Fx, e: ExprId, jsx: JsxId) -> Option<LayoutId> {
         let hir = self.hir(fx.file);
         let element = &hir[jsx];
@@ -287,9 +273,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         })
     }
 
-    /// The object with the properties of an element: of the layout if it fits, else an ordinary one.
     fn emit_jsx_props(&mut self, fx: &mut Fx, layout: Option<LayoutId>, names: &[StrId], values: &[V]) -> V {
-        if let Some(layout) = layout.filter(|&layout| self.fits(layout, names)) {
+        if let Some(layout) = layout.filter(|&layout| self.names_fit_layout(layout, names)) {
             return self.emit_typed_object(fx, layout, names, values, None);
         }
         let props = self.emit(fx, Op::NewObject);
@@ -300,7 +285,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         props
     }
 
-    /// `React.createElement`, or whatever the file names instead, and the object it is read from.
     fn classic_jsx_entity(&mut self, fx: &mut Fx, element: ExprId, is_fragment_tag: bool) -> (V, V) {
         let pos = self.hir(fx.file)[element].pos;
         let (entity, found) = self.c.classic_jsx_factory(fx.file, element, is_fragment_tag);
@@ -327,14 +311,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         (value, this)
     }
 
-    /// A string child is either JSX text or `{"a string literal"}`, which comes right after a `{`.
     fn is_jsx_text(&self, fx: &Fx, child: ExprId) -> bool {
         let hir = self.hir(fx.file);
         let before = &hir.text[..hir[child].pos as usize];
         before.iter().rev().find(|byte| !byte.is_ascii_whitespace()) != Some(&b'{')
     }
 
-    /// The export `name` of the module `specifier` as the file being built resolves it.
     pub(crate) fn module_binding(&mut self, fx: &mut Fx, specifier: Atom, name: &[u8], pos: u32) -> V {
         if let Some(imported) = self.imported_file(fx.file, specifier)
             && self.has_exports_object(imported)
@@ -353,7 +335,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 }
 
-/// `getTransformedJsxText`: lines are trimmed and joined by one space, lines of white space only are dropped, entities are decoded.
 pub(super) fn jsx_text(raw: &[u8]) -> Vec<u8> {
     let lines: Vec<&[u8]> = bun_core::strings::split(raw, b"\n").collect();
     let mut joined: Vec<u8> = Vec::new();

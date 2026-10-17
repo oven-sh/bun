@@ -47,7 +47,7 @@ failing-cast-in-initializer-at-load: 13 layouts, 0 given, 17 open, places 39 of 
 field-covariance-linked-list: 2 layouts, 0 given, 0 open, places 18 of 26, reads 4 of 12
 field-covariance: 12 layouts, 0 given, 0 open, places 53 of 78, reads 27 of 34
 field-made-readonly-via-untyped-ref: 2 layouts, 0 given, 3 open, places 13 of 25, reads 2 of 12
-for-in-changed-prototypes: 3 layouts, 25 given, 1 open, places 28 of 42, reads 4 of 31
+for-in-changed-prototypes: 3 layouts, 11 given, 1 open, places 28 of 42, reads 4 of 31
 for-in: 2 layouts, 10 given, 0 open, places 13 of 36, reads 2 of 26
 freeze: 1 layouts, 0 given, 1 open, places 2 of 10, reads 0 of 4
 frozen-and-sealed-objects: 5 layouts, 0 given, 3 open, places 16 of 24, reads 1 of 8
@@ -124,7 +124,7 @@ private-field-type-enforced: 1 layouts, 0 given, 0 open, places 6 of 19, reads 1
 private-members-via-another-type: 22 layouts, 0 given, 28 open, places 68 of 103, reads 13 of 30
 private-members: 3 layouts, 0 given, 3 open, places 27 of 36, reads 5 of 28
 property-read-into-untyped-call: 2 layouts, 0 given, 3 open, places 9 of 19, reads 0 of 14
-prototype-of-typed-objects: 3 layouts, 0 given, 0 open, places 34 of 57, reads 5 of 51
+prototype-of-typed-objects: 3 layouts, 0 given, 0 open, places 34 of 57, reads 6 of 51
 proxies-through-interfaces: 3 layouts, 0 given, 2 open, places 32 of 62, reads 8 of 33
 redefine-or-delete-field-throws: 0 layouts, 0 given, 0 open, places 15 of 28, reads 2 of 24
 reflect-construct-other-new-target: 1 layouts, 0 given, 1 open, places 8 of 17, reads 0 of 10
@@ -149,7 +149,7 @@ type-error-with-decorators: is refused
 typed-functions-via-any-missing-arguments: 1 layouts, 0 given, 0 open, places 19 of 28, reads 6 of 11
 typed-object-prototype-immutable: 2 layouts, 0 given, 2 open, places 8 of 16, reads 2 of 10
 undefined-bang-placeholders: 3 layouts, 0 given, 0 open, places 19 of 38, reads 0 of 4
-undefined-into-number-variable: 2 layouts, 0 given, 0 open, places 13 of 25, reads 5 of 7
+undefined-into-number-variable: 2 layouts, 0 given, 1 open, places 13 of 25, reads 5 of 7
 undefined-stored-via-untyped-ref: 2 layouts, 0 given, 2 open, places 15 of 26, reads 2 of 10
 under-allocation-pressure: 2 layouts, 0 given, 2 open, places 37 of 46, reads 8 of 9
 undiscriminated-unions: 1 layouts, 0 given, 2 open, places 7 of 16, reads 1 of 13

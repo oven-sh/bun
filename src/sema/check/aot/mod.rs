@@ -1,5 +1,3 @@
-//! What ahead-of-time compilation asks of the types beyond what checking does.
-
 mod mutations;
 mod builtin_constants;
 mod builtins_generated;
@@ -13,7 +11,7 @@ mod escape;
 mod escape_closure;
 mod first_stores;
 mod flows;
-pub mod given;
+pub mod nullish_flow;
 mod identity;
 mod int32_fields;
 mod integers;
@@ -22,14 +20,15 @@ mod kinds;
 pub mod locked_builtins;
 mod locked_builtins_generated;
 mod mapped_arguments;
-mod reported_by_lint;
-mod rows;
+mod lint_checks;
+mod type_flags;
 mod sloppy;
 mod storage;
 mod subtypes;
+mod symbols;
 mod trust;
 mod type_caches;
-mod types_of_bun;
+mod bun_types;
 mod undeclared_fields;
 mod validation;
 
@@ -43,10 +42,11 @@ pub use identity::Identity;
 pub use int32_fields::{NotInt32Reason, FlowNode, FlowSource, Int32Verdict, NumberFlow, CodeOwner, expected_int32};
 pub use javascript::ImportedCode;
 pub use kinds::kind;
-pub use flows::{Answer, BuiltIn, Candidate, TruncatedSearch, KindsDeclared, Literal, SearchBarrier, Membership, FlowNotes, DataOrigin, Place, Question, Reach, Share, UntypedReason};
+pub use flows::{SubtypeAnswer, BuiltIn, Candidate, TruncatedSearch, KindsDeclared, Literal, SearchBarrier, Membership, FlowNotes, DataOrigin, Place, SubtypeQuery, LayoutUsage, FilePartition, UntypedReason};
 pub use subtypes::{Cause, FieldTypes, LoggingRelaxation, Sizes, Subtypes};
-pub use storage::{Evaluates, Primitive, ReferenceRead, Storage};
-pub use reported_by_lint::{AotCheck, AotCheckKind};
+pub use storage::{EvaluationTime, Primitive, ReferenceRead, Storage};
+pub use symbols::{ConstantSymbol, FieldKey};
+pub use lint_checks::{AotCheck, AotCheckKind};
 pub use trust::{Claim, is_engine_global};
 pub use validation::{Constant, OtherKeys, Placeholder, PlanNode, Planned, PlannedMember, PlannedPrimitive, Rule, ValidationCall, ValidationPlan};
 
@@ -57,7 +57,7 @@ use crate::bind::Parent;
 use crate::hir::{ExprId, ExprKind, ExprTag, ExprsByKind, FileKind, StmtId};
 use crate::local::MaybeLocal;
 use crate::program::{FileId, Sym};
-use crate::types::{TypeData, TypeId};
+use crate::types::{MapperId, Origin, TypeData, TypeId, tf};
 use crate::util::{InParallel, for_each_mut};
 
 const MAX_TASK_NESTING: u32 = 1000;
@@ -105,15 +105,16 @@ impl Program<'_> {
     }
 }
 
-/// What `Checker::is_provably_assignable` may make before it gives up.
 const FUEL: u64 = 1 << 14;
+const MAX_VALUE_BOUND_DEPTH: u8 = 6;
+const MAX_VALUE_BOUND_STEPS: u32 = 64;
 
 thread_local! {
     static IS_WARMING_UP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 struct OnceLock<T> {
-    made: std::sync::OnceLock<T>,
+    created: std::sync::OnceLock<T>,
     warmup_value: std::sync::OnceLock<Box<T>>,
 }
 
@@ -125,33 +126,33 @@ impl<T> Default for OnceLock<T> {
 
 impl<T> OnceLock<T> {
     const fn new() -> OnceLock<T> {
-        OnceLock { made: std::sync::OnceLock::new(), warmup_value: std::sync::OnceLock::new() }
+        OnceLock { created: std::sync::OnceLock::new(), warmup_value: std::sync::OnceLock::new() }
     }
 
     fn get(&self) -> Option<&T> {
-        match self.made.get() {
-            None if IS_WARMING_UP.get() => self.warmup_value.get().map(|made| &**made),
-            made => made,
+        match self.created.get() {
+            None if IS_WARMING_UP.get() => self.warmup_value.get().map(|created| &**created),
+            created => created,
         }
     }
 
     fn get_or_init(&self, make: impl FnOnce() -> T) -> &T {
-        match self.made.get() {
-            Some(made) => made,
+        match self.created.get() {
+            Some(created) => created,
             None if IS_WARMING_UP.get() => self.warmup_value.get_or_init(|| Box::new(make())),
-            None => self.made.get_or_init(make),
+            None => self.created.get_or_init(make),
         }
     }
 
     fn set(&self, value: T) -> Result<(), T> {
         match IS_WARMING_UP.get() {
             true => self.warmup_value.set(Box::new(value)).map_err(|value| *value),
-            false => self.made.set(value),
+            false => self.created.set(value),
         }
     }
 
     fn is_finalized(&self) -> bool {
-        self.made.get().is_some()
+        self.created.get().is_some()
     }
 
     fn set_warmup_value(&self, value: T) {
@@ -161,13 +162,13 @@ impl<T> OnceLock<T> {
 
 impl<'p, 's> Checker<'p, 's> {
     pub fn during_warmup<R>(&mut self, work: impl FnOnce(&mut Checker<'p, 's>) -> R) -> R {
-        let kept = std::mem::take(&mut self.aot);
+        let retained = std::mem::take(&mut self.aot);
         let kept_by_translator = self.translator.take();
         IS_WARMING_UP.set(true);
         let result = work(self);
         IS_WARMING_UP.set(false);
         let compared = self.aot.flows.take_pairs_compared();
-        self.aot = kept;
+        self.aot = retained;
         self.translator = kept_by_translator;
         self.aot.flows.add_pairs_compared(compared);
         result
@@ -208,8 +209,6 @@ impl<'p, 's> Checker<'p, 's> {
     }
 }
 
-/// A table by file. Each entry is made once, by whoever asks for it first, and is only read from then on. What is in it follows from
-/// the trees and the symbols alone, so that it does not matter who that is.
 struct ByFile<T>(OnceLock<Box<[OnceLock<T>]>>);
 
 impl<T> Default for ByFile<T> {
@@ -219,13 +218,12 @@ impl<T> Default for ByFile<T> {
 }
 
 impl<T> ByFile<T> {
-    /// `files`: how many the program has.
     fn get_or_init(&self, files: usize, file: FileId, make: impl FnOnce() -> T) -> &T {
         self.0.get_or_init(|| (0..files).map(|_| OnceLock::new()).collect())[file.idx()].get_or_init(make)
     }
 
-    fn get(&self, files: usize, file: FileId) -> Option<&T> {
-        self.0.get_or_init(|| (0..files).map(|_| OnceLock::new()).collect())[file.idx()].get()
+    fn initialized(&self) -> impl Iterator<Item = &T> {
+        self.0.get().into_iter().flat_map(|by_file| by_file.iter().filter_map(OnceLock::get))
     }
 }
 
@@ -275,6 +273,23 @@ impl<T: Copy> ByExpression<T> {
     fn clear(&mut self) {
         self.round += 1;
         self.other_files.clear();
+    }
+
+    #[inline]
+    fn get_in_file(&self, at: (FileId, ExprId)) -> Option<&T> {
+        if at.0 != self.file {
+            return None;
+        }
+        self.of_file.get(at.1.idx()).filter(|entry| entry.0 == self.round).map(|entry| &entry.1)
+    }
+
+    #[inline]
+    fn insert_in_file(&mut self, at: (FileId, ExprId), answer: T) {
+        if at.0 == self.file
+            && let Some(entry) = self.of_file.get_mut(at.1.idx())
+        {
+            *entry = (self.round, answer);
+        }
     }
 }
 
@@ -358,6 +373,16 @@ impl Checker<'_, '_> {
     }
 
     #[inline]
+    pub(in crate::check) fn translation_cached_call(&self, file: FileId, call: ExprId) -> Option<super::call::ResolvedCall> {
+        self.aot.resolved_calls.get_in_file((file, call)).copied()
+    }
+
+    #[inline]
+    pub(in crate::check) fn cache_call_for_translation(&mut self, file: FileId, call: ExprId, resolved: super::call::ResolvedCall) {
+        self.aot.resolved_calls.insert_in_file((file, call), resolved);
+    }
+
+    #[inline]
     pub fn expr_parent_link(&self, file: FileId, e: ExprId) -> Parent {
         if file == self.aot.parent_links.file { self.aot.parent_links.expr_parents[e.idx()] } else { self.bound(file).expr_parent[e.idx()] }
     }
@@ -369,11 +394,11 @@ impl Checker<'_, '_> {
 
     #[inline]
     pub(super) fn cached_symbol_for(&self, file: FileId, e: ExprId, name: Atom) -> Option<Option<Sym>> {
-        let kept = &self.aot.symbols_named;
-        if file != kept.file {
+        let retained = &self.aot.symbols_named;
+        if file != retained.file {
             return None;
         }
-        kept.get((file, e)).filter(|known| known.0 == name).map(|known| known.1)
+        retained.get((file, e)).filter(|known| known.0 == name).map(|known| known.1)
     }
 
     #[inline]
@@ -384,13 +409,8 @@ impl Checker<'_, '_> {
     }
 }
 
-/// What holds for every checker of the program, a field for each part of this module that has such. It belongs to the program: it
-/// mentions no type, nor anything else that is numbered by task. Each table is made once and is only read from then on. Whoever asks
-/// first makes what follows from the trees and the symbols alone. Whoever sets the program up says what is for the bundler to say.
-/// What takes types to find is noted file by file, by the task that has them, and put together when no task is running.
 #[derive(Default)]
 pub(super) struct Shared {
-    /// `file_exprs_by_kind`
     exprs_by_kind: ByFile<ExprsByKind>,
     names_in_code: std::sync::OnceLock<crate::util::FxHashSet<Atom>>,
     max_nesting_depths: ByFile<u32>,
@@ -404,6 +424,7 @@ pub(super) struct Shared {
     javascript: javascript::Shared,
     kinds: kinds::Shared,
     storage: storage::Shared,
+    symbols: symbols::Shared,
     type_caches: type_caches::TypeCaches,
     undeclared_fields: undeclared_fields::Shared,
     has_bailed_out: std::sync::atomic::AtomicBool,
@@ -420,13 +441,15 @@ impl Program<'_> {
 
     pub fn release_translation_caches(&self) {
         self.aot.flows.release();
+        self.aot.type_caches.release();
+        self.aot.captures.release();
     }
 }
 
-/// What the queries of this module have found so far, a field for each part of it. It belongs to a checker.
 #[derive(Default)]
 pub(super) struct State {
     callees: callees::State,
+    captures: captures::State,
     commonjs: commonjs::State,
     creation: creation::State,
     undeclared_fields: undeclared_fields::State,
@@ -443,6 +466,7 @@ pub(super) struct State {
     is_translating: bool,
     is_after_check: bool,
     symbols_named: ByExpression<(Atom, Option<Sym>)>,
+    resolved_calls: ByExpression<super::call::ResolvedCall>,
     parent_links: ParentLinks,
     non_nullable_types: crate::util::FxHashMap<TypeId, TypeId>,
 }
@@ -462,7 +486,6 @@ impl<'p, 's> Checker<'p, 's> {
         found
     }
 
-    /// `exprs_by_kind`, for a file that need not be the one the task is at. That keeps the index of one file. This one stays.
     fn file_exprs_by_kind(&self, file: FileId) -> &'p ExprsByKind {
         let program = self.p;
         program.aot.exprs_by_kind.get_or_init(program.files.modules.len(), file, || ExprsByKind::outside(self.hir(file), program.files.module(file).cut))
@@ -506,26 +529,22 @@ impl<'p, 's> Checker<'p, 's> {
         for_each_mut(&mut slices, in_parallel, &|(slice, result)| {
             let mut c = program.checker();
             c.begin_stack_budget();
-            let made = work(&mut c, slice);
-            *result = (!c.take_ran_out_of_stack() && c.stack_half_used_count() == 0).then_some(made);
+            let created = work(&mut c, slice);
+            *result = (!c.take_ran_out_of_stack() && c.stack_half_used_count() == 0).then_some(created);
         });
         slices.into_iter().map(|(slice, result)| result.unwrap_or_else(|| work(self, slice))).collect()
     }
 
-    /// Of an interface that extends `Array` or `ReadonlyArray`, such as `NodeArray<T>`, and of an intersection with an array, a tuple or
-    /// such an interface, `number[] & { tag: string }`: the type of the elements. Its objects are arrays that have been given more
-    /// properties. Not of a class that extends `Array`, nor of an intersection with one: what such a class makes has another prototype,
-    /// where it may find other methods, and the engine does not take it for an array.
     pub fn array_subtype_element(&mut self, ty: TypeId) -> Option<TypeId> {
         if !matches!(self.data(ty), TypeData::Ref { .. } | TypeData::Intersection(_)) {
             return None;
         }
-        let known = if self.results_are_provisional() { None } else { self.shared_type_flag(ty, rows::ARRAY_SUBTYPE_KNOWN, rows::IS_ARRAY_SUBTYPE).or_else(|| self.aot.flows.array_subtypes.get(&ty).copied()) };
+        let known = if self.results_are_provisional() { None } else { self.shared_type_flag(ty, type_flags::ARRAY_SUBTYPE_KNOWN, type_flags::IS_ARRAY_SUBTYPE).or_else(|| self.aot.flows.array_subtypes.get(&ty).copied()) };
         let is_array = match known {
             Some(known) => known,
             None => {
                 let (found, is_cacheable) = self.compute_cacheable(|c| c.is_array_subtype(ty));
-                if is_cacheable && !self.publish_type_flag(ty, rows::ARRAY_SUBTYPE_KNOWN, rows::IS_ARRAY_SUBTYPE, found) {
+                if is_cacheable && !self.publish_type_flag(ty, type_flags::ARRAY_SUBTYPE_KNOWN, type_flags::IS_ARRAY_SUBTYPE, found) {
                     self.aot.flows.array_subtypes.insert(ty, found);
                 }
                 found
@@ -548,18 +567,15 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `any`, `unknown`, `never`, `void`: no value is known for what it is by it.
-    /// `{}`, `Object`, an interface without members: a string or a number is one as well. `object` is not meant.
-    /// A type that data from outside the program is looked at as: whatever the data holds is there.
     pub fn accepts_primitives(&mut self, ty: TypeId) -> bool {
         if ty == TypeId::OBJECT || matches!(self.data(ty), TypeData::Union(_)) {
             return false;
         }
-        let by_itself = match self.shared_type_flag(ty, rows::ACCEPTS_PRIMITIVES_KNOWN, rows::ACCEPTS_PRIMITIVES).or_else(|| self.aot.flows.accepts_primitives_cache.get(&ty).copied()) {
+        let by_itself = match self.shared_type_flag(ty, type_flags::ACCEPTS_PRIMITIVES_KNOWN, type_flags::ACCEPTS_PRIMITIVES).or_else(|| self.aot.flows.accepts_primitives_cache.get(&ty).copied()) {
             Some(known) => known,
             None => {
-                let (found, is_cacheable) = self.compute_cacheable(|c| c.is_empty_object_type(ty) || ty == c.global_ref(known::Object, &[]));
-                if !is_cacheable || !self.publish_type_flag(ty, rows::ACCEPTS_PRIMITIVES_KNOWN, rows::ACCEPTS_PRIMITIVES, found) {
+                let (found, is_cacheable) = self.compute_cacheable(|c| c.is_empty_object_type(ty) || ty == c.global_ref(known::Object, &[]) || c.is_mapped_over_possible_primitive(ty));
+                if !is_cacheable || !self.publish_type_flag(ty, type_flags::ACCEPTS_PRIMITIVES_KNOWN, type_flags::ACCEPTS_PRIMITIVES, found) {
                     self.aot.flows.accepts_primitives_cache.insert(ty, found);
                 }
                 found
@@ -568,17 +584,78 @@ impl<'p, 's> Checker<'p, 's> {
         by_itself || self.is_tainted(ty)
     }
 
-    /// `is_assignable`, for a question that checking the program need not have asked, and whose answer only saves something. `false` also
-    /// where it is not known: where the checker has run into one of its limits, behind which is the error type, to which everything
-    /// is assignable. `e as T[K]`: to be assignable to `T[K]` is to be assignable to all values of `T` at once, an intersection that is
-    /// distributed over those that are unions. TypeScript builds up to 100,000 of them, each with members of its own.
-    ///
-    /// TypeScript's limits end every question, after minutes and gigabytes. This one may make `FUEL` things, see `burn`.
+    pub fn value_bound(&mut self, ty: TypeId) -> TypeId {
+        if !self.has_type_variables(ty) {
+            return self.base_constraint(ty);
+        }
+        if let Some(&known) = self.aot.flows.value_bounds.get(&ty) {
+            return known;
+        }
+        let mut steps_left = MAX_VALUE_BOUND_STEPS;
+        let bound = self.bound_through_conditional_types(ty, 0, &mut steps_left);
+        let bound = bound.unwrap_or_else(|| self.base_constraint(ty));
+        self.aot.flows.value_bounds.insert(ty, bound);
+        bound
+    }
+
+    fn bound_through_conditional_types(&mut self, ty: TypeId, depth: u8, steps_left: &mut u32) -> Option<TypeId> {
+        if !self.has_type_variables(ty) {
+            return None;
+        }
+        if depth > MAX_VALUE_BOUND_DEPTH || *steps_left == 0 {
+            return Some(TypeId::UNKNOWN);
+        }
+        *steps_left -= 1;
+        match *self.data(ty) {
+            TypeData::Cond { .. } => {
+                let arms = [self.cond_true(ty), self.cond_false(ty)];
+                let bounds = arms.map(|arm| self.bound_through_conditional_types(arm, depth + 1, steps_left).unwrap_or_else(|| self.base_constraint(arm)));
+                Some(self.union(&bounds))
+            }
+            TypeData::TypeParam(..) | TypeData::ThisParam(_) | TypeData::IndexedAccess { .. } => {
+                let constraint = self.constraint_of(ty).filter(|&constraint| constraint != ty)?;
+                self.bound_through_conditional_types(constraint, depth + 1, steps_left)
+            }
+            TypeData::Substitution { base, constraint } => {
+                let (of_base, of_constraint) = (self.bound_through_conditional_types(base, depth + 1, steps_left), self.bound_through_conditional_types(constraint, depth + 1, steps_left));
+                if of_base.is_none() && of_constraint.is_none() {
+                    return None;
+                }
+                let of_base = of_base.unwrap_or_else(|| self.base_constraint(base));
+                Some(if of_base == TypeId::UNKNOWN { of_constraint.unwrap_or_else(|| self.base_constraint(constraint)) } else { of_base })
+            }
+            TypeData::Union(ref parts) => {
+                let found: Vec<Option<TypeId>> = parts.iter().map(|&part| self.bound_through_conditional_types(part, depth + 1, steps_left)).collect();
+                if found.iter().all(Option::is_none) {
+                    return None;
+                }
+                let bounds: Vec<TypeId> = found.into_iter().zip(parts.iter()).map(|(bound, &part)| bound.unwrap_or_else(|| self.base_constraint(part))).collect();
+                Some(self.union(&bounds))
+            }
+            TypeData::Intersection(ref parts) => parts.iter().any(|&part| self.bound_through_conditional_types(part, depth + 1, steps_left).is_some()).then_some(TypeId::UNKNOWN),
+            _ => None,
+        }
+    }
+
+    fn is_mapped_over_possible_primitive(&mut self, ty: TypeId) -> bool {
+        let TypeData::Anon { origin: Origin::Mapped(file, node), mapper } = *self.data(ty) else { return false };
+        let Some(variable) = self.homomorphic_type_variable(file, node, MapperId::IDENTITY) else { return false };
+        let source = self.instantiate(variable, mapper);
+        if !self.is_instantiable(source) {
+            return self.is_mapped_over_possible_primitive(source);
+        }
+        let bound = self.value_bound(source);
+        let parts = match self.data(bound) {
+            TypeData::Union(parts) => parts.to_vec(),
+            _ => vec![bound],
+        };
+        parts.into_iter().any(|part| part == TypeId::UNKNOWN || part.is_any() || self.flags(part) & tf::PRIMITIVE != 0 || self.is_empty_object_type(part))
+    }
+
     pub fn is_provably_assignable(&mut self, source: TypeId, target: TypeId) -> bool {
         self.is_provably_related(source, target, Relation::Assignable)
     }
 
-    /// The same for any relation.
     fn is_provably_related(&mut self, source: TypeId, target: TypeId, relation: Relation) -> bool {
         if self.aot.flows.truncated.contains(&(source, target, relation as u8)) {
             self.aot.flows.unknown_count += 1;
@@ -591,10 +668,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let was_too_complex = self.relation_too_complex;
         let had_stack_overflow = self.ran_out_of_stack.get();
-        let most = fuel.min(FUEL);
-        self.fuel.set(most);
+        let maximum = fuel.min(FUEL);
+        self.fuel.set(maximum);
         let is_related = self.related(source, target, relation);
-        let burnt = most - self.fuel.get();
+        let burnt = maximum - self.fuel.get();
         self.fuel.set(if fuel == u64::MAX { fuel } else { fuel - burnt });
         if self.cuts() != cuts {
             self.ran_out_of_stack.set(had_stack_overflow);
@@ -609,11 +686,11 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     pub fn truncated_queries(&self) -> Vec<(TypeId, TypeId, u8)> {
-        self.aot.flows.truncated.iter().copied().filter(|question| !question.is_local()).collect()
+        self.aot.flows.truncated.iter().copied().filter(|query| !query.is_local()).collect()
     }
 
-    pub fn set_truncated_queries(&mut self, questions: &[(TypeId, TypeId, u8)]) {
-        self.aot.flows.truncated.extend(questions.iter().copied());
+    pub fn set_truncated_queries(&mut self, queries: &[(TypeId, TypeId, u8)]) {
+        self.aot.flows.truncated.extend(queries.iter().copied());
     }
 
     pub fn is_uninformative(&self, ty: TypeId) -> bool {

@@ -12,13 +12,13 @@ const files = {
 function early(o) { return ${sumOf(seldom.filter((_, i) => i % 2 === 0))}; }
 function late(o) { return ${sumOf(seldom.filter((_, i) => i % 2 === 1))}; }
 let total = 0;
-for (let i = 0; i < 3; i++) total += busy({ often7: i }) + early({ seldom0000: i }) + late({ seldom0001: i });
+for (let i = 0; i < 3; i++) total += busy({ often7: i }) + early({}) + late({});
 console.log(total);
 `,
 };
 
-test("bun run --aot: beyond the names used most, the names that one part of the text asks for are numbered side by side", async () => {
-  using dir = tempDir("aot-names-of-one-part-of-the-text", files);
+test("bun run --aot: name ids beyond the hot range are adjacent within a function", async () => {
+  using dir = tempDir("aot-name-ids-adjacent", files);
   const mapPath = join(String(dir), "main.map");
   await using proc = Bun.spawn({
     cmd: [bunExe(), "run", "--debug-aot", "./main.js"],
@@ -29,7 +29,7 @@ test("bun run --aot: beyond the names used most, the names that one part of the 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).not.toContain("crashIfInterpreterIsUsed");
-  expect({ stdout, exitCode }).toEqual({ stdout: "12\n", exitCode: 0 });
+  expect({ stdout, exitCode }).toEqual({ stdout: "6\n", exitCode: 0 });
   const numbers = new Map<string, number>();
   for (const line of readFileSync(mapPath, "utf8").split("\n")) {
     const fields = line.split("\t");

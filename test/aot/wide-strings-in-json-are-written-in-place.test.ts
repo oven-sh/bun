@@ -7,6 +7,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const files = {
+  "tsconfig.json": JSON.stringify({ compilerOptions: { typeRoots: [join(import.meta.dir, "../../packages")], types: ["bun-types"] } }),
   "main.ts": `
     interface Comment { id: number; body: string; at: Date }
     interface CommentNode extends Comment { replies: CommentNode[] }

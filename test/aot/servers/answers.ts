@@ -47,8 +47,12 @@ export interface Route {
   name: string;
   method: "GET" | "POST";
   path: string;
+  /** "-": any. */
   type: string;
+  headers?: Record<string, string>;
   request?: string;
+  /** 200 unless given. */
+  status?: number;
   expectedBody: string;
 }
 
@@ -110,5 +114,76 @@ export const invalidOrders: Record<string, string> = {
   "text that is not JSON": '{"customer":',
 };
 
+function summary(id: number) {
+  return { id, name: `User ${id}`, orders: 5, totalCents: [0, 1, 2, 3, 4].reduce((sum, n) => sum + 1000 + n * 250 + id, 0) };
+}
+
+export const effectInvalidOrderBody = JSON.stringify({ _tag: "InvalidOrder", error: "invalid order" });
+
+/** The routes of the servers under ./effect: six of the routes above, with the same bodies, and five of their own. */
+export const effectRoutes: Route[] = [
+  ...routes.filter(route => ["text", "json", "params", "async", "stream", "post"].includes(route.name)),
+  { name: "profile", method: "GET", path: "/users/42", type: "application/json", expectedBody: JSON.stringify(profile(42)) },
+  {
+    name: "list",
+    method: "GET",
+    path: "/products",
+    type: "application/json",
+    expectedBody: JSON.stringify(
+      products.map(({ id, title, priceCents, stock }) => ({
+        id,
+        title,
+        priceCents,
+        stock,
+        tags: id % 2 === 0 ? ["even", `shelf-${id % 5}`] : [`shelf-${id % 5}`],
+        addedAt: `2026-02-${String(1 + (id % 28)).padStart(2, "0")}T12:00:00.000Z`,
+      })),
+    ),
+  },
+  // Fails with a typed error that the API maps to a status.
+  { name: "missing", method: "GET", path: "/users/1000", type: "application/json", status: 404, expectedBody: JSON.stringify({ _tag: "UserNotFound", id: 1000 }) },
+  // Ten summaries, each three effects in sequence, computed concurrently.
+  { name: "concurrent", method: "GET", path: "/summaries?from=20", type: "application/json", expectedBody: JSON.stringify(Array.from({ length: 10 }, (_, n) => summary(20 + n))) },
+  { name: "refused", method: "POST", path: "/shops/west/orders", type: "application/json", request: invalidOrders["a quantity of zero"], status: 400, expectedBody: effectInvalidOrderBody },
+];
+
+// The routes of ./app/api-bun.ts, ./app/api-thin.ts and ./app/api-hono.ts.
+const task = (n: number) => ({
+  id: 300 + n,
+  title: `Task ${n} of project 3`,
+  status: n % 3 === 0 ? "done" : "open",
+  priority: 1 + (n % 4),
+  assignee: `User ${1 + (n % 20)}`,
+  tags: n % 2 === 0 ? ["backend", "urgent"] : ["frontend"],
+});
+const anonymous = { "x-request-id": "r-1" };
+const signedIn = { ...anonymous, authorization: "Bearer token-7" };
+
+export const apiRoutes: Route[] = [
+  // Hono clones the Response to add a header after the handler, and the clone of `new Response("ok")` has another Content-Type.
+  { name: "health", method: "GET", path: "/health", type: "-", headers: anonymous, expectedBody: "ok" },
+  { name: "task", method: "GET", path: "/api/projects/3/tasks/317", type: "application/json", headers: signedIn, expectedBody: JSON.stringify(task(17)) },
+  {
+    name: "list",
+    method: "GET",
+    path: "/api/projects/3/tasks?status=open&limit=5",
+    type: "application/json",
+    headers: signedIn,
+    expectedBody: JSON.stringify({ projectId: 3, requestedBy: "User 7", total: 20, tasks: [1, 2, 4, 5, 7].map(task) }),
+  },
+  {
+    name: "create",
+    method: "POST",
+    path: "/api/projects/3/tasks",
+    type: "application/json",
+    status: 201,
+    headers: signedIn,
+    request: JSON.stringify({ title: "Write the report", priority: 2, assigneeId: 5, tags: ["docs", "q4"], note: "before Friday" }),
+    expectedBody: JSON.stringify({ id: 399, projectId: 3, title: "Write the report", priority: 2, assignee: "User 5", tagCount: 2, createdBy: "User 7" }),
+  },
+  { name: "denied", method: "GET", path: "/api/projects/3/tasks/317", type: "application/json", status: 401, headers: anonymous, expectedBody: JSON.stringify({ error: "missing token", requestId: "r-1" }) },
+  { name: "missing", method: "GET", path: "/nothing/here", type: "application/json", status: 404, headers: anonymous, expectedBody: JSON.stringify({ error: "not found", requestId: "r-1" }) },
+];
+
 // Used by ./measure/measure.py.
-if (import.meta.main) console.log(JSON.stringify({ routes, invalidOrders, invalidOrderBody }));
+if (import.meta.main) console.log(JSON.stringify({ routes, effectRoutes, apiRoutes, invalidOrders, invalidOrderBody }));

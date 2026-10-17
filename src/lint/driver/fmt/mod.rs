@@ -399,6 +399,7 @@ fn with_file<R>(
             detects_commonjs_by_free_names: false,
             uses_ecmascript_bindings: false,
             is_forced_commonjs: None,
+            is_typed_bundle: false,
         };
         let program = how.verifies.then(|| Program::new(&hir, text, atoms));
         if needs_symbols {

@@ -1,6 +1,3 @@
-//! What the bundler replaces by a constant: `--define`, `feature()` of `bun:bundle`. Conditions on these are folded, so that the code
-//! a build leaves out is not translated either.
-
 use super::{FileBuild, Fx};
 use crate::id::V;
 use crate::ir::{Op, Operation};
@@ -46,7 +43,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// `a.b.c` where `a` is not declared by the program: the dotted name.
     fn global_path(&mut self, file: FileId, e: ExprId) -> Option<Vec<u8>> {
         let hir = self.hir(file);
         match hir[e].kind {
@@ -84,7 +80,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// The value an expression always has because built-in objects are immutable: a global that cannot be replaced, or a property of a built-in object.
     fn known_builtin_value(&mut self, file: FileId, e: ExprId) -> Option<KnownValue> {
         if self.is_builtin_file(file) {
             return None;
@@ -105,7 +100,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// The expression is not translated: see `Body::cut`.
     pub(crate) fn mark_dead_expr(&mut self, fx: &Fx, e: ExprId) {
         self.mark_dead_expr_in(fx.file, e);
     }
@@ -124,13 +118,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// The constant the bundler puts in the place of the expression.
     pub(crate) fn replacement(&mut self, fx: &Fx, e: ExprId) -> Option<Constant> {
         self.define_replacement(fx.file, e)
     }
 
     pub(crate) fn define_replacement(&mut self, file: FileId, e: ExprId) -> Option<Constant> {
-        // A define of `__filename` comes first, as in a bundle.
         let found = match self.replacement_of(file, e) {
             Some(found) => found,
             None => self.module_environment_constant(file, e)?,
@@ -162,7 +154,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                         return Some(found.clone());
                     }
                 }
-                // A member of a literal.
                 let ExprKind::Dot { obj, name, chain: hir::Chain::No, .. } = hir[e].kind else { return None };
                 let mut root = obj;
                 while let ExprKind::Dot { obj, .. } = hir[root].kind {
@@ -174,10 +165,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 }
                 let Constant::Object(members) = self.replacement_of(file, obj)? else { return None };
                 let name = self.c.atoms().bytes(name);
-                // The last of that name is what the object holds.
                 members.into_iter().rev().find(|member| member.0 == name).map(|member| member.1)
             }
-            // `feature("FLAG")`, imported from `bun:bundle`.
             ExprKind::Call(call) => {
                 if self.is_dropped_call(file, hir[call].callee) {
                     return Some(Constant::Undefined);
@@ -211,11 +200,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// What a `const` of the program holds that a reference stands for: `Checker::const_value`.
     fn const_binding_value(&mut self, file: FileId, e: ExprId, name: Atom) -> Option<Constant> {
         let found = self.c.symbol_of_identifier(file, e, name)?;
         let sym = self.value_symbol(found);
-        // What it holds is known. Where it may not hold it yet, the reference is translated, and throws.
         if self.c.may_be_in_tdz(sym, file, e) {
             return None;
         }
@@ -226,7 +213,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if let Some(known) = self.constants_after_defines.get(&sym) {
             return known.clone();
         }
-        // For one that is initialized with itself by way of another.
         self.constants_after_defines.insert(sym, None);
         let (file, init) = self.c.initializer_of_const(sym)?;
         let outer = std::mem::replace(&mut self.is_query_only, true);
@@ -236,7 +222,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         found
     }
 
-    /// What the checker calls a constant expression.
     fn checker_constant(&mut self, file: FileId, e: ExprId) -> Option<Constant> {
         let value = self.c.constant_value_of(file, e)?;
         Some(self.primitive_constant(value))
@@ -284,7 +269,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         Some(DecidedOperand { yields, is_cut_left: for_effect.is_none() })
     }
 
-    /// Whether the expression always yields something truthy, or always something falsy, though it may have to be evaluated for what it does: `live && false`.
     pub(crate) fn known_truthiness(&mut self, fx: &Fx, e: ExprId) -> Option<bool> {
         let outer = std::mem::replace(&mut self.is_query_only, true);
         let found = self.known_truthiness_in(fx.file, e);
@@ -315,7 +299,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// The value of an expression made of literals, of constants of the program and of what the bundler replaces.
     pub(crate) fn constant(&mut self, fx: &Fx, e: ExprId) -> Option<Constant> {
         self.constant_in(fx.file, e)
     }
@@ -340,7 +323,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     Some(Constant::Bool(!held.is_truthy))
                 }
             },
-            // `typeof NAME`, where the bundler replaces the name.
             ExprKind::Unary { op: hir::UnOp::Typeof, operand } if matches!(hir[operand].kind, ExprKind::Ident(_) | ExprKind::Dot { .. }) => {
                 let Some(replaced) = self.define_replacement(file, operand) else {
                     let held = self.known_builtin_value(file, operand)?;
@@ -377,7 +359,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     _ => {}
                 }
                 let b = self.constant_in(file, right)?;
-                // Two objects, which are not the same.
                 if !a.is_primitive() || !b.is_primitive() {
                     return None;
                 }
@@ -386,7 +367,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 match op {
                     hir::BinOp::EqEqEq => Some(Constant::Bool(strictly_equal)),
                     hir::BinOp::NotEqEq => Some(Constant::Bool(!strictly_equal)),
-                    // Loose equality of two values of one type, or with `null` and `undefined`.
                     hir::BinOp::EqEq | hir::BinOp::NotEq => {
                         let equal = if a.is_nullish() || b.is_nullish() {
                             a.is_nullish() && b.is_nullish()

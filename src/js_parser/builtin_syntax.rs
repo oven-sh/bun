@@ -1,6 +1,3 @@
-//! `--target=bun_builtins`: the syntax of `src/js`. Every rewrite happens on a node the visit pass
-//! has not reached yet, so what it produces is visited like source text.
-
 use bstr::BStr;
 use bun_ast::op::Level;
 use bun_ast::stmt::Data as StmtData;
@@ -16,7 +13,6 @@ use crate::lexer::{self, Lexer};
 use crate::p::P;
 
 impl<'a> Lexer<'a> {
-    /// The name of the identifier `raw`, which starts with `$`.
     pub(crate) fn builtin_name(&mut self, raw: &'a [u8]) -> Result<&'a [u8], lexer::Error> {
         let name = &raw[1..];
         if !name
@@ -88,7 +84,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.new_expr(E::Number::new(f64::from(value)), loc)
     }
 
-    /// `value` in a debug build. It is visited either way: its scopes are in the list of scopes.
     fn in_development(&mut self, manifest: &Manifest, value: Expr, loc: Loc) -> Expr {
         let test = self.new_expr(
             E::Boolean {
@@ -115,15 +110,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    /// `export default value`, after the `default`.
     pub(crate) fn parse_builtin_module_value(&mut self, loc: Loc) -> Result<Stmt, Error> {
         let value = self.parse_expr(Level::Comma)?;
         self.lexer.expect_or_insert_semicolon()?;
         Ok(self.s(S::Return { value: Some(value) }, loc))
     }
 
-    /// Call between the parse pass and the visit pass. A module with named exports keeps them, and
-    /// the linker returns them as an object.
     pub(crate) fn finish_builtin_module(&mut self, stmts: &[Stmt]) {
         let value = stmts
             .iter()
@@ -158,11 +150,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 format_args!("`export default` must be the last statement of a builtin module"),
             );
         }
-        // Only `export type` and `export interface` can have set it.
         self.esm_export_keyword = Range::NONE;
     }
 
-    /// The source text of the first argument of `call`, which starts at `loc`.
     fn first_argument_text(&self, call: &E::Call, loc: Loc) -> Option<&'a [u8]> {
         let source: &'a [u8] = &self.source.contents;
         let start = usize::try_from(loc.start).ok()?;
@@ -230,7 +220,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         true
     }
 
-    /// Returns whether `e`, a call that has not been visited, was replaced by what it stands for.
     pub(crate) fn expand_builtin_call(&mut self, e: &mut Expr) -> bool {
         let Some(mut call) = e.data.e_call() else {
             return false;
@@ -366,7 +355,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `new TypeError(..)` is `$makeTypeError(..)`.
     pub(crate) fn expand_builtin_new(&mut self, e: &mut Expr) -> bool {
         let Some(mut new) = e.data.e_new() else {
             return false;
@@ -378,7 +366,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         true
     }
 
-    /// `throw new TypeError(..)` is `$throwTypeError(..)`, and the same for `RangeError`.
     pub(crate) fn builtin_throw_call(&mut self, value: &Expr) -> Option<Expr> {
         let mut new = value.data.e_new()?;
         let callee: &[u8] = match self.constructor_name(&new) {
@@ -389,7 +376,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Some(self.call_replacing_new(&mut new, callee, value.loc))
     }
 
-    /// A class extends the public global, not its private copy.
     pub(crate) fn keep_public_heritage(&mut self, extends: &mut Expr) {
         let Data::EIdentifier(identifier) = extends.data else {
             return;

@@ -1,4 +1,8 @@
 # Programs that collector-stress.py does not judge, and why.
+data-from-outside/union-members-and-literal-fields-convert-without-the-runtime    counts calls into the runtime
+data-from-outside/conversion-plans-cover-field-kinds    counts calls into the runtime
+data-from-outside/fresh-literals-are-copied-into-their-record-type    counts calls into the runtime
+data-from-outside/plain-objects-holding-references-convert-quickly    counts calls into the runtime
 calls-fast-paths/class-objects-not-materialized    counts cells of the heap
 calls-fast-paths/classes-that-extend-builtins    counts cells of the heap
 classes-and-closures/property-stores-on-new-functions    counts calls into the runtime
@@ -32,3 +36,4 @@ untyped-code/stores-find-some-names-present    counts calls into the runtime
 untyped-code/stores-to-adjacent-names    counts calls into the runtime
 untyped-code/trap-key-is-known-atom    counts calls into the runtime
 untyped-code/lookups-not-repeated    counts calls into the runtime
+untyped-code/getters-add-receiver-property    counts calls into the runtime

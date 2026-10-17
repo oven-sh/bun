@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "path";
 
 const service = {
+  "tsconfig.json": JSON.stringify({ compilerOptions: { typeRoots: [join(import.meta.dir, "../../packages")], types: ["bun-types"] } }),
   "service.ts": `
     export interface Job { id: number; done: boolean; label: string }
     export function load(id: number): Job { return { id, done: true, label: "real" }; }

@@ -293,7 +293,7 @@ impl Checker<'_, '_> {
                     || hir[p].flags.contains(Flags::REST)
             })
             .collect();
-        if non_simple_parameters.is_empty() || language_version(self) < ScriptTarget::ES2016 {
+        if non_simple_parameters.is_empty() || language_version(self, file) < ScriptTarget::ES2016 {
             return false;
         }
         let mut related = Vec::with_capacity(non_simple_parameters.len());

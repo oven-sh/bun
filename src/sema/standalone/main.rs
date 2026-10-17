@@ -192,6 +192,7 @@ fn run(args: &[String]) {
                 let bytes = read_file(path).expect("the snapshot cannot be read");
                 bun_sema_driver::snapshot::Snapshot::from_bytes(&bytes).expect("not a snapshot")
             });
+            let deferred_sources = snapshot.as_mut().and_then(|it| it.take_deferred_sources());
             let (cwd, paths, project) = match &snapshot {
                 // `--project` on the command line goes before the one the bundle was made with.
                 Some(it) => (text(&it.cwd), it.entry_points.clone(), command_line.project.clone().or_else(|| it.tsconfig.clone())),
@@ -257,7 +258,7 @@ fn run(args: &[String]) {
             // ECMAScript-exact unless asked otherwise: a type annotation promises nothing, and nothing throws because one is wrong.
             constants.features.extend(args.iter().filter_map(|a| a.strip_prefix("--feature=")).map(|flag| flag.as_bytes().to_vec()));
             const OWN_FLAGS: [&str; 49] = ["--agent", "--all", "--aot", "--aot-explain", "--aot-out", "--aot-type-errors", "--audit-only", "--audit-sites-out", "--builtin-sources", "--checkers", "--chunk-bytes", "--declarations-out", "--define", "--error-types", "--every-stage", "--feature", "--file-cost", "--file-instructions", "--github", "--keep", "--keep-names", "--memory", "--min-tasks", "--minify", "--minify-identifiers", "--no-builtin-modules", "--no-color", "--only", "--order", "--own-paths", "--plain", "--progress", "--projects-at-once", "--removable", "--repeat", "--slices", "--snapshot", "--split-files", "--split-publishes-everything", "--split-tolerates", "--step-growth", "--task-instructions", "--test-globals", "--threads", "--timing", "--type-node-cost", "--warm-up-files", "--warm-up-max-bytes", "--width"];
-            const EXPLAINED: [&str; 16] = ["mutations", "builtins", "deferred", "errors", "fields", "foreign", "given", "integers", "progress", "react", "react-locations", "rows", "throws", "throws-all", "throws-all-json", "throws-json"];
+            const EXPLAINED: [&str; 17] = ["mutations", "builtins", "deferred", "errors", "fields", "foreign", "given", "integers", "joins", "progress", "react", "react-locations", "rows", "throws", "throws-all", "throws-all-json", "throws-json"];
             for rejected in &command_line.rejected {
                 let flag = text(&rejected.flag);
                 // A flag that is no compiler option is one of the tool's own, looked for below, or an error.
@@ -356,7 +357,7 @@ fn run(args: &[String]) {
             // `--aot-explain=integers`: by name of a field, whether the numbers stored under it are expected to be int32s, and if not, the first evidence to the contrary.
             // `--aot-explain=progress`: where the soundness closure of the link is, on stderr as it goes, with the sizes of its tables, and at the end what has grown, in numbers alone.
             // `--aot-explain=deferred`: how many modules and top-level statements may run at their first use, and what stands in the way for the others. Numbers alone.
-            let explain = bun_aot::Explain { throws: has("--aot-explain=throws") || has("--aot-explain=throws-all"), throws_json: has("--aot-explain=throws-json") || has("--aot-explain=throws-all-json"), throws_all: has("--aot-explain=throws-all") || has("--aot-explain=throws-all-json"), rows: has("--aot-explain=rows"), given: has("--aot-explain=given"), foreign: has("--aot-explain=foreign"), includes_builtin_modules: true, mutations: has("--aot-explain=mutations"), fields: has("--aot-explain=fields"), integers: has("--aot-explain=integers"), progress: has("--aot-explain=progress").then_some((|line: std::fmt::Arguments<'_>| eprintln!("{line}")) as fn(std::fmt::Arguments<'_>)), deferred: has("--aot-explain=deferred") };
+            let explain = bun_aot::Explain { throws: has("--aot-explain=throws") || has("--aot-explain=throws-all"), throws_json: has("--aot-explain=throws-json") || has("--aot-explain=throws-all-json"), throws_all: has("--aot-explain=throws-all") || has("--aot-explain=throws-all-json"), rows: has("--aot-explain=rows"), joins: has("--aot-explain=joins"), given: has("--aot-explain=given"), foreign: has("--aot-explain=foreign"), includes_builtin_modules: true, mutations: has("--aot-explain=mutations"), fields: has("--aot-explain=fields"), integers: has("--aot-explain=integers"), plugins: false, progress: has("--aot-explain=progress").then_some((|line: std::fmt::Arguments<'_>| eprintln!("{line}")) as fn(std::fmt::Arguments<'_>)), deferred: has("--aot-explain=deferred") };
             let translation = bun_aot::Translation::new(&constants).explaining(explain);
             // `--aot-explain=react`, with or without `--aot`: what the React Compiler makes of the checker's tree of each `.jsx` and `.tsx` file: the candidates, the compiled functions with their scopes and slots, the bail-outs with their reasons.
             // `--aot-explain=react-locations`: the same, and each function is compiled again with its locations renumbered, which is to make no difference.
@@ -402,9 +403,9 @@ fn run(args: &[String]) {
                     begin_translation(program, in_parallel);
                 }
             };
-            let audited_alone = args.iter().find_map(|a| a.strip_prefix("--audit-only="));
+            let audited_separately = args.iter().find_map(|a| a.strip_prefix("--audit-only="));
             let is_left_out = |checker: &bun_sema::check::Checker<'_, '_>, file: bun_sema::program::FileId| {
-                audited_alone.is_some_and(|only| !text(checker.p.files.modules[file.idx()].file_name()).contains(only))
+                audited_separately.is_some_and(|only| !text(checker.p.files.modules[file.idx()].file_name()).contains(only))
             };
             let translate_file =
                 |checker: &mut bun_sema::check::Checker<'_, '_>,
@@ -438,7 +439,7 @@ fn run(args: &[String]) {
                              errors: &[(bun_sema::program::FileId, u32)]|
              -> Vec<bool> {
                 let started = std::time::Instant::now();
-                if audited_alone.is_some() {
+                if audited_separately.is_some() {
                     let path = args.iter().find_map(|a| a.strip_prefix("--audit-sites-out=")).expect("--audit-only goes with --audit-sites-out");
                     let tables: Vec<String> = (translation.take_fragment_programs(program).iter())
                         .map(|of_fragment| bun_aot::audit::to_json(&bun_aot::audit::table(of_fragment, false, &|path| program.files.by_path.get(&bun_sema_driver::host::from_native(std::path::Path::new(&cwd).join(bstr::BStr::new(path).to_string()).to_string_lossy().as_bytes())).map(|file| &program.files.hir(file).text[..]), in_parallel), &[]))
@@ -680,8 +681,13 @@ fn run(args: &[String]) {
             let mut provided = snapshot.as_mut().map_or_else(Default::default, |it| bun_sema_driver::host::Provided {
                 already_read: std::mem::take(&mut it.already_read),
                 code_kinds: std::mem::take(&mut it.code_kinds).into_iter().collect(),
+                deferred_imports: std::mem::take(&mut it.deferred_imports),
+                deferred_paths: std::mem::take(&mut it.deferred_paths),
                 ..Default::default()
             });
+            if let Some(sources) = deferred_sources {
+                provided.deferred_sources = Some(Box::new(move || Some(sources)));
+            }
             if has("--aot") {
                 provided.build_constants = Some(constants.build_constants());
                 for &(name, text) in bun_aot::prelude::FILES {

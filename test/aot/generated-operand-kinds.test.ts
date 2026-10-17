@@ -1,5 +1,5 @@
 import { operations, program, sources } from "./generated/operands";
-import { operationsOnAnyValue, sourcesOfEveryKind } from "./generated/operands-of-every-kind";
+import { operationsOnAnyValue, sourcesOfEveryKind } from "./generated/operands-every-kind";
 import { generated } from "./generated/run-generated";
 
 const alwaysRun = new Set(['"" written', 'a parameter: "5" or left out', "one of -0 and undefined", "[5] under number[] | null"]);

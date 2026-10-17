@@ -1,12 +1,3 @@
-// Generates `locked_builtins_generated.rs`: the built-in objects that `--aot` makes immutable. The build (TS100014) and the
-// rules `bun/aot-*` of `bun lint` read it.
-//
-//   bun src/sema/check/aot/generate-locked-builtins.mjs [--check]
-//
-// Nothing is listed by hand. The script runs itself twice, with and without `--aot`. Each run tries to assign to, define and
-// delete every property of every global object, of its prototype and of what a namespace such as `Intl` holds, and the
-// properties that these inherit. What throws under `--aot` alone is what `--aot` refuses. Run it again after an upgrade of
-// JavaScriptCore. With `--check` it writes nothing, and fails if the file is out of date.
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -168,7 +159,6 @@ function refuses(name, key, change) {
   return !isExtensible;
 }
 
-// The table has to answer as the engine did.
 for (const name of table.keys()) {
   const check = (key, change, refused, rejectedPlain) => {
     if (refuses(name, key, change) !== (refused && !rejectedPlain)) throw new Error(`${name || "globalThis"}: ${change} ${key}`);

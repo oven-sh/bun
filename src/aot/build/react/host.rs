@@ -1,5 +1,3 @@
-//! The React Compiler's `Host` without a parser: a symbol table that the adapter fills.
-
 use bun_alloc::Arena;
 use bun_ast::{Expr, ImportKind, ImportRecord, Loc, Ref, RefTag, Scope, StoreStr, Symbol, scope, symbol};
 use bun_react_compiler::JsxImportKind;
@@ -17,13 +15,10 @@ pub(super) struct Host<'a> {
     source: &'a [u8],
     symbols: Vec<Symbol>,
     module_scope: Scope,
-    /// By index in `JSX_IMPORTS`.
     jsx_imports: [Ref; 5],
-    /// `__MEMO_CACHE_SENTINEL`, `__EARLY_RETURN_SENTINEL`
     sentinels: [Ref; 2],
     is_jsx_dev: bool,
     is_jsx_classic: bool,
-    /// Of the last element the adapter has converted.
     pub(super) classic_factory: Expr,
 }
 
@@ -42,14 +37,12 @@ impl<'a> Host<'a> {
         }
     }
 
-    /// `name` outlives the host.
     pub(super) fn new_symbol(&mut self, kind: symbol::Kind, name: &'a [u8]) -> Ref {
         let ref_ = Ref::new(self.symbols.len() as u32, 0, RefTag::Symbol);
         self.symbols.push(Symbol { kind, original_name: StoreStr::new(name), ..Default::default() });
         ref_
     }
 
-    /// Makes the symbol one that the module scope declares.
     pub(super) fn declare_in_module(&mut self, ref_: Ref) {
         let name = self.symbols[ref_.inner_index() as usize].original_name;
         // SAFETY: `new_symbol` was handed a name that outlives the host, and so the scope.

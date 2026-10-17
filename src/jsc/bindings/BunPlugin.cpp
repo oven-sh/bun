@@ -49,6 +49,34 @@ static bool isValidNamespaceString(String& namespaceString)
 
 extern "C" const uint8_t* Bun__standaloneCompiledProgramSources(size_t*);
 
+static bool isCompiledProgramSource(const String& path)
+{
+    size_t length = 0;
+    const uint8_t* data = Bun__standaloneCompiledProgramSources(&length);
+    std::span<const uint8_t> sortedLines { data, length };
+    auto utf8 = path.utf8();
+    std::span<const uint8_t> key = byteCast<uint8_t>(utf8.span());
+    size_t low = 0;
+    size_t high = sortedLines.size();
+    while (low < high) {
+        size_t start = low + (high - low) / 2;
+        while (start > low && sortedLines[start - 1] != '\n')
+            --start;
+        size_t end = start;
+        while (end < sortedLines.size() && sortedLines[end] != '\n')
+            ++end;
+        auto line = sortedLines.subspan(start, end - start);
+        int order = memcmp(line.data(), key.data(), std::min(line.size(), key.size()));
+        if (!order && line.size() == key.size())
+            return true;
+        if (order < 0 || (!order && line.size() < key.size()))
+            low = std::min(end + 1, sortedLines.size());
+        else
+            high = start;
+    }
+    return false;
+}
+
 static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target, BunPlugin::Base& plugin)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -239,9 +267,9 @@ static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObje
         return {};
     }
 
-    size_t lengthOfCompiledSources = 0;
-    Bun__standaloneCompiledProgramSources(&lengthOfCompiledSources);
-    if (lengthOfCompiledSources && (namespaceString.isEmpty() || namespaceString == "file"_s)) {
+    size_t compiledSourcesLength = 0;
+    Bun__standaloneCompiledProgramSources(&compiledSourcesLength);
+    if (compiledSourcesLength && (namespaceString.isEmpty() || namespaceString == "file"_s)) {
         JSValue main = JSValue::decode(BunObject_getter_main(defaultGlobalObject(globalObject)));
         RETURN_IF_EXCEPTION(scope, {});
         if (main.isString()) {
@@ -744,23 +772,13 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
         return {};
     }
 
-    bool isCompiledWithTheProgram = false;
-    size_t lengthOfCompiledSources = 0;
-    const uint8_t* compiledSources = Bun__standaloneCompiledProgramSources(&lengthOfCompiledSources);
-    for (std::span<const uint8_t> left { compiledSources, lengthOfCompiledSources }; !left.empty();) {
-        size_t end = std::find(left.begin(), left.end(), '\n') - left.begin();
-        if (String::fromUTF8(left.first(end)) == specifier) {
-            isCompiledWithTheProgram = true;
-            break;
-        }
-        left = left.subspan(std::min(end + 1, left.size()));
-    }
+    bool isCompiledWithProgram = isCompiledProgramSource(specifier);
 
     JSC::JSObject* callback = callbackValue.getObject();
 
     JSModuleMock* mock = JSModuleMock::create(vm, globalObject->mockModule.mockModuleStructure.getInitializedOnMainThread(globalObject), callback, specifierString);
 
-    if (isCompiledWithTheProgram) {
+    if (isCompiledWithProgram) {
         scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, makeString("mock(module, fn) cannot replace a module that was compiled ahead of time: \""_s, specifier, "\""_s)));
         return {};
     }

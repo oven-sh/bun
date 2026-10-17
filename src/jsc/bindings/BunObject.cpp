@@ -649,11 +649,11 @@ static JSValue constructBunPeekObject(VM& vm, JSObject* bunObject)
 extern "C" uint64_t Bun__readOriginTimer(void*);
 extern "C" double Bun__readOriginTimerStart(void*);
 
-static EncodedJSValue validateByPlan(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, ASCIILiteral name, unsigned indexOfPlan)
+static EncodedJSValue validateByPlan(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, ASCIILiteral name, unsigned planIndex)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!callFrame->argument(indexOfPlan).isString()) {
+    if (!callFrame->argument(planIndex).isString()) {
         throwTypeError(lexicalGlobalObject, scope, makeString("Bun."_s, name, "<T>() checks a value against a TypeScript type, which Bun knows only with --aot. Run the program with `bun run --aot`, or build it with `bun build --compile --aot`."_s));
         return {};
     }

@@ -1,9 +1,3 @@
-//! What is read through a view is what one of its members holds.
-//!
-//! `(symbol as MappedSymbol).links`: the object may be any `Symbol`, so the front end takes what is read for anything and coerces it. Here the members of the view are known: each has in
-//! the field what is stored to it, through whichever view it is looked at: `const wide: { v: number | string } = narrow; wide.v = "text"`. So, where none of them lacks it, the read is of what
-//! one of those views says of the field. A coercion that finds its operand within what it tries has nothing to do.
-
 use crate::declared::{Declared, DeclaredTable, Part, prim};
 use crate::id::{LayoutId, StrId, TyId, V};
 use crate::ir::{Def, Func, Layout, LayoutKind, Op, Operation, Prediction, Program, Strs, CoerceReason, class_flags, field_flags};
@@ -14,9 +8,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 const FUNCTIONS_PER_SLICE: usize = 256;
 const KEYS_PER_SLICE: usize = 16;
 
-/// What the members of the view hold under the name. `None`: that says nothing, a member lacks the field, or an object that is not laid out may be looked at through the view.
-/// `supertypes_of`: of each layout, the views that have it for a member. `stored_through`: the views through which the program stores to which name: a view that is only read through puts nothing
-/// into a field, whatever it says of it.
 fn ty_from_subtypes(
     tys: &DeclaredTable,
     layouts: &[Layout],
@@ -33,9 +24,7 @@ fn ty_from_subtypes(
     let mut held = Declared::never();
     for &member in looked_at.members.iter().chain(looked_at.members.is_empty().then_some(&view)) {
         let of_member = &layouts[member.idx()];
-        // One that lacks the field may have been given a property of that name by untyped code: anything.
         let own = of_member.field(name)?;
-        // What is absent is read from the prototype chain, and there anything may be found.
         let is_always_there = of_member.fields[own as usize].flags & (field_flags::OPTIONAL | field_flags::ABSENT_AT_CREATION | field_flags::NEVER_OBSERVED_ABSENT) == field_flags::NEVER_OBSERVED_ABSENT;
         if !is_always_there && (is_on_object_prototype || of_member.kind != LayoutKind::Record || of_member.class_flags & class_flags::MAY_HAVE_OTHER_PROTOTYPE != 0) {
             return None;
@@ -53,7 +42,6 @@ fn ty_from_subtypes(
     Some(held)
 }
 
-/// How many reads were given a type, and how many coercions were left with nothing to do.
 pub(super) fn retype_reads_from_subtypes(program: &mut Program, in_parallel: InParallel<'_>) -> (usize, usize) {
     let Program { tys, funcs, layouts, strs, .. } = program;
     let mut supertypes_of: Vec<Vec<LayoutId>> = vec![Vec::new(); layouts.len()];
@@ -79,7 +67,6 @@ pub(super) fn retype_reads_from_subtypes(program: &mut Program, in_parallel: InP
                 for value in &func.values {
                     match &value.def {
                         Def::Op(Op::PropSet { obj, name, .. }) => note(*obj, *name),
-                        // `Initialize this, "a", x, "b", 0, ..`: the first stores of a constructor function.
                         Def::Op(Op::Operation { which: Operation::Initialize, args }) => {
                             for store in args[1..].chunks_exact(2) {
                                 if let Some(&Op::Str(name)) = func.op(store[0]) {
@@ -106,18 +93,18 @@ pub(super) fn retype_reads_from_subtypes(program: &mut Program, in_parallel: InP
             stored_through.extend(slice.1);
             all.extend(slice.2.into_iter().filter(|&key| seen.insert(key)));
         }
-        let mut made: Vec<(&[(LayoutId, StrId)], Vec<Option<Declared>>)> = all.chunks(KEYS_PER_SLICE).map(|keys| (keys, Vec::new())).collect();
-        for_each_mut(&mut made, in_parallel, &|(keys, found)| {
+        let mut created: Vec<(&[(LayoutId, StrId)], Vec<Option<Declared>>)> = all.chunks(KEYS_PER_SLICE).map(|keys| (keys, Vec::new())).collect();
+        for_each_mut(&mut created, in_parallel, &|(keys, found)| {
             found.extend(keys.iter().map(|&(view, name)| ty_from_subtypes(tys, layouts, &supertypes_of, &stored_through, view, name, is_on_object_prototype(strs, name))));
         });
-        for (keys, found) in made {
+        for (keys, found) in created {
             described.extend(keys.iter().copied().zip(found));
         }
     }
     let (all_reads, all_coercions) = (AtomicUsize::new(0), AtomicUsize::new(0));
     let (layouts, strs) = (&layouts[..], &*strs);
     let mut unused = vec![false; funcs.len()];
-    super::nil::for_each_slice(tys, funcs, &mut unused, in_parallel, &|super::nil::Slice { funcs, tys, .. }| {
+    super::nullish::for_each_slice(tys, funcs, &mut unused, in_parallel, &|super::nullish::Slice { funcs, tys, .. }| {
         let mut known: FxHashMap<(LayoutId, StrId), TyId> = FxHashMap::default();
         let (mut reads, mut coercions) = (0, 0);
         for func in funcs.iter_mut() {
@@ -138,7 +125,6 @@ pub(super) fn retype_reads_from_subtypes(program: &mut Program, in_parallel: InP
                                 held
                             }
                         };
-                        // A read that is only looked at is left wider than the field, with a prediction: through such a view there is nothing to predict.
                         let own = func.values[number].ty;
                         if held.is_some() && held != own && (own == tys.anything || own.is_some() && tys.get(held).is_subset_of(tys.get(own))) {
                             func.values[number].ty = held;
@@ -146,7 +132,6 @@ pub(super) fn retype_reads_from_subtypes(program: &mut Program, in_parallel: InP
                             reads += 1;
                         }
                     }
-                    // Values are numbered as they are made: the operand has its type by now.
                     Def::Op(Op::Coerce { value, to, why: CoerceReason::Coerce }) => {
                         let have = func.ty(value);
                         if value.idx() < number && have.is_some() && have != tys.anything && to.is_some() && tys.get(have).is_subset_of(tys.get(to)) {
@@ -166,9 +151,7 @@ pub(super) fn retype_reads_from_subtypes(program: &mut Program, in_parallel: InP
     (all_reads.into_inner(), all_coercions.into_inner())
 }
 
-/// `take(node as SourceFile)`, where the parameter is written `SourceFile`: a coercion, and what it yields goes nowhere but to a cast to the same objects, which makes of an object what the coercion
-/// makes of it and then makes sure. So the cast takes the operand itself. Of an operand that is objects of the program and nil alone: a primitive is converted by the coercion only.
-fn defer_to_following_cast(tys: &super::nil::Overlay<'_>, func: &mut Func) -> usize {
+fn defer_to_following_cast(tys: &super::nullish::Overlay<'_>, func: &mut Func) -> usize {
     let mut uses: Vec<u32> = Vec::new();
     let mut left = 0;
     for number in 0..func.values.len() {

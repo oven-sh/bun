@@ -1,5 +1,3 @@
-//! The program as text, for people and for comparing with what the engine says it has read: `Program::dump` there prints the same.
-
 use crate::declared::Part;
 use crate::format::{Opcode, end_of, record};
 use crate::id::{FuncId, StrId, TyId, V};
@@ -81,8 +79,8 @@ impl Program {
                     let _ = write!(o, " {name}");
                 }
             }
-            if let Some((least, most)) = declared.ints {
-                let _ = write!(o, " integers {least}..{most}");
+            if let Some((minimum, maximum)) = declared.ints {
+                let _ = write!(o, " integers {minimum}..{maximum}");
             }
             for part in &declared.parts {
                 let arguments: &[TyId] = match part {
@@ -150,6 +148,9 @@ impl Program {
             }
             if layout.kind != LayoutKind::Instance && layout.class_flags & class_flags::MAY_HAVE_OTHER_PROTOTYPE != 0 {
                 o.push_str(" other prototypes");
+            }
+            if layout.class_flags & class_flags::PROTOTYPE_IS_SET_BY_TYPED_CODE != 0 {
+                o.push_str(" prototype set by typed code");
             }
             if layout.is_allocated {
                 o.push_str(" allocated");
@@ -323,6 +324,7 @@ impl Program {
                         }
                         Opcode::String
                         | Opcode::BigInt
+                        | Opcode::ConstantSymbol
                         | Opcode::GetGlobal
                         | Opcode::GetGlobalForTypeOf
                         | Opcode::PutGlobal
@@ -361,12 +363,10 @@ impl Program {
                             if r.immediates[1] >> 8 != 0 {
                                 let _ = write!(o, " fresh {}", r.immediates[1] >> 8);
                             }
-                            // What it tries for. For any other reason that is the type of the value.
                             if r.immediates[1] & 0xff == 6 {
                                 o.push(' ');
                                 ty(o, TyId(r.immediates[0]));
                             }
-                            // The text of what is asserted.
                             if r.immediates[1] == 2 && StrId(r.immediates[0]).is_some() {
                                 o.push(' ');
                                 self.quoted(o, StrId(r.immediates[0]));
@@ -381,6 +381,9 @@ impl Program {
                     }
                     if func.values[v.idx()].is_in_tail_position() {
                         o.push_str(" tail");
+                    }
+                    if func.values[v.idx()].keeps_unconvertible_objects() {
+                        o.push_str(" if convertible");
                     }
                     o.push('\n');
                 }

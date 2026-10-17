@@ -76,6 +76,18 @@ test("a package that no file of the project imports declares nothing", async () 
   expect(result.stderr).not.toContain("Cannot find name 'fromImported'");
 });
 
+test("a file outside the bundle that adds to a module of the program is in the program", async () => {
+  const result = await run({
+    "tsconfig.json": tsconfig(),
+    "src/rules.ts": `export interface Rules {\n  known?: number;\n}\nexport function count(rules: Rules): number {\n  return Object.keys(rules).length;\n}\n`,
+    "tests/more-rules.ts": `export {};\ndeclare module "../src/rules" {\n  interface Rules {\n    custom?: number;\n  }\n}\n`,
+    "tests/other.ts": `export const unrelated = 1;\n`,
+    "src/main.ts": `import { count, type Rules } from "./rules";\nconst rules: Rules = { custom: 1 };\nconsole.log(count(rules));\n`,
+  });
+  expect(result.stderr).not.toContain("error");
+  expect({ stdout: result.stdout, exitCode: result.exitCode }).toEqual({ stdout: "1\n", exitCode: 0 });
+});
+
 test("a file outside the bundle that declares a global itself is in the program", async () => {
   expectSeen(
     await run({

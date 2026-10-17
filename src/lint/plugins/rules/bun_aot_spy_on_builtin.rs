@@ -3,8 +3,6 @@ use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint_oxlint::ast_util::is_import_from_module;
 
-/// Disallow stubs and fake timers that are written in JavaScript and replace what `bun test --aot` makes immutable. `spyOn()` of
-/// `bun:test` is part of the test runner, which can replace it.
 pub struct AotSpyOnBuiltin;
 
 const SPY: Message = Message::new(
@@ -20,18 +18,14 @@ const FAKE_TIMERS: Message = Message::new(
     "This replaces the global `Date`, which throws a `TypeError` under `bun test --aot`: built-in objects are immutable there. Use `jest.useFakeTimers()` from `bun:test`, or leave `Date` out of `{{option}}`.",
 );
 
-/// The packages whose `install()` replaces the timers and `Date`.
 const FAKE_TIMERS_PACKAGES: [&str; 2] = ["@sinonjs/fake-timers", "lolex"];
 
-/// Whether the configuration of fake timers has them replace `Date`: all are replaced unless `option` lists some.
-/// `None`: it is not to be seen.
 fn replaces_date(configuration: Option<Expr>, option: &str) -> Option<bool> {
     let Some(configuration) = configuration.map(Expr::skip_type_wrappers) else {
         return Some(true);
     };
     let properties = match configuration.kind() {
         ExprKind::Object(properties) => properties,
-        // The time to start at.
         ExprKind::Number(_) | ExprKind::New(_) | ExprKind::Call(_) => return Some(true),
         _ => return None,
     };
@@ -48,7 +42,6 @@ fn replaces_date(configuration: Option<Expr>, option: &str) -> Option<bool> {
         return Some(true);
     };
     let listed = listed.value()?.skip_type_wrappers().as_array()?;
-    // For sinon an empty list is no list.
     if listed.is_empty() {
         return Some(option == "toFake");
     }
@@ -59,7 +52,6 @@ fn replaces_date(configuration: Option<Expr>, option: &str) -> Option<bool> {
 }
 
 impl AotSpyOnBuiltin {
-    /// `double(object, "name")`, which defines the property: `stub()` of sinon, `mock.method()` of `node:test`.
     fn check_double<'a>(e: Expr<'a>, call: Call<'a>, cx: &mut Cx<'a, Self>) {
         let (Some(object), Some(key)) = (call.args().first(), call.args().get(1)) else {
             return;
@@ -170,11 +162,9 @@ impl AotSpyOnBuiltin {
             b"stub" | b"spy" | b"method" | b"getter" | b"setter" => {
                 Self::check_double(e, call, cx);
             }
-            // Not that of a string.
             b"replace" | b"replaceGetter" | b"replaceSetter" if call.args().len() == 3 => {
                 Self::check_double(e, call, cx);
             }
-            // Those of `jest` and `vi` are Bun's own, and replace nothing.
             b"useFakeTimers"
                 if cx.file().mentions("sinon")
                     && !object.is_ident("jest")
@@ -189,7 +179,6 @@ impl AotSpyOnBuiltin {
             {
                 Self::check_fake_timers(e, call, "toFake", cx);
             }
-            // `mock.timers.enable()` of `node:test`
             b"enable"
                 if object
                     .member_name()
@@ -202,7 +191,6 @@ impl AotSpyOnBuiltin {
     }
 }
 
-/// `import a from "package"`, `const a = require("package")`
 fn is_from_package(e: Expr, package: &str) -> bool {
     if !e.file().mentions(package) || e.tag() != ExprTag::Ident {
         return false;

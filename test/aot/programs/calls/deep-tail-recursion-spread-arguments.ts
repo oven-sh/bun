@@ -29,7 +29,7 @@ attempt("a spread of a rest parameter, three elements", () => spreadOfVariableRe
 attempt("a spread of a rest parameter, seven elements", () => spreadOfVariableRest(N, spreadOfVariableRest, 1, 2, 3, 4, 5));
 function applyOfVariable(this: any, n: any, f: any, a: any, b: any, c: any, d: any): any { if (n === 0) return d; const list = [n - 1, f, d, a, b, c]; return f.apply(this, list); }
 attempt("apply of a variable, six elements", () => applyOfVariable(N, applyOfVariable, 1, 2, 3, 4));
-const forward = (...all: any[]): any => target(...all);
+const forward = (...all: [any, any, any]): any => target(...all);
 function target(n: any, a: any, b: any): any { return n === 0 ? a + b : forward(n - 1, b, a); }
 attempt("a forwarding wrapper", () => target(N, 1, 2));
 function wrapperTarget(n: any, a: any): any { return n === 0 ? a : applyWrapper(n - 1, a + 1); }

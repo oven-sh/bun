@@ -1,0 +1,28 @@
+# Real applications under `--aot`
+
+Open-source TypeScript projects that nobody here wrote, each at a pinned commit, with their own test suites. They answer two questions: is `--aot` correct on such code, and what does a project have to change before it can use it?
+
+`projects.json` is the list: repository, commit, the directory of the package, its `tsconfig.json`, an entry point and a kind.
+
+```sh
+bun test/aot/real-apps/run.ts <work folder> [--only <regex>] [--steps fetch,types,build,tests] [--jobs <n>] [--bun <path>] [--tsc <path>] [--no-jail]
+```
+
+| Step    | What runs                                                                                     | Network | Runs the project's code |
+| ------- | --------------------------------------------------------------------------------------------- | ------- | ----------------------- |
+| `fetch` | `git fetch --depth 1` of the commit, `bun install --ignore-scripts`                           | yes     | no                      |
+| `types` | TypeScript 7 (`--tsc`) and `bun check` on the same `tsconfig.json`; every difference is a bug | no      | no                      |
+| `build` | `bun build --compile` and `bun build --compile --aot --no-macros` of the entry point          | no      | no                      |
+| `tests` | `bun test` twice, then `bun test --aot`, compared test by test                                | no      | yes                     |
+
+It prints one line per project and writes `<work folder>/results.json`. A test counts only if plain Bun passes it twice. A failure under `--aot` is grouped by its message and by the innermost stack frame inside the project.
+
+`bun check` and `bun build` are called from an empty directory with absolute paths: in a project whose `package.json` has a script named `check`, `bun check` runs that script, and a `bunfig.toml` can name a preload.
+
+On Linux every step except `fetch` runs in `jail.sh`: its own user, mount, process and network namespaces, loopback only, an empty home directory, and the project as an overlay whose writes are thrown away. Run third-party code nowhere else. `--no-jail` is for your own projects.
+
+`programs/` holds small programs in the shape of code that these projects contain, which TypeScript accepts and plain Bun runs, and which `--aot` ends with a `TypeError` in one mode or another. `programs.test.ts` runs each one plain, under `bun run --aot` and as an executable. Where the output is not plain Bun's, the test is `test.failing`: it turns red when the behavior changes, and the entry in its table is then corrected.
+
+`test-runs.test.ts` holds small projects in the shape of these repositories where what `bun test --aot` does with a test file depends on the other test files of the run. Each test states a property that does not hold yet, as `test.failing`.
+
+`real-apps.test.ts` runs all steps for every project when `AOT_REAL_APPS` names a work folder (`AOT_REAL_APPS_ONLY` is a regular expression of names). It fails on a difference from TypeScript, on a build that `--aot` refuses for a reason other than a type error, and on a death by signal. It takes hours and about 40 GB, so it is skipped otherwise.

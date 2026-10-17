@@ -1,5 +1,3 @@
-//! What the rules `bun/aot-*` share: how a program writes the built-in objects that `--aot` makes immutable.
-
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::types::locked_builtins::names;
@@ -8,7 +6,6 @@ use bun_lint_oxlint::ast_util::is_global_reference;
 use smallvec::SmallVec;
 use std::borrow::Cow;
 
-/// The names of the global object in Bun.
 const GLOBAL_OBJECT: [&str; 3] = ["globalThis", "global", "self"];
 
 pub(crate) fn root_names() -> impl Iterator<Item = &'static str> {
@@ -59,19 +56,15 @@ impl NameSet {
     }
 }
 
-/// A variable that stands for a built-in object: the `P` of `const P = Array.prototype`.
 pub(crate) type Alias<'a> = Option<(Symbol<'a>, &'static Builtin)>;
 
-/// A built-in object as it is written: `Array.prototype`. Something else, if the file declares an `Array`.
 #[derive(Copy, Clone)]
 pub(crate) struct Written<'a> {
     pub(crate) builtin: &'static Builtin,
-    /// The identifier that it starts with. `None`: an [`Alias`], which is certain.
     start: Option<Expr<'a>>,
 }
 
 impl<'a> Written<'a> {
-    /// The global variable `identifier`, as a property of the global object.
     pub(crate) fn global_variable(identifier: Expr<'a>) -> Self {
         Written {
             builtin: global_object(),
@@ -79,15 +72,12 @@ impl<'a> Written<'a> {
         }
     }
 
-    /// Whether it is the built-in object. To be asked last: it takes the scopes of the file.
     pub(crate) fn is_builtin(self) -> bool {
         self.start.is_none_or(is_global_reference)
     }
 }
 
-/// The built-in object that `e` looks like: `Array`, `Array.prototype`, `globalThis.Array`, `(Intl as any)["Collator"]`.
 pub(crate) fn builtin_for_syntax<'a>(e: Expr<'a>, alias: Alias<'a>) -> Option<Written<'a>> {
-    // Nearly always it is something else, which what it starts with tells.
     let mut start = e.skip_type_wrappers();
     while let Some(object) = start.object() {
         start = object.skip_type_wrappers();
@@ -108,7 +98,6 @@ pub(crate) fn builtin_for_syntax<'a>(e: Expr<'a>, alias: Alias<'a>) -> Option<Wr
     })
 }
 
-/// What `e` is, if what it starts with is `first`.
 fn object_from(first: &'static Builtin, e: Expr<'_>) -> Option<&'static Builtin> {
     match e.object() {
         Some(object) => {
@@ -120,13 +109,11 @@ fn object_from(first: &'static Builtin, e: Expr<'_>) -> Option<&'static Builtin>
     }
 }
 
-/// The built-in object that `e` names.
 pub(crate) fn builtin_for_expr<'a>(e: Expr<'a>, alias: Alias<'a>) -> Option<&'static Builtin> {
     let written = builtin_for_syntax(e, alias).filter(|it| it.is_builtin());
     written.map(|it| it.builtin)
 }
 
-/// The name of the property that the member access `e` is about, as [`Builtin::properties`] has it.
 pub(crate) fn property_name(e: Expr<'_>) -> Option<Cow<'_, [u8]>> {
     match e.index() {
         Some(index) => key_name(index),
@@ -134,7 +121,6 @@ pub(crate) fn property_name(e: Expr<'_>) -> Option<Cow<'_, [u8]>> {
     }
 }
 
-/// The same for a property of an object literal.
 pub(crate) fn literal_key(property: Prop<'_>) -> Option<Cow<'_, [u8]>> {
     match property.key()?.kind() {
         KeyKind::Computed(key) => key_name(key),
@@ -142,7 +128,6 @@ pub(crate) fn literal_key(property: Prop<'_>) -> Option<Cow<'_, [u8]>> {
     }
 }
 
-/// The same for an expression that is used as a key: `"a"`, `Symbol.iterator`.
 pub(crate) fn key_name(key: Expr<'_>) -> Option<Cow<'_, [u8]>> {
     let key = key.skip_type_wrappers();
     match key.as_dot() {

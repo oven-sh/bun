@@ -5,7 +5,6 @@ use bun_lint::types::utils::is_symbol_from_default_library;
 use bun_lint::types::{ObjectFlags, SymbolFlags, Type, TypeFlags};
 use rustc_hash::FxHashSet;
 
-/// Disallow a cast of a literal to a type that it does not match, where `--aot` throws and plain JavaScript goes on.
 pub struct AotCastLacksMember;
 
 const MISSING: Message = Message::new(
@@ -21,7 +20,6 @@ const WRONG_VALUE: Message = Message::new(
     "{{found}} is never a `{{type}}`. Under `--aot` this throws a `TypeError`, here or at the first place that expects a `{{type}}`. Build a real one, or change the type that is expected.",
 );
 
-/// The kinds of values that `typeof` and `Array.isArray` tell apart, as a set.
 mod kind {
     pub(super) const UNDEFINED: u16 = 1 << 0;
     pub(super) const NULL: u16 = 1 << 1;
@@ -36,19 +34,16 @@ mod kind {
 
     pub(super) const MISSING: u16 = UNDEFINED | NULL;
     pub(super) const OBJECTS: u16 = FUNCTION | ARRAY | OBJECT;
-    /// `as` converts between these, or throws. The build reports that.
     pub(super) const PRIMITIVES: u16 = BOOLEAN | NUMBER | STRING | BIGINT | SYMBOL;
     pub(super) const ALL: u16 = (1 << 10) - 1;
 }
 
-/// The kinds of the values of the type. All of them where the type does not tell.
 fn kinds_of(ty: Type) -> u16 {
     let flags = ty.flags();
     if flags.intersects(TypeFlags::UNION) {
         return ty.types().iter().fold(0, |all, part| all | kinds_of(part));
     }
     if flags.intersects(TypeFlags::INTERSECTION) {
-        // `string & { brand: 1 }` is a string.
         let primitive = ty
             .types()
             .iter()
@@ -81,7 +76,6 @@ fn kinds_of(ty: Type) -> u16 {
     if is_object_flag_set(ty, ObjectFlags::OBJECT_LITERAL) {
         return kind::OBJECT;
     }
-    // A string is a `String`, and anything but `null` and `undefined` is an `Object` and a `{}`.
     match ty
         .symbol()
         .filter(|it| is_symbol_from_default_library(*it))
@@ -114,8 +108,6 @@ fn describe_kinds(kinds: u16) -> &'static str {
     }
 }
 
-/// Whether compiled code keeps a value of the type as a bare number or boolean, which has no room for `undefined`. In a place for
-/// a string, an object or a mix of kinds, `undefined` is read as in JavaScript.
 fn is_kept_bare(ty: Type) -> bool {
     let parts = || {
         union_constituents(ty)
@@ -126,9 +118,7 @@ fn is_kept_bare(ty: Type) -> bool {
     parts().next().is_some() && (all(TypeFlags::NUMBER_LIKE) || all(TypeFlags::BOOLEAN_LIKE))
 }
 
-/// Whether compiled code holds a value to the type. What a declaration file says about an object is only expected of it.
-/// `Readonly<T>` and the like are declared in one, and say what `T` says.
-fn is_held_to(part: Type) -> bool {
+fn is_checked_cast_target(part: Type) -> bool {
     let is_object_structurally =
         part.has_flags(TypeFlags::OBJECT) && kinds_of(part) == kind::OBJECTS;
     !is_object_structurally
@@ -145,23 +135,18 @@ fn is_class(ty: Type) -> bool {
         .is_some_and(|it| it.has_flags(SymbolFlags::CLASS))
 }
 
-/// Why a value does not match a type.
 enum Mismatch<'a> {
-    /// The type that requires the member.
     Missing(Type<'a>),
-    /// The type that has the member, the type of the member, what is there.
     WrongMember(Type<'a>, Type<'a>, Vec<u8>),
     WrongValue(Vec<u8>),
 }
 
-/// Where in the literal, as `a.b[0]`, and why.
 type Found<'a> = (Vec<u8>, Mismatch<'a>);
 
 fn wrong_value<'a>(found: impl Into<Vec<u8>>) -> Option<Found<'a>> {
     Some((Vec::new(), Mismatch::WrongValue(found.into())))
 }
 
-/// `found`, which is about the member `name` of an `owner`.
 fn below<'a>(
     name: &[u8],
     is_index: bool,
@@ -197,7 +182,6 @@ const LITERALS: &[ExprTag] = &[
     ExprTag::Null,
 ];
 
-/// The literal that is the value of `e`, whatever is asserted of it on the way: `e` itself, or what the constant `e` starts with.
 fn literal_under_casts(e: Expr) -> Option<Expr> {
     let value = e.skip_type_wrappers();
     if LITERALS.contains(&value.tag()) || value.is_ident("undefined") {
@@ -238,7 +222,6 @@ fn literal_names<'a>(file: &'a File<'a>) -> FxHashSet<Name<'a>> {
     names.collect()
 }
 
-/// The property of the literal that is called `name`. The last wins.
 fn property_named<'a>(props: List<'a, Prop<'a>>, name: &[u8]) -> Option<Prop<'a>> {
     let is_it = |prop: &Prop<'a>| {
         prop.key()
@@ -248,18 +231,14 @@ fn property_named<'a>(props: List<'a, Prop<'a>>, name: &[u8]) -> Option<Prop<'a>
     props.iter().filter(is_it).last()
 }
 
-/// Why the object literal does not match `wanted`, which is no union.
 fn object_mismatch<'a>(
     props: List<'a, Prop<'a>>,
     wanted: Type<'a>,
     depth: u32,
 ) -> Option<Found<'a>> {
-    // The cast makes the literal under it an object of the type, with the members that are missing left blank. An instance of a
-    // class is only made by `new`, and a literal inside the literal is made before the cast sees it.
     let is_allocated_by_cast = depth == 0 && !is_class(wanted);
     for member in wanted.get_properties().iter() {
         let name = member.name();
-        // A key that is a symbol, `#private`.
         if name.starts_with(b"__@") || name.starts_with(b"#") {
             continue;
         }
@@ -295,7 +274,6 @@ fn object_mismatch<'a>(
     None
 }
 
-/// Why the value of `e` does not match `wanted`. `None`: it does, or nothing here can tell, or it makes no difference.
 fn mismatch<'a>(e: Expr<'a>, wanted: Type<'a>, depth: u32) -> Option<Found<'a>> {
     let value = literal_under_casts(e)?;
     let have = value.ty();
@@ -305,13 +283,12 @@ fn mismatch<'a>(e: Expr<'a>, wanted: Type<'a>, depth: u32) -> Option<Found<'a>> 
     let (kinds, taken) = (kinds_of(have), kinds_of(wanted));
     if taken == kind::ALL
         || have.get_widened_type().is_assignable_to(wanted)
-        || !union_constituents(wanted).iter().all(is_held_to)
+        || !union_constituents(wanted).iter().all(is_checked_cast_target)
     {
         return None;
     }
     if kinds & taken == 0 {
         let is_noop = match kinds & !kind::MISSING == 0 {
-            // `null as unknown as T` stays `null`.
             true => depth == 0 || !is_kept_bare(wanted),
             false => depth == 0 && kinds & !kind::PRIMITIVES == 0 && taken & kind::PRIMITIVES != 0,
         };
@@ -331,7 +308,6 @@ fn mismatch<'a>(e: Expr<'a>, wanted: Type<'a>, depth: u32) -> Option<Found<'a>> 
             let is_open = |prop: Prop| {
                 prop.kind() == PropKind::Spread || prop.key().is_none_or(|it| it.name().is_none())
             };
-            // `{} as T` is filled in later.
             if depth == 0 && props.is_empty() || props.iter().any(is_open) {
                 return None;
             }
@@ -384,7 +360,6 @@ impl Rule for AotCastLacksMember {
     const META: Meta =
         Meta::plugin(Plugin::Bun, "aot-cast-lacks-member", Kind::Problem).requires_types();
     const ON: On = On::new().exprs(&[ExprTag::As]);
-    /// The names of the variables that start with an object literal. Found at the first cast of a name.
     type State<'a> = Option<FxHashSet<Name<'a>>>;
 
     fn new(_: &Options) -> Self {
@@ -399,7 +374,6 @@ impl Rule for AotCastLacksMember {
         let ExprKind::As { expr, ty } = e.kind() else {
             return;
         };
-        // Most casts are of a name, and few names are of interest. No type is asked for the others.
         if let Some(name) = expr.skip_type_wrappers().as_ident() {
             let file = cx.file();
             let known = cx.state.get_or_insert_with(|| literal_names(file));
@@ -411,7 +385,6 @@ impl Rule for AotCastLacksMember {
             return;
         }
         let asserted = ty.ty();
-        // `as never` fits every place to the type checker. The value is held to what the place expects.
         let wanted = match asserted.has_flags(TypeFlags::NEVER) {
             true if matches!(e.parent(), Node::Expr(around) if around.skip_type_wrappers() != around) =>
             {

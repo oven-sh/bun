@@ -105,7 +105,7 @@ impl Checker<'_, '_> {
         };
         // NEEDS: `Options::verbatim_module_syntax: bool`, the value of
         // `compilerOptions.verbatimModuleSyntax`
-        let is_verbatim = self.p.files.options.verbatim_module_syntax;
+        let is_verbatim = self.check_options(file).verbatim_module_syntax;
         let cx = Cx {
             file,
             text: &hir.text,
@@ -374,7 +374,7 @@ impl Checker<'_, '_> {
         // Both relate to options that preserve `const enum`s, so a namespace that contains nothing
         // else counts as well.
         if !is_ambient
-            && self.p.files.options.isolated_modules
+            && self.check_options(cx.file).isolated_modules
             && self.bound(cx.file).module_instance_state[m.idx()]
                 != ModuleInstanceState::NonInstantiated
         {
@@ -382,7 +382,7 @@ impl Checker<'_, '_> {
                 self.error_at(
                     (cx.file, name_pos, 0),
                     1280,
-                    &[Arg::Bytes(isolated_modules_like_flag_name(files))],
+                    &[Arg::Bytes(isolated_modules_like_flag_name(files, cx.file))],
                 );
             }
             if cx.verbatim_commonjs
@@ -1177,7 +1177,7 @@ impl Checker<'_, '_> {
         let name = hir[names.at(0)].text;
         // `canCollectSymbolAliasAccessibilityData`
         if name == known::empty
-            || files.options.verbatim_module_syntax
+            || files.check_options(cx.file).verbatim_module_syntax
             || !self.modules_is_marked_as_referenced(cx.file, &cx.aliases, i, &mut Vec::new())
         {
             return;
@@ -1365,7 +1365,7 @@ impl Checker<'_, '_> {
             && !is_ambient
             && !type_only
             && !hir[x].type_only
-            && !files.options.verbatim_module_syntax
+            && !files.check_options(cx.file).verbatim_module_syntax
         {
             let meaning = SymFlags::VALUE | SymFlags::EXPORT_VALUE;
             let message = self.get_cannot_find_name_diagnostic_for_name(cx.file, location, name);
@@ -1477,7 +1477,7 @@ impl Checker<'_, '_> {
             self.error_at(self.span_of_parenthesized_expr(cx.file, e), 2714, &[]);
         }
         // The rest concerns a compiler that processes one file at a time.
-        if is_ambient || !self.p.files.options.isolated_modules {
+        if is_ambient || !self.check_options(cx.file).isolated_modules {
             return;
         }
         // `isIllegalExportDefaultInCJS`: nothing else is reported then.
@@ -1513,7 +1513,7 @@ impl Checker<'_, '_> {
                 code,
                 &[
                     Arg::Atom(name),
-                    Arg::Bytes(isolated_modules_like_flag_name(files)),
+                    Arg::Bytes(isolated_modules_like_flag_name(files, cx.file)),
                 ],
             );
         };
@@ -1803,8 +1803,8 @@ fn is_in_appropriate_context(bound: &Bound, s: StmtId) -> bool {
 // ───────────────────────────── message arguments ─────────────────────────────
 
 /// `getIsolatedModulesLikeFlagName`
-pub(super) fn isolated_modules_like_flag_name(files: &Files) -> &'static [u8] {
-    if files.options.verbatim_module_syntax {
+pub(super) fn isolated_modules_like_flag_name(files: &Files, file: FileId) -> &'static [u8] {
+    if files.check_options(file).verbatim_module_syntax {
         b"verbatimModuleSyntax"
     } else {
         b"isolatedModules"

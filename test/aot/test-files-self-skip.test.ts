@@ -1,5 +1,4 @@
-// Most platforms on which CI runs the tests refuse `--aot` (Linux arm64, musl, macOS x64, Windows). A test file that uses the
-// flag has to skip itself there, and nobody who writes one on macOS arm64 or Linux x64 sees it if it does not. So this reads
+// A Bun that was built without the compiler refuses `--aot`. A test file that uses the flag has to skip itself there. So this reads
 // the files: each, or a file that it imports, mentions `unsupported`, which is what run-programs.ts asks the Bun under test.
 // The short way: `import { describe, test } from "./supported";` in place of the same names of bun:test. In a file where only
 // some tests use the flag: `test.skipIf(!!unsupported)`.
@@ -38,6 +37,7 @@ const needNoCompiler = [
   "aot/mocks-named-by-tests.test.ts",
   "aot/spies-on-builtin-prototypes.test.ts",
   "aot/spies-on-builtins.test.ts",
+  "aot/static-tls-size.test.ts",
   "aot/generated-code.test.ts",
   "aot/host-classes-match-bun-types.test.ts",
   "aot/perf/front-end.test.ts",
@@ -46,6 +46,7 @@ const needNoCompiler = [
   "aot/run-aot-jit.test.ts",
   "aot/shell-completions-list-flags.test.ts",
   "aot/test-files-self-skip.test.ts",
+  "aot/validation-by-types/recorded-issues.test.ts",
   "bundler/bun-build-dts.test.ts",
   "cli/aot-compile-executable-path.test.ts",
   "cli/aot-environment.test.ts",

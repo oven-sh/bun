@@ -1,11 +1,7 @@
-//! Bring-up only: what `bun build --compile --aot` hands to the checker, written to a file, so that the standalone tool can repeat the
-//! analysis of a bundle without the bundler.
-
-use crate::host::AlreadyRead;
+use crate::host::{AlreadyRead, DeferredSources, from_native};
 use bun_sema::resolve::ScriptKind;
-use bun_sema::util::FxHashMap;
+use bun_sema::util::{FxHashMap, FxHashSet};
 
-/// What the bundler has resolved each import to, by the importing file and the specifier. The paths are in the checker's format.
 pub type Resolved = FxHashMap<(Vec<u8>, Vec<u8>), Vec<u8>>;
 
 #[derive(Default)]
@@ -13,9 +9,7 @@ pub struct Snapshot {
     pub cwd: Vec<u8>,
     pub tsconfig: Option<Vec<u8>>,
     pub conditions: Vec<Box<[u8]>>,
-    /// `Request::paths`
     pub entry_points: Vec<Vec<u8>>,
-    /// `Request::code`
     pub code: Vec<Vec<u8>>,
     pub script_kinds: Vec<(Vec<u8>, ScriptKind)>,
     pub script_kinds_by_extension: Vec<(Vec<u8>, ScriptKind)>,
@@ -26,16 +20,16 @@ pub struct Snapshot {
     pub assets: Vec<(Vec<u8>, Vec<u8>)>,
     pub defines: Vec<(Vec<u8>, Vec<u8>)>,
     pub features: Vec<Vec<u8>>,
-    /// `BundleOptions::preserve_source_paths`. A snapshot that ends before it was written without.
     pub preserve_source_paths: bool,
-    /// What each entry function runs: an entry point of the bundle, then the file that does what `bun:main` does. A snapshot that ends
-    /// before it has none.
     pub entry_functions: Vec<[Vec<u8>; 2]>,
-    /// `TypeChecked::statements`. A snapshot that ends before it was written without.
     pub statements: Vec<(Vec<u8>, u32, bool)>,
     pub side_effect_free_files: Vec<Vec<u8>>,
     pub lifted_commonjs: Vec<Vec<u8>>,
     pub code_kinds: Vec<(Vec<u8>, bool)>,
+    pub deferred_entry_points: usize,
+    pub deferred_code: usize,
+    pub deferred_imports: Vec<(Vec<u8>, Vec<u8>)>,
+    pub deferred_paths: Vec<Vec<u8>>,
 }
 
 const MAGIC: &[u8] = b"bun aot snapshot 4\n";
@@ -92,6 +86,22 @@ impl<'a> Reader<'a> {
 }
 
 impl Snapshot {
+    pub fn take_deferred_sources(&mut self) -> Option<DeferredSources> {
+        if self.deferred_entry_points == 0 && self.deferred_code == 0 {
+            return None;
+        }
+        let paths = self.entry_points.split_off(self.entry_points.len().saturating_sub(self.deferred_entry_points));
+        let code = self.code.split_off(self.code.len().saturating_sub(self.deferred_code));
+        let is_deferred: FxHashSet<&[u8]> = paths.iter().chain(&code).map(Vec::as_slice).collect();
+        let is_deferred_file: FxHashSet<Vec<u8>> = is_deferred.iter().map(|path| from_native(path)).collect();
+        let (script_kinds, early_script_kinds) = std::mem::take(&mut self.script_kinds).into_iter().partition(|it| is_deferred.contains(&it.0[..]));
+        let (code_kinds, early_code_kinds): (Vec<_>, Vec<_>) = std::mem::take(&mut self.code_kinds).into_iter().partition(|it| is_deferred.contains(&it.0[..]));
+        let (already_read, early_already_read) = std::mem::take(&mut self.already_read).into_iter().partition(|it| is_deferred_file.contains(&it.0));
+        (self.script_kinds, self.code_kinds, self.already_read) = (early_script_kinds, early_code_kinds, early_already_read);
+        drop(is_deferred);
+        Some(DeferredSources { paths, code, script_kinds, already_read, code_kinds: code_kinds.into_iter().collect(), ..Default::default() })
+    }
+
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut out = MAGIC.to_vec();
         put(&mut out, &self.cwd);
@@ -186,6 +196,17 @@ impl Snapshot {
             put(&mut out, path);
             put_count(&mut out, usize::from(*is_commonjs));
         }
+        put_count(&mut out, self.deferred_entry_points);
+        put_count(&mut out, self.deferred_code);
+        put_count(&mut out, self.deferred_imports.len());
+        for (from, specifier) in &self.deferred_imports {
+            put(&mut out, from);
+            put(&mut out, specifier);
+        }
+        put_count(&mut out, self.deferred_paths.len());
+        for path in &self.deferred_paths {
+            put(&mut out, path);
+        }
         out
     }
 
@@ -213,7 +234,15 @@ impl Snapshot {
         let side_effect_free_files = (0..reader.count().unwrap_or(0)).map(|_| reader.bytes()).collect::<Option<_>>()?;
         let lifted_commonjs = (0..reader.count().unwrap_or(0)).map(|_| reader.bytes()).collect::<Option<_>>()?;
         let code_kinds = (0..reader.count().unwrap_or(0)).map(|_| Some((reader.bytes()?, reader.count()? != 0))).collect::<Option<_>>()?;
+        let deferred_entry_points = reader.count().unwrap_or(0);
+        let deferred_code = reader.count().unwrap_or(0);
+        let deferred_imports = (0..reader.count().unwrap_or(0)).map(|_| Some((reader.bytes()?, reader.bytes()?))).collect::<Option<_>>()?;
+        let deferred_paths = (0..reader.count().unwrap_or(0)).map(|_| reader.bytes()).collect::<Option<_>>()?;
         Some(Snapshot {
+            deferred_entry_points,
+            deferred_code,
+            deferred_imports,
+            deferred_paths,
             entry_functions,
             defines,
             features,

@@ -1,25 +1,3 @@
-// Writes the tables `bun build --target=bun_builtins` reads (src/builtin_syntax/lib.rs). One record per line, fields
-// separated by tabs, "-" for none:
-//
-//   development  0|1
-//   define       key, value             as --define takes them; `$name` in a key is a private name
-//   global       name                   read through the private name of the same spelling
-//   name         name, kind             `$name` exists
-//   error        name, code             `$name(..)` is `$makeErrorWithCode(code, ..)`
-//   class        name, id               `$inherits<name>(..)` is `$inherits(id, ..)`
-//   module       id, path, specifier, label, name
-//   functions    path                   a file of builtin functions
-//   function     id, path, name         what native code asks a compiled program for the function by
-//   native       id, macro, file, symbol
-//   requires     id, id..               the modules that the first can require, eagerly or lazily
-//   first_tick   id                     the first tick of the event loop evaluates it
-//   always       id                     native code may require it, whatever the program does
-//   trigger      global.property, id..  native code requires them once the program reads that property
-//
-// With a second output file, also the archive `bun build --compile --aot` compiles the modules from: their sources as they
-// are written, the two declaration files, and the manifest. The format is described in src/builtin_syntax/lib.rs.
-//
-// Usage: bun src/codegen/builtins-manifest.ts --debug=[OFF|ON] <manifest> [<archive>] [--types-only=<schema>,..]
 import fs from "node:fs";
 import path from "node:path";
 import { constants, zstdCompressSync } from "node:zlib";
@@ -28,7 +6,6 @@ import jsclasses from "../jsc/bindings/js_classes";
 import { census, uncurryThisMismatch } from "./builtin-name-census";
 import { builtinFunctionIds } from "./builtin-function-ids";
 import { jscNames, typeNames } from "./builtin-names";
-// replacements.ts and builtin-parser.ts import each other, and only this one can be entered first.
 import "./builtin-parser";
 import { registerNativeCall } from "./generate-js2native";
 import { writeIfNotChanged, writeIfNotChangedBinary } from "./helpers";
@@ -65,7 +42,6 @@ const functionFiles = fs
   .filter(file => file.endsWith(".ts") && !file.endsWith(".d.ts"))
   .sort()
   .map(file => "builtins/" + file);
-// JavaScriptCore's own, in the same syntax: Source/JavaScriptCore/Scripts/generate-aot-builtins.py writes most of them.
 const ENGINE = path.join(import.meta.dir, "../aot/prelude/engine");
 functionFiles.push(
   ...fs
@@ -137,8 +113,6 @@ function labelOf(file: string) {
   return id;
 }
 
-// `idToPublicSpecifierOrEnumName` of bundle-modules.ts: what the module loader, the builtins section of an executable and
-// stack frames call it.
 function nameOf(file: string) {
   if (file === "internal-for-testing.ts") return "bun:internal-for-testing";
   const label = labelOf(file);
@@ -154,8 +128,6 @@ for (let id = 0; id < moduleList.length; id++) {
   );
 }
 
-// An id is the position of the first call of a native function, over the modules in registry order and then the files
-// of builtin functions. The transpiler's output tells a call from the same text in a comment.
 const nativeCall =
   /\$(cpp|rust|newCppFunction|newRustFunction|bindgen)\(\s*(["'])([^"'\n]+)\2\s*,\s*(["'])([^"'\n]+)\4\s*(?:,\s*(\d+)\s*)?,?\s*\)/g;
 const transpiler = new Bun.Transpiler({ loader: "ts" });
@@ -181,7 +153,6 @@ for (const file of [...moduleList.slice(0, nativeStartIndex), ...functionFiles])
   }
 }
 
-// As `Manifest::resolve` does.
 const sourceFiles = moduleList.slice(0, nativeStartIndex);
 const pathId = new Map(sourceFiles.map((file, id) => [file, id]));
 const specifierId = new Map(moduleList.map((file, id) => [id < nativeStartIndex ? specifierOf(file) : file, id]));
@@ -203,7 +174,6 @@ const console_ = ["node:util", "internal/validators", "internal/util/debuglog"];
 const ipc = ["node:net", "node:dgram", "internal/dgram", "node:fs", "internal/serialization_buffers"];
 const standardStream = ["node:tty", "node:fs", "internal/fs/streams"];
 
-// What a module requires through native code or a builtin function: no `require("..")` in its text says so.
 const alsoRequired: Record<string, string[]> = {
   "node:fs/promises": ["internal/fifo"],
   "node:console": console_,
@@ -213,7 +183,6 @@ const alsoRequired: Record<string, string[]> = {
   "node:repl": standardStream,
 };
 
-// What a builtin function requires is here or in `alsoRequired`, under what makes native code call the function.
 const triggers: Record<string, string[]> = {
   "process.stdout": standardStream,
   "process.stderr": standardStream,
@@ -276,7 +245,6 @@ for (const [id, file] of sourceFiles.entries()) {
   if (triggered.length) lines.push(`triggered\t${id}\t${[...new Set(triggered)].sort((a, b) => a - b).join("\t")}`);
 }
 
-// The queue of `process.nextTick`, which native code fills by itself.
 const firstTick = [
   "internal/process/next_tick_queue",
   "internal/validators",
@@ -288,8 +256,6 @@ for (const id of idsOf(firstTick)) {
   lines.push(`first_tick\t${id}`);
 }
 
-// `node:util`: `console.log` of an object with a `nodejs.util.inspect.custom` method, which Bun's own classes have.
-// `node:path`: a warning that native code emits.
 for (const id of idsOf(["node:util", "node:path"])) {
   lines.push(`always\t${id}`);
 }
@@ -309,9 +275,6 @@ for (const [property, specifiers] of Object.entries(triggers)) {
   lines.push(`trigger\t${property}\t${idsOf(specifiers).join("\t")}`);
 }
 
-// Every `$name` that src/js uses has a row that says what the AoT front end makes of it, and every row a use.
-// `name, position` is a row, `PREFIX*, position` one for every name that starts so and has no row of its own, and
-// `name, Value, hardened` one for a global that is read through the private name of the same spelling.
 const rows = fs
   .readFileSync(path.join(import.meta.dir, "../aot/build/intrinsics.txt"), "utf8")
   .split("\n")
@@ -352,7 +315,6 @@ writeIfNotChanged(output, manifest);
 if (archive) {
   const nameLength = 63;
   const recordLength = 1 + nameLength + 4 + 4;
-  // By bytes, which is how they are searched. The names are ASCII.
   const files = [...sourceFiles, ...functionFiles, "builtins.d.ts", "private.d.ts"].map((file): [string, Buffer] => [
     file,
     fs.readFileSync(locate(file)),

@@ -1,4 +1,4 @@
-import type { Int, Max, MaxItems, MaxLength, Min, MinItems, MinLength, StrictAllTheWayDown } from "bun";
+import type { Int, Max, MaxItems, MaxLength, Min, MinItems, MinLength, DeepStrict } from "bun";
 import type { Country } from "./types";
 
 type Text<Longest extends number> = string & MinLength<1> & MaxLength<Longest>;
@@ -23,6 +23,6 @@ export interface Order {
 }
 
 export function parseOrder(body: unknown): Order | undefined {
-  const result = Bun.safeValidate<Order & StrictAllTheWayDown>(body);
+  const result = Bun.safeValidate<Order & DeepStrict>(body);
   return result.success ? result.data : undefined;
 }

@@ -1,11 +1,3 @@
-//! What JavaScript probably does: predictions, which nothing relies on.
-//!
-//! Where nobody has written a type down, the checker says `any`: of a parameter of a JavaScript function, and so of all that is computed
-//! from it. A prediction says what such a value is likely to be. It starts from the checker's own type of an expression, a variable or a
-//! property. Where that says nothing it goes by what the program does: a parameter is what the calls of the function pass, a variable is
-//! what is stored to it, a call yields what the function returns, an object made with `new` from a function has what is stored to `this`
-//! there. All of it may be wrong, and compiled code has to do the right thing when it is.
-
 use crate::atom::{Atom, known};
 use crate::bind::{Decl, Parent, PatParent, SymFlags, SymbolId};
 use crate::check::Checker;
@@ -22,9 +14,7 @@ use super::OnceLock;
 
 const FILES_PER_CHECKER: usize = 32;
 
-/// Of the calls of a function, this many say what its parameters are.
 const MAX_CALLS: usize = 32;
-/// One prediction asks for another this many times over. Beyond that nothing is found.
 const MAX_DEPTH: usize = 48;
 const MAX_CYCLE_ROUNDS: usize = 4;
 const MAX_CYCLE_MEMBERS: usize = 1 << 14;
@@ -32,91 +22,55 @@ const MAX_PREDICTED_UNION_MEMBERS: usize = 1024;
 
 type Function = (FileId, FnId);
 
-/// Where the code of an import is. The checker resolves an import for its types, often to a declaration file. Which code runs is up to
-/// the bundler.
 #[derive(Copy, Clone)]
 pub enum ImportedCode {
-    /// The binding of the program that holds its value.
     Binding(Sym),
-    /// What the file exports under the name. No name: all that it exports.
     Export(FileId, Option<Atom>),
 }
 
-/// What a prediction is made of.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 enum Subject {
     Expr(FileId, ExprId),
-    /// `F.prototype.name`, by what the program stores there.
     Member(FileId, ExprId),
-    /// What a parameter, a variable or a part of a pattern is bound to.
     Pat(FileId, PatId),
-    /// What a variable or a property holds over its whole life.
     Symbol(Sym),
-    /// What a call of the function yields.
     Result(FileId, FnId),
-    /// What `new` makes from the function, which is no class.
     Instance(FileId, FnId),
 }
 
-/// The key or the value of a keyed store, or what a call passes for it.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
-enum Passed {
+enum PassedValue {
     Key(Atom),
     Closure(Function),
-    /// What the function is handed for the parameter of that number.
     Parameter(Function, usize),
 }
 
-/// A constructor function inherits from another this many times over.
 const MAX_INHERITED: usize = 8;
 
-/// A parameter is followed to the calls of its function this many times over.
 const MAX_FORWARDED: usize = 4;
 
-/// What one file does with the functions of the program, each list in the order of the file. It takes the types of the file to find. It
-/// mentions none, nor anything else that is numbered by task.
 #[derive(Default)]
 struct FileFunctionUses {
-    /// A function, and a call or a `new` expression whose callee the checker takes for it.
     calls: Vec<(Function, ExprId)>,
-    /// A function, a call that hands it its arguments, `process.nextTick(f, a, b)`, `f.call(receiver, a, b)`, and the number of the first of them.
     passed_arguments: Vec<(Function, ExprId, usize)>,
-    /// A parameter, and a call whose callee is its name.
     parameter_calls: Vec<((FileId, ParamId), ExprId)>,
-    /// A function, the function it is passed to, and as which argument.
     passed_to: Vec<(Function, Function, usize)>,
-    /// A function of the file, and the `F` on whose `prototype` it is put.
     constructors: Vec<(FnId, Function)>,
-    /// `F`, and the name and the value of what is stored to a property of `F.prototype`.
     members: Vec<(Function, Atom, ExprId)>,
-    /// The function of the file whose `this` a property is stored to, and the name and the value.
     this_stores: Vec<(FnId, Atom, ExprId)>,
-    /// `X.name[key] = value`: the name, the key and the value.
-    keyed_stores: Vec<(Atom, Passed, Passed)>,
-    /// `S`, and the `F` whose `prototype` that of `S` inherits from.
+    keyed_stores: Vec<(Atom, PassedValue, PassedValue)>,
     heirs: Vec<(Function, Function)>,
 }
 
-/// What files do with the functions of the program: all of them, or one.
 #[derive(Default)]
 struct Uses {
-    /// By function: the calls and the `new` expressions whose callee the checker takes for it, in the order of the files. By the
-    /// constructor of a class: the `new` expressions and the `super` calls.
     calls: CallSites,
-    /// By function: the calls that hand it its arguments, and the number of the first of them.
     passed_arguments: FxHashMap<Function, Vec<(FileId, ExprId, usize)>>,
-    /// By parameter: the calls whose callee is its name.
     parameter_calls: FxHashMap<(FileId, ParamId), Vec<(FileId, ExprId)>>,
-    /// By function: the functions it is passed to where it is written or named as an argument of a call, and as which argument.
     passed_to: FxHashMap<Function, Vec<(Function, usize)>>,
-    /// By function that is stored to a property of `F.prototype`, or is a member of the literal that is stored to `F.prototype`: `F`.
     constructors: FxHashMap<Function, Function>,
-    /// By function that is no class: the names and the values of what is stored to the properties of its `prototype`, and to those of
-    /// `this` in it and in the functions that `constructors` has for it.
     members: FxHashMap<Function, Vec<(Atom, FileId, ExprId)>>,
-    /// `FileFunctionUses::keyed_stores`, in the order of the files.
-    keyed_stores: Vec<(Atom, Passed, Passed)>,
-    /// By function that is no class: the function whose `prototype` its own inherits from. The first that the program says.
+    keyed_stores: Vec<(Atom, PassedValue, PassedValue)>,
     inherits_from: FxHashMap<Function, Function>,
 }
 
@@ -148,7 +102,6 @@ impl CallSites {
 }
 
 impl Uses {
-    /// `parts`: in the order that the lists are to be in. `kind_of`: of a function of the program.
     fn new(parts: &[(FileId, &FileFunctionUses)], kind_of: impl Fn(FileId, FnId) -> FnKind) -> Uses {
         let mut uses = Uses::default();
         let shard_count = if parts.len() >= CallSites::MIN_FILES_FOR_PARALLEL_MERGE { CallSites::PARALLEL_SHARDS } else { 1 };
@@ -165,7 +118,6 @@ impl Uses {
             });
         }
         uses.calls = CallSites { shards };
-        // Once it is known which functions are on the `prototype` of which.
         for &(file, part) in parts {
             for &(func, name, value) in &part.this_stores {
                 if let Some(constructor) = uses.constructor_for_method(file, func, kind_of(file, func)) {
@@ -201,17 +153,15 @@ impl Uses {
         }
     }
 
-    /// The calls of the function, and those that hand it its arguments: each with the number of the argument that is the first for the function.
     fn calls_with_arguments(&self, function: Function) -> Vec<(FileId, ExprId, usize)> {
         self.first_calls_with_arguments(function, usize::MAX)
     }
 
-    fn first_calls_with_arguments(&self, function: Function, most: usize) -> Vec<(FileId, ExprId, usize)> {
+    fn first_calls_with_arguments(&self, function: Function, maximum: usize) -> Vec<(FileId, ExprId, usize)> {
         let calls = self.calls.get(function).iter().map(|&(file, e)| (file, e, 0));
-        calls.chain(self.passed_arguments.get(&function).into_iter().flatten().copied()).take(most).collect()
+        calls.chain(self.passed_arguments.get(&function).into_iter().flatten().copied()).take(maximum).collect()
     }
 
-    /// The function that makes the objects that are `this` in `func`, if `func` is called the way it looks.
     fn constructor_for_method(&self, file: FileId, func: FnId, kind: FnKind) -> Option<Function> {
         match self.constructors.get(&(file, func)) {
             Some(&constructor) => Some(constructor),
@@ -222,19 +172,13 @@ impl Uses {
 
 #[derive(Default)]
 pub(super) struct Shared {
-    /// `set_imported_code`
     imported_code: OnceLock<FxHashMap<Sym, ImportedCode>>,
-    /// `set_declaration_only_files`
     declaration_only_file_set: OnceLock<FxHashSet<FileId>>,
-    /// `called_imports`
     called_imports: OnceLock<Vec<Sym>>,
-    /// By file: what `record_function_uses_in` has found last. Emptied by `merge_recorded_function_uses`.
-    noted: OnceLock<Box<[Guarded<Option<FileFunctionUses>>]>>,
-    /// Of all files, once they are merged.
+    recorded: OnceLock<Box<[Guarded<Option<FileFunctionUses>>]>>,
     uses: OnceLock<Uses>,
 }
 
-/// The uses that predictions go by.
 enum KnownUses<'p> {
     OfProgram(&'p Uses),
     OfFile(Rc<Uses>),
@@ -373,20 +317,15 @@ impl Predictions {
     }
 }
 
-/// What has been predicted so far. It belongs to a checker: the types are its own.
 pub(super) struct State {
-    /// The file whose uses have been noted last, and those, once they have been asked for. They count until those of all files are
-    /// merged.
     last_recorded_file: Option<FileId>,
     current_file_uses: Option<Rc<Uses>>,
-    /// `constructor_uses_in`, by file.
     constructor_uses_by_file: FxHashMap<FileId, Rc<Uses>>,
     predictions: Predictions,
     depth: usize,
     provisional: Vec<Subject>,
     deferred: Vec<Subject>,
     previous_round: FxHashMap<Subject, Option<TypeId>>,
-    /// The index of the outermost prediction in progress that the innermost one has asked for. `usize::MAX`: none.
     outermost_requested: usize,
     declared: super::ByExpression<bool>,
     predicted: super::ByExpression<Option<TypeId>>,
@@ -442,14 +381,11 @@ impl Default for State {
 }
 
 impl<'p, 's> Checker<'p, 's> {
-    // ───────────────────────────── what is only inferred ─────────────────────────────
 
     pub fn is_untyped_file(&self, file: FileId) -> bool {
         self.files.module(file).is_untyped()
     }
 
-    /// Whether the type is that of an object, a function or a class of a JavaScript file: what the checker makes of code that it does not
-    /// hold to anything.
     pub fn is_inferred_from_javascript(&self, ty: TypeId) -> bool {
         match self.data(ty) {
             TypeData::Anon { origin, .. } => {
@@ -468,8 +404,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Whether the program is held to the checker's type of the expression. In JavaScript nothing is declared: the types are what the
-    /// checker infers. That goes for what TypeScript reads from an object or gets from a function of JavaScript too.
     pub fn has_declared_type(&mut self, file: FileId, e: ExprId) -> bool {
         if self.is_untyped_file(file) {
             return false;
@@ -487,11 +421,9 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn find_has_declared_type(&mut self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
-        // A declaration without a body is a prediction: see `trust.rs`.
         if self.unverified_claim(file, e).is_some() {
             return false;
         }
-        // So is the type of what the program is given. A cast goes by its operand: see `result_type_of`.
         if !matches!(hir[e].kind, ExprKind::As { .. }) {
             let own = self.type_of_expr(file, e);
             if self.has_tainted_part(own) {
@@ -501,7 +433,6 @@ impl<'p, 's> Checker<'p, 's> {
         let source = match hir[e].kind {
             ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
             ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) => hir[call].callee,
-            // An import is declared where the module it is resolved to for its types is.
             ExprKind::Ident(name) => {
                 let found = self.symbol_of_identifier(file, e, name);
                 let import = found.filter(|&found| self.files.flags(found).contains(SymFlags::ALIAS));
@@ -514,16 +445,12 @@ impl<'p, 's> Checker<'p, 's> {
         if self.parts(ty).iter().copied().all(|part| self.is_nullish(part)) {
             return false;
         }
-        // `C.prototype` is declared to be a `C`, and `Map.prototype` a `Map<any, any>`. Neither is one.
         if matches!(hir[e].kind, ExprKind::Dot { name: known::prototype, .. }) && self.members(ty).is_some_and(|members| !members.shape().construct.is_empty()) {
             return false;
         }
         !self.is_inferred_from_javascript(ty)
     }
 
-    // ───────────────────────────── predictions ─────────────────────────────
-
-    /// What the value of the expression probably is. `None`: nothing is known of it.
     pub fn predicted_expr_type(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         if let Some(&known) = self.aot.javascript.predicted.get((file, e)) {
             return known;
@@ -541,7 +468,6 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn find_predicted_expr_type(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         let checked = self.type_of_expr(file, e);
-        // What the program stores on a prototype says more than `any`, and more than a declaration without a body.
         if matches!(self.hir(file)[e].kind, ExprKind::Dot { .. })
             && self.function_for_type(checked).is_none()
             && let Some(stored) = self.predict(Subject::Member(file, e))
@@ -554,8 +480,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `fiber.flags & 4`, `a.index < 10`, `-x.n`, `x.lanes |= lane`: what is only good for a number where it stands is expected to be one. Not an operand of `+`, which is as likely a
-    /// string.
     fn predicted_by_use(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         if let Some(&known) = self.aot.javascript.predicted_by_use.get((file, e)) {
             return known;
@@ -573,7 +497,6 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn find_predicted_by_use(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // Of an array, a string, a function, a typed array.
         if matches!(hir[e].kind, ExprKind::Dot { name, .. } if name == known::length) {
             return Some(TypeId::NUMBER);
         }
@@ -607,7 +530,6 @@ impl<'p, 's> Checker<'p, 's> {
             && obj == e
             && self.result_kinds_of(file, index) == kind::NUMBER
         {
-            // A name goes by all that is done with it: `s[i]` beside `s.charCodeAt(i)` is a string.
             let is_array = match bound.expr_symbol[e.idx()].some() {
                 Some(id) => self.is_used_as_array(Sym { file, id }),
                 None => true,
@@ -618,11 +540,9 @@ impl<'p, 's> Checker<'p, 's> {
         let is_number = match hir[parent].kind {
             ExprKind::Binary { op, .. } if is_for_numbers(op) => true,
             ExprKind::Binary { op: BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge, left, right } => self.result_kinds_of(file, if left == e { right } else { left }) == kind::NUMBER,
-            // Beside a number a number is the likelier.
             ExprKind::Binary { op: BinOp::Add, left, right } => self.result_kinds_of(file, if left == e { right } else { left }) == kind::NUMBER,
             ExprKind::Assign { op: Some(BinOp::Add), target, value } => self.result_kinds_of(file, if target == e { value } else { target }) == kind::NUMBER,
             ExprKind::Assign { op: Some(op), .. } => is_for_numbers(op),
-            // `Math.floor(x)` makes a number of whatever it is handed.
             ExprKind::Call(call) => hir[call].callee != e && matches!(hir[hir[call].callee].kind, ExprKind::Dot { obj, .. } if self.refers_to_global_object(file, obj, b"Math")),
             ExprKind::Unary { op: UnOp::Minus | UnOp::BitNot | UnOp::Plus | UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec, .. } => true,
             _ => false,
@@ -630,7 +550,6 @@ impl<'p, 's> Checker<'p, 's> {
         is_number.then_some(TypeId::NUMBER)
     }
 
-    /// What the variable or the property probably holds, at any time.
     pub fn predicted_symbol_type(&mut self, sym: Sym) -> Option<TypeId> {
         let sym = match self.files.flags(sym).contains(SymFlags::ALIAS) {
             true => self.files.resolve_alias(sym).unwrap_or(sym),
@@ -643,13 +562,11 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// What the function is probably handed for the parameter.
     pub fn predicted_param_type(&mut self, file: FileId, p: ParamId) -> Option<TypeId> {
         let pat = self.hir(file)[p].pat;
         self.predicted_pat_type(file, pat)
     }
 
-    /// What the name or the pattern is probably bound to.
     pub fn predicted_pat_type(&mut self, file: FileId, pat: PatId) -> Option<TypeId> {
         let checked = self.type_of_pat(file, pat);
         match self.informative_type(checked) {
@@ -658,8 +575,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// The function of the program that the values of the type are closures of, nil aside: the type is that of one function declaration,
-    /// function expression or method. Another function may have been stored where the checker has this type, so it is a prediction too.
     pub fn function_for_type(&self, ty: TypeId) -> Option<(FileId, FnId)> {
         let mut parts = self.parts(ty).iter().filter(|&&part| !self.is_nullish(part));
         let &only = parts.next()?;
@@ -668,7 +583,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let (file, func) = match self.data(only) {
             TypeData::Fns { decls, .. } => self.single_with_body(decls.iter().copied())?,
-            // `declare class F { .. }` beside `function F(..) { .. }` too.
             TypeData::Anon { origin: Origin::Function(sym) | Origin::ClassStatic(sym), .. } => {
                 let declarations = self.files.decls(*sym).into_iter().filter_map(|(file, decl)| match decl {
                     Decl::Fn(func) => Some((file, func)),
@@ -681,7 +595,6 @@ impl<'p, 's> Checker<'p, 's> {
         matches!(self.hir(file)[func].kind, FnKind::Decl | FnKind::Expr | FnKind::Arrow | FnKind::Method).then_some((file, func))
     }
 
-    /// The function of the program that the value of the expression is probably a closure of.
     pub fn predicted_expr_function(&mut self, file: FileId, e: ExprId) -> Option<(FileId, FnId)> {
         if let Some(code) = self.imported_code_type(file, e)
             && let Some(function) = self.function_for_type(code)
@@ -698,7 +611,6 @@ impl<'p, 's> Checker<'p, 's> {
         with_body.next().is_none().then_some(only)
     }
 
-    /// What runs when a value of the type is constructed: the constructor that a class of the program declares, or a function.
     fn constructed_function(&self, ty: TypeId) -> Option<Function> {
         let TypeData::Anon { origin: Origin::ClassStatic(sym), .. } = self.data(ty) else {
             return self.function_for_type(ty);
@@ -717,12 +629,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// The type, if a value is known for what it is by it.
     fn informative_type(&self, ty: TypeId) -> Option<TypeId> {
         (!self.is_uninformative(ty) && !self.is_any(ty) && self.parts(ty).len() <= MAX_PREDICTED_UNION_MEMBERS).then_some(ty)
     }
 
-    /// Any of the types. Where nothing has been found there is none to give, and that is left out: what is known of the rest stands.
     fn either(&mut self, found: &[TypeId]) -> Option<TypeId> {
         let ty = self.union(found);
         self.informative_type(ty)
@@ -847,9 +757,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    // ───────────────────────────── expressions ─────────────────────────────
-
-    /// For an expression the checker's type says nothing of.
     fn predict_expr(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         let hir = self.hir(file);
         match hir[e].kind {
@@ -888,7 +795,6 @@ impl<'p, 's> Checker<'p, 's> {
             | ExprKind::Assign { op: Some(op @ (BinOp::And | BinOp::Or | BinOp::Nullish)), target: left, value: right } => {
                 let mut found = Vec::new();
                 if let Some(left) = self.predicted_expr_type(file, left) {
-                    // What of the left operand gets past the operator.
                     let left = match op {
                         BinOp::And => self.definitely_falsy_part(left),
                         BinOp::Or => self.remove_definitely_falsy(left),
@@ -910,7 +816,6 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 self.either(&found)
             }
-            // `x as any` is still what `x` is.
             ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::Instantiation { expr, .. } | ExprKind::AsConst(expr) => self.predicted_expr_type(file, expr),
             ExprKind::NonNull(expr) => {
                 let value = self.predicted_expr_type(file, expr)?;
@@ -926,7 +831,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `e`: `X.name`. If `X` is the `prototype` of a function of the program: what the program stores on that under the name.
     fn predict_prototype_member(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         let ExprKind::Dot { obj, name, .. } = self.hir(file)[e].kind else { return None };
         let constructor = self.constructor_with_prototype(file, obj, 0)?;
@@ -941,8 +845,6 @@ impl<'p, 's> Checker<'p, 's> {
         self.either(&found)
     }
 
-    /// `getFlowTypeOfReference` for the reference `e`, were it declared to hold `held`: what the tests and the assignments on the way to
-    /// `e` leave of that. The type of what is no reference is left as it is.
     fn narrowed_at(&mut self, file: FileId, e: ExprId, held: TypeId) -> Option<TypeId> {
         if !self.flow_analysis_disabled.is_empty() {
             let narrowed = self.flow_type_of_reference(file, e, held);
@@ -961,9 +863,7 @@ impl<'p, 's> Checker<'p, 's> {
         found
     }
 
-    /// Of what a property is read from, which is not nil if that goes well.
     fn predicted_object_type(&mut self, file: FileId, obj: ExprId) -> Option<TypeId> {
-        // In a member of the literal in `F.prototype = { .. }` the checker takes `this` for the literal.
         if matches!(self.hir(file)[obj].kind, ExprKind::This)
             && let Some((of, constructor)) = self.this_constructor(file, obj)
             && let Some(instance) = self.predicted_instance_type(of, constructor)
@@ -983,9 +883,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.predicted_property_type(inherited_from, name)
     }
 
-    /// `class G extends (F as any) { .. }`. `object`: the type of the objects of `G`. What `new F()` probably makes, where `F` is a function of the program and no class.
     fn predicted_base_instance(&mut self, object: TypeId) -> Option<TypeId> {
-        // The type of `this` in a method stands for that of the objects of the class.
         let object = self.apparent_type(object);
         let &TypeData::Ref { target, .. } = self.data(object) else { return None };
         let (file, class) = self.files.decls(target).into_iter().find_map(|(file, decl)| match decl {
@@ -1062,13 +960,12 @@ impl<'p, 's> Checker<'p, 's> {
                 false => self.predicted_fn_result(of, func),
             };
         }
-        // The receiver is only predicted, so the checker has not resolved the call: the first signature that takes as many arguments.
         let callee = self.non_nullable(callee);
         let signatures = self.signatures(callee, is_new);
         for &signature in signatures.iter() {
             let params = self.sig_params(signature);
-            let takes_more = params.last().is_some_and(|last| last.rest);
-            if call.args.len() < Self::min_args(&params) || call.args.len() > params.len() && !takes_more {
+            let accepts_more = params.last().is_some_and(|last| last.rest);
+            if call.args.len() < Self::min_args(&params) || call.args.len() > params.len() && !accepts_more {
                 continue;
             }
             let erased = self.erased_sig(signature);
@@ -1078,7 +975,6 @@ impl<'p, 's> Checker<'p, 's> {
         None
     }
 
-    /// What a call of the function probably yields.
     fn predicted_fn_result(&mut self, file: FileId, func: FnId) -> Option<TypeId> {
         let checked = self.return_type_of_fn(file, func);
         if let Some(checked) = self.informative_type(checked) {
@@ -1089,7 +985,6 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn predict_result(&mut self, file: FileId, func: FnId) -> Option<TypeId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // What is returned there is not what the call yields.
         if hir[func].flags.intersects(Flags::ASYNC | Flags::GENERATOR) {
             return None;
         }
@@ -1109,7 +1004,6 @@ impl<'p, 's> Checker<'p, 's> {
         self.either(&found)
     }
 
-    /// `a + b`: a string if either is one, a number if both are.
     fn predict_sum(&mut self, file: FileId, left: ExprId, right: ExprId) -> Option<TypeId> {
         let mut operands = [None, None];
         for (operand, e) in operands.iter_mut().zip([left, right]) {
@@ -1130,9 +1024,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    // ───────────────────────────── variables, parameters, properties ─────────────────────────────
-
-    /// All that is stored to it where the program says so by its name: its declarations, and the assignments to a variable.
     fn predict_symbol(&mut self, sym: Sym) -> Option<TypeId> {
         let mut found = Vec::new();
         let mut variables: Vec<(FileId, SymbolId)> = Vec::new();
@@ -1164,7 +1055,6 @@ impl<'p, 's> Checker<'p, 's> {
         for (file, variable) in variables {
             let (hir, bound) = (self.hir(file), self.bound(file));
             for &(_, target) in bound.assignments_to(variable) {
-                // The value of `x = v`, `x += v` and `++x` is what `x` holds from then on. That of `x++` is of the same kind.
                 let Parent::Expr(assignment) = bound.expr_parent[target.idx()] else { continue };
                 let stores = match hir[assignment].kind {
                     ExprKind::Assign { target: to, .. } => to == target,
@@ -1180,7 +1070,6 @@ impl<'p, 's> Checker<'p, 's> {
         self.either(&found)
     }
 
-    /// For a name or a pattern the checker's type says nothing of.
     fn predict_pat(&mut self, file: FileId, pat: PatId) -> Option<TypeId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         match bound.pat_parent[pat.idx()] {
@@ -1190,7 +1079,6 @@ impl<'p, 's> Checker<'p, 's> {
                 if init.is_some() {
                     return self.predicted_expr_type(file, init);
                 }
-                // `for (const x of xs)`
                 let stmt = bound.var_stmt[declaration.idx()].some()?;
                 let Parent::Stmt(owner) = bound.stmt_parent[stmt.idx()] else { return None };
                 let StmtKind::ForOf { left, expr, is_await, .. } = hir[owner].kind else { return None };
@@ -1252,8 +1140,6 @@ impl<'p, 's> Checker<'p, 's> {
         calls
     }
 
-    /// What the calls of the function pass. A call that passes nothing passes `undefined`. Where the function is itself passed to a
-    /// function, `each(list, function (item) { .. })`, the calls of that parameter there are calls of it.
     fn predict_param(&mut self, file: FileId, p: ParamId) -> Option<TypeId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let func = bound.param_fn[p.idx()].some()?;
@@ -1268,7 +1154,6 @@ impl<'p, 's> Checker<'p, 's> {
             let caller = self.hir(of);
             let (ExprKind::Call(call) | ExprKind::New(call)) = caller[e].kind else { continue };
             let args = caller[call].args;
-            // Which argument comes after a spread depends on what is spread.
             if caller.ids(args).take(index + 1).any(|arg| matches!(caller[arg].kind, ExprKind::Spread(_))) {
                 continue;
             }
@@ -1279,7 +1164,6 @@ impl<'p, 's> Checker<'p, 's> {
             self.add(&mut found, passed);
         }
         let mut passed = self.either(&found);
-        // Nobody is seen to pass anything: it is expected to be what it is used as.
         if passed.is_none()
             && let Some(id) = bound.pat_symbol[hir[p].pat.idx()].some()
             && self.is_used_as_number(Sym { file, id })
@@ -1301,7 +1185,6 @@ impl<'p, 's> Checker<'p, 's> {
         self.or_default(file, passed, hir[p].default)
     }
 
-    /// `found`, or what the initializer `default` yields, if there is one.
     fn or_default(&mut self, file: FileId, found: Option<TypeId>, default: ExprId) -> Option<TypeId> {
         if default.is_none() {
             return found;
@@ -1313,17 +1196,12 @@ impl<'p, 's> Checker<'p, 's> {
         self.either(&either)
     }
 
-    // ───────────────────────────── functions that are used as classes ─────────────────────────────
-
-    /// The function that makes the objects that are `this` at the expression `this`, which is not in a class.
     fn this_constructor(&mut self, file: FileId, this: ExprId) -> Option<Function> {
         let Some(Ok(func)) = self.this_container(file, this) else { return None };
         let kind = self.hir(file)[func].kind;
         self.constructor_uses_in(file).constructor_for_method(file, func, kind)
     }
 
-    /// An object type with a property for each name that is stored to `this` in the function and in the functions on its `prototype`,
-    /// and for each of those.
     fn predicted_instance_type(&mut self, file: FileId, func: FnId) -> Option<TypeId> {
         self.predict(Subject::Instance(file, func))
     }
@@ -1333,7 +1211,6 @@ impl<'p, 's> Checker<'p, 's> {
         let mut constructor = (file, func);
         for _ in 0..MAX_INHERITED {
             let uses = self.constructor_uses_in(constructor.0);
-            // What the heir stores under a name hides what it inherits.
             let hidden = members.len();
             for &(name, of, value) in uses.members.get(&constructor).into_iter().flatten() {
                 let at = match members.iter().position(|member| member.0 == name) {
@@ -1369,15 +1246,11 @@ impl<'p, 's> Checker<'p, 's> {
         Some(self.synth(Shape { props: vec_from_iter_in(props, self.arena), ..Shape::new_in(self.arena) }))
     }
 
-    // ───────────────────────────── what the program does with its functions ─────────────────────────────
-
-    /// In their order.
     fn files_with_code(&self) -> Vec<FileId> {
         let files = (0..self.files.modules.len() as u32).map(FileId);
         files.filter(|&file| !matches!(self.hir(file).kind, FileKind::Declaration | FileKind::Json) && !self.bound(file).ran_out_of_stack).collect()
     }
 
-    /// The imports that the program calls or constructs, or a member of which it does, in the order of the files.
     pub fn called_imports(&mut self, in_parallel: InParallel<'_>) -> &'p [Sym] {
         let program = self.p;
         program.aot.javascript.called_imports.get_or_init(|| {
@@ -1404,24 +1277,18 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// Where the code of each of the imports is. Once for the program, whichever checker is told, before anything is predicted. What is
-    /// said after that changes nothing.
     pub fn set_imported_code(&self, code: impl IntoIterator<Item = (Sym, ImportedCode)>) {
         self.p.aot.javascript.imported_code.get_or_init(|| code.into_iter().collect());
     }
 
-    /// The TypeScript files that stand in for declaration files: other code runs in their place. Once for the program, like
-    /// `set_imported_code`.
     pub fn set_declaration_only_files(&self, files: impl IntoIterator<Item = FileId>) {
         self.p.aot.javascript.declaration_only_file_set.get_or_init(|| files.into_iter().collect());
     }
 
-    /// Whether the file says what there is and the program has no code for it: a declaration file, or a file that stands in for one.
     pub fn is_declaration_only(&self, file: FileId) -> bool {
         self.hir(file).kind == FileKind::Declaration || self.p.aot.javascript.declaration_only_file_set.get().is_some_and(|files| files.contains(&file))
     }
 
-    /// For `a` or `a.name`, where `a` is an import: the import, and the name.
     fn import_for_expr(&mut self, file: FileId, e: ExprId) -> Option<(Sym, Option<Atom>)> {
         let hir = self.hir(file);
         let (import, member) = match hir[e].kind {
@@ -1433,7 +1300,6 @@ impl<'p, 's> Checker<'p, 's> {
         self.files.flags(import).contains(SymFlags::ALIAS).then_some((import, member))
     }
 
-    /// The checker's type of the code that `e` stands for, which is an import or a member of one.
     fn imported_code_type(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         let (import, member) = self.import_for_expr(file, e)?;
         let code = *self.p.aot.javascript.imported_code.get()?.get(&import)?;
@@ -1443,7 +1309,6 @@ impl<'p, 's> Checker<'p, 's> {
                 let module = self.files.file_symbol(of);
                 match name.and_then(|name| self.files.module_export(module, name)) {
                     Some(exported) => self.type_of_symbol(exported),
-                    // All of it, which is also what an ES module sees as the `default` of a CommonJS module.
                     None if name.is_none_or(|name| name == known::default) => {
                         let value = self.files.module_value(module);
                         self.type_of_symbol(value)
@@ -1458,20 +1323,12 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    // A parameter is what the calls of its function pass, wherever they are. Which function a call runs takes the types of the file the
-    // call is in. So each file is gone through by the task that has its types, and what comes of the files is put together when all
-    // have been: a function of the program, whoever has gone through what. Until then a checker predicts by one file alone.
-
     fn recorded_function_uses(&self) -> &'p [Guarded<Option<FileFunctionUses>>] {
         let program = self.p;
-        program.aot.javascript.noted.get_or_init(|| (0..program.files.modules.len()).map(|_| Guarded::new(None)).collect())
+        program.aot.javascript.recorded.get_or_init(|| (0..program.files.modules.len()).map(|_| Guarded::new(None)).collect())
     }
 
-    /// Notes what the file does with the functions of the program, in the place of whatever has been noted of it before. For the task
-    /// that has checked or visited the file. From here on, and until `merge_recorded_function_uses`, what this checker predicts goes by
-    /// this file alone, and by nothing it has predicted before.
     pub fn record_function_uses_in(&mut self, file: FileId) {
-        // What is predicted on the way goes by no file that this checker has noted before.
         self.aot.javascript = State::default();
         self.enable_expr_cache_for(file);
         let found = self.find_function_uses_in(file);
@@ -1480,20 +1337,17 @@ impl<'p, 's> Checker<'p, 's> {
         self.enable_expr_cache_for(file);
     }
 
-    /// Puts together what has been noted of the files, in the order of the program. Once, when no task is running and every file has
-    /// been noted that is going to be. From here on every checker predicts by all of it.
     pub fn merge_recorded_function_uses(&self) {
         self.p.aot.javascript.uses.get_or_init(|| {
             let mut files = self.files_with_code();
             files.sort_by_key(|&file| self.files.rank_of_file(file));
-            let noted = self.recorded_function_uses();
-            let parts: Vec<(FileId, FileFunctionUses)> = files.into_iter().filter_map(|file| Some((file, noted[file.idx()].lock().take()?))).collect();
+            let recorded = self.recorded_function_uses();
+            let parts: Vec<(FileId, FileFunctionUses)> = files.into_iter().filter_map(|file| Some((file, recorded[file.idx()].lock().take()?))).collect();
             let parts: Vec<(FileId, &FileFunctionUses)> = parts.iter().map(|(file, part)| (*file, part)).collect();
             Uses::new(&parts, |file, func| self.hir(file)[func].kind)
         });
     }
 
-    /// Whether what the files do has been merged.
     pub fn has_merged_function_uses(&self) -> bool {
         self.p.aot.javascript.uses.get().is_some()
     }
@@ -1517,9 +1371,6 @@ impl<'p, 's> Checker<'p, 's> {
         KnownUses::OfFile(uses)
     }
 
-    /// The uses that say what a function of `file` makes with `new`. Until those of all files are merged a file goes by its own, and has none for the
-    /// constructor that it imports: then these are what `file` itself stores on the `prototype` of its functions and to `this` in them. Whichever file is
-    /// being translated, by whichever task, they are the same.
     fn constructor_uses_in(&mut self, file: FileId) -> KnownUses<'p> {
         if self.p.aot.javascript.uses.get().is_some() || self.aot.javascript.last_recorded_file == Some(file) {
             return self.function_uses();
@@ -1534,8 +1385,6 @@ impl<'p, 's> Checker<'p, 's> {
         KnownUses::OfFile(uses)
     }
 
-    /// The function of the program that the expression names: by the checker's own type, by the code behind an import, and where those say nothing by the trees. It asks for no prediction of
-    /// this file: what predictions rest on is found with it.
     fn function_for_expr_by_name(&mut self, file: FileId, e: ExprId) -> Option<Function> {
         let ty = match self.imported_code_type(file, e) {
             Some(code) => code,
@@ -1547,7 +1396,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// The `F` whose `prototype` the value of the expression is: `F.prototype`, `(F.prototype = {})`, and `P` after `const P = (F.prototype = {})`.
     fn constructor_with_prototype(&mut self, file: FileId, e: ExprId, depth: usize) -> Option<ExprId> {
         let hir = self.hir(file);
         if depth > 4 {
@@ -1571,7 +1419,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// One pass over the expressions of the file. It asks for the checker's own types, and for what is predicted while no call is known.
     fn find_function_uses_in(&mut self, file: FileId) -> FileFunctionUses {
         let mut uses = FileFunctionUses::default();
         if matches!(self.hir(file).kind, FileKind::Declaration | FileKind::Json) || self.bound(file).ran_out_of_stack {
@@ -1580,7 +1427,6 @@ impl<'p, 's> Checker<'p, 's> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for (index, node) in hir.exprs.iter().enumerate() {
             let e = ExprId(index as u32);
-            // The parser leaves nodes behind that are part of nothing.
             if matches!(bound.expr_parent[e.idx()], Parent::None) {
                 continue;
             }
@@ -1607,7 +1453,6 @@ impl<'p, 's> Checker<'p, 's> {
                         let callee = self.type_of_expr(file, callee);
                         function = self.invoked_function(callee, constructs);
                     }
-                    // `e.emit("x", 1)`: a property of what is probably made by `new F()`.
                     if function.is_none()
                         && let Some(callee) = self.predicted_expr_type(file, callee)
                     {
@@ -1622,7 +1467,6 @@ impl<'p, 's> Checker<'p, 's> {
                                 let arg = self.type_of_expr(file, arg);
                                 self.function_for_type(arg)
                             }
-                            // Which argument comes after it depends on what is spread.
                             ExprKind::Spread(_) => break,
                             _ => None,
                         };
@@ -1636,8 +1480,8 @@ impl<'p, 's> Checker<'p, 's> {
                         && let Some(property) = self.holding_property(file, obj, 0)
                         && let Some(key) = self.classify_passed(file, index)
                         && let Some(stored) = self.classify_passed(file, value)
-                        && !matches!(key, Passed::Closure(_))
-                        && !matches!(stored, Passed::Key(_))
+                        && !matches!(key, PassedValue::Closure(_))
+                        && !matches!(stored, PassedValue::Key(_))
                     {
                         uses.keyed_stores.push((property, key, stored));
                     }
@@ -1649,7 +1493,6 @@ impl<'p, 's> Checker<'p, 's> {
         uses
     }
 
-    /// `process.nextTick(f, a, b)`, `f.call(receiver, a, b)`: `f`, and the number of the argument that is its first.
     fn function_receiving_forwarded_arguments(&mut self, file: FileId, call: CallId) -> Option<(Function, usize)> {
         let hir = self.hir(file);
         let args = hir[call].args;
@@ -1668,8 +1511,6 @@ impl<'p, 's> Checker<'p, 's> {
         Some((self.function_for_type(expected)?, first))
     }
 
-    /// The name of the property that holds the object that the expression stands for: `X.name`, `(X.name = ..)`, and a variable that is bound to nothing else: `var events = target._events`,
-    /// `var { _events: events } = this`, `events = target._events = Object.create(null)`.
     pub fn holding_property(&mut self, file: FileId, e: ExprId, depth: usize) -> Option<Atom> {
         let hir = self.hir(file);
         if depth > 4 {
@@ -1713,12 +1554,11 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// What the expression is, as the key or the value of a keyed store or as an argument that is handed on to one.
-    fn classify_passed(&mut self, file: FileId, e: ExprId) -> Option<Passed> {
+    fn classify_passed(&mut self, file: FileId, e: ExprId) -> Option<PassedValue> {
         let hir = self.hir(file);
         match hir[e].kind {
-            ExprKind::String(text) => return Some(Passed::Key(text)),
-            ExprKind::Fn(func) => return Some(Passed::Closure((file, func))),
+            ExprKind::String(text) => return Some(PassedValue::Key(text)),
+            ExprKind::Fn(func) => return Some(PassedValue::Closure((file, func))),
             ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) => return self.classify_passed(file, expr),
             ExprKind::Ident(name) => {
                 if let Some(sym) = self.symbol_of_identifier(file, e, name)
@@ -1731,31 +1571,28 @@ impl<'p, 's> Checker<'p, 's> {
                         return None;
                     }
                     let index = declaring[func].params.iter().position(|other| other == p)?;
-                    return Some(Passed::Parameter((of, func), index));
+                    return Some(PassedValue::Parameter((of, func), index));
                 }
             }
             _ => {}
         }
         let expected = self.predicted_expr_type(file, e)?;
-        self.function_for_type(expected).map(Passed::Closure)
+        self.function_for_type(expected).map(PassedValue::Closure)
     }
 
-    /// `(name, key, function)`: the one function of the program whose closures are stored under the constant key in the dictionaries that are held under the property `name`, as far as the
-    /// trees tell. In the order of the texts of the name and the key. Once the uses of all files are merged.
     pub fn functions_by_key(&mut self) -> Vec<(Atom, Atom, (FileId, FnId))> {
         let uses = self.function_uses();
-        let mut pending: Vec<(Atom, Passed, Passed, usize)> = uses.keyed_stores.iter().map(|&(property, key, stored)| (property, key, stored, 0)).collect();
-        let mut seen: FxHashSet<(Atom, Passed, Passed)> = pending.iter().map(|&(property, key, stored, _)| (property, key, stored)).collect();
+        let mut pending: Vec<(Atom, PassedValue, PassedValue, usize)> = uses.keyed_stores.iter().map(|&(property, key, stored)| (property, key, stored, 0)).collect();
+        let mut seen: FxHashSet<(Atom, PassedValue, PassedValue)> = pending.iter().map(|&(property, key, stored, _)| (property, key, stored)).collect();
         let mut found: FxHashMap<(Atom, Atom), Option<Function>> = FxHashMap::default();
         while let Some((property, key, stored, forwarded)) = pending.pop() {
             let taking = match (key, stored) {
-                (Passed::Key(key), Passed::Closure(function)) => {
-                    // A second function leaves none.
+                (PassedValue::Key(key), PassedValue::Closure(function)) => {
                     found.entry((property, key)).and_modify(|only| *only = only.filter(|&only| only == function)).or_insert(Some(function));
                     continue;
                 }
-                (Passed::Parameter(of_key, _), Passed::Parameter(of_value, _)) if of_key != of_value => continue,
-                (Passed::Parameter(taking, _), _) | (_, Passed::Parameter(taking, _)) => taking,
+                (PassedValue::Parameter(of_key, _), PassedValue::Parameter(of_value, _)) if of_key != of_value => continue,
+                (PassedValue::Parameter(taking, _), _) | (_, PassedValue::Parameter(taking, _)) => taking,
                 _ => continue,
             };
             if forwarded == MAX_FORWARDED {
@@ -1767,16 +1604,15 @@ impl<'p, 's> Checker<'p, 's> {
                 let args = caller[call].args;
                 let mut at_call = [Some(key), Some(stored)];
                 for passed in &mut at_call {
-                    if let Some(Passed::Parameter(_, index)) = *passed {
+                    if let Some(PassedValue::Parameter(_, index)) = *passed {
                         let index = index + first;
-                        // Which argument comes after a spread depends on what is spread.
                         let is_known = index < args.len() && !caller.ids(args).take(index + 1).any(|arg| matches!(caller[arg].kind, ExprKind::Spread(_)));
                         *passed = if is_known { self.classify_passed(of, caller.id_at(args, index)) } else { None };
                     }
                 }
                 if let [Some(key), Some(stored)] = at_call
-                    && !matches!(key, Passed::Closure(_))
-                    && !matches!(stored, Passed::Key(_))
+                    && !matches!(key, PassedValue::Closure(_))
+                    && !matches!(stored, PassedValue::Key(_))
                     && seen.insert((property, key, stored))
                 {
                     pending.push((property, key, stored, forwarded + 1));
@@ -1788,7 +1624,6 @@ impl<'p, 's> Checker<'p, 's> {
         table
     }
 
-    /// `heir`, `base`: expressions of the file that name two functions.
     fn add_subclass(&mut self, file: FileId, heir: ExprId, base: ExprId, uses: &mut FileFunctionUses) {
         let functions = [heir, base].map(|named| self.function_for_expr_by_name(file, named));
         if let [Some(heir), Some(base)] = functions
@@ -1798,7 +1633,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// What the file stores on the `prototype` of a function, and to `this`. It asks for the checker's own type of the function only.
     fn add_stored_members(&mut self, file: FileId, uses: &mut FileFunctionUses) {
         if matches!(self.hir(file).kind, FileKind::Declaration | FileKind::Json) || self.bound(file).ran_out_of_stack {
             return;
@@ -1842,7 +1676,6 @@ impl<'p, 's> Checker<'p, 's> {
             while let ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) = hir[literal].kind {
                 literal = expr;
             }
-            // `S.prototype = Object.create(F.prototype, ..)`, `S.prototype.__proto__ = F.prototype`
             let inherited = match hir[literal].kind {
                 ExprKind::Call(call) if name == known::prototype && !hir[call].args.is_empty() => match hir[hir[call].callee].kind {
                     ExprKind::Ident(callee) | ExprKind::Dot { name: callee, .. } if matches!(self.atoms().bytes(callee), b"create" | b"ObjectCreate") => Some((Some(obj), hir.id_at(hir[call].args, 0))),
@@ -1859,7 +1692,6 @@ impl<'p, 's> Checker<'p, 's> {
             }
             let mut stored: Vec<(Atom, ExprId)> = Vec::new();
             let constructor = match hir[literal].kind {
-                // `F.prototype = { .. }`
                 ExprKind::Object(props) if name == known::prototype => {
                     for p in props.iter() {
                         if let PropKey::Name(name) = hir[p].key
@@ -1870,7 +1702,6 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     obj
                 }
-                // `F.prototype.name = value`
                 _ => {
                     let Some(constructor) = self.constructor_with_prototype(file, obj, 0) else { continue };
                     stored.push((name, value));

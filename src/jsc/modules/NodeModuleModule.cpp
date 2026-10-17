@@ -450,7 +450,7 @@ JSC_DEFINE_CUSTOM_SETTER(setNodeModuleResolveFilename,
             lexicalGlobalObject->vm(), globalObject, value);
         globalObject->hasOverriddenModuleResolveFilenameFunction = true;
         auto scope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
-        Bun::noteThatRequireCacheIsRead(globalObject);
+        Bun::recordRequireCacheRead(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
     }
 
@@ -618,7 +618,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterRequireFunction,
             ->builtinNames()
             .overridableRequirePrivateName(),
         JSValue::decode(value), 0);
-    Bun::noteThatRequireCacheIsRead(uncheckedDowncast<Zig::GlobalObject>(globalObject));
+    Bun::recordRequireCacheRead(uncheckedDowncast<Zig::GlobalObject>(globalObject));
     RETURN_IF_EXCEPTION(scope, false);
     return true;
 }
@@ -710,7 +710,7 @@ static void setModuleWrapper(Zig::GlobalObject* global, JSC::ThrowScope& scope, 
     }
     global->hasOverriddenModuleWrapper = isOverride;
     if (isOverride) [[unlikely]]
-        Bun::noteThatRequireCacheIsRead(global);
+        Bun::recordRequireCacheRead(global);
     global->m_moduleWrapperStart = WTF::move(start);
     global->m_moduleWrapperEnd = WTF::move(end);
 }

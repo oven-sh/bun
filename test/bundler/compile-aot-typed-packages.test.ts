@@ -124,15 +124,34 @@ describe("compile/aot/TypedPackages", () => {
   test("the typed version that the package ships", async () => {
     const folder = project("aot-typed-shipped");
     shipped(folder);
-    expect(await built(folder)).toEqual({ said: used("node_modules/shapes"), stdout: "42 index.sound.ts\n", exitCode: 0 });
+    expect(await built(folder)).toEqual({ said: used("node_modules/shapes"), stdout: "42 index.js\n", exitCode: 0 });
     expect(await Bun.file(join(folder, "node_modules", "shapes", "index.js")).text()).toBe(installed["index.js"]);
+  });
+
+  test("the program takes the types of what the package ships from the typed file, not from the declaration file", async () => {
+    const folder = project("aot-typed-shipped-types");
+    shipped(folder);
+    write(join(folder, "node_modules", "shapes"), { "index.d.ts": mark() + installed["index.d.ts"].replace("w: number, h: number", "w: string, h: string") });
+    expect(await built(folder)).toEqual({ said: used("node_modules/shapes"), stdout: "42 index.js\n", exitCode: 0 });
+  });
+
+  test("a typed file that has no type for one of its exports: the program keeps the declaration file", async () => {
+    const folder = project("aot-typed-shipped-untyped-export");
+    const javascript = installed["index.js"] + "var tools = {};\ntools.each = (list, callback) => list.map(callback);\nexport { tools };\n";
+    write(join(folder, "node_modules", "shapes"), {
+      "index.js": javascript,
+      "index.d.ts": mark("index.sound.ts", javascript) + installed["index.d.ts"] + "export declare const tools: { each(list: number[], callback: (n: number) => number): number[] };\n",
+      "index.sound.ts": typed["index.sound.ts"] + "var tools: any = {};\ntools.each = (list: number[], callback: (n: number) => number): number[] => list.map(callback);\nexport { tools };\n",
+    });
+    write(folder, { "app.ts": `import { area, tools, where } from "shapes";\nconsole.log(tools.each([area(6, 7) - 1], n => n + 1)[0], /index(\\.sound)?\\.[jt]s/.exec(where())![0]);\n` });
+    expect(await built(folder)).toEqual({ said: used("node_modules/shapes"), stdout: "42 index.sound.ts\n", exitCode: 0 });
   });
 
   test("the project's own folder wins over what the package ships, which wins over a companion", async () => {
     const folder = project("aot-typed-order");
     shipped(folder);
     write(folder, { "package.json": JSON.stringify({ name: "app", dependencies: { "@sound/shapes": "1.2.3" } }), "node_modules/@sound/shapes/sound.json": "{" });
-    expect(await built(folder)).toEqual({ said: used("node_modules/shapes"), stdout: "42 index.sound.ts\n", exitCode: 0 });
+    expect(await built(folder)).toEqual({ said: used("node_modules/shapes"), stdout: "42 index.js\n", exitCode: 0 });
     write(join(folder, ".sound", "shapes"), { "sound.json": "{" });
     expect(await built(folder)).toEqual({ said: unused(".sound/shapes", "its sound.json is not JSON"), stdout: "42 index.js\n", exitCode: 0 });
   });
@@ -152,7 +171,7 @@ describe("compile/aot/TypedPackages", () => {
       "dist/index.d.ts": mark() + installed["index.d.ts"],
       "dist/index.sound.ts": typed["index.sound.ts"],
     });
-    expect(await built(folder)).toEqual({ said: used("node_modules/shapes/dist"), stdout: "42 index.sound.ts\n", exitCode: 0 });
+    expect(await built(folder)).toEqual({ said: used("node_modules/shapes/dist"), stdout: "42 index.js\n", exitCode: 0 });
   });
 
   test("a declaration file without the comment, or with half of it, says nothing", async () => {
@@ -174,7 +193,7 @@ describe("compile/aot/TypedPackages", () => {
       "index.sound.ts": typed["index.sound.ts"] + "export default function twice(n: number): number {\n  return n * 2;\n}\n",
     });
     write(folder, { "app.ts": `import twice, { area, where } from "shapes";\nconsole.log(twice(area(3, 7)), /index(\\.sound)?\\.[jt]s/.exec(where())![0]);\n` });
-    expect(await built(folder)).toEqual({ said: used("node_modules/shapes"), stdout: "42 index.sound.ts\n", exitCode: 0 });
+    expect(await built(folder)).toEqual({ said: used("node_modules/shapes"), stdout: "42 index.js\n", exitCode: 0 });
   });
 
   const shippedMismatches: [string, (folder: string) => void, string][] = [
@@ -202,7 +221,7 @@ describe("compile/aot/TypedPackages", () => {
     expect(said).not.toContain("TS100021");
     expect(said).not.toContain("error:");
     expect(build.exitCode).toBe(0);
-    expect(await spawned([join(folder, "app")], folder)).toEqual({ stdout: "42 index.sound.ts\n", stderr: "", exitCode: 0 });
+    expect(await spawned([join(folder, "app")], folder)).toEqual({ stdout: "42 index.js\n", stderr: "", exitCode: 0 });
   });
 
   test("a package behind a symlink", async () => {

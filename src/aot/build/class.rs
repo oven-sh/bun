@@ -1,22 +1,4 @@
-//! Classes.
-//!
-//! Every class of the program has a layout of the kind `Instance`. It says what the engine makes the class object and the prototype object
-//! from: the constructor, whose closure is the class object, the methods and accessors, where the static fields are. If the program
-//! itself makes the objects of the class, it also says what those are made of. What is known of a class the checker says: `ClassFacts`.
-//!
-//! What a class keeps besides are variables of the scope it is declared in: the static fields, and the names that are computed or made
-//! when it is declared. Where the declaration is evaluated once they are module variables. Elsewhere they are fields of an environment
-//! that each evaluation makes, and that the class object closes over.
-//!
-//! What can be told at the declaration happens there, in order: the `extends` expression, the computed names, the initializers of the
-//! static fields and the static blocks. The class object of a class that is evaluated once and extends nothing but such classes is made
-//! when it is first asked for.
-//!
-//! A constructor makes no object. Where the class is laid out, whoever constructs makes it, and it is handed from `super()` to
-//! `super()`. Where it is not, the language is followed to the letter: the class that extends nothing is handed an ordinary object by
-//! the engine, and any other gets `this` from what it extends, by its value.
-
-use super::fit::{Signature, Ty};
+use super::coerce::{Signature, Ty};
 use super::{FileBuild, Fx, Place, Source};
 use crate::declared::{Declared, prim};
 use crate::fragment::{GlobalKey, LayoutKey};
@@ -33,55 +15,39 @@ use bun_sema::types::TypeId;
 pub(crate) struct ClassInfo {
     pub(crate) layout: LayoutId,
     pub(crate) facts: ClassFacts,
-    /// It has an `extends` clause.
     pub(crate) is_derived: bool,
-    /// The class it extends, where both are laid out: the constructor of that works on the same object.
     pub(crate) base: Option<(FileId, ClassId)>,
-    /// `NONE` until the members have been declared, see `define_class`.
     pub(crate) ctor: FuncId,
 }
 
 impl ClassInfo {
-    /// Whether the constructor returns what `new` yields in every case, and not only where that is another object than it was handed.
     pub(crate) fn returns_constructed_object(&self) -> bool {
         self.facts.may_return_another_object || self.is_derived && !self.facts.has_fixed_layout
     }
 }
 
-/// What a class keeps to itself, in a variable of the scope it is declared in.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub(crate) enum ClassVariable {
-    /// Of a class that is evaluated once: `true` from the declaration on. Until then it holds nothing, and to read it throws, as a
-    /// reference to the class does.
     IsDeclared,
     IsBound,
-    /// Of any other class: the class object.
     Class,
-    /// The class object of the class it extends, where that is laid out and not evaluated once.
     Base,
-    /// The computed name of the member, as a property key.
     Key(MemberId),
-    /// Where the objects of the class are ordinary objects: the private name `#name` stands for.
     PrivateName(Atom),
-    /// There too: an object nobody else sees, with the `#m() {}` and `get #a() {}` each object of the class gets when it is made.
     PrivateMethods,
     StaticPrivateMethod(FuncId),
 }
 
-/// What `C.name` stands for, where that follows from the declaration of `C`, a class written in TypeScript: a static field, or a static
-/// member with a private name.
 #[derive(Copy, Clone)]
 pub(crate) struct StaticMember {
     pub(crate) kind: StaticMemberKind,
     pub(crate) name: StrId,
     pub(crate) is_private: bool,
-    /// The class it is accessed on, which is `this` for a method or an accessor.
     pub(crate) on: (FileId, ClassId),
 }
 
 #[derive(Copy, Clone)]
 pub(crate) enum StaticMemberKind {
-    /// The variable it is, by the symbol of the member.
     Field(Sym),
     Method(FuncId),
     Accessor { getter: FuncId, setter: FuncId },
@@ -206,19 +172,14 @@ impl TypeMetadata {
     }
 }
 
-/// Where the variables of a class that is being defined go.
 struct ClassScope {
-    /// `NONE`: they are module variables.
     env: LayoutId,
     fields: Vec<Field>,
-    /// How many `GlobalKey::ClassVariable` there are.
     module_variables: u32,
 }
 
 impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
-    // ───────────────────────────── which class, and what is known of it ─────────────────────────────
 
-    /// The class of the program an expression names, if nothing else can be its value.
     pub(crate) fn class_for_expr(&mut self, file: FileId, e: ExprId) -> Option<(FileId, ClassId)> {
         let sym = self.binding_for_ident(file, e)?;
         let class = match self.value_declaration(sym)? {
@@ -229,19 +190,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         (!self.is_ambient(sym) && !self.is_assigned(sym)).then_some(class)
     }
 
-    /// What holds the value of the identifier `e`, through imports. `None`: it is no identifier, or `NONE`.
     fn binding_for_ident(&mut self, file: FileId, e: ExprId) -> Option<Sym> {
         let ExprKind::Ident(name) = self.hir(file)[e.some()?].kind else { return None };
         self.ident_symbol(file, e, name)
     }
 
-    /// The layout of the objects of the class. `None`: they are ordinary objects.
     pub(crate) fn instance_layout(&mut self, file: FileId, class: ClassId) -> Option<LayoutId> {
         let info = self.class_info(file, class);
         info.facts.has_fixed_layout.then_some(info.layout)
     }
 
-    /// An object of the class, as a type. `NONE`: an ordinary object.
     pub(crate) fn instance_type(&mut self, file: FileId, class: ClassId) -> Ty {
         match self.instance_layout(file, class) {
             Some(layout) => Ty { id: self.layout_ty(layout), checked: self.layout_types.get(&layout).copied().unwrap_or(TypeId::UNRESOLVED) },
@@ -249,14 +207,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// The layout of the class with the names of its fields, and the facts. For the types of the fields see `resolve_field_types`, for the
-    /// members `define_class`.
     pub(crate) fn class_info(&mut self, file: FileId, class: ClassId) -> ClassInfo {
         if let Some(&known) = self.classes.get(&(file, class)) {
             return known;
         }
         let c = &self.hir(file)[class];
-        // A class that extends itself is an error that the type checker reports.
         self.classes_in_progress.insert((file, class));
         let named = if c.extends.is_some() { self.class_for_expr(file, c.extends).filter(|named| !self.classes_in_progress.contains(named)) } else { None };
         let extended = named.map(|(file, base)| self.class_info(file, base));
@@ -273,7 +228,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let name = self.name_of_class(file, class);
         let layout = self.add_layout(LayoutKind::Instance, name, LayoutKey::Instance(file, class));
         self.out.layouts[layout.idx()].base = base_layout;
-        // What constructs the class it extends by its value gets an object of that layout, with a prototype of its own.
         if let Some(extended) = extended.filter(|extended| !facts.has_fixed_layout && extended.facts.has_fixed_layout) {
             self.constructs.insert(layout, extended.layout);
         }
@@ -284,9 +238,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.classes[&(file, class)]
     }
 
-    /// A field for each property that the class declares, after those of the class it extends. A field that is declared is there from
-    /// the start, holding `undefined` if nothing else. Then a field for each optional property of what the class `implements` that it does
-    /// not declare: the object has no such property until one is stored, which then has its place.
+    fn instance_field_name(&mut self, file: FileId, member: MemberId) -> Atom {
+        match self.hir(file)[member].key {
+            PropKey::Name(name) | PropKey::Private(name) => name,
+            PropKey::Computed(key) => self.c.fold_constant_string(file, key).map(|(name, _)| name).or_else(|| self.c.property_named_by_constant_symbol(file, key)).unwrap_or(Atom::NONE),
+            PropKey::None => Atom::NONE,
+        }
+    }
+
     fn compute_class_layout(&mut self, file: FileId, class: ClassId, layout: LayoutId, base: LayoutId) {
         let hir = self.hir(file);
         let c = &hir[class];
@@ -302,22 +261,18 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         let mut declared_by: Vec<(u32, Sym)> = Vec::new();
         let mut add = |this: &mut Self, name: Atom, symbol: SymbolId, flags: Flags| {
-            // `5 = v` is a property like any that the layout does not know of.
             if !Self::is_field_name(this.c.atoms().bytes(name)) {
                 return;
             }
             let name = this.str(name);
             let fields = &mut this.out.layouts[layout.idx()].fields;
-            // What declares a field of the class it extends again says what the field holds in its own objects.
             let index = fields.iter().position(|field| field.name == name).unwrap_or_else(|| {
                 fields.push(Field::new(name, TyId::NONE, 0));
                 fields.len() - 1
             });
-            // The class it extends may only have made room for it.
             if fields[index].flags & field_flags::ABSENT_AT_CREATION != 0 {
                 fields[index].flags &= !(field_flags::ABSENT_AT_CREATION | field_flags::OPTIONAL);
             }
-            // It is there from the start all the same, and can be deleted.
             if flags.contains(Flags::OPTIONAL) {
                 fields[index].flags |= field_flags::OPTIONAL;
             }
@@ -334,16 +289,27 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 }
             }
         }
+        let mut named_by_constants: Vec<Atom> = Vec::new();
         for member in c.members.iter() {
             let m = &hir[member];
             if m.kind != MemberKind::Property || m.flags.intersects(Flags::STATIC | Flags::AMBIENT | Flags::ABSTRACT) || self.c.is_field_omitted(file, member) {
                 continue;
             }
-            if let PropKey::Name(name) | PropKey::Private(name) = m.key {
+            let name = self.instance_field_name(file, member);
+            if name.is_some() {
                 add(self, name, bound.member_symbol[member.idx()], m.flags);
+                if bound.member_symbol[member.idx()].is_none() {
+                    named_by_constants.push(name);
+                }
             }
         }
         let mut implemented: Vec<(u32, TypeId, Atom)> = Vec::new();
+        for name in named_by_constants {
+            let text = self.str(name);
+            if let Some(field) = self.out.layouts[layout.idx()].fields.iter().position(|field| field.name == text) {
+                implemented.push((field as u32, instances, name));
+            }
+        }
         for (interface, name) in self.c.implemented_optional_properties(file, class) {
             let bytes = self.c.atoms().bytes(name);
             if bytes.first() == Some(&0xFE) || bytes == b"__proto__" || !Self::is_field_name(bytes) {
@@ -356,7 +322,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 fields.push(Field::new(text, TyId::NONE, field_flags::OPTIONAL | field_flags::ABSENT_AT_CREATION));
             }
         }
-        // What is only declared: `declare x: T`, an interface of the name of the class.
         for name in self.c.declared_only_properties(file, class) {
             let bytes = self.c.atoms().bytes(name);
             if bytes.first() == Some(&0xFE) || bytes == b"__proto__" || !Self::is_field_name(bytes) {
@@ -381,9 +346,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.set_class_field_types(layout, symbol, base, declared_by, implemented);
     }
 
-    /// The class with its constructor, its methods and its variables: all that the layout says of it. It follows from the declaration
-    /// alone. A class of another file that is only mentioned stays without. The functions are built once the declaration has been
-    /// translated, see `did_declare_class`.
     pub(crate) fn define_class(&mut self, file: FileId, class: ClassId) -> ClassInfo {
         let info = self.class_info(file, class);
         if info.ctor.is_some() || !self.classes_being_defined.insert((file, class)) {
@@ -392,7 +354,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if let Some((file, base)) = info.base {
             self.define_class(file, base);
         }
-        // What cannot be translated of the declaration counts wherever the class is of any use.
         let problem_count_before = std::mem::take(&mut self.problems);
         let hir = self.hir(file);
         let c = &hir[class];
@@ -413,14 +374,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
         } else {
             scope.env = self.add_layout(LayoutKind::Environment, StrId::NONE, LayoutKey::ClassEnvironment(file, class));
-            // What is in a function or a loop is not seen from another file.
             debug_assert!(file == self.file);
             let was = self.activation_layouts.insert(Activation::Class(class), scope.env);
+            self.index_activation_layout(Activation::Class(class));
             if let Some(undo) = &mut self.undo {
                 undo.activation_layouts.push((Activation::Class(class), was));
             }
             self.activations.insert(scope.env, Activation::Class(class));
-            // What the members need from outside the class: `emit_class` stores it before anything of the class runs.
             let imports = self.c.class_imports(file, class);
             for &import in &imports {
                 let (index, declared) = (scope.fields.len() as u32, self.capture_ty(import));
@@ -449,7 +409,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 continue;
             }
             let is_static = m.flags.contains(Flags::STATIC);
-            // Where the objects are ordinary objects, `#name` is a key that is made with the class.
             if let PropKey::Private(name) = m.key
                 && !is_static
                 && !facts.has_fixed_layout
@@ -498,7 +457,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                             }
                         }
                         PropKey::Computed(key) => {
-                            // The variable holds nothing but symbols then, which the store to it makes sure of.
                             if !self.is_untyped_file(file) && self.c.is_symbol_name(file, key) {
                                 let name = self.out.strs.intern(b"key");
                                 let symbol = self.out.tys.intern(Declared::prims(prim::SYMBOL));
@@ -521,6 +479,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     }
                     let symbol = bound.member_symbol[member.idx()];
                     match m.key {
+                        PropKey::Computed(_) if self.is_field_named_by_constant_symbol(file, class, member) => {}
                         PropKey::Computed(_) => {
                             self.add_hidden_variable(&mut scope, (file, class, ClassVariable::Key(member)), b"key");
                         }
@@ -580,11 +539,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         info
     }
 
-    /// A variable of the class. Yields its number, as the layout of the class refers to it.
     fn add_class_variable(&mut self, scope: &mut ClassScope, key: (FileId, ClassId, ClassVariable), name: StrId, declared: TyId) -> u32 {
         if scope.env.is_none() {
             scope.module_variables += 1;
-            let global = self.add_global(name, key.0, Ty::of(declared), GlobalKey::ClassVariable(key.0, key.1, scope.module_variables - 1));
+            let global = self.add_global(name, key.0, Ty::from_id(declared), GlobalKey::ClassVariable(key.0, key.1, scope.module_variables - 1));
             self.class_variables.insert(key, Place::Global(global));
             return global.0;
         }
@@ -594,7 +552,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         index
     }
 
-    /// One that holds anything, and that nothing reads before the declaration has stored to it.
     fn add_hidden_variable(&mut self, scope: &mut ClassScope, key: (FileId, ClassId, ClassVariable), name: &[u8]) -> u32 {
         let name = self.out.strs.intern(name);
         let variable = self.add_class_variable(scope, key, name, TyId::NONE);
@@ -613,7 +570,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.class_variables.insert(key, Place::Env(scope.env, index));
     }
 
-    /// A static field is a variable like any that the scope of the class declares. It holds nothing until its initializer has run.
     fn add_static_field(&mut self, scope: &mut ClassScope, sym: Sym) -> u32 {
         if scope.env.is_none() {
             return self.symbol_global(sym).0;
@@ -633,17 +589,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         index
     }
 
-    /// A method, an accessor or a static block. It is given the environment of the class only if it needs it: otherwise whoever knows
-    /// the function can call it without its closure.
     fn declare_member_function(&mut self, file: FileId, class: ClassId, func: FnId, is_static: bool) -> FuncId {
         let captures = self.c.function_captures(file, func);
         let id = self.declare_function(file, func, Some((file, class)));
         if is_static {
-            // `this` is the class object, which is handed over only where it is looked at, by `this` or by `super`.
-            let takes_this = captures || self.c.inspects_this(file, func);
+            let accepts_this = captures || self.c.inspects_this(file, func);
             let out = &mut self.out.funcs[id.idx()];
             out.declared_this_type = TyId::NONE;
-            out.flags = if takes_this { out.flags | func_flags::HAS_THIS } else { out.flags & !func_flags::HAS_THIS };
+            out.flags = if accepts_this { out.flags | func_flags::HAS_THIS } else { out.flags & !func_flags::HAS_THIS };
             if let Some(signature) = self.signatures.get_mut(&id) {
                 signature.this = None;
             }
@@ -660,9 +613,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.typed_bodies.insert(entry, whole);
         self.untyped_clones.insert(entry, second);
         self.generic_entrypoints.insert(whole, entry);
+        self.generic_entrypoint_ids.insert(entry);
     }
 
-    /// The constructor of the class, declared or not, of which nothing need be known: as `forward_declare_function`. The class need not be defined.
     pub(crate) fn forward_declare_constructor(&mut self, file: FileId, class: ClassId) -> FuncId {
         if let Some(declared) = self.c.class_constructor(file, class) {
             return self.forward_declare_function(file, declared);
@@ -678,7 +631,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         id
     }
 
-    /// The constructor of a class that declares none.
     fn declare_default_constructor(&mut self, file: FileId, class: ClassId, info: ClassInfo) -> FuncId {
         let name = self.name_of_class(file, class);
         let module = self.module_of(file);
@@ -692,17 +644,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         let (mut params, mut annotated, mut flags) = (Vec::new(), Vec::new(), func_flags::HAS_THIS);
         match info.base {
-            // It hands on what it is handed, as the constructor of the class it extends takes it. `finish_constructor` sees to `new.target`.
             Some(base) => {
                 let base = self.classes[&base].ctor;
-                let takes_new_target = usize::from(self.out.funcs[base.idx()].has(func_flags::HAS_NEW_TARGET));
+                let uses_new_target = usize::from(self.out.funcs[base.idx()].has(func_flags::HAS_NEW_TARGET));
                 let extended = &self.out.funcs[base.idx()];
-                params = extended.params[takes_new_target..].to_vec();
-                annotated = extended.annotated.get(takes_new_target..).unwrap_or_default().to_vec();
+                params = extended.params[uses_new_target..].to_vec();
+                annotated = extended.annotated.get(uses_new_target..).unwrap_or_default().to_vec();
                 flags |= extended.flags & func_flags::HAS_REST;
-                signature.params = self.signatures.get(&base).map_or(Vec::new(), |extended| extended.params.get(takes_new_target..).unwrap_or_default().to_vec());
+                signature.params = self.signatures.get(&base).map_or(Vec::new(), |extended| extended.params.get(uses_new_target..).unwrap_or_default().to_vec());
             }
-            // `constructor(...args) { super(...args) }`
             None if info.is_derived => {
                 params.push(TyId::NONE);
                 flags |= func_flags::HAS_REST;
@@ -721,20 +671,18 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         ctor
     }
 
-    /// What is the same for a constructor that is declared and for one that is not.
     fn finish_constructor(&mut self, file: FileId, class: ClassId, info: ClassInfo, ctor: FuncId) {
         let name = self.name_of_class(file, class);
         let instance = self.instance_type(file, class);
         let signature = self.signatures.entry(ctor).or_default();
         let out = &mut self.out.funcs[ctor.idx()];
-        // As a closure it is the class object, which an object of the class leads to: `object.constructor`.
         out.name = name;
         out.flags |= func_flags::IS_VALUE;
         if !info.facts.has_fixed_layout {
             out.declared_this_type = TyId::NONE;
             signature.this = None;
         }
-        if info.facts.takes_new_target {
+        if info.facts.uses_new_target {
             out.flags |= func_flags::HAS_NEW_TARGET;
             out.params.insert(0, TyId::NONE);
             if !out.annotated.is_empty() {
@@ -750,17 +698,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// `Body::spans` of the constructor, but for the constructor itself.
     pub(crate) fn instance_field_spans(&self, file: FileId, class: ClassId) -> Vec<(u32, u32)> {
         let hir = self.hir(file);
         let is_initialized = |m: &Member| m.kind == MemberKind::Property && !m.flags.intersects(Flags::STATIC | Flags::AMBIENT | Flags::ABSTRACT);
         hir[class].members.iter().filter(|&member| !self.c.is_field_omitted(file, member)).map(|member| &hir[member]).filter(|m| is_initialized(m)).map(|m| (m.start, m.loc.end)).collect()
     }
 
-    // ───────────────────────────── when the functions of a class are built ─────────────────────────────
-
-    /// The class whose declaration has to be translated before the function is built: what the function refers to around the class has
-    /// its place by then.
     pub(crate) fn pending_class_for(&self, func: FuncId) -> Option<(FileId, ClassId)> {
         let class = match self.sources[func.idx()] {
             Source::Function { class: Some(class), .. } => class,
@@ -782,9 +725,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    // ───────────────────────────── scopes ─────────────────────────────
-
-    /// Whether there is one of what the symbol is bound to for as long as the program runs, so that a module variable holds it.
     pub(crate) fn is_bound_once(&self, sym: Sym) -> bool {
         self.value_declaration(sym).is_some_and(|(file, decl)| self.c.is_bound_once(file, decl))
     }
@@ -821,8 +761,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    // ───────────────────────────── the class as a value ─────────────────────────────
-
     pub(crate) fn class_object(&mut self, fx: &mut Fx, file: FileId, class: ClassId) -> V {
         if !fx.b.is_open() {
             return self.emit(fx, Op::Undefined);
@@ -845,7 +783,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let mut reached = Some((file, class));
         while let Some((file, class)) = reached {
             let info = self.class_info(file, class);
-            if !info.facts.has_fixed_layout || self.classes_as_values.contains(&info.layout) {
+            if !info.facts.has_fixed_layout || !self.classes_as_values_set.insert(info.layout) {
                 break;
             }
             self.classes_as_values.push(info.layout);
@@ -860,8 +798,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         !info.facts.is_evaluated_once && environment.is_some() && self.can_reach_env(fx, environment)
     }
 
-    /// The reference `e` to the class throws if the declaration has not been evaluated. `NONE`: a reference that is not in the source.
-    /// Within the class it has been: nothing of the class runs before.
     pub(crate) fn emit_class_tdz_check(&mut self, fx: &mut Fx, file: FileId, class: ClassId, e: ExprId) {
         self.emit_default_export_tdz_check(fx, e);
         if e.is_some() && file == fx.file && self.c.is_in_class_heritage_or_computed_key(file, e, class) {
@@ -873,7 +809,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let message = if self.shared.constants.minifies_identifiers { [&[crate::names::TDZ_MARKER][..], &name].concat() } else { crate::names::tdz_error_message(&name) };
             return self.throw_error(fx, b"ReferenceError", &message);
         }
-        // `const Links = class { .. }`: the reference is to the variable, which holds nothing until the static members are evaluated.
         if let Some(constant) = self.binding_for_ident(fx.file, e).filter(|&named| self.c.class_for_const(named).is_some()) {
             if self.c.may_be_in_tdz(constant, fx.file, e) {
                 self.read_reference(fx, constant, e);
@@ -896,10 +831,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    // ───────────────────────────── the declaration ─────────────────────────────
-
-    /// Evaluates the declaration of the class. `binding`: the variable a class declaration binds, which is initialized once the static
-    /// members are evaluated. Yields the class object that this evaluation has made. `NONE`: there is one for all, see `class_object`.
     pub(crate) fn emit_class(&mut self, fx: &mut Fx, class: ClassId, binding: Option<Sym>) -> V {
         let file = fx.file;
         let hir = self.hir(file);
@@ -917,7 +848,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             self.problem(file, c.start, "a decorator");
         }
         let key_name = std::mem::replace(&mut self.key_name_value, V::NONE);
-        // NamedEvaluation: by now an anonymous class has been given the name it takes from where it is written.
         let name = self.name_of_class(file, class);
         self.out.layouts[layout.idx()].name = name;
         self.out.funcs[info.ctor.idx()].name = name;
@@ -967,6 +897,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     let key = self.emit_throwing(fx, Op::ToKey(key));
                     self.write_class_variable(fx, file, class, ClassVariable::Key(member), key);
                 }
+                PropKey::Computed(key) if self.is_field_named_by_constant_symbol(file, class, member) => self.emit_tdz_check(fx, key),
                 _ => {}
             }
         }
@@ -1334,14 +1265,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.read(found)
     }
 
-    /// `get #a() {}` and `set #a(v) {}` share a name.
     fn is_first_member_with_name(&self, file: FileId, class: ClassId, member: MemberId) -> bool {
         let hir = self.hir(file);
         let PropKey::Private(name) = hir[member].key else { return true };
         !hir[class].members.iter().take_while(|&other| other != member).any(|other| matches!(hir[other].key, PropKey::Private(earlier) if earlier == name))
     }
 
-    /// Where the objects of the class are ordinary objects: `#m() {}` is not inherited, each object gets it, see `did_bind_this`.
     fn emit_private_methods(&mut self, fx: &mut Fx, file: FileId, class: ClassId) {
         if !self.class_variables.contains_key(&(file, class, ClassVariable::PrivateMethods)) {
             return;
@@ -1374,7 +1303,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.write_class_variable(fx, file, class, ClassVariable::PrivateMethods, holder);
     }
 
-    /// The initializers of the static fields and the static blocks, in order, with the class object as `this`.
     fn emit_static_members(&mut self, fx: &mut Fx, file: FileId, class: ClassId) {
         let hir = self.hir(file);
         let bound = self.c.bound(file);
@@ -1436,8 +1364,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.is_in_field_initializer = was_in_field_initializer;
     }
 
-    /// Whether `super` in the function looks from the class object and not from the prototype: it is a static member, or an arrow
-    /// function within one.
     pub(crate) fn is_in_static_member(&self, file: FileId, func: FnId) -> bool {
         let (hir, bound) = (self.hir(file), self.c.bound(file));
         let mut func = func;
@@ -1447,9 +1373,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         func.is_some() && matches!(bound.fns[func.idx()].owner, FnOwner::Member(member) if hir[member].kind == MemberKind::StaticBlock || hir[member].flags.contains(Flags::STATIC))
     }
 
-    // ───────────────────────────── static members ─────────────────────────────
-
-    /// The static member that the class itself declares by the name.
     fn own_static_member(&mut self, file: FileId, class: ClassId, name: Atom) -> Option<StaticMemberKind> {
         let hir = self.hir(file);
         let (mut getter, mut setter) = (FuncId::NONE, FuncId::NONE);
@@ -1477,27 +1400,22 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         (getter.is_some() || setter.is_some()).then_some(StaticMemberKind::Accessor { getter, setter })
     }
 
-    /// Whether the code being built has what it takes to get at the member without the class object.
     fn can_reach_static_member(&self, fx: &Fx, on: (FileId, ClassId), kind: StaticMemberKind) -> bool {
         match kind {
             StaticMemberKind::Field(sym) => self.can_reach_slot(fx, self.places.get(&sym).copied()),
             StaticMemberKind::Method(func) => {
-                let kept = self.class_variables.get(&(on.0, on.1, ClassVariable::StaticPrivateMethod(func))).copied();
-                self.has_captures_available(fx, func) && (kept.is_none() || self.can_reach_slot(fx, kept))
+                let retained = self.class_variables.get(&(on.0, on.1, ClassVariable::StaticPrivateMethod(func))).copied();
+                self.has_captures_available(fx, func) && (retained.is_none() || self.can_reach_slot(fx, retained))
             }
             StaticMemberKind::Accessor { getter, setter } => [getter, setter].into_iter().all(|func| func.is_none() || self.has_captures_available(fx, func)),
         }
     }
 
-    /// A member whose name is computed may have any name, unless it is a symbol, which only TypeScript says.
     fn has_computed_static_member(&mut self, file: FileId, class: ClassId) -> bool {
         let hir = self.hir(file);
         hir[class].members.iter().any(|member| hir[member].flags.contains(Flags::STATIC) && matches!(hir[member].key, PropKey::Computed(key) if self.is_untyped_file(file) || !self.c.is_symbol_name(file, key)))
     }
 
-    /// The static field or the private static member that `obj.name` names, where `obj` names the class of the program that declares it. A
-    /// store to a field through a class that inherits it makes a property of that class, and only the class itself has what is private.
-    /// Takes care of the reference to the class.
     pub(crate) fn static_member(&mut self, fx: &mut Fx, obj: ExprId, name: Atom) -> Option<StaticMember> {
         let on = self.class_for_expr(fx.file, obj)?;
         self.define_class(on.0, on.1);
@@ -1513,10 +1431,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         Some(StaticMember { kind, name: self.str(name), is_private, on })
     }
 
-    /// The class object that `obj` names, for an access to `obj.name`, where that is a static method or accessor that the class declares
-    /// or inherits, all in TypeScript, and there is one class object. The access goes by the name. Which function that finds is for
-    /// whoever compiles it to say, from the layouts of the classes: whether a method may be replaced is not known here. Takes care of
-    /// the reference to the class.
     pub(crate) fn class_as_receiver(&mut self, fx: &mut Fx, obj: ExprId, name: Atom) -> Option<V> {
         let on = self.class_for_expr(fx.file, obj)?;
         let mut at = Some(on);
@@ -1541,7 +1455,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         None
     }
 
-    /// `#name`, if it is a static member of the class that declares it. Only the class object itself has it.
     pub(crate) fn static_private_member(&mut self, fx: &Fx, name: Atom) -> Option<StaticMember> {
         let class = self.private_name_class(name)?;
         self.define_class(fx.file, class);
@@ -1549,7 +1462,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.can_reach_static_member(fx, (fx.file, class), kind).then(|| StaticMember { kind, name: self.str(name), is_private: true, on: (fx.file, class) })
     }
 
-    /// Throws unless the value is the class object.
     pub(crate) fn check_is_class(&mut self, fx: &mut Fx, value: V, on: (FileId, ClassId)) {
         let is_class = self.is_class(fx, value, on);
         let (fine, throw) = (fx.b.new_block(), fx.b.new_block());
@@ -1641,7 +1553,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.read(fx, has)
     }
 
-    /// What a direct call of a static method or accessor passes for `this`. `NONE`: the function does not look at it.
     pub(crate) fn static_receiver(&mut self, fx: &mut Fx, func: FuncId, on: (FileId, ClassId)) -> V {
         if self.out.funcs[func.idx()].has(func_flags::HAS_THIS) { self.class_as_value(fx, on.0, on.1) } else { V::NONE }
     }
@@ -1678,7 +1589,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let this = self.static_receiver(fx, setter, member.on);
                 self.emit_direct_call(fx, setter, this, &[value]);
             }
-            // The class object turns it away.
             _ => {
                 let obj = self.class_as_value(fx, member.on.0, member.on.1);
                 self.emit_throwing(fx, Op::PropSet { obj, name: member.name, value });
@@ -1686,15 +1596,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    // ───────────────────────────── `#name` ─────────────────────────────
-
-    /// `#name` as written. The checker spells the name of a private member `\xFE#name@file.class`.
     pub(crate) fn private_name_text(&self, name: Atom) -> Option<Vec<u8>> {
         let bytes = self.c.atoms().bytes(name);
         (bytes.starts_with(b"#") || bytes.starts_with(PRIVATE_NAME_PREFIX)).then(|| bun_sema::atom::written_name(bytes).to_vec())
     }
 
-    /// The class that declares `#name`, which need not be the innermost one around the reference. It is in the name, and in the same file.
     pub(crate) fn private_name_class(&self, name: Atom) -> Option<ClassId> {
         let bytes = self.c.atoms().bytes(name);
         if !bytes.starts_with(PRIVATE_NAME_PREFIX) {
@@ -1704,17 +1610,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         Some(ClassId(std::str::from_utf8(class).ok()?.parse().ok()?))
     }
 
-    /// The key `#name` stands for where the code being built is. `None`: the class is laid out, and `#name` a field or a method of the
-    /// layout by the name the checker spells it with.
     pub(crate) fn private_key(&mut self, fx: &mut Fx, name: Atom) -> Option<V> {
         let class = self.private_name_class(name)?;
         self.define_class(fx.file, class);
         self.class_variables.contains_key(&(fx.file, class, ClassVariable::PrivateName(name))).then(|| self.read_class_variable(fx, fx.file, class, ClassVariable::PrivateName(name)))
     }
 
-    // ───────────────────────────── construction ─────────────────────────────
-
-    /// `new callee(args)`, where `callee` names the class. `None`: it is constructed as any value is, and the engine makes the object.
     pub(crate) fn construct_class(&mut self, fx: &mut Fx, callee: ExprId, (file, class): (FileId, ClassId), args: IdList<ExprId>) -> Option<V> {
         let info = self.define_class(file, class);
         let hir = self.hir(fx.file);
@@ -1730,7 +1631,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             class_object = self.expr(fx, callee);
         }
         let mut all: Vec<V> = Vec::new();
-        if info.facts.takes_new_target {
+        if info.facts.uses_new_target {
             all.push(if class_object.is_some() { class_object } else { self.class_as_value(fx, file, class) });
         }
         all.extend(self.arguments(fx, args).unwrap_or_default());
@@ -1745,7 +1646,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         Some(if info.returns_constructed_object() { result } else { object })
     }
 
-    /// The arguments as the entry block of `func` takes them: the captures, `this`, then one for each parameter.
     pub(crate) fn direct_args(&mut self, fx: &mut Fx, func: FuncId, this: V, args: &[V]) -> Args {
         let mut all = self.capture_values(fx, func, 0);
         if self.out.funcs[func.idx()].has(func_flags::HAS_THIS) {
@@ -1762,25 +1662,21 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         all
     }
 
-    // ───────────────────────────── constructors ─────────────────────────────
-
-    /// The body of a constructor, declared or not.
     pub(crate) fn emit_constructor(&mut self, fx: &mut Fx) {
         let Some((file, class)) = fx.class else { return };
         let info = self.define_class(file, class);
         let hir = self.hir(file);
         let pos = if fx.func.is_some() { hir[fx.func].start } else { hir[class].start };
-        let (takes_new_target, count) = {
+        let (uses_new_target, count) = {
             let func = &self.out.funcs[fx.id.idx()];
             (func.has(func_flags::HAS_NEW_TARGET), func.params.len())
         };
         self.add_captures(fx);
         fx.given = self.add_entry_param(fx, fx.this_type);
-        if takes_new_target {
+        if uses_new_target {
             fx.new_target = self.add_entry_param(fx, Ty::NONE);
         }
         fx.returns_this = info.returns_constructed_object();
-        // Where `super()` may come back with another object than it was handed, or is handed none, there is no `this` before it has.
         let is_passed_this = match info.base {
             Some(base) => !self.classes[&base].facts.may_return_another_object,
             None => !info.is_derived,
@@ -1826,10 +1722,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
         } else {
             let types = self.out.funcs[fx.id.idx()].params.clone();
-            let handed: Vec<V> = (usize::from(takes_new_target)..count).map(|i| self.add_entry_param(fx, Ty::of(types[i]))).collect();
+            let handed: Vec<V> = (usize::from(uses_new_target)..count).map(|i| self.add_entry_param(fx, Ty::from_id(types[i]))).collect();
             match info.base {
                 Some(base) => self.emit_default_super_call(fx, base, &handed, pos),
-                None if info.is_derived => self.emit_super_construct(fx, handed[0], pos),
+                None if info.is_derived => match self.construct_promise_subclass_with_list(fx, file, class, handed[0], pos) {
+                    Some(constructed) => {
+                        self.bind_this(fx, constructed);
+                        self.did_bind_this(fx, pos);
+                    }
+                    None => self.emit_super_construct(fx, handed[0], pos),
+                },
                 None => self.did_bind_this(fx, pos),
             }
         }
@@ -1861,9 +1763,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             if m.kind == MemberKind::Property
                 && !m.flags.intersects(Flags::STATIC | Flags::AMBIENT | Flags::ABSTRACT)
                 && !self.c.is_field_omitted(file, member)
-                && let PropKey::Name(name) = m.key
+                && !matches!(m.key, PropKey::Private(_))
             {
-                names.push(name);
+                let name = self.instance_field_name(file, member);
+                if name.is_some() {
+                    names.push(name);
+                }
             }
         }
         let extended = info.base.map(|(file, class)| self.class_info(file, class).layout);
@@ -1876,7 +1781,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     fn list_fields(&mut self, fx: &mut Fx, pos: u32, name: Atom, includes_name: bool) {
         let text = self.str(name);
-        let (this, text) = (self.this(fx, pos), self.emit(fx, Op::Str(text)));
+        let (this, text) = (self.this(fx, pos), self.emit_key(fx, text));
         let word = match fx.listed_fields {
             None if !includes_name && fx.this == fx.given => self.operation(fx, Operation::UnlistFields, &[this, text]),
             None => {
@@ -1894,7 +1799,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.listed_fields = Some((word, name, includes_name));
     }
 
-    /// What follows once `this` is there: at the start of the constructor of a class that extends nothing, else after `super()`.
     fn did_bind_this(&mut self, fx: &mut Fx, pos: u32) {
         self.initialize_instance_elements(fx, pos);
         self.assign_decorated_fields(fx, pos);
@@ -1926,7 +1830,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.is_in_field_initializer = was_in_field_initializer;
     }
 
-    /// InitializeInstanceElements: the private methods and accessors come before the fields.
     fn initialize_instance_elements(&mut self, fx: &mut Fx, pos: u32) {
         let Some((file, class)) = fx.class else { return };
         if self.class_variables.contains_key(&(file, class, ClassVariable::PrivateMethods)) {
@@ -1975,25 +1878,22 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// The initializers of the fields the class declares.
     fn initialize_fields(&mut self, fx: &mut Fx, file: FileId, class: ClassId, pos: u32) {
         let was_in_field_initializer = std::mem::replace(&mut fx.is_in_field_initializer, true);
         let hir = self.hir(file);
         let bound = self.c.bound(file);
         let info = self.class_info(file, class);
-        // A field starts as `undefined`: without an initializer it is stored to only if what the class extends or an initializer may have been there.
         let mut is_untouched = info.base.is_none() || info.facts.has_fixed_layout && !self.this_escapes_in_base_classes(info.layout);
         let uses_this = self.c.initializers_that_use_this(file, class);
-        // `this.x = init`: a store like any other, and a function takes no name from it.
         let assigns = self.c.assigns_fields(file, class);
         let lists_fields = self.tracks_field_definition_order(file, class);
         let (own_fields, lets_go) = if lists_fields { (self.own_fields_in_order(file, class), self.initializers_where_this_escapes(info.layout, file, class)) } else { Default::default() };
         let mut may_be_seen = lists_fields && info.base.is_some() && self.this_escapes_in_base_classes(info.layout);
         let mut has_undeclared_fields = may_be_seen;
         let runs_code = |init: ExprId| init.is_some() && !matches!(hir[init].kind, ExprKind::Null | ExprKind::True | ExprKind::False | ExprKind::Number(_) | ExprKind::String(_) | ExprKind::BigInt(_) | ExprKind::Fn(_));
-        let begins_run: Vec<bool> = (own_fields.iter())
-            .map(|&own| hir[class].members.iter().map(|member| &hir[member]).any(|m| m.kind == MemberKind::Property && !m.flags.contains(Flags::STATIC) && matches!(m.key, PropKey::Name(key) if key == own) && runs_code(m.init)))
-            .collect();
+        let is_public_field = |member: &MemberId| hir[*member].kind == MemberKind::Property && !hir[*member].flags.contains(Flags::STATIC) && !matches!(hir[*member].key, PropKey::Private(_));
+        let names_that_run_code: Vec<Atom> = hir[class].members.iter().filter(is_public_field).filter(|&member| runs_code(hir[member].init)).map(|member| self.instance_field_name(file, member)).collect();
+        let begins_run: Vec<bool> = own_fields.iter().map(|own| names_that_run_code.contains(own)).collect();
         let end_of_run = |from: usize| (from + 1..begins_run.len()).take_while(|&at| !begins_run[at]).last().unwrap_or(from);
         let mut listed = 0;
         if may_be_seen && !own_fields.is_empty() {
@@ -2009,16 +1909,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             if m.kind != MemberKind::Property || m.flags.intersects(Flags::STATIC | Flags::AMBIENT | Flags::ABSTRACT) || self.c.is_field_omitted(file, member) || !assigns && self.files.is_decorated_member(file, member) {
                 continue;
             }
-            let name = match m.key {
-                PropKey::Name(name) | PropKey::Private(name) => name,
-                _ => Atom::NONE,
-            };
+            let name = self.instance_field_name(file, member);
             let given = if assigns { Atom::NONE } else { name };
             if info.facts.has_fixed_layout && name.is_some() {
                 if m.init.is_none() {
                     let field = self.str(name);
                     self.implicit_stores.push(field);
-                    // Where the constructor stores to it before anybody looks, its type may have no room for `undefined`.
                     let symbol = bound.member_symbol[member.idx()];
                     let starts_undefined = symbol.is_none() || self.field_starts_undefined(info.layout, self.files.sym(file, symbol));
                     if starts_undefined && (!is_untouched || !Self::is_field_name(self.c.atoms().bytes(name))) {
@@ -2092,7 +1988,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.is_in_field_initializer = was_in_field_initializer;
     }
 
-    /// Whether a class that `class` extends has an accessor by the name, so that a store to the property is not what defines it.
+    fn is_field_named_by_constant_symbol(&mut self, file: FileId, class: ClassId, member: MemberId) -> bool {
+        let m = &self.hir(file)[member];
+        m.kind == MemberKind::Property
+            && matches!(m.key, PropKey::Computed(_))
+            && !m.flags.intersects(Flags::STATIC | Flags::AMBIENT | Flags::ABSTRACT)
+            && self.class_info(file, class).facts.has_fixed_layout
+            && !self.c.is_field_omitted(file, member)
+            && self.c.known_member_name(file, m.key).is_some()
+    }
+
     fn inherits_accessor(&mut self, file: FileId, class: ClassId, name: Atom) -> bool {
         let mut at = self.class_info(file, class).base;
         while let Some((file, class)) = at {
@@ -2110,8 +2015,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         false
     }
 
-    /// CreateDataPropertyOrThrow for a field of the class around the code being built, which is laid out. A store does the same, unless
-    /// it finds an accessor first, or the layout has no field by the name.
     fn define_field(&mut self, fx: &mut Fx, this: V, key: Atom, value: V) {
         let name = self.str(key);
         let bytes = self.c.atoms().bytes(key);
@@ -2123,14 +2026,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if is_store {
             self.emit_throwing(fx, Op::PropSet { obj: this, name, value });
         } else {
-            let name = self.emit(fx, Op::Str(name));
+            let name = self.emit_key(fx, name);
             self.operation(fx, Operation::DefineField, &[this, name, value]);
         }
     }
 
-    // ───────────────────────────── `super(..)` ─────────────────────────────
-
-    /// `super(args)`
     pub(crate) fn super_call(&mut self, fx: &mut Fx, args: IdList<ExprId>, pos: u32) -> V {
         let Some((file, class)) = fx.class else {
             return self.unsupported(fx, pos, "`super()` outside a constructor");
@@ -2143,6 +2043,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return self.unsupported(fx, pos, "`super()` in a class without `extends`");
         }
         let Some(base) = info.base else {
+            if let Some(constructed) = self.construct_promise_subclass(fx, file, class, args, pos) {
+                self.bind_this(fx, constructed);
+                self.did_bind_this(fx, pos);
+                return self.this(fx, pos);
+            }
             let written = args;
             if self.hir(fx.file).ids(written).all(|e| self.super_argument_is_side_effect_free(fx, written, e)) {
                 let args = self.emit_array_with_spread(fx, args);
@@ -2160,8 +2065,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let ctor = self.classes[&base].ctor;
         let result = match self.has_captures_available(fx, ctor).then(|| self.arguments(fx, args)).flatten() {
             Some(args) => {
-                let takes_new_target = self.out.funcs[ctor.idx()].has(func_flags::HAS_NEW_TARGET);
-                let all: Vec<V> = takes_new_target.then_some(fx.new_target).into_iter().chain(args).collect();
+                let uses_new_target = self.out.funcs[ctor.idx()].has(func_flags::HAS_NEW_TARGET);
+                let all: Vec<V> = uses_new_target.then_some(fx.new_target).into_iter().chain(args).collect();
                 self.emit_direct_call(fx, ctor, fx.given, &all)
             }
             None => {
@@ -2171,6 +2076,34 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         };
         self.did_call_base_constructor(fx, base, result, pos);
         self.this(fx, pos)
+    }
+
+    fn construct_promise_subclass(&mut self, fx: &mut Fx, file: FileId, class: ClassId, args: IdList<ExprId>, pos: u32) -> Option<V> {
+        let executor = self.hir(fx.file).ids(args).next().filter(|&only| args.len() == 1 && !matches!(self.hir(fx.file)[only].kind, ExprKind::Spread(_)))?;
+        let helper = self.promise_subclass_helper(file, class, b"Promise$constructSubclass")?;
+        let class_object = self.class_object(fx, file, class);
+        let parent = self.operation(fx, Operation::GetSuperConstructor, &[class_object]);
+        let executor = self.expr(fx, executor);
+        let callee = self.read_sym(fx, helper, pos);
+        let this = self.emit(fx, Op::Undefined);
+        Some(self.emit_throwing(fx, Op::Call { callee, this, args: [class_object, fx.new_target, parent, executor].into_iter().collect() }))
+    }
+
+    fn construct_promise_subclass_with_list(&mut self, fx: &mut Fx, file: FileId, class: ClassId, list: V, pos: u32) -> Option<V> {
+        let helper = self.promise_subclass_helper(file, class, b"Promise$constructSubclassWithList")?;
+        let class_object = self.class_object(fx, file, class);
+        let parent = self.operation(fx, Operation::GetSuperConstructor, &[class_object]);
+        let callee = self.read_sym(fx, helper, pos);
+        let this = self.emit(fx, Op::Undefined);
+        Some(self.emit_throwing(fx, Op::Call { callee, this, args: [class_object, fx.new_target, parent, list].into_iter().collect() }))
+    }
+
+    fn promise_subclass_helper(&mut self, file: FileId, class: ClassId, name: &[u8]) -> Option<Sym> {
+        if !self.c.extends_global_promise(file, class) {
+            return None;
+        }
+        let helper = self.shared.promise_helpers().zip(self.c.atoms().lookup(name));
+        helper.and_then(|(helpers, name)| self.exported_binding(helpers, name))
     }
 
     fn super_argument_is_side_effect_free(&mut self, fx: &Fx, args: IdList<ExprId>, e: ExprId) -> bool {
@@ -2202,12 +2135,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// The same of a constructor that is not declared: it hands on what it was handed, as the constructor of the class it extends takes it.
     fn emit_default_super_call(&mut self, fx: &mut Fx, base: (FileId, ClassId), handed: &[V], pos: u32) {
         let ctor = self.classes[&base].ctor;
         let result = if self.has_captures_available(fx, ctor) {
-            let takes_new_target = self.out.funcs[ctor.idx()].has(func_flags::HAS_NEW_TARGET);
-            let all: Vec<V> = takes_new_target.then_some(fx.new_target).into_iter().chain(handed.iter().copied()).collect();
+            let uses_new_target = self.out.funcs[ctor.idx()].has(func_flags::HAS_NEW_TARGET);
+            let all: Vec<V> = uses_new_target.then_some(fx.new_target).into_iter().chain(handed.iter().copied()).collect();
             let args = self.direct_args(fx, ctor, fx.given, &all);
             self.emit_throwing(fx, Op::CallDirect { func: ctor, args })
         } else {
@@ -2222,7 +2154,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.did_call_base_constructor(fx, base, result, pos);
     }
 
-    /// The constructor of the class `base` works on the object, called the way someone does who does not know the function.
     fn emit_construct_on(&mut self, fx: &mut Fx, base: (FileId, ClassId), args: V) -> V {
         let extended = match fx.class {
             Some((file, class)) if self.class_variables.contains_key(&(file, class, ClassVariable::Base)) => self.read_class_variable(fx, file, class, ClassVariable::Base),
@@ -2240,7 +2171,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.did_bind_this(fx, pos);
     }
 
-    /// `super(...args)` where what the class extends makes the object.
     fn emit_super_construct(&mut self, fx: &mut Fx, args: V, pos: u32) {
         let Some((file, class)) = fx.class else { return };
         let class_object = self.class_object(fx, file, class);
@@ -2249,7 +2179,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.did_bind_this(fx, pos);
     }
 
-    /// `super()` has returned. A second one constructs, and then finds `this` bound.
     fn bind_this(&mut self, fx: &mut Fx, this: V) {
         let Some(before) = self.this_if_bound(fx) else { return };
         if !matches!(fx.b.func.op(before), Some(Op::Undefined)) {
@@ -2272,7 +2201,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// Where `this` comes about when `super()` returns: `this`, or `undefined` before that.
     pub(crate) fn this_if_bound(&mut self, fx: &mut Fx) -> Option<V> {
         match (fx.this_binding, fx.this_var) {
             (Some((layout, binding)), _) => Some(self.emit(fx, Op::FieldGet { obj: binding, layout, field: 0 })),
@@ -2281,7 +2209,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// What `return value` in a constructor hands back.
     pub(crate) fn constructor_result(&mut self, fx: &mut Fx, value: V, pos: u32) -> V {
         if value.is_none() {
             return self.this(fx, pos);
@@ -2300,13 +2227,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 }
             }
         }
-        // An object can be returned before `super()` has been called.
         let unchecked = self.this_if_bound(fx);
         let this = match unchecked {
             Some(this) => this,
             None => self.this(fx, pos),
         };
-        // Of a class that extends something: a primitive other than `undefined` throws.
         let is_derived = fx.class.is_some_and(|(file, class)| self.class_info(file, class).is_derived);
         let result = self.operation(fx, if is_derived { Operation::DerivedConstructorResult } else { Operation::ConstructorResult }, &[value, this]);
         if unchecked.is_some() {
@@ -2315,13 +2240,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         result
     }
 
-    /// Where `this` comes about when `super()` returns, it is not there before.
     pub(crate) fn check_this_is_bound(&mut self, fx: &mut Fx, this: V) {
         let mut source = this;
         while let Some(Op::Coerce { value, .. }) = fx.b.func.op(source) {
             source = *value;
         }
-        // What `super()` came back with, on the only way here.
         if matches!(fx.b.func.op(source), Some(Op::CallDirect { .. } | Op::Operation { which: Operation::SuperConstruct | Operation::ConstructOn, .. })) {
             return;
         }
@@ -2336,11 +2259,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.switch_to(fine);
     }
 
-    // ───────────────────────────── `super.name` ─────────────────────────────
-
-    /// The class object of the class around the code, and whether `super` looks from it and not from its prototype object. What a name
-    /// finds from there is for whoever compiles the operation to say, from the layouts of the classes, or is looked for when the program
-    /// runs: whether a method may be replaced is not known here.
     fn super_home(&mut self, fx: &mut Fx, pos: u32) -> (V, V) {
         let is_arrow = fx.func.is_some() && self.hir(fx.file)[fx.func].kind == FnKind::Arrow;
         let method = match is_arrow.then(|| self.c.arrow_receiver(fx.file, fx.func)) {
@@ -2360,7 +2278,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         (class, is_static)
     }
 
-    /// `super.name`
     pub(crate) fn super_get(&mut self, fx: &mut Fx, name: StrId, pos: u32) -> V {
         if self.is_builtin_file(fx.file) && self.out.strs.get(name).starts_with(b"$") {
             self.problem(fx.file, pos, "a `$` intrinsic after `super.`");
@@ -2369,14 +2286,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.super_get_by_key(fx, key, pos)
     }
 
-    /// `super[key]`
     pub(crate) fn super_get_by_key(&mut self, fx: &mut Fx, key: V, pos: u32) -> V {
         let (class, is_static) = self.super_home(fx, pos);
         let this = self.this(fx, pos);
         self.operation(fx, Operation::SuperGet, &[class, key, this, is_static])
     }
 
-    /// `super.name = value`
     pub(crate) fn super_set(&mut self, fx: &mut Fx, name: StrId, value: V, pos: u32) {
         if self.is_builtin_file(fx.file) && self.out.strs.get(name).starts_with(b"$") {
             self.problem(fx.file, pos, "a `$` intrinsic after `super.`");
@@ -2385,7 +2300,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.super_set_by_key(fx, key, value, pos);
     }
 
-    /// `super[key] = value`
     pub(crate) fn super_set_by_key(&mut self, fx: &mut Fx, key: V, value: V, pos: u32) {
         let (class, is_static) = self.super_home(fx, pos);
         let this = self.this(fx, pos);

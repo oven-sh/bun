@@ -36,7 +36,7 @@ pub fn typed_package(root: &[u8], defines: &Defines, directory: &[u8], name: &[u
     (files, Some(said.into_boxed_str()))
 }
 
-pub fn typed_version_that_lays(root: &[u8], directory: &[u8], name: &[u8], path: &[u8], text: &[u8]) -> Option<Vec<u8>> {
+pub fn typed_version_providing(root: &[u8], directory: &[u8], name: &[u8], path: &[u8], text: &[u8]) -> Option<Vec<u8>> {
     let root = match root {
         [before @ .., last] if !before.is_empty() && is_separator(*last) => before,
         _ => root,
@@ -68,7 +68,7 @@ pub(crate) fn ancestors(path: &[u8]) -> impl Iterator<Item = &[u8]> {
 
 fn read(path: &[u8]) -> Option<Vec<u8>> {
     let text = bun_sys::File::read_from(Fd::cwd(), path).ok();
-    crate::asked::note(crate::asked::Kind::NativeText, path, |hash| crate::asked::of_text(hash, text.as_deref()));
+    crate::fs_queries::record_query(crate::fs_queries::Kind::NativeText, path, |hash| crate::fs_queries::of_text(hash, text.as_deref()));
     text
 }
 
@@ -167,7 +167,7 @@ fn shipped_files(directory: &[u8]) -> Result<(Files, Vec<u8>), String> {
             }
             let imported = parts.join(&b'/');
             let candidates = [imported.clone(), [&imported[..], b".js"].concat(), [&imported[..], b".mjs"].concat(), [&imported[..], b"/index.js"].concat()];
-            let imported = candidates.into_iter().find(|candidate| typed_path_beside(candidate).is_some() && crate::asked::exists(&join(&[directory, candidate])));
+            let imported = candidates.into_iter().find(|candidate| typed_path_beside(candidate).is_some() && crate::fs_queries::exists(&join(&[directory, candidate])));
             if let Some(imported) = imported.filter(|imported| !leaves && is_relative_inner_path(imported) && !seen.contains(imported)) {
                 seen.push(imported.clone());
                 waiting.push(imported);
@@ -178,12 +178,16 @@ fn shipped_files(directory: &[u8]) -> Result<(Files, Vec<u8>), String> {
             true => format!("export * from \"./{specifier}\";\nexport {{ default }} from \"./{specifier}\";\n"),
             false => format!("export * from \"./{specifier}\";\n"),
         };
-        for (path, text) in [(&javascript[..], entry_point.into_bytes()), (&typed[..], text)] {
+        let laid = match erased.has_untyped_exports {
+            true => vec![(&javascript[..], entry_point.into_bytes(), false), (&typed[..], text, false)],
+            false => vec![(&javascript[..], text, true)],
+        };
+        for (path, text, is_typescript) in laid {
             let mut at = join(&[directory, path]);
             if cfg!(windows) {
                 at.iter_mut().filter(|byte| **byte == b'\\').for_each(|byte| *byte = b'/');
             }
-            files.push((at.into_boxed_slice(), text.into_boxed_slice(), false));
+            files.push((at.into_boxed_slice(), text.into_boxed_slice(), is_typescript));
         }
     }
     Ok((files, package.get(b"version").and_then(Json::as_str).unwrap_or_default().to_vec()))
@@ -200,7 +204,7 @@ pub(crate) fn declarations_path_beside(javascript: &[u8]) -> Option<Vec<u8>> {
 }
 
 fn typed_package_home(root: &[u8], directory: &[u8], name: &[u8]) -> Option<(Vec<u8>, bool)> {
-    let has_manifest = |home: &Vec<u8>| crate::asked::exists(&join(&[home, MANIFEST]));
+    let has_manifest = |home: &Vec<u8>| crate::fs_queries::exists(&join(&[home, MANIFEST]));
     let own = join(&[root, FOLDER, name]);
     if has_manifest(&own) {
         return Some((own, false));
@@ -278,7 +282,7 @@ fn files_of(root: &[u8], defines: &Defines, home: &[u8], directory: &[u8], name:
         let mut at = join(&[directory, path]);
         match wanted {
             b"new" if !is_relative_inner_path(path) => return Err(format!("\"{}\" in its sound.json is no path inside the package", BStr::new(path))),
-            b"new" if crate::asked::exists(&at) => return Err(format!("{} is installed, and it was not when the package was typed", BStr::new(path))),
+            b"new" if crate::fs_queries::exists(&at) => return Err(format!("{} is installed, and it was not when the package was typed", BStr::new(path))),
             b"new" => {}
             _ => verify_typed_against(directory, path, wanted)?,
         }
@@ -296,7 +300,7 @@ fn files_of(root: &[u8], defines: &Defines, home: &[u8], directory: &[u8], name:
     }
     for needed in manifest.get(b"needs").and_then(Json::as_array).unwrap_or_default() {
         let needed = needed.as_str().filter(|needed| is_package_name(needed)).ok_or("\"needs\" of its sound.json is not a list of packages' names")?;
-        let there = ancestors(directory).map(|at| join(&[at, NODE_MODULES_DIR, needed])).find(|there| crate::asked::exists(&join(&[there, PACKAGE_JSON])));
+        let there = ancestors(directory).map(|at| join(&[at, NODE_MODULES_DIR, needed])).find(|there| crate::fs_queries::exists(&join(&[there, PACKAGE_JSON])));
         let fits = |there: Vec<u8>| {
             typed_package_home(root, &there, needed).is_some_and(|(home, is_shipped_with_the_package)| match is_shipped_with_the_package {
                 true => shipped_files(&there).is_ok(),

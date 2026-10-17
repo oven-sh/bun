@@ -82,10 +82,10 @@ test.if(isPosix && !isASAN)("a crash in compiled code lists the compiled functio
     .slice(1)
     .filter(line => line.startsWith("    at "));
   expect(frames).toEqual([
-    "    at byteAt (app.ts:6:17)",
-    "    at sum (app.ts:14:47)",
-    "    at start (app.ts:18:17)",
-    "    at app.ts:22:13",
+    "    at byteAt (/$bunfs/root/app.ts:6:17)",
+    "    at sum (/$bunfs/root/app.ts:14:47)",
+    "    at start (/$bunfs/root/app.ts:18:17)",
+    "    at /$bunfs/root/app.ts:22:13",
   ]);
   const url = stderr.match(/^ (\S*CGaot\S*)$/m)![1];
   for (const word of ["byteAt", "peek", "sum", "start", "app.ts"]) expect(url).not.toContain(word);

@@ -4,7 +4,7 @@
 //! `bun check`, `bun build --check` and `bun run --check` all use this, with different roots and
 //! different output formatting.
 
-pub mod asked;
+pub mod fs_queries;
 pub mod builtins;
 pub mod format;
 pub mod host;
@@ -25,13 +25,13 @@ use bun_sema::atom::RecentAtoms;
 use bun_sema::check::errors::Checked;
 use bun_sema::check::explain::Explained;
 use bun_sema::check::task::{Finished, Published};
-use bun_sema::check::{CompilerDiagnostic, FOREIGN_EVALUATION_KINDS, Requested, Share, compute_ecma_line_starts};
+use bun_sema::check::{CompilerDiagnostic, FOREIGN_EVALUATION_KINDS, Requested, FilePartition, compute_ecma_line_starts};
 use bun_sema::config::{self, ConfigError};
 use bun_sema::hir::{ExprTag, FileKind};
 use bun_sema::json::Json;
 use bun_sema::messages;
 use bun_sema::program::{
-    COMPARE_PATHS_CASE_SENSITIVE, Files, GlobalName, Run, declaration_emit_output_file_path,
+    COMPARE_PATHS_CASE_SENSITIVE, DeferredProgramRoot, DeferredRoots, Files, GlobalName, Run, WaitForDeferredRoots, declaration_emit_output_file_path,
     has_libraries, own_emit_output_file_path,
 };
 pub use bun_sema::check::{Checker, Program};
@@ -39,7 +39,7 @@ pub use bun_sema::program::FileId;
 pub use bun_sema::resolve::ScriptKind;
 pub use bun_sema::util::InParallel;
 use bun_sema::resolve::{
-    Host, ModuleDetection, Options, Phase, ancestors, contains_path, displayed_path,
+    CheckOptions, Host, ModuleDetection, Options, Phase, ancestors, contains_path, displayed_path,
     get_relative_path_from_directory, inside, is_declaration_file_name, is_javascript,
     is_javascript_file, is_relative, is_same_path, join, output_declaration_file_name, to_path,
     to_path_in, typescript_path,
@@ -319,12 +319,11 @@ impl EarlyRun {
     }
 }
 
-pub fn with_early_run<R>(then: impl FnOnce(EarlyRun) -> R) -> R {
+pub fn with_early_run<R>(shared_directory_cache: Arc<host::SharedDirectoryCache>, then: impl FnOnce(EarlyRun) -> R) -> R {
     let result = {
         let session = Session::new();
         let run = Run::early(&session);
         let scanned_files = ScannedFiles::new(FxHashMap::default());
-        let shared_directory_cache = Arc::new(host::SharedDirectoryCache::default());
         then(EarlyRun((&raw const run).cast(), &raw const scanned_files, &raw const shared_directory_cache))
     };
     THREADS_STILL_TO_RELEASE.fetch_add(1, Ordering::AcqRel);
@@ -1287,6 +1286,9 @@ pub struct Report {
     pub deepest_stack: usize,
     /// `Request::is_one_program`: the modules of the runtime that are compiled with the program.
     pub builtin_modules: Option<builtins::Found>,
+    pub abandoned: Option<host::Abandoned>,
+    pub reloaded_paths: Vec<Vec<u8>>,
+    pub is_reloaded_for_changed_files: bool,
 }
 
 impl Report {
@@ -1390,22 +1392,7 @@ fn is_missing_runtime_type_library(reported: &Diagnostic) -> bool {
     reported.code == 2688 && reported.args.first().is_some_and(|name| [&b"bun-types"[..], b"bun", b"node"].contains(&&name[..]))
 }
 
-fn enclosing_config_dir<'p>(host: &dyn Host, file_name: &'p [u8], known: &mut FxHashMap<&'p [u8], &'p [u8]>) -> &'p [u8] {
-    let (mut directory, mut passed) = (file_name, Vec::new());
-    let found = loop {
-        let Some(at) = strings::last_index_of_char(directory, b'/') else { break &file_name[..0] };
-        directory = &directory[..at];
-        if let Some(&found) = known.get(directory) {
-            break found;
-        }
-        passed.push(directory);
-        if [&b"/tsconfig.json"[..], b"/jsconfig.json"].iter().any(|name| host.is_file(&[directory, *name].concat())) {
-            break directory;
-        }
-    };
-    known.extend(passed.into_iter().map(|directory| (directory, found)));
-    found
-}
+const PRELUDE_DIRECTORY: &[u8] = b"/.bun-aot-prelude/";
 
 fn invalidation_key<'a>(files: &'a bun_sema::program::Files<'_>, module: &'a bun_sema::program::Module<'_>) -> (&'a [u8], &'a [u8]) {
     package_of(files, module).unwrap_or((module.path.text, module.file_name()))
@@ -1418,7 +1405,7 @@ fn from_compiler_diagnostic(program: &Program, found: &CompilerDiagnostic) -> Di
     located(module.file_name(), text, &compute_ecma_line_starts(text), found.start, found.end, reported)
 }
 
-fn is_type_only_diagnostic(code: u32) -> bool {
+pub fn is_type_only_diagnostic(code: u32) -> bool {
     matches!(
         code,
         1205 | 1250..=1252 | 1269 | 1272 | 1280 | 1282..=1288 | 1294 | 1295 | 1323 | 1324 | 1343 | 1378 | 1432 | 1484 | 1485 | 1501 | 1503
@@ -1656,6 +1643,45 @@ pub fn check_then<R>(request: &Request, then: impl FnOnce(Report) -> R) -> R {
 /// `check_then`, for a caller that has read some of the files, or that watches them.
 pub fn check_provided_then<R>(
     request: &Request,
+    mut provided: host::Provided,
+    then: impl FnOnce(Report) -> R,
+) -> R {
+    let Some(early_provided) = provided.deferred_sources.is_some().then(|| provided.without_callbacks()) else {
+        return check_provided_once(request, provided, then);
+    };
+    let mut then = Some(then);
+    let mut reloaded_paths: Vec<Vec<u8>> = Vec::new();
+    let mut is_reloaded_for_changed_files = false;
+    loop {
+        let checked = check_provided_once(request, provided, |mut report| match report.abandoned.take_if(|abandoned| abandoned.is_outdated || !abandoned.conflicting_paths.is_empty()) {
+            Some(abandoned) => Err(abandoned),
+            None => {
+                report.reloaded_paths = std::mem::take(&mut reloaded_paths);
+                report.is_reloaded_for_changed_files = is_reloaded_for_changed_files;
+                Ok(then.take().map(|then| then(report)))
+            }
+        });
+        match checked {
+            Ok(result) => return result.expect("the report is handed over once"),
+            Err(abandoned) => {
+                provided = host::Provided {
+                    scripts_of_page: abandoned.scripts_of_page,
+                    before_read: abandoned.before_read,
+                    deferred_read: abandoned.deferred_read,
+                    ..early_provided.without_callbacks()
+                };
+                is_reloaded_for_changed_files |= abandoned.is_outdated;
+                reloaded_paths.extend(abandoned.conflicting_paths.iter().cloned());
+                provided.deferred_paths.extend(reloaded_paths.iter().cloned());
+                let sources = abandoned.deferred_sources;
+                provided.deferred_sources = Some(Box::new(move || sources));
+            }
+        }
+    }
+}
+
+fn check_provided_once<R>(
+    request: &Request,
     provided: host::Provided,
     then: impl FnOnce(Report) -> R,
 ) -> R {
@@ -1719,7 +1745,14 @@ pub fn check_provided_then<R>(
     disk.build_constants = provided.build_constants;
     disk.early_paths = provided.early_paths.map(bun_threading::Guarded::new);
     disk.early_parse_cancelled = provided.early_parse_cancelled;
+    disk.is_load_abandoned = provided.is_load_abandoned;
+    disk.observed = provided.observes_files.then(|| Guarded::new(Vec::new()));
     disk.deferred_read = Guarded::new(provided.deferred_read);
+    for (importer, specifier) in provided.deferred_imports {
+        disk.deferred_imports.entry(host::from_native(&importer)).or_default().push(specifier);
+    }
+    disk.deferred_paths = paths_of(&disk, provided.deferred_paths.iter().map(Vec::as_slice).collect()).into_iter().collect();
+    disk.wait_for_deferred_sources = Guarded::new(provided.deferred_sources);
     if let Libs::Bundled(libs) = request.libs {
         disk.bundled_libs = Some(libs);
     }
@@ -1735,6 +1768,12 @@ pub fn check_provided_then<R>(
     let mut report = check_request(&disk, request);
     report.is_case_sensitive = disk.is_case_sensitive();
     report.builtin_modules = disk.compiled.as_ref().and_then(|compiled| compiled.builtin_modules.lock().take());
+    report.abandoned = disk.abandoned.lock().take();
+    if let Some(abandoned) = &mut report.abandoned {
+        abandoned.deferred_read = disk.take_deferred_read();
+        abandoned.scripts_of_page = disk.scripts_of_page.take();
+        abandoned.before_read = disk.before_read.take();
+    }
     report.is_quiet = tristate(request.compiler_options, b"quiet") == Some(true);
     report.not_installed = dependencies_not_installed(&disk, &cwd, &project, &report.diagnostics);
     let result = then(report);
@@ -2029,11 +2068,34 @@ impl Projects {
             }
             below = above;
         }
-        let project = self.load(disk, request, &nearest);
-        let is_solution =
-            project.is_some_and(|it| it.files.is_empty() && !it.references.is_empty());
+        let is_solution = self.is_solution(disk, request, &nearest);
         Err((!is_solution).then_some(nearest))
     }
+
+    fn is_solution(&mut self, disk: &host::Disk, request: &Request, config: &[u8]) -> bool {
+        self.load(disk, request, config).is_some_and(|it| it.files.is_empty() && !it.references.is_empty())
+    }
+
+    fn governing_config(&mut self, disk: &host::Disk, request: &Request, nearest: Option<Vec<u8>>, path: &[u8]) -> Option<Vec<u8>> {
+        let has_references = nearest.as_ref().is_some_and(|nearest| self.load(disk, request, nearest).is_some_and(|it| !it.references.is_empty()));
+        match has_references {
+            true => self.owner_of(disk, request, nearest, path).unwrap_or_else(|nearest| nearest),
+            false => nearest,
+        }
+    }
+}
+
+fn common_directory<'a>(mut directories: impl Iterator<Item = &'a [u8]>) -> &'a [u8] {
+    let Some(mut common) = directories.next() else { return b"" };
+    for directory in directories {
+        while !(directory == common || directory.len() > common.len() && directory.starts_with(common) && directory[common.len()] == b'/') && !common.is_empty() {
+            common = dirname::<Posix>(common);
+            if common == b"/" {
+                return common;
+            }
+        }
+    }
+    common
 }
 
 /// The project checked where there is no configuration file: `files` and what they import, as in
@@ -2241,11 +2303,27 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
         ..Default::default()
     };
     if request.is_one_program && !paths.is_empty() {
-        let nearest = config_in(dirname::<Posix>(&paths[0]));
-        let owner = projects.owner_of(disk, request, nearest, &paths[0]);
-        let owner = owner.unwrap_or_else(|nearest| nearest);
+        let mut owners: Vec<Option<Vec<u8>>> = Vec::new();
+        let on_disk = || paths.iter().filter(|path| !strings::contains(path, PRELUDE_DIRECTORY));
+        for path in on_disk() {
+            let owner = projects.governing_config(disk, request, config_in(dirname::<Posix>(path)), path);
+            if !owners.contains(&owner) {
+                owners.push(owner);
+            }
+        }
+        let owner = match owners.as_slice() {
+            [] => projects.governing_config(disk, request, config_in(dirname::<Posix>(&paths[0])), &paths[0]),
+            [only] => only.clone(),
+            _ => {
+                let nearest = config_in(common_directory(on_disk().map(|path| dirname::<Posix>(path))));
+                nearest.filter(|nearest| !projects.is_solution(disk, request, nearest))
+            }
+        };
+        let mut more_configs: Vec<Vec<u8>> = owners.into_iter().flatten().filter(|other| Some(other) != owner.as_ref()).collect();
+        more_configs.shared_sort_unstable();
         let of = OfProject {
             config: owner.as_deref(),
+            more_configs: &more_configs,
             named: Some((Extent::Project, paths.as_slice())),
             elsewhere: None,
             // SAFETY: both places that put an `EarlyRun` into a request do so inside the closure of
@@ -2261,6 +2339,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
             Some(config) => {
                 let of = OfProject {
                     config: Some(&config),
+                    more_configs: &[],
                     named: None,
                     elsewhere: None,
                     run: None,
@@ -2457,6 +2536,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
             let place = room.enter();
             let of = OfProject {
                 config: config.as_deref(),
+                more_configs: &[],
                 named: Some((*extent, files.as_slice())),
                 elsewhere: (!is_one).then_some(&elsewhere),
                 run: run.as_ref(),
@@ -2522,6 +2602,7 @@ enum Extent {
 struct OfProject<'a, 'u> {
     /// `None`: there is no configuration file.
     config: Option<&'a [u8]>,
+    more_configs: &'a [Vec<u8>],
     /// `None`: all of its files.
     named: Option<(Extent, &'a [Vec<u8>])>,
     /// The files that are checked in another project, by `tspath.Path`. This one may import them.
@@ -2723,23 +2804,53 @@ fn check_project_of(
         }
     };
     let is_case_sensitive = disk.is_case_sensitive();
+    let wait_for_deferred_sources = disk.wait_for_deferred_sources.lock().take().filter(|_| request.is_one_program);
+    let listed_project_files: FxHashMap<Vec<u8>, usize> = match wait_for_deferred_sources {
+        Some(_) => project.files.iter().enumerate().map(|(at, file)| (to_path(file, is_case_sensitive).into_owned(), at)).collect(),
+        None => FxHashMap::default(),
+    };
+    if wait_for_deferred_sources.is_some() {
+        project.files.retain(|file| !disk.is_deferred_path(file));
+    }
+    let mut files_to_scan: Vec<Vec<u8>> = Vec::new();
+    let mut early_project_files: FxHashSet<Vec<u8>> = FxHashSet::default();
+    let mut listing_positions_of_roots: Vec<usize> = Vec::new();
+    let more_projects: Vec<config::Project> = match wait_for_deferred_sources {
+        Some(_) => Vec::new(),
+        None => of.more_configs.iter().filter_map(|config| projects.lock().load(disk, request, config).cloned()).collect(),
+    };
+    let has_references = !project.references.is_empty();
     if request.is_one_program {
         let cwd = host::from_native(request.cwd);
         let of_bundle: FxHashSet<Vec<u8>> = (request.code.iter())
             .map(|path| to_path(&host::from_argument(&cwd, path), is_case_sensitive).into_owned())
             .collect();
-        let by_name: FxHashSet<Vec<u8>> = (project.options.file_specs.iter()).map(|named| to_path(&named.1, is_case_sensitive).into_owned()).collect();
+        let file_specs = project.options.file_specs.iter().chain(more_projects.iter().flat_map(|other| &other.options.file_specs));
+        let by_name: FxHashSet<Vec<u8>> = file_specs.map(|named| to_path(&named.1, is_case_sensitive).into_owned()).collect();
         let is_kept = |file: &Vec<u8>| is_declaration_file_name(file) || of_bundle.contains(&*to_path(file, is_case_sensitive)) || by_name.contains(&*to_path(file, is_case_sensitive));
         let lists_files = !project.options.is_default_include_spec && !request.plan_options.early_parse_only;
-        let others: Vec<&Vec<u8>> = project.files.iter().filter(|file| lists_files && !is_kept(file)).collect();
-        let declares_globals: Vec<AtomicBool> = others.iter().map(|_| AtomicBool::new(false)).collect();
-        let imported_by: Vec<Guarded<Vec<Vec<u8>>>> = others.iter().map(|_| Guarded::new(Vec::new())).collect();
+        let mut is_listed = vec![lists_files; project.files.len()];
+        if !more_projects.is_empty() {
+            let mut places: FxHashMap<Vec<u8>, usize> = project.files.iter().enumerate().map(|(at, file)| (to_path(file, is_case_sensitive).into_owned(), at)).collect();
+            for other in &more_projects {
+                let lists_files = !other.options.is_default_include_spec && !request.plan_options.early_parse_only;
+                for file in &other.files {
+                    let at = *places.entry(to_path(file, is_case_sensitive).into_owned()).or_insert(project.files.len());
+                    if at == project.files.len() {
+                        project.files.push(file.clone());
+                        is_listed.push(lists_files);
+                    }
+                    is_listed[at] |= lists_files;
+                }
+            }
+        }
+        let others: Vec<&Vec<u8>> = project.files.iter().zip(&is_listed).filter(|(file, is_listed)| **is_listed && !is_kept(file)).map(|(file, _)| file).collect();
         // SAFETY: both places that put an `EarlyRun` into a request do so inside the closure of
         // `with_early_run`, where the scanned files are alive.
         let scanned_early = request.plan_options.early_run.map(|it| unsafe { it.scanned_files() });
         if let (true, Some(scanned_early)) = (request.plan_options.early_scan_only, scanned_early) {
             disk.parallel(others.len(), &|at| {
-                if disk.is_early_parse_cancelled() || disk.has_bundler_source(others[at]) {
+                if disk.is_early_parse_cancelled() || disk.has_bundler_source(others[at]) || disk.is_scheduled_by_bundler(others[at]) {
                     return;
                 }
                 let Some(_read) = disk.begin_early_read() else {
@@ -2751,63 +2862,32 @@ fn check_project_of(
                 let imports = RefCell::new(Vec::new());
                 let may_declare_a_global = may_declare_a_global(disk, others[at], true, true, &|name| imports.borrow_mut().push(name.to_vec()));
                 scanned_early.lock().insert(others[at].clone(), ScannedFile { times, may_declare_a_global, imports: imports.into_inner() });
-                std::thread::yield_now();
             });
             return report;
         }
-        let taken = scanned_early.map(|scanned_early| std::mem::take(&mut *scanned_early.lock()));
-        disk.parallel(others.len(), &|at| {
-            let imports = |name: &[u8]| imported_by[at].lock().push(name.to_vec());
-            let scanned = taken.as_ref().filter(|_| !disk.has_already_read(others[at])).and_then(|taken| taken.get(others[at]));
-            let scanned = scanned.filter(|scanned| host::Disk::file_times(others[at]) == Some(scanned.times));
-            let may = match scanned {
-                Some(scanned) => {
-                    scanned.imports.iter().for_each(|name| imports(name));
-                    scanned.may_declare_a_global
-                }
-                None if !asked::is_recording() || is_declaration_file_name(others[at]) || others[at].ends_with(b".json") => may_declare_a_global(disk, others[at], true, true, &imports),
-                None => {
-                    let text = asked::without_recording(|| disk.read(others[at]));
-                    let (may, found) = scan_result(others[at], text.as_deref(), &imports);
-                    asked::note(asked::Kind::Scanned, others[at], |hash| found.map_or(0, |found| hash(&found) | 1));
-                    may
-                }
-            };
-            declares_globals[at].store(may, Ordering::Relaxed);
-        });
-        if let (Some(scanned_early), Some(taken)) = (scanned_early, taken) {
-            *scanned_early.lock() = taken;
+        if wait_for_deferred_sources.is_some() {
+            files_to_scan = others.into_iter().cloned().collect();
+            project.files.retain(|file| is_kept(file));
+            early_project_files = project.files.iter().cloned().collect();
+            listing_positions_of_roots = project.files.iter().filter_map(|file| listed_project_files.get(&*to_path(file, is_case_sensitive)).copied()).collect();
+        } else {
+            let (sources, mut of_packages) = find_global_declarations(disk, &others, scanned_early, &|count, work| disk.parallel(count, work));
+            project.files.retain(|file| is_kept(file) || sources.contains(file));
+            of_packages.retain(|file| !project.files.contains(file));
+            project.files.extend(of_packages);
         }
-        let mut imported: Vec<(Vec<u8>, usize)> = (imported_by.iter().enumerate())
-            .flat_map(|(at, names)| std::mem::take(&mut *names.lock()).into_iter().map(move |name| (name, at)))
-            .collect();
-        imported.shared_sort_unstable();
-        imported.dedup_by(|a, b| a.0 == b.0);
-        let mut places: Vec<(&[u8], &[u8])> = imported.iter().map(|(name, at)| (dirname::<Posix>(others[*at]), package_of_specifier(name))).collect();
-        places.shared_sort_unstable();
-        places.dedup();
-        let mut installed_above: Vec<(&[u8], Vec<Vec<u8>>)> = places.iter().map(|place| (place.0, Vec::new())).collect();
-        installed_above.dedup_by(|a, b| a.0 == b.0);
-        bun_sema::util::for_each_mut(&mut installed_above, &|count, work| disk.parallel(count, work), &|(directory, installed)| {
-            *installed = ancestors(directory).map(|above| inside(above, b"node_modules")).filter(|packages| disk.is_dir(packages)).collect();
-        });
-        let looked_into = Guarded::new(FxHashMap::default());
-        let mut asked: Vec<((&[u8], &[u8]), Option<Vec<u8>>)> = places.into_iter().map(|place| (place, None)).collect();
-        bun_sema::util::for_each_mut(&mut asked, &|count, work| disk.parallel(count, work), &|((directory, package), found)| {
-            let directory: &[u8] = directory;
-            let installed = installed_above.binary_search_by(|known| known.0.cmp(directory)).map_or(&[][..], |at| &installed_above[at].1[..]);
-            *found = package_global_declarations(disk, installed, package, &looked_into);
-        });
-        let mut of_packages: Vec<Vec<u8>> = asked.into_iter().filter_map(|(_, found)| found).collect();
-        of_packages.shared_sort_unstable();
-        of_packages.dedup();
-        let sources: FxHashSet<Vec<u8>> = (others.iter().zip(&declares_globals))
-            .filter(|(_, declares)| declares.load(Ordering::Relaxed))
-            .map(|(file, _)| (*file).clone())
-            .collect();
-        project.files.retain(|file| is_kept(file) || sources.contains(file));
-        of_packages.retain(|file| !project.files.contains(file));
-        project.files.extend(of_packages);
+        for other in &more_projects {
+            let resolving = Session::new();
+            let resolver = bun_sema::resolve::Resolver::new(&resolving, disk, &other.options);
+            let from = inside(&other.options.base_dir, bun_sema::resolve::INFERRED_TYPES_CONTAINING_FILE);
+            for name in other.options.types.iter().flatten() {
+                if let Some((found, _)) = resolver.resolve_type_reference(name, &from, bun_sema::hir::ResolutionMode::None, None)
+                    && !project.files.contains(&found)
+                {
+                    project.files.push(found);
+                }
+            }
+        }
     }
     let named = of.named.map(|(extent, named)| {
         if extent == Extent::Project && !request.plan_options.only_the_globals {
@@ -2860,6 +2940,15 @@ fn check_project_of(
         if !project.options.specifies_lib && !project.options.no_lib {
             project.options.libs = vec![b"esnext.full".to_vec()];
         }
+        for other in more_projects.iter().filter(|other| !other.options.no_lib) {
+            let default = [b"esnext.full".to_vec()];
+            let libs = if other.options.specifies_lib { &other.options.libs[..] } else { &default[..] };
+            for lib in libs {
+                if !project.options.libs.contains(lib) {
+                    project.options.libs.push(lib.clone());
+                }
+            }
+        }
         project.errors.retain(|error| !(error.is_about_options && project.options.is_removed_option_error(error.code)));
         project.options.resolves_js_imports_as_code_only = !allows_js;
         project.options.allow_js = true;
@@ -2900,18 +2989,248 @@ fn check_project_of(
             *extent == Extent::Graph && project.files.iter().all(is_named)
         };
         let named = named.filter(|it| !is_whole(it)).map(|it| it.1);
-        check_named_files(
-            disk,
-            project,
-            request,
-            report,
-            started,
-            named,
-            of.elsewhere,
-            None,
-            of.run,
-            of.place,
-        )
+        // SAFETY: both places that put an `EarlyRun` into a request do so inside the closure of
+        // `with_early_run`, where the scanned files are alive.
+        let scanned_early = request.plan_options.early_run.map(|it| unsafe { it.scanned_files() });
+        std::thread::scope(|scope| {
+            let scan = (!files_to_scan.is_empty()).then(|| {
+                scope.spawn(|| {
+                    let others: Vec<&Vec<u8>> = files_to_scan.iter().collect();
+                    find_global_declarations(disk, &others, scanned_early, &for_each_on_scanning_threads)
+                })
+            });
+            let scan = Guarded::new(scan);
+            let has_deferred_sources = wait_for_deferred_sources.is_some();
+            let wait_for_deferred_sources = Guarded::new(wait_for_deferred_sources);
+            let deferred_request: OnceLock<DeferredRequest> = OnceLock::new();
+            let wait_for_deferred_roots = |has_loaded_text: &dyn Fn(&[u8], &[u8]) -> Option<bool>| -> Option<DeferredRoots> {
+                let wait = wait_for_deferred_sources.lock().take()?;
+                let Some(sources) = wait() else {
+                    *disk.abandoned.lock() = Some(host::Abandoned::default());
+                    return None;
+                };
+                let (declaring_globals, mut of_packages) = match scan.lock().take() {
+                    Some(scan) => scan.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
+                    None => Default::default(),
+                };
+                let mut global_declaration_roots: Vec<Vec<u8>> = files_to_scan.iter().filter(|file| declaring_globals.contains(*file)).cloned().collect();
+                of_packages.retain(|file| !early_project_files.contains(file) && !global_declaration_roots.contains(file));
+                global_declaration_roots.extend(of_packages);
+                if disk.has_changed_since_observed() {
+                    *disk.abandoned.lock() = Some(host::Abandoned { is_outdated: true, deferred_sources: Some(sources), ..Default::default() });
+                    return None;
+                }
+                let cwd = host::from_native(request.cwd);
+                let code: Vec<Vec<u8>> = sources.code.iter().map(|path| host::from_argument(&cwd, path)).collect();
+                let paths: Vec<Vec<u8>> = sources.paths.iter().map(|path| disk.as_written(&host::from_argument(&cwd, path))).collect();
+                let key_of = |path: &[u8]| to_path(path, is_case_sensitive).into_owned();
+                let with_own_settings: FxHashSet<Vec<u8>> = (sources.script_kinds.iter().map(|it| &it.0))
+                    .chain(sources.file_jsx_options.iter().map(|it| &it.0))
+                    .chain(sources.file_class_options.iter().map(|it| &it.0))
+                    .chain(sources.code_kinds.keys())
+                    .map(|path| key_of(&host::from_argument(&cwd, path)))
+                    .collect();
+                let (mut conflicting_paths, mut reloaded_paths): (Vec<Vec<u8>>, Vec<Vec<u8>>) = Default::default();
+                for (path, text) in sources.already_read.iter().filter(|(path, _)| !disk.is_deferred_path(path)) {
+                    match has_loaded_text(path, text) {
+                        None => {}
+                        Some(true) if !with_own_settings.contains(&key_of(path)) => reloaded_paths.push(path.clone()),
+                        Some(_) => conflicting_paths.push(path.clone()),
+                    }
+                }
+                conflicting_paths.shared_sort_unstable();
+                reloaded_paths.shared_sort_unstable();
+                if !conflicting_paths.is_empty() {
+                    *disk.abandoned.lock() = Some(host::Abandoned { conflicting_paths, deferred_sources: Some(sources), ..Default::default() });
+                    return None;
+                }
+                let _ = deferred_request.set(DeferredRequest { paths: sources.paths.clone(), code: sources.code.clone() });
+                disk.install_deferred_sources(&cwd, sources);
+                let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
+                let declaring_globals = global_declaration_roots.iter().filter(|path| !disk.has_already_read(path));
+                let of_project = code.iter().filter(|path| listed_project_files.contains_key(&key_of(path)));
+                let listed_roots = declaring_globals.chain(of_project).map(|path| {
+                    let precedes_root = match listed_project_files.get(&key_of(path)) {
+                        Some(&listed_at) => listing_positions_of_roots.partition_point(|&root| root < listed_at),
+                        None => listing_positions_of_roots.len(),
+                    };
+                    DeferredProgramRoot { path: path.clone(), precedes_root }
+                });
+                let named_roots = paths.iter().map(|path| DeferredProgramRoot { path: path.clone(), precedes_root: usize::MAX });
+                let program_roots: Vec<DeferredProgramRoot> = listed_roots.chain(named_roots).filter(|root| seen.insert(key_of(&root.path))).collect();
+                let code_roots: Vec<Vec<u8>> = code.into_iter().filter(|path| seen.insert(key_of(path))).collect();
+                Some(DeferredRoots { program_roots, code_roots, reloaded_paths })
+            };
+            let wait_for_deferred_roots: WaitForDeferredRoots<'_> = &wait_for_deferred_roots;
+        let cwd = host::from_native(request.cwd);
+        let nearest_to: RefCell<FxHashMap<Vec<u8>, Option<Vec<u8>>>> = Default::default();
+        let options_of: RefCell<Vec<(Option<Vec<u8>>, GoverningOptions)>> = Default::default();
+        let governing_options = |file_name: &[u8]| -> Option<GoverningOptions> {
+            let directory = dirname::<Posix>(file_name);
+            let known = nearest_to.borrow().get(directory).cloned();
+            let nearest = known.unwrap_or_else(|| {
+                let nearest = config::find_config(disk, directory).or_else(|| config::find_config(disk, &cwd));
+                nearest_to.borrow_mut().insert(directory.to_vec(), nearest.clone());
+                nearest
+            });
+            if !has_references && nearest.as_deref() == of.config {
+                return None;
+            }
+            let owner = projects.lock().governing_config(disk, request, nearest, file_name);
+            if owner.as_deref() == of.config {
+                return None;
+            }
+            if let Some(known) = options_of.borrow().iter().find(|known| known.0 == owner) {
+                return Some(known.1);
+            }
+            let found = match &owner {
+                Some(config) => GoverningOptions::of(&projects.lock().load(disk, request, config)?.options),
+                None => GoverningOptions::of(&project_without_config(disk, request, &cwd, &[file_name.to_vec()]).options),
+            };
+            options_of.borrow_mut().push((owner, found));
+            Some(found)
+        };
+        let governing_options: &dyn Fn(&[u8]) -> Option<GoverningOptions> = &governing_options;
+        let governs_each_file = request.is_one_program && request.project.is_none() && tristate(request.compiler_options, b"ignoreConfig") != Some(true);
+            check_named_files(
+                disk,
+                project,
+                request,
+                report,
+                started,
+                named,
+                of.elsewhere,
+                None,
+                of.run,
+                of.place,
+                has_deferred_sources.then_some((wait_for_deferred_roots, &deferred_request)),
+            governs_each_file.then_some(governing_options),
+            )
+        })
+    }
+}
+
+fn find_global_declarations(disk: &host::Disk, others: &[&Vec<u8>], scanned_early: Option<&ScannedFiles>, in_parallel: InParallel<'_>) -> (FxHashSet<Vec<u8>>, Vec<Vec<u8>>) {
+    let declares_globals: Vec<AtomicBool> = others.iter().map(|_| AtomicBool::new(false)).collect();
+    let imported_by: Vec<Guarded<Vec<Vec<u8>>>> = others.iter().map(|_| Guarded::new(Vec::new())).collect();
+    let taken = scanned_early.map(|scanned_early| std::mem::take(&mut *scanned_early.lock()));
+    in_parallel(others.len(), &|at| {
+        if disk.is_load_abandoned() {
+            return;
+        }
+        let imports = |name: &[u8]| imported_by[at].lock().push(name.to_vec());
+        let scanned = taken.as_ref().filter(|_| !disk.has_already_read(others[at])).and_then(|taken| taken.get(others[at]));
+        let scanned = scanned.filter(|scanned| disk.file_timestamps(others[at]) == Some(scanned.times));
+        let may = match scanned {
+            Some(scanned) => {
+                scanned.imports.iter().for_each(|name| imports(name));
+                scanned.may_declare_a_global
+            }
+            None if !fs_queries::is_recording() || is_declaration_file_name(others[at]) || others[at].ends_with(b".json") => may_declare_a_global(disk, others[at], true, true, &imports),
+            None => {
+                let text = fs_queries::without_recording(|| disk.read(others[at]));
+                let (may, found) = scan_result(others[at], text.as_deref(), &imports);
+                fs_queries::record_query(fs_queries::Kind::Scanned, others[at], |hash| found.map_or(0, |found| hash(&found) | 1));
+                may
+            }
+        };
+        declares_globals[at].store(may, Ordering::Relaxed);
+    });
+    if let (Some(scanned_early), Some(taken)) = (scanned_early, taken) {
+        *scanned_early.lock() = taken;
+    }
+    let mut imported: Vec<(Vec<u8>, usize)> = (imported_by.iter().enumerate())
+        .flat_map(|(at, names)| std::mem::take(&mut *names.lock()).into_iter().map(move |name| (name, at)))
+        .collect();
+    imported.shared_sort_unstable();
+    imported.dedup_by(|a, b| a.0 == b.0);
+    let mut places: Vec<(&[u8], &[u8])> = imported.iter().map(|(name, at)| (dirname::<Posix>(others[*at]), package_of_specifier(name))).collect();
+    places.shared_sort_unstable();
+    places.dedup();
+    let mut installed_above: Vec<(&[u8], Vec<Vec<u8>>)> = places.iter().map(|place| (place.0, Vec::new())).collect();
+    installed_above.dedup_by(|a, b| a.0 == b.0);
+    bun_sema::util::for_each_mut(&mut installed_above, in_parallel, &|(directory, installed)| {
+        *installed = ancestors(directory).map(|above| inside(above, b"node_modules")).filter(|packages| disk.is_dir(packages)).collect();
+    });
+    let looked_into = Guarded::new(FxHashMap::default());
+    let mut asked: Vec<((&[u8], &[u8]), Option<Vec<u8>>)> = places.into_iter().map(|place| (place, None)).collect();
+    bun_sema::util::for_each_mut(&mut asked, in_parallel, &|((directory, package), found)| {
+        let directory: &[u8] = directory;
+        let installed = installed_above.binary_search_by(|known| known.0.cmp(directory)).map_or(&[][..], |at| &installed_above[at].1[..]);
+        *found = package_global_declarations(disk, installed, package, &looked_into);
+    });
+    let mut of_packages: Vec<Vec<u8>> = asked.into_iter().filter_map(|(_, found)| found).collect();
+    of_packages.shared_sort_unstable();
+    of_packages.dedup();
+    let sources: FxHashSet<Vec<u8>> = (others.iter().zip(&declares_globals))
+        .filter(|(_, declares)| declares.load(Ordering::Relaxed))
+        .map(|(file, _)| (*file).clone())
+        .collect();
+    (sources, of_packages)
+}
+
+const SCANNING_THREADS: usize = 6;
+
+fn for_each_on_scanning_threads(count: usize, work: &(dyn Fn(usize) + Sync)) {
+    let next = AtomicUsize::new(0);
+    std::thread::scope(|scope| {
+        for _ in 0..SCANNING_THREADS.min(count) {
+            scope.spawn(|| {
+                while let at = next.fetch_add(1, Ordering::Relaxed)
+                    && at < count
+                {
+                    work(at);
+                }
+            });
+        }
+    });
+}
+
+struct DeferredRequest {
+    paths: Vec<Vec<u8>>,
+    code: Vec<Vec<u8>>,
+}
+
+#[derive(Clone, Copy)]
+struct GoverningOptions {
+    check_options: CheckOptions,
+    strictness: Strictness,
+}
+
+#[derive(Clone, Copy, PartialEq, Default)]
+struct Strictness {
+    strict_null_checks: bool,
+    exact_optional_property_types: bool,
+    strict_function_types: bool,
+    strict_bind_call_apply: bool,
+    strict_builtin_iterator_return: bool,
+}
+
+impl Strictness {
+    fn of(options: &Options) -> Strictness {
+        Strictness {
+            strict_null_checks: options.strict_null_checks,
+            exact_optional_property_types: options.exact_optional_property_types,
+            strict_function_types: options.strict_function_types,
+            strict_bind_call_apply: options.strict_bind_call_apply,
+            strict_builtin_iterator_return: options.strict_builtin_iterator_return,
+        }
+    }
+
+    fn or(self, other: Strictness) -> Strictness {
+        Strictness {
+            strict_null_checks: self.strict_null_checks || other.strict_null_checks,
+            exact_optional_property_types: self.exact_optional_property_types || other.exact_optional_property_types,
+            strict_function_types: self.strict_function_types || other.strict_function_types,
+            strict_bind_call_apply: self.strict_bind_call_apply || other.strict_bind_call_apply,
+            strict_builtin_iterator_return: self.strict_builtin_iterator_return || other.strict_builtin_iterator_return,
+        }
+    }
+}
+
+impl GoverningOptions {
+    fn of(options: &Options) -> GoverningOptions {
+        GoverningOptions { check_options: options.for_checking(), strictness: Strictness::of(options) }
     }
 }
 
@@ -3640,6 +3959,8 @@ fn check_with_references(
                 Some(&|| !host.awaited.lock().is_empty()),
                 run,
                 place,
+                None,
+                None,
             )
         };
         let mut checked = match is_one_program {
@@ -3923,7 +4244,7 @@ pub fn check_project(
     started: Instant,
 ) -> Report {
     check_named_files(
-        host, project, request, report, started, None, None, None, None, None,
+        host, project, request, report, started, None, None, None, None, None, None, None,
     )
 }
 
@@ -3952,7 +4273,8 @@ fn lacks_its_packages(host: &dyn Host, config: &[u8]) -> bool {
 }
 
 /// Whether the root file at `path` can add to the globals of its program: it is a declaration file; or a script, which
-/// has neither `import` nor `export`, nor `require` in JavaScript; or it has `declare global` or a `/// <reference`. By
+/// has neither `import` nor `export`, nor `require` in JavaScript; or it has `declare global` or a `/// <reference`. With
+/// `counts_every_import`, also whether it can add to a module of the project: it has `declare module "./name"`. By
 /// its text: one that is kept for nothing costs its parse. A script that has such a word in a comment is not seen, nor
 /// a comment between `declare` and `global`. `imports`: called with each name of a package that it imports for its
 /// effects, which can be to declare globals.
@@ -3975,7 +4297,7 @@ fn may_declare_a_global(
     source_may_declare_global(path, &text, every_file_is_a_module, counts_every_import, imports)
 }
 
-/// `asked::Kind::Scanned`: what `source_may_declare_global` finds in a file that the bundle does not hold, and all of it in bytes. `None`:
+/// `fs_queries::Kind::Scanned`: what `source_may_declare_global` finds in a file that the bundle does not hold, and all of it in bytes. `None`:
 /// there is no such file.
 pub(crate) fn scan_result(path: &[u8], text: Option<&[u8]>, imports: &dyn Fn(&[u8])) -> (bool, Option<Vec<u8>>) {
     let Some(text) = text else { return (false, None) };
@@ -4003,6 +4325,15 @@ fn source_may_declare_global(path: &[u8], text: &[u8], every_file_is_a_module: b
             return true;
         }
         from += found + b"global".len();
+    }
+    let mut from = if counts_every_import { 0 } else { text.len() };
+    while let Some(found) = strings::index_of(&text[from..], b"module") {
+        let before = text[..from + found].trim_ascii_end();
+        let is_declared = before.len() < from + found && before.ends_with(b"declare");
+        from += found + b"module".len();
+        if is_declared && let [b'"' | b'\'', name @ ..] = text[from..].trim_ascii_start() && is_relative(name) {
+            return true;
+        }
     }
     let (mut from, mut has_import) = (0, false);
     while let Some(found) = strings::index_of(&text[from..], b"import") {
@@ -4084,6 +4415,8 @@ fn check_named_files(
     is_outdated: Option<&dyn Fn() -> bool>,
     run: Option<&Run<'_>>,
     in_room: Option<&Place<'_>>,
+    deferred: Option<(WaitForDeferredRoots<'_>, &OnceLock<DeferredRequest>)>,
+    governing_options: Option<&dyn Fn(&[u8]) -> Option<GoverningOptions>>,
 ) -> Report {
     // A small project of a build is checked by the one thread that builds it, and has the plan
     // of one thread.
@@ -4106,6 +4439,7 @@ fn check_named_files(
     if request.plan_options.writes_declaration_files {
         project.options.emits_declarations = true;
         project.options.writes_declaration_files = true;
+        project.options.writes_declaration_maps = false;
     }
     let config_path = project.config_path.clone();
     let last = RefCell::new(None);
@@ -4210,7 +4544,6 @@ fn check_named_files(
     project.options.uses_engine_arithmetic = request.is_one_program;
     project.options.uses_ecmascript_bindings = request.is_one_program;
     project.options.undefined_properties_have_no_declaration = request.is_one_program;
-    project.options.build_constants = host.build_constants().filter(|_| request.is_one_program);
     project.options.early_parse_only = request.plan_options.early_parse_only;
     let before = host.times();
     host.spent(Phase::Discover, started.elapsed());
@@ -4228,10 +4561,58 @@ fn check_named_files(
         project.options,
         &project.files,
         &files_are_found,
+        deferred.map(|it| it.0),
     ) else {
         return report;
     };
-    files.fold_constants(&session, &|count, work| host.parallel(count, work));
+    let deferred_request = deferred.and_then(|it| it.1.get()).filter(|it| !it.paths.is_empty() || !it.code.is_empty());
+    let all_paths: Vec<Vec<u8>> = deferred_request.map_or_else(Vec::new, |more| [request.paths, &more.paths[..]].concat());
+    let all_code: Vec<Vec<u8>> = deferred_request.map_or_else(Vec::new, |more| [request.code, &more.code[..]].concat());
+    let request = &match deferred_request {
+        Some(_) => Request { paths: &all_paths, code: &all_code, ..*request },
+        None => *request,
+    };
+    let all_named: Option<Vec<Vec<u8>>> = deferred_request.zip(named).map(|(more, named)| {
+        let cwd = host::from_native(request.cwd);
+        let more = more.paths.iter().map(|path| to_path(&host::from_argument(&cwd, path), host.is_case_sensitive()).into_owned());
+        let mut all: Vec<Vec<u8>> = named.iter().cloned().chain(more).collect();
+        all.shared_sort_unstable();
+        all
+    });
+    let named = all_named.as_deref().or(named);
+    let mut is_governed_less_strictly = vec![false; files.modules.len()];
+    if let Some(governing_options) = governing_options {
+        let of_program = Strictness::of(files.options);
+        let mut governed: Vec<(FileId, CheckOptions)> = Vec::new();
+        let mut typed: Vec<(usize, Strictness)> = Vec::new();
+        for (index, module) in files.modules.iter().enumerate() {
+            let name = module.file_name();
+            if module.is_lib || module.builtin.is_some() || module.hir.kind == FileKind::Json || host::is_bundled(name) || strings::contains(module.path.text, b"/node_modules/") || strings::contains(module.path.text, PRELUDE_DIRECTORY) {
+                continue;
+            }
+            let own = governing_options(name);
+            governed.extend(own.map(|own| (FileId(index as u32), own.check_options)));
+            if matches!(module.hir.kind, FileKind::Ts | FileKind::Tsx) && !module.hir.is_js {
+                typed.push((index, own.map_or(of_program, |own| own.strictness)));
+            }
+        }
+        files.set_check_options(&governed);
+        let strictest = typed.iter().map(|typed| typed.1).reduce(Strictness::or).unwrap_or(of_program);
+        if strictest != of_program {
+            files.options = session.keep(Options {
+                strict_null_checks: strictest.strict_null_checks,
+                exact_optional_property_types: strictest.exact_optional_property_types,
+                strict_function_types: strictest.strict_function_types,
+                strict_bind_call_apply: strictest.strict_bind_call_apply,
+                strict_builtin_iterator_return: strictest.strict_builtin_iterator_return,
+                ..files.options.clone()
+            });
+        }
+        for (index, strictness) in typed {
+            is_governed_less_strictly[index] = strictness != strictest;
+        }
+    }
+    files.fold_constants(&session, host.build_constants().filter(|_| request.is_one_program), &|count, work| host.parallel(count, work));
     host.loaded();
     if is_outdated.is_some_and(|is_outdated| is_outdated()) {
         return report;
@@ -4358,7 +4739,7 @@ fn check_named_files(
         to_check.retain(|&f| !owned_elsewhere.contains(path(f)));
     }
     if let Some(only) = request.only {
-        to_check.retain(|&f| only.split(|&byte| byte == 0).any(|only| strings::contains(program.files.modules[f.idx()].file_name(), only)));
+        to_check.retain(|&f| strings::split(&only, b"\0").any(|only| strings::contains(program.files.modules[f.idx()].file_name(), only)));
     }
     let mut compiled_untyped: Vec<Diagnostic> = Vec::new();
     if request.is_one_program && !program.has_bailed_out() {
@@ -4374,18 +4755,7 @@ fn check_named_files(
         for file in entry_points.iter().filter_map(|path| program.files.by_path.get(path)) {
             is_left_out[file.idx()] = true;
         }
-        let mut known = FxHashMap::default();
-        let mut projects_of_entry_points = entry_points.iter().map(|path| enclosing_config_dir(host, path, &mut known).to_vec());
-        let own_project = projects_of_entry_points.next().unwrap_or_default();
-        let other_projects: FxHashSet<Vec<u8>> = projects_of_entry_points.filter(|project| *project != own_project).collect();
-        if !other_projects.is_empty() && own_project == dirname::<Posix>(&config_path) {
-            let mut known = FxHashMap::default();
-            to_check.retain(|file| {
-                let module = &modules[file.idx()];
-                let is_program_code = matches!(module.hir.kind, FileKind::Ts | FileKind::Tsx) && module.builtin.is_none() && !strings::contains(module.path.text, b"/.bun-aot-prelude/");
-                !(is_program_code && other_projects.contains(enclosing_config_dir(host, module.file_name(), &mut known)))
-            });
-        }
+        to_check.retain(|file| !is_governed_less_strictly[file.idx()]);
         for file in &to_check {
             is_left_out[file.idx()] = false;
         }
@@ -4455,14 +4825,20 @@ fn check_named_files(
                     let file = FileId(i as u32);
                     let found = program.finish_file(file, checked);
                     let is_restricted_to_fixed_set = modules[i].is_restricted_to_fixed_set();
-                    let mut errors = found.iter().filter(|it| it.category == Category::Error && !is_type_only_diagnostic(it.code) && !(is_restricted_to_fixed_set && is_missing_host_declaration_code(it.code)));
+                    let mut counted: Vec<_> = found.iter().filter(|it| it.category == Category::Error && !is_type_only_diagnostic(it.code) && !(is_restricted_to_fixed_set && is_missing_host_declaration_code(it.code))).collect();
+                    if is_restricted_to_fixed_set && !counted.is_empty() {
+                        let mut checker = program.checker();
+                        checker.begin_stack_budget();
+                        counted.retain(|it| !checker.is_error_about_ambient_declaration(file, it.start, it.end));
+                    }
+                    let mut errors = counted.into_iter();
                     let first = errors.next();
                     if first.is_none() && !is_cut_short {
                         continue;
                     }
                     let (count, (directory, name)) = (1 + errors.count(), invalidation_key(&program.files, &modules[i]));
                     let text = &modules[i].hir.text;
-                    let typed_version = first.and_then(|_| typed_packages::typed_version_that_lays(request.cwd, host::to_native(directory), name, host::to_native(modules[i].path.text), text));
+                    let typed_version = first.and_then(|_| typed_packages::typed_version_providing(request.cwd, host::to_native(directory), name, host::to_native(modules[i].path.text), text));
                     let known = fallen.iter().position(|known| known.0 == directory);
                     if let Some(known) = known {
                         fallen[known].2 += count;
@@ -5071,7 +5447,7 @@ fn check_named_files(
                             bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Check"));
                             let mut searcher = new_checker(Requested::All);
                             searcher.begin_task(step_of_searchers, index as u32, true);
-                            searcher.search_in_parallel(meeting, index, &Share::Rest { index, of: searchers, is_taken: &[] });
+                            searcher.search_in_parallel(meeting, index, &FilePartition::Rest { index, of: searchers, is_taken: &[] });
                             deepest_stack.fetch_max(searcher.deepest_stack(), Ordering::Relaxed);
                             *found[index].lock() = Some(Outcome {
                                 finished: Some(searcher.end_task()),
@@ -5556,7 +5932,7 @@ fn check_named_files(
     report.diagnostics.extend(cannot_read);
     report.diagnostics.extend(compiled_untyped);
     report.files_compiled_untyped = program.files.modules.iter().filter(|module| module.is_forced_untyped.load(Ordering::Relaxed)).count();
-    if request.is_one_program && !report.has_bun_types_installed {
+    if request.is_one_program && (!report.has_bun_types_installed || program.files.is_bun_module_declared_only_by_host()) {
         let mut is_first = true;
         let mut is_missing_bun_members = false;
         report.diagnostics.retain_mut(|reported| {

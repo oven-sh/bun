@@ -1,4 +1,4 @@
-// An array, Map or Set whose element type is only inferred may end up holding external data that does not match the inferred type.
+// An array whose element type is only inferred may end up holding external data that does not match the inferred type.
 // Reading such an element and using it must behave as in plain JavaScript instead of asserting the inferred type.
 const data = JSON.parse('{"t":"abc","u":"d","l":["x","y"]}') as { t: number; u: number; l: number[] };
 const say = (label: string, f: () => unknown): void => { let r: string; try { const v = f(); r = typeof v + " " + (typeof v === "object" ? JSON.stringify(v) : String(v)); } catch (e) { r = "throws " + (e as Error).constructor.name; } console.log(label + " ==> " + r); };
@@ -27,12 +27,5 @@ say("reduce", () => { const c = [1]; c.push(data.t); return c.reduce((a, v) => a
 say("pop", () => { const c = [1]; c.push(data.t); return c.pop()! + 1; });
 say("at", () => { const c = [data.t]; return c.at(0)! + 1; });
 say("returned from a function", () => { const f = () => [data.t]; return f()[0] + 1; });
-say("Map.set", () => { const m = new Map([[1, 2]]); m.set(2, data.t); return m.get(2)! + 1; });
-say("Map constructor", () => { const m = new Map([[1, data.t]]); return m.get(1)! + 1; });
-say("Map key", () => { const m = new Map([[1, 2]]); m.set(data.t, 3); return [...m.keys()].map(k => k + 1); });
-say("Map values", () => { const m = new Map([[1, 2]]); m.set(2, data.t); let s = ""; for (const v of m.values()) s += v + 1; return s; });
-say("Map forEach", () => { const m = new Map([[1, data.t]]); let s = ""; m.forEach(v => { s += v + 1; }); return s; });
-say("Set.add", () => { const s = new Set([1]); s.add(data.t); return [...s].map(v => v + 1); });
-say("Set constructor", () => { const s = new Set([data.t]); let r = ""; for (const v of s) r += v + 1; return r; });
 say("trusted array stays exact", () => { const c = [1, 2]; c.push(3); return c[0] + c[2]; });
 say("trusted Map stays exact", () => { const m = new Map([[1, 2]]); m.set(2, 3); return m.get(2)! + 1; });

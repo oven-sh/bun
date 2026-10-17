@@ -1,0 +1,1 @@
+Known failure: a private field with an inferred type that holds external data of another type throws a TypeError when it is read. has_predicted_prop() does not find the mangled private name.

@@ -1,5 +1,3 @@
-//! The modules of WebAssembly that a program loads from files. The engine compiles them with the program.
-
 use crate::id::StrId;
 use crate::ir::{Def, Op, Program};
 use std::collections::BTreeSet;
@@ -9,11 +7,9 @@ const WASM_MAGIC: &[u8] = b"\0asm\x01\0\0\0";
 const MAX_PARENT_FOLDERS: usize = 4;
 
 fn may_be_wasm_path(text: &[u8]) -> bool {
-    text.len() > b".wasm".len() && text.len() <= 1024 && text.ends_with(b".wasm") && !text.contains(&0)
+    text.len() > b".wasm".len() && text.len() <= 1024 && text.ends_with(b".wasm") && !bun_core::strings::contains_char(text, 0)
 }
 
-/// A text that ends in `.wasm` names a file where there is one by that path from the folder of the module that the text stands in, or
-/// from one of the folders around it. No fact about what the program loads: bytes that are not among these are a module all the same.
 pub(crate) fn add_referenced_files(program: &mut Program) {
     let may_name: Vec<bool> = (0..program.strs.len()).map(|index| may_be_wasm_path(program.strs.get(StrId::new(index)))).collect();
     if !may_name.contains(&true) {

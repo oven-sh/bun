@@ -4,6 +4,7 @@ use super::int32_fields::CodeOwner;
 use super::builtins_generated::{Arity, BUILTIN_ENTRIES, BuiltinEntry, BuiltinKind, Pattern, uses};
 use super::trust::{ALIASES, TYPED_ARRAYS};
 use super::type_caches::is_published;
+use super::type_flags::{IS_UNTYPED_FOR_OBJECTS, MAY_HOLD_OBJECTS, UNTYPED_FOR_OBJECTS_KNOWN};
 use crate::atom::Atom;
 use crate::bind::{Decl, Parent};
 use crate::check::{Checker, ContextFlags};
@@ -15,11 +16,9 @@ use std::hash::Hash;
 use std::rc::Rc;
 use std::sync::OnceLock;
 
-/// A type parameter, by its declaration.
 pub(super) type TypeParameter = (FileId, TypeParamId);
 
 pub(crate) struct Escapes<T = TypeId> {
-    /// What a built-in may freeze or give another prototype: see `mutations.rs`. `None`: nothing of it has been noted. It is large, and this is in the notes of every function.
     pub(super) mutations: Option<Box<Mutations<T>>>,
 }
 
@@ -32,67 +31,57 @@ impl<T> Default for Escapes<T> {
 impl<T: Copy + Eq + Hash> Escapes<T> {
     pub(super) fn with_mutations<R>(&self, read: impl FnOnce(&Mutations<T>) -> R) -> R {
         match &self.mutations {
-            Some(noted) => read(noted),
+            Some(recorded) => read(recorded),
             None => read(&Mutations::default()),
         }
     }
 
     pub(super) fn absorb(&mut self, other: Escapes<T>) {
-        if let Some(noted) = other.mutations {
-            self.mutations.get_or_insert_with(Default::default).absorb(*noted);
+        if let Some(recorded) = other.mutations {
+            self.mutations.get_or_insert_with(Default::default).absorb(*recorded);
         }
     }
 
     pub(super) fn renamed<U: Copy + Eq + Hash>(self, rename: &mut impl FnMut(T) -> Option<U>) -> Escapes<U> {
-        Escapes { mutations: self.mutations.map(|noted| Box::new(noted.renamed(rename))) }
+        Escapes { mutations: self.mutations.map(|recorded| Box::new(recorded.renamed(rename))) }
     }
 }
 
-/// Where the value of an expression goes.
 #[derive(Copy, Clone)]
 enum Destination {
-    /// It is used up where it stands: tested, converted, called, read from.
     Nowhere,
-    /// It is, or is among, what the expression around it yields, whose type has the type of this one in it.
     WithParent,
-    /// A place of this type.
     Typed(TypeId),
     Untyped,
 }
 
-/// What is known of the function that a call calls.
 #[derive(Copy, Clone)]
 enum CalleeKind {
-    /// A function of the program, or whatever is in a place of a function type: it goes by the signature.
     Typed,
-    /// The engine implements it: the interface of `lib.*.d.ts` that declares it, `NONE` for a global, and the name.
     BuiltIn(Atom, Atom),
     Unknown,
 }
 
-/// What has been noted for the file that is gone through. What is noted goes with the module, and a module that is not in the program is
-/// dropped: nothing is left out for a file because another has noted it.
 #[derive(Default)]
 pub(super) struct State {
-    /// The pairs of types between which a flow has been noted.
     flows: FxHashSet<(TypeId, TypeId)>,
     receiving_any: FxHashSet<TypeId>,
     nested_parameter_indices: Vec<u32>,
-    /// The same for `record_type_parameter_inflow`.
     pub(super) entered: FxHashSet<(TypeId, TypeId)>,
     pub(super) visited_type_inflows: FxHashSet<(TypeId, TypeId)>,
     pub(super) visited_untyped_slots: FxHashSet<(TypeId, Option<TypeId>)>,
     pub(super) queries: FxHashMap<EscapeQuery, Place>,
-    /// The instantiations and the signatures whose type arguments have been noted.
     bound: FxHashSet<TypeId>,
     bound_at_calls: FxHashSet<SigId>,
-    /// By what is called, and by call: it is asked for each argument.
     callees: FxHashMap<ExprId, CalleeKind>,
     uses: FxHashMap<CallId, Option<(u16, Rc<[u16]>)>>,
     untyped_callbacks: FxHashMap<CallId, bool>,
     literal_destinations: FxHashMap<ExprId, Destination>,
     built_in_operands: FxHashSet<ExprId>,
     query_scratch: Option<Box<State>>,
+    wide_unions_with_instances: FxHashMap<TypeId, bool>,
+    visited_file: Option<FileId>,
+    literal_contexts: FxHashMap<ExprId, Option<TypeId>>,
 }
 
 const MAX_REUSED_TABLE_CAPACITY: usize = 512;
@@ -123,12 +112,12 @@ impl State {
             self.uses,
             self.untyped_callbacks,
             self.literal_destinations,
-            self.built_in_operands
+            self.built_in_operands,
+            self.literal_contexts
         );
     }
 }
 
-/// The entries of `BUILTIN_ENTRIES` for the holder and the name, of whatever kind: those of one built-in are adjacent.
 fn entries_of(holder: &str, name: &[u8]) -> &'static [BuiltinEntry] {
     static INDEX: OnceLock<FxHashMap<(&'static str, &'static [u8]), (usize, usize)>> = OnceLock::new();
     let index = INDEX.get_or_init(|| {
@@ -141,34 +130,35 @@ fn entries_of(holder: &str, name: &[u8]) -> &'static [BuiltinEntry] {
     index.get(&(holder, name)).map_or(&[], |&(from, to)| &BUILTIN_ENTRIES[from..to])
 }
 
-/// The holder as `BUILTIN_ENTRIES` spells it.
 fn canonical_holder_name(text: &[u8]) -> Option<&'static str> {
     static HOLDERS: OnceLock<FxHashMap<&'static [u8], &'static str>> = OnceLock::new();
     HOLDERS.get_or_init(|| BUILTIN_ENTRIES.iter().map(|entry| (entry.holder.as_bytes(), entry.holder)).collect()).get(text).copied()
 }
 
-/// As many flows may carry a flow within them.
 const MAX_NESTED_FLOWS: u32 = 3;
 
-/// As many pairs of parts of two unions are looked at one by one.
 const MAX_PART_PAIRS: usize = 64;
 
+const MAX_PRIMITIVE_PARTS: usize = 16;
+
+const MAX_PARTS_SCANNED_PER_USE: usize = 8;
+
 impl<'p, 's> Checker<'p, 's> {
-    /// A value of type `source` enters a place of type `target`.
     fn record_flow(&mut self, source: TypeId, target: TypeId) {
         self.record_flow_at_depth(source, target, 0);
     }
 
-    /// `depth`: how many flows carry this one within them.
     fn record_flow_at_depth(&mut self, source: TypeId, target: TypeId, depth: u32) {
         self.record_nested_flow(source, target, depth, false);
     }
 
     fn record_nested_flow(&mut self, source: TypeId, target: TypeId, depth: u32, is_parameter_without_second_body: bool) {
+        if self.holds_only_primitives(target) || self.holds_only_primitives(source) {
+            return;
+        }
         if is_parameter_without_second_body && !target.is_never() && self.is_any_like(source) && self.aot.escape_closure.receiving_any.insert(target) {
             self.record_any_inflow_to_records(target);
         }
-        // There is no value of type `never`: the elements of `[]`.
         if source == target || source.is_never() || target.is_never() || !self.aot.escape_closure.flows.insert((source, target)) {
             return;
         }
@@ -186,11 +176,11 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn nested_flows(&mut self, source: TypeId, target: TypeId) -> Rc<[(TypeId, TypeId)]> {
-        let is_result_cacheable = !self.results_are_provisional();
+        let is_result_cacheable = !self.results_are_provisional() && !self.is_type_of_one_expression(source) && !self.is_type_of_one_expression(target);
         if is_result_cacheable && let Some(known) = self.aot.flows.carried.get(&(source, target)) {
             return Rc::clone(known);
         }
-        let caches = self.type_caches().filter(|_| is_published(source) && is_published(target));
+        let caches = self.type_caches().filter(|_| is_result_cacheable && is_published(source) && is_published(target));
         if let Some(known) = caches.and_then(|caches| caches.nested_flows.get_as((source, target), |known| Rc::<[(TypeId, TypeId)]>::from(&known[..]))) {
             self.aot.flows.carried.insert((source, target), Rc::clone(&known));
             return known;
@@ -214,18 +204,15 @@ impl<'p, 's> Checker<'p, 's> {
         carried
     }
 
-    /// `any`, `unknown`, `object`, `{}`, `Object`, `Function`, `void`: whoever has a value of it as that may do anything to it.
     pub(super) fn is_untyped_for_objects(&mut self, ty: TypeId) -> bool {
         if self.is_uninformative(ty) {
             return true;
         }
+        if let Some(row) = self.translation_type_flags(ty, UNTYPED_FOR_OBJECTS_KNOWN) {
+            return row & IS_UNTYPED_FOR_OBJECTS != 0;
+        }
         let is_result_cacheable = !self.results_are_provisional();
         if is_result_cacheable && let Some(&known) = self.aot.flows.untyped_for_objects.get(&ty) {
-            return known;
-        }
-        let caches = self.type_caches().filter(|_| is_published(ty));
-        if let Some(known) = caches.and_then(|caches| caches.untyped_for_objects.get_as(ty, |&known| known)) {
-            self.aot.flows.untyped_for_objects.insert(ty, known);
             return known;
         }
         let careful_before = (self.stack_half_used_count(), self.aot.flows.unknown_count);
@@ -233,9 +220,10 @@ impl<'p, 's> Checker<'p, 's> {
             c.parts(ty).iter().any(|&part| c.is_uninformative(part) && !part.is_never() || part == TypeId::OBJECT || !c.is_instantiable(part) && c.accepts_primitives(part) || c.is_nested_too_deeply(part) || c.is_global_function_type(part))
         });
         if is_result_cacheable && careful_before == (self.stack_half_used_count(), self.aot.flows.unknown_count) {
-            self.aot.flows.untyped_for_objects.insert(ty, found);
-            if let Some(caches) = caches.filter(|_| is_cacheable && !self.has_order_dependent_results()) {
-                caches.untyped_for_objects.insert(ty, found);
+            if is_cacheable && self.type_caches().is_some() && !self.has_order_dependent_results() {
+                self.cache_type_flag(ty, UNTYPED_FOR_OBJECTS_KNOWN, IS_UNTYPED_FOR_OBJECTS, found);
+            } else {
+                self.aot.flows.untyped_for_objects.insert(ty, found);
             }
         }
         found
@@ -252,10 +240,8 @@ impl<'p, 's> Checker<'p, 's> {
         known.contains(&ty)
     }
 
-    /// The flows that a flow between two types that both say something carries within it.
     fn add_nested_flows(&mut self, source: TypeId, target: TypeId, carried: &mut Vec<(TypeId, TypeId)>) {
         let to_parts: Vec<TypeId> = self.parts(target).iter().copied().filter(|&part| !self.has_primitive_flag(part)).collect();
-        // A part that both have stays in a place of its own type: what is left of a union that has been narrowed.
         let in_target: FxHashSet<TypeId> = to_parts.iter().copied().collect();
         let from_parts: Vec<TypeId> = self.parts(source).iter().copied().filter(|part| !self.has_primitive_flag(*part) && !in_target.contains(part)).collect();
         if from_parts.len() * to_parts.len() <= MAX_PART_PAIRS {
@@ -283,7 +269,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `from`, `to`: neither is a union.
     fn add_nested_flows_between(&mut self, from: TypeId, to: TypeId, carried: &mut Vec<(TypeId, TypeId)>) {
         if let (TypeData::Ref { target: declared, .. }, TypeData::Ref { target: as_declared, .. }) = (self.data(from), self.data(to))
             && declared == as_declared
@@ -316,15 +301,13 @@ impl<'p, 's> Checker<'p, 's> {
                             carried.push((argument, parameter));
                         }
                     }
-                    let (yielded, produced_as) = (self.sig_return(declared_sig), self.sig_return(called_as));
-                    carried.push((yielded, produced_as));
+                    let (produced, produced_as) = (self.sig_return(declared_sig), self.sig_return(called_as));
+                    carried.push((produced, produced_as));
                 }
             }
         }
     }
 
-    /// An object of type `from` is looked at as `to` says. A function in a member of it is read as the one type and stored as the other. What
-    /// else the members hold is seen to by the subtype sets.
     fn add_function_member_flows(&mut self, from: TypeId, to: TypeId, carried: &mut Vec<(TypeId, TypeId)>) {
         if !self.declares_properties(from) || !self.declares_properties(to) {
             return;
@@ -335,7 +318,6 @@ impl<'p, 's> Checker<'p, 's> {
         let (Some(of_from), Some(of_to)) = (self.members(from), self.members(to)) else { return };
         for as_prop in of_to.shape().props.iter() {
             let Some(prop) = of_from.resolved.prop(as_prop.name) else { continue };
-            // One declaration, as where the one type extends the other: one type.
             if let (&PropSource::Symbol(declared), &PropSource::Symbol(as_declared)) = (&prop.source, &as_prop.source)
                 && declared == as_declared
                 && of_from.mapper == of_to.mapper
@@ -350,7 +332,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Whether a declaration file that is not of the language declares the type: a package, the host.
     fn is_declared_by_package(&self, ty: TypeId) -> bool {
         let declared_in = match *self.data(ty) {
             TypeData::Ref { target, .. } => target.file,
@@ -360,7 +341,6 @@ impl<'p, 's> Checker<'p, 's> {
         self.hir(declared_in).kind == FileKind::Declaration && !self.files.module(declared_in).is_lib
     }
 
-    /// The type arguments of the instantiations in the type are put in for the type parameters of what they instantiate.
     fn record_type_arguments_in(&mut self, ty: TypeId) {
         let parts: Vec<TypeId> = self.parts(ty).to_vec();
         for part in parts {
@@ -376,15 +356,11 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    // ───────────────────────────── the expressions of a file ─────────────────────────────
-
-    /// Takes note of where the value of every expression of the file goes.
     pub fn record_escapes_in(&mut self, file: FileId) {
         let hir = self.hir(file);
         if hir.kind == FileKind::Declaration {
             return;
         }
-        // Host code, to whatever is found out about the types of the program.
         if self.files.module(file).is_opaque() {
             return;
         }
@@ -475,124 +451,151 @@ impl<'p, 's> Checker<'p, 's> {
 
     pub fn record_escapes_of(&mut self, file: FileId, expressions: &[ExprId]) {
         self.aot.escape_closure.reset();
+        self.aot.escape_closure.visited_file = Some(file);
         for &e in expressions {
             self.record_escape_of(file, e);
         }
+        self.aot.escape_closure.visited_file = None;
+    }
+
+    pub(in crate::check) fn apparent_type_of_literal_context(&mut self, file: FileId, literal: ExprId, context_flags: ContextFlags) -> Option<TypeId> {
+        if self.aot.escape_closure.visited_file != Some(file) || !context_flags.is_empty() || !self.is_top_level_query() || !self.inference_contexts.is_empty() {
+            return self.apparent_type_of_contextual_type(file, literal, context_flags);
+        }
+        if let Some(&known) = self.aot.escape_closure.literal_contexts.get(&literal) {
+            return known;
+        }
+        let (found, is_cacheable) = self.compute_cacheable(|c| c.apparent_type_of_contextual_type(file, literal, context_flags));
+        if is_cacheable {
+            self.aot.escape_closure.literal_contexts.insert(literal, found);
+        }
+        found
     }
 
     fn record_escape_of(&mut self, file: FileId, e: ExprId) {
-        let bound = self.bound(file);
+        let (hir, bound) = (self.hir(file), self.bound(file));
         let parent = bound.expr_parent[e.idx()];
         if parent == Parent::None || bound.is_in_type_query(e) {
             return;
         }
-        let stored_to = match self.hir(file)[e].kind {
-            ExprKind::Assign { target, .. } => Some(target),
-            ExprKind::Unary { op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec, operand } => Some(operand),
-            _ => None,
-        };
-        if let Some(target) = stored_to
-            && let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } = self.hir(file)[target].kind
-        {
-            self.record_dictionaries_stored_through(file, obj);
+        let kind = hir[e].kind;
+        match kind {
+            ExprKind::Assign { target: stored_to, .. } | ExprKind::Unary { op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec, operand: stored_to } => {
+                if let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } = hir[stored_to].kind {
+                    self.record_dictionaries_stored_through(file, obj);
+                }
+                self.record_mutation_by(file, e);
+            }
+            ExprKind::Unary { .. } => self.record_mutation_by(file, e),
+            ExprKind::Call(_) => {
+                self.record_mutation_by(file, e);
+                self.record_construction_with_other_new_target(file, e);
+            }
+            ExprKind::Dot { .. } => self.record_method_as_value(file, e, parent),
+            ExprKind::Binary { op: BinOp::Instanceof, .. } => self.record_instanceof_operands(file, e),
+            _ => {}
         }
-        self.record_mutation_by(file, e);
-        self.record_method_as_value(file, e, parent);
-        self.record_instanceof_operands(file, e);
-        self.record_construction_with_other_new_target(file, e);
         if self.leaks_prototype(file, e, parent) {
             let shown = self.apparent_type_of(file, e, 0);
             self.record_escaping_types(shown, None);
         }
-        let entered = if matches!(self.hir(file)[e].kind, ExprKind::Object(_)) { self.literal_destination(file, e, parent) } else { self.destination_of(file, e, parent) };
-        if let ExprKind::Spread(operand) = self.hir(file)[e].kind
+        let entered = if matches!(kind, ExprKind::Object(_)) { self.literal_destination(file, e, parent) } else { self.destination_of(file, e, parent) };
+        if let ExprKind::Spread(operand) = kind
             && let Parent::Expr(around) = parent
-            && let ExprKind::Call(call) | ExprKind::New(call) = self.hir(file)[around].kind
+            && let ExprKind::Call(call) | ExprKind::New(call) = hir[around].kind
         {
             let spread = self.type_of_expr(file, operand);
             if self.is_untyped(spread)
                 && let Some(signature) = self.resolved_signature(file, around).sig
             {
-                let index = self.hir(file).ids(self.hir(file)[call].args).position(|argument| argument == e).unwrap_or(0);
+                let index = hir.ids(hir[call].args).position(|argument| argument == e).unwrap_or(0);
                 let parameters: Vec<TypeId> = self.sig_params(signature).iter().map(|parameter| parameter.ty).collect();
-                let pos = self.hir(file)[e].pos;
-                self.set_current_site(file, pos);
+                self.set_current_site(file, hir[e].pos);
                 for &parameter in parameters.iter().skip(index.min(parameters.len().saturating_sub(1))) {
                     self.record_untyped_inflow_to_classes(parameter);
                 }
             }
         }
-        if !matches!(entered, Destination::Nowhere) {
-            let held = self.type_of_expr(file, e);
-            let pos = self.hir(file)[e].pos;
-            self.set_current_site(file, pos);
-            if let Destination::Typed(target) = entered
-                && self.is_untyped(held)
-            {
-                let mut source = e;
-                while let ExprKind::As { expr: inner, .. } | ExprKind::NonNull(inner) | ExprKind::Satisfies { expr: inner, .. } = self.hir(file)[source].kind {
-                    source = inner;
-                }
-                let written = self.type_of_expr(file, source);
-                if self.is_untyped(written) {
-                    self.note_escape_query_once(EscapeQuery::UntypedIntoPlace(target));
-                }
-            }
-            if matches!(self.hir(file)[e].kind, ExprKind::Fn(_) | ExprKind::Ident(_) | ExprKind::Dot { .. })
-                && matches!(parent, Parent::Expr(around) if matches!(self.hir(file)[around].kind, ExprKind::Call(_) | ExprKind::New(_)))
-            {
-                self.note_escape_query_once(EscapeQuery::ThroughGuardsOf(held));
-            }
+        if matches!(entered, Destination::Nowhere) {
+            return;
         }
-        match entered {
-            Destination::Nowhere => {}
-            Destination::Typed(target) => self.record_built_in_as_value(file, e, Some(target)),
-            Destination::Untyped => self.record_built_in_as_value(file, e, None),
-            // A variable, a property, a function without an annotation has the type of what it is given.
-            Destination::WithParent => {
-                let around = if let Parent::Expr(around) = parent { around } else { e };
-                let target = self.type_of_expr(file, around);
-                self.record_built_in_as_value(file, e, Some(target));
-            }
-        }
-        if match entered {
-            Destination::Untyped => !self.aot.escape_closure.built_in_operands.contains(&e) && !self.is_passed_to_read_only_built_in(file, e, parent),
-            Destination::Typed(target) => self.is_untyped_for_objects(target),
-            Destination::Nowhere | Destination::WithParent => false,
-        } {
-            self.record_dictionaries_stored_through(file, e);
-        }
-        if let Parent::Prop(prop) = parent
-            && !matches!(entered, Destination::Nowhere)
+        let own = self.type_of_expr(file, e);
+        self.set_current_site(file, hir[e].pos);
+        if let Destination::Typed(target) = entered
+            && self.is_untyped(own)
         {
-            let held = self.type_of_expr(file, e);
+            let mut source = e;
+            while let ExprKind::As { expr: inner, .. } | ExprKind::NonNull(inner) | ExprKind::Satisfies { expr: inner, .. } = hir[source].kind {
+                source = inner;
+            }
+            let written = self.type_of_expr(file, source);
+            if self.is_untyped(written) {
+                self.note_escape_query_once(EscapeQuery::UntypedIntoPlace(target));
+            }
+        }
+        let is_primitive = self.holds_only_primitives(own);
+        if !is_primitive {
+            if matches!(kind, ExprKind::Fn(_) | ExprKind::Ident(_) | ExprKind::Dot { .. })
+                && matches!(parent, Parent::Expr(around) if matches!(hir[around].kind, ExprKind::Call(_) | ExprKind::New(_)))
+            {
+                if self.may_have_type_predicate(own) {
+                    self.note_escape_query_once(EscapeQuery::ThroughGuardsOf(own));
+                }
+            }
+            match entered {
+                Destination::Nowhere => {}
+                Destination::Typed(target) => self.record_built_in_as_value(file, e, Some(target)),
+                Destination::Untyped => self.record_built_in_as_value(file, e, None),
+                Destination::WithParent => {
+                    let around = if let Parent::Expr(around) = parent { around } else { e };
+                    let target = self.type_of_expr(file, around);
+                    self.record_built_in_as_value(file, e, Some(target));
+                }
+            }
+            if match entered {
+                Destination::Untyped => !self.aot.escape_closure.built_in_operands.contains(&e) && !self.is_passed_to_read_only_built_in(file, e, parent),
+                Destination::Typed(target) => self.is_untyped_for_objects(target),
+                Destination::Nowhere | Destination::WithParent => false,
+            } {
+                self.record_dictionaries_stored_through(file, e);
+            }
+        }
+        if let Parent::Prop(prop) = parent {
             let mut literal = bound.prop_owner[prop.idx()];
             for _ in 0..8 {
                 let of_literal = self.type_of_expr(file, literal);
                 if self.is_uninformative(of_literal) {
-                    self.record_flow_into_untyped_slot(held, None);
+                    self.record_flow_into_untyped_slot(own, None);
                     break;
                 }
                 let around = bound.expr_parent[literal.idx()];
                 match self.literal_destination(file, literal, around) {
-                    Destination::Untyped => self.record_flow_into_untyped_slot(held, None),
-                    Destination::Typed(target) => self.record_flow_into_untyped_slot(held, Some(target)),
+                    Destination::Untyped => self.record_flow_into_untyped_slot(own, None),
+                    Destination::Typed(target) => self.record_flow_into_untyped_slot(own, Some(target)),
                     Destination::Nowhere | Destination::WithParent => {}
                 }
                 let Parent::Prop(above) = around else { break };
                 literal = bound.prop_owner[above.idx()];
             }
         }
-        if matches!(entered, Destination::Nowhere | Destination::WithParent) {
+        if matches!(entered, Destination::WithParent) {
             return;
         }
-        let own = self.type_of_expr(file, e);
+        if is_primitive {
+            if let Destination::Typed(target) = entered {
+                if self.has_instance_or_type_parameter_part(target) && self.is_predicted(file, e) {
+                    self.record_type_accepts_untyped(target, true);
+                }
+                self.note_escape_query_once(EscapeQuery::Entry(TypeId::STRING, Some(target)));
+            }
+            return;
+        }
         self.record_flow_into_untyped_slot(own, if let Destination::Typed(target) = entered { Some(target) } else { None });
         let is_inherited = matches!(parent, Parent::Expr(around) if matches!(self.hir(file)[around].kind, ExprKind::Call(_) | ExprKind::New(_) | ExprKind::TaggedTemplate(_) | ExprKind::Dot { .. } | ExprKind::Index { .. }));
         if is_inherited && matches!(entered, Destination::Untyped) && !self.is_this_in_own_class_method(file, e, parent) {
             let shown = self.apparent_type_of(file, e, 0);
             let is_tested_on_entry = matches!(self.hir(file)[e].kind, ExprKind::Fn(func) if self.has_untyped_clone(file, func));
-            self.note_escape_query_once(EscapeQuery::HandedOver(shown, is_tested_on_entry));
+            self.note_escape_query_once(EscapeQuery::EscapingValues(shown, is_tested_on_entry));
         }
         if let Destination::Typed(target) = entered
             && self.is_uninformative(own)
@@ -603,12 +606,38 @@ impl<'p, 's> Checker<'p, 's> {
         }
         if let Destination::Typed(target) = entered
             && !self.is_uninformative(own)
-            && self.parts(target).iter().any(|&part| self.is_instance_type(part) || matches!(*self.data(part), TypeData::TypeParam(..)))
+            && self.has_instance_or_type_parameter_part(target)
             && self.is_predicted(file, e)
         {
             self.record_type_accepts_untyped(target, true);
         }
-        self.note_escape_query_once(EscapeQuery::Entry(own, if let Destination::Typed(target) = entered { Some(target) } else { None }));
+        self.note_escape_query_once(match entered {
+            Destination::Typed(target) if target == own => EscapeQuery::Entry(TypeId::STRING, Some(target)),
+            Destination::Typed(target) => EscapeQuery::Entry(own, Some(target)),
+            _ => EscapeQuery::Entry(own, None),
+        });
+    }
+
+    pub(super) fn holds_only_primitives(&self, ty: TypeId) -> bool {
+        if self.row(ty) & MAY_HOLD_OBJECTS != 0 || self.is_uninformative(ty) {
+            return false;
+        }
+        let parts = self.parts(ty);
+        parts.len() <= MAX_PRIMITIVE_PARTS && parts.iter().all(|&part| self.has_primitive_flag(part))
+    }
+
+    fn has_instance_or_type_parameter_part(&mut self, ty: TypeId) -> bool {
+        let parts = self.parts(ty);
+        if parts.len() > MAX_PARTS_SCANNED_PER_USE
+            && let Some(&known) = self.aot.escape_closure.wide_unions_with_instances.get(&ty)
+        {
+            return known;
+        }
+        let found = parts.iter().any(|&part| self.is_instance_type(part) || matches!(*self.data(part), TypeData::TypeParam(..)));
+        if parts.len() > MAX_PARTS_SCANNED_PER_USE {
+            self.aot.escape_closure.wide_unions_with_instances.insert(ty, found);
+        }
+        found
     }
 
     pub(super) fn walk_entry(&mut self, own: TypeId, target: Option<TypeId>) {
@@ -625,7 +654,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.aot.escape_closure.query_scratch = Some(scratch);
     }
 
-    pub(super) fn walk_what_is_handed_over(&mut self, shown: TypeId, is_tested_on_entry: bool) {
+    pub(super) fn walk_escaping_values(&mut self, shown: TypeId, is_tested_on_entry: bool) {
         self.record_escaping_types(shown, None);
         self.record_function_parameter_types(shown, is_tested_on_entry);
     }
@@ -640,8 +669,8 @@ impl<'p, 's> Checker<'p, 's> {
         let class = self.type_of_expr(file, right);
         let signatures: Vec<SigId> = self.signatures(class, true).iter().copied().collect();
         for signature in signatures {
-            let made = self.sig_return(signature);
-            self.record_type_accepts_untyped(made, true);
+            let created = self.sig_return(signature);
+            self.record_type_accepts_untyped(created, true);
         }
     }
 
@@ -660,43 +689,51 @@ impl<'p, 's> Checker<'p, 's> {
         let signatures: Vec<SigId> = self.signatures(class, true).iter().copied().collect();
         let mut pending: Vec<TypeId> = signatures.into_iter().map(|signature| self.sig_return(signature)).collect();
         let mut seen: FxHashSet<TypeId> = FxHashSet::default();
-        while let Some(made) = pending.pop() {
-            if !seen.insert(made) {
+        while let Some(created) = pending.pop() {
+            if !seen.insert(created) {
                 continue;
             }
-            self.record_type_accepts_untyped(made, false);
-            if let TypeData::Ref { target, .. } = *self.data(made) {
+            self.record_type_accepts_untyped(created, false);
+            if let TypeData::Ref { target, .. } = *self.data(created) {
                 pending.extend(self.base_types(target).iter().copied());
             }
         }
     }
 
     fn record_function_parameter_types(&mut self, shown: TypeId, is_tested_on_entry: bool) {
-        let mut seen: FxHashSet<TypeId> = FxHashSet::default();
-        for part in self.parts(shown).to_vec() {
+        let mut taken: Vec<TypeId> = Vec::new();
+        for &part in self.parts(shown) {
             let signatures: Vec<SigId> = self.signatures(part, false).iter().copied().collect();
             for signature in signatures {
-                let taken: Vec<TypeId> = self.sig_params(signature).iter().map(|parameter| parameter.ty).collect();
-                for ty in taken {
-                    self.record_nested_inflows(ty, 0, is_tested_on_entry, &mut seen);
-                }
+                taken.extend(self.sig_params(signature).iter().map(|parameter| parameter.ty).filter(|&ty| !self.holds_only_primitives(ty)));
             }
+        }
+        if let [only] = taken[..] {
+            return self.record_escape_query(EscapeQuery::NestedInflows(only, is_tested_on_entry));
+        }
+        let mut seen: FxHashSet<TypeId> = FxHashSet::default();
+        for ty in taken {
+            self.record_nested_inflows(ty, 0, is_tested_on_entry, &mut seen);
         }
     }
 
+    pub(super) fn walk_nested_inflows(&mut self, ty: TypeId, is_tested: bool) {
+        self.record_nested_inflows(ty, 0, is_tested, &mut FxHashSet::default());
+    }
+
     fn record_nested_inflows(&mut self, ty: TypeId, depth: u32, is_tested: bool, seen: &mut FxHashSet<TypeId>) {
-        if depth > 3 || (!is_tested && !seen.insert(ty)) {
+        if depth > 3 || self.holds_only_primitives(ty) || (!is_tested && !seen.insert(ty)) {
             return;
         }
         if !is_tested {
             self.record_type_accepts_untyped(ty, true);
         }
-        for part in self.parts(ty).to_vec() {
+        for &part in self.parts(ty) {
             if self.is_instance_type(part) {
                 continue;
             }
             if let TypeData::Ref { .. } = *self.data(part) {
-                for argument in self.type_arguments(part).to_vec() {
+                for &argument in self.type_arguments(part) {
                     self.record_nested_inflows(argument, depth + 1, false, seen);
                 }
             } else if self.is_object_type(part) && self.signatures(part, false).is_empty() {
@@ -801,7 +838,7 @@ impl<'p, 's> Checker<'p, 's> {
         let given = bound_to.map(|to| self.passed_this_type(file, to));
         let receiver = self.type_of_expr(file, obj);
         let receiver = self.non_nullable(receiver);
-        for part in self.parts(receiver).to_vec() {
+        for &part in self.parts(receiver) {
             if !self.is_instance_type(part) || !self.members(part).is_some_and(|members| members.resolved.prop(name).is_some_and(|prop| prop.flags.contains(crate::types::PropFlags::METHOD))) {
                 continue;
             }
@@ -852,13 +889,11 @@ impl<'p, 's> Checker<'p, 's> {
             })
     }
 
-    /// The type of where the value of `e` goes, as it is declared: a type parameter and not what it is bound by.
     fn declared_contextual_type(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         self.prepare_enclosing(file, e);
         self.contextual_type(file, e, ContextFlags::empty())
     }
 
-    /// The contextual type, or the place is of the type of the value itself.
     fn contextual_destination(&mut self, file: FileId, e: ExprId) -> Destination {
         match self.declared_contextual_type(file, e) {
             Some(target) => Destination::Typed(target),
@@ -882,11 +917,9 @@ impl<'p, 's> Checker<'p, 's> {
             Parent::Expr(around) => self.destination_in_expression(file, e, around),
             Parent::Stmt(stmt) => match hir[stmt].kind {
                 StmtKind::Expr(_) | StmtKind::If { .. } | StmtKind::For { .. } | StmtKind::While { .. } | StmtKind::DoWhile { .. } | StmtKind::Switch { .. } => Destination::Nowhere,
-                // The keys are strings. What is iterated over hands its elements to a binding of their type.
                 StmtKind::ForIn { .. } | StmtKind::ForOf { .. } => Destination::Nowhere,
                 StmtKind::Return(_) => self.contextual_destination(file, e),
                 StmtKind::Throw(_) => Destination::Untyped,
-                // Whoever imports it has it as its type. The host has the exports of the entry point.
                 StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_) => Destination::Untyped,
                 StmtKind::Empty
                 | StmtKind::Debugger
@@ -913,10 +946,8 @@ impl<'p, 's> Checker<'p, 's> {
                 PropKind::Spread => Destination::Nowhere,
                 _ => self.contextual_destination(file, e),
             },
-            // Converted to a property key.
             Parent::PropKey(..) | Parent::PatKey(_) | Parent::MemberKey(_) | Parent::MethodKey(_) => Destination::Nowhere,
             Parent::EnumInit(_) | Parent::Case(_) => Destination::Nowhere,
-            // The class is constructed by what extends it, which is typed code.
             Parent::ClassExtends(_) => Destination::Nowhere,
             Parent::Decorator(..) => Destination::Untyped,
         }
@@ -925,7 +956,6 @@ impl<'p, 's> Checker<'p, 's> {
     fn destination_in_expression(&mut self, file: FileId, e: ExprId, around: ExprId) -> Destination {
         let hir = self.hir(file);
         match hir[around].kind {
-            // These have no operands.
             ExprKind::Missing
             | ExprKind::Ident(_)
             | ExprKind::PrivateIdentifier(_)
@@ -943,7 +973,6 @@ impl<'p, 's> Checker<'p, 's> {
             | ExprKind::Object(_)
             | ExprKind::ImportMeta
             | ExprKind::NewTarget(_) => Destination::Untyped,
-            // Converted to a string, by typed code if by any.
             ExprKind::Template { .. } => Destination::Nowhere,
             ExprKind::TaggedTemplate(call) | ExprKind::Call(call) | ExprKind::New(call) => {
                 if hir[call].callee == e {
@@ -974,7 +1003,6 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 match op {
                     None | Some(BinOp::And | BinOp::Or | BinOp::Nullish) => match hir[target].kind {
-                        // A pattern: its parts go to targets that are not looked at one by one.
                         ExprKind::Array(_) | ExprKind::Object(_) => Destination::Untyped,
                         _ if self.is_untyped_code_slot(file, target) => Destination::Untyped,
                         _ => Destination::Typed(self.type_of_expr(file, target)),
@@ -993,11 +1021,9 @@ impl<'p, 's> Checker<'p, 's> {
                 Parent::Expr(holder) if matches!(hir[holder].kind, ExprKind::Array(_)) => Destination::WithParent,
                 _ => Destination::Untyped,
             },
-            // What a promise is settled with is of the type it says.
             ExprKind::Await(_) => Destination::Nowhere,
             ExprKind::Yield { .. } => self.contextual_destination(file, e),
             ExprKind::As { .. } => {
-                // `(namespace as any).Name` reads one binding, and the object goes nowhere else.
                 if self.is_namespace_read_by_name(file, e, around) {
                     return Destination::Nowhere;
                 }
@@ -1009,7 +1035,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `e`: the name of a namespace import. `cast`: `e as T`. Whether that is the object of `(e as T).Name`, which is not called.
     fn is_namespace_read_by_name(&mut self, file: FileId, e: ExprId, cast: ExprId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let ExprKind::Ident(name) = hir[e].kind else { return false };
@@ -1044,8 +1069,6 @@ impl<'p, 's> Checker<'p, 's> {
         if self.is_untyped_file(declared_in) {
             return CalleeKind::Unknown;
         }
-        // A signature of `lib.*.d.ts`: a built-in, unless it is only the type of a place of the program. The globals of the language are
-        // read-only and keep what they have, so what is read from one by name is what the engine put there.
         if self.files.module(declared_in).is_lib
             && let Some((holder, name)) = self.built_in_for_callee(file, callee)
             && !entries_of(self.holder_in_table(holder).0, self.atoms().bytes(name)).is_empty()
@@ -1058,8 +1081,6 @@ impl<'p, 's> Checker<'p, 's> {
         CalleeKind::Typed
     }
 
-    /// Whether what the expression yields comes out of a place that the program declares, whatever declares the type of that: a variable,
-    /// a parameter, a property, an element, what a call yields. Not a property that `lib.*.d.ts` declares, nor a global of it.
     fn is_program_declared_slot(&mut self, file: FileId, e: ExprId) -> bool {
         match self.hir(file)[e].kind {
             ExprKind::Ident(name) => self.resolve_identifier(file, e, name, true).ok().flatten().is_some_and(|sym| !self.files.module(sym.file).is_lib),
@@ -1082,7 +1103,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// The interface of `lib.*.d.ts` that declares what the expression reads, `NONE` for a global, and the name.
     fn built_in_for_callee(&mut self, file: FileId, callee: ExprId) -> Option<(Atom, Atom)> {
         match self.hir(file)[callee].kind {
             ExprKind::Dot { obj, name, .. } => {
@@ -1091,14 +1111,12 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 let receiver = self.type_of_expr(file, obj);
                 let receiver = self.non_nullable(receiver);
-                let parts: Vec<TypeId> = self.parts(receiver).to_vec();
                 let mut holder = Atom::NONE;
-                for part in parts {
+                for &part in self.parts(receiver) {
                     let apparent = self.apparent_type(part);
-                    // What a function has besides its own properties is declared by the interfaces for functions.
                     let is_function = !self.signatures(part, false).is_empty() || !self.signatures(part, true).is_empty();
-                    let of_functions = [crate::atom::known::CallableFunction, crate::atom::known::NewableFunction, crate::atom::known::Function].map(|name| self.global_ref(name, &[]));
-                    let declared = [apparent].into_iter().chain(of_functions.into_iter().filter(|_| is_function)).find_map(|holding| {
+                    let of_functions = is_function.then(|| [crate::atom::known::CallableFunction, crate::atom::known::NewableFunction, crate::atom::known::Function].map(|name| self.global_ref(name, &[])));
+                    let declared = [apparent].into_iter().chain(of_functions.into_iter().flatten()).find_map(|holding| {
                         self.members(holding).and_then(|members| match members.resolved.prop(name)?.source {
                             crate::types::PropSource::Symbol(declared) => Some(declared),
                             _ => None,
@@ -1144,13 +1162,11 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// The contextual type of an argument has what is inferred put in for the type parameters. The parameter as it is declared may be of one.
     fn record_argument_to_declared_parameter(&mut self, file: FileId, call: CallId, e: ExprId, signature: SigId) {
         let hir = self.hir(file);
         let Some((declared_in, function, _)) = self.sig_decl(signature) else { return };
-        let arguments: Vec<ExprId> = hir.ids(hir[call].args).collect();
-        let Some(index) = arguments.iter().position(|&argument| argument == e) else { return };
-        if arguments[..index].iter().any(|&argument| matches!(hir[argument].kind, ExprKind::Spread(_))) {
+        let Some(index) = hir.ids(hir[call].args).position(|argument: ExprId| argument == e) else { return };
+        if hir.ids(hir[call].args).take(index).any(|argument: ExprId| matches!(hir[argument].kind, ExprKind::Spread(_))) {
             return;
         }
         let Some(parameter) = self.hir(declared_in)[function].params.iter().nth(index) else { return };
@@ -1179,7 +1195,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// What is put in for the type parameters of the function that is called.
     fn record_call_type_arguments(&mut self, signature: SigId) {
         let Some((.., mapper)) = self.sig_decl(signature) else { return };
         if mapper == MapperId::IDENTITY || !self.aot.escape_closure.bound_at_calls.insert(signature) {
@@ -1191,7 +1206,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// The name of the holder in `BUILTIN_ENTRIES`, and whether it is the static side.
     fn holder_in_table(&self, holder: Atom) -> (&'static str, bool) {
         if holder.is_none() {
             return ("", false);
@@ -1208,8 +1222,6 @@ impl<'p, 's> Checker<'p, 's> {
         (canonical_holder_name(text).unwrap_or("?"), is_static)
     }
 
-    /// What the built-in may do with its receiver and with each argument of the call: `uses`. The first entry whose patterns fit, as the
-    /// engine has it. If none is seen to fit, all of them together, which holds whichever applies. `None`: the table has no entry.
     fn built_in_operand_uses(&mut self, file: FileId, call: CallId, holder: Atom, name: Atom, is_constructed: bool) -> Option<(u16, Rc<[u16]>)> {
         if let Some(known) = self.aot.escape_closure.uses.get(&call) {
             return known.clone();
@@ -1248,7 +1260,6 @@ impl<'p, 's> Checker<'p, 's> {
                     Some((Pattern::Any, ..)) => true,
                     Some((Pattern::Number, ..)) => self.is_number_like(types[index]),
                     Some((Pattern::ToNumber | Pattern::ToString | Pattern::ToPropertyKey, ..)) => self.parts(types[index]).iter().all(|&part| self.has_primitive_flag(part)),
-                    // Not seen to fit. That leads on to the entries behind it, which hold for any argument that this one holds for.
                     Some(_) => false,
                 })
         });
@@ -1261,9 +1272,6 @@ impl<'p, 's> Checker<'p, 's> {
         Some((this, of_arguments.collect()))
     }
 
-    /// Whether the built-in is handed a function, as an argument or as its receiver, that takes what the types say nothing of: the replacer of
-    /// `JSON.stringify`, `(function (this: any) { .. }).call(o)`. By the type of the function itself and by the type that `lib.*.d.ts` has for
-    /// the parameter.
     fn has_callback_with_untyped_parameters(&mut self, file: FileId, call: CallId) -> bool {
         if let Some(&known) = self.aot.escape_closure.untyped_callbacks.get(&call) {
             return known;
@@ -1299,7 +1307,6 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// `e`: the receiver or an argument of a call of a built-in, which may do `used` with it.
     fn record_dictionaries_stored_through(&mut self, file: FileId, e: ExprId) {
         let own = self.type_of_expr(file, e);
         for dictionary in self.dictionaries_in(own) {
@@ -1395,14 +1402,11 @@ impl<'p, 's> Checker<'p, 's> {
             return Destination::Untyped;
         }
         let own = self.type_of_expr(file, e);
-        // The result is of the type that `lib.*.d.ts` has for it.
         let is_result_used = !matches!(self.bound(file).expr_parent[call_expr.idx()], Parent::Stmt(stmt) if matches!(self.hir(file)[stmt].kind, StmtKind::Expr(_)));
         if used & uses::RETURNS != 0 && is_result_used {
             let result = self.type_of_expr(file, call_expr);
             self.record_flow(own, result);
         }
-        // It is kept or called as the type that `lib.*.d.ts` has for the parameter. What is handed to a callback is handed over as the
-        // parameters of that say.
         if used & (uses::KEEPS | uses::CALLS) != 0 && self.hir(file)[call].callee != e && !self.is_receiver_of(file, call, e) {
             return match self.declared_contextual_type(file, e) {
                 Some(target) => Destination::Typed(target),
@@ -1417,7 +1421,6 @@ impl<'p, 's> Checker<'p, 's> {
         matches!(hir[hir[call].callee].kind, ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if obj == e)
     }
 
-    /// `e`: the object of `access`, a property access. Where it goes if that is what a call calls.
     fn receiver_destination(&mut self, file: FileId, e: ExprId, access: ExprId) -> Destination {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let Parent::Expr(call_expr) = bound.expr_parent[access.idx()] else { return Destination::Nowhere };
@@ -1425,11 +1428,9 @@ impl<'p, 's> Checker<'p, 's> {
         if hir[call].callee != access {
             return Destination::Nowhere;
         }
-        // Handed over as `this`.
         let Some(signature) = self.resolved_signature(file, call_expr).sig else { return Destination::Untyped };
         match self.callee_kind(file, access, signature) {
             CalleeKind::Unknown => Destination::Untyped,
-            // A method is typed code. What is in a field: C4.
             CalleeKind::Typed => Destination::Nowhere,
             CalleeKind::BuiltIn(holder, name) => {
                 let used = self.built_in_operand_uses(file, call, holder, name, false).map_or(uses::EVERYTHING, |found| found.0);
@@ -1438,8 +1439,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Whether what is stored to `target` can be got at by code that is not compiled with types: a property of the global object, an
-    /// ambient variable, a property of an object that a declaration without a body or JavaScript stands for.
     fn is_untyped_code_slot(&mut self, file: FileId, target: ExprId) -> bool {
         let hir = self.hir(file);
         match hir[target].kind {
@@ -1458,7 +1457,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Whether the property that `access` names is one that JavaScript declares.
     fn is_declared_by_javascript(&mut self, file: FileId, access: ExprId) -> bool {
         let ExprKind::Dot { obj, name, .. } = self.hir(file)[access].kind else { return false };
         let receiver = self.type_of_expr(file, obj);
@@ -1475,7 +1473,6 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// The name that the key is, if its type is one string.
     pub(super) fn name_of_key(&mut self, file: FileId, key: ExprId) -> Atom {
         let ty = self.type_of_expr(file, key);
         match *self.data(ty) {

@@ -1151,7 +1151,7 @@ impl<'p, 's> Checker<'p, 's> {
             if let Some((file, e)) = access_expression
                 && !self.is_const_enum_object(object)
             {
-                let no_implicit_any = self.p.files.options.no_implicit_any;
+                let no_implicit_any = self.check_options(file).no_implicit_any;
                 if self.is_object_literal_type(object) {
                     if no_implicit_any
                         && self.flags(index) & (tf::STRING_LITERAL | tf::NUMBER_LITERAL) != 0

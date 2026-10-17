@@ -1,31 +1,3 @@
-//! From the fragments to the program. It runs when the check is over. Which of the errors that the check has found matter is known
-//! here: those that lie in what is reached.
-//!
-//! 1. Who defines what. A function is defined by the fragment that has its body. A class, an environment and a variable that a file
-//!    declares are what the fragment of that file says. The layout of an object type, which belongs to no file, is what the first
-//!    fragment in program order says that defines it.
-//! 2. What is reached from the entry points: by calls, by closures, by the types of values, by the members of classes. A function of a
-//!    class is only reached once a function that is reached evaluates the declaration of the class, and a member that no code uses
-//!    by itself only once code uses the constructor: see `Reach::release`. Everything else is dropped.
-//! 3. Numbers. Functions: the entry function, then the files in program order, each with its functions in the order of its fragment.
-//!    Strings, types, layouts and variables: by first mention, going through the functions in that order. Nothing depends on which
-//!    thread has translated what, nor on the value of an identity or the order of a hash table.
-//! 4. Every function is renumbered, independently of the others.
-//! 5. What the fragments have taken the declarations of other files for is compared with what those are. A difference is a problem: code
-//!    has been translated by a fact that does not hold.
-//! 6. ReferencedBy which names the code that is reached stores properties. A property that nothing stores does not exist: no object is required to
-//!    have it, and its field needs no room (`field_flags::NEVER_STORED`). And under which names it is expected to store no number but
-//!    int32s (`field_flags::EXPECTED_INT32`), from how numbers get from place to place in the code that is reached.
-//! 7. What was noted for the code that is reached is put together, and the checker says which objects are of which types
-//!    (`begin_subtypes`). The questions that leaves for the relation between types are shared out to checkers of their own.
-//! 8. What messages and stack traces are made of: the path of each module as it is shown, its lines, and the types of the fields as text.
-//!    No code depends on it.
-//!
-//! What the checker is asked here: the identity of every type that was kept, which classes may be extended by their value, which takes
-//! the type of what stands after `extends` in the classes that are not laid out, and those questions. Nothing else is derived
-//! again, but for the layouts that no fragment defines: those are described in tasks like those of the check, as many rounds of them
-//! as it takes.
-
 use crate::build::Problem;
 use crate::declared::{Declared, DeclaredTable, Part};
 use crate::format::line_table;
@@ -34,9 +6,9 @@ use crate::id::{FuncId, GlobalId, LayoutId, ModuleId, StrId, TyId, V};
 use crate::ir::{self, Def, Func, FuncKind, Layout, LayoutKind, Literal, NO_VARIABLE, Op, Operation, Prediction, Program, Strs, Term, CoerceReason, class_flags, field_flags, func_flags, method_flags};
 use bun_sema::atom::Atom;
 use bun_sema::check::task::Finished;
-use bun_sema::check::{Answer, Checker, CompilerDiagnostic, Identity, Int32Verdict, KindsDeclared, MethodStore, FlowNotes, NumberFlow, Program as Checked, Question, ReplacedMethods, compute_ecma_line_starts, expected_int32};
+use bun_sema::check::{SubtypeAnswer, Checker, CompilerDiagnostic, FieldKey, Identity, Int32Verdict, KindsDeclared, MethodStore, FlowNotes, NumberFlow, Program as Checked, SubtypeQuery, ReplacedMethods, compute_ecma_line_starts, expected_int32};
 use bun_sema::hir::{self, ClassId, Flags, StmtKind};
-use bun_sema::program::{Builtin, FileId, LoadedBy};
+use bun_sema::program::{Builtin, FileId, LoadedBy, Sym};
 use bun_sema::resolve::get_relative_path_from_directory;
 use bun_sema::types::TypeId;
 use bun_sema::util::{InParallel, for_each_mut};
@@ -51,27 +23,21 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
 mod exports;
-mod nil;
+mod integer_ranges;
+mod nullish;
 mod reads;
 mod reuse;
-mod strangers;
+mod literal_structures;
 mod throws;
 
 #[derive(Default)]
 pub struct Linked {
     pub program: Program,
-    /// What could not be translated of the code that is reached, and what the fragments do not agree on.
     pub problems: Vec<Problem>,
-    /// `Membership::sizes`, as a line.
     pub members: String,
-    /// What `Explain` has asked for, a line each.
     pub explained: Vec<String>,
-    /// For each of the errors that `link` was handed: why it does not lie in code that is in the program. `None`: it does.
     pub errors: Vec<Option<OutsideProgramReason>>,
-    /// The modules of the runtime that are not in the program because something of them could not be translated, each with the first
-    /// such thing. The registry runs them as it does without an image.
     pub skipped_builtin_modules: Vec<(u32, Problem)>,
-    /// The same for the builtin functions.
     pub skipped_builtin_functions: Vec<(u32, Problem)>,
     pub found: Vec<CompilerDiagnostic>,
     pub times: Times,
@@ -127,24 +93,18 @@ fn always_failing_sites(checked: &Checked<'_>, program: &Program, setup: throws:
     }).collect()
 }
 
-/// What the link says of what it has decided, for whoever asks why.
 #[derive(Default, Copy, Clone)]
 pub struct Explain {
-    /// CoerceReason each view that admits objects that are not laid out does: `Checker::explain_untyped`.
     pub foreign: bool,
     pub includes_builtin_modules: bool,
-    /// How many layouts a built-in may freeze or give another prototype, and how many stores test for it, in numbers alone: `Checker::explain_mutations`.
     pub mutations: bool,
-    /// Which fields have a name that nothing stores: `explain_fields`.
     pub fields: bool,
-    /// Under which names of fields the numbers are expected to be int32s, and why not under the others: `Checker::explain_int32_fields`.
     pub integers: bool,
-    /// Where the soundness closure is and how large its tables are, on stderr as it goes, and `Subtypes::report` at the end.
+    pub plugins: bool,
     pub progress: Option<fn(std::fmt::Arguments<'_>)>,
-    /// How much of what the modules do when they are evaluated may be deferred: `Checker::explain_deferred`.
     pub deferred: bool,
     pub rows: bool,
-    /// How many of the places and of the reads of typed code go by a fact: `explain_external_data`.
+    pub joins: bool,
     pub given: bool,
     pub throws: bool,
     pub throws_json: bool,
@@ -153,7 +113,7 @@ pub struct Explain {
 
 impl Explain {
     pub const REPORTS: [&'static str; 4] = ["throws", "throws-all", "throws-json", "throws-all-json"];
-    pub const WORDS: [&'static str; 11] = ["mutations", "deferred", "fields", "foreign", "given", "integers", "rows", "throws", "throws-all", "throws-all-json", "throws-json"];
+    pub const WORDS: [&'static str; 13] = ["mutations", "deferred", "fields", "foreign", "given", "integers", "joins", "plugins", "rows", "throws", "throws-all", "throws-all-json", "throws-json"];
 
     pub fn set(&mut self, word: &[u8]) -> bool {
         let asked = match word {
@@ -163,7 +123,9 @@ impl Explain {
             b"foreign" => &mut self.foreign,
             b"given" => &mut self.given,
             b"integers" => &mut self.integers,
+            b"plugins" => &mut self.plugins,
             b"rows" => &mut self.rows,
+            b"joins" => &mut self.joins,
             b"throws" => &mut self.throws,
             b"throws-json" => &mut self.throws_json,
             b"throws-all" | b"throws-all-json" => {
@@ -177,18 +139,14 @@ impl Explain {
     }
 }
 
-/// Where the time of the link goes.
 #[derive(Default)]
 pub struct Times {
-    /// ReferencedBy step, in the order they are first come by: how long it has taken in all.
     pub steps: Vec<(&'static str, Duration)>,
-    /// How many rounds it has taken to describe the layouts that no fragment defines, and how many those were.
     pub rounds: usize,
     pub layouts_described: usize,
 }
 
 impl Times {
-    /// The time since `since` has gone into the step. From now on it goes into the next.
     fn add(&mut self, step: &'static str, since: &mut Instant) {
         let spent = std::mem::replace(since, Instant::now()).elapsed();
         match self.steps.iter_mut().find(|known| known.0 == step) {
@@ -198,12 +156,8 @@ impl Times {
     }
 }
 
-/// Defines the layouts of the types, in a fragment of no file, and those that they lead to through the types of their fields and of which
-/// the last argument says that nobody defines them. A fragment names a layout without defining it where the code of its file does not
-/// look into the objects. If no file does, nobody has defined it.
 pub type Describe<'a> = &'a (dyn Fn(&mut Checker<'_, '_>, &[TypeId], &dyn Fn(Identity) -> bool) -> Fragment + Sync);
 
-/// A part of a fragment, by the number of the fragment and its number there.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct FragmentIndex {
     fragment: u32,
@@ -216,12 +170,8 @@ impl FragmentIndex {
     }
 }
 
-// ───────────────────────────── names, for the messages ─────────────────────────────
-
-/// What mentions something.
 #[derive(Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord)]
 enum ReferencedBy {
-    /// The program starts with it.
     #[default]
     Entry,
     Func(FragmentIndex),
@@ -254,7 +204,6 @@ impl ReferencedBy {
         }
     }
 
-    /// A problem with what it mentions, at the place where it is.
     fn problem(self, fragments: &[Fragment], nowhere: FileId, what: String) -> Problem {
         let (file, pos) = match self {
             ReferencedBy::Entry => (nowhere, 0),
@@ -271,21 +220,17 @@ impl ReferencedBy {
     }
 }
 
-// ───────────────────────────── who defines what ─────────────────────────────
-
 #[derive(Default)]
 struct Index {
     funcs: Vec<AtomicU64>,
     layouts: Vec<AtomicU64>,
     globals: Vec<AtomicU64>,
-    /// The number of the fragment of each file.
     by_file: FxHashMap<FileId, u32>,
     outline: Outline,
 }
 
 const NOT_FOUND: u64 = u64::MAX;
 
-/// The first that has the last word, or else the first.
 fn prefer(known: &[AtomicU64], id: u32, at: FragmentIndex, has_last_word: bool) {
     known[id as usize].fetch_min(u64::from(!has_last_word) << 63 | u64::from(at.fragment) << 32 | u64::from(at.index), Ordering::Relaxed);
 }
@@ -332,7 +277,6 @@ impl Index {
         }
         for (i, shape) in fragment.layouts.iter().enumerate() {
             let Some(definition) = &shape.definition else { continue };
-            // The accessors of an object literal are listed where the literal is written. Whoever else lays its type out has none.
             let lists_accessors = definition.layout.kind == LayoutKind::Record && !definition.layout.methods.is_empty();
             prefer(&self.layouts, ids.layouts[i], FragmentIndex::new(number, i), lists_accessors || shape.key.file() == Some(fragment.file));
         }
@@ -362,43 +306,31 @@ impl Index {
     }
 }
 
-// ───────────────────────────── what is reached ─────────────────────────────
-
 enum Work {
     Root(u32, bool),
-    /// The body of the function.
     Func(u32),
-    /// The definition of the layout.
     Layout(u32),
-    /// The part of that number of the body of the function.
     Part(FragmentIndex, u32),
 }
 
 mod reached {
     pub(super) const IS_REACHED: u8 = 1;
-    /// Of a function: its body is reached too. Of the others only what a caller has to know is kept.
     pub(super) const BODY: u8 = 1 << 1;
-    /// Closures are made of it.
     pub(super) const VALUE: u8 = 1 << 2;
-    /// It is the constructor, a method or an accessor of a class that is reached.
     pub(super) const MEMBER: u8 = 1 << 3;
-    /// Code that is reached calls it or makes closures of it. The others are only members of classes that are reached.
     pub(super) const USED_BY_CODE: u8 = 1 << 4;
     pub(super) const IS_UNDEFINED: u8 = 1 << 5;
-    /// Of a class: its declaration is evaluated by a function that is reached.
     pub(super) const DECLARED: u8 = 1 << 1;
-    /// Of a class: its constructor is used by code: there may be objects of it, or somebody may have the class object.
     pub(super) const CONSTRUCTED: u8 = 1 << 2;
 }
 
-/// The modules of the runtime that can be in the image, by number and by name. One is reached when code that is reached asks for it. One that is not in the image the registry runs as it does without an image.
 #[derive(Default)]
 struct RuntimeModules {
     by_number: FxHashMap<i64, FileId>,
     by_name: FxHashMap<Vec<u8>, FileId>,
     evaluations: FxHashMap<FileId, u32>,
-    behind_doors: Vec<u32>,
-    hidden_behind_doors: Vec<(i64, Vec<u8>, FileId, u32)>,
+    behind_loader_entries: Vec<u32>,
+    hidden_behind_loader_entries: Vec<(i64, Vec<u8>, FileId, u32)>,
     unserved_requests: Vec<u32>,
 }
 
@@ -415,9 +347,7 @@ impl RuntimeModules {
 
 #[derive(Default)]
 struct Unresolved {
-    /// The object types whose layouts are reached and that no fragment defines, with the shape that names each and what mentions it.
     missing: Vec<(Identity, FragmentIndex, ReferencedBy)>,
-    /// What else is reached and not defined.
     undefined_funcs: Vec<(u32, ReferencedBy)>,
     undefined_layouts: Vec<(FragmentIndex, ReferencedBy)>,
 }
@@ -425,41 +355,41 @@ struct Unresolved {
 type Sharded<T> = Vec<Guarded<FxHashMap<u32, Vec<T>>>>;
 
 #[derive(Default)]
-struct Reach {
+struct Reachability {
     funcs: Vec<AtomicU8>,
     layouts: Vec<AtomicU8>,
     globals: Vec<AtomicBool>,
-    /// ReferencedBy variable that nothing has mentioned so far: the parts of the bodies of modules that are reached and that store to it.
     parts_storing: Sharded<(FragmentIndex, u32)>,
-    /// The parts that run: something else mentions a variable that they store to.
     parts: Guarded<FxHashSet<(FragmentIndex, u32)>>,
-    /// ReferencedBy class: its functions that are reached and cannot run yet. See `release`.
     waiting: Sharded<u32>,
     seen_tys: Vec<AtomicBool>,
     work: Vec<Work>,
-    /// ReferencedBy the name of a built-in: the functions of the prelude that the engine may call in its place. A function that is reached and
-    /// calls or reads something by the name, a global too, reaches them.
     prelude: Vec<(Vec<u8>, Vec<u32>)>,
     prelude_left: AtomicU64,
     prelude_names: Vec<OnceLock<Vec<(StrId, u8)>>>,
     runtime: Guarded<RuntimeModules>,
     loader_entry_points: FxHashSet<FragmentIndex>,
-    has_closed_doors: AtomicBool,
+    has_unreached_loader_entries: AtomicBool,
     unresolved: Unresolved,
 }
 
-#[derive(Default)]
-struct WorkQueue {
-    shared: Guarded<Vec<Work>>,
+struct WorkQueue<T> {
+    shared: Guarded<Vec<T>>,
     shared_len: AtomicUsize,
     active_workers: AtomicUsize,
     idle_workers: AtomicUsize,
 }
 
-impl WorkQueue {
+impl<T> Default for WorkQueue<T> {
+    fn default() -> WorkQueue<T> {
+        WorkQueue { shared: Guarded::new(Vec::new()), shared_len: AtomicUsize::new(0), active_workers: AtomicUsize::new(0), idle_workers: AtomicUsize::new(0) }
+    }
+}
+
+impl<T> WorkQueue<T> {
     const LARGEST_BATCH: usize = 64;
 
-    fn share(&self, work: impl Iterator<Item = Work>) {
+    fn share(&self, work: impl Iterator<Item = T>) {
         let mut shared = self.shared.lock();
         shared.extend(work);
         self.shared_len.store(shared.len(), Ordering::Release);
@@ -469,7 +399,11 @@ impl WorkQueue {
         self.active_workers.fetch_add(1, Ordering::AcqRel);
     }
 
-    fn wait_for_work(&self, work: &mut Vec<Work>) -> bool {
+    fn has_idle_workers(&self) -> bool {
+        self.idle_workers.load(Ordering::Relaxed) != 0 && self.shared_len.load(Ordering::Relaxed) == 0
+    }
+
+    fn wait_for_work(&self, work: &mut Vec<T>) -> bool {
         self.idle_workers.fetch_add(1, Ordering::Relaxed);
         self.active_workers.fetch_sub(1, Ordering::AcqRel);
         let has_work = loop {
@@ -477,8 +411,8 @@ impl WorkQueue {
                 let mut shared = self.shared.lock();
                 if !shared.is_empty() {
                     self.active_workers.fetch_add(1, Ordering::AcqRel);
-                    let kept = shared.len() - shared.len().div_ceil(2).min(WorkQueue::LARGEST_BATCH);
-                    work.extend(shared.drain(kept..));
+                    let retained = shared.len() - shared.len().div_ceil(2).min(Self::LARGEST_BATCH);
+                    work.extend(shared.drain(retained..));
                     self.shared_len.store(shared.len(), Ordering::Release);
                     break true;
                 }
@@ -493,18 +427,17 @@ impl WorkQueue {
     }
 }
 
-impl Reach {
+impl Reachability {
     const SHARDS: usize = 64;
 
-    /// There are more fragments than before.
     fn grow(&mut self, fragments: &[Fragment], ids: &ProgramIds) {
         self.funcs.resize_with(ids.funcs.bound(), AtomicU8::default);
         self.layouts.resize_with(ids.layouts.bound(), AtomicU8::default);
         self.globals.resize_with(ids.globals.bound(), AtomicBool::default);
         self.seen_tys.resize_with(ids.tys_upper_bound(), AtomicBool::default);
         self.prelude_names.resize_with(fragments.len(), OnceLock::new);
-        self.parts_storing.resize_with(Reach::SHARDS, Guarded::default);
-        self.waiting.resize_with(Reach::SHARDS, Guarded::default);
+        self.parts_storing.resize_with(Reachability::SHARDS, Guarded::default);
+        self.waiting.resize_with(Reachability::SHARDS, Guarded::default);
     }
 
     fn has(&self, func: u32, flag: u8) -> bool {
@@ -526,7 +459,6 @@ impl Reach {
         ids.funcs.find(&key).is_some_and(|id| self.has(id, reached::BODY))
     }
 
-    /// `by_code`: see `reached::USED_BY_CODE`.
     fn add_root(&mut self, id: u32, by_code: bool) {
         self.work.push(Work::Root(id, by_code));
     }
@@ -541,14 +473,13 @@ impl Reach {
         }
     }
 
-    /// Until nothing is left to do but to describe what is `missing`.
     fn run(&mut self, fragments: &[Fragment], index: &Index, in_parallel: InParallel<'_>) {
         const WORKERS: usize = 64;
         let queue = WorkQueue::default();
         queue.share(std::mem::take(&mut self.work).into_iter());
         let runtime = self.runtime.get_mut();
-        *self.has_closed_doors.get_mut() = !(runtime.behind_doors.is_empty() && runtime.hidden_behind_doors.is_empty());
-        let reach: &Reach = self;
+        *self.has_unreached_loader_entries.get_mut() = !(runtime.behind_loader_entries.is_empty() && runtime.hidden_behind_loader_entries.is_empty());
+        let reach: &Reachability = self;
         let mut unresolved: Vec<Unresolved> = (0..WORKERS).map(|_| Unresolved::default()).collect();
         for_each_mut(&mut unresolved, in_parallel, &|unresolved| {
             let mut worker = ReachWorker { reach, fragments, index, work: Vec::new(), user: ReferencedBy::Entry, unresolved: Unresolved::default() };
@@ -567,17 +498,16 @@ impl Reach {
 }
 
 struct ReachWorker<'a> {
-    reach: &'a Reach,
+    reach: &'a Reachability,
     fragments: &'a [Fragment],
     index: &'a Index,
     work: Vec<Work>,
-    /// What is being gone through.
     user: ReferencedBy,
     unresolved: Unresolved,
 }
 
 impl<'a> ReachWorker<'a> {
-    fn run(&mut self, queue: &WorkQueue) {
+    fn run(&mut self, queue: &WorkQueue<Work>) {
         queue.join();
         loop {
             let Some(work) = self.work.pop() else {
@@ -587,7 +517,7 @@ impl<'a> ReachWorker<'a> {
                 return;
             };
             self.visit(work);
-            if self.work.len() > 1 && queue.idle_workers.load(Ordering::Relaxed) != 0 && queue.shared_len.load(Ordering::Relaxed) == 0 {
+            if self.work.len() > 1 && queue.has_idle_workers() {
                 let shared = self.work.len() / 2;
                 queue.share(self.work.drain(..shared));
             }
@@ -599,7 +529,6 @@ impl<'a> ReachWorker<'a> {
         self.work.push(Work::Func(id));
     }
 
-    /// `by_code`: see `reached::USED_BY_CODE`.
     fn reach_function(&mut self, id: u32, by_code: bool) {
         let (reach, index) = (self.reach, self.index);
         let wanted = reached::IS_REACHED | if by_code { reached::USED_BY_CODE } else { 0 };
@@ -635,7 +564,7 @@ impl<'a> ReachWorker<'a> {
             return;
         }
         let class = function.class_id;
-        let mut waiting = reach.waiting[class as usize % Reach::SHARDS].lock();
+        let mut waiting = reach.waiting[class as usize % Reachability::SHARDS].lock();
         let before = reach.layouts[class as usize].load(Ordering::Relaxed);
         let is_newly_constructed = by_code && function.has(outline_flags::IS_CONSTRUCTOR) && reach.layouts[class as usize].fetch_or(reached::CONSTRUCTED, Ordering::Relaxed) & reached::CONSTRUCTED == 0;
         if before & reached::DECLARED == 0 || is_newly_constructed {
@@ -656,9 +585,6 @@ impl<'a> ReachWorker<'a> {
         self.start_body(id);
     }
 
-    /// A function of a class runs only once the declaration of the class has been evaluated. A method, an accessor or the constructor
-    /// that no code uses by itself takes an object of the class or the class object besides, and there is neither unless code uses
-    /// the constructor. Those of the functions that wait and that can run by now are gone through.
     fn release(&mut self, class: u32, waiting: &mut FxHashMap<u32, Vec<u32>>) {
         let flags = self.reach.layouts[class as usize].load(Ordering::Relaxed);
         if flags & reached::DECLARED == 0 {
@@ -749,7 +675,7 @@ impl<'a> ReachWorker<'a> {
         if self.reach.globals[id as usize].load(Ordering::Relaxed) || self.reach.globals[id as usize].swap(true, Ordering::Relaxed) {
             return;
         }
-        let storing = self.reach.parts_storing[id as usize % Reach::SHARDS].lock().remove(&id).unwrap_or_default();
+        let storing = self.reach.parts_storing[id as usize % Reachability::SHARDS].lock().remove(&id).unwrap_or_default();
         for part in storing {
             self.start_part(part);
         }
@@ -763,7 +689,6 @@ impl<'a> ReachWorker<'a> {
         }
     }
 
-    /// `only_stored`: the variables among them that are stored to and not read: what else is stored to them nobody can tell by that.
     fn reach_mentions(&mut self, from: u32, mentions: &ReferencedIds, only_stored: &[GlobalId]) {
         for ty in mentions.tys() {
             self.reach_local_type(from, ty);
@@ -822,7 +747,7 @@ impl<'a> ReachWorker<'a> {
             && runtime.evaluations.contains_key(&file)
             && let Some((&number, _)) = runtime.by_number.iter().find(|module| *module.1 == file)
         {
-            let besides = bun_builtin_syntax::Archive::embedded().manifest().required_besides(number as u32);
+            let besides = bun_builtin_syntax::Archive::embedded().manifest().also_required(number as u32);
             requested.extend(besides.iter().filter_map(|&id| runtime.by_number.get(&i64::from(id))));
             is_served &= requested.len() == besides.len();
         }
@@ -835,7 +760,7 @@ impl<'a> ReachWorker<'a> {
             is_served &= found.is_some();
             requested.extend(found.copied());
         }
-        if !is_served && !runtime.hidden_behind_doors.is_empty() {
+        if !is_served && !runtime.hidden_behind_loader_entries.is_empty() {
             runtime.unserved_requests.push(function.id);
         }
         let evaluations: Vec<u32> = requested.iter().map(|file| runtime.evaluations[file]).collect();
@@ -845,14 +770,14 @@ impl<'a> ReachWorker<'a> {
         }
     }
 
-    fn open_doors(&mut self) {
+    fn reach_loader_entries(&mut self) {
         let reach = self.reach;
         let mut runtime = reach.runtime.lock();
-        for (number, name, file, evaluation) in std::mem::take(&mut runtime.hidden_behind_doors) {
+        for (number, name, file, evaluation) in std::mem::take(&mut runtime.hidden_behind_loader_entries) {
             runtime.add(number, &name, file, evaluation);
         }
-        reach.has_closed_doors.store(false, Ordering::Relaxed);
-        let (evaluations, requests) = (std::mem::take(&mut runtime.behind_doors), std::mem::take(&mut runtime.unserved_requests));
+        reach.has_unreached_loader_entries.store(false, Ordering::Relaxed);
+        let (evaluations, requests) = (std::mem::take(&mut runtime.behind_loader_entries), std::mem::take(&mut runtime.unserved_requests));
         drop(runtime);
         for evaluation in evaluations {
             self.reach_function(evaluation, true);
@@ -904,8 +829,8 @@ impl<'a> ReachWorker<'a> {
                 if !function.has(outline_flags::HAS_BODY) {
                     return;
                 }
-                if reach.has_closed_doors.load(Ordering::Relaxed) && reach.loader_entry_points.contains(&at) {
-                    self.open_doors();
+                if reach.has_unreached_loader_entries.load(Ordering::Relaxed) && reach.loader_entry_points.contains(&at) {
+                    self.reach_loader_entries();
                 }
                 self.reach_requested_runtime_modules(function);
                 self.reach_function_mentions(function);
@@ -915,7 +840,7 @@ impl<'a> ReachWorker<'a> {
                     let mut runs = stored.clone().any(|id| reach.globals[id as usize].load(Ordering::Relaxed));
                     if !runs {
                         for id in stored {
-                            let mut storing = reach.parts_storing[id as usize % Reach::SHARDS].lock();
+                            let mut storing = reach.parts_storing[id as usize % Reachability::SHARDS].lock();
                             runs = reach.globals[id as usize].load(Ordering::Relaxed);
                             if runs {
                                 break;
@@ -933,10 +858,9 @@ impl<'a> ReachWorker<'a> {
                 for position in function.list(Outline::CLASSES_AS_VALUES) {
                     self.reach_listed_layout(at.fragment, position);
                 }
-                // A class that is declared and that nothing mentions is no part of the program.
                 for &class in &index.outline.program[function.list(Outline::DECLARES)] {
                     if !reach.has_layout(class, reached::DECLARED) {
-                        let mut waiting = reach.waiting[class as usize % Reach::SHARDS].lock();
+                        let mut waiting = reach.waiting[class as usize % Reachability::SHARDS].lock();
                         if reach.layouts[class as usize].fetch_or(reached::DECLARED, Ordering::Relaxed) & reached::DECLARED == 0 {
                             self.release(class, &mut waiting);
                         }
@@ -979,17 +903,17 @@ impl<'a> ReachWorker<'a> {
 #[derive(Default)]
 struct UntypedObjectEvidence {
     fragments: usize,
-    noted: Notes,
+    recorded: Notes,
     is_absorbed: Vec<bool>,
     classes: usize,
     served: Vec<LayoutKey>,
 }
 
-fn classes_served_by_untyped_clones(checked: &Checked<'_>, fragments: &[Fragment], index: &Index, reach: &Reach, types: &FxHashMap<Identity, TypeId>, known: &mut UntypedObjectEvidence, in_parallel: InParallel<'_>) -> Vec<LayoutKey> {
+fn classes_served_by_untyped_clones(checked: &Checked<'_>, fragments: &[Fragment], index: &Index, reach: &Reachability, types: &FxHashMap<Identity, TypeId>, known: &mut UntypedObjectEvidence, in_parallel: InParallel<'_>) -> Vec<LayoutKey> {
     if known.fragments != fragments.len() {
         *known = UntypedObjectEvidence { fragments: fragments.len(), is_absorbed: vec![false; reach.funcs.len()], classes: usize::MAX, ..UntypedObjectEvidence::default() };
     }
-    let UntypedObjectEvidence { noted: evidence, is_absorbed, .. } = known;
+    let UntypedObjectEvidence { recorded: evidence, is_absorbed, .. } = known;
     let mut not_absorbed: Vec<&Notes> = Vec::new();
     for (number, fragment) in fragments.iter().enumerate().filter(|(_, fragment)| !fragment.summary.with_mutations.is_empty()) {
         if fragment.file != NO_FILE && checked.files.module(fragment.file).is_opaque() {
@@ -1012,7 +936,7 @@ fn classes_served_by_untyped_clones(checked: &Checked<'_>, fragments: &[Fragment
     for (_, of_run) in runs {
         evidence.absorb(of_run);
     }
-    let kept = |list: Vec<Identity>| -> Vec<TypeId> { list.into_iter().filter_map(|identity| types.get(&identity).copied()).collect() };
+    let retained = |list: Vec<Identity>| -> Vec<TypeId> { list.into_iter().filter_map(|identity| types.get(&identity).copied()).collect() };
     let mut classes: Vec<(LayoutKey, TypeId)> = Vec::new();
     for (number, fragment) in fragments.iter().enumerate() {
         for (i, shape) in fragment.layouts.iter().enumerate().filter(|(_, shape)| matches!(shape.key, LayoutKey::Instance(..))) {
@@ -1029,21 +953,20 @@ fn classes_served_by_untyped_clones(checked: &Checked<'_>, fragments: &[Fragment
         return known.served.clone();
     }
     known.classes = classes.len();
-    let (escaped, entered, receiving_untyped_if_escaped) = known.noted.untyped_object_evidence();
+    let (escaped, entered, receiving_untyped_if_escaped) = known.recorded.untyped_object_evidence();
     if escaped.is_empty() && entered.is_empty() {
         known.served = Vec::new();
         return Vec::new();
     }
     let of_classes: Vec<TypeId> = classes.iter().map(|class| class.1).collect();
-    let served = checked.checker().classes_served_by_untyped_clones(&kept(escaped), &kept(entered), &kept(receiving_untyped_if_escaped), &of_classes);
+    let served = checked.checker().classes_served_by_untyped_clones(&retained(escaped), &retained(entered), &retained(receiving_untyped_if_escaped), &of_classes);
     let mut served: Vec<LayoutKey> = classes.into_iter().zip(served).filter(|class| class.1).map(|class| class.0.0).collect();
     served.sort_unstable_by_key(|key| if let LayoutKey::Instance(file, class) = *key { (file.idx(), class.idx()) } else { (0, 0) });
     known.served.clone_from(&served);
     served
 }
 
-/// Takes the part out of the function. Those behind it have been seen to.
-fn take_out(func: &mut Func, part: &ModulePart, anything: TyId) {
+fn remove_part(func: &mut Func, part: &ModulePart, anything: TyId) {
     for v in part.values(func) {
         func.values[v.idx()] = ir::Value::new(Def::Op(Op::Undefined), 0, anything);
     }
@@ -1065,8 +988,7 @@ fn take_out(func: &mut Func, part: &ModulePart, anything: TyId) {
     }
 }
 
-/// What is left of the body of a module is a function like any other.
-fn remove_unreached_parts(fragments: &mut [Fragment], outline: &mut Outline, reach: &Reach, in_parallel: InParallel<'_>) {
+fn remove_unreached_parts(fragments: &mut [Fragment], outline: &mut Outline, reach: &Reachability, in_parallel: InParallel<'_>) {
     let mut funcs_with_parts: Vec<(FragmentIndex, u32)> = outline.funcs_with_parts.iter().map(|&place| (FragmentIndex { fragment: outline.funcs[place as usize].fragment, index: outline.funcs[place as usize].index }, place)).collect();
     funcs_with_parts.sort_unstable_by_key(|function| (function.0.fragment, function.0.index));
     let mut listed: Vec<((u32, &mut Function, &LocalToProgram, FileId), FragmentIndex, TyId)> = Vec::with_capacity(funcs_with_parts.len());
@@ -1089,7 +1011,7 @@ fn remove_unreached_parts(fragments: &mut [Fragment], outline: &mut Outline, rea
         let (Some(func), Some(body)) = (&mut function.func, &mut function.body) else { return };
         for (part_number, part) in std::mem::take(&mut body.parts).iter().enumerate().rev() {
             if !running_parts.contains(&(*at, part_number as u32)) {
-                take_out(func, part, *anything);
+                remove_part(func, part, *anything);
             }
         }
         body.mentions = ReferenceCollector::default().collect_func(func);
@@ -1098,18 +1020,13 @@ fn remove_unreached_parts(fragments: &mut [Fragment], outline: &mut Outline, rea
     outline.rebuild_functions(&mut again, in_parallel);
 }
 
-// ───────────────────────────── numbers ─────────────────────────────
-
-/// For one fragment: the number in the program of what has a number in the fragment. `NONE`: nothing that is reached mentions it.
 struct Maps {
     strs: Vec<StrId>,
     tys: Vec<TyId>,
     layouts: Vec<LayoutId>,
     globals: Vec<GlobalId>,
     modules: Vec<ModuleId>,
-    /// `NONE`: the function is not reached.
     funcs: Vec<FuncId>,
-    /// Whether code of the fragment that is reached calls the function or makes closures of it.
     uses_func: Vec<bool>,
 }
 
@@ -1125,10 +1042,8 @@ struct Numbering<'a> {
     strs: Strs,
     unplaced_strs: Vec<(u32, StrId)>,
     tys: DeclaredTable,
-    /// ReferencedBy number: where the definition is.
     layouts: Vec<FragmentIndex>,
     globals: Vec<FragmentIndex>,
-    /// ReferencedBy number: the file and its name.
     modules: Vec<FileId>,
     str_ids: Vec<StrId>,
     ty_ids: Vec<TyId>,
@@ -1136,7 +1051,6 @@ struct Numbering<'a> {
     global_ids: Vec<GlobalId>,
     module_ids: FxHashMap<FileId, ModuleId>,
     record_positions: Vec<u32>,
-    /// What has its number and whose definition has not been gone through.
     pending: VecDeque<Pending>,
 }
 
@@ -1295,7 +1209,6 @@ impl<'a> Numbering<'a> {
         runs.into_iter().map(|(_, bytes, lengths, hashes)| (bytes, lengths, hashes)).collect()
     }
 
-    /// Orders the parts of a type by what they are, not by the numbers of the fragment.
     fn part_rank(&self, from: u32, part: &Part) -> Rank {
         let fragment = &self.fragments[from as usize];
         let mut rank = Rank::new();
@@ -1328,14 +1241,13 @@ impl<'a> Numbering<'a> {
             return rank.push(u64::MAX);
         }
         let Declared { prims, ints, parts, any_object, any_function } = self.fragments[from as usize].tys.get(ty);
-        let (least, most) = ints.unwrap_or((0, 0));
-        rank.extend([u64::from(*prims), u64::from(*any_object) | u64::from(*any_function) << 1 | u64::from(ints.is_some()) << 2, least as u64, most as u64, parts.len() as u64]);
+        let (minimum, maximum) = ints.unwrap_or((0, 0));
+        rank.extend([u64::from(*prims), u64::from(*any_object) | u64::from(*any_function) << 1 | u64::from(ints.is_some()) << 2, minimum as u64, maximum as u64, parts.len() as u64]);
         let mut of_parts: SmallVec<[Rank; 4]> = parts.iter().map(|part| self.part_rank(from, part)).collect();
         of_parts.sort_unstable();
         rank.extend(of_parts.into_iter().flatten());
     }
 
-    /// A description only mentions descriptions that were there before it, so this ends.
     fn ty(&mut self, from: u32, local: TyId) -> TyId {
         if local.is_none() {
             return local;
@@ -1347,8 +1259,6 @@ impl<'a> Numbering<'a> {
             return known;
         }
         let Declared { prims, ints, parts, any_object, any_function } = fragments[from as usize].tys.get(local);
-        // What is mentioned for the first time gets its number here. The parts are in the order of the fragment's numbers: for the parts
-        // of a union that is the order of the checker's ids, which goes by the plan of the check.
         let mut order: SmallVec<[usize; 4]> = (0..parts.len()).collect();
         if parts.len() > 1 {
             order.sort_by_cached_key(|&part| self.part_rank(from, &parts[part]));
@@ -1380,7 +1290,6 @@ impl<'a> Numbering<'a> {
         match (numbered, index.outline.layout(program_id)) {
             (Some(id), _) => id,
             (None, Some(layout)) => {
-                // What a class extends has the smaller number: the engine makes the classes in the order of their numbers.
                 self.layout(layout.fragment, layout.base);
                 let id = LayoutId::new(self.layouts.len());
                 self.layouts.push(FragmentIndex { fragment: layout.fragment, index: layout.index });
@@ -1388,7 +1297,6 @@ impl<'a> Numbering<'a> {
                 self.pending.push_back(Pending::Layout(program_id));
                 id
             }
-            // A problem has been reported.
             (None, None) => LayoutId::NONE,
         }
     }
@@ -1400,7 +1308,6 @@ impl<'a> Numbering<'a> {
             Some(id) => id,
             None => {
                 let id = GlobalId::new(self.globals.len());
-                // What belongs to no file is as the first that mentions it has it.
                 let has_file = fragments[from as usize].globals[local.idx()].key.file().is_some();
                 self.globals.push(if has_file { self.index.global(program_id).expect(IS_INDEXED) } else { FragmentIndex::new(from as usize, local.idx()) });
                 self.global_ids[program_id as usize] = id;
@@ -1466,7 +1373,6 @@ impl<'a> Numbering<'a> {
         }
     }
 
-    /// Goes through the definitions of what has got a number, and of what gets one on the way.
     fn settle(&mut self) {
         let (fragments, index) = (self.fragments, self.index);
         while let Some(pending) = self.pending.pop_front() {
@@ -1600,8 +1506,6 @@ impl<'a> Numbering<'a> {
 
 }
 
-/// A function that nothing calls: it is of a class whose declaration nothing evaluates, or no fragment has its body. It takes what
-/// a caller would hand it. In the numbering of the program.
 fn stub(func: &Func, maps: &Maps, anything: TyId) -> Func {
     let ty = |local: TyId| if local.is_none() { local } else { maps.tys[local.idx()] };
     let or_anything = |ty: TyId| if ty.is_none() { anything } else { ty };
@@ -1639,7 +1543,6 @@ fn stub(func: &Func, maps: &Maps, anything: TyId) -> Func {
 
 #[derive(Default)]
 struct FieldTypeCache {
-    // ReferencedBy view, name and what the view says: what the field holds. `NONE`: anything.
     by_field: FxHashMap<(LayoutId, StrId, TyId), TyId>,
     is_found: Vec<bool>,
     subset_cache: FxHashMap<(TyId, TyId), bool>,
@@ -1680,7 +1583,6 @@ fn retype_reads_from_field_types(func: &mut Func, layouts: &[Layout], tys: &mut 
             let view = &layouts[view.idx()];
             let members = || view.members.iter().map(|member| &layouts[member.idx()]);
             let is_pristine = |layout: &Layout| layout.class_flags & class_flags::MAY_HAVE_OTHER_PROTOTYPE == 0;
-            // Where the view has no field by the name, each of the objects has one of its own, or the name may stand for anything.
             let has_it = |layout: &Layout| {
                 let declared = layout.field(name).map_or(TyId::NONE, |field| layout.fields[field as usize].declared);
                 declared.is_some() && tys.get(declared).is_subset_of(tys.get(ty))
@@ -1720,7 +1622,6 @@ fn retype_reads_from_field_types(func: &mut Func, layouts: &[Layout], tys: &mut 
                         let besides = Declared { parts: taken.parts.iter().filter(|part| !matches!(part, Part::Class(_))).cloned().collect(), ..taken.clone() };
                         besides.is_subset_of(read_as) && (read_as.any_object || layouts_in(taken).into_iter().all(|sub| layouts_in(read_as).into_iter().any(|sup| is_subtype(sub, sup))))
                     };
-                    // What the other views take for the field beyond that. A narrower declaration in a subtype adds nothing.
                     let (mut more, mut takes_anything): (Vec<TyId>, bool) = (Vec::new(), false);
                     for other in beside.iter() {
                         let other = &layouts[other.idx()];
@@ -1822,7 +1723,6 @@ impl FuncIds<'_> {
 
 const IS_INDEXED: &str = "every fragment that mentions a variable is in the index with it";
 
-/// Puts the numbers of the program in the place of those of a fragment. Everything it comes by has its number.
 struct Renumber<'a>(&'a Maps);
 
 impl Ids for Renumber<'_> {
@@ -1862,7 +1762,6 @@ fn first_evaluating_entry_point(number_of_files: usize, entry_points: &[Vec<usiz
 
 fn renumber_func(func: &mut Func, maps: &Maps) {
     for_each_func_id(func, &mut Renumber(maps));
-    // Of a function that is not reached there are no closures to expect.
     for value in &mut func.values {
         if value.prediction() == Prediction::Closure(FuncId::NONE) {
             value.set_prediction(Prediction::None);
@@ -1870,8 +1769,6 @@ fn renumber_func(func: &mut Func, maps: &Maps) {
     }
 }
 
-/// Runs the modules that the program starts with, in order.
-/// `--aot-explain=deferred`: what the functions that run when the program starts contain, by operation. An operation counts once wherever it stands. Numbers alone.
 fn explain_start(program: &Program, evaluating: &[(FuncId, FuncKey)]) -> Vec<String> {
     let kinds: [(&str, fn(FuncKey) -> bool); 3] = [
         ("functions that evaluate a module once", |key| matches!(key, FuncKey::Module(_))),
@@ -1936,30 +1833,23 @@ fn entry_function(name: StrId, anything: TyId, roots: &[FuncId], import: Option<
     for &root in roots {
         func.append(entry, Op::CallDirect { func: root, args: ir::Args::new() }, 0, anything);
     }
-    let yielded = import.map_or(V::NONE, |import| func.append(entry, Op::FuncRef(import), 0, anything));
-    func.blocks[entry.idx()].term = Some(Term::Return(yielded));
+    let produced = import.map_or(V::NONE, |import| func.append(entry, Op::FuncRef(import), 0, anything));
+    func.blocks[entry.idx()].term = Some(Term::Return(produced));
     func
 }
 
-// ───────────────────────────── whether the fragments agree ─────────────────────────────
-
-/// The program, for looking up what a fragment has.
 struct Final<'a> {
     program: &'a Program,
     tys: FxHashMap<&'a Declared, TyId>,
     funcs: &'a [FuncId],
     layouts: &'a [LayoutId],
     globals: &'a [GlobalId],
-    /// ReferencedBy function: see `Numbering::stub`.
     is_stub: &'a [bool],
 }
 
-/// Finds in the program what has a number in one fragment, mentioned by code that is reached or not. `None`: the program has none such.
-/// `NONE` is `NONE`.
 struct Finder<'a> {
     fragment: &'a Fragment,
     all: &'a Final<'a>,
-    /// ReferencedBy type, as far as it has been looked for.
     tys: Vec<Option<Option<TyId>>>,
 }
 
@@ -1976,7 +1866,6 @@ impl Finder<'_> {
         if local.is_none() { Some(local) } else { Some(self.all.funcs[self.fragment.program_ids.funcs[local.idx()] as usize]).filter(|id| id.is_some()) }
     }
 
-    /// A variable of a class, see `Layout::environment`.
     fn variable(&self, local: u32, is_module_variable: bool) -> Option<u32> {
         if !is_module_variable || local == NO_VARIABLE {
             return Some(local);
@@ -2016,18 +1905,14 @@ impl Finder<'_> {
         self.all.tys.get(&declared).copied()
     }
 
-    /// Whether what the fragment says of the one function of a field or a variable is what the program says. The program says nothing of
-    /// a function that is not reached.
     fn matches_single_function(&self, local: FuncId, flags: u8, out: FuncId, out_flags: u8) -> bool {
         let found = self.func(local).unwrap_or(FuncId::NONE);
         found == out && (found.is_none() || flags == out_flags)
     }
 
-    /// Whether the function is to a caller what the fragment takes it for.
     fn is_func(&mut self, local: &Func, id: FuncId) -> bool {
         let all = self.all;
         let out = &all.program.funcs[id.idx()];
-        // What is only known of a function once it is built, or once all its uses are.
         let known_later = func_flags::IS_VALUE | func_flags::IS_TYPED | func_flags::IS_BUILTIN | func_flags::IS_IN_BUILTIN_MODULE | if all.is_stub[id.idx()] { COROUTINE } else { 0 };
         local.kind == out.kind
             && (local.flags ^ out.flags) & !known_later == 0
@@ -2040,11 +1925,9 @@ impl Finder<'_> {
             && local.params.iter().zip(&out.params).all(|(&param, &same)| self.ty(param) == Some(same))
     }
 
-    /// The same for a layout, but for what the link itself finds out about it.
     fn matches_layout(&mut self, local: &Layout, id: LayoutId) -> bool {
         let all = self.all;
         let out = &all.program.layouts[id.idx()];
-        // See `Index::add`.
         let lists_methods = local.kind != LayoutKind::Record;
         let is_alike = local.kind == out.kind
             && (local.class_flags ^ out.class_flags) & !class_flags::MAY_HAVE_OTHER_PROTOTYPE == 0
@@ -2088,7 +1971,6 @@ impl Finder<'_> {
     }
 }
 
-/// What code of the fragment that is reached relies on, and that is not so.
 fn disagreements(fragment: &Fragment, maps: &Maps, all: &Final<'_>, nowhere: FileId) -> Vec<Problem> {
     let mut finder = Finder { fragment, all, tys: vec![None; fragment.tys.list.len()] };
     let file = if fragment.file == NO_FILE { nowhere } else { fragment.file };
@@ -2125,23 +2007,19 @@ fn disagreements(fragment: &Fragment, maps: &Maps, all: &Final<'_>, nowhere: Fil
     problems
 }
 
-// ───────────────────────────── the types again ─────────────────────────────
-
-/// How many types a checker is made for, to say what they are called.
 const TYPES_PER_CHECKER: usize = 8192;
 
-/// Adds the types that tasks have kept, by what fragments call them. `seen`: those that have been added.
 fn add_kept_types(program: &Checked<'_>, seen: &mut FxHashSet<TypeId>, types: &mut FxHashMap<Identity, TypeId>, lanes: usize, in_parallel: InParallel<'_>) {
-    let mut kept = program.checker().kept_types_on_pool(in_parallel);
-    kept.retain(|&ty| seen.insert(ty));
-    let mut slices: Vec<(&[TypeId], Vec<Identity>)> = kept.chunks(TYPES_PER_CHECKER).map(|slice| (slice, Vec::new())).collect();
+    let mut retained = program.checker().kept_types_on_pool(in_parallel);
+    retained.retain(|&ty| seen.insert(ty));
+    let mut slices: Vec<(&[TypeId], Vec<Identity>)> = retained.chunks(TYPES_PER_CHECKER).map(|slice| (slice, Vec::new())).collect();
     for_each_mut_in_lanes(&mut slices, lanes, in_parallel, &|(slice, identities)| {
         let mut c = program.checker();
         *identities = slice.iter().map(|&ty| c.type_identity(ty)).collect();
     });
-    types.reserve(kept.len());
+    types.reserve(retained.len());
     let c = program.checker();
-    for (&ty, &identity) in kept.iter().zip(slices.iter().flat_map(|slice| &slice.1)) {
+    for (&ty, &identity) in retained.iter().zip(slices.iter().flat_map(|slice| &slice.1)) {
         let first = types.entry(identity).or_insert(ty);
         if *first != ty
             && let (Some(written_at), Some(so_far)) = (c.object_literal_span(ty), c.object_literal_span(*first))
@@ -2152,23 +2030,14 @@ fn add_kept_types(program: &Checked<'_>, seen: &mut FxHashSet<TypeId>, types: &m
     }
 }
 
-/// What every object inherits unless it has a property of its own by the name.
 const NAMES_ON_OBJECT_PROTOTYPE: [&str; 12] = [
     "constructor", "hasOwnProperty", "isPrototypeOf", "propertyIsEnumerable", "toLocaleString", "toString", "valueOf", "__proto__", "__defineGetter__", "__defineSetter__", "__lookupGetter__", "__lookupSetter__",
 ];
 
-/// How many of the layouts that are missing a task describes, before it goes on to what they lead to.
 const LAYOUTS_PER_TASK: usize = 128;
-/// A further round is for what the classes lead to that the layouts of a round mention, which the tasks do not look into, and for what a
-/// task was kept from describing at once.
 const MAX_ROUNDS: usize = 32;
-/// The step of the tasks of the link, which come after all others.
 const LINK_STEP: u32 = u32::MAX;
 
-/// Describes the layouts of the types, in tasks like those of the check: with a barrier, validated and retried, so that the types they
-/// come by and keep are published. A task goes on to what its layouts lead to and nobody defines, with all it has found out so far:
-/// what two tasks lead to is described twice. Yields the fragments, in the order of the types, and whether the stack has run out for a
-/// task.
 fn describe_in_tasks<'s>(
     program: &Checked<'s>,
     missing: &[(Identity, TypeId)],
@@ -2223,15 +2092,12 @@ fn describe_in_tasks<'s>(
     (described, ran_out_of_stack)
 }
 
-/// How many questions a checker is made for, at the least, and how many checkers are made for the questions of a round, at the most. A checker finds again what another has found, and one that is cut
-/// short holds up all behind it. The numbers do not show in the answers.
 const QUERIES_PER_CHECKER: usize = 64;
 const CHECKERS_PER_ROUND: usize = 64;
 
-/// `Checker::answer`, shared out, and whether the stack has run out for one of the checkers.
-fn answer_queries(program: &Checked<'_>, questions: &[Question], stored: &FxHashSet<Atom>, truncated: &mut Vec<(TypeId, TypeId, u8)>, in_parallel: InParallel<'_>) -> (Vec<Answer>, bool) {
+fn answer_queries(program: &Checked<'_>, queries: &[SubtypeQuery], stored: &FxHashSet<Atom>, truncated: &mut Vec<(TypeId, TypeId, u8)>, in_parallel: InParallel<'_>) -> (Vec<SubtypeAnswer>, bool) {
     let known: &[(TypeId, TypeId, u8)] = truncated;
-    let mut slices: Vec<(&[Question], Vec<Answer>, bool, Vec<(TypeId, TypeId, u8)>)> = questions.chunks(questions.len().div_ceil(CHECKERS_PER_ROUND).max(QUERIES_PER_CHECKER)).map(|slice| (slice, Vec::new(), false, Vec::new())).collect();
+    let mut slices: Vec<(&[SubtypeQuery], Vec<SubtypeAnswer>, bool, Vec<(TypeId, TypeId, u8)>)> = queries.chunks(queries.len().div_ceil(CHECKERS_PER_ROUND).max(QUERIES_PER_CHECKER)).map(|slice| (slice, Vec::new(), false, Vec::new())).collect();
     for_each_mut(&mut slices, in_parallel, &|(slice, answers, ran_out_of_stack, cut_now)| {
         let mut c = program.checker();
         c.begin_stack_budget();
@@ -2247,30 +2113,21 @@ fn answer_queries(program: &Checked<'_>, questions: &[Question], stored: &FxHash
     (slices.into_iter().flat_map(|slice| slice.1).collect(), ran_out_of_stack)
 }
 
-fn keep_truncated_queries(kept: &mut Vec<(TypeId, TypeId, u8)>, mut more: Vec<(TypeId, TypeId, u8)>) {
+fn keep_truncated_queries(retained: &mut Vec<(TypeId, TypeId, u8)>, mut more: Vec<(TypeId, TypeId, u8)>) {
     if !more.is_empty() {
-        kept.append(&mut more);
-        kept.sort_unstable_by_key(|question| (question.0.0, question.1.0, question.2));
-        kept.dedup();
+        retained.append(&mut more);
+        retained.sort_unstable_by_key(|query| (query.0.0, query.1.0, query.2));
+        retained.dedup();
     }
 }
 
-// ───────────────────────────── the names of properties ─────────────────────────────
-
-/// ReferencedBy string: what the program does with properties of that name.
 struct Names {
-    /// An operation stores a property by the name, or may: it hands the name to whatever it calls. Or a class has a method, an accessor
-    /// or a static field of the name. A copy, by a spread or `Object.assign`, adds nothing: what it brings has been stored before. Nor
-    /// does plain data that is copied into a layout: what it has by another name stays an extra property.
     stored: Vec<bool>,
-    /// An operation reads, calls or looks for a property by the name, or may.
     read: Vec<bool>,
 }
 
-/// How many functions are gone through at a time.
 const FUNCTIONS_PER_SLICE: usize = 256;
 
-/// The string that the value is, as far as that shows without following the flow of control.
 pub(crate) fn constant_string(func: &Func, mut value: V) -> Option<StrId> {
     while value.is_some() {
         match func.op(value)? {
@@ -2287,7 +2144,6 @@ fn collect_property_names(func: &Func, layouts: &[Layout], stored: &mut Vec<StrI
         let Def::Op(op) = &value.def else { continue };
         match op {
             Op::PropSet { name, .. } => stored.push(*name),
-            // Whoever initializes the object stores it.
             Op::NewWith { name, .. } => stored.push(*name),
             Op::FieldSet { layout, field, .. } if layout.is_some() && layouts[layout.idx()].kind != LayoutKind::Environment => stored.push(layouts[layout.idx()].fields[*field as usize].name),
             Op::ElemSet { key, .. } => stored.extend(constant_string(func, *key)),
@@ -2295,7 +2151,6 @@ fn collect_property_names(func: &Func, layouts: &[Layout], stored: &mut Vec<StrI
             Op::ElemGet { key, .. } | Op::ElemHas { key, .. } => read.extend(constant_string(func, *key)),
             _ => {}
         }
-        // `DefineField`, `Object.defineProperty(o, "k", ..)`, `Reflect.get(o, "k")`, and what the program has of its own of the kind.
         if let Op::Operation { args, .. } | Op::Call { args, .. } | Op::CallMethod { args, .. } | Op::CallDirect { args, .. } | Op::Construct { args, .. } = op {
             for name in args.iter().filter_map(|&arg| constant_string(func, arg)) {
                 stored.push(name);
@@ -2339,8 +2194,7 @@ impl Marks {
 }
 
 impl Names {
-    /// Every function of the program with a body is reached. `is_in_opaque_file`: by layout, see `Module::is_opaque`.
-    fn of(program: &Program, marks: &Marks, is_in_opaque_file: &[bool]) -> Names {
+    fn new(program: &Program, marks: &Marks, is_in_opaque_file: &[bool]) -> Names {
         let mut names = Names { stored: vec![false; program.strs.len()], read: vec![false; program.strs.len()] };
         for (name, marks) in marks.names.iter().enumerate() {
             names.stored[name] = marks.load(Ordering::Relaxed) & Marks::IS_STORED != 0;
@@ -2356,13 +2210,9 @@ impl Names {
     }
 }
 
-/// How many of the layouts that objects are made as have a field of each name that is flagged, the most first. Then those layouts, each
-/// with the fields that are flagged, those with the most first. Then what else goes by the names and is not acted on.
-/// In the functions that are written in TypeScript: how many places and reads have a type that says something. The rest holds anything, with or without a prediction.
 fn explain_external_data(program: &Program, is_runtime_layout: &[bool]) -> Vec<String> {
     let is_own = |layout: usize| !is_runtime_layout.get(layout).copied().unwrap_or(false);
     let is_fact = |ty: TyId| ty.is_some() && ty != program.tys.anything;
-    // Facts, and all.
     let (mut parameters, mut results, mut joins, mut fields) = ((0usize, 0usize), (0usize, 0usize), (0usize, 0usize), (0usize, 0usize));
     let (mut receivers, mut properties, mut containers, mut elements) = ((0usize, 0usize), (0usize, 0usize), (0usize, 0usize), (0usize, 0usize));
     let mut read_through = vec![0usize; program.layouts.len()];
@@ -2398,9 +2248,9 @@ fn explain_external_data(program: &Program, is_runtime_layout: &[bool]) -> Vec<S
             }
         }
     }
-    let mut made = 0usize;
+    let mut created = 0usize;
     for (_, layout) in program.layouts.iter().enumerate().filter(|&(index, layout)| is_own(index) && layout.kind != LayoutKind::Environment && layout.is_allocated) {
-        made += 1;
+        created += 1;
         for field in &layout.fields {
             count(&mut fields, field.declared);
         }
@@ -2418,26 +2268,25 @@ fn explain_external_data(program: &Program, is_runtime_layout: &[bool]) -> Vec<S
     let share = |(facts, all): (usize, usize)| format!("{facts} of {all} ({:.1}%)", 100.0 * facts as f64 / all.max(1) as f64);
     let sum = |counted: &[(usize, usize)]| counted.iter().fold((0, 0), |sum, counted| (sum.0 + counted.0, sum.1 + counted.1));
     let in_all = format!("given: facts: {} of the places, {} of the reads", share(sum(&[parameters, results, joins, fields])), share(sum(&[properties, elements])));
-    // A view that admits objects that are not laid out stays a type, and every read through it tests for them.
     let views = program.layouts.iter().enumerate().filter(|&(index, layout)| is_own(index) && layout.kind != LayoutKind::Environment).map(|(_, layout)| layout);
-    let strangers = format!("given: layouts that admit strangers: {}", share((views.clone().filter(|layout| layout.accepts_untyped).count(), views.count())));
-    let made = format!("given: layouts that objects are made as: {made}");
+    let accepting_untyped = format!("given: layouts that admit strangers: {}", share((views.clone().filter(|layout| layout.accepts_untyped).count(), views.count())));
+    let created = format!("given: layouts that objects are made as: {created}");
     let mut most_read: Vec<usize> = (0..program.layouts.len()).filter(|&view| read_through[view] > 0 && is_own(view) && program.layouts[view].name.is_some()).collect();
     most_read.sort_by(|&a, &b| read_through[b].cmp(&read_through[a]).then_with(|| program.strs.get(program.layouts[a].name).cmp(program.strs.get(program.layouts[b].name))).then(a.cmp(&b)));
     let named = most_read.iter().take(10).map(|&view| {
         let layout = &program.layouts[view];
         format!("given: read through: {}: {} reads: {}", text_of(&program.strs, layout.name), read_through[view], if layout.accepts_untyped { "open" } else { "closed" })
     });
-    [in_all, strangers, made].into_iter().chain(rows.iter().map(|&(what, counted)| format!("given: {what}: {} are facts", share(counted)))).chain(named).collect()
+    [in_all, accepting_untyped, created].into_iter().chain(rows.iter().map(|&(what, counted)| format!("given: {what}: {} are facts", share(counted)))).chain(named).collect()
 }
 
 fn explain_fields(program: &Program, names: &Names) -> Vec<String> {
     let is_flagged = |field: &&ir::Field| field.flags & field_flags::NEVER_STORED != 0;
-    let made: Vec<&Layout> = program.layouts.iter().filter(|layout| layout.kind != LayoutKind::Environment && layout.is_allocated).collect();
+    let created: Vec<&Layout> = program.layouts.iter().filter(|layout| layout.kind != LayoutKind::Environment && layout.is_allocated).collect();
     let mut layouts_with: Vec<usize> = vec![0; program.strs.len()];
     let mut by_layout: Vec<(usize, &Layout)> = Vec::new();
     let (mut fields, mut flagged, mut never_read) = (0, 0, 0);
-    for &layout in &made {
+    for &layout in &created {
         for field in layout.fields.iter().filter(is_flagged) {
             layouts_with[field.name.idx()] += 1;
         }
@@ -2447,11 +2296,10 @@ fn explain_fields(program: &Program, names: &Names) -> Vec<String> {
         flagged += of_layout;
         never_read += layout.fields.iter().filter(|field| !is_flagged(field) && field.name.is_some() && !names.read[field.name.idx()]).count();
     }
-    let mut lines = vec![format!("fields: {flagged} of the {fields} fields of the {} layouts that objects are made as have a name that nothing stores", made.len())];
+    let mut lines = vec![format!("fields: {flagged} of the {fields} fields of the {} layouts that objects are made as have a name that nothing stores", created.len())];
     let mut by_name: Vec<StrId> = (0..program.strs.len()).filter(|&name| layouts_with[name] > 0).map(StrId::new).collect();
     by_name.sort_by(|&a, &b| layouts_with[b.idx()].cmp(&layouts_with[a.idx()]).then_with(|| program.strs.get(a).cmp(program.strs.get(b))));
     lines.extend(by_name.iter().map(|&name| format!("fields: `{}` in {} layouts", text_of(&program.strs, name), layouts_with[name.idx()])));
-    // Those with as many stay in the order of their numbers.
     by_layout.sort_by_key(|&(of_layout, _)| std::cmp::Reverse(of_layout));
     for (of_layout, layout) in by_layout {
         let flagged: Vec<String> = layout.fields.iter().filter(is_flagged).map(|field| text_of(&program.strs, field.name)).collect();
@@ -2460,9 +2308,9 @@ fn explain_fields(program: &Program, names: &Names) -> Vec<String> {
     lines.push(format!("fields: {never_read} more have a name that is stored and that nothing reads"));
     let is_required = |field: &&ir::Field| field.flags & (field_flags::OPTIONAL | field_flags::NEVER_STORED) == 0;
     let may_be_absent = |field: &&ir::Field| is_required(field) && field.flags & field_flags::NEVER_OBSERVED_ABSENT == 0;
-    let required = made.iter().flat_map(|layout| &layout.fields).filter(is_required).count();
-    lines.push(format!("fields: {} of the {required} required fields may be seen absent", made.iter().flat_map(|layout| &layout.fields).filter(may_be_absent).count()));
-    for layout in made.iter().filter(|layout| layout.fields.iter().any(|field| may_be_absent(&field))) {
+    let required = created.iter().flat_map(|layout| &layout.fields).filter(is_required).count();
+    lines.push(format!("fields: {} of the {required} required fields may be seen absent", created.iter().flat_map(|layout| &layout.fields).filter(may_be_absent).count()));
+    for layout in created.iter().filter(|layout| layout.fields.iter().any(|field| may_be_absent(&field))) {
         let absent: Vec<String> = layout.fields.iter().filter(may_be_absent).map(|field| text_of(&program.strs, field.name)).collect();
         lines.push(format!("fields: `{}`: may be seen absent: {}", text_of(&program.strs, layout.name), absent.join(", ")));
     }
@@ -2471,16 +2319,9 @@ fn explain_fields(program: &Program, names: &Names) -> Vec<String> {
     lines
 }
 
-// ───────────────────────────── for messages ─────────────────────────────
-
-/// How many views a checker is made for, to print the types of their properties. What a type is printed as may depend on what the
-/// checker has printed before, so this shows in the output. The number of threads does not.
 const LAYOUTS_PER_CHECKER: usize = 512;
-/// How many bytes `Field::type_text` has at most.
 const MAX_TYPE_TEXT_LEN: usize = 80;
 
-/// For each of the views: the fields of its layout that are properties of the type, by their indexes, each with its type as text. Not
-/// `#x`.
 struct TypeTexts<'a> {
     slices: Vec<&'a [(LayoutId, TypeId)]>,
     next: AtomicUsize,
@@ -2500,7 +2341,7 @@ struct LayoutDeclarationSites {
 }
 
 impl<'a> TypeTexts<'a> {
-    fn of(views: &'a [(LayoutId, TypeId)]) -> TypeTexts<'a> {
+    fn new(views: &'a [(LayoutId, TypeId)]) -> TypeTexts<'a> {
         let slices: Vec<&[(LayoutId, TypeId)]> = views.chunks(LAYOUTS_PER_CHECKER).collect();
         TypeTexts { printed: slices.iter().map(|_| OnceLock::new()).collect(), slices, next: AtomicUsize::new(0), declared: OnceLock::new() }
     }
@@ -2509,7 +2350,7 @@ impl<'a> TypeTexts<'a> {
         loop {
             let at = self.next.fetch_add(1, Ordering::Relaxed);
             let Some(slice) = self.slices.get(at) else { break };
-            assert!(self.printed[at].set(type_texts(checked, program, slice)).is_ok(), "a slice is printed once");
+            assert!(self.printed[at].set(layout_type_texts(checked, program, slice)).is_ok(), "a slice is printed once");
         }
         self.declared.get_or_init(|| self.find_layout_declaration_sites(checked, shown_from));
     }
@@ -2545,14 +2386,13 @@ impl<'a> TypeTexts<'a> {
     }
 }
 
-fn type_texts(checked: &Checked<'_>, program: &Program, slice: &[(LayoutId, TypeId)]) -> LayoutTypeTexts {
+fn layout_type_texts(checked: &Checked<'_>, program: &Program, slice: &[(LayoutId, TypeId)]) -> LayoutTypeTexts {
     let LayoutTypeTexts { fields: mut texts, mut declared_at } = LayoutTypeTexts::default();
     {
         let mut c = checked.checker();
         c.begin_stack_budget();
         let mut printed: FxHashMap<TypeId, (u64, Vec<u8>)> = FxHashMap::default();
         for &(layout, view) in slice.iter() {
-            // The text of a library that is not checked is not kept.
             declared_at.push(c.type_declaration_site(view).filter(|at| (at.pos as usize) < checked.files.hir(at.file).text.len()).map(|at| (at.file, at.pos)));
             let mut layout_entry = Vec::new();
             let Some(members) = c.members(view) else {
@@ -2562,14 +2402,17 @@ fn type_texts(checked: &Checked<'_>, program: &Program, slice: &[(LayoutId, Type
             let by_name = program.layouts[layout.idx()].fields_by_name();
             for prop in members.shape().props.iter() {
                 let name = c.atoms().bytes(prop.name);
-                let Some(field) = program.strs.find(name).filter(|_| !name.starts_with(&[0xFE])).and_then(|name| by_name.get(&program.layouts[layout.idx()], name)) else { continue };
+                let name = match c.constant_symbol_of_property(prop.name) {
+                    Some(symbol) => program.strs.find(&c.constant_symbol_text(symbol)),
+                    None => program.strs.find(name).filter(|_| !name.starts_with(&[0xFE])),
+                };
+                let Some(field) = name.and_then(|name| by_name.get(&program.layouts[layout.idx()], name)) else { continue };
                 let ty = c.type_of_prop(prop, members.mapper);
                 if let Some((hash, text)) = printed.get(&ty) {
                     layout_entry.push((field, *hash, text.clone()));
                     continue;
                 }
                 let mut text = c.type_to_string_in_canonical_order(ty);
-                // Nothing is made of half a text.
                 if c.take_ran_out_of_stack() {
                     continue;
                 }
@@ -2601,25 +2444,16 @@ fn type_texts(checked: &Checked<'_>, program: &Program, slice: &[(LayoutId, Type
     LayoutTypeTexts { fields: texts, declared_at }
 }
 
-// ───────────────────────────── the link ─────────────────────────────
-
-/// Where the checker has found errors, and `build::files_imported_by`.
 pub struct Errors<'a> {
     pub places: &'a [(FileId, u32)],
-    /// For each: it lies in an import or export declaration that the bundler has dropped.
     pub in_dropped_imports: &'a [bool],
     pub imported_by: &'a (dyn Fn(&mut Checker<'_, '_>, FileId) -> Vec<FileId> + Sync),
 }
 
-/// CoerceReason an error does not lie in the program.
 pub enum OutsideProgramReason {
-    /// A constant decides that the code does not run, or stands in its place. Where what is left out starts.
     Cut(u32),
     DroppedImport,
-    /// It is in the function of that name, which nothing reaches.
     NotReached(String),
-    /// Nothing of the file is in the program, and no module of the program imports it, be it through files that are themselves no
-    /// modules of the program.
     NoModule,
     RegExpLiteral,
     PrivateNameInOptionalChain,
@@ -2629,9 +2463,7 @@ pub enum OutsideProgramReason {
     PackageDeclarations,
 }
 
-/// The files that are no modules of the program and that a module of the program imports, straight away or through others of them: for
-/// their types, which say what the code of the program is.
-fn files_imported_for_types(checked: &Checked<'_>, fragments: &[Fragment], reach: &Reach, ids: &ProgramIds, imported_by: &(dyn Fn(&mut Checker<'_, '_>, FileId) -> Vec<FileId> + Sync), in_parallel: InParallel<'_>) -> FxHashSet<FileId> {
+fn files_imported_for_types(checked: &Checked<'_>, fragments: &[Fragment], reach: &Reachability, ids: &ProgramIds, imported_by: &(dyn Fn(&mut Checker<'_, '_>, FileId) -> Vec<FileId> + Sync), in_parallel: InParallel<'_>) -> FxHashSet<FileId> {
     const FILES_PER_RUN: usize = 256;
     let is_module = |file: FileId| reach.has_body_by_key(ids, FuncKey::Module(file));
     let mut pending: Vec<FileId> = fragments.iter().map(|fragment| fragment.file).filter(|&file| file != NO_FILE && is_module(file)).collect();
@@ -2647,8 +2479,6 @@ fn files_imported_for_types(checked: &Checked<'_>, fragments: &[Fragment], reach
     found
 }
 
-/// Of a file that is not compiled with the program: the name of a function with a body in whose text the position lies, or nothing for a name if it lies in a statement at the top level
-/// that declares nothing. That is code, and not the program's. `None`: it lies in what the file declares.
 fn enclosing_code_name(checked: &Checked<'_>, file: FileId, pos: u32) -> Option<String> {
     let hir = checked.files.hir(file);
     let c = checked.checker();
@@ -2665,10 +2495,7 @@ fn enclosing_code_name(checked: &Checked<'_>, file: FileId, pos: u32) -> Option<
     declares_nothing.then(String::new)
 }
 
-/// `None`: the position lies in code of the file that is in the program. It is code of the innermost function around it that the
-/// fragment of the file defines, or else of the body of the module. A function in code that is cut is not defined.
-/// `is_imported_for_types`: see `files_imported_for_types`. What such a file has outside of functions counts as what it declares.
-fn classify_error_location(checked: &Checked<'_>, fragments: &[Fragment], index: &Index, reach: &Reach, ids: &ProgramIds, (file, pos): (FileId, u32), is_imported_for_types: &mut dyn FnMut(FileId) -> bool) -> Option<OutsideProgramReason> {
+fn classify_error_location(checked: &Checked<'_>, fragments: &[Fragment], index: &Index, reach: &Reachability, ids: &ProgramIds, (file, pos): (FileId, u32), is_imported_for_types: &mut dyn FnMut(FileId) -> bool) -> Option<OutsideProgramReason> {
     if let Some(start) = checked.files.enclosing_dead_range_start(file, pos) {
         return Some(OutsideProgramReason::Cut(start));
     }
@@ -2684,11 +2511,20 @@ fn classify_error_location(checked: &Checked<'_>, fragments: &[Fragment], index:
     let bodies = fragment.funcs.iter().filter(|function| function.key.file() == file).filter_map(|function| Some((function, function.body.as_ref()?)));
     let around = bodies.clone().flat_map(|(function, body)| body.spans.iter().filter(holds).map(move |span| (span.1 - span.0, function, body)));
     let name_of = |function: &Function| function.func.as_ref().map_or_else(String::new, |func| text_of(&fragment.strs, func.name));
-    if let Some((_, function, body)) = around.min_by_key(|&(length, ..)| length) {
-        if !reach.has_body_by_key(ids, function.key) {
-            return Some(OutsideProgramReason::NotReached(name_of(function)));
+    let around: Vec<_> = around.collect();
+    if let Some(smallest) = around.iter().map(|&(length, ..)| length).min() {
+        let mut reason = None;
+        for &(_, function, body) in around.iter().filter(|&&(length, ..)| length == smallest) {
+            if !reach.has_body_by_key(ids, function.key) {
+                reason.get_or_insert_with(|| OutsideProgramReason::NotReached(name_of(function)));
+                continue;
+            }
+            match body.cut.iter().find(holds) {
+                Some(cut) => reason = Some(OutsideProgramReason::Cut(cut.0)),
+                None => return None,
+            }
         }
-        return body.cut.iter().find(holds).map(|cut| OutsideProgramReason::Cut(cut.0));
+        return reason;
     }
     let of_module = bodies.filter(|(function, _)| matches!(function.key, FuncKey::Module(_) | FuncKey::ModuleBody(_) | FuncKey::ModuleInner(_)));
     if !reach.has_body_by_key(ids, FuncKey::Module(file)) {
@@ -2735,9 +2571,6 @@ fn is_in_try_block_with_catch(checked: &Checked<'_>, file: FileId, pos: u32) -> 
     }
 }
 
-/// `fragments`: one for each file that has been translated, in any order. `roots`: the files that the program starts with.
-/// `builtin_modules`: the modules of the runtime that are compiled with it, by id. The registry runs them: nothing of the program does.
-/// `prelude`: the files of `crate::prelude`. `shown_from`: `Constants::root`.
 pub fn link(
     checked: &Checked<'_>,
     fragments: Vec<Fragment>,
@@ -2804,7 +2637,6 @@ fn make_line_tables(checked: &Checked<'_>, shown_from: &[u8], shows_whole_paths:
         let file = *file;
         let text = crate::original_source(checked.files.module(file).file_name(), &checked.files.hir(file).text);
         *table = line_table(text, &compute_ecma_line_starts(text));
-        // A module of the runtime is shown by the name the module loader has for it: native code goes by that text.
         let builtin = match checked.files.module(file).builtin {
             Some(Builtin::Module(id, _)) => bun_builtin_syntax::Archive::embedded().manifest().module(id),
             _ => None,
@@ -2842,7 +2674,6 @@ fn link_with_helper_threads<'scope>(
     let translated: Vec<FileId> = fragments.iter().map(|fragment| fragment.file).filter(|&file| file != NO_FILE).collect();
     let is_opaque = |file: FileId| file != NO_FILE && checked.files.module(file).is_opaque();
     let is_runtime = |file: FileId| file != NO_FILE && checked.files.module(file).builtin.is_some();
-    // For a problem that is in no file.
     let nowhere = roots.first().copied().unwrap_or(FileId(0));
     let mut problems: Vec<Problem> = Vec::new();
     times.add("order", &mut since);
@@ -2863,7 +2694,7 @@ fn link_with_helper_threads<'scope>(
     index.extend_outline(&mut fragments, 0, in_parallel);
     times.add("index", &mut since);
 
-    let mut reach = Reach::default();
+    let mut reach = Reachability::default();
     reach.grow(&fragments, ids);
     for &(method, name) in crate::prelude::FUNCTIONS {
         let defined = fragments.iter().filter(|fragment| prelude.contains(&fragment.file)).flat_map(|fragment| fragment.funcs.iter().map(move |function| (fragment, function)));
@@ -2874,7 +2705,6 @@ fn link_with_helper_threads<'scope>(
             reach.add_prelude_function(method.as_bytes(), id);
         }
     }
-    // A file that only declares has no code to start with.
     let roots: Vec<FuncKey> = roots.iter().map(|&root| FuncKey::Module(root)).filter(|&root| index.func_by_key(ids, root).is_some()).collect();
     for root in roots.iter().filter_map(|&root| index.func_by_key(ids, root)) {
         reach.add_root(root, true);
@@ -2883,11 +2713,10 @@ fn link_with_helper_threads<'scope>(
         reach.add_root(import, true);
         reach.add_flags(import, reached::VALUE);
     }
-    for yielded in entry_points.iter().filter_map(|files| files.first()).filter_map(|&first| index.func_by_key(ids, FuncKey::NamespaceForHost(first))) {
-        reach.add_root(yielded, true);
-        reach.add_flags(yielded, reached::VALUE);
+    for produced in entry_points.iter().filter_map(|files| files.first()).filter_map(|&first| index.func_by_key(ids, FuncKey::NamespaceForHost(first))) {
+        reach.add_root(produced, true);
+        reach.add_flags(produced, reached::VALUE);
     }
-    // No code outside a module of the runtime names a function of it, so one that cannot be translated is left out by itself.
     let mut skipped_builtin_modules: Vec<(u32, Problem)> = Vec::new();
     let mut skipped_builtin_functions: Vec<(u32, Problem)> = Vec::new();
     let mut builtin_roots: Vec<(u32, FuncKey)> = Vec::new();
@@ -2948,12 +2777,12 @@ fn link_with_helper_threads<'scope>(
                     _ => LoadedBy::RuntimeModulesOnly,
                 };
                 if loader_entries_have_sites && matches!(loaded_by, LoadedBy::ComputedName | LoadedBy::RuntimeModulesBehindLoader) {
-                    reach.runtime.get_mut().hidden_behind_doors.push((i64::from(id), name.to_vec(), file, evaluation));
+                    reach.runtime.get_mut().hidden_behind_loader_entries.push((i64::from(id), name.to_vec(), file, evaluation));
                 } else {
                     reach.runtime.get_mut().add(i64::from(id), name, file, evaluation);
                 }
                 match loaded_by {
-                    LoadedBy::ComputedName | LoadedBy::RuntimeModulesOrComputedName if loader_entries_have_sites => reach.runtime.get_mut().behind_doors.push(evaluation),
+                    LoadedBy::ComputedName | LoadedBy::RuntimeModulesOrComputedName if loader_entries_have_sites => reach.runtime.get_mut().behind_loader_entries.push(evaluation),
                     LoadedBy::NativeCodeOrLiteralName | LoadedBy::ComputedName | LoadedBy::RuntimeModulesOrComputedName => reach.add_root(evaluation, true),
                     LoadedBy::RuntimeModulesOnly | LoadedBy::RuntimeModulesBehindLoader => {}
                 }
@@ -2964,7 +2793,7 @@ fn link_with_helper_threads<'scope>(
     if let Some((namespace, id)) = runtime_helpers.and_then(|namespace| Some((namespace, index.func_by_key(ids, namespace)?))) {
         builtin_roots.push((0x7fff_fffe, namespace));
         if loader_entries_have_sites {
-            reach.runtime.get_mut().behind_doors.push(id);
+            reach.runtime.get_mut().behind_loader_entries.push(id);
         } else {
             reach.add_root(id, true);
         }
@@ -2973,7 +2802,6 @@ fn link_with_helper_threads<'scope>(
         builtin_roots.push((0x7fff_ffff, files));
         reach.add_root(id, true);
     }
-    // Native code asks for a builtin function by its number, whatever the program does. A file that cannot be translated is left out whole.
     let mut builtin_functions: Vec<(u32, FuncKey, u32)> = Vec::new();
     for fragment in fragments.iter().filter(|fragment| !fragment.builtin_functions.is_empty()) {
         let of_bodies = fragment.funcs.iter().filter_map(|function| function.body.as_ref()).flat_map(|body| &body.problems);
@@ -3162,12 +2990,10 @@ fn link_with_helper_threads<'scope>(
             .or_else(|| is_in_package_declarations(place).then_some(OutsideProgramReason::PackageDeclarations))
     };
     let errors: Vec<Option<OutsideProgramReason>> = places.iter().zip(in_dropped_imports).map(place_of).collect();
-    // Nothing comes of a program with an error in it.
     if errors.iter().any(Option::is_none) {
         return Linked { problems, errors, times, ..Linked::default() };
     }
 
-    // The functions of the program after the entry functions, and whether each has its body.
     let runtime_flags: FxHashSet<FileId> = builtin_modules.iter().map(|module| module.1).collect();
     let mut included_of: Vec<(usize, [Vec<((FragmentIndex, bool), u32)>; 2])> = (0..fragments.len()).map(|number| (number, Default::default())).collect();
     {
@@ -3206,7 +3032,6 @@ fn link_with_helper_threads<'scope>(
         let first_entry_point = first_evaluating_entry_point(fragments.len(), &starts, &static_imports_of);
         included_of.sort_by_key(|&(number, _)| (first_entry_point[number], number));
     }
-    // What runs when the program starts comes first, in the order it runs in: the image places code by these numbers, and whatever is numbered as it is first mentioned follows.
     let key_at = |at: FragmentIndex| fragments[at.fragment as usize].funcs[at.index as usize].key;
     let evaluating_modules: usize = included_of.iter().map(|of_fragment| of_fragment.1[0].len()).sum();
     let (included, included_slots): (Vec<(FragmentIndex, bool)>, Vec<u32>) = [0, 1].into_iter().flat_map(|group| included_of.iter().flat_map(move |of_fragment| &of_fragment.1[group])).copied().unzip();
@@ -3234,7 +3059,6 @@ fn link_with_helper_threads<'scope>(
     let mut numbering = Numbering::new(&fragments, &index, ids, &func_ids.by_program_id, record_positions, in_parallel);
     numbering.str_ids[entry_name as usize] = numbering.strs.intern(b"main");
     let entry_name = numbering.str_ids[entry_name as usize];
-    // A module for each file that has a function in the program, in the order of those.
     let mut last = None;
     for &place in &included_slots {
         let file = index.outline.funcs[place as usize].file;
@@ -3242,7 +3066,7 @@ fn link_with_helper_threads<'scope>(
             numbering.module_of(file);
         }
     }
-    let mut noted: FlowNotes = FlowNotes::default();
+    let mut recorded: FlowNotes = FlowNotes::default();
     let mut lost: Vec<(Identity, Problem)> = Vec::new();
     let mut included_by_fragment: Vec<[&[(FragmentIndex, bool)]; 2]> = vec![[&included[..0]; 2]; fragments.len()];
     let mut slots_by_fragment: Vec<[&[u32]; 2]> = vec![[&included_slots[..0]; 2]; fragments.len()];
@@ -3257,7 +3081,6 @@ fn link_with_helper_threads<'scope>(
     }
     let (mut numbering, is_runtime_layout, mut extended_globals, mut prototype_property_names, method_stores) = std::thread::scope(|scope| {
     let numbered = spawn_outside_pool(scope, || {
-    // ReferencedBy layout: a function of the runtime is the first to lead to it. Those of the program come first: so nothing of the program leads to it.
     let mut is_runtime_layout: Vec<bool> = Vec::new();
     let mut module_before = (u32::MAX, ModuleId::NONE);
     for (position, &(at, has_body)) in included.iter().enumerate() {
@@ -3299,24 +3122,22 @@ fn link_with_helper_threads<'scope>(
     (numbering, is_runtime_layout, extended_globals, prototype_property_names, method_stores)
     });
 
-    // From here on the fragments are taken apart. What was noted is put together, with the types in the place of what the fragments call
-    // them. A type that does not come back would be a member or a view the less, and nobody would know.
     struct FragmentNotes<'a> {
         program_ids: &'a [u32],
         funcs: &'a mut [Function],
         functions: [&'a [(FragmentIndex, bool)]; 2],
-        noted: [FlowNotes; 2],
+        recorded: [FlowNotes; 2],
         lost: [Vec<(Identity, Problem)>; 2],
     }
     let mut fragment_notes: Vec<FragmentNotes<'_>> = Vec::with_capacity(included_by_fragment.iter().filter(|functions| functions.iter().any(|group| !group.is_empty())).count());
     fragment_notes.extend(
         (funcs_of.iter_mut().zip(&fragments).zip(included_by_fragment.iter().copied()))
             .filter(|(_, functions)| functions.iter().any(|group| !group.is_empty()))
-            .map(|((funcs, fragment), functions)| FragmentNotes { program_ids: &fragment.program_ids.funcs, funcs, functions, noted: Default::default(), lost: Default::default() }),
+            .map(|((funcs, fragment), functions)| FragmentNotes { program_ids: &fragment.program_ids.funcs, funcs, functions, recorded: Default::default(), lost: Default::default() }),
     );
     for_each_mut(&mut fragment_notes, in_parallel, &|of| {
         for (group, functions) in of.functions.iter().enumerate() {
-            let (noted, lost) = (&mut of.noted[group], &mut of.lost[group]);
+            let (recorded, lost) = (&mut of.recorded[group], &mut of.lost[group]);
             for index in functions.iter().filter(|function| function.1).map(|function| function.0.index) {
                 let function = &mut of.funcs[index as usize];
                 let (key, pos) = (function.key, function.func.as_ref().map_or(0, |func| func.pos));
@@ -3327,7 +3148,7 @@ fn link_with_helper_threads<'scope>(
                 let has_unknown_caller = reach.has(of.program_ids[index as usize], reached::VALUE | reached::MEMBER);
                 let when_callee_unknown = has_unknown_caller.then(|| std::mem::take(&mut body.notes_for_unknown_callers));
                 for notes in std::iter::once(std::mem::take(&mut body.notes)).chain(when_callee_unknown) {
-                    noted.absorb(notes.renamed(|identity| {
+                    recorded.absorb(notes.renamed(|identity| {
                         let ty = types.get(&identity).copied();
                         if ty.is_none() {
                             lost.push((identity, Problem { file: key.file(), pos, what: format!("a type ({identity:x?}) that is noted for the function {key:?} and that no task has kept").into() }));
@@ -3340,16 +3161,16 @@ fn link_with_helper_threads<'scope>(
     });
     const FRAGMENTS_PER_RUN: usize = 1024;
     let mut runs: Vec<(&mut [FragmentNotes<'_>], [FlowNotes; 2])> = fragment_notes.chunks_mut(FRAGMENTS_PER_RUN).map(|run| (run, Default::default())).collect();
-    for_each_mut(&mut runs, in_parallel, &|(run, noted)| {
-        for (group, noted) in noted.iter_mut().enumerate() {
+    for_each_mut(&mut runs, in_parallel, &|(run, recorded)| {
+        for (group, recorded) in recorded.iter_mut().enumerate() {
             for of in run.iter_mut() {
-                noted.absorb(std::mem::take(&mut of.noted[group]));
+                recorded.absorb(std::mem::take(&mut of.recorded[group]));
             }
         }
     });
     for group in 0..2 {
         for (run, of_run) in &mut runs {
-            noted.absorb(std::mem::take(&mut of_run[group]));
+            recorded.absorb(std::mem::take(&mut of_run[group]));
             for of in run.iter_mut() {
                 lost.append(&mut of.lost[group]);
             }
@@ -3399,22 +3220,18 @@ fn link_with_helper_threads<'scope>(
     let (stores_known, methods_awaited) = replaced_methods_channel;
     stores_known.send(method_stores).expect("the thread that finds the methods that are replaced is there");
     let mut classes_as_values: Vec<LayoutId> = Vec::new();
-    // `Body::implicit_stores`, with the number of the fragment.
     let mut implicit_stores: Vec<(u32, StrId)> = Vec::new();
-    // `Body::number_flows`, each with its file. The names are program-wide ids.
     let (mut number_flows, mut flows_of_runtime): (Vec<(FileId, NumberFlow<StrId>)>, Vec<(FileId, NumberFlow<StrId>)>) = (Vec::new(), Vec::new());
     let is_stub: Vec<bool> = std::iter::repeat_n(false, entry_points.len()).chain(included.iter().map(|function| !function.1)).collect();
 
     let mut program = Program { strs, tys, extended_globals, prototype_property_names, entries: (0..entry_points.len()).map(FuncId::new).collect(), ..Program::default() };
     for entry_point in entry_points {
-        // A file that only declares has no code to start with.
         let run: Vec<FuncId> = entry_point.iter().filter_map(|&root| func_ids.get(FuncKey::Module(root))).collect();
         let import = entry_point.first().and_then(|&first| func_ids.get(FuncKey::NamespaceForHost(first)).or_else(|| func_ids.get(FuncKey::DynamicImport(first, false))));
         let is_commonjs = shows_whole_paths && entry_point.first().is_some_and(|&first| checked.files.module(first).is_commonjs() || checked.files.module(first).file_name().ends_with(b".cjs"));
         let first_operation = is_commonjs.then_some(Operation::MarkCommonJSEntryPoint);
         program.funcs.push(entry_function(entry_name, program.tys.anything, &run, import, first_operation));
     }
-    // ReferencedBy layout: the type it stands for, the class it is of, and the class that it constructs by its value.
     let mut views: Vec<(LayoutId, Identity)> = Vec::new();
     let mut classes: Vec<Option<(FileId, ClassId)>> = Vec::with_capacity(layouts.len());
     let mut constructed_by_value: Vec<LayoutId> = Vec::new();
@@ -3553,14 +3370,13 @@ fn link_with_helper_threads<'scope>(
     unsafe { program.funcs.set_len(entry_points.len() + included.len()) };
     program.regexp_literals.sort_unstable_by_key(|&(pattern, flags)| (pattern.0, flags.0));
     program.regexp_literals.dedup();
-    // The runtime and the program each go by what their own code stores.
     let file_ranks: Vec<u32> = (0..checked.files.modules.len() as u32).map(|file| checked.files.rank_of_file(FileId(file))).collect();
     let integer_verdicts = std::thread::Builder::new().spawn(move || [number_flows, flows_of_runtime].map(|flows| expected_int32(&flows, |file| file_ranks[file.idx()]))).expect("a thread");
     program.builtin_modules = builtin_roots.iter().filter_map(|(id, root)| Some((*id, func_ids.get(*root)?))).collect();
     program.builtin_functions = builtin_functions.iter().map(|(id, root, visibility)| (*id, func_ids.get(*root).expect("a builtin function that is in the index is reached"), *visibility)).collect();
     let init_of = |file: FileId| func_ids.get(FuncKey::Module(file)).unwrap_or(FuncId::NONE);
-    let mut precomputed_line_tables: Vec<LineTable> = precomputed_line_tables.map_or_else(Vec::new, |made| made.join().expect("the thread that makes the line tables panicked"));
-    let precomputed: FxHashMap<FileId, usize> = precomputed_line_tables.iter().enumerate().map(|(at, made)| (made.0, at)).collect();
+    let mut precomputed_line_tables: Vec<LineTable> = precomputed_line_tables.map_or_else(Vec::new, |created| created.join().expect("the thread that makes the line tables panicked"));
+    let precomputed: FxHashMap<FileId, usize> = precomputed_line_tables.iter().enumerate().map(|(at, created)| (created.0, at)).collect();
     let mut others: Vec<LineTable> = modules.iter().filter(|&&file| !precomputed.contains_key(&file)).map(|&file| (file, Vec::new(), Vec::new())).collect();
     let lanes = others.len();
     make_line_tables(checked, shown_from, shows_whole_paths, &mut others, lanes, in_parallel);
@@ -3568,7 +3384,7 @@ fn link_with_helper_threads<'scope>(
     for &file in &modules {
         let (line_table, shown) = match precomputed.get(&file) {
             Some(&at) => (std::mem::take(&mut precomputed_line_tables[at].1), std::mem::take(&mut precomputed_line_tables[at].2)),
-            None => others.next().map(|made| (made.1, made.2)).expect("a line table is made for every other module"),
+            None => others.next().map(|created| (created.1, created.2)).expect("a line table is made for every other module"),
         };
         let display_path = program.strs.intern(&shown);
         program.modules.push(ir::Module { path: display_path, init: init_of(file), display_path, line_table, printed: Vec::new() });
@@ -3595,25 +3411,24 @@ fn link_with_helper_threads<'scope>(
     }
     const VARIABLES_PER_RUN: usize = 1024;
     let mut runs: Vec<(&[FragmentIndex], Vec<ir::Global>)> = globals.chunks(VARIABLES_PER_RUN).map(|run| (run, Vec::new())).collect();
-    for_each_mut(&mut runs, in_parallel, &|(run, made)| {
+    for_each_mut(&mut runs, in_parallel, &|(run, created)| {
         for &at in run.iter() {
             let ir::Global { name, module, declared, initialization, single_function, single_function_flags } = fragments[at.fragment as usize].globals[at.index as usize].global;
             let mut global = ir::Global { name, module, declared, initialization, single_function, single_function_flags };
             for_each_global_id(&mut global, &mut Renumber(&maps[at.fragment as usize]));
-            // Of a function that is not reached there are no closures.
             if global.single_function.is_none() {
                 global.single_function_flags = 0;
             }
-            made.push(global);
+            created.push(global);
         }
     });
     program.globals.extend(runs.into_iter().flat_map(|run| run.1));
     problems.append(&mut layout_problems);
     const LAYOUTS_PER_RUN: usize = 512;
     let mut runs: Vec<(&mut [(Notes, LayoutKey)], FlowNotes, Vec<(Identity, Problem)>)> = layout_notes.chunks_mut(LAYOUTS_PER_RUN).map(|run| (run, FlowNotes::default(), Vec::new())).collect();
-    for_each_mut(&mut runs, in_parallel, &|(run, noted, lost)| {
+    for_each_mut(&mut runs, in_parallel, &|(run, recorded, lost)| {
         for (notes, key) in run.iter_mut() {
-            noted.absorb(std::mem::take(notes).renamed(|identity| {
+            recorded.absorb(std::mem::take(notes).renamed(|identity| {
                 let ty = types.get(&identity).copied();
                 if ty.is_none() {
                     lost.push((identity, Problem { file: key.file().unwrap_or(nowhere), pos: 0, what: format!("a type ({identity:x?}) that is noted for the layout {key:x?} and that no task has kept").into() }));
@@ -3623,7 +3438,7 @@ fn link_with_helper_threads<'scope>(
         }
     });
     for (_, of_run, mut lost_in_run) in runs {
-        noted.absorb(of_run);
+        recorded.absorb(of_run);
         lost.append(&mut lost_in_run);
     }
     for class in constructed_by_value.into_iter().filter(|class| class.is_some()) {
@@ -3659,16 +3474,13 @@ fn link_with_helper_threads<'scope>(
         .filter_map(|(layout, identity)| Some((layout, again(identity, nowhere, &|| format!("the layout `{}`", text_of(&program.strs, program.layouts[layout.idx()].name)))?)))
         .collect();
     lost.append(&mut invalidated_by_stores);
-    // The notes of a function come in no order, and a type more than once.
     lost.sort_by_key(|lost| lost.0);
     lost.dedup_by_key(|lost| lost.0);
     problems.extend(lost.into_iter().map(|lost| lost.1));
 
-    // No task runs any more: the checker sees all that has been published.
     let c = &mut checked.checker();
     c.begin_stack_budget();
 
-    // Which methods the modules of the program are seen to put something else in the place of. No fragment says so of any.
     let (replaced, noted_on_the_way, has_run_out_on_the_way) = methods_awaited.recv().expect("the thread that finds the methods that are replaced panicked");
     ran_out_of_stack |= has_run_out_on_the_way;
     for (layout, class) in program.layouts.iter_mut().zip(&classes) {
@@ -3683,8 +3495,6 @@ fn link_with_helper_threads<'scope>(
         }
     }
 
-    // A class that is not laid out constructs what it extends by its value. Where that may be a class that is laid out, the objects of
-    // that layout do not all have the prototype object of that class.
     let has_replaced_static_member = |layout: &Layout| layout.methods.iter().any(|method| method.flags & method_flags::STATIC != 0 && method.flags & method_flags::MAY_BE_REPLACED != 0);
     for &(layout, _) in views.iter().filter(|view| classes[view.0.idx()].is_some()) {
         let mut at = layout;
@@ -3716,7 +3526,6 @@ fn link_with_helper_threads<'scope>(
         if may_be_extended {
             extended_by_value += 1;
             program.layouts[candidate.0.idx()].class_flags |= class_flags::MAY_HAVE_OTHER_PROTOTYPE;
-            // `super()` there makes an object of this layout, be the class abstract.
             if let Some(&(_, ty)) = views.iter().find(|view| view.0 == candidate.0) {
                 c.record_allocation(ty);
             }
@@ -3726,20 +3535,18 @@ fn link_with_helper_threads<'scope>(
     if let Some(print_line) = explain.progress {
         print_line(format_args!("aot: progress: the link: {external_and_invalidated} given types that no task has kept"));
     }
-    noted.absorb(noted_on_the_way);
-    noted.absorb(c.take_notes_recorded());
+    recorded.absorb(noted_on_the_way);
+    recorded.absorb(c.take_notes_recorded());
     let classes_used_as_values = candidates.len();
 
     times.add("classes", &mut since);
 
     let is_in_opaque_file: Vec<bool> = classes.iter().map(|class| class.is_some_and(|class| is_opaque(class.0))).collect();
-    let mut names = Names::of(&program, &marks, &is_in_opaque_file);
-    // A name that the program has no string for is the name of no field.
+    let mut names = Names::new(&program, &marks, &is_in_opaque_file);
     for name in implicit_stores.into_iter().filter_map(|(fragment, name)| program.strs.find(fragments[fragment as usize].strs.get(name))) {
         names.stored[name.idx()] = true;
     }
     let function_keys: Vec<FuncKey> = included.iter().filter(|_| explain.mutations || explain.throws || explain.throws_json).map(|&(at, _)| fragments[at.fragment as usize].funcs[at.index as usize].key).collect();
-    // How the modules of the runtime are compiled does not depend on the program they are linked with: each of their fields has room.
     for (layout, _) in program.layouts.iter().zip(&is_runtime_layout).filter(|layout| *layout.1 && layout.0.kind != LayoutKind::Environment) {
         for field in layout.fields.iter().filter(|field| field.name.is_some()) {
             names.stored[field.name.idx()] = true;
@@ -3758,7 +3565,6 @@ fn link_with_helper_threads<'scope>(
     let stored: FxHashSet<Atom> = runs.into_iter().flat_map(|run| run.1).collect();
     times.add("names", &mut since);
 
-    // A name that the program has no string for is the name of no field.
     let [verdicts, verdicts_of_runtime] = integer_verdicts.join().expect("the thread that follows the numbers panicked").map(|verdicts| -> Vec<(StrId, Int32Verdict<StrId>)> {
         verdicts.into_iter().filter_map(|verdict| Some((Some(str_ids[verdict.name.idx()]).filter(|name| name.is_some())?, verdict))).collect()
     });
@@ -3787,10 +3593,10 @@ fn link_with_helper_threads<'scope>(
     let mut is_exhausted = false;
     let mut truncated = Vec::new();
     let mut relaxed_for_logging = Vec::new();
-    let type_texts = TypeTexts::of(&views);
+    let layout_type_texts = TypeTexts::new(&views);
     let membership = std::thread::scope(|scope| {
-    let printers = [(); 2].map(|()| spawn_outside_pool(scope, || type_texts.print(checked, &program, shown_from)));
-    let mut subtypes = c.begin_subtypes(noted, &asked, field_types, stored, kinds_declared, explain.progress, in_parallel);
+    let printers = [(); 2].map(|()| spawn_outside_pool(scope, || layout_type_texts.print(checked, &program, shown_from)));
+    let mut subtypes = c.begin_subtypes(recorded, &asked, field_types, stored, kinds_declared, explain.progress, in_parallel);
     times.add("flows", &mut since);
     for run in 0..6 {
         if run == 1 {
@@ -3809,9 +3615,9 @@ fn link_with_helper_threads<'scope>(
             use bun_sema::check::LoggingRelaxation::{BoundedExternalData, Nothing, BoundedUntyped, AllExternalData};
             subtypes = subtypes.restart_final_run([AllExternalData, BoundedExternalData, BoundedUntyped, Nothing][run - 2]);
         }
-        while !subtypes.questions().is_empty() || !subtypes.own_queries().is_empty() {
-            let (answers, has_this_run_out) = answer_queries(checked, subtypes.questions(), subtypes.stored(), &mut truncated, in_parallel);
-            subtypes.say("the answers of the other checkers");
+        while !subtypes.queries().is_empty() || !subtypes.own_queries().is_empty() {
+            let (answers, has_this_run_out) = answer_queries(checked, subtypes.queries(), subtypes.stored(), &mut truncated, in_parallel);
+            subtypes.log_progress("the answers of the other checkers");
             c.set_truncated_queries(&truncated);
             let local_answers = c.answer(subtypes.own_queries(), subtypes.stored());
             keep_truncated_queries(&mut truncated, c.truncated_queries());
@@ -3826,7 +3632,7 @@ fn link_with_helper_threads<'scope>(
     }
     let membership = subtypes.finish();
     times.add("flows", &mut since);
-    type_texts.print(checked, &program, shown_from);
+    layout_type_texts.print(checked, &program, shown_from);
     for printer in printers {
         printer.join().expect("a thread that prints types panicked");
     }
@@ -3844,9 +3650,28 @@ fn link_with_helper_threads<'scope>(
     let mut remaining_layouts: Vec<Option<&mut Layout>> = program.layouts.iter_mut().map(Some).collect();
     let mut laid: Vec<_> = views.iter().zip(&membership.views).map(|(&(layout, _), reach)| (remaining_layouts[layout.idx()].take().expect("a layout is of one view"), reach)).collect();
     drop(remaining_layouts);
+    let symbol_field_names: FxHashMap<Atom, Option<StrId>> = (membership.views.iter())
+        .flat_map(|reach| reach.callees.iter().map(|callee| callee.0).chain(reach.never_observed_absent.iter().copied()))
+        .filter(|&name| c.atoms().is_symbol_name(name))
+        .map(|name| (name, c.constant_symbol_of_property(name).and_then(|symbol| strs.find(&c.constant_symbol_text(symbol)))))
+        .collect();
+    let field_names_by_symbol: FxHashMap<Sym, StrId> = (membership.views.iter())
+        .flat_map(|reach| reach.set_at_creation.iter())
+        .filter_map(|&(key, _)| match key {
+            FieldKey::Symbol(declaration) => Some((declaration, strs.find(&c.constant_symbol_text(c.constant_symbol(declaration)?))?)),
+            FieldKey::Name(_) => None,
+        })
+        .collect();
+    let field_name = |name: Atom| match symbol_field_names.get(&name) {
+        Some(&found) => found,
+        None => strs.find(checked.files.atoms.bytes(name)),
+    };
     for_each_mut(&mut laid, in_parallel, &|(out, reach)| {
         out.is_allocated = reach.is_allocated;
         out.may_be_frozen = reach.may_be_frozen;
+        if reach.prototype_is_set_by_typed_code && out.kind == LayoutKind::Record {
+            out.class_flags |= class_flags::PROTOTYPE_IS_SET_BY_TYPED_CODE;
+        }
         if reach.may_have_other_prototype && out.kind == LayoutKind::Record {
             out.class_flags |= class_flags::MAY_HAVE_OTHER_PROTOTYPE;
         }
@@ -3857,28 +3682,29 @@ fn link_with_helper_threads<'scope>(
         out.structural_subtypes = layouts_at(&reach.structural_subtypes);
         out.specializations = layouts_at(&reach.specializations);
         let by_name = out.fields_by_name();
-        // What is stored under a name in the objects of a view is seen as far as the types go: a prediction.
         for &(name, file, func) in &reach.callees {
-            let field = strs.find(checked.files.atoms.bytes(name)).and_then(|name| by_name.get(out, name));
+            let field = field_name(name).and_then(|name| by_name.get(out, name));
             if let (Some(field), Some(func)) = (field, func_ids.get(FuncKey::Function(file, func))) {
                 out.fields[field as usize].single_function = func;
             }
         }
         for &(name, is_at_every_creation) in &reach.set_at_creation {
-            if let Some(field) = strs.find(checked.files.atoms.bytes(name)).and_then(|name| by_name.get(out, name)) {
+            let name = match name {
+                FieldKey::Name(name) => field_name(name),
+                FieldKey::Symbol(declaration) => field_names_by_symbol.get(&declaration).copied(),
+            };
+            if let Some(field) = name.and_then(|name| by_name.get(out, name)) {
                 out.fields[field as usize].flags |= if is_at_every_creation { field_flags::SET_AT_CREATION } else { field_flags::MAY_BE_SET_AT_CREATION };
             }
         }
         for &name in &reach.never_observed_absent {
-            if let Some(field) = strs.find(checked.files.atoms.bytes(name)).and_then(|name| by_name.get(out, name))
+            if let Some(field) = field_name(name).and_then(|name| by_name.get(out, name))
                 && out.fields[field as usize].flags & (field_flags::OPTIONAL | field_flags::NEVER_STORED) == 0
             {
                 out.fields[field as usize].flags |= field_flags::NEVER_OBSERVED_ABSENT;
             }
         }
     });
-    // The objects that a constructor function initializes inherit from its `prototype` object. Where the program may replace that or get
-    // hold of it, they may inherit from anything.
     for (file, function) in c.functions_with_mutable_prototype() {
         if let Some(func) = func_ids.get(FuncKey::Function(file, function))
             && program.funcs[func.idx()].declared_this_type.is_some()
@@ -3893,9 +3719,37 @@ fn link_with_helper_threads<'scope>(
             }
         }
     }
-    // A read that stands in a test position is held to nothing. What a view says of a field is a fact all the same where every object that is
-    // looked at through it is one of the program's, with the prototype it was made with, and no other view of such an object takes more for
-    // the field: typed code stores through a view what the field of the VIEW takes, `(narrow as Wide).next = wide`.
+    {
+        let layout_of_type: FxHashMap<TypeId, LayoutId> = views.iter().map(|&(layout, ty)| (ty, layout)).collect();
+        let layout_of_class: FxHashMap<(FileId, ClassId), LayoutId> = classes.iter().enumerate().filter_map(|(index, class)| Some(((*class)?, LayoutId::new(index)))).collect();
+        let layouts = &program.layouts;
+        let extends = |mut layout: LayoutId, ancestor: LayoutId| {
+            while layout.is_some() && layout != ancestor {
+                layout = layouts[layout.idx()].base;
+            }
+            layout == ancestor
+        };
+        let mut resolved: Vec<(usize, usize)> = Vec::new();
+        for (index, class) in classes.iter().enumerate() {
+            let Some((file, class)) = *class else { continue };
+            for (at, method) in layouts[index].methods.iter().enumerate() {
+                if method.flags & method_flags::MAY_BE_REPLACED == 0 || method.flags & method_flags::STATIC != 0 || method.name.is_none() {
+                    continue;
+                }
+                let Some(evidence) = replaced.structural_evidence(file, class, program.strs.get(method.name)) else { continue };
+                let is_reached = evidence.iter().any(|(candidate, receiver)| match (layout_of_class.get(candidate), layout_of_type.get(receiver)) {
+                    (Some(&candidate), Some(&receiver)) => layouts[receiver.idx()].members.iter().any(|&member| extends(member, candidate)),
+                    _ => true,
+                });
+                if !is_reached {
+                    resolved.push((index, at));
+                }
+            }
+        }
+        for (index, at) in resolved {
+            program.layouts[index].methods[at].flags &= !method_flags::MAY_BE_REPLACED;
+        }
+    }
     let mut supertypes_by_layout: Vec<Vec<LayoutId>> = vec![Vec::new(); program.layouts.len()];
     for (index, view) in program.layouts.iter().enumerate() {
         for member in view.members.iter().filter(|member| member.idx() != index) {
@@ -3926,12 +3780,12 @@ fn link_with_helper_threads<'scope>(
         }
     }
     times.add("answers", &mut since);
-    let fields_by_name = nil::fields_with_deleted_names(&program, &contents, in_parallel);
-    let deleted = nil::widen_fields_for_deletions(&mut program, &contents, &fields_by_name, in_parallel);
+    let fields_by_name = nullish::fields_with_deleted_names(&program, &contents, in_parallel);
+    let deleted = nullish::widen_fields_for_deletions(&mut program, &contents, &fields_by_name, in_parallel);
     reads::retype_reads_from_subtypes(&mut program, in_parallel);
     let written: Vec<TyId> = program.funcs.iter().flat_map(|func| func.params.iter().copied()).collect();
     let mut found_meanwhile = None;
-    nil::widen_for_nullish(&mut program, &contents, &fields_by_name, in_parallel, &mut |program| found_meanwhile = Some((strangers::find_single_structure_receivers(program, in_parallel), throws::set_up(program, in_parallel))));
+    nullish::widen_for_nullish(&mut program, &contents, &fields_by_name, in_parallel, &mut |program| found_meanwhile = Some((literal_structures::find_single_structure_receivers(program, in_parallel), throws::set_up(program, in_parallel))));
     let ((single_structure_accesses, mut rows), setup_of_what_always_fails) = found_meanwhile.expect("the link waits once for where the functions get");
     let mut left = &written[..];
     for (index, func) in program.funcs.iter().enumerate() {
@@ -3941,6 +3795,8 @@ fn link_with_helper_threads<'scope>(
             program.declared_parameter_types.insert(index as u32, of_function.to_vec());
         }
     }
+    nullish::narrow_integer_arithmetic(&mut program, in_parallel);
+    integer_ranges::eliminate_redundant_integer_casts(&mut program, in_parallel);
     times.add("nil", &mut since);
     say("the subtypes are in the program");
     times.add("members", &mut since);
@@ -3950,7 +3806,7 @@ fn link_with_helper_threads<'scope>(
     }
     times.add("verify", &mut since);
     say("verified");
-    let is_empty_slot = |view: &Layout| view.kind == LayoutKind::Record && nil::is_uninhabited_layout(view) && !view.is_relaxed_for_logging;
+    let is_empty_slot = |view: &Layout| view.kind == LayoutKind::Record && nullish::is_uninhabited_layout(view) && !view.is_relaxed_for_logging;
     for view in program.layouts.iter_mut().filter(|view| is_empty_slot(view)) {
         view.name = StrId::NONE;
         for field in &mut view.fields {
@@ -3981,7 +3837,7 @@ fn link_with_helper_threads<'scope>(
             }
         }
     }
-    let TypeTexts { printed, declared, .. } = type_texts;
+    let TypeTexts { printed, declared, .. } = layout_type_texts;
     for (&(layout, _), layout_entry) in views.iter().zip(printed.into_iter().flat_map(|slice| slice.into_inner().expect("every slice is printed").fields)) {
         if is_empty_slot(&program.layouts[layout.idx()]) {
             continue;
@@ -4027,7 +3883,7 @@ fn link_with_helper_threads<'scope>(
             converted_layouts.len(),
             deleted.converted_by_name,
             deleted.never_observed_absent,
-            nil::count_reads_of_deleted_fields(&program, &deleted)
+            nullish::count_reads_of_deleted_fields(&program, &deleted)
         ));
         explained.push(format!("mutations: classes: {extended_by_value} of the {classes_used_as_values} laid-out classes that are used as values may be extended by their value"));
         let is_tested: Vec<bool> = program.layouts.iter().map(|view| view.members.iter().any(|member| program.layouts[member.idx()].may_be_frozen)).collect();
@@ -4110,11 +3966,27 @@ fn link_with_helper_threads<'scope>(
         explained.push(format!("integers: under {} of the {} names of fields that numbers are seen to get to, they are expected to be int32s", by_text.iter().filter(|verdict| verdict.is_expected_int32()).count(), by_text.len()));
         explained.append(&mut c.explain_int32_fields(&by_text));
     }
-    program.flagged_values = crate::build::sets_of_strings::find_string_set_sizes(&program, &contents, in_parallel);
+    program.flagged_values = crate::build::string_sets::find_string_set_sizes(&program, &contents, in_parallel);
+    for site in crate::build::fused_joins::find_join_sites(&program) {
+        if explain.joins {
+            let func = &program.funcs[site.func.idx()];
+            let text = &checked.files.hir(modules[func.module.idx()]).text;
+            let before = &text[..(func.values[site.join.idx()].pos as usize).min(text.len())];
+            let line = before.iter().filter(|&&byte| byte == b'\n').count() + 1;
+            let path = bstr::BStr::new(program.strs.get(program.modules[func.module.idx()].display_path));
+            explained.push(match &site.rejection {
+                None => format!("joins: {path}:{line}: map().join() is fused into one loop"),
+                Some(rejection) => format!("joins: {path}:{line}: map().join() is not fused: {rejection}"),
+            });
+        }
+        if site.rejection.is_none() {
+            program.flagged_values[site.func.idx()].push(site.join);
+        }
+    }
     times.add("collections", &mut since);
     program.single_structure_accesses = single_structure_accesses;
     times.add("rows", &mut since);
-    strangers::find_first_stores(&mut program, &contents, in_parallel);
+    literal_structures::find_first_stores(&mut program, &contents, in_parallel);
     times.add("firsts", &mut since);
     if explain.rows {
         explained.append(&mut rows);

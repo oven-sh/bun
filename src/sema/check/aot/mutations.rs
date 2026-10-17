@@ -1,26 +1,3 @@
-//! Which objects a built-in may freeze, seal or make non-extensible, and of which it may replace the prototype.
-//!
-//! Compiled code is ready for either only where the layout says that it may happen, and the run time refuses it for an object of any other
-//! layout. So a layout too many costs a test at each store, and a layout too few is a `TypeError` in a correct program: every rule here
-//! errs towards more.
-//!
-//! By the type of the operand:
-//! - An object type: its subtypes.
-//! - A type parameter: all that enters a place of it, at a call or in an instantiation, through other type parameters. At
-//!   `seal({ a: 1 })` with `function seal<T extends object>(value: T) { return Object.freeze(value); }` that is the type of the literal.
-//! - A type that says nothing, `any`, `unknown`, `object`: every layout. What `escape_closure` finds to have escaped is not all that gets to
-//!   such a place.
-//! - `Readonly<T>`, `Partial<T>`, `T & {}`: as `T`.
-//! - Any other type that depends on a type parameter: as what it is bounded by, `Events[E]` as `Events[keyof Events]`. Bounded by nothing, `T[K]`: every layout.
-//!
-//! A call is known by where its signature is declared, whatever the callee is called. So where the built-in goes somewhere as a value:
-//! - A place of its own type, `const ObjectFreeze = Object.freeze`: nothing. What is in such a place is known when it is called.
-//! - A place of another function type, `list.forEach(Object.freeze)`: as an operand of the type of the first parameter.
-//! - A place that says nothing: as an operand of which nothing is said.
-//!
-//! What is noted is sets and sums: it is absorbed in any order. It is closed where the subtype sets are begun, but for "every layout",
-//! which `Subtypes::finish` adds.
-
 use std::hash::Hash;
 use std::rc::Rc;
 
@@ -28,6 +5,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::escape_closure::TypeParameter;
 use super::type_caches::is_published;
+use super::type_flags::{HAS_OBJECT_TYPE_PARAMETERS, HAS_OBJECT_TYPES, HAS_UNTYPED_OBJECT_PART, OBJECT_TYPES_KNOWN};
 use super::flows::{Membership, NoteKind, ParameterNote, ParameterNoteKind, Place};
 use crate::atom::Atom;
 use crate::check::Checker;
@@ -38,9 +16,7 @@ use crate::types::{Origin, SigId, TypeData, TypeId};
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub(super) enum Mutation {
-    /// `Object.freeze`, `Object.seal`, `Object.preventExtensions`, `Reflect.preventExtensions`.
     IntegrityLevel,
-    /// `Object.setPrototypeOf`, `Reflect.setPrototypeOf`, a store to `__proto__`. Not to `null`, which the run time lets any record go to.
     Prototype,
     Redefinition,
 }
@@ -49,53 +25,40 @@ impl Mutation {
     pub(super) const ALL: [Mutation; 2] = [Mutation::IntegrityLevel, Mutation::Prototype];
 }
 
-/// What is known of an operand by its type. The order of `Mutations::sites`.
 #[derive(Copy, Clone)]
 enum Operand {
     ObjectType,
     TypeParameter,
     Untyped,
     DependsOnTypeParameter,
-    /// An array, a function, a primitive.
     NoLayout,
-    /// The built-in is not called here: it goes somewhere as a value.
     BuiltInAsValue,
-    /// The new prototype is `null`.
     ToNull,
 }
 
 const OPERANDS: usize = 7;
 
-/// Of a place whose operand nothing is said of: the form of the operand, and what is around the place. For the numbers.
 const FORMS: [&str; 8] = ["this", "a parameter", "a variable", "a member", "what a call yields", "a literal", "another form", "named and not called"];
 const AROUND: [&str; 3] = ["in the constructor of a class", "in another function", "in no function"];
-/// By mutation, by whether the file is JavaScript, by `FORMS`, by `AROUND`.
 type UntypedSites = [[[[u32; AROUND.len()]; FORMS.len()]; 2]; 2];
 type Widest = [[Option<Place>; 2]; 2];
 
-/// The places that define a property or delete one. For the numbers.
 const KEYS: [&str; 2] = ["a constant key", "another key"];
 const DESCRIPTORS: [&str; 6] = ["`value` and `writable: true`", "`value`", "`get` or `set`", "a literal with none of these, a spread or a computed name", "no literal", "delete"];
-/// What is known of the operand: by its type, and where that says nothing by its form.
 const REDEFINITION_OPERANDS: [&str; 13] = [
     "an object type", "a type parameter", "another type that depends on one", "no layout",
     "this", "a parameter", "a variable", "`.prototype`", "`exports`", "another member", "what a call yields", "a literal", "another form",
 ];
-/// By whether the file is JavaScript, by `KEYS`, by `DESCRIPTORS`, by `REDEFINITION_OPERANDS`.
 type RedefinitionCounts = [[[[u32; REDEFINITION_OPERANDS.len()]; DESCRIPTORS.len()]; KEYS.len()]; 2];
 
 pub(crate) struct Mutations<T = TypeId> {
     of_types: FxHashSet<(Mutation, T)>,
     parameter_mutations: FxHashSet<(Mutation, TypeParameter)>,
-    /// By mutation.
     on_untyped: [bool; 2],
     on_anything: [bool; 2],
-    /// A value of the object type enters a place of the type parameter.
     enters: FxHashSet<(TypeParameter, T)>,
-    /// A value of the second type parameter enters a place of the first.
     parameter_inflows: FxHashSet<(TypeParameter, TypeParameter)>,
     untyped_inflows: FxHashSet<TypeParameter>,
-    /// A value of a type that depends on a type parameter in another way, `T[K]`: it is not followed.
     any_inflows: FxHashSet<TypeParameter>,
     escaped_instances: FxHashSet<T>,
     escaped_parameters: FxHashSet<TypeParameter>,
@@ -106,9 +69,7 @@ pub(crate) struct Mutations<T = TypeId> {
     escaped_types: FxHashSet<T>,
     type_inflows: FxHashSet<(T, T)>,
     instances_flowing_into_types: FxHashSet<T>,
-    /// By mutation and `Operand`: how many places in the source.
     sites: [[u32; OPERANDS]; 2],
-    /// By mutation: the first place in the source that marks all that has escaped, and the first that marks every layout.
     widest: Widest,
     untyped_sites: UntypedSites,
     redefinition_counts: RedefinitionCounts,
@@ -142,13 +103,9 @@ impl<T> Default for Mutations<T> {
     }
 }
 
-/// See `Mutations::closed`.
 pub(super) struct Altered<T> {
-    /// In no order.
     pub(super) types: Vec<T>,
-    /// Every layout: nothing is said of an operand.
     pub(super) is_untyped: bool,
-    /// Every layout.
     pub(super) is_any_layout: bool,
 }
 
@@ -331,7 +288,6 @@ impl<T: Copy + Eq + Hash> Mutations<T> {
         instances.iter().copied().chain(self.enters.iter().filter(|enters| reached.contains(&enters.0)).map(|enters| enters.1)).collect()
     }
 
-    /// The types of the objects that may be the operand, type parameters followed back to what enters them.
     pub(super) fn closed(&self, mutation: Mutation) -> Altered<T> {
         let mut entering: FxHashMap<TypeParameter, Vec<TypeParameter>> = FxHashMap::default();
         for &(into, from) in &self.parameter_inflows {
@@ -355,10 +311,8 @@ impl<T: Copy + Eq + Hash> Mutations<T> {
     }
 }
 
-/// The objects that a value of a type may be, as far as the type goes.
 #[derive(Default, Clone)]
 pub(super) struct ObjectTypes {
-    /// `layout_defining_type`.
     types: Vec<TypeId>,
     parameters: Vec<TypeParameter>,
     is_untyped: bool,
@@ -368,6 +322,18 @@ pub(super) struct ObjectTypes {
 impl<'p, 's> Checker<'p, 's> {
     fn recorded_mutations(&mut self) -> &mut Mutations {
         self.recorded_escapes().mutations.get_or_insert_with(Default::default)
+    }
+
+    fn object_types(&mut self, ty: TypeId) -> Rc<ObjectTypes> {
+        if self.results_are_provisional() {
+            let mut found = ObjectTypes::default();
+            self.find_object_types(ty, &mut found);
+            return Rc::new(found);
+        }
+        match self.aot.flows.without_primitives.get(&ty) {
+            Some(known) => Rc::clone(known),
+            None => self.object_types_on_cache_miss(ty),
+        }
     }
 
     fn add_object_types(&mut self, ty: TypeId, found: &mut ObjectTypes) {
@@ -401,8 +367,18 @@ impl<'p, 's> Checker<'p, 's> {
             if let Some(caches) = caches.filter(|_| is_task_independent && !self.has_order_dependent_results()) {
                 caches.object_types.insert(ty, (*of_type).clone());
             }
+            if is_cacheable && (is_task_independent || !is_published(ty)) && self.type_caches().is_some() && !self.has_order_dependent_results() && !of_type.depends_on_type_parameter {
+                let flag_if = |holds: bool, flag: u64| if holds { flag } else { 0 };
+                let flags = flag_if(!of_type.types.is_empty(), HAS_OBJECT_TYPES) | flag_if(!of_type.parameters.is_empty(), HAS_OBJECT_TYPE_PARAMETERS) | flag_if(of_type.is_untyped, HAS_UNTYPED_OBJECT_PART);
+                self.cache_type_flag(ty, OBJECT_TYPES_KNOWN | flags, 0, false);
+            }
         }
         of_type
+    }
+
+    #[inline]
+    fn object_type_flags(&self, ty: TypeId) -> Option<u64> {
+        self.translation_type_flags(ty, OBJECT_TYPES_KNOWN)
     }
 
     fn find_object_types(&mut self, ty: TypeId, found: &mut ObjectTypes) {
@@ -418,12 +394,10 @@ impl<'p, 's> Checker<'p, 's> {
             }
             match *self.data(part) {
                 TypeData::TypeParam(file, parameter, _) => found.parameters.push((file, parameter)),
-                // The objects of the class and of what extends it.
                 TypeData::ThisParam(_) => {
                     let bound = self.base_constraint(part);
                     self.add_object_types(bound, found);
                 }
-                // It is of every constituent, so those that say something say enough: `T & {}`.
                 TypeData::Intersection(_) => {
                     let constituents: Vec<TypeId> = self.constituents(part).to_vec();
                     let mut of_all = ObjectTypes::default();
@@ -439,7 +413,6 @@ impl<'p, 's> Checker<'p, 's> {
                     found.types.append(&mut of_all.types);
                     found.parameters.append(&mut of_all.parameters);
                 }
-                // `Readonly<T>`, `Partial<T>`: places of it and places of `T` are taken for the same.
                 TypeData::Anon { origin: Origin::Mapped(file, node), mapper } if self.is_generic(part) => match self.homomorphic_type_variable(file, node, mapper) {
                     Some(variable) => self.add_object_types(variable, found),
                     None => found.depends_on_type_parameter = true,
@@ -454,7 +427,6 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                 }
                 _ if self.is_generic(part) => found.depends_on_type_parameter = true,
-                // An array, a function and the like have no layout.
                 _ if self.declares_properties(part) && !self.is_array_or_tuple(part) && self.array_subtype_element(part).is_none() => found.types.push(self.layout_defining_type(part)),
                 _ => {}
             }
@@ -462,10 +434,14 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     pub(super) fn record_type_accepts_untyped(&mut self, target: TypeId, only_if_let_out: bool) {
-        let mut found = ObjectTypes::default();
-        self.add_object_types(target, &mut found);
-        let types = std::mem::take(&mut found.types);
-        let instances: Vec<TypeId> = types.into_iter().filter(|&ty| self.is_instance_type(ty)).collect();
+        if self.object_type_flags(target).is_some_and(|flags| flags & (HAS_OBJECT_TYPES | HAS_OBJECT_TYPE_PARAMETERS) == 0) {
+            return;
+        }
+        let found = self.object_types(target);
+        if found.types.is_empty() && found.parameters.is_empty() {
+            return;
+        }
+        let instances: Vec<TypeId> = found.types.iter().copied().filter(|&ty| self.is_instance_type(ty)).collect();
         if instances.is_empty() && found.parameters.is_empty() {
             return;
         }
@@ -473,9 +449,9 @@ impl<'p, 's> Checker<'p, 's> {
             true => (NoteKind::InstanceReceivesUntypedIfEscapes, ParameterNoteKind::ReceivesUntypedIfEscapes),
             false => (NoteKind::InstanceReceivesUntyped, ParameterNoteKind::ReceivesUntyped),
         };
-        let noted = self.notes();
-        noted.add_all(instance_predictions, &instances);
-        noted.add_parameters(parameter_mutations, &found.parameters);
+        let recorded = self.notes();
+        recorded.add_all(instance_predictions, &instances);
+        recorded.add_parameters(parameter_mutations, &found.parameters);
     }
 
     pub(super) fn record_type_escapes(&mut self, view: TypeId) {
@@ -484,77 +460,83 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     pub(super) fn record_instances_flowing_into_types(&mut self, own: TypeId, target: TypeId) {
-        if own == target || !self.aot.escape_closure.visited_type_inflows.insert((own, target)) {
+        if own == target || [own, target].into_iter().any(|ty| self.object_type_flags(ty).is_some_and(|flags| flags & HAS_OBJECT_TYPES == 0)) {
             return;
         }
-        let (mut from, mut into) = (ObjectTypes::default(), ObjectTypes::default());
-        self.add_object_types(target, &mut into);
-        let views: Vec<TypeId> = into.types.into_iter().filter(|&ty| !self.is_instance_type(ty)).collect();
+        if !self.aot.escape_closure.visited_type_inflows.insert((own, target)) {
+            return;
+        }
+        let into = self.object_types(target);
+        let views: Vec<TypeId> = into.types.iter().copied().filter(|&ty| !self.is_instance_type(ty)).collect();
         if views.is_empty() {
             return;
         }
-        self.add_object_types(own, &mut from);
+        let from = self.object_types(own);
         if from.types.is_empty() {
             return;
         }
         let instances: Vec<TypeId> = from.types.iter().copied().filter(|&ty| self.is_instance_type(ty)).collect();
-        let noted = self.notes();
-        noted.add_all(NoteKind::InstanceFlowsIntoTypes, &instances);
+        let recorded = self.notes();
+        recorded.add_all(NoteKind::InstanceFlowsIntoTypes, &instances);
         for &entering in &from.types {
             for &view in views.iter().filter(|&&view| view != entering) {
-                noted.add_pair(NoteKind::FlowsIntoType, view, entering);
+                recorded.add_pair(NoteKind::FlowsIntoType, view, entering);
             }
         }
     }
 
     pub(super) fn record_escaping_types(&mut self, own: TypeId, target: Option<TypeId>) {
-        if let Some(target) = target {
-            let mut into = ObjectTypes::default();
-            self.add_object_types(target, &mut into);
-            if !into.is_untyped {
-                return;
+        if let Some(target) = target
+            && !match self.object_type_flags(target) {
+                Some(flags) => flags & HAS_UNTYPED_OBJECT_PART != 0,
+                None => self.object_types(target).is_untyped,
             }
+        {
+            return;
         }
-        let mut found = ObjectTypes::default();
-        self.add_object_types(own, &mut found);
-        let types = std::mem::take(&mut found.types);
-        let instances: Vec<TypeId> = types.into_iter().filter(|&ty| self.is_instance_type(ty)).collect();
+        if self.object_type_flags(own).is_some_and(|flags| flags & (HAS_OBJECT_TYPES | HAS_OBJECT_TYPE_PARAMETERS) == 0) {
+            return;
+        }
+        let found = self.object_types(own);
+        if found.types.is_empty() && found.parameters.is_empty() {
+            return;
+        }
+        let instances: Vec<TypeId> = found.types.iter().copied().filter(|&ty| self.is_instance_type(ty)).collect();
         if instances.is_empty() && found.parameters.is_empty() {
             return;
         }
-        let noted = self.notes();
-        noted.add_all(NoteKind::InstanceEscapes, &instances);
-        noted.add_parameters(ParameterNoteKind::Escaped, &found.parameters);
+        let recorded = self.notes();
+        recorded.add_all(NoteKind::InstanceEscapes, &instances);
+        recorded.add_parameters(ParameterNoteKind::Escaped, &found.parameters);
     }
 
-    /// A value of type `source` enters a place of type `target`, which may be one of a type parameter.
     pub(super) fn record_type_parameter_inflow(&mut self, source: TypeId, target: TypeId) {
+        if self.object_type_flags(target).is_some_and(|flags| flags & HAS_OBJECT_TYPE_PARAMETERS == 0) {
+            return;
+        }
         if !self.aot.escape_closure.entered.insert((source, target)) {
             return;
         }
-        let mut into = ObjectTypes::default();
-        self.add_object_types(target, &mut into);
+        let into = self.object_types(target);
         if into.parameters.is_empty() {
             return;
         }
-        let mut from = ObjectTypes::default();
-        self.add_object_types(source, &mut from);
-        let noted = self.notes();
-        for parameter in into.parameters {
-            noted.add_entering_parameter(parameter, &from.types);
+        let from = self.object_types(source);
+        let recorded = self.notes();
+        for &parameter in &into.parameters {
+            recorded.add_entering_parameter(parameter, &from.types);
             for &other in from.parameters.iter().filter(|&&other| other != parameter) {
-                noted.add_parameter_pair(ParameterNoteKind::Enters, parameter, other);
+                recorded.add_parameter_pair(ParameterNoteKind::Enters, parameter, other);
             }
             if from.is_untyped {
-                noted.add_parameters(ParameterNoteKind::UntypedInflow, &[parameter]);
+                recorded.add_parameters(ParameterNoteKind::UntypedInflow, &[parameter]);
             }
             if from.depends_on_type_parameter {
-                noted.add_parameters(ParameterNoteKind::AnyInflow, &[parameter]);
+                recorded.add_parameters(ParameterNoteKind::AnyInflow, &[parameter]);
             }
         }
     }
 
-    /// `operand`: `None` if the built-in is named at `at` and not called.
     fn record_untyped_site(&mut self, mutation: Mutation, file: FileId, operand: Option<ExprId>, at: ExprId) {
         let hir = self.hir(file);
         let form = match operand {
@@ -577,7 +559,6 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
         };
-        // `this` of an arrow function is that of what is around it.
         let mut function = self.enclosing_fn_of_expr(file, at);
         while let Some(arrow) = function.filter(|&function| hir[function].kind == FnKind::Arrow) {
             function = Some(self.bound(file).fns[arrow.idx()].enclosing).filter(|enclosing| enclosing.is_some());
@@ -616,17 +597,17 @@ impl<'p, 's> Checker<'p, 's> {
         for &ty in types {
             self.add_object_types(ty, &mut operand);
         }
-        if let Some(made) = self.created_in_place(file, of_operand) {
+        if let Some(created) = self.created_in_place(file, of_operand) {
             let hir = self.hir(file);
             let mut layer = of_operand;
-            while layer != made {
+            while layer != created {
                 let (ExprKind::As { expr: inner, .. } | ExprKind::Satisfies { expr: inner, .. } | ExprKind::NonNull(inner) | ExprKind::AsConst(inner)) = hir[layer].kind else { break };
                 layer = inner;
                 let of_layer = self.type_of_expr(file, layer);
                 self.add_object_types(of_layer, &mut operand);
             }
-            if matches!(hir[made].kind, ExprKind::Object(_))
-                && let Some(expected) = self.contextual_type_of_literal(file, made)
+            if matches!(hir[created].kind, ExprKind::Object(_))
+                && let Some(expected) = self.contextual_type_of_literal(file, created)
             {
                 self.add_object_types(expected, &mut operand);
             }
@@ -648,15 +629,15 @@ impl<'p, 's> Checker<'p, 's> {
             self.record_untyped_site(mutation, file, Some(of_operand), of_operand);
         }
         let at = Place { file, pos: self.hir(file)[of_operand].pos };
-        let noted = self.recorded_mutations();
+        let recorded = self.recorded_mutations();
         if operand.depends_on_type_parameter || operand.is_untyped {
-            noted.record_widest(mutation, operand.depends_on_type_parameter, at);
+            recorded.record_widest(mutation, operand.depends_on_type_parameter, at);
         }
-        noted.sites[mutation as usize][kind as usize] += 1;
-        noted.of_types.extend(types.into_iter().map(|ty| (mutation, ty)));
-        noted.parameter_mutations.extend(operand.parameters.into_iter().map(|parameter| (mutation, parameter)));
-        noted.on_untyped[mutation as usize] |= operand.is_untyped;
-        noted.on_anything[mutation as usize] |= operand.depends_on_type_parameter;
+        recorded.sites[mutation as usize][kind as usize] += 1;
+        recorded.of_types.extend(types.into_iter().map(|ty| (mutation, ty)));
+        recorded.parameter_mutations.extend(operand.parameters.into_iter().map(|parameter| (mutation, parameter)));
+        recorded.on_untyped[mutation as usize] |= operand.is_untyped;
+        recorded.on_anything[mutation as usize] |= operand.depends_on_type_parameter;
     }
 
     fn mutation_for_name(&self, name: Atom) -> Option<Mutation> {
@@ -670,14 +651,11 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Whether `e` reads one of the built-ins by its name, where nothing else is known of it.
     fn mutation_for_expr(&mut self, file: FileId, e: ExprId) -> Option<Mutation> {
         let (ExprKind::Dot { name, .. } | ExprKind::Ident(name)) = self.hir(file)[e].kind else { return None };
         self.mutation_for_name(name)
     }
 
-    /// What a call by the signature does: `Object.freeze`, or what a package declares by that name, which can only do it by the built-in.
-    /// It is known by the name it is declared under and by where that is.
     fn mutation_for_signature(&self, signature: SigId) -> Option<Mutation> {
         let (declared_in, func, _) = self.sig_decl(signature)?;
         let hir = self.hir(declared_in);
@@ -716,7 +694,6 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// `Object.freeze.call(undefined, o)`, `Object.freeze.apply(undefined, [o])`: what the built-in does, and whether the arguments are in a list.
     fn built_in_called_through(&mut self, file: FileId, callee: ExprId) -> Option<(Mutation, bool)> {
         let ExprKind::Dot { obj, name, .. } = self.hir(file)[callee].kind else { return None };
         if name.is_none() {
@@ -813,7 +790,6 @@ impl<'p, 's> Checker<'p, 's> {
         matches!(self.hir(file)[key].kind, ExprKind::String(_) | ExprKind::Number(_)) || self.name_of_key(file, key).is_some()
     }
 
-    /// For the numbers: `e` defines a property of an object or deletes one.
     fn count_redefinition(&mut self, file: FileId, e: ExprId) {
         let hir = self.hir(file);
         match hir[e].kind {
@@ -822,7 +798,6 @@ impl<'p, 's> Checker<'p, 's> {
                 if name.is_none() {
                     return;
                 }
-                let arguments: Vec<ExprId> = hir.ids(hir[call].args).collect();
                 let redefinition_kind = match self.atoms().bytes(name) {
                     b"defineProperty" => 0,
                     b"defineProperties" => 1,
@@ -830,6 +805,7 @@ impl<'p, 's> Checker<'p, 's> {
                     b"deleteProperty" => 3,
                     _ => return,
                 };
+                let arguments: Vec<ExprId> = hir.ids(hir[call].args).collect();
                 match (redefinition_kind, &arguments[..]) {
                     (0, &[operand, key, descriptor, ..]) => {
                         let (is_constant, descriptor) = (self.is_redefinition_key_constant(file, key), self.redefinition_descriptor_kind(file, descriptor));
@@ -869,7 +845,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// If `e` is a call of one of the built-ins, or a store to `__proto__`: takes note of what the operand is.
     pub(super) fn record_mutation_by(&mut self, file: FileId, e: ExprId) {
         self.count_redefinition(file, e);
         let hir = self.hir(file);
@@ -912,8 +887,8 @@ impl<'p, 's> Checker<'p, 's> {
                     let of_operand = self.type_of_expr(file, operand);
                     let mut objects = ObjectTypes::default();
                     self.add_object_types(of_operand, &mut objects);
-                    let noted = self.recorded_mutations();
-                    noted.parameter_mutations.extend(objects.parameters.into_iter().map(|parameter| (Mutation::Redefinition, parameter)));
+                    let recorded = self.recorded_mutations();
+                    recorded.parameter_mutations.extend(objects.parameters.into_iter().map(|parameter| (Mutation::Redefinition, parameter)));
                     return;
                 }
                 let Some(mutation) = (match (through, signature) {
@@ -927,18 +902,16 @@ impl<'p, 's> Checker<'p, 's> {
                 let Some(operand) = arguments.next() else { return };
                 if through.is_some_and(|(_, is_list)| is_list) || matches!(hir[operand].kind, ExprKind::Spread(_) | ExprKind::Missing) {
                     let at = Place { file, pos: hir[e].pos };
-                    let noted = self.recorded_mutations();
-                    noted.sites[mutation as usize][Operand::DependsOnTypeParameter as usize] += 1;
-                    noted.on_anything[mutation as usize] = true;
-                    noted.record_widest(mutation, true, at);
+                    let recorded = self.recorded_mutations();
+                    recorded.sites[mutation as usize][Operand::DependsOnTypeParameter as usize] += 1;
+                    recorded.on_anything[mutation as usize] = true;
+                    recorded.record_widest(mutation, true, at);
                     return;
                 }
                 if mutation == Mutation::Prototype && arguments.next().is_some_and(|prototype| matches!(hir[prototype].kind, ExprKind::Null)) {
                     self.recorded_mutations().sites[mutation as usize][Operand::ToNull as usize] += 1;
                     return;
                 }
-                // A literal is made as what it is checked against, which is the type of the parameter, where that says something:
-                // `setPrototypeOf(o: any, ..)` does not.
                 let of_parameter = signature.and_then(|signature| {
                     let parameters = self.sig_params(signature);
                     self.param_type_at(&parameters, 0).filter(|&of_parameter| !self.is_untyped_for_objects(of_parameter))
@@ -959,9 +932,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `e` goes to a place of the type `target` as a value, or to one of which nothing is said. If it is one of the built-ins: see the top.
     fn has_mutating_builtin_signature(&mut self, ty: TypeId) -> bool {
-        if self.cached_type_flag(ty, super::rows::HAS_NO_MUTATING_BUILTIN_SIGNATURE, 0).is_some() {
+        if self.cached_type_flag(ty, super::type_flags::HAS_NO_MUTATING_BUILTIN_SIGNATURE, 0).is_some() {
             return false;
         }
         let (found, is_cacheable) = self.compute_cacheable(|c| {
@@ -969,7 +941,7 @@ impl<'p, 's> Checker<'p, 's> {
             signatures.iter().any(|&signature| c.mutation_for_signature(signature).is_some())
         });
         if !found && is_cacheable && !self.is_warming_up() && !self.has_order_dependent_results() {
-            self.cache_type_flag(ty, super::rows::HAS_NO_MUTATING_BUILTIN_SIGNATURE, 0, false);
+            self.cache_type_flag(ty, super::type_flags::HAS_NO_MUTATING_BUILTIN_SIGNATURE, 0, false);
         }
         found
     }
@@ -989,9 +961,9 @@ impl<'p, 's> Checker<'p, 's> {
         if of_place.is_empty() {
             self.record_untyped_site(mutation, file, None, e);
             let at = Place { file, pos: self.hir(file)[e].pos };
-            let noted = self.recorded_mutations();
-            noted.on_untyped[mutation as usize] = true;
-            noted.record_widest(mutation, false, at);
+            let recorded = self.recorded_mutations();
+            recorded.on_untyped[mutation as usize] = true;
+            recorded.record_widest(mutation, false, at);
         }
         for signature in of_place {
             let parameters = self.sig_params(signature);
@@ -1001,7 +973,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// In JavaScript nothing is known of an operand, nor of what a name stands for.
     pub(super) fn record_javascript_mutations(&mut self, file: FileId) {
         let hir = self.hir(file);
         let (mut called, mut without_layout): (FxHashSet<ExprId>, FxHashSet<ExprId>) = Default::default();
@@ -1032,10 +1003,10 @@ impl<'p, 's> Checker<'p, 's> {
                         self.record_untyped_site(mutation, file, None, e);
                     }
                     let at = Place { file, pos: hir[e].pos };
-                    let noted = self.recorded_mutations();
-                    noted.sites[mutation as usize][Operand::Untyped as usize] += 1;
-                    noted.on_untyped[mutation as usize] = true;
-                    noted.record_widest(mutation, false, at);
+                    let recorded = self.recorded_mutations();
+                    recorded.sites[mutation as usize][Operand::Untyped as usize] += 1;
+                    recorded.on_untyped[mutation as usize] = true;
+                    recorded.record_widest(mutation, false, at);
                 }
             }
         }
@@ -1045,16 +1016,15 @@ impl<'p, 's> Checker<'p, 's> {
                 && let Some(operand) = self.is_proto_access(file, target)
             {
                 self.record_untyped_site(Mutation::Prototype, file, Some(operand), e);
-                let noted = self.recorded_mutations();
-                noted.sites[Mutation::Prototype as usize][Operand::Untyped as usize] += 1;
-                noted.on_untyped[Mutation::Prototype as usize] = true;
+                let recorded = self.recorded_mutations();
+                recorded.sites[Mutation::Prototype as usize][Operand::Untyped as usize] += 1;
+                recorded.on_untyped[Mutation::Prototype as usize] = true;
             }
         }
     }
 
-    /// `--aot-explain=mutations`. Numbers alone.
     pub fn explain_mutations(&mut self, membership: &Membership) -> Vec<String> {
-        let allocated: Vec<&super::flows::Reach> = membership.views.iter().filter(|reach| reach.is_allocated).collect();
+        let allocated: Vec<&super::flows::LayoutUsage> = membership.views.iter().filter(|reach| reach.is_allocated).collect();
         let mut lines = vec![format!("mutations: {} allocated layouts", allocated.len())];
         for (mutation, what) in Mutation::ALL.into_iter().zip(["integrity level", "prototype"]) {
             let [object_type, type_parameter, untyped, depends, no_layout, as_value, to_null] = membership.mutation_sites[mutation as usize];

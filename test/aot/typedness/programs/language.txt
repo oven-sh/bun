@@ -39,7 +39,7 @@ frame-after-stack-trace-limit: 1 layouts, 0 given, 0 open, places 22 of 31, read
 function-declaration-after-name-evaluated: 1 layouts, 0 given, 1 open, places 49 of 61, reads 1 of 10
 function-declarations-are-bindings: 1 layouts, 0 given, 0 open, places 27 of 41, reads 3 of 24
 function-read-before-arguments: 1 layouts, 0 given, 4 open, places 8 of 19, reads 0 of 6
-host-callback: 3 layouts, 0 given, 7 open, places 12 of 67, reads 1 of 30
+host-callback: 3 layouts, 0 given, 6 open, places 12 of 67, reads 1 of 30
 hot-and-cold-sides-of-guards: 2 layouts, 0 given, 2 open, places 59 of 92, reads 9 of 21
 identical-return-statements-after-calls: 1 layouts, 0 given, 0 open, places 39 of 48, reads 16 of 18
 int32-read-once-used-variously: 3 layouts, 0 given, 1 open, places 88 of 105, reads 32 of 42
@@ -65,7 +65,7 @@ numbers-at-limits: 0 layouts, 0 given, 0 open, places 2 of 10, reads 0 of 1
 numbers-passed-as-values: 0 layouts, 0 given, 0 open, places 30 of 40, reads 1 of 13
 numeric-key-kinds: 1 layouts, 0 given, 0 open, places 30 of 41, reads 18 of 38
 one-number-printed: 0 layouts, 0 given, 0 open, places 0 of 8, reads 0 of 0
-only-called-thunks: 0 layouts, 4 given, 0 open, places 3 of 16, reads 2 of 13
+only-called-thunks: 0 layouts, 4 given, 0 open, places 3 of 16, reads 1 of 13
 operators-inside-loops: 0 layouts, 0 given, 0 open, places 93 of 186, reads 2472 of 32305
 operators-outside-loops: 0 layouts, 0 given, 0 open, places 54 of 113, reads 2472 of 32305
 optional-number-stores: 2 layouts, 0 given, 0 open, places 35 of 46, reads 31 of 43

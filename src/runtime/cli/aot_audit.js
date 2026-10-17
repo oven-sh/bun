@@ -91,11 +91,9 @@
       else if (part.members === undefined || matchesAnyOf(part.members, value)) return true;
       else if (under !== undefined && isInstanceOfSomeClass(value)) return true;
     }
-    return checksMembers && canBeMade(type, value, under);
+    return checksMembers && canBeAllocated(type, value, under);
   }
 
-  // Below a member, where a false word costs more than a missing one. The engine goes by the kind of the cell: a Date of another realm is a
-  // Date, a SharedArrayBuffer an ArrayBuffer. And a class is told by its name here, which a program can change.
   function isOfKind(name, value) {
     const kind = apply(stringSlice, apply(objectToString, value, []), [8, -1]);
     return kind === name || (name === "ArrayBuffer" && kind === "SharedArrayBuffer");
@@ -112,7 +110,6 @@
     return typeof constructor === "function" && getOwnPropertyDescriptor(constructor, "prototype")?.value === prototype && getOwnPropertyDescriptor(constructor, "name")?.value === "Object";
   }
 
-  // The key of the shape that the object was made with by a literal of typed code, or that it has entered a record type as.
   function taggedShapeKey(tagged) {
     if (tagged >= ENTERED) return enteredKeys[tagged - ENTERED];
     const steps = groupOf(tagged).steps;
@@ -129,27 +126,19 @@
     tag(value, ENTERED + number);
   }
 
-  // What becomes of an object where it enters a record type that admits no strangers. THE RULE IS THE ENGINE'S: class Coercion in
-  // JavaScriptCore/aot/AOTTypedObject.cpp: coerce(), copy(), chooseLayout(), distanceTo(), mayBeCoerced(). Plain data is made one of a
-  // shape that the program allocates: every own property that the shape has a field for is an enumerable data property whose value
-  // enters the type of the field in its turn (read only or not configurable: taken where objects of the shape may be frozen, which of a
-  // record only the engine knows: nothing is said); every field that is not optional is there; what the shape does not name stays. Nothing is made of a Proxy, an array, a function or a native object. Where nothing can be made and the type also takes records of other shapes, what is not all plain data stays the object it is if it may satisfy the type when read by name: mayStayWhereNothingCanBeMadeOfIt(). test/cli/aot-audit-members.test.ts holds the two to
-  // each other.
-  // It errs on the side of silence. The engine takes the nearest shape and fails with it: here any will do. Whether an object that typed
-  // code has made is of the type goes by its layout in a build: a literal with the tag passes if it was made as a member of the type, and
-  // is looked at like plain data otherwise. Whatever has another prototype and is not native passes: `new` on a class or a function of the
-  // program may have made it.
-  // In a build the data has become a record from there on. Here it gets the tag that a literal of typed code gets, with the shape it has
-  // entered as, so that it is walked once, and the site knows its Structure again without asking.
-  function canBeMade(type, value, under) {
+  function canBeAllocated(type, value, under) {
     return canBeCopied(type, value, under) || (under === undefined && mayStay(type, value));
+  }
+
+  function acceptsOtherLayouts(type) {
+    const parts = type.parts;
+    for (let i = 0; i < parts.length; i++) if (parts[i].view !== undefined && shapeBy(parts[i].view)?.stays) return true;
+    return false;
   }
 
   function mayStay(type, value) {
     const parts = type.parts;
-    let stays = false;
-    for (let i = 0; i < parts.length; i++) if (parts[i].view !== undefined && shapeBy(parts[i].view)?.stays) stays = true;
-    if (!stays || isAllPlainData(value)) return false;
+    if (!acceptsOtherLayouts(type) || isAllPlainData(value)) return false;
     for (let i = 0; i < parts.length; i++) {
       if (parts[i].view === undefined) continue;
       const view = shapeBy(parts[i].view);
@@ -261,8 +250,6 @@
     return present === shape.required;
   }
 
-  // Why: the engine's words, of kinds alone, never a value: Coercion::distanceTo() with `explains`, failToFit(), State::explainMismatch().
-  // It explains why the first shape is not it: first what a look at each property shows, then what is missing, then what lies deeper.
   function reasonOf(type, value, path, depth) {
     let part, views = 0;
     for (let i = 0; i < type.parts.length; i++) {
@@ -620,7 +607,7 @@
     for (let i = 0; i < steps.length; i++) {
       const step = steps[i];
       if (step.to === undefined || step.unsure !== undefined || step.after !== undefined || step.what === "IteratorOpen") return;
-      key += (step.what === "Coerce" ? "as " : "") + typeKey(step.to) + (step.result === undefined ? "" : ">" + typeKey(step.result)) + ";";
+      key += (step.what === "Coerce" ? "as " : step.keeps ? "keeps " : "") + typeKey(step.to) + (step.result === undefined ? "" : ">" + typeKey(step.result)) + ";";
     }
     return key;
   }
@@ -707,6 +694,7 @@
       }
       if (step.what === "Coerce" && (typeof held === "object" ? held !== null : typeof held === "function") && (type.o || type.fn || type.parts.length !== 0)) continue;
       if (fits(type, held)) continue;
+      if (step.keeps && held !== null && (typeof held === "object" || typeof held === "function") && acceptsOtherLayouts(type)) continue;
       if (waits(step, held)) return;
       if (step.after !== undefined) {
         for (let j = 0; j < step.after.length; j++) if (apply(mapGet, converted, [file + ":" + step.after[j]])) return;

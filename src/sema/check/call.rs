@@ -369,7 +369,11 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return resolved;
         }
+        if let Some(known) = self.translation_cached_call(file, call) {
+            return known;
+        }
         if let Some(known) = self.cached_resolved_signature(file, call) {
+            self.cache_call_for_translation(file, call, known);
             return known;
         }
         if let Some(&(.., resolved)) = self
@@ -1014,7 +1018,7 @@ impl<'p, 's> Checker<'p, 's> {
         let node = CallLike::Call(id);
         let this_arg = self.this_argument_of_call(file, call, node);
         // `resolveNewExpression` reads the return type of a call signature invoked with `new` only without `noImplicitAny` (2350).
-        let expects_return = if is_call_by_new && self.p.files.options.no_implicit_any {
+        let expects_return = if is_call_by_new && self.check_options(file).no_implicit_any {
             ExpectsReturn::No
         } else {
             ExpectsReturn::Yes

@@ -1,7 +1,4 @@
-//! What binding patterns and assignment patterns have in common: the iterator of an array pattern, RequireObjectCoercible, and the
-//! names that anonymous functions take from where they are written.
-
-use super::fit::Ty;
+use super::coerce::Ty;
 use super::{FileBuild, Fx, Jump};
 use crate::builder::Var;
 use crate::id::{BlockId, StrId, TyId, V};
@@ -10,12 +7,9 @@ use bun_sema::atom::Atom;
 use bun_sema::hir::{ClassId, ExprId, ExprKind};
 use bun_sema::program::FileId;
 
-/// The iterator record of an array pattern (IteratorBindingInitialization, IteratorDestructuringAssignmentEvaluation).
 pub(crate) struct PatternIterator {
     iter: V,
-    /// [[Done]]: it has ended, or a step has thrown. It is not asked again and not closed.
     done: Var,
-    /// Closes the iterator, unless it is done, and throws on.
     closing: BlockId,
 }
 
@@ -28,8 +22,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         PatternIterator { iter, done, closing: fx.b.new_block() }
     }
 
-    /// One step. The value, which is held to `claim`, or `undefined` once the iterator has ended. What a step throws leaves the iterator
-    /// as it is.
     pub(crate) fn step_pattern_iterator(&mut self, fx: &mut Fx, it: &PatternIterator, index: i64, wants_value: bool, claim: TyId) -> V {
         let (step, there, ended, join) = (fx.b.new_block(), fx.b.new_block(), fx.b.new_block(), fx.b.new_block());
         let result = if claim.is_some() { fx.b.new_var(self.or_undefined(claim)) } else { self.new_temporary(fx) };
@@ -47,7 +39,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.switch_to(there);
         let got = self.emit_throwing(fx, Op::IterGet { iter: it.iter, index });
         if wants_value {
-            let got = self.coerce_to(fx, got, Ty::of(claim), CoerceReason::Claim);
+            let got = self.coerce_to(fx, got, Ty::from_id(claim), CoerceReason::Claim);
             self.write(fx, result, got);
         }
         fx.b.jump(join);
@@ -60,7 +52,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.read(fx, result)
     }
 
-    /// An array of what is left.
     pub(crate) fn collect_pattern_iterator_rest(&mut self, fx: &mut Fx, it: &PatternIterator, from: i64) -> V {
         let array = self.emit_throwing(fx, Op::NewArray(ir::Args::new()));
         let index = self.new_counter(fx, from);
@@ -90,7 +81,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         array
     }
 
-    /// What `f` emits is not a step of the iterator: an initializer, a target, a nested pattern. If it throws, the iterator is closed.
     pub(crate) fn with_pattern_iterator_close<R>(&mut self, fx: &mut Fx, it: &PatternIterator, f: impl FnOnce(&mut Self, &mut Fx) -> R) -> R {
         if !self.out.funcs[fx.id.idx()].has(ir::func_flags::GENERATOR) {
             fx.handlers.push(it.closing);
@@ -113,7 +103,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         result
     }
 
-    /// The end of the pattern.
     pub(crate) fn close_pattern_iterator(&mut self, fx: &mut Fx, it: PatternIterator) {
         let (close, after) = (fx.b.new_block(), fx.b.new_block());
         let done = self.read(fx, it.done);
@@ -147,7 +136,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.switch_to(after);
     }
 
-    /// RequireObjectCoercible, for a pattern that may read no property of the value: `({} = null)` throws.
     pub(crate) fn require_object_coercible(&mut self, fx: &mut Fx, value: V) {
         let nullish = self.emit(fx, Op::IsNullish(value));
         let (throw, fine) = (fx.b.new_block(), fx.b.new_block());
@@ -159,7 +147,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.switch_to(fine);
     }
 
-    /// `throw new <class>(<message>)`. Ends the block.
     pub(crate) fn throw_error(&mut self, fx: &mut Fx, class: &[u8], message: &[u8]) {
         let name = self.out.strs.intern(class);
         let callee = self.emit_throwing(fx, Op::FreeGet { name, is_typeof: false });
@@ -170,15 +157,17 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.terminate(Term::Throw { value: error, unwind, pos: 0 });
     }
 
-    // ───────────────────────────── NamedEvaluation ─────────────────────────────
-
-    /// The expression, which if it is an anonymous function or class takes `name` for its own.
     pub(crate) fn expr_with_name(&mut self, fx: &mut Fx, e: ExprId, name: Atom) -> V {
         if name.is_some() {
-            // `#x = () => {}` is named `#x`, as it is written.
             let name = match self.private_name_text(name) {
                 Some(written) => self.out.strs.intern(&written),
-                None => self.str(name),
+                None => match self.c.constant_symbol_of_property(name) {
+                    Some(symbol) => {
+                        let text = symbol.description.map_or(Vec::new(), |description| [b"[", self.c.atoms().bytes(description), b"]"].concat());
+                        self.out.strs.intern(&text)
+                    }
+                    None => self.str(name),
+                },
             };
             self.set_inferred_name(fx, e, name);
         }
@@ -205,9 +194,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// The same as what it goes straight to holds it to: see `expr_into`.
     pub(crate) fn expr_with_name_into(&mut self, fx: &mut Fx, e: ExprId, name: Atom, want: Ty, why: CoerceReason) -> V {
-        // A function or a class, which is all that takes a name, is held to nothing.
         if matches!(self.hir(fx.file)[self.inferred_name_target(fx, e)].kind, ExprKind::Fn(_) | ExprKind::Class(_)) {
             let value = self.expr_with_name(fx, e, name);
             return self.coerce_to(fx, value, want, why);
@@ -215,7 +202,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.expr_into(fx, e, want, why)
     }
 
-    /// Its own name, the one it takes from where it is written, or none.
+    pub(crate) fn expr_with_name_into_if_convertible(&mut self, fx: &mut Fx, e: ExprId, name: Atom, want: Ty) -> V {
+        if matches!(self.hir(fx.file)[self.inferred_name_target(fx, e)].kind, ExprKind::Fn(_) | ExprKind::Class(_)) {
+            return self.expr_with_name_into(fx, e, name, want, CoerceReason::Cast);
+        }
+        self.expr_into_if_convertible(fx, e, want)
+    }
+
     pub(crate) fn name_of_class(&mut self, file: FileId, class: ClassId) -> StrId {
         let name = self.hir(file)[class].name;
         let is_default_export = self.hir(file)[class].flags.contains(bun_sema::hir::Flags::DEFAULT);

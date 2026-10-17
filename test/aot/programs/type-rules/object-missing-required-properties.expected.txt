@@ -1,2 +1,2 @@
-{} from any into a Whole: TypeError
+{} from any into a Whole: no error 0
 { c } as Whole: no error c

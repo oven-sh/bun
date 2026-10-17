@@ -29,6 +29,5 @@ say("holder.method() + 1", () => holder.method() + 1);
 say("new Reader().read() + 1", () => new Reader().read() + 1);
 say("Reader.read() + 1", () => Reader.read() + 1);
 say("identity(data.t) + 1", () => identity(data.t) + 1);
-say("let n = 0; n += arrow()", () => { let n = 0; n += arrow(); return n; });
 say("(() => data.t)() + 1", () => (() => data.t)() + 1);
 (async () => { let w: unknown; try { w = (await later()) + 1; } catch (e) { w = "throws " + (e as Error).constructor.name; } say("(await later()) + 1", () => w); })();

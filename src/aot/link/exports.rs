@@ -56,10 +56,10 @@ fn collect_namespace_uses(fragment: &Fragment, starts_in: FuncId, start: V, is_p
     let mut returned_by_handlers: Vec<Followed> = Vec::new();
     let mut work = vec![Followed { function: starts_in, value: start, is_awaited: !is_promise, wrapping: Wrapping::Itself, index: 0 }];
     let mut seen: Vec<Followed> = Vec::new();
-    fn resolve(work: &mut Vec<Followed>, uses: &mut Uses, made: Followed, returned: Followed) {
+    fn resolve(work: &mut Vec<Followed>, uses: &mut Uses, created: Followed, returned: Followed) {
         match returned.wrapping {
-            Wrapping::Itself => work.push(Followed { is_awaited: false, wrapping: Wrapping::Itself, index: 0, ..made }),
-            Wrapping::List | Wrapping::PromiseOfList => work.push(Followed { wrapping: Wrapping::PromiseOfList, index: returned.index, ..made }),
+            Wrapping::Itself => work.push(Followed { is_awaited: false, wrapping: Wrapping::Itself, index: 0, ..created }),
+            Wrapping::List | Wrapping::PromiseOfList => work.push(Followed { wrapping: Wrapping::PromiseOfList, index: returned.index, ..created }),
             Wrapping::ListOfPromises | Wrapping::IteratorOfList => uses.escapes = true,
         }
     }
@@ -217,8 +217,8 @@ fn collect_namespace_uses(fragment: &Fragment, starts_in: FuncId, start: V, is_p
                 Term::Return(value) if value == wrapping => {
                     if next.function != starts_in {
                         returned_by_handlers.push(next);
-                        for &(_, made) in handlers.iter().filter(|handler| handler.0 == next.function) {
-                            resolve(&mut work, &mut uses, made, next);
+                        for &(_, created) in handlers.iter().filter(|handler| handler.0 == next.function) {
+                            resolve(&mut work, &mut uses, created, next);
                         }
                     } else if next.wrapping == Wrapping::Itself {
                         uses.is_returned = true;
@@ -240,7 +240,7 @@ fn collect_namespace_uses(fragment: &Fragment, starts_in: FuncId, start: V, is_p
 }
 
 fn returned_global(fragment: &Fragment, func: &Func, arm: BlockId) -> Option<GlobalId> {
-    let mut yielded: Option<GlobalId> = None;
+    let mut produced: Option<GlobalId> = None;
     let mut factories: Vec<FuncId> = Vec::new();
     let mut is_seen = vec![false; func.blocks.len()];
     let mut work: Vec<BlockId> = vec![arm];
@@ -251,10 +251,10 @@ fn returned_global(fragment: &Fragment, func: &Func, arm: BlockId) -> Option<Glo
         for &at in &func.blocks[block.idx()].ops {
             match func.op(at)? {
                 &Op::GlobalGet(global) => {
-                    if yielded.is_some_and(|known| known != global) {
+                    if produced.is_some_and(|known| known != global) {
                         return None;
                     }
-                    yielded = Some(global);
+                    produced = Some(global);
                 }
                 Op::CallDirect { func: maker, args } if args.is_empty() => factories.push(*maker),
                 Op::IsNullish(_) | Op::StrictEq { .. } | Op::Undefined | Op::Null | Op::Bool(_) | Op::Coerce { .. } | Op::FreeGet { .. } | Op::Str(_) | Op::Construct { .. } => {}
@@ -263,18 +263,18 @@ fn returned_global(fragment: &Fragment, func: &Func, arm: BlockId) -> Option<Glo
         }
         func.blocks[block.idx()].term.as_ref()?.for_each_target(|target| work.push(target.block));
     }
-    let yielded = yielded?;
+    let produced = produced?;
     for maker in factories {
         let allocated_by = fragment.funcs[maker.idx()].func.as_ref().filter(|allocated_by| fragment.funcs[maker.idx()].body.is_some() && allocated_by.kind == FuncKind::Module)?;
         for block in &allocated_by.blocks {
             if let Some(Term::Return(returned)) = block.term
-                && (returned.is_none() || !matches!(allocated_by.op(without_casts(allocated_by, returned)), Some(&Op::GlobalGet(global)) if global == yielded))
+                && (returned.is_none() || !matches!(allocated_by.op(without_casts(allocated_by, returned)), Some(&Op::GlobalGet(global)) if global == produced))
             {
                 return None;
             }
         }
     }
-    Some(yielded)
+    Some(produced)
 }
 
 fn stores_possible_this_reader(fragment: &Fragment, func: &Func, stored: V) -> bool {
@@ -286,13 +286,13 @@ fn stores_possible_this_reader(fragment: &Fragment, func: &Func, stored: V) -> b
 }
 
 fn namespace_names(fragment: &Fragment, func: &Func, file: FileId) -> Option<Vec<Vec<u8>>> {
-    let made: Vec<&ir::Args> = (func.values.iter())
+    let created: Vec<&ir::Args> = (func.values.iter())
         .filter_map(|value| match &value.def {
             Def::Op(Op::Operation { which: Operation::MakeModuleNamespace, args }) => Some(args),
             _ => None,
         })
         .collect();
-    let [args] = made[..] else { return None };
+    let [args] = created[..] else { return None };
     let (&reader, names) = args.split_first()?;
     if !matches!(func.op(reader), Some(&Op::FuncRef(reader)) if fragment.funcs[reader.idx()].key == FuncKey::ModuleNamespaceReader(file)) {
         return None;
@@ -307,13 +307,13 @@ fn referenced_ids(body: &Body) -> impl Iterator<Item = &ReferencedIds> {
 pub(super) fn drop_unread_exports(fragments: &mut [Fragment], entry_points: &[Vec<FileId>], in_parallel: InParallel<'_>) -> (usize, usize, usize) {
     let mut namespaces: FxHashMap<FileId, Namespace> = FxHashMap::default();
     let mut looked_at: Vec<(&Fragment, Vec<(FileId, Option<Vec<Vec<u8>>>)>, Vec<u32>)> = fragments.iter().map(|fragment| (fragment, Vec::new(), Vec::new())).collect();
-    for_each_mut(&mut looked_at, in_parallel, &|(fragment, made, readers)| {
+    for_each_mut(&mut looked_at, in_parallel, &|(fragment, created, readers)| {
         let fragment: &Fragment = *fragment;
         for (index, function) in fragment.funcs.iter().enumerate().filter(|function| function.1.body.is_some()) {
             match (function.key, &function.func) {
                 (FuncKey::NamespaceObject(file, _), Some(func)) => {
                     if func.values.iter().any(|value| matches!(&value.def, Def::Op(Op::Operation { which: Operation::MakeModuleNamespace, .. }))) {
-                        made.push((file, namespace_names(fragment, func, file)));
+                        created.push((file, namespace_names(fragment, func, file)));
                     }
                 }
                 (FuncKey::ModuleNamespaceReader(_), Some(_)) => readers.push(index as u32),

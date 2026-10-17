@@ -1,6 +1,6 @@
 array-literals-and-rest-must-allocate: 0 layouts, 0 given, 0 open, places 38 of 60, reads 14 of 36
 arrays-of-literal-element-types: 7 layouts, 0 given, 1 open, places 44 of 70, reads 23 of 28
-callbacks-with-contextually-typed-results: 2 layouts, 0 given, 4 open, places 51 of 83, reads 18 of 31
+callbacks-with-contextually-typed-results: 2 layouts, 0 given, 4 open, places 51 of 82, reads 18 of 31
 captured-variables-and-tail-calls: 0 layouts, 0 given, 0 open, places 20 of 28, reads 5 of 7
 captured-variables-in-async-functions: 0 layouts, 0 given, 0 open, places 10 of 18, reads 4 of 6
 captured-variables-on-stack: 1 layouts, 0 given, 1 open, places 31 of 40, reads 16 of 21
@@ -24,8 +24,8 @@ identity-03: 84 layouts, 0 given, 0 open, places 383 of 437, reads 89 of 215
 identity-04: 90 layouts, 0 given, 0 open, places 353 of 467, reads 91 of 182
 identity-05: 60 layouts, 0 given, 0 open, places 386 of 547, reads 66 of 109
 identity-06: 60 layouts, 0 given, 0 open, places 365 of 425, reads 45 of 245
-identity-07: 84 layouts, 0 given, 0 open, places 383 of 407, reads 68 of 254
-identity-08: 90 layouts, 0 given, 18 open, places 374 of 439, reads 72 of 187
+identity-07: 84 layouts, 0 given, 0 open, places 383 of 407, reads 66 of 254
+identity-08: 90 layouts, 0 given, 18 open, places 374 of 439, reads 70 of 187
 identity-09: 87 layouts, 0 given, 0 open, places 418 of 525, reads 130 of 186
 identity-10: 39 layouts, 0 given, 0 open, places 289 of 384, reads 56 of 129
 identity-11: 36 layouts, 0 given, 0 open, places 282 of 370, reads 66 of 107
@@ -41,9 +41,9 @@ identity2-05: 60 layouts, 0 given, 0 open, places 332 of 361, reads 147 of 205
 identity2-06: 60 layouts, 0 given, 0 open, places 329 of 353, reads 183 of 371
 identity2-07: 60 layouts, 0 given, 0 open, places 335 of 377, reads 144 of 272
 identity2-08: 60 layouts, 0 given, 0 open, places 332 of 433, reads 126 of 277
-identity2-09: 60 layouts, 0 given, 0 open, places 343 of 461, reads 128 of 215
+identity2-09: 60 layouts, 0 given, 0 open, places 343 of 461, reads 127 of 215
 identity2-10: 96 layouts, 0 given, 0 open, places 371 of 419, reads 188 of 290
-identity2-11: 60 layouts, 0 given, 0 open, places 332 of 373, reads 135 of 289
+identity2-11: 60 layouts, 0 given, 0 open, places 332 of 373, reads 134 of 289
 identity2-12: 60 layouts, 0 given, 0 open, places 389 of 539, reads 92 of 167
 identity2-13: 60 layouts, 0 given, 0 open, places 425 of 479, reads 96 of 140
 identity2-14: 78 layouts, 0 given, 0 open, places 434 of 523, reads 102 of 145

@@ -1490,6 +1490,18 @@ impl Bound<'_> {
 
     /// `markNodeAssignmentsWorker`: the identifiers that resolve to `symbol` and are assignment
     /// targets, in source order.
+    pub fn is_const(&self, hir: &File, d: VarDeclId) -> bool {
+        match hir[d].kind {
+            VarKind::Const => true,
+            VarKind::Var => self.pat_symbol.get(hir[d].pat.idx()).and_then(|symbol| symbol.some()).is_some_and(|symbol| self.symbols[symbol.idx()].flags.contains(SymFlags::CONST)),
+            VarKind::Let | VarKind::Using | VarKind::AwaitUsing => false,
+        }
+    }
+
+    pub fn is_constant(&self, hir: &File, d: VarDeclId) -> bool {
+        matches!(hir[d].kind, VarKind::Using | VarKind::AwaitUsing) || self.is_const(hir, d)
+    }
+
     pub fn assignments_to(&self, symbol: SymbolId) -> &[(SymbolId, ExprId)] {
         let from = self.assignments.partition_point(|a| a.0.0 < symbol.0);
         let len = self.assignments[from..].partition_point(|a| a.0 == symbol);
@@ -2395,6 +2407,7 @@ pub struct BindOptions {
     pub detects_commonjs_by_free_names: bool,
     pub uses_ecmascript_bindings: bool,
     pub is_forced_commonjs: Option<bool>,
+    pub is_typed_bundle: bool,
 }
 
 /// `bindSourceFile`

@@ -1,0 +1,115 @@
+{"pos":0,"size":1.5,"note":"sample","done":false,"extra":null}
+matching data: 16.5 28: 0 conversions by the runtime
+  {"pos":2,"size":2,"note":"one","done":true,"extra":[1]} | pos,size,note,done,extra | false false true true true false 0
+  {"pos":2,"size":2,"note":"written","done":true,"extra":[1],"added":1}
+  {"pos":3,"size":2.5,"note":"two","done":false,"extra":{"a":1}} | pos,size,note,done,extra | false false true true true false 0
+  {"pos":3,"size":2.5,"note":"written","done":false,"extra":{"a":1},"added":1}
+  {"pos":3,"size":7,"note":"one","done":true,"extra":[1]} | pos,size,note,done,extra | false false true true true false 0
+  {"pos":3,"size":7,"note":"written","done":true,"extra":[1],"added":1}
+  {"pos":4,"size":7,"note":"two","done":false,"extra":{"a":1}} | pos,size,note,done,extra | false false true true true false 0
+  {"pos":4,"size":7,"note":"written","done":false,"extra":{"a":1},"added":1}
+  [{"pos":1,"size":2,"note":"one","done":true,"extra":[1]},{"pos":2,"size":2.5,"note":"two","done":false,"extra":{"a":1}}]
+matching data in another key order: 8 14: 0 conversions by the runtime
+  {"extra":"x","done":true,"note":"one","size":2,"pos":2} | extra,done,note,size,pos | false false true true true false 0
+  {"extra":"x","done":true,"note":"written","size":2,"pos":2,"added":1}
+  {"extra":"x","done":true,"note":"one","size":7,"pos":3} | extra,done,note,size,pos | false false true true true false 0
+  {"extra":"x","done":true,"note":"written","size":7,"pos":3,"added":1}
+  [{"extra":"x","done":true,"note":"one","size":2,"pos":1}]
+numbers at the edges: 4 2147483684: 0 conversions by the runtime
+  {"pos":0,"size":0,"note":"","done":false,"extra":0} | pos,size,note,done,extra | false true true true true false 0
+  {"pos":0,"size":0,"note":"written","done":false,"extra":0,"added":1}
+  {"pos":1073741823,"size":1073741824,"note":"n","done":true,"extra":1e+300} | pos,size,note,done,extra | false false true true true false 0
+  {"pos":1073741823,"size":1073741824,"note":"written","done":true,"extra":1e+300,"added":1}
+  {"pos":-1073741824,"size":-1073741825,"note":"n","done":true,"extra":2147483648} | pos,size,note,done,extra | false false true true true false 0
+  {"pos":-1073741824,"size":-1073741825,"note":"written","done":true,"extra":2147483648,"added":1}
+  {"pos":2147483647,"size":-2147483648,"note":"n","done":true,"extra":null} | pos,size,note,done,extra | false false true true true false 0
+  {"pos":2147483647,"size":-2147483648,"note":"written","done":true,"extra":null,"added":1}
+  {"pos":1,"size":7,"note":"","done":false,"extra":0} | pos,size,note,done,extra | false false true true true false 0
+  {"pos":1,"size":7,"note":"written","done":false,"extra":0,"added":1}
+  {"pos":1073741824,"size":7,"note":"n","done":true,"extra":1e+300} | pos,size,note,done,extra | false false true true true false 0
+  {"pos":1073741824,"size":7,"note":"written","done":true,"extra":1e+300,"added":1}
+  {"pos":-1073741823,"size":7,"note":"n","done":true,"extra":2147483648} | pos,size,note,done,extra | false false true true true false 0
+  {"pos":-1073741823,"size":7,"note":"written","done":true,"extra":2147483648,"added":1}
+  {"pos":2147483648,"size":7,"note":"n","done":true,"extra":null} | pos,size,note,done,extra | false false true true true false 0
+  {"pos":2147483648,"size":7,"note":"written","done":true,"extra":null,"added":1}
+  [{"pos":-1,"size":0,"note":"","done":false,"extra":0},{"pos":1073741822,"size":1073741824,"note":"n","done":true,"extra":1e+300},{"pos":-1073741825,"size":-1073741825,"note":"n","done":true,"extra":2147483648},{"pos":2147483646,"size":-2147483648,"note":"n","done":true,"extra":null}]
+a property the type does not have: 6 12: 0 conversions by the runtime
+  {"pos":2,"size":2,"note":"n","done":true,"extra":0,"more":1} | pos,size,note,done,extra,more | false false true true true false 0
+  {"pos":2,"size":2,"note":"written","done":true,"extra":0,"more":1,"added":1}
+  {"pos":3,"size":7,"note":"n","done":true,"extra":0,"more":1} | pos,size,note,done,extra,more | false false true true true false 0
+  {"pos":3,"size":7,"note":"written","done":true,"extra":0,"more":1,"added":1}
+  [{"pos":1,"size":2,"note":"n","done":true,"extra":0,"more":1}]
+an index among the properties: 6 12: 0 conversions by the runtime
+  {"0":1,"pos":2,"size":2,"note":"n","done":true,"extra":0} | 0,pos,size,note,done,extra | false false true true true false 0
+  {"0":1,"pos":2,"size":2,"note":"written","done":true,"extra":0,"added":1}
+  {"0":1,"pos":3,"size":7,"note":"n","done":true,"extra":0} | 0,pos,size,note,done,extra | false false true true true false 0
+  {"0":1,"pos":3,"size":7,"note":"written","done":true,"extra":0,"added":1}
+  [{"0":1,"pos":1,"size":2,"note":"n","done":true,"extra":0}]
+more properties than fit in the object: 6 12: 0 conversions by the runtime
+  {"pos":2,"size":2,"note":"n","done":true,"extra":0,"a":1,"b":2,"c":3,"d":4,"e":5,"f":6,"g":7,"h":8,"i":9,"j":10} | pos,size,note,done,extra,a,b,c,d,e,f,g,h,i,j | false false true true true false 0
+  {"pos":2,"size":2,"note":"written","done":true,"extra":0,"a":1,"b":2,"c":3,"d":4,"e":5,"f":6,"g":7,"h":8,"i":9,"j":10,"added":1}
+  {"pos":3,"size":7,"note":"n","done":true,"extra":0,"a":1,"b":2,"c":3,"d":4,"e":5,"f":6,"g":7,"h":8,"i":9,"j":10} | pos,size,note,done,extra,a,b,c,d,e,f,g,h,i,j | false false true true true false 0
+  {"pos":3,"size":7,"note":"written","done":true,"extra":0,"a":1,"b":2,"c":3,"d":4,"e":5,"f":6,"g":7,"h":8,"i":9,"j":10,"added":1}
+  [{"pos":1,"size":2,"note":"n","done":true,"extra":0,"a":1,"b":2,"c":3,"d":4,"e":5,"f":6,"g":7,"h":8,"i":9,"j":10}]
+the stored field is missing in the source: NaN: 0 conversions by the runtime
+  {"size":2,"note":"one","done":true,"extra":0,"pos":null} | size,note,done,extra,pos | false false true true true false 0
+  {"size":2,"note":"written","done":true,"extra":0,"pos":null,"added":1}
+  [{"size":2,"note":"one","done":true,"extra":0}]
+a required field is missing: 2: 0 conversions by the runtime
+  {"pos":2,"size":2,"done":true,"extra":0} | pos,size,done,extra | false false true true true false 0
+  {"pos":2,"size":2,"done":true,"extra":0,"note":"written","added":1}
+  [{"pos":1,"size":2,"done":true,"extra":0}]
+a number where a string belongs: 2: 0 conversions by the runtime
+  {"pos":2,"size":2,"note":3,"done":true,"extra":0} | pos,size,note,done,extra | false false true true true false 0
+  {"pos":2,"size":2,"note":"written","done":true,"extra":0,"added":1}
+  [{"pos":1,"size":2,"note":3,"done":true,"extra":0}]
+a string where a number belongs: 2: 0 conversions by the runtime
+  {"pos":2,"size":"2","note":"n","done":true,"extra":0} | pos,size,note,done,extra | false false true true true false 0
+  {"pos":2,"size":"2","note":"written","done":true,"extra":0,"added":1}
+  [{"pos":1,"size":"2","note":"n","done":true,"extra":0}]
+a number where a boolean belongs: 2: 0 conversions by the runtime
+  {"pos":2,"size":2,"note":"n","done":1,"extra":0} | pos,size,note,done,extra | false false true true true false 0
+  {"pos":2,"size":2,"note":"written","done":1,"extra":0,"added":1}
+  [{"pos":1,"size":2,"note":"n","done":1,"extra":0}]
+null where a string, a number and a boolean belong: 2: 0 conversions by the runtime
+  {"pos":2,"size":null,"note":null,"done":null,"extra":null} | pos,size,note,done,extra | false false true true true false 0
+  {"pos":2,"size":null,"note":"written","done":null,"extra":null,"added":1}
+  [{"pos":1,"size":null,"note":null,"done":null,"extra":null}]
+a getter: 2: 0 conversions by the runtime
+  {"pos":2,"size":1,"note":"n","done":true,"extra":0} | pos,size,note,done,extra | false false true true true false 0
+  {"pos":2,"size":1,"note":"written","done":true,"extra":0,"added":1}
+  [{"pos":1,"size":2,"note":"n","done":true,"extra":0}]
+a property that is not enumerable: 2: 0 conversions by the runtime
+  {"pos":2,"size":2,"done":true,"extra":0} | pos,size,done,extra | false false true true true false 0
+  {"pos":2,"size":2,"done":true,"extra":0,"note":"written","added":1}
+  [{"pos":1,"size":2,"done":true,"extra":0}]
+a property that is not writable: 2: 0 conversions by the runtime
+  {"pos":2,"size":2,"note":"n","done":true,"extra":0} | pos,size,note,done,extra | false false true true true false 0
+  {"pos":2,"size":2,"note":"written","done":true,"extra":0,"added":1}
+  [{"pos":1,"size":2,"note":"n","done":true,"extra":0}]
+a frozen source: 2: 0 conversions by the runtime
+  {"pos":2,"size":2,"note":"n","done":true,"extra":0} | pos,size,note,done,extra | false false true true true false 0
+  {"pos":2,"size":2,"note":"written","done":true,"extra":0,"added":1}
+  [{"pos":1,"size":2,"note":"n","done":true,"extra":0}]
+a source that cannot be extended: 2: 0 conversions by the runtime
+  {"pos":2,"size":2,"note":"n","done":true,"extra":0} | pos,size,note,done,extra | false false true true true false 0
+  {"pos":2,"size":2,"note":"written","done":true,"extra":0,"added":1}
+  [{"pos":1,"size":2,"note":"n","done":true,"extra":0}]
+a source with another prototype: 2: 0 conversions by the runtime
+  {"pos":2,"size":2,"note":"n","done":true,"extra":0} | pos,size,note,done,extra | false false true true true false 0
+  {"pos":2,"size":2,"note":"written","done":true,"extra":0,"added":1}
+  [{"pos":1,"size":2,"note":"n","done":true,"extra":0}]
+a source without a prototype: 2: 0 conversions by the runtime
+  {"pos":2,"size":2,"note":"n","done":true,"extra":0} | pos,size,note,done,extra | false false true true true false 0
+  {"pos":2,"size":2,"note":"written","done":true,"extra":0,"added":1}
+  [{"pos":1,"size":2,"note":"n","done":true,"extra":0}]
+a symbol among the keys: 2: 0 conversions by the runtime
+  {"pos":2,"size":2,"note":"n","done":true,"extra":0} | pos,size,note,done,extra | false false true true true false 1
+  {"pos":2,"size":2,"note":"written","done":true,"extra":0,"added":1}
+  [{"pos":1,"size":2,"note":"n","done":true,"extra":0}]
+a property deleted and added again: 2: 0 conversions by the runtime
+  {"pos":2,"note":"n","done":true,"extra":0,"size":3} | pos,note,done,extra,size | false false true true true false 0
+  {"pos":2,"note":"written","done":true,"extra":0,"size":3,"added":1}
+  [{"pos":1,"note":"n","done":true,"extra":0,"size":3}]
+2
+12,000 copies: 3877600: 0 conversions by the runtime

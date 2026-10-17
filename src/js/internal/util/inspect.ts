@@ -2258,7 +2258,7 @@ function groupArrayElements(ctx: Context, output: unknown[], value: any): unknow
   const breakLength = ctx.breakLength;
   const compact = ctx.compact;
   if (typeof maxArrayLength !== "number" || typeof breakLength !== "number" || typeof compact !== "number") {
-    return groupArrayElementsOfAnything(ctx, output, value);
+    return groupArrayElementsUntyped(ctx, output, value);
   }
   let totalLength = 0;
   let maxLength = 0;
@@ -2276,7 +2276,7 @@ function groupArrayElements(ctx: Context, output: unknown[], value: any): unknow
   // otherwise the length would not be calculated properly.
   for (; i < outputLength; i++) {
     const entry = output[i];
-    if (typeof entry !== "string") return groupArrayElementsOfAnything(ctx, output, value);
+    if (typeof entry !== "string") return groupArrayElementsUntyped(ctx, output, value);
     const len = getStringWidth(entry, colors);
     dataLen[i] = len;
     totalLength += len + separatorSpace;
@@ -2365,7 +2365,7 @@ function groupArrayElements(ctx: Context, output: unknown[], value: any): unknow
   return output;
 }
 
-function groupArrayElementsOfAnything(ctx: Context, output: any[], value: any): unknown[] {
+function groupArrayElementsUntyped(ctx: Context, output: any[], value: any): unknown[] {
   let totalLength = 0;
   let maxLength = 0;
   let i = 0;
@@ -2986,13 +2986,13 @@ function isBelowBreakLength(ctx: Context, output: unknown[], start: unknown, bas
   // significant.
   const breakLength = ctx.breakLength;
   if (typeof start !== "number" || typeof breakLength !== "number" || ctx.colors) {
-    return isBelowBreakLengthOfAnything(ctx, output, start, base);
+    return isBelowBreakLengthUntyped(ctx, output, start, base);
   }
   let totalLength = output.length + start;
   if (totalLength + output.length > breakLength) return false;
   for (let i = 0; i < output.length; i++) {
     const entry = output[i];
-    if (typeof entry !== "string") return isBelowBreakLengthOfAnything(ctx, output, start, base);
+    if (typeof entry !== "string") return isBelowBreakLengthUntyped(ctx, output, start, base);
     totalLength += entry.length;
     if (totalLength > breakLength) {
       return false;
@@ -3002,7 +3002,7 @@ function isBelowBreakLength(ctx: Context, output: unknown[], start: unknown, bas
   return base === "" || !StringPrototypeIncludes.$call(base as any, "\n");
 }
 
-function isBelowBreakLengthOfAnything(ctx: Context, output: any[], start: any, base: unknown): boolean {
+function isBelowBreakLengthUntyped(ctx: Context, output: any[], start: any, base: unknown): boolean {
   let totalLength = output.length + start;
   if (totalLength + output.length > (ctx.breakLength as any)) return false;
   for (let i = 0; i < output.length; i++) {
@@ -3197,7 +3197,7 @@ function toAppendedString(value: unknown): string {
   return typeof value === "string" ? value : "" + (value as any);
 }
 
-function parseIntOfNumber(number: number): number {
+function parseIntFromNumber(number: number): number {
   const abs = number < 0 ? -number : number;
   if (abs >= 1e-6 && abs < 1e21) return MathTrunc(number);
   return number === 0 ? 0 : NumberParseInt(number as any);
@@ -3294,7 +3294,7 @@ function formatWithFormatString(inspectOptions: any, first: string, args: unknow
             // 'i'
             const tempInteger = args[++a];
             if (typeof tempInteger === "number") {
-              tempStr = formatNumberNoColor(parseIntOfNumber(tempInteger), inspectOptions);
+              tempStr = formatNumberNoColor(parseIntFromNumber(tempInteger), inspectOptions);
             } else if (typeof tempInteger === "bigint") {
               tempStr = formatBigIntNoColor(tempInteger, inspectOptions);
             } else if (typeof tempInteger === "symbol") {

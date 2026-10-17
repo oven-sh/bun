@@ -1,11 +1,6 @@
-//! Facts about classes, for what compiles a program by its types.
-//!
-//! Which declaration a name stands for is for whoever asks: an import gets its value from the file whose code runs, which the checker
-//! does not know. So the facts of a class are asked for with those of the class it extends, if that is a class of the program.
-
-use super::ByFile;
+use super::{ByFile, FieldKey};
 use crate::atom::{Atom, known};
-use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, SymFlags, SymbolId};
+use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, SymFlags, SymbolId, UNREACHABLE};
 use crate::check::Checker;
 use crate::hir::{
     BinOp, CallId, Chain, ClassId, EnumMemberId, ExprId, ExprKind, ExprTag, File, FileKind, Flags, FnBody, FnId, FnKind, IdList, ImportEqualsId, ImportEqualsTarget, MemberId, MemberKind, ModuleId, PatId, PatKind, PropKey, PropKind, StmtId, StmtKind, TypeNodeId, TypeNodeKind, UnOp,
@@ -15,99 +10,72 @@ use crate::program::{FileId, Sym};
 use crate::types::{Origin, PropFlags, PropSource, TypeData, TypeId};
 use crate::util::{FxHashMap, FxHashSet};
 use super::OnceLock;
+use super::storage::Primitive;
 
 #[derive(Default)]
 pub(super) struct Shared {
-    /// `method_declarations_by_name`
     method_declarations: std::sync::OnceLock<MethodDeclarations>,
-    /// `computed_methods`
     computed_methods: OnceLock<Vec<((FileId, ClassId), ExprId)>>,
-    /// `file_class_facts`
     by_file: ByFile<FileFacts>,
-    /// `discriminants`
     discriminants: std::sync::OnceLock<Discriminants>,
-    /// `mutable_prototypes`
     mutable_prototypes: std::sync::OnceLock<MutablePrototypes>,
-    /// `set_builtin_requires`
     builtin_requires: OnceLock<FxHashMap<(FileId, Atom), FileId>>,
-    /// `is_reified_namespace`
     reified_namespaces: OnceLock<ReifiedNamespaces>,
     reassigned_enum_members: OnceLock<FxHashSet<(FileId, EnumMemberId)>>,
-    /// `prototype_property_names`
-    prototype_property_names: OnceLock<FxHashSet<Atom>>,
+    prototype_property_names: OnceLock<FxHashSet<FieldKey>>,
     stores_in_checked_sources: OnceLock<FxHashMap<Atom, Vec<(FileId, ExprId)>>>,
     property_assignments: OnceLock<FxHashMap<Atom, Vec<(FileId, ExprId)>>>,
+    property_container_mutations: OnceLock<FxHashMap<Atom, Vec<(FileId, ExprId, ExprId)>>>,
+    computed_key_assignments: OnceLock<Vec<(FileId, ExprId)>>,
+    union_key_assignments: OnceLock<Vec<(FileId, ExprId)>>,
+    union_key_assignments_search: std::sync::Mutex<()>,
     method_assignments_by_name: OnceLock<FxHashMap<Atom, Vec<(FileId, ClassId)>>>,
 }
 
 #[derive(Default)]
 struct ReifiedNamespaces {
     namespaces: FxHashSet<Sym>,
-    /// By file: the variables that it declares and one of them exports, as the file itself refers to them.
     variables: FxHashMap<FileId, Vec<SymbolId>>,
 }
 
-/// A function that declares its `this`, `function Node(this: Node, kind: Kind) { this.kind = kind; .. }`. Whoever constructs with it
-/// hands it an object of that type to initialize.
 struct ConstructorFunction {
     function: (FileId, FnId),
-    /// The statements `this.name = value` that its body starts with, in their order, up to the first statement of another form and
-    /// the first value that mentions `this`: nobody else has seen the object by then.
     initial_stores: Vec<InitialStore>,
 }
 
-/// `this.name = value`
 struct InitialStore {
     name: Atom,
-    /// Which parameter the value is: see `unmodified_parameter`. None also if the name comes twice among the stores.
     parameter: Option<u32>,
-    /// `this.name`
     target: ExprId,
 }
 
-/// What the trees say of the properties that tell kinds of objects apart.
 #[derive(Default)]
 struct Discriminants {
-    /// In the order of the program.
     constructor_functions: Vec<ConstructorFunction>,
-    /// The names that are worth looking at. Some class, interface or type literal declares a property by the name whose type is
-    /// written as a number, as `Kind.A`, which may be a member of an enum, as `K`, which may be a type parameter, or as a union with
-    /// such a part.
     candidates: FxHashSet<Atom>,
-    /// Of those: some file stores to a property by the name or deletes one, whatever the object, other than by an `InitialStore` of a
-    /// parameter.
     mutated: FxHashSet<Atom>,
 }
 
-/// The `ConstructorFunction`s whose `prototype` object does not stay what it is at first, known to nobody else.
 #[derive(Default)]
 struct MutablePrototypes {
-    /// All of them: it is replaced or given another prototype for a function that is not known.
     every: bool,
     all_since: Option<super::flows::Place>,
     functions: FxHashSet<(FileId, FnId)>,
 }
 
-/// What an expression stands for that something is done to as to a function.
 enum NamedFunction {
     Constructor(FileId, FnId),
-    /// Something that is no `ConstructorFunction`.
     Other,
     Unknown,
 }
 
-/// What is done with `E.prototype`.
 #[derive(Copy, Clone, PartialEq)]
 enum PrototypeUse {
-    /// It is replaced, or given another prototype.
     Replaced,
-    /// It is a value: whoever gets hold of it may do anything to it.
     Escapes,
-    /// A property of it is read, called, stored to or defined.
     Accessed,
 }
 
-/// A class of the program declares a method or an accessor.
 #[derive(Copy, Clone, PartialEq, Eq)]
 struct MethodDeclaration {
     class: (FileId, ClassId),
@@ -115,54 +83,47 @@ struct MethodDeclaration {
     is_accessor: bool,
 }
 
-/// By name, in the order of the files.
 type MethodDeclarations = FxHashMap<Atom, Vec<MethodDeclaration>>;
 
-/// Something is done to the property `name` of an object of type `object`. `T`: what a type is called by.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct MethodStore<T = TypeId> {
     object: T,
-    /// Its text, which is the same for every checker.
     name: Box<[u8]>,
-    /// It is defined or deleted. Otherwise it is stored to, which for an accessor is a call of the setter and replaces nothing.
     defines: bool,
 }
 
 impl<T> MethodStore<T> {
-    /// The same in terms of another name for the type. `None`: `rename` has none for it.
     pub fn renamed<U>(self, rename: impl FnOnce(T) -> Option<U>) -> Option<MethodStore<U>> {
         Some(MethodStore { object: rename(self.object)?, name: self.name, defines: self.defines })
     }
 }
 
-/// What `replaced_methods` finds.
 #[derive(Default)]
 pub struct ReplacedMethods {
-    /// By class: the name of the member, and whether it is static.
     by_class: FxHashMap<(FileId, ClassId), Vec<(Atom, bool)>>,
-    /// By name, as text.
     names: FxHashMap<Box<[u8]>, Atom>,
+    structural_evidence: FxHashMap<((FileId, ClassId), Atom), Option<Vec<((FileId, ClassId), TypeId)>>>,
 }
 
 impl ReplacedMethods {
-    /// Whether the method or the accessor `name` that the class declares may be replaced.
     pub fn contains(&self, file: FileId, class: ClassId, name: &[u8], is_static: bool) -> bool {
         match (self.by_class.get(&(file, class)), self.names.get(name)) {
             (Some(members), Some(&name)) => members.contains(&(name, is_static)),
             _ => false,
         }
     }
+
+    pub fn structural_evidence(&self, file: FileId, class: ClassId, name: &[u8]) -> Option<&[((FileId, ClassId), TypeId)]> {
+        self.structural_evidence.get(&((file, class), *self.names.get(name)?))?.as_deref()
+    }
 }
 
-/// What a class extends.
 enum Superclass {
     None,
     Known((FileId, ClassId)),
-    /// No class of the program, or nobody knows which.
     Unknown,
 }
 
-/// Which class of the program extends which.
 #[derive(Default)]
 struct Hierarchy {
     parent: FxHashMap<(FileId, ClassId), (FileId, ClassId)>,
@@ -170,10 +131,8 @@ struct Hierarchy {
 }
 
 impl Hierarchy {
-    /// Whether `class` extends `ancestor`, through however many classes.
     fn extends(&self, class: (FileId, ClassId), ancestor: (FileId, ClassId)) -> bool {
         let mut at = class;
-        // A class that extends itself is an error that is reported.
         for _ in 0..256 {
             match self.parent.get(&at) {
                 Some(&parent) if parent == ancestor => return true,
@@ -185,7 +144,6 @@ impl Hierarchy {
     }
 }
 
-/// `e` without the assertions around it: `(e as T)!`.
 fn skip_assertions(hir: &File, mut e: ExprId) -> ExprId {
     while let ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) = hir[e].kind {
         e = expr;
@@ -193,7 +151,6 @@ fn skip_assertions(hir: &File, mut e: ExprId) -> ExprId {
     e
 }
 
-/// `Discriminants::candidates`. `type_parameters`: the names of those of the file.
 fn may_be_number_type(hir: &File, ty: TypeNodeId, type_parameters: &FxHashSet<Atom>) -> bool {
     match hir[ty].kind {
         TypeNodeKind::NumberLit(_) => true,
@@ -203,15 +160,11 @@ fn may_be_number_type(hir: &File, ty: TypeNodeId, type_parameters: &FxHashSet<At
     }
 }
 
-/// What one pass over the expressions of a file finds.
 #[derive(Default)]
 struct FileFacts {
-    /// The constructors that mention `new.target`, also from within an arrow function.
     mentioning_new_target: FxHashSet<FnId>,
-    /// The functions that mention `super`, also from within an arrow function. No arrow functions themselves.
     mentioning_super: FxHashSet<FnId>,
     mentioning_this: FxHashSet<FnId>,
-    /// `this_may_be_uninitialized`
     with_uninitialized_this: FxHashSet<FnId>,
     tested_by_private_name: FxHashSet<ClassId>,
 }
@@ -311,27 +264,21 @@ impl crate::program::Files<'_> {
     }
 }
 
-/// What follows from the declaration of a class and from the facts of the class it extends.
 #[derive(Copy, Clone, Debug)]
 pub struct ClassFacts {
-    /// The program itself makes the objects of the class, and the class says what fields they have: it is written in TypeScript, and
-    /// so is all it extends.
     pub has_fixed_layout: bool,
-    /// The declaration is evaluated at most once, so there is one class object.
     pub is_evaluated_once: bool,
-    /// The constructor has to be told `new.target`: it mentions it, a constructor that it hands the object on to has to be told, or
-    /// the object is made by what the class extends, which goes by it.
-    pub takes_new_target: bool,
-    /// `new` may yield another object than the one that was made for it: the constructor, or one that it hands the object on to, has a
-    /// `return` with a value.
+    pub uses_new_target: bool,
     pub may_return_another_object: bool,
 }
 
 impl<'p, 's> Checker<'p, 's> {
-    /// By builtin file and specifier: the builtin module that `require(specifier)` yields the value of there. Once for the program, whichever
-    /// checker is told, before anything is asked.
     pub fn set_builtin_requires(&self, requires: Vec<((FileId, Atom), FileId)>) {
         self.p.aot.classes.builtin_requires.get_or_init(|| requires.into_iter().collect());
+    }
+
+    pub(super) fn has_builtin_requires(&self) -> bool {
+        self.p.aot.classes.builtin_requires.get().is_some()
     }
 
     pub(crate) fn required_builtin_module(&self, file: FileId, e: ExprId) -> Option<FileId> {
@@ -340,18 +287,10 @@ impl<'p, 's> Checker<'p, 's> {
         self.p.aot.classes.builtin_requires.get()?.get(&(file, specifier)).copied()
     }
 
-    /// Whether somebody may get hold of the object that the `namespace` of TypeScript is, so that there has to be one: what it exports are
-    /// its properties then, and whoever has the object can store to them, define and delete them. From the trees and the symbols of all
-    /// files, once.
-    ///
-    /// It is mentioned otherwise than as the object of `N.name`. Or a module exports it, and the namespace object of some module is made.
-    /// Or a namespace that is reified exports it. Where it is reached by a path, `a.b.N`, it goes by its name alone.
     pub fn is_reified_namespace(&self, namespace: Sym) -> bool {
         self.reified_namespaces().namespaces.contains(&namespace)
     }
 
-    /// The variables that the file declares and a reified namespace exports, as the file itself refers to them. They are properties: not
-    /// every store to them is seen.
     pub(super) fn reified_namespace_variables(&self, file: FileId) -> &'p [SymbolId] {
         self.reified_namespaces().variables.get(&file).map_or(&[], |variables| &variables[..])
     }
@@ -360,8 +299,6 @@ impl<'p, 's> Checker<'p, 's> {
         !self.reified_namespaces().namespaces.is_empty()
     }
 
-    /// `member`: a function, a class, an enum or a namespace that a namespace exports. Whether the identifier `e` is within the block that
-    /// declares it. There the name stands for the binding of the block. In another block of the namespace it stands for the property.
     pub fn is_within_declaring_block(&self, file: FileId, e: ExprId, member: Sym) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut around: Vec<ModuleId> = Vec::new();
@@ -463,7 +400,6 @@ impl<'p, 's> Checker<'p, 's> {
         let code = self.files_declaring_classes();
         let mut by_name: FxHashMap<Atom, Vec<Sym>> = FxHashMap::default();
         let mut found = ReifiedNamespaces::default();
-        // What a file declares whose code is elsewhere is made by that code: an object like any that is not the program's.
         for &file in code.iter().filter(|&&file| self.is_compiled(file)) {
             let (hir, bound) = (self.hir(file), self.bound(file));
             for (m, module) in hir.modules.iter().enumerate() {
@@ -472,7 +408,6 @@ impl<'p, 's> Checker<'p, 's> {
                     continue;
                 }
                 let namespace = files.export_symbol_of_value_symbol_if_exported(files.sym(file, bound.module_symbol[m.idx()]));
-                // Merged with a function, a class or an enum, it is that object.
                 if files.flags(namespace).intersects(SymFlags::FUNCTION | SymFlags::CLASS | SymFlags::ENUM) {
                     found.namespaces.insert(namespace);
                     continue;
@@ -546,7 +481,6 @@ impl<'p, 's> Checker<'p, 's> {
         let mut pending: Vec<Sym> = found.namespaces.iter().copied().collect();
         while let Some(namespace) = pending.pop() {
             for (_, member) in files.each_export(namespace) {
-                // `export import a = b.c`
                 let held = if files.flags(member).contains(SymFlags::ALIAS) { files.resolve_alias(member) } else { Some(member) };
                 if let Some(held) = held.filter(|&held| is_candidate(held) && found.namespaces.insert(held)) {
                     pending.push(held);
@@ -601,8 +535,6 @@ impl<'p, 's> Checker<'p, 's> {
         self.symbol_of_identifier(file, e, name)
     }
 
-    /// Of an intersection with a primitive. `string & DisposableString` is an OBJECT that converts to a string: a part is of a class, or has a
-    /// method. `string & { __brand: "Id" }` is a string with a brand, which has neither.
     pub fn is_primitive_wrapper(&mut self, ty: TypeId) -> bool {
         let TypeData::Intersection(parts) = self.data(ty) else { return false };
         parts.to_vec().into_iter().any(|part| {
@@ -611,8 +543,6 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// `anys.forEach((x: P) => ..)`: the parameters of the function expression that have an annotation while whoever the function is handed to is declared to hand over something of which
-    /// its type says nothing. By number.
     pub fn parameters_passed_untyped(&mut self, file: FileId, func: FnId) -> Vec<usize> {
         let own = self.hir(file)[func].params;
         if !own.iter().any(|p| self.hir(file)[p].ty.is_some()) {
@@ -628,14 +558,10 @@ impl<'p, 's> Checker<'p, 's> {
             .collect()
     }
 
-    /// `e`: what the function returns. If that is an async function with an annotation, `Promise<T>`, and `e` is no promise by its type, so that it is what the promise is fulfilled with:
-    /// `T`. What may be a promise, or says nothing of what it is, is awaited first: of that nothing is known here. Of a generator with an annotation, `Generator<Y, T>`,
-    /// `AsyncGenerator<Y, T>`: `T` likewise.
     pub fn promise_fulfillment_type(&mut self, file: FileId, func: FnId, e: ExprId) -> Option<TypeId> {
         self.annotated_result_element_type(file, func, e, false)
     }
 
-    /// `yield e` in a generator with an annotation, `Generator<Y>`, `AsyncGenerator<Y>`, `Iterable<Y>`: `Y`, likewise.
     pub fn generator_yield_type(&mut self, file: FileId, func: FnId, e: ExprId) -> Option<TypeId> {
         self.annotated_result_element_type(file, func, e, true)
     }
@@ -663,9 +589,6 @@ impl<'p, 's> Checker<'p, 's> {
         (written != declared && !self.is_uninformative(written)).then_some(written)
     }
 
-    /// Whether what the expression yields is spread into an object literal: `{ mode, ...{ a } }`, `{ ...(c && { a }) }`, `{ ...((g) => ({ a: g }))(x) }`, `{ ...(function () { return { a } })() }`.
-    /// Also of the function expression that is called there. The checker hands what is spread the type that the WHOLE literal is checked against, and a function that is called where it is
-    /// written the type that the call is checked against, to guide inference. Nothing is checked against it: it is a part, and may lack what the whole requires.
     pub fn is_spread_part(&self, file: FileId, e: ExprId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut at = e;
@@ -690,9 +613,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Whether every declaration of the interface is ambient: it stands in a declaration file, or under `declare global`, `declare module`,
-    /// `declare namespace`. Such an interface says what the host hands out, and what it requires is a wish: `interface ProcessEnv { KEY:
-    /// string }`. It is a declaration without a body, which nothing is held to.
     fn redeclared_parameter_symbols(&self, file: FileId, func: FnId) -> Vec<SymbolId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let f = &hir[func];
@@ -754,7 +674,6 @@ impl<'p, 's> Checker<'p, 's> {
             })
     }
 
-    /// Whether what declares the value of the symbol is ambient: it stands in a declaration file, or under a `declare`.
     pub fn is_declared_ambient(&self, sym: Sym) -> bool {
         self.files().value_declaration(sym).is_some_and(|(file, decl)| {
             let hir = self.hir(file);
@@ -762,8 +681,6 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// `const { E } = require("./m")`, where the module has `export const enum E`: the enum, if the expression is of the type of its object.
-    /// There is no such object when the program runs, so what is of that type stands for the enum, and `E.member` for the constant.
     pub fn const_enum_object_type(&mut self, file: FileId, e: ExprId) -> Option<Sym> {
         let ty = self.type_of_expr(file, e);
         match *self.data(ty) {
@@ -772,8 +689,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Whether a call of the function yields `undefined` and nothing else, going by its text: it has a block for its body, no `return` in that
-    /// has a value, and it is neither async nor a generator. `(): void => list.push(1)` yields a number.
     pub fn returns_no_value(&self, file: FileId, func: FnId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         matches!(hir[func].body, FnBody::Block(_))
@@ -781,7 +696,12 @@ impl<'p, 's> Checker<'p, 's> {
             && bound.ids(bound.fns[func.idx()].returns).all(|stmt: StmtId| !matches!(hir[stmt].kind, StmtKind::Return(value) if value.is_some()))
     }
 
-    /// `e`: an argument of a call or a `new`. Whether the parameter that takes it, as the call is resolved, says nothing of it: `any`, `unknown`.
+    pub fn never_returns(&mut self, file: FileId, func: FnId) -> bool {
+        let bound = self.bound(file);
+        let (end, has_return) = (bound.fns[func.idx()].end, bound.ids::<StmtId>(bound.fns[func.idx()].returns).next().is_some());
+        !has_return && self.returns_no_value(file, func) && (end == UNREACHABLE || (end.is_some() && !self.is_reachable(file, end)))
+    }
+
     pub fn is_passed_to_any_or_unknown_parameter(&mut self, file: FileId, e: ExprId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let Parent::Expr(parent) = bound.expr_parent[e.idx()] else { return false };
@@ -798,11 +718,6 @@ impl<'p, 's> Checker<'p, 's> {
         self.param_type_at(&parameters, index).is_some_and(|taking| self.is_uninformative(taking))
     }
 
-    /// `{ ...C }` of a class, `{ ...new MyError("m") }`. `e`: the operand of a spread in an object literal. A spread copies the own enumerable
-    /// properties. The checker's type of the literal has every property of the operand's type but the methods of a class: `prototype` and
-    /// the static methods of a class object, `name` and `message` of an error, which are inherited or not enumerable. Whether the type
-    /// of the operand may have such: it is that of a class object or a function, of an object that the engine makes, or of a class that
-    /// extends one of the engine.
     pub fn spread_type_exceeds_copied_properties(&mut self, file: FileId, e: ExprId) -> bool {
         let operand = self.type_of_expr(file, e);
         let operand = self.non_nullable(operand);
@@ -813,10 +728,6 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// `expect({ text }).toEqual({ text: anything })`. `e`: an object literal, which is checked against `expected`. Whether nobody has written
-    /// that type down for it, and it need not be of it: it is an argument, or within one, for a parameter whose declaration mentions a type
-    /// parameter, so that `expected` is what the checker has put in for that; and one of its values is an `any` where `expected` says
-    /// what the property is. The function that is called knows the value by the bound of the type parameter.
     pub fn is_checked_against_inferred_type(&mut self, file: FileId, e: ExprId, expected: TypeId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         if !self.has_any_where_type_is_expected(file, e, expected) {
@@ -841,8 +752,6 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(index) = hir.ids(hir[call].args).position(|it| it == argument) else { return false };
         let Some(sig) = self.resolved_signature(file, parent).sig else { return false };
         let Some((declared_in, func, _)) = self.sig_decl(sig) else { return false };
-        // `rows.push({ .. })`, `map.set(key, { .. })`: the type parameter is that of a container of the engine, which the program has written down
-        // where it declares the container. What is put in is read out as that.
         if self.files().module(declared_in).is_lib {
             return false;
         }
@@ -851,7 +760,6 @@ impl<'p, 's> Checker<'p, 's> {
         matches!((self.param_type_at(&declared, index), self.param_type_at(&called, index)), (Some(declared), Some(called)) if declared != called)
     }
 
-    /// Whether the literal, or a literal within it, has an `any` for a property of which `expected` says what it is.
     fn has_any_where_type_is_expected(&mut self, file: FileId, e: ExprId, expected: TypeId) -> bool {
         let hir = self.hir(file);
         match hir[e].kind {
@@ -871,12 +779,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `base`: the facts of the class of the program that the `extends` clause names, if it names one.
     pub fn class_facts(&mut self, file: FileId, class: ClassId, base: Option<ClassFacts>, extended: &[(FileId, ClassId)]) -> ClassFacts {
         let found = self.file_class_facts(file);
         let (hir, bound) = (self.hir(file), self.bound(file));
         let c = &hir[class];
-        // A class in JavaScript gets its fields by assignments to `this`, wherever they are.
         let constructor = self.class_constructor(file, class);
         let is_initialized_in_order = !constructor.is_some_and(|func| found.with_uninitialized_this.contains(&func));
         let is_evaluated_once = self.is_evaluated_once(file, bound.class_owner[class.idx()].to_parent()) && !self.is_class_named_by_computed_key(file, class);
@@ -887,29 +793,20 @@ impl<'p, 's> Checker<'p, 's> {
             let constructing: Vec<(FileId, ClassId)> = std::iter::once((file, class)).chain(extended.iter().copied()).collect();
             !found.tested_by_private_name.contains(&class) || self.this_never_escapes_construction(&constructing)
         };
-        // A class that is not laid out constructs what it extends by its value, as the language has it, whatever that is.
         let base = base.filter(|_| has_fixed_layout);
         let mentions_new_target = constructor.is_some_and(|func| found.mentioning_new_target.contains(&func));
         let returns_value = constructor.is_some_and(|func| bound.ids(bound.fns[func.idx()].returns).any(|stmt| matches!(hir[stmt].kind, StmtKind::Return(value) if value.is_some())));
         ClassFacts {
             has_fixed_layout,
             is_evaluated_once,
-            takes_new_target: mentions_new_target || c.extends.is_some() && !has_fixed_layout || base.is_some_and(|base| base.takes_new_target),
+            uses_new_target: mentions_new_target || c.extends.is_some() && !has_fixed_layout || base.is_some_and(|base| base.uses_new_target),
             may_return_another_object: returns_value || base.is_some_and(|base| base.may_return_another_object),
         }
     }
 
-    /// The optional properties of the types that the class `implements` that its objects do not have by the class itself: no field, method
-    /// or accessor of the name, declared or inherited. The implemented type and the name, in the order of the clause and of the types.
-    /// `class Links implements LinksLike {}` says that its objects are used as a `LinksLike`, which is how they come by such a property.
-    ///
-    /// Not a name that two of the types give different types. Not a name that a subclass declares a method or an accessor by: its objects
-    /// inherit the property, and a field that is absent is not looked for on the prototype chain. A subclass is a class of any file that
-    /// is loaded. Where it is not known what a class extends: see `may_be_extended_by_value`.
     pub fn implemented_optional_properties(&mut self, file: FileId, class: ClassId) -> Vec<(TypeId, Atom)> {
         let hir = self.hir(file);
         let instances = self.class_instance_type(file, class);
-        // With the type of the property. `None`: the types differ.
         let mut found: Vec<(TypeId, Atom, Option<TypeId>)> = Vec::new();
         for node in hir.ids(hir[class].implements) {
             let implemented = self.type_from_node(file, node);
@@ -931,12 +828,8 @@ impl<'p, 's> Checker<'p, 's> {
             return Vec::new();
         }
         let class = (file, class);
-        // A name that is computed may be any of them, unless it is a symbol. The class itself and what it extends may have such a method too.
-        let computed: Vec<(FileId, ClassId)> =
-            self.computed_methods().iter().filter(|&&(of, key)| self.is_untyped_file(of.0) || !self.is_symbol_name(of.0, key)).map(|&(of, _)| of).collect();
-        if computed.into_iter().any(|other| other == class || self.may_extend(other, class) || self.may_extend(class, other)) {
-            return Vec::new();
-        }
+        let Some(computed_names) = self.constant_computed_method_names(class) else { return Vec::new() };
+        found.retain(|known| !computed_names.contains(&known.1));
         let declaring = self.method_declarations_by_name();
         found.retain(|known| {
             let declarations = declaring.get(&known.1).map_or(&[][..], |declarations| &declarations[..]);
@@ -945,11 +838,21 @@ impl<'p, 's> Checker<'p, 's> {
         found.into_iter().map(|(implemented, name, _)| (implemented, name)).collect()
     }
 
-    /// The properties that the objects of the class are declared to have and that nothing of the class defines: `declare x: T`, and what an
-    /// interface of the name of the class declares, itself or by what it extends. In the order of the type.
-    ///
-    /// No method, no accessor. Not a name that the class it extends has. Not a name that a method or an accessor of a class on the same chain
-    /// goes by, up or down: see `implemented_optional_properties`.
+    fn constant_computed_method_names(&mut self, class: (FileId, ClassId)) -> Option<Vec<Atom>> {
+        let mut names = Vec::new();
+        for &(of, key) in self.computed_methods() {
+            if !self.is_untyped_file(of.0) && self.is_symbol_name(of.0, key) {
+                continue;
+            }
+            if of != class && !self.is_declared_to_extend(of, class) && !self.may_extend(class, of) {
+                continue;
+            }
+            let Some(Primitive::String(name)) = self.constant_value_of(of.0, key) else { return None };
+            names.push(name);
+        }
+        Some(names)
+    }
+
     pub fn declared_only_properties(&mut self, file: FileId, class: ClassId) -> Vec<Atom> {
         let instances = self.class_instance_type(file, class);
         let inherited = match self.resolve_superclass(file, class) {
@@ -972,11 +875,8 @@ impl<'p, 's> Checker<'p, 's> {
             return found;
         }
         let class = (file, class);
-        let computed: Vec<(FileId, ClassId)> =
-            self.computed_methods().iter().filter(|&&(of, key)| self.is_untyped_file(of.0) || !self.is_symbol_name(of.0, key)).map(|&(of, _)| of).collect();
-        if computed.into_iter().any(|other| other == class || self.may_extend(other, class) || self.may_extend(class, other)) {
-            return Vec::new();
-        }
+        let Some(computed_names) = self.constant_computed_method_names(class) else { return Vec::new() };
+        found.retain(|name| !computed_names.contains(name));
         let declaring = self.method_declarations_by_name();
         found.retain(|name| {
             let declarations = declaring.get(name).map_or(&[][..], |declarations| &declarations[..]);
@@ -987,9 +887,6 @@ impl<'p, 's> Checker<'p, 's> {
         found
     }
 
-    /// `"useDefineForClassFields": false` in the tsconfig.json, as what runs the program carries it out (js_parser/visit: `lower_fields`): the instance fields of a class in a TypeScript file are
-    /// not defined. One with an initializer is assigned, `this.x = init`, where it would have been defined; one without is left out. Not so for any field of a class one of whose
-    /// instance fields has a computed key.
     pub fn assigns_fields(&self, file: FileId, class: ClassId) -> bool {
         let hir = self.hir(file);
         self.bound(file).class_options.map_or(self.files().options.specified_use_define_for_class_fields == Some(false), |own| !own.use_define_for_class_fields)
@@ -1001,7 +898,6 @@ impl<'p, 's> Checker<'p, 's> {
             })
     }
 
-    /// Whether the member is such a field without an initializer. No code comes of it, as of `declare x: T`. `#x` stays: that is what makes the name.
     pub fn is_field_omitted(&self, file: FileId, member: MemberId) -> bool {
         let m = &self.hir(file)[member];
         m.kind == MemberKind::Property
@@ -1011,7 +907,6 @@ impl<'p, 's> Checker<'p, 's> {
             && matches!(self.bound(file).member_owner[member.idx()], MemberOwner::Class(class) if self.assigns_fields(file, class) || self.files().is_decorated_member(file, member))
     }
 
-    /// Whether every declaration of the member is one that no code comes of: in an interface, or `declare x: T` in a class.
     fn is_declared_only_member(&self, member: Sym) -> bool {
         let declarations = self.files.decls(member);
         !declarations.is_empty()
@@ -1037,9 +932,18 @@ impl<'p, 's> Checker<'p, 's> {
         self.base_types(symbol).into_vec().into_iter().find_map(|base| self.class_for_type(base, false)).map_or(Superclass::Unknown, Superclass::Known)
     }
 
-    /// Whether `class` extends `ancestor`, through however many classes, as far as anybody knows.
+    fn is_declared_to_extend(&mut self, mut class: (FileId, ClassId), ancestor: (FileId, ClassId)) -> bool {
+        for _ in 0..256 {
+            match self.resolve_superclass(class.0, class.1) {
+                Superclass::None | Superclass::Unknown => return false,
+                Superclass::Known(superclass) if superclass != ancestor => class = superclass,
+                Superclass::Known(_) => return true,
+            }
+        }
+        true
+    }
+
     fn may_extend(&mut self, mut class: (FileId, ClassId), ancestor: (FileId, ClassId)) -> bool {
-        // A class that extends itself is an error that is reported.
         for _ in 0..256 {
             match self.resolve_superclass(class.0, class.1) {
                 Superclass::None => return false,
@@ -1051,7 +955,6 @@ impl<'p, 's> Checker<'p, 's> {
         true
     }
 
-    /// The constructor that the class declares: of the overloads, the one with the body.
     pub fn class_constructor(&self, file: FileId, class: ClassId) -> Option<FnId> {
         let hir = self.hir(file);
         (hir[class].members.iter())
@@ -1060,8 +963,6 @@ impl<'p, 's> Checker<'p, 's> {
             .map(|m| m.func)
     }
 
-    /// The class that the variable holds whenever it holds anything: `const Links = class { .. }`, where the declaration is evaluated at
-    /// most once and says nothing else of what the variable is.
     pub fn class_for_const(&self, sym: Sym) -> Option<(FileId, ClassId)> {
         let (file, Decl::Var(pat)) = self.files.value_declaration(sym)? else { return None };
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -1074,9 +975,36 @@ impl<'p, 's> Checker<'p, 's> {
         self.is_evaluated_once(file, Parent::Expr(declaration.init)).then_some((file, class))
     }
 
-    /// The class whose class object the variable holds whenever it holds anything, however often its declaration is evaluated: the
-    /// binding of a class declaration that nothing is stored to, or a `const` whose initializer is a class expression, with or without
-    /// assertions around it.
+    pub fn extends_global_promise(&mut self, file: FileId, class: ClassId) -> bool {
+        let Some(promise) = self.atoms().lookup(b"Promise").and_then(|name| self.files().global(name, SymFlags::VALUE)) else { return false };
+        if !self.files().decls_of(promise).iter().all(|&(of, _)| self.files().module(of).is_lib) {
+            return false;
+        }
+        let (mut file, mut e) = (file, self.hir(file)[class].extends);
+        for _ in 0..4 {
+            let hir = self.hir(file);
+            if e.is_none() {
+                return false;
+            }
+            e = skip_assertions(hir, e);
+            let name = match hir[e].kind {
+                ExprKind::Instantiation { expr, .. } => {
+                    e = expr;
+                    continue;
+                }
+                ExprKind::Ident(name) => name,
+                _ => return false,
+            };
+            let Some(sym) = self.identifier_binding(file, e, name) else { return false };
+            if sym == promise {
+                return true;
+            }
+            let Some(initializer) = self.initializer_of_const(sym) else { return false };
+            (file, e) = initializer;
+        }
+        false
+    }
+
     pub fn class_for_variable(&self, sym: Sym) -> Option<(FileId, ClassId)> {
         let (file, decl) = self.files.value_declaration(sym)?;
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -1088,7 +1016,6 @@ impl<'p, 's> Checker<'p, 's> {
                     || !bound.assignments_to(local).is_empty()
                     || self.is_stored_through_assertions(file, local)
                     || self.files.has_decorator(file, class);
-                // What a script declares at its top level, every file sees.
                 let is_file_private = self.files.module(file).is_module() || self.enclosing_fn(file, bound.class_owner[class.idx()].to_parent()).is_some();
                 (!hir[class].flags.contains(Flags::AMBIENT) && !is_assigned && is_file_private).then_some((file, class))
             }
@@ -1149,8 +1076,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Whether the node is evaluated at most once while the program runs: it is at the level of a module, in no function, static block or
-    /// initializer of an instance field, and in no loop.
     pub fn is_evaluated_once(&self, file: FileId, node: Parent) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut at = node;
@@ -1170,7 +1095,6 @@ impl<'p, 's> Checker<'p, 's> {
                     bound.stmt_parent[s.idx()]
                 }
                 Parent::MemberInit(m) if !hir[m].flags.contains(Flags::STATIC) => return false,
-                // The name of a member and the initializer of a static field are evaluated with the class.
                 Parent::MemberKey(m) | Parent::MemberInit(m) => match bound.member_owner[m.idx()] {
                     MemberOwner::Class(class) => bound.class_owner[class.idx()].to_parent(),
                     _ => return false,
@@ -1181,15 +1105,11 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Whether the computed name of a member is a symbol, going by its type.
     pub fn is_symbol_name(&mut self, file: FileId, name: ExprId) -> bool {
         let ty = self.type_of_expr(file, name);
         self.is_symbol_like(ty)
     }
 
-    /// For each of `candidates`: whether its class object may be what one of the classes `extending` extends, going by the type of what
-    /// stands after `extends` there. As in `function mixin<T extends new (..) => object>(Base: T) { return class extends Base {} }`, where
-    /// it is not known which class that is. A type that says nothing, as `any`, may be any of them: in a module of the runtime, any of the runtime's.
     pub fn may_be_extended_by_value(&mut self, extending: &[(FileId, ClassId)], candidates: &[(FileId, ClassId)]) -> Vec<bool> {
         let mut extended: Vec<TypeId> = Vec::new();
         let (mut is_anything_extended, mut is_anything_extended_in_the_runtime) = (false, false);
@@ -1235,15 +1155,10 @@ impl<'p, 's> Checker<'p, 's> {
         found
     }
 
-    /// Appends the names of the global objects that the file does more with than the engine's knowledge of them allows for.
-    ///
-    /// A class of the engine that a class of the file extends, going by the type of what stands after `extends`, so that
-    /// `const M = Map; class X extends M {}` counts: its instances are not all what the engine makes of itself.
     pub fn mutated_globals_in(&mut self, file: FileId, out: &mut Vec<Atom>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut seen = FxHashSet::default();
         for (class, c) in hir.classes.iter().enumerate() {
-            // The parser leaves nodes behind that are part of nothing.
             if c.extends.is_none() || c.flags.contains(Flags::AMBIENT) || bound.class_symbol[class].is_none() {
                 continue;
             }
@@ -1267,13 +1182,12 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
             for signature in signatures {
-                let made = self.sig_return(signature);
-                self.add_global_classes(made, &mut seen, out);
+                let created = self.sig_return(signature);
+                self.add_global_classes(created, &mut seen, out);
             }
         }
     }
 
-    /// The type, and what it extends, as far as those are classes and interfaces that are global.
     fn add_global_classes(&mut self, ty: TypeId, seen: &mut FxHashSet<Sym>, out: &mut Vec<Atom>) {
         match self.data(ty) {
             TypeData::Ref { target, .. } => {
@@ -1298,8 +1212,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Whether nothing in the program defines what the symbol stands for: the declaration is ambient, or its file is not compiled with the
-    /// program, as one that is only imported for its types.
     fn is_only_declared(&self, sym: Sym) -> bool {
         match self.files.value_declaration(sym) {
             Some((file, decl)) => !self.is_compiled(file) || self.bound(file).modifier_flags(self.hir(file), decl).contains(Flags::AMBIENT),
@@ -1307,16 +1219,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    // ───────────────────────────── function prototypes ─────────────────────────────
-
-    /// * `P.name = ..` and `P["name"] = ..`, compound assignments too;
-    /// * `Object.defineProperty(P, "name", ..)`, `Reflect.defineProperty(P, "name", ..)`, `Reflect.set(P, "name", ..)`;
-    /// * the keys that are written down in the object literals of `Object.defineProperties(P, { .. })` and `Object.assign(P, { .. }, ..)`.
-    ///
-    /// Syntax only, and nothing else: no alias of `P`, no store through `any`, no computed key, no spread, no argument that is not a
-    /// literal, not `P = { .. }`. This is an allow-list and no fact. The run time refuses to define a property that is named like a field
-    /// on the `prototype` of a function that initializes records, unless the name is listed. For a name that is listed, compiled code
-    /// looks at the prototype where such a record lacks the field.
     pub fn prototype_property_names_in(&mut self, file: FileId, out: &mut Vec<Atom>) {
         self.prototype_property_names_by_function_in(file, out, &mut [0; 3]);
     }
@@ -1349,7 +1251,6 @@ impl<'p, 's> Checker<'p, 's> {
             !matches!(named, NamedFunction::Other)
         };
         for (index, node) in hir.exprs.iter().enumerate() {
-            // The parser leaves nodes behind that are part of nothing.
             if bound.expr_parent[index] == Parent::None {
                 continue;
             }
@@ -1360,11 +1261,12 @@ impl<'p, 's> Checker<'p, 's> {
                     if let ExprKind::String(name) = hir[key].kind {
                         out.push(name);
                     }
+                    out.extend(self.property_named_by_constant_symbol(file, key));
                 }
                 ExprKind::Call(call) => {
                     let ExprKind::Dot { obj: global, name: function, .. } = hir[hir[call].callee].kind else { continue };
                     let ExprKind::Ident(global_name) = hir[global].kind else { continue };
-                    let takes_key = match (self.atoms().bytes(global_name), self.atoms().bytes(function)) {
+                    let accepts_key = match (self.atoms().bytes(global_name), self.atoms().bytes(function)) {
                         (b"Object" | b"Reflect", b"defineProperty") | (b"Reflect", b"set") => true,
                         (b"Object", b"defineProperties" | b"assign") => false,
                         _ => continue,
@@ -1373,18 +1275,19 @@ impl<'p, 's> Checker<'p, 's> {
                     if !args.next().is_some_and(|target| is_prototype(self, target)) || !self.symbol_of_identifier(file, global, global_name).is_none_or(|sym| self.is_only_declared(sym)) {
                         continue;
                     }
-                    if takes_key {
-                        if let Some(key) = args.next()
-                            && let ExprKind::String(name) = hir[key].kind
-                        {
-                            out.push(name);
+                    if accepts_key {
+                        if let Some(key) = args.next() {
+                            if let ExprKind::String(name) = hir[key].kind {
+                                out.push(name);
+                            }
+                            out.extend(self.property_named_by_constant_symbol(file, key));
                         }
                         continue;
                     }
                     for source in args {
                         if let ExprKind::Object(props) = hir[skip_assertions(hir, source)].kind {
                             out.extend(props.iter().filter_map(|p| match hir[p].key {
-                                PropKey::Name(name) if hir[p].kind != PropKind::Spread => Some(name),
+                                PropKey::Name(_) | PropKey::Computed(_) if hir[p].kind != PropKind::Spread => self.known_member_name(file, hir[p].key),
                                 _ => None,
                             }));
                         }
@@ -1395,23 +1298,17 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `prototype_property_names_in` of every file that is loaded.
-    pub(super) fn prototype_property_names(&mut self) -> &'p FxHashSet<Atom> {
+    pub(super) fn prototype_property_names(&mut self) -> &'p FxHashSet<FieldKey> {
         let program = self.p;
         program.aot.classes.prototype_property_names.get_or_init(|| {
             let mut names = Vec::new();
             for file in self.files_declaring_classes() {
                 self.prototype_property_names_in(file, &mut names);
             }
-            names.into_iter().collect()
+            names.into_iter().map(|name| self.field_key_of_property(name)).collect()
         })
     }
 
-    /// Whether the objects that the function initializes may inherit from anything: the function is a `ConstructorFunction`, and the
-    /// program is seen to replace its `prototype` object, to give that another prototype, to construct with another `new.target`, or
-    /// to get hold of that object as a value.
-    ///
-    /// This is no fact. Where it is not seen, the run time keeps the `prototype` object of the function as it is and refuses the rest.
     pub fn has_mutable_prototype(&self, file: FileId, func: FnId) -> bool {
         let known = self.mutable_prototypes();
         known.functions.contains(&(file, func)) || known.every && self.is_constructor_function(file, func) && self.may_be_used_as_value(file, func)
@@ -1485,7 +1382,6 @@ impl<'p, 's> Checker<'p, 's> {
         (known.every, known.all_since, all.iter().filter(|it| self.has_mutable_prototype(it.function.0, it.function.1)).count(), all.len())
     }
 
-    /// From the trees and the symbols alone, of all files that are loaded, TypeScript and JavaScript, compiled with the program or not.
     fn mutable_prototypes(&self) -> &'p MutablePrototypes {
         self.p.aot.classes.mutable_prototypes.get_or_init(|| {
             let mut found = MutablePrototypes::default();
@@ -1493,7 +1389,6 @@ impl<'p, 's> Checker<'p, 's> {
                 return found;
             }
             for file in self.files_declaring_classes() {
-                // Of a tree that is not bound to its end, nobody knows what is what.
                 found.every |= self.bound(file).ran_out_of_stack;
                 if found.every {
                     break;
@@ -1504,24 +1399,11 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// With `E` for any expression, with or without assertions around it or around `E.prototype`.
-    ///
-    /// Replaced: `E.prototype` or `E["prototype"]` is the target of an assignment of any kind;
-    /// `Object.setPrototypeOf(E.prototype, ..)`, `Reflect.setPrototypeOf(E.prototype, ..)`, `E.prototype.__proto__ = ..`;
-    /// `Object.defineProperty(E, "prototype", ..)`, `Reflect.defineProperty(E, "prototype", ..)`, `Reflect.set(E, "prototype", ..)`,
-    /// `Object.defineProperties(E, { prototype: .. })`, `Object.assign(E, { prototype: .. })`; `Reflect.construct(E, args, newTarget)`;
-    /// `inherits(E, ..)` and `x.inherits(E, ..)`, by the name of the callee. Where `E` is not known, that goes for every function.
-    ///
-    /// Escapes: `E.prototype` anywhere else but as the object of a member access, as the first argument of what
-    /// `prototype_property_names_in` knows, and as an operand of `===`, `!==`, `==`, `!=`, `typeof`, `!`, `void`. Where `E` is not known, that goes for none: `hasProperty(ctor.prototype, name)` in a loop
-    /// over constructors would otherwise go for all.
     fn add_mutable_prototypes_in(&self, file: FileId, found: &mut MutablePrototypes) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let names_prototype = |key: ExprId| matches!(hir[key].kind, ExprKind::String(name) if name == known::prototype);
-        // `E`, and whether its `prototype` is replaced and does not only escape.
         let mut sites: Vec<(ExprId, bool)> = Vec::new();
         for (index, node) in hir.exprs.iter().enumerate() {
-            // The parser leaves nodes behind that are part of nothing.
             if bound.expr_parent[index] == Parent::None {
                 continue;
             }
@@ -1568,7 +1450,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `prototype`: `E.prototype` or `E["prototype"]`.
     fn prototype_use(&self, file: FileId, prototype: ExprId) -> PrototypeUse {
         let (hir, bound) = (self.hir(file), self.bound(file));
         if self.access_store_kind(file, prototype).is_some() {
@@ -1598,7 +1479,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// For a call of `Object.name(..)` or `Reflect.name(..)`, where those are the globals: the two names.
     fn global_method_names(&self, file: FileId, call: CallId) -> Option<(&'p [u8], &'p [u8])> {
         let hir = self.hir(file);
         let ExprKind::Dot { obj: global, name: method, .. } = hir[hir[call].callee].kind else { return None };
@@ -1607,8 +1487,6 @@ impl<'p, 's> Checker<'p, 's> {
         (matches!(names.0, b"Object" | b"Reflect") && self.resolve_identifier(file, global, global_name, true).ok().flatten().is_none_or(|sym| self.is_only_declared(sym))).then_some(names)
     }
 
-    /// What the expression stands for: a function expression, the name of a function, or a `const` whose initializer stands for one,
-    /// through imports as the checker resolves them, with or without assertions. `depth`: how many such names have been followed.
     fn resolve_function_expr(&self, file: FileId, e: ExprId, depth: u32) -> NamedFunction {
         let hir = self.hir(file);
         let e = skip_assertions(hir, e);
@@ -1622,7 +1500,6 @@ impl<'p, 's> Checker<'p, 's> {
                     let Some(target) = self.files.resolve_alias(sym) else { return NamedFunction::Unknown };
                     sym = target;
                 }
-                // What other code defines is no function of the program.
                 if self.is_only_declared(sym) {
                     return NamedFunction::Other;
                 }
@@ -1643,23 +1520,11 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    // ───────────────────────────── methods that are replaced ─────────────────────────────
-
-    // A program may put something else in the place of a method or an accessor that a class declares: in an object, which gets a
-    // property of its own by the name, or in the prototype object or the class object. It is seen to do so where something is stored to
-    // `x.name`, or that is deleted or defined, and an object of the class may be `x`, going by the type of `x`. Where it is not seen to,
-    // what an object of the class finds by the name is what the class declares, and whoever tries to change that is turned away.
-    //
-    // What a file does is found from the file alone, `method_stores_in`. Which methods that replaces is decided once, from what all
-    // files do, `replaced_methods`. So nobody knows of a method whether it may be replaced while files are still looked at.
-
-    /// The files that classes of the program are declared in, in their order.
     pub(super) fn files_declaring_classes(&self) -> Vec<FileId> {
         let is_code = |&file: &FileId| !matches!(self.hir(file).kind, FileKind::Declaration | FileKind::Json) && !self.files.module(file).is_opaque();
         (0..self.files.modules.len() as u32).map(FileId).filter(is_code).collect()
     }
 
-    /// From the declarations alone.
     fn method_declarations_by_name(&self) -> &'p MethodDeclarations {
         self.p.aot.classes.method_declarations.get_or_init(|| {
             let mut declaring = MethodDeclarations::default();
@@ -1677,7 +1542,7 @@ impl<'p, 's> Checker<'p, 's> {
                         }
                         let entry = MethodDeclaration { class: (file, ClassId(class as u32)), is_static: m.flags.contains(Flags::STATIC), is_accessor: m.kind != MemberKind::Method };
                         let classes = declaring.entry(name).or_default();
-                        if !classes.contains(&entry) {
+                        if !classes.iter().rev().take_while(|declared| declared.class == entry.class).any(|declared| *declared == entry) {
                             classes.push(entry);
                         }
                     }
@@ -1687,8 +1552,6 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// The methods and accessors of the objects of a class whose names are computed: the class and the name, in the order of the files.
-    /// From the declarations alone.
     fn computed_methods(&self) -> &'p [((FileId, ClassId), ExprId)] {
         self.p.aot.classes.computed_methods.get_or_init(|| {
             let mut computed = Vec::new();
@@ -1714,13 +1577,6 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// For what the file does to a property by the name of a method of some class of the program: the type of the object and the name,
-    /// each pair once, in the order of the file. What counts: an assignment of any kind to `x.name`, to `x["name"]`, or to `x[key]`
-    /// where the type of `key` is that of one string or of a few; `++`, `--`, `delete`; `Object.defineProperty`,
-    /// `Object.defineProperties`, `Object.assign`, `Reflect.set`, `Reflect.defineProperty` and `Reflect.deleteProperty`, where the name is
-    /// written down.
-    ///
-    /// Not `x.name = x.name.bind(x)`: what an object finds by the name still does what the method does.
     pub fn method_stores_in(&mut self, file: FileId) -> Vec<MethodStore> {
         let mut found: Vec<(TypeId, Atom, bool)> = Vec::new();
         self.add_method_stores_in(file, &mut found);
@@ -1729,7 +1585,6 @@ impl<'p, 's> Checker<'p, 's> {
         found.into_iter().map(|(object, name, defines)| MethodStore { object, name: self.atoms().bytes(name).into(), defines }).collect()
     }
 
-    /// The type of the object, the name, and `MethodStore::defines`.
     fn add_method_stores_in(&mut self, file: FileId, out: &mut Vec<(TypeId, Atom, bool)>) {
         let declaring = self.method_declarations_by_name();
         let index = self.file_exprs_by_kind(file);
@@ -1883,13 +1738,37 @@ impl<'p, 's> Checker<'p, 's> {
         found
     }
 
-    /// Whether `e` is the object of `e.name`, and that property is only read there.
     pub fn is_read_receiver(&self, file: FileId, e: ExprId) -> bool {
         matches!(self.bound(file).expr_parent[e.idx()], Parent::Expr(parent) if parent.is_some() && matches!(self.hir(file)[parent].kind, ExprKind::Dot { obj, .. } if obj == e) && self.access_store_kind(file, parent).is_none())
     }
 
-    /// What is done to the property that the access `e` names, besides reading it: whether it is deleted, and not stored to. `None`: it
-    /// is only read. What is stored to may be cast first: `(x.name as any) = value`.
+    pub(super) fn property_container_mutations(&self) -> &'p FxHashMap<Atom, Vec<(FileId, ExprId, ExprId)>> {
+        self.p.aot.classes.property_container_mutations.get_or_init(|| {
+            let mut found: FxHashMap<Atom, Vec<(FileId, ExprId, ExprId)>> = FxHashMap::default();
+            for file in (0..self.files.modules.len() as u32).map(FileId) {
+                if !self.is_compiled(file) || self.is_untyped_file(file) || self.bound(file).ran_out_of_stack {
+                    continue;
+                }
+                let (hir, index) = (self.hir(file), self.file_exprs_by_kind(file));
+                for &e in index.of(ExprTag::Call) {
+                    let ExprKind::Call(call) = hir[e].kind else { continue };
+                    let ExprKind::Dot { obj: container, name: method, .. } = hir[hir[call].callee].kind else { continue };
+                    let ExprKind::Dot { obj: holder, name, .. } = hir[container].kind else { continue };
+                    if matches!(self.atoms().bytes(method), b"push" | b"unshift" | b"splice" | b"fill" | b"set" | b"add") {
+                        found.entry(name).or_default().extend(hir.ids(hir[call].args).map(|argument| (file, holder, argument)));
+                    }
+                }
+                for &e in index.of(ExprTag::Assign) {
+                    let ExprKind::Assign { target, value, .. } = hir[e].kind else { continue };
+                    let ExprKind::Index { obj: container, .. } = hir[target].kind else { continue };
+                    let ExprKind::Dot { obj: holder, name, .. } = hir[container].kind else { continue };
+                    found.entry(name).or_default().push((file, holder, value));
+                }
+            }
+            found
+        })
+    }
+
     pub(super) fn property_assignments(&self) -> &'p FxHashMap<Atom, Vec<(FileId, ExprId)>> {
         self.p.aot.classes.property_assignments.get_or_init(|| {
             let mut found: FxHashMap<Atom, Vec<(FileId, ExprId)>> = FxHashMap::default();
@@ -1902,6 +1781,57 @@ impl<'p, 's> Checker<'p, 's> {
                     let ExprKind::Assign { target, .. } = hir[assignment].kind else { continue };
                     if let ExprKind::Dot { name, .. } = hir[target].kind {
                         found.entry(name).or_default().push((file, assignment));
+                    }
+                }
+            }
+            found
+        })
+    }
+
+    pub(super) fn union_key_assignments(&mut self) -> &'p [(FileId, ExprId)] {
+        let program = self.p;
+        let shared = &program.aot.classes.union_key_assignments;
+        if let Some(known) = shared.get() {
+            return known;
+        }
+        let _search = program.aot.classes.union_key_assignments_search.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(known) = shared.get() {
+            return known;
+        }
+        let mut found = Vec::new();
+        for &(file, assignment) in self.computed_key_assignments() {
+            let hir = self.hir(file);
+            let ExprKind::Assign { target, .. } = hir[assignment].kind else { continue };
+            let ExprKind::Index { index, .. } = hir[target].kind else { continue };
+            if let ExprKind::Ident(name) = hir[index].kind
+                && let Some(binding) = self.identifier_binding(file, index, name)
+                && self.type_of_symbol(binding) == TypeId::NUMBER
+            {
+                continue;
+            }
+            let key = self.type_of_expr(file, index);
+            let parts = self.parts(key);
+            if parts.len() >= 2 && parts.iter().all(|&part| matches!(self.data(part), TypeData::StringLit { .. })) {
+                found.push((file, assignment));
+            }
+        }
+        shared.get_or_init(|| found)
+    }
+
+    pub(super) fn computed_key_assignments(&self) -> &'p [(FileId, ExprId)] {
+        self.p.aot.classes.computed_key_assignments.get_or_init(|| {
+            let mut found = Vec::new();
+            for file in (0..self.files.modules.len() as u32).map(FileId) {
+                if !self.is_compiled(file) || self.is_untyped_file(file) || self.bound(file).ran_out_of_stack {
+                    continue;
+                }
+                let hir = self.hir(file);
+                for &assignment in self.file_exprs_by_kind(file).of(ExprTag::Assign) {
+                    let ExprKind::Assign { target, .. } = hir[assignment].kind else { continue };
+                    if let ExprKind::Index { index, .. } = hir[target].kind
+                        && !matches!(hir[index].kind, ExprKind::String(_) | ExprKind::Number(_))
+                    {
+                        found.push((file, assignment));
                     }
                 }
             }
@@ -1960,8 +1890,6 @@ impl<'p, 's> Checker<'p, 's> {
         (is_deleted || bound.get_assignment_target(hir, e).is_some()).then_some(is_deleted)
     }
 
-    /// The object is of the checker's type of the expression `object`, or of what that may yield besides: `as` coerces and does not
-    /// assert, so that `(x as T).name = value` may store to whatever `x` is.
     fn add_method_store(&mut self, file: FileId, object: ExprId, name: Atom, defines: bool, out: &mut Vec<(TypeId, Atom, bool)>) {
         let own = self.type_of_expr(file, object);
         out.push((own, name, defines));
@@ -1985,7 +1913,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// The property names that the key of an element access can be, if those are a few strings that its type lists. None otherwise.
     pub(super) fn key_literal_names(&mut self, file: FileId, key: ExprId) -> Vec<Atom> {
         if let ExprKind::String(name) = self.hir(file)[key].kind {
             return vec![name];
@@ -2001,7 +1928,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Whether `target` is the left side of `x.name = x.name.bind(x)`, or of the same with `x[key]`, where `x` is `this` or one variable.
     fn is_self_bind_assignment(&self, file: FileId, target: ExprId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let Parent::Expr(assignment) = bound.expr_parent[target.idx()] else { return false };
@@ -2025,7 +1951,6 @@ impl<'p, 's> Checker<'p, 's> {
             }
     }
 
-    /// The class of the program whose objects, or with `is_static` whose class object, the type is that of.
     pub(super) fn class_for_type(&self, ty: TypeId, is_static: bool) -> Option<(FileId, ClassId)> {
         let symbol = match *self.data(ty) {
             TypeData::Ref { target, .. } | TypeData::ThisParam(target) if !is_static && self.files.flags(target).contains(SymFlags::CLASS) => target,
@@ -2038,13 +1963,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// From what the files of the program do, `method_stores_in`, in any order, to the methods and accessors that may be replaced. The
-    /// one step that looks at the whole program.
-    ///
-    /// The object stored to may be of any class whose objects are of the type it is looked at as. For the type of a class those are
-    /// the class and what extends it. For any other type, an interface for one, those that are assignable to it. What such an object
-    /// finds by the name is declared by its class, by a class that it extends, or, as it may be of a class that extends its class, by one
-    /// of those.
     pub fn replaced_methods(&mut self, stores: Vec<MethodStore>) -> ReplacedMethods {
         let mut replaced = ReplacedMethods::default();
         if stores.is_empty() {
@@ -2087,19 +2005,19 @@ impl<'p, 's> Checker<'p, 's> {
                     continue;
                 }
                 let mut stored_to: Vec<((FileId, ClassId), bool)> = Vec::new();
+                let mut structural_receiver = None;
                 if let Some(class) = self.class_for_type(part, false) {
                     stored_to.push((class, false));
                 } else if let Some(class) = self.class_for_type(part, true) {
                     stored_to.push((class, true));
                 } else {
-                    // Every class that has the method, by declaring or by inheriting it.
+                    structural_receiver = Some(self.layout_defining_type(part));
                     let mut having: Vec<(FileId, ClassId)> = declared_by.iter().filter(|declaration| !declaration.is_static).map(|declaration| declaration.class).collect();
                     let mut visited: FxHashSet<(FileId, ClassId)> = having.iter().copied().collect();
                     let part = self.permissive_instantiation(part);
                     while let Some(class) = having.pop() {
                         let instances = self.class_instance_type(class.0, class.1);
                         if self.is_assignable(instances, part) {
-                            // With all that extends it.
                             stored_to.push((class, false));
                             continue;
                         }
@@ -2130,6 +2048,13 @@ impl<'p, 's> Checker<'p, 's> {
                                 members.push((name, is_static));
                                 replaced.names.entry(text.clone()).or_insert(name);
                             }
+                            if !is_static {
+                                let evidence = replaced.structural_evidence.entry((other, name)).or_insert_with(|| Some(Vec::new()));
+                                match (evidence.as_mut(), structural_receiver) {
+                                    (Some(found), Some(receiver)) => found.push((class, receiver)),
+                                    _ => *evidence = None,
+                                }
+                            }
                         }
                     }
                 }
@@ -2138,13 +2063,6 @@ impl<'p, 's> Checker<'p, 's> {
         replaced
     }
 
-    // ───────────────────────────── discriminants ─────────────────────────────
-
-    // `kind` in `interface Node { kind: Kind }`, `interface Block extends Node { kind: Kind.Block; .. }` tells what an object is going to
-    // be looked at as. Where an object is made with a value for such a property, and the property keeps it, the engine can make the
-    // object what it is going to be from the start.
-
-    /// From the trees and the symbols alone, of all files that are loaded, compiled with the program or not.
     fn discriminants(&self) -> &'p Discriminants {
         self.p.aot.classes.discriminants.get_or_init(|| {
             let mut files = self.files_declaring_classes();
@@ -2183,7 +2101,6 @@ impl<'p, 's> Checker<'p, 's> {
                 initial.extend(of.initial_stores.iter().filter(|store| store.parameter.is_some()).map(|store| (of.function.0, store.target)));
             }
             for &file in &files {
-                // Of a tree that is not bound to its end, nobody knows what is a store.
                 if self.bound(file).ran_out_of_stack {
                     found.mutated = found.candidates.clone();
                     break;
@@ -2214,19 +2131,15 @@ impl<'p, 's> Checker<'p, 's> {
         self.method_declarations_by_name();
     }
 
-    /// The functions of the program that declare their `this`, in program order (`rank_of_file`).
     pub(super) fn constructor_functions(&self) -> Vec<(FileId, FnId)> {
         self.discriminants().constructor_functions.iter().map(|it| it.function).collect()
     }
 
-    /// Whether `new` may hand an object that is made as `made` to the constructor function: it declares a `this` that the object is of. A
-    /// `this` that says nothing of its properties, `this: unknown`, is that of a function that passes it on.
-    pub(super) fn may_construct(&mut self, function: (FileId, FnId), made: TypeId) -> bool {
+    pub(super) fn may_construct(&mut self, function: (FileId, FnId), created: TypeId) -> bool {
         let this = self.type_of_this_parameter(function.0, function.1);
-        !self.is_uninformative(this) && this != TypeId::OBJECT && !self.accepts_primitives(this) && self.is_assignable(made, this)
+        !self.is_uninformative(this) && this != TypeId::OBJECT && !self.accepts_primitives(this) && self.is_assignable(created, this)
     }
 
-    /// `ConstructorFunction::initial_stores`
     fn initial_this_stores(&self, file: FileId, func: FnId, body: IdList<StmtId>) -> Vec<InitialStore> {
         let hir = self.hir(file);
         let this_references = self.file_exprs_by_kind(file).of(ExprTag::This);
@@ -2248,8 +2161,6 @@ impl<'p, 's> Checker<'p, 's> {
         stores
     }
 
-    /// Which parameter of the function the expression is, if it is nothing but the name of one that holds what the caller passes for
-    /// as long as the function runs: it is a plain name without a default, takes one argument, and nothing is stored to it.
     fn unmodified_parameter(&self, file: FileId, func: FnId, e: ExprId) -> Option<u32> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let ExprKind::Ident(_) = hir[e].kind else { return None };
@@ -2263,48 +2174,23 @@ impl<'p, 's> Checker<'p, 's> {
         is_unmodified.then_some(position as u32)
     }
 
-    /// Whether the property `name` of an object that is made as `made` is a number that no code of the program replaces by the name,
-    /// once the object has it.
-    ///
-    /// This is a fact: the object is made what an object with that number in the property is going to be looked at as, and is never
-    /// made anything that goes with another number.
-    ///
-    /// * No file that is loaded, TypeScript or JavaScript, stores to a property by the name or deletes one, whatever the object:
-    ///   `x.name`, `x["name"]`, through `as`, `!` and `satisfies`, as the target of an assignment of any kind, of `++` and `--`, of a
-    ///   destructuring, of `for-in` and `for-of`. A property of an object literal, a field of a class and a parameter property are
-    ///   what other objects start with.
-    /// * But for the stores of a parameter that a `ConstructorFunction` starts with.
-    ///
-    /// Two kinds of store are not ruled out, and are for whoever relies on this to check where they happen. One of those initial stores,
-    /// where the function is handed an object that is not new: `Node.call(old, kind)`. And what goes through the run time: a name that
-    /// is computed, `Object.assign`, `Object.defineProperty`, `Reflect.set`.
-    pub fn is_immutable_discriminant(&mut self, made: TypeId, name: Atom) -> bool {
+    pub fn is_immutable_discriminant(&mut self, created: TypeId, name: Atom) -> bool {
         let known = self.discriminants();
         if !known.candidates.contains(&name) || known.mutated.contains(&name) {
             return false;
         }
-        let Some(property) = self.type_of_property(made, name) else { return false };
+        let Some(property) = self.type_of_property(created, name) else { return false };
         let parts = self.parts(property);
         !parts.is_empty() && parts.iter().all(|&part| self.is_number_like(part))
     }
 
-    /// For `new callee(..)` where the object is made at the expression, as `made`, and handed to whatever `callee` turns out to be: an
-    /// argument and the name of an `is_immutable_discriminant`, such that the property is never stored to by its name, or holds that
-    /// argument from before anybody else sees the object.
-    ///
-    /// What initializes the object is a function that declares a `this` the object is of. Every such function of the program stores
-    /// that parameter to that property, among the stores it starts with, and no other `ConstructorFunction` stores to the name. A
-    /// `this` that says nothing of its properties, `this: unknown`, is that of a function that passes it on.
-    ///
-    /// `None`: that does not hold of any argument, or there is no such function. Of several, the one that the first of the functions
-    /// stores first.
-    pub fn new_discriminant(&mut self, file: FileId, e: ExprId, made: TypeId) -> Option<(usize, Atom)> {
+    pub fn new_discriminant(&mut self, file: FileId, e: ExprId, created: TypeId) -> Option<(usize, Atom)> {
         let hir = self.hir(file);
         let ExprKind::New(call) = hir[e].kind else { return None };
         let mut stored_by_every_constructor: Option<Vec<(Atom, u32)>> = None;
         let mut others: Vec<&ConstructorFunction> = Vec::new();
         for handed in &self.discriminants().constructor_functions {
-            if !self.may_construct(handed.function, made) {
+            if !self.may_construct(handed.function, created) {
                 others.push(handed);
                 continue;
             }
@@ -2314,17 +2200,14 @@ impl<'p, 's> Checker<'p, 's> {
                 Some(so_far) => so_far.into_iter().filter(|&(name, parameter)| stores(name, parameter)).collect(),
             });
         }
-        // Which argument comes after a spread depends on what is spread.
         let written = hir.ids(hir[call].args).take_while(|&argument| !matches!(hir[argument].kind, ExprKind::Spread(_))).count();
         stored_by_every_constructor?.into_iter().find_map(|(name, parameter)| {
             let has_external_stores = others.iter().any(|other| other.initial_stores.iter().any(|store| store.name == name));
-            ((parameter as usize) < written && !has_external_stores && self.is_immutable_discriminant(made, name)).then_some((parameter as usize, name))
+            ((parameter as usize) < written && !has_external_stores && self.is_immutable_discriminant(created, name)).then_some((parameter as usize, name))
         })
     }
 
-    /// For an object literal that is made as `made`: the first of its properties that is an `is_immutable_discriminant`. The literal
-    /// gives it its value and nothing in the literal replaces that: all names are written down, this one once, and nothing is spread.
-    pub fn object_literal_discriminant(&mut self, file: FileId, e: ExprId, made: TypeId) -> Option<Atom> {
+    pub fn object_literal_discriminant(&mut self, file: FileId, e: ExprId, created: TypeId) -> Option<Atom> {
         let hir = self.hir(file);
         let ExprKind::Object(props) = hir[e].kind else { return None };
         if props.iter().any(|p| hir[p].kind == PropKind::Spread || !matches!(hir[p].key, PropKey::Name(_))) {
@@ -2344,11 +2227,10 @@ impl<'p, 's> Checker<'p, 's> {
                 Some(&times) => times == 1,
                 None => props.iter().filter(|&other| matches!(hir[other].key, PropKey::Name(of_other) if of_other == name)).count() == 1,
             };
-            (matches!(hir[p].kind, PropKind::Init | PropKind::Shorthand) && is_written_once && self.is_immutable_discriminant(made, name)).then_some(name)
+            (matches!(hir[p].kind, PropKind::Init | PropKind::Shorthand) && is_written_once && self.is_immutable_discriminant(created, name)).then_some(name)
         })
     }
 
-    /// The checker that asks first finds them, from the tree and the symbols of the file alone.
     fn file_class_facts(&mut self, file: FileId) -> &'p FileFacts {
         let program = self.p;
         program.aot.classes.by_file.get_or_init(program.files.modules.len(), file, || self.find_file_class_facts(file))
@@ -2358,12 +2240,11 @@ impl<'p, 's> Checker<'p, 's> {
         let index = self.file_exprs_by_kind(file);
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut found = FileFacts::default();
-        // The function whose `this` and `new.target` the expression sees.
         let receiver_of = |e: ExprId| {
             let mut func = self.evaluating_function(file, bound.expr_parent[e.idx()]).unwrap_or(FnId::NONE);
             while func.is_some() && hir[func].kind == FnKind::Arrow {
                 func = match bound.fns[func.idx()].owner {
-                    FnOwner::Expr(made) => self.evaluating_function(file, bound.expr_parent[made.idx()]).unwrap_or(FnId::NONE),
+                    FnOwner::Expr(created) => self.evaluating_function(file, bound.expr_parent[created.idx()]).unwrap_or(FnId::NONE),
                     _ => FnId::NONE,
                 };
             }
@@ -2421,14 +2302,10 @@ impl<'p, 's> Checker<'p, 's> {
         found
     }
 
-    /// Of the constructor that a class with an `extends` clause declares: whether `this` may be asked for, `super(..)` called or the
-    /// constructor left while it is not known whether `super(..)` has returned. It is known where one statement directly in the body is the
-    /// only `super(..)`, and every mention of `this` and `super`, also from within an arrow function, and every `return` comes after it.
     pub fn this_may_be_uninitialized(&mut self, file: FileId, func: FnId) -> bool {
         self.file_class_facts(file).with_uninitialized_this.contains(&func)
     }
 
-    /// Whether the function, which is no arrow function, mentions `new.target`, also from within an arrow function.
     pub fn mentions_new_target(&mut self, file: FileId, func: FnId) -> bool {
         self.file_class_facts(file).mentioning_new_target.contains(&func)
     }
@@ -2437,8 +2314,6 @@ impl<'p, 's> Checker<'p, 's> {
         self.file_class_facts(file).mentioning_super.contains(&func)
     }
 
-    /// Whether the function, which is no arrow function, looks at its `this`: it mentions `this` or `super`, also from within an arrow
-    /// function, or it is a constructor, which initializes it.
     pub(super) fn uses_this(&mut self, file: FileId, func: FnId) -> bool {
         self.hir(file)[func].kind == FnKind::Constructor || self.inspects_this(file, func) || self.file_class_facts(file).mentioning_super.contains(&func)
     }
@@ -2447,7 +2322,6 @@ impl<'p, 's> Checker<'p, 's> {
         self.bound(file).fns[func.idx()].contains_this || self.file_class_facts(file).mentioning_this.contains(&func)
     }
 
-    /// Whether there is one of what the declaration binds for as long as the program runs, so that it needs no environment to live in.
     pub fn is_bound_once(&self, file: FileId, decl: Decl) -> bool {
         self.activation_binding(file, decl).is_none()
     }
@@ -2472,8 +2346,6 @@ impl<'p, 's> Checker<'p, 's> {
         self.enclosing_classes(file, e).contains(&class)
     }
 
-    /// The function whose activations each have their own of what the declaration binds. `Some(None)`: the turns of a loop of the module
-    /// have. `None`: it is there once and for all, as what a module declares at its top level or imports.
     pub(super) fn activation_binding(&self, file: FileId, decl: Decl) -> Option<Option<FnId>> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let node = match decl {
@@ -2485,7 +2357,6 @@ impl<'p, 's> Checker<'p, 's> {
                         PatParent::Param(p) => return Some(Some(bound.param_fn[p.idx()])),
                         PatParent::Var(d) => {
                             let stmt = Parent::Stmt(bound.var_stmt[d.idx()]);
-                            // A `var` is a variable of the function, or of the module, wherever it is declared.
                             if hir[d].kind == VarKind::Var {
                                 return self.enclosing_fn(file, stmt).map(Some);
                             }

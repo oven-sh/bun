@@ -4,6 +4,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
 const files = {
+  "tsconfig.json": JSON.stringify({ compilerOptions: { typeRoots: [join(import.meta.dir, "../../packages")], types: ["bun-types"] } }),
   "app/main.ts": `import { once } from "node:events";
 const name = "./" + Buffer.alloc(100_000, "w").toString();
 const said = (error: unknown) => String((error as Error).message).replace(name, "<name>").replace(/ from '.*'$/, "");

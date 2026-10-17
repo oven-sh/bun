@@ -98,7 +98,7 @@
     ]
   },
   "src/runtime/cli/aot_audit.rs": {
-    "thread spawn": 4
+    "thread spawn": 5
   },
   "src/runtime/cli/check_command.rs": {
     "thread spawn": 3,

@@ -14,6 +14,10 @@ const everyKindOfPlace = [
   "function f() { return BAD; } console.log(f());",
   "function f(a = BAD) { return a; } console.log(f());",
   "const f = (a = BAD) => a; console.log(f());",
+  "const f = () => BAD; const g = () => f(); console.log(g());",
+  "const f = function () { return BAD; }; function g() { return f(); } console.log(g());",
+  "const f = (a = BAD) => a; const g = () => f(); console.log(g());",
+  "const f = () => BAD; function run(g: () => unknown) { return g(); } console.log(run(() => f()));",
   "class K { f = BAD; } console.log(new K().f);",
   "class K { static f = BAD; } console.log(K.f);",
   "class K { static { console.log(BAD); } } console.log(new K());",
@@ -146,7 +150,7 @@ const besideWhatAConstantCuts = [
   "declare const D: boolean | undefined; if (typeof D === \"undefined\") console.log(BAD);",
 ];
 
-describe.skipIf(!!unsupported)("compile/aot/type errors wherever they stand", () => {
+describe.skipIf(!!unsupported).concurrent("compile/aot/type errors wherever they stand", () => {
   const root = String(tempDir("aot-type-errors", {}));
   afterAll(() => rmSync(root, { recursive: true, force: true }));
   [...everyKindOfPlace, ...besideWhatAConstantCuts].forEach((row, index) => {

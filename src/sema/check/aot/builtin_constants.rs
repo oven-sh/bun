@@ -1,5 +1,3 @@
-//! A constant that holds a built-in: `const hasOwnProperty = Object.prototype.hasOwnProperty`, `const ObjectKeys = Object.keys`.
-
 use super::builtins_generated::{BUILTIN_ENTRIES, BuiltinKind, Pattern, REPLACEABLE_GLOBALS};
 use crate::bind::{Decl, Parent, PatParent, SymFlags};
 use crate::check::Checker;
@@ -7,19 +5,12 @@ use crate::check::errors_names_and_exports::root_declaration;
 use crate::hir::{BinOp, Chain, ExprId, ExprKind, Flags, UnOp, VarKind};
 use crate::program::{FileId, Sym};
 
-/// Whether the engine's table has a function under the name: a static one of the holder, or a method of its prototype.
 fn has_function(is_method: bool, holder: &[u8], name: &[u8]) -> bool {
     let kind = if is_method { BuiltinKind::Method } else { BuiltinKind::Static };
     BUILTIN_ENTRIES.iter().any(|entry| entry.kind == kind && entry.holder.as_bytes() == holder && entry.name.as_bytes() == name)
 }
 
 impl<'p, 's> Checker<'p, 's> {
-    /// The initializer of a `const` that nothing finds in its dead zone, if it is a path to a function of the engine's table:
-    /// `Holder.name`, `Holder.prototype.name` or `Holder.prototype[Symbol.name]`, with globals that the program does not bind. Neither the
-    /// global, nor its `prototype`, nor what is found under the name can be replaced. So the path finds the same function whenever it is
-    /// evaluated, runs no code and does not throw: it stands for a reference to the constant.
-    ///
-    /// It goes by the tree and the symbols alone: every task finds the same.
     pub fn builtin_for_const(&mut self, sym: Sym) -> Option<(FileId, ExprId)> {
         if let Some(&known) = self.aot.storage.builtin_bindings.get(&sym) {
             return known;
@@ -41,8 +32,6 @@ impl<'p, 's> Checker<'p, 's> {
         (self.is_path_to_builtin_function(file, path) && self.is_never_read_uninitialized(sym)).then_some((file, path))
     }
 
-    /// The same for a variable of any kind that nothing is ever stored to but by its own declaration, whoever may read it before that has run: it holds `undefined` until then (or
-    /// is in its dead zone), and the function from then on. The path. The initializer may be `typeof P === "function" ? P : q`, `P || q` or `P ?? q`, which come to `P`.
     pub fn builtin_or_undefined_for_variable(&mut self, sym: Sym) -> Option<(FileId, ExprId)> {
         if let Some(&known) = self.aot.storage.builtin_or_undefined_bindings.get(&sym) {
             return known;
@@ -117,7 +106,6 @@ impl<'p, 's> Checker<'p, 's> {
         self.is_path_to_builtin_function(file, path).then_some(path)
     }
 
-    /// Of names and `.name` alone.
     fn are_same_paths(&self, file: FileId, a: ExprId, b: ExprId) -> bool {
         let hir = self.hir(file);
         match (hir[a].kind, hir[b].kind) {
@@ -143,7 +131,6 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let (holder, is_method) = match hir[of].kind {
             ExprKind::Dot { obj, name, chain: Chain::No, .. } if self.atoms().bytes(name) == b"prototype" => (obj, true),
-            // A well-known symbol names a method.
             _ if matches!(hir[path].kind, ExprKind::Index { .. }) => return false,
             _ => (of, false),
         };

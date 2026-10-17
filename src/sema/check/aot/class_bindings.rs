@@ -1,13 +1,9 @@
-//! The variable that a class declaration binds. TypeScript lets nobody assign to it; JavaScript does.
-
 use crate::bind::{Decl, Parent};
 use crate::check::Checker;
 use crate::hir::{BinOp, ExprKind};
 use crate::program::Sym;
 
 impl<'p, 's> Checker<'p, 's> {
-    /// Whether the variable holds the class object from its initialization on, although it is assigned to: every assignment is `||=` or `??=`. A class object decides those, so that the right
-    /// side is never evaluated and nothing is ever stored. A transpiler writes `((C) => { .. })(C ||= {})` for a namespace that is merged with the class `C`.
     pub fn always_holds_class(&self, sym: Sym) -> bool {
         let Some((file, decl @ Decl::Class(_))) = self.variable_declaration(sym) else { return false };
         let (hir, bound) = (self.hir(file), self.bound(file));

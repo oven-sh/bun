@@ -705,9 +705,7 @@ extern "C" void Bun__AOT__useImage(const uint8_t* bytes, size_t length, int file
 #if OS(DARWIN) || OS(LINUX) || OS(FREEBSD) || OS(WINDOWS)
     const char* verbose = getenv("BUN_AOT_VERBOSE");
 #if OS(WINDOWS)
-    UNUSED_PARAM(offsetInFile);
-    const char* isNotInExecutable = "it is not in the executable";
-    JSC::AOTFileUse use = fileDescriptor < 0 ? JSC::useAOTFileInLoadedSection({ bytes, length }) : JSC::AOTFileUse { isNotInExecutable, isNotInExecutable };
+    JSC::AOTFileUse use = fileDescriptor < 0 ? JSC::useAOTFileInLoadedSection({ bytes, length }) : JSC::useAOTFile({ bytes, length }, reinterpret_cast<void*>(static_cast<intptr_t>(fileDescriptor)), offsetInFile);
 #else
     bool isInExecutable = fileDescriptor < 0;
     JSC::AOTFileUse use;

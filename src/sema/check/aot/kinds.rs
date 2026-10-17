@@ -1,29 +1,3 @@
-//! What kind of value a variable holds, from what is stored to it and from nothing else.
-//!
-//! In a file whose types nothing holds the program to, JavaScript or a module of the runtime, a variable is kept so that it can hold anything,
-//! and every operator asks what it has been handed: `i++` may be handed a bigint, `i & 1` an object. Most variables never hold but one
-//! kind of value, and the text shows it: `let i = 0`, `i++`, `i < n`.
-//!
-//! A FACT. Compiled code relies on an answer without a test, so what is not shown to hold is not answered. No type of the checker is
-//! gone by: not an annotation, not what is inferred for a call or for a property.
-//!
-//! An expression is gone through by its syntax. What an operator yields often does not depend on what it is handed: a comparison, `!a` and
-//! `delete` yield a boolean, `typeof a` and a template a string, `+a` and `a >>> b` a number. `a - b` yields a number or a bigint, and a number
-//! if one of the two is neither a bigint nor an object: the two kinds do not mix, it throws. `a + b` concatenates if either
-//! is a string, and adds numbers if both are `undefined`, `null`, booleans or numbers.
-//!
-//! A name stands for what its variable holds, and `this.#name` for what the field does. Every store to a variable is in the file that declares it, from whatever function
-//! (`integers.rs`, `Place`), so all of them are looked at. What is stored may depend on what the variable holds, `i++`, or another one
-//! does: the least sets that all stores stay within. They are found for all variables of a file at once, from nothing upward, so an answer
-//! does not depend on which variable is asked about first.
-//!
-//! Where a name is read, more may be known than what its variable holds over its whole life: `if (typeof n !== "number") throw ..`, and `n` is a number from there
-//! on. From the read back over the flow nodes of the binder, to the stores that reach it, with the tests that have been passed on the way. Only for a variable of which
-//! the flow tells every store: see `variable_flow_coverage`.
-//!
-//! A function returns what its `return`s yield, whoever calls it. A call yields that where its callee is a name that stands for one function
-//! of the file whenever it is read. The functions of a file are in the same fixed point as its variables.
-
 use super::ByFile;
 use super::integers::{Place, Store};
 use crate::atom::{Atom, known};
@@ -36,7 +10,6 @@ use crate::program::{FileId, Sym};
 use crate::util::{FxHashMap, FxHashSet};
 use std::rc::Rc;
 
-/// The kinds of values, a bit for each.
 pub mod kind {
     pub const UNDEFINED: u16 = 1;
     pub const NULL: u16 = 1 << 1;
@@ -45,43 +18,29 @@ pub mod kind {
     pub const STRING: u16 = 1 << 4;
     pub const BIGINT: u16 = 1 << 5;
     pub const SYMBOL: u16 = 1 << 6;
-    /// What `typeof` calls a function.
     pub const FUNCTION: u16 = 1 << 7;
-    /// An array that an array literal has made.
     pub const ARRAY: u16 = 1 << 8;
-    /// Any other object.
     pub const OBJECT: u16 = 1 << 9;
     pub const ANYTHING: u16 = PLAIN | BIGINT | SYMBOL | OBJECTS;
     pub const NOTHING: u16 = 0;
-    /// What is converted to a number by itself, running no code and yielding no bigint.
     pub const PLAIN: u16 = UNDEFINED | NULL | BOOLEAN | NUMBER | STRING;
     pub const OBJECTS: u16 = FUNCTION | ARRAY | OBJECT;
 }
 
 #[derive(Default)]
 pub(super) struct State {
-    /// By file: what the variables, parameters and `#private` fields hold whose stores are followed.
     held: FxHashMap<FileId, FxHashMap<SymbolId, u16>>,
     tracked_variables: Vec<(SymbolId, Rc<Place>, bool)>,
     tracked_functions: Vec<FnId>,
-    /// While that is found for a file: what has been found so far.
     growing: Option<(FileId, FxHashMap<SymbolId, u16>)>,
     reads_of_growing: u64,
-    /// By file: `returned_kinds`.
     returned: FxHashMap<FileId, FxHashMap<FnId, u16>>,
-    /// The same while `growing`.
     returned_so_far: FxHashMap<FnId, u16>,
-    /// `result_kinds_of`, once the file is done.
-    yielded: FxHashMap<(FileId, ExprId), u16>,
-    /// The same while `growing`, for one round.
+    produced: FxHashMap<(FileId, ExprId), u16>,
     produced_this_round: FxHashMap<ExprId, u16>,
-    /// `variable_flow_coverage`, as far as it has been asked.
     told: FxHashMap<Sym, Option<FlowCoverage>>,
-    /// `asserted_kinds`, as far as it has been asked. What is found further in is cut off earlier: by the depth too.
     asserted: FxHashMap<(FileId, FnId, u32, u8), u16>,
-    /// `kinds_at`, by variable and flow node, once the file is done.
     at_flow: FxHashMap<(Sym, FlowId), u16>,
-    /// The same while `growing`, for one round.
     at_flow_this_round: FxHashMap<(SymbolId, FlowId), u16>,
 }
 
@@ -111,28 +70,21 @@ impl State {
     }
 }
 
-/// How far control flow tells what a variable holds.
 #[derive(Copy, Clone)]
 struct FlowCoverage {
-    /// The code that declares it. Every store to it is part of that code.
     container: Container,
-    /// Nothing is stored to it once it has its first value, and no read comes before that.
     is_constant: bool,
     begins_at: FlowId,
 }
 
-/// From the read of a variable back to the stores that reach it.
 struct Walk {
     at: Sym,
     held: u16,
     is_constant: bool,
-    /// It starts from what the variable holds, so what it finds at a flow node every read of the variable finds there.
     is_of_read: bool,
     begins_at: FlowId,
-    /// By join of paths: what was found there.
     joins: FxHashMap<FlowId, u16>,
     steps: u32,
-    /// How many functions that assert by calling one that does have been gone into.
     depth: u8,
 }
 
@@ -140,7 +92,6 @@ const MAX_STEPS: u32 = 20_000;
 const MAX_DEPTH: u8 = 3;
 const NULLISH: u16 = kind::UNDEFINED | kind::NULL;
 
-/// What `typeof` calls by the name, and what it calls by another. An object may pass itself off as `undefined`.
 fn typeof_kinds(name: &[u8]) -> (u16, u16) {
     let (called, never_otherwise) = match name {
         b"undefined" => (kind::UNDEFINED | kind::OBJECT, kind::UNDEFINED),
@@ -161,7 +112,6 @@ const MATH_FUNCTIONS: [&[u8]; 35] = [
     b"imul", b"log", b"log10", b"log1p", b"log2", b"max", b"min", b"pow", b"random", b"round", b"sign", b"sin", b"sinh", b"sqrt", b"tan", b"tanh", b"trunc",
 ];
 
-/// What an operator on numbers and bigints other than `+` yields.
 fn numeric(a: u16, b: u16) -> u16 {
     if a == kind::NOTHING || b == kind::NOTHING {
         kind::NOTHING
@@ -185,10 +135,8 @@ fn sum(a: u16, b: u16) -> u16 {
     } else if a == kind::BIGINT && b == kind::BIGINT {
         kind::BIGINT
     } else if (a | b) & (kind::STRING | kind::OBJECTS) == 0 {
-        // A symbol throws.
         numeric(a, b)
     } else if a & (kind::BIGINT | kind::OBJECTS) == 0 || b & (kind::BIGINT | kind::OBJECTS) == 0 {
-        // A bigint is added to a bigint alone.
         kind::NUMBER | kind::STRING
     } else {
         kind::NUMBER | kind::STRING | kind::BIGINT
@@ -196,7 +144,6 @@ fn sum(a: u16, b: u16) -> u16 {
 }
 
 impl<'p, 's> Checker<'p, 's> {
-    /// Every value that the variable or the parameter ever holds is of one of the kinds. `kind::ANYTHING`: nothing is known.
     pub fn symbol_kinds(&mut self, at: Sym) -> u16 {
         if let Some(&known) = self.aot.kinds.held.get(&at.file).and_then(|held| held.get(&at.id)) {
             return known;
@@ -229,7 +176,6 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let growing = self.aot.kinds.growing.take();
         let place = self.integer_slot(at);
-        // A variable is blank at first. Whether anything reads it by then is known.
         let starts_uninitialized = place.is_followed && place.starts_undefined && (!is_variable || self.starts_undefined(self.files().sym(at.file, at.id)));
         self.aot.kinds.growing = growing;
         if !place.is_followed {
@@ -248,7 +194,6 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn converge_kinds(&mut self, file: FileId, begin: impl FnOnce(&mut Self)) {
-        // No name of another file is looked into, so one file is gone through at a time.
         let outer = self.aot.kinds.growing.replace((file, FxHashMap::default()));
         let outer_variables = std::mem::take(&mut self.aot.kinds.tracked_variables);
         let outer_functions = std::mem::take(&mut self.aot.kinds.tracked_functions);
@@ -311,7 +256,6 @@ impl<'p, 's> Checker<'p, 's> {
         self.aot.kinds.at_flow_this_round = outer_at_flow;
     }
 
-    /// Whatever a call of the function yields is of one of the kinds, whoever calls it. Not what `new` makes of it.
     pub fn returned_kinds(&mut self, file: FileId, func: FnId) -> u16 {
         if let Some(&known) = self.aot.kinds.returned.get(&file).and_then(|returned| returned.get(&func)) {
             return known;
@@ -333,7 +277,6 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn find_returned_kinds(&mut self, file: FileId, func: FnId) -> u16 {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // The promise, the generator.
         if hir[func].flags.intersects(Flags::ASYNC | Flags::GENERATOR) {
             return kind::OBJECT;
         }
@@ -349,8 +292,6 @@ impl<'p, 's> Checker<'p, 's> {
         all
     }
 
-    /// The function of the file that the name `e` stands for whenever it is read: a function declaration that nothing is assigned to, or a
-    /// `const` that a function expression initializes. In JavaScript a function in a block is a `var` besides, which holds `undefined` at first.
     fn function_for_name_syntactically(&self, file: FileId, e: ExprId) -> Option<FnId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let local = bound.expr_symbol[e.idx()].some()?;
@@ -375,11 +316,6 @@ impl<'p, 's> Checker<'p, 's> {
         (!hir.is_js || matches!(bound.stmt_parent[stmt.idx()], Parent::File | Parent::FnBody(_))).then_some(func)
     }
 
-    /// Whether the variable or the parameter is used as a number, and nowhere as an object or a function. A PREDICTION, for one of which
-    /// nothing else is known: `function f(n) { for (let i = 0; i < n; i++) .. }`.
-    ///
-    /// As a number: an operand of `<`, `<=`, `>`, `>=` whose other side is shown to be a number, or of an operator on numbers other than
-    /// `+`, which also concatenates.
     pub(super) fn is_used_as_number(&mut self, at: Sym) -> bool {
         let program = self.p;
         let uses = program.aot.kinds.used_as_numbers.get_or_init(program.files.modules.len(), at.file, || self.find_number_like_names(at.file));
@@ -420,9 +356,6 @@ impl<'p, 's> Checker<'p, 's> {
         Uses { surely: as_numbers, otherwise, if_number }
     }
 
-    /// Whether the variable or the parameter is used as an array, and nowhere as a string, a number or a function. A PREDICTION, for one of which nothing else is known.
-    ///
-    /// As an array: it is indexed by what is shown to be a number, or a method is called on it that only arrays have.
     pub(super) fn is_used_as_array(&mut self, at: Sym) -> bool {
         let program = self.p;
         let uses = program.aot.kinds.used_as_arrays.get_or_init(program.files.modules.len(), at.file, || self.find_array_like_names(at.file));
@@ -538,8 +471,6 @@ impl<'p, 's> Checker<'p, 's> {
         as_strings
     }
 
-    /// Of a name whose stores are not followed one by one: a function declaration that nothing is assigned to. Not in JavaScript, where a
-    /// function in a block is a `var` besides.
     fn declared_kinds(&mut self, at: Sym) -> u16 {
         let (hir, bound) = (self.hir(at.file), self.bound(at.file));
         let Some(symbol) = bound.symbols.get(at.id.idx()) else { return kind::ANYTHING };
@@ -548,7 +479,6 @@ impl<'p, 's> Checker<'p, 's> {
         if is_function && !symbol.flags.intersects(is_more) && bound.assignments_to(at.id).is_empty() && !self.has_direct_eval(at.file) { kind::FUNCTION } else { kind::ANYTHING }
     }
 
-    /// `None`: code that the control flow does not tell of may store to the variable or the parameter at any time.
     fn variable_flow_coverage(&mut self, at: Sym) -> Option<FlowCoverage> {
         if let Some(&known) = self.aot.kinds.told.get(&at) {
             return known;
@@ -579,7 +509,6 @@ impl<'p, 's> Checker<'p, 's> {
             Decl::Param(pat) => {
                 let PatParent::Param(p) = root_declaration(bound, pat) else { return None };
                 let func = bound.param_fn[p.idx()];
-                // Through `arguments` a parameter can be stored to. A function that the body declares by the name takes its place.
                 let is_replaced = matches!(hir[func].body, FnBody::Block(body) if hir.ids(body).any(|stmt| matches!(hir[stmt].kind, StmtKind::Fn(inner) if hir[inner].name == symbol.name)));
                 if is_replaced || self.mentions_arguments_object(file, func) {
                     return None;
@@ -590,7 +519,6 @@ impl<'p, 's> Checker<'p, 's> {
         };
         match container {
             Container::Fn(_) | Container::Member(_) => {}
-            // What a script declares at its top level, every file sees.
             Container::File if self.files().module(file).is_module() => {}
             _ => return None,
         }
@@ -602,7 +530,6 @@ impl<'p, 's> Checker<'p, 's> {
         Some(FlowCoverage { container, is_constant, begins_at })
     }
 
-    /// Whether the name of the variable stands somewhere where `kinds_after_test` and `kinds_in_switch_clauses` look at it. One pass over the names of a file.
     fn is_tested(&mut self, at: Sym) -> bool {
         let program = self.p;
         program.aot.kinds.tested.get_or_init(program.files.modules.len(), at.file, || self.find_tested_names(at.file)).contains(&at.id)
@@ -634,19 +561,15 @@ impl<'p, 's> Checker<'p, 's> {
         tested
     }
 
-    /// Whatever the name `e` yields where it stands is of one of the kinds: what its variable holds, less what the tests that have been passed and the stores on the way
-    /// to `e` rule out.
     fn read_kinds(&mut self, file: FileId, e: ExprId, id: SymbolId) -> u16 {
         let at = Sym { file, id };
         let held = self.symbol_kinds(at);
-        // Most variables are never tested, and hold what they hold wherever they are read.
         if held == kind::NOTHING || !self.is_tested(at) {
             return held;
         }
         let Some(told) = self.variable_flow_coverage(at) else { return held };
         let bound = self.bound(file);
         let flow = bound.expr_flow[e.idx()];
-        // Between a test or a store and the read, code that the control flow does not tell of may store to it.
         let is_read_elsewhere = told.container != self.flow_container(file, bound.expr_parent[e.idx()]);
         if is_read_elsewhere && !told.is_constant || flow.is_none() || flow == UNREACHABLE || self.is_outside_flow_graph(file, e) {
             return held;
@@ -655,7 +578,6 @@ impl<'p, 's> Checker<'p, 's> {
         self.kinds_at(&mut walk, flow)
     }
 
-    /// What the variable holds when control is at the flow node, on its way to the read.
     fn kinds_at(&mut self, walk: &mut Walk, start: FlowId) -> u16 {
         if !walk.is_of_read {
             return self.find_kinds_at(walk, start);
@@ -687,7 +609,6 @@ impl<'p, 's> Checker<'p, 's> {
             }
             match bound.flow[flow.idx()] {
                 Flow::Unreachable => break kind::NOTHING,
-                // What held of a variable that never changes where a function was made holds in the function.
                 Flow::Start { outer, .. } | Flow::StartInvoked { outer, .. } => {
                     if !walk.is_constant || outer.is_none() || outer == UNREACHABLE {
                         break walk.held;
@@ -712,7 +633,6 @@ impl<'p, 's> Checker<'p, 's> {
                     passing &= self.kinds_after_call(file, call, walk.at.id, walk.depth);
                     flow = before;
                 }
-                // After a `finally` block only some of the paths into the block count. All of them are taken.
                 Flow::Reduce { before, .. } | Flow::ArrayMutation { before, .. } => flow = before,
                 Flow::Label { start, len } => {
                     if let Some(&known) = walk.joins.get(&flow) {
@@ -725,7 +645,6 @@ impl<'p, 's> Checker<'p, 's> {
                     walk.joins.insert(flow, all);
                     break all;
                 }
-                // The first edge is the way in.
                 Flow::Loop { start, len } => match *bound.edges(start, len) {
                     [] => break kind::NOTHING,
                     [entry] => flow = entry,
@@ -741,11 +660,9 @@ impl<'p, 's> Checker<'p, 's> {
         found & passing
     }
 
-    /// What an assignment node for the variable stores.
     fn kinds_at_assignment(&mut self, file: FileId, target: FlowTarget) -> u16 {
         let hir = self.hir(file);
         match target {
-            // Not the variable of `for .. of`, which has no initializer.
             FlowTarget::Var(d) if hir[d].init.is_some() && matches!(hir[hir[d].pat].kind, PatKind::Ident(_)) => self.result_kinds_of(file, hir[d].init),
             FlowTarget::Var(_) | FlowTarget::Pat(_) => kind::ANYTHING,
             FlowTarget::Expr(e) => match self.target_store(file, e) {
@@ -756,7 +673,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// The kind of a literal, of `undefined` and of `void 0`. `NOTHING`: it is none of them.
     fn literal_kind(&self, file: FileId, e: ExprId) -> u16 {
         let hir = self.hir(file);
         match hir[e].kind {
@@ -771,16 +687,13 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Of which kinds the variable can be, `test` having turned out truthy, if `holds`, or falsy. `ANYTHING`: the test says nothing of it.
     fn kinds_after_test(&mut self, file: FileId, test: ExprId, holds: bool, id: SymbolId) -> u16 {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let references_it = |e: ExprId| matches!(hir[e].kind, ExprKind::Ident(_)) && bound.expr_symbol[e.idx()] == id;
-        // `a === (a = 1)`: what was tested is no longer what is held.
         if bound.assignments_to(id).iter().any(|&(_, target)| hir[target].pos >= hir[test].pos && hir[target].end <= hir[test].end) {
             return kind::ANYTHING;
         }
         match hir[test].kind {
-            // No function, no array and no symbol is falsy.
             ExprKind::Ident(_) if references_it(test) => kind::ANYTHING & !(if holds { NULLISH } else { kind::SYMBOL | kind::FUNCTION | kind::ARRAY }),
             ExprKind::Unary { op: UnOp::Not, operand } => self.kinds_after_test(file, operand, !holds, id),
             ExprKind::Binary { op: op @ (BinOp::EqEqEq | BinOp::NotEqEq | BinOp::EqEq | BinOp::NotEq), left, right } => {
@@ -800,7 +713,6 @@ impl<'p, 's> Checker<'p, 's> {
                     return match (compared_with & NULLISH != 0, is_strict, is_equal) {
                         (_, true, true) => compared_with,
                         (true, true, false) => kind::ANYTHING & !compared_with,
-                        // So for both, and for an object that passes itself off as `undefined`.
                         (true, false, true) => NULLISH | kind::OBJECT,
                         (true, false, false) => kind::ANYTHING & !NULLISH,
                         _ => kind::ANYTHING,
@@ -808,12 +720,10 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 kind::ANYTHING
             }
-            // None of their own functions can be replaced.
             ExprKind::Call(call) if hir[call].chain == Chain::No && hir.ids(hir[call].args).next().is_some_and(references_it) => {
                 let ExprKind::Dot { obj, name, chain: Chain::No, .. } = hir[hir[call].callee].kind else { return kind::ANYTHING };
                 match self.atoms().bytes(name) {
                     b"isInteger" | b"isSafeInteger" | b"isFinite" | b"isNaN" if holds && self.refers_to_global_object(file, obj, b"Number") => kind::NUMBER,
-                    // So for a proxy of an array as well.
                     b"isArray" if self.refers_to_global_object(file, obj, b"Array") => kind::ANYTHING & if holds { kind::ARRAY | kind::OBJECT } else { !kind::ARRAY },
                     _ => kind::ANYTHING,
                 }
@@ -822,12 +732,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Of which kinds the variable can be, the call having returned: `validateString(name, "name")`, where the function throws unless it is handed a string.
     fn kinds_after_call(&mut self, file: FileId, call: ExprId, id: SymbolId, depth: u8) -> u16 {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let ExprKind::Call(c) = hir[call].kind else { return kind::ANYTHING };
         let c = &hir[c];
-        // `check(a, a = b)`: what was handed over is no longer what is held.
         let is_stored_to = bound.assignments_to(id).iter().any(|&(_, target)| hir[target].pos >= hir[call].pos && hir[target].end <= hir[call].end);
         if c.chain != Chain::No || is_stored_to || !matches!(hir[c.callee].kind, ExprKind::Ident(_)) {
             return kind::ANYTHING;
@@ -844,7 +752,6 @@ impl<'p, 's> Checker<'p, 's> {
         passing
     }
 
-    /// Of which kinds what is passed for the parameter of that number is, whenever a call of the function returns. `ANYTHING`: nothing is shown. By the text of the function alone.
     fn asserted_kinds(&mut self, file: FileId, func: FnId, index: usize, depth: u8) -> u16 {
         if let Some(&known) = self.aot.kinds.asserted.get(&(file, func, index as u32, depth)) {
             return known;
@@ -857,7 +764,6 @@ impl<'p, 's> Checker<'p, 's> {
     fn find_asserted_kinds(&mut self, file: FileId, func: FnId, index: usize, depth: u8) -> u16 {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let f = &hir[func];
-        // What an async function throws, whoever calls it does not see.
         if depth >= MAX_DEPTH || f.flags.intersects(Flags::ASYNC | Flags::GENERATOR) || !matches!(f.body, FnBody::Block(_)) {
             return kind::ANYTHING;
         }
@@ -885,13 +791,11 @@ impl<'p, 's> Checker<'p, 's> {
         all
     }
 
-    /// Of which kinds the variable can be, one of the clauses `from..to` of the `switch` statement having matched.
     fn kinds_in_switch_clauses(&mut self, file: FileId, stmt: StmtId, from: u16, to: u16, id: SymbolId) -> u16 {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let StmtKind::Switch { expr, cases } = hir[stmt].kind else { return kind::ANYTHING };
         let references_it = |e: ExprId| matches!(hir[e].kind, ExprKind::Ident(_)) && bound.expr_symbol[e.idx()] == id;
         let is_typeof = matches!(hir[expr].kind, ExprKind::Unary { op: UnOp::Typeof, operand } if references_it(operand));
-        // No clauses: none has matched.
         if from >= to || !is_typeof && !references_it(expr) {
             return kind::ANYTHING;
         }
@@ -901,16 +805,13 @@ impl<'p, 's> Checker<'p, 's> {
             all |= match test.some().map(|test| hir[test].kind) {
                 Some(ExprKind::String(name)) if is_typeof => typeof_kinds(self.atoms().bytes(name)).0,
                 Some(_) if !is_typeof && self.literal_kind(file, test) != kind::NOTHING => self.literal_kind(file, test),
-                // `default`, or a test that is not looked into.
                 _ => return kind::ANYTHING,
             };
         }
         all
     }
 
-    /// Whatever the expression yields is of one of the kinds. For `a++` and `a--`: what is stored.
     pub fn result_kinds_of(&mut self, file: FileId, e: ExprId) -> u16 {
-        // In the last round nothing grows, so what is remembered there is what is found there.
         if matches!(&self.aot.kinds.growing, Some((growing, _)) if *growing == file) {
             if let Some(&known) = self.aot.kinds.produced_this_round.get(&e) {
                 self.aot.kinds.reads_of_growing += 1;
@@ -923,11 +824,11 @@ impl<'p, 's> Checker<'p, 's> {
         if self.aot.kinds.growing.is_some() {
             return self.find_result_kinds_of(file, e);
         }
-        if let Some(&known) = self.aot.kinds.yielded.get(&(file, e)) {
+        if let Some(&known) = self.aot.kinds.produced.get(&(file, e)) {
             return known;
         }
         let found = self.find_result_kinds_of(file, e);
-        self.aot.kinds.yielded.insert((file, e), found);
+        self.aot.kinds.produced.insert((file, e), found);
         found
     }
 
@@ -949,7 +850,6 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Ident(name) => {
                 let local = self.bound(file).expr_symbol[e.idx()];
                 if local.is_none() {
-                    // Nothing can be stored to these three of the global object.
                     return match self.atoms().bytes(name) {
                         _ if name == known::undefined => kind::UNDEFINED,
                         b"NaN" | b"Infinity" => kind::NUMBER,
@@ -987,12 +887,10 @@ impl<'p, 's> Checker<'p, 's> {
             | ExprKind::NonNull(expr)
             | ExprKind::Instantiation { expr, .. } => self.result_kinds_of(file, expr),
             ExprKind::Cond { yes, no, .. } => self.result_kinds_of(file, yes) | self.result_kinds_of(file, no),
-            // Every store to a `#private` field is in the body of its class.
             ExprKind::Dot { name, chain: Chain::No, .. } if self.private_field_for_access(file, e, name).is_some() => {
                 let id = self.private_field_for_access(file, e, name);
                 self.symbol_kinds(Sym { file, id })
             }
-            // Their own property, which nothing can be put in the place of.
             ExprKind::Dot { obj, name, chain: Chain::No, .. } if name == known::length => {
                 match self.result_kinds_of(file, obj) {
                     kind::NOTHING => kind::NOTHING,
@@ -1015,7 +913,6 @@ impl<'p, 's> Checker<'p, 's> {
                         Some(func) => self.returned_kinds(file, func),
                         None => kind::ANYTHING,
                     },
-                    // A function may be added to `Math`. None of its own can be replaced.
                     ExprKind::Dot { obj, name, chain: Chain::No, .. } if MATH_FUNCTIONS.contains(&self.atoms().bytes(name)) && self.refers_to_global_object(file, obj, b"Math") => kind::NUMBER,
                     ExprKind::Dot { obj, name, chain: Chain::No, .. } => match self.result_kinds_of(file, obj) {
                         kind::NOTHING => kind::NOTHING,
@@ -1032,9 +929,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `s.name(first, ..)`, where `s` is a string: it has no properties of its own, and nothing can be put in the place of a function of `String.prototype`.
     fn kinds_returned_by_string_method(&mut self, file: FileId, name: Atom, first: Option<ExprId>) -> u16 {
-        // Handed an object, these hand over to a method of it, which yields what it likes. That of a regular expression is the engine's.
         let is_plain = |c: &mut Self| match first {
             Some(first) => matches!(c.hir(file)[first].kind, ExprKind::Regex) || c.result_kinds_of(file, first) & !kind::STRING == 0,
             None => true,

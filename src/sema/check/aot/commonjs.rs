@@ -1,50 +1,3 @@
-//! CommonJS modules whose exports are module variables.
-//!
-//! `exports.name = value` stores a property of an object. Where nobody can tell that object from a set of variables there is none: each
-//! name is a module variable, `undefined` until it is stored to, and `require("./m").name`, `const { name } = require("./m")`, `m.name`,
-//! `import { name } from "./m"` and `ns.name` read it. A FACT: whatever is not shown to hold leaves the module its object.
-//!
-//! THE MODULE ITSELF. Every mention of `exports`, `module.exports`, `this` at the top level and a variable that is initialized with one of them and never stored to is `E.name`, read, stored to or called; or only
-//! tested (`E && ..`, `!E`); or `Object.defineProperty(E, "__esModule", { value: true })`. `module` is mentioned as `module.exports` alone.
-//! No `eval`, no `with`, no `return` at the top level, no name that `Object.prototype` has. Or all it does is `module.exports =
-//! require("./other")`: then what it exports is what the other does.
-//!
-//! `Object.defineProperty(E, "name", { enumerable: true, get: function () { return m.other; } })`, where `m` stands for the exports of a module that keeps them
-//! in variables: the name is another name for that variable, whatever `exports.name = void 0` has come before. `__exportStar(require("./other"), E)`, the function known by what it
-//! does: every name that the other module is sure to have by then, but for `default` and what `E` has already, is another name for its variable.
-//! `module.exports = { a, b: value }`, once, before anything else is done with
-//! `module.exports`, in a module that is in no cycle and does not mention `exports`: a store to each name.
-//!
-//! WHOEVER GETS AT IT. What `require` yields, a variable that is initialized with it and never stored to, `ns` of `import * as ns` and a default
-//! import that is `module.exports` are used as `m.name`, read or called, as the source of a pattern of plain keys, or only tested.
-//! `m.name(..)` hands `m` to the function as `this`: every value stored under the name is a function that does not look at it.
-//! `__importDefault(m)`, `__importStar(m)`, `_interopRequireDefault(m)`, known by what their functions do: `m` itself if the module says it was an ES module, else for
-//! the first and the last an object whose `default` is `m`.
-//!
-//! `await import("./m")` is `ns`.
-//!
-//! A VARIABLE THAT HOLDS WHAT `require` HAS YIELDED is `undefined`, or in its dead zone, until the declaration has run. No code of the module reads it before that where the
-//! declaration stands in the PROLOGUE of a module that is in no cycle: the statements at the start that run no function of the module and hand none to anybody.
-//!
-//! AN ES MODULE sees the properties as they are when the module has been evaluated, in a bundle as they are when they are read. The
-//! two are one where every store runs with the body of the module, every name is stored to whenever that runs, and the module is in
-//! no cycle. A module that an ES module imports and for which that is not so keeps its object.
-//!
-//! A MODULE THAT KEEPS ITS OBJECT still needs no `module` object where `module` is mentioned as `module.exports` alone, which is neither deleted nor called: then
-//! `module.exports` is a module variable, and `require` reads it.
-//!
-//! CYCLES. Whoever gets at a module by a `require` or an `import` that the body of a module runs, and is not in a cycle with it, finds it evaluated to the end: were it still being
-//! evaluated, it would have led there. Not so a `require` in a function: whatever calls that, a callback, may be called by the module itself: and then neither the bodies of the
-//! modules that such a `require` evaluates, the EXPOSED ones. So what only holds
-//! of a module that has been evaluated (another name for a variable, `module.exports = ..` once, what an ES module sees) holds for all who are not in its cycle, and the module keeps
-//! its object only if one that is gets at it, or an exposed one, or a function requires it.
-//!
-//! `module.exports = require("./other")` as the only statement of a file: the file IS the other one, as a bundle has it, whoever gets at it and whenever.
-//!
-//! ONE VALUE. `module.exports = f`, once, with the body: a `require` that finds the module evaluated to the end yields a closure of `f`, and nothing else.
-//!
-//! It goes by the trees, the symbols and what the bundler has resolved: every task finds the same.
-
 use super::callees::Callee;
 use super::flows::Place;
 use crate::atom::{Atom, known};
@@ -57,31 +10,23 @@ use super::OnceLock;
 
 const FILES_PER_CHECKER: usize = 32;
 
-/// How a CommonJS module of the program keeps what it exports.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum CommonJsExports {
-    /// In what the property `exports` of its `module` object holds.
     Object,
-    /// In what `module.exports` holds, which is a module variable: there is no `module` object.
     Value,
-    /// In a module variable for each name.
     Variables,
-    /// It exports what the other module does, which keeps it in variables.
     Of(FileId),
 }
 
-/// An expression that stands for what a module exports, where there is no object for it to yield.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct ExportsReference {
     pub module: FileId,
-    /// `ns` of `import * as ns`, whose `default` is not the property of that name.
     pub is_namespace: bool,
-    /// `{ default: m }`, as an interop helper makes it for a module that does not say it was an ES module.
     pub is_boxed: bool,
 }
 
 impl ExportsReference {
-    fn of(module: FileId) -> ExportsReference {
+    fn new(module: FileId) -> ExportsReference {
         ExportsReference { module, is_namespace: false, is_boxed: false }
     }
 }
@@ -187,17 +132,12 @@ const OBJECT_PROTOTYPE_NAMES: [&[u8]; 12] = [
     b"__lookupSetter__",
 ];
 
-/// What is for the bundler to say.
 struct Graph {
-    /// All that are compiled with the program, in their order.
     modules: Vec<FileId>,
-    /// By importing file and specifier: the file whose code runs.
     resolved: FxHashMap<(FileId, Atom), FileId>,
     require_resolutions: FxHashMap<(FileId, Atom), FileId>,
     reevaluated: FxHashSet<FileId>,
-    /// The `if` statements whose condition is a constant.
     folded: FxHashMap<(FileId, StmtId), bool>,
-    /// Who imports what without saying so: the JSX runtime.
     implicit: Vec<(FileId, FileId)>,
     entry_points: Vec<FileId>,
     preserves_source_paths: bool,
@@ -209,10 +149,8 @@ impl Graph {
     }
 }
 
-/// What has been asked so far. It belongs to a checker.
 #[derive(Default)]
 pub(super) struct State {
-    /// `module_exports_function`. `None` also while it is being found.
     whole_export_functions: FxHashMap<FileId, Option<(FileId, FnId, bool)>>,
     export_variable_names: Option<FxHashMap<FileId, Vec<Atom>>>,
     create_require_candidates: FxHashMap<FileId, Vec<Atom>>,
@@ -230,79 +168,53 @@ pub(super) struct Shared {
 struct Found {
     exports: FxHashMap<FileId, CommonJsExports>,
     mentions: FxHashMap<(FileId, ExprId), ExportsReference>,
-    /// By module and name: the values that are stored. `NONE`: one that is not seen.
     stores: FxHashMap<(FileId, Atom), Vec<ExprId>>,
-    /// By module that says it was an ES module: the call that says so.
     marked: FxHashMap<FileId, ExprId>,
-    /// By module and name that is another name for a variable: that variable.
     aliases: FxHashMap<(FileId, Atom), (FileId, Atom)>,
-    /// The calls of `Object.defineProperty` that say so.
     alias_definitions: FxHashSet<(FileId, ExprId)>,
-    /// The calls of `__exportStar` that do.
     stars: FxHashSet<(FileId, ExprId)>,
     value_only_modules: FxHashSet<FileId>,
     value_only_object_modules: FxHashSet<FileId>,
     named_literals: FxHashMap<FileId, (ExprId, ExprId)>,
-    /// By module that is in no cycle: where its prologue ends.
     prologues: FxHashMap<FileId, u32>,
-    /// `module.exports`, in the modules where that is a variable.
     whole: FxHashSet<(FileId, ExprId)>,
-    /// By such a module: the values that are stored to it. `NONE`: one that is not seen.
     values: FxHashMap<FileId, Vec<ExprId>>,
-    /// Those of them where that is stored to once, and whenever the body runs to its end.
     stored_once: FxHashSet<FileId>,
-    /// The calls of `require` that find their module evaluated to the end.
     requires_of_evaluated_modules: FxHashSet<(FileId, ExprId)>,
     are_children_read: bool,
-    /// Why a module keeps its object, and how many do for that.
     obstacles: Vec<(&'static str, u32)>,
-    /// The same for the `module` object.
     module_object_reasons: Vec<(&'static str, u32)>,
 }
 
-/// When an expression is evaluated.
 #[derive(Copy, Clone, PartialEq, Eq)]
-enum Runs {
-    /// It stands in code that the build leaves out.
+enum Execution {
     Never,
-    /// Whenever the body of the module runs to its end.
     Always,
-    /// With the body of the module, or not at all.
     Sometimes,
     Later,
 }
 
 struct Store {
     value: ExprId,
-    runs: Runs,
+    runs: Execution,
 }
 
 struct Module {
     obstacle: Option<&'static str>,
-    /// Why there has to be a `module` object.
     module_object_reason: Option<&'static str>,
-    /// What is stored to `module.exports`.
     values: Vec<ExprId>,
-    /// How many of those stores run whenever the body does.
     unconditional_value_stores: u32,
-    /// `module.exports = require("./other")` is all there is in the file.
     is_redirect: bool,
     re_exports: Option<FileId>,
     mentions: Vec<ExprId>,
     stores: FxHashMap<Atom, Vec<Store>>,
     methods: Vec<Atom>,
-    /// `Object.defineProperty(exports, "__esModule", { value: true })`
     marker: ExprId,
-    /// By name: the call that defines a getter, and what the getter returns.
     getters: FxHashMap<Atom, (ExprId, ExprId)>,
-    /// `module.exports = { .. }`: the literal.
     literal: ExprId,
     name_of_literal: ExprId,
-    /// The names that the module reads or calls through its own exports.
     reads: FxHashSet<Atom>,
-    /// `__exportStar(.., exports)`: the calls, in their order.
     stars: Vec<ExprId>,
-    /// What only holds as long as nobody gets at the module while it is evaluated.
     is_exact_outside_cycles: bool,
 }
 
@@ -316,43 +228,30 @@ impl Module {
     }
 
     fn is_settled(&self) -> bool {
-        self.stores.values().all(|stores| stores.iter().all(|store| store.runs != Runs::Later) && stores.iter().any(|store| store.runs == Runs::Always))
+        self.stores.values().all(|stores| stores.iter().all(|store| store.runs != Execution::Later) && stores.iter().any(|store| store.runs == Execution::Always))
     }
 }
 
 enum Use {
-    /// `E.name`, `E["name"]`: that expression.
     Member(ExprId, Atom),
-    /// Only whether there is a value counts, or not even that.
     Nothing,
-    /// It initializes the variable.
     CopyCondition(VarDeclId),
-    /// `E = value`: the assignment.
     Assigned(ExprId),
-    /// `module.exports = E`
     Exported,
-    /// `Object.defineProperty(E, "__esModule", { value: true })`: the call.
     Marked(ExprId),
-    /// `Object.defineProperty(E, "name", { enumerable: true, get: function () { return value; } })`: the call, the name, `value`.
     Defined(ExprId, Atom, ExprId),
-    /// `__importDefault(E)`: the call.
     Interop(ExprId, Helper),
-    /// `__exportStar(E, exports)`: the call.
     Starred(ExprId),
-    /// `__exportStar(m, E)`: the call.
     StarredInto(ExprId),
     Other(&'static str),
 }
 
-/// What a function does with a module that does not say it was an ES module. One that does it hands back.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Helper {
-    /// `{ default: mod }`
     Boxes,
     Other,
 }
 
-/// What holds the exports of a module under a name.
 #[derive(Copy, Clone)]
 enum Holder {
     Variable(Sym),
@@ -372,14 +271,10 @@ struct Uses {
     mentions: Vec<(FileId, ExprId, ExportsReference)>,
     looked_at: Vec<(FileId, &'static str)>,
     methods: Vec<(FileId, Atom)>,
-    /// What a `require` in a function yields.
     required_by_functions: FxHashSet<FileId>,
     requires_of_evaluated_modules: FxHashSet<(FileId, ExprId)>,
-    /// Who does more with which module than evaluate it.
     readers: FxHashSet<(FileId, FileId)>,
-    /// Which ES module imports which module.
     imported_by_es_modules: FxHashSet<(FileId, FileId)>,
-    /// Who hands which module to `__exportStar`, by which call.
     starred: Vec<(FileId, ExprId, FileId)>,
     awaited: Vec<FileId>,
     is_cache_read: bool,
@@ -403,9 +298,6 @@ impl Uses {
 }
 
 impl<'p, 's> Checker<'p, 's> {
-    /// Once for the program, whichever checker is told, before anything is asked. `modules`: all that are compiled with the program.
-    /// `resolved`: by file and specifier, the file whose code an `import`, an `import()` or a `require()` runs. `folded`: the `if` statements at the
-    /// top level of CommonJS modules whose condition the build replaces by a constant. `implicit`: who imports which JSX runtime.
     pub fn set_resolved_imports(&self, modules: &[FileId], resolved: Vec<((FileId, Atom), FileId)>, require_resolutions: Vec<((FileId, Atom), FileId)>, reevaluated: Vec<FileId>, folded: Vec<((FileId, StmtId), bool)>, implicit: Vec<(FileId, FileId)>, entry_points: Vec<FileId>, preserves_source_paths: bool) {
         self.p.aot.commonjs.graph.get_or_init(|| Graph { modules: modules.to_vec(), resolved: resolved.into_iter().collect(), require_resolutions: require_resolutions.into_iter().collect(), reevaluated: reevaluated.into_iter().collect(), folded: folded.into_iter().collect(), implicit, entry_points, preserves_source_paths });
     }
@@ -542,7 +434,6 @@ impl<'p, 's> Checker<'p, 's> {
         self.commonjs().exports.get(&file).copied().unwrap_or(CommonJsExports::Object)
     }
 
-    /// The module that keeps what `file` exports, if that is in variables.
     pub fn module_with_export_variables(&mut self, file: FileId) -> Option<FileId> {
         let found = self.commonjs();
         let mut at = file;
@@ -555,7 +446,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// What the expression stands for, if that is the exports of a module that has no object for them.
     pub fn has_exports_expressions(&mut self, file: FileId) -> bool {
         let found = self.commonjs();
         let files = self.p.aot.commonjs.files_with_exports_expressions.get_or_init(|| {
@@ -569,12 +459,10 @@ impl<'p, 's> Checker<'p, 's> {
         self.commonjs().mentions.get(&(file, e)).copied()
     }
 
-    /// Whether the call is `Object.defineProperty(exports, "__esModule", { value: true })` in a module that has no object for it.
     pub fn marks_export_variables(&mut self, file: FileId, call: ExprId) -> bool {
         self.commonjs().marked.get(&file) == Some(&call)
     }
 
-    /// `e`: `m.name` or `m["name"]`. The module and the name of the variable that it names.
     pub fn export_variable_for_expr(&mut self, file: FileId, e: ExprId) -> Option<(FileId, Atom)> {
         let hir = self.hir(file);
         let (obj, name) = match hir[e].kind {
@@ -589,14 +477,12 @@ impl<'p, 's> Checker<'p, 's> {
         if mention.is_boxed {
             return None;
         }
-        // `exports.name = void 0`, which the getter replaces.
         if self.bound(file).get_assignment_target(hir, e).is_some() {
             return Some((self.module_with_export_variables(mention.module)?, name));
         }
         self.export_variable_for(mention.module, name)
     }
 
-    /// `e`: a reference to a variable that holds what `require` has yielded for a module without an object. Whether the variable is initialized whenever the reference is evaluated.
     pub fn is_initialized_at_every_read(&mut self, file: FileId, e: ExprId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let (Some(&prologue), ExprKind::Ident(name)) = (self.commonjs().prologues.get(&file), hir[e].kind) else { return false };
@@ -614,31 +500,27 @@ impl<'p, 's> Checker<'p, 's> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let graph = self.p.aot.commonjs.graph.get()?;
         let mut stores = bound.assignments_to(local).iter().filter_map(|&(_, target)| match bound.expr_parent[target.idx()] {
-            Parent::Expr(around) if self.runs(file, graph, around) == Runs::Never => None,
+            Parent::Expr(around) if self.runs(file, graph, around) == Execution::Never => None,
             Parent::Expr(around) => Some(around),
             _ => Some(ExprId::NONE),
         });
         let (store, None) = (stores.next()?, stores.next()) else { return None };
-        (store.is_some() && self.runs(file, graph, store) == Runs::Always).then(|| hir[store].end)
+        (store.is_some() && self.runs(file, graph, store) == Execution::Always).then(|| hir[store].end)
     }
 
-    /// Whether the call is `__exportStar(require("./other"), exports)` and does no more than evaluate the other module.
     pub fn is_export_star_of_variables(&mut self, file: FileId, call: ExprId) -> bool {
         self.commonjs().stars.contains(&(file, call))
     }
 
-    /// The variable that holds what the module exports under the name, if it keeps that in variables.
     pub fn export_variable_for(&mut self, module: FileId, name: Atom) -> Option<(FileId, Atom)> {
         let keeper = self.module_with_export_variables(module)?;
         Some(self.commonjs().aliases.get(&(keeper, name)).copied().unwrap_or((keeper, name)))
     }
 
-    /// Whether the call is `Object.defineProperty(exports, "name", { get .. })` and does nothing: the name is another name for a variable.
     pub fn defines_export_variable_alias(&mut self, file: FileId, call: ExprId) -> bool {
         self.commonjs().alias_definitions.contains(&(file, call))
     }
 
-    /// `module.exports = { a, b: value }` in a module that keeps its exports in variables: the literal.
     pub fn is_export_variables_literal(&mut self, file: FileId, literal: ExprId) -> bool {
         let is_literal_name = self.commonjs().named_literals.get(&file).is_some_and(|named| named.1 == literal);
         (is_literal_name || matches!(self.hir(file)[literal].kind, ExprKind::Object(_))) && self.commonjs_exports(file) == CommonJsExports::Variables
@@ -657,20 +539,16 @@ impl<'p, 's> Checker<'p, 's> {
         found.value_only_modules.contains(&module) && found.stores.get(&(module, name)).is_some_and(|stores| stores.len() == 1)
     }
 
-    /// What the ES module `importer` gets for `import { name } from` the CommonJS module. `None`: there is no variable for it, the module has an
-    /// object, or `name` is `default` and stands for all that the module exports.
     pub fn imported_export_variable(&mut self, importer: FileId, module: FileId, name: Atom) -> Option<(FileId, Atom)> {
         let keeper = self.module_with_export_variables(module)?;
         (name != known::default || self.has_own_default_property(importer, module, keeper)).then(|| self.commonjs().aliases.get(&(keeper, name)).copied().unwrap_or((keeper, name)))
     }
 
-    /// Whether `default` is the property of that name. Else it is `module.exports`.
     fn has_own_default_property(&mut self, importer: FileId, module: FileId, keeper: FileId) -> bool {
         let found = self.commonjs();
         !self.ignores_es_module_marker(importer, module) && found.marked.contains_key(&keeper) && (found.stores.contains_key(&(keeper, known::default)) || found.aliases.contains_key(&(keeper, known::default)))
     }
 
-    /// The function that every function the export variable ever holds is a closure of, and whether that is only expected. A read may find `undefined`.
     pub fn export_variable_single_function(&mut self, module: FileId, name: Atom) -> Option<(FileId, FnId, bool)> {
         self.export_variable_function(module, name, 0)
     }
@@ -682,9 +560,9 @@ impl<'p, 's> Checker<'p, 's> {
             if value.is_none() {
                 return None;
             }
-            let yielded = self.result_callees_of(module, value, depth);
-            callee = callee.join(yielded.callee);
-            is_predicted |= yielded.is_predicted;
+            let produced = self.result_callees_of(module, value, depth);
+            callee = callee.join(produced.callee);
+            is_predicted |= produced.is_predicted;
         }
         match callee {
             Callee::One(file, func) => Some((file, func, is_predicted || self.is_inside_cloneable_function(file, func, &[]))),
@@ -692,29 +570,25 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Whether the expression is `module.exports` in a module where that is a variable.
     pub fn is_module_exports_variable(&mut self, file: FileId, e: ExprId) -> bool {
         self.commonjs().whole.contains(&(file, e))
     }
 
-    /// The function that `module.exports` of the module is expected to hold a closure of: every store puts one there. Until the first it holds an object. And whether it is
-    /// sure to hold one once the module has been evaluated to the end.
     pub fn module_exports_function(&mut self, module: FileId) -> Option<(FileId, FnId, bool)> {
         if let Some(&known) = self.aot.commonjs.whole_export_functions.get(&module) {
             return known;
         }
         self.aot.commonjs.whole_export_functions.insert(module, None);
         let values = self.commonjs().values.get(&module);
-        // Whichever variable is being asked about just now has not come by the variables of this module.
         let mut is_sure = self.commonjs().stored_once.contains(&module);
         let callee = self.outside_variable_query(|this| {
             values.into_iter().flatten().fold(Callee::Nothing, |callee, &value| {
                 if value.is_none() {
                     return callee.join(Callee::Unknown(Place { file: module, pos: 0 }));
                 }
-                let yielded = this.result_callees_of(module, value, 0);
-                is_sure &= !yielded.is_predicted && !yielded.may_be_nullish;
-                callee.join(yielded.callee)
+                let produced = this.result_callees_of(module, value, 0);
+                is_sure &= !produced.is_predicted && !produced.may_be_nullish;
+                callee.join(produced.callee)
             })
         });
         let found = match callee {
@@ -725,7 +599,6 @@ impl<'p, 's> Checker<'p, 's> {
         found
     }
 
-    /// `e`: `require("./m")`. `module_exports_function` of the module, and whether the call is sure to yield a closure of it.
     pub(super) fn required_function(&mut self, file: FileId, e: ExprId) -> Option<(FileId, FnId, bool)> {
         let hir = self.hir(file);
         let (specifier, ExprKind::Call(call)) = (required_specifier(hir, e)?, hir[e].kind) else { return None };
@@ -737,18 +610,17 @@ impl<'p, 's> Checker<'p, 's> {
         self.module_exports_function(module).map(|(of, func, is_sure)| (of, func, is_sure && is_already_evaluated))
     }
 
-    /// `--aot-explain=deferred`. Numbers alone.
     pub fn explain_commonjs(&mut self) -> Vec<String> {
         let found = self.commonjs();
-        let count = |of: fn(&CommonJsExports) -> bool| found.exports.values().filter(|kept| of(kept)).count();
+        let count = |of: fn(&CommonJsExports) -> bool| found.exports.values().filter(|retained| of(retained)).count();
         let mut lines = vec![format!(
             "commonjs: modules {}: variables {}, re-exports of such {}, module.exports is a variable {} (stored once, with the body: {}), `module` is an object {}; variables {}, other names for them {}; places that stand for exports {}; calls of require that find a module evaluated {}",
             found.exports.len(),
-            count(|kept| *kept == CommonJsExports::Variables),
-            count(|kept| matches!(kept, CommonJsExports::Of(_))),
-            count(|kept| *kept == CommonJsExports::Value),
+            count(|retained| *retained == CommonJsExports::Variables),
+            count(|retained| matches!(retained, CommonJsExports::Of(_))),
+            count(|retained| *retained == CommonJsExports::Value),
             found.stored_once.len(),
-            count(|kept| *kept == CommonJsExports::Object),
+            count(|retained| *retained == CommonJsExports::Object),
             found.stores.len(),
             found.aliases.len(),
             found.mentions.len(),
@@ -797,7 +669,6 @@ impl<'p, 's> Checker<'p, 's> {
                 module.obstacle = module.obstacle.or(Some("it re-exports something that is not a CommonJS module"));
             }
         }
-        // The module at the end of the re-exports. One that keeps its object for a reason of its own is an end.
         let holder_by_symbol = |modules: &FxHashMap<FileId, Module>, file: FileId| {
             let (mut at, mut steps) = (file, 0);
             while let Some(other) = modules.get(&at).filter(|module| module.obstacle.is_none()).and_then(|module| module.re_exports) {
@@ -824,7 +695,6 @@ impl<'p, 's> Checker<'p, 's> {
             uses.append(more);
         }
         uses.imported_by_es_modules.extend(graph.implicit.iter().copied());
-        // The modules that somebody may get at while they are evaluated.
         let accessed = uses.readers.iter().copied().chain(uses.imported_by_es_modules.iter().copied());
         let accessed_early: FxHashSet<FileId> = accessed.filter(|&(by, module)| is_in_cycle_with(by, module) || exposed.contains(&by)).map(|(_, module)| module).chain(uses.required_by_functions.iter().copied()).collect();
         let mut with_object: FxHashMap<FileId, &'static str> = FxHashMap::default();
@@ -868,7 +738,6 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
         }
-        // What a module hands to `__exportStar` it hands to a function, unless that call is seen through.
         let mut stars: FxHashMap<FileId, Vec<(ExprId, FileId)>> = FxHashMap::default();
         for &(file, call, other) in &uses.starred {
             match modules.get(&file).filter(|module| module.obstacle.is_none() && module.stars.contains(&call)) {
@@ -887,7 +756,6 @@ impl<'p, 's> Checker<'p, 's> {
             if module.is_exact_outside_cycles && accessed_early.contains(&file) {
                 with_object.entry(file).or_insert("a getter or __exportStar, and it may be got at while it is evaluated");
             }
-            // What is still being evaluated has not got all its names.
             if stars.get(&file).into_iter().flatten().any(|star| is_in_cycle_with(file, star.1) || is_in_cycle_with(file, holder_by_symbol(&modules, star.1))) {
                 with_object.entry(file).or_insert("__exportStar of a module of its cycle");
             }
@@ -895,7 +763,6 @@ impl<'p, 's> Checker<'p, 's> {
                 with_object.entry(file).or_insert("__exportStar of something that is not a CommonJS module of the program");
             }
         }
-        // The names that a module is sure to have, and to show, once it has been evaluated. From the modules without stars on.
         let mut keys: FxHashMap<FileId, Vec<Atom>> = FxHashMap::default();
         loop {
             let before = keys.len();
@@ -912,8 +779,7 @@ impl<'p, 's> Checker<'p, 's> {
                         if name == known::default || aliases.contains_key(&(file, name)) && !module.getters.contains_key(&name) {
                             continue;
                         }
-                        // What the module defines itself comes first, or the star is in its way.
-                        if module.reads.contains(&name) || module.stores.get(&name).is_some_and(|stores| stores.iter().any(|store| store.runs != Runs::Always)) {
+                        if module.reads.contains(&name) || module.stores.get(&name).is_some_and(|stores| stores.iter().any(|store| store.runs != Execution::Always)) {
                             with_object.entry(file).or_insert("a name that __exportStar may bring is read by the module itself, or stored to late or not always");
                         }
                         let defined = (module.stores.get(&name).into_iter().flatten().map(|store| store.value)).chain(module.getters.get(&name).map(|getter| getter.0));
@@ -937,17 +803,16 @@ impl<'p, 's> Checker<'p, 's> {
         }
         for &module in &uses.awaited {
             let keeper = holder_by_symbol(&modules, module);
-            if modules.get(&keeper).is_some_and(|kept| kept.has(known::then)) || aliases.contains_key(&(keeper, known::then)) {
+            if modules.get(&keeper).is_some_and(|retained| retained.has(known::then)) || aliases.contains_key(&(keeper, known::then)) {
                 with_object.entry(keeper).or_insert("it exports `then`, and an import() of it is awaited");
             }
         }
         for (&file, starred) in &stars {
-            let is_sure = |other: FileId| modules.get(&other).is_some_and(|other| other.stores.values().all(|stores| stores.iter().any(|store| store.runs == Runs::Always)));
+            let is_sure = |other: FileId| modules.get(&other).is_some_and(|other| other.stores.values().all(|stores| stores.iter().any(|store| store.runs == Execution::Always)));
             if !keys.contains_key(&file) || !starred.iter().all(|star| is_sure(holder_by_symbol(&modules, star.1))) {
                 with_object.entry(file).or_insert("__exportStar of a module that may or may not have a name");
             }
         }
-        // The variable at the end of the other names. `None`: they go round in a circle.
         let variable_of = |modules: &FxHashMap<FileId, Module>, module: FileId, name: Atom| {
             let (mut module, mut name) = (module, name);
             for _ in 0..64 {
@@ -992,18 +857,17 @@ impl<'p, 's> Checker<'p, 's> {
         }
         for (importer, module) in imported {
             let keeper = holder_by_symbol(&modules, module);
-            let Some(kept) = modules.get(&keeper) else { continue };
+            let Some(retained) = modules.get(&keeper) else { continue };
             let others: Vec<Option<(FileId, Atom)>> = aliased_names.get(&keeper).into_iter().flatten().map(|&name| variable_of(&modules, keeper, name)).collect();
             let is_settled = |other: &Option<(FileId, Atom)>| {
-                other.is_some_and(|(of, name)| modules.get(&of).is_some_and(|of| of.stores.get(&name).is_none_or(|stores| stores.iter().all(|store| store.runs != Runs::Later) && stores.iter().any(|store| store.runs == Runs::Always))))
+                other.is_some_and(|(of, name)| modules.get(&of).is_some_and(|of| of.stores.get(&name).is_none_or(|stores| stores.iter().all(|store| store.runs != Execution::Later) && stores.iter().any(|store| store.runs == Execution::Always))))
             };
-            if !kept.is_settled() || !others.iter().all(is_settled) {
+            if !retained.is_settled() || !others.iter().all(is_settled) {
                 with_object.entry(keeper).or_insert("an ES module imports it, and a name is stored to late or not always");
-            } else if is_in_cycle_with(importer, keeper) || is_in_cycle_with(importer, module) || exposed.contains(&importer) || accessed_early.contains(&keeper) && kept.is_exact_outside_cycles {
+            } else if is_in_cycle_with(importer, keeper) || is_in_cycle_with(importer, module) || exposed.contains(&importer) || accessed_early.contains(&keeper) && retained.is_exact_outside_cycles {
                 with_object.entry(keeper).or_insert("an ES module imports it that may run while it is evaluated");
             }
         }
-        // Another name for a variable needs the variable.
         let mut named: Vec<(FileId, Atom)> = aliases.keys().copied().collect();
         named.sort_unstable_by_key(|alias| alias.0);
         loop {
@@ -1054,7 +918,7 @@ impl<'p, 's> Checker<'p, 's> {
                 continue;
             }
             found.exports.insert(file, module.re_exports.map_or(CommonJsExports::Variables, CommonJsExports::Of));
-            found.mentions.extend(module.mentions.iter().map(|&e| ((file, e), ExportsReference::of(file))));
+            found.mentions.extend(module.mentions.iter().map(|&e| ((file, e), ExportsReference::new(file))));
             if module.is_marked() {
                 found.marked.insert(file, module.marker);
             }
@@ -1282,7 +1146,6 @@ impl<'p, 's> Checker<'p, 's> {
         (is_own || self.is_own_file_require_ref(file, callee)).then_some(specifier)
     }
 
-    /// Whether the identifier is `module`, `exports` or `require` as every CommonJS module gets them, not a declaration of the program by that name.
     fn is_commonjs_variable_ref(&mut self, file: FileId, e: ExprId, name: Atom) -> bool {
         let Some(found) = self.identifier_binding(file, e, name) else { return true };
         if name == known::require && found.file == file && self.is_own_file_require_ref(file, e) {
@@ -1303,7 +1166,7 @@ impl<'p, 's> Checker<'p, 's> {
         let ExprKind::Ident(name) = hir[e].kind else { return false };
         let Some((of, Decl::Var(pat))) = self.identifier_binding(file, e, name).and_then(|sym| self.variable_declaration(sym)) else { return false };
         let PatParent::Var(declaration) = bound.pat_parent[pat.idx()] else { return false };
-        of == file && hir[declaration].init.is_some() && self.runs(file, graph, hir[declaration].init) == Runs::Always
+        of == file && hir[declaration].init.is_some() && self.runs(file, graph, hir[declaration].init) == Execution::Always
     }
 
     pub fn redeclared_commonjs_variable(&self, file: FileId, name: Atom) -> Option<Sym> {
@@ -1315,17 +1178,17 @@ impl<'p, 's> Checker<'p, 's> {
         is_var.then_some(found)
     }
 
-    fn runs(&self, file: FileId, graph: &Graph, e: ExprId) -> Runs {
+    fn runs(&self, file: FileId, graph: &Graph, e: ExprId) -> Execution {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let (mut parent, mut runs, mut from, mut inner) = (bound.expr_parent[e.idx()], Runs::Always, StmtId::NONE, e);
-        let less = |runs: Runs| if runs == Runs::Always { Runs::Sometimes } else { runs };
+        let (mut parent, mut runs, mut from, mut inner) = (bound.expr_parent[e.idx()], Execution::Always, StmtId::NONE, e);
+        let less = |runs: Execution| if runs == Execution::Always { Execution::Sometimes } else { runs };
         let is_falsy = |e: ExprId| matches!(hir[e].kind, ExprKind::False | ExprKind::Null) || matches!(hir[e].kind, ExprKind::Number(number) if hir.numbers[number as usize] == 0.0);
         loop {
             let within = std::mem::replace(&mut inner, ExprId::NONE);
             parent = match parent {
                 Parent::Expr(outer) if outer.is_some() => {
                     if matches!(hir[outer].kind, ExprKind::Binary { op: BinOp::And, left, right } if right == within && is_falsy(left)) {
-                        return Runs::Never;
+                        return Execution::Never;
                     }
                     inner = outer;
                     if !matches!(hir[outer].kind, ExprKind::Assign { op: None, .. } | ExprKind::Binary { op: BinOp::Comma, .. }) {
@@ -1338,7 +1201,7 @@ impl<'p, 's> Checker<'p, 's> {
                     match hir[stmt].kind {
                         StmtKind::Expr(_) | StmtKind::Block(_) | StmtKind::Var(_) => {}
                         StmtKind::If { yes, no, .. } if from.is_some() => match graph.folded.get(&(file, stmt)) {
-                            Some(&is_true) if from == if is_true { no } else { yes } => return Runs::Never,
+                            Some(&is_true) if from == if is_true { no } else { yes } => return Execution::Never,
                             Some(_) => {}
                             None => runs = less(runs),
                         },
@@ -1350,9 +1213,9 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 Parent::VarInit(_) => self.parent_of_node(file, parent),
                 Parent::File => return runs,
-                Parent::None | Parent::Expr(_) | Parent::Stmt(_) => return Runs::Never,
+                Parent::None | Parent::Expr(_) | Parent::Stmt(_) => return Execution::Never,
                 _ => {
-                    runs = if matches!(parent, Parent::FnBody(_) | Parent::ParamDefault(_) | Parent::MemberInit(_)) { Runs::Later } else { less(runs) };
+                    runs = if matches!(parent, Parent::FnBody(_) | Parent::ParamDefault(_) | Parent::MemberInit(_)) { Execution::Later } else { less(runs) };
                     from = StmtId::NONE;
                     self.parent_of_node(file, parent)
                 }
@@ -1366,7 +1229,7 @@ impl<'p, 's> Checker<'p, 's> {
         let ExprKind::Assign { op: None, target, value: stored } = hir[assignment].kind else { return None };
         let ExprKind::Ident(name) = hir[target].kind else { return None };
         let is_statement = matches!(bound.expr_parent[assignment.idx()], Parent::Stmt(stmt) if matches!(hir[stmt].kind, StmtKind::Expr(_)));
-        if stored != value || !is_statement || self.runs(file, graph, assignment) != Runs::Always {
+        if stored != value || !is_statement || self.runs(file, graph, assignment) != Execution::Always {
             return None;
         }
         let local = bound.expr_symbol[target.idx()];
@@ -1382,7 +1245,7 @@ impl<'p, 's> Checker<'p, 's> {
             && !self.has_direct_eval(file)
             && !self.is_stored_through_casts(file, local)
             && !hir.exports.iter().any(|export| export.spec.is_none() && export.items.iter().any(|item| hir[item].local == name));
-        let is_left_out = |other: ExprId| matches!(bound.expr_parent[other.idx()], Parent::Expr(around) if matches!(hir[around].kind, ExprKind::Assign { op: None, target, .. } if target == other) && self.runs(file, graph, around) == Runs::Never);
+        let is_left_out = |other: ExprId| matches!(bound.expr_parent[other.idx()], Parent::Expr(around) if matches!(hir[around].kind, ExprKind::Assign { op: None, target, .. } if target == other) && self.runs(file, graph, around) == Execution::Never);
         (is_plain && bound.assignments_to(local).iter().all(|&(_, other)| other == target || is_left_out(other))).then_some((name, local))
     }
 
@@ -1447,7 +1310,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `Object.defineProperty(object, "__esModule", { value: true })`
     fn marks_as_es_module(&mut self, file: FileId, call: ExprId, object: ExprId) -> bool {
         let hir = self.hir(file);
         let ExprKind::Call(c) = hir[call].kind else { return false };
@@ -1470,7 +1332,6 @@ impl<'p, 's> Checker<'p, 's> {
             && is_true
     }
 
-    /// `Object.defineProperty(object, "name", { enumerable: true, get: function () { return value; } })`: the name and `value`.
     fn defined_getter(&mut self, file: FileId, call: ExprId, object: ExprId) -> Option<(Atom, ExprId)> {
         let hir = self.hir(file);
         let ExprKind::Call(c) = hir[call].kind else { return None };
@@ -1513,7 +1374,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// What the function that `callee` names does with what `require` has yielded, if it hands back a module that says it was an ES module.
     fn interop_helper(&mut self, file: FileId, callee: ExprId) -> Option<Helper> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let ExprKind::Ident(_) = hir[callee].kind else { return None };
@@ -1529,7 +1389,6 @@ impl<'p, 's> Checker<'p, 's> {
                 let init = hir[declaration].init.some()?;
                 match hir[init].kind {
                     ExprKind::Fn(func) => func,
-                    // `(this && this.__importDefault) || function (mod) { .. }`, before anything has been stored to `this`, which is `exports`.
                     ExprKind::Binary { op: BinOp::Or, left, right } => {
                         let ExprKind::Binary { op: BinOp::And, left: this, right: own } = hir[left].kind else { return None };
                         let ExprKind::Dot { obj, chain: Chain::No, .. } = hir[own].kind else { return None };
@@ -1558,7 +1417,6 @@ impl<'p, 's> Checker<'p, 's> {
             _ => false,
         };
         match hir[hir.ids(stmts).next()?].kind {
-            // `return mod && mod.__esModule ? mod : { default: mod };`
             StmtKind::Return(value) if value.is_some() => {
                 let ExprKind::Cond { test, yes, no } = hir[value].kind else { return None };
                 let ExprKind::Object(props) = hir[no].kind else { return None };
@@ -1566,7 +1424,6 @@ impl<'p, 's> Checker<'p, 's> {
                 let (Some(prop), None) = (props.next(), props.next()) else { return None };
                 (is_marked(test) && is_module(yes) && hir[prop].kind == PropKind::Init && matches!(hir[prop].key, PropKey::Name(known::default)) && is_module(hir[prop].value)).then_some(Helper::Boxes)
             }
-            // `if (mod && mod.__esModule) return mod;`
             StmtKind::If { test, yes, no } if no.is_none() && is_marked(test) => matches!(hir[yes].kind, StmtKind::Return(value) if value.is_some() && is_module(value)).then_some(Helper::Other),
             _ => None,
         }
@@ -1748,8 +1605,6 @@ impl<'p, 's> Checker<'p, 's> {
         self.is_known_function(file, callee, &EXPORT_STAR_HELPER, 0)
     }
 
-    /// Whether evaluating the expression runs no function of the module and hands none to anybody: it makes functions and literals, reads variables and its own exports, and
-    /// chooses among those.
     fn is_pure_in_prologue(&mut self, file: FileId, e: ExprId, depth: u32) -> bool {
         let hir = self.hir(file);
         if depth > 32 {
@@ -1760,7 +1615,6 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Unary { op: UnOp::Void | UnOp::Not | UnOp::Typeof, operand } => self.is_pure_in_prologue(file, operand, depth + 1),
             ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma | BinOp::EqEqEq | BinOp::NotEqEq, left, right } => self.is_pure_in_prologue(file, left, depth + 1) && self.is_pure_in_prologue(file, right, depth + 1),
             ExprKind::Cond { test, yes, no } => [test, yes, no].into_iter().all(|part| self.is_pure_in_prologue(file, part, depth + 1)),
-            // What another module exports, which that module's code may compute: it knows nothing of this one.
             ExprKind::Call(call) if required_specifier(hir, e).is_some() => self.is_commonjs_variable_ref(file, hir[call].callee, known::require),
             ExprKind::Call(call) => {
                 let is_literal = |e: ExprId| matches!(hir[e].kind, ExprKind::Null | ExprKind::True | ExprKind::False | ExprKind::Number(_) | ExprKind::String(_));
@@ -1771,7 +1625,6 @@ impl<'p, 's> Checker<'p, 's> {
                 if is_helper {
                     args.into_iter().all(|arg| self.is_pure_in_prologue(file, arg, depth + 1))
                 } else if defines {
-                    // The object is the module's own, which has no setters and is no proxy.
                     args.len() == 3 && (matches!(hir[args[0]].kind, ExprKind::Ident(known::exports)) || is_module_exports(hir, args[0])) && is_literal(args[1]) && self.is_pure_in_prologue(file, args[2], depth + 1)
                 } else {
                     (is_required || self.creates_symbols(file, callee)) && args.into_iter().all(is_literal)
@@ -1828,7 +1681,6 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// `exports.name`, `module.exports.name`, `this.name` at the top level
     fn is_own_export(&mut self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
         let ExprKind::Dot { obj, chain: Chain::No, .. } = hir[e].kind else { return false };
@@ -1839,7 +1691,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `require("m")`, `require("m").a.b`
     fn has_defined_getter(&self, file: FileId, member: ExprId) -> bool {
         let (hir, by_kind) = (self.hir(file), self.file_exprs_by_kind(file));
         let ExprKind::Dot { name, .. } = hir[member].kind else { return true };
@@ -1863,7 +1714,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Where the statements end with which the module starts and that run no function of the module and hand none to anybody.
     fn prologue_end(&mut self, file: FileId, graph: &Graph) -> u32 {
         let hir = self.hir(file);
         let mut end = 0;
@@ -1874,7 +1724,6 @@ impl<'p, 's> Checker<'p, 's> {
                 StmtKind::Var(declarations) => declarations.iter().all(|declaration| {
                     let is_plain = match hir[hir[declaration].pat].kind {
                         PatKind::Ident(_) => true,
-                        // `const { a, b: c } = require("m")`
                         PatKind::Object(props) => props.iter().all(|prop| !hir[prop].is_rest && hir[prop].default.is_none() && matches!(hir[prop].key, PropKey::Name(_) | PropKey::None) && matches!(hir[hir[prop].value].kind, PatKind::Ident(_))),
                         _ => false,
                     };
@@ -1890,7 +1739,6 @@ impl<'p, 's> Checker<'p, 's> {
         end
     }
 
-    /// Where the first call, construction, store or deletion stands that the body of the module runs itself.
     fn first_module_effect(&self, file: FileId) -> u32 {
         let (hir, by_kind) = (self.hir(file), self.file_exprs_by_kind(file));
         let tags = [ExprTag::Call, ExprTag::New, ExprTag::TaggedTemplate, ExprTag::Assign, ExprTag::Unary, ExprTag::ImportCall, ExprTag::Await, ExprTag::Yield];
@@ -1903,7 +1751,6 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn member_use(&self, file: FileId, member: ExprId) -> MemberUse {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // An assertion is not there when the program runs.
         let mut asserted = member;
         while let Parent::Expr(parent) = bound.expr_parent[asserted.idx()]
             && matches!(hir[parent].kind, ExprKind::As { .. } | ExprKind::Satisfies { .. } | ExprKind::NonNull(_))
@@ -1925,8 +1772,6 @@ impl<'p, 's> Checker<'p, 's> {
         OBJECT_PROTOTYPE_NAMES.contains(&self.atoms().bytes(name))
     }
 
-    /// Whether a call of the value does not look at `this`: it is a function that does not mention it, or no function.
-    /// `named_by`: for `m.name` that names an export variable: its module and the values that are stored to it.
     fn ignores_this(&mut self, file: FileId, value: ExprId, depth: u32, named_by: &dyn Fn(FileId, ExprId) -> Option<(FileId, Vec<ExprId>)>) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         if depth > 16 {
@@ -1945,7 +1790,6 @@ impl<'p, 's> Checker<'p, 's> {
                 match symbol.decls[..] {
                     [Decl::Fn(func)] => !self.uses_this(file, func),
                     [Decl::Class(_)] => true,
-                    // What it is initialized with, or `undefined`.
                     [Decl::Var(pat)] => matches!(bound.pat_parent[pat.idx()], PatParent::Var(declaration) if hir[declaration].init.is_some() && self.ignores_this(file, hir[declaration].init, depth + 1, named_by)),
                     _ => false,
                 }
@@ -2019,7 +1863,7 @@ impl<'p, 's> Checker<'p, 's> {
                 module.obstacle = Some("`arguments` at the top level");
                 module.module_object_reason = module.obstacle;
             }
-            if name != known::exports && name != known::module || !self.is_commonjs_variable_ref(file, e, name) || self.runs(file, graph, e) == Runs::Never {
+            if name != known::exports && name != known::module || !self.is_commonjs_variable_ref(file, e, name) || self.runs(file, graph, e) == Execution::Never {
                 continue;
             }
             match bound.expr_parent[e.idx()] {
@@ -2032,7 +1876,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         for &e in by_kind.of(ExprTag::This) {
-            if self.this_container(file, e).is_none() && self.runs(file, graph, e) != Runs::Never && !hir.references_import_meta() {
+            if self.this_container(file, e).is_none() && self.runs(file, graph, e) != Execution::Never && !hir.references_import_meta() {
                 module.mentions.push(e);
             }
         }
@@ -2042,7 +1886,6 @@ impl<'p, 's> Checker<'p, 's> {
             next += 1;
             if !matches!(hir[e].kind, ExprKind::Ident(_) | ExprKind::This) {
                 match bound.expr_parent[e.idx()] {
-                    // `module` is `this`.
                     Parent::Expr(parent) if matches!(hir[parent].kind, ExprKind::Call(call) | ExprKind::TaggedTemplate(call) if hir[call].callee == e) || matches!(hir[parent].kind, ExprKind::Unary { op: UnOp::Delete, .. }) => {
                         module.module_object_reason = Some("module.exports is called or deleted");
                     }
@@ -2050,7 +1893,7 @@ impl<'p, 's> Checker<'p, 's> {
                     Parent::Expr(parent) if matches!(hir[parent].kind, ExprKind::Assign { op: None, target, .. } if target == e) && bound.get_assignment_target(hir, parent).is_none() => {
                         if let ExprKind::Assign { value, .. } = hir[parent].kind {
                             module.values.push(value);
-                            module.unconditional_value_stores += (self.runs(file, graph, parent) == Runs::Always) as u32;
+                            module.unconditional_value_stores += (self.runs(file, graph, parent) == Execution::Always) as u32;
                         }
                     }
                     _ if bound.get_assignment_target(hir, e).is_some() => module.values.push(ExprId::NONE),
@@ -2083,16 +1926,16 @@ impl<'p, 's> Checker<'p, 's> {
                     module.stores.entry(name).or_default().push(Store { value, runs });
                 }
                 Use::Nothing => {}
-                Use::Marked(call) if self.runs(file, graph, call) == Runs::Always && !module.is_marked() && matches!(bound.expr_parent[call.idx()], Parent::Stmt(_)) => {
+                Use::Marked(call) if self.runs(file, graph, call) == Execution::Always && !module.is_marked() && matches!(bound.expr_parent[call.idx()], Parent::Stmt(_)) => {
                     module.marker = call;
-                    module.stores.entry(known::__esModule).or_default().push(Store { value: ExprId::NONE, runs: Runs::Always });
+                    module.stores.entry(known::__esModule).or_default().push(Store { value: ExprId::NONE, runs: Execution::Always });
                 }
                 Use::Marked(_) => module.obstacle = Some("__esModule is defined late, or twice"),
                 Use::Assigned(assignment) => {
                     let ExprKind::Assign { value, .. } = hir[assignment].kind else { continue };
                     let other = required_specifier(hir, value).and_then(|specifier| graph.required(file, specifier));
                     let is_statement = matches!(bound.expr_parent[assignment.idx()], Parent::Stmt(_));
-                    let is_whole = is_statement && !matches!(hir[e].kind, ExprKind::Ident(_) | ExprKind::This) && self.runs(file, graph, assignment) == Runs::Always;
+                    let is_whole = is_statement && !matches!(hir[e].kind, ExprKind::Ident(_) | ExprKind::This) && self.runs(file, graph, assignment) == Execution::Always;
                     let named_literal = if is_whole && other.is_none() && module.literal.is_none() { self.literal_with_single_name(file, assignment, value) } else { None };
                     match other {
                         Some(other) if is_whole => {
@@ -2137,7 +1980,7 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                 }
                 Use::StarredInto(call) => {
-                    if self.runs(file, graph, call) == Runs::Always && matches!(bound.expr_parent[call.idx()], Parent::Stmt(_)) {
+                    if self.runs(file, graph, call) == Execution::Always && matches!(bound.expr_parent[call.idx()], Parent::Stmt(_)) {
                         module.stars.push(call);
                         module.is_exact_outside_cycles = true;
                     } else {
@@ -2146,15 +1989,13 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 Use::Starred(_) => module.obstacle = Some("it is passed to a function"),
                 Use::Defined(call, name, value) => {
-                    let is_plain = self.runs(file, graph, call) == Runs::Always && matches!(bound.expr_parent[call.idx()], Parent::Stmt(_)) && !self.is_object_prototype_name(name);
+                    let is_plain = self.runs(file, graph, call) == Execution::Always && matches!(bound.expr_parent[call.idx()], Parent::Stmt(_)) && !self.is_object_prototype_name(name);
                     if !is_plain || module.getters.insert(name, (call, value)).is_some() {
                         module.obstacle = Some("a getter is defined late, or twice");
                     }
-                    // Until the getter is defined there is no such property.
                     module.is_exact_outside_cycles = true;
                 }
                 Use::Interop(..) => module.obstacle = Some("it is passed to a function"),
-                // `var utils = exports;`
                 Use::CopyCondition(declaration) => {
                     let pat = hir[declaration].pat;
                     let local = bound.pat_symbol[pat.idx()];
@@ -2185,7 +2026,6 @@ impl<'p, 's> Checker<'p, 's> {
         if module.getters.keys().any(|name| module.reads.contains(name)) {
             module.obstacle = Some("a name with a getter is read by the module itself");
         }
-        // `exports.name = void 0`, before the getter is defined, is seen by nobody once the module has been evaluated.
         let replaced: Vec<Atom> = module.getters.keys().copied().filter(|name| module.stores.contains_key(name)).collect();
         for name in replaced {
             let defined_at = hir[module.getters[&name].0].pos;
@@ -2195,7 +2035,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 value.is_some() && matches!(hir[value].kind, ExprKind::Unary { op: UnOp::Void, .. }) && hir[value].pos < defined_at
             };
-            if module.reads.contains(&name) || !module.stores[&name].iter().all(|store| store.runs == Runs::Always && is_void(store.value)) {
+            if module.reads.contains(&name) || !module.stores[&name].iter().all(|store| store.runs == Execution::Always && is_void(store.value)) {
                 module.obstacle = Some("a name with a getter is stored to");
             }
             module.stores.remove(&name);
@@ -2203,10 +2043,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
         if let Some(ExprKind::Object(props)) = module.literal.some().map(|literal| hir[literal].kind) {
             let end = hir[module.literal].end;
-            let comes_first = module.mentions.iter().all(|&e| !matches!(hir[e].kind, ExprKind::Ident(_) | ExprKind::This) && (hir[e].end <= hir[module.literal].pos || hir[e].pos >= end || self.runs(file, graph, e) == Runs::Later));
+            let comes_first = module.mentions.iter().all(|&e| !matches!(hir[e].kind, ExprKind::Ident(_) | ExprKind::This) && (hir[e].end <= hir[module.literal].pos || hir[e].pos >= end || self.runs(file, graph, e) == Execution::Later));
             let stored_at = hir[if module.name_of_literal.is_some() { module.name_of_literal } else { module.literal }].pos;
-            let before = module.mentions.iter().filter(|&&e| hir[e].pos < stored_at && self.runs(file, graph, e) != Runs::Later).count();
-            if !comes_first || before != 1 || !module.getters.is_empty() || module.is_marked() && hir[module.marker].pos < end || module.stores.values().flatten().any(|store| store.runs == Runs::Later) {
+            let before = module.mentions.iter().filter(|&&e| hir[e].pos < stored_at && self.runs(file, graph, e) != Execution::Later).count();
+            if !comes_first || before != 1 || !module.getters.is_empty() || module.is_marked() && hir[module.marker].pos < end || module.stores.values().flatten().any(|store| store.runs == Execution::Later) {
                 module.obstacle = Some("module.exports = { .. } is not all that defines the exports");
             }
             for prop in props.iter() {
@@ -2217,7 +2057,7 @@ impl<'p, 's> Checker<'p, 's> {
                     _ => false,
                 };
                 match hir[prop].key {
-                    PropKey::Name(name) if is_plain && !self.is_object_prototype_name(name) && name != known::__esModule => module.stores.entry(name).or_default().push(Store { value, runs: Runs::Always }),
+                    PropKey::Name(name) if is_plain && !self.is_object_prototype_name(name) && name != known::__esModule => module.stores.entry(name).or_default().push(Store { value, runs: Execution::Always }),
                     _ => module.obstacle = Some("module.exports = { .. } with more than plain names"),
                 }
             }
@@ -2235,7 +2075,6 @@ impl<'p, 's> Checker<'p, 's> {
         specifiers.into_iter().filter_map(|specifier| graph.required(file, specifier)).collect()
     }
 
-    /// The modules that a `require` in a function evaluates, and all that those evaluate. Their bodies may run while any other module is being evaluated.
     fn modules_exposed(&mut self, graph: &Graph, in_parallel: Option<InParallel<'_>>) -> FxHashSet<FileId> {
         let found = self.map_slices(&graph.modules, FILES_PER_CHECKER, in_parallel, &|c, files| {
             let mut pending: Vec<FileId> = Vec::new();
@@ -2244,7 +2083,7 @@ impl<'p, 's> Checker<'p, 's> {
                     pending.extend(c.required_by_folded_specifier(file, graph, e));
                     let Some(specifier) = c.require_call_specifier(file, e) else { continue };
                     if let Some(module) = graph.required(file, specifier)
-                        && c.runs(file, graph, e) == Runs::Later
+                        && c.runs(file, graph, e) == Execution::Later
                     {
                         pending.push(module);
                     }
@@ -2357,14 +2196,14 @@ impl<'p, 's> Checker<'p, 's> {
             }
             let Some(specifier) = self.require_call_specifier(file, e) else { continue };
             if let Some(module) = graph.required(file, specifier).filter(|module| modules.contains_key(module))
-                && self.runs(file, graph, e) != Runs::Never
+                && self.runs(file, graph, e) != Execution::Never
             {
-                if self.runs(file, graph, e) == Runs::Later {
+                if self.runs(file, graph, e) == Execution::Later {
                     uses.required_by_functions.insert(module);
                 } else if !exposed.contains(&file) && !graph.reevaluated.contains(&module) && in_cycles.get(&file).is_none_or(|cycle| in_cycles.get(&module) != Some(cycle)) {
                     uses.requires_of_evaluated_modules.insert((file, e));
                 }
-                pending.push((e, ExportsReference::of(module)));
+                pending.push((e, ExportsReference::new(module)));
             }
         }
         for &e in by_kind.of(ExprTag::ImportCall) {
@@ -2384,7 +2223,7 @@ impl<'p, 's> Checker<'p, 's> {
                 match bound.expr_parent[e.idx()] {
                     Parent::Expr(awaited) if matches!(hir[awaited].kind, ExprKind::Await(_)) && hir.ids(args).count() == 1 => {
                         uses.awaited.push(module);
-                        pending.push((awaited, ExportsReference { is_namespace: true, ..ExportsReference::of(module) }));
+                        pending.push((awaited, ExportsReference { is_namespace: true, ..ExportsReference::new(module) }));
                     }
                     _ => uses.looked_at.push((module, "import() that is not awaited on the spot")),
                 }
@@ -2395,8 +2234,8 @@ impl<'p, 's> Checker<'p, 's> {
                 StmtKind::Import(import) if !hir[import].type_only => {
                     let Some(module) = commonjs(hir[import].spec) else { continue };
                     uses.imported_by_es_modules.insert((file, module));
-                    let kept = &modules[&holder_by_symbol(modules, module)];
-                    let has_own_default_property = !self.ignores_es_module_marker(file, module) && kept.is_marked() && kept.has(known::default);
+                    let retained = &modules[&holder_by_symbol(modules, module)];
+                    let has_own_default_property = !self.ignores_es_module_marker(file, module) && retained.is_marked() && retained.has(known::default);
                     let mut bindings = Vec::new();
                     if hir[import].default.is_some() && !has_own_default_property {
                         bindings.push((hir[import].default, Decl::ImportDefault(import), false));
@@ -2448,17 +2287,16 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 match found {
                     Use::Member(member, name) if mention.is_boxed => match self.member_use(file, member) {
-                        MemberUse::Read if name == known::default => pending.push((member, ExportsReference::of(module))),
+                        MemberUse::Read if name == known::default => pending.push((member, ExportsReference::new(module))),
                         _ => uses.looked_at.push((module, "what an interop helper has made is used for more than its default")),
                     },
                     Use::Member(member, name) => {
-                        let kept = &modules[&holder_by_symbol(modules, module)];
-                        // Where a bundle and the loader differ.
-                        if mention.is_namespace && (name == known::__esModule || name == known::default && !kept.is_marked() && kept.has(known::default)) {
+                        let retained = &modules[&holder_by_symbol(modules, module)];
+                        if mention.is_namespace && (name == known::__esModule || name == known::default && !retained.is_marked() && retained.has(known::default)) {
                             uses.looked_at.push((module, "ns.__esModule, or ns.default of a module that is not marked and has one"));
                         }
-                        if mention.is_namespace && name == known::default && (self.ignores_es_module_marker(file, module) || !kept.is_marked() || !kept.has(known::default)) {
-                            pending.push((member, ExportsReference::of(module)));
+                        if mention.is_namespace && name == known::default && (self.ignores_es_module_marker(file, module) || !retained.is_marked() || !retained.has(known::default)) {
+                            pending.push((member, ExportsReference::new(module)));
                             continue;
                         }
                         if self.is_object_prototype_name(name) {
@@ -2490,9 +2328,9 @@ impl<'p, 's> Checker<'p, 's> {
                                 }
                             }
                             PatKind::Object(props) if !mention.is_boxed && hir[declaration].ty.is_none() => {
-                                let kept = &modules[&holder_by_symbol(modules, module)];
+                                let retained = &modules[&holder_by_symbol(modules, module)];
                                 let is_node_mode = self.ignores_es_module_marker(file, module);
-                                let is_whole = |name: Atom| mention.is_namespace && (name == known::__esModule || name == known::default && (is_node_mode || !kept.is_marked() || !kept.has(known::default)));
+                                let is_whole = |name: Atom| mention.is_namespace && (name == known::__esModule || name == known::default && (is_node_mode || !retained.is_marked() || !retained.has(known::default)));
                                 for prop in props.iter() {
                                     let name = match (hir[prop].key, hir[hir[prop].value].kind) {
                                         _ if hir[prop].is_rest => None,
@@ -2510,14 +2348,13 @@ impl<'p, 's> Checker<'p, 's> {
                     Use::Exported if modules.get(&file).is_some_and(|importer| importer.re_exports == Some(module)) => {}
                     Use::Interop(call, helper) => {
                         let keeper = holder_by_symbol(modules, module);
-                        let kept = &modules[&keeper];
-                        // Whoever requires the module while it is evaluated finds it marked if that is the first thing it does.
-                        let may_be_early = in_cycles.get(&keeper).is_some_and(|cycle| in_cycles.get(&file) == Some(cycle)) || exposed.contains(&file) || self.runs(file, graph, call) == Runs::Later;
-                        let is_marked_late = kept.is_marked() && may_be_early && self.hir(keeper)[kept.marker].pos > self.first_module_effect(keeper);
-                        if mention.is_namespace || mention.is_boxed || !kept.is_marked() && helper != Helper::Boxes || is_marked_late {
+                        let retained = &modules[&keeper];
+                        let may_be_early = in_cycles.get(&keeper).is_some_and(|cycle| in_cycles.get(&file) == Some(cycle)) || exposed.contains(&file) || self.runs(file, graph, call) == Execution::Later;
+                        let is_marked_late = retained.is_marked() && may_be_early && self.hir(keeper)[retained.marker].pos > self.first_module_effect(keeper);
+                        if mention.is_namespace || mention.is_boxed || !retained.is_marked() && helper != Helper::Boxes || is_marked_late {
                             uses.looked_at.push((module, "an interop helper copies it"));
                         } else {
-                            pending.push((call, ExportsReference { is_boxed: !kept.is_marked(), ..mention }));
+                            pending.push((call, ExportsReference { is_boxed: !retained.is_marked(), ..mention }));
                         }
                     }
                     Use::Starred(call) if !mention.is_namespace && !mention.is_boxed && matches!(hir[e].kind, ExprKind::Call(_)) => uses.starred.push((file, call, module)),
@@ -2595,7 +2432,6 @@ impl<'p, 's> Checker<'p, 's> {
     }
 }
 
-/// The modules that evaluate themselves by way of others, whatever makes one evaluate the next: each with a number that it shares with those others.
 fn modules_in_cycles(graph: &Graph) -> FxHashMap<FileId, u32> {
     let mut evaluates: FxHashMap<FileId, Vec<FileId>> = FxHashMap::default();
     let mut evaluated_by: FxHashMap<FileId, Vec<FileId>> = FxHashMap::default();

@@ -1,23 +1,10 @@
-//! From the trees and the types of the type checker to the intermediate representation.
-//!
-//! What an operation means is never taken from the checker: a property read is a property read by name, and the compiler behind
-//! the front end decides how it is done. What it decides by is the checker's types, which are all handed over, and which it takes for
-//! facts: of every value, of every storage place (parameter, `this`, result, field, captured variable, module variable), of every
-//! object type as a layout with the layouts of the objects that are looked at as it. Where a value is not known to be of the type it
-//! is used as, a `Coerce` makes sure: see `coerce_to`. A name that the program does not bind stays a name: what `Math` or `undefined` is, is
-//! not known here. JavaScript is held to no type: what the checker infers there is handed over as predictions, which are no facts: see
-//! `predict`.
-//!
-//! Each file is translated by itself, into a `Fragment`: see `FileBuild`. What is the same for all files is in `Shared`. `link` makes the
-//! program of the fragments.
-
-mod asked;
+mod query_tape;
 mod class;
 mod expr;
 mod commonjs;
 mod comments;
 mod constants;
-mod fit;
+mod coerce;
 mod host_classes;
 mod imports;
 mod intrinsics;
@@ -27,12 +14,13 @@ mod pattern;
 mod predict;
 pub mod react;
 mod scope;
-pub(crate) mod sets_of_strings;
+pub(crate) mod fused_joins;
+pub(crate) mod string_sets;
 mod stmt;
 mod types;
 mod validate;
 
-use self::fit::Ty;
+use self::coerce::Ty;
 pub(crate) use self::imports::ImportSource;
 use crate::builder::{FuncBuilder, Var};
 use crate::builtins_generated::Operation;
@@ -42,7 +30,7 @@ use crate::id::{BlockId, FuncId, GlobalId, LayoutId, ModuleId, StrId, TyId, V};
 use crate::ir::{self, Func, FuncKind, Op, Term};
 use bun_builtin_syntax::Archive;
 use bun_sema::atom::Atom;
-use bun_sema::check::{Activation, Capture, Checker, Evaluates, FirstStore, Identity, Program as Checked, Receiver, CodeOwner};
+use bun_sema::check::{Activation, Capture, Checker, EvaluationTime, FirstStore, Identity, Program as Checked, Receiver, CodeOwner};
 use bun_sema::hir::{self, ClassId, FileKind, FnId, StmtKind};
 use bun_sema::program::{Builtin, FileId, Files, LoadedBy, Sym};
 use bun_sema::types::TypeId;
@@ -56,14 +44,12 @@ use std::sync::OnceLock;
 const FILES_PER_CHECKER: usize = 32;
 const IMPORTS_PER_CHECKER: usize = 256;
 
-/// Something the compiler cannot translate yet.
 pub struct Problem {
     pub file: FileId,
     pub pos: u32,
     pub what: Cow<'static, str>,
 }
 
-/// Where a variable that is not a local of one function lives.
 #[derive(Default)]
 pub(crate) struct Undo {
     pub(crate) funcs: Vec<((FileId, FnId), Option<FuncId>)>,
@@ -74,9 +60,9 @@ pub(crate) struct Undo {
     pub(crate) parameter_slots: Vec<(Sym, Option<(Place, u32, u32)>)>,
 }
 
-fn restore_entries<K: Copy + Eq + std::hash::Hash, T>(map: &mut FxHashMap<K, T>, noted: Vec<(K, Option<T>)>) {
+fn restore_entries<K: Copy + Eq + std::hash::Hash, T>(map: &mut FxHashMap<K, T>, recorded: Vec<(K, Option<T>)>) {
     let mut seen = FxHashSet::default();
-    for (key, was) in noted {
+    for (key, was) in recorded {
         if seen.insert(key)
             && let Some(was) = was
         {
@@ -91,11 +77,9 @@ pub(crate) enum Place {
     Env(LayoutId, u32),
 }
 
-/// What a module imports statically.
 #[derive(Copy, Clone)]
 enum Dependency {
     Module(FileId),
-    /// A module that is not compiled with the program, by its specifier.
     External(Atom),
 }
 
@@ -108,32 +92,23 @@ pub(crate) enum Role {
     Second,
 }
 
-/// What a function of the program is made from.
 #[derive(Copy, Clone)]
 pub(crate) enum Source {
     Module(FileId),
     Function { file: FileId, func: FnId, class: Option<(FileId, ClassId)>, role: Role, untyped_clone_root: FnId },
-    /// The constructor of a class that declares none.
     DefaultConstructor { file: FileId, class: ClassId },
-    /// Yields the object an enum is as a value.
     EnumObject(Sym),
-    /// Returns the object for a module namespace or a TypeScript namespace used as a value.
     NamespaceObject(Sym),
-    /// `(number) => value`: what the module exports under the name of that number, now.
     ModuleNamespaceReader(FileId),
-    /// `import("./file")`: an async function that evaluates the module and returns its namespace object.
     DynamicImport(FileId, bool),
     Required(FileId),
     DynamicImportBody(FileId, bool),
-    /// `FileBuild::body_of`
     ModuleBody(FileId),
     ModuleTouch(FileId),
     ModuleSettling(FileId),
     ModuleDriver(FileId),
     ModuleInner(FileId),
-    /// `FileBuild::lazy_initializer`
     Initializer(Sym),
-    /// `FileBuild::exported_object_member`, as long as nothing is remembered: of a name it is handed; of `default`, as Node.js has it or not.
     ExportedObjectMember(FileId),
     ExportedObjectDefault(FileId, bool),
     FilesByPath(FileId),
@@ -186,131 +161,88 @@ pub(crate) struct EnvScope {
 pub(crate) struct Jump {
     pub(crate) label: Atom,
     pub(crate) break_to: BlockId,
-    /// `NONE`: not a loop.
     pub(crate) continue_to: BlockId,
-    /// The iterator to close on leaving. `NONE`: none.
     pub(crate) iter: V,
-    /// How many of the handlers are outside the statement. Only for a loop with an iterator.
     pub(crate) unwind_depth: usize,
-    /// A `break` without a label stops here: a loop or a `switch`.
     pub(crate) is_unlabeled_break_target: bool,
-    /// A `try` with a `finally`, which runs on leaving.
     pub(crate) finally_context: Option<FinallyContext>,
 }
 
-/// Where control goes once the statements it leaves have been left.
 #[derive(Copy, Clone)]
 pub(crate) enum Exit {
     Return(V),
     Goto(BlockId),
 }
 
-/// The finalizer is built once. Whoever goes through it says in `completion_type` where it is heading.
 pub(crate) struct FinallyContext {
     pub(crate) entry: BlockId,
-    /// 0: on to what follows. 1: an exception goes on. From 2 on: `exits`.
     pub(crate) completion_type: Var,
-    /// What was thrown, if the finalizer looks at it, or what is returned.
     pub(crate) value: Var,
     pub(crate) exception: Var,
-    /// The statements still to leave afterwards, from which index on, and where to go then.
     pub(crate) exits: Vec<(usize, Exit)>,
 }
 
-/// Where the value of an expression goes straight to, if that holds it to a type that is written down: a variable, a field, a parameter
-/// or a result with an annotation, `as`, `!`. The value is held to that type and to no other. `want` is `NONE` where whoever gets the
-/// value holds it to the type.
 #[derive(Copy, Clone)]
 pub(crate) struct Sink {
     pub(crate) e: hir::ExprId,
     pub(crate) want: Ty,
     pub(crate) why: ir::CoerceReason,
+    pub(crate) keeps_unconvertible_objects: bool,
 }
 
-/// The function being built.
 pub(crate) struct Fx {
     pub(crate) b: FuncBuilder,
     pub(crate) id: FuncId,
     pub(crate) file: FileId,
-    /// `NONE`: the top level of the file.
     pub(crate) func: FnId,
     pub(crate) locals: FxHashMap<Sym, Var>,
-    /// For a local `let`, `const`, class or parameter that is referred to where it may be in its dead zone: whether it has been
-    /// initialized.
     pub(crate) initialized: FxHashMap<Sym, Var>,
-    /// By lazy variable: whether the function has found it to hold its value. See `FileBuild::read_lazy_variable`.
     pub(crate) known_initialized: FxHashMap<GlobalId, Var>,
-    /// Those of which that was seen to before the loops around the code that is being translated.
-    pub(crate) initialized_before_loops: Vec<GlobalId>,
+    pub(crate) initialized_before_loops: Vec<(GlobalId, V)>,
     pub(crate) modules_touched_before_loops: Vec<FileId>,
-    /// `true` and `false`, in the entry block. `NONE`: not made yet.
     pub(crate) true_value: V,
     pub(crate) false_value: V,
     pub(crate) envs: Vec<EnvScope>,
     pub(crate) this: V,
-    /// The checker's type of `this`. `NONE`: it says nothing.
-    pub(crate) this_type: fit::Ty,
+    pub(crate) this_type: coerce::Ty,
     pub(crate) class: Option<(FileId, ClassId)>,
     pub(crate) jumps: Vec<Jump>,
     pub(crate) handlers: Vec<BlockId>,
-    /// The label of the statement about to be built.
     pub(crate) label: Atom,
-    /// In a constructor where `super()` may come back with another object than it was handed: `this`, which comes about then.
     pub(crate) this_var: Option<Var>,
-    /// In a constructor where `Checker::this_may_be_uninitialized`, and in the arrow functions there: the environment that holds `this`.
     pub(crate) this_binding: Option<(LayoutId, V)>,
-    /// In the initializer of a static field, and in an arrow function there: the class, whose class object is `this`.
     pub(crate) this_class: Option<(FileId, ClassId)>,
-    /// The copies of `this` and of `arguments` objects that the function is handed, its own to see or to hand on.
     pub(crate) receivers: FxHashMap<Receiver, V>,
     pub(crate) captured_arguments: FxHashMap<FnId, V>,
     pub(crate) captured_new_targets: FxHashMap<FnId, V>,
     pub(crate) home_objects: FxHashMap<FnId, V>,
-    /// In a constructor: what it is handed for `this`, the object whoever constructs has made, or `undefined`.
     pub(crate) given: V,
-    /// `NONE`: the code is not in a constructor that is handed it.
     pub(crate) new_target: V,
     pub(crate) listed_fields: Option<(V, Atom, bool)>,
     pub(crate) is_in_field_initializer: bool,
-    /// It is a constructor that returns what `new` yields in every case.
     pub(crate) returns_this: bool,
-    /// It is a static member, so that `super` looks from the class and not from its prototype.
     pub(crate) is_static: bool,
     pub(crate) constructor_params: Vec<V>,
-    /// The DisposableStack of the innermost block with `using` declarations.
     pub(crate) disposable_stack: V,
-    /// The `arguments` object. `NONE`: the function does not refer to it.
     pub(crate) arguments: V,
-    /// The array that all arguments arrive in. `NONE`: each arrives by itself.
     pub(crate) all_arguments: V,
-    /// Written in TypeScript: expressions have the checker's types.
     pub(crate) is_typed: bool,
-    /// By value and by variable: the checker's type, where it has one.
     pub(crate) checked: CheckedTypes,
     pub(crate) checked_vars: FxHashMap<Var, TypeId>,
-    /// By block, value and type: the value as held to the type in that block.
     pub(crate) fitted: FxHashMap<(BlockId, V, TyId), V>,
-    /// What a written `as` has yielded with an `undefined` or a `null` that the type after `as` has not: `Builder::coerce`.
     pub(crate) nullish_after_cast: FxHashSet<V>,
-    /// The operand of the `as` that is being translated: `Checker::is_syntactically_fresh_graph`.
     pub(crate) is_coercing_fresh_graph: bool,
-    /// The calls in whose place the argument has been put that they hand back: `FileBuild::returned_argument`.
-    pub(crate) handed_back: FxHashSet<hir::ExprId>,
+    pub(crate) handed_back: Versioned<FxHashSet<hir::ExprId>>,
+    pub(crate) unchanged_by_coercion: Option<coerce::CoercionState>,
+    pub(crate) coercion_idempotence: coerce::Idempotence,
     pub(crate) calls_in_tail_position: Vec<hir::ExprId>,
-    /// By iterator of a loop: there is nothing to close if this holds. See `FileBuild::open_collection_loop`.
     pub(crate) skip_close_if: FxHashMap<V, V>,
-    /// The ordinary objects that no cast makes anything of, with the checker's types of them: a literal with an accessor, what `Object.defineProperties({ .. }, ..)` yields.
-    pub(crate) uncoercible_objects: FxHashMap<V, TypeId>,
-    /// By value that was read from a place other code may have stored to since it was last looked at: the checker's type of the read,
-    /// which the value has not been held to. A use that needs it to be of that type holds it to that.
-    pub(crate) narrowed: FxHashMap<V, Ty>,
-    /// For the expression that is being evaluated.
+    pub(crate) uncoercible_objects: Versioned<FxHashMap<V, TypeId>>,
+    pub(crate) narrowed: Versioned<FxHashMap<V, Ty>>,
     pub(crate) sink: Option<Sink>,
-    /// By block, value and prediction: the value as looked at with the prediction in that block.
     pub(crate) expected: FxHashMap<(BlockId, V, ir::Prediction), V>,
-    /// Of a constructor function: the statements that are translated as one operation, see `FileBuild::initialize`.
     pub(crate) first_stores: Vec<FirstStore>,
-    /// What is being stored to a variable is what it has room for besides its type: `let a;`, `a = undefined!`. See `symbol_store_ty`.
+    pub(crate) owes_initialize_without_stores: bool,
     pub(crate) is_storing_default: bool,
     pub(crate) first_spans: FxHashMap<V, crate::audit::RecordedSpan>,
     pub(crate) last_spans: FxHashMap<V, crate::audit::RecordedSpan>,
@@ -319,40 +251,31 @@ pub(crate) struct Fx {
 
 pub(crate) use bun_sema::fold::Defines;
 
-/// What is the same for every file of the program, and stays as it is while the files are translated.
 pub struct Shared<'a> {
     pub(crate) defines: Defines,
-    /// The manifest's, for the builtin modules.
     pub(crate) builtin_defines: Defines,
     pub(crate) last_names_of_defines: FxHashSet<Atom>,
     pub(crate) last_names_of_builtin_defines: FxHashSet<Atom>,
     pub(crate) names_of_own_path: [Atom; 2],
     pub(crate) features: FxHashSet<Vec<u8>>,
     pub(crate) constants: &'a crate::Constants,
-    /// `None`: there is no bundler.
     pub(crate) bundle: Option<imports::Bundle<'a>>,
-    /// The files that the program starts with, whichever entry point that is: each once.
     roots: Vec<FileId>,
-    /// By entry point: the files that are run when the program is started with it, in order.
     entry_points: Vec<Vec<FileId>>,
-    /// The files of `crate::prelude` that the program was loaded with.
     prelude: Vec<FileId>,
     decorator_helpers: Option<FileId>,
+    promise_helpers: Option<FileId>,
+    delegation_helpers: Option<FileId>,
     validation_helpers: Option<FileId>,
     runtime_helpers: Option<FileId>,
     has_computed_module_names: bool,
-    /// The modules that are compiled with the program, in ascending order: what the roots lead to, going by the code that runs for an
-    /// import.
     modules: Vec<FileId>,
     is_module: Vec<bool>,
-    /// The builtin modules among them, by registry id, ascending.
     builtin_modules: Vec<(u32, FileId)>,
     pub(crate) builtin_functions: commonjs::BuiltinFunctions,
-    /// Those whose evaluation may have to wait: they have top-level `await`, or import a module that does.
     async_modules: FxHashSet<FileId>,
-    /// By file. It follows from the tree, and is made by whoever asks first.
     pub(crate) using_arguments: Vec<OnceLock<UsingArguments>>,
-    function_facts: bun_sema::util::ShardedMap<(FileId, FnId, bool), Box<[asked::Said]>>,
+    function_facts: bun_sema::util::ShardedMap<(FileId, FnId, bool), Box<[query_tape::RecordedAnswer]>>,
     pub(crate) calls_marked_pure: Vec<OnceLock<Vec<u32>>>,
     pub(crate) may_have_requires: Vec<OnceLock<bool>>,
     pub(crate) stars: Vec<OnceLock<imports::Stars>>,
@@ -365,19 +288,14 @@ pub struct Shared<'a> {
     unresolved_imports: FxHashMap<FileId, Vec<(FileId, Atom)>>,
 }
 
-/// The functions of a file that refer to their `arguments` object, and the arrow functions that refer to that of a function around
-/// them.
 #[derive(Default)]
 pub(crate) struct UsingArguments {
     pub(crate) functions: FxHashSet<FnId>,
-    /// Those of them that refer to the object, and not only to how many arguments there are or to one of them (`$argumentCount`, `$argument`).
     pub(crate) objects: FxHashSet<FnId>,
     pub(crate) arrows: FxHashSet<FnId>,
 }
 
 impl<'a> Shared<'a> {
-    /// Once the program is loaded, before any of it is translated. It goes by the trees and the symbols alone. The checker is told what
-    /// is for the bundler to say: where the code of the imports is, and which module evaluates which.
     pub fn new(program: &Checked<'_>, entry_points: &[Vec<FileId>], constants: &'a crate::Constants, in_parallel: InParallel<'_>) -> Shared<'a> {
         let entry_points: Vec<Vec<FileId>> = entry_points.iter().map(|run| run.iter().map(|&file| imports::original_source_of(program.files, file)).collect()).collect();
         let mut roots: Vec<FileId> = Vec::new();
@@ -419,6 +337,8 @@ impl<'a> Shared<'a> {
             runtime_helpers: program.files.by_path.get(&crate::prelude::path_of(&constants.root, crate::prelude::RUNTIME_HELPERS.0)),
             has_computed_module_names: program.files.modules.iter().any(|module| matches!(module.builtin, Some(Builtin::Module(_, LoadedBy::ComputedName | LoadedBy::RuntimeModulesOrComputedName)))),
             decorator_helpers: program.files.by_path.get(&crate::prelude::path_of(&constants.root, crate::prelude::DECORATORS.0)),
+            promise_helpers: program.files.by_path.get(&crate::prelude::path_of(&constants.root, "promise.ts")),
+            delegation_helpers: program.files.by_path.get(&crate::prelude::path_of(&constants.root, "promise.ts")),
             validation_helpers: program.files.by_path.get(&crate::prelude::path_of(&constants.root, crate::prelude::VALIDATION.0)),
             modules: Vec::new(),
             is_module: Vec::new(),
@@ -479,7 +399,6 @@ impl<'a> Shared<'a> {
         shared.lazy_modules = lazy_modules;
         shared.lazy_modules_with_state = waiting;
         c.set_lazy_modules(&shared.lazy_modules.union(&shared.modules_deferred).copied().collect());
-        // It asks which declarations are ambient, which goes by the modules.
         let called = c.called_imports(in_parallel);
         let code = c.map_slices(called, IMPORTS_PER_CHECKER, Some(in_parallel), &|c, imports| FileBuild::new(c, &shared, NO_FILE).imported_code(imports));
         c.set_imported_code(code.into_iter().flatten());
@@ -504,6 +423,14 @@ impl<'a> Shared<'a> {
         self.decorator_helpers
     }
 
+    pub(crate) fn delegation_helpers(&self) -> Option<FileId> {
+        self.delegation_helpers
+    }
+
+    pub(crate) fn promise_helpers(&self) -> Option<FileId> {
+        self.promise_helpers
+    }
+
     pub(crate) fn validation_helpers(&self) -> Option<FileId> {
         self.validation_helpers
     }
@@ -524,9 +451,37 @@ impl<'a> Shared<'a> {
         self.prelude.contains(&file)
     }
 
-    /// Whether the file is a module that is compiled with the program.
     pub fn is_compiled(&self, file: FileId) -> bool {
         self.is_module.get(file.idx()) == Some(&true)
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct Versioned<T> {
+    inner: T,
+    version: u32,
+}
+
+impl<T> Versioned<T> {
+    #[inline]
+    pub(crate) fn version(&self) -> u32 {
+        self.version
+    }
+}
+
+impl<T> std::ops::Deref for Versioned<T> {
+    type Target = T;
+    #[inline]
+    fn deref(&self) -> &T {
+        &self.inner
+    }
+}
+
+impl<T> std::ops::DerefMut for Versioned<T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut T {
+        self.version = self.version.wrapping_add(1);
+        &mut self.inner
     }
 }
 
@@ -580,7 +535,6 @@ impl CheckedTypeSlot<'_> {
     }
 }
 
-/// The tables of the fragment that is being made.
 #[derive(Default)]
 pub(crate) struct Out {
     pub(crate) strs: ir::Strs,
@@ -590,105 +544,75 @@ pub(crate) struct Out {
     pub(crate) globals: Vec<ir::Global>,
 }
 
-/// The translation of one file. It defines the functions, the classes and the environments of the file, and the layouts of the object
-/// types it looks into. Of what another file defines it has what whoever uses it has to know: the header of a function, the layout of a
-/// class, what a variable holds. All of that follows from the declaration alone, so that every file that asks finds the same. What it
-/// does not look into it only names.
 pub(crate) struct FileBuild<'c, 'p, 's> {
     pub(crate) c: &'c mut Checker<'p, 's>,
     pub(crate) files: &'p Files<'s>,
     pub(crate) shared: &'c Shared<'c>,
-    /// `NO_FILE`: no file is translated, only types are laid out.
     pub(crate) file: FileId,
     pub(crate) out: Out,
-    /// By function, by layout and by variable of `out`: what it is, in terms that hold for every file.
     pub(crate) sources: Vec<Source>,
     layout_keys: Vec<LayoutKey>,
     global_keys: Vec<GlobalKey>,
-    /// By function: what goes with it, once it is built.
     bodies: Vec<Option<Box<Body>>>,
-    /// How many `LayoutKey::Environment` and `GlobalKey::Hidden` there are.
     environments: u32,
     hidden_variables: u32,
     pub(crate) template_objects: FxHashMap<(FileId, u32), GlobalId>,
-    /// What the function that is being built has come by: see `Body`.
     problems: Vec<Problem>,
     declares: Vec<LayoutId>,
     classes_as_values: Vec<LayoutId>,
+    classes_as_values_set: FxHashSet<LayoutId>,
     last_default_export_check: Option<(FuncId, hir::ExprId)>,
     modules_touched: (FuncId, BlockId, Vec<FileId>),
     implicit_stores: Vec<StrId>,
     cut: Vec<(u32, u32)>,
-    /// An expression of another body is evaluated: nothing of this one is cut by that.
     is_query_only: bool,
-    /// By `const` that `Checker::const_value` has no value for: what its initializer comes to with what the bundler replaces.
     constants_after_defines: FxHashMap<Sym, Option<constants::Constant>>,
     dropped: Vec<(u32, u32)>,
     marks: Vec<parts::Mark>,
-    /// The scope that is entered next is the top level of a module.
     enters_module_body: bool,
-    /// `Definition::problems`, `Definition::constructs`
     layout_problems: FxHashMap<LayoutId, Vec<Problem>>,
     constructs: FxHashMap<LayoutId, LayoutId>,
     modules: FxHashMap<FileId, ModuleId>,
-    /// By `ModuleId`.
     module_files: Vec<FileId>,
-    /// By module: the function that evaluates it.
     evaluations: FxHashMap<FileId, FuncId>,
-    /// `body_of`
     module_bodies: FxHashMap<FileId, FuncId>,
     deferred_module_functions: FxHashMap<FuncKey, FuncId>,
     module_drivers: FxHashMap<FileId, FuncId>,
     module_inners: FxHashMap<FileId, FuncId>,
-    /// `is_lazy`
     lazy: FxHashMap<Sym, bool>,
     pub(crate) value_symbols: FxHashMap<Sym, Sym>,
     ident_cache: Vec<scope::CachedIdent>,
     pub(crate) ambient: std::cell::RefCell<FxHashMap<Sym, bool>>,
-    /// `lazy_initializer`
     initializers: FxHashMap<Sym, FuncId>,
-    /// The module variables that are lazy, as far as they have come up.
     pub(crate) lazy_globals: FxHashMap<GlobalId, Sym>,
     pub(crate) hoisted_functions: FxHashMap<GlobalId, (GlobalId, FileId, FnId)>,
     lazy_variable_states: FxHashMap<Sym, Option<GlobalId>>,
-    /// `lazy_declarations_in`
     lazy_declarations: FxHashMap<FileId, Rc<Vec<(u32, u32, Sym)>>>,
-    /// `lazy_variable_uses`
     lazy_uses: Option<Rc<Vec<(u32, FnId, Sym)>>>,
     lazy_module_uses: Option<Rc<Vec<(u32, FnId, FileId, u32)>>>,
     pub(crate) funcs: FxHashMap<(FileId, FnId), FuncId>,
-    /// The functions of the source that closures are expected of and that are not declared: see `forward_declare_function`.
     named_functions: FxHashMap<(FileId, FnId), FuncId>,
-    /// The same for the constructors of classes that declare none: see `forward_declare_constructor`.
     named_default_constructors: FxHashMap<(FileId, ClassId), FuncId>,
     pub(crate) classes: FxHashMap<(FileId, ClassId), class::ClassInfo>,
-    /// Where each class keeps what it keeps to itself.
     pub(crate) class_variables: FxHashMap<(FileId, ClassId, class::ClassVariable), Place>,
-    /// The classes whose layout is being made, and those whose members are being declared.
     classes_in_progress: FxHashSet<(FileId, ClassId)>,
     classes_being_defined: FxHashSet<(FileId, ClassId)>,
-    /// The classes whose declaration has been translated, and by class the functions that are built once it has.
     declared_classes: FxHashSet<(FileId, ClassId)>,
     waiting_for_class: FxHashMap<(FileId, ClassId), Vec<FuncId>>,
     pub(crate) enum_objects: FxHashMap<Sym, FuncId>,
     pub(crate) validators: validate::Validators,
     pub(crate) enum_globals: FxHashMap<Sym, GlobalId>,
     pub(crate) namespace_objects: FxHashMap<Sym, FuncId>,
-    /// `namespace_global`
     pub(crate) namespace_globals: FxHashMap<Sym, GlobalId>,
     pub(crate) dynamic_imports: FxHashMap<(FileId, bool), FuncId>,
     pub(crate) require_evaluations: FxHashMap<FileId, FuncId>,
     pub(crate) required_es_modules: FxHashMap<FileId, self::commonjs::RequiredEsModule>,
     pub(crate) files_with_requires: FxHashMap<FileId, bool>,
     pub(crate) dynamic_import_bodies: FxHashMap<(FileId, bool), FuncId>,
-    /// `export_variable`
     pub(crate) export_variables: FxHashMap<(FileId, Atom), GlobalId>,
-    /// `exported_object_import`
     pub(crate) exported_object_imports: FxHashMap<(FileId, u8), FuncId>,
-    /// By specifier: the global that holds the namespace object of an external module.
     pub(crate) external_modules: Vec<(StrId, GlobalId)>,
     pub(crate) module_globals: FxHashMap<(FileId, &'static str), GlobalId>,
-    /// NamedEvaluation: the names anonymous functions and classes take from where they are written.
     pub(crate) inferred_function_names: FxHashMap<(FileId, FnId), StrId>,
     pub(crate) inferred_class_names: FxHashMap<(FileId, ClassId), StrId>,
     pub(crate) key_name_value: V,
@@ -696,42 +620,31 @@ pub(crate) struct FileBuild<'c, 'p, 's> {
     pub(crate) entity_aliases: FxHashMap<Sym, self::imports::EntityAlias>,
     pub(crate) places: FxHashMap<Sym, Place>,
     pub(crate) parameter_slots: FxHashMap<Sym, (Place, u32, u32)>,
-    /// By activation of the file that has an environment, as far as it has come up: the layout of that. And the other way round.
     pub(crate) activation_layouts: FxHashMap<Activation, LayoutId>,
-    /// `this_binding_layout`
+    activation_layout_positions: std::collections::BTreeSet<(u32, Activation)>,
     pub(crate) this_bindings: FxHashMap<FnId, LayoutId>,
     pub(crate) activations: FxHashMap<LayoutId, Activation>,
-    /// The fields of environments that keep the closure of a function declaration.
     pub(crate) cached_closures: FxHashSet<(LayoutId, u32)>,
-    /// By function that captures anything: what, in the order it is handed it.
     pub(crate) captures: FxHashMap<FuncId, Vec<Capture>>,
-    /// By environment of a class: what its first fields hold for the members of the class.
     pub(crate) imports: FxHashMap<LayoutId, Vec<Capture>>,
     captured: FxHashMap<FileId, Rc<FxHashSet<Sym>>>,
-    /// By file: the function declarations that are referred to other than to call them.
     function_values: FxHashMap<FileId, Rc<FxHashSet<Sym>>>,
-    /// By type, and by how many times over the type that was asked about holds it: see `ty_at_depth`.
     tys: FxHashMap<(TypeId, u8), TyId>,
     description_is_layout_free: bool,
     description_is_leaf: bool,
-    tape: asked::Tape<'c>,
+    tape: query_tape::Tape<'c>,
     pub(crate) records: FxHashMap<TypeId, Option<LayoutId>>,
-    pub(crate) known: fit::Known,
-    /// The checker's type that a layout is the layout of, and its types of the places of the program.
+    pub(crate) known: coerce::Known,
     pub(crate) layout_types: FxHashMap<LayoutId, TypeId>,
     pub(crate) layout_subset_pairs: FxHashMap<(TyId, TyId), Option<(Rc<[(LayoutId, LayoutId)]>, bool)>>,
     pub(crate) checked_globals: FxHashMap<GlobalId, TypeId>,
     pub(crate) checked_fields: FxHashMap<(LayoutId, u32), TypeId>,
-    /// The fields of objects whose type is written down.
     pub(crate) annotated_fields: FxHashSet<(LayoutId, u32)>,
-    /// By the layout of its objects: the class.
     pub(crate) fixed_layout_classes: FxHashMap<LayoutId, (FileId, ClassId)>,
-    /// By the layout of what the parts of a union have in common, where that stands for the union: the layouts of the parts.
     pub(crate) union_part_layouts: FxHashMap<LayoutId, Vec<LayoutId>>,
     pub(crate) layout_growth_epoch: u32,
     pub(crate) cast_targets: FxHashMap<TyId, (u32, TyId)>,
-    pub(crate) signatures: FxHashMap<FuncId, fit::Signature>,
-    /// The layouts whose fields have their names and not their types: see `resolve_field_types`.
+    pub(crate) signatures: FxHashMap<FuncId, coerce::Signature>,
     layouts_pending_field_types: FxHashMap<LayoutId, types::FieldTypes>,
     predicted_composed_cache: FxHashMap<(TypeId, u8), crate::declared::Declared>,
     predicted_description_cache: FxHashMap<TypeId, TyId>,
@@ -739,20 +652,18 @@ pub(crate) struct FileBuild<'c, 'p, 's> {
     pub(crate) typed_bodies: FxHashMap<FuncId, FuncId>,
     pub(crate) untyped_clones: FxHashMap<FuncId, FuncId>,
     pub(crate) generic_entrypoints: FxHashMap<FuncId, FuncId>,
+    pub(crate) generic_entrypoint_ids: FxHashSet<FuncId>,
     pub(crate) untyped_clone_worklist: VecDeque<FuncId>,
     pub(crate) untyped_clone_root: Option<FnId>,
     pub(crate) undo: Option<Box<Undo>>,
 }
 
-/// Translates the file, which is compiled with the program, and which the checker has checked or visited.
 pub fn translate_file(c: &mut Checker<'_, '_>, shared: &Shared<'_>, file: FileId) -> Box<Fragment> {
     c.enable_expr_cache_for(file);
     let mut build = FileBuild::new(c, shared, file);
-    // The tree has a block in its place.
     for &(start, _) in build.hir(file).with_bodies.iter() {
         build.problem(file, start, "a `with` statement");
     }
-    // A file of builtin functions is never evaluated.
     match build.files.module(file).builtin {
         Some(Builtin::Functions) => {
             for function in shared.builtin_functions.list.iter().filter(|function| function.file == file) {
@@ -778,10 +689,6 @@ pub fn translate_file(c: &mut Checker<'_, '_>, shared: &Shared<'_>, file: FileId
     build.finish()
 }
 
-/// The files that the file imports or exports from by a declaration, for their code or for their types, as the checker resolves
-/// imports. The bundler drops an import that turns out to be of types only, and one whose names only code uses that is cut away. The
-/// first counts and the second does not: a declaration that is dropped counts if it says `type`, if one of its names stands for a
-/// type and for no value, or if it is `export *`, which names nothing.
 pub fn files_imported_by(c: &mut Checker<'_, '_>, shared: &Shared<'_>, file: FileId) -> Vec<FileId> {
     use bun_sema::bind::{Decl, SymFlags};
     let (files, hir, bound) = (c.p.files, c.hir(file), c.bound(file));
@@ -822,7 +729,6 @@ pub fn files_imported_by(c: &mut Checker<'_, '_>, shared: &Shared<'_>, file: Fil
 
 const MAX_LAYOUTS_DESCRIBED_AT_ONCE: usize = 1 << 16;
 
-/// `link::Describe`
 pub fn describe(c: &mut Checker<'_, '_>, shared: &Shared<'_>, missing: &[TypeId], is_defined: &dyn Fn(Identity) -> bool) -> Fragment {
     let mut build = FileBuild::new(c, shared, NO_FILE);
     for &ty in missing {
@@ -830,7 +736,6 @@ pub fn describe(c: &mut Checker<'_, '_>, shared: &Shared<'_>, missing: &[TypeId]
             build.resolve_field_types(layout);
         }
     }
-    // More come about on the way. Types can lead to ever more types: the link ends that.
     let mut next = 0;
     while next < build.out.layouts.len().min(MAX_LAYOUTS_DESCRIBED_AT_ONCE) {
         if let LayoutKey::Record(identity) = build.layout_keys[next]
@@ -846,7 +751,7 @@ pub fn describe(c: &mut Checker<'_, '_>, shared: &Shared<'_>, missing: &[TypeId]
 impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     fn new(c: &'c mut Checker<'p, 's>, shared: &'c Shared<'c>, file: FileId) -> FileBuild<'c, 'p, 's> {
         let mut out = Out::default();
-        let known = fit::Known::new(&mut out.tys);
+        let known = coerce::Known::new(&mut out.tys);
         FileBuild {
             files: c.p.files,
             c,
@@ -863,6 +768,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             problems: Vec::new(),
             declares: Vec::new(),
             classes_as_values: Vec::new(),
+            classes_as_values_set: FxHashSet::default(),
             last_default_export_check: None,
             modules_touched: (FuncId::NONE, BlockId::NONE, Vec::new()),
             implicit_stores: Vec::new(),
@@ -923,6 +829,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             places: FxHashMap::default(),
             parameter_slots: FxHashMap::default(),
             activation_layouts: FxHashMap::default(),
+            activation_layout_positions: Default::default(),
             this_bindings: FxHashMap::default(),
             activations: FxHashMap::default(),
             cached_closures: FxHashSet::default(),
@@ -933,7 +840,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             tys: FxHashMap::default(),
             description_is_layout_free: true,
             description_is_leaf: true,
-            tape: asked::Tape::Off,
+            tape: query_tape::Tape::Off,
             records: FxHashMap::default(),
             known,
             layout_types: FxHashMap::default(),
@@ -953,6 +860,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             typed_bodies: FxHashMap::default(),
             untyped_clones: FxHashMap::default(),
             generic_entrypoints: FxHashMap::default(),
+            generic_entrypoint_ids: FxHashSet::default(),
             untyped_clone_worklist: VecDeque::new(),
             untyped_clone_root: None,
             undo: None,
@@ -967,17 +875,30 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if atom.is_none() {
             return self.out.strs.intern(b"");
         }
-        // The checker marks a mangled name with a leading 0xFE, which is not UTF-8. `#x` keeps it: by it the engine knows that it is no property key.
+        if self.c.atoms().is_symbol_name(atom)
+            && let Some(symbol) = self.c.constant_symbol_of_property(atom)
+        {
+            return self.constant_symbol_name(symbol);
+        }
         let bytes = self.c.atoms().bytes(atom);
         let is_private = bytes.starts_with(bun_sema::atom::PRIVATE_NAME_PREFIX);
         self.out.strs.intern(if is_private { bytes } else { bytes.strip_prefix(&[0xFE]).unwrap_or(bytes) })
+    }
+
+    pub(crate) fn constant_symbol_name(&mut self, symbol: bun_sema::check::ConstantSymbol) -> StrId {
+        let text = self.c.constant_symbol_text(symbol);
+        self.out.strs.intern(&text)
+    }
+
+    pub(crate) fn emit_key(&mut self, fx: &mut Fx, name: StrId) -> V {
+        let is_symbol = self.out.strs.get(name).first() == Some(&0xFC);
+        self.emit(fx, if is_symbol { Op::Symbol(name) } else { Op::Str(name) })
     }
 
     pub(crate) fn problem(&mut self, file: FileId, pos: u32, what: &'static str) {
         self.problems.push(Problem { file, pos, what: Cow::Borrowed(what) });
     }
 
-    /// Records the problem and yields `undefined` in the place of the value.
     pub(crate) fn unsupported(&mut self, fx: &mut Fx, pos: u32, what: &'static str) -> V {
         self.problem(fx.file, pos, what);
         self.emit(fx, Op::Undefined)
@@ -1057,10 +978,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         let name = self.name_with_file("module", file);
         let module = self.module_of(file);
-        let made = self.add_func(name, module, 0, FuncKind::Module, source);
-        self.out.funcs[made.idx()].flags |= ir::func_flags::IS_HIDDEN_IN_STACK_TRACES;
-        self.deferred_module_functions.insert(source.key(), made);
-        made
+        let created = self.add_func(name, module, 0, FuncKind::Module, source);
+        self.out.funcs[created.idx()].flags |= ir::func_flags::IS_HIDDEN_IN_STACK_TRACES;
+        self.deferred_module_functions.insert(source.key(), created);
+        created
     }
 
     fn deferred_module_state(&mut self, file: FileId) -> (GlobalId, GlobalId) {
@@ -1177,9 +1098,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             self.record_allocation(layout);
         }
         if let Op::NewWith { layout, .. } = op
-            && let Some(&made) = self.layout_types.get(&layout)
+            && let Some(&created) = self.layout_types.get(&layout)
         {
-            self.c.record_object_created_with_discriminant(made);
+            self.c.record_object_created_with_discriminant(created);
         }
         let allocated_as = if fx.is_typed { None } else { self.allocated_as(&op, ty.id) };
         let value = fx.b.emit(op, if allocated_as.is_some() { self.out.tys.anything } else { ty.id });
@@ -1212,15 +1133,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         value
     }
 
-    /// What the language does that is no operation of its own here: the engine knows it by the name.
     pub(crate) fn operation(&mut self, fx: &mut Fx, which: Operation, args: &[V]) -> V {
         self.emit_throwing(fx, Op::Operation { which, args: args.iter().copied().collect() })
     }
 
-    /// The same for an operation that may throw.
     pub(crate) fn constant_key_name(&self, fx: &Fx, key: V) -> Option<StrId> {
         match fx.b.func.op(key) {
             Some(&Op::Str(name)) if Self::is_field_name(self.out.strs.get(name)) && !matches!(self.out.strs.get(name), [b'-' | b'#', ..] | b"Infinity" | b"NaN") => Some(name),
+            Some(&Op::Symbol(name)) => Some(name),
             _ => None,
         }
     }
@@ -1229,6 +1149,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let op = match op {
             Op::ElemGet { obj, key } => self.constant_key_name(fx, key).map_or(Op::ElemGet { obj, key }, |name| Op::PropGet { obj, name }),
             Op::ElemDelete { obj, key } => self.constant_key_name(fx, key).map_or(Op::ElemDelete { obj, key }, |name| Op::PropDelete { obj, name }),
+            Op::ElemHas { obj, key } => match fx.b.func.op(key) {
+                Some(&Op::Symbol(name)) => Op::PropHas { obj, name },
+                _ => Op::ElemHas { obj, key },
+            },
+            Op::ToKey(key) if matches!(fx.b.func.op(key), Some(Op::Symbol(_))) => return key,
             op => op,
         };
         let v = self.emit(fx, op);
@@ -1241,14 +1166,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         v
     }
 
-    /// `module a.ts`: the name of a function that the compiler makes for a module says which, without the directories.
     pub(crate) fn name_with_file(&mut self, what: &str, file: FileId) -> StrId {
         let path = self.files.module(file).file_name();
         let name = path.rsplit(|&byte| byte == b'/').next().unwrap_or(path);
         self.out.strs.intern(&[what.as_bytes(), b" ", name].concat())
     }
 
-    /// The function that evaluates the module. `None`: there is nothing to evaluate.
     pub(crate) fn evaluation_function(&mut self, file: FileId) -> Option<FuncId> {
         if let Some(&known) = self.evaluations.get(&file) {
             return Some(known);
@@ -1260,7 +1183,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let module = self.module_of(file);
         let kind = if self.builtin_id(file).is_some() || self.is_async_module(file) { FuncKind::Plain } else { FuncKind::Module };
         let evaluation = self.add_func(name, module, 0, kind, Source::Module(file));
-        // It has none of the code of the module. Whoever imports the module says the same of it.
         if kind == FuncKind::Module || self.is_async_module(file) {
             self.out.funcs[evaluation.idx()].flags |= ir::func_flags::IS_HIDDEN_IN_STACK_TRACES;
         }
@@ -1302,9 +1224,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         Some(by_require)
     }
 
-    /// The function that has the statements of a module that is not one of the runtime's. It takes nothing, and sets and tests nothing: that it
-    /// runs once, after what the module imports, is seen to by `evaluation_function`, which calls it, or by the engine where a top-level `await`
-    /// is reached from the module (`module_driver`). An async function if the module has a top-level `await` of its own.
     pub(crate) fn body_of(&mut self, file: FileId) -> FuncId {
         if let Some(&known) = self.module_bodies.get(&file) {
             return known;
@@ -1472,11 +1391,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         found
     }
 
-    /// What the module evaluates before its body, in order.
     fn dependencies_of(&self, file: FileId) -> Vec<Dependency> {
         let hir = self.hir(file);
         let mut specifiers = Vec::new();
-        // The implicit import of the JSX runtime comes first. A file without JSX has none.
         if let Some(runtime) = self.jsx_runtime(file)
             && hir.exprs.iter().any(|e| matches!(e.kind, hir::ExprKind::Jsx(_)))
         {
@@ -1511,8 +1428,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let mut dependencies = Vec::new();
         for (specifier, is_asset) in specifiers {
             let text = self.c.atoms().bytes(specifier);
-            // `bun:bundle` only exists while bundling: `feature()` is replaced by a constant. For `import "./global.d.ts"` there is
-            // nothing to evaluate.
             if !is_asset && (text == b"bun:bundle" || self.is_dropped_import(file, specifier) || text.ends_with(b".d.ts")) {
                 continue;
             }
@@ -1524,7 +1439,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         dependencies
     }
 
-    /// Tells the checker which module evaluates which. Yields `Shared::modules` and `Shared::async_modules`.
     fn report_module_graph(&mut self) -> (Vec<FileId>, FxHashSet<FileId>) {
         let (mut modules, mut edges, mut builtin_requires) = (Vec::new(), Vec::new(), Vec::new());
         let mut seen: FxHashSet<FileId> = FxHashSet::default();
@@ -1544,7 +1458,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
             let hir = self.hir(file);
             let first = self.dependencies_of(file).into_iter().filter_map(|dependency| match dependency {
-                Dependency::Module(imported) => Some((imported, Evaluates::First)),
+                Dependency::Module(imported) => Some((imported, EvaluationTime::First)),
                 Dependency::External(_) => None,
             });
             let holders = self.c.create_require_result_variables(file);
@@ -1558,33 +1472,33 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 hir::ExprKind::ImportCall { args } => {
                     let is_in_function = self.c.enclosing_fn_of_expr(file, hir::ExprId(i as u32)).is_some();
                     let argument = hir.ids(args).next()?;
-                    Some((sources_by_file(argument)?, if is_in_function { Evaluates::Later } else { Evaluates::DeferredFromModuleBody }))
+                    Some((sources_by_file(argument)?, if is_in_function { EvaluationTime::Later } else { EvaluationTime::DeferredFromModuleBody }))
                 }
                 hir::ExprKind::Call(call) if hir.is_require_callee(hir[call].callee) => {
                     let is_in_function = self.c.enclosing_fn_of_expr(file, hir::ExprId(i as u32)).is_some();
                     let argument = hir.ids(hir[call].args).next()?;
-                    Some((sources_by_file(argument)?, if is_in_function { Evaluates::Immediately } else { Evaluates::InModuleBody }))
+                    Some((sources_by_file(argument)?, if is_in_function { EvaluationTime::Immediately } else { EvaluationTime::InModuleBody }))
                 }
                 hir::ExprKind::Call(call) if hir[call].args.len() == 1 && created_requires.contains(&hir[call].callee) => {
                     let is_in_function = self.c.enclosing_fn_of_expr(file, hir::ExprId(i as u32)).is_some();
-                    Some((sources_by_file(hir.id_at(hir[call].args, 0))?, if is_in_function { Evaluates::Immediately } else { Evaluates::InModuleBody }))
+                    Some((sources_by_file(hir.id_at(hir[call].args, 0))?, if is_in_function { EvaluationTime::Immediately } else { EvaluationTime::InModuleBody }))
                 }
                 _ => None,
             });
             let on_demand = on_demand.flat_map(|(specifiers, how)| specifiers.into_iter().map(move |specifier| (specifier, how)));
             let required = hir.ids(hir.body).filter_map(|stmt| match hir[stmt].kind {
                 StmtKind::ImportEquals(import) => match hir[import].target {
-                    hir::ImportEqualsTarget::Require(specifier) if specifier.is_some() => Some((specifier, Evaluates::InModuleBody)),
+                    hir::ImportEqualsTarget::Require(specifier) if specifier.is_some() => Some((specifier, EvaluationTime::InModuleBody)),
                     _ => None,
                 },
                 _ => None,
             });
-            let file_named = |specifier: Atom, how: Evaluates| if matches!(how, Evaluates::Immediately | Evaluates::InModuleBody) { self.required_file(file, specifier) } else { self.imported_file(file, specifier) };
-            let on_demand: Vec<(Atom, FileId, Evaluates)> = on_demand.chain(required).filter_map(|(specifier, how)| Some((specifier, file_named(specifier, how)?, how))).collect();
+            let file_named = |specifier: Atom, how: EvaluationTime| if matches!(how, EvaluationTime::Immediately | EvaluationTime::InModuleBody) { self.required_file(file, specifier) } else { self.imported_file(file, specifier) };
+            let on_demand: Vec<(Atom, FileId, EvaluationTime)> = on_demand.chain(required).filter_map(|(specifier, how)| Some((specifier, file_named(specifier, how)?, how))).collect();
             if self.is_builtin_file(file) {
                 builtin_requires.extend(on_demand.iter().map(|&(specifier, imported, _)| ((file, specifier), imported)));
             }
-            let again = self.required_again_form(file).map(|second| (second, Evaluates::Later));
+            let again = self.required_again_form(file).map(|second| (second, EvaluationTime::Later));
             for (imported, how) in first.chain(on_demand.into_iter().map(|(_, imported, how)| (imported, how))).chain(again) {
                 edges.push((file, imported, how));
                 pending.push(imported);
@@ -1599,7 +1513,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.c.set_builtin_requires(builtin_requires);
         let mut importers: FxHashMap<FileId, Vec<FileId>> = FxHashMap::default();
         for &(importer, imported, how) in &edges {
-            if how == Evaluates::First {
+            if how == EvaluationTime::First {
                 importers.entry(imported).or_default().push(importer);
             }
         }
@@ -1612,7 +1526,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         (modules, async_modules)
     }
 
-    /// Whether the initializer of the variable runs when the variable is first read: `Checker::is_lazy_variable`.
     pub(crate) fn is_lazy(&mut self, sym: Sym) -> bool {
         if let Some(&known) = self.lazy.get(&sym) {
             return known;
@@ -1643,8 +1556,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         state
     }
 
-    /// The function that evaluates the initializer of a lazy variable and stores it. It takes nothing. It yields what it has stored, which is neither `undefined` nor `null`, where the
-    /// variable has a type and keeps its state in its own slot. Otherwise nothing.
     fn lazy_initializer(&mut self, sym: Sym) -> FuncId {
         if let Some(&known) = self.initializers.get(&sym) {
             return known;
@@ -1656,15 +1567,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if self.lazy_variable_state(sym).is_none() {
             let global = self.symbol_global(sym);
             let held = self.out.globals[global.idx()].declared;
-            let made = self.strip_nullish(held);
-            if made != held {
-                self.out.funcs[initializer.idx()].result = made;
+            let created = self.strip_nullish(held);
+            if created != held {
+                self.out.funcs[initializer.idx()].result = created;
             }
         }
         initializer
     }
 
-    /// The lazy variables that the file declares, with where each declaration starts and ends. Ascending.
     pub(crate) fn lazy_declarations_in(&mut self, file: FileId) -> Rc<Vec<(u32, u32, Sym)>> {
         if let Some(known) = self.lazy_declarations.get(&file) {
             return known.clone();
@@ -1688,20 +1598,19 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         found
     }
 
-    /// The lazy variable whose declaration the position is in.
     pub(crate) fn lazy_variable_declared_at(&mut self, file: FileId, pos: u32) -> Option<Sym> {
         let declarations = self.lazy_declarations_in(file);
         let next = declarations.partition_point(|&(start, ..)| start <= pos);
         declarations[..next].last().filter(|&&(_, end, _)| pos < end).map(|&(.., sym)| sym)
     }
 
-    /// The slot holds `undefined` while the variable is in its dead zone, `null` once its turn has come, which the declaration stores,
-    /// and then the value, which is neither. Where no read can be early the declaration stores nothing, and `undefined` says that its
-    /// turn has come. `may_be_early`: this read. Where the initializer is a call marked pure the slot has the value alone, which may be either, and `lazy_variable_state` the rest.
     pub(crate) fn read_lazy_variable(&mut self, fx: &mut Fx, global: GlobalId, sym: Sym, may_be_early: bool) -> V {
         self.touch_module(fx, sym.file);
+        if let Some(&(_, value)) = fx.initialized_before_loops.iter().find(|&&(known, _)| known == global) {
+            return value;
+        }
         let found = self.emit_raw(fx, Op::GlobalGet(global));
-        if self.initializers.get(&sym) == Some(&fx.id) || fx.initialized_before_loops.contains(&global) {
+        if self.initializers.get(&sym) == Some(&fx.id) {
             return found;
         }
         let is_known = match fx.known_initialized.get(&global) {
@@ -1720,11 +1629,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return found;
         }
         let func = self.lazy_initializer(sym);
-        // In untyped code a read says nothing of what it yields, whatever the variable is declared to hold.
         let read_as = self.ty(fx, found);
-        let made = self.out.funcs[func.idx()].result;
-        let is_announced = made.is_some() && self.strip_nullish(read_as) == made;
-        let value = fx.b.new_var(if is_announced { made } else { read_as });
+        let created = self.out.funcs[func.idx()].result;
+        let is_announced = created.is_some() && self.strip_nullish(read_as) == created;
+        let value = fx.b.new_var(if is_announced { created } else { read_as });
         let is_missing = self.emit(fx, Op::IsNullish(found));
         let (initialize, done) = (fx.b.new_block(), fx.b.new_block());
         if is_announced {
@@ -1732,7 +1640,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             self.branch(fx, is_missing, initialize, present);
             fx.b.seal(present);
             fx.b.switch_to(present);
-            let held = self.emit_throwing(fx, Op::Coerce { value: found, to: made, why: ir::CoerceReason::NonNull(StrId::NONE) });
+            let held = self.emit_throwing(fx, Op::Coerce { value: found, to: created, why: ir::CoerceReason::NonNull(StrId::NONE) });
             fx.b.write(value, held);
             fx.b.jump(done);
         } else {
@@ -1753,8 +1661,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         } else if may_be_early && !self.c.is_never_read_uninitialized(sym) {
             self.emit_throw_if_tdz(fx, sym, found);
         }
-        let yielded = self.emit_throwing(fx, Op::CallDirect { func, args: ir::Args::new() });
-        let stored = if is_announced { yielded } else { self.emit_raw(fx, Op::GlobalGet(global)) };
+        let produced = self.emit_throwing(fx, Op::CallDirect { func, args: ir::Args::new() });
+        let stored = if is_announced { produced } else { self.emit_raw(fx, Op::GlobalGet(global)) };
         fx.b.write(value, stored);
         fx.b.jump(done);
         fx.b.seal(done);
@@ -1763,7 +1671,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.read(value)
     }
 
-    /// `f(..)` where `const f = () => ..` is lazy and the function captures nothing: the call needs neither the variable nor a closure.
     pub(crate) fn lazy_function_for_ident(&mut self, fx: &Fx, e: hir::ExprId) -> Option<(Sym, FuncId)> {
         let hir::ExprKind::Ident(name) = self.hir(fx.file)[e].kind else { return None };
         let sym = self.ident_symbol(fx.file, e, name)?;
@@ -1778,11 +1685,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let (file, d) = self.c.lazy_variable_declaration(sym)?;
         let hir = self.hir(file);
         let hir::ExprKind::Fn(func) = hir[hir[d].init].kind else { return None };
-        // A function expression with a name of its own sees its closure under that name.
         if hir[func].kind != hir::FnKind::Arrow && hir[func].name.is_some() {
             return None;
         }
-        // NamedEvaluation: it takes its name from the variable, whoever comes by it first: this call, or the initializer.
         if let hir::PatKind::Ident(name) = hir[hir[d].pat].kind
             && hir[func].name.is_none()
         {
@@ -1793,7 +1698,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.captures.get(&id).is_none_or(|captures| captures.is_empty()).then_some(id)
     }
 
-    /// The reference `e` to a lazy variable whose value is not asked for throws if the variable is in its dead zone.
     pub(crate) fn emit_lazy_tdz_check(&mut self, fx: &mut Fx, sym: Sym, e: hir::ExprId) {
         if self.c.is_never_read_uninitialized(sym) || !self.may_be_in_tdz(fx, sym, e) {
             return;
@@ -1835,10 +1739,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// Where the language has the variable initialized.
     pub(crate) fn declare_lazy_variable(&mut self, fx: &mut Fx, sym: Sym) {
         let global = self.symbol_global(sym);
-        // The fragment of the file is the one that has it, whoever reads the variable.
         self.lazy_initializer(sym);
         for &named in self.c.names_initialized_at_declaration(sym).iter() {
             self.mark_lazy_initialized(fx, named);
@@ -1880,16 +1782,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let there = self.emit(fx, Op::Bool(true));
             self.emit(fx, Op::GlobalSet(state, there));
         }
-        let made = self.out.funcs[fx.id.idx()].result;
-        if made.is_some() {
+        let created = self.out.funcs[fx.id.idx()].result;
+        if created.is_some() {
             let global = self.symbol_global(sym);
             let stored = self.emit_raw(fx, Op::GlobalGet(global));
-            let held = if self.ty(fx, stored) == made { stored } else { self.emit_throwing(fx, Op::Coerce { value: stored, to: made, why: ir::CoerceReason::NonNull(StrId::NONE) }) };
+            let held = if self.ty(fx, stored) == created { stored } else { self.emit_throwing(fx, Op::Coerce { value: stored, to: created, why: ir::CoerceReason::NonNull(StrId::NONE) }) };
             self.terminate_with_return(fx, held);
         }
     }
 
-    /// Where the code of the file names a lazy variable: the position, the function that runs the code, the variable. Ascending.
     fn lazy_variable_uses(&mut self) -> Rc<Vec<(u32, FnId, Sym)>> {
         if let Some(known) = &self.lazy_uses {
             return known.clone();
@@ -1925,8 +1826,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         uses
     }
 
-    /// Before a loop: what its code would test each time round is seen to once. Nobody can tell that an initializer ran early. Not for a
-    /// variable that may be in its dead zone: the read that finds it there has to throw, and no other.
     fn lazy_module_uses(&mut self) -> Rc<Vec<(u32, FnId, FileId, u32)>> {
         if let Some(known) = &self.lazy_module_uses {
             return known.clone();
@@ -1986,14 +1885,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 continue;
             }
             let global = self.symbol_global(sym);
-            if !fx.initialized_before_loops.contains(&global) {
+            if !fx.initialized_before_loops.iter().any(|&(known, _)| known == global) {
                 self.read_lazy_variable(fx, global, sym, false);
-                fx.initialized_before_loops.push(global);
+                let value = self.emit_raw(fx, Op::GlobalGet(global));
+                fx.initialized_before_loops.push((global, value));
             }
         }
     }
 
-    /// Evaluates what the module imports, in order.
     fn emit_dependencies(&mut self, fx: &mut Fx, file: FileId) {
         self.emit_unresolved_import_resolution(fx, file);
         let hir = self.hir(file);
@@ -2057,7 +1956,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                         self.host_namespace(fx, imported);
                     }
                 }
-                // The host evaluates it the first time it is asked for.
                 Dependency::External(specifier) => {
                     let hir = self.hir(file);
                     let is_import_call = |stmt: &hir::StmtId| match hir[*stmt].kind {
@@ -2072,11 +1970,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     } else if self.shared.constants.source_path_to_url.is_none() && self.is_bundle_only_import(file, specifier) {
                         self.problem(file, pos, "an import of a file that is neither code nor data the bundler can inline");
                     } else if self.shared.bundle.is_some() && stmt.is_some_and(|stmt| self.is_asset_import(file, stmt)) {
-                        // The host is asked by the specifier alone.
                         self.problem(file, pos, "an import `with { type: .. }` of a file that is not in the bundle");
                     }
                     let (module, unproven) = if is_importer { self.unproven_builtin_imports(file, specifier) } else { (&b""[..], Vec::new()) };
-                    // Once for the program: every module that imports it sees the same.
                     let global = self.external_module_global_in(importer, file, specifier);
                     let specifier = self.host_resolved_specifier(file, specifier);
                     let specifier = self.str(specifier);
@@ -2136,8 +2032,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let has_await = self.emit(fx, Op::Bool(has_await));
         let driver = self.module_driver(file);
         let driver = self.emit(fx, Op::FuncRef(driver));
-        let made = self.operation(fx, Operation::NewModuleRecord, &[has_await, driver]);
-        self.emit(fx, Op::GlobalSet(record, made));
+        let created = self.operation(fx, Operation::NewModuleRecord, &[has_await, driver]);
+        self.emit(fx, Op::GlobalSet(record, created));
         fx.b.jump(there);
         fx.b.seal(there);
         fx.b.switch_to(there);
@@ -2283,7 +2179,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if self.host_may_request_modules() && !self.is_builtin_file(file) && self.c.references_module_cache_alias(file) {
             self.emit_mark_require_cache_read(fx, file);
         }
-        // The value of a JSON module is made when it is asked for.
         if self.hir(file).kind != FileKind::Json {
             let body = self.hir(file).body;
             self.enters_module_body = !self.is_async_module(file);
@@ -2294,7 +2189,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// `await`, `for await` or `await using` outside of functions.
     fn has_top_level_await(&self, file: FileId) -> bool {
         let (hir, bound) = (self.hir(file), self.c.bound(file));
         let in_expressions = hir.exprs.iter().enumerate().any(|(i, e)| {
@@ -2312,12 +2206,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         in_expressions || in_statements
     }
 
-    /// `Shared::async_modules`
     fn is_async_module(&self, file: FileId) -> bool {
         self.shared.async_modules.contains(&file)
     }
 
-    /// `NONE`: the file is not compiled with the program.
     pub(crate) fn module_of(&mut self, file: FileId) -> ModuleId {
         if let Some(&known) = self.modules.get(&file) {
             return known;
@@ -2331,8 +2223,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         module
     }
 
-    /// What the type is called in a fragment. The type outlives the task.
-    pub(crate) fn keep(&mut self, ty: TypeId) -> Identity {
+    pub(crate) fn retain_type(&mut self, ty: TypeId) -> Identity {
         self.c.keep_type(ty);
         self.c.type_identity(ty)
     }
@@ -2347,9 +2238,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         GlobalKey::Hidden(self.file, self.hidden_variables - 1)
     }
 
-    /// Whether the function is built here. What is made from the code of a file is built with that file. What the compiler makes up for
-    /// a declaration is built by whoever asks for it, and is the same whoever does.
-    fn builds(&self, source: Source) -> bool {
+    fn owns_source(&self, source: Source) -> bool {
         match source {
             Source::Module(file) | Source::ModuleBody(file) | Source::ModuleDriver(file) | Source::ModuleInner(file) | Source::ModuleTouch(file) | Source::ModuleSettling(file) | Source::Function { file, .. } | Source::DefaultConstructor { file, .. } => file == self.file,
             Source::Initializer(sym) => sym.file == self.file,
@@ -2392,16 +2281,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         bun_sema::direct_eval::position_in_source(&self.c.bound(file).inserted, place).saturating_sub(ahead) + 1
     }
 
-    /// A function without a body, which is built later if it is built here.
     pub(crate) fn add_func(&mut self, name: StrId, module: ModuleId, pos: u32, kind: FuncKind, source: Source) -> FuncId {
         let id = self.add_header(name, module, pos, kind, source);
-        if self.builds(source) {
+        if self.owns_source(source) {
             self.work.push_back(id);
         }
         id
     }
 
-    /// The function of the source, of which nothing need be known: closures of it are expected and nothing more. See `Function::func`.
     pub(crate) fn forward_declare_function(&mut self, file: FileId, func: FnId) -> FuncId {
         if let Some(&known) = self.funcs.get(&(file, func)).or_else(|| self.named_functions.get(&(file, func))) {
             return known;
@@ -2438,7 +2325,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// Builds the functions that have been declared, and those that come up on the way. Those of a class wait for its declaration.
     fn build_functions(&mut self) {
         loop {
             while let Some(func) = self.work.pop_front() {
@@ -2458,32 +2344,43 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         file == self.file && func != root && hir[root].start <= hir[func].start && hir[func].start < self.c.end_of_fn(file, root)
     }
 
+    pub(crate) fn index_activation_layout(&mut self, key: Activation) {
+        let hir = self.hir(self.file);
+        let start = match self.c.environment_activation(self.file, key) {
+            Activation::Call(func) | Activation::Expression(func) => hir[func].start,
+            Activation::Iteration(stmt) | Activation::Block(stmt) => hir[stmt].start,
+            Activation::Class(class) => hir[class].start,
+            Activation::Partition(_) => return,
+        };
+        self.activation_layout_positions.insert((start, key));
+    }
+
     fn build_untyped_clone(&mut self, id: FuncId) {
         let Source::Function { file, func: root, class, .. } = self.sources[id.idx()] else { return };
         let hir = self.hir(file);
         let (start, end) = (hir[root].start, self.c.end_of_fn(file, root));
         let is_within = |pos: u32| start <= pos && pos < end;
-        let is_in_nest = |activation: &Activation| match *activation {
-            Activation::Call(func) | Activation::Expression(func) => is_within(hir[func].start),
-            Activation::Iteration(stmt) | Activation::Block(stmt) => is_within(hir[stmt].start),
-            Activation::Class(class) => is_within(hir[class].start),
-            Activation::Partition(_) => false,
-        };
         let is_inner = |key: &(FileId, FnId)| key.0 == file && key.1 != root && is_within(hir[key.1].start);
         let mut undo = Box::<Undo>::default();
-        for key in self.funcs.keys().copied().filter(is_inner).collect::<Vec<_>>() {
-            undo.funcs.push((key, self.funcs.remove(&key)));
-        }
-        for key in self.named_functions.keys().copied().filter(is_inner).collect::<Vec<_>>() {
-            undo.named_functions.push((key, self.named_functions.remove(&key)));
-        }
-        for key in self.activation_layouts.keys().copied().collect::<Vec<_>>() {
-            if is_in_nest(&self.c.environment_activation(file, key)) {
-                undo.activation_layouts.push((key, self.activation_layouts.remove(&key)));
+        let functions_in_nest = self.c.functions_starting_within(file, start, end);
+        for key in functions_in_nest.iter().map(|&(_, func)| (file, func)).filter(|key| key.1 != root) {
+            if let Some(declared) = self.funcs.remove(&key) {
+                undo.funcs.push((key, Some(declared)));
+            }
+            if let Some(named) = self.named_functions.remove(&key) {
+                undo.named_functions.push((key, Some(named)));
             }
         }
-        for key in self.this_bindings.keys().copied().filter(|&func| is_within(hir[func].start)).collect::<Vec<_>>() {
-            undo.this_bindings.push((key, self.this_bindings.remove(&key)));
+        let first_activation = Activation::Call(FnId(0));
+        for (_, key) in self.activation_layout_positions.range((start, first_activation)..(end, first_activation)).copied().collect::<Vec<_>>() {
+            if let Some(layout) = self.activation_layouts.remove(&key) {
+                undo.activation_layouts.push((key, Some(layout)));
+            }
+        }
+        for &(_, func) in functions_in_nest {
+            if let Some(layout) = self.this_bindings.remove(&func) {
+                undo.this_bindings.push((func, Some(layout)));
+            }
         }
         self.untyped_clone_root = Some(root);
         if class.is_some() || matches!(hir[root].kind, hir::FnKind::Method | hir::FnKind::Setter) {
@@ -2499,10 +2396,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         self.untyped_clone_root = None;
         let undo = *self.undo.take().unwrap_or_default();
-        for (key, _) in undo.funcs.iter().filter(|noted| is_inner(&noted.0)) {
+        for (key, _) in undo.funcs.iter().filter(|recorded| is_inner(&recorded.0)) {
             self.funcs.remove(key);
         }
-        for (key, _) in undo.named_functions.iter().filter(|noted| is_inner(&noted.0)) {
+        for (key, _) in undo.named_functions.iter().filter(|recorded| is_inner(&recorded.0)) {
             self.named_functions.remove(key);
         }
         restore_entries(&mut self.funcs, undo.funcs);
@@ -2513,12 +2410,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         restore_entries(&mut self.parameter_slots, undo.parameter_slots);
     }
 
-    /// Every class that the file declares is defined by its fragment, also one that is declared in code that the build leaves out: a type
-    /// in another file may mention it. The functions of such a class stay without a body.
     fn define_file_classes(&mut self) {
         let (hir, bound) = (self.hir(self.file), self.c.bound(self.file));
         for class in (0..hir.classes.len() as u32).map(ClassId) {
-            // The parser can leave a node that nothing refers to, which has no symbol.
             if !hir[class].flags.contains(hir::Flags::AMBIENT) && bound.class_symbol[class.idx()].is_some() {
                 let info = self.define_class(self.file, class);
                 self.resolve_field_types(info.layout);
@@ -2526,8 +2420,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// A class of another file that has been looked into is defined in full, so that the link can compare it with what its file says.
-    /// What a class extends has the smaller number, and is looked into with it.
     fn define_referenced_classes(&mut self) {
         let mut classes: Vec<(LayoutId, (FileId, ClassId))> = self.classes.iter().map(|(&class, info)| (info.layout, class)).collect();
         classes.sort_unstable_by(|a, b| b.0.cmp(&a.0));
@@ -2540,7 +2432,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// What the checker has noted since this was last asked for.
     fn take_notes(&mut self) -> Notes {
         let c = &mut *self.c;
         c.take_notes_recorded().renamed(|ty| {
@@ -2570,14 +2461,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             self.c.prototype_property_names_in(file, &mut names);
             prototype_property_names = names.into_iter().map(|name| self.str(name)).collect();
             let stores = self.c.method_stores_in(file);
-            method_stores = stores.into_iter().filter_map(|store| store.renamed(|ty| Some(self.keep(ty)))).collect();
+            method_stores = stores.into_iter().filter_map(|store| store.renamed(|ty| Some(self.retain_type(ty)))).collect();
             for (by, flow) in self.c.number_flows_in(file) {
                 let func = match by {
                     CodeOwner::Module => self.module_bodies.get(&file).or_else(|| self.evaluations.get(&file)).copied(),
                     CodeOwner::Function(func) => self.funcs.get(&(file, func)).map(|id| self.typed_bodies.get(id).unwrap_or(id)).copied(),
                     CodeOwner::ClassConstructor(class) => self.classes.get(&(file, class)).map(|info| info.ctor),
                 };
-                // A function in code that is cut is not translated, and what is cut of a body does not run.
                 let Some(func) = func.filter(|func| func.is_some()) else { continue };
                 let flow = flow.renamed(|name| self.str(name));
                 if let Some(body) = &mut self.bodies[func.idx()]
@@ -2590,7 +2480,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if file != NO_FILE {
             self.c.record_escapes_in(file);
         }
-        // What has come up outside of any function goes with the evaluation of the module.
         let (notes, mut problems) = (self.take_notes(), std::mem::take(&mut self.problems));
         if let Some(&evaluation) = self.evaluations.get(&file)
             && let Some(body) = &mut self.bodies[evaluation.idx()]
@@ -2629,7 +2518,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 body.notes_for_unknown_callers = notes;
             }
         }
-        // By layout. `None`: the layout is only named.
         let mut layout_notes: Vec<Option<Option<Box<Notes>>>> = Vec::with_capacity(self.out.layouts.len());
         let mut identities: Vec<Option<Identity>> = Vec::with_capacity(self.out.layouts.len());
         for layout in (0..self.out.layouts.len()).map(LayoutId::new) {
@@ -2643,7 +2531,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 is_held.then(|| Box::new(self.take_notes()))
             }));
             let ty = self.layout_types.get(&layout).copied();
-            identities.push(ty.map(|ty| self.keep(ty)));
+            identities.push(ty.map(|ty| self.retain_type(ty)));
         }
 
         let of_file = self.shared.builtin_functions.list.iter().filter(|function| function.file == file);
@@ -2731,10 +2619,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             false_value: V::NONE,
             envs: Vec::new(),
             this: V::NONE,
-            // An arrow function sees the `this` of the code around it, which it has a copy of.
             this_type: match seen {
                 Receiver::Function(_) | Receiver::Instance(_) => self.receiver_ty(seen),
-                Receiver::None | Receiver::Static(_) => fit::Ty {
+                Receiver::None | Receiver::Static(_) => coerce::Ty {
                     id: self.out.funcs[id.idx()].declared_this_type,
                     checked: self.signatures.get(&id).and_then(|signature| signature.this).unwrap_or(TypeId::UNRESOLVED),
                 },
@@ -2773,32 +2660,35 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             fitted: FxHashMap::default(),
             nullish_after_cast: FxHashSet::default(),
             is_coercing_fresh_graph: false,
-            handed_back: FxHashSet::default(),
+            handed_back: Versioned::default(),
+            unchanged_by_coercion: None,
+            coercion_idempotence: coerce::Idempotence::Unknown,
             calls_in_tail_position: Vec::new(),
             skip_close_if: FxHashMap::default(),
-            uncoercible_objects: FxHashMap::default(),
-            narrowed: FxHashMap::default(),
+            uncoercible_objects: Versioned::default(),
+            narrowed: Versioned::default(),
             sink: None,
             expected: FxHashMap::default(),
             first_stores: Vec::new(),
+            owes_initialize_without_stores: false,
             is_storing_default: false,
             first_spans: FxHashMap::default(),
             last_spans: FxHashMap::default(),
             operand_spans: Vec::new(),
         };
-        // What comes before its first statement.
         fx.b.pos = fx.b.func.pos;
-        // `function Point(this: Point, x: number) { .. }`: whoever constructs with it, knowing it or not, gets an object of that type.
         if func.is_some() && matches!(self.hir(file)[func].kind, hir::FnKind::Decl | hir::FnKind::Expr) && self.hir(file)[func].this_param.is_some() {
             let this = self.or_anything(fx.this_type.id);
             if let Some(layout) = self.out.tys.get(this).single_layout()
                 && self.out.layouts[layout.idx()].kind == ir::LayoutKind::Record
             {
-                self.record_allocation(layout);
-                fx.first_stores = self.c.first_stores_for(file, func);
+                if self.c.allocates_for_unknown_callers(file, func) {
+                    self.record_allocation(layout);
+                    fx.first_stores = self.c.first_stores_for(file, func);
+                    fx.owes_initialize_without_stores = fx.first_stores.is_empty();
+                }
             }
             let views = self.layout_types_in(this);
-            // Of several types: nobody can say which of them `new` makes. Whoever constructs with it and does not say what it makes hands it an ordinary object, which stays what it is.
             if views.len() > 1 {
                 self.c.set_current_site(file, fx.b.pos);
                 for &view in &views {
@@ -2820,7 +2710,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 if self.host_may_request_modules() && self.shared.entry_points().iter().any(|files| files.first() == Some(&file)) {
                     self.files_by_path(file);
                 }
-                // Evaluated once, after its dependencies, by whichever importer comes first.
                 let name = self.out.strs.intern(b"evaluated");
                 let flag = self.add_global(name, file, Ty::NONE, GlobalKey::ModuleInternal(file, "evaluated"));
                 self.out.globals[flag.idx()].initialization = ir::Initialization::Undefined;
@@ -2835,7 +2724,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let evaluation = self.add_global(name, file, Ty::NONE, GlobalKey::ModuleInternal(file, "evaluation"));
                 self.out.globals[evaluation.idx()].initialization = ir::Initialization::Undefined;
                 fx.b.switch_to(done);
-                // `false`: evaluation threw, and `evaluation` holds the value.
                 let no = self.emit(&mut fx, Op::Bool(false));
                 let has_thrown = self.emit(&mut fx, Op::StrictEq { a: known, b: no });
                 let (thrown, evaluated) = (fx.b.new_block(), fx.b.new_block());
@@ -2851,7 +2739,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let yes = self.emit(&mut fx, Op::Bool(true));
                 self.emit(&mut fx, Op::GlobalSet(flag, yes));
                 let body = if self.has_lazy_module_state(file) { self.deferred_module_function(file, Source::ModuleSettling(file)) } else { self.body_of(file) };
-                // The handler watches calls, and the code of the module is under none: under a handler a block ends at whatever may throw.
                 let throwing = fx.b.new_block();
                 fx.handlers.push(throwing);
                 self.emit_dependencies(&mut fx, file);
@@ -2959,12 +2846,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 fx.b.switch_to(due);
                 let undefined = self.emit(&mut fx, Op::Undefined);
                 let is_first = self.emit(&mut fx, Op::StrictEq { a: known, b: undefined });
-                let (first, kept) = (fx.b.new_block(), fx.b.new_block());
-                self.branch(&mut fx, is_first, first, kept);
+                let (first, retained) = (fx.b.new_block(), fx.b.new_block());
+                self.branch(&mut fx, is_first, first, retained);
                 fx.b.seal(first);
-                fx.b.seal(kept);
+                fx.b.seal(retained);
                 let evaluation = self.evaluation_function(file);
-                fx.b.switch_to(kept);
+                fx.b.switch_to(retained);
                 if let Some(func) = evaluation {
                     self.emit_throwing(&mut fx, Op::CallDirect { func, args: ir::Args::new() });
                 }
@@ -3017,11 +2904,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             | if fx.is_typed { ir::func_flags::IS_TYPED } else { 0 }
             | if self.shared.is_prelude(fx.file) { ir::func_flags::IS_BUILTIN } else { 0 }
             | if self.is_builtin_file(fx.file) { ir::func_flags::IS_IN_BUILTIN_MODULE } else { 0 };
-        let noted = std::mem::take(&mut fx.first_spans);
+        let recorded = std::mem::take(&mut fx.first_spans);
         let mut of_operands = std::mem::take(&mut fx.operand_spans);
         let mut built = fx.b.finish();
-        if !noted.is_empty() {
-            built.spans = crate::audit::settle(&built, &noted);
+        if !recorded.is_empty() {
+            built.spans = crate::audit::settle(&built, &recorded);
             built.spans.append(&mut of_operands);
         }
         if role == Role::Second {
@@ -3050,7 +2937,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 spans
             }
             Source::DefaultConstructor { file, class } => self.instance_field_spans(file, class),
-            // What a constant cuts out of the initializer is noted with this function, not with the body of the module.
             Source::Initializer(sym) => match self.c.lazy_variable_declaration(sym) {
                 Some((file, d)) => {
                     let initializer = &self.hir(file)[self.hir(file)[d].init];
@@ -3080,7 +2966,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             dropped: std::mem::take(&mut self.dropped),
             class: class.and_then(|class| self.classes.get(&class)).map_or(LayoutId::NONE, |class| class.layout),
             declares: std::mem::take(&mut self.declares),
-            classes_as_values: std::mem::take(&mut self.classes_as_values),
+            classes_as_values: {
+                self.classes_as_values_set.clear();
+                std::mem::take(&mut self.classes_as_values)
+            },
             implicit_stores: std::mem::take(&mut self.implicit_stores),
             number_flows: Vec::new(),
             notes: self.take_notes(),
@@ -3092,7 +2981,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.c.translate_untyped_clone(None);
     }
 
-    /// The variables of a file that another function than the one that declares them refers to, or another file.
     pub(crate) fn captured(&mut self, file: FileId) -> Rc<FxHashSet<Sym>> {
         if let Some(known) = self.captured.get(&file) {
             return known.clone();
@@ -3105,7 +2993,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         for (i, e) in hir.exprs.iter().enumerate() {
             let hir::ExprKind::Ident(name) = e.kind else { continue };
             let e = hir::ExprId(i as u32);
-            // The operand of a `typeof` in a type is not evaluated.
             if matches!(bound.expr_parent[e.idx()], bun_sema::bind::Parent::None) || bound.is_in_type_query(e) {
                 continue;
             }
@@ -3133,7 +3020,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 }
             }
             let Some(declared_in) = declared_in else { continue };
-            // The initializer of a lazy variable is run by a function of its own.
             if self.enclosing_function(file, e) != declared_in || self.is_in_instance_field_initializer(file, e) || declared_in.is_none() && self.lazy_variable_declared_at(file, hir[e].pos).is_some() {
                 captured.insert(sym);
             }
@@ -3171,7 +3057,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         for &(_, export) in self.files.exports_of_module(self.files.file_symbol(file)) {
             captured.insert(self.value_symbol(export));
-            // `var a = ..; export default a`: other modules read `a`.
             captured.insert(self.export_value_symbol(export));
         }
         let captured = Rc::new(captured);

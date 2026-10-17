@@ -1109,7 +1109,7 @@ impl Checker<'_, '_> {
         let (options, hir) = (&self.p.files.options, self.hir(file));
         let class = &hir[c];
         if !options.strict_null_checks
-            || !options.strict_property_initialization
+            || !self.check_options(file).strict_property_initialization
             || hir.kind == FileKind::Declaration
             || class.flags.contains(Flags::AMBIENT)
         {
@@ -1463,7 +1463,7 @@ impl Checker<'_, '_> {
         let (options, module) = (&files.options, files.module(file));
         !(options.no_emit
             || options.emit_declaration_only
-            || options.verbatim_module_syntax
+            || files.check_options(file).verbatim_module_syntax
             || !matches!(hir.kind, FileKind::Ts | FileKind::Tsx)
             || hir.is_js
             || module.is_from_external_library)

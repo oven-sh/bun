@@ -1,100 +1,36 @@
-//! The soundness closure: which layouts are subtypes of which supertypes.
-//!
-//! **Subtypes by flow, not by fit.** `S(V)`, the layouts whose objects can be in a place of type `V`, is the least fixed point over the
-//! flows of the program. A flow is an edge between two layouts:
-//!
-//! * ALLOCATION: `L` is in `S(L)` if a site makes it or plain data is copied into it.
-//! * DECLARED: `L` goes to every supertype it declares, `extends` or a part of an intersection. Untested.
-//! * UPCAST `a -> b`: a test has been left out (`Checker::record_upcast`). `S(b)` takes all of `S(a)`.
-//! * CAST `a -> b`: `as`, a place whose type is written down, a type guard (`Checker::record_cast`). `S(b)` takes those of `S(a)` that pass, the
-//!   cast may turn an object into a `b` where it is, and it admits what cannot become one: `Subtypes::verdict`.
-//! * TEST `a -> b`: every other `Coerce` operation, which only makes sure. `S(b)` takes those of `S(a)` that fit, and nothing else comes of it.
-//! * FIELDS: `L` in `S(V)` makes tests between the layouts of the type of `L.f` and those of `V.f`, where the two differ: a read through the
-//!   one finds what has been stored through the other, and is tested. Only types without a layout goes over them: the type of a field is
-//!   vouched for (phase B), which brings every layout that fits. One general type of a field, `props: P`, would bring every layout of
-//!   the program to a test against every other type of that field.
-//!
-//! A supertype that ADMITS UNTYPED OBJECTS takes any object, as far as the engine goes: its accesses test the shape, and its set is a list
-//! of the shapes worth testing for. So nothing is asked at a test into it. What is in a place of it is not known, then: the target of
-//! a cast or a test out of it is vouched for.
-//!
-//! Only at a cast is the relation asked, about a pair that a flow has brought together, and only once the names and the constants of the
-//! two have been compared. So the cost follows the flows and the sizes of the sets. Nothing is a matrix, and no question is asked about
-//! all pairs.
-//!
-//! What a cast makes of a layout `L` that gets to it is a function of `L` and the target `b` alone (`Subtypes::verdict`), so the system is
-//! monotone: what comes of it does not depend on the order of the steps or on who answers.
-//!
-//! It goes in ROUNDS. A round propagates what is new over the untested edges, collects the pairs that have come together at casts, and
-//! hands them out as questions, which any number of checkers answer. The answers start the next round.
-//!
-//! **Phase A** is that. **Phase B is a safety net.** A value that the operations say nothing of and the checker has a type for, an element, what
-//! an indirect or a generic call yields, is VOUCHED for by that type. Whether every flow into such a place has been noted does not
-//! show before the program runs: function types, instantiated type parameters and containers carry flows within them. So the
-//! target of a vouched cast is completed by fit, from posting lists by name and by constant, never from all pairs. Every yes is a
-//! layout that FITS, BUT NO FLOW brings it: counted. Here to fit is to be assignable as the language
-//! has it, which an honest flow is. That reference fields do not count (`Checker::has_same_fields`) is for a cast that meets a canonical
-//! layout, which phase A sees, and would make every two layouts with the same field names subtypes of each other. A target that requires no live field has no
-//! posting list to go by, and nearly everything fits it: it admits untyped objects instead, which costs its accesses a test of the
-//! shape. So does one that more than `MAX_CANDIDATES` layouts may fit by their names and constants: `{ color: string }` where a thousand
-//! literals `{ color: "red" }` are each a layout of their own, `{ id: string }` in a program with ten thousand layouts that have an `id`, times
-//! eighty thousand targets. A SUPERTYPE THAT FITS BRINGS ITS WHOLE SET: if `Node` is assignable to the target, whatever is in a place of type `Node`
-//! may get there. So a yes is an untested edge, and a target with too many candidates first asks about the supertypes with the largest
-//! sets: one question in place of six hundred. When the list is empty or understood, phase B goes.
-//!
-//! **A budget.** The tables grow with the flows, and a program may have flows that make them grow beyond all use: `Subtypes::is_over_budget`.
-//! Then nothing is followed any further, the link fails, and `Subtypes::report` says on stderr what has grown, in numbers alone.
-
 use super::callees::Callee;
 use super::creation::IndexedCreations;
 use super::escape_closure::Escapes;
 use super::first_stores::IndexedConstructions;
-use super::flows::{Answer, Membership, Place, Question, Reach, UntypedReason};
+use super::flows::{SubtypeAnswer, Membership, Place, SubtypeQuery, LayoutUsage, UntypedReason};
 use crate::atom::Atom;
 use crate::types::TypeId;
 use crate::util::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
+use std::sync::Arc;
 use std::time::Instant;
 
-/// An allocation site makes it.
 pub(super) const HAS_SITE: u16 = 1;
-/// Plain data is copied into it.
 pub(super) const IS_COPIED: u16 = 1 << 1;
-/// Some field of it is a set of constants.
 pub(super) const HAS_CONSTANTS: u16 = 1 << 2;
-/// Some field of it is one constant: a discriminant that says which layout an object has.
 pub(super) const IS_CONCRETE: u16 = 1 << 3;
-/// The type of the objects of a class: nothing becomes one but by its constructor.
 pub(super) const IS_INSTANCE: u16 = 1 << 4;
-/// It has type parameters: generic code makes it or looks at objects as it.
 pub(super) const IS_GENERIC: u16 = 1 << 5;
-/// A coercion made it: its names say nothing of what is of it.
 pub(super) const IS_COERCION_RESULT: u16 = 1 << 6;
-/// As the relation has it: all its properties are optional, dead ones too, and it has no index signature. It takes what shares a name.
 pub(super) const IS_WEAK: u16 = 1 << 7;
 pub(super) const HAS_INDEX_SIGNATURE: u16 = 1 << 8;
-/// A layout that declares it as a supertype `IS_CONCRETE`.
 const HAS_CONCRETE_SUBTYPE: u16 = 1 << 9;
-/// All its properties are primitives, stored by the program or not: no read through it reaches another object.
 pub(super) const IS_FLAT: u16 = 1 << 10;
-/// The program tells it from a layout that an object has to be made as: `Subtypes::mark_distinguished_layouts`. It admits nothing for being flat or for
-/// requiring nothing.
 const IS_DISTINGUISHED: u16 = 1 << 11;
-/// All its properties are primitives or functions (so whatever `IS_FLAT`): nothing has to be made of an object for it. It says one thing only: what is untyped and held to it is not copied into it. It
-/// is not taken for flat anywhere else: a type with methods has to be made, and types without a layout does not pass a cast to it.
 pub(super) const IS_FLAT_BUT_FOR_FUNCTIONS: u16 = 1 << 12;
 pub(super) const MAY_LACK_CAPACITY: u16 = 1 << 13;
 pub(super) const IS_PLAIN_DATA: u16 = 1 << 14;
 pub(super) const IS_PLAIN_DATA_OR_FUNCTIONS: u16 = 1 << 15;
 
-/// Phase B asks about no more layouts than this for one target. Of a target that the program tells apart from others, or the type of the objects
-/// of a class, which cannot take any object instead: than that.
 const MAX_CANDIDATES: usize = 4096;
 const MAX_CANDIDATES_PER_CREATED_TYPE: usize = 4096;
 const MANY_CANDIDATES: usize = 64;
-/// A supertype with as many subtypes is asked about first where there are too many candidates.
 const LARGE: usize = 8;
-/// What fits brings a target no more subtypes than this in all. `Element<any>` fits every `Element<P>`, and brings all the others to each.
 const MAX_STRUCTURAL_SUBTYPES: usize = 1024;
 const BITSET_THRESHOLD: usize = 128;
 const MAX_BITSET_WORDS: usize = 1 << 22;
@@ -105,36 +41,28 @@ const MAX_PAIRS_WAITING: usize = 100_000_000;
 const MAX_QUERIES: usize = 30_000_000;
 const MAX_TESTS: usize = 20_000_000;
 
-/// What is compared before the relation is asked. Names are the numbers of atoms. Every list is ascending.
 #[derive(Default)]
 pub(super) struct Facts {
     pub flags: u16,
-    /// The names of all its properties.
     pub declared: Box<[u32]>,
-    /// Of those: what some code of the program stores.
     pub live: Box<[u32]>,
-    /// Of those: what an object cannot be without, and not every object has.
     pub required: Box<[u32]>,
-    /// By name of a property whose type is nothing but constants and nil: the constants.
     pub constants: Box<[(u32, u64)]>,
-    /// The names of the properties whose type may stand for a constant: `any`, `never`, a type parameter.
     pub open: Box<[u32]>,
     pub hidden: Box<[u32]>,
     pub declared_as_bits: u64,
     pub live_as_bits: u64,
     pub required_as_bits: u64,
-    /// What kind of type it is, in a word that says nothing of the program: for `Subtypes::report`.
     pub kind: &'static str,
 }
 
 impl Facts {
-    /// Whether it takes any object for what it is by itself: see `IS_FLAT`, and phase B on a target that requires no live field.
     pub(super) fn accepts_by_structure(&self) -> bool {
         self.flags & (IS_DISTINGUISHED | IS_INSTANCE) == 0 && (self.flags & IS_FLAT != 0 || self.required.is_empty())
     }
 }
 
-/// `--aot-explain=progress`: says on stderr where the closure is. The link of a large program is silent for minutes otherwise.
+#[derive(Clone)]
 pub(super) struct Clock {
     is_verbose: bool,
     print_line: Option<fn(std::fmt::Arguments<'_>)>,
@@ -147,7 +75,7 @@ impl Clock {
         Clock { is_verbose: print_line.is_some(), print_line, started: Instant::now(), last: Instant::now() }
     }
 
-    pub(super) fn say(&mut self, what: std::fmt::Arguments<'_>) {
+    pub(super) fn log_progress(&mut self, what: std::fmt::Arguments<'_>) {
         if let Some(print_line) = self.print_line {
             print_line(format_args!("aot: progress: {:.1} s, {:.1} s since the last line: {what}", self.started.elapsed().as_secs_f64(), self.last.elapsed().as_secs_f64()));
         }
@@ -155,82 +83,58 @@ impl Clock {
     }
 }
 
-/// How the translated program describes the fields of the views: what the engine compares where a field is read.
 pub struct FieldTypes {
-    /// By view: the name and the type of each live field, both as numbers of the program, ascending by name.
     pub fields_by_layout: Vec<Vec<(u32, u32)>>,
-    /// The types of the static fields of classes.
     pub static_field_types: Vec<u32>,
-    /// By type: the views in it, at any depth. Ascending.
     pub layouts_in_type: Vec<Vec<u32>>,
-    /// The views that are the parts of one union, for every union of several. Each ascending.
     pub together: Vec<Vec<u32>>,
-    /// By type: the numbers in `together` of the unions in it, at any depth. Ascending.
     pub unions_in_type: Vec<Vec<u32>>,
-    /// The types that a cast leads to that makes a copy of plain data. Ascending.
     pub copy_targets: Vec<u32>,
 }
 
-/// Why a layout is a subtype of a supertype: the first reason that was come by. The order of the steps is fixed, so it is always the same.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Cause {
-    /// An allocation site, or a copy of plain data. For types without a layout: it is let in here.
     Birth,
-    /// A shape transition from the layout makes it.
     Transition(u32),
-    /// The subtype of the view, which declares this one as a supertype.
     Declared(u32),
-    /// Over the upcast of that number.
     Upcast(u32),
-    /// It passes a cast from the view.
     Cast(u32),
-    /// A cast from the view admits it as it is: the target is abstract, or a sibling that it cannot become.
     Accepted(u32),
-    /// The supertype holds the layout, which becomes this one and stays where it is.
     Converted(u32),
-    /// Phase B: the view fits, this layout or a supertype of it, but no flow brings what is in a place of it.
     Fit(u32),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Verdict {
-    /// The answer is on its way: the number of the pair.
     Asked(u32),
     Refused,
     Passes,
     Accepted,
-    /// `fits`: it is of the type as it is, too, so it passes a test.
     Becomes { fits: bool },
 }
 
-/// A layout and a cast target that have come together, and the questions about them.
+#[derive(Clone)]
 struct Pair {
     member: u32,
     target: u32,
-    /// The view that the cast is from. `NONE`: phase B.
     from: u32,
-    /// It is a cast, and no mere test.
     may_convert: bool,
-    /// Where the answer is to whether the member is of the type of the target, and to the converse. The top bit: among `own_queries`.
     fits: u32,
     structural_fit: u32,
 }
 
 const NONE: u32 = u32::MAX;
-/// In place of the number of an answer: it is known to be yes.
 const YES: u32 = u32::MAX - 1;
 const NOT_KNOWN: u32 = u32::MAX - 2;
-/// In place of the number of an upcast: phase B has found that the one fits the other.
 const FITS: u32 = u32::MAX - 1;
 const OWN: u32 = 1 << 31;
 
-/// Phase B: the layouts that are allocated or may yet be, by what the target of a vouched cast is compared by. Each list ascending.
+#[derive(Clone)]
 struct Candidates {
     by_name: FxHashMap<u32, Vec<u32>>,
     by_open: FxHashMap<u32, Vec<u32>>,
     by_constant: FxHashMap<(u32, u64), Vec<u32>>,
     without_names: Vec<u32>,
-    /// The views with at least `LARGE` subtypes that admit no untyped objects, allocated or not, by name.
     large_by_name: FxHashMap<u32, Vec<u32>>,
 }
 
@@ -240,8 +144,7 @@ enum Phase {
     Completion,
 }
 
-/// The sizes, for whoever wants to know what the link costs.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Sizes {
     pub views: usize,
     pub allocated: usize,
@@ -253,7 +156,7 @@ pub struct Sizes {
     pub rounds: usize,
     pub pairs_met: usize,
     pub pairs_queried: usize,
-    pub questions: usize,
+    pub queries: usize,
     pub memberships: usize,
     pub largest: usize,
     pub structural_without_flow: usize,
@@ -278,7 +181,7 @@ impl Sizes {
             self.rounds,
             self.pairs_met,
             self.pairs_queried,
-            self.questions,
+            self.queries,
             self.memberships,
             self.largest,
             self.transitions,
@@ -291,25 +194,17 @@ impl Sizes {
     }
 }
 
-/// What `Checker::begin_subtypes` has gathered.
 pub(super) struct Gathered {
-    /// The views.
     pub types: Vec<TypeId>,
-    /// For each: the pairs that the relation is queried for where it is the supertype. See `Checker::coercion_target`.
     pub asked_as: Vec<TypeId>,
     pub facts: Vec<Facts>,
-    /// From a view to a supertype it declares.
     pub declared: Vec<(u32, u32)>,
     pub upcasts: Vec<(u32, u32, Place)>,
     pub casts: Vec<(u32, u32)>,
-    /// Those of `casts` that are type guards. Ascending.
     pub guards: Vec<(u32, u32)>,
-    /// Those of `casts` that refuse nothing: `Checker::record_forced_cast`. Ascending.
     pub forced: Vec<(u32, u32)>,
     pub tests: Vec<(u32, u32)>,
-    /// The targets of vouched casts and of casts of what is untyped, each with the first place. Ascending.
     pub vouched: Vec<(u32, Place)>,
-    /// The views that the value of an expression is held to whose type says nothing, themselves and not what they hold. Ascending.
     pub untyped_inflow_sites: Vec<(u32, Place)>,
     pub untyped_inflow_pairs: Vec<(u32, u32)>,
     pub any_inflow_sites: Vec<(u32, Place)>,
@@ -320,12 +215,9 @@ pub(super) struct Gathered {
     pub accepting_when_strict: Vec<bool>,
     pub subtypes_when_strict: Vec<Vec<(u32, Cause)>>,
     pub conversions_when_strict: Vec<Vec<u32>>,
-    pub kind_queries_retry: Vec<(Question, u32, UntypedReason)>,
-    /// What is not laid out and let in: the view, the type of the object if that is known, and why.
+    pub kind_queries_retry: Vec<(SubtypeQuery, u32, UntypedReason)>,
     pub foreign: Vec<(u32, Option<TypeId>, UntypedReason)>,
-    /// Whether a kind of objects that are not laid out is of the type of a view that something untyped is held to. By view.
-    pub kind_queries: Vec<(Question, u32, UntypedReason)>,
-    /// By `Mutation`.
+    pub kind_queries: Vec<(SubtypeQuery, u32, UntypedReason)>,
     pub(super) altered: [MutatedTypes; 2],
     pub fields: FieldTypes,
     pub stored: FxHashSet<Atom>,
@@ -336,72 +228,50 @@ pub(super) struct Gathered {
     pub escapes: Escapes,
 }
 
-/// The objects that a built-in may freeze, or give another prototype: see `mutations.rs`.
 pub(super) struct MutatedTypes {
-    /// The views whose subtypes may be: they are handed to the built-in, or get to a type that is and is no view.
     pub(super) views: Vec<u32>,
-    /// What is handed to it and is no view.
     pub(super) besides: Vec<Facts>,
-    /// And every layout: nothing is said of an operand.
     pub(super) is_untyped: bool,
-    /// And every layout.
     pub(super) is_any_layout: bool,
 }
 
-/// The state between two rounds.
+#[derive(Clone)]
 pub struct Subtypes {
-    gathered: Gathered,
+    gathered: Arc<Gathered>,
+    flow_phase_snapshot: Option<Box<Subtypes>>,
     completes_structurally: bool,
-    kind_queries: Vec<(Question, u32, UntypedReason)>,
+    kind_queries: Vec<(SubtypeQuery, u32, UntypedReason)>,
     subtypes_by_flow: Vec<Vec<u32>>,
-    /// The number of views. A number from here on stands for types without a layout: this one for whatever stays where upcasts take it,
-    /// the next ones for the types in `seen`, which also pass the casts that they fit.
     nodes: u32,
     seen: Vec<TypeId>,
-    /// By supertype: its subtypes, ascending, and why each is one.
     sets: Vec<Vec<u32>>,
     causes: Vec<Vec<Cause>>,
     bits: Vec<Vec<u64>>,
     bitset_words_left: usize,
-    /// By subtype: the supertypes that hold it, in the order they came to.
     holders: Vec<Vec<u32>>,
-    /// By layout: what a cast turns it into. Ascending.
     becomes: Vec<Vec<u32>>,
-    /// By view: the untested edges out of it, each with its cause but for the number of the view.
     untested: Vec<Vec<(u32, u32)>>,
-    /// By view: the targets of the casts and the tests from it, and whether it is a cast.
     tested: Vec<Vec<(u32, bool)>>,
     is_tested: FxHashSet<(u32, u32)>,
-    /// By view: how many of `tested` have been noted. The rest are tests between field types.
     recorded_tests: Vec<u32>,
-    /// By target: the layouts that it refuses, ascending, and those that have come since that list was last put in order.
     refused: Vec<Vec<u32>>,
     newly_rejected: Vec<Vec<u32>>,
-    /// By view: the declared supertypes that an allocation site makes or plain data is copied into, at any distance. Ascending.
     bases: Vec<Option<Box<[u32]>>>,
-    /// What a cast makes of a layout, but for those that the target refuses.
     verdicts: FxHashMap<(u32, u32), Verdict>,
-    answered: FxHashMap<(bool, TypeId, TypeId), Answer>,
-    kind_query_answers: Option<Vec<Answer>>,
-    /// By view: what has come to it since it was last propagated.
+    answered: FxHashMap<(bool, TypeId, TypeId), SubtypeAnswer>,
+    kind_query_answers: Option<Vec<SubtypeAnswer>>,
     fresh: Vec<Vec<u32>>,
     queue: VecDeque<u32>,
     is_queued: Vec<bool>,
-    /// What has met at a cast and what is newly a subtype, while the untested edges are followed.
     met: Vec<(u32, u32, u32, bool)>,
     joined: Vec<(u32, u32)>,
     compared: FxHashSet<(u32, u32)>,
     candidates: Option<Box<Candidates>>,
-    /// Phase B: by target with too many candidates, the supertypes that it has asked about first. Ascending.
     queried_first: FxHashMap<u32, Vec<u32>>,
-    /// By view: it is vouched for. Those that phase B has yet to complete. The views that have come to admit untyped objects since it
-    /// last looked.
     is_trusted: Vec<bool>,
     to_complete: Vec<(u32, Place)>,
     newly_accepting: Vec<u32>,
-    /// By view: something that is not laid out is in its set.
     is_accepting: Vec<bool>,
-    /// By view: `abandon_completion`.
     has_bailed_out: Vec<bool>,
     is_reachable_from_untyped: Vec<bool>,
     escaped_layout_types: Option<Vec<u32>>,
@@ -409,18 +279,15 @@ pub struct Subtypes {
     acceptance_reasons: FxHashMap<(u32, u32), UntypedReason>,
     distinguished_from: Vec<Vec<u32>>,
     pairs: Vec<Pair>,
-    questions: Vec<Question>,
-    own_queries: Vec<Question>,
+    queries: Vec<SubtypeQuery>,
+    own_queries: Vec<SubtypeQuery>,
     phase: Phase,
     sizes: Sizes,
     clock: Clock,
-    /// Since the budget and the time were last looked at.
     steps: usize,
-    /// How many entries `sets`, `refused` and `becomes` have.
     memberships: usize,
     refusals: usize,
     transitions: usize,
-    /// The table that has passed its budget.
     over_budget: Option<&'static str>,
 }
 
@@ -437,43 +304,41 @@ fn have_common_element(a: &[u32], b: &[u32]) -> bool {
     fewer.iter().any(|name| more.binary_search(name).is_ok())
 }
 
-/// The entries of the name.
 fn constants_for_name(constants: &[(u32, u64)], name: u32) -> &[(u32, u64)] {
     let from = constants.partition_point(|entry| entry.0 < name);
     let len = constants[from..].partition_point(|entry| entry.0 == name);
     &constants[from..from + len]
 }
 
-/// Whether the relation has to be asked if what is made as the one is of the type of the other. If not, it is not.
-fn may_be_assignable_to(made: &Facts, view: &Facts) -> bool {
+fn may_be_assignable_to(created: &Facts, view: &Facts) -> bool {
     if view.flags & IS_COERCION_RESULT != 0 {
         return true;
     }
-    if view.required_as_bits & !made.declared_as_bits != 0 {
+    if view.required_as_bits & !created.declared_as_bits != 0 {
         return false;
     }
-    if !is_subset(&view.required, &made.declared) || (view.flags & IS_WEAK != 0 && !view.declared.is_empty() && !made.declared.is_empty() && !have_common_element(&view.declared, &made.declared)) {
+    if !is_subset(&view.required, &created.declared) || (view.flags & IS_WEAK != 0 && !view.declared.is_empty() && !created.declared.is_empty() && !have_common_element(&view.declared, &created.declared)) {
         return false;
     }
     view.constants.chunk_by(|a, b| a.0 == b.0).all(|taken| {
         let name = taken[0].0;
-        if made.declared.binary_search(&name).is_err() {
+        if created.declared.binary_search(&name).is_err() {
             return true;
         }
-        let own = constants_for_name(&made.constants, name);
-        if own.is_empty() { made.open.binary_search(&name).is_ok() } else { own.iter().all(|constant| taken.binary_search(constant).is_ok()) }
+        let own = constants_for_name(&created.constants, name);
+        if own.is_empty() { created.open.binary_search(&name).is_ok() } else { own.iter().all(|constant| taken.binary_search(constant).is_ok()) }
     })
 }
 
-fn may_match_by_constants(made: &Facts, view: &Facts) -> bool {
-    if view.required_as_bits & !made.declared_as_bits != 0 {
+fn may_match_by_constants(created: &Facts, view: &Facts) -> bool {
+    if view.required_as_bits & !created.declared_as_bits != 0 {
         return false;
     }
-    if !is_subset(&view.required, &made.declared) || (view.flags & IS_WEAK != 0 && !view.declared.is_empty() && !made.declared.is_empty() && !have_common_element(&view.declared, &made.declared)) {
+    if !is_subset(&view.required, &created.declared) || (view.flags & IS_WEAK != 0 && !view.declared.is_empty() && !created.declared.is_empty() && !have_common_element(&view.declared, &created.declared)) {
         return false;
     }
     view.constants.chunk_by(|a, b| a.0 == b.0).all(|taken| {
-        let own = constants_for_name(&made.constants, taken[0].0);
+        let own = constants_for_name(&created.constants, taken[0].0);
         own.is_empty() || own.iter().any(|constant| taken.binary_search(constant).is_ok())
     })
 }
@@ -495,9 +360,23 @@ impl Subtypes {
         Subtypes::new_run(gathered, clock, false, FxHashMap::default(), None)
     }
 
-    pub fn restart(self) -> Subtypes {
+    pub fn restart(mut self) -> Subtypes {
         let subtypes_by_flow = self.sets.iter().map(|set| set[..set.partition_point(|&member| member < self.nodes)].to_vec()).collect();
-        let mut gathered = self.gathered;
+        if let Some(mut resumed) = self.flow_phase_snapshot.take() {
+            drop(self.gathered);
+            if resumed.gathered.logs_type_errors {
+                resumed.gathered_mut().kind_queries_retry = self.kind_queries;
+            }
+            resumed.completes_structurally = true;
+            resumed.kind_queries = Vec::new();
+            resumed.answered = self.answered;
+            resumed.kind_query_answers = self.kind_query_answers;
+            resumed.clock = self.clock;
+            resumed.subtypes_by_flow = subtypes_by_flow;
+            resumed.settle();
+            return *resumed;
+        }
+        let mut gathered = Self::into_gathered(self.gathered);
         gathered.kind_queries = self.kind_queries;
         if gathered.logs_type_errors {
             gathered.kind_queries_retry = gathered.kind_queries.clone();
@@ -532,7 +411,7 @@ impl Subtypes {
     }
 
     pub fn restart_final_run(self, opens: LoggingRelaxation) -> Subtypes {
-        let (subtypes_by_flow, mut gathered) = (self.subtypes_by_flow, self.gathered);
+        let (subtypes_by_flow, mut gathered) = (self.subtypes_by_flow, Self::into_gathered(self.gathered));
         if gathered.logging_relaxation == LoggingRelaxation::Nothing {
             gathered.accepting_when_strict = self.is_accepting;
             let nodes = self.nodes;
@@ -546,7 +425,15 @@ impl Subtypes {
         again
     }
 
-    fn new_run(mut gathered: Gathered, clock: Clock, completes_structurally: bool, answered: FxHashMap<(bool, TypeId, TypeId), Answer>, kind_query_answers: Option<Vec<Answer>>) -> Subtypes {
+    fn into_gathered(gathered: Arc<Gathered>) -> Gathered {
+        Arc::into_inner(gathered).expect("a finished run is the only owner of its inputs")
+    }
+
+    fn gathered_mut(&mut self) -> &mut Gathered {
+        Arc::get_mut(&mut self.gathered).expect("a run changes its inputs only before its snapshot is taken")
+    }
+
+    fn new_run(mut gathered: Gathered, clock: Clock, completes_structurally: bool, answered: FxHashMap<(bool, TypeId, TypeId), SubtypeAnswer>, kind_query_answers: Option<Vec<SubtypeAnswer>>) -> Subtypes {
         for facts in gathered.facts.iter_mut() {
             (facts.declared_as_bits, facts.live_as_bits, facts.required_as_bits) = (name_bloom_bits(&facts.declared), name_bloom_bits(&facts.live), name_bloom_bits(&facts.required));
         }
@@ -594,7 +481,7 @@ impl Subtypes {
             acceptance_reasons: FxHashMap::default(),
             distinguished_from: Vec::new(),
             pairs: Vec::new(),
-            questions: Vec::new(),
+            queries: Vec::new(),
             own_queries: Vec::new(),
             phase: Phase::Flows,
             sizes: Sizes::default(),
@@ -604,7 +491,8 @@ impl Subtypes {
             refusals: 0,
             transitions: 0,
             over_budget: None,
-            gathered,
+            gathered: Arc::new(gathered),
+            flow_phase_snapshot: None,
             completes_structurally,
             kind_queries,
             subtypes_by_flow: Vec::new(),
@@ -634,13 +522,11 @@ impl Subtypes {
                 }
             }
         }
-        // ABSTRACT: no field of the layout is one constant, and a layout that declares it as a supertype has such a field. `Declaration`,
-        // `TypeNode`, where a `PropertyAccessExpression` has `kind: SyntaxKind.PropertyAccessExpression`.
         let mut pending: Vec<u32> = (0..self.nodes).filter(|&view| self.gathered.facts[view as usize].flags & IS_CONCRETE != 0).collect();
         while let Some(view) = pending.pop() {
             for at in 0..self.untested[view as usize].len() {
                 let (supertype, number) = self.untested[view as usize][at];
-                let flags = &mut self.gathered.facts[supertype as usize].flags;
+                let flags = &mut self.gathered_mut().facts[supertype as usize].flags;
                 if number == NONE && *flags & HAS_CONCRETE_SUBTYPE == 0 {
                     *flags |= HAS_CONCRETE_SUBTYPE;
                     pending.push(supertype);
@@ -666,9 +552,6 @@ impl Subtypes {
             let (target, place) = self.gathered.vouched[at];
             self.accept_by_structure(target, place);
         }
-        // Nothing has to be made of an object for a type all of whose properties are primitives, and no read through it reaches another object.
-        // So what is untyped is not copied into it. Where only its type vouches for a value, that is held to it as to any other:
-        // what untyped code stores to a field `o: { v: number }` is refused there, and not where `o.v` is read.
         for at in 0..self.gathered.untyped_inflow_sites.len() {
             let (view, place) = self.gathered.untyped_inflow_sites[at];
             if self.flags(view) & (IS_FLAT_BUT_FOR_FUNCTIONS | IS_COERCION_RESULT) == IS_FLAT_BUT_FOR_FUNCTIONS {
@@ -751,7 +634,7 @@ impl Subtypes {
             self.relax_for_logging();
         }
         if self.kind_query_answers.is_none() {
-            self.questions.extend(self.gathered.kind_queries.iter().map(|about| about.0));
+            self.queries.extend(self.gathered.kind_queries.iter().map(|about| about.0));
         }
         self.settle();
     }
@@ -786,8 +669,9 @@ impl Subtypes {
         let opening: Vec<(u32, u32)> = nested_casts.into_iter().filter(|cast| self.is_small_or_data(cast.0, cast.1, MAX_LIVE_FIELDS_TO_RELAX)).collect();
         self.relaxes_if_rejected.extend(opening);
         if !below.is_empty() {
-            self.gathered.casts.extend(below);
-            self.gathered.casts.sort_unstable();
+            let casts = &mut self.gathered_mut().casts;
+            casts.extend(below);
+            casts.sort_unstable();
         }
     }
 
@@ -815,7 +699,7 @@ impl Subtypes {
         }
     }
 
-    fn types_relaxed_with(&self, view: u32, most: usize) -> Option<usize> {
+    fn types_relaxed_with(&self, view: u32, maximum: usize) -> Option<usize> {
         let fields = &self.gathered.fields;
         let (mut reached, mut is_reached) = (vec![view], FxHashSet::default());
         is_reached.insert(view);
@@ -829,7 +713,7 @@ impl Subtypes {
             for to in onward {
                 if !self.gathered.accepting_when_strict[to as usize] && is_reached.insert(to) {
                     reached.push(to);
-                    if reached.len() > most {
+                    if reached.len() > maximum {
                         return None;
                     }
                 }
@@ -838,18 +722,6 @@ impl Subtypes {
         Some(reached.len())
     }
 
-    /// A plain object that a supertype takes as it is, for being flat or for requiring nothing (`Facts::accepts_by_structure`), stays plain. Where the
-    /// program goes on to find out that it is a `Pair`, by a discriminant, and a `Pair` has to be made, the test fails: nothing has made
-    /// one of it. So a supertype takes nothing by its structure
-    /// * if a type guard or a test leads out of it to a layout that has to be made: `as` makes a copy of plain data, so `links as MappedSymbolLinks` is
-    ///   no such thing,
-    /// * if it is a part of a union beside such a layout, where the engine takes any object for the union if it does for a part, and plain data
-    ///   may be held to that union: it is in the target of a cast that makes a copy of plain data, or in the type of a field of a layout
-    ///   that plain data is copied into. `[symbolLinks, type] as const`, whose elements are a `SymbolLinks | Type`, is only ever read,
-    /// * if it is upcast to a supertype that for one of these reasons takes nothing by its structure, which would inherit what it takes:
-    ///   `Leaf`, flat, and what `Leaf | Pair | ..` have in common, `{ tag }`, flat as well.
-    /// Plain data is copied into it as into any layout, and what fits it is found by its names. The type of the objects of a class is none of the
-    /// layouts meant: a plain object never narrows to it, and a cast to it refuses the object whether or not something was made of it before.
     fn mark_distinguished_layouts(&mut self) {
         let nodes = self.nodes as usize;
         let (mut upcast_from, mut cast_from, mut beside): (Vec<Vec<u32>>, Vec<Vec<u32>>, Vec<Vec<u32>>) = (vec![Vec::new(); nodes], vec![Vec::new(); nodes], vec![Vec::new(); nodes]);
@@ -876,58 +748,53 @@ impl Subtypes {
                 beside[view as usize].push(number as u32);
             }
         }
-        // What takes any object for another reason need not be made.
         let mut must_be_allocated: Vec<bool> = self.gathered.facts.iter().map(|facts| facts.flags & (IS_COERCION_RESULT | IS_INSTANCE) == 0 && !facts.accepts_by_structure()).collect();
-        // So does what inherits that over a declaration or an upcast. It is not told from anything, whatever leads out of it.
-        let mut takes_any_object = vec![false; nodes];
+        let mut accepts_any_object = vec![false; nodes];
         let mut inheriting: Vec<u32> = self.gathered.foreign.iter().map(|accept_untyped| accept_untyped.0).collect();
         while let Some(view) = inheriting.pop() {
-            if !std::mem::replace(&mut takes_any_object[view as usize], true) {
+            if !std::mem::replace(&mut accepts_any_object[view as usize], true) {
                 must_be_allocated[view as usize] = false;
                 inheriting.extend(self.untested[view as usize].iter().map(|edge| edge.0));
             }
         }
         let mut pending: Vec<u32> = (0..self.nodes).filter(|&view| must_be_allocated[view as usize]).collect();
-        while let Some(made) = pending.pop() {
-            let mut distinguished_from_it: Vec<u32> = cast_from[made as usize].clone();
-            if self.flags(made) & IS_DISTINGUISHED != 0 {
-                distinguished_from_it.extend_from_slice(&upcast_from[made as usize]);
+        while let Some(created) = pending.pop() {
+            let mut distinguished_from_it: Vec<u32> = cast_from[created as usize].clone();
+            if self.flags(created) & IS_DISTINGUISHED != 0 {
+                distinguished_from_it.extend_from_slice(&upcast_from[created as usize]);
             }
-            for &number in &beside[made as usize] {
+            for &number in &beside[created as usize] {
                 distinguished_from_it.extend_from_slice(&self.gathered.fields.together[number as usize]);
             }
             for other in distinguished_from_it {
-                let facts = &mut self.gathered.facts[other as usize];
-                if !takes_any_object[other as usize] {
+                let facts = &mut self.gathered_mut().facts[other as usize];
+                if !accepts_any_object[other as usize] {
                     facts.flags &= !IS_FLAT_BUT_FOR_FUNCTIONS;
                 }
-                if facts.accepts_by_structure() && !takes_any_object[other as usize] {
+                if facts.accepts_by_structure() && !accepts_any_object[other as usize] {
                     facts.flags = (facts.flags & !IS_FLAT) | IS_DISTINGUISHED;
                     pending.push(other);
                 }
             }
         }
         let mut distinguished_from: Vec<Vec<u32>> = vec![Vec::new(); nodes];
-        for made in 0..nodes {
-            let union_siblings = beside[made].iter().flat_map(|&number| self.gathered.fields.together[number as usize].iter().copied());
-            for other in cast_from[made].iter().copied().chain(union_siblings).filter(|&other| other as usize != made) {
-                distinguished_from[other as usize].push(made as u32);
+        for created in 0..nodes {
+            let union_siblings = beside[created].iter().flat_map(|&number| self.gathered.fields.together[number as usize].iter().copied());
+            for other in cast_from[created].iter().copied().chain(union_siblings).filter(|&other| other as usize != created) {
+                distinguished_from[other as usize].push(created as u32);
             }
         }
         self.distinguished_from = distinguished_from;
     }
 
-    /// The questions of this round, for any checker of the program, if the views are published. None, and none of its own: it is done.
-    pub fn questions(&self) -> &[Question] {
-        &self.questions
+    pub fn queries(&self) -> &[SubtypeQuery] {
+        &self.queries
     }
 
-    /// Those about types that only the checker knows that has gathered the flows.
-    pub fn own_queries(&self) -> &[Question] {
+    pub fn own_queries(&self) -> &[SubtypeQuery] {
         &self.own_queries
     }
 
-    /// The names that count as stored: what `Checker::answer` goes by, and no field by another name needs a slot.
     pub fn stored(&self) -> &FxHashSet<Atom> {
         &self.gathered.stored
     }
@@ -1055,8 +922,6 @@ impl Subtypes {
         }
     }
 
-    /// `target` is vouched for. Nearly everything fits a target that requires no live field, and there is no list to find that in. It takes any
-    /// object instead. Yields whether it does.
     fn accept_by_structure(&mut self, target: u32, at: Place) -> bool {
         let facts = &self.gathered.facts[target as usize];
         if facts.flags & IS_COERCION_RESULT != 0 || !facts.required.is_empty() || !facts.accepts_by_structure() {
@@ -1124,7 +989,6 @@ impl Subtypes {
         new
     }
 
-    /// `members`: ascending. One walk over the set, however many there are.
     fn insert_all(&mut self, view: u32, members: &[u32], cause: Cause) {
         let set = &self.sets[view as usize];
         let new: Vec<u32> = if members.len() * 8 < set.len() {
@@ -1173,7 +1037,6 @@ impl Subtypes {
         }
     }
 
-    /// `member` is newly in the set of `view`.
     fn follow(&mut self, view: u32, member: u32) {
         self.memberships += 1;
         self.tick(1);
@@ -1191,14 +1054,12 @@ impl Subtypes {
         if member != view {
             self.joined.push((member, view));
         }
-        // It stays in the places it is in.
         for at in 0..self.becomes[member as usize].len() {
             let becomes = self.becomes[member as usize][at];
             self.insert(view, becomes, Cause::Converted(member));
         }
     }
 
-    /// Wherever a table grows. Every so often it looks at the budget and at the time.
     fn tick(&mut self, steps: usize) {
         self.steps += steps;
         if self.steps < 1 << 20 || self.over_budget.is_some() {
@@ -1209,29 +1070,27 @@ impl Subtypes {
             (self.memberships > MAX_MEMBERSHIPS, "the number of memberships"),
             (self.sizes.pairs_met > MAX_PAIRS_MET, "the number of pairs met"),
             (self.met.len() > MAX_PAIRS_WAITING, "the number of pairs that wait"),
-            (self.sizes.questions > MAX_QUERIES, "the number of questions"),
+            (self.sizes.queries > MAX_QUERIES, "the number of questions"),
             (self.is_tested.len() > MAX_TESTS, "the number of tests"),
         ];
         self.over_budget = tables.into_iter().find(|table| table.0).map(|table| table.1);
         if self.clock.last.elapsed().as_secs() >= 2 {
-            self.say("on the way");
+            self.log_progress("on the way");
         }
     }
 
-    /// The table that has grown beyond all use, if one has. What `finish` yields then is good for nothing.
     pub fn is_over_budget(&self) -> Option<&'static str> {
         self.over_budget
     }
 
-    /// `--aot-explain=progress`: a line with the sizes of the tables.
-    pub fn say(&mut self, step: &str) {
+    pub fn log_progress(&mut self, step: &str) {
         if !self.clock.is_verbose {
             return;
         }
         const MB: usize = 1 << 20;
         let largest = self.sets.iter().map(Vec::len).max().unwrap_or(0);
         let pending_rejections: usize = self.newly_rejected.iter().map(Vec::len).sum();
-        self.clock.say(format_args!(
+        self.clock.log_progress(format_args!(
             "{step}: round {}, phase {}; {} memberships, the largest set {largest}, {} transitions; {} tests, {} pairs of field types compared; {} pairs met, {} refused, {} verdicts kept, {} asked about in {} questions; waiting: {} views, {} new subtypes, {} pairs met, {} pairs asked about, {} + {} questions; MB: sets {}, refused {}, verdicts {}, tests {}, waiting {}",
             self.sizes.rounds,
             if self.phase == Phase::Flows { "A" } else { "B" },
@@ -1243,26 +1102,24 @@ impl Subtypes {
             self.refusals + pending_rejections,
             self.verdicts.len(),
             self.sizes.pairs_queried,
-            self.sizes.questions,
+            self.sizes.queries,
             self.queue.len(),
             self.joined.len(),
             self.met.len(),
             self.pairs.len(),
-            self.questions.len(),
+            self.queries.len(),
             self.own_queries.len(),
             self.memberships * (size_of::<u32>() * 3 + size_of::<Cause>()) / MB,
             (self.refusals + pending_rejections) * size_of::<u32>() / MB,
             self.verdicts.len() * 24 / MB,
             (self.is_tested.len() * 20 + self.compared.len() * 12) / MB,
-            (self.met.len() * 16 + self.joined.len() * 8 + self.pairs.len() * size_of::<Pair>() + (self.questions.len() + self.own_queries.len()) * size_of::<Question>()) / MB,
+            (self.met.len() * 16 + self.joined.len() * 8 + self.pairs.len() * size_of::<Pair>() + (self.queries.len() + self.own_queries.len()) * size_of::<SubtypeQuery>()) / MB,
         ));
     }
 
-    /// What has grown, in numbers alone: no name and no text of the program is in it.
     fn report(&self) {
         let Some(print_line) = self.clock.print_line else { return };
         let nodes = self.nodes as usize;
-        // Out of the view and into it: declared, upcasts, casts, tests, tests between field types.
         let mut degrees = vec![[0u32; 10]; nodes];
         for from in 0..nodes {
             for &(to, number) in &self.untested[from] {
@@ -1367,8 +1224,6 @@ impl Subtypes {
         report_first("casts and tests out of it", &|view| self.tested[view].len());
         report_first("casts and tests into it", &|view| (degrees[view][7] + degrees[view][8] + degrees[view][9]) as usize);
         report_first("untested edges into it", &|view| (degrees[view][5] + degrees[view][6]) as usize);
-        // Why supertypes admit untyped objects: by the reason where it starts, those that it is the reason of themselves and those that have it
-        // over upcasts, declarations and casts.
         const REASONS: [&str; 9] = ["seen to be let in", "declared in a declaration file", "untyped inflow and a kind that is of the type", "weak", "flat", "too many candidates", "made by coercion", "another", "may lack room"];
         let (mut of_their_own, mut inherited) = ([0usize; 9], [0usize; 9]);
         for view in (0..self.nodes).filter(|&view| self.accepts_untyped(view)) {
@@ -1407,7 +1262,6 @@ impl Subtypes {
         let mut layouts_in_type: Vec<usize> = self.gathered.fields.layouts_in_type.iter().map(Vec::len).collect();
         layouts_in_type.sort_unstable_by_key(|&number| std::cmp::Reverse(number));
         print_line(format_args!("aot: sizes: views in a type: {} in all, in {} types. The first 30: {:?}", layouts_in_type.iter().sum::<usize>(), layouts_in_type.len(), &layouts_in_type[..layouts_in_type.len().min(30)]));
-        // What one layout per structure would save, at the least: the types of the fields are compared as they are.
         for kind in ["an object literal", "a type literal"] {
             let mut by_fields: FxHashMap<&[(u32, u32)], usize> = FxHashMap::default();
             for (view, fields) in self.gathered.fields.fields_by_layout.iter().enumerate().filter(|layout_entry| self.gathered.facts[layout_entry.0].kind == kind) {
@@ -1437,8 +1291,6 @@ impl Subtypes {
         self.propagate_members(&without_fixed_layout, from, to, false);
     }
 
-    /// `members`, ascending, which are in places of the view `from`, get to a cast or a test. Those that the target has or refuses are left
-    /// out here, in one walk over the three lists: nearly all of them, and there are many edges between large sets.
     fn propagate_members(&mut self, members: &[u32], from: u32, to: u32, may_convert: bool) {
         if self.over_budget.is_some() || members.is_empty() || (!may_convert && self.accepts_untyped(to)) {
             return;
@@ -1459,7 +1311,6 @@ impl Subtypes {
             while refuses.get(among_refused).is_some_and(|&other| other < member) {
                 among_refused += 1;
             }
-            // What is not laid out, and of no type that is known, stays where upcasts take it. But see `meet`.
             let may_pass = (member != self.nodes && member != self.other_layout_record_node()) || (may_convert && target.flags & IS_FLAT != 0) || is_forced;
             if is_forced && refuses.get(among_refused) == Some(&member) && has.get(among) != Some(&member) {
                 admitted.push(member);
@@ -1467,7 +1318,6 @@ impl Subtypes {
             if opens && opened_by.is_none() && member < self.nodes && refuses.get(among_refused) == Some(&member) && has.get(among) != Some(&member) {
                 opened_by = Some(member);
             }
-            // What an upcast has brought here before may yet become the target at a cast: `createType(flags) as TypeParameter`.
             let is_new = has.get(among) != Some(&member)
                 || (may_convert && member < self.nodes && target.flags & IS_INSTANCE == 0 && self.gathered.facts[member as usize].live.len() <= target.live.len() && self.becomes[member as usize].binary_search(&to).is_err());
             if is_new && refuses.get(among_refused) != Some(&member) && may_pass && member != to {
@@ -1508,10 +1358,9 @@ impl Subtypes {
         self.refused[target as usize] = merged;
     }
 
-    /// Follows every edge as far as it goes without an answer, and leaves the questions of the next round.
     fn settle(&mut self) {
         loop {
-            self.say("the untested edges");
+            self.log_progress("the untested edges");
             while let Some(view) = self.queue.pop_front() {
                 self.is_queued[view as usize] = false;
                 let mut fresh = std::mem::take(&mut self.fresh[view as usize]);
@@ -1526,7 +1375,6 @@ impl Subtypes {
                 }
                 for at in 0..self.untested[view as usize].len() {
                     let (to, number) = self.untested[view as usize][at];
-                    // That untyped objects get to the one does not show that they get to the other.
                     match number {
                         NONE => self.insert_all(to, &fresh, Cause::Declared(view)),
                         FITS => self.propagate_structural_match(view, to, &fresh[..layouts_among], &fresh_as_bits),
@@ -1540,34 +1388,36 @@ impl Subtypes {
                     self.propagate_members(members, view, to, may_convert);
                 }
             }
-            // The untested edges first: what a declaration or an upcast brings need not be asked about.
-            self.say("the fields of the new subtypes");
+            self.log_progress("the fields of the new subtypes");
             for (member, view) in std::mem::take(&mut self.joined) {
                 self.compare_fields(member, view);
             }
-            self.say("the pairs that have met");
+            self.log_progress("the pairs that have met");
             for (member, from, to, may_convert) in std::mem::take(&mut self.met) {
                 self.meet(member, from, to, may_convert);
             }
             if self.over_budget.is_some() {
-                self.say("over the budget");
+                self.log_progress("over the budget");
                 self.report();
                 self.queue.clear();
                 self.joined.clear();
                 self.met.clear();
                 self.pairs.clear();
-                self.questions.clear();
+                self.queries.clear();
                 self.own_queries.clear();
                 return;
             }
             if self.queue.is_empty() && self.joined.is_empty() && self.met.is_empty() {
-                if !self.pairs.is_empty() || !self.questions.is_empty() || !self.gathered.kind_queries.is_empty() {
-                    self.say("the questions of the round");
-                    if self.questions.is_empty() && self.own_queries.is_empty() {
-                        self.say("the answers of the other checkers");
+                if !self.pairs.is_empty() || !self.queries.is_empty() || !self.gathered.kind_queries.is_empty() {
+                    self.log_progress("the questions of the round");
+                    if self.queries.is_empty() && self.own_queries.is_empty() {
+                        self.log_progress("the answers of the other checkers");
                         self.advance(&[], &[]);
                     }
                     return;
+                }
+                if self.phase == Phase::Flows && !self.completes_structurally {
+                    self.flow_phase_snapshot = Some(Box::new(self.clone()));
                 }
                 self.collect_completion_targets();
                 if self.to_complete.is_empty() {
@@ -1576,13 +1426,12 @@ impl Subtypes {
                     }
                     return;
                 }
-                self.say("phase B");
+                self.log_progress("phase B");
                 self.complete();
             }
         }
     }
 
-    /// `member` is a subtype of `view`: the value stored to a field through the one is read through the other.
     fn compare_fields(&mut self, member: u32, view: u32) {
         if self.over_budget.is_some() {
             return;
@@ -1605,35 +1454,29 @@ impl Subtypes {
         }
     }
 
-    /// `member`, which is in places of the view `from`, gets to a cast to `to`, or to a mere test.
     fn meet(&mut self, member: u32, from: u32, to: u32, may_convert: bool) {
         let is_there = self.bitset_contains(to, member).unwrap_or_else(|| self.sets[to as usize].binary_search(&member).is_ok());
-        // Phase B asks about a supertype that is there, too: for what it brings.
         if self.over_budget.is_some() || (is_there && from != NONE && (!may_convert || member >= self.nodes)) {
             return;
         }
         self.tick(1);
         self.sizes.pairs_met += 1;
-        // A type all of whose properties are primitives admits untyped objects wherever the source of a cast to it does. Nothing has to be
-        // made of such an object, and nothing that is read through the type has to be held to a layout: `Pick<CompilerOptions, "target">`.
         if member == self.nodes || member == self.logging_untyped_node() || member == self.other_layout_record_node() {
             self.insert(to, member, Cause::Cast(from));
             return;
         }
-        // Phase B asks for itself, and what it is told says nothing of what a cast makes of the pair.
         if from == NONE {
-            let (made, view) = (&self.gathered.facts[member as usize], &self.gathered.facts[to as usize]);
-            let is_rejected_by_language = made.hidden.iter().any(|name| view.declared.binary_search(name).is_ok() && view.hidden.binary_search(name).is_err())
+            let (created, view) = (&self.gathered.facts[member as usize], &self.gathered.facts[to as usize]);
+            let is_rejected_by_language = created.hidden.iter().any(|name| view.declared.binary_search(name).is_ok() && view.hidden.binary_search(name).is_err())
                 && (view.flags & IS_INSTANCE != 0 || self.gathered.untyped_inflow_sites.binary_search_by_key(&to, |held| held.0).is_err());
-            if !is_rejected_by_language && may_be_assignable_to(made, view) {
+            if !is_rejected_by_language && may_be_assignable_to(created, view) {
                 self.sizes.pairs_queried += 1;
-                let fits = self.ask(Question::allocated_is_assignable_query(self.gathered.types[member as usize], self.gathered.asked_as[to as usize]), false);
+                let fits = self.ask(SubtypeQuery::allocated_is_assignable_query(self.gathered.types[member as usize], self.gathered.asked_as[to as usize]), false);
                 self.pairs.push(Pair { member, target: to, from, may_convert, fits, structural_fit: NONE });
             }
             return;
         }
         match self.verdicts.get(&(member, to)) {
-            // A cast makes more of it than a test.
             Some(&Verdict::Asked(pair)) => {
                 let is_forced = self.is_forced(from, to);
                 let pair = &mut self.pairs[pair as usize];
@@ -1646,16 +1489,14 @@ impl Subtypes {
             None => {}
         }
         let number = Verdict::Asked(self.pairs.len() as u32);
-        // What is not laid out passes if it is of the type.
         if member > self.nodes {
             self.verdicts.insert((member, to), number);
-            let fits = self.ask(Question::allocated_is_subtype_query(self.seen[(member - self.nodes - 1) as usize], self.gathered.asked_as[to as usize]), true);
+            let fits = self.ask(SubtypeQuery::allocated_is_subtype_query(self.seen[(member - self.nodes - 1) as usize], self.gathered.asked_as[to as usize]), true);
             return self.pairs.push(Pair { member, target: to, from, may_convert, fits, structural_fit: NONE });
         }
-        let (made, target) = (&self.gathered.facts[member as usize], &self.gathered.facts[to as usize]);
-        // What is there without a verdict has come over an untested edge: it fits.
-        let needs_fit_check = !is_there && may_be_assignable_to(made, target);
-        let queries_converse = target.flags & IS_INSTANCE == 0 && made.live_as_bits & !target.live_as_bits == 0 && is_subset(&made.live, &target.live) && may_be_assignable_to(target, made);
+        let (created, target) = (&self.gathered.facts[member as usize], &self.gathered.facts[to as usize]);
+        let needs_fit_check = !is_there && may_be_assignable_to(created, target);
+        let queries_converse = target.flags & IS_INSTANCE == 0 && created.live_as_bits & !target.live_as_bits == 0 && is_subset(&created.live, &target.live) && may_be_assignable_to(target, created);
         if !needs_fit_check && !queries_converse {
             let verdict = self.verdict(member, to, is_there, false);
             self.settle_pair(member, to, verdict);
@@ -1663,8 +1504,8 @@ impl Subtypes {
         }
         self.verdicts.insert((member, to), number);
         self.sizes.pairs_queried += 1;
-        let fits = if needs_fit_check { self.ask(Question::allocated_is_subtype_query(self.gathered.types[member as usize], self.gathered.asked_as[to as usize]), false) } else if is_there { YES } else { NONE };
-        let structural_fit = if queries_converse { self.ask(Question::allocated_is_subtype_query(self.gathered.types[to as usize], self.gathered.asked_as[member as usize]), false) } else { NONE };
+        let fits = if needs_fit_check { self.ask(SubtypeQuery::allocated_is_subtype_query(self.gathered.types[member as usize], self.gathered.asked_as[to as usize]), false) } else if is_there { YES } else { NONE };
+        let structural_fit = if queries_converse { self.ask(SubtypeQuery::allocated_is_subtype_query(self.gathered.types[to as usize], self.gathered.asked_as[member as usize]), false) } else { NONE };
         self.pairs.push(Pair { member, target: to, from, may_convert, fits, structural_fit });
     }
 
@@ -1677,39 +1518,26 @@ impl Subtypes {
         }
     }
 
-    fn ask(&mut self, question: Question, is_own: bool) -> u32 {
-        self.sizes.questions += 1;
-        if let Some(&answer) = question.as_allocated_query().and_then(|asked| self.answered.get(&asked)) {
+    fn ask(&mut self, query: SubtypeQuery, is_own: bool) -> u32 {
+        self.sizes.queries += 1;
+        if let Some(&answer) = query.as_allocated_query().and_then(|asked| self.answered.get(&asked)) {
             return match answer {
-                Answer::Yes => YES,
-                Answer::No => NONE,
-                Answer::NotKnown => {
+                SubtypeAnswer::Yes => YES,
+                SubtypeAnswer::No => NONE,
+                SubtypeAnswer::NotKnown => {
                     self.sizes.unknown_answers += 1;
                     NOT_KNOWN
                 }
             };
         }
-        let questions = if is_own { &mut self.own_queries } else { &mut self.questions };
-        questions.push(question);
-        (questions.len() - 1) as u32 | if is_own { OWN } else { 0 }
+        let queries = if is_own { &mut self.own_queries } else { &mut self.queries };
+        queries.push(query);
+        (queries.len() - 1) as u32 | if is_own { OWN } else { 0 }
     }
 
-    /// What a cast to `target` makes of an object of the layout `member`. `fits`: it is of the type of the target. `structural_fit`: the target is
-    /// of the type of the layout, and has every live field of it.
-    ///
-    /// TRANSITION FIRST, ADMIT SECOND. A SHAPE TRANSITION ADDS FIELDS AND LOSES NONE: a `PromiseOrAwaitableType` does not become a
-    /// `FreshObjectLiteralType`, which lacks `promisedTypeOfPromise`. Where each is of the type of the other, because what the one has more is
-    /// optional (`TypeParameter extends Type`), it goes to the one that has more. NOTHING BECOMES AN ABSTRACT LAYOUT: an object is allocated
-    /// as what its discriminant says, or becomes that, and a step on the way hides what an allocation makes. What a cast would have
-    /// turned into one is admitted as it is.
-    ///
-    /// A FAMILY: the extensions of one base that is allocated. `Type` is cast to `ObjectType`, `InterfaceType`, `ResolvedType`, `GenericType` as the
-    /// program learns more about it. No discriminant says that it is one and not the other, and it is several at once: it ACCUMULATES
-    /// extensions, and a transition goes one way only. So a sibling that cannot become the target is admitted as it is. What its
-    /// layout lacks of the target's fields is an extra property, which is slow.
     fn verdict(&mut self, member: u32, target: u32, fits: bool, structural_fit: bool) -> Verdict {
-        let (made, to) = (&self.gathered.facts[member as usize], &self.gathered.facts[target as usize]);
-        let may_become = structural_fit && (made.live.len() < to.live.len() || !fits);
+        let (created, to) = (&self.gathered.facts[member as usize], &self.gathered.facts[target as usize]);
+        let may_become = structural_fit && (created.live.len() < to.live.len() || !fits);
         let is_abstract = to.flags & IS_CONCRETE == 0 && to.flags & HAS_CONCRETE_SUBTYPE != 0;
         if may_become && !is_abstract {
             return Verdict::Becomes { fits };
@@ -1717,9 +1545,8 @@ impl Subtypes {
         if fits {
             return Verdict::Passes;
         }
-        // A copy of plain data is born complete, which takes nothing from what casts do to the objects of the base.
         const NO_EXTENSION: u16 = HAS_SITE | HAS_CONSTANTS | IS_INSTANCE;
-        if may_become || (made.flags & NO_EXTENSION == 0 && to.flags & NO_EXTENSION == 0 && self.have_common_base(member, target)) {
+        if may_become || (created.flags & NO_EXTENSION == 0 && to.flags & NO_EXTENSION == 0 && self.have_common_base(member, target)) {
             return Verdict::Accepted;
         }
         Verdict::Refused
@@ -1753,7 +1580,6 @@ impl Subtypes {
         self.bases[view as usize] = Some(found.into_boxed_slice());
     }
 
-    /// `from`: the view that the cast is from. `may_convert`: it is a cast, and no mere test, which only lets through what fits.
     fn apply(&mut self, verdict: Verdict, member: u32, from: u32, to: u32, may_convert: bool) {
         let verdict = match verdict {
             Verdict::Becomes { fits: true } if !may_convert => Verdict::Passes,
@@ -1788,52 +1614,48 @@ impl Subtypes {
         }
     }
 
-    /// The answers to `questions` and to `own_queries`, in their order. Starts the next round.
-    pub fn advance(&mut self, answers: &[Answer], local_answers: &[Answer]) {
-        debug_assert!(answers.len() == self.questions.len() && local_answers.len() == self.own_queries.len());
-        self.sizes.unknown_answers += answers.iter().chain(local_answers).filter(|&&answer| answer == Answer::NotKnown).count();
-        for (question, &answer) in self.questions.iter().zip(answers).chain(self.own_queries.iter().zip(local_answers)) {
-            if let Some(asked) = question.as_allocated_query() {
+    pub fn advance(&mut self, answers: &[SubtypeAnswer], local_answers: &[SubtypeAnswer]) {
+        debug_assert!(answers.len() == self.queries.len() && local_answers.len() == self.own_queries.len());
+        self.sizes.unknown_answers += answers.iter().chain(local_answers).filter(|&&answer| answer == SubtypeAnswer::NotKnown).count();
+        for (query, &answer) in self.queries.iter().zip(answers).chain(self.own_queries.iter().zip(local_answers)) {
+            if let Some(asked) = query.as_allocated_query() {
                 self.answered.insert(asked, answer);
             }
         }
-        self.say("the answers");
+        self.log_progress("the answers");
         self.sizes.rounds += 1;
-        // They are the first questions of the first round. The first yes is the same however the questions were shared out: nothing
-        // before it is left out.
-        let kind_queries = std::mem::take(&mut self.gathered.kind_queries);
+        let kind_queries = if self.gathered.kind_queries.is_empty() { Vec::new() } else { std::mem::take(&mut self.gathered_mut().kind_queries) };
         if !kind_queries.is_empty() {
-            let kept = match self.kind_query_answers.take() {
-                Some(kept) => {
-                    self.sizes.unknown_answers += kept.iter().filter(|&&answer| answer == Answer::NotKnown).count();
-                    kept
+            let retained = match self.kind_query_answers.take() {
+                Some(retained) => {
+                    self.sizes.unknown_answers += retained.iter().filter(|&&answer| answer == SubtypeAnswer::NotKnown).count();
+                    retained
                 }
                 None => answers[..kind_queries.len()].to_vec(),
             };
-            for (&answer, (_, view, why)) in kept.iter().zip(kind_queries) {
-                if answer != Answer::No {
+            for (&answer, (_, view, why)) in retained.iter().zip(kind_queries) {
+                if answer != SubtypeAnswer::No {
                     self.accept_untyped(view, self.nodes, why);
                     self.accept_relaxed(view, why);
                 }
             }
-            self.kind_query_answers = Some(kept);
+            self.kind_query_answers = Some(retained);
         }
         let answer_at = |at: u32| match at {
-            YES => Answer::Yes,
-            NONE => Answer::No,
-            NOT_KNOWN => Answer::NotKnown,
+            YES => SubtypeAnswer::Yes,
+            NONE => SubtypeAnswer::No,
+            NOT_KNOWN => SubtypeAnswer::NotKnown,
             at if at & OWN != 0 => local_answers[(at & !OWN) as usize],
             at => answers[at as usize],
         };
         let pairs = std::mem::take(&mut self.pairs);
-        let decided: Vec<(u32, u32, u32, bool, Answer, Answer)> = pairs.iter().map(|pair| (pair.member, pair.target, pair.from, pair.may_convert, answer_at(pair.fits), answer_at(pair.structural_fit))).collect();
-        self.questions.clear();
+        let decided: Vec<(u32, u32, u32, bool, SubtypeAnswer, SubtypeAnswer)> = pairs.iter().map(|pair| (pair.member, pair.target, pair.from, pair.may_convert, answer_at(pair.fits), answer_at(pair.structural_fit))).collect();
+        self.queries.clear();
         self.own_queries.clear();
         for (member, target, from, may_convert, fits, structural_fit) in decided {
-            let may_convert_conservatively = fits == Answer::No && structural_fit == Answer::NotKnown;
-            let (fits, structural_fit) = (fits != Answer::No, structural_fit == Answer::Yes);
+            let may_convert_conservatively = fits == SubtypeAnswer::No && structural_fit == SubtypeAnswer::NotKnown;
+            let (fits, structural_fit) = (fits != SubtypeAnswer::No, structural_fit == SubtypeAnswer::Yes);
             if from == NONE {
-                // Whatever is in a place of the one may get to a place of the other, now and later.
                 if fits {
                     self.untested[member as usize].push((target, FITS));
                     if self.accepts_untyped(target) || self.has_bailed_out[target as usize] {
@@ -1858,7 +1680,6 @@ impl Subtypes {
         self.settle();
     }
 
-    /// Phase B has found that `from` fits `target`. `members`: subtypes of `from`, ascending.
     fn propagate_structural_match(&mut self, from: u32, target: u32, members: &[u32], as_bits: &[u64]) {
         if self.accepts_untyped(target) || self.has_bailed_out[target as usize] {
             return;
@@ -1875,10 +1696,6 @@ impl Subtypes {
         self.abandon_completion(target, at);
     }
 
-    /// Too many layouts may fit the target, or do. It takes any object instead. Not the type of the objects of a class: nothing but its constructor
-    /// makes one, and what else is of its type gets there by a flow that is seen, or not at all. Nor a part of a union that is told
-    /// from the others by what it requires, or what they have in common: plain data that stayed plain would be none of them. One that
-    /// requires nothing is no such part.
     fn abandon_completion(&mut self, target: u32, at: Place) {
         if std::mem::replace(&mut self.has_bailed_out[target as usize], true) {
             return;
@@ -1890,8 +1707,6 @@ impl Subtypes {
         }
     }
 
-    /// Phase B begins with what has been noted as vouched for. After that, whenever all is quiet: the targets of the casts and the tests out of
-    /// a supertype that has come to admit untyped objects.
     fn collect_completion_targets(&mut self) {
         if self.phase == Phase::Flows {
             self.phase = Phase::Completion;
@@ -1955,7 +1770,6 @@ impl Subtypes {
     }
 
     fn find_candidates(&self) -> Candidates {
-        // What is allocated, or may yet be: the target of a cast.
         let mut is_candidate: Vec<bool> = (0..self.nodes).map(|layout| self.is_allocated(layout)).collect();
         for &(_, to) in &self.gathered.casts {
             if self.flags(to) & IS_INSTANCE == 0 {
@@ -1989,14 +1803,10 @@ impl Subtypes {
         lists
     }
 
-    /// The layouts among which are all that fit a type with these facts. Ascending.
     fn candidates_for(lists: &Candidates, facts: &Facts) -> Vec<u32> {
-        // The numbers of names differ from run to run, so of two lists of one length it is not the first that is taken.
         let is_shorter = |a: &&[u32], b: &&[u32]| a.len().cmp(&b.len()).then_with(|| a.cmp(b));
         let mut candidates: Vec<u32> = Vec::new();
-        // The shortest list that every layout that fits is in: of a required name, or of the constants of a required field.
         match facts.required.iter().map(|name| lists.by_name.get(name).map_or(&[][..], |list| &list[..])).min_by(is_shorter) {
-            // What fits shares a name, or has none.
             None => {
                 candidates.extend(facts.declared.iter().filter_map(|name| lists.by_name.get(name)).flatten());
                 candidates.extend_from_slice(&lists.without_names);
@@ -2020,7 +1830,6 @@ impl Subtypes {
         candidates
     }
 
-    /// The supertypes with the largest sets that may fit the target by their names, `MANY_CANDIDATES` at most. Ascending.
     fn large_candidates_for(&self, lists: &Candidates, target: u32) -> Vec<u32> {
         let facts = &self.gathered.facts[target as usize];
         let names = if facts.required.is_empty() { &facts.declared } else { &facts.required };
@@ -2034,19 +1843,19 @@ impl Subtypes {
         large
     }
 
-    fn is_small_or_data(&self, made: u32, target: u32, most_live_fields: usize) -> bool {
-        let (made, target) = (&self.gathered.facts[made as usize], &self.gathered.facts[target as usize]);
-        made.flags & target.flags & IS_PLAIN_DATA != 0 || made.live.len() <= most_live_fields && target.live.len() <= most_live_fields
+    fn is_small_or_data(&self, created: u32, target: u32, most_live_fields: usize) -> bool {
+        let (created, target) = (&self.gathered.facts[created as usize], &self.gathered.facts[target as usize]);
+        created.flags & target.flags & IS_PLAIN_DATA != 0 || created.live.len() <= most_live_fields && target.live.len() <= most_live_fields
     }
 
-    fn may_meet_through_untyped(&self, made: u32, target: u32) -> bool {
-        made != target && self.sets[target as usize].binary_search(&made).is_err() && may_match_by_constants(&self.gathered.facts[made as usize], &self.gathered.facts[target as usize]) && self.is_small_or_data_recursively(made, target)
+    fn may_meet_through_untyped(&self, created: u32, target: u32) -> bool {
+        created != target && self.sets[target as usize].binary_search(&created).is_err() && may_match_by_constants(&self.gathered.facts[created as usize], &self.gathered.facts[target as usize]) && self.is_small_or_data_recursively(created, target)
     }
 
-    fn is_small_or_data_recursively(&self, made: u32, target: u32) -> bool {
+    fn is_small_or_data_recursively(&self, created: u32, target: u32) -> bool {
         let fields = &self.gathered.fields;
         let is_record = |view: u32| self.flags(view) & (IS_INSTANCE | IS_COERCION_RESULT) == 0;
-        let mut pending = vec![(made, target)];
+        let mut pending = vec![(created, target)];
         let mut seen: FxHashSet<(u32, u32)> = FxHashSet::default();
         while let Some((from, to)) = pending.pop() {
             if !self.is_small_or_data(from, to, MAX_LIVE_FIELDS_TO_CONVERT) {
@@ -2071,17 +1880,17 @@ impl Subtypes {
         true
     }
 
-    fn relax_for_unconvertible_layout(&mut self, target: u32, made: u32) {
+    fn relax_for_unconvertible_layout(&mut self, target: u32, created: u32) {
         let facts = &self.gathered.facts[target as usize];
         if facts.flags & IS_INSTANCE == 0 && (facts.flags & IS_DISTINGUISHED == 0 || facts.required.is_empty()) {
-            self.accept_untyped(target, self.nodes, UntypedReason::UnconvertibleLayout { from: made });
+            self.accept_untyped(target, self.nodes, UntypedReason::UnconvertibleLayout { from: created });
         }
     }
 
     fn escaped_layouts(&mut self) -> Vec<u32> {
         if self.escaped_layout_types.is_none() {
             let number_of: FxHashMap<TypeId, u32> = self.gathered.types.iter().enumerate().map(|(view, &ty)| (ty, view as u32)).collect();
-            let mut views: Vec<u32> = self.gathered.escapes.with_mutations(|noted| noted.escaped()).iter().filter_map(|ty| number_of.get(ty).copied()).collect();
+            let mut views: Vec<u32> = self.gathered.escapes.with_mutations(|recorded| recorded.escaped()).iter().filter_map(|ty| number_of.get(ty).copied()).collect();
             views.sort_unstable();
             views.dedup();
             self.escaped_layout_types = Some(views);
@@ -2095,7 +1904,6 @@ impl Subtypes {
         layouts
     }
 
-    /// Phase B, for `to_complete`. See the head of the file.
     fn complete(&mut self) {
         let lists = match self.candidates.take() {
             Some(lists) => lists,
@@ -2105,22 +1913,19 @@ impl Subtypes {
         let mut targets_by_name: FxHashMap<u32, Vec<u32>> = FxHashMap::default();
         let escaped = self.escaped_layouts();
         for (target, place) in std::mem::take(&mut self.to_complete) {
-            // What a coercion made admits everything as it is, and so does what admits untyped objects.
             if self.flags(target) & IS_COERCION_RESULT != 0 || self.accepts_untyped(target) || self.accept_by_structure(target, place) {
                 continue;
             }
             let facts = &self.gathered.facts[target as usize];
-            // Nearly everything fits a class that requires nothing, and it cannot take any object instead. A type all of whose properties are optional can.
             if facts.flags & (IS_INSTANCE | IS_WEAK) != 0 && facts.required.is_empty() {
                 self.abandon_completion(target, place);
                 continue;
             }
-            let (many, most) = if facts.flags & (IS_INSTANCE | IS_DISTINGUISHED) != 0 { (MAX_CANDIDATES_PER_CREATED_TYPE, MAX_CANDIDATES_PER_CREATED_TYPE) } else { (MANY_CANDIDATES, MAX_CANDIDATES) };
+            let (many, maximum) = if facts.flags & (IS_INSTANCE | IS_DISTINGUISHED) != 0 { (MAX_CANDIDATES_PER_CREATED_TYPE, MAX_CANDIDATES_PER_CREATED_TYPE) } else { (MANY_CANDIDATES, MAX_CANDIDATES) };
             let (has, queried_first) = (&self.sets[target as usize], self.queried_first.get(&target));
-            let may_be_new = |&made: &u32| made != target && has.binary_search(&made).is_err() && queried_first.is_none_or(|asked| asked.binary_search(&made).is_err()) && may_be_assignable_to(&self.gathered.facts[made as usize], facts);
+            let may_be_new = |&created: &u32| created != target && has.binary_search(&created).is_err() && queried_first.is_none_or(|asked| asked.binary_search(&created).is_err()) && may_be_assignable_to(&self.gathered.facts[created as usize], facts);
             let fitting: Vec<u32> = Self::candidates_for(&lists, facts).into_iter().filter(may_be_new).take(MAX_CANDIDATES_PER_CREATED_TYPE + 1).collect();
             if fitting.len() > many {
-                // One of them may bring most of the others, unless they are beyond all measure.
                 let large = if self.completes_structurally && queried_first.is_none() && fitting.len() <= MAX_CANDIDATES_PER_CREATED_TYPE { self.large_candidates_for(&lists, target) } else { Vec::new() };
                 if !large.is_empty() {
                     self.met.extend(large.iter().map(|&view| (view, NONE, target, false)));
@@ -2129,7 +1934,7 @@ impl Subtypes {
                     continue;
                 }
             }
-            if fitting.len() > most {
+            if fitting.len() > maximum {
                 self.abandon_completion(target, place);
                 continue;
             }
@@ -2139,25 +1944,19 @@ impl Subtypes {
             if self.completes_structurally {
                 self.propagate_members(&fitting, NONE, target, false);
                 if self.is_reachable_from_untyped[target as usize] {
-                    let meeting: Vec<u32> = escaped.iter().copied().filter(|&made| self.may_meet_through_untyped(made, target)).collect();
-                    for &made in &meeting {
-                        if may_be_assignable_to(&self.gathered.facts[made as usize], &self.gathered.facts[target as usize]) && self.is_small_or_data(made, target, MAX_LIVE_FIELDS_TO_RELAX) {
-                            self.relaxes_if_rejected.insert((made, target));
+                    let meeting: Vec<u32> = escaped.iter().copied().filter(|&created| self.may_meet_through_untyped(created, target)).collect();
+                    for &created in &meeting {
+                        if may_be_assignable_to(&self.gathered.facts[created as usize], &self.gathered.facts[target as usize]) && self.is_small_or_data(created, target, MAX_LIVE_FIELDS_TO_RELAX) {
+                            self.relaxes_if_rejected.insert((created, target));
                         }
-                        self.propagate_members(&[made], made, target, true);
+                        self.propagate_members(&[created], created, target, true);
                     }
                 }
             }
         }
         self.candidates = Some(lists);
         self.to_complete = again;
-        // What generic code has made goes by the bounds of its type parameters until a test on the way out makes it what the caller takes
-        // it for: a `Token<TKind>` becomes an `AsteriskToken`. Where it comes out of a call that is not seen through, nothing says
-        // what it is looked at as before. What the caller takes it for has the same fields: `{ value: T }` does not become whatever
-        // has a `value`.
         let is_shorter = |a: &&[u32], b: &&[u32]| a.len().cmp(&b.len()).then_with(|| a.cmp(b));
-        // Not only what is made as such a type: whatever is in a place of it. `createBaseToken<T extends Node>` casts a `Node` to `Mutable<T>`, which
-        // is carried out nowhere, and `createToken<TKind>` hands it on as a `Token<TKind>`, which a `Node` is.
         for generic in 0..self.nodes {
             let facts = &self.gathered.facts[generic as usize];
             if facts.flags & IS_GENERIC == 0 || facts.flags & IS_INSTANCE != 0 {
@@ -2174,9 +1973,8 @@ impl Subtypes {
         }
     }
 
-    /// Once there are no more questions.
     pub fn finish(mut self) -> Membership {
-        self.say("done");
+        self.log_progress("done");
         if self.clock.is_verbose && self.over_budget.is_none() {
             self.report();
         }
@@ -2210,8 +2008,8 @@ impl Subtypes {
                 }
             }
         }
-        let mut reached: Vec<Reach> = Vec::new();
-        reached.resize_with(views, Reach::default);
+        let mut reached: Vec<LayoutUsage> = Vec::new();
+        reached.resize_with(views, LayoutUsage::default);
         let mut untyped_reasons: Vec<Option<UntypedReason>> = vec![None; views];
         let (logging_untyped_node, other_layout_record_node) = (self.logging_untyped_node(), self.other_layout_record_node());
         for (view, reach) in reached.iter_mut().enumerate() {
@@ -2242,7 +2040,7 @@ impl Subtypes {
             self.sizes.largest = self.sizes.largest.max(layout_types_cache);
             self.sizes.transitions += reach.specializations.len();
         }
-        let mark = |reach: &mut Reach, mutation: usize| *(if mutation == 0 { &mut reach.may_be_frozen } else { &mut reach.may_have_other_prototype }) = true;
+        let mark = |reach: &mut LayoutUsage, mutation: usize| *(if mutation == 0 { &mut reach.may_be_frozen } else { &mut reach.may_have_other_prototype }) = true;
         for mutation in 0..2 {
             for &view in &self.gathered.altered[mutation].views {
                 for &member in self.sets[view as usize].iter().filter(|&&member| (member as usize) < views) {
@@ -2257,9 +2055,9 @@ impl Subtypes {
             };
             for mutation in 0..2 {
                 for facts in &self.gathered.altered[mutation].besides {
-                    for made in Self::candidates_for(&lists, facts) {
-                        if may_be_assignable_to(&self.gathered.facts[made as usize], facts) {
-                            mark(&mut reached[made as usize], mutation);
+                    for created in Self::candidates_for(&lists, facts) {
+                        if may_be_assignable_to(&self.gathered.facts[created as usize], facts) {
+                            mark(&mut reached[created as usize], mutation);
                         }
                     }
                 }
@@ -2267,15 +2065,13 @@ impl Subtypes {
         }
         self.sizes.bytes = self.sets.iter().map(|set| set.len() * (size_of::<u32>() * 2 + size_of::<Cause>())).sum::<usize>() + self.verdicts.len() * 16 + self.is_tested.len() * 12;
 
-        // Callee prediction. First by allocated layout and name: the functions whose closures the stores that are seen put there.
         let join = |callees: &mut FxHashMap<(u32, Atom), Callee>, place: (u32, Atom), callee: Callee| {
             let joined = callees.entry(place).or_default();
             *joined = joined.join(callee);
         };
         let mut held: FxHashMap<(u32, Atom), Callee> = FxHashMap::default();
-        for &(made, name, callee) in &self.gathered.callees_at_creation {
-            // A shape transition keeps what the fields hold.
-            let (mut passed, mut pending) = (FxHashSet::default(), vec![made]);
+        for &(created, name, callee) in &self.gathered.callees_at_creation {
+            let (mut passed, mut pending) = (FxHashSet::default(), vec![created]);
             while let Some(layout) = pending.pop() {
                 if passed.insert(layout) && reached.get(layout as usize).is_some_and(|reach| reach.is_allocated) {
                     join(&mut held, (layout, name), callee);
@@ -2292,12 +2088,16 @@ impl Subtypes {
         for (&(layout, name), &callee) in &held {
             store_target_type[layout as usize].push((name, callee));
         }
-        // What a built-in may alter whose operand nothing is said of.
-        let is_marked = |reach: &Reach, mutation: usize| reach.is_allocated && if mutation == 0 { reach.may_be_frozen } else { reach.may_have_other_prototype };
+        let is_marked = |reach: &LayoutUsage, mutation: usize| reach.is_allocated && if mutation == 0 { reach.may_be_frozen } else { reach.may_have_other_prototype };
         let mut mutated_by = [[0u32; 3]; 2];
         for mutation in 0..2 {
             let altered = &self.gathered.altered[mutation];
             mutated_by[mutation][0] = reached.iter().filter(|reach| is_marked(reach, mutation)).count() as u32;
+            if mutation == 1 {
+                for reach in &mut reached {
+                    reach.prototype_is_set_by_typed_code = reach.may_have_other_prototype;
+                }
+            }
             if altered.is_any_layout || altered.is_untyped {
                 for reach in &mut reached {
                     mark(reach, mutation);
@@ -2308,7 +2108,7 @@ impl Subtypes {
         }
         let number_of: FxHashMap<TypeId, u32> = self.gathered.types.iter().enumerate().map(|(view, &ty)| (ty, view as u32)).collect();
         let mut is_known_escaped = vec![false; views];
-        for view in self.gathered.escapes.with_mutations(|noted| noted.escaped()).iter().filter_map(|ty| number_of.get(ty)) {
+        for view in self.gathered.escapes.with_mutations(|recorded| recorded.escaped()).iter().filter_map(|ty| number_of.get(ty)) {
             for &member in self.sets[*view as usize].iter().filter(|&&member| (member as usize) < views) {
                 is_known_escaped[member as usize] = true;
             }
@@ -2322,9 +2122,8 @@ impl Subtypes {
         let count = |holds: &dyn Fn(usize) -> bool| (0..views).filter(|&view| reached[view].is_allocated && holds(view)).count() as u32;
         let is_record = |view: usize| self.gathered.facts[view].flags & IS_INSTANCE == 0;
         let mutation_evidence = [count(&|view| is_record(view)), count(&|view| gives_up[view]), count(&|view| is_known_escaped[view]), count(&|view| is_record(view) && !gives_up[view] && !is_known_escaped[view]), count(&|view| !is_record(view) && !is_known_escaped[view])];
-        let (mutation_sites, untyped_mutations) = self.gathered.escapes.with_mutations(|noted| (noted.sites(), noted.untyped_sites()));
-        let (widest_mutations, redefinition_counts) = self.gathered.escapes.with_mutations(|noted| (noted.widest(), noted.redefinition_counts()));
-        // Then by supertype: a read through it finds an object of any subtype.
+        let (mutation_sites, untyped_mutations) = self.gathered.escapes.with_mutations(|recorded| (recorded.sites(), recorded.untyped_sites()));
+        let (widest_mutations, redefinition_counts) = self.gathered.escapes.with_mutations(|recorded| (recorded.widest(), recorded.redefinition_counts()));
         for reach in reached.iter_mut() {
             let mut read: FxHashMap<Atom, Callee> = FxHashMap::default();
             for &layout in &reach.members {
@@ -2340,10 +2139,12 @@ impl Subtypes {
             }
             reach.callees.sort_unstable_by_key(|&(name, file, func)| (file, func, name.0));
         }
-        self.say("the callees");
-        self.gathered.creations.apply(&mut reached);
-        let constructions_are_incomplete = self.gathered.constructions.is_incomplete();
-        self.gathered.constructions.apply(&mut reached, &self.gathered.facts, &self.becomes);
+        self.log_progress("the callees");
+        self.flow_phase_snapshot = None;
+        let gathered = Self::into_gathered(self.gathered);
+        gathered.creations.apply(&mut reached);
+        let constructions_are_incomplete = gathered.constructions.is_incomplete();
+        gathered.constructions.apply(&mut reached, &gathered.facts, &self.becomes);
         Membership {
             constructions_are_incomplete,
             views: reached,
@@ -2357,8 +2158,8 @@ impl Subtypes {
             untyped_reasons,
             subtypes: self.sets,
             causes: self.causes,
-            upcasts: self.gathered.upcasts,
-            vouched: self.gathered.vouched,
+            upcasts: gathered.upcasts,
+            vouched: gathered.vouched,
         }
     }
 }

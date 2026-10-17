@@ -28,7 +28,7 @@
 //
 const setAsyncHooksEnabled = $newCppFunction("NodeAsyncHooks.cpp", "jsSetAsyncHooksEnabled", 1);
 const registerAsyncLocalStorage = $newCppFunction("NodeAsyncHooks.cpp", "jsRegisterAsyncLocalStorage", 3);
-let numberOfStoragesNoted = 0;
+let recordedStorageCount = 0;
 let sampleFrame: Frame | undefined;
 const { validateFunction, validateString, validateObject } = require("internal/validators");
 // SameValue in pure operators. Node compares stores with the primordial
@@ -223,8 +223,8 @@ class AsyncLocalStorage<T = any> {
       }
     }
     setAsyncHooksEnabled(true);
-    if (numberOfStoragesNoted < 8 && new.target === AsyncLocalStorage) {
-      if (numberOfStoragesNoted++ === 0) {
+    if (recordedStorageCount < 8 && new.target === AsyncLocalStorage) {
+      if (recordedStorageCount++ === 0) {
         sampleFrame = newFrame(undefined!, undefined, undefined, undefined);
         new AsyncLocalStorage({ defaultValue: sampleFrame });
       }

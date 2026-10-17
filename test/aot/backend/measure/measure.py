@@ -4,7 +4,8 @@
 Measures the backend benchmark on Linux. Postgres and the carrier service must be running already (see README.md).
 
 A COLUMN is an executable in the folder, started with PORT, DATABASE_URL, DATABASE_POOL and CARRIER_URL set ($<COLUMN>_RUN_ENV="NAME=value,NAME=value ..":
-more environment for that column alone, such as a pool size of its own). A column whose name
+more environment for that column alone, such as a pool size of its own; $<COLUMN>_LAUNCHER="setarch,x86_64,-R": words put in front
+of the executable). A column whose name
 is listed in $SINGLE_THREADED (aot, jit, released by default) runs JavaScript on one thread, so it is started once per server
 core, each process pinned to a core of its own, all listening on one port with SO_REUSEPORT. Every other column (go, rust) is one
 process that may use all the server's cores.
@@ -47,9 +48,32 @@ The client (load.c) keeps $CONNECTIONS (256) connections open, each with one req
 checks every response: status, media type and body. CPU time is `perf stat -e task-clock` on all processes of the column.
 Memory: RSS and private memory (Anonymous less LazyFree) are summed over the column's processes. settled_*: $SETTLE (0) seconds after the
 last request.
+BY LAYER ($LAYERS=yes, under continuous load only): two more windows follow the counted one, under `perf record -e cycles:u` and
+`-e instructions:u`. Every sample is charged to the layer that owns the code it fell in (../../servers/measure/layers.py: the
+compiled application, stubs, Bun's own JavaScript modules, Bun's native code, the engine's C++, ICU, GC, malloc, libc), scaled to
+the counted cycles and instructions per request. Kernel cycles are user cycles times kernel CPU time over user CPU time, both read
+in the windows without hardware counters. The row
+gets layers_cycles and layers_instructions (layer:count ..), and an --aot column layers_asked (who/layer:cycles ..) from a third
+window with call chains: who asked for the work, the application's compiled code, Bun's own modules, or nobody; layers_sampled is
+samples times period over the counted total (well under 1: the kernel dropped samples, and threads that mostly sleep look too large); the heaviest symbols of every layer go to <rows.tsv>.symbols, and the
+single stubs too where <executable>.map exists (`BUN_JSC_aotMapFilePath=<executable>.map bun build --compile --aot ..`). The
+executables must not be stripped. table.py prints the layers side by side.
+EVENTS="ic_cache_fill_l2,l2_cache_req_stat.ic_fill_miss": more hardware events by perf's names, counted with instructions and cycles, per
+request, as fields of their own. On AMD Zen 4 these two are the lines of code fetched into the first-level cache and those that the
+L2 did not have either. At most four, or perf takes turns (counted=MULTIPLEXED).
+COPIES: the pages of an executable file stay where they are in the page cache for as long as the file lives, so all processes of one
+file share one placement of its code in physical memory, and two files with the same bytes can differ by some percent in cycles.
+Every start therefore runs a copy of the executable that was made for it, in /dev/shm, under a path of the same length for every column.
+GUESTS: every window compares the time the kernel charged to the column's cores (user, nice and system in /proc/stat) with the time
+it charged to the column's processes. What is left over ran for somebody else. A window in which that is more than 1% of those cores is
+left out of the rate; guests is the largest share in a window that was kept, windows_void how many were left out, and a start
+without a clean window has void=yes: table.py and pairs.py print no number for it.
 postgres_busy, carrier_busy, client_busy: the share of their cores that Postgres, the carrier and the client used during the
 rounds. Where one of them is above 0.9 the server was not the limit and the row says limit=<which>."""
-import fcntl, hashlib, html, json, os, re, resource, signal, socket, statistics, subprocess, sys, threading, time
+import fcntl, hashlib, html, json, os, re, resource, shutil, signal, socket, statistics, subprocess, sys, threading, time
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'servers', 'measure'))
+import layers
 
 folder, golden, rows_file, tests, columns = sys.argv[1:6]
 E = os.environ.get
@@ -62,6 +86,8 @@ PACED_ROUNDS, PACED_LEAD, PACED_SECONDS, COUNTER_ROUNDS = int(E('PACED_ROUNDS', 
 CONNECTIONS, POOL, LOAD, TMP = int(E('CONNECTIONS', '256')), E('DATABASE_POOL', '8'), os.path.join(folder, 'load'), E('TMP_DIR', '/tmp')
 SINGLE_THREADED = E('SINGLE_THREADED', 'aot jit released node').split()
 SETTLE = float(E('SETTLE', '0'))
+LAYERS = E('LAYERS', '') == 'yes'
+SAMPLES_A_SECOND = 3000  # the kernel drops samples silently above kernel.perf_event_max_sample_rate, which it lowers by itself under load (seen: 5,300)
 LABEL = E('LABEL', '-')
 
 
@@ -151,6 +177,11 @@ def cpu_seconds(pids, fields=(11, 12)):
     return total
 
 
+def core_seconds(cores):
+    wanted = set('cpu%d' % c for c in cores)
+    return sum(sum(int(x) for x in l.split()[1:4]) for l in open('/proc/stat') if l.split(' ', 1)[0] in wanted) / 100
+
+
 def children(parent):
     try:
         return [int(x) for t in os.listdir('/proc/%d/task' % parent) for x in open('/proc/%d/task/%s/children' % (parent, t)).read().split()]
@@ -170,6 +201,8 @@ class Broke(Exception):
 
 bad = []
 spawned = [0]
+numbers = {}
+EVENTS = [e for e in E('EVENTS', '').split(',') if e]
 
 
 class Server:
@@ -177,10 +210,13 @@ class Server:
         self.test, self.column, self.binary, self.home, self.loaded = test, column, os.path.join(folder, column), home, []
         self.path, self.kind, self.check, self.pipeline, self.pace = TESTS[test]
         self.pace = int(E('PACED_RATE', self.pace * (len(SERVER) if len(SERVER) < 4 else 4)))
-        self.processes, self.windows, self.rounds, self.counted, self.paced, self.total, self.high = [], [], [], [], [], 0, 0.0
+        self.processes, self.windows, self.rounds, self.counted, self.paced, self.total, self.high, self.layers, self.sampled = [], [], [], [], [], 0, 0.0, {}, []
         self.name = '%s/%s/%d' % (test, column, len(SERVER))
         self.least = max(10000, WARM // int(re.sub(r'\D', '', test) or 1))
         self.folder = os.path.join(TMP, 'backend-%d' % SERVER[0], column)
+        with one_at_a_time:
+            number = numbers.setdefault(column, len(numbers))
+        self.copy = os.path.join('/dev/shm' if os.access('/dev/shm', os.W_OK) else TMP, 'aot-backend-core-%03d-column-%02d' % (SERVER[0], number))
         os.makedirs(self.folder, exist_ok=True)
         self.exchanges, self.listed = [((), None, None)], None
         if self.path is None:
@@ -209,6 +245,8 @@ class Server:
                 p.kill()
             p.wait()
         self.processes = []
+        if os.path.exists(self.copy):
+            os.remove(self.copy)
 
     def signal(self, what):
         for p in self.processes:
@@ -249,7 +287,10 @@ class Server:
             env['WTF_numberOfProcessorCores'] = '1'
         if self.column.split('.')[0] == 'aot':
             env['BUN_JSC_crashIfInterpreterIsUsed'] = '1'
+            if LAYERS:
+                env['BUN_JSC_useAOTPerfMap'] = '1'
         env.update(x.split('=', 1) for x in E(self.column.upper().replace('.', '_') + '_RUN_ENV', '').replace(',', ' ').split())
+        launcher = E(self.column.upper().replace('.', '_') + '_LAUNCHER', '').replace(',', ' ').split()
         self.pool = env['DATABASE_POOL']
         pins = [self.home] if self.home else [str(c) for c in SERVER] if single else [SERVER_CORES]
         firsts = []
@@ -262,8 +303,9 @@ class Server:
             env['PORT'] = str(self.port)
             log = open(os.path.join(self.folder, 'server.log'), 'wb')
             first = None
+            shutil.copy(self.binary, self.copy)
             t0 = time.perf_counter()
-            self.processes = [subprocess.Popen(['taskset', '-c', pin, self.binary], env=env, stdout=log, stderr=log, stdin=subprocess.DEVNULL, cwd=self.folder) for pin in pins]
+            self.processes = [subprocess.Popen(['taskset', '-c', pin] + launcher + [self.copy], env=env, stdout=log, stderr=log, stdin=subprocess.DEVNULL, cwd=self.folder) for pin in pins]
             while time.perf_counter() - t0 < 30 and not self.dead():
                 try:
                     code, fields, self.body = ask(self.port, self.listed[0]['path'] if self.listed else self.path, headers, request, self.listed and self.listed[0]['method'])
@@ -324,13 +366,16 @@ class Server:
             return {'p50': float(j['p50_us']), 'p99': float(j['p99_us']), 'p999': float(j['p999_us']), 'longest': float(j['longest_us'])}
         w = threading.Thread(target=watch, daemon=True)
         w.start()
-        events = ('instructions:u', 'cycles:u', 'task-clock') if counters else ('task-clock',)
+        events = ('instructions:u', 'cycles:u', 'task-clock') + tuple(e + ':u' for e in EVENTS) if counters else ('task-clock',)
         try:
             for attempt in range(4):  # a thread that ends while perf attaches fails the call before the client is started
                 backends = children(POSTMASTER) if POSTMASTER else []
+                mine = [int(self.home)] if self.home else SERVER
+                o0, m0 = core_seconds(mine), cpu_seconds(pids)
                 g0, c0, s0, k0, w0 = cpu_seconds(backends), cpu_seconds(CARRIER_PIDS), cpu_seconds(pids, (12,)), resource.getrusage(resource.RUSAGE_CHILDREN), time.perf_counter()
                 o = subprocess.run(['perf', 'stat', '-x,', '-o', f, '-e', ','.join(events), '-p', ','.join(map(str, pids)), '--'] + client, capture_output=True, text=True, env=env)
                 wall, k1, g1, c1, s1 = time.perf_counter() - w0, resource.getrusage(resource.RUSAGE_CHILDREN), cpu_seconds(backends), cpu_seconds(CARRIER_PIDS), cpu_seconds(pids, (12,))
+                guests = max(0.0, (core_seconds(mine) - o0 - (cpu_seconds(pids) - m0)) / (wall * len(mine)))
                 if 'sys_perf_event_open' not in o.stderr:
                     break
         finally:
@@ -351,9 +396,55 @@ class Server:
         self.high = max(self.high, here[0])
         seconds = float(j['seconds'])
         return {'n': size, 'at': self.total, 'rate': size / seconds, 'p50': float(j['p50_us']), 'p99': float(j['p99_us']), 'mean': float(j['mean_us']), 'instructions': c.get('instructions', 0) / size, 'cycles': c.get('cycles', 0) / size,
-                'kernel': (s1 - s0) * 1e6 / size, 'cpu': c['task-clock'] * 1e3 / size, 'whole': whole, 'private': here[0],
+                'kernel': (s1 - s0) * 1e6 / size, 'cpu': c['task-clock'] * 1e3 / size, 'whole': whole, 'private': here[0], 'guests': guests, **dict((e, c.get(e, 0) / size) for e in EVENTS),
                 'client': (k1.ru_utime + k1.ru_stime - k0.ru_utime - k0.ru_stime) / (wall * len(CLIENT)), 'postgres': (g1 - g0) / (wall * max(1, len(cores_of(POSTGRES_CORES)))), 'postgres_us': (g1 - g0) * 1e6 / size,
                 'carrier': (c1 - c0) / (wall * max(1, len(cores_of(CARRIER_CORES))))}
+
+    def profile(self, event, per_request):
+        data = os.path.join(self.folder, 'perf.data')
+        requests = self.size * 4
+        period = int(per_request * self.size / (SAMPLES_A_SECOND * WINDOW_SECONDS))
+        client = ['taskset', '-c', CLIENT_CORES, LOAD, str(self.port), str(CONNECTIONS), str(requests), str(len(CLIENT))] + self.pairs
+        for attempt in range(6):  # a thread that ends while perf attaches fails the call before the client is started
+            o = subprocess.run(['perf', 'record', '-N', '-B', '-e', event + ':u', '-c', str(period), '-o', data, '-p', ','.join(map(str, self.pids())), '--'] + client, capture_output=True, text=True)
+            if o.returncode == 0:
+                break
+        if self.dead() or o.returncode != 0:
+            raise Broke('broke under load', 'perf record: exit %s: ' % o.returncode + (o.stderr + o.stdout)[-400:].replace('\n', ' '))
+        report = subprocess.run(['perf', 'report', '-q', '-i', data, '--stdio', '--sort', 'dso,symbol', '-n', '-F', 'sample,dso,symbol', '--percent-limit', '0', '-g', 'none'], capture_output=True, text=True, errors='replace').stdout
+        image_map, perf_map = self.binary + '.map', '/tmp/perf-%d.map' % self.pids()[0]
+        addresses = []
+        if os.path.exists(image_map) and os.path.exists(perf_map):
+            addresses = subprocess.run(['perf', 'script', '-i', data, '-F', 'ip'], capture_output=True, text=True).stdout.split()
+        by_stub = layers.count_stubs([int(x, 16) for x in addresses], perf_map, image_map)
+        os.remove(data)
+        self.total += requests
+        named = b'.symtab' in subprocess.run(['readelf', '-S', '-W', self.binary], capture_output=True).stdout
+        by_layer, by_symbol = layers.read_report(report.split('\n'), layers.kind_of(self.column if named else 'stripped'))
+        scale = per_request / sum(by_layer.values())
+        self.sampled.append('%s:%.2f' % (event, sum(by_layer.values()) * period / (per_request * requests)))
+        with open(rows_file + '.symbols', 'a') as f:
+            for (layer, symbol), samples in by_symbol.most_common(400):
+                f.write('%s\t%s\t%s\t%s\t%d\t%s\n' % (self.test, self.column, event, layer, samples * scale, symbol[:200]))
+            for name, samples in by_stub.most_common(100):
+                f.write('%s\t%s\t%s\t%s\t%d\t%s\n' % (self.test, self.column, event, 'one stub', samples * scale, name))
+        return dict((layer, samples * scale) for layer, samples in by_layer.items())
+
+    def profile_callers(self, per_request):
+        data = os.path.join(self.folder, 'perf.data')
+        requests = self.size * 4
+        period = int(per_request * self.size / (SAMPLES_A_SECOND * WINDOW_SECONDS))
+        client = ['taskset', '-c', CLIENT_CORES, LOAD, str(self.port), str(CONNECTIONS), str(requests), str(len(CLIENT))] + self.pairs
+        for attempt in range(6):
+            o = subprocess.run(['perf', 'record', '-N', '-B', '-g', '-e', 'cycles:u', '-c', str(period), '-o', data, '-p', ','.join(map(str, self.pids())), '--'] + client, capture_output=True, text=True)
+            if o.returncode == 0:
+                break
+        if self.dead() or o.returncode != 0:
+            raise Broke('broke under load', 'perf record -g: exit %s: ' % o.returncode + (o.stderr + o.stdout)[-400:].replace('\n', ' '))
+        counts = layers.read_call_chains(subprocess.run(['perf', 'script', '-i', data, '-F', 'ip,sym,dso'], capture_output=True, text=True, errors='replace').stdout.split('\n'))
+        os.remove(data)
+        self.total += requests
+        return dict(('%s/%s' % (who, layer), samples * per_request / sum(counts.values())) for (layer, who), samples in counts.items())
 
     def warm(self):
         began, size, self.settled = time.perf_counter(), 2000, False
@@ -386,6 +477,13 @@ class Server:
         if CONTINUOUS:
             self.rounds = [w for at, w in self.loaded if at >= READ_FROM] or [free]
             self.counted = [self.window(self.size) for n in range(COUNTER_ROUNDS)]
+            if LAYERS:
+                last = self.counted[-1]
+                self.layers = dict((event, self.profile(event, last[event])) for event in ('cycles', 'instructions'))
+                if self.column.split('.')[0] == 'aot':
+                    self.layers['asked'] = self.profile_callers(last['cycles'])
+                kernel, cpu = (statistics.median(x[k] for x in self.rounds) for k in ('kernel', 'cpu'))
+                self.layers['cycles']['kernel'] = last['cycles'] * kernel / (cpu - kernel)
             self.paced = [self.window(int(self.pace * PACED_SECONDS), self.pace, int(self.pace * PACED_LEAD)) for n in range(PACED_ROUNDS)]
 
     def move(self, cores):
@@ -405,6 +503,8 @@ class Server:
         self.end()
         best = max(x['rate'] for x in self.rounds)
         r = self.rounds if CONTINUOUS else [x for x in self.rounds if x['rate'] >= 0.9 * best]
+        clean = [x for x in r if x['guests'] <= 0.01]
+        left_out, r = len(r) - len(clean), clean or r
         e = self.windows[:2]
 
         def middle(k):
@@ -412,18 +512,21 @@ class Server:
         rates = [x['rate'] for x in r]
         counted = self.counted or self.windows[-2:]
         row = {'requests_a_second': middle('rate'), 'p50_us': middle('p50'), 'p99_us': middle('p99'), 'instructions': statistics.median(x['instructions'] for x in counted), 'cycles': statistics.median(x['cycles'] for x in counted),
-               'counted_requests_a_second': statistics.median(x['rate'] for x in counted), 'kernel_us': middle('kernel'),
+               'counted_requests_a_second': statistics.median(x['rate'] for x in counted), 'kernel_us': middle('kernel'), **dict((e, statistics.median(x[e] for x in counted)) for e in EVENTS),
                'cpu_us': middle('cpu'), 'peak_rss_mb': peak, 'private_mb': self.high, 'settled_rss_mb': settled_rss, 'settled_private_mb': settled_private, 'ready_rss_mb': self.ready_rss, 'ready_private_mb': self.ready_private, 'first_answer_ms': statistics.median(self.firsts) * 1e3,
                'server_busy': statistics.median(x['cpu'] * x['rate'] / 1e6 for x in r) / len(SERVER), 'client_busy': middle('client'), 'postgres_busy': middle('postgres'), 'postgres_us': middle('postgres_us'), 'carrier_busy': middle('carrier'),
-               'spread_percent': (max(rates) - min(rates)) * 100 / statistics.median(rates), 'early_requests_a_second': sum(x['n'] for x in e) / sum(x['n'] / x['rate'] for x in e),
+               'guests': max(x['guests'] for x in r), 'spread_percent': (max(rates) - min(rates)) * 100 / statistics.median(rates), 'early_requests_a_second': sum(x['n'] for x in e) / sum(x['n'] / x['rate'] for x in e),
                'file_mb': os.path.getsize(self.binary) / 1e6, 'load': float(open('/proc/loadavg').read().split()[0]), 'warm_seconds': self.warm_seconds}
         if self.paced:
             row.update(paced_p50_us=min(x['p50'] for x in self.paced), paced_p99_us=min(x['p99'] for x in self.paced), paced_p999_us=min(x['p999'] for x in self.paced))
         limit = [k for k in ('client', 'postgres', 'carrier') if row[k + '_busy'] > 0.9]
+        by_layer = dict(('layers_' + event, ' '.join('%s:%d' % x for x in cells.items())) for event, cells in self.layers.items())
+        if self.sampled:
+            by_layer['layers_sampled'] = ' '.join(self.sampled)
         words = {'requests': self.total, 'window': self.size, 'rounds': len(self.rounds), 'rounds_kept': len(r), 'processes': len(self.firsts) and (len(SERVER) if self.column.split('.')[0] in SINGLE_THREADED else 1), 'threads': threads, 'paced_rate': self.pace,
                  'connections': CONNECTIONS, 'pool': self.pool, 'body_bytes': len(self.body), 'body_md5': hashlib.md5(self.body).hexdigest()[:8], 'settled': 'yes' if self.settled else 'NO', 'counted': 'whole' if all(x['whole'] for x in counted) else 'MULTIPLEXED',
                  'limit': ','.join(limit) or 'server', 'confirmed': int(self.confirmed()), 'firsts_ms': ' '.join('%.1f' % (x * 1e3) for x in self.firsts), 'round_rates': ' '.join('%d' % x['rate'] for x in self.rounds),
-                 'curve': ' '.join('%d:%d' % (x['at'], x['instructions']) for x in self.windows), 'rate_curve': ' '.join(self.curve), 'label': LABEL, 'start_number': start}
+                 'curve': ' '.join('%d:%d' % (x['at'], x['instructions']) for x in self.windows), 'rate_curve': ' '.join(self.curve), 'label': LABEL, 'start_number': start, 'windows_void': left_out, 'void': 'no' if clean else 'yes', **by_layer}
         print('%-24s %9.0f/s +-%2.0f%% p50 %6.0f p99 %7.0f us | %8.0f instructions %8.0f cycles %7.2f us CPU (kernel %6.2f) | RSS ready %6.1f peak %6.1f private %6.1f MB | first %6.1f ms | busy: server %.2f client %.2f postgres %.2f carrier %.2f%s' % (
             self.name, row['requests_a_second'], row['spread_percent'] / 2, row['p50_us'], row['p99_us'], row['instructions'], row['cycles'], row['cpu_us'], row['kernel_us'], self.ready_rss, peak, self.high,
             row['first_answer_ms'], row['server_busy'], row['client_busy'], row['postgres_busy'], row['carrier_busy'], '' if self.settled else ' NOT SETTLED'), flush=True)
@@ -521,7 +624,7 @@ for test in tests.split(','):
         starts = stand[column]
         row = dict((k, statistics.median(s[0][k] for s in starts)) for k in starts[-1][0])
         words = dict(starts[-1][1])
-        for k, worst in (('settled', 'NO'), ('counted', 'MULTIPLEXED')):
+        for k, worst in (('settled', 'NO'), ('counted', 'MULTIPLEXED'), ('void', 'yes')):
             if any(s[1][k] == worst for s in starts):
                 words[k] = worst
         words['limit'] = ','.join(sorted(set(x for s in starts for x in s[1]['limit'].split(',')) - ({'server'} if any(s[1]['limit'] != 'server' for s in starts) else set())))

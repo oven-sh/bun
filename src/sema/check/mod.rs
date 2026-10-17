@@ -123,12 +123,13 @@ pub use aot::ImportedCode;
 pub use aot::{AotCheck, AotCheckKind};
 pub use aot::{CommonJsExports, ExportsReference};
 pub use aot::Identity;
-pub use aot::given;
+pub use aot::nullish_flow;
 pub use aot::{NotInt32Reason, FlowNode, FlowSource, Int32Verdict, NumberFlow, CodeOwner, expected_int32};
-pub use aot::{Answer, BuiltIn, Candidate, TruncatedSearch, KindsDeclared, Literal, SearchBarrier, Membership, FlowNotes, DataOrigin, Place, Question, Reach, Share, UntypedReason};
+pub use aot::{SubtypeAnswer, BuiltIn, Candidate, TruncatedSearch, KindsDeclared, Literal, SearchBarrier, Membership, FlowNotes, DataOrigin, Place, SubtypeQuery, LayoutUsage, FilePartition, UntypedReason};
 pub use aot::{Cause, FieldTypes, LoggingRelaxation, Sizes, Subtypes};
-pub use aot::{Evaluates, FirstStore, Primitive, ReferenceRead, Storage, kind};
+pub use aot::{EvaluationTime, FirstStore, Primitive, ReferenceRead, Storage, kind};
 pub use aot::{Claim, is_engine_global};
+pub use aot::{ConstantSymbol, FieldKey};
 pub use aot::{Constant, OtherKeys, Placeholder, PlanNode, Planned, PlannedMember, PlannedPrimitive, Rule, ValidationCall, ValidationPlan};
 pub use aot::locked_builtins;
 pub use aot::{Callee, SingleFunction};
@@ -1979,6 +1980,11 @@ impl<'p, 's> Checker<'p, 's> {
     #[inline]
     fn files(&self) -> &'p Files<'s> {
         self.files
+    }
+
+    #[inline]
+    pub(crate) fn check_options(&self, file: FileId) -> &'p crate::resolve::CheckOptions {
+        self.files.check_options(file)
     }
 
     /// Whether `file` contains a conditional or a mapped type node: in any other file,

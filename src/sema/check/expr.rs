@@ -1167,7 +1167,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let right = self.place_of_right(file, name, name_pos);
                 if self.is_block_scoped_global(name) {
                     self.error_at(right, 2339, &[Arg::Atom(name), Arg::Type(left)]);
-                } else if self.p.files.options.no_implicit_any {
+                } else if self.check_options(file).no_implicit_any {
                     self.error_at(right, 7017, &[Arg::Type(left)]);
                 }
                 return (TypeId::ANY, stops);
@@ -1214,7 +1214,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let printed = self.apparent_type_of_intersection(apparent);
                 self.error_at(node, 2542, &[Arg::Type(printed)]);
             }
-            if self.p.files.options.no_property_access_from_index_signature
+            if self.check_options(file).no_property_access_from_index_signature
                 && !self.is_restricted_to_fixed_set(file)
                 && !bound.is_in_type_query(e)
             {
@@ -1323,7 +1323,7 @@ impl<'p, 's> Checker<'p, 's> {
         hir.kind(hir.node(member)) == Kind::PropertyDeclaration
             && hir[member].ty.is_none()
             && hir[member].init.is_none()
-            && self.p.files.options.no_implicit_any
+            && self.check_options(file).no_implicit_any
     }
 
     /// `getDeclaringConstructor` for the symbol of `file` whose `Declarations` are `declarations`.
@@ -1548,7 +1548,7 @@ impl<'p, 's> Checker<'p, 's> {
             None => TypeId::ERROR,
         };
         // `getPropertyTypeForIndexType`: each member of a union of keys names a property.
-        if self.p.files.options.no_unused_locals && !self.is_generic(key) {
+        if self.check_options(file).no_unused_locals && !self.is_generic(key) {
             for &k in self.parts(key) {
                 if let Some(name) = self.property_name_of_type(k) {
                     self.mark_property_as_referenced(file, receiver, name, Some(e));
@@ -2555,7 +2555,7 @@ impl<'p, 's> Checker<'p, 's> {
         let is_for_direct_eval = matches!(self.bound(file).expr_parent[e.idx()], Parent::Prop(p)
             if matches!(hir[p].key, PropKey::Name(key) if self.atoms().bytes(key) == crate::direct_eval::SCOPE_KEY));
         let Some(t) = self.try_get_this_type_at_ex(file, this, container) else {
-            if !self.p.files.options.no_implicit_this || is_for_direct_eval {
+            if !self.check_options(file).no_implicit_this || is_for_direct_eval {
                 return TypeId::ANY;
             }
             let is_shadowed = self
@@ -2570,7 +2570,7 @@ impl<'p, 's> Checker<'p, 's> {
             return TypeId::ANY;
         };
         if captured_by_arrow_function
-            && self.p.files.options.no_implicit_this
+            && self.check_options(file).no_implicit_this
             && !is_for_direct_eval
             && is_global_this(self, t)
         {
@@ -2698,7 +2698,7 @@ impl<'p, 's> Checker<'p, 's> {
         // does not handle it.
         let hir = self.hir(file);
         let this = &hir[f.this_param];
-        if self.p.files.options.no_implicit_any
+        if self.check_options(file).no_implicit_any
             && !this.flags.contains(Flags::REPARSED)
             && !(hir.is_js && !self.is_check_js(file))
             && !self.is_private_within_ambient(file, func)
@@ -2831,7 +2831,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return Some(this);
         }
-        if !self.p.files.options.no_implicit_this && !self.hir(file).is_js {
+        if !self.check_options(file).no_implicit_this && !self.hir(file).is_js {
             return None;
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -3624,7 +3624,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `isJSLiteralType`
     pub(super) fn is_js_literal_type(&mut self, ty: TypeId) -> bool {
         // The flag has no effect under noImplicitAny.
-        if self.p.files.options.no_implicit_any {
+        if self.p.files.has_no_implicit_any_everywhere() {
             return false;
         }
         match self.data(ty) {
@@ -3660,7 +3660,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// type, or is empty and has expando members. A type that `getSpreadType` creates never has it.
     pub(super) fn is_js_literal(&mut self, file: FileId, literal: ExprId) -> bool {
         // `isJSLiteralType`, `hasExcessProperties`: nothing reads the flag under noImplicitAny.
-        if self.p.files.options.no_implicit_any {
+        if self.check_options(file).no_implicit_any {
             return false;
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -5690,7 +5690,7 @@ impl<'p, 's> Checker<'p, 's> {
                     if op == BinOp::UShr {
                         self.report_operator_error(file, e, op, l, r, None);
                     } else if op == BinOp::Pow
-                        && language_version(self) < crate::resolve::ScriptTarget::ES2016
+                        && language_version(self, file) < crate::resolve::ScriptTarget::ES2016
                     {
                         self.error_at(self.place_of_expr(file, e), 2791, &[]);
                     }

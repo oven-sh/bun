@@ -1,5 +1,3 @@
-//! Escape analysis: what a function does with what it is handed.
-
 use super::ByFile;
 use super::callees::{Callee, ResultCallees};
 use super::storage::Query;
@@ -9,9 +7,7 @@ use crate::hir::{BinOp, CallId, ExprId, ExprKind, ExprTag, Flags, FnId, FnKind, 
 use crate::program::FileId;
 use crate::util::{FxHashMap, FxHashSet};
 
-/// What may happen to the argument for a parameter. A join semilattice of bits.
 pub mod argument_use {
-    /// Something may tell it from another object: it is compared, used as a key, looked into, constructed with.
     pub const OBSERVED: u8 = 1 << 0;
     pub const ESCAPES: u8 = 1 << 1;
     pub const ALL: u8 = OBSERVED | ESCAPES;
@@ -27,12 +23,9 @@ pub(super) struct State {
     parameter_uses: FxHashMap<(FileId, ParamId), u8>,
 }
 
-/// What one pass over the identifiers of a file finds.
 #[derive(Default)]
 struct FileUses {
-    /// By parameter or variable that is a plain name with one declaration: the references to it, in the order of the source.
     parameter_uses: FxHashMap<SymbolId, Vec<ExprId>>,
-    /// The functions that refer to their `arguments` object, also from within an arrow function.
     using_arguments: FxHashSet<FnId>,
 }
 
@@ -101,7 +94,6 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(&known) = self.aot.escape.parameter_uses.get(&(file, p)) {
             return known;
         }
-        // A function that hands the argument on to itself, by way of others or not, does no more with it for that.
         if let Some(assumed) = self.assumption(Query::ArgumentUse(file, p)) {
             return assumed as u8;
         }
@@ -118,7 +110,6 @@ impl<'p, 's> Checker<'p, 's> {
         let uses = self.file_uses(file);
         let symbol = bound.pat_symbol[pat.idx()];
         let is_plain = matches!(hir[pat].kind, PatKind::Ident(_)) && !hir[p].flags.contains(Flags::REST) && func.is_some() && symbol.is_some();
-        // What is stored to the parameter is read like the argument. The `arguments` object is another way to the argument.
         if !is_plain || uses.using_arguments.contains(&func) || !bound.assignments_to(symbol).is_empty() || self.is_stored_through_casts(file, symbol) {
             return argument_use::ALL;
         }
@@ -141,7 +132,6 @@ impl<'p, 's> Checker<'p, 's> {
         found
     }
 
-    /// What is done with the value of the expression where it stands.
     pub(super) fn value_use_flags(&mut self, file: FileId, e: ExprId) -> u8 {
         self.value_use_flags_at_depth(file, e, 0)
     }
@@ -166,11 +156,9 @@ impl<'p, 's> Checker<'p, 's> {
                 _ => return argument_use::ALL,
             };
             match hir[parent].kind {
-                // They yield the value itself.
                 ExprKind::As { .. } | ExprKind::Satisfies { .. } | ExprKind::NonNull(_) | ExprKind::Instantiation { .. } => {}
                 ExprKind::Cond { test, .. } if test == e => return 0,
                 ExprKind::Cond { .. } => {}
-                // A function is truthy: `f && f(x)` does not yield it.
                 ExprKind::Binary { op: BinOp::And, left, .. } if left == e => return 0,
                 ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, .. } => {}
                 ExprKind::Binary { op: BinOp::Comma, left, .. } if left == e => return 0,
@@ -195,12 +183,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// What the call does with its argument `e`.
     fn call_argument_use_flags(&mut self, file: FileId, call: CallId, e: ExprId) -> u8 {
         let hir = self.hir(file);
         let mut index = None;
         for (i, argument) in hir.ids(hir[call].args).enumerate() {
-            // Which parameter takes what comes after it depends on what is spread.
             if matches!(hir[argument].kind, ExprKind::Spread(_)) {
                 break;
             }
@@ -214,7 +200,6 @@ impl<'p, 's> Checker<'p, 's> {
             let params = self.hir(of)[func].params;
             return match params.iter().nth(index) {
                 Some(p) => self.argument_use_flags(of, p),
-                // Nothing names it.
                 None if !self.file_uses(of).using_arguments.contains(&func) && !params.iter().next_back().is_some_and(|last| self.hir(of)[last].flags.contains(Flags::REST)) => 0,
                 None => argument_use::ALL,
             };

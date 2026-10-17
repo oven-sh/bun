@@ -6,7 +6,7 @@ const { Stream, prependListener } = require("internal/streams/legacy");
 const { addAbortSignal, addAbortSignalNoValidate } = require("internal/streams/add-abort-signal");
 const eos = require("internal/streams/end-of-stream");
 const destroyImpl = require("internal/streams/destroy");
-const { ReadableState, createReadableState, createReadableStateOfBytes, isReadableState, isWritableState, internals } =
+const { ReadableState, createReadableState, createByteReadableState, isReadableState, isWritableState, internals } =
   require("internal/streams/state") as typeof import("internal/streams/state").default;
 type ReadableState = import("internal/streams/state").ReadableState;
 type WritableState = import("internal/streams/state").WritableState;
@@ -118,7 +118,7 @@ internals.onReadableConstructed = onConstructed;
 function constructReadable(stream, highWaterMark: unknown): void {
   stream._events ??= preallocatedEvents();
 
-  stream._readableState = createReadableStateOfBytes(highWaterMark);
+  stream._readableState = createByteReadableState(highWaterMark);
 
   Stream.$call(stream, undefined);
 
@@ -170,7 +170,7 @@ function push(stream, state: ReadableState, chunk, encoding): boolean {
 }
 
 internals.pushToReadable = push;
-internals.methodThatPushes = Readable.prototype.push;
+internals.pushingMethod = Readable.prototype.push;
 
 // Unshift should *always* be something directly out of read().
 Readable.prototype.unshift = function (chunk, encoding) {
@@ -410,7 +410,7 @@ function howMuchToRead(n: number, state: ReadableState): number {
 }
 
 // `state.length` is the sum of the lengths of what is buffered.
-function lengthOfFirstChunk(state: ReadableState): number {
+function firstChunkLength(state: ReadableState): number {
   const buffer = state.buffer;
   const index = state.bufferIndex;
   return buffer.length - index === 1 ? state.length : (buffer[index].length as number);
@@ -419,10 +419,10 @@ function lengthOfFirstChunk(state: ReadableState): number {
 function howManyBytesToRead(n: number, state: ReadableState): number {
   if (NumberIsNaN(n)) {
     // Fast path for buffers.
-    if ((state.flags & kDecoder) === 0 && state.length) return lengthOfFirstChunk(state);
+    if ((state.flags & kDecoder) === 0 && state.length) return firstChunkLength(state);
 
     // Only flow one buffer at a time.
-    if ((state.flags & kFlowing) !== 0 && state.length) return lengthOfFirstChunk(state);
+    if ((state.flags & kFlowing) !== 0 && state.length) return firstChunkLength(state);
 
     return state.length;
   }
@@ -789,7 +789,7 @@ Readable.prototype.pipe = function (dest, pipeOpts) {
     $debug("ondata");
     try {
       const ret =
-        destState !== undefined && dest.write === internals.methodThatWrites
+        destState !== undefined && dest.write === internals.writingMethod
           ? internals.writeToWritable!(dest, destState, chunk, undefined, undefined) === true
           : dest.write(chunk);
       $debug("dest.write", ret);
@@ -1055,7 +1055,7 @@ function resume_(stream, state: ReadableState): void {
   if ((state.flags & (kFlowing | kReading)) === kFlowing) stream.read(0);
 }
 
-internals.resumeInItsTick = resume_;
+internals.resumeOnNextTick = resume_;
 
 Readable.prototype.pause = function () {
   const state: ReadableState = this._readableState;
@@ -1582,7 +1582,7 @@ function endReadableNT(state: ReadableState, stream): void {
   }
 }
 
-internals.endInItsTick = endReadableNT;
+internals.endOnNextTick = endReadableNT;
 
 function endWritableNT(stream) {
   const writable = stream.writable && !stream.writableEnded && !stream.destroyed;

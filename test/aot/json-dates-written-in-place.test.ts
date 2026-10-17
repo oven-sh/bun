@@ -7,6 +7,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const files = {
+  "tsconfig.json": JSON.stringify({ compilerOptions: { typeRoots: [join(import.meta.dir, "../../packages")], types: ["bun-types"] } }),
   "main.ts": `
     interface Comment { id: number; at: Date; replies: Comment[] }
     const comment = (id: number, depth: number): Comment => ({ id, at: new Date(1_700_000_000_000 + id * 86_400_123), replies: depth ? [comment(id * 2 + 1, depth - 1), comment(id * 2 + 2, depth - 1)] : [] });

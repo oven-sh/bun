@@ -44,6 +44,18 @@ test(`types: ["bun-types"] without the package installed is a warning`, async ()
   expect({ stdout, exitCode }).toEqual({ stdout: "string\n", exitCode: 0 });
 });
 
+test(`@types/bun installed but excluded by "types" is a warning`, async () => {
+  const { stdout, stderr, exitCode } = await run({
+    "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, types: ["bun-types"] } }),
+    "main.ts": `console.log(typeof Bun.version);\n`,
+    "node_modules/@types/bun/package.json": JSON.stringify({ name: "@types/bun", version: "1.0.0", types: "index.d.ts" }),
+    "node_modules/@types/bun/index.d.ts": `export {};\n`,
+  });
+  expect(stderr).toContain("TS2688");
+  expect(stderr).toContain(`"types": ["bun"]`);
+  expect({ stdout, exitCode }).toEqual({ stdout: "string\n", exitCode: 0 });
+});
+
 test("a type error in the program's own code still stops the build", async () => {
   const { stdout, stderr, exitCode } = await run({
     "main.ts": `const n: number = "one";\nconsole.log(n);\n`,

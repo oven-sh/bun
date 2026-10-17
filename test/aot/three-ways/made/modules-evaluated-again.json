@@ -60,7 +60,7 @@
  "second-form-hoisting": "as bun run",
  "second-form-imported-by-an-es-module-too": "as the bundle",
  "second-form-json-and-node-modules-beside": "as the bundle",
- "second-form-places-in-stacks": "alone: 0 [\"Error: from the library\",\"at thrower (lib.cjs:2:13\",\"at <anonymous> (lib.cjs:5:7\"]\n1 [\"Error: from the library\",\"at thrower (lib.cjs:2:13\",\"at <anonymous> (lib.cjs:5:7\"]\n2 [\"Error: from the library\",\"at thrower (lib.cjs:2:13\",\"at <anonymous> (lib.cjs:5:7\"]",
+ "second-form-places-in-stacks": "as bun run",
  "second-form-requires-itself": "all agree",
  "second-form-sloppy-at-the-top": "as bun run",
  "second-form-the-module-object": "as the bundle",

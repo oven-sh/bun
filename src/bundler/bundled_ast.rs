@@ -101,6 +101,7 @@ pub struct BundledAst<'arena> {
 
     // const_values: ConstValuesMap,
     pub(crate) ts_enums: bun_ast::ast_result::TsEnumsMap,
+    pub(crate) jsx_pragmas: Option<bun_alloc::AstBox<bun_ast::ast_result::JsxPragmas>>,
 
     pub(crate) flags: Flags,
 }
@@ -136,6 +137,7 @@ bun_collections::multi_array_columns! {
         redirect_import_record_index: u32,
         target: bun_ast::Target,
         ts_enums: bun_ast::ast_result::TsEnumsMap,
+        jsx_pragmas: Option<bun_alloc::AstBox<bun_ast::ast_result::JsxPragmas>>,
         flags: Flags,
     }
 }
@@ -197,6 +199,7 @@ impl<'arena> BundledAst<'arena> {
             redirect_import_record_index: u32::MAX,
             target: bun_ast::Target::Browser,
             ts_enums: bun_ast::ast_result::TsEnumsMap::default(),
+            jsx_pragmas: None,
             flags: Flags::empty(),
         }
     }
@@ -249,6 +252,7 @@ impl<'arena> BundledAst<'arena> {
 
             // const_values: self.const_values,
             ts_enums: self.ts_enums,
+            jsx_pragmas: self.jsx_pragmas,
 
             uses_exports_ref: self.flags.contains(Flags::USES_EXPORTS_REF),
             uses_module_ref: self.flags.contains(Flags::USES_MODULE_REF),
@@ -345,6 +349,7 @@ impl<'arena> BundledAst<'arena> {
 
             // const_values: ast.const_values,
             ts_enums: ast.ts_enums,
+            jsx_pragmas: ast.jsx_pragmas,
 
             flags,
         }

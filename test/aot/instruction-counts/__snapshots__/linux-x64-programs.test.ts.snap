@@ -2,13 +2,13 @@
 
 exports[`Code made at run time meets compiled code: 0 the loop alone 1`] = `"a turn: 104.51 instructions (the runtime 104.14, elsewhere 0.36), 0 bytes"`;
 
-exports[`Code made at run time meets compiled code: 0 calls a function made of text 1`] = `"a turn: 333.75 instructions (the runtime 333.72, elsewhere 0.03), 0 bytes"`;
+exports[`Code made at run time meets compiled code: 0 calls a function made of text 1`] = `"a turn: 334.26 instructions (the runtime 334.24, elsewhere 0.03), 0 bytes"`;
 
 exports[`Code made at run time meets compiled code: 1 calls a typed function (numbers) 1`] = `"a turn: 305.77 instructions (the runtime 225.41, stub EnterSlimClosure 59, stub BoxNumber 8, add 5, stub LeafUnboxNumberArgument0ToFPR0 4, stub LeafUnboxNumberArgument1ToFPR1 4, elsewhere 0.36), 0 bytes"`;
 
-exports[`Code made at run time meets compiled code: 1 the same, made by eval 1`] = `"a turn: 308.72 instructions (the runtime 228.25, stub EnterSlimClosure 59, stub BoxNumber 8, add 5, stub LeafUnboxNumberArgument0ToFPR0 4, stub LeafUnboxNumberArgument1ToFPR1 4, elsewhere 0.47), 0 bytes"`;
+exports[`Code made at run time meets compiled code: 1 the same, made by eval 1`] = `"a turn: 308.90 instructions (the runtime 228.38, stub EnterSlimClosure 59, stub BoxNumber 8, add 5, stub LeafUnboxNumberArgument0ToFPR0 4, stub LeafUnboxNumberArgument1ToFPR1 4, elsewhere 0.52), 0 bytes"`;
 
-exports[`Code made at run time meets compiled code: 1 the same, made by node:vm 1`] = `"a turn: 308.04 instructions (the runtime 227.57, stub EnterSlimClosure 59, stub BoxNumber 8, add 5, stub LeafUnboxNumberArgument0ToFPR0 4, stub LeafUnboxNumberArgument1ToFPR1 4, elsewhere 0.47), 0 bytes"`;
+exports[`Code made at run time meets compiled code: 1 the same, made by node:vm 1`] = `"a turn: 308.13 instructions (the runtime 227.66, stub EnterSlimClosure 59, stub BoxNumber 8, add 5, stub LeafUnboxNumberArgument0ToFPR0 4, stub LeafUnboxNumberArgument1ToFPR1 4, elsewhere 0.47), 0 bytes"`;
 
 exports[`Code made at run time meets compiled code: 1 calls a typed function (a typed object in) 1`] = `"a turn: 289.93 instructions (the runtime 211.56, stub EnterSlimClosure 59, width 11, stub BoxNumber 8, elsewhere 0.36), 0 bytes"`;
 
@@ -50,9 +50,9 @@ exports[`Code made at run time meets compiled code: 7 is called by untyped code 
 
 exports[`Code made at run time meets compiled code: 8 Array.prototype.push 1`] = `"a turn: 396.90 instructions (the runtime 397.10, elsewhere -0.20), 0 bytes"`;
 
-exports[`Code made at run time meets compiled code: 8 JSON.stringify of a typed object 1`] = `"a turn: 1222.99 instructions (the runtime 1205.35, elsewhere 17.64), 0 bytes"`;
+exports[`Code made at run time meets compiled code: 8 JSON.stringify of a typed object 1`] = `"a turn: 1213.18 instructions (the runtime 1195.54, elsewhere 17.64), 0 bytes"`;
 
-exports[`Code made at run time meets compiled code: 8 JSON.stringify of an untyped object 1`] = `"a turn: 1142.12 instructions (the runtime 1124.48, elsewhere 17.64), 0 bytes"`;
+exports[`Code made at run time meets compiled code: 8 JSON.stringify of an untyped object 1`] = `"a turn: 1141.99 instructions (the runtime 1124.35, elsewhere 17.64), 0 bytes"`;
 
 exports[`Code made at run time meets compiled code: 8 Map.prototype.get 1`] = `"a turn: 395.44 instructions (the runtime 395.07, elsewhere 0.36), 0 bytes"`;
 
@@ -162,12 +162,12 @@ exports[`Dictionary-mode objects: 4 read by computed key, plain object 1`] = `"a
 
 exports[`Dictionary-mode objects: 4 read by computed key, permanent dictionary object 1`] = `"a turn: 253.90 instructions (the runtime 173.40, built-in modules 33.50, stub GetByNameGeneric 24, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 12, stub ReadThroughSlotsByNamePreservingTwo 11), 0 bytes"`;
 
-exports[`Property cache misses: 0 new shape only 1`] = `"a turn: 2794.34 instructions (the runtime 2588.94, elsewhere 75.25, stub PutByValCached 48.06, built-in modules 43, stub NewObjectFromDescriptor4 23.09, stub OperationValueWithInstance 14, stub OperationValueWithInstance to operationAOTTypedConcatenateWithIntegers 2), 0 bytes"`;
+exports[`Property cache misses: 0 new shape only 1`] = `"a turn: 2789.33 instructions (the runtime 2584.07, elsewhere 75.11, stub PutByValCached 48.06, built-in modules 43, stub NewObjectFromDescriptor4 23.09, stub OperationValueWithInstance 14, stub OperationValueWithInstance to operationAOTTypedConcatenateWithIntegers 2), 0 bytes"`;
 
 exports[`Property cache misses: 1 replace four properties, new shape 1`] = `"a turn: 5603.87 instructions (the runtime 5181.38, built-in modules 95, elsewhere 76.34, stub PutByNameGeneric 68, stub PutByValCached 48.06, stub PutByNameWithDirectColumn 40, stub PutByNameStoresFieldBoolean 28, stub PutByNameThroughSlots 28, stub NewObjectFromDescriptor4 23.09, stub OperationValueWithInstance 14, stub OperationValueWithInstance to operationAOTTypedConcatenateWithIntegers 2), 0 bytes"`;
 
 exports[`Property cache misses: 2 add four properties, new shape 1`] = `"a turn: 11949.77 instructions (the runtime 11450.22, elsewhere 134.62, built-in modules 95, stub PutByNameGeneric 68, stub PutByValCached 47.94, stub NewObjectFromDescriptor4 41.99, stub PutByNameWithDirectColumn 40, stub PutByNameStoresFieldBoolean 28, stub PutByNameThroughSlots 28, stub OperationValueWithInstance 14, stub OperationValueWithInstance to operationAOTTypedConcatenateWithIntegers 2), 0 bytes"`;
 
-exports[`Property cache misses: 3 read four own properties, new shape 1`] = `"a turn: 2993.68 instructions (the runtime 2615.28, built-in modules 140, stub GetById 76, elsewhere 75.25, stub PutByValCached 48.06, stub NewObjectFromDescriptor4 23.09, stub OperationValueWithInstance 14, stub OperationValueWithInstance to operationAOTTypedConcatenateWithIntegers 2), 0 bytes"`;
+exports[`Property cache misses: 3 read four own properties, new shape 1`] = `"a turn: 2963.76 instructions (the runtime 2585.36, built-in modules 140, stub GetById 76, elsewhere 75.25, stub PutByValCached 48.06, stub NewObjectFromDescriptor4 23.09, stub OperationValueWithInstance 14, stub OperationValueWithInstance to operationAOTTypedConcatenateWithIntegers 2), 0 bytes"`;
 
 exports[`Property cache misses: 4 read four missing properties, new shape 1`] = `"a turn: 5145.59 instructions (the runtime 4828.95, elsewhere 75.50, built-in modules 62, stub GetByNameWithDirectColumnWithReceiverInRBX 55, stub PutByValCached 48.06, stub GetByNameGeneric 24, stub NewObjectFromDescriptor4 23.09, stub OperationValueWithInstance 14, stub ReadThroughSlotsByName 7, stub ReadAbsentByName 6, stub OperationValueWithInstance to operationAOTTypedConcatenateWithIntegers 2), 0 bytes"`;

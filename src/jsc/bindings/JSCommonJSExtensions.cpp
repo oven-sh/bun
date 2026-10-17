@@ -151,7 +151,7 @@ void onAssign(Zig::GlobalObject* globalObject, JSC::PropertyName propertyName, J
     auto* name = propertyName.publicName();
     if (!name->startsWith('.')) return;
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
-    Bun::noteThatRequireCacheIsRead(globalObject);
+    Bun::recordRequireCacheRead(globalObject);
     RETURN_IF_EXCEPTION(scope, );
     BunString ext = Bun::toString(name);
     JSC::CallData callData = JSC::getCallData(value);

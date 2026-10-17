@@ -151,7 +151,7 @@ Transform.prototype._write = function (chunk, encoding, callback) {
     }
 
     if (val != null) {
-      if (this.push === internals.methodThatPushes) internals.pushToReadable!(this, rState, val, undefined);
+      if (this.push === internals.pushingMethod) internals.pushToReadable!(this, rState, val, undefined);
       else this.push(val);
     }
 

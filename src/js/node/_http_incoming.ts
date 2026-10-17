@@ -28,7 +28,7 @@ const {
 
 const ObjectDefineProperty = Object.defineProperty;
 const ProcessNextTick = process.nextTick;
-const { constructReadable, resumeInItsTick, endInItsTick } = internals;
+const { constructReadable, resumeOnNextTick, endOnNextTick } = internals;
 const { emit, listenerCount, read, push, resume, destroy } = Readable.prototype;
 
 const kAutoDestroy = 1 << 2;
@@ -768,7 +768,7 @@ IncomingMessage.prototype._dump = function _dump() {
   }
 };
 
-const { _read: readOfIncomingMessage, _destroy: destroyOfIncomingMessage } = IncomingMessage.prototype;
+const { _read: incomingMessageRead, _destroy: incomingMessageDestroy } = IncomingMessage.prototype;
 
 function isUnheard(req, name) {
   if (req.emit !== emit) return false;
@@ -796,12 +796,12 @@ function resumeUnwatched(req, state) {
     req._consuming ||
     req[eofInProgress] ||
     req.read !== read ||
-    req._read !== readOfIncomingMessage ||
+    req._read !== incomingMessageRead ||
     req._readableState !== state ||
     !isUnheard(req, "resume") ||
     !advanceFlags(state, kFlagsResumed, kFlagsReading)
   ) {
-    return resumeInItsTick(req, state);
+    return resumeOnNextTick(req, state);
   }
   req._consuming = true;
   resumeConnection(req);
@@ -826,13 +826,13 @@ function endUnwatched(req) {
 
 function destroyUnwatched(req, state, parser) {
   try {
-    destroyInItsTick(req, state);
+    destroyOnNextTick(req, state);
   } finally {
     if (parser !== undefined) clearServerParserIncoming(parser, req);
   }
 }
 
-function destroyInItsTick(req, state) {
+function destroyOnNextTick(req, state) {
   const handle = req[kHandle];
   if (
     !handle ||
@@ -840,12 +840,12 @@ function destroyInItsTick(req, state) {
     req.writable ||
     req._writableState ||
     req.destroy !== destroy ||
-    req._destroy !== destroyOfIncomingMessage ||
+    req._destroy !== incomingMessageDestroy ||
     req._readableState !== state ||
     !isUnheard(req, "end") ||
     !advanceFlags(state, kFlagsEnded, kFlagsDestroyed)
   ) {
-    return endInItsTick(state, req);
+    return endOnNextTick(state, req);
   }
   req[kAutoDestroyed] = true;
   req[kHandle] = undefined;

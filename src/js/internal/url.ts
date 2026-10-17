@@ -1,7 +1,7 @@
 const [domainToASCII, domainToUnicode, idnaToASCII] = $cpp("NodeURL.cpp", "Bun::createNodeURLBinding");
 
 function urlToHttpOptions(url) {
-  if (!(url instanceof URL)) return urlToHttpOptionsOfAnything(url);
+  if (!(url instanceof URL)) return urlToHttpOptionsUntyped(url);
   // A URL's accessors are native and make a string at each read: each is read once.
   const hostname = url.hostname;
   const search = url.search;
@@ -29,7 +29,7 @@ function urlToHttpOptions(url) {
   return options;
 }
 
-function urlToHttpOptionsOfAnything(url) {
+function urlToHttpOptionsUntyped(url) {
   const options = {
     __proto__: null,
     ...url,

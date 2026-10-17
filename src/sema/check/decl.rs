@@ -2694,7 +2694,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.error_at(at, 1061, &[]);
             return Evaluated::default();
         };
-        if self.p.files.options.isolated_modules
+        if self.check_options(file).isolated_modules
             && let Some((previous, before)) = previous
             && hir[previous].init.is_some()
             && (!matches!(before.value, Some(EnumValue::Number(_))) || before.resolved_other_files)
@@ -2729,7 +2729,7 @@ impl<'p, 's> Checker<'p, 's> {
                     let is_nan = f64::from_bits(n).is_nan();
                     self.error_at(at, if is_nan { 2478 } else { 2477 }, &[]);
                 }
-                if self.p.files.options.isolated_modules
+                if self.check_options(file).isolated_modules
                     && matches!(value, EnumValue::String(_))
                     && !result.is_syntactically_string
                 {
@@ -3611,7 +3611,7 @@ impl<'p, 's> Checker<'p, 's> {
         let hir = self.hir(file);
         let is_js = hir.is_js && is_class_or_interface && most != 0;
         // `isJsImplicitAny`
-        if is_js && !self.p.files.options.no_implicit_any {
+        if is_js && !self.check_options(file).no_implicit_any {
             return Some(most);
         }
         let at = match node {
@@ -3681,7 +3681,7 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         let name = hir[name.at(0)].text;
-        let no_implicit_any = self.p.files.options.no_implicit_any;
+        let no_implicit_any = self.check_options(file).no_implicit_any;
         let ty = match self.atoms().bytes(name) {
             b"String" => TypeId::STRING,
             b"Number" => TypeId::NUMBER,
@@ -3755,7 +3755,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let (decl, stmt) = (&hir[d], bound.var_stmt[d.idx()]);
                 match hir[decl.pat].kind {
                     PatKind::Ident(name)
-                        if decl.kind == VarKind::Const
+                        if bound.is_const(hir, d)
                             && stmt.is_some()
                             && matches!(hir[stmt].kind, StmtKind::Var(_))
                             && !matches!(bound.stmt_parent[stmt.idx()], Parent::Stmt(parent) if parent.is_some() && matches!(hir[parent].kind, StmtKind::For { init, .. } if init == stmt)) =>

@@ -1,9 +1,3 @@
-//! From a function of the checker's HIR to the `bun_ast` the React Compiler lowers: the shape the parser's visit pass leaves. Types are
-//! gone, a JSX element is a call, what the bundler replaces by a constant is replaced and the branches that leaves dead are dropped.
-//!
-//! A `Loc` is not an offset. It is a token: the nodes are numbered in source order as they are converted, and `Adapter::origins` has the
-//! node of the HIR for each token.
-
 use super::super::FileBuild;
 use super::super::constants::Constant;
 use super::super::jsx::{decode_entities, jsx_text};
@@ -25,14 +19,10 @@ use bun_sema::hir::{
 use bun_sema::program::FileId;
 use rustc_hash::FxHashMap;
 
-/// How tokens are spelled as `Loc`s. The compiler is to make the same of a function under each.
 #[derive(Copy, Clone)]
 pub(super) enum Numbering {
-    /// The token itself.
     Dense,
-    /// In the same order, `SPARSE_STRIDE` apart, give or take.
     Sparse,
-    /// In no order.
     Shuffled,
 }
 
@@ -50,7 +40,6 @@ impl Numbering {
     }
 }
 
-/// The node a token stands for.
 #[derive(Copy, Clone)]
 pub(super) enum Origin {
     Expr(ExprId),
@@ -62,7 +51,6 @@ pub(super) enum Origin {
     Prop(PropId),
 }
 
-/// What `PendingCompile` and `maybe_compile_pending` take.
 pub(super) struct Function {
     pub(super) args: StoreSlice<G::Arg>,
     pub(super) flags: flags::FunctionSet,
@@ -70,7 +58,6 @@ pub(super) struct Function {
     pub(super) body_loc: Loc,
 }
 
-/// Of one file.
 pub(super) struct Adapter<'a, 'c, 'p, 's> {
     build: &'a mut FileBuild<'c, 'p, 's>,
     file: FileId,
@@ -79,9 +66,7 @@ pub(super) struct Adapter<'a, 'c, 'p, 's> {
     arena: &'a Arena,
     pub(super) host: Host<'a>,
     numbering: Numbering,
-    /// By token.
     origins: Vec<Origin>,
-    /// With whether the visit pass refers to it by an `E::ImportIdentifier`.
     symbols: FxHashMap<SymbolId, (Ref, bool)>,
     unbound: FxHashMap<Atom, Ref>,
     labels: FxHashMap<Atom, Ref>,
@@ -143,7 +128,6 @@ fn assign_op(op: Option<BinOp>) -> OpCode {
         Some(BinOp::Nullish) => OpCode::BinNullishCoalescingAssign,
         Some(BinOp::Or) => OpCode::BinLogicalOrAssign,
         Some(BinOp::And) => OpCode::BinLogicalAndAssign,
-        // No such token.
         Some(_) => OpCode::BinAssign,
     }
 }
@@ -172,7 +156,6 @@ fn optional_chain(chain: Chain) -> Option<OptionalChain> {
     }
 }
 
-/// The expression without the type syntax around it, which the parser drops.
 pub(super) fn skip_casts(hir: &hir::File<'_>, mut e: ExprId) -> ExprId {
     loop {
         e = match hir[e].kind {
@@ -183,7 +166,6 @@ pub(super) fn skip_casts(hir: &hir::File<'_>, mut e: ExprId) -> ExprId {
     }
 }
 
-/// The text of a directive, if the statement is written as one. Which statements are in a directive prologue is up to the caller.
 fn directive(hir: &hir::File<'_>, stmt: StmtId) -> Option<Atom> {
     let StmtKind::Expr(e) = hir[stmt].kind else { return None };
     let ExprKind::String(text) = hir[e].kind else { return None };
@@ -217,7 +199,6 @@ impl<'a, 'c, 'p, 's> Adapter<'a, 'c, 'p, 's> {
         self.suppressed_functions.binary_search(&func.0).is_ok()
     }
 
-    /// Where the node of a token starts in the source.
     pub(super) fn pos(&self, token: u32) -> Option<u32> {
         let hir = self.hir;
         Some(match *self.origins.get(token as usize)? {
@@ -246,9 +227,6 @@ impl<'a, 'c, 'p, 's> Adapter<'a, 'c, 'p, 's> {
         E::EString::init_re_encode_utf8(self.arena.alloc_slice_copy(text), self.arena)
     }
 
-    // ───────────────────────────── symbols ─────────────────────────────
-
-    /// What `collect_import_bindings` makes of the `S::Import`s of a module.
     pub(super) fn import_bindings(&mut self) -> IndexMap<Ref, VariableBinding> {
         let (hir, bound) = (self.hir, self.bound);
         let mut bindings = Vec::new();
@@ -278,7 +256,6 @@ impl<'a, 'c, 'p, 's> Adapter<'a, 'c, 'p, 's> {
         bindings.into_iter().collect()
     }
 
-    /// The variable declaration a name of a binding pattern belongs to.
     fn var_kind(&self, pat: PatId) -> Option<VarKind> {
         let mut root = pat;
         loop {
@@ -304,7 +281,6 @@ impl<'a, 'c, 'p, 's> Adapter<'a, 'c, 'p, 's> {
         false
     }
 
-    /// The symbol of the parser for a symbol of the binder.
     fn symbol(&mut self, symbol: SymbolId) -> (Ref, bool) {
         if let Some(&known) = self.symbols.get(&symbol) {
             return known;
@@ -391,8 +367,6 @@ impl<'a, 'c, 'p, 's> Adapter<'a, 'c, 'p, 's> {
         Expr::init_identifier(self.unbound(name), loc)
     }
 
-    // ───────────────────────────── expressions ─────────────────────────────
-
     fn constant(&self, constant: &Constant, loc: Loc) -> Expr {
         match constant {
             Constant::Undefined => Expr::init(E::Undefined {}, loc),
@@ -435,7 +409,6 @@ impl<'a, 'c, 'p, 's> Adapter<'a, 'c, 'p, 's> {
         self.convert(e, false)
     }
 
-    /// `is_target`: it is assigned to, or part of a pattern that is.
     fn convert(&mut self, e: ExprId, is_target: bool) -> Expr {
         let hir = self.hir;
         let kind = hir[e].kind;
@@ -443,7 +416,6 @@ impl<'a, 'c, 'p, 's> Adapter<'a, 'c, 'p, 's> {
             ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::Instantiation { expr, .. } => return self.convert(expr, is_target),
             ExprKind::AsConst(expr) | ExprKind::NonNull(expr) => return self.convert(expr, is_target),
             ExprKind::Binary { .. } => return self.binary(e),
-            // As `e_if` of the visit pass.
             ExprKind::Cond { test, yes, no } => {
                 if let Some(known) = self.build.constant_in(self.file, test) {
                     return self.expr(if known.is_truthy() { yes } else { no });
@@ -555,7 +527,6 @@ impl<'a, 'c, 'p, 's> Adapter<'a, 'c, 'p, 's> {
         }
     }
 
-    /// Not recursive on the left: `a + b + ...` is as deep as it is long.
     fn binary(&mut self, e: ExprId) -> Expr {
         let hir = self.hir;
         let mut spine: Vec<(Loc, BinOp, ExprId)> = Vec::new();
@@ -607,7 +578,6 @@ impl<'a, 'c, 'p, 's> Adapter<'a, 'c, 'p, 's> {
         Expr::init(E::Template { tag: Some(tag), parts: leak(parts), head: E::TemplateContents::Raw(StoreStr::new(raw)) }, loc)
     }
 
-    /// The name of a member of an object literal or of a binding pattern, and whether it is computed.
     fn key(&mut self, key: PropKey, name_kind: NameKind, loc: Loc) -> (Expr, bool) {
         match key {
             PropKey::Name(name) => {
@@ -656,7 +626,6 @@ impl<'a, 'c, 'p, 's> Adapter<'a, 'c, 'p, 's> {
                 PropKind::Init | PropKind::Spread => {}
             }
             property.flags = flags;
-            // `{ a = 1 }`, in a pattern.
             match hir[prop.value].kind {
                 ExprKind::Assign { op: None, target, value } if prop.kind == PropKind::Shorthand => {
                     property.value = Some(self.convert(target, is_target));
@@ -669,13 +638,10 @@ impl<'a, 'c, 'p, 's> Adapter<'a, 'c, 'p, 's> {
         properties
     }
 
-    // ───────────────────────────── JSX ─────────────────────────────
-
     fn jsx_import(&mut self, kind: JsxImportKind, loc: Loc) -> Expr {
         Expr::init(E::ImportIdentifier::new(self.host.jsx_import(kind), true), loc)
     }
 
-    /// `React.createElement`, `React.Fragment`, or what the file names instead.
     fn classic_jsx_entity(&mut self, e: ExprId, is_fragment_tag: bool) -> Expr {
         let (entity, found) = self.build.c.classic_jsx_factory(self.file, e, is_fragment_tag);
         let loc = self.loc(Origin::Expr(e));
@@ -707,14 +673,12 @@ impl<'a, 'c, 'p, 's> Adapter<'a, 'c, 'p, 's> {
         }
     }
 
-    /// As `e_jsx_element` of the visit pass.
     fn jsx(&mut self, e: ExprId, jsx: JsxId, loc: Loc) -> Expr {
         let hir = self.hir;
         let element = &hir[jsx];
         let is_classic = self.host.is_jsx_classic();
         let has_value = |attr: &hir::Prop| attr.value.is_some() && !matches!(hir[attr.value].kind, ExprKind::Missing);
         let is_key = |adapter: &Self, attr: &hir::Prop| matches!(attr.key, PropKey::Name(name) if adapter.text(name) == b"key") && attr.kind != PropKind::Spread;
-        // The parser drops a `key` without a value.
         let attrs: Vec<PropId> = element.attrs.iter().filter(|&id| !is_key(self, &hir[id]) || has_value(&hir[id])).collect();
         let key_index = attrs.iter().rposition(|&id| is_key(self, &hir[id]));
         let first_spread = attrs.iter().position(|&id| hir[id].kind == PropKind::Spread);
@@ -783,7 +747,6 @@ impl<'a, 'c, 'p, 's> Adapter<'a, 'c, 'p, 's> {
             return Expr::init(E::Call { target, args, was_jsx_element: true, close_paren_loc, ..Default::default() }, loc);
         }
 
-        // `<a {...{ b }} />` is `<a b={b} />`.
         while let [G::Property { kind: G::PropertyKind::Spread, value: Some(Expr { data: bun_ast::ExprData::EObject(inner), .. }), .. }] = properties.as_mut_slice() {
             properties = AstAlloc::take(&mut inner.properties);
         }
@@ -819,8 +782,6 @@ impl<'a, 'c, 'p, 's> Adapter<'a, 'c, 'p, 's> {
         Expr::init(E::Call { target, args, was_jsx_element: true, close_paren_loc, ..Default::default() }, loc)
     }
 
-    // ───────────────────────────── patterns ─────────────────────────────
-
     fn pat(&mut self, pat: PatId) -> Binding {
         let hir = self.hir;
         let loc = self.loc(Origin::Pat(pat));
@@ -852,7 +813,6 @@ impl<'a, 'c, 'p, 's> Adapter<'a, 'c, 'p, 's> {
                             flags.insert(flags::Property::IsSpread);
                             Expr::init(E::Missing {}, loc)
                         }
-                        // `{ a }`
                         (PropKey::None, PatKind::Ident(name)) => Expr::init(self.string(self.text(name)), loc),
                         (key, _) => {
                             let (key, is_computed) = self.key(key, prop.name_kind, loc);
@@ -869,8 +829,6 @@ impl<'a, 'c, 'p, 's> Adapter<'a, 'c, 'p, 's> {
             }
         }
     }
-
-    // ───────────────────────────── functions ─────────────────────────────
 
     fn args(&mut self, func: FnId) -> (StoreSlice<G::Arg>, bool) {
         let hir = self.hir;
@@ -895,7 +853,6 @@ impl<'a, 'c, 'p, 's> Adapter<'a, 'c, 'p, 's> {
         }
     }
 
-    /// A function that is handed to the compiler by itself.
     pub(super) fn function(&mut self, func: FnId) -> Function {
         let declared = self.hir[func].flags;
         let body_loc = self.loc(Origin::Fn(func));
@@ -944,9 +901,6 @@ impl<'a, 'c, 'p, 's> Adapter<'a, 'c, 'p, 's> {
         )
     }
 
-    // ───────────────────────────── statements ─────────────────────────────
-
-    /// The directive prologue of a list of statements.
     pub(super) fn directives(&mut self, list: IdList<StmtId>) -> Vec<Stmt> {
         let hir = self.hir;
         let mut out = Vec::new();
@@ -980,7 +934,6 @@ impl<'a, 'c, 'p, 's> Adapter<'a, 'c, 'p, 's> {
         (loc, leak(stmts))
     }
 
-    /// Where the syntax has one statement.
     fn stmt(&mut self, stmt: StmtId) -> Stmt {
         let mut out = Vec::new();
         self.stmt_into(stmt, &mut out);
@@ -1008,7 +961,6 @@ impl<'a, 'c, 'p, 's> Adapter<'a, 'c, 'p, 's> {
         G::Decl { binding, value: self.optional_expr(declared.init) }
     }
 
-    /// The head of a loop: all declarations in one statement, or an expression.
     fn loop_head(&mut self, stmt: StmtId, is_target: bool) -> Stmt {
         let hir = self.hir;
         let loc = self.loc(Origin::Stmt(stmt));
@@ -1026,7 +978,6 @@ impl<'a, 'c, 'p, 's> Adapter<'a, 'c, 'p, 's> {
         }
     }
 
-    /// `var name`, which is what is left in place of an enum or a namespace, before the closure that fills it.
     fn hoisted_object(&mut self, symbol: SymbolId, loc: Loc) -> Stmt {
         let binding = Binding::alloc(self.arena, b::Identifier { r#ref: self.symbol(symbol).0 }, loc);
         Stmt::alloc(S::Local { kind: S::Kind::KVar, decls: AstAlloc::vec_from_iter([G::Decl { binding, value: None }]), ..Default::default() }, loc)
@@ -1036,7 +987,6 @@ impl<'a, 'c, 'p, 's> Adapter<'a, 'c, 'p, 's> {
         let hir = self.hir;
         let kind = hir[stmt].kind;
         match kind {
-            // One statement each: an instruction has the location of its statement.
             StmtKind::Var(decls) => {
                 for id in decls.iter().filter(|&id| !hir[id].flags.contains(Flags::AMBIENT)) {
                     let loc = self.loc(Origin::Decl(id));
@@ -1045,7 +995,6 @@ impl<'a, 'c, 'p, 's> Adapter<'a, 'c, 'p, 's> {
                 }
                 return;
             }
-            // The branch that is taken stands for the statement.
             StmtKind::If { test, yes, no } => {
                 if let Some(known) = self.build.constant_in(self.file, test) {
                     let taken = if known.is_truthy() { yes } else { no };
@@ -1135,7 +1084,6 @@ impl<'a, 'c, 'p, 's> Adapter<'a, 'c, 'p, 's> {
                 let name = self.label(label, loc);
                 Stmt::alloc(S::Label { name, stmt: self.stmt(body) }, loc)
             }
-            // Only at the top level of a module, which is not converted.
             StmtKind::Import(_)
             | StmtKind::ImportEquals(_)
             | StmtKind::ExportNamed(_)

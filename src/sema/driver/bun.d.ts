@@ -74,5 +74,5 @@ declare module "bun" {
   /** `{ id: number } & Strict`: a property that the type does not declare is an issue. */
   type Strict = { readonly "bun.strict"?: true };
   /** {@link Strict} for the type and for every object type within it. */
-  type StrictAllTheWayDown = { readonly "bun.strict"?: "all the way down" };
+  type DeepStrict = { readonly "bun.strict"?: "deep" };
 }

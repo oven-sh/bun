@@ -32,7 +32,7 @@ struct PostDominators {
 const UNKNOWN: usize = usize::MAX;
 
 impl PostDominators {
-    fn of(func: &Func) -> PostDominators {
+    fn new(func: &Func) -> PostDominators {
         let count = func.blocks.len();
         let exit = count;
         let following: Vec<Vec<usize>> = (0..count).map(|block| successors(func, block)).collect();
@@ -116,7 +116,7 @@ pub(crate) const STORED: i32 = i32::MIN + 1;
 pub(crate) const READ_LATER: i32 = i32::MIN + 2;
 pub(crate) const VALIDATION: i32 = i32::MIN + 3;
 
-pub(crate) fn settle(func: &Func, noted: &FxHashMap<V, RecordedSpan>) -> Vec<Span> {
+pub(crate) fn settle(func: &Func, recorded: &FxHashMap<V, RecordedSpan>) -> Vec<Span> {
     let mut made_in: Vec<u32> = vec![u32::MAX; func.values.len()];
     for (index, block) in func.blocks.iter().enumerate() {
         for &v in block.params.iter().chain(&block.ops) {
@@ -124,8 +124,8 @@ pub(crate) fn settle(func: &Func, noted: &FxHashMap<V, RecordedSpan>) -> Vec<Spa
         }
     }
     let mut after: Option<PostDominators> = None;
-    let mut spans: Vec<Span> = Vec::with_capacity(noted.len());
-    for (&value, &span) in noted {
+    let mut spans: Vec<Span> = Vec::with_capacity(recorded.len());
+    for (&value, &span) in recorded {
         if value.is_none() {
             spans.push(Span { value, start: span.start, end: span.end, step: span.step });
             continue;
@@ -147,7 +147,7 @@ pub(crate) fn settle(func: &Func, noted: &FxHashMap<V, RecordedSpan>) -> Vec<Spa
         if here == u32::MAX {
             continue;
         }
-        let after = after.get_or_insert_with(|| PostDominators::of(func));
+        let after = after.get_or_insert_with(|| PostDominators::new(func));
         let mut origin = value;
         while let Some(&Op::Coerce { value: coercion_site, .. }) = func.op(origin) {
             origin = coercion_site;
@@ -158,10 +158,10 @@ pub(crate) fn settle(func: &Func, noted: &FxHashMap<V, RecordedSpan>) -> Vec<Spa
             spans.push(Span { value, start: span.start, end: span.end, step: span.step });
             continue;
         }
-        spans.extend(span_at_merge(func, noted, value, to, here as usize));
+        spans.extend(span_at_merge(func, recorded, value, to, here as usize));
     }
     let unrecorded_checks = |value: V| match func.op(value) {
-        Some(&Op::Coerce { value: coercion_site, to, why }) if !matches!(why, CoerceReason::Upcast | CoerceReason::Forced) && !noted.contains_key(&value) => Some((coercion_site, to, why)),
+        Some(&Op::Coerce { value: coercion_site, to, why }) if !matches!(why, CoerceReason::Upcast | CoerceReason::Forced) && !recorded.contains_key(&value) => Some((coercion_site, to, why)),
         _ => None,
     };
     let all = || func.blocks.iter().flat_map(|block| &block.ops).copied();
@@ -173,7 +173,7 @@ pub(crate) fn settle(func: &Func, noted: &FxHashMap<V, RecordedSpan>) -> Vec<Spa
         }
         let last = chain[chain.len() - 1];
         if let Some((_, to, _)) = unrecorded_checks(last)
-            && let Some(span) = span_at_merge(func, noted, last, to, made_in[last.idx()] as usize)
+            && let Some(span) = span_at_merge(func, recorded, last, to, made_in[last.idx()] as usize)
         {
             spans.extend(chain.into_iter().filter(|&value| unrecorded_checks(value).is_some_and(|coercion_site| coercion_site.1 == to)).map(|value| Span { value, ..span }));
         }
@@ -183,7 +183,6 @@ pub(crate) fn settle(func: &Func, noted: &FxHashMap<V, RecordedSpan>) -> Vec<Spa
     spans
 }
 
-/// The parameter of a block that `value` is handed to, from the end of the block that makes it or, in a `try`, of one that follows.
 fn block_param_receiving<'a>(func: &'a Func, value: V, mut end: &'a Option<Term>) -> Option<V> {
     for _ in 0..16 {
         match end {
@@ -195,7 +194,7 @@ fn block_param_receiving<'a>(func: &'a Func, value: V, mut end: &'a Option<Term>
     None
 }
 
-fn span_at_merge(func: &Func, noted: &FxHashMap<V, RecordedSpan>, value: V, to: TyId, mut at: usize) -> Option<Span> {
+fn span_at_merge(func: &Func, recorded: &FxHashMap<V, RecordedSpan>, value: V, to: TyId, mut at: usize) -> Option<Span> {
     let joined = loop {
         match &func.blocks[at].term {
             Some(Term::Invoke { normal, .. }) if !normal.args.contains(&value) => at = normal.block.idx(),
@@ -203,7 +202,7 @@ fn span_at_merge(func: &Func, noted: &FxHashMap<V, RecordedSpan>, value: V, to: 
             _ => return None,
         }
     };
-    let whole = noted.get(&joined).filter(|_| func.ty(joined) == to)?;
+    let whole = recorded.get(&joined).filter(|_| func.ty(joined) == to)?;
     let step = if whole.step == READ_LATER { 0 } else { whole.step };
     Some(Span { value, start: whole.start, end: whole.end, step })
 }
@@ -301,8 +300,8 @@ pub fn describe(program: &Program, ty: TyId) -> String {
     }
     append_member(&mut result, declared.any_object, "object");
     append_member(&mut result, declared.any_function && !declared.any_object, "Function");
-    if let Some((least, most)) = declared.ints.filter(|_| declared.prims & prim::NUMBER == 0) {
-        let text = if least == most { format!("{least}") } else { format!("integer {least}..{most}") };
+    if let Some((minimum, maximum)) = declared.ints.filter(|_| declared.prims & prim::NUMBER == 0) {
+        let text = if minimum == maximum { format!("{minimum}") } else { format!("integer {minimum}..{maximum}") };
         append_member(&mut result, true, &text);
     }
     append_primitives(&mut result, declared.prims);
@@ -404,8 +403,8 @@ pub struct Group {
     pub end: u32,
     pub step: i32,
     pub passes: u32,
-    pub least: i32,
-    pub most: i32,
+    pub minimum: i32,
+    pub maximum: i32,
     pub steps: String,
 }
 
@@ -416,8 +415,8 @@ pub struct Parameter {
     pub end: u32,
     pub body: (u32, u32),
     pub passes: u32,
-    pub least: i32,
-    pub most: i32,
+    pub minimum: i32,
+    pub maximum: i32,
     pub step: String,
 }
 
@@ -441,9 +440,7 @@ pub mod class {
     pub const OBJECT: u32 = 1 << 8;
     pub const FUNCTION: u32 = 1 << 9;
     pub const ALL: u32 = (1 << 10) - 1;
-    /// No class of its own: an object with the tag that the audit gives to what typed code has made and to what has entered a record type.
     pub const TAGGED: u32 = 1 << 10;
-    /// No class of its own either: an array that is no Proxy.
     pub const ARRAY: u32 = 1 << 14;
     pub const HAS_UNTYPED_CLONE: u32 = 1 << 12;
     pub const READS_ARRAY_ELEMENT: u32 = 1 << 13;
@@ -456,24 +453,17 @@ fn is_closed(program: &Program, layout: crate::id::LayoutId) -> bool {
     is_named_class(described) && !described.accepts_unchecked_objects() && !described.members.is_empty() && described.members.iter().all(|member| is_named_class(&program.layouts[member.idx()]))
 }
 
-/// What is made once of a linked program, for the types that only the link knows about.
 struct Linked {
-    /// By layout: `shape_key()`, with a number behind it where two records read alike but for the views they name.
     keys: Vec<String>,
-    /// By layout: an operation of the program allocates it. `Layout::is_allocated` also says so of what only a cast makes.
     is_allocated_by_op: Vec<bool>,
-    /// By layout: the views that have it among their members.
     seen_as: Vec<Vec<u32>>,
-    /// By layout: `Layout::mayDespecialize` in AOTTypedReader.cpp.
     gives_up: Vec<bool>,
-    /// By function: what it returns may come straight from a call in tail position that nothing holds: of a value, or of such a function.
     returns_unchecked: Vec<bool>,
-    /// By layout and name of a field: the kinds of primitives of all the fields that may share its slot, `shareSlots()` in AOTTypedPlacement.cpp.
     slot_primitives: FxHashMap<(u32, crate::id::StrId), u32>,
 }
 
 impl Linked {
-    fn of(program: &Program) -> Linked {
+    fn new(program: &Program) -> Linked {
         let mut seen_as: Vec<Vec<u32>> = vec![Vec::new(); program.layouts.len()];
         for (index, view) in program.layouts.iter().enumerate() {
             for member in &view.members {
@@ -552,15 +542,11 @@ impl Linked {
     }
 }
 
-/// A record type that admits no strangers.
 fn is_closed_record(program: &Program, layout: crate::id::LayoutId) -> bool {
     let described = &program.layouts[layout.idx()];
     described.kind == LayoutKind::Record && !described.accepts_unchecked_objects()
 }
 
-/// Whether an object that typed code has not made is coercion_site to the members of the closed records among the parts. Only the link knows which
-/// those are. Where there are several and only a cast makes one of them, a build is seen to let in what fits none: nothing is said there.
-/// Nor where nothing can be made, or one of more shapes than are worth trying at every value that comes by: a view over a whole family.
 fn is_checked_against_subtypes(program: &Program, declared: &Declared, linked: Option<&Linked>) -> bool {
     const MAX_SHAPES_TRIED: usize = 8;
     let Some(linked) = linked else { return false };
@@ -570,11 +556,10 @@ fn is_checked_against_subtypes(program: &Program, declared: &Declared, linked: O
             _ => None,
         })
         .collect();
-    let made: Vec<crate::id::LayoutId> = closed.iter().flat_map(|&view| allocated_as(program, view)).collect();
-    !made.is_empty() && made.len() <= MAX_SHAPES_TRIED && closed.iter().all(|&view| !allocated_as(program, view).is_empty()) && (closed.len() == 1 || made.iter().all(|made| linked.is_allocated_by_op[made.idx()]))
+    let created: Vec<crate::id::LayoutId> = closed.iter().flat_map(|&view| allocated_as(program, view)).collect();
+    !created.is_empty() && created.len() <= MAX_SHAPES_TRIED && closed.iter().all(|&view| !allocated_as(program, view).is_empty()) && (closed.len() == 1 || created.iter().all(|created| linked.is_allocated_by_op[created.idx()]))
 }
 
-/// What plain data is made one of so that it is of the view: `Coercion::forEachInstantiableLayout()` in AOTTypedObject.cpp.
 fn allocated_as(program: &Program, view: crate::id::LayoutId) -> Vec<crate::id::LayoutId> {
     let is_made = |layout: crate::id::LayoutId| program.layouts[layout.idx()].kind == LayoutKind::Record && program.layouts[layout.idx()].is_allocated;
     if program.layouts[view.idx()].is_allocated {
@@ -583,15 +568,14 @@ fn allocated_as(program: &Program, view: crate::id::LayoutId) -> Vec<crate::id::
     program.layouts[view.idx()].members.iter().copied().filter(|&member| member != view && is_made(member)).collect()
 }
 
-/// What the helper asks for by the `view` of a part that is a closed record: once a view, not at every mention.
 fn layout_text(program: &Program, view: crate::id::LayoutId, linked: &Linked, generalizations: &[Vec<u32>]) -> String {
     let keys = &linked.keys;
     let mut text = String::from("{\"made\":[");
-    for (i, made) in allocated_as(program, view).into_iter().enumerate() {
+    for (i, created) in allocated_as(program, view).into_iter().enumerate() {
         if i > 0 {
             text.push(',');
         }
-        quoted(&mut text, keys[made.idx()].as_bytes());
+        quoted(&mut text, keys[created.idx()].as_bytes());
     }
     text.push_str("],\"members\":[");
     for (i, key) in member_keys(program, view, linked, generalizations).into_iter().enumerate() {
@@ -608,7 +592,6 @@ fn despecialization_key(layout: crate::id::LayoutId) -> String {
     format!("gives up {}", layout.idx())
 }
 
-/// By layout: the layouts that have it among their specializations.
 fn generalizations(program: &Program) -> Vec<Vec<u32>> {
     let mut found = vec![Vec::new(); program.layouts.len()];
     for (index, layout) in program.layouts.iter().enumerate() {
@@ -664,7 +647,6 @@ fn narrows_records(program: &Program, from: &Declared, to: &Declared) -> bool {
     members(from).into_iter().any(|member| program.layouts[member.idx()].kind == LayoutKind::Record && program.layouts[member.idx()].is_allocated && !taken.contains(&member))
 }
 
-/// Whether a place of the type can hold an object that typed code has not made. Where it cannot, what is cast from it brings no stranger.
 fn may_be_untyped_object(program: &Program, declared: &Declared) -> bool {
     declared.any_object || declared.parts.iter().any(|part| matches!(part, Part::Class(layout) if program.layouts[layout.idx()].accepts_unchecked_objects()))
 }
@@ -687,8 +669,8 @@ fn write_type(program: &Program, out: &mut String, ty: TyId, depth: u32, linked:
     let declared = program.tys.get(ty);
     let is_held = is_checked_against_subtypes(program, declared, linked);
     let _ = write!(out, "{{\"p\":{},\"o\":{},\"fn\":{}", declared.clone().with_literal_string_widened().prims, declared.any_object, declared.any_function);
-    if let Some((least, most)) = declared.ints {
-        let _ = write!(out, ",\"i\":[{least},{most}]");
+    if let Some((minimum, maximum)) = declared.ints {
+        let _ = write!(out, ",\"i\":[{minimum},{maximum}]");
     }
     out.push_str(",\"parts\":[");
     for (i, part) in declared.parts.iter().enumerate() {
@@ -1023,7 +1005,7 @@ fn shape_key(program: &Program, layout: crate::id::LayoutId) -> String {
 }
 
 pub fn shapes(program: &Program) -> Vec<(String, String)> {
-    let linked = Linked::of(program);
+    let linked = Linked::new(program);
     let mut found: Vec<(String, String)> = Vec::new();
     let mut place_of: FxHashMap<String, usize> = FxHashMap::default();
     for index in 0..program.layouts.len() {
@@ -1196,17 +1178,17 @@ struct Chain {
 const FULL_INT32_RANGE: (i64, i64) = (i32::MIN as i64, i32::MAX as i64);
 
 fn integer_range_within(so_far: Option<(i64, i64)>, declared: &Declared) -> Option<(i64, i64)> {
-    let (least, most) = so_far?;
+    let (minimum, maximum) = so_far?;
     match declared.ints {
-        _ if declared.prims & prim::NUMBER != 0 => Some((least, most)),
-        Some(within) => Some((least.max(within.0), most.min(within.1))),
+        _ if declared.prims & prim::NUMBER != 0 => Some((minimum, maximum)),
+        Some(within) => Some((minimum.max(within.0), maximum.min(within.1))),
         None => None,
     }
 }
 
 fn to_int32_range(integer_range: Option<(i64, i64)>) -> (i32, i32) {
     match integer_range {
-        Some((least, most)) if least <= most => (least as i32, most as i32),
+        Some((minimum, maximum)) if minimum <= maximum => (minimum as i32, maximum as i32),
         _ => (1, 0),
     }
 }
@@ -1223,7 +1205,7 @@ pub const CLASS_ITSELF: u32 = u32::MAX;
 
 fn add_classes(program: &Program, modules: &mut [Module]) {
     use crate::ir::{class_flags, method_flags};
-    let linked = Linked::of(program);
+    let linked = Linked::new(program);
     for (index, layout) in program.layouts.iter().enumerate().filter(|(_, layout)| layout.kind == LayoutKind::Instance && layout.constructor.is_some() && layout.class_flags & class_flags::HAS_FIXED_LAYOUT != 0) {
         let constructor = &program.funcs[layout.constructor.idx()];
         if constructor.module.is_none() || constructor.source_start == 0 || constructor.has(func_flags::IS_BUILTIN | func_flags::IS_IN_BUILTIN_MODULE) {
@@ -1250,7 +1232,7 @@ fn add_classes(program: &Program, modules: &mut [Module]) {
         quoted(&mut step, layout_name(program, crate::id::LayoutId::new(index)).as_bytes());
         step.push('}');
         let found = &mut modules[constructor.module.idx()];
-        found.parameters.push(Parameter { function: constructor.source_start - 1, index: CLASS_ITSELF, start: 0, end: 0, body: (0, 0), passes: 0, least: 1, most: 0, step });
+        found.parameters.push(Parameter { function: constructor.source_start - 1, index: CLASS_ITSELF, start: 0, end: 0, body: (0, 0), passes: 0, minimum: 1, maximum: 0, step });
     }
     for module in modules {
         module.parameters.sort_by_key(|parameter| (parameter.function, parameter.index));
@@ -1264,7 +1246,7 @@ pub fn sites(program: &Program, in_parallel: InParallel<'_>) -> Vec<Site> {
 
 fn walk<'t>(program: &Program, is_linked: bool, text_of: &dyn Fn(&[u8]) -> Option<&'t [u8]>, in_parallel: InParallel<'_>) -> (Vec<Module>, Vec<Site>) {
     let lines: Vec<Option<Lines>> = program.modules.iter().map(|module| Lines::read(&module.line_table)).collect();
-    let linked = is_linked.then(|| Linked::of(program));
+    let linked = is_linked.then(|| Linked::new(program));
     let linked = linked.as_ref();
     let entered_by_untyped_clone: rustc_hash::FxHashSet<(usize, u32)> = (program.funcs.iter())
         .filter(|entry| entry.kind == crate::ir::FuncKind::Method && entry.has(func_flags::IS_GENERIC_ENTRYPOINT) && entry.module.is_some())
@@ -1348,8 +1330,8 @@ fn walk_module(
     let module = *index;
     for func in std::mem::take(funcs) {
         for span in func.spans.iter().filter(|span| span.step == VALIDATION) {
-            if let Some(&Op::Str(noted)) = func.op(span.value)
-                && let [which, plan @ ..] = program.strs.get(noted)
+            if let Some(&Op::Str(recorded)) = func.op(span.value)
+                && let [which, plan @ ..] = program.strs.get(recorded)
             {
                 found.validations.push(Validation { start: span.start, end: span.end, which: which - b'0', plan: plan.to_vec() });
             }
@@ -1445,6 +1427,9 @@ fn walk_module(
                 if coercion_site.text.is_some() {
                     line.push_str(",\"text\":");
                     quoted(&mut line, program.strs.get(coercion_site.text));
+                }
+                if func.values[v.idx()].keeps_unconvertible_objects() {
+                    line.push_str(",\"keeps\":true");
                 }
                 if let Some(member) = members.get(&v) {
                     line.push_str(",\"on\":");
@@ -1547,7 +1532,7 @@ fn walk_module(
                 } else {
                     0
                 };
-                parameters.push(Parameter { function: body.step as u32, index: index as u32, start: span.start, end: span.end, body: (body.start, body.end), passes: (passes(program, declared, None) & !(if holds && !declared.any_function { class::FUNCTION } else { 0 })) | objects, least: to_int32_range(integer_range_within(Some(FULL_INT32_RANGE), declared)).0, most: to_int32_range(integer_range_within(Some(FULL_INT32_RANGE), declared)).1, step });
+                parameters.push(Parameter { function: body.step as u32, index: index as u32, start: span.start, end: span.end, body: (body.start, body.end), passes: (passes(program, declared, None) & !(if holds && !declared.any_function { class::FUNCTION } else { 0 })) | objects, minimum: to_int32_range(integer_range_within(Some(FULL_INT32_RANGE), declared)).0, maximum: to_int32_range(integer_range_within(Some(FULL_INT32_RANGE), declared)).1, step });
             }
         }
         found.without_span.append(&mut lacking);
@@ -1561,12 +1546,12 @@ fn walk_module(
         if key != Some((chain.start, chain.end, chain.step)) {
             key = Some((chain.start, chain.end, chain.step));
             seen.clear();
-            found.groups.push(Group { start: chain.start, end: chain.end, step: chain.step, passes: class::ALL | class::TAGGED | class::ARRAY, least: i32::MIN, most: i32::MAX, steps: String::new() });
+            found.groups.push(Group { start: chain.start, end: chain.end, step: chain.step, passes: class::ALL | class::TAGGED | class::ARRAY, minimum: i32::MIN, maximum: i32::MAX, steps: String::new() });
         }
         let group = found.groups.last_mut().expect("one was pushed");
         group.passes = (group.passes & chain.passes) | ((group.passes | chain.passes) & (class::READS_ARRAY_ELEMENT | class::STORES_THROUGH_UNTYPED));
-        let (least, most) = to_int32_range(chain.integer_range);
-        (group.least, group.most) = (group.least.max(least), group.most.min(most));
+        let (minimum, maximum) = to_int32_range(chain.integer_range);
+        (group.minimum, group.maximum) = (group.minimum.max(minimum), group.maximum.min(maximum));
         for (_, step) in chain.steps {
             if seen.contains(&step) {
                 continue;
@@ -1662,13 +1647,13 @@ pub fn to_json(modules: &[Module], shapes: &[(String, String)]) -> String {
         }
         out.push_str(",\"parameters\":[");
         for (i, parameter) in module.parameters.iter().enumerate() {
-            let _ = write!(out, "{}\n{{\"function\":{},\"index\":{},\"start\":{},\"end\":{},\"body\":[{},{}],\"passes\":{},\"least\":{},\"most\":{},\"step\":{}}}", if i > 0 { "," } else { "" }, parameter.function, parameter.index, parameter.start, parameter.end, parameter.body.0, parameter.body.1, parameter.passes, parameter.least, parameter.most, parameter.step);
+            let _ = write!(out, "{}\n{{\"function\":{},\"index\":{},\"start\":{},\"end\":{},\"body\":[{},{}],\"passes\":{},\"least\":{},\"most\":{},\"step\":{}}}", if i > 0 { "," } else { "" }, parameter.function, parameter.index, parameter.start, parameter.end, parameter.body.0, parameter.body.1, parameter.passes, parameter.minimum, parameter.maximum, parameter.step);
         }
         out.push_str("],\"withoutSpan\":[\n");
         out.push_str(&module.without_span.join(",\n"));
         out.push_str("],\"groups\":[");
         for (i, group) in module.groups.iter().enumerate() {
-            let _ = write!(out, "{}\n{{\"start\":{},\"end\":{},\"step\":{},\"passes\":{},\"least\":{},\"most\":{},\"steps\":[{}]}}", if i > 0 { "," } else { "" }, group.start, group.end, group.step, group.passes, group.least, group.most, group.steps);
+            let _ = write!(out, "{}\n{{\"start\":{},\"end\":{},\"step\":{},\"passes\":{},\"least\":{},\"most\":{},\"steps\":[{}]}}", if i > 0 { "," } else { "" }, group.start, group.end, group.step, group.passes, group.minimum, group.maximum, group.steps);
         }
         out.push_str("]}");
     }

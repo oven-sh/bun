@@ -1,4 +1,3 @@
-// The number of each function of src/js/builtins: what its generator asks a program that was compiled ahead of time for. JavaScriptCore's own builtins have the numbers below the first.
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 

@@ -157,6 +157,7 @@ pub(super) struct FlowMemo {
     /// calls, by symbol.
     narrowing_index_file: Option<FileId>,
     first_narrowing_node: Vec<u32>,
+    first_whole_narrowing_node: Vec<u32>,
     in_call_statements: Vec<u64>,
     call_statements_by_symbol: Vec<(SymbolId, FlowId)>,
     /// Indexed by flow node: an upper bound on the node numbers reachable through its antecedents.
@@ -391,6 +392,8 @@ impl SharedFlows {
 /// What an invocation of `getTypeAtFlowNode` does to the type at `flow.Antecedent`.
 enum Pending {
     Cond(ExprId, bool),
+    UnrelatedCond(ExprId, bool),
+    PropertyCond(ExprId, bool),
     Switch(StmtId, u16, u16),
     Assert(ExprId),
     /// `a.push(x)`, `a[i] = x`
@@ -400,6 +403,13 @@ enum Pending {
     /// `for (const k in x)`: `x` is there.
     NonNull,
     Nothing,
+}
+
+enum TestRelevance {
+    Related,
+    RelatedByProperty,
+    UnrelatedWithUnion,
+    Unrelated,
 }
 
 /// What `getTypeAtFlowAssignment` returns.
@@ -490,6 +500,7 @@ trait NarrowingSubjects {
     /// from its input. For a reference that is no subject that is `getUnionType([t, t])`:
     /// errorType if `t` is the error type of a name, neverType if it is another `never`.
     fn add_union(&mut self);
+    fn add_property_that_narrows_root(&mut self) {}
 }
 
 /// For which references a walk that passes a flow node resolves the name of a key there.
@@ -519,20 +530,33 @@ impl NarrowingSubjects for About {
     }
 
     fn add_union(&mut self) {
-        self.state |= About::ANYTHING;
+        self.state |= About::UNION;
+    }
+
+    fn add_property_that_narrows_root(&mut self) {
+        self.state |= About::PROPERTY_NARROWS_ROOT;
     }
 }
 
 /// Indexed by symbol: the first flow node that concerns a reference rooted at it, whatever its
 /// path. Second field: the current node. Third: what its keys require. Fourth: `add_union`.
-struct FirstNarrowingNodes<'a>(&'a mut [u32], u32, ResolvesKey, bool);
+struct FirstNarrowingNodes<'a>(&'a mut [u32], u32, ResolvesKey, bool, &'a mut [u32], bool);
 
 impl NarrowingSubjects for FirstNarrowingNodes<'_> {
-    fn add(&mut self, root: u32, _: u32) {
+    fn add(&mut self, root: u32, property: u32) {
+        let narrows_root = std::mem::take(&mut self.5) || property == 0 || property == About::ALONE;
         if root & 3 == 1 {
             let first = &mut self.0[(root >> 2) as usize];
             *first = (*first).min(self.1);
+            if narrows_root {
+                let first = &mut self.4[(root >> 2) as usize];
+                *first = (*first).min(self.1);
+            }
         }
+    }
+
+    fn add_property_that_narrows_root(&mut self) {
+        self.5 = true;
     }
 
     fn bails_on_computed_key(&mut self, resolves: ResolvesKey) -> bool {
@@ -579,37 +603,95 @@ impl About {
     /// There are more subjects than `chains` can hold, a key whose name can only be resolved by a
     /// query, or a union (`add_union`).
     const ANYTHING: u32 = 2;
+    const UNION: u32 = 4;
+    const HASHED: u32 = 8;
+    const PROPERTY_NARROWS_ROOT: u32 = 16;
 
     fn add(&mut self, root: u32, first: u32) {
-        for chain in &mut self.chains {
-            if chain.0 == 0 {
-                *chain = (root, first);
-                return;
+        if self.state & About::HASHED == 0 {
+            for chain in &mut self.chains {
+                if chain.0 == 0 {
+                    *chain = (root, first);
+                    return;
+                }
+                if chain.0 == root && (chain.1 == first || chain.1 == 0) {
+                    return;
+                }
             }
-            if chain.0 == root && (chain.1 == first || chain.1 == 0) {
-                return;
+            let listed = std::mem::take(&mut self.chains);
+            self.state |= About::HASHED;
+            for (root, first) in listed {
+                self.add_hashed(root, first);
             }
         }
-        self.state |= About::ANYTHING;
+        self.add_hashed(root, first);
+    }
+
+    fn add_hashed(&mut self, root: u32, first: u32) {
+        if root == 0 {
+            return;
+        }
+        let [roots, roots_with_any_property, pairs] = &mut self.chains;
+        About::insert(roots, root, 0);
+        if first == 0 {
+            About::insert(roots_with_any_property, root, 0);
+        } else {
+            About::insert(pairs, root, first);
+        }
+    }
+
+    fn filter_bit(root: u32, first: u32) -> u64 {
+        1 << ((root.wrapping_mul(0x9E37_79B1) ^ first.wrapping_mul(0x85EB_CA6B)) >> 26)
+    }
+
+    fn insert(filter: &mut (u32, u32), root: u32, first: u32) {
+        let bit = About::filter_bit(root, first);
+        filter.0 |= bit as u32;
+        filter.1 |= (bit >> 32) as u32;
+    }
+
+    fn may_contain(filter: (u32, u32), root: u32, first: u32) -> bool {
+        (u64::from(filter.0) | u64::from(filter.1) << 32) & About::filter_bit(root, first) != 0
     }
 
     /// Whether one of `chains` can be `reference`, have it as a prefix, or be the object of its
     /// last property.
-    fn concerns(&self, reference: &Reference) -> bool {
+    fn relevance_to(&self, reference: &Reference) -> TestRelevance {
         let root = root_key(reference.root);
         if root == 0 || self.state & About::ANYTHING != 0 {
-            return true;
+            return TestRelevance::Related;
+        }
+        let unrelated = match self.state & About::UNION {
+            0 => TestRelevance::Unrelated,
+            _ => TestRelevance::UnrelatedWithUnion,
+        };
+        let is_hashed = self.state & About::HASHED != 0;
+        let [roots, roots_with_any_property, pairs] = self.chains;
+        if is_hashed && !About::may_contain(roots, root, 0) {
+            return unrelated;
         }
         let Some(first) = reference.path.first() else {
-            return self.chains.iter().any(|chain| chain.0 == root);
+            let is_named_whole = match is_hashed {
+                true => About::may_contain(roots_with_any_property, root, 0) || About::may_contain(pairs, root, About::ALONE),
+                false => self.chains.iter().any(|chain| chain.0 == root && (chain.1 == 0 || chain.1 == About::ALONE)),
+            };
+            return if is_named_whole || self.state & About::PROPERTY_NARROWS_ROOT != 0 {
+                TestRelevance::Related
+            } else if is_hashed || self.chains.iter().any(|chain| chain.0 == root) {
+                TestRelevance::RelatedByProperty
+            } else {
+                unrelated
+            };
         };
         let first = match first.name.get() {
             AccessedName::Some(name) => name.0.wrapping_add(1),
             AccessedName::None | AccessedName::Unresolved(_) => 0,
         };
-        self.chains
-            .iter()
-            .any(|chain| chain.0 == root && (chain.1 == 0 || chain.1 == first))
+        let is_related = match is_hashed {
+            true => About::may_contain(roots_with_any_property, root, 0) || About::may_contain(pairs, root, first),
+            false => self.chains.iter().any(|chain| chain.0 == root && (chain.1 == 0 || chain.1 == first)),
+        };
+        if is_related { TestRelevance::Related } else { unrelated }
     }
 }
 
@@ -2101,10 +2183,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if stmt.is_some() && matches!(hir[stmt].kind, StmtKind::Try { .. }) {
                     !self.any_binding_assigned(file, root)
                 } else {
-                    matches!(
-                        hir[d].kind,
-                        VarKind::Const | VarKind::Using | VarKind::AwaitUsing
-                    )
+                    bound.is_constant(hir, d)
                 }
             }
             _ => false,
@@ -2211,10 +2290,7 @@ impl<'p, 's> Checker<'p, 's> {
                 !self.is_symbol_assigned(file, symbol)
             }
             // `isConstantVariable`
-            PatParent::Var(d) => matches!(
-                hir[d].kind,
-                VarKind::Const | VarKind::Using | VarKind::AwaitUsing
-            ),
+            PatParent::Var(d) => self.bound(file).is_constant(hir, d),
             _ => matches!(
                 self.bound(file).symbols[symbol.idx()].decls.first(),
                 Some(&Decl::Fn(f)) if hir[f].kind == FnKind::Expr
@@ -2266,14 +2342,7 @@ impl<'p, 's> Checker<'p, 's> {
         let is_parameter = match bound.pat_parent[root.idx()] {
             PatParent::Param(_) => true,
             // `NodeFlagsConstant`
-            PatParent::Var(d)
-                if matches!(
-                    hir[d].kind,
-                    VarKind::Const | VarKind::Using | VarKind::AwaitUsing
-                ) =>
-            {
-                false
-            }
+            PatParent::Var(d) if bound.is_constant(hir, d) => false,
             _ => return declared,
         };
         // `NodeCheckFlagsInCheckIdentifier`
@@ -2620,11 +2689,11 @@ impl<'p, 's> Checker<'p, 's> {
     /// Whether `narrow` may narrow `reference` by `expr`, the test of the flow node `flow`. If not,
     /// it would run no query and return its input type. It may still ask whether a variable is
     /// assigned.
-    fn is_test_about(&mut self, reference: &Reference, flow: FlowId, expr: ExprId) -> bool {
+    fn test_relevance(&mut self, reference: &Reference, flow: FlowId, expr: ExprId) -> TestRelevance {
         let file = reference.file;
         // Every comparison asks for the name of the outermost key of the reference.
         if reference.unresolved.get() != 0 || self.has_order_dependent_assignment_marks(file) {
-            return true;
+            return TestRelevance::Related;
         }
         let memo = &self.flow_memo;
         let known = if memo.tests_of == Some(file) {
@@ -2635,10 +2704,11 @@ impl<'p, 's> Checker<'p, 's> {
                 .copied()
                 .unwrap_or_default()
         };
-        if known.state != 0 {
-            return known.concerns(reference);
-        }
-        self.look_into_test(file, flow, expr).concerns(reference)
+        let about = match known.state {
+            0 => self.look_into_test(file, flow, expr),
+            _ => known,
+        };
+        about.relevance_to(reference)
     }
 
     #[inline(never)]
@@ -2860,6 +2930,9 @@ impl<'p, 's> Checker<'p, 's> {
                     is_whole = false;
                     first = name.0.wrapping_add(1);
                     is_link = chain != Chain::No;
+                    if is_link || name == known::constructor {
+                        about.add_property_that_narrows_root();
+                    }
                     obj
                 }
                 ExprKind::Index { obj, index, chain } => {
@@ -2872,13 +2945,22 @@ impl<'p, 's> Checker<'p, 's> {
                         return;
                     }
                     is_whole = false;
-                    first = 0;
+                    first = match hir[index].kind {
+                        _ if is_parenthesized(hir, index) => 0,
+                        ExprKind::String(name) => name.0.wrapping_add(1),
+                        ExprKind::Number(n) => self.number_name(hir.numbers[n as usize]).0.wrapping_add(1),
+                        _ => 0,
+                    };
                     is_link = chain != Chain::No;
+                    if is_link || first == known::constructor.0.wrapping_add(1) {
+                        about.add_property_that_narrows_root();
+                    }
                     obj
                 }
                 ExprKind::Call(c) if hir[c].chain != Chain::No => {
                     is_whole = false;
                     is_link = true;
+                    about.add_property_that_narrows_root();
                     hir[c].callee
                 }
                 ExprKind::NonNull(x) | ExprKind::Satisfies { expr: x, .. } => {
@@ -4890,7 +4972,7 @@ impl<'p, 's> Checker<'p, 's> {
                     return false;
                 };
                 let member = &self.hir(of)[m];
-                return options.strict_property_initialization
+                return self.check_options(of).strict_property_initialization
                     && of == file
                     // `IsAccessExpression`: `typeof this.x` in a type is a qualified name.
                     && !bound.is_in_type_query(e)
@@ -5017,7 +5099,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Not in tsgo. The symbols of `file` that some node of its flow graph refers to: a condition
-    /// (`note_test`, as for `is_test_about`), a `switch`, an assignment target, the expression of a
+    /// (`note_test`, as for `test_relevance`), a `switch`, an assignment target, the expression of a
     /// `for in`. Nothing else can change the type of a reference rooted at a name, except an
     /// assertion call: see `FlowMemo::in_call_statements`. Empty: some backward path through the
     /// graph may take `MAX_FLOW_DEPTH` invocations, and the walk that detects that reports it.
@@ -5027,6 +5109,7 @@ impl<'p, 's> Checker<'p, 's> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let words = bound.symbols.len() / 64 + 1;
         let mut first_nodes = vec![u32::MAX; bound.symbols.len()];
+        let mut first_whole_nodes = vec![u32::MAX; bound.symbols.len()];
         let mut last_call_statement = vec![u32::MAX; bound.symbols.len()];
         let mut declaration_node = vec![u32::MAX; bound.symbols.len()];
         let mut mentioned_in_calls = vec![0u64; words];
@@ -5040,8 +5123,14 @@ impl<'p, 's> Checker<'p, 's> {
         let mut noted_switches: FxHashMap<StmtId, (ResolvesKey, bool)> = FxHashMap::default();
         let mut longest = 0;
         for (i, &node) in bound.flow.iter().enumerate() {
-            let about =
-                &mut FirstNarrowingNodes(&mut first_nodes, i as u32, ResolvesKey::Never, false);
+            let about = &mut FirstNarrowingNodes(
+                &mut first_nodes,
+                i as u32,
+                ResolvesKey::Never,
+                false,
+                &mut first_whole_nodes,
+                false,
+            );
             let mut resolves_in_call = ResolvesKey::Never;
             let mut takes_union = false;
             // Its antecedents: a range of edges, or a single node.
@@ -5171,6 +5260,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         if longest >= MAX_FLOW_DEPTH {
             first_nodes.clear();
+            first_whole_nodes.clear();
         }
         for &(symbol, _) in &call_statements_by_symbol {
             mentioned_in_calls[symbol.idx() / 64] |= 1 << (symbol.idx() % 64);
@@ -5178,6 +5268,7 @@ impl<'p, 's> Checker<'p, 's> {
         call_statements_by_symbol.shared_sort_unstable_by_key(|&(symbol, flow)| (symbol.0, flow.0));
         let memo = &mut self.flow_memo;
         memo.narrowing_index_file = Some(file);
+        memo.first_whole_narrowing_node = first_whole_nodes;
         (
             memo.first_narrowing_node,
             memo.in_call_statements,
@@ -5499,7 +5590,11 @@ impl<'p, 's> Checker<'p, 's> {
         let Root::Symbol(s) = reference.root else {
             return false;
         };
-        let Some(&first_about) = memo.first_narrowing_node.get(s.idx()) else {
+        let first_nodes = match reference.path.is_empty() && !self.is_union(declared) {
+            true => &memo.first_whole_narrowing_node,
+            false => &memo.first_narrowing_node,
+        };
+        let Some(&first_about) = first_nodes.get(s.idx()) else {
             return false;
         };
         let symbol = &bound.symbols[s.idx()];
@@ -5981,7 +6076,7 @@ impl<'p, 's> Checker<'p, 's> {
         let reference = Reference::synthetic(file, Root::This, path, parent);
         let walk = Walk::new(reference, TypeId::AUTO, initial, false);
         let ty = self.get_flow_type_of_reference(walk, exit);
-        if self.p.files.options.no_implicit_any && self.is_automatic_type(ty) {
+        if self.check_options(file).no_implicit_any && self.is_automatic_type(ty) {
             let at = self.place_of_untyped_property(file, value_declaration);
             // `symbolToString`
             let written = match value_declaration {
@@ -6700,10 +6795,17 @@ impl<'p, 's> Checker<'p, 's> {
                     sense,
                 } => {
                     // Every condition is applied to an evolving array.
-                    if self.is_automatic_type(walk.declared)
-                        || self.is_test_about(&walk.reference, flow, expr)
-                    {
-                        let then = Pending::Cond(expr, sense);
+                    let relevance = match self.is_automatic_type(walk.declared) {
+                        true => TestRelevance::Related,
+                        false => self.test_relevance(&walk.reference, flow, expr),
+                    };
+                    let then = match relevance {
+                        TestRelevance::Related => Some(Pending::Cond(expr, sense)),
+                        TestRelevance::RelatedByProperty => Some(Pending::PropertyCond(expr, sense)),
+                        TestRelevance::UnrelatedWithUnion => Some(Pending::UnrelatedCond(expr, sense)),
+                        TestRelevance::Unrelated => None,
+                    };
+                    if let Some(then) = then {
                         pending.push((then, std::mem::take(&mut shared_flow)));
                     } else if shared_flow.is_some() {
                         pending.push((Pending::Nothing, std::mem::take(&mut shared_flow)));
@@ -6975,8 +7077,16 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 Pending::Nothing => seen,
                 // Only `getTypeAtFlowCondition` returns `never` as it is.
-                Pending::Cond(..) if ty.is_never() => seen,
-                Pending::Cond(expr, sense) => self.narrow(reference, seen, expr, sense),
+                Pending::Cond(..) | Pending::UnrelatedCond(..) | Pending::PropertyCond(..) if ty.is_never() => seen,
+                Pending::UnrelatedCond(..) if seen == TypeId::ANY || !self.is_any(seen) => seen,
+                Pending::PropertyCond(..)
+                    if (seen == TypeId::ANY || !self.is_any(seen)) && !self.is_union(seen) && !self.is_union(walk.declared) =>
+                {
+                    seen
+                }
+                Pending::Cond(expr, sense) | Pending::UnrelatedCond(expr, sense) | Pending::PropertyCond(expr, sense) => {
+                    self.narrow(reference, seen, expr, sense)
+                }
                 Pending::Switch(stmt, from, to) => {
                     self.narrow_by_switch(reference, seen, stmt, from as usize, to as usize)
                 }
@@ -7147,11 +7257,7 @@ impl<'p, 's> Checker<'p, 's> {
             // "A matching dotted name might also be an expando property on a function *expression*"
             if let FlowTarget::Var(d) = target
                 && let Some(init) = hir[d].init.some()
-                && (hir.is_js
-                    || matches!(
-                        hir[d].kind,
-                        VarKind::Const | VarKind::Using | VarKind::AwaitUsing
-                    ))
+                && (hir.is_js || self.bound(file).is_constant(hir, d))
                 && matches!(hir[init].kind, ExprKind::Fn(f) if matches!(hir[f].kind, FnKind::Expr | FnKind::Arrow))
                 && !is_parenthesized(hir, init)
             {

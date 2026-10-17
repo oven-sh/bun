@@ -1,14 +1,3 @@
-//! Which functions keep their parameters in their `arguments` object.
-//!
-//! In sloppy code with simple parameters (`Checker::has_mapped_arguments`) `arguments[i]` and the i-th parameter are one variable, and
-//! `arguments.callee` is the function that runs. Most functions that name `arguments` cannot tell: they ask for its length, read it by
-//! a number, spread it or hand it to `apply`, and store to no parameter. For those nothing changes.
-//!
-//! For the others the object is the engine's own mapped one, the parameters live in it, and whoever refers to a parameter, an inner
-//! function too, goes through the object. Nothing follows the stores to such a parameter: see `find_variable_flow_coverage`.
-//!
-//! It goes by the trees and the symbols of one file, and by `kinds.rs`, which does: every task finds the same.
-
 use super::kinds::kind;
 use crate::bind::{Parent, SymbolId};
 use crate::check::Checker;
@@ -24,9 +13,7 @@ pub(super) struct State {
 
 #[derive(Default)]
 pub(super) struct Mapped {
-    /// By function that keeps its parameters in the object: the first place where it names the object.
     pub(super) functions: FxHashMap<FnId, ExprId>,
-    /// By parameter of such a function: the function, and which of its parameters it is.
     parameters: FxHashMap<SymbolId, (FnId, u32)>,
     pub(super) materialized_on_demand: FxHashMap<FnId, ExprId>,
     dynamic_key_reads: FxHashSet<ExprId>,
@@ -55,7 +42,6 @@ impl<'p, 's> Checker<'p, 's> {
         if !hir.is_js || bound.ran_out_of_stack {
             return found;
         }
-        // Those that read what the parameters hold now, and those that can tell whatever the parameters do.
         let (mut reading, mut informative_type): (FxHashMap<FnId, ExprId>, FxHashMap<FnId, ExprId>) = Default::default();
         let mut by_dynamic_key: Vec<(FnId, ExprId)> = Vec::new();
         for &e in bound.arguments_objects.iter() {
@@ -84,7 +70,6 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         for (func, e) in reading {
-            // A `var` of the name may have an initializer, a function of the name takes its place.
             let is_stored_to = hir[func].params.iter().any(|p| {
                 bound.pat_symbol[hir[p].pat.idx()].some().is_some_and(|symbol| !bound.assignments_to(symbol).is_empty() || bound.symbols[symbol.idx()].decls.len() != 1)
             });
@@ -134,7 +119,6 @@ impl<'p, 's> Checker<'p, 's> {
                     Parent::Expr(user) if user.is_some() => match hir[user].kind {
                         ExprKind::Assign { target, .. } => target != parent,
                         ExprKind::Unary { op, .. } => !matches!(op, UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec | UnOp::Delete),
-                        // It may be part of a pattern that is assigned to.
                         ExprKind::Array(_) | ExprKind::Object(_) | ExprKind::Spread(_) => false,
                         ExprKind::Call(call) => hir[call].callee != parent,
                         _ => true,
@@ -143,14 +127,12 @@ impl<'p, 's> Checker<'p, 's> {
                     Parent::Stmt(stmt) if stmt.is_some() => !matches!(hir[stmt].kind, StmtKind::ForIn { .. } | StmtKind::ForOf { .. }),
                     _ => false,
                 };
-                // By a number: under any other key there may be `callee`.
                 if is_read && self.result_kinds_of(file, index) != kind::NUMBER && self.enclosing_fn_of_expr(file, parent) == Some(owner) {
                     return ArgumentsUse::DynamicKeyRead(parent);
                 }
                 is_read && self.result_kinds_of(file, index) == kind::NUMBER
             }
             ExprKind::Spread(_) => true,
-            // `f.apply(x, arguments)`.
             ExprKind::Call(call) => hir[call].callee != e && matches!(hir[hir[call].callee].kind, ExprKind::Dot { name, .. } if self.atoms().bytes(name) == b"apply"),
             _ => false,
         };
@@ -161,12 +143,10 @@ impl<'p, 's> Checker<'p, 's> {
         self.hir(file).is_js && self.file_mapped_arguments(file).dynamic_key_reads.contains(&e)
     }
 
-    /// Whether the parameters of the function live in its `arguments` object, which is the mapped one of the language.
     pub fn keeps_parameters_in_arguments(&mut self, file: FileId, func: FnId) -> bool {
         self.file_mapped_arguments(file).functions.contains_key(&func)
     }
 
-    /// Of a parameter of such a function: the function, and which of its parameters it is.
     pub fn mapped_parameter(&mut self, sym: Sym) -> Option<(FnId, u32)> {
         if !self.hir(sym.file).is_js {
             return None;

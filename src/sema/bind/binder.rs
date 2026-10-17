@@ -1677,7 +1677,7 @@ impl<'f, 's> Binder<'f, 's> {
                 };
                 let decl = &self.f[d];
                 // `NodeFlagsConst`, a bit that `NodeFlagsAwaitUsing` has too.
-                if !matches!(decl.kind, VarKind::Const | VarKind::AwaitUsing) && !self.f.is_js {
+                if !matches!(decl.kind, VarKind::Const | VarKind::AwaitUsing) && !self.f.is_js && !(self.options.is_typed_bundle && decl.kind == VarKind::Var) {
                     return None;
                 }
                 self.symbol_of_expando_initializer(decl.init, decl.ty.is_some())
@@ -2106,6 +2106,24 @@ impl<'f, 's> Binder<'f, 's> {
         scope
     }
 
+    fn mark_unassigned_variables_constant(&mut self) {
+        for statement in self.f.ids(self.f.body) {
+            let StmtKind::Var(declarations) = self.f[statement].kind else {
+                continue;
+            };
+            for d in declarations.iter() {
+                let declaration = &self.f[d];
+                let Some(symbol) = self.b.pat_symbol[declaration.pat.idx()].some() else {
+                    continue;
+                };
+                let symbol = &mut self.b.symbols[symbol.idx()];
+                if declaration.kind == VarKind::Var && declaration.init.is_some() && symbol.decls.iter().filter(|declared| matches!(declared, Decl::Var(_))).count() == 1 && !symbol.flags.contains(SymFlags::ASSIGNED) {
+                    symbol.flags |= SymFlags::CONST;
+                }
+            }
+        }
+    }
+
     fn finish(&mut self) {
         // Resolves names, now that everything is declared.
         let idents = std::mem::take(&mut self.idents);
@@ -2150,6 +2168,9 @@ impl<'f, 's> Binder<'f, 's> {
             }
         }
         self.assigned = assigned;
+        if self.options.is_typed_bundle {
+            self.mark_unassigned_variables_constant();
+        }
         self.b.assignments.sort_unstable_by_key(|a| (a.0.0, a.1.0));
         let (expr_symbol, arguments_objects) = (&self.b.expr_symbol, &self.b.arguments_objects);
         self.b.unchecked_assignment_targets.retain(|target| {

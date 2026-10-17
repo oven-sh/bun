@@ -1,8 +1,8 @@
 // Tests on `number | undefined` and `number | null | undefined` values read from optional fields: typeof, truthiness, ??, === undefined, === null. An absent field, a field that holds undefined, NaN, zero and negative zero must all answer as in JavaScript.
-// SIZE< typeIsNumber 60
-// SIZE< typeIsUndefined 80
-// SIZE< truthy 56
-// SIZE< orDefault 44
+// SIZE< typeIsNumber 32
+// SIZE< typeIsUndefined 32
+// SIZE< truthy 40
+// SIZE< orDefault 32
 type Options = { name: string; limit?: number; count?: number | null; whole?: number };
 function typeIsNumber(options: Options): boolean { return typeof options.limit === "number"; }
 function typeIsUndefined(options: Options): boolean { return typeof options.limit === "undefined"; }

@@ -326,7 +326,7 @@ impl Checker<'_, '_> {
                 } else if hir.kind(hir.parent(hir.parent(parent))) != Kind::VariableStatement {
                     (None, 1334)
                 // `NodeFlagsConst` is one of the two bits of `NodeFlagsAwaitUsing`.
-                } else if !matches!(hir[d].kind, VarKind::Const | VarKind::AwaitUsing) {
+                } else if hir[d].kind != VarKind::AwaitUsing && !self.bound(file).is_const(hir, d) {
                     (Some(self.place_of_token(file, hir[hir[d].pat].pos)), 1332)
                 } else {
                     return;

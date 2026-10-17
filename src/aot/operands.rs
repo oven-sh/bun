@@ -12,6 +12,7 @@ impl Op {
             | Op::Double(_)
             | Op::Str(_)
             | Op::BigInt(_)
+            | Op::Symbol(_)
             | Op::FuncRef(_)
             | Op::GlobalGet(_)
             | Op::FreeGet { .. }

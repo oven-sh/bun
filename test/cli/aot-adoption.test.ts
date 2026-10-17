@@ -545,7 +545,6 @@ show(5, () => { function idOf(s: Session): number { return s.id.length + 1; } re
       const { stdout, stderr, exitCode } = await spawned([join(dir, "app")], dir);
       expect(stdout).toBe(plain.stdout);
       expect(brief(lines(stderr, "type-error").filter(line => !line.text.endsWith("; total")))).toEqual([
-        "enter-variable app.ts:7:36 continued",
         "enter-return app.ts:8:51 continued",
         "enter-field app.ts:9:72 continued",
         "read-element app.ts:10:72 continued",
@@ -554,7 +553,7 @@ show(5, () => { function idOf(s: Session): number { return s.id.length + 1; } re
       expect(stderr).toContain("; reason property 'type' is missing in untyped object but required in Session");
       expect(exitCode).toBe(0);
       expect((await bun(dir, "build", "--compile", "--aot", "app.ts", "--outfile", "throws")).exitCode).toBe(0);
-      expect((await spawned([join(dir, "throws")], dir)).stdout).toBe("a\n1 thrown\n2 thrown\n3 thrown\n4 thrown\n5 thrown\n");
+      expect((await spawned([join(dir, "throws")], dir)).stdout).toBe("a\n1 y undefined\n2 thrown\n3 thrown\n4 thrown\n5 thrown\n");
     }, 240_000);
 
     test("the report says where this build continues", async () => {
@@ -665,7 +664,7 @@ type Handlers = { message(n: number): string };
 const registered: Handlers[] = [];
 function register(handlers: Handlers): void { registered.push(handlers); }
 register({ message(n: number): string { return "registered " + n; } });
-const counter = { total: 0, add(n: number): string { return "add " + n + " " + ++this.total; }, set limit(n: number) { this.total = 10; } };
+const counter = { total: 0, add(n: number): string { return "add " + n + " " + ++this.total; }, set limit(n: number) { this.total = n === 0 ? 0 : 10; }, set ignored(n: number) { this.total = 11; } };
 const nested = { websocket: { async message(n: number): Promise<string> { await null; return "nested " + n; } } };
 const proxy: any = new Proxy({}, { get(target: object, key: string): string { return "get " + String(key); } });
 const json = { toJSON(key: number): string { return "key " + key; } };
@@ -676,10 +675,11 @@ row(3, () => { untyped.limit = body.n; return counter.total; });
 row(4, () => proxy[Symbol.iterator]);
 row(5, () => JSON.stringify([json]));
 try { console.log(6, await (nested as any).websocket.message(body.n)); } catch { console.log(6, "thrown"); }
+row(7, () => { untyped.ignored = body.n; return counter.total; });
 `,
       });
       const plain = await bun(dir, "app.ts");
-      expect(plain.stdout).toBe('1 registered wrong\n2 add wrong 1 | add 5 2\n3 10\n4 get Symbol(Symbol.iterator)\n5 ["key 0"]\n6 nested wrong\n');
+      expect(plain.stdout).toBe('1 registered wrong\n2 add wrong 1 | add 5 2\n3 10\n4 get Symbol(Symbol.iterator)\n5 ["key 0"]\n6 nested wrong\n7 11\n');
       const build = await bun(dir, "build", "--compile", "--aot", "--aot-type-errors=log", "--aot-explain=throws", "app.ts", "--outfile", "app");
       expect(build.exitCode).toBe(0);
       const { stdout, stderr, exitCode } = await spawned([join(dir, "app")], dir);
@@ -689,6 +689,7 @@ try { console.log(6, await (nested as any).websocket.message(body.n)); } catch {
       const foretold = lines(build.stdout + build.stderr, "type-check").filter(line => line.text.includes("; this log build continues here"));
       const ids = new Set(foretold.flatMap(line => [line.id, line.call]));
       expect(logged.filter(line => !ids.has(line.id)).map(line => line.text)).toEqual([]);
+      expect(lines(build.stdout + build.stderr, "type-check").filter(line => line.text.includes("ignored"))).toEqual([]);
       expect(exitCode).toBe(0);
     }, 120_000);
 
@@ -991,7 +992,8 @@ class Account {
   constructor(public opening: number = 0) {}
   add(n: number): string { return "add " + n; }
   both(label: string, n: number): string { return label + n; }
-  set limit(n: number) { this.total = 1; }
+  set limit(n: number) { this.total = n === 0 ? 0 : 1; }
+  set ignored(n: number) { this.total = 2; }
   static parse(n: number): string { return "parse " + n; }
 }
 function declared(n: number): string { return "declared " + n; }
@@ -1003,6 +1005,7 @@ row(3, () => new Account(body.n).total);
 row(4, () => { account.limit = body.n; return account.total; });
 row(5, () => Account.parse(body.n));
 row(6, () => held(body.n));
+row(7, () => { account.ignored = body.n; return account.total; });
 `,
     });
     for (const mode of ["throw", "log"]) {
@@ -1012,6 +1015,7 @@ row(6, () => held(body.n));
       const logged = lines(stderr, "type-error").filter(line => !line.text.endsWith("; total"));
       expect(logged.length).toBe(6);
       const report = lines(build.stdout + build.stderr, "type-check");
+      expect(report.filter(line => line.text.includes("ignored"))).toEqual([]);
       const ids = new Set(report.flatMap(line => [line.id, line.call, /; logged as ([0-9a-f]{12})/.exec(line.text)?.[1]]));
       expect(logged.filter(line => !ids.has(line.id)).map(line => line.text)).toEqual([]);
     }
@@ -1029,7 +1033,8 @@ function* steps(n: number): Generator<string> { yield "step " + n; }
 class Account {
   static rate = 0;
   constructor(public opening: number) {}
-  static set level(n: number) { Account.rate = 1; }
+  static set level(n: number) { Account.rate = n === 0 ? 0 : 1; }
+  static set ignored(n: number) { Account.rate = 2; }
   static parse(n: number): string { return "parse " + n; }
   static scale(n: number): string { return "scale " + n; }
 }
@@ -1047,6 +1052,7 @@ row(9, () => { loose(Account).level = body.n; return Account.rate; });
 row(10, () => loose(Account.parse)(body.n));
 row(11, () => loose(Account).scale(body.n));
 row(12, () => new Square().describe(body.n));
+row(13, () => { loose(Account).ignored = body.n; return Account.rate; });
 `,
     });
     for (const mode of ["throw", "log"]) {
@@ -1057,28 +1063,31 @@ row(12, () => new Square().describe(body.n));
       expect(logged.map(line => `${line.kind} ${/\((.*?)\)/.exec(line.text)![1]}`)).toEqual(["declared", "anonymous", "usesThis", "steps", "Account", "level", "parse", "scale", "area"].map(name => "enter-function " + name));
       const ids = new Set(lines(build.stdout + build.stderr, "type-check").map(line => line.id));
       expect(logged.filter(line => !ids.has(line.id)).map(line => line.text)).toEqual([]);
+      expect(lines(build.stdout + build.stderr, "type-check").filter(line => line.text.includes("ignored"))).toEqual([]);
     }
   }, 240_000);
 
-  test("a setter assigned through any is in the report", async () => {
+  test("a setter assigned through any is in the report, unless it ignores its parameter", async () => {
     const dir = project("aot-report-setter", {
       "app.ts": `const body: any = JSON.parse('{"n":"wrong","list":[]}');
 const row = (n: number, f: () => unknown) => { try { console.log(n, String(f())); } catch { console.log(n, "thrown"); } };
-class Gauge { level = 0; set size(n: number) { this.level = 1; } }
+class Gauge { level = 0; set size(n: number) { this.level = n === 0 ? 0 : 1; } set ignored(n: number) { this.level = 2; } }
 const gauge = new Gauge(), loose: any = gauge;
 row(1, () => (Reflect.construct(Gauge, body.list) as Gauge).level);
 row(2, () => { loose.size = body.n; return gauge.level; });
+row(3, () => { loose.ignored = body.n; return gauge.level; });
 `,
     });
     for (const mode of ["throw", "log"]) {
       const build = await bun(dir, "build", "--compile", "--aot", `--aot-type-errors=${mode}`, "--aot-explain=throws", "app.ts", "--outfile", "app");
       expect(build.exitCode).toBe(0);
       const { stdout, stderr } = await spawned([join(dir, "app")], dir, { BUN_AOT_TYPE_ERROR_LOG: "stderr" });
-      expect(stdout).toBe("1 0\n2 thrown\n");
+      expect(stdout).toBe("1 0\n2 thrown\n3 2\n");
       const logged = lines(stderr, "type-error").filter(line => !line.text.endsWith("; total"));
       expect(logged.map(line => `${line.kind} ${/\((.*?)\)/.exec(line.text)![1]}`)).toEqual(["enter-function size"]);
       const ids = new Set(lines(build.stdout + build.stderr, "type-check").map(line => line.id));
       expect(logged.filter(line => !ids.has(line.id)).map(line => line.text)).toEqual([]);
+      expect(lines(build.stdout + build.stderr, "type-check").filter(line => line.text.includes("ignored"))).toEqual([]);
     }
   }, 240_000);
 

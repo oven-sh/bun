@@ -6,7 +6,7 @@ import { join } from "path";
 
 // ONE RULE, WRITTEN TWICE. What becomes of an object that typed code has not made, where it enters a record type that admits no
 // strangers, is decided by the engine in an --aot executable (class Coercion in JavaScriptCore/aot/AOTTypedObject.cpp) and foretold by
-// `bun --aot-audit` (canBeMade(), matchesShape() in src/runtime/cli/aot_audit.js, over the tables of src/aot/audit.rs). This test holds the
+// `bun --aot-audit` (canBeAllocated(), matchesShape() in src/runtime/cli/aot_audit.js, over the tables of src/aot/audit.rs). This test holds the
 // two to each other: every case of the fixtures runs plain, in an executable and under the audit.
 //   FALSE: the audit says would-throw and the executable does not throw. Never.
 //   MISSED: the executable throws because the object does not fit, and the audit has no record on that line. Only where the case says

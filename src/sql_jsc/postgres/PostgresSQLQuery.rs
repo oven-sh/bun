@@ -5,6 +5,7 @@ use crate::error::ThrowSqlError;
 use crate::jsc::{
     CallFrame, JSGlobalObject, JSValue, JsError, JsRef, JsResult, VirtualMachineSqlExt as _,
 };
+use crate::shared::row_decoder::RowDecoder;
 use crate::shared::query_ctor_args::QueryCtorArgs;
 use bun_core::String as BunString;
 use bun_jsc::JsCell;
@@ -53,6 +54,8 @@ pub struct PostgresSQLQuery {
     ref_count: Cell<u32>,
 
     pub(crate) flags: Cell<Flags>,
+
+    pub(crate) row_type: Cell<u32>,
 }
 
 impl Default for PostgresSQLQuery {
@@ -64,6 +67,7 @@ impl Default for PostgresSQLQuery {
             status: Cell::new(Status::Pending),
             ref_count: Cell::new(1),
             flags: Cell::new(Flags::default()),
+            row_type: Cell::new(0),
         }
     }
 }
@@ -487,6 +491,7 @@ impl PostgresSQLQuery {
         if !query.is_object() {
             return Err(global_object.throw_invalid_argument_type("run", "query", "Query"));
         }
+        this.row_type.set(RowDecoder::expected_row_type(global_object, query));
 
         let this_value = callframe.this();
         let binding_value = js::binding_get_cached(this_value).unwrap_or_default();

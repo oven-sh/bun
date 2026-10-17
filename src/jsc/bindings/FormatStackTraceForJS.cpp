@@ -323,6 +323,8 @@ WTF::String formatStackTrace(
     sourceURLs.grow(framesCount);
     originalLineColumns.grow(framesCount);
     bool anyRemap = false;
+    uint32_t previousCompiledSource = 0;
+    size_t previousCompiledFrame = 0;
 
     for (size_t i = 0; i < framesCount; i++) {
         StackFrame& frame = stackTrace.at(i);
@@ -341,8 +343,11 @@ WTF::String formatStackTrace(
         if (frame.isTypedAOTFrame()) {
             if (auto position = frame.reportedPosition()) {
                 originalLineColumns[i] = position->lineColumn;
-                if (position->source)
-                    sourceURLs[i] = JSC::AOT::ProgramData::get()->sourceName(position->source);
+                if (position->source) {
+                    sourceURLs[i] = position->source == previousCompiledSource ? sourceURLs[previousCompiledFrame] : JSC::AOT::ProgramData::get()->sourceNameInFrames(position->source);
+                    previousCompiledSource = position->source;
+                    previousCompiledFrame = i;
+                }
             }
             continue;
         }

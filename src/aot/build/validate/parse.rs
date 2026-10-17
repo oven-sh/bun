@@ -1,4 +1,4 @@
-use super::super::fit::Ty;
+use super::super::coerce::Ty;
 use super::super::{FileBuild, Fx};
 use super::GeneratedFunction;
 use crate::builder::Var;
@@ -242,19 +242,21 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.switch_to(unreachable);
     }
 
-    pub(super) fn emit_parse_by_type(&mut self, fx: &mut Fx, plan: &Rc<ValidationPlan>, number: u32, text: V, made: Ty) -> V {
+    pub(super) fn emit_parse_by_type(&mut self, fx: &mut Fx, plan: &Rc<ValidationPlan>, number: u32, text: V, created: Ty) -> V {
         let (general_path, done) = (fx.b.new_block(), fx.b.new_block());
-        let result = fx.b.new_var(self.or_anything(made.id));
+        let result = fx.b.new_var(self.or_anything(created.id));
         let opened = self.emit_parser_operation(fx, Operation::JSONOpen, &[text], self.known.counter);
         self.continue_if_parsed(fx, opened, general_path);
         let start = self.skip_whitespace(fx, opened);
+        let was_speculative = std::mem::replace(&mut self.validators.is_speculative, true);
         let (value, end) = self.emit_parsed(fx, plan, number, plan.root, start, Found::Expected, general_path);
+        self.validators.is_speculative = was_speculative;
         let is_complete = self.emit_parser_operation(fx, Operation::JSONClose, &[end], self.known.boolean);
         let complete = fx.b.new_block();
         fx.b.branch(is_complete, complete, general_path);
         fx.b.seal(complete);
         fx.b.switch_to(complete);
-        let value = self.coerce_to(fx, value, made, CoerceReason::Cast);
+        let value = self.coerce_to(fx, value, created, CoerceReason::Cast);
         fx.b.write(result, value);
         fx.b.jump(done);
         fx.b.seal(general_path);
@@ -263,7 +265,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let text = self.emit_parser_operation(fx, Operation::JSONDecodeSource, &[text], self.out.tys.anything);
         let parsed = self.emit_global_method_call(fx, b"JSON", b"parse", &[text]);
         let validated = self.emit_root_validation(fx, plan, number, None, parsed, false);
-        let validated = self.coerce_to(fx, validated, made, CoerceReason::Cast);
+        let validated = self.coerce_to(fx, validated, created, CoerceReason::Cast);
         fx.b.write(result, validated);
         fx.b.jump(done);
         fx.b.seal(done);
@@ -275,8 +277,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let function = self.helper_function(fx, GeneratedFunction::Parser(number, node), 1);
         self.out.funcs[function.idx()].params = vec![self.known.counter];
         if ty != TypeId::UNRESOLVED {
-            let made = self.ty_of(ty);
-            self.out.funcs[function.idx()].result = self.or_undefined(made);
+            let created = self.ty_of(ty);
+            self.out.funcs[function.idx()].result = self.or_undefined(created);
         }
         function
     }
@@ -359,15 +361,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
             Planned::Object { ty, .. } | Planned::Array { ty, .. } | Planned::Tuple { ty, .. } | Planned::Dictionary { ty, .. } => {
                 let parser = self.parser_for(fx, number, node, if matches!(described.planned, Planned::Dictionary { .. }) { TypeId::UNRESOLVED } else { *ty });
-                let made = self.emit_throwing(fx, Op::CallDirect { func: parser, args: [cursor].into_iter().collect() });
+                let created = self.emit_throwing(fx, Op::CallDirect { func: parser, args: [cursor].into_iter().collect() });
                 let undefined = self.emit(fx, Op::Undefined);
-                let is_refused = self.emit(fx, Op::StrictEq { a: made, b: undefined });
+                let is_refused = self.emit(fx, Op::StrictEq { a: created, b: undefined });
                 self.continue_unless(fx, is_refused, fails);
                 let end = self.emit_parser_operation(fx, Operation::JSONCursor, &[], self.known.counter);
                 if matches!(described.planned, Planned::Array { .. }) {
-                    return (made, end);
+                    return (created, end);
                 }
-                (made, end)
+                (created, end)
             }
             Planned::Union { arms, .. } => {
                 let (held, end) = (self.new_temporary(fx), fx.b.new_var(self.known.counter));
@@ -416,8 +418,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     pub(super) fn emit_parser(&mut self, fx: &mut Fx, number: u32, node: u32) {
         let plan = self.validators.plans[number as usize].clone();
-        let start = self.add_entry_param(fx, Ty::of(self.known.counter));
+        let start = self.add_entry_param(fx, Ty::from_id(self.known.counter));
         let fails = fx.b.new_block();
+        let was_speculative = std::mem::replace(&mut self.validators.is_speculative, true);
         if reaches(&plan, node, node, &mut Vec::new()) {
             let has_stack_space = self.emit_parser_operation(fx, Operation::JSONHasStackSpace, &[], self.known.boolean);
             let has_stack_space = self.emit_parser_operation(fx, Operation::Likely, &[has_stack_space], self.known.boolean);
@@ -433,15 +436,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             Planned::Tuple { ty, elements } => self.emit_tuple_parser(fx, &plan, number, *ty, elements, start, fails),
             _ => fx.b.jump(fails),
         }
+        self.validators.is_speculative = was_speculative;
         fx.b.seal(fails);
         fx.b.switch_to(fails);
         let undefined = self.emit(fx, Op::Undefined);
         fx.b.terminate(Term::Return(undefined));
     }
 
-    fn return_parsed(&mut self, fx: &mut Fx, made: V, end: V) {
+    fn return_parsed(&mut self, fx: &mut Fx, created: V, end: V) {
         self.emit_parser_operation(fx, Operation::JSONSetCursor, &[end], self.known.undefined);
-        self.terminate_with_return(fx, made);
+        self.terminate_with_return(fx, created);
     }
 
     fn emit_array_parser(&mut self, fx: &mut Fx, plan: &Rc<ValidationPlan>, number: u32, node: u32, ty: TypeId, element: u32, start: V, fails: BlockId) {
@@ -484,7 +488,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn emit_dictionary_parser(&mut self, fx: &mut Fx, plan: &Rc<ValidationPlan>, number: u32, held: u32, start: V, fails: BlockId) {
-        let made = self.emit(fx, Op::NewObject);
+        let created = self.emit(fx, Op::NewObject);
         let cursor = fx.b.new_var(self.known.counter);
         let (is_empty, turn, done) = (fx.b.new_block(), fx.b.new_block(), fx.b.new_block());
         let first = self.skip_whitespace(fx, start);
@@ -501,14 +505,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let gives_up = self.give_up(fx, fails);
         let (key, value, after) = self.emit_key_and_value(fx, plan, number, held, at, gives_up);
         fx.b.seal(gives_up);
-        self.operation(fx, Operation::PutByValDirect, &[made, key, value]);
+        self.operation(fx, Operation::PutByValDirect, &[created, key, value]);
         fx.b.write(cursor, after);
         self.branch_on_separator(fx, cursor, b"}", turn, done, fails);
         fx.b.seal(turn);
         fx.b.seal(done);
         fx.b.switch_to(done);
         let end = fx.b.read(cursor);
-        self.return_parsed(fx, made, end);
+        self.return_parsed(fx, created, end);
     }
 
     fn emit_tuple_parser(&mut self, fx: &mut Fx, plan: &Rc<ValidationPlan>, number: u32, ty: TypeId, elements: &[u32], start: V, fails: BlockId) {
@@ -524,10 +528,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         let cursor = self.skip_whitespace(fx, cursor);
         let end = self.continue_after_text(fx, cursor, b"]", true, fails);
-        let made = self.emit_list(fx, &items);
+        let created = self.emit_list(fx, &items);
         let want = Ty { id: self.ty_of(ty), checked: ty };
-        let made = self.coerce_to(fx, made, want, CoerceReason::Cast);
-        self.return_parsed(fx, made, end);
+        let created = self.coerce_to(fx, created, want, CoerceReason::Cast);
+        self.return_parsed(fx, created, end);
     }
 
     fn declare_object_variables(&mut self, fx: &mut Fx, plan: &ValidationPlan, members: &[PlannedMember], start: V) -> ObjectParse {
@@ -688,8 +692,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let end = self.continue_after_text(fx, cursor, b"}", true, leaves);
             fx.b.seal(leaves);
             let values = self.resolve_absent_members(fx, plan, number, members, &parsed, fails);
-            let made = self.emit_object_from_checked_members(fx, plan, number, node, None, &values, fails);
-            self.return_parsed(fx, made, end);
+            let created = self.emit_object_from_checked_members(fx, plan, number, node, None, &values, fails);
+            self.return_parsed(fx, created, end);
         }
 
         fx.b.seal(after_brace);
@@ -810,7 +814,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             fx.b.switch_to(next);
         }
         let values = self.resolve_absent_members(fx, plan, number, members, &parsed, fails);
-        let made = self.emit_object_from_checked_members(fx, plan, number, node, None, &values, fails);
+        let created = self.emit_object_from_checked_members(fx, plan, number, node, None, &values, fails);
         if matches!(others, OtherKeys::Kept(_)) {
             let keys = fx.b.read(parsed.kept_keys);
             let values = fx.b.read(parsed.kept_values);
@@ -824,14 +828,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             self.emit_loop(fx, keys, |build, fx, at, key| {
                 let key = build.claim_type(fx, key, build.known.string);
                 let value = build.emit_throwing(fx, Op::ElemGet { obj: values, key: at });
-                build.operation(fx, Operation::PutByValDirect, &[made, key, value]);
+                build.operation(fx, Operation::PutByValDirect, &[created, key, value]);
             });
             fx.b.jump(next);
             fx.b.seal(next);
             fx.b.switch_to(next);
         }
         let end = fx.b.read(parsed.cursor);
-        self.return_parsed(fx, made, end);
+        self.return_parsed(fx, created, end);
     }
 
     fn emit_key_dispatch(&mut self, fx: &mut Fx, members: &[PlannedMember], cursor: V, candidates: &[usize], arms: &[BlockId], unknown: BlockId) {

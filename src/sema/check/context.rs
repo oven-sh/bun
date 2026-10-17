@@ -356,7 +356,7 @@ impl<'p, 's> Checker<'p, 's> {
             PatKind::Array(elems) => {
                 let rest_element = elems.iter().next_back().filter(|&e| hir[e].is_rest);
                 if elems.is_empty() || (elems.len() == 1 && rest_element.is_some()) {
-                    if self.p.files.options.target == crate::resolve::ScriptTarget::ES5 {
+                    if self.check_options(file).target == crate::resolve::ScriptTarget::ES5 {
                         return Some(self.array_of(TypeId::ANY));
                     }
                     // `createIterableType`, `getGlobalIterableTypeChecked`
@@ -762,7 +762,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if prop.kind == PropKind::Spread {
                     return self.contextual_type(file, owner, context_flags);
                 }
-                let context = self.apparent_type_of_contextual_type(file, owner, context_flags)?;
+                let context = self.apparent_type_of_literal_context(file, owner, context_flags)?;
                 let name_expression = match prop.key {
                     PropKey::Computed(k) if is_dynamic_name(hir, k) => k,
                     // `symbol.Name`, as the binder has it. A missing name is the empty string.
@@ -2228,7 +2228,7 @@ impl<'p, 's> Checker<'p, 's> {
             let sig = match fitting[..] {
                 [] => continue,
                 [only] => only,
-                _ => match self.intersected_signature(&fitting) {
+                _ => match self.intersected_signature(file, &fitting) {
                     Some(combined) => combined,
                     None => continue,
                 },
@@ -2291,14 +2291,14 @@ impl<'p, 's> Checker<'p, 's> {
         match fitting[..] {
             [] => None,
             [only] => Some(only),
-            _ => self.intersected_signature(&fitting),
+            _ => self.intersected_signature(file, &fitting),
         }
     }
 
     /// `getIntersectedSignatures`: a single signature for a function that must satisfy all of
     /// `sigs`.
-    pub(super) fn intersected_signature(&mut self, sigs: &[SigId]) -> Option<SigId> {
-        if !self.p.files.options.no_implicit_any {
+    pub(super) fn intersected_signature(&mut self, file: FileId, sigs: &[SigId]) -> Option<SigId> {
+        if !self.check_options(file).no_implicit_any {
             return None;
         }
         let mut combined: Option<SigId> = None;

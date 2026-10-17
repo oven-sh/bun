@@ -3,7 +3,6 @@
     clippy::disallowed_types,
     clippy::disallowed_macros
 )]
-//! Export `BUN_CODEGEN_DIR` for the `include_bytes!`d archive that `src/codegen/builtins-manifest.ts` writes.
 
 use std::env;
 use std::fs;

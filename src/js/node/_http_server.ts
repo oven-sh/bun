@@ -3,7 +3,7 @@ const EventEmitter: typeof import("node:events").EventEmitter = require("node:ev
 const { Stream } = require("node:stream");
 const StreamPrototype = Stream.prototype;
 const DuplexPrototype = Stream.Duplex.prototype;
-const resumeOfDuplex = DuplexPrototype.resume;
+const duplexResume = DuplexPrototype.resume;
 const { flagsOf } = require("internal/streams/state");
 const kFlowing = 1 << 24;
 const kHasPaused = 1 << 25;
@@ -1667,8 +1667,8 @@ interface NetSocketBase extends Pick<NetSocket, NetSocketPrototypeAccessors>, Ne
 interface NetSocketConstructor {
   new (options?: import("node:net").SocketConstructorOpts & import("node:stream").DuplexOptions): NetSocketBase;
 }
-let resumeOfServerSocket;
-let resumeOfNetSocket;
+let serverSocketResume;
+let netSocketResume;
 function getNodeHTTPServerSocket() {
   if (NodeHTTPServerSocket) return NodeHTTPServerSocket;
   const { Socket: NetSocket }: { Socket: NetSocketConstructor } = require("node:net");
@@ -2244,9 +2244,9 @@ function getNodeHTTPServerSocket() {
 
     [kResumeUnlessFlowing]() {
       if (
-        this.resume !== resumeOfServerSocket ||
-        super.resume !== resumeOfNetSocket ||
-        DuplexPrototype.resume !== resumeOfDuplex ||
+        this.resume !== serverSocketResume ||
+        super.resume !== netSocketResume ||
+        DuplexPrototype.resume !== duplexResume ||
         this[kStreamingEnabled] ||
         this[kUpgradeIncoming] !== undefined ||
         (flagsOf(this._readableState) & (kFlowing | kHasPaused | kPaused)) !== (kFlowing | kHasPaused)
@@ -2268,8 +2268,8 @@ function getNodeHTTPServerSocket() {
     }
   } as unknown as typeof import("node:net").Socket;
   Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });
-  resumeOfServerSocket = NodeHTTPServerSocket.prototype.resume;
-  resumeOfNetSocket = NetSocket.prototype.resume;
+  serverSocketResume = NodeHTTPServerSocket.prototype.resume;
+  netSocketResume = NetSocket.prototype.resume;
   return NodeHTTPServerSocket;
 }
 

@@ -1,46 +1,17 @@
-//! The built-in objects that `--aot` makes immutable. `bun build --aot` and `bun lint` both use this table.
-//!
-//! In a program that is compiled ahead of time, what the JavaScript engine gives a realm stays what it is:
-//! - a prototype keeps its properties and gets no others; but `Error.prototype` and the prototypes that inherit from it are a program's to change;
-//! - any other object (a constructor, a namespace such as `Math`) keeps its properties, and can be given others, except one that
-//!   would shadow a property it inherits from another built-in object;
-//! - the properties of the global object that name them cannot be replaced.
-//!
-//! What Bun adds (`console`, `process`, `setTimeout`, `URL`, ..) is not among them.
-
 use super::locked_builtins_generated::BUILTINS;
 use bun_core::strings;
 
-/// An object that `--aot` makes immutable.
 pub struct Builtin {
-    /// As a program writes it: `Array`, `Array.prototype`, `Intl.Collator`. Empty: the global object. In `%`: no name leads
-    /// to it, others inherit from it.
     pub name: &'static str,
-    /// The `name` of its prototype. Empty if it has none, `%` if its prototype is not in this table.
     pub inherits: &'static str,
-    /// All but the prototypes.
     pub is_extensible: bool,
-    /// All its own properties, separated by spaces. For the global object, only the ones that cannot be replaced.
-    /// `@@iterator` is `Symbol.iterator`. Before the name:
-    /// - nothing: a program can assign to it, define it again and delete it, and `--aot` rejects_change all three;
-    /// - `~`: an accessor, or read-only. JavaScript decides what an assignment does, and `--aot` rejects_change the other two;
-    /// - `=`: writable but not configurable, and `--aot` rejects_change the assignment;
-    /// - `!`: JavaScript itself rejects_change all three;
-    /// - `-`: `--aot` lets it be, like the `name` of a function.
-    ///
-    /// After the name, unless the value is a function: `:accessor`, or `:` and the `typeof` of the value, followed by `?` if the
-    /// value is falsy.
     pub properties: &'static str,
 }
 
-/// How a program changes a property.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Change {
-    /// `a.b = c`
     Assign,
-    /// `Object.defineProperty(a, "b", c)`
     Define,
-    /// `delete a.b`
     Delete,
 }
 
@@ -111,24 +82,20 @@ impl Builtin {
         find(self.inherits.as_bytes()).filter(|it| !it.is_global_object())
     }
 
-    /// Whether it has a property `name` of its own.
     pub fn has(&self, name: &[u8]) -> bool {
         self.own(name).is_some()
     }
 
-    /// Whether it has a property `name` of its own that a program could replace without `--aot`.
     pub fn has_replaceable(&self, name: &[u8]) -> bool {
         matches!(self.own(name), Some((Property::Replaceable, _)))
     }
 
-    /// The names of these.
     pub fn replaceable(&self) -> impl Iterator<Item = &'static str> {
         let names = strings::split(self.properties.as_bytes(), b" ");
         let unmarked = names.filter(|it| !matches!(it.first(), Some(b'~' | b'=' | b'!' | b'-')));
         unmarked.filter_map(|it| str::from_utf8(it).ok()?.split(':').next())
     }
 
-    /// Whether it has a property `name`, of its own or inherited from another of them.
     pub fn has_property(&self, name: &[u8]) -> bool {
         self.has(name) || self.parent().is_some_and(|it| it.has_property(name))
     }
@@ -160,7 +127,6 @@ impl Builtin {
         self.known_value(name).or_else(|| self.can_never_have(name).then_some(KnownValue { type_of: "undefined", is_truthy: false }))
     }
 
-    /// Whether `--aot` rejects_change this change to the property `name`, and JavaScript does not.
     pub fn rejects_change(&self, name: &[u8], change: Change) -> bool {
         if let Some((own, _)) = self.own(name) {
             return match own {
@@ -190,8 +156,6 @@ impl Builtin {
         None
     }
 
-    /// The built-in object whose property a new own property `name` would shadow. Assigning over an inherited accessor or
-    /// read-only property is left to JavaScript.
     pub fn would_shadow(&self, name: &[u8], change: Change) -> Option<&'static Builtin> {
         if self.has(name) || change == Change::Delete {
             return None;
@@ -200,12 +164,10 @@ impl Builtin {
         shadowed.map(|(it, _)| it)
     }
 
-    /// Whether `--aot` rejects_change it another prototype, and JavaScript does not.
     pub fn has_immutable_prototype(&self) -> bool {
         !self.is_global_object() && self.name != "Object.prototype"
     }
 
-    /// The built-in object that is its property `name`.
     pub fn object_at(&self, name: &[u8]) -> Option<&'static Builtin> {
         if name.is_empty() || strings::contains_char(name, b'.') || name.first() == Some(&b'%') {
             return None;
@@ -218,8 +180,6 @@ impl Builtin {
     }
 }
 
-/// For a message, in backticks: `Array.prototype.push`, `Array.prototype[Symbol.iterator]`, `Object.prototype["a-b"]`. And "the
-/// global `Array`".
 pub fn shown(builtin: &Builtin, name: &[u8]) -> Vec<u8> {
     let object = builtin.name.as_bytes();
     let is_identifier = !name.first().is_some_and(u8::is_ascii_digit)

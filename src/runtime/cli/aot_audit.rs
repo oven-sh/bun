@@ -7,8 +7,8 @@ use crate::cli::check_command::{Audited, EntryPoint, MoreCode, audit_before};
 
 struct Described {
     passes: u32,
-    least: i32,
-    most: i32,
+    minimum: i32,
+    maximum: i32,
     text: Box<str>,
 }
 
@@ -31,18 +31,18 @@ struct State {
 }
 
 #[derive(Clone, Copy, PartialEq)]
-enum Trust {
+enum Confidence {
     Sure,
     Unsure,
     Silent,
 }
 
-impl Trust {
+impl Confidence {
     fn text(self) -> &'static str {
         match self {
-            Trust::Sure => "",
-            Trust::Unsure => "\"unsure\":true,",
-            Trust::Silent => "\"unsure\":true,\"silent\":true,",
+            Confidence::Sure => "",
+            Confidence::Unsure => "\"unsure\":true,",
+            Confidence::Silent => "\"unsure\":true,\"silent\":true,",
         }
     }
 }
@@ -66,10 +66,9 @@ fn log_verbose(text: &str) {
     let line = format!("[aot] type check: {text}\n");
     bun_core::Output::flush();
     // SAFETY: `line` is readable for `line.len()` bytes.
-    unsafe { libc::write(2, line.as_ptr().cast(), line.len()) };
+    unsafe { libc::write(2, line.as_ptr().cast(), line.len() as _) };
 }
 static RENDERED_DIAGNOSTICS: Guarded<Vec<u8>> = Guarded::new(Vec::new());
-/// The test files that `bun test --aot` does not run: a file with a type error is reached from them.
 static SKIPPED_TEST_FILES: Guarded<Vec<Vec<u8>>> = Guarded::new(Vec::new());
 
 pub(crate) fn is_skipped_for_type_errors(entry_point: &[u8]) -> bool {
@@ -83,6 +82,7 @@ static SINGLE_FILE_ANALYSIS_DONE: bun_threading::Condvar = bun_threading::Condva
 static CHILD: Guarded<i32> = Guarded::new(0);
 
 const HELPER: &str = include_str!("aot_audit.js");
+#[cfg(unix)]
 const AUDIT_FD_ENV: &core::ffi::CStr = c"BUN_INTERNAL_AOT_AUDIT_FD";
 #[cfg(unix)]
 const AUDIT_PASS_FD_ENV: &core::ffi::CStr = c"BUN_INTERNAL_AOT_AUDIT_PASS_FD";
@@ -105,14 +105,14 @@ unsafe extern "C" {
     fn Bun__AOTAudit__setGeneration(generation: u32);
 }
 
-fn note(text: &str) {
+fn print_note(text: &str) {
     if is_enforcing() {
         return;
     }
     let line = format!("[aot] note: {text}\n");
     bun_core::Output::flush();
     // SAFETY: `line` is readable for `line.len()` bytes.
-    unsafe { libc::write(2, line.as_ptr().cast(), line.len()) };
+    unsafe { libc::write(2, line.as_ptr().cast(), line.len() as _) };
 }
 
 fn log() -> (i32, bool) {
@@ -180,19 +180,19 @@ fn native_path(cwd: &[u8], shown: &[u8]) -> Vec<u8> {
     bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(cwd, &[bun_sema_driver::host::to_native(shown)]).to_vec()
 }
 
-fn group_json(shown: &str, trust: Trust, group: &bun_aot::audit::Group) -> Box<str> {
+fn group_json(shown: &str, trust: Confidence, group: &bun_aot::audit::Group) -> Box<str> {
     let unsure = trust.text();
     format!("{{\"file\":{shown},{unsure}\"step\":{},\"steps\":[{}]}}", group.step, group.steps).into_boxed_str()
 }
 
-fn parameter_json(shown: &str, trust: Trust, parameter: &bun_aot::audit::Parameter) -> Box<str> {
+fn parameter_json(shown: &str, trust: Confidence, parameter: &bun_aot::audit::Parameter) -> Box<str> {
     let unsure = trust.text();
     format!("{{\"file\":{shown},{unsure}\"parameter\":true,\"steps\":[{}]}}", parameter.step).into_boxed_str()
 }
 
 impl State {
-    fn add(&mut self, cwd: &[u8], module: &bun_aot::audit::Module, text: &[u8], trust: Trust) -> &'static AuditedFile {
-        self.awaits_whole_program_analysis |= trust != Trust::Sure;
+    fn add(&mut self, cwd: &[u8], module: &bun_aot::audit::Module, text: &[u8], trust: Confidence) -> &'static AuditedFile {
+        self.awaits_whole_program_analysis |= trust != Confidence::Sure;
         let shown = bun_aot::audit::quoted_text(&module.path);
         let mut audited = AuditedFile {
             source_hash: hash_of(text),
@@ -203,8 +203,8 @@ impl State {
             let id = self.described.len() as u32;
             self.described.push(Described {
                 passes: if group.step != 0 { 0 } else { group.passes },
-                least: group.least,
-                most: group.most,
+                minimum: group.minimum,
+                maximum: group.maximum,
                 text: group_json(&shown, trust, group),
             });
             groups.insert((group.start, group.end, group.step), id);
@@ -218,8 +218,8 @@ impl State {
             let id = self.described.len() as u32;
             self.described.push(Described {
                 passes: parameter.passes,
-                least: parameter.least,
-                most: parameter.most,
+                minimum: parameter.minimum,
+                maximum: parameter.maximum,
                 text: parameter_json(&shown, trust, parameter),
             });
             parameters.insert((parameter.function, parameter.index), id);
@@ -292,7 +292,7 @@ impl State {
                 let renumbered = |id: u32| first + ids.binary_search(&id).unwrap_or(0) as u32;
                 for &id in &ids {
                     let it = &described[id as usize];
-                    self.described.push(Described { passes: it.passes, least: it.least, most: it.most, text: it.text.clone() });
+                    self.described.push(Described { passes: it.passes, minimum: it.minimum, maximum: it.maximum, text: it.text.clone() });
                 }
                 let mut audited = AuditedFile {
                     source_hash: theirs.audited.source_hash,
@@ -324,7 +324,7 @@ impl State {
 
     fn refine(&mut self, cwd: &[u8], module: &bun_aot::audit::Module, text: &[u8]) {
         let Some(file) = self.files.get(&native_path(cwd, &module.path)) else {
-            self.add(cwd, module, text, Trust::Sure);
+            self.add(cwd, module, text, Confidence::Sure);
             return;
         };
         if file.audited.source_hash != hash_of(text) {
@@ -337,12 +337,12 @@ impl State {
         }
         for group in &module.groups {
             if let Some(&id) = file.groups.get(&(group.start, group.end, group.step)) {
-                texts.insert(id, group_json(&shown, Trust::Sure, group));
+                texts.insert(id, group_json(&shown, Confidence::Sure, group));
             }
         }
         for parameter in &module.parameters {
             if let Some(&id) = file.parameters.get(&(parameter.function, parameter.index)) {
-                texts.insert(id, parameter_json(&shown, Trust::Sure, parameter));
+                texts.insert(id, parameter_json(&shown, Confidence::Sure, parameter));
             }
         }
         for (id, text) in texts {
@@ -368,13 +368,13 @@ fn run_on_new_thread<T: Send>(run: impl FnOnce() -> T + Send) -> T {
 
 fn analyze_whole_program(entry_points: &[Vec<u8>], code: &[Vec<u8>], hinted: &[Vec<u8>], is_for_tests: bool, before_read: Option<bun_sema_driver::host::BeforeRead>, audited: Audited<'_>) -> bool {
     let cwd = crate::cli::check_command::working_directory();
-    let mut entry_points = entry_points.to_vec();
+    let mut refused_entry_points: Vec<Vec<u8>> = Vec::new();
     let (mut code, mut before_read) = (code.to_vec(), before_read);
     let (given, mut taken_out) = (code.len(), Vec::new());
     code.extend_from_slice(hinted);
     let found = loop {
         let entries: Vec<EntryPoint> = entry_points.iter().map(|path| EntryPoint::file(path)).collect();
-        let more_code = MoreCode { paths: &code, fixed: given, taken_out: &taken_out };
+        let more_code = MoreCode { paths: &code, fixed: given, taken_out: &taken_out, refused_entry_points: &refused_entry_points };
         let mut found = audit_before(&entries, before_read.take(), is_for_tests, audited, more_code, None).unwrap_or_default();
         if !found.unlinked_files.is_empty() || !found.never_visited.is_empty() {
             code.retain(|path| !found.unlinked_files.contains(path));
@@ -382,10 +382,10 @@ fn analyze_whole_program(entry_points: &[Vec<u8>], code: &[Vec<u8>], hinted: &[V
             code.append(&mut found.never_visited);
             continue;
         }
-        if found.entry_points_reaching_errors.is_empty() || found.entry_points_reaching_errors.len() == entry_points.len() || !matches!(audited, Audited::Whole) || !IS_ENFORCING.load(Ordering::Acquire) || IS_WATCH_MODE.load(Ordering::Acquire) {
+        if found.entry_points_reaching_errors.is_empty() || found.entry_points_reaching_errors.len() + refused_entry_points.len() == entry_points.len() || !matches!(audited, Audited::Whole) || !IS_ENFORCING.load(Ordering::Acquire) || IS_WATCH_MODE.load(Ordering::Acquire) {
             break found;
         }
-        entry_points.retain(|path| !found.entry_points_reaching_errors.contains(path));
+        refused_entry_points.extend_from_slice(&found.entry_points_reaching_errors);
         SKIPPED_TEST_FILES.lock().append(&mut found.entry_points_reaching_errors);
     };
     if found.has_build_blocking_error && matches!(audited, Audited::Whole) && IS_ENFORCING.load(Ordering::Acquire) {
@@ -414,10 +414,9 @@ fn analyze_whole_program(entry_points: &[Vec<u8>], code: &[Vec<u8>], hinted: &[V
     !found.has_build_blocking_error && !found.has_errors && SKIPPED_TEST_FILES.lock().is_empty()
 }
 
-/// A look that is kept from one start to the next, see `bun_sema_driver::asked`.
 #[cfg(unix)]
-mod kept {
-    use bun_sema_driver::asked::{Kind, Question};
+mod retained {
+    use bun_sema_driver::fs_queries::{Kind, FsQuery};
     use std::sync::atomic::{AtomicBool, Ordering};
 
     const MAGIC: &[u8; 8] = b"bunlook4";
@@ -429,9 +428,7 @@ mod kept {
         pub(super) read: Vec<Vec<u8>>,
         pub(super) said: Vec<u8>,
         pub(super) tables: Vec<u8>,
-        /// What is answered otherwise.
         pub(super) changed: Vec<Vec<u8>>,
-        /// Nothing is answered otherwise but the texts of TypeScript files of the program itself.
         pub(super) holds: bool,
         pub(super) public_declarations: Vec<(Vec<u8>, u64, Vec<u8>)>,
     }
@@ -453,7 +450,6 @@ mod kept {
         if cfg!(target_os = "macos") { inside(&[home, b"Library/Caches/bun", b"@aot@"]) } else { inside(&[home, b".bun/install/cache", b"@aot@"]) }
     }
 
-    /// How this process was started, as far as a look depends on it, and the files of settings that Bun itself has read.
     pub(super) struct Start {
         key: Vec<u8>,
         path: Vec<u8>,
@@ -461,7 +457,7 @@ mod kept {
     }
 
     impl Start {
-        pub(super) fn of(entry_points: &[Vec<u8>], is_for_tests: bool, is_enforcing: bool) -> Option<Start> {
+        pub(super) fn new(entry_points: &[Vec<u8>], is_for_tests: bool, is_enforcing: bool) -> Option<Start> {
             let folder = folder()?;
             let executable = bun_core::self_exe_path().ok()?;
             // SAFETY: `stat` is plain data for which all zeros is a valid value.
@@ -471,7 +467,7 @@ mod kept {
                 return None;
             }
             let cwd = crate::cli::check_command::working_directory();
-            bun_sema_driver::asked::set_working_directory(&bun_sema_driver::host::from_native(&cwd));
+            bun_sema_driver::fs_queries::set_working_directory(&bun_sema_driver::host::from_native(&cwd));
             let form = crate::cli::check_command::diagnostic_format_key();
             let mut key = format!("{} {} {} {} {is_for_tests} {is_enforcing} {form:?}\0", bun_core::Global::package_json_version_with_sha, found.st_size, found.st_mtime, found.st_mtime_nsec).into_bytes();
             for part in [executable.as_bytes(), &cwd[..]] {
@@ -501,8 +497,6 @@ mod kept {
             Some(Start { key, path, settings })
         }
 
-        /// What the look that was kept for a start like this one had to say, its tables, the files it had read, and whether the disk still
-        /// answers as it did.
         pub(super) fn take(&self) -> Option<Taken> {
             let file = bun_sys::File::read_from(bun_sys::Fd::cwd(), &self.path).ok()?;
             let rest = file.strip_prefix(MAGIC)?;
@@ -525,10 +519,10 @@ mod kept {
                 return None;
             }
             let count = usize::try_from(number(&mut rest)?).ok()?;
-            let mut questions = Vec::new();
+            let mut queries = Vec::new();
             for _ in 0..count {
                 let (kind, answer) = (Kind::from_number(number(&mut rest)?)?, number(&mut rest)?);
-                questions.push(Question { kind, path: bytes(&mut rest)?, answer });
+                queries.push(FsQuery { kind, path: bytes(&mut rest)?, answer });
             }
             let count = usize::try_from(number(&mut rest)?).ok()?;
             let mut public_declarations = Vec::new();
@@ -541,19 +535,19 @@ mod kept {
             let threads = usize::from(bun_core::get_thread_count()).min(16);
             let mut holds = true;
             let mut changed = Vec::new();
-            for at in bun_sema_driver::asked::changed_answers(&questions, hash, threads) {
-                let path = bun_sema_driver::host::to_native(&questions[at].path).to_vec();
-                holds &= questions[at].kind == Kind::Text && public_declarations.iter().any(|it| it.0 == path);
+            for at in bun_sema_driver::fs_queries::changed_answers(&queries, hash, threads) {
+                let path = bun_sema_driver::host::to_native(&queries[at].path).to_vec();
+                holds &= queries[at].kind == Kind::Text && public_declarations.iter().any(|it| it.0 == path);
                 changed.push(path);
             }
-            let read = questions.into_iter().filter(|question| question.kind == Kind::Text).map(|question| question.path).collect();
+            let read = queries.into_iter().filter(|query| query.kind == Kind::Text).map(|query| query.path).collect();
             Some(Taken { read, said, tables: rest.to_vec(), changed, public_declarations, holds })
         }
 
         pub(super) fn record_settings(&self) {
             for path in &self.settings {
                 let text = bun_sys::File::read_from(bun_sys::Fd::cwd(), path).ok();
-                bun_sema_driver::asked::note(Kind::NativeText, path, |hash| bun_sema_driver::asked::of_text(hash, text.as_deref()));
+                bun_sema_driver::fs_queries::record_query(Kind::NativeText, path, |hash| bun_sema_driver::fs_queries::of_text(hash, text.as_deref()));
             }
         }
 
@@ -561,7 +555,6 @@ mod kept {
             [self.path.strip_suffix(b".look").unwrap_or(&self.path), b".ticket"].concat()
         }
 
-        /// From here on only a child that is started now goes on.
         pub(super) fn write_ticket(&self) {
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |it| it.as_nanos());
             let Ok(path) = std::ffi::CString::new(self.ticket_path()) else { return };
@@ -577,7 +570,6 @@ mod kept {
             }
         }
 
-        /// Ends the process as soon as another ticket is written.
         pub(super) fn exit_when_superseded(&self) {
             let path = self.ticket_path();
             let read = move || bun_sys::File::read_from(bun_sys::Fd::cwd(), &path).ok();
@@ -600,18 +592,18 @@ mod kept {
             }
         }
 
-        pub(super) fn put(&self, questions: &[Question], public_declarations: &[(Vec<u8>, u64, Vec<u8>)], said: &[u8], tables: &[u8]) {
-            let mut rest = Vec::with_capacity(tables.len() + questions.len() * 96);
+        pub(super) fn put(&self, queries: &[FsQuery], public_declarations: &[(Vec<u8>, u64, Vec<u8>)], said: &[u8], tables: &[u8]) {
+            let mut rest = Vec::with_capacity(tables.len() + queries.len() * 96);
             let bytes = |rest: &mut Vec<u8>, value: &[u8]| {
                 rest.extend_from_slice(&(value.len() as u64).to_le_bytes());
                 rest.extend_from_slice(value);
             };
             bytes(&mut rest, &self.key);
-            rest.extend_from_slice(&(questions.len() as u64).to_le_bytes());
-            for question in questions {
-                rest.extend_from_slice(&(question.kind as u64).to_le_bytes());
-                rest.extend_from_slice(&question.answer.to_le_bytes());
-                bytes(&mut rest, &question.path);
+            rest.extend_from_slice(&(queries.len() as u64).to_le_bytes());
+            for query in queries {
+                rest.extend_from_slice(&(query.kind as u64).to_le_bytes());
+                rest.extend_from_slice(&query.answer.to_le_bytes());
+                bytes(&mut rest, &query.path);
             }
             rest.extend_from_slice(&(public_declarations.len() as u64).to_le_bytes());
             for (path, seen, declarations) in public_declarations {
@@ -656,9 +648,8 @@ mod kept {
             self.evict_old_entries();
         }
 
-        /// The kept looks take `MAX_CACHE_BYTES` bytes at most: the oldest go first, this one never. So does what a writer that died left behind.
         fn evict_old_entries(&self) {
-            let Some(slash) = self.path.iter().rposition(|&byte| byte == b'/') else { return };
+            let Some(slash) = bun_core::strings::last_index_of_char(&self.path, b'/') else { return };
             let Ok(folder) = std::ffi::CString::new(&self.path[..slash]) else { return };
             // SAFETY: the path is NUL-terminated.
             let directory = unsafe { libc::opendir(folder.as_ptr()) };
@@ -667,7 +658,7 @@ mod kept {
             }
             // SAFETY: time(2) takes a null pointer.
             let now = unsafe { libc::time(core::ptr::null_mut()) };
-            let mut kept = Vec::new();
+            let mut retained = Vec::new();
             loop {
                 // SAFETY: `directory` is open. The entry is read before the next call.
                 let entry = unsafe { libc::readdir(directory) };
@@ -688,7 +679,7 @@ mod kept {
                     continue;
                 }
                 if is_kept {
-                    kept.push(((found.st_mtime, found.st_mtime_nsec), found.st_size.max(0) as u64, path));
+                    retained.push(((found.st_mtime, found.st_mtime_nsec), found.st_size.max(0) as u64, path));
                 } else if now - found.st_mtime > 600 {
                     // SAFETY: the path is NUL-terminated.
                     unsafe { libc::unlink(path.as_ptr()) };
@@ -696,9 +687,9 @@ mod kept {
             }
             // SAFETY: `directory` is open and is not used again.
             unsafe { libc::closedir(directory) };
-            kept.sort();
-            let mut all: u64 = kept.iter().map(|it| it.1).sum();
-            for (_, size, path) in kept {
+            retained.sort();
+            let mut all: u64 = retained.iter().map(|it| it.1).sum();
+            for (_, size, path) in retained {
                 if all <= MAX_CACHE_BYTES {
                     break;
                 }
@@ -883,10 +874,10 @@ fn analyze_single_file_now(path: &[u8], text: &[u8], hash: u64) {
             let mut is_added = false;
             let falls = !is_known_to_the_whole && found.has_errors;
             for (module, text) in found.modules.iter().filter(|(module, _)| !falls && native_path(&cwd, &module.path) == path) {
-                let trust = if is_known_to_the_whole || !is_of_a_package { Trust::Unsure } else { Trust::Silent };
+                let trust = if is_known_to_the_whole || !is_of_a_package { Confidence::Unsure } else { Confidence::Silent };
                 is_added = state.add(&cwd, module, text, trust).source_hash == hash;
                 if !is_added {
-                    note(&format!("{} is not audited: the analysis read a different text of this file than the one that runs (a direct eval(), a loader plugin, or an edit while it loaded)", bstr::BStr::new(&module.path)));
+                    print_note(&format!("{} is not audited: the analysis read a different text of this file than the one that runs (a direct eval(), a loader plugin, or an edit while it loaded)", bstr::BStr::new(&module.path)));
                 }
             }
             if !is_added {
@@ -947,6 +938,7 @@ impl State {
         matches!(bun_paths::extension(path), b".ts" | b".tsx" | b".mts" | b".cts")
     }
 
+    #[cfg(unix)]
     fn to_bytes(&self) -> Vec<u8> {
         let mut out = Vec::new();
         let number = |out: &mut Vec<u8>, value: u64| out.extend_from_slice(&value.to_le_bytes());
@@ -957,7 +949,7 @@ impl State {
         number(&mut out, self.described.len() as u64);
         for described in &self.described {
             number(&mut out, u64::from(described.passes));
-            number(&mut out, u64::from(described.least as u32) << 32 | u64::from(described.most as u32));
+            number(&mut out, u64::from(described.minimum as u32) << 32 | u64::from(described.maximum as u32));
             bytes(&mut out, described.text.as_bytes());
         }
         number(&mut out, u64::from(self.awaits_whole_program_analysis || IS_ANALYZING_WHOLE_PROGRAM.load(Ordering::Acquire)));
@@ -999,6 +991,7 @@ impl State {
         out
     }
 
+    #[cfg(unix)]
     fn from_bytes(mut input: &[u8]) -> Option<State> {
         fn number(input: &mut &[u8]) -> Option<u64> {
             let (value, rest) = input.split_first_chunk::<8>()?;
@@ -1017,7 +1010,7 @@ impl State {
             let passes = number(input)? as u32;
             let range = number(input)?;
             let text = core::str::from_utf8(bytes(input)?).ok()?;
-            state.described.push(Described { passes, least: (range >> 32) as u32 as i32, most: range as u32 as i32, text: Box::from(text) });
+            state.described.push(Described { passes, minimum: (range >> 32) as u32 as i32, maximum: range as u32 as i32, text: Box::from(text) });
         }
         state.awaits_whole_program_analysis = number(input)? != 0;
         for _ in 0..number(input)? {
@@ -1069,6 +1062,7 @@ impl State {
             audited.sort();
             // SAFETY: as in `add`.
             let audited: &'static AuditedFile = unsafe { &*bun_core::heap::alloc(audited) };
+            bun_core::asan::ignore_object(core::ptr::from_ref(audited).cast());
             state.files.insert(path, File { audited, groups, parameters });
         }
         Some(state)
@@ -1124,7 +1118,7 @@ fn take_inherited_state() -> Option<State> {
     // SAFETY: the name is NUL-terminated.
     unsafe { libc::unsetenv(AUDIT_FD_ENV.as_ptr()) };
     let bytes = read_fd_to_end(fd);
-    // SAFETY: `fd` was kept open over the reload for this read and is not used again.
+    // SAFETY: `fd` was retained open over the reload for this read and is not used again.
     unsafe { libc::close(fd) };
     State::from_bytes(&bytes?)
 }
@@ -1158,25 +1152,25 @@ fn analyze_for_parent_process(is_for_tests: bool) {
     let asked = read_fd_to_end(fd).unwrap_or_default();
     let of_kind = |kind: u8| -> Vec<Vec<u8>> { bun_core::strings::split(&asked, b"\0").filter(|it| it.first() == Some(&kind)).map(|it| it[1..].to_vec()).collect() };
     let (entry_points, code) = (of_kind(b'E'), of_kind(b'C'));
-    let start = kept::Start::of(&entry_points, is_for_tests, is_enforcing());
+    let start = retained::Start::new(&entry_points, is_for_tests, is_enforcing());
     if let Some(start) = &start {
         start.exit_when_superseded();
-        bun_sema_driver::asked::begin(kept::hash);
+        bun_sema_driver::fs_queries::begin(retained::hash);
         start.record_settings();
     }
     let (given, hinted) = if is_enforcing() { (&[][..], &code[..]) } else { (&code[..], &[][..]) };
     let is_result_cacheable = run_on_new_thread(|| analyze_whole_program(&entry_points, given, hinted, is_for_tests, None, Audited::WholeProgramInBackground));
     let bytes = STATE.lock().as_ref().map_or_else(Vec::new, State::to_bytes);
-    let questions = bun_sema_driver::asked::end();
-    let bytes = match (&start, questions) {
+    let queries = bun_sema_driver::fs_queries::end();
+    let bytes = match (&start, queries) {
         (Some(start), _) if HAS_BUILD_BLOCKING_ERROR.load(Ordering::Acquire) => {
             start.forget();
             [&STOPS[..], &RENDERED_DIAGNOSTICS.lock()[..]].concat()
         }
-        (Some(start), Some(questions)) if is_result_cacheable => {
+        (Some(start), Some(queries)) if is_result_cacheable => {
             let threads = usize::from(bun_core::get_thread_count()).min(16);
-            if bun_sema_driver::asked::changed_answers(&questions, kept::hash, threads).is_empty() {
-                start.put(&questions, &PUBLIC_DECLARATIONS.lock(), &RENDERED_DIAGNOSTICS.lock(), &bytes);
+            if bun_sema_driver::fs_queries::changed_answers(&queries, retained::hash, threads).is_empty() {
+                start.put(&queries, &PUBLIC_DECLARATIONS.lock(), &RENDERED_DIAGNOSTICS.lock(), &bytes);
             }
             bytes
         }
@@ -1220,7 +1214,6 @@ pub(crate) fn preload_paths(vm: &mut bun_jsc::virtual_machine::VirtualMachine) -
         .collect()
 }
 
-/// Whether the program may start. Type errors end the process, unless a file watcher is there to start it again.
 pub(crate) fn prepare(entry_points: &[EntryPoint], before_read: Option<bun_sema_driver::host::BeforeRead>, is_for_tests: bool) -> bool {
     IS_WATCH_MODE.store(before_read.is_some(), Ordering::Release);
     #[cfg(unix)]
@@ -1230,19 +1223,19 @@ pub(crate) fn prepare(entry_points: &[EntryPoint], before_read: Option<bun_sema_
     let is_inherited = handed_over.is_some();
     let mut awaits_whole_program_analysis = false;
     #[cfg(unix)]
-    let start = kept::Start::of(&paths, is_for_tests, is_enforcing());
+    let start = retained::Start::new(&paths, is_for_tests, is_enforcing());
     #[cfg(unix)]
-    let taken = start.as_ref().and_then(kept::Start::take);
+    let taken = start.as_ref().and_then(retained::Start::take);
     #[cfg(unix)]
-    let mut kept = taken.as_ref().and_then(|taken| State::from_bytes(&taken.tables));
+    let mut retained = taken.as_ref().and_then(|taken| State::from_bytes(&taken.tables));
     #[cfg_attr(not(unix), allow(unused_mut))]
     let mut hinted: Vec<Vec<u8>> = Vec::new();
     #[cfg(unix)]
     if taken.as_ref().is_some_and(|taken| !taken.holds) {
-        hinted = kept.take().map_or_else(Vec::new, |state| state.code);
+        hinted = retained.take().map_or_else(Vec::new, |state| state.code);
     }
     #[cfg(unix)]
-    if let (Some(state), Some(taken)) = (&mut kept, &taken)
+    if let (Some(state), Some(taken)) = (&mut retained, &taken)
         && !taken.changed.is_empty()
     {
         let entries: Vec<EntryPoint> = paths.iter().chain(taken.changed.iter().filter(|path| !paths.contains(path))).map(|path| EntryPoint::file(path)).collect();
@@ -1252,11 +1245,11 @@ pub(crate) fn prepare(entry_points: &[EntryPoint], before_read: Option<bun_sema_
         if found.public_declarations_changed || found.has_build_blocking_error {
             log_verbose(if found.has_build_blocking_error { "type errors in changed files: falling back to a full check" } else { "exported types changed: falling back to a full check" });
             hinted = core::mem::take(&mut state.code);
-            kept = None;
+            retained = None;
         } else {
             let cwd = crate::cli::check_command::working_directory();
             for (module, text) in &found.modules {
-                state.add(&cwd, module, text, Trust::Unsure);
+                state.add(&cwd, module, text, Confidence::Unsure);
             }
             state.awaits_whole_program_analysis = true;
             awaits_whole_program_analysis = true;
@@ -1264,8 +1257,8 @@ pub(crate) fn prepare(entry_points: &[EntryPoint], before_read: Option<bun_sema_
         }
     }
     #[cfg(not(unix))]
-    let kept: Option<State> = None;
-    let is_kept = kept.is_some();
+    let retained: Option<State> = None;
+    let is_kept = retained.is_some();
     #[cfg(unix)]
     if let (true, Some(taken)) = (is_kept, &taken) {
         if let Some(before_read) = &before_read {
@@ -1282,22 +1275,22 @@ pub(crate) fn prepare(entry_points: &[EntryPoint], before_read: Option<bun_sema_
     *STATE.lock() = Some(State {
         entry_points: paths.clone(),
         is_for_tests,
-        ..handed_over.or(kept).unwrap_or_default()
+        ..handed_over.or(retained).unwrap_or_default()
     });
     if !is_inherited && !is_kept {
         #[cfg(unix)]
         if let Some(start) = &start {
-            bun_sema_driver::asked::begin(kept::hash);
+            bun_sema_driver::fs_queries::begin(retained::hash);
             start.record_settings();
         }
         let is_result_cacheable = run_on_new_thread(|| analyze_whole_program(&paths, &[], &hinted, is_for_tests, before_read, Audited::Whole));
         #[cfg(unix)]
         if let Some(start) = &start
-            && let Some(questions) = bun_sema_driver::asked::end()
+            && let Some(queries) = bun_sema_driver::fs_queries::end()
             && is_result_cacheable
             && let Some(tables) = STATE.lock().as_ref().filter(|state| !state.awaits_whole_program_analysis).map(State::to_bytes)
         {
-            start.put(&questions, &PUBLIC_DECLARATIONS.lock(), &RENDERED_DIAGNOSTICS.lock(), &tables);
+            start.put(&queries, &PUBLIC_DECLARATIONS.lock(), &RENDERED_DIAGNOSTICS.lock(), &tables);
         }
         #[cfg(not(unix))]
         let _ = is_result_cacheable;
@@ -1361,7 +1354,7 @@ fn finish(written: &[u8]) -> Option<Box<bun_ast::audited::Finished>> {
     let state = STATE.lock();
     let state = state.as_ref()?;
     let is_enforcing = u32::from(IS_ENFORCING.load(Ordering::Acquire)) << 11;
-    let of = |id: u32| state.described.get(id as usize).map_or([0, 1, 0], |it| [it.passes | is_enforcing, it.least as u32, it.most as u32]);
+    let of = |id: u32| state.described.get(id as usize).map_or([0, 1, 0], |it| [it.passes | is_enforcing, it.minimum as u32, it.maximum as u32]);
     let expressions: Vec<[u32; 6]> = (expressions.iter())
         .map(|&[mut start, mut end, id]| {
             while start < end && written.get(start as usize).is_some_and(u8::is_ascii_whitespace) {
@@ -1370,14 +1363,14 @@ fn finish(written: &[u8]) -> Option<Box<bun_ast::audited::Finished>> {
             while start < end && written.get(end as usize - 1).is_some_and(u8::is_ascii_whitespace) {
                 end -= 1;
             }
-            let [passes, least, most] = of(id);
-            [start, end, id, passes, least, most]
+            let [passes, minimum, maximum] = of(id);
+            [start, end, id, passes, minimum, maximum]
         })
         .collect();
     let parameters: Vec<[u32; 6]> = (parameters.iter())
         .map(|&[function, index, id]| {
-            let [passes, least, most] = of(id);
-            [function, index, id, passes, least, most]
+            let [passes, minimum, maximum] = of(id);
+            [function, index, id, passes, minimum, maximum]
         })
         .collect();
     Some(Box::new(bun_ast::audited::Finished {

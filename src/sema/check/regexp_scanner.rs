@@ -24,7 +24,7 @@ impl Checker<'_, '_> {
             return;
         }
         // `GetEmitScriptTarget`
-        let target = match self.p.files.options.target {
+        let target = match self.check_options(file).target {
             ScriptTarget::None => ScriptTarget::ES2025,
             target => target,
         };

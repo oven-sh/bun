@@ -1,4 +1,4 @@
-const { validateByPlan, safeValidateByPlan, schemaOfPlan } = require("internal/validation");
+const { validateByPlan, safeValidateByPlan, planSchema } = require("internal/validation");
 
 const plans = new Map<string, any[]>();
 
@@ -21,5 +21,5 @@ export function parse(text: string, planText: string): unknown {
 }
 
 export function schema(planText: string): unknown {
-  return schemaOfPlan(planOf(planText));
+  return planSchema(planOf(planText));
 }

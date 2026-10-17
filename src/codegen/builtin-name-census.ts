@@ -1,5 +1,3 @@
-// Every use of a `$name` in files of src/js, by where it stands: what `resolve_intrinsic` (src/aot/build/intrinsics.rs) is asked for it.
-// builtins-manifest.ts holds the uses against src/aot/build/intrinsics.txt.
 import fs from "node:fs";
 import ts from "typescript";
 
@@ -59,7 +57,6 @@ function positionOf(node: ts.Identifier, declared: Set<string>): Position | unde
       ts.isPropertySignature(parent) ||
       ts.isMethodSignature(parent));
   if (isKey || (ts.isBindingElement(parent) && parent.propertyName === node)) return "Member";
-  // `{ $name }`: in a pattern the key, and a variable of the file; in a literal the key, and the value unless the file declares it.
   if (ts.isBindingElement(parent) && parent.name === node && !parent.propertyName && ts.isObjectBindingPattern(parent.parent)) return "Member";
   if (ts.isShorthandPropertyAssignment(parent)) return "Member";
   if (declared.has(node.text)) return undefined;

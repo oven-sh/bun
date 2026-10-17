@@ -1,16 +1,9 @@
-//! What only sloppy code has.
-//!
-//! A function is sloppy if it stands in a CommonJS module (`Module::is_commonjs`), under no `"use strict"` and in no class.
-//! There, with simple parameters (names alone: no default, no rest, no pattern), the language gives it a MAPPED `arguments` object:
-//! `arguments.callee` is the function that runs, and `arguments[i]` and the i-th parameter are one variable for as many as were passed.
-
 use crate::bind::FnOwner;
 use crate::check::Checker;
 use crate::hir::{ExprId, ExprKind, Flags, FnBody, FnId, FnKind, IdList, PatKind, StmtId, StmtKind};
 use crate::program::FileId;
 
 impl<'p, 's> Checker<'p, 's> {
-    /// `"use strict"` among the directives that the statements start with.
     fn starts_with_use_strict(&self, file: FileId, body: IdList<StmtId>) -> bool {
         let hir = self.hir(file);
         for stmt in hir.ids(body) {
@@ -47,10 +40,8 @@ impl<'p, 's> Checker<'p, 's> {
         self.is_in_commonjs_package(file) || self.starts_with_use_strict(file, hir.body) && !self.is_in_module_package(file)
     }
 
-    /// Whether the code of the function is sloppy.
     pub fn is_sloppy_function(&self, file: FileId, func: FnId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // JavaScript that is no CommonJS module is an ES module to the bundler and to the runtime, whether or not it imports or exports anything: strict.
         if !(self.files().module(file).is_commonjs() || self.is_commonjs_by_extension(file)) || self.starts_with_use_strict(file, hir.body) {
             return false;
         }
@@ -74,7 +65,6 @@ impl<'p, 's> Checker<'p, 's> {
         true
     }
 
-    /// Whether the `arguments` object of the function is mapped by the language.
     pub fn has_mapped_arguments(&self, file: FileId, func: FnId) -> bool {
         let hir = self.hir(file);
         hir[func].kind != FnKind::Arrow
@@ -82,7 +72,6 @@ impl<'p, 's> Checker<'p, 's> {
             && self.is_sloppy_function(file, func)
     }
 
-    /// The function whose `arguments` object the expression names: an arrow function sees that of the function around it.
     pub(super) fn arguments_owner(&self, file: FileId, e: ExprId) -> FnId {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut at = self.enclosing_fn_of_expr(file, e).unwrap_or(FnId::NONE);

@@ -63,7 +63,7 @@ inlining-limits: 8 layouts, 0 given, 0 open, places 36 of 64, reads 15 of 25
 integer-conversions-across-a-catch-block: 0 layouts, 0 given, 0 open, places 98 of 114, reads 2 of 6
 lazy-constant-in-small-function: 0 layouts, 0 given, 0 open, places 30 of 38, reads 2 of 3
 lazy-function-materialized-by-stub: 4 layouts, 0 given, 2 open, places 65 of 74, reads 15 of 27
-lazy-functions-seen-by-untyped-code: 2 layouts, 2 given, 0 open, places 44 of 58, reads 19 of 30
+lazy-functions-seen-by-untyped-code: 2 layouts, 2 given, 0 open, places 44 of 58, reads 3 of 30
 lazy-value-checked-once: 1 layouts, 0 given, 0 open, places 21 of 29, reads 8 of 9
 literal-field-functions-created-lazily: 6 layouts, 0 given, 1 open, places 86 of 129, reads 110 of 143
 literal-for-destructured-parameter: 1 layouts, 0 given, 0 open, places 26 of 34, reads 5 of 7

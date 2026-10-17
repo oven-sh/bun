@@ -3963,7 +3963,7 @@ private:
     const bool m_finishesObjects { !!m_globalObject->aotInstance() };
     BitVector m_isReferencedInObjectPool;
     HashMap<uint32_t, JSObject*, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_finishedInObjectPool;
-    HashMap<JSObject*, uint32_t> m_placeInObjectPoolOfOpenObject;
+    HashMap<JSObject*, uint32_t> m_openObjectPoolIndex;
     const Vector<RefPtr<MessagePort>>& m_messagePorts;
     ArrayBufferContentsArray* m_arrayBufferContents;
     Vector<RefPtr<JSC::ArrayBuffer>> m_arrayBuffers;
@@ -4056,7 +4056,7 @@ DeserializationResult CloneDeserializer::deserialize()
                 return std::make_pair(JSValue(), SerializationReturnCode::StackOverflowError);
             JSObject* outObject = constructEmptyObject(m_lexicalGlobalObject, m_globalObject->objectPrototype());
             if (m_finishesObjects)
-                m_placeInObjectPoolOfOpenObject.set(outObject, static_cast<uint32_t>(m_objectPool.size()));
+                m_openObjectPoolIndex.set(outObject, static_cast<uint32_t>(m_objectPool.size()));
             addToObjectPool(outObject);
             outputObjectStack.append(outObject);
         }
@@ -4071,7 +4071,7 @@ DeserializationResult CloneDeserializer::deserialize()
 
                 JSObject* outObject = outputObjectStack.last();
                 if (m_finishesObjects) {
-                    if (auto place = m_placeInObjectPoolOfOpenObject.takeOptional(outObject); place && !m_isReferencedInObjectPool.get(*place)) {
+                    if (auto place = m_openObjectPoolIndex.takeOptional(outObject); place && !m_isReferencedInObjectPool.get(*place)) {
                         JSObject* finished = JSC::AOT::withAllPropertiesInline(m_globalObject, outObject);
                         if (finished != outObject) {
                             m_gcBuffer.appendWithCrashOnOverflow(finished);
@@ -4552,7 +4552,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
             }
         }
 
-        auto collectFieldsOfCompiledObject = [&](JSObject* compiledObject, WTF::Vector<SimpleInMemoryPropertyTableEntry>& properties) -> bool {
+        auto collectCompiledObjectFields = [&](JSObject* compiledObject, WTF::Vector<SimpleInMemoryPropertyTableEntry>& properties) -> bool {
             bool isSimple = true;
             bool isCompiledObject = JSC::AOT::Typed::forEachCompiledObjectOwnProperty(compiledObject, [&](UniquedStringImpl& name, JSValue fieldValue) {
                 if (name.isSymbol())
@@ -4657,7 +4657,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
                         auto* objStructure = obj->structure();
                         WTF::Vector<SimpleInMemoryPropertyTableEntry> properties;
                         bool isPlainCandidate = isObjectFastPathCandidate(objStructure);
-                        if (!isPlainCandidate && !collectFieldsOfCompiledObject(obj, properties)) {
+                        if (!isPlainCandidate && !collectCompiledObjectFields(obj, properties)) {
                             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
                             ok = false;
                             break;
@@ -4775,7 +4775,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
             }
         } else if (object && !array) {
             WTF::Vector<SimpleInMemoryPropertyTableEntry> properties;
-            bool isSimple = collectFieldsOfCompiledObject(object, properties);
+            bool isSimple = collectCompiledObjectFields(object, properties);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             if (isSimple)
                 return SerializedScriptValue::createObjectFastPath(WTF::FixedVector<SimpleInMemoryPropertyTableEntry>(WTF::move(properties)));

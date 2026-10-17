@@ -1,4 +1,3 @@
-
 use bun_core::{Global, pretty_errorln};
 use bun_options_types::compile_target::CompileTarget;
 
@@ -13,13 +12,6 @@ pub(crate) fn unsupported_reason(target: &CompileTarget) -> Option<&'static str>
     }
     if !Bun__AOT__hasCompiler() {
         return Some("this build of Bun does not include the ahead-of-time compiler");
-    }
-    let is_tried = cfg!(any(
-        all(target_os = "macos", target_arch = "aarch64"),
-        all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"),
-    ));
-    if !is_tried && bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_AOT_ON_UNTRIED_PLATFORMS.get() != Some(true) {
-        return Some("ahead-of-time compilation is not available on this platform yet. It works on macOS arm64 and on Linux x64 with glibc");
     }
     if !target.is_host_platform() {
         return Some("ahead-of-time compilation makes machine code for the platform it runs on and cannot target another. Run this build on the target platform, with that platform's Bun");
@@ -84,6 +76,9 @@ pub(crate) fn why_cannot_be_carried(target: &CompileTarget, env: &mut bun_dotenv
     let Ok(this_bun) = bun_core::self_exe_path() else {
         return Some(b"failed to get self executable path".to_vec());
     };
+    if carrier.as_bytes() == this_bun.as_bytes() {
+        return None;
+    }
     let theirs = match target_builtins(target, env, executable_path) {
         Ok(Some(_)) => stamp_of(carrier.as_bytes()),
         Ok(None) => Err(&b"it is not a Bun, or it is an older one"[..]),
@@ -106,27 +101,23 @@ pub(crate) fn why_cannot_be_carried(target: &CompileTarget, env: &mut bun_dotenv
     Some(message.into_bytes())
 }
 
-#[cfg(unix)]
 pub(crate) fn graph(
     ctx: &ContextData,
 ) -> crate::Result<Option<&'static mut bun_standalone_graph::Graph>> {
     let Some(fd) = ctx.runtime_options.aot_graph_fd else {
         return Ok(None);
     };
-    let Some(graph) = bun_standalone_graph::Graph::from_fd(bun_sys::Fd::from_native(fd))? else {
+    #[cfg(unix)]
+    let fd = bun_sys::Fd::from_native(fd);
+    #[cfg(windows)]
+    let fd = bun_sys::Fd::from_system(fd as isize as *mut core::ffi::c_void);
+    let Some(graph) = bun_standalone_graph::Graph::from_fd(fd)? else {
         pretty_errorln!("<r><red>error<r>: --aot-graph-fd is not a module graph");
         Global::exit(1);
     };
     // SAFETY: `from_fd` just allocated the graph for the life of the process, and nobody else has
     // the pointer.
     Ok(Some(unsafe { &mut *graph }))
-}
-
-#[cfg(not(unix))]
-pub(crate) fn graph(
-    _ctx: &ContextData,
-) -> crate::Result<Option<&'static mut bun_standalone_graph::Graph>> {
-    Ok(None)
 }
 
 pub(crate) fn as_dyn(
@@ -215,7 +206,6 @@ pub(crate) fn reject_unknown_flags(is_build: bool, passed_through: usize) {
     }
 }
 
-#[cfg(unix)]
 pub(crate) fn exec_build(ctx: &ContextData, entry_points: &[&[u8]], for_tests: bool) -> ! {
     if let Some(why) = unsupported_reason(&CompileTarget::default()) {
         pretty_errorln!("<r><red>error<r>: <b>--aot<r>: {}", why);
@@ -294,7 +284,6 @@ pub(crate) fn exec_build(ctx: &ContextData, entry_points: &[&[u8]], for_tests: b
     if ctx.args.jsx.as_ref().is_some_and(|jsx| jsx.side_effects) {
         args.push(b"--jsx-side-effects".to_vec());
     }
-    // What is a builtin module to the program that runs is one to the build.
     if bun_resolve_builtins::expose_internals_enabled() {
         args.push(b"--expose-internals".to_vec());
     }
@@ -392,16 +381,86 @@ pub(crate) fn exec_build(ctx: &ContextData, entry_points: &[&[u8]], for_tests: b
         }
     }
     let args: Vec<&[u8]> = args.iter().map(Vec::as_slice).collect();
-    let errno = bun_core::exec_self(&args, None);
-    pretty_errorln!(
-        "<r><red>error<r>: failed to start the build for <b>--aot<r>: errno {}",
-        errno
-    );
-    Global::exit(1);
+    #[cfg(windows)]
+    run_build_then_program(&args);
+    #[cfg(unix)]
+    {
+        let errno = bun_core::exec_self(&args, None);
+        pretty_errorln!(
+            "<r><red>error<r>: failed to start the build for <b>--aot<r>: errno {}",
+            errno
+        );
+        Global::exit(1);
+    }
 }
 
-#[cfg(not(unix))]
-pub(crate) fn exec_build(_ctx: &ContextData, _entry_points: &[&[u8]], _for_tests: bool) -> ! {
-    pretty_errorln!("<r><red>error<r>: <b>--aot<r> is not supported on this platform yet");
-    Global::exit(1);
+#[cfg(windows)]
+fn run_build_then_program(args: &[&[u8]]) -> ! {
+    use std::os::windows::fs::OpenOptionsExt as _;
+    use std::os::windows::io::AsRawHandle as _;
+    const GENERIC_READ_WRITE_EXECUTE: u32 = 0x8000_0000 | 0x4000_0000 | 0x2000_0000;
+    const FILE_SHARE_READ_WRITE_DELETE: u32 = 7;
+    const FILE_ATTRIBUTE_TEMPORARY: u32 = 0x100;
+    const FILE_FLAG_DELETE_ON_CLOSE: u32 = 0x0400_0000;
+    const HANDLE_FLAG_INHERIT: u32 = 1;
+    const RUN_ARG: &[u8] = b"--compile-run-arg=";
+    unsafe extern "system" {
+        fn SetHandleInformation(handle: *mut core::ffi::c_void, mask: u32, flags: u32) -> i32;
+    }
+    let fail = |what: &str, error: std::io::Error| -> ! {
+        pretty_errorln!("<r><red>error<r>: failed to {} for <b>--aot<r>: {}", what, error);
+        Global::exit(1);
+    };
+    let path = std::env::temp_dir().join(format!("bun-aot-{:x}-{:x}", std::process::id(), bun_core::fast_random()));
+    let file = match std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .access_mode(GENERIC_READ_WRITE_EXECUTE)
+        .share_mode(FILE_SHARE_READ_WRITE_DELETE)
+        .attributes(FILE_ATTRIBUTE_TEMPORARY)
+        .custom_flags(FILE_FLAG_DELETE_ON_CLOSE)
+        .open(&path)
+    {
+        Ok(file) => file,
+        Err(error) => fail("create a temporary file", error),
+    };
+    let handle = file.as_raw_handle();
+    // SAFETY: `handle` is the open handle of `file`, which lives until the process exits.
+    if unsafe { SetHandleInformation(handle.cast(), HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) } == 0 {
+        fail("hand on a temporary file", std::io::Error::last_os_error());
+    }
+    // SAFETY: no arguments; it only marks the standard handles inheritable.
+    unsafe { bun_sys::windows::windows_enable_stdio_inheritance() };
+    let Ok(this_bun) = bun_core::self_exe_path() else {
+        pretty_errorln!("<r><red>error<r>: failed to get self executable path");
+        Global::exit(1);
+    };
+    let this_bun = String::from_utf8_lossy(this_bun.as_bytes()).into_owned();
+    let graph_fd = format!("--aot-graph-fd={}", handle as isize);
+    let run = |arguments: Vec<String>, what: &str| -> u32 {
+        match std::process::Command::new(&this_bun).args(arguments).status() {
+            Ok(status) => status.code().unwrap_or(1) as u32,
+            Err(error) => fail(what, error),
+        }
+    };
+    let with_handle = |arg: &[u8]| -> String {
+        match arg {
+            b"--aot-graph-fd=" => graph_fd.clone(),
+            arg => String::from_utf8_lossy(arg).into_owned(),
+        }
+    };
+    let build = args
+        .iter()
+        .map(|arg| match arg.strip_prefix(RUN_ARG) {
+            Some(b"--aot-graph-fd=") => format!("--compile-run-arg={graph_fd}"),
+            _ => String::from_utf8_lossy(arg).into_owned(),
+        })
+        .collect();
+    let code = run(build, "start the build");
+    if code != 0 {
+        Global::exit(code);
+    }
+    let program = args.iter().filter_map(|arg| arg.strip_prefix(RUN_ARG)).map(|arg| with_handle(arg)).collect();
+    Global::exit(run(program, "start the program"));
 }

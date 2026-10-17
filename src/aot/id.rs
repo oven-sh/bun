@@ -1,5 +1,3 @@
-//! Index types.
-
 macro_rules! id {
     ($(#[$meta:meta])* $name:ident, $prefix:literal) => {
         $(#[$meta])*
@@ -41,42 +39,34 @@ macro_rules! id {
 }
 
 id!(
-    /// A function of the program.
     FuncId,
     "f"
 );
 id!(
-    /// A basic block of one function.
     BlockId,
     "b"
 );
 id!(
-    /// A value of one function: a block parameter or the result of an operation.
     V,
     "v"
 );
 id!(
-    /// The shape of a kind of object: which fields it has.
     LayoutId,
     "L"
 );
 id!(
-    /// A description of a declared type.
     TyId,
     "t"
 );
 id!(
-    /// Interned bytes: a name or a string constant.
     StrId,
     "s"
 );
 id!(
-    /// A module-level variable.
     GlobalId,
     "g"
 );
 id!(
-    /// A file of the program.
     ModuleId,
     "m"
 );

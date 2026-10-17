@@ -2520,6 +2520,25 @@ export const c: 1 = handler;
       );
     });
 
+    test("a type of a referenced package whose output folder is inside node_modules can be named", async () => {
+      using dir = monorepo({
+        "packages/lib/package.json": JSON.stringify({ name: "lib", exports: { "./*": "./src/*.ts" } }),
+        "packages/lib/tsconfig.json": JSON.stringify({
+          compilerOptions: { ...options, rootDir: "src", outDir: "node_modules/.cache/out" },
+          include: ["src"],
+        }),
+        "packages/lib/src/Types.ts": `export interface Box<T> {\n  value: T;\n}\n`,
+        "packages/lib/src/Make.ts": `import type { Box } from "./Types";\nexport declare function make<T>(value: T): Box<T>;\n`,
+        "packages/app/src/index.ts": `import { make } from "lib/Make";\nexport const made = make(1);\nexport const wrong: string = made.value;\n`,
+      });
+      mkdirSync(join(String(dir), "packages/app/node_modules"), { recursive: true });
+      symlinkSync(join(String(dir), "packages/lib"), join(String(dir), "packages/app/node_modules/lib"), "junction");
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(
+        `"packages/app/src/index.ts(3,14): error TS2322: Type 'number' is not assignable to type 'string'."`,
+      );
+    });
+
     test("a generated declaration file names a dependency by its package name in a project with paths", async () => {
       using dir = monorepo({
         "packages/lib/tsconfig.json": JSON.stringify({

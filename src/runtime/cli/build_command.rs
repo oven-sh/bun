@@ -223,6 +223,7 @@ impl BuildCommand {
                 explain_to_log: false,
                 logs_type_errors: false,
                 early_analysis: None,
+                early_sources: None,
                 release_asts: &mut || {},
             };
             let is_checked = match ctx.bundler_options.dts {
@@ -818,7 +819,7 @@ impl BuildCommand {
                         file.source_map_index = u32::MAX;
                     }
                     output_files.retain(|file| file.output_kind != options::OutputKind::Sourcemap);
-                    let inside_outdir = |path: &[u8]| -> Box<[u8]> { path.strip_prefix(&outdir[..]).map_or(path, |inside| inside.strip_prefix(b"/").unwrap_or(inside)).into() };
+                    let inside_outdir = |path: &[u8]| -> Box<[u8]> { path.strip_prefix(&outdir[..]).map_or(path, |inside| inside.strip_prefix(std::path::MAIN_SEPARATOR_STR.as_bytes()).unwrap_or(inside)).into() };
                     for file in typed.sound_files {
                         let beside = inside_outdir(&file.declaration_file);
                         let declarations = output_files.iter_mut().find(|written| written.output_kind == options::OutputKind::Declaration && written.dest_path == beside);
@@ -1120,6 +1121,34 @@ impl BuildCommand {
                     .compile_exec_argv
                     .as_deref()
                     .unwrap_or(b"");
+                #[cfg(windows)]
+                if ctx.bundler_options.compile_run {
+                    let handle = ctx.bundler_options.compile_run_args.iter().find_map(|arg| {
+                        core::str::from_utf8(arg.strip_prefix(b"--aot-graph-fd=")?).ok()?.parse::<isize>().ok()
+                    });
+                    let Some(handle) = handle else {
+                        Output::print_errorln(format_args!("--compile-run needs --aot-graph-fd on Windows"));
+                        Global::exit(1);
+                    };
+                    if let Err(err) = bun_standalone_module_graph::StandaloneModuleGraph::to_graph_fd(
+                        compile_target,
+                        output_files,
+                        &opt_public_path,
+                        opt_output_format,
+                        compile_exec_argv,
+                        graph_flags,
+                        graph_runtime_options,
+                        bun_sys::Fd::from_system(handle as *mut core::ffi::c_void),
+                    ) {
+                        Output::print_errorln(format_args!("{}", bstr::BStr::new(err.slice())));
+                        Global::exit(1);
+                    }
+                    log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
+                        Output::error_writer(),
+                    ))?;
+                    Output::flush();
+                    Global::exit(0);
+                }
                 #[cfg(unix)]
                 if ctx.bundler_options.compile_run {
                     let fd = match bun_standalone_module_graph::StandaloneModuleGraph::to_graph_fd(

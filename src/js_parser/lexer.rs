@@ -43,6 +43,12 @@ pub struct JSXPragma {
 }
 
 impl JSXPragma {
+    pub(crate) fn to_ast(&self) -> Option<bun_alloc::AstBox<js_ast::ast_result::JsxPragmas>> {
+        let [factory, fragment, runtime, import_source] = [self._jsx.text, self._jsx_frag.text, self._jsx_runtime.text, self._jsx_import_source.text];
+        let is_any_set = [factory, fragment, runtime, import_source].iter().any(|text| text.len() > 0);
+        is_any_set.then(|| bun_alloc::ast_box(js_ast::ast_result::JsxPragmas { factory, fragment, runtime, import_source }))
+    }
+
     // `Span.text` is a `StoreStr`; `.len()` via Deref<[u8]>.
     pub(crate) fn jsx(&self) -> Option<js_ast::Span> {
         if self._jsx.text.len() > 0 {

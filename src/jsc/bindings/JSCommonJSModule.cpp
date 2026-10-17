@@ -468,7 +468,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsRequireCacheGetter, (JSC::JSGlobalObject * globalObje
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!graph) {
-        Bun::noteThatRequireCacheIsRead(thisObject);
+        Bun::recordRequireCacheRead(thisObject);
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(thisObject->lazyRequireCacheObject());
     }

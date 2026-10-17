@@ -1276,7 +1276,52 @@ pub struct TypeChecked<'a, 'i> {
     pub explain_to_log: bool,
     pub logs_type_errors: bool,
     pub early_analysis: Option<EarlyAnalysis>,
+    pub early_sources: Option<(std::sync::Arc<EarlySources>, PrintedReactCompilerOutputs)>,
     pub release_asts: &'i mut dyn FnMut(),
+}
+
+pub type PrintedReactCompilerOutputs = std::sync::mpsc::Receiver<(usize, Option<Box<[u8]>>)>;
+
+pub struct EarlySource {
+    pub path: Box<[u8]>,
+    pub text: std::borrow::Cow<'static, [u8]>,
+    pub loader: Loader,
+}
+
+impl PartialEq for EarlySource {
+    fn eq(&self, other: &EarlySource) -> bool {
+        self.path == other.path && self.loader == other.loader && (std::ptr::eq::<[u8]>(&*self.text, &*other.text) || self.text == other.text)
+    }
+}
+
+#[derive(PartialEq)]
+pub struct EarlySources {
+    pub has_deferred_sources: bool,
+    pub entry_points: Vec<Box<[u8]>>,
+    pub own_entry_points: Vec<Box<[u8]>>,
+    pub sources: Vec<EarlySource>,
+    pub constant_imports: Vec<[Box<[u8]>; 3]>,
+    pub deferred_imports: Vec<[Box<[u8]>; 2]>,
+    pub deferred_paths: Vec<Box<[u8]>>,
+    pub kinds: Vec<(Box<[u8]>, bool)>,
+    pub jsx: Vec<(Box<[u8]>, OwnedFileJsxOptions)>,
+    pub classes: Vec<(Box<[u8]>, FileClassOptions)>,
+    pub react_compiler_paths: Vec<Box<[u8]>>,
+}
+
+#[derive(PartialEq)]
+pub struct OwnedFileJsxOptions {
+    pub is_classic: bool,
+    pub factory: Box<[u8]>,
+    pub fragment: Box<[u8]>,
+    pub import_source: Box<[u8]>,
+    pub overrides_pragmas: bool,
+}
+
+impl OwnedFileJsxOptions {
+    pub fn borrowed(&self) -> FileJsxOptions<'_> {
+        FileJsxOptions { is_classic: self.is_classic, factory: &self.factory, fragment: &self.fragment, import_source: &self.import_source, overrides_pragmas: self.overrides_pragmas }
+    }
 }
 
 pub type EarlyAnalysis = Box<dyn core::any::Any + Send>;
@@ -1315,9 +1360,10 @@ pub struct FileJsxOptions<'a> {
     pub factory: &'a [u8],
     pub fragment: &'a [u8],
     pub import_source: &'a [u8],
+    pub overrides_pragmas: bool,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct FileClassOptions {
     pub use_define_for_class_fields: bool,
     pub experimental_decorators: bool,

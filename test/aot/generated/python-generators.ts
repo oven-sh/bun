@@ -17,6 +17,8 @@ export type Options = {
   failsToday?: Record<number, string> | string;
   /** By seed: how `bun run --aot` departs from the executable today. */
   modeFailsToday?: Record<number, string>;
+  /** Why generated-fresh-seeds does not give it seeds that nobody has looked at. */
+  noFreshSeeds?: string;
 };
 
 // The regular expression JIT of plain Bun and the ahead-of-time compiler share the code generator.
@@ -25,6 +27,8 @@ const orThrows = { linesMayBeRefused: true } as const;
 const once = { seeds: [1] };
 const as = (language: string) => ({ words: (seed: number) => [seed, language] });
 const W = "an instance of a class that typed code hands to JavaScript and keeps is held to its layout";
+const X = "a value from external data that does not match an inferred type throws a TypeError in some uses";
+const upTo = (count: number) => Array.from({ length: count }, (_, i) => i);
 
 export const generators: [name: string, extension: "ts" | "js", options?: Options][] = [
   ["altered-arrays", "js", { ...orThrows, ...as("js") }],
@@ -44,30 +48,36 @@ export const generators: [name: string, extension: "ts" | "js", options?: Option
   ["host-deep-equality", "ts"],
   ["external-data-into-classes", "ts", { seeds: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112] }],
   ["element-reads-and-stores", "ts"],
-  ["families-of-classes", "ts", orThrows],
+  ["class-families", "ts", orThrows],
   ["for-in-loops", "ts"],
   ["inherited-setters", "js"],
   ["json-stringify-typed-values", "ts"],
-  ["keys-made-of-parts", "ts"],
-  ["keys-that-die", "ts"],
+  ["concatenated-keys", "ts"],
+  ["appended-strings", "ts"],
+  ["collected-keys", "ts"],
   ["numeric-looking-keys", "ts"],
   ["literals-escape-through-untyped-slots", "ts"],
   ["many-structures-many-names", "js", { seeds: [200, 400, 600, 1000, 3000] }],
   ["maps-and-sets", "ts"],
+  ["external-data-in-containers", "ts", { seeds: upTo(60), failsToday: Object.fromEntries([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59].map(seed => [seed, X])) }],
+  ["external-data-in-inferred-places", "ts", { seeds: upTo(146), failsToday: Object.fromEntries([58, 59, 60, 61, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 88, 89, 94, 95, 96, 97, 98, 99, 110, 111, 112, 113, 114, 115, 120, 121, 134, 135, 136, 137, 138, 139, 140, 141].map(seed => [seed, X])) }],
+  ["optional-number-and-boolean-fields", "ts", { seeds: upTo(9) }],
+  // CET and WET are time zones of some ICU data only.
+  ["intl-constant-arguments", "ts", { seeds: upTo(121), leftOut: [50, 51] }],
   ["collections-mutated-during-iteration", "ts"],
   ["mostly-integer-members", "ts"],
-  ["members-that-hold-references", "ts", { leftOut: [4, 10, 18] }],
+  ["reference-holding-members", "ts", { leftOut: [4, 10, 18] }],
   ["maybe-integer-numbers", "ts", { leftOut: [8] }],
-  ["objects", "ts", { leftOut: [20, 27] }],
+  ["objects", "ts", { leftOut: [20, 27], noFreshSeeds: "some of its programs store an object through `any` into a setter whose parameter is a number" }],
   ["adjacent-objects-same-transitions", "ts"],
-  ["objects-that-stay-inside", "js"],
+  ["non-escaping-objects", "js"],
   ["unescaped-objects-with-own-names", "js"],
   ["adjacent-old-objects-get-young-values", "ts"],
   ["old-typed-objects-get-young-extras", "ts"],
-  ["one-object-two-views", "ts"],
+  ["one-object-two-types", "ts"],
   ["one-property-two-spellings", "js"],
-  ["order-of-asynchronous-code", "ts"],
-  ["order-of-microtasks", "ts"],
+  ["async-code-order", "ts"],
+  ["microtask-order", "ts"],
   ["own-property-queries-by-name", "js"],
   ["references-in-every-slot-kind", "ts"],
   ["regular-expression-literals", "js", { ...withoutTheRegExpJIT, leftOut: [1, 8, 26] }],
@@ -77,7 +87,7 @@ export const generators: [name: string, extension: "ts" | "js", options?: Option
   ["paths-to-read-site", "js", { words: seed => ["js", seed] }],
   ["structures-die-and-return", "js"],
   ["sloppy-code", "js"],
-  ["spreads-held-as-records", "ts", { leftOut: [8, 17, 30] }],
+  ["spreads-as-records", "ts", { leftOut: [8, 17, 30] }],
   ["spreads-every-indexing-type", "ts", orThrows],
   ["named-stores-every-object-kind", "js", once],
   ["stores-from-runtime-code", "js"],
@@ -86,7 +96,7 @@ export const generators: [name: string, extension: "ts" | "js", options?: Option
   ["switch-statements", "ts"],
   ["tail-calls", "ts", { modeFailsToday: { 2: "the first frame of a chain of checked tail calls stays", 4: "the first frame of a chain of checked tail calls stays" } }],
   ["tail-calls-permuting-arguments", "ts"],
-  ["the-async-context", "ts"],
+  ["async-context", "ts"],
   ["typed-objects-through-builtins", "ts", { seeds: [5, 42, 79, 116, 153, 190, 227, 264, 301, 338, 375, 412, 449, 486, 523, 560, 597, 634, 671, 708, 745, 782, 819] }],
   ["infinite-types", "ts", orThrows],
   ["unions-of-string-literals", "ts", orThrows],
@@ -95,11 +105,20 @@ export const generators: [name: string, extension: "ts" | "js", options?: Option
   ["statement-exits", "js", as("js")],
   ["statement-exits", "ts", as("ts")],
   ["well-typed-value-constructions", "ts", { seeds: [5, 72, 139, 206, 273, 340, 407, 474, 541, 608, 675, 742, 809, 876, 943, 1010, 1077, 1144, 1211, 1278, 1345, 1412, 1479, 1546, 1613] }],
+  ["well-typed-values-of-generic-types", "ts", { seeds: [46, 51, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 47, 48, 49, 50, 52, 53, 54] }],
+  ["well-typed-values-of-unusual-types", "ts", { seeds: [25, 8, 0, 1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99] }],
   ["function-own-stores", "ts", once],
   ["throw-and-catch-pairs", "ts", { leftOut: [1, 10, 15, 23, 27] }],
   ["js-mutates-typed-objects", "ts", { seeds: [0, 2, 3, 4, 10, 23, 24, 25, 26, 27, 28, 33, 46, 48, 49, 50, 54, 56, 63, 69, 71, 72, 73, 77, 79, 86, 91, 92, 93, 99, 114, 115, 116, 122, 137, 138, 139, 145, 161, 168, 183, 184, 185, 191, 206, 207, 208, 214, 230, 253, 276, 299, 322, 341, 342, 343, 345, 349, 364, 365, 366, 368, 372, 391, 414, 437, 456, 457, 458, 460, 464, 478, 479, 480, 481, 482, 483, 487, 502, 503, 504, 506, 508, 510, 517, 525, 526, 527, 529, 531, 533, 540, 545, 546, 547, 552, 553, 568, 569, 570, 575, 576, 591, 592, 593, 598, 599, 621, 622, 637, 638, 639, 644, 645, 660, 661, 662, 667, 668], failsToday: { 502: W, 503: W, 504: W, 508: W, 510: W, 517: W, 525: W, 526: W, 527: W, 531: W, 533: W, 540: W } }],
   ["undefined-sentinel-among-numbers", "ts", orThrows],
-  ["what-the-host-sees", "ts"],
+  ["host-visible-values", "ts"],
+  ["typed-programs", "ts"],
+  ["typed-programs-with-holes", "ts", orThrows],
+  ["exception-paths", "ts"],
+  ["typed-programs-in-workers", "ts"],
+  ["resource-management", "ts"],
+  ["untyped-border", "ts", { seeds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60], failsToday: Object.fromEntries([5, 6, 8, 12, 14, 15, 17, 18, 19, 20, 22, 27, 28, 29, 34, 35, 36, 37, 40, 46, 48, 49, 52, 55, 56, 58, 59, 60].map(seed => [seed, "a value from untyped code is refused at the border, until values are checked at the edge"])), noFreshSeeds: "a value from untyped code is refused at the border, until values are checked at the edge" }],
+  ["untyped-border-misfits", "ts", { seeds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], failsToday: "a value from untyped code is refused at the border, until values are checked at the edge", noFreshSeeds: "a value from untyped code is refused at the border, until values are checked at the edge" }],
 ];
 
 export const python = Bun.which("python3");

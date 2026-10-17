@@ -1,30 +1,3 @@
-//! Which objects are of which types.
-//!
-//! Compiled code looks at an object as a type says, a view, and tests nothing that the type says. So of every view it has to be known
-//! which objects can be in its places: its subtypes, which are layouts that objects are made as. Those are the layouts that some flow of
-//! the program brings there: see `subtypes.rs`. Here is what is noted of the flows while the program is translated, and the relation
-//! that a cast goes by: whether an object that is made as one type says is of another type.
-//!
-//! What has to agree for that is the names and the kinds of the properties. Their types need not, as far as memory goes: a field that
-//! several views share is kept as the widest of them says, and a read through a narrower one is tested. So generic code, which is
-//! compiled once for all its instantiations, is dealt with by letting a type parameter of a VIEW stand for anything: whatever it is
-//! handed will do. What it MAKES goes by the bounds of its type parameters, as assignability has it: a `Token<TKind>` is no
-//! `Token<SyntaxKind.AsteriskToken>` until the test on the way out of the generic code has made it one.
-//!
-//! Not every object is laid out: an array, a function, a `Map`, what the host or a package makes. Those are assignable to types of the
-//! program as well, `{ length: number }` for one. A view that such an object is seen to enter, or may enter where the program holds a
-//! value to it of which its text says nothing, admits foreign objects, which costs every access through it a test and a general path.
-//!
-//! **A property that no code of the program ever stores does not exist.** `_expressionBrand: any` is declared so that the checker tells an
-//! `Expression` from a `Node`. No object has it, so none can be required to, and it gets no slot. Which names are stored is known when
-//! the program is linked. From then on the relation leaves the others out of what it compares an object with, at every depth
-//! (`Relation::AssignableAsStored`). While the program is translated it leaves out nothing: a test more is made, which the object passes
-//! when the program runs, because that goes by the members found here.
-//!
-//! Whoever translates the program reports what objects are made as, what is cast to what, and where it has left out a
-//! test because the one type is assignable to the other. All of it is sets. What follows is worked out once, when all are in:
-//! `begin_subtypes`.
-
 use bun_threading::{Condvar, Guarded, RwLock};
 use crate::atom::{Atom, known};
 use crate::bind::{Decl, Flow, FnOwner, MemberOwner, Parent, PatParent, SymFlags, SymbolId};
@@ -32,7 +5,7 @@ use crate::check::{Checker, ContextFlags, Program};
 use crate::check::relate::Relation;
 use crate::check::task::Finished;
 use super::identity::Identity;
-use super::rows;
+use super::type_flags;
 use super::type_caches::{NestedPairs, TypeCaches, is_published};
 use super::callees::Callee;
 use super::subtypes::{self, MutatedTypes, Cause, Facts, FieldTypes, Gathered, LoggingRelaxation, Sizes, Subtypes};
@@ -49,7 +22,6 @@ use std::hash::Hash;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
-/// The classes of the language whose objects the engine makes and tells by what they are.
 const ENGINE_CLASSES: [&[u8]; 23] = [
     b"Map",
     b"Set",
@@ -76,8 +48,9 @@ const ENGINE_CLASSES: [&[u8]; 23] = [
     b"BigUint64Array",
 ];
 
-/// A type in whose own type arguments one declaration is applied more often than this, one application within the other, is not laid out.
 const MAX_NESTED_APPLICATIONS: u32 = 8;
+const MAX_FAMILY_SIZE: u64 = 4096;
+const MIN_DEPTH_OF_LARGE_FAMILY: u32 = 4;
 const PRIMITIVES: [TypeId; 5] = [TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN, TypeId::BIGINT, TypeId::SYMBOL];
 
 const MAX_INSTANTIATIONS_INSPECTED: u32 = 8;
@@ -97,7 +70,6 @@ pub struct TruncatedSearch {
     pub place: String,
 }
 
-/// Where in the source something has been noted.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct Place {
     pub file: FileId,
@@ -114,32 +86,16 @@ impl Default for Place {
     }
 }
 
-/// What has been noted while a program, or a part of one, was translated. The types are those that say how objects are laid out
-/// (`layout_defining_type`), but for `without_fixed_layout`. `T`: what a type is called by. What costs something comes with the first place in
-/// the program that it was noted at, so that it can be said why.
 struct NotedTables<T = TypeId> {
-    /// What an allocation site makes.
     allocated_at_site: FxHashSet<T>,
-    /// What plain data is cast to, which makes a copy of it.
     copied_into: FxHashSet<T>,
-    /// An object that is looked at as the first type says is looked at as the second says from somewhere on, and no test is made there.
     upcasts: FxHashMap<(T, T), Place>,
-    /// An object that is looked at as the first type says is cast to the second, by `as`, by a place whose type is written down or by a type
-    /// guard: it passes, the cast turns it into one where it is, admits it as it is, or refuses it. Which, is found at the link.
     casts: FxHashSet<(T, T)>,
-    /// Those of them that are type guards: they make no copy of plain data.
     guards: FxHashSet<(T, T)>,
-    /// Those of them that the program forces, `x as unknown as T`, here or inside generic code that the cast is at the way out of: they refuse nothing.
     forced: FxHashSet<(T, T)>,
-    /// The same, but it is only made sure that it is one: it passes or it does not.
     tests: FxHashSet<(T, T)>,
-    /// A value that the operations say nothing of is held to it: an element, what an indirect or a generic call yields, an argument of
-    /// whoever calls a function without knowing it.
     trusted_into: FxHashMap<T, Place>,
-    /// An object that is not laid out, of a type that is assignable to this one, is let into a place of it, and no test is made there.
-    /// With the type of the object.
     foreign: FxHashMap<T, (Option<T>, Place)>,
-    /// The value of an expression whose type says nothing of it, `any`, `unknown`, `object`, `{}`, is held to it.
     untyped_into: FxHashMap<T, Place>,
     untyped_into_both: FxHashSet<(T, T)>,
     stored_read_only: FxHashSet<(T, T)>,
@@ -147,17 +103,12 @@ struct NotedTables<T = TypeId> {
     any_into: FxHashMap<T, Place>,
     checked_into: FxHashMap<T, Place>,
     checked_by_path: [usize; 7],
-    /// Types that no declaration names and whose objects are not laid out: `(() => number) & { unit: string }`, `number[] & { tag: string }`.
     without_fixed_layout: FxHashSet<T>,
     truncated: FxHashMap<Place, [u32; 4]>,
     max_inspected: [u32; 3],
-    /// By field, which is a layout and a name: the functions whose closures the allocation sites of the layout store there.
     callees_at_creation: FxHashMap<(T, Atom), Callee>,
-    /// The same for the stores through a supertype, which reach the objects of every subtype.
     callees_stored: FxHashMap<(T, Atom), Callee>,
-    /// Which fields objects get right after their allocation: see `creation.rs`.
     creations: Creations<T>,
-    /// The constructor functions: see `first_stores.rs`.
     constructions: Constructions<T>,
     escapes: Escapes<T>,
 }
@@ -200,10 +151,9 @@ impl<T> Default for NotedTables<T> {
 
 impl<T: Copy + Eq + Hash> NotedTables<T> {
     fn untyped_object_evidence(&self) -> (Vec<T>, Vec<T>, Vec<T>) {
-        self.escapes.with_mutations(|noted| (noted.escaped(), noted.receiving_untyped(), noted.receiving_untyped_if_escaped()))
+        self.escapes.with_mutations(|recorded| (recorded.escaped(), recorded.receiving_untyped(), recorded.receiving_untyped_if_escaped()))
     }
 
-    /// Adds what has been noted elsewhere, in terms of the same names for the types.
     fn absorb(&mut self, other: NotedTables<T>) {
         self.allocated_at_site.extend(other.allocated_at_site);
         self.copied_into.extend(other.copied_into);
@@ -220,8 +170,8 @@ impl<T: Copy + Eq + Hash> NotedTables<T> {
                 *sum += more;
             }
         }
-        for (most, other) in self.max_inspected.iter_mut().zip(other.max_inspected) {
-            *most = (*most).max(other);
+        for (maximum, other) in self.max_inspected.iter_mut().zip(other.max_inspected) {
+            *maximum = (*maximum).max(other);
         }
         self.creations.absorb(other.creations);
         self.constructions.absorb(other.constructions);
@@ -511,8 +461,8 @@ impl<T: Copy + Eq + Hash> FlowNotes<T> {
                 *sum += more;
             }
         }
-        for (most, other) in self.max_inspected.iter_mut().zip(other.max_inspected) {
-            *most = (*most).max(other);
+        for (maximum, other) in self.max_inspected.iter_mut().zip(other.max_inspected) {
+            *maximum = (*maximum).max(other);
         }
         match (&mut self.others, other.others) {
             (Some(mine), Some(theirs)) => mine.absorb(*theirs),
@@ -540,8 +490,8 @@ impl<T: Copy + Eq + Hash> FlowNotes<T> {
                 *sum += more;
             }
         }
-        for (most, other) in tables.max_inspected.iter_mut().zip(self.max_inspected) {
-            *most = (*most).max(other);
+        for (maximum, other) in tables.max_inspected.iter_mut().zip(self.max_inspected) {
+            *maximum = (*maximum).max(other);
         }
         if let Some(others) = self.others {
             tables.absorb_others(*others);
@@ -621,7 +571,6 @@ impl<T: Copy + Eq + Hash> FlowNotes<T> {
         self.add_at(NoteKind::TrustedInto, view, at);
     }
 
-    /// The same in terms of other names for the types. What `rename` has no name for is left out, a pair if either has none.
     pub fn renamed<U: Copy + Eq + Hash>(self, mut rename: impl FnMut(T) -> Option<U>) -> FlowNotes<U> {
         let mut notes = Vec::with_capacity(self.notes.len());
         let mut last: Option<(T, Option<U>)> = None;
@@ -676,30 +625,21 @@ impl FlowNotes<TypeId> {
     }
 }
 
-/// What the objects of a class or an interface are that are not laid out whoever declares it, because of what it extends.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Root {
     None,
     Array,
-    /// It extends `Function`, or it can be called or constructed.
     Function,
-    /// A declaration file of a package says that it can be called or constructed. That is a declaration without a body, which nothing is held to: what `memo(C)` yields is a
-    /// plain object, `Fragment` a symbol.
     Claimed,
-    /// A class of the engine.
     Class(Sym),
 }
 
-/// The same, for whoever describes the type.
 pub enum BuiltIn {
     Function,
-    /// Anything: see `Root::Claimed`.
     Claimed,
-    /// Objects of this type, which is a class of the engine.
     Instance(TypeId),
 }
 
-/// A string or a number that a type names.
 #[derive(Copy, Clone, PartialEq)]
 pub enum Literal {
     String(Atom),
@@ -711,24 +651,25 @@ pub(super) enum EscapeQuery {
     OfType(TypeId),
     IntoUntypedSlot(TypeId, Option<TypeId>),
     Entry(TypeId, Option<TypeId>),
-    HandedOver(TypeId, bool),
+    EscapingValues(TypeId, bool),
     UntypedIntoPlace(TypeId),
     ThroughGuardsOf(TypeId),
     UntypedIntoNestedClasses(TypeId, bool),
+    NestedInflows(TypeId, bool),
 }
 
 impl EscapeQuery {
     fn is_local(self) -> bool {
         let is_local = |ty: TypeId| crate::local::is_local_number(ty.0);
         match self {
-            EscapeQuery::OfType(ty) | EscapeQuery::HandedOver(ty, _) | EscapeQuery::UntypedIntoPlace(ty) | EscapeQuery::ThroughGuardsOf(ty) | EscapeQuery::UntypedIntoNestedClasses(ty, _) => is_local(ty),
+            EscapeQuery::OfType(ty) | EscapeQuery::EscapingValues(ty, _) | EscapeQuery::UntypedIntoPlace(ty) | EscapeQuery::ThroughGuardsOf(ty) | EscapeQuery::UntypedIntoNestedClasses(ty, _) | EscapeQuery::NestedInflows(ty, _) => is_local(ty),
             EscapeQuery::IntoUntypedSlot(own, target) | EscapeQuery::Entry(own, target) => is_local(own) || target.is_some_and(is_local),
         }
     }
 
     fn subject(self) -> TypeId {
         match self {
-            EscapeQuery::OfType(ty) | EscapeQuery::HandedOver(ty, _) | EscapeQuery::UntypedIntoPlace(ty) | EscapeQuery::ThroughGuardsOf(ty) | EscapeQuery::UntypedIntoNestedClasses(ty, _) => ty,
+            EscapeQuery::OfType(ty) | EscapeQuery::EscapingValues(ty, _) | EscapeQuery::UntypedIntoPlace(ty) | EscapeQuery::ThroughGuardsOf(ty) | EscapeQuery::UntypedIntoNestedClasses(ty, _) | EscapeQuery::NestedInflows(ty, _) => ty,
             EscapeQuery::IntoUntypedSlot(own, _) | EscapeQuery::Entry(own, _) => own,
         }
     }
@@ -806,29 +747,26 @@ impl Default for Shared {
 #[derive(Default)]
 pub(super) struct State {
     escape_notes: EscapeNotes,
-    noted: FlowNotes,
-    /// `is_upcast_safe`, as far as it has been asked.
+    recorded: FlowNotes,
     seen_as: FxHashMap<(TypeId, TypeId), bool>,
-    /// What `is_provably_assignable` has given up on.
     pub(super) truncated: FxHashSet<(TypeId, TypeId, u8)>,
     pub(super) provably_related: FxHashMap<(TypeId, TypeId, u8), bool>,
     derived_types: FxHashMap<(TypeId, DerivedTypeKind), TypeId>,
     pub(super) literal_contextual_types: FxHashMap<(FileId, ExprId), Option<TypeId>>,
     pub(super) unknown_count: usize,
-    /// `root_of`, as far as it has been asked. Arrays, functions and the classes of the engine are in it from the first time on.
     roots: FxHashMap<Sym, Root>,
-    /// What is being translated: see `set_current_site`.
     place: Place,
-    /// What `nested_inflow_pairs` has been asked.
     visited_inflow_pairs: FxHashSet<(TypeId, TypeId)>,
+    nested_untyped_inflow_sites: FxHashMap<TypeId, Place>,
     looked_into: FxHashMap<(Applied, Applied), [u32; 2]>,
     uninspected: FxHashSet<(TypeId, bool)>,
     levels_inspected: u32,
-    /// `collect_applications`, as far as it has been asked.
+    conditional_type_depth: u32,
+    ambient_type_param_mentions: FxHashMap<TypeId, bool>,
+    cloned_type_params: FxHashMap<TypeId, std::rc::Rc<[TypeId]>>,
+    erased_cloned_type_params: FxHashMap<TypeId, TypeId>,
     applications: FxHashMap<TypeId, Vec<(Applied, u32)>>,
-    /// Once the program is linked: a bit for every published name, by its number. Set: some code of the program stores a property by it.
     stored: Option<std::sync::Arc<Vec<u64>>>,
-    /// Cache of `canonical_type`.
     canonical: FxHashMap<TypeId, TypeId>,
     layout_types_cache: FxHashMap<TypeId, TypeId>,
     first_with_structure: FxHashMap<Identity, TypeId>,
@@ -850,31 +788,30 @@ pub(super) struct State {
     function_members_cache: FxHashMap<TypeId, std::rc::Rc<[(Atom, TypeId)]>>,
     tags: FxHashMap<TypeId, std::rc::Rc<[(Atom, Box<[u64]>)]>>,
     pub(super) accepts_primitives_cache: FxHashMap<TypeId, bool>,
+    pub(super) value_bounds: FxHashMap<TypeId, TypeId>,
     pub(super) array_subtypes: FxHashMap<TypeId, bool>,
     pub(super) function_types: Option<[TypeId; 3]>,
-    /// `is_tainted`, as far as it has been asked.
     tainted: FxHashMap<TypeId, bool>,
     with_tainted_part: FxHashMap<TypeId, bool>,
     taint_query_depth: u32,
-    /// This checker is at the search from the redefinition_counts. While it is, no type is tainted.
     is_searching_from_sources: bool,
     is_boundary_bounded: bool,
     boundary_types_at_site: u32,
     boundary_overflow: Option<TruncatedSearch>,
     records_reaching_javascript: Vec<(TypeId, Place)>,
-    /// For the search: the untyped files that a tool has made of a TypeScript file which is still in the program, checked, and only declares (`P.tsx.js` of `P.tsx`), and those TypeScript files.
     generated_from_checked_source: FxHashSet<FileId>,
     checked_sources: FxHashSet<FileId>,
     pairs_compared: FxHashSet<(TypeId, TypeId, bool)>,
     compared_again: FxHashSet<crate::check::relate::Key>,
     generic_callback_cache: FxHashMap<TypeId, bool>,
-    reached_from_types: Reached,
+    reached_from_types: SccState,
     nested_types_staying_untyped: FxHashMap<(TypeId, bool), std::rc::Rc<[TypeId]>>,
     wide_data_records: FxHashMap<TypeId, Box<[TypeId]>>,
     records: FxHashMap<TypeId, Box<[TypeId]>>,
     nested_class_types: FxHashMap<TypeId, Box<[TypeId]>>,
     nested_class_types_by_depth: FxHashMap<(TypeId, u32), std::rc::Rc<[TypeId]>>,
     mapped_layout_types_in_progress: Vec<TypeId>,
+    mapped_layout_cycles_cut: u32,
     untyped_type_guards: FxHashMap<TypeId, Box<[TypeId]>>,
     dictionaries: FxHashMap<TypeId, Box<[TypeId]>>,
     plain_data: FxHashMap<(TypeId, bool), bool>,
@@ -944,7 +881,7 @@ struct Group {
 }
 
 #[derive(Default)]
-struct Reached {
+struct SccState {
     standing: FxHashMap<(TypeId, bool), Standing>,
     groups: Vec<Group>,
     path: Vec<(TypeId, bool)>,
@@ -953,7 +890,7 @@ struct Reached {
     successor_groups: Vec<u32>,
 }
 
-impl Walk for Reached {
+impl Walk for SccState {
     fn has_reached(&mut self, ty: TypeId, stays: bool) -> bool {
         match self.standing.get(&(ty, stays)) {
             None => false,
@@ -1002,7 +939,7 @@ impl Walk for Reached {
     }
 }
 
-impl Reached {
+impl SccState {
     fn take_views(&mut self) -> std::rc::Rc<[TypeId]> {
         let Some(group) = self.successor_groups.pop() else { return Vec::new().into() };
         self.successor_groups.clear();
@@ -1029,34 +966,27 @@ impl Reached {
     }
 }
 
-/// What the search from the redefinition_counts has found, as every task reads it: it mentions no type by its number. It follows from the program alone, so that it does not matter which task has made it.
 #[derive(Default, Clone)]
 pub(super) struct ExternalTypes {
     continued_by_pairs: bool,
     identities: FxHashSet<Identity>,
     names: FxHashMap<Identity, Vec<Box<[u8]>>>,
-    /// Of those that have properties: by name, `value_summary` what the property holds. A name is its text: a text first seen during the check is an atom of the task that has seen it, and another task has another text by that number.
     properties: Vec<FxHashMap<Box<[u8]>, ValueSummary>>,
-    /// By name of a property: the indexes in `properties` of those that have it.
     by_name: FxHashMap<Box<[u8]>, Vec<u32>>,
 }
 
-/// Whether the name is that of a property keyed by a symbol, `{ readonly [brand]: "h" }`. No data has such a property, and nothing is laid out by a type that has one: it is left out of the names a type is known by.
 fn is_keyed_by_symbol(name: &[u8]) -> bool {
     name.first() == Some(&0xFE)
 }
 
-/// What is read off the type of a property: `Checker::value_summary`.
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct ValueSummary {
     kinds: u16,
-    /// The strings and the numbers that it can be, each kind by itself, if the type names them all: a discriminant. Empty: it can be others. By text and by bits: nothing that is numbered by task. In order.
     strings: Vec<Box<[u8]>>,
     numbers: Vec<u64>,
 }
 
 impl ValueSummary {
-    /// Whether a type that says this may be assignable to one that says `taken`.
     fn may_be_assignable_to(&self, taken: &ValueSummary) -> bool {
         if !said::may_be_assignable_to(self.kinds, taken.kinds) {
             return false;
@@ -1069,7 +999,6 @@ impl ValueSummary {
     }
 }
 
-/// `Checker::declared_value_kinds`
 mod said {
     pub(super) const TRUE: u16 = 1;
     pub(super) const FALSE: u16 = 1 << 1;
@@ -1077,15 +1006,12 @@ mod said {
     pub(super) const STRING: u16 = 1 << 3;
     pub(super) const BIGINT: u16 = 1 << 4;
     pub(super) const SYMBOL: u16 = 1 << 5;
-    /// Objects that are neither of the two below.
     pub(super) const RECORDS: u16 = 1 << 6;
     pub(super) const ARRAYS: u16 = 1 << 7;
     pub(super) const FUNCTIONS: u16 = 1 << 8;
-    /// Nothing is read off the type.
     pub(super) const ANYTHING: u16 = 1 << 9;
     pub(super) const UNKNOWN: u16 = 1 << 10;
 
-    /// Whether a type that says `held` may be assignable to one that says `taken`. That a string is a `{ length: number }`, an array too, and a function a `{ name: string }` is left aside: no property of what the program is given is looked at so.
     pub(super) fn may_be_assignable_to(held: u16, taken: u16) -> bool {
         taken & (ANYTHING | UNKNOWN) != 0 || held & ANYTHING != 0 || held & !taken == 0
     }
@@ -1098,18 +1024,13 @@ enum DerivedTypeKind {
     AnythingAs,
 }
 
-/// What type arguments are applied to.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 enum Applied {
-    /// A generic class or interface.
     Named(Sym),
-    /// A type that is written where type parameters are in scope: the body of a generic alias, a type literal in a generic function.
     Written(Origin),
     Function(FileId, FnId),
-    /// A spread, a rest, what a mapped type is inferred from.
     Computed,
     Tuple,
-    /// No application: the text of a string literal type or of a template literal type, which a template literal type makes longer.
     Text,
     Alias(Sym),
     Conditional(FileId, TypeNodeId),
@@ -1117,7 +1038,6 @@ enum Applied {
     StringMapping,
 }
 
-/// The types and the mappers that the record of a type refers to.
 #[derive(Default)]
 struct Referred {
     types: Vec<TypeId>,
@@ -1138,40 +1058,26 @@ impl Visitor for Referred {
     fn plain<T: Hash + ?Sized>(&mut self, _: &T) {}
 }
 
-/// What holds of one view. The other types are given by their index in the list of views that was asked about.
 #[derive(Default)]
-pub struct Reach {
-    /// Something makes objects of it.
+pub struct LayoutUsage {
     pub is_allocated: bool,
-    /// Nothing but a shape transition does: no allocation site, no copy of plain data.
     pub is_transition_target_only: bool,
-    /// Objects that are made as it are of a type that the program freezes or seals objects of.
     pub may_be_frozen: bool,
-    /// Or of a type that it replaces the prototype of objects of, by anything but `null`.
     pub may_have_other_prototype: bool,
-    /// An object that is not laid out can be in places of this type.
+    pub prototype_is_set_by_typed_code: bool,
     pub accepts_untyped: bool,
     pub is_relaxed_for_logging: bool,
     pub accepts_only_other_layouts: bool,
-    /// The allocated types whose objects can be in places of this type, itself among them if it is allocated. Ascending.
     pub members: Vec<u32>,
     pub structural_subtypes: Vec<u32>,
-    /// What a cast may turn an object into, where it is, that was made as this type. Each is a member of this type. Ascending.
     pub specializations: Vec<u32>,
-    /// By name of a field: the one function whose closures the stores that are seen put there, in the objects of every subtype. A
-    /// prediction: an untyped store is not seen. In no order that means anything.
     pub callees: Vec<(Atom, FileId, FnId)>,
-    /// The fields that an object of it gets right after its allocation, and whether at every creation point, on every path. A
-    /// prediction: see `creation.rs`. By name.
-    pub set_at_creation: Vec<(Atom, bool)>,
-    /// Of a layout that is allocated: the names of the required fields that nobody ever sees absent. A fact: see
-    /// `first_stores.rs`. In no order that means anything.
+    pub set_at_creation: Vec<(super::FieldKey, bool)>,
     pub never_observed_absent: Vec<Atom>,
 }
 
 pub struct Membership {
-    /// For each of the views that were asked about.
-    pub views: Vec<Reach>,
+    pub views: Vec<LayoutUsage>,
     pub(super) mutation_sites: [[u32; NUMBER_OF_OPERANDS]; 2],
     pub(super) mutated_by: [[u32; 3]; 2],
     pub(super) mutation_evidence: [u32; 5],
@@ -1180,35 +1086,22 @@ pub struct Membership {
     pub(super) constructions_are_incomplete: bool,
     pub(super) redefinition_counts: CountedRedefinitions,
     pub sizes: Sizes,
-    /// For each view that admits foreign objects: why.
     pub untyped_reasons: Vec<Option<UntypedReason>>,
-    /// For each view: its subtypes, and after them, by numbers that no view has, types without a layout. Ascending. And why each is one.
     pub subtypes: Vec<Vec<u32>>,
     pub causes: Vec<Vec<Cause>>,
-    /// What `Cause::Upcast` numbers.
     pub upcasts: Vec<(u32, u32, Place)>,
-    /// The targets of vouched casts, each with the first place. Ascending.
     pub vouched: Vec<(u32, Place)>,
 }
 
-/// Where a value of type `any` or `unknown` comes from, going by the text: `Checker::data_origin`. The first three are known for data that nobody has made anything of.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum DataOrigin {
-    /// `JSON.parse(..)`
     Parsed,
-    /// What a declaration without a body has produced.
     Prediction,
-    /// The value of a JSON module.
     JsonModule,
-    /// A variable or a parameter that is annotated so.
     Annotated,
-    /// A variable whose type is inferred so.
     Inferred,
-    /// What a function of the program yields.
     Function,
-    /// What a built-in of the engine yields, but for `JSON.parse`.
     BuiltIn,
-    /// A property that is declared so, of an object that has a type.
     Property,
     Awaited,
 }
@@ -1257,8 +1150,8 @@ fn share_by_weight(files: &[FileId], weights: &[u64], index: usize, searchers: u
     files.iter().copied().filter(starts_in_share).collect()
 }
 
-pub enum Share<'a> {
-    Of(&'a [FileId]),
+pub enum FilePartition<'a> {
+    Files(&'a [FileId]),
     Rest { index: usize, of: usize, is_taken: &'a [bool] },
 }
 
@@ -1276,7 +1169,7 @@ pub(super) struct Search {
     despecialized: RwLock<FxHashSet<Identity>>,
     said: Vec<Guarded<Vec<TypePropertySummary>>>,
     summaries_so_far: Guarded<FxHashSet<Vec<(Box<[u8]>, ValueSummary)>>>,
-    given: RwLock<ExternalTypes>,
+    external_types: RwLock<ExternalTypes>,
     gave_up: Guarded<Option<TruncatedSearch>>,
     continues_past_sources: (Guarded<Option<bool>>, Condvar),
     is_continuation: bool,
@@ -1298,7 +1191,7 @@ impl Search {
             despecialized: RwLock::new(Default::default()),
             said: (0..searchers).map(|_| Guarded::default()).collect(),
             summaries_so_far: Guarded::default(),
-            given: RwLock::new(Default::default()),
+            external_types: RwLock::new(Default::default()),
             gave_up: Guarded::default(),
             continues_past_sources: Default::default(),
             is_continuation: false,
@@ -1318,7 +1211,7 @@ impl Search {
             tainted: first.tainted,
             despecialized: first.despecialized,
             summaries_so_far: first.summaries_so_far,
-            given: first.given,
+            external_types: first.external_types,
             left: first.left,
             names: first.names,
             ..Search::new(parties)
@@ -1326,7 +1219,7 @@ impl Search {
     }
 
     fn found(&self) -> ExternalTypes {
-        ExternalTypes { names: std::mem::take(&mut *self.names.lock()), ..std::mem::take(&mut *self.given.write()) }
+        ExternalTypes { names: std::mem::take(&mut *self.names.lock()), ..std::mem::take(&mut *self.external_types.write()) }
     }
 
     fn has_any_found(&self, found: usize, turn: &mut usize) -> bool {
@@ -1340,25 +1233,25 @@ impl Search {
     }
 
     fn publish_summaries(&self) {
-        let (mut given, mut summaries_so_far) = (self.given.write(), self.summaries_so_far.lock());
+        let (mut external_types, mut summaries_so_far) = (self.external_types.write(), self.summaries_so_far.lock());
         for said in &self.said {
             for (identity, properties) in said.lock().drain(..) {
-                let is_new = given.identities.insert(identity);
+                let is_new = external_types.identities.insert(identity);
                 let Some(properties) = properties.filter(|_| is_new) else { continue };
                 if properties.is_empty() || summaries_so_far.contains(&properties) {
                     continue;
                 }
                 summaries_so_far.insert(properties.clone());
-                let index = given.properties.len() as u32;
+                let index = external_types.properties.len() as u32;
                 for (name, _) in &properties {
-                    match given.by_name.get_mut(name) {
+                    match external_types.by_name.get_mut(name) {
                         Some(having) => having.push(index),
                         None => {
-                            given.by_name.insert(name.clone(), vec![index]);
+                            external_types.by_name.insert(name.clone(), vec![index]);
                         }
                     }
                 }
-                given.properties.push(properties.into_iter().collect());
+                external_types.properties.push(properties.into_iter().collect());
             }
         }
     }
@@ -1366,7 +1259,7 @@ impl Search {
 
 impl<'s> Program<'s> {
     pub fn is_external_data_found(&self) -> bool {
-        self.aot.storage.given.get().is_some()
+        self.aot.storage.external_types.get().is_some()
     }
 
     pub(crate) fn absorb_pairs_compared(&self, mut pairs: Vec<(Identity, Identity)>) {
@@ -1389,12 +1282,12 @@ impl<'s> Program<'s> {
     }
 
     pub fn find_external_data(&self, searchers: usize, step: u32, is_searched_again: bool, at_once: &dyn Fn(usize, &(dyn Fn(usize) + Sync))) -> Result<Vec<Finished<'s>>, TruncatedSearch> {
-        if self.aot.storage.given.get().is_some() {
+        if self.aot.storage.external_types.get().is_some() {
             return Ok(Vec::new());
         }
         self.aot.storage.is_search_under_way.store(is_searched_again, Ordering::Relaxed);
         let search = Search { is_continuation: is_searched_again, seen_by_other_declarations: self.checker().importers_with_other_declarations(), ..Search::new(searchers.max(1)) };
-        search.given.write().continued_by_pairs = is_searched_again;
+        search.external_types.write().continued_by_pairs = is_searched_again;
         let finished: Vec<Guarded<Option<Finished<'s>>>> = (0..search.searchers).map(|_| Guarded::new(None)).collect();
         const TABLES: usize = 9;
         at_once(search.searchers + TABLES, &|index| {
@@ -1433,7 +1326,7 @@ impl<'s> Program<'s> {
             }
             searcher.aot.flows.is_searching_from_sources = true;
             searcher.aot.flows.is_boundary_bounded = true;
-            searcher.search_from_sources(&search, index, &Share::Rest { index, of: search.searchers, is_taken: &[] }, &FxHashMap::default());
+            searcher.search_from_sources(&search, index, &FilePartition::Rest { index, of: search.searchers, is_taken: &[] }, &FxHashMap::default());
             let mut found = searcher.end_task();
             found.diagnostics.retain(|(owner, _)| owner.is_some());
             *finished[index].lock() = Some(found);
@@ -1443,52 +1336,39 @@ impl<'s> Program<'s> {
         }
         match is_searched_again {
             true => {
-                self.aot.storage.given.set_warmup_value(search.given.read().clone());
+                self.aot.storage.external_types.set_warmup_value(search.external_types.read().clone());
                 *self.aot.storage.initial_search.lock() = Some(search);
             }
             false => {
-                let _ = self.aot.storage.given.set(search.found());
+                let _ = self.aot.storage.external_types.set(search.found());
             }
         }
         Ok(finished.into_iter().filter_map(|mut finished| finished.get_mut().take()).collect())
     }
 }
 
-/// Why a view admits objects that are not laid out.
 #[derive(Copy, Clone)]
 pub enum UntypedReason {
-    /// A value of the type `source`, if that is still known, has been let in.
     Seen { source: Option<TypeId>, at: Place },
-    /// The value of an expression whose type says nothing has been held to the view, or to one that holds it, and objects of the kind are
-    /// of the type of the view.
     Untyped { at: Place, candidate: Candidate },
     ExternalData { at: Place, candidate: Candidate },
     UnretainedExternalData { at: Place },
-    /// What is in a place of the view `from` gets into places of this one untested.
     Inherited { from: u32, at: Place },
-    /// A declaration file declares the type: it describes host objects to begin with.
     DeclaredOnly,
     Instance,
-    /// What is in a place of the view `from` and is not laid out passes a cast to this one.
     PassedCast { from: u32 },
-    /// It requires no live field, so nearly everything fits it, and a value that only its type vouches for is held to it. See `subtypes.rs`,
-    /// phase B.
     Weak { at: Place },
-    /// All its properties are primitives, and something untyped is held to it: nothing has to be made of that.
     Flat { at: Place },
     MayLackCapacity { at: Place },
     AnotherLayout { at: Place },
     UnconvertibleLayout { from: u32 },
     Dictionary { at: Place },
-    /// More layouts may fit it than phase B asks about for one target, and a value that only its type vouches for is held to it.
     TooMany { at: Place },
     ForLogging { at: Place },
     NeverAllocated { at: Place },
-    /// JavaScript of the program gets hold of its objects, and may do to one whatever the language allows: that object is an ordinary one from then on.
     ReachesJavaScript { at: Place },
 }
 
-/// A kind of objects that are not laid out. `Checker::name_of_candidate` says which.
 #[derive(Copy, Clone)]
 pub struct Candidate(Kind);
 
@@ -1515,8 +1395,8 @@ impl KindsDeclared {
             let Some(slice) = self.declaring.chunks(KindsDeclared::FILES_PER_CHECKER).nth(at - 1) else { break };
             let mut c = program.checker();
             c.begin_stack_budget();
-            let made = c.kinds_declared_in(slice);
-            self.found[at - 1].set((!c.take_ran_out_of_stack() && c.stack_half_used_count() == 0).then_some(made)).expect("a slice is gone through once");
+            let created = c.kinds_declared_in(slice);
+            self.found[at - 1].set((!c.take_ran_out_of_stack() && c.stack_half_used_count() == 0).then_some(created)).expect("a slice is gone through once");
         }
     }
 
@@ -1535,12 +1415,9 @@ impl KindsDeclared {
     }
 }
 
-/// Types, by their index in a list, and which of them has a property by which name.
 #[derive(Default)]
 struct PropertyIndex {
-    /// Ascending, as are `indexable` and each list of `by_name`.
     all: Vec<u32>,
-    /// Those that a type with an index signature can take: they have one, or are known to have no properties but those they say.
     indexable: Vec<u32>,
     by_name: FxHashMap<Atom, Vec<u32>>,
     bit_set_words: usize,
@@ -1564,86 +1441,64 @@ impl PropertyIndex {
 
 const MAX_EXTERNAL_KINDS_QUERIED: usize = 256;
 
-/// What a question is about.
 #[derive(Copy, Clone)]
 enum Kind {
-    /// Objects that are made as the type.
     Allocated(TypeId),
-    /// The same, and the types of reference fields count: see `Checker::is_allocated_subtype_by`.
     Assignable(TypeId),
-    /// Objects that are not laid out: arrays, functions, the objects of a class or an interface, a class or a function as a value. With
-    /// `any` for type parameters. They are named by what every checker finds for itself, and not by a type that one checker has made.
     Arrays,
     Functions,
     InstancesOf(Sym),
     ValueOf(Sym),
-    /// Objects of a type that no declaration names, which whoever has noted it has kept.
     Of(TypeId),
-    ExternalTypes(TypeId),
+    ExternalData(TypeId),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum Answer {
+pub enum SubtypeAnswer {
     No,
     Yes,
     NotKnown,
 }
 
-/// Whether objects of a kind are of the type of a view. It stands by itself: every checker of the program answers it the same, whatever
-/// it has been asked before.
 #[derive(Copy, Clone)]
-pub struct Question {
+pub struct SubtypeQuery {
     kind: Kind,
     view: TypeId,
 }
 
-impl Question {
-    pub(super) fn allocated_is_subtype_query(made: TypeId, view: TypeId) -> Question {
-        Question { kind: Kind::Allocated(made), view }
+impl SubtypeQuery {
+    pub(super) fn allocated_is_subtype_query(created: TypeId, view: TypeId) -> SubtypeQuery {
+        SubtypeQuery { kind: Kind::Allocated(created), view }
     }
 
-    pub(super) fn allocated_is_assignable_query(made: TypeId, view: TypeId) -> Question {
-        Question { kind: Kind::Assignable(made), view }
+    pub(super) fn allocated_is_assignable_query(created: TypeId, view: TypeId) -> SubtypeQuery {
+        SubtypeQuery { kind: Kind::Assignable(created), view }
     }
 
     pub(super) fn as_allocated_query(&self) -> Option<(bool, TypeId, TypeId)> {
         match self.kind {
-            Kind::Allocated(made) => Some((false, made, self.view)),
-            Kind::Assignable(made) => Some((true, made, self.view)),
+            Kind::Allocated(created) => Some((false, created, self.view)),
+            Kind::Assignable(created) => Some((true, created, self.view)),
             _ => None,
         }
     }
 }
 
 impl<'p, 's> Checker<'p, 's> {
-    // ───────────────────────────── what is noted ─────────────────────────────
 
-    /// The type that says how objects of type `ty` are laid out. There is one for all instantiations of a class and its `this` type, since
-    /// a class is compiled once, and one for the fresh type of an object literal, which the expression has, and the regular one. A mapped
-    /// type over a type parameter is the same over what the parameter is bounded by, as the parameter by itself is: where `T extends
-    /// Node`, a `Mutable<T>` is a `Mutable<Node>`. `Identifier & BinaryExpression`, which nothing is, going by `kind`, is `never`: no view, no
-    /// member, nothing that objects are made as or cast to.
     pub fn layout_defining_type(&mut self, ty: TypeId) -> TypeId {
-        if self.shared_type_flags(ty) & rows::IS_OWN_LAYOUT_TYPE != 0 {
+        if self.shared_type_flags(ty) & type_flags::IS_OWN_LAYOUT_TYPE != 0 {
             return ty;
         }
         if let Some(&known) = self.aot.flows.layout_types_cache.get(&ty) {
             return known;
         }
-        let caches = self.type_caches().filter(|_| is_published(ty));
-        if let Some(known) = caches.and_then(|caches| caches.layout_types.get_as(ty, |&known| known)) {
-            self.aot.flows.layout_types_cache.insert(ty, known);
-            return known;
-        }
-        let representatives_used = self.aot.flows.structure_representatives_used;
+        let counts_before = (self.aot.flows.structure_representatives_used, self.aot.flows.mapped_layout_cycles_cut);
         let (found, is_cacheable) = self.compute_cacheable(|c| c.find_layout_type(ty));
         if self.aot.flows.finding_canonical == 0 {
-            let is_task_independent = is_cacheable && self.aot.flows.structure_representatives_used == representatives_used;
-            if !is_task_independent || found != ty || !self.publish_type_flags(ty, rows::IS_OWN_LAYOUT_TYPE) {
+            let is_task_independent = is_cacheable && counts_before == (self.aot.flows.structure_representatives_used, self.aot.flows.mapped_layout_cycles_cut);
+            if !is_task_independent || found != ty || !self.publish_type_flags(ty, type_flags::IS_OWN_LAYOUT_TYPE) {
                 self.aot.flows.layout_types_cache.insert(ty, found);
-                if let Some(caches) = caches.filter(|_| is_task_independent && is_published(found) && !self.has_order_dependent_results()) {
-                    caches.layout_types.insert(ty, found);
-                }
             }
         }
         found
@@ -1655,6 +1510,7 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::Ref { target, .. } | TypeData::ThisParam(target) if self.files().flags(target).contains(SymFlags::CLASS) => self.declared_type(target),
             TypeData::Anon { origin: Origin::Mapped(file, node), mapper } => {
                 if self.aot.flows.mapped_layout_types_in_progress.contains(&ty) {
+                    self.aot.flows.mapped_layout_cycles_cut += 1;
                     return ty;
                 }
                 self.aot.flows.mapped_layout_types_in_progress.push(ty);
@@ -1680,7 +1536,6 @@ impl<'p, 's> Checker<'p, 's> {
     fn find_mapped_layout_type(&mut self, ty: TypeId, file: FileId, node: TypeNodeId, mapper: MapperId) -> TypeId {
         let Some((over, _)) = self.mapped_modifiers_source(file, node) else { return ty };
         let over = self.instantiate(over, mapper);
-        // `Mutable<T>`, `Readonly<T>`: there is no `readonly` when the program runs, so it is a `T`.
         if self.only_changes_readonly(file, node) {
             let over = if self.is_type_param(over) { self.base_constraint(over) } else { over };
             if self.declares_properties(over) {
@@ -1742,16 +1597,10 @@ impl<'p, 's> Checker<'p, 's> {
         Some(fields)
     }
 
-    /// The supertype whose layout `ty` shares. `interface AssignmentExpression extends BinaryExpression { left: LeftHandSideExpression }`
-    /// and `BinaryExpression & { left: Identifier }` only narrow the types of reference fields. A reference is one word whatever it
-    /// points to, so at run time they are a `BinaryExpression`: one layout id, no shape transition on a cast. The field types of the
-    /// layout are those of the supertype, so a read is typed by the supertype and the narrower type is tested where it is used.
-    /// Found by walking `extends` clauses and intersection members only, so every checker finds the same type.
     fn canonical_type(&mut self, ty: TypeId) -> TypeId {
         if let Some(&known) = self.aot.flows.canonical.get(&ty) {
             return known;
         }
-        // Breaks cycles.
         self.aot.flows.canonical.insert(ty, ty);
         self.aot.flows.finding_canonical += 1;
         let supertypes: Vec<TypeId> = match *self.data(ty) {
@@ -1762,7 +1611,6 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::Intersection(ref parts) => parts.to_vec(),
             _ => Vec::new(),
         };
-        // An instantiation differs from the interface at the bounds of its parameters in nothing that the run time sees, where those are primitives.
         let mut supertypes = supertypes;
         if let TypeData::Ref { target, .. } = *self.data(ty)
             && self.is_created_by_program(ty)
@@ -1786,17 +1634,6 @@ impl<'p, 's> Checker<'p, 's> {
         canonical
     }
 
-    /// Whether `sub` has the fields of `sup` and they differ only in what the reference fields point to. No signatures, no index
-    /// signatures. The primitive part of each field has to agree, discriminants above all.
-    ///
-    /// `exact`, for the layout id: `sub` has no other fields, every declared field counts, what is optional in the one is in the other, and
-    /// the primitive parts are the same but for `undefined` and `null`. So nothing the relation goes by is lost when `sub` is allocated
-    /// as `sup`. The answer is a function of the two types alone, before and after the link.
-    ///
-    /// Otherwise, for the relation at the link: `sub` may have more fields, dead fields do not count, a field that `sup` requires is
-    /// required in `sub`, and the primitive part of `sub` is assignable to that of `sup`. It has to reach as far as that, because a
-    /// canonical layout has the reference fields of the SUPERTYPE: an `AssignmentExpression` is allocated as a `BinaryExpression`, whose
-    /// `left` is an `Expression`, and is still a `{ left: LeftHandSideExpression }`.
     fn has_same_fields(&mut self, sub: TypeId, sup: TypeId, exact: bool) -> bool {
         let (Some(of_sub), Some(of_sup)) = (self.members(sub), self.members(sup)) else { return false };
         let (sub_shape, sup_shape) = (of_sub.shape(), of_sup.shape());
@@ -1826,15 +1663,8 @@ impl<'p, 's> Checker<'p, 's> {
         true
     }
 
-    /// See `has_same_fields`. A field is a reference, a real primitive (number, string, boolean, bigint, symbol, a literal) or boxed.
-    /// * A reference slot holds nil anyway, so a nil-only type (`undefined`, `null`, `void`) goes with any reference type, both ways:
-    ///   `FlowUnreachable.node: undefined`, `FlowStart.node: FunctionExpression | undefined`.
-    /// * `unknown` and `any` in `sup` are a boxed slot, which holds whatever `sub` says, so references and nil go with it:
-    ///   `FlowNodeBase.node: unknown`. Not a real primitive: it would lose its unboxed slot. Not the other way round.
-    /// * Real primitives have to agree.
     fn differs_in_references_only(&mut self, sub: TypeId, sup: TypeId, exact: bool) -> bool {
         let is_generic = |c: &Self, ty: TypeId| c.parts(ty).iter().any(|&part| c.is_instantiable(part));
-        // By its bound: a type parameter does not stand for a constant here either. `is_allocated_subtype` would let it.
         if is_generic(self, sub) || is_generic(self, sup) {
             if exact {
                 let (sub_bound, sup_bound) = (self.with_primitive_bounds(sub), self.with_primitive_bounds(sup));
@@ -1859,7 +1689,6 @@ impl<'p, 's> Checker<'p, 's> {
         let is_sub_nullish = !sub_references && sub_primitives.is_empty();
         let is_sup_nullish = !sup_references && sup_primitives.is_empty();
         if exact {
-            // Which string or number it is, is nothing that a slot shows.
             let kinds = |c: &mut Self, parts: &[TypeId]| -> Vec<TypeId> {
                 let mut kinds: Vec<TypeId> = Vec::new();
                 for &part in parts {
@@ -1876,8 +1705,6 @@ impl<'p, 's> Checker<'p, 's> {
         (!sub_references || sup_references || is_sup_nullish) && sub_primitives.into_iter().all(|part| sup_primitives.contains(&part) || self.is_provably_assignable(part, sup))
     }
 
-    /// What a type parameter is bounded by, if that is primitives alone: `E extends Name`, `TKind extends SyntaxKind`. Any other stands for objects, and a place for the type at
-    /// its bound is no place for every instantiation.
     fn primitive_bound(&mut self, ty: TypeId) -> Option<TypeId> {
         if !self.is_type_param(ty) {
             return None;
@@ -1887,14 +1714,12 @@ impl<'p, 's> Checker<'p, 's> {
         is_primitive.then_some(bound)
     }
 
-    /// The type with every part that has a `primitive_bound` replaced by that.
     fn with_primitive_bounds(&mut self, ty: TypeId) -> TypeId {
         let parts: Vec<TypeId> = self.parts(ty).to_vec();
         let bounded: Vec<TypeId> = parts.into_iter().map(|part| self.primitive_bound(part).unwrap_or(part)).collect();
         self.union(&bounded)
     }
 
-    /// `Site<E>` as it is declared, with every parameter that has a `primitive_bound` replaced by that.
     fn declared_type_with_primitive_bounds(&mut self, target: Sym) -> TypeId {
         let declared = self.declared_type(target);
         let parameters: Vec<TypeId> = self.type_params_of_symbol(target).iter().copied().collect();
@@ -1911,8 +1736,6 @@ impl<'p, 's> Checker<'p, 's> {
         self.instantiate(declared, mapper)
     }
 
-    /// Whether the mapped type that is declared at `node` is `{ readonly [K in keyof T]: T[K] }`, with `readonly`, `-readonly` or neither: it
-    /// has the properties of `T`, with their types, and what is optional in `T` is in it.
     fn only_changes_readonly(&mut self, file: FileId, node: TypeNodeId) -> bool {
         let mapped = self.mapped_decl(file, node);
         if mapped.name_ty.is_some() || mapped.ty.is_none() || mapped.optional != MappedModifier::None {
@@ -1923,25 +1746,22 @@ impl<'p, 's> Checker<'p, 's> {
         matches!(*self.data(template), TypeData::IndexedAccess { obj, index, .. } if obj == over && index == key)
     }
 
-    /// Whether the type is one of a family that need not end, and too far out in it to be laid out: `interface List<T> { next:
-    /// List<List<T>> }` has a field of a larger instantiation of itself, which has one of a larger one still. That is read off the type
-    /// alone, however it was come by: some declaration is applied too often within its own type arguments, `List<List<List<..>>>`, or,
-    /// where `A<T>` has a `B<T[]>` and `B<T>` an `A<T[]>`, `T[][][]..`. A long tuple and a long text count for more, so that what only grows
-    /// sideways, `C<[...T, 0]>`, ends as well. A generic alias is such a declaration though it stand for the same each time: with `type Maybe<T> = T | null`, `Maybe<Maybe<number>>` is another type than `Maybe<number>`. So is what waits for a type parameter: `Awaited<Awaited<T>>`, `T[K][K]`.
     pub fn is_nested_too_deeply(&mut self, ty: TypeId) -> bool {
-        if let Some(known) = self.cached_type_flag(ty, rows::NESTING_KNOWN, rows::IS_NESTED_TOO_DEEPLY) {
+        if let Some(known) = self.cached_type_flag(ty, type_flags::NESTING_KNOWN, type_flags::IS_NESTED_TOO_DEEPLY) {
             return known;
         }
         let found = self.compute_is_nested_too_deeply(ty);
-        self.cache_type_flag(ty, rows::NESTING_KNOWN, rows::IS_NESTED_TOO_DEEPLY, found)
+        self.cache_type_flag(ty, type_flags::NESTING_KNOWN, type_flags::IS_NESTED_TOO_DEEPLY, found)
     }
 
     fn compute_is_nested_too_deeply(&mut self, ty: TypeId) -> bool {
-        if self.nesting_bound(ty) <= MAX_NESTED_APPLICATIONS {
+        let depth = self.nesting_bound(ty);
+        if depth <= MIN_DEPTH_OF_LARGE_FAMILY {
             return false;
         }
         self.collect_applications(ty);
-        self.aot.flows.applications[&ty].iter().any(|&(_, times)| times > MAX_NESTED_APPLICATIONS)
+        let applications = &self.aot.flows.applications[&ty];
+        applications.iter().any(|&(_, times)| times > MAX_NESTED_APPLICATIONS) || (applications.len() as u64).checked_pow(depth).is_none_or(|family| family > MAX_FAMILY_SIZE)
     }
 
     fn generic_form(&mut self, ty: TypeId) -> Option<TypeId> {
@@ -1956,12 +1776,12 @@ impl<'p, 's> Checker<'p, 's> {
         if ty == TypeId::UNRESOLVED {
             return false;
         }
-        if let Some(known) = self.cached_type_flag(ty, rows::BEYOND_LAYOUTS_KNOWN, rows::IS_BEYOND_LAYOUTS) {
+        if let Some(known) = self.cached_type_flag(ty, type_flags::BEYOND_LAYOUTS_KNOWN, type_flags::IS_BEYOND_LAYOUTS) {
             return known;
         }
         let parts: Vec<TypeId> = self.parts(ty).to_vec();
         let found = parts.into_iter().any(|part| self.is_nested_too_deeply(part));
-        self.cache_type_flag(ty, rows::BEYOND_LAYOUTS_KNOWN, rows::IS_BEYOND_LAYOUTS, found)
+        self.cache_type_flag(ty, type_flags::BEYOND_LAYOUTS_KNOWN, type_flags::IS_BEYOND_LAYOUTS, found)
     }
 
     pub fn is_read_from_beyond_layouts(&mut self, file: FileId, e: ExprId) -> bool {
@@ -2008,18 +1828,18 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    pub fn record_generic_function_result(&mut self, made: &FreshGraph, allocated_as: TypeId) {
+    pub fn record_generic_function_result(&mut self, created: &FreshGraph, allocated_as: TypeId) {
         if allocated_as == TypeId::UNRESOLVED {
             return;
         }
         let mut views = Vec::new();
-        self.add_allocated_types(made, allocated_as, &mut views);
+        self.add_allocated_types(created, allocated_as, &mut views);
         for view in views {
             self.record_untyped(view, TypeId::UNRESOLVED);
         }
     }
 
-    fn add_allocated_types(&mut self, made: &FreshGraph, allocated_as: TypeId, out: &mut Vec<TypeId>) {
+    fn add_allocated_types(&mut self, created: &FreshGraph, allocated_as: TypeId, out: &mut Vec<TypeId>) {
         let mut allocated_as = self.reduced(allocated_as);
         if self.is_instantiable(allocated_as) {
             let bound = self.base_constraint(allocated_as);
@@ -2035,16 +1855,16 @@ impl<'p, 's> Checker<'p, 's> {
                 let objects = self.union(&objects);
                 let common = self.common_supertype_of_union(objects);
                 if !matches!(self.data(common), TypeData::Union(_)) {
-                    self.add_allocated_types(made, common, out);
+                    self.add_allocated_types(created, common, out);
                 }
             }
             for part in parts {
-                self.add_allocated_types(made, part, out);
+                self.add_allocated_types(created, part, out);
             }
             return;
         }
         if self.is_array_or_tuple(allocated_as) {
-            if let Some(elements) = &made.elements {
+            if let Some(elements) = &created.elements {
                 let of_elements: Vec<TypeId> = self.type_arguments(allocated_as).to_vec();
                 for of_element in of_elements {
                     self.add_allocated_types(elements, of_element, out);
@@ -2053,17 +1873,17 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         }
         let is_module = matches!(self.data(allocated_as), TypeData::Anon { origin: Origin::Module(..), .. });
-        if !made.is_object || self.built_in_for_type(allocated_as).is_some() || self.is_instance_type(allocated_as) || !self.declares_properties(allocated_as) || is_module {
+        if !created.is_object || self.built_in_for_type(allocated_as).is_some() || self.is_instance_type(allocated_as) || !self.declares_properties(allocated_as) || is_module {
             return;
         }
         let view = self.layout_defining_type(allocated_as);
         out.push(view);
-        for (name, held) in &made.within {
+        for (name, held) in &created.within {
             if let Some(of_field) = self.type_of_property(allocated_as, *name) {
                 self.add_allocated_types(held, of_field, out);
             }
         }
-        if let Some(anywhere) = &made.anywhere
+        if let Some(anywhere) = &created.anywhere
             && let Some(members) = self.members(allocated_as)
         {
             for info in members.shape().index.iter() {
@@ -2076,11 +1896,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// The types that the record of the type refers to, those that its mappers map to among them, and the type arguments of the alias that is stored with it.
     fn referenced_types(&self, at: TypeId) -> Vec<TypeId> {
         let mut referred = Referred::default();
         self.data(at).visit(&mut referred);
-        // What a spread was made of is no part of it: `{ ...a, ...b, ...c }` is made of `{ ...a, ...b }` and `c`, and has the properties of all three itself.
         if let TypeData::Synth(shape) = self.data(at)
             && let Some((left, right)) = shape.created_from
         {
@@ -2101,9 +1919,6 @@ impl<'p, 's> Checker<'p, 's> {
         referred.types
     }
 
-    /// For each declaration: how often at most it is applied, one application within the other, in `ty` and its type arguments. It goes by
-    /// the records of the types and the aliases stored with them, which refer to older records only, so it ends: the arguments of `Json[]` in `type Json = string | Json[]`
-    /// are a node there and not the type they resolve to. Types may be nested thousands deep, so it keeps its own list of what is to do.
     fn nesting_bound(&self, ty: TypeId) -> u32 {
         let mut pending = vec![ty];
         while let Some(&at) = pending.last() {
@@ -2157,7 +1972,6 @@ impl<'p, 's> Checker<'p, 's> {
                 continue;
             }
             let referred = self.referenced_types(at);
-            // The arguments first.
             let known = pending.len();
             pending.extend(referred.iter().copied().filter(|argument| !self.aot.flows.applications.contains_key(argument)));
             if pending.len() > known {
@@ -2184,25 +1998,16 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `layout_defining_type` of the objects of the class.
     pub fn class_instance_type(&mut self, file: FileId, class: ClassId) -> TypeId {
         let class = self.class_sym(file, class);
         self.declared_type(class)
     }
 
-    /// Whether the type is that of the objects of a class.
     #[inline]
     pub fn is_instance_type(&self, ty: TypeId) -> bool {
-        self.row(ty) & rows::IS_INSTANCE_TYPE != 0
+        self.row(ty) & type_flags::IS_INSTANCE_TYPE != 0
     }
 
-    /// Whether an object that is looked at as `source` says may be looked at as `target` says without a test: whatever is a member of the
-    /// one is a member of the other. Both say how objects are laid out.
-    ///
-    /// That is the assignability relation again, but a type parameter does not stand for the same on both sides. A `Box<T>` is any box,
-    /// whatever `T` is bounded by, and a place for a `Box<string>` is not a place for any box: in `source` a type parameter is like nothing
-    /// else. Any box will do for a `Box<T>`: in `target` it stands for anything. So on the way out of generic code a test is made, and on
-    /// the way in none.
     pub fn is_upcast_safe(&mut self, source: TypeId, target: TypeId) -> bool {
         if let Some(&known) = self.aot.flows.seen_as.get(&(source, target)) {
             return known;
@@ -2216,16 +2021,11 @@ impl<'p, 's> Checker<'p, 's> {
         is_seen
     }
 
-    /// An object that is looked at as `source` says is looked at as `target` says, and no test is made: `is_upcast_safe` has been relied on, or
-    /// the object is known to be the same, see `returned_argument_of`.
     pub fn record_upcast(&mut self, source: TypeId, target: TypeId) {
         let at = self.aot.flows.place;
-        self.aot.flows.noted.add_upcast((source, target), at);
+        self.aot.flows.recorded.add_upcast((source, target), at);
     }
 
-    /// Where the type that the view stands for is declared: the name of the alias, the interface or the class, the first of them if it is
-    /// merged, or the start of a type literal or an object literal. `None`: nothing declares it: an intersection, a mapped type, what
-    /// the parts of a union have in common.
     pub fn type_declaration_site(&self, view: TypeId) -> Option<Place> {
         let named = |sym: Sym| {
             let declarations = self.files().decls_of(sym);
@@ -2255,13 +2055,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// What is translated from here on is at `pos` of `file`. What is noted is noted for that place.
     pub fn set_current_site(&mut self, file: FileId, pos: u32) {
         self.aot.flows.place = Place { file, pos };
     }
 
-    /// What the parts of the union have in common, which is what an object is looked at as of which it is not known which part it is of.
-    /// Each part is seen as that, whatever the relation makes of it.
     pub fn common_supertype_of_union(&mut self, union: TypeId) -> TypeId {
         self.cached_derived_type(union, DerivedTypeKind::Union, Self::compute_common_supertype_of_union)
     }
@@ -2291,9 +2088,6 @@ impl<'p, 's> Checker<'p, 's> {
         view
     }
 
-    /// `union_as_object` as a record that is the same in every task. That has the names in the order of the first part and keeps the constituents of
-    /// each property in the order of the parts, which is that of their ids. This has the same properties with the same types, by name. The
-    /// union is kept where a spread keeps its operands, with a rank that no spread has, nor a `record_with_all_names`.
     fn union_as_record(&mut self, union: TypeId) -> TypeId {
         let object = self.union_as_object(union);
         let Some(members) = self.members(object) else { return object };
@@ -2314,9 +2108,6 @@ impl<'p, 's> Checker<'p, 's> {
         shape.props.sort_by(|a, b| atoms.bytes(a.name).cmp(atoms.bytes(b.name)));
     }
 
-    /// What an object is looked at as that is of one of the parts of the union, where a property is accessed that not all of them have:
-    /// `(node as NamedDeclaration).name`, where the object may be any `Node`. It has a property by every name that one of the parts has.
-    /// What some part lacks or need not have, it need not have. Each part is seen as that, whatever the relation makes of it.
     pub fn union_all_members_type(&mut self, union: TypeId) -> TypeId {
         self.cached_derived_type(union, DerivedTypeKind::Either, Self::compute_union_all_members_type)
     }
@@ -2327,9 +2118,6 @@ impl<'p, 's> Checker<'p, 's> {
         self.record_with_all_names(&parts, (TypeId::NEVER, union))
     }
 
-    /// What an object is looked at as of which nothing is known and that has been coerced to `target`: one of `target`, if it could be made
-    /// one, or whatever it was. It has the properties of `target`, and need not have any. It is a type of its own, so that `target`
-    /// stays what it is: a view that has only its members in its places.
     fn coerced_unknown_type(&mut self, target: TypeId) -> TypeId {
         self.cached_derived_type(target, DerivedTypeKind::AnythingAs, Self::compute_coerced_unknown_type)
     }
@@ -2339,12 +2127,10 @@ impl<'p, 's> Checker<'p, 's> {
         self.record_with_all_names(&parts, (TypeId::UNKNOWN, target))
     }
 
-    /// Whether the type is a `coerced_unknown_type`.
     pub fn is_coerced_unknown_type(&self, ty: TypeId) -> bool {
         matches!(self.data(ty), TypeData::Synth(shape) if shape.spread_rank == u32::MAX && matches!(shape.created_from, Some((TypeId::UNKNOWN, _))))
     }
 
-    /// For a `coerced_unknown_type` the type that was cast to, for a `union_all_members_type` the union. Any other type unchanged.
     fn coercion_target(&self, ty: TypeId) -> TypeId {
         match self.data(ty) {
             TypeData::Synth(shape) if shape.spread_rank == u32::MAX => shape.created_from.map_or(ty, |made_for| made_for.1),
@@ -2352,13 +2138,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Whether the type is a `coerced_unknown_type` or a `union_all_members_type`: nobody has declared it, and no primitive is of it.
     pub fn is_coercion_result_type(&self, ty: TypeId) -> bool {
         matches!(self.data(ty), TypeData::Synth(shape) if shape.spread_rank == u32::MAX && shape.created_from.is_some())
     }
 
-    /// `made_for`: `unknown` and the type that is meant, for `coerced_unknown_type`; `never` and the union, for `union_all_members_type`. It is kept
-    /// where a spread keeps its operands, with a rank that no spread has: that tells the type from every other, in every checker.
     fn record_with_all_names(&mut self, parts: &[TypeId], made_for: (TypeId, TypeId)) -> TypeId {
         let is_any_type = made_for.0 == TypeId::UNKNOWN;
         let mut of_parts = Vec::with_capacity(parts.len());
@@ -2378,7 +2161,6 @@ impl<'p, 's> Checker<'p, 's> {
                     };
                     types.push(self.type_of_prop(found, other.mapper));
                     is_optional |= found.flags.contains(PropFlags::OPTIONAL);
-                    // A method only if it is one everywhere. What is an accessor somewhere is no field.
                     flags = (flags & found.flags) | (found.flags & PropFlags::ACCESSOR) | (flags & PropFlags::ACCESSOR);
                 }
                 if is_optional {
@@ -2399,34 +2181,19 @@ impl<'p, 's> Checker<'p, 's> {
         view
     }
 
-    /// The type, as a fact, of what `e as T` yields, where `e` is of type `source` and `T` is `target`. `as` coerces, as `ToObject` does, and
-    /// does not assert.
-    ///
-    /// * `undefined` and `null` stay what they are. They are converted where the value enters a declared place that cannot hold them: `Builder::fit`.
-    /// * Any other primitive becomes one of the primitives of `target`, by the conversions of the language. So those of `source` are gone. Which
-    ///   string or number it is, is not looked at: `5 as 1 | 2` is a number, and so is `2.5 as Small`, an enum.
-    /// * An object stays the same object. It is made one of `target` if it can be: it is one, it was made as less and has what is
-    ///   missing, it is plain data. Otherwise it is what it was. So the result is of `target` or of one of the object types of `source`.
-    /// * If nothing is known of `e`, it is of `target` or anything: `coerced_unknown_type` of the parts of `target` that say which properties
-    ///   an object has. An array, an object of a class of the engine is what nothing can be made: those parts stay, and whoever emits the
-    ///   cast sees that there is no room for anything else and asserts. Not so with a function.
-    /// * Not so with `Error` and what extends it, which are types like any other here: `catch (e) { (e as Error).message }` is everywhere,
-    ///   and what is thrown may be anything. Where `target` is nothing else, see `is_noop_cast_target`, a primitive stays what it is too.
-    /// * So it is if `target` has no objects: `raw as string` of a `string | Tree` is a string or a `Tree`.
     pub fn coerced_type(&mut self, source: TypeId, target: TypeId) -> TypeId {
-        // Where the result is `target`, it is the very type that was given: whoever asks compares the two.
-        let given = target;
+        let original_target = target;
         let (source, target) = (self.reduced(source), self.reduced(target));
         let is_untyped = self.is_untyped(source);
         let may_be_any_object = is_untyped || self.has_multiple_primitive_kinds(source);
         if self.is_uninformative(target) || (!is_untyped && self.is_provably_assignable(source, target)) {
-            return given;
+            return original_target;
         }
         let is_noop_cast_target = self.is_noop_cast_target(target);
         if is_noop_cast_target && !is_untyped {
             return self.union(&[target, source]);
         }
-        let (mut views, mut parts, mut is_as_given) = (Vec::new(), Vec::new(), true);
+        let (mut views, mut parts, mut is_unchanged) = (Vec::new(), Vec::new(), true);
         for &part in self.parts(target) {
             if self.has_primitive_flag(part) {
                 let widened = if self.is_number_like(part) {
@@ -2436,8 +2203,7 @@ impl<'p, 's> Checker<'p, 's> {
                 } else {
                     self.base_of_literal(part)
                 };
-                // `boolean` has all that its parts widen to.
-                is_as_given &= self.parts(widened).iter().all(|of_widened| self.parts(target).contains(of_widened));
+                is_unchanged &= self.parts(widened).iter().all(|of_widened| self.parts(target).contains(of_widened));
                 parts.push(widened);
             } else if is_untyped && self.can_be_created_from_any_object(part) {
                 views.push(part);
@@ -2453,8 +2219,13 @@ impl<'p, 's> Checker<'p, 's> {
             parts.extend([TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN, TypeId::BIGINT, TypeId::SYMBOL, TypeId::UNDEFINED, TypeId::NULL]);
         }
         let number_of_target = parts.len();
-        // Of a value of which nothing is known as well: an object stays the object it is.
-        // So it does under a cast to a function type, which asserts nothing: the call does, by the language. `memo(C) as typeof C` is an object that nobody calls.
+        if !is_noop_cast_target && self.cast_keeps_primitives(target) {
+            if is_untyped {
+                parts.extend([TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN, TypeId::BIGINT, TypeId::SYMBOL]);
+            } else {
+                parts.extend(self.parts(source).iter().copied().filter(|&part| self.has_primitive_flag(part) && !part.is_undefined() && !part.is_null()));
+            }
+        }
         let objects: Vec<TypeId> = parts.iter().copied().filter(|&part| !self.has_primitive_flag(part)).collect();
         if may_be_any_object && objects.into_iter().all(|part| matches!(self.built_in_for_type(part), Some(BuiltIn::Function))) {
             parts.push(TypeId::OBJECT);
@@ -2462,19 +2233,15 @@ impl<'p, 's> Checker<'p, 's> {
         if !is_untyped {
             parts.extend(self.parts(source).iter().copied().filter(|&part| !self.has_primitive_flag(part)));
         }
-        // `undefined` and `null` pass: `o.flag as boolean` is how people strip `| undefined`, and they go on to compare with it. Only `!` asserts. The type says so where it
-        // matters: a bare number or boolean has no room for them. Whatever else `target` is, is kept as a cell or boxed, which holds nil whatever the type says.
         let is_kept_bare = self.parts(target).iter().all(|&part| self.has_primitive_flag(part)) && self.parts(target).iter().any(|&part| self.is_number_like(part) || part == TypeId::BOOLEAN || self.parts(TypeId::BOOLEAN).contains(&part));
         for nil in [TypeId::UNDEFINED, TypeId::NULL] {
             if is_kept_bare && (is_untyped || self.parts(source).contains(&nil)) && !parts.contains(&nil) {
                 parts.push(nil);
             }
         }
-        if is_as_given && views.is_empty() && parts.len() == number_of_target { given } else { self.union(&parts) }
+        if is_unchanged && views.is_empty() && parts.len() == number_of_target { original_target } else { self.union(&parts) }
     }
 
-    /// Primitives of more than one kind and nothing else: `boolean | number | string`. Nil is no kind. A place of such a type has room for an object that an `as` has let through:
-    /// `Declared::has_multiple_primitive_kinds`.
     pub fn has_multiple_primitive_kinds(&mut self, ty: TypeId) -> bool {
         let ty = self.reduced(ty);
         let parts: Vec<TypeId> = self.parts(ty).to_vec();
@@ -2500,8 +2267,6 @@ impl<'p, 's> Checker<'p, 's> {
         kinds.len() > 1
     }
 
-    /// Whether an object of which nothing is known can be made one of the type, which is a part of the target of a cast: it says which properties an object has, and is no array, no function and
-    /// no class of the engine.
     pub(super) fn can_be_created_from_any_object(&mut self, part: TypeId) -> bool {
         self.declares_properties(part)
             && self.has_properties(part)
@@ -2510,8 +2275,6 @@ impl<'p, 's> Checker<'p, 's> {
             && (!self.is_ambient_interface_type(part) || self.extends_error(part))
     }
 
-    /// An interface that `lib.*.d.ts` declares, or all of whose declarations are ambient: it says what code without a body hands out. There is no layout for it, so nothing is made one of it:
-    /// `FileBuild::is_record_type`.
     fn is_ambient_interface_type(&self, ty: TypeId) -> bool {
         match *self.data(ty) {
             TypeData::Ref { target, .. } => self.files().module(target.file).is_lib || self.is_ambient_interface(target),
@@ -2519,14 +2282,29 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Whether the objects of the type are those of the class `Error` of the engine, or of what extends it.
     fn extends_error(&mut self, ty: TypeId) -> bool {
         let Some(BuiltIn::Instance(class)) = self.built_in_for_type(ty) else { return false };
         matches!(*self.data(class), TypeData::Ref { target, .. } if self.atoms().bytes(self.files().symbol(target).name) == b"Error")
     }
 
-    /// `e as Error`, `e as MyError | undefined`: all that the type has besides nil is `Error` or extends it. Such a cast does nothing at all
-    /// to a value, whatever it is.
+    pub fn cast_keeps_primitives(&mut self, target: TypeId) -> bool {
+        let target = self.reduced(target);
+        let parts: Vec<TypeId> = self.parts(target).to_vec();
+        if parts.iter().all(|&part| self.has_primitive_flag(part)) {
+            return false;
+        }
+        parts.into_iter().any(|part| {
+            if self.has_primitive_flag(part) {
+                return !part.is_undefined() && !part.is_null();
+            }
+            if self.is_instantiable(part) {
+                let bound = self.value_bound(part);
+                return bound != part && (self.parts(bound).iter().any(|&of_bound| self.has_primitive_flag(of_bound) && !of_bound.is_undefined() && !of_bound.is_null()) || self.cast_keeps_primitives(bound));
+            }
+            !self.assignable_primitives(part).is_empty()
+        })
+    }
+
     pub fn is_noop_cast_target(&mut self, target: TypeId) -> bool {
         let target = self.reduced(target);
         let mut has_error = false;
@@ -2542,10 +2320,6 @@ impl<'p, 's> Checker<'p, 's> {
         has_error
     }
 
-    /// `(x as T).name`, `p.name` where `p` holds what a cast has yielded: the object need not be a `T`, so what is read need not be a
-    /// `T["name"]`. The read is a coercion itself, as if `x.name as T["name"]` were written. For such a read `e`: the type of what is found,
-    /// `unknown` where the object need not have the property, and the type it is coerced to. What the object has not is `undefined`, and
-    /// so is what need not be there by the type that is found, and what a chain yields that is cut short.
     pub fn coerced_property_read(&mut self, file: FileId, e: ExprId) -> Option<(TypeId, TypeId)> {
         let ExprKind::Dot { obj, name, chain, .. } = self.hir(file)[e].kind else { return None };
         if matches!(self.hir(file)[obj].kind, ExprKind::Super) || !self.has_declared_type(file, e) {
@@ -2555,7 +2329,6 @@ impl<'p, 's> Checker<'p, 's> {
         if known == self.type_of_expr(file, obj) || self.is_uninformative(known) {
             return None;
         }
-        // `(x as string).length`: the string's: see `is_primitive_by_type`.
         if self.is_primitive_by_type(file, obj) {
             return None;
         }
@@ -2568,29 +2341,24 @@ impl<'p, 's> Checker<'p, 's> {
         Some((found.unwrap_or(TypeId::UNKNOWN), target))
     }
 
-    /// `e` is a string, a number, a boolean and the like to the checker. What it yields may be an object all the same, which an `as` has let through. Whoever only looks sees that
-    /// object. A use that needs the primitive asserts that it is one, or goes by it as a prediction: `FileBuild::as_checked_primitive`.
     pub fn is_primitive_by_type(&mut self, file: FileId, e: ExprId) -> bool {
         let declared = self.type_of_expr(file, e);
         let parts: Vec<TypeId> = self.parts(declared).to_vec();
         !self.is_uninformative(declared) && !parts.iter().all(|&part| self.is_nullish(part)) && parts.into_iter().all(|part| self.has_primitive_flag(part))
     }
 
-    /// Whether the type is one about what the program is given from outside. Such a type is a prediction, and a prediction never asserts.
     pub fn is_external_data_prediction(&self, _declared: TypeId) -> bool {
         false
     }
 
-    /// `is_primitive_by_type`, and a use of `e` asserts.
     pub fn is_asserted_at_use(&mut self, file: FileId, e: ExprId) -> bool {
         let declared = self.type_of_expr(file, e);
         self.is_primitive_by_type(file, e) && !self.is_external_data_prediction(declared)
     }
 
-    /// An object of which nothing is known is in a place of the view from here on. `source`: the checker's type of it.
     pub fn record_untyped(&mut self, view: TypeId, source: TypeId) {
         let at = self.aot.flows.place;
-        self.aot.flows.noted.add_untyped(view, (source != TypeId::UNRESOLVED).then_some(source), at);
+        self.aot.flows.recorded.add_untyped(view, (source != TypeId::UNRESOLVED).then_some(source), at);
     }
 
     fn has_namespace_part(&self, ty: TypeId) -> bool {
@@ -2629,7 +2397,7 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Call(call) if matches!(hir[hir[call].callee].kind, ExprKind::Ident(name) if self.atoms().bytes(name) == b"require") => true,
             _ => {
                 let own = self.type_of_expr(file, e);
-                if let Some(known) = self.shared_type_flag(own, rows::NAMESPACE_TEST_KNOWN, rows::MAY_BE_NAMESPACE) {
+                if let Some(known) = self.shared_type_flag(own, type_flags::NAMESPACE_TEST_KNOWN, type_flags::MAY_BE_NAMESPACE) {
                     return known;
                 }
                 let (found, is_cacheable) = self.compute_cacheable(|c| {
@@ -2637,7 +2405,7 @@ impl<'p, 's> Checker<'p, 's> {
                     c.has_namespace_part(own) || c.has_namespace_part(awaited)
                 });
                 if is_cacheable {
-                    self.publish_type_flag(own, rows::NAMESPACE_TEST_KNOWN, rows::MAY_BE_NAMESPACE, found);
+                    self.publish_type_flag(own, type_flags::NAMESPACE_TEST_KNOWN, type_flags::MAY_BE_NAMESPACE, found);
                 }
                 found
             }
@@ -2645,52 +2413,42 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     pub(super) fn recorded_creations(&mut self) -> &mut Creations {
-        &mut self.aot.flows.noted.others().creations
+        &mut self.aot.flows.recorded.others().creations
     }
 
     pub(super) fn notes(&mut self) -> &mut FlowNotes {
-        &mut self.aot.flows.noted
+        &mut self.aot.flows.recorded
     }
 
     pub(super) fn recorded_escapes(&mut self) -> &mut Escapes {
-        &mut self.aot.flows.noted.escapes
+        &mut self.aot.flows.recorded.escapes
     }
 
     pub(super) fn recorded_constructions(&mut self) -> &mut Constructions {
-        &mut self.aot.flows.noted.others().constructions
+        &mut self.aot.flows.recorded.others().constructions
     }
 
-    /// The value of the expression `value` is stored to the field `name` of an object. `holder`: with `is_birth`, the layout that it is being
-    /// allocated as. Else the supertype that it is looked at as.
     pub fn record_stored_callee(&mut self, holder: TypeId, name: Atom, file: FileId, value: ExprId, is_birth: bool) {
         let callee = self.result_callees_of(file, value, 0).callee;
         if callee != Callee::Nothing {
-            let noted = self.aot.flows.noted.others();
-            join_callee(if is_birth { &mut noted.callees_at_creation } else { &mut noted.callees_stored }, (holder, name), callee);
+            let recorded = self.aot.flows.recorded.others();
+            join_callee(if is_birth { &mut recorded.callees_at_creation } else { &mut recorded.callees_stored }, (holder, name), callee);
         }
     }
 
-    /// The same for a closure of the function, which a declaration stores there: `namespace N { export function f() {} }`.
     pub fn record_declared_callee(&mut self, holder: TypeId, name: Atom, file: FileId, func: FnId) {
-        join_callee(&mut self.aot.flows.noted.others().callees_stored, (holder, name), Callee::One(file, func));
+        join_callee(&mut self.aot.flows.recorded.others().callees_stored, (holder, name), Callee::One(file, func));
     }
 
     pub fn record_unknown_callee(&mut self, holder: TypeId, name: Atom, file: FileId, pos: u32) {
-        join_callee(&mut self.aot.flows.noted.others().callees_stored, (holder, name), Callee::Unknown(Place { file, pos }));
+        join_callee(&mut self.aot.flows.recorded.others().callees_stored, (holder, name), Callee::Unknown(Place { file, pos }));
     }
 
-    /// An object is made as `ty` says.
     pub fn record_allocation(&mut self, ty: TypeId) {
         let ty = self.layout_defining_type(ty);
-        self.aot.flows.noted.add_at(NoteKind::AllocatedAtSite, ty, Place::NOWHERE);
+        self.aot.flows.recorded.add_at(NoteKind::AllocatedAtSite, ty, Place::NOWHERE);
     }
 
-    /// `const host: Host = system as any`, where a `Host` is neither more nor less than a `System`, and what is missing is stored next. It is
-    /// the same object, and goes on being used as a `System`. What such a cast makes of it: a `System & Host`, which is both. `None` if
-    /// one of the types is the other and more, or nothing can be both.
-    ///
-    /// Not for a supertype that a coercion made: `const name = (child as NamedDeclaration).name; isPropertyName(name)`. It says what `name`
-    /// was coerced to, not what it is, which may be a `QualifiedName`. An intersection with it would assert its discriminants.
     pub fn intersection_for_forced_cast(&mut self, source: TypeId, target: TypeId) -> Option<TypeId> {
         let not_known_before = self.aot.flows.unknown_count;
         if self.is_coercion_result_type(source) || self.is_coercion_result_type(target) {
@@ -2705,52 +2463,36 @@ impl<'p, 's> Checker<'p, 's> {
         matches!(self.data(both), TypeData::Intersection(_)).then_some(both)
     }
 
-    /// A value is cast to `target`, with `as`, with `!` or by entering a place whose type is written down. `sources`: what it is looked at
-    /// as, as far as it is an object of the program. `may_be_plain`: it may be an object that the program has not laid out. All say how
-    /// objects are laid out.
-    ///
-    /// `is_trusted`: the operations say nothing of the value, and `sources` is what the checker takes it for. `may_convert`: it is a cast, and
-    /// does not only make sure. `is_guard`: it is a type guard, which makes no copy of plain data.
-    ///
-    /// A cast may make an object of `target`: of plain data a copy, of an object that was made as something `target` extends that
-    /// object. Nothing becomes an object of a class but by its constructor. What it makes of which layout is found at the link.
     pub fn record_cast(&mut self, sources: &[TypeId], target: TypeId, may_be_plain: bool, is_trusted: bool, may_convert: bool, is_guard: bool) {
         let at = self.aot.flows.place;
         if may_be_plain && !self.is_instance_type(target) {
-            self.aot.flows.noted.add_at(NoteKind::CopiedInto, target, Place::NOWHERE);
+            self.aot.flows.recorded.add_at(NoteKind::CopiedInto, target, Place::NOWHERE);
         }
         if is_trusted {
-            self.aot.flows.noted.add_trusted_inflow(target, at);
+            self.aot.flows.recorded.add_trusted_inflow(target, at);
         }
-        let noted = &mut self.aot.flows.noted;
-        noted.add_pairs_into(if may_convert { NoteKind::Cast } else { NoteKind::Test }, sources, target);
+        let recorded = &mut self.aot.flows.recorded;
+        recorded.add_pairs_into(if may_convert { NoteKind::Cast } else { NoteKind::Test }, sources, target);
         if !may_convert {
             return;
         }
         if is_guard {
-            noted.add_pairs_into(NoteKind::Guard, sources, target);
+            recorded.add_pairs_into(NoteKind::Guard, sources, target);
         }
-        // `function tag<T extends object>(value: T): T & Tagged { return Object.assign(value, { .. }) }`: whoever calls it gets back what it
-        // has handed over, of which nothing is known in between. What was made as one of the types of an intersection and has been given
-        // the rest becomes one of the intersection.
         if let TypeData::Intersection(parts) = self.data(target) {
             for &part in parts.iter() {
                 if self.declares_properties(part) {
                     let part = self.layout_defining_type(part);
-                    self.aot.flows.noted.add_pair(NoteKind::Cast, part, target);
+                    self.aot.flows.recorded.add_pair(NoteKind::Cast, part, target);
                 }
             }
         }
     }
 
-    /// The cast from `sources` to `target`, which `record_cast` has been told of, is forced: `x as unknown as T`, `<T><any>x`, or it is at the way out of generic code and stands for such a cast to a type
-    /// with type parameters in there. It makes what it can of an object, and refuses none.
     pub fn record_forced_cast(&mut self, sources: &[TypeId], target: TypeId) {
-        self.aot.flows.noted.add_pairs_into(NoteKind::Forced, sources, target);
+        self.aot.flows.recorded.add_pairs_into(NoteKind::Forced, sources, target);
     }
 
-    /// `e`: a call. What the declaration of the function says it yields, where this call yields something else: `createToken<TKind>(kind)` is
-    /// declared to yield a `Token<TKind>`, which is what it makes, and yields an `AsteriskToken` here.
     pub fn declared_call_result(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         let sig = self.resolved_signature(file, e).sig?;
         let (of, func, _) = self.sig_decl(sig)?;
@@ -2758,16 +2500,12 @@ impl<'p, 's> Checker<'p, 's> {
         (declared != self.sig_return(sig)).then_some(declared)
     }
 
-    /// If the call `e` yields its first argument itself, whatever more the type of the call says of it: that argument. `Object.assign(target,
-    /// ..)`, which is a `T & U`, `Object.freeze(o)`, a `Readonly<T>`, `seal`, `preventExtensions`, `defineProperty`, `defineProperties`,
-    /// `setPrototypeOf`. The function is known by the signature the call is resolved to. For a function of the program:
-    /// `Checker::returned_argument_of_function`.
     pub fn returned_argument_of(&mut self, file: FileId, e: ExprId) -> Option<ExprId> {
         const NAMES: [&[u8]; 7] = [b"assign", b"freeze", b"seal", b"preventExtensions", b"defineProperty", b"defineProperties", b"setPrototypeOf"];
         let hir = self.hir(file);
         let ExprKind::Call(call) = hir[e].kind else { return None };
         let ExprKind::Dot { obj, name, chain: Chain::No, .. } = hir[hir[call].callee].kind else { return None };
-        if name.is_none() || !NAMES.contains(&self.atoms().bytes(name)) || !self.refers_to_global_object(file, obj, b"Object") {
+        if name.is_none() || !matches!(hir[obj].kind, ExprKind::Ident(known::Object)) || !NAMES.contains(&self.atoms().bytes(name)) || !self.refers_to_global_object(file, obj, b"Object") {
             return None;
         }
         let first = hir.ids(hir[call].args).next().filter(|&first| !matches!(hir[first].kind, ExprKind::Spread(_) | ExprKind::Missing))?;
@@ -2826,14 +2564,14 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn is_generic_callback(&mut self, callback: TypeId) -> bool {
-        if let Some(known) = self.shared_type_flag(callback, rows::GENERIC_CALLBACK_KNOWN, rows::IS_GENERIC_CALLBACK).or_else(|| self.aot.flows.generic_callback_cache.get(&callback).copied()) {
+        if let Some(known) = self.shared_type_flag(callback, type_flags::GENERIC_CALLBACK_KNOWN, type_flags::IS_GENERIC_CALLBACK).or_else(|| self.aot.flows.generic_callback_cache.get(&callback).copied()) {
             return known;
         }
         let (scope, mark) = (self.begin_scope(), self.non_cacheable_mark());
         let apparent = self.reduced_apparent_type(callback);
         let may_be = !self.is_union(apparent) || self.union_has_generic_callback(apparent);
         let is_settled = self.non_cacheable_mark() == mark;
-        if self.end_scope(scope).is_ok() && is_settled && !self.publish_type_flag(callback, rows::GENERIC_CALLBACK_KNOWN, rows::IS_GENERIC_CALLBACK, may_be) {
+        if self.end_scope(scope).is_ok() && is_settled && !self.publish_type_flag(callback, type_flags::GENERIC_CALLBACK_KNOWN, type_flags::IS_GENERIC_CALLBACK, may_be) {
             self.aot.flows.generic_callback_cache.insert(callback, may_be);
         }
         may_be
@@ -2900,9 +2638,6 @@ impl<'p, 's> Checker<'p, 's> {
         common.iter().any(|state| matches!(state, CommonType::Instantiable(_)))
     }
 
-    /// `f.call(x as A)`, `id(x as A)`. `e`: an argument of a call or a `new`. Whether the parameter that takes it is declared as a type parameter of the very
-    /// signature that is called, and the call writes no type arguments: then the parameter has its type from the arguments, and nobody has
-    /// written it down but they.
     pub fn is_parameter_type_inferred_from_arguments(&mut self, file: FileId, e: ExprId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let Parent::Expr(parent) = bound.expr_parent[e.idx()] else { return false };
@@ -2919,34 +2654,29 @@ impl<'p, 's> Checker<'p, 's> {
         self.sig_type_params(declared).iter().any(|&parameter| parameter == taking)
     }
 
-    /// Whether `undefined` is of the type. Of a type parameter it may be.
     pub fn accepts_undefined(&mut self, ty: TypeId) -> bool {
         self.accepts_nullish(ty) || self.parts(ty).iter().any(|&part| part.is_any() || part.is_undefined() || matches!(part, TypeId::UNKNOWN | TypeId::VOID | TypeId::UNRESOLVED) || self.is_instantiable(part))
     }
 
-    /// An expression is of type `ty`. Takes note of the intersections in it with an array, a function or a class of the engine: there are
-    /// objects of such a type, they are not laid out, and no declaration names it.
     pub fn record_object_without_layout(&mut self, ty: TypeId) {
-        self.aot.flows.noted.add_at(NoteKind::NoFixedLayout, ty, Place::NOWHERE);
+        self.aot.flows.recorded.add_at(NoteKind::NoFixedLayout, ty, Place::NOWHERE);
     }
 
     pub fn record_expression_type(&mut self, ty: TypeId) {
         for &part in self.parts(ty) {
             if matches!(self.data(part), TypeData::Intersection(_)) && (self.array_subtype_element(part).is_some() || self.extended_built_in(part).is_some()) {
-                self.aot.flows.noted.add_at(NoteKind::NoFixedLayout, part, Place::NOWHERE);
+                self.aot.flows.recorded.add_at(NoteKind::NoFixedLayout, part, Place::NOWHERE);
             }
             if let TypeData::Anon { origin: Origin::Module(module), .. } = *self.data(part) {
                 let declarations = self.files().decls(module);
                 let is_allocated_in_blocks = !declarations.is_empty() && declarations.iter().all(|&(file, decl)| matches!(decl, Decl::Module(_)) && !self.is_declaration_only(file) && !self.files().module(file).is_untyped());
                 if !is_allocated_in_blocks {
-                    self.aot.flows.noted.add_at(NoteKind::NoFixedLayout, part, Place::NOWHERE);
+                    self.aot.flows.recorded.add_at(NoteKind::NoFixedLayout, part, Place::NOWHERE);
                 }
             }
         }
     }
 
-    /// What a value of the type yields when it is called or constructed. Something of which nothing is known that is cast to `(n: number)
-    /// => Wrapped` yields what nothing is known of either, and that is held to `Wrapped`.
     pub fn call_results(&mut self, ty: TypeId) -> Vec<TypeId> {
         let mut results = Vec::new();
         if ty == TypeId::UNRESOLVED {
@@ -2984,8 +2714,6 @@ impl<'p, 's> Checker<'p, 's> {
         found
     }
 
-    /// Whether the type says nothing of what an object of it is: `any`, `unknown`, `object`, `{}`, or a type parameter that is bounded by
-    /// one of them. Not so where the checker has no type.
     pub fn is_untyped(&mut self, ty: TypeId) -> bool {
         if ty == TypeId::UNRESOLVED {
             return false;
@@ -3009,9 +2737,6 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// Data of the origin is held to `ty`, by a cast or by a place whose type is written down. `is_in_container`: nothing is made of it from the top, as with the value of a
-    /// JSON module. A cast walks no container, so what is in one stays what it is, with all that it holds: the views that it is looked at as from
-    /// then on take it as it is, if it is known for data.
     pub fn record_types_staying_untyped(&mut self, ty: TypeId, is_in_container: bool, origin: DataOrigin) {
         if ty == TypeId::UNRESOLVED {
             return;
@@ -3024,17 +2749,11 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    // ───────────────────────────── what the program is given ─────────────────────────────
-
-    /// Whether declaration files alone declare the interface or the class. What they declare is made elsewhere: nothing is laid out by it, and what is read out of it is a prediction already (trust.rs), but for the language's and the host's own
-    /// objects, which are made of nobody's data and cannot be replaced: `Math`, `JSON`, `console`. Not an array: what is handed in as one need not be one.
     #[inline]
     fn is_declared_externally(&self, ty: TypeId) -> bool {
-        self.row(ty) & rows::IS_DECLARED_EXTERNALLY != 0
+        self.row(ty) & type_flags::IS_DECLARED_EXTERNALLY != 0
     }
 
-    /// Whether data from outside the program is looked at as the type. Types are facts about what the program makes and predictions about what it is given: a place of such a type holds
-    /// anything, and the type is what it is expected to hold. ASSERTED.md 1.
     pub(super) fn explain_taint(&mut self) -> Vec<String> {
         let files = self.files();
         let mut seen: FxHashSet<Sym> = FxHashSet::default();
@@ -3050,7 +2769,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
         }
-        let given = self.given();
+        let external_types = self.external_types();
         let (mut all, mut by_identity, mut by_looks, mut otherwise) = (0u32, 0u32, 0u32, 0u32);
         let mut lost: Vec<String> = Vec::new();
         let mut external_by_nature: Vec<String> = Vec::new();
@@ -3064,10 +2783,10 @@ impl<'p, 's> Checker<'p, 's> {
                 continue;
             }
             let identity = self.type_identity(ty);
-            if given.identities.contains(&identity) {
+            if external_types.identities.contains(&identity) {
                 by_identity += 1;
                 external_by_nature.push(self.display_name(ty));
-            } else if self.accepts_external_data(ty, given) {
+            } else if self.accepts_external_data(ty, external_types) {
                 by_looks += 1;
                 if lost.len() < 8 {
                     let name = self.display_name(ty);
@@ -3077,7 +2796,7 @@ impl<'p, 's> Checker<'p, 's> {
                 otherwise += 1;
             }
         }
-        let mut lines = vec![format!("mutations: given: of the {all} classes and interfaces that compiled files declare, data from outside is looked at as {by_identity} by what they are, {by_looks} by their looks, {otherwise} otherwise; {} types are given", given.identities.len())];
+        let mut lines = vec![format!("mutations: given: of the {all} classes and interfaces that compiled files declare, data from outside is looked at as {by_identity} by what they are, {by_looks} by their looks, {otherwise} otherwise; {} types are given", external_types.identities.len())];
         lines.append(&mut lost);
         external_by_nature.sort();
         lines.extend(external_by_nature.iter().take(40).map(|name| format!("mutations: given: where: by what it is: {name}")));
@@ -3085,13 +2804,13 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     pub fn is_tainted(&mut self, ty: TypeId) -> bool {
-        if let Some(known) = self.shared_type_flag(ty, rows::TAINT_KNOWN, rows::IS_TAINTED) {
+        if let Some(known) = self.shared_type_flag(ty, type_flags::TAINT_KNOWN, type_flags::IS_TAINTED) {
             return known;
         }
         let is_computed_now = !self.aot.flows.tainted.contains_key(&ty);
         let (is_tainted, is_cacheable) = self.compute_cacheable(|c| c.compute_is_tainted(ty));
         if is_computed_now && is_cacheable && !matches!(self.data(ty), TypeData::Anon { origin: Origin::ObjectLiteral(..) | Origin::WidenedLiteral(..), .. }) {
-            self.publish_type_flag(ty, rows::TAINT_KNOWN, rows::IS_TAINTED, is_tainted);
+            self.publish_type_flag(ty, type_flags::TAINT_KNOWN, type_flags::IS_TAINTED, is_tainted);
         }
         is_tainted
     }
@@ -3107,58 +2826,51 @@ impl<'p, 's> Checker<'p, 's> {
             self.aot.flows.tainted.insert(ty, false);
             return false;
         }
-        let given = self.given();
-        if given.identities.is_empty() {
+        let external_types = self.external_types();
+        if external_types.identities.is_empty() {
             return false;
         }
-        // The type that a literal is checked against may be that of another literal.
         self.aot.flows.tainted.insert(ty, false);
         self.aot.flows.taint_query_depth += 1;
         let identity = self.type_identity(ty);
-        let is_tainted = given.identities.contains(&identity) || self.accepts_external_data(ty, given) || self.is_literal_type_of_external_data(ty, given) || self.is_plain_literal_type(ty);
+        let is_tainted = external_types.identities.contains(&identity) || self.accepts_external_data(ty, external_types) || self.is_literal_type_of_external_data(ty, external_types) || self.is_plain_literal_type(ty);
         self.aot.flows.taint_query_depth -= 1;
         self.aot.flows.tainted.insert(ty, is_tainted);
         is_tainted
     }
 
-    fn is_literal_type_of_external_data(&mut self, ty: TypeId, given: &ExternalTypes) -> bool {
+    fn is_literal_type_of_external_data(&mut self, ty: TypeId, external_types: &ExternalTypes) -> bool {
         if !matches!(self.data(ty), TypeData::Anon { origin: Origin::ObjectLiteral(..), .. }) {
             return false;
         }
         let regular = self.regular_type_of_object_literal(ty);
         let widened = self.get_widened_type(regular);
-        [regular, widened].into_iter().any(|other| other != ty && given.identities.contains(&self.type_identity(other)))
+        [regular, widened].into_iter().any(|other| other != ty && external_types.identities.contains(&self.type_identity(other)))
     }
 
-    /// Whether it is the type of an object literal that stands where a tainted type is expected. Such a literal is made as a plain object (`FileBuild::is_explicitly_dynamic`). A place that takes its type from an initializer takes it from
-    /// what the initializer is made as: the field of the literal around it, an element of the array literal around it, `const x = { .. } satisfies T`, a result that is inferred.
-    /// `{ A: { p: [] } } satisfies { [N in Names]?: Row<N> }`: the inner literal is checked against `Row<"A">` and stored to a field of the outer one, which is of the inner one's own type.
     fn is_plain_literal_type(&mut self, ty: TypeId) -> bool {
         let (TypeData::Anon { origin: Origin::ObjectLiteral(file, literal, ..), .. } | TypeData::Anon { origin: Origin::WidenedLiteral(file, literal, ..), .. }) = *self.data(ty) else { return false };
         matches!(self.hir(file)[literal].kind, ExprKind::Object(_)) && self.contextual_type_of_literal(file, literal).is_some_and(|expected| self.has_tainted_part(expected))
     }
 
-    /// The search is made once for the program: a task that finds it made reads it. Tasks that find it missing at the same time all make it, and come to the same.
     pub(super) fn is_searching_from_sources(&self) -> bool {
         self.aot.flows.is_searching_from_sources
     }
 
-    fn given(&mut self) -> &'p ExternalTypes {
+    fn external_types(&mut self) -> &'p ExternalTypes {
         let program = self.p;
-        if let Some(given) = program.aot.storage.given.get() {
-            return given;
+        if let Some(external_types) = program.aot.storage.external_types.get() {
+            return external_types;
         }
         assert!(!program.aot.storage.is_search_under_way.load(Ordering::Relaxed), "what the program is given is asked for while the search for it is under way");
-        // By a checker of its own, outside the plan: what it finds out on the way is dropped with it. So the task that happens to make the search is left as every other task is: with nothing looked at out of its order, and
-        // nothing remembered from while no type was tainted.
         let search = Search { seen_by_other_declarations: self.importers_with_other_declarations(), ..Search::new(1) };
         let mut searcher = program.checker();
         searcher.begin_task(0, 0, true);
         (searcher.stack_base, searcher.stack_limit) = (self.stack_base, self.stack_limit);
         searcher.aot.flows.is_searching_from_sources = true;
-        searcher.search_from_sources(&search, 0, &Share::Rest { index: 0, of: 1, is_taken: &[] }, &FxHashMap::default());
+        searcher.search_from_sources(&search, 0, &FilePartition::Rest { index: 0, of: 1, is_taken: &[] }, &FxHashMap::default());
         drop(searcher);
-        program.aot.storage.given.get_or_init(|| search.found())
+        program.aot.storage.external_types.get_or_init(|| search.found())
     }
 
     fn property_summary(&mut self, ty: TypeId) -> Option<Vec<(Box<[u8]>, ValueSummary)>> {
@@ -3194,7 +2906,6 @@ impl<'p, 's> Checker<'p, 's> {
         said
     }
 
-    /// Which kinds of values the type has room for, nil aside, as far as that is read off it without a question to the checker's relations.
     fn declared_value_kinds(&mut self, ty: TypeId) -> u16 {
         let ty = self.reduced(ty);
         match self.data(ty) {
@@ -3219,7 +2930,6 @@ impl<'p, 's> Checker<'p, 's> {
                 if self.is_array_or_tuple(ty) || self.array_subtype_element(ty).is_some() {
                     said::ARRAYS
                 } else if self.is_declared_externally(ty) || self.is_empty_object_type(ty) {
-                    // `Iterable<T>`, `ArrayLike<T>`, `{}`
                     said::ANYTHING
                 } else if matches!(self.built_in_for_type(ty), Some(BuiltIn::Function)) {
                     said::FUNCTIONS
@@ -3231,15 +2941,12 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Where the data may go on to: whether one of the types that the search has found may be assignable to the type: `takeDeep(node: Deep<All>)`, handed a `node: All`; `Readonly<T>`, `Partial<T>`, `Pick<T, ..>`, a base interface. Asked of a
-    /// type when somebody has to do with it, once: nobody goes through the types of the program. It goes by the names of the properties and by the kinds of what they hold, which every task finds the same: whoever is assignable has every
-    /// required property and one of the properties at least, and holds nothing there that the type has no room for.
-    fn accepts_external_data(&mut self, ty: TypeId, given: &ExternalTypes) -> bool {
+    fn accepts_external_data(&mut self, ty: TypeId, external_types: &ExternalTypes) -> bool {
         if !self.declares_properties(ty) || self.is_instance_type(ty) || self.built_in_for_type(ty).is_some() || self.array_subtype_element(ty).is_some() {
             return false;
         }
         let Some(members) = self.members(ty) else { return false };
-        if given.continued_by_pairs
+        if external_types.continued_by_pairs
             && members.shape().props.len() <= MAX_IN_PLACE_CONVERSION_PROPERTIES
             && (members.shape().props.iter().filter(|prop| !prop.flags.contains(PropFlags::OPTIONAL)).count() >= 2
                 || (matches!(self.data(ty), TypeData::Ref { .. }) || self.alias_of_type(ty).is_some())
@@ -3254,15 +2961,14 @@ impl<'p, 's> Checker<'p, 's> {
         let atoms = self.atoms();
         let names: Vec<(&[u8], bool)> = members.shape().props.iter().map(|prop| (atoms.bytes(prop.name), prop.flags.contains(PropFlags::OPTIONAL))).filter(|name| !is_keyed_by_symbol(name.0)).collect();
         let none = Vec::new();
-        let having = |name: &[u8]| given.by_name.get(name).unwrap_or(&none);
+        let having = |name: &[u8]| external_types.by_name.get(name).unwrap_or(&none);
         let lists: Vec<&Vec<u32>> = match names.iter().filter(|name| !name.1).map(|name| having(name.0)).min_by_key(|having| having.len()) {
             Some(fewest) => vec![fewest],
             None => names.iter().map(|name| having(name.0)).collect(),
         };
-        // What the type itself says is only found out once one has the names.
         let mut taken: Vec<(&[u8], ValueSummary)> = Vec::new();
         for &index in lists.into_iter().flatten() {
-            let held = &given.properties[index as usize];
+            let held = &external_types.properties[index as usize];
             if !names.iter().all(|&(name, is_optional)| is_optional || held.contains_key(name)) {
                 continue;
             }
@@ -3279,16 +2985,11 @@ impl<'p, 's> Checker<'p, 's> {
         false
     }
 
-    /// Whether the value of the expression is what the program is given, or is read out of that: it is of a tainted type, a prediction, or a property or an element of one. Nothing is asserted of it, and no cast makes
-    /// anything of it.
     pub fn is_external_data(&mut self, file: FileId, e: ExprId) -> bool {
         let own = self.type_of_expr(file, e);
         self.has_tainted_part(own) || self.unverified_claim(file, e).is_some() || self.is_predicted(file, e)
     }
 
-    /// `--aot-explain=given`: of the unions of two or more record types that are written in a typed text, of the program's graph or not: how many have a member that is tainted and one that is not, and how many there are. A place of such a union holds
-    /// anything, and a narrowing that names the other member expects its layout.
-    /// And of the first: how many have no member that the search has found: a member only takes what was found, by its names, kinds and discriminants: it looks like what is given.
     pub fn count_partially_tainted_unions(&mut self) -> (usize, usize, usize) {
         let (mut in_part, mut by_looks, mut all) = (0, 0, 0);
         for file in (0..self.files().modules.len() as u32).map(FileId) {
@@ -3309,7 +3010,7 @@ impl<'p, 's> Checker<'p, 's> {
                         if self.is_tainted(member) {
                             tainted += 1;
                             let identity = self.type_identity(member);
-                            found += usize::from(self.given().identities.contains(&identity));
+                            found += usize::from(self.external_types().identities.contains(&identity));
                         }
                     }
                 }
@@ -3325,19 +3026,16 @@ impl<'p, 's> Checker<'p, 's> {
         (in_part, by_looks, all)
     }
 
-    /// Whether there is such a type in the program at all.
     pub fn is_any_type_tainted(&mut self) -> bool {
-        !self.aot.flows.is_searching_from_sources && !self.given().identities.is_empty()
+        !self.aot.flows.is_searching_from_sources && !self.external_types().identities.is_empty()
     }
 
-    /// Whether no object of the type is laid out by it, nor an element of an array of it: primitives, arrays of them, what the engine makes. Such a type is everybody's and cannot be tainted.
     pub(super) fn never_has_fixed_layout(&mut self, ty: TypeId) -> bool {
         let (mut seen, mut found) = (FxHashSet::default(), Vec::new());
         self.add_object_types_in(ty, true, &mut seen, &mut found);
         found.is_empty()
     }
 
-    /// The same for one of the parts of a union.
     pub fn has_tainted_part(&mut self, ty: TypeId) -> bool {
         if !matches!(self.data(ty), TypeData::Union(_)) {
             return self.is_tainted(ty);
@@ -3356,20 +3054,18 @@ impl<'p, 's> Checker<'p, 's> {
         has_one
     }
 
-    /// Whether the expression is of such a type by itself: `export const kept = { .. }`, which untyped code imports and stores to.
     pub fn is_of_tainted_type(&mut self, file: FileId, e: ExprId) -> bool {
         let own = self.type_of_expr(file, e);
         self.has_tainted_part(own)
     }
 
-    /// It goes by the trees, the symbols and the checker's types alone: every task finds the same, and nothing is remembered on the way that the answer would change.
-    pub fn search_in_parallel(&mut self, meeting: &SearchBarrier, index: usize, share: &Share<'_>) {
+    pub fn search_in_parallel(&mut self, meeting: &SearchBarrier, index: usize, share: &FilePartition<'_>) {
         let program = self.p;
         let own_pairs = self.compared_targets_by_source();
         self.aot = Default::default();
         self.aot.flows.is_searching_from_sources = true;
         self.aot.flows.seen_before = meeting.search.seen_before.clone();
-        if let Share::Rest { .. } = share {
+        if let FilePartition::Rest { .. } = share {
             for file in (0..program.files.modules.len() as u32).map(FileId) {
                 if self.is_untyped_file(file) {
                     self.task.begin_file(file, false);
@@ -3378,47 +3074,43 @@ impl<'p, 's> Checker<'p, 's> {
         }
         self.search_from_sources(&meeting.search, index, share, &own_pairs);
         if meeting.barrier.wait() {
-            let _ = program.aot.storage.given.set(meeting.search.found());
+            let _ = program.aot.storage.external_types.set(meeting.search.found());
         }
         meeting.barrier.wait();
         self.aot = Default::default();
     }
 
-    fn visit_external_sources(&mut self, search: &Search, share: &Share<'_>, held_to: &mut Vec<TypeId>, despecialized: &mut Vec<TypeId>, looked_at: &mut Vec<InspectedCast>, written_unions: &mut Vec<WrittenUnion>) -> bool {
+    fn visit_external_sources(&mut self, search: &Search, share: &FilePartition<'_>, coercion_targets: &mut Vec<TypeId>, despecialized: &mut Vec<TypeId>, looked_at: &mut Vec<InspectedCast>, written_unions: &mut Vec<WrittenUnion>) -> bool {
         let count = self.files().modules.len() as u32;
         let all = move || (0..count).map(FileId);
         let weights: Vec<u64> = all().map(|file| self.hir(file).exprs.len() as u64 + 1).collect();
-        let mine: FxHashSet<FileId> = if let Share::Of(mine) = share { mine.iter().copied().collect() } else { FxHashSet::default() };
+        let mine: FxHashSet<FileId> = if let FilePartition::Files(mine) = share { mine.iter().copied().collect() } else { FxHashSet::default() };
         let own = |files: &[FileId]| -> Vec<FileId> {
             match *share {
-                Share::Of(_) => files.iter().copied().filter(|file| mine.contains(file)).collect(),
-                Share::Rest { index, of, is_taken } => {
+                FilePartition::Files(_) => files.iter().copied().filter(|file| mine.contains(file)).collect(),
+                FilePartition::Rest { index, of, is_taken } => {
                     let left: Vec<FileId> = files.iter().copied().filter(|file| !is_taken.get(file.idx()).copied().unwrap_or(false)).collect();
                     share_by_weight(&left, &weights, index, of)
                 }
             }
         };
-        // `P.tsx.js`, which a tool has made of `P.tsx`, does what the checked text does. No value of another type gets anywhere than in the text: all that differs is that what the text makes is made as plain objects.
         let placeholder: FxHashMap<&[u8], FileId> = (all().filter(|&file| self.is_declaration_only(file) && self.hir(file).kind != FileKind::Declaration && self.hir(file).decorators.is_empty()))
             .map(|file| (self.files().module(file).file_name(), file))
             .collect();
         let made_of: Vec<(FileId, FileId)> = (all().filter(|&file| self.is_compiled(file) && self.is_untyped_file(file)))
             .filter_map(|file| Some((file, *placeholder.get(self.files().module(file).file_name().strip_suffix(b".js")?)?)))
             .collect();
-        self.aot.flows.generated_from_checked_source = made_of.iter().map(|made| made.0).collect();
-        self.aot.flows.checked_sources = made_of.iter().map(|made| made.1).collect();
-        let texts: Vec<FileId> = made_of.iter().map(|made| made.1).collect();
+        self.aot.flows.generated_from_checked_source = made_of.iter().map(|created| created.0).collect();
+        self.aot.flows.checked_sources = made_of.iter().map(|created| created.1).collect();
+        let texts: Vec<FileId> = made_of.iter().map(|created| created.1).collect();
         for text in own(&texts) {
             self.add_types_allocated_in(text, despecialized);
         }
-        // So the text is gone through like that of a typed file.
         let files: Vec<FileId> = all().filter(|&file| (self.is_compiled(file) || self.aot.flows.checked_sources.contains(&file)) && !self.is_untyped_file(file)).collect();
-        // A type is written where its alias is: also in a module that is imported for its types alone, which is no module of the program's graph.
         let written: Vec<FileId> = all().filter(|&file| self.hir(file).kind != FileKind::Declaration && !self.is_untyped_file(file)).collect();
         for file in own(&files) {
-            self.add_external_data_target_types(file, held_to);
+            self.add_external_data_target_types(file, coercion_targets);
         }
-        // Untyped code of the program is outside as well: it calls what it imports with what it has made, and stores to what it is handed.
         let untyped: Vec<FileId> = all().filter(|&file| self.is_compiled(file) && self.is_untyped_file(file) && !self.aot.flows.generated_from_checked_source.contains(&file)).collect();
         let (mut imported, mut crossed, mut handed_over, mut gotten) = (FxHashSet::default(), FxHashSet::default(), FxHashSet::default(), FxHashSet::default());
         let seen_by_other_declarations = &search.seen_by_other_declarations;
@@ -3427,18 +3119,18 @@ impl<'p, 's> Checker<'p, 's> {
                 let module = self.files().file_symbol(file);
                 let value = self.files().module_value(module);
                 let of_module = self.type_of_symbol(value);
-                self.add_passed_values(of_module, 0, file, at, &mut FxHashSet::default(), &mut crossed, held_to);
+                self.add_passed_values(of_module, 0, file, at, &mut FxHashSet::default(), &mut crossed, coercion_targets);
             }
         }
         for file in own(&untyped) {
-            self.add_arguments_to_reexports(file, &mut crossed, held_to);
+            self.add_arguments_to_reexports(file, &mut crossed, coercion_targets);
         }
         if !untyped.is_empty() {
             for file in own(&untyped).into_iter().chain(own(&files)) {
-                self.add_types_imported_across_boundary(file, &mut imported, &mut gotten, &mut crossed, held_to);
+                self.add_types_imported_across_boundary(file, &mut imported, &mut gotten, &mut crossed, coercion_targets);
             }
             for file in own(&files) {
-                self.add_types_passed_to_javascript(file, &mut handed_over, &mut crossed, held_to);
+                self.add_types_passed_to_javascript(file, &mut handed_over, &mut crossed, coercion_targets);
             }
         }
         for (record, at) in std::mem::take(&mut self.aot.flows.records_reaching_javascript) {
@@ -3469,21 +3161,32 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     pub(in crate::check) fn records_compared_pairs(&self) -> bool {
-        self.p.files.options.undefined_properties_have_no_declaration && self.aot.flows.seen_before.is_none() && !self.p.aot.storage.given.is_finalized() && (!self.is_warming_up() || self.fuel.get() == u64::MAX)
+        self.p.files.options.undefined_properties_have_no_declaration && self.aot.flows.seen_before.is_none() && !self.p.aot.storage.external_types.is_finalized() && (!self.is_warming_up() || self.fuel.get() == u64::MAX)
     }
 
     pub(in crate::check) fn record_recompared(&mut self, key: crate::check::relate::Key) -> bool {
         self.aot.flows.compared_again.insert(key)
     }
 
+    pub(in crate::check) fn is_assignable_in_conditional_type(&mut self, source: TypeId, target: TypeId) -> bool {
+        self.aot.flows.conditional_type_depth += 1;
+        let is_assignable = self.is_assignable(source, target);
+        self.aot.flows.conditional_type_depth -= 1;
+        is_assignable
+    }
+
+    pub(in crate::check) fn is_resolving_conditional_type(&self) -> bool {
+        self.aot.flows.conditional_type_depth != 0 && self.records_compared_pairs()
+    }
+
     pub(in crate::check) fn record_compared_pair(&mut self, source: TypeId, target: TypeId, relation: Relation, is_reported: bool) {
-        if relation != Relation::Identity && (relation != Relation::Comparable || is_reported) && self.records_compared_pairs() {
+        if relation != Relation::Identity && (relation != Relation::Comparable || is_reported) && self.aot.flows.conditional_type_depth == 0 && self.records_compared_pairs() {
             self.aot.flows.pairs_compared.insert((source, target, is_reported));
         }
     }
 
     pub(in crate::check) fn are_compared_pairs_recorded(&self) -> bool {
-        self.p.files.options.undefined_properties_have_no_declaration && self.aot.flows.seen_before.is_none() && self.p.aot.storage.given.get().is_none()
+        self.p.files.options.undefined_properties_have_no_declaration && self.aot.flows.seen_before.is_none() && self.p.aot.storage.external_types.get().is_none()
     }
 
     fn propagating_pairs(&mut self) -> Vec<(TypeId, TypeId)> {
@@ -3519,14 +3222,13 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn add_targets_of_found_types(&mut self, search: &Search, own_pairs: &FxHashMap<Identity, Vec<TypeId>>, kept_targets: &FxHashMap<Identity, TypeId>, followed: &mut FxHashSet<Identity>, tracked_as_plain: &mut FxHashSet<Identity>, out: &mut Vec<TypeId>, despecialized: &mut Vec<TypeId>) {
+    fn add_targets_of_found_types(&mut self, search: &Search, own_pairs: &FxHashMap<Identity, Vec<TypeId>>, kept_targets: &FxHashMap<Identity, TypeId>, sources_of_kept_targets: &[Identity], followed: &mut FxHashSet<Identity>, tracked_as_plain: &mut FxHashSet<Identity>, out: &mut Vec<TypeId>, despecialized: &mut Vec<TypeId>) {
         if own_pairs.is_empty() && kept_targets.is_empty() {
             return;
         }
         let mut found: Vec<Identity> = {
             let by_all = search.tainted.read();
-            let from_earlier_tasks = (!kept_targets.is_empty()).then(|| search.targets_by_source.keys());
-            own_pairs.keys().chain(from_earlier_tasks.into_iter().flatten()).copied().filter(|identity| by_all.contains(identity) && !followed.contains(identity)).collect()
+            own_pairs.keys().chain(sources_of_kept_targets).copied().filter(|identity| by_all.contains(identity) && !followed.contains(identity)).collect()
         };
         found.sort_unstable();
         found.dedup();
@@ -3548,11 +3250,11 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    fn search_from_sources(&mut self, search: &Search, index: usize, share: &Share<'_>, own_pairs: &FxHashMap<Identity, Vec<TypeId>>) {
-        let (mut held_to, mut despecialized, mut looked_at, mut written_unions) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    fn search_from_sources(&mut self, search: &Search, index: usize, share: &FilePartition<'_>, own_pairs: &FxHashMap<Identity, Vec<TypeId>>) {
+        let (mut coercion_targets, mut despecialized, mut looked_at, mut written_unions) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         let goes_on = search.seen_before.is_some();
         let mut turn = 0;
-        if !goes_on && !self.visit_external_sources(search, share, &mut held_to, &mut despecialized, &mut looked_at, &mut written_unions) {
+        if !goes_on && !self.visit_external_sources(search, share, &mut coercion_targets, &mut despecialized, &mut looked_at, &mut written_unions) {
             return;
         }
         let (mut is_left_taken, mut arrays_before, mut arrays_found, mut arrays_not_said_yet): (bool, Vec<(Identity, Vec<Identity>)>, Vec<Identity>, Vec<Identity>) = (!goes_on, Vec::new(), Vec::new(), Vec::new());
@@ -3566,21 +3268,23 @@ impl<'p, 's> Checker<'p, 's> {
         let mut tracked_as_plain: FxHashSet<Identity> = FxHashSet::default();
         let mut plain_candidates: FxHashSet<Identity> = FxHashSet::default();
         let mut kept_targets: FxHashMap<Identity, TypeId> = FxHashMap::default();
-        if let (false, &Share::Rest { index, of, .. }) = (search.targets_by_source.is_empty(), share) {
+        if let (false, &FilePartition::Rest { index, of, .. }) = (search.targets_by_source.is_empty(), share) {
             for (at, ty) in self.kept_types().into_iter().enumerate() {
                 if at % of == index {
                     kept_targets.insert(self.type_identity(ty), ty);
                 }
             }
         }
-        self.add_targets_of_found_types(search, own_pairs, &kept_targets, &mut followed, &mut tracked_as_plain, &mut held_to, &mut despecialized);
+        let has_kept_target = |targets: &[Identity]| targets.iter().any(|target| kept_targets.contains_key(target));
+        let sources_of_kept_targets: Vec<Identity> = if kept_targets.is_empty() { Vec::new() } else { search.targets_by_source.iter().filter(|pair| has_kept_target(pair.1.as_slice())).map(|pair| *pair.0).collect() };
+        self.add_targets_of_found_types(search, own_pairs, &kept_targets, &sources_of_kept_targets, &mut followed, &mut tracked_as_plain, &mut coercion_targets, &mut despecialized);
         loop {
-            while search.has_any_found(held_to.len() + despecialized.len() + usize::from(turn == 0), &mut turn) {
+            while search.has_any_found(coercion_targets.len() + despecialized.len() + usize::from(turn == 0), &mut turn) {
                 if !is_left_taken {
                     is_left_taken = true;
                     self.take_remaining_work(search, index, share, &mut looked_at, &mut written_unions, &mut arrays_before);
                 }
-                for ty in held_to.drain(..) {
+                for ty in coercion_targets.drain(..) {
                     self.add_types_staying_untyped(ty, true, &mut seen, &mut views);
                 }
                 let mut newly: Vec<TypeId> = views.drain(..).filter(|&ty| tainted.insert(ty)).collect();
@@ -3617,7 +3321,6 @@ impl<'p, 's> Checker<'p, 's> {
                 if !stable_seen.is_empty() {
                     search.seen.write().extend(stable_seen);
                 }
-                // An array of them that the data may hold. Not `string[]`, which is everybody's.
                 loop {
                     let identities: Vec<Identity> = newly.iter().map(|&ty| self.type_identity(ty)).collect();
                     let mut names = Vec::with_capacity(newly.len());
@@ -3657,15 +3360,13 @@ impl<'p, 's> Checker<'p, 's> {
                         break;
                     }
                 }
-                // What the program has made and looks at as such a type is written to as the data is: `(second as ListItem).next = parsed`, `const item: ListItem = second`.
-                self.add_cast_target_types(&mut looked_at, search, &mut plain_candidates, &mut held_to, &mut despecialized);
-                self.add_targets_of_found_types(search, own_pairs, &kept_targets, &mut followed, &mut tracked_as_plain, &mut held_to, &mut despecialized);
+                self.add_cast_target_types(&mut looked_at, search, &mut plain_candidates, &mut coercion_targets, &mut despecialized);
+                self.add_targets_of_found_types(search, own_pairs, &kept_targets, &sources_of_kept_targets, &mut followed, &mut tracked_as_plain, &mut coercion_targets, &mut despecialized);
             }
-            // The members of a union that is written go together, also where one of them only takes what has been found.
             let mut said = Vec::new();
             for ty in not_reported_yet.drain(..) {
                 let identity = self.type_identity(ty);
-                if !search.given.read().identities.contains(&identity) {
+                if !search.external_types.read().identities.contains(&identity) {
                     said.push((identity, self.property_summary(ty)));
                 }
             }
@@ -3676,8 +3377,8 @@ impl<'p, 's> Checker<'p, 's> {
                 search.publish_summaries();
             }
             search.barrier.wait();
-            self.add_declared_union_members(&written_unions, search, &mut plain_candidates, &mut held_to, &mut despecialized);
-            if !search.has_any_found(held_to.len() + despecialized.len(), &mut turn) {
+            self.add_declared_union_members(&written_unions, search, &mut plain_candidates, &mut coercion_targets, &mut despecialized);
+            if !search.has_any_found(coercion_targets.len() + despecialized.len(), &mut turn) {
                 break;
             }
         }
@@ -3700,13 +3401,13 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    fn take_remaining_work(&mut self, search: &Search, index: usize, share: &Share<'_>, looked_at: &mut Vec<InspectedCast>, unions: &mut Vec<WrittenUnion>, arrays: &mut Vec<(Identity, Vec<Identity>)>) {
+    fn take_remaining_work(&mut self, search: &Search, index: usize, share: &FilePartition<'_>, looked_at: &mut Vec<InspectedCast>, unions: &mut Vec<WrittenUnion>, arrays: &mut Vec<(Identity, Vec<Identity>)>) {
         let (mut of_looked_at, mut of_unions) = (Vec::new(), Vec::new());
         {
             let mut left = search.left.lock();
             let files: Vec<FileId> = match *share {
-                Share::Of(mine) => mine.to_vec(),
-                Share::Rest { index, of, is_taken } => {
+                FilePartition::Files(mine) => mine.to_vec(),
+                FilePartition::Rest { index, of, is_taken } => {
                     let mut files: Vec<FileId> = (left.looked_at.keys().chain(left.unions.keys()).copied()).filter(|file| !is_taken.get(file.idx()).copied().unwrap_or(false) && file.idx() % of == index).collect();
                     files.sort_unstable_by_key(|file| file.0);
                     files.dedup();
@@ -3745,7 +3446,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// A place of `A | B` holds anything as soon as `A` is tainted, a literal there that no discriminant singles out is made plain, and what is narrowed to `B` is expected to be laid out as a `B`. `taking`: `accepts_external_data`, as far as asked.
     fn add_declared_unions(&mut self, file: FileId, out: &mut Vec<WrittenUnion>) {
         let hir = self.hir(file);
         for (index, node) in hir.types.iter().enumerate() {
@@ -3767,7 +3467,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn add_declared_union_members(&mut self, unions: &[WrittenUnion], search: &Search, plain_candidates: &mut FxHashSet<Identity>, out: &mut Vec<TypeId>, despecialized: &mut Vec<TypeId>) {
-        let (seen, tainted, plain, given) = (search.seen.read(), search.tainted.read(), search.despecialized.read(), search.given.read());
+        let (seen, tainted, plain, external_types) = (search.seen.read(), search.tainted.read(), search.despecialized.read(), search.external_types.read());
         let mut taking: FxHashMap<TypeId, bool> = FxHashMap::default();
         for WrittenUnion { members, .. } in unions {
             if members.iter().all(|member| seen.contains(&member.1)) {
@@ -3783,7 +3483,7 @@ impl<'p, 's> Checker<'p, 's> {
                     || match taking.get(&member) {
                         Some(&known) => known,
                         None => {
-                            let takes = self.accepts_external_data(member, &given);
+                            let takes = self.accepts_external_data(member, &external_types);
                             taking.insert(member, takes);
                             takes
                         }
@@ -3798,10 +3498,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// What a cast or an annotated variable with an initializer carries, both ways, as far as it has not been seen. BACK: the type of the operand of a cast to one of the types, of the initializer of a variable that is annotated with one.
-    /// ON: the type after `as`, or the annotation, where the operand is of one of the types (`base as Derived`: no assignability tells that), or where nothing is known of the operand and it is known for data (`data_origin`): `load(path) as Settings`
-    /// with a `load` of a package that yields `any`, `const s: Settings = loose` with a `loose` that holds what was parsed, the value of a JSON module. Not what goes through an `any` of the program's own, `(x: unknown) => x as T`: only a flow tells
-    /// what gets there.
     fn add_inspected_casts(&mut self, file: FileId, out: &mut Vec<InspectedCast>) {
         let hir = self.hir(file);
         let casts = self.file_exprs_by_kind(file).of(ExprTag::As).iter().filter_map(|&cast| match hir[cast].kind {
@@ -3817,7 +3513,6 @@ impl<'p, 's> Checker<'p, 's> {
                 continue;
             }
             self.prepare_enclosing(file, value);
-            // `x as unknown as T`: what is looked at as a `T` is `x`.
             let (mut operand, mut source) = (value, self.type_of_expr(file, value));
             while self.is_uninformative(source)
                 && let ExprKind::As { expr, .. } | ExprKind::NonNull(expr) = hir[operand].kind
@@ -3860,14 +3555,12 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Whether the code behind what the file declares is untyped code of the program that nobody has checked: JavaScript, or a TypeScript file that stands in for a declaration file. Not what a tool has made of a checked text.
     fn is_declaration_for_javascript(&self, declared_in: FileId) -> bool {
         let flows = &self.aot.flows;
         self.is_untyped_file(declared_in) && !flows.generated_from_checked_source.contains(&declared_in)
             || self.is_declaration_only(declared_in) && self.hir(declared_in).kind != FileKind::Declaration && !flows.checked_sources.contains(&declared_in)
     }
 
-    /// What the text makes, where untyped code made of it runs in its place: every object literal and the attributes of every JSX element, by its own type and by the type it is checked against. From there it gets on as in typed code.
     fn add_despecialized_records(&mut self, ty: TypeId, out: &mut Vec<TypeId>) {
         let ty = self.reduced(ty);
         for part in self.parts(ty).to_vec() {
@@ -3892,7 +3585,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// What an untyped file refers to that a typed file of the program declares, and what a typed file refers to that untyped code is behind. `imported`: what has been looked at, and whether from an untyped file.
     fn add_types_imported_across_boundary(&mut self, file: FileId, imported: &mut FxHashSet<(Sym, bool)>, handed_over: &mut FxHashSet<TypeId>, seen: &mut FxHashSet<TypeId>, out: &mut Vec<TypeId>) {
         let bound = self.bound(file);
         let is_untyped = self.is_untyped_file(file);
@@ -3950,8 +3642,8 @@ impl<'p, 's> Checker<'p, 's> {
                 self.add_boundary_types_at(part, 1, typed_side, at, seen, out);
             } else if depth < 4 {
                 for signature in self.signatures(part, false).to_vec() {
-                    let yielded = self.sig_return(signature);
-                    self.add_boundary_data(yielded, depth + 1, typed_side, at, seen, out);
+                    let produced = self.sig_return(signature);
+                    self.add_boundary_data(produced, depth + 1, typed_side, at, seen, out);
                 }
             }
         }
@@ -4072,8 +3764,8 @@ impl<'p, 's> Checker<'p, 's> {
                         let Some(parameter) = self.param_type_at(&parameters, index) else { break };
                         self.add_incoming_data(parameter, typed_side, at, &mut FxHashSet::default(), seen, out);
                     }
-                    let yielded = self.sig_return(signature);
-                    self.add_passed_values(yielded, depth + 1, typed_side, at, visited, seen, out);
+                    let produced = self.sig_return(signature);
+                    self.add_passed_values(produced, depth + 1, typed_side, at, visited, seen, out);
                 }
             }
             if !self.may_hold_objects(part) || self.is_array_or_tuple(part) || self.is_instantiable(part) {
@@ -4095,7 +3787,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// The arguments of the calls of the typed file whose callee is reached through a name that is imported from an untyped file, or from a file whose code is one: `render(state)`, `new View(options)`, `lib.store.set(item)`.
     fn add_types_passed_to_javascript(&mut self, file: FileId, handed_over: &mut FxHashSet<TypeId>, seen: &mut FxHashSet<TypeId>, out: &mut Vec<TypeId>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let by_kind = self.file_exprs_by_kind(file);
@@ -4241,8 +3932,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// What untyped code has to do with once it holds a value of the type. A function it calls with what it has made, and what the function yields it holds in turn. Of an object it reads and stores the properties, of a
-    /// container the elements. `out`: the types among all that which say properties. What a declaration file declares is gone through by its type arguments alone: nothing is laid out by it.
     fn add_boundary_types(&mut self, ty: TypeId, seen: &mut FxHashSet<TypeId>, out: &mut Vec<TypeId>) {
         if self.aot.flows.boundary_types_at_site > MAX_BOUNDARY_TYPES_PER_SITE {
             return;
@@ -4252,7 +3941,6 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         }
         self.aot.flows.boundary_types_at_site += u32::from(self.aot.flows.is_boundary_bounded);
-        // `wrap(): Box<Box<T>>`: it is laid out so far and no further.
         if self.is_nested_too_deeply(ty) {
             return;
         }
@@ -4270,13 +3958,12 @@ impl<'p, 's> Checker<'p, 's> {
         for is_construct in [false, true] {
             for signature in self.signatures(ty, is_construct).to_vec() {
                 let parameters = self.sig_params(signature);
-                // A rest parameter of a tuple type stands for several.
                 for index in 0..parameters.len() + 8 {
                     let Some(parameter) = self.param_type_at(&parameters, index) else { break };
                     self.add_boundary_types(parameter, seen, out);
                 }
-                let yielded = self.sig_return(signature);
-                self.add_boundary_types(yielded, seen, out);
+                let produced = self.sig_return(signature);
+                self.add_boundary_types(produced, seen, out);
             }
         }
         if matches!(self.data(ty), TypeData::Ref { .. } | TypeData::Tuple { .. }) {
@@ -4284,7 +3971,6 @@ impl<'p, 's> Checker<'p, 's> {
                 self.add_boundary_types(argument, seen, out);
             }
         }
-        // An array that untyped code hands in need not be one.
         if self.is_array_or_tuple(ty) {
             out.push(ty);
             return;
@@ -4345,7 +4031,16 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     pub(super) fn record_flow_into_untyped_slot(&mut self, own: TypeId, target: Option<TypeId>) {
-        if !self.may_hold_objects(own) && !matches!(self.data(own), TypeData::Fns { .. }) || !self.aot.escape_closure.visited_untyped_slots.insert((own, target)) {
+        if !self.may_hold_objects(own) && !matches!(self.data(own), TypeData::Fns { .. }) {
+            return;
+        }
+        if let Some(target) = target
+            && !matches!(self.data(own), TypeData::Fns { .. } | TypeData::Anon { origin: Origin::Function(_), .. })
+            && !self.accepts_untyped_values(target, 0)
+        {
+            return;
+        }
+        if !self.aot.escape_closure.visited_untyped_slots.insert((own, target)) {
             return;
         }
         self.record_escape_query(EscapeQuery::IntoUntypedSlot(own, target));
@@ -4363,9 +4058,9 @@ impl<'p, 's> Checker<'p, 's> {
                                 self.record_transitive_types(from, 0);
                             }
                         }
-                        let (yielded, expected) = (self.sig_return(mine), self.sig_return(theirs));
+                        let (produced, expected) = (self.sig_return(mine), self.sig_return(theirs));
                         if self.accepts_untyped_values(expected, 0) {
-                            self.record_transitive_types(yielded, 0);
+                            self.record_transitive_types(produced, 0);
                         }
                     }
                 }
@@ -4378,6 +4073,9 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn record_transitive_types(&mut self, ty: TypeId, depth: u32) {
+        if self.holds_only_primitives(ty) {
+            return;
+        }
         if depth == 0 {
             self.record_escape_query(EscapeQuery::OfType(ty));
         } else {
@@ -4401,7 +4099,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.record_escape_query(query);
     }
 
-    fn is_type_of_one_expression(&self, ty: TypeId) -> bool {
+    pub(super) fn is_type_of_one_expression(&self, ty: TypeId) -> bool {
         match *self.data(ty) {
             TypeData::Fns { ref decls, .. } => decls.first().is_some_and(|&(file, func)| matches!(self.hir(file)[func].kind, crate::hir::FnKind::Expr | crate::hir::FnKind::Arrow)),
             TypeData::Anon { origin: Origin::ObjectLiteral(..), .. } => true,
@@ -4414,21 +4112,22 @@ impl<'p, 's> Checker<'p, 's> {
             EscapeQuery::OfType(ty) => self.expand_transitive_types(ty, 0),
             EscapeQuery::IntoUntypedSlot(own, target) => self.expand_flow_into_untyped_slot(own, target),
             EscapeQuery::Entry(own, target) => self.walk_entry(own, target),
-            EscapeQuery::HandedOver(shown, is_tested_on_entry) => self.walk_what_is_handed_over(shown, is_tested_on_entry),
+            EscapeQuery::EscapingValues(shown, is_tested_on_entry) => self.walk_escaping_values(shown, is_tested_on_entry),
             EscapeQuery::UntypedIntoPlace(target) => self.record_untyped_inflow_to_slot(target),
             EscapeQuery::ThroughGuardsOf(shown) => self.record_untyped_inflow_through_type_guards(shown),
             EscapeQuery::UntypedIntoNestedClasses(target, includes_self) => self.expand_untyped_into_nested_classes_query(target, includes_self),
+            EscapeQuery::NestedInflows(ty, is_tested) => self.walk_nested_inflows(ty, is_tested),
         }
     }
 
-    fn record_escape_query(&mut self, query: EscapeQuery) {
+    pub(super) fn record_escape_query(&mut self, query: EscapeQuery) {
         if self.is_type_of_one_expression(query.subject()) {
             return self.expand_escape_query(query);
         }
         let flows = &mut self.aot.flows;
         if let Some(known) = flows.escape_notes.get(&query) {
             let Some(known) = known else { return };
-            return flows.noted.repeat(known, flows.place);
+            return flows.recorded.repeat(known, flows.place);
         }
         let program = self.p;
         let is_shared = self.aot.is_translating && !query.is_local() && !self.is_warming_up() && self.aot.flows.stored.is_none();
@@ -4436,18 +4135,18 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(found_elsewhere) = shared.and_then(|shared| shared.read().get(&query).cloned()) {
             let flows = &mut self.aot.flows;
             if let Some(known) = &found_elsewhere {
-                flows.noted.repeat(known, flows.place);
+                flows.recorded.repeat(known, flows.place);
             }
             flows.escape_notes.insert(query, found_elsewhere);
             return;
         }
         let careful_before = (self.results_are_provisional(), self.stack_half_used_count(), self.aot.flows.unknown_count);
         let (scope, mark) = (self.begin_scope(), self.non_cacheable_mark());
-        let position = self.aot.flows.noted.position();
+        let position = self.aot.flows.recorded.position();
         self.expand_escape_query(query);
         let is_settled = self.non_cacheable_mark() == mark && careful_before == (false, self.stack_half_used_count(), self.aot.flows.unknown_count);
         if self.end_scope(scope).is_ok() && is_settled {
-            let notes = self.aot.flows.noted.notes_since(position);
+            let notes = self.aot.flows.recorded.notes_since(position);
             let is_empty = notes.notes.is_empty() && notes.parameter_notes.is_empty();
             let belongs_to_task = notes.notes.iter().any(|note| crate::local::is_local_number(note.first.0) || crate::local::is_local_number(note.second.0));
             let notes = (!is_empty).then(|| Arc::new(notes));
@@ -4463,7 +4162,7 @@ impl<'p, 's> Checker<'p, 's> {
         if depth == 0 {
             self.record_any_inflow_to_parameters(ty, 0, &mut FxHashSet::default());
         }
-        for part in self.parts(ty).to_vec() {
+        for &part in self.parts(ty) {
             if self.declares_properties(part) && !self.is_instance_type(part) && !self.is_declared_externally(part) {
                 self.record_type_escapes(part);
             }
@@ -4471,7 +4170,7 @@ impl<'p, 's> Checker<'p, 's> {
                 continue;
             }
             if matches!(self.data(part), TypeData::Ref { .. } | TypeData::Tuple { .. }) {
-                for argument in self.type_arguments(part).to_vec() {
+                for &argument in self.type_arguments(part) {
                     self.record_transitive_types(argument, depth + 1);
                 }
             }
@@ -4499,7 +4198,6 @@ impl<'p, 's> Checker<'p, 's> {
         false
     }
 
-    /// `JSON.parse(..)`, `response.json()`, `structuredClone(..)`.
     fn is_external_data_source(&mut self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
         let ExprKind::Call(call) = hir[e].kind else { return false };
@@ -4583,7 +4281,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// The types that are written where what has come through a door of the file gets to.
     fn add_external_data_target_types(&mut self, file: FileId, out: &mut Vec<TypeId>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let by_kind = self.file_exprs_by_kind(file);
@@ -4609,18 +4306,18 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let mut holders: FxHashSet<SymbolId> = FxHashSet::default();
-        while let Some(mut yielded) = pending.pop() {
+        while let Some(mut produced) = pending.pop() {
             let is_kept_by_name = loop {
-                match bound.expr_parent[yielded.idx()] {
+                match bound.expr_parent[produced.idx()] {
                     Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
                         ExprKind::As { ty, .. } => {
                             out.push(self.type_from_node(file, ty));
-                            yielded = parent;
+                            produced = parent;
                         }
-                        ExprKind::Await(_) | ExprKind::NonNull(_) | ExprKind::Satisfies { .. } | ExprKind::Binary { op: BinOp::Or | BinOp::Nullish, .. } => yielded = parent,
-                        ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if obj == yielded => yielded = parent,
-                        ExprKind::Cond { yes, no, .. } if yes == yielded || no == yielded => yielded = parent,
-                        ExprKind::Binary { op: BinOp::And | BinOp::Comma, right, .. } if right == yielded => yielded = parent,
+                        ExprKind::Await(_) | ExprKind::NonNull(_) | ExprKind::Satisfies { .. } | ExprKind::Binary { op: BinOp::Or | BinOp::Nullish, .. } => produced = parent,
+                        ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if obj == produced => produced = parent,
+                        ExprKind::Cond { yes, no, .. } if yes == produced || no == produced => produced = parent,
+                        ExprKind::Binary { op: BinOp::And | BinOp::Comma, right, .. } if right == produced => produced = parent,
                         _ => break false,
                     },
                     Parent::VarInit(d) if hir[d].ty.is_none() && matches!(hir[hir[d].pat].kind, PatKind::Ident(_)) => {
@@ -4636,14 +4333,13 @@ impl<'p, 's> Checker<'p, 's> {
             if is_kept_by_name {
                 continue;
             }
-            self.prepare_enclosing(file, yielded);
-            if let Some(expected) = self.contextual_type(file, yielded, ContextFlags::empty()) {
+            self.prepare_enclosing(file, produced);
+            if let Some(expected) = self.contextual_type(file, produced, ContextFlags::empty()) {
                 out.push(expected);
             }
         }
     }
 
-    /// Nobody else can hold what the expression yields, nor anything that hangs below it: `JSON.parse(text)`, with one argument: a reviver sees what is made. Not what a variable holds.
     pub fn is_syntactically_fresh_graph(&mut self, file: FileId, e: ExprId) -> bool {
         match self.hir(file)[e].kind {
             ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) => self.is_syntactically_fresh_graph(file, expr),
@@ -4658,10 +4354,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Where the value of the expression comes from, going by the text, if it is of type `any` or `unknown`. `None`: it has a type, or it is the program's own: `x as any` of an `x`
-    /// that has a type, `(x as any).field`, what `new` makes.
-    ///
-    /// Nothing rests on it but which types take an object as it is: what is not let in is turned away where it is read.
     pub fn data_origin(&mut self, file: FileId, e: ExprId) -> Option<DataOrigin> {
         self.data_origin_at_depth(file, e, 0)
     }
@@ -4682,7 +4374,6 @@ impl<'p, 's> Checker<'p, 's> {
         if self.unverified_claim(file, e).is_some() {
             return Some(DataOrigin::Prediction);
         }
-        // Of two, the one that is known for data.
         let either = |a: Option<DataOrigin>, b: Option<DataOrigin>| a.into_iter().chain(b).min();
         match self.hir(file)[e].kind {
             ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) | ExprKind::AsConst(expr) => self.data_origin_at_depth(file, expr, depth + 1),
@@ -4699,7 +4390,6 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 _ => Some(DataOrigin::Function),
             },
-            // What data holds is data. `(element as any).parent`: what the program's own object holds, the program has put there.
             ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => {
                 let holder = self.type_of_expr(file, obj);
                 if is_uninformative(self, holder) { self.data_origin_at_depth(file, obj, depth + 1) } else { Some(DataOrigin::Property) }
@@ -4715,13 +4405,11 @@ impl<'p, 's> Checker<'p, 's> {
                 let (hir, bound) = (self.hir(of), self.bound(of));
                 let PatParent::Var(d) = bound.pat_parent[pat.idx()] else { return named };
                 let otherwise = Some(if hir[d].ty.is_some() { DataOrigin::Annotated } else { DataOrigin::Inferred });
-                // It holds what it is initialized with.
                 if hir[d].pat != pat || hir[d].init.is_none() || !bound.assignments_to(bound.pat_symbol[pat.idx()]).is_empty() {
                     return otherwise;
                 }
                 match self.data_origin_at_depth(of, hir[d].init, depth + 1) {
                     Some(origin) if origin.is_known_plain_data() => Some(origin),
-                    // `const loose: any = typed`
                     None => None,
                     _ => otherwise,
                 }
@@ -4730,7 +4418,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `stays`: what is of type `ty` is in a container, or is held by what is.
     fn add_types_staying_untyped(&mut self, ty: TypeId, stays: bool, seen: &mut FxHashSet<(TypeId, bool)>, out: &mut Vec<TypeId>) {
         self.walk_types_staying_untyped(ty, stays, &mut (seen, out));
     }
@@ -4754,11 +4441,8 @@ impl<'p, 's> Checker<'p, 's> {
     fn walk_contained_types<W: Walk>(&mut self, ty: TypeId, stays: bool, walk: &mut W) {
         if let TypeData::Union(parts) = self.data(ty) {
             let parts: Vec<TypeId> = parts.to_vec();
-            // What an object is looked at as of which it is not known which part it is of.
-            // Of the object types among the parts alone, as `FileBuild::common_layout` has it: `{ a: boolean } | { a: boolean; b: boolean } | undefined`.
             let objects: Vec<TypeId> = parts.iter().copied().filter(|&part| self.declares_properties(part)).collect();
             if stays && objects.len() > 1 {
-                // Its properties are unions in turn, of what the parts have by the name.
                 let objects = self.union(&objects);
                 let common = self.common_supertype_of_union(objects);
                 self.walk_types_staying_untyped(common, true, walk);
@@ -4778,7 +4462,6 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             match self.built_in_for_type(ty) {
                 Some(BuiltIn::Function | BuiltIn::Claimed) => return,
-                // `Map<K, V>`, `Set<T>`, `Promise<T>`
                 Some(BuiltIn::Instance(_)) => {
                     for &argument in self.type_arguments(ty) {
                         self.walk_types_staying_untyped(argument, true, walk);
@@ -4792,19 +4475,17 @@ impl<'p, 's> Checker<'p, 's> {
                     self.walk_types_staying_untyped(argument, true, walk);
                 }
             }
-            // Plain data is no object of a class.
             if self.is_instance_type(ty) {
                 return;
             }
             let Some(members) = self.members(ty) else { return };
-            let goes_on = !self.is_nested_too_deeply(ty);
+            let goes_on = !self.is_nested_too_deeply(ty) && !(self.mentions_ambient_type_param(ty) && self.generic_form(ty).is_some_and(|form| form != ty));
             if !goes_on && let Some(form) = self.generic_form(ty) {
                 self.walk_types_staying_untyped(form, true, walk);
             }
             for info in members.shape().index.iter().filter(|_| goes_on) {
                 self.walk_types_staying_untyped(info.value, true, walk);
             }
-            // The type of a module says what it exports, and no object is laid out by it: `import * as data from "./x.json"`, `import("./x.json")`.
             let is_module = matches!(self.data(ty), TypeData::Anon { origin: Origin::Module(..), .. });
             if !self.declares_properties(ty) && !is_module {
                 return;
@@ -4817,6 +4498,37 @@ impl<'p, 's> Checker<'p, 's> {
                 self.walk_types_staying_untyped(of_field, stays, walk);
             }
         }
+    }
+
+    fn mentions_ambient_type_param(&mut self, ty: TypeId) -> bool {
+        let mut pending = vec![ty];
+        while let Some(&at) = pending.last() {
+            if self.aot.flows.ambient_type_param_mentions.contains_key(&at) {
+                pending.pop();
+                continue;
+            }
+            let declared_in = match *self.data(at) {
+                TypeData::TypeParam(file, ..) => Some(file),
+                TypeData::ThisParam(declared) => Some(declared.file),
+                _ => None,
+            };
+            if let Some(file) = declared_in {
+                let mentions = self.is_declaration_only(file);
+                self.aot.flows.ambient_type_param_mentions.insert(at, mentions);
+                pending.pop();
+                continue;
+            }
+            let referred = self.referenced_types(at);
+            let known = pending.len();
+            pending.extend(referred.iter().copied().filter(|argument| !self.aot.flows.ambient_type_param_mentions.contains_key(argument)));
+            if pending.len() > known {
+                continue;
+            }
+            let mentions = referred.iter().any(|argument| self.aot.flows.ambient_type_param_mentions[argument]);
+            self.aot.flows.ambient_type_param_mentions.insert(at, mentions);
+            pending.pop();
+        }
+        self.aot.flows.ambient_type_param_mentions[&ty]
     }
 
     fn nested_types_staying_untyped(&mut self, ty: TypeId, stays: bool) -> std::rc::Rc<[TypeId]> {
@@ -4857,7 +4569,6 @@ impl<'p, 's> Checker<'p, 's> {
         are_shared.then(|| &program.aot.flows.lists[usize::from(self.aot.is_after_check)])
     }
 
-    /// The value of an expression whose type `is_untyped` is held to `target`, which says how objects are laid out.
     pub fn dictionaries_wider_than(&mut self, view: TypeId, record: TypeId) -> Vec<TypeId> {
         let mut accepting_more = Vec::new();
         if view == TypeId::UNRESOLVED || record == TypeId::UNRESOLVED {
@@ -4879,15 +4590,15 @@ impl<'p, 's> Checker<'p, 's> {
             let Some(members) = self.members(part) else { continue };
             for info in members.shape().index.iter().filter(|info| info.key != TypeId::NUMBER) {
                 let value = self.instantiate(info.value, members.mapper);
-                let mut takes_more = false;
+                let mut accepts_more = false;
                 for prop in of_record.shape().props.iter() {
                     let held = self.type_of_prop(prop, of_record.mapper);
                     if value.is_any() || !self.is_assignable(value, held) {
-                        takes_more = true;
+                        accepts_more = true;
                         break;
                     }
                 }
-                if takes_more {
+                if accepts_more {
                     accepting_more.push(part);
                     break;
                 }
@@ -4905,18 +4616,9 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return known.to_vec();
         }
-        let caches = self.type_caches().filter(|_| is_published(ty));
-        if let Some(known) = caches.and_then(|caches| caches.dictionaries.get_as(ty, |known| known.clone())) {
-            let found = known.to_vec();
-            self.aot.flows.dictionaries.insert(ty, known);
-            return found;
-        }
         let (found, is_cacheable) = self.compute_cacheable(|c| c.find_dictionaries_in(ty));
         if is_cacheable {
             self.aot.flows.dictionaries.insert(ty, found.as_slice().into());
-            if let Some(caches) = caches.filter(|_| found.iter().all(|&part| is_published(part)) && !self.has_order_dependent_results()) {
-                caches.dictionaries.insert(ty, found.as_slice().into());
-            }
         }
         found
     }
@@ -4936,22 +4638,22 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     pub fn record_stored_read_only(&mut self, held: TypeId, dictionary: TypeId) {
-        self.aot.flows.noted.add_pair(NoteKind::StoredReadOnly, held, dictionary);
+        self.aot.flows.recorded.add_pair(NoteKind::StoredReadOnly, held, dictionary);
     }
 
     pub fn record_read_only_passed_on(&mut self, dictionary: TypeId) {
-        self.aot.flows.noted.add_all(NoteKind::ReadOnlyPassedOn, &[dictionary]);
+        self.aot.flows.recorded.add_all(NoteKind::ReadOnlyPassedOn, &[dictionary]);
     }
 
     pub fn record_untyped_inflow(&mut self, target: TypeId) {
         let at = self.aot.flows.place;
-        self.aot.flows.noted.add_untyped_inflow(target, at);
+        self.aot.flows.recorded.add_untyped_inflow(target, at);
     }
 
     pub fn record_untyped_inflow_to_union_members(&mut self, arms: &[TypeId]) {
         for (index, &arm) in arms.iter().enumerate() {
             for &other in &arms[index + 1..] {
-                self.aot.flows.noted.add_pair(NoteKind::UntypedIntoBoth, arm, other);
+                self.aot.flows.recorded.add_pair(NoteKind::UntypedIntoBoth, arm, other);
             }
         }
     }
@@ -4960,15 +4662,22 @@ impl<'p, 's> Checker<'p, 's> {
         if ty == TypeId::UNRESOLVED {
             return;
         }
+        let at = self.aot.flows.place;
+        if self.aot.flows.nested_untyped_inflow_sites.get(&ty).is_some_and(|&earliest| earliest <= at) {
+            return;
+        }
         let views = self.nested_types_staying_untyped(ty, false);
         for &view in views.iter() {
             self.record_untyped_inflow(view);
+        }
+        if self.aot.flows.nested_types_staying_untyped.contains_key(&(ty, false)) {
+            self.aot.flows.nested_untyped_inflow_sites.insert(ty, at);
         }
     }
 
     pub fn record_any_inflow(&mut self, target: TypeId) {
         let at = self.aot.flows.place;
-        self.aot.flows.noted.add_any_inflow(target, at);
+        self.aot.flows.recorded.add_any_inflow(target, at);
     }
 
     pub fn is_any_like(&mut self, ty: TypeId) -> bool {
@@ -5139,8 +4848,8 @@ impl<'p, 's> Checker<'p, 's> {
                         self.record_untyped_inflow_to_classes(parameter);
                     }
                     if depth < 2 {
-                        let yielded = self.sig_return(signature);
-                        self.record_untyped_inflow_to_parameters(yielded, depth + 1, seen);
+                        let produced = self.sig_return(signature);
+                        self.record_untyped_inflow_to_parameters(produced, depth + 1, seen);
                     }
                 }
             }
@@ -5199,12 +4908,28 @@ impl<'p, 's> Checker<'p, 's> {
             if self.is_untyped_file(module.file) || self.hir(module.file).kind == FileKind::Declaration {
                 continue;
             }
-            let yielded = self.type_of_expr(file, e);
-            let of_module = if is_promised { self.awaited(yielded) } else { yielded };
+            let produced = self.type_of_expr(file, e);
+            let of_module = if is_promised { self.awaited(produced) } else { produced };
             let pos = self.hir(file)[e].pos;
             self.set_current_site(file, pos);
             self.record_untyped_inflow_to_parameters(of_module, 0, &mut FxHashSet::default());
         }
+    }
+
+    pub(super) fn may_have_type_predicate(&mut self, ty: TypeId) -> bool {
+        if self.cached_type_flag(ty, type_flags::HAS_NO_TYPE_PREDICATE, 0).is_some() {
+            return false;
+        }
+        let (found, is_cacheable) = self.compute_cacheable(|c| {
+            c.parts(ty).iter().any(|&part| {
+                let signatures: Vec<SigId> = c.signatures(part, false).iter().copied().collect();
+                signatures.into_iter().any(|signature| c.sig_predicate(signature).is_some())
+            })
+        });
+        if !found && is_cacheable && !self.is_warming_up() && !self.has_order_dependent_results() {
+            self.cache_type_flag(ty, type_flags::HAS_NO_TYPE_PREDICATE, 0, false);
+        }
+        found
     }
 
     pub(super) fn record_untyped_inflow_through_type_guards(&mut self, shown: TypeId) {
@@ -5346,13 +5071,10 @@ impl<'p, 's> Checker<'p, 's> {
 
     pub fn record_log_build_check(&mut self, target: TypeId, road: usize) {
         let at = self.aot.flows.place;
-        self.aot.flows.noted.add_check(target, at);
-        self.aot.flows.noted.others().checked_by_path[road] += 1;
+        self.aot.flows.recorded.add_check(target, at);
+        self.aot.flows.recorded.others().checked_by_path[road] += 1;
     }
 
-    /// The type that the checker has for where the value of `e` goes, if `e` is an argument, an element of an array literal, the value of
-    /// a property of an object literal, or what is assigned. That is a place like any other, whether or not the translated program
-    /// has one of that type there: `map.set(key, e)`, `list.push(e)`, `[e]`, `options.handler = e`.
     pub fn type_pairs_narrowed_together(&mut self, declared: TypeId, narrowed: TypeId) -> Vec<(TypeId, TypeId)> {
         let (mut pairs, mut seen, mut pending) = (Vec::new(), FxHashSet::default(), vec![(declared, narrowed, 0u32)]);
         while let Some((from, to, depth)) = pending.pop() {
@@ -5470,19 +5192,15 @@ impl<'p, 's> Checker<'p, 's> {
             Parent::Expr(parent) => match hir[parent].kind {
                 ExprKind::Call(call) | ExprKind::New(call) => hir[call].callee != e,
                 ExprKind::Array(_) => true,
-                // Whoever steps through the generator gets it.
                 ExprKind::Yield { value, star: false } => value == e,
-                // `links[id] ??= new Links()` stores what `links[id] = new Links()` does.
                 ExprKind::Assign { op: None | Some(crate::hir::BinOp::And | crate::hir::BinOp::Or | crate::hir::BinOp::Nullish), value, .. } => value == e,
                 _ => false,
             },
             Parent::Prop(_) => true,
-            // What an async function returns is what its promise is resolved with, which is no place of the translated program.
             Parent::Stmt(stmt) => matches!(hir[stmt].kind, crate::hir::StmtKind::Return(_)),
             Parent::FnBody(_) => true,
             _ => false,
         };
-        // An object literal is made as what it is checked against, or as its own type: `const all: Beta[] = [new Beta(), { .. }]`.
         if !enters || matches!(hir[e].kind, ExprKind::Spread(_) | ExprKind::Missing) {
             return None;
         }
@@ -5550,7 +5268,6 @@ impl<'p, 's> Checker<'p, 's> {
         (!self.is_uninformative(reached)).then_some(reached)
     }
 
-    /// `list.push(...more)`. `e`: the spread, an argument of a call or a `new`. The type of what it iterates over, and the type that the checker has for where each of those goes.
     pub fn spread_destination_types(&mut self, file: FileId, e: ExprId) -> Option<(TypeId, TypeId)> {
         let hir = self.hir(file);
         let ExprKind::Spread(spread) = hir[e].kind else { return None };
@@ -5564,7 +5281,6 @@ impl<'p, 's> Checker<'p, 's> {
         (!self.is_uninformative(source) && !self.is_uninformative(target)).then_some((source, target))
     }
 
-    /// `Object.assign(target, a, b)`. For each property of the type `source` that the type `target` has by the same name: the two types.
     pub fn assigned_property_types(&mut self, source: TypeId, target: TypeId) -> Vec<(TypeId, TypeId)> {
         let mut entering = Vec::new();
         for &from in &self.parts(source).to_vec() {
@@ -5581,10 +5297,6 @@ impl<'p, 's> Checker<'p, 's> {
         entering
     }
 
-    /// `source`: the type of a function of the program. `target`: the type of a place it is handed to. If that is a function type that a
-    /// declaration file or JavaScript declares, whoever calls the function there is not compiled with the program, and calls it with
-    /// what that type says: for each parameter, the type of what it is called with and the type it is declared with. These are the
-    /// signatures that the checker compares when it checks the one type against the other.
     pub fn callback_argument_types(&mut self, source: TypeId, target: TypeId) -> Vec<(TypeId, TypeId)> {
         let mut entering = Vec::new();
         if !matches!(self.data(source), TypeData::Fns { .. } | TypeData::Anon { origin: Origin::Function(_), .. }) {
@@ -5613,12 +5325,6 @@ impl<'p, 's> Checker<'p, 's> {
         entering
     }
 
-    /// A value of type `source` enters a place of type `target`. If both hold other values, those enter with it, and nothing tests them
-    /// there: the elements of an `S[]` that is taken for a `T[]`, what is in a `Map<K, S>` that is taken for a `Map<K, T>`, in a `Set`, a
-    /// `Promise`, an `Iterable`, a dictionary. For each, the type of what is held and the type it is held as: the type arguments, where
-    /// the two are instantiations of one declaration, or else what their index signatures say. Likewise what goes through a function:
-    /// its arguments the other way, from the type it is taken for to its own, and what it yields; and through a function that is a property of the two. The first time it is asked of the two
-    /// types, and nothing after that.
     pub fn nested_inflow_pairs(&mut self, source: TypeId, target: TypeId) -> Vec<(TypeId, TypeId)> {
         let mut entering = Vec::new();
         if source == target || self.is_uninformative(source) || self.is_uninformative(target) {
@@ -5664,7 +5370,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             let is_written = self.is_program_declared_record(from);
             let is_declared_only = !is_written && self.is_declared_only_record(from);
-            let mut said_by_from = None;
+            let mut from_summary = None;
             let visited: Option<Vec<u32>> = (is_large && is_written).then(|| {
                 let mut numbers = taking.clone();
                 if let TypeData::Ref { target: declared, .. } = self.data(from) {
@@ -5699,6 +5405,22 @@ impl<'p, 's> Checker<'p, 's> {
                     held.pairs.extend(arguments.iter().copied().zip(arguments_as.iter().copied()));
                     continue;
                 }
+                if self.declares_properties(from) && self.declares_properties(to) {
+                    let erased = (self.erase_cloned_type_params(from), self.erase_cloned_type_params(to));
+                    if erased != (from, to) {
+                        if erased.0 != erased.1 {
+                            let mut run = Vec::new();
+                            self.add_inflow_pairs_between_records(erased.0, erased.1, &mut run);
+                            held.add_run(erased.0, erased.1, &run);
+                            if self.aot.flows.visited_inflow_pairs.insert(erased) {
+                                let first = entering.len();
+                                entering.extend_from_slice(&run);
+                                self.truncate_growing_types(erased.0, erased.1, first, &mut entering);
+                            }
+                        }
+                        continue;
+                    }
+                }
                 if let Some(tags_of_from) = tags_of_from.as_ref().filter(|tags| !tags.is_empty()) {
                     let tags_of_to = self.tags_of(to);
                     let has_none_in_common = |(name, constants): &(Atom, Box<[u64]>)| tags_of_to.iter().any(|(same, taken)| same == name && constants.iter().all(|constant| !taken.contains(constant)));
@@ -5707,9 +5429,9 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                 }
                 let first = entering.len();
-                let (held_by_key, is_declared) = match said_by_from {
+                let (held_by_key, is_declared) = match from_summary {
                     Some(known) => known,
-                    None => *said_by_from.insert(self.element_and_call_types_of(from)),
+                    None => *from_summary.insert(self.element_and_call_types_of(from)),
                 };
                 let (slot_type, is_called) = match if is_large { large.element_and_call_types[number] } else { value_summary[number] } {
                     Some(known) => known,
@@ -5721,7 +5443,6 @@ impl<'p, 's> Checker<'p, 's> {
                         entering.push((held, slot_type));
                     }
                 }
-                // A function that is called as `to` says is handed what that takes, and what it yields is taken for what that yields.
                 for constructs in [false, true] {
                     if !is_declared[usize::from(constructs)] || !is_called[usize::from(constructs)] {
                         continue;
@@ -5739,8 +5460,6 @@ impl<'p, 's> Checker<'p, 's> {
                         }
                     }
                 }
-                // So with a function that is a property: `{ deps: (ctx: A) => .. }` that is taken for a `{ deps: (ctx: Big) => .. }` is handed a `Big`.
-                // Not of what the standard library or a declaration file writes: `then` yields a `Promise` of a type parameter of its own, whose `then` yields another: that does not end.
                 if !is_written {
                     if is_declared_only {
                         for (name, slot_type) in self.object_members(to) {
@@ -5779,6 +5498,112 @@ impl<'p, 's> Checker<'p, 's> {
             self.aot.flows.nested_pairs_cache.insert((source, target), std::rc::Rc::new(held));
         }
         entering
+    }
+
+    fn add_inflow_pairs_between_records(&mut self, from: TypeId, to: TypeId, entering: &mut Vec<(TypeId, TypeId)>) {
+        let (held_by_key, is_declared) = self.element_and_call_types_of(from);
+        let (slot_type, is_called) = self.element_and_call_types_of(to);
+        for key in 0..2 {
+            if let (Some(held), Some(slot_type)) = (held_by_key[key], slot_type[key]) {
+                entering.push((held, slot_type));
+            }
+        }
+        for constructs in [false, true] {
+            if !is_declared[usize::from(constructs)] || !is_called[usize::from(constructs)] {
+                continue;
+            }
+            for &called_as in self.signatures(to, constructs).iter() {
+                let arguments = self.sig_params(called_as);
+                for &declared_sig in self.signatures(from, constructs).iter() {
+                    let parameters = self.sig_params(declared_sig);
+                    for index in 0..parameters.len() {
+                        if let (Some(argument), Some(parameter)) = (self.param_type_at(&arguments, index), self.param_type_at(&parameters, index)) {
+                            entering.push((argument, parameter));
+                        }
+                    }
+                    entering.push((self.sig_return(declared_sig), self.sig_return(called_as)));
+                }
+            }
+        }
+        let members: Vec<(Atom, TypeId)> = if self.is_program_declared_record(from) {
+            self.function_members_cache(to).to_vec()
+        } else if self.is_declared_only_record(from) {
+            self.object_members(to)
+        } else {
+            Vec::new()
+        };
+        for (name, slot_type) in members {
+            if let Some(held) = self.type_of_property(from, name)
+                && held != slot_type
+            {
+                entering.push((held, slot_type));
+            }
+        }
+    }
+
+    fn collect_cloned_type_params(&mut self, ty: TypeId) -> std::rc::Rc<[TypeId]> {
+        let mut pending = vec![ty];
+        while let Some(&at) = pending.last() {
+            if self.aot.flows.cloned_type_params.contains_key(&at) {
+                pending.pop();
+                continue;
+            }
+            if matches!(*self.data(at), TypeData::TypeParam(_, _, around) if around != MapperId::IDENTITY) {
+                self.aot.flows.cloned_type_params.insert(at, [at].into());
+                pending.pop();
+                continue;
+            }
+            let mut referred = self.referenced_types(at);
+            referred.retain(|&argument| self.has_type_variables(argument));
+            let known = pending.len();
+            pending.extend(referred.iter().copied().filter(|argument| !self.aot.flows.cloned_type_params.contains_key(argument)));
+            if pending.len() > known {
+                continue;
+            }
+            let mut all: Vec<TypeId> = Vec::new();
+            for argument in &referred {
+                all.extend(self.aot.flows.cloned_type_params[argument].iter().copied());
+            }
+            all.sort_unstable_by_key(|parameter| parameter.0);
+            all.dedup();
+            self.aot.flows.cloned_type_params.insert(at, all.into());
+            pending.pop();
+        }
+        std::rc::Rc::clone(&self.aot.flows.cloned_type_params[&ty])
+    }
+
+    fn erase_cloned_type_params(&mut self, ty: TypeId) -> TypeId {
+        if !self.has_type_variables(ty) {
+            return ty;
+        }
+        let cloned = self.collect_cloned_type_params(ty);
+        if cloned.is_empty() {
+            return ty;
+        }
+        if let Some(&known) = self.aot.flows.erased_cloned_type_params.get(&ty) {
+            return known;
+        }
+        let (found, is_cacheable) = self.compute_cacheable(|c| {
+            let mut pairs: Vec<(TypeId, TypeId)> = Vec::with_capacity(cloned.len());
+            for &parameter in cloned.iter() {
+                let mut bound = c.base_constraint(parameter);
+                if bound == parameter {
+                    bound = TypeId::UNKNOWN;
+                }
+                let within: Vec<(TypeId, TypeId)> = c.collect_cloned_type_params(bound).iter().map(|&inner| (inner, TypeId::UNKNOWN)).collect();
+                if !within.is_empty() {
+                    let to_unknown = c.types().mapper(within);
+                    bound = c.instantiate(bound, to_unknown);
+                }
+                pairs.push((parameter, bound));
+            }
+            let to_constraints = c.types().mapper(pairs);
+            c.instantiate(ty, to_constraints)
+        });
+        if is_cacheable {
+            self.aot.flows.erased_cloned_type_params.insert(ty, found);
+        }
+        found
     }
 
     fn large_union_info(&mut self, union: TypeId) -> std::rc::Rc<LargeUnionInfo> {
@@ -5981,7 +5806,7 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn type_caches(&self) -> Option<&'p TypeCaches> {
         let program = self.p;
         let is_shared = self.aot.is_translating
-            && program.aot.storage.given.is_finalized()
+            && program.aot.storage.external_types.is_finalized()
             && !self.is_warming_up()
             && !self.results_are_provisional()
             && self.aot.flows.stored.is_none()
@@ -6091,8 +5916,8 @@ impl<'p, 's> Checker<'p, 's> {
         times[1] += u32::from(!grown.is_empty());
         let [at_all, for_what_grows] = *times;
         let levels = self.aot.flows.levels_inspected;
-        let most = &mut self.aot.flows.noted.max_inspected;
-        *most = [most[0].max(at_all), most[1].max(for_what_grows), most[2].max(levels)];
+        let maximum = &mut self.aot.flows.recorded.max_inspected;
+        *maximum = [maximum[0].max(at_all), maximum[1].max(for_what_grows), maximum[2].max(levels)];
         let why = if levels > MAX_LEVELS_INSPECTED {
             3
         } else if self.is_half_of_stack_in_use() {
@@ -6108,7 +5933,7 @@ impl<'p, 's> Checker<'p, 's> {
             grown = (first..entering.len()).collect();
         }
         let at = self.aot.flows.place;
-        self.aot.flows.noted.truncated.entry(at).or_default()[why] += 1;
+        self.aot.flows.recorded.truncated.entry(at).or_default()[why] += 1;
         for index in grown.into_iter().rev() {
             let (held, slot_type) = entering.remove(index);
             self.record_uninspected_type(held, slot_type);
@@ -6134,8 +5959,8 @@ impl<'p, 's> Checker<'p, 's> {
                 for constructs in [false, true] {
                     for &signature in self.signatures(part, constructs).iter() {
                         if is_what_it_is_called_as {
-                            let yielded = self.sig_return(signature);
-                            self.record_untyped_source_once(yielded);
+                            let produced = self.sig_return(signature);
+                            self.record_untyped_source_once(produced);
                             continue;
                         }
                         let parameters = self.sig_params(signature);
@@ -6159,15 +5984,12 @@ impl<'p, 's> Checker<'p, 's> {
         !self.files.module(file).is_lib && self.hir(file).kind != FileKind::Declaration
     }
 
-    /// Whether a value of type `source`, whose objects are not laid out, may enter a place for objects of one of `views` as it is: `source`
-    /// says what they are, which `any`, `unknown`, `object` and `{}` do not, and each is seen as one of the views. If so, note is taken
-    /// that the view admits them.
     pub fn accepts_untyped(&mut self, source: TypeId, views: &[TypeId]) -> bool {
         let source = self.reduced(source);
         if self.has_namespace_part(source) {
             let at = self.aot.flows.place;
             for &view in views {
-                self.aot.flows.noted.add_untyped(view, Some(source), at);
+                self.aot.flows.recorded.add_untyped(view, Some(source), at);
             }
         }
         let mut admitting = Vec::new();
@@ -6176,7 +5998,7 @@ impl<'p, 's> Checker<'p, 's> {
             let at = self.aot.flows.place;
             let is_external = self.is_beyond_layouts(source);
             for view in admitting {
-                self.aot.flows.noted.add_untyped(view, Some(source), at);
+                self.aot.flows.recorded.add_untyped(view, Some(source), at);
                 if is_external {
                     self.record_untyped_source(view);
                 }
@@ -6189,7 +6011,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 for &view in views {
                     if self.is_instance_type(view) && self.is_upcast_safe(part, view) {
-                        self.aot.flows.noted.add_untyped(view, Some(part), at);
+                        self.aot.flows.recorded.add_untyped(view, Some(part), at);
                     }
                 }
             }
@@ -6197,8 +6019,6 @@ impl<'p, 's> Checker<'p, 's> {
         is_accepted
     }
 
-    /// Appends the views that take the objects a value of type `source` can be. False: there is none for some, or it is not known what
-    /// they are.
     fn find_accepting_types(&mut self, source: TypeId, views: &[TypeId], out: &mut Vec<TypeId>) -> bool {
         if let TypeData::Union(parts) = self.data(source) {
             return parts.iter().all(|&part| self.find_accepting_types(part, views, out));
@@ -6210,7 +6030,6 @@ impl<'p, 's> Checker<'p, 's> {
             let bound = self.base_constraint(source);
             return bound != source && self.find_accepting_types(bound, views, out);
         }
-        // Whether a primitive may enter is not asked here.
         if self.has_primitive_flag(source) {
             return true;
         }
@@ -6233,8 +6052,6 @@ impl<'p, 's> Checker<'p, 's> {
         is_accepted_conservatively
     }
 
-    /// Whether an object literal that is checked against the type is checked against the type of the objects of a class. It is not made
-    /// as that: nothing but the constructor makes one.
     pub fn is_checked_against_class(&self, expected: TypeId) -> bool {
         self.parts(expected).iter().any(|&part| self.is_instance_type(part))
     }
@@ -6291,19 +6108,19 @@ impl<'p, 's> Checker<'p, 's> {
 
     pub fn record_untyped_object_evidence(&mut self, file: FileId) {
         let program = self.p;
-        let kept = self.take_notes_recorded();
+        let retained = self.take_notes_recorded();
         for (_, expressions) in self.code_with_recorded_escapes(file) {
             self.record_escapes_of(file, &expressions);
         }
         self.record_escapes_of(file, &[]);
-        let noted = self.take_notes_recorded();
-        self.aot.flows.noted = kept;
-        let noted = noted.renamed(|ty| match *self.data(ty) {
+        let recorded = self.take_notes_recorded();
+        self.aot.flows.recorded = retained;
+        let recorded = recorded.renamed(|ty| match *self.data(ty) {
             TypeData::Ref { target, .. } if self.is_instance_type(ty) => Some(target),
             _ => None,
         });
         let mut evidence: FlowNotes<Sym> = FlowNotes::default();
-        evidence.absorb_untyped_object_evidence(&noted);
+        evidence.absorb_untyped_object_evidence(&recorded);
         let places = program.aot.storage.recorded_untyped_object_evidence.get_or_init(|| (0..program.files.modules.len()).map(|_| Guarded::new(None)).collect());
         *places[file.idx()].lock() = Some(evidence.absorbed.and_then(|absorbed| absorbed.escapes.mutations).unwrap_or_default());
     }
@@ -6316,8 +6133,8 @@ impl<'p, 's> Checker<'p, 's> {
             if !is_compiled(file) || self.hir(file).kind == FileKind::Declaration || self.files.module(file).is_opaque() || self.is_untyped_file(file) {
                 continue;
             }
-            let Some(noted) = places[file.idx()].lock().take() else { return };
-            all.absorb_untyped_object_evidence(&noted);
+            let Some(recorded) = places[file.idx()].lock().take() else { return };
+            all.absorb_untyped_object_evidence(&recorded);
         }
         let evidence: FxHashSet<Sym> = all.all_with_untyped_object_evidence().into_iter().collect();
         let mut met: FxHashSet<Sym> = FxHashSet::default();
@@ -6362,57 +6179,48 @@ impl<'p, 's> Checker<'p, 's> {
         false
     }
 
-    /// Hands over what has been noted to this checker, which starts anew: what is noted from here on does not depend on what was asked
-    /// before.
-    pub fn record_external_data(&mut self, kept: &dyn Fn(&Identity) -> Option<TypeId>) -> usize {
-        let given = self.given();
+    pub fn record_external_data(&mut self, retained: &dyn Fn(&Identity) -> Option<TypeId>) -> usize {
+        let external_types = self.external_types();
         let mut unretained: Vec<Identity> = Vec::new();
-        for identity in &given.identities {
-            match kept(identity) {
+        for identity in &external_types.identities {
+            match retained(identity) {
                 Some(ty) => {
-                    self.aot.flows.noted.add_at(NoteKind::NoFixedLayout, ty, Place::NOWHERE);
+                    self.aot.flows.recorded.add_at(NoteKind::NoFixedLayout, ty, Place::NOWHERE);
                 }
                 None => unretained.push(*identity),
             }
         }
         unretained.sort_unstable();
         let atoms = self.atoms();
-        self.aot.flows.unretained_external_data = unretained.iter().filter_map(|identity| given.names.get(identity)).map(|names| names.iter().filter_map(|name| atoms.lookup(name)).collect()).collect();
+        self.aot.flows.unretained_external_data = unretained.iter().filter_map(|identity| external_types.names.get(identity)).map(|names| names.iter().filter_map(|name| atoms.lookup(name)).collect()).collect();
         unretained.len()
     }
 
     pub fn take_notes_recorded(&mut self) -> FlowNotes {
         self.aot.flows.visited_inflow_pairs.clear();
+        self.aot.flows.nested_untyped_inflow_sites.clear();
         self.aot.flows.looked_into.clear();
         self.aot.flows.uninspected.clear();
-        let mut noted = std::mem::take(&mut self.aot.flows.noted);
-        noted.sort_and_deduplicate();
-        noted
+        let mut recorded = std::mem::take(&mut self.aot.flows.recorded);
+        recorded.sort_and_deduplicate();
+        recorded
     }
 
-    // ───────────────────────────── kinds of types ─────────────────────────────
-
-    /// Whether a value of the type can be an object that the type says something of.
     #[inline]
     fn may_hold_objects(&self, ty: TypeId) -> bool {
-        self.row(ty) & rows::MAY_HOLD_OBJECTS != 0
+        self.row(ty) & type_flags::MAY_HOLD_OBJECTS != 0
     }
 
-    /// Whether it is a type that says which properties its objects have, so that they can be laid out by it. Neither a union nor a type
-    /// parameter: those stand for other types.
     #[inline]
     pub(super) fn declares_properties(&self, ty: TypeId) -> bool {
         let row = self.row(ty);
-        row & rows::DECLARES_PROPERTIES != 0 || row & rows::IS_NAMESPACE_OBJECT != 0 && matches!(self.data(ty), TypeData::Anon { origin: Origin::Module(namespace), .. } if self.is_reified_namespace(*namespace))
+        row & type_flags::DECLARES_PROPERTIES != 0 || row & type_flags::IS_NAMESPACE_OBJECT != 0 && matches!(self.data(ty), TypeData::Anon { origin: Origin::Module(namespace), .. } if self.is_reified_namespace(*namespace))
     }
 
-    /// Not `{}`, which anything is.
     fn has_properties(&mut self, ty: TypeId) -> bool {
         self.members(ty).is_some_and(|members| !members.shape().props.is_empty())
     }
 
-    /// Appends the types that say which properties an object has that is of type `ty`, or, with `in_arrays`, that is an element of an
-    /// array of type `ty`, however deep. `seen`: what has been looked at, since a type may be made of itself: `type Json = string | Json[]`.
     fn add_object_types_in(&mut self, ty: TypeId, in_arrays: bool, seen: &mut FxHashSet<TypeId>, out: &mut Vec<TypeId>) {
         let ty = self.reduced(ty);
         if !self.may_hold_objects(ty) || !seen.insert(ty) {
@@ -6440,10 +6248,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    // ───────────────────────────── types without a layout ─────────────────────────────
-
-    /// What the objects of the class or interface `sym` are, if what it extends says: an array, a function, an object of a class of the
-    /// engine. No code of the program makes such an object by itself, so it is never laid out.
     fn extends_untyped_code(&mut self, sym: Sym, depth: u32) -> bool {
         let declared: Vec<(FileId, Decl)> = self.files().decls_of(sym).to_vec();
         if declared.iter().any(|&(file, _)| self.is_untyped_file(file)) {
@@ -6481,7 +6285,6 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(&known) = self.aot.flows.roots.get(&sym) {
             return known;
         }
-        // What extends itself is an error, which has been reported.
         self.aot.flows.roots.insert(sym, Root::None);
         let is_called = self.files().decls_of(sym).iter().any(|&(file, decl)| {
             let hir = self.hir(file);
@@ -6507,14 +6310,10 @@ impl<'p, 's> Checker<'p, 's> {
         root
     }
 
-    /// As far as the program's library declares them.
     fn engine_classes(&self) -> Vec<Sym> {
         ENGINE_CLASSES.iter().filter_map(|name| self.global_type_symbol(self.atoms().intern(name))).collect()
     }
 
-    /// `interface Failure extends Error { code: string }`, `interface Callback { (): void; label: string }`, `Buffer`, and `Int32Array & { 0:
-    /// number }`, where the other types of the intersection only say more of the properties: what the objects of the type are, whatever
-    /// more it says of them. `None`: nothing of the kind, or an array (`array_subtype_element`), or a class of the engine itself.
     pub fn extended_built_in(&mut self, ty: TypeId) -> Option<BuiltIn> {
         match *self.data(ty) {
             TypeData::Ref { target, .. } if self.root_of(target) == Root::Class(target) => None,
@@ -6527,7 +6326,6 @@ impl<'p, 's> Checker<'p, 's> {
         self.is_primitive(ty) || matches!(self.built_in_for_type(ty), Some(BuiltIn::Instance(_)))
     }
 
-    /// The same, where `ty` may be a class of the engine or the type of a function itself.
     fn built_in_for_type(&mut self, ty: TypeId) -> Option<BuiltIn> {
         match *self.data(ty) {
             TypeData::Ref { target, .. } => match self.root_of(target) {
@@ -6551,10 +6349,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// The strings and the numbers that a value of the type can be, as far as the type names them. For strings and for numbers by
-    /// themselves: all of them, or none if it can be others as well, as with `string`, a template literal type, or a type parameter.
-    /// The type of a member of an enum names the value of the member. A numeric enum as a whole names nothing: flags are combined. In
-    /// an order that only depends on what they are.
     pub fn type_literals(&mut self, ty: TypeId) -> Vec<Literal> {
         let (mut strings, mut numbers): (Vec<Atom>, Vec<f64>) = (Vec::new(), Vec::new());
         let (mut is_any_string, mut is_any_number) = (false, false);
@@ -6573,7 +6367,6 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 TypeData::Intrinsic(Intrinsic::String) | TypeData::Template { .. } | TypeData::StringMapping { .. } => is_any_string = true,
                 TypeData::Intrinsic(Intrinsic::Number) | TypeData::Enum { .. } => is_any_number = true,
-                // Neither a string nor a number.
                 TypeData::Intrinsic(
                     Intrinsic::Undefined | Intrinsic::Missing | Intrinsic::UndefinedWidening | Intrinsic::Null | Intrinsic::NullWidening | Intrinsic::BigInt | Intrinsic::Symbol | Intrinsic::Object,
                 )
@@ -6610,7 +6403,6 @@ impl<'p, 's> Checker<'p, 's> {
         literals
     }
 
-    /// The primitive types that are assignable to the object type `ty`: a string is a `{ length: number }`.
     pub fn has_no_required_properties(&mut self, ty: TypeId) -> bool {
         let objects: Vec<TypeId> = self.parts(ty).iter().copied().filter(|&part| !self.has_primitive_flag(part)).collect();
         !objects.is_empty()
@@ -6627,8 +6419,8 @@ impl<'p, 's> Checker<'p, 's> {
         let is_task_independent = self.aot.flows.stored.is_none();
         if !self.results_are_provisional() {
             let row = if is_task_independent { self.shared_type_flags(ty) } else { 0 };
-            if row & rows::ASSIGNABLE_PRIMITIVES_KNOWN != 0 {
-                return PRIMITIVES.iter().enumerate().filter(|primitive| row >> (rows::ASSIGNABLE_PRIMITIVES_SHIFT + primitive.0 as u32) & 1 != 0).map(|primitive| *primitive.1).collect();
+            if row & type_flags::ASSIGNABLE_PRIMITIVES_KNOWN != 0 {
+                return PRIMITIVES.iter().enumerate().filter(|primitive| row >> (type_flags::ASSIGNABLE_PRIMITIVES_SHIFT + primitive.0 as u32) & 1 != 0).map(|primitive| *primitive.1).collect();
             }
             if let Some(known) = self.aot.flows.type_primitives.get(&ty) {
                 return known.clone();
@@ -6636,7 +6428,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let (found, is_cacheable) = self.compute_cacheable(|c| c.compute_type_primitives(ty));
         if is_cacheable {
-            let bits = PRIMITIVES.iter().enumerate().filter(|primitive| found.contains(primitive.1)).fold(rows::ASSIGNABLE_PRIMITIVES_KNOWN, |bits, primitive| bits | 1 << (rows::ASSIGNABLE_PRIMITIVES_SHIFT + primitive.0 as u32));
+            let bits = PRIMITIVES.iter().enumerate().filter(|primitive| found.contains(primitive.1)).fold(type_flags::ASSIGNABLE_PRIMITIVES_KNOWN, |bits, primitive| bits | 1 << (type_flags::ASSIGNABLE_PRIMITIVES_SHIFT + primitive.0 as u32));
             if !is_task_independent || !self.publish_type_flags(ty, bits) {
                 self.aot.flows.type_primitives.insert(ty, found.clone());
             }
@@ -6656,8 +6448,6 @@ impl<'p, 's> Checker<'p, 's> {
         primitives
     }
 
-    /// Whether `ty` has a property by every name that an object of type `view` cannot be without. If not, it is not assignable to it. The
-    /// same as `add_candidates` finds out for many types at once.
     fn has_required_names_of(&mut self, ty: TypeId, view: TypeId) -> bool {
         if let TypeData::Intersection(parts) = self.data(view) {
             return parts.iter().all(|&part| self.has_required_names_of(ty, part));
@@ -6675,19 +6465,14 @@ impl<'p, 's> Checker<'p, 's> {
         !is_weak || shape.props.iter().any(|prop| of_type.resolved.prop(prop.name).is_some())
     }
 
-    /// Adds the names of the properties of `ty`. Whether a type with an index signature can take it.
     fn add_property_names(&mut self, names: &mut Vec<Atom>, ty: TypeId) -> bool {
         let Some(members) = self.members(ty) else { return false };
         names.extend(members.shape().props.iter().map(|prop| prop.name));
         !members.shape().index.is_empty() || self.is_object_type_with_inferable_index(ty)
     }
 
-    /// The types of the objects that are not laid out and that the program need not have got from anyone: arrays, functions, the objects of
-    /// the classes of the engine, and whatever the program or the library of the language declares that is one of them and more. A class
-    /// as a value and a function that has been given properties are among them. With `any` for type parameters.
     pub fn kinds_declared(&self) -> KindsDeclared {
         let files = self.files();
-        // What a package declares is let in where it is seen to come in. Of JavaScript nothing is declared.
         let declaring: Vec<FileId> = (0..files.modules.len() as u32).map(FileId).filter(|&file| !(files.module(file).is_untyped() || (self.is_declaration_only(file) && !files.module(file).is_lib))).collect();
         KindsDeclared { found: declaring.chunks(KindsDeclared::FILES_PER_CHECKER).map(|_| OnceLock::new()).collect(), declaring, next: AtomicUsize::new(0), namespaces: OnceLock::new(), publish_lock: RwLock::new(()) }
     }
@@ -6727,7 +6512,6 @@ impl<'p, 's> Checker<'p, 's> {
                 } else {
                     (root == Root::None && symbol.flags.intersects(SymFlags::CLASS) && c.extends_untyped_code(sym, 0)).then_some(false)
                 };
-                // The class as a value, with what is static in it, and a function that has properties.
                 let is_value = files.flags(sym).intersects(SymFlags::CLASS | SymFlags::FUNCTION | SymFlags::VARIABLE) && files.each_export(sym).len() != 0 && {
                     let value = c.type_of_symbol(sym);
                     c.has_properties(value) && !(c.signatures(value, false).is_empty() && c.signatures(value, true).is_empty())
@@ -6738,17 +6522,17 @@ impl<'p, 's> Checker<'p, 's> {
         found
     }
 
-    fn kinds_without_fixed_layout(&mut self, noted: &FxHashSet<TypeId>, given: &[TypeId], required_names: &FxHashSet<Atom>, declared: &KindsDeclared, in_parallel: crate::util::InParallel<'_>) -> (Vec<Kind>, PropertyIndex, PropertyIndex) {
+    fn kinds_without_fixed_layout(&mut self, recorded: &FxHashSet<TypeId>, external_types: &[TypeId], required_names: &FxHashSet<Atom>, declared: &KindsDeclared, in_parallel: crate::util::InParallel<'_>) -> (Vec<Kind>, PropertyIndex, PropertyIndex) {
         const KINDS_PER_CHECKER: usize = 512;
         let mut kinds: Vec<(Kind, bool)> = vec![(Kind::Arrays, false), (Kind::Functions, true)];
         kinds.extend(self.engine_classes().into_iter().map(|class| (Kind::InstancesOf(class), false)));
-        let mut noted: Vec<TypeId> = noted.iter().copied().collect();
-        noted.sort_unstable_by_key(|ty| ty.0);
-        for ty in noted {
+        let mut recorded: Vec<TypeId> = recorded.iter().copied().collect();
+        recorded.sort_unstable_by_key(|ty| ty.0);
+        for ty in recorded {
             let is_function = matches!(self.built_in_for_type(ty), Some(BuiltIn::Function));
             kinds.push((Kind::Of(ty), is_function));
         }
-        kinds.extend(given.iter().map(|&ty| (Kind::ExternalTypes(ty), false)));
+        kinds.extend(external_types.iter().map(|&ty| (Kind::ExternalData(ty), false)));
         let files = self.files();
         let program = self.p;
         in_parallel(KindsDeclared::POOL_HELPERS, &|_| declared.help(program));
@@ -6835,7 +6619,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn kind_type(&mut self, kind: Kind) -> TypeId {
         let ty = match kind {
             Kind::Allocated(ty) | Kind::Assignable(ty) => return ty,
-            Kind::Of(ty) | Kind::ExternalTypes(ty) => ty,
+            Kind::Of(ty) | Kind::ExternalData(ty) => ty,
             Kind::Arrays => return self.array_of(TypeId::ANY),
             Kind::Functions => return self.global_ref(known::Function, &[]),
             Kind::InstancesOf(sym) => self.declared_type(sym),
@@ -6844,63 +6628,48 @@ impl<'p, 's> Checker<'p, 's> {
         self.permissive_instantiation(ty)
     }
 
-    // ───────────────────────────── the relation ─────────────────────────────
-
-    /// Whether an object that is made as `made` says is of type `view`, neither of them a union. That is the assignability relation. In
-    /// either a type parameter stands for anything, because type arguments do not exist at run time: what generic code is handed as a
-    /// `Box<T>` was made as a `Box<string>`, and the `Both<T>` it allocates is a `Cache<string>` to the caller.
-    ///
-    /// With one exception: a type parameter of `made` does not stand for a CONSTANT. Where a field of `view` is a discriminant, that of
-    /// `made` goes by its bound (`discriminants_agree`): the `Token<TKind>` of `createToken<TKind>` has a `kind` that is a `SyntaxKind`, and
-    /// is neither an `AsteriskToken` nor a `{ kind: "untransformed" }`. It becomes one by the test on the way out of the generic code,
-    /// see `Subtypes::verdict`. Not so for an object of a generic class: one layout for all instantiations, no shape transition.
-    ///
-    /// Once it is known which names are stored, `view` has no property by any other, nor have the types of its properties.
-    fn is_allocated_subtype(&mut self, made: TypeId, view: TypeId) -> bool {
-        self.is_allocated_subtype_by(made, view, true)
+    fn is_allocated_subtype(&mut self, created: TypeId, view: TypeId) -> bool {
+        self.is_allocated_subtype_by(created, view, true)
     }
 
-    /// `goes_by_fields`: see below. Without it, it is assignability as the language has it, dead properties and type parameters aside.
-    fn is_allocated_subtype_by(&mut self, made: TypeId, view: TypeId, goes_by_fields: bool) -> bool {
+    fn is_allocated_subtype_by(&mut self, created: TypeId, view: TypeId, goes_by_fields: bool) -> bool {
         let relation = if self.aot.flows.stored.is_some() { Relation::AssignableAsStored } else { Relation::Assignable };
-        if self.is_provably_related(made, view, relation) {
+        if self.is_provably_related(created, view, relation) {
             return true;
         }
-        // It has the live fields, with the same discriminants: a subtype whatever its reference fields are declared to point to. A read
-        // through the narrower type is tested (`Lowering::readField`). At the link only, where the dead fields are known.
-        if goes_by_fields && self.aot.flows.stored.is_some() && self.declares_properties(made) && self.declares_properties(view) && self.has_same_fields(made, view, false) {
+        if goes_by_fields && self.aot.flows.stored.is_some() && self.declares_properties(created) && self.declares_properties(view) && self.has_same_fields(created, view, false) {
             return true;
         }
         if goes_by_fields
             && self.aot.flows.stored.is_some()
-            && self.declares_properties(made)
+            && self.declares_properties(created)
             && self.declares_properties(view)
-            && !self.is_provably_related(view, made, relation)
-            && self.is_assignable_ignoring_optionality(made, view, relation)
+            && !self.is_provably_related(view, created, relation)
+            && self.is_assignable_ignoring_optionality(created, view, relation)
         {
             return true;
         }
-        let is_created_generic = self.has_type_variables(made);
+        let is_created_generic = self.has_type_variables(created);
         if !is_created_generic && !self.has_type_variables(view) {
             return false;
         }
-        if is_created_generic && !self.is_instance_type(made) && !self.discriminants_agree(made, view, relation, !goes_by_fields) {
+        if is_created_generic && !self.is_instance_type(created) && !self.discriminants_agree(created, view, relation, !goes_by_fields) {
             return false;
         }
-        let (made, view) = (self.permissive_instantiation(made), self.permissive_instantiation(view));
-        self.is_provably_related(made, view, relation)
+        let (created, view) = (self.permissive_instantiation(created), self.permissive_instantiation(view));
+        self.is_provably_related(created, view, relation)
     }
 
-    fn may_be_subtype_at_runtime(&mut self, given: TypeId, view: TypeId) -> bool {
-        self.declares_properties(given) && self.declares_properties(view) && self.is_provably_related(given, view, Relation::Comparable)
+    fn may_be_subtype_at_runtime(&mut self, candidate: TypeId, view: TypeId) -> bool {
+        self.declares_properties(candidate) && self.declares_properties(view) && self.is_provably_related(candidate, view, Relation::Comparable)
     }
 
-    fn is_narrowed_from(&mut self, view: TypeId, made: TypeId) -> bool {
-        if !matches!(self.data(view), TypeData::Intersection(_)) || !self.declares_properties(made) || !self.declares_properties(view) {
+    fn is_narrowed_from(&mut self, view: TypeId, created: TypeId) -> bool {
+        if !matches!(self.data(view), TypeData::Intersection(_)) || !self.declares_properties(created) || !self.declares_properties(view) {
             return false;
         }
         let relation = if self.aot.flows.stored.is_some() { Relation::AssignableAsStored } else { Relation::Assignable };
-        let (Some(of_created), Some(layout_entry)) = (self.members(made), self.members(view)) else { return false };
+        let (Some(of_created), Some(layout_entry)) = (self.members(created), self.members(view)) else { return false };
         let is_plain = |shape: &Shape| shape.call.is_empty() && shape.construct.is_empty() && shape.index.is_empty();
         if !is_plain(of_created.shape()) || !is_plain(layout_entry.shape()) || of_created.shape().props.len() != layout_entry.shape().props.len() {
             return false;
@@ -6919,8 +6688,8 @@ impl<'p, 's> Checker<'p, 's> {
         true
     }
 
-    fn is_assignable_ignoring_optionality(&mut self, made: TypeId, view: TypeId, relation: Relation) -> bool {
-        let (Some(of_created), Some(layout_entry)) = (self.members(made), self.members(view)) else { return false };
+    fn is_assignable_ignoring_optionality(&mut self, created: TypeId, view: TypeId, relation: Relation) -> bool {
+        let (Some(of_created), Some(layout_entry)) = (self.members(created), self.members(view)) else { return false };
         let is_plain = |shape: &Shape| shape.call.is_empty() && shape.construct.is_empty() && shape.index.is_empty();
         if !is_plain(of_created.shape()) || !is_plain(layout_entry.shape()) {
             return false;
@@ -6949,11 +6718,8 @@ impl<'p, 's> Checker<'p, 's> {
         is_one_optional
     }
 
-    /// Whether every field of `view` whose type is a set of constants takes what `made`, as it is declared, has in that field. `by_bounds`, for what no flow has brought
-    /// (`subtypes.rs`, phase B): also every field of `view` that holds primitives alone, where that of `made` is a type parameter whose bound is primitives alone. A numeric enum as
-    /// a whole names no constant, and `TKind extends SyntaxKind` is no `TypeMapKind` all the same.
-    fn discriminants_agree(&mut self, made: TypeId, view: TypeId, relation: Relation, by_bounds: bool) -> bool {
-        let (Some(of_created), Some(layout_entry)) = (self.members(made), self.members(view)) else { return true };
+    fn discriminants_agree(&mut self, created: TypeId, view: TypeId, relation: Relation, by_bounds: bool) -> bool {
+        let (Some(of_created), Some(layout_entry)) = (self.members(created), self.members(view)) else { return true };
         let are_primitives = |c: &Self, ty: TypeId| c.parts(ty).iter().all(|&part| c.has_primitive_flag(part));
         for view_prop in layout_entry.shape().props.iter() {
             let view_type = self.type_of_prop(view_prop, layout_entry.mapper);
@@ -6973,18 +6739,12 @@ impl<'p, 's> Checker<'p, 's> {
         true
     }
 
-    /// `e`: a name whose declared union the checker has narrowed because a type guard `g(e)` returned true. A guard proves its own type and
-    /// nothing else. The checker keeps the union members that are SUBTYPES of that type, which drops `Cls { name?: string }` under
-    /// `n is { name: string }` although the guard was truthful for it. What is left of `stored` is every member that has the fields
-    /// the guard's type requires, optional or not, besides what the checker kept (`own`). `None`: no guard is seen to be the cause.
     pub(super) fn guard_proven_type(&mut self, file: FileId, e: ExprId, stored: TypeId, own: TypeId) -> Option<TypeId> {
         let guard = self.guard_narrowing(file, e)?;
-        let kept = self.filter(stored, |c, part| c.parts(own).contains(&part) || (c.declares_properties(part) && c.has_required_names_of(part, guard)));
-        Some(kept)
+        let retained = self.filter(stored, |c, part| c.parts(own).contains(&part) || (c.declares_properties(part) && c.has_required_names_of(part, guard)));
+        Some(retained)
     }
 
-    /// The type of the nearest type guard that is known to have returned true for the name `e` where it is read, with nothing but other
-    /// conditions in between.
     fn guard_narrowing(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         const MAX_STEPS: usize = 32;
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -7014,7 +6774,6 @@ impl<'p, 's> Checker<'p, 's> {
         None
     }
 
-    /// From here on `is_allocated_subtype` and all that goes before it leave out the properties whose names are not among `stored`.
     fn restrict_to_stored_names(&mut self, stored: &FxHashSet<Atom>) {
         let bits = self.p.aot.storage.stored_names.get_or_init(|| {
             let mut bits: Vec<u64> = Vec::new();
@@ -7030,8 +6789,6 @@ impl<'p, 's> Checker<'p, 's> {
         self.aot.flows.stored = Some(bits.clone());
     }
 
-    /// Whether the objects of the type are made by the program, as far as the type tells. What a declaration file declares is made
-    /// elsewhere, and so is an array: which names the program stores says nothing of what those have.
     pub(in crate::check) fn is_created_by_program(&self, ty: TypeId) -> bool {
         match *self.data(ty) {
             TypeData::Ref { target, .. } => !self.is_declaration_only(target.file),
@@ -7040,21 +6797,16 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Whether a declaration file declares the record type. The program may allocate it, `const o: FromADts = { .. }`, but what it is there
-    /// for is host objects, which reach its places by ways nobody follows: a property of another host object, a cast of `require(..)`.
-    /// So it always admits foreign objects.
     pub fn is_declared_only_record(&self, ty: TypeId) -> bool {
         match self.data(ty) {
             TypeData::Ref { target, .. } => self.is_declaration_only(target.file),
-            TypeData::Anon { origin: Origin::TypeLiteral(file, _), .. } => self.is_declaration_only(*file),
+            TypeData::Anon { origin: Origin::TypeLiteral(file, literal), .. } => self.is_declaration_only(*file) && !self.is_safe_validate_result(*file, *literal),
             TypeData::Intersection(parts) => parts.iter().any(|&part| self.is_declared_only_record(part)),
             TypeData::Synth(shape) if shape.spread_rank >= u32::MAX - 1 => shape.created_from.is_some_and(|(_, viewed)| self.parts(viewed).iter().any(|&part| self.is_declared_only_record(part))),
             _ => false,
         }
     }
 
-    /// `readonly T[]`, `ReadonlyArray<T>` and a readonly tuple as what they are when the program runs: `T[]`, and the tuple. Any other type
-    /// as it is.
     pub(in crate::check) fn without_readonly(&mut self, ty: TypeId) -> TypeId {
         match *self.data(ty) {
             TypeData::Tuple { readonly: true, ref flags, .. } => {
@@ -7069,8 +6821,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Whether it is known that no code of the program stores a property by the name. Not known: before the program is linked; of a name
-    /// that only this checker has come by; of a key that is a symbol and of `#x`, which whoever counts the stores spells otherwise.
     pub(in crate::check) fn is_never_stored(&self, name: Atom) -> bool {
         let Some(stored) = &self.aot.flows.stored else { return false };
         if name.is_none() || name.is_own() {
@@ -7081,36 +6831,28 @@ impl<'p, 's> Checker<'p, 's> {
         !is_stored && !self.atoms().bytes(name).starts_with(&[0xFE])
     }
 
-    /// Appends those of the types of `having` that have a property by every name that an object of type `view` cannot be without. No other
-    /// is assignable to it. In no order, and some more than once.
     fn add_candidates(&mut self, having: &PropertyIndex, view: TypeId, out: &mut Vec<u32>) {
         let Some(members) = self.members(view) else { return };
         let shape = members.shape();
-        // The members of the global `Object`, which every object is taken to have.
         let object = self.global_ref(known::Object, &[]);
         let any_object_type = self.members(object);
         let mut is_weak = shape.index.is_empty();
         let mut required: Vec<&[u32]> = Vec::new();
         let mut required_names: Vec<Atom> = Vec::new();
         for prop in shape.props.iter().filter(|prop| !prop.flags.contains(PropFlags::OPTIONAL)) {
-            // As the relation has it: a type that requires a property is not weak, stored or not.
             is_weak = false;
             if any_object_type.is_some_and(|members| members.resolved.prop(prop.name).is_some()) || self.is_never_stored(prop.name) {
                 continue;
             }
-            // Nobody has it.
             let Some(indexes) = having.by_name.get(&prop.name) else { return };
             required.push(indexes);
             required_names.push(prop.name);
         }
         let Some(&rarest) = required.iter().min_by_key(|indexes| indexes.len()) else {
-            // A type all of whose properties are optional takes what has one of them.
-            // One with an index signature takes what has one or can be taken to: no class, no interface. `[key: string]: any` takes all,
-            // and so may a type parameter, which stands for anything.
-            let takes_any = shape.index.iter().any(|info| info.key == TypeId::STRING && self.instantiate(info.value, members.mapper).is_any());
+            let accepts_any = shape.index.iter().any(|info| info.key == TypeId::STRING && self.instantiate(info.value, members.mapper).is_any());
             if is_weak {
                 out.extend(shape.props.iter().filter_map(|prop| having.by_name.get(&prop.name)).flatten());
-            } else if shape.index.is_empty() || takes_any || self.has_type_variables(view) {
+            } else if shape.index.is_empty() || accepts_any || self.has_type_variables(view) {
                 out.extend_from_slice(&having.all);
             } else {
                 out.extend_from_slice(&having.indexable);
@@ -7132,11 +6874,6 @@ impl<'p, 's> Checker<'p, 's> {
         out.extend(rarest.iter().filter(|candidate| required.iter().all(|indexes| indexes.binary_search(candidate).is_ok())));
     }
 
-    // ───────────────────────────── the whole program ─────────────────────────────
-
-    /// The views that what is held to one of `roots` gets into, if it is plain data: those, the types of their fields, and so on all the
-    /// way down, through arrays. Not what the fields of a class hold: plain data is no object of a class. `index_of`: of the views. Each
-    /// with the first of the places of the roots it is come by from.
     fn types_reachable_from_plain_data(&mut self, roots: impl Iterator<Item = (TypeId, Place)>, index_of: &FxHashMap<TypeId, u32>, external_forms: &mut Vec<TypeId>) -> FxHashMap<TypeId, Place> {
         let mut roots: Vec<(TypeId, Place)> = roots.collect();
         roots.sort_unstable_by_key(|root| root.1);
@@ -7168,110 +6905,94 @@ impl<'p, 's> Checker<'p, 's> {
         held
     }
 
-    /// Once everything is translated: gathers the flows between `views`, the types that say how the objects of the program are laid out, no
-    /// two of them the same, and what is compared of each before the relation is asked. The whole program is looked at here and in
-    /// `subtypes.rs`, and nowhere else. What comes of it depends on what is in the sets and on the order of the views, and on nothing else.
-    ///
-    /// What it yields goes in rounds. Any number of checkers of the program may `answer` any slices of `Subtypes::questions`, if the views are
-    /// published, this one answers `Subtypes::own_queries`, and the answers, in the order of the questions, go to `Subtypes::advance`, until
-    /// there are no more questions.
-    ///
-    /// `stored`: the names by which some code of the linked program stores a property, or defines a method or an accessor. A property by
-    /// another name does not exist. A name too few costs nothing but speed: what is stored by it after all is an extra property, as
-    /// with any name that a layout has no field for, and so is what plain data brings along when it is copied into a layout.
-    ///
-    /// `says_progress`: `--aot-explain=progress`.
-    pub fn begin_subtypes(&mut self, noted: FlowNotes, views: &[TypeId], fields: FieldTypes, stored: FxHashSet<Atom>, kinds_declared: &KindsDeclared, says_progress: Option<fn(std::fmt::Arguments<'_>)>, in_parallel: crate::util::InParallel<'_>) -> Subtypes {
+    pub fn begin_subtypes(&mut self, recorded: FlowNotes, views: &[TypeId], fields: FieldTypes, stored: FxHashSet<Atom>, kinds_declared: &KindsDeclared, says_progress: Option<fn(std::fmt::Arguments<'_>)>, in_parallel: crate::util::InParallel<'_>) -> Subtypes {
         const LAYOUTS_PER_CHECKER: usize = 512;
         const TYPES_PER_WALK: usize = 128;
-        self.p.aot.type_caches.release();
-        let noted = noted.into_tables();
+        let recorded = recorded.into_tables();
         let mut clock = subtypes::Clock::new(says_progress);
-        clock.say(format_args!(
+        clock.log_progress(format_args!(
             "gathering: {} views, {} types of fields with {} views in them, {} unions; noted: {} sites, {} upcasts, {} casts, {} tests, {} vouched for, {} untyped into, {} copied into, {} not laid out",
             views.len(),
             fields.layouts_in_type.len(),
             fields.layouts_in_type.iter().map(Vec::len).sum::<usize>(),
             fields.together.len(),
-            noted.allocated_at_site.len(),
-            noted.upcasts.len(),
-            noted.casts.len(),
-            noted.tests.len(),
-            noted.trusted_into.len(),
-            noted.untyped_into.len(),
-            noted.copied_into.len(),
-            noted.foreign.len()
+            recorded.allocated_at_site.len(),
+            recorded.upcasts.len(),
+            recorded.casts.len(),
+            recorded.tests.len(),
+            recorded.trusted_into.len(),
+            recorded.untyped_into.len(),
+            recorded.copied_into.len(),
+            recorded.foreign.len()
         ));
-        let mut truncated: Vec<(Place, [u32; 4])> = noted.truncated.iter().map(|(&at, &times)| (at, times)).collect();
+        let mut truncated: Vec<(Place, [u32; 4])> = recorded.truncated.iter().map(|(&at, &times)| (at, times)).collect();
         truncated.sort_unstable();
         let sums = truncated.iter().fold([0u32; 4], |sums, cut| [sums[0] + cut.1[0], sums[1] + cut.1[1], sums[2] + cut.1[2], sums[3] + cut.1[3]]);
         let first = truncated.first().map_or_else(String::new, |cut| format!("; the first at {}", self.display_location(cut.0)));
-        clock.say(format_args!(
+        clock.log_progress(format_args!(
             "what is held within what enters: the walk was cut short at {} places: {} times for what nests in itself, {} for too many of two declarations, {} for the stack, {} for too many levels{first}; the most of two declarations in one body: {} looked into, {} of them for what nests in itself; the deepest: {} levels",
             truncated.len(),
             sums[0],
             sums[1],
             sums[2],
             sums[3],
-            noted.max_inspected[0],
-            noted.max_inspected[1],
-            noted.max_inspected[2]
+            recorded.max_inspected[0],
+            recorded.max_inspected[1],
+            recorded.max_inspected[2]
         ));
         self.restrict_to_stored_names(&stored);
         let mut index_of: FxHashMap<TypeId, u32> = FxHashMap::default();
         for (index, &view) in views.iter().enumerate() {
             index_of.entry(view).or_insert(index as u32);
         }
-        // Plain data is copied into the layout of the type it is cast to, and what it holds into the layouts of the types of the fields.
-        // So objects are made as those.
         let mut external_forms: Vec<TypeId> = Vec::new();
-        let copied_into = self.types_reachable_from_plain_data(noted.copied_into.iter().map(|&ty| (ty, Place::NOWHERE)), &index_of, &mut Vec::new());
-        let untyped_into = self.types_reachable_from_plain_data(noted.untyped_into.iter().map(|(&ty, &at)| (ty, at)), &index_of, &mut external_forms);
-        let mut noted = noted;
-        let mut stored_through: FxHashSet<TypeId> = noted.read_only_passed_on.iter().copied().collect();
+        let copied_into = self.types_reachable_from_plain_data(recorded.copied_into.iter().map(|&ty| (ty, Place::NOWHERE)), &index_of, &mut Vec::new());
+        let untyped_into = self.types_reachable_from_plain_data(recorded.untyped_into.iter().map(|(&ty, &at)| (ty, at)), &index_of, &mut external_forms);
+        let mut recorded = recorded;
+        let mut stored_through: FxHashSet<TypeId> = recorded.read_only_passed_on.iter().copied().collect();
         loop {
             let before = stored_through.len();
-            stored_through.extend(noted.stored_read_only.iter().filter(|held| stored_through.contains(&held.1)).map(|held| held.0).collect::<Vec<TypeId>>());
+            stored_through.extend(recorded.stored_read_only.iter().filter(|held| stored_through.contains(&held.1)).map(|held| held.0).collect::<Vec<TypeId>>());
             if stored_through.len() == before {
                 break;
             }
         }
-        let mut opened: Vec<(TypeId, TypeId)> = noted.stored_read_only.iter().copied().filter(|held| stored_through.contains(&held.1) && index_of.contains_key(&held.0)).collect();
+        let mut opened: Vec<(TypeId, TypeId)> = recorded.stored_read_only.iter().copied().filter(|held| stored_through.contains(&held.1) && index_of.contains_key(&held.0)).collect();
         opened.sort_unstable_by_key(|held| (held.0.0, held.1.0));
         for (held, dictionary) in opened {
-            noted.add_untyped(held, Some(dictionary), Place::NOWHERE);
+            recorded.add_untyped(held, Some(dictionary), Place::NOWHERE);
         }
         let (mut seen_beyond, mut staying) = (FxHashSet::default(), Vec::new());
         for form in external_forms {
             self.add_types_staying_untyped(form, true, &mut seen_beyond, &mut staying);
         }
         for view in staying {
-            noted.add_untyped(view, None, Place::NOWHERE);
+            recorded.add_untyped(view, None, Place::NOWHERE);
         }
-        clock.say(format_args!("what is held within: {} copied into, {} untyped into", copied_into.len(), untyped_into.len()));
+        clock.log_progress(format_args!("what is held within: {} copied into, {} untyped into", copied_into.len(), untyped_into.len()));
 
         let types: Vec<TypeId> = views.to_vec();
-        let mut redefined: Vec<TypeId> = noted.escapes.with_mutations(|noted| noted.closed(Mutation::Redefinition)).types;
+        let mut redefined: Vec<TypeId> = recorded.escapes.with_mutations(|recorded| recorded.closed(Mutation::Redefinition)).types;
         redefined.sort_unstable_by_key(|ty| ty.0);
         redefined.dedup();
         for &view in &redefined {
-            noted.add_untyped(view, None, Place::NOWHERE);
+            recorded.add_untyped(view, None, Place::NOWHERE);
         }
         let is_of_literal = |c: &Self, ty: TypeId| match c.data(ty) {
             TypeData::Anon { origin: Origin::ObjectLiteral(..) | Origin::WidenedLiteral(..), .. } => true,
             TypeData::Synth(_) => !c.is_coercion_result_type(ty),
             _ => false,
         };
-        let edges: Vec<(TypeId, TypeId)> = noted.upcasts.keys().chain(&noted.casts).copied().filter(|&(from, to)| from != to && is_of_literal(self, from) && !self.is_uninformative(to)).collect();
+        let edges: Vec<(TypeId, TypeId)> = recorded.upcasts.keys().chain(&recorded.casts).copied().filter(|&(from, to)| from != to && is_of_literal(self, from) && !self.is_uninformative(to)).collect();
         let mut allocated_by_identity: FxHashMap<Identity, Vec<TypeId>> = FxHashMap::default();
-        let mut sites: Vec<TypeId> = noted.allocated_at_site.iter().copied().filter(|&site| is_of_literal(self, site)).collect();
+        let mut sites: Vec<TypeId> = recorded.allocated_at_site.iter().copied().filter(|&site| is_of_literal(self, site)).collect();
         sites.sort_unstable_by_key(|ty| ty.0);
         for site in sites {
             allocated_by_identity.entry(self.type_identity(site)).or_default().push(site);
         }
         let mut seen_as_annotated: FxHashSet<TypeId> = edges.iter().filter(|edge| !is_of_literal(self, edge.1)).map(|edge| edge.0).collect();
         let (mut forms_of_literals, mut walked, mut let_out_unwritten): (Vec<[TypeId; 3]>, FxHashSet<TypeId>, FxHashSet<TypeId>) = Default::default();
-        let mut to_walk: Vec<TypeId> = noted.escapes.with_mutations(|noted| noted.escaped());
+        let mut to_walk: Vec<TypeId> = recorded.escapes.with_mutations(|recorded| recorded.escaped());
         loop {
             let is_own = |ty: &TypeId| crate::local::is_local_number(ty.0);
             let (own, published): (Vec<TypeId>, Vec<TypeId>) = std::mem::take(&mut to_walk).into_iter().filter(|&ty| walked.insert(ty)).partition(is_own);
@@ -7318,9 +7039,9 @@ impl<'p, 's> Checker<'p, 's> {
         let mut unannotated: Vec<TypeId> = let_out_unwritten.into_iter().filter(|form| !seen_as_annotated.contains(form)).collect();
         unannotated.sort_unstable_by_key(|ty| ty.0);
         for &view in &unannotated {
-            noted.add_untyped(view, None, Place::NOWHERE);
+            recorded.add_untyped(view, None, Place::NOWHERE);
         }
-        let altered = Mutation::ALL.map(|mutation| noted.escapes.with_mutations(|noted| noted.closed(mutation)));
+        let altered = Mutation::ALL.map(|mutation| recorded.escapes.with_mutations(|recorded| recorded.closed(mutation)));
         let mutated_types: [Vec<TypeId>; 2] = [0, 1].map(|mutation: usize| {
             let mut handed_over: Vec<TypeId> = altered[mutation].types.clone();
             handed_over.sort_unstable_by_key(|ty| ty.0);
@@ -7331,7 +7052,6 @@ impl<'p, 's> Checker<'p, 's> {
             found
         });
 
-        // The members of the global `Object`, which every object is taken to have.
         let object = self.global_ref(known::Object, &[]);
         let mut any_object_type: Vec<u32> = self.members(object).map_or_else(Vec::new, |members| members.shape().props.iter().map(|prop| prop.name.0).collect());
         any_object_type.sort_unstable();
@@ -7343,7 +7063,7 @@ impl<'p, 's> Checker<'p, 's> {
             for &(index, ty) in slice {
                 let mut of_type = c.facts_of(ty, &any_object_type);
                 c.add_undeclared_fields_to(&mut of_type, ty, &stored);
-                if noted.allocated_at_site.contains(&ty) {
+                if recorded.allocated_at_site.contains(&ty) {
                     of_type.flags |= subtypes::HAS_SITE;
                 }
                 if copied_into.contains_key(&ty) && of_type.flags & subtypes::IS_INSTANCE == 0 {
@@ -7373,19 +7093,17 @@ impl<'p, 's> Checker<'p, 's> {
             declared.extend(of_declared);
         }
         let has_own_names: Vec<bool> = facts.iter().map(has_own_atoms).collect();
-        clock.say(format_args!("the facts: {} types, {} declared supertypes", types.len(), declared.len()));
+        clock.log_progress(format_args!("the facts: {} types, {} declared supertypes", types.len(), declared.len()));
         let asked_as: Vec<TypeId> = types.iter().map(|&ty| self.coercion_target(ty)).collect();
-        clock.say(format_args!("the pairs that the relation is queried for"));
+        clock.log_progress(format_args!("the pairs that the relation is queried for"));
 
-        // Whatever is held to a type without the operations saying what it is: see `subtypes.rs`, phase B.
         let mut first_trusted: FxHashMap<u32, Place> = FxHashMap::default();
-        for (ty, &at) in noted.trusted_into.iter().chain(&untyped_into).chain(&copied_into) {
+        for (ty, &at) in recorded.trusted_into.iter().chain(&untyped_into).chain(&copied_into) {
             if let Some(&index) = index_of.get(ty) {
                 let first = first_trusted.entry(index).or_insert(at);
                 *first = at.min(*first);
             }
         }
-        // Whoever stores to a field without knowing the layout hands it anything, and the engine holds that to the type of the field.
         for ty in fields.fields_by_layout.iter().flatten().map(|field| field.1).chain(fields.static_field_types.iter().copied()) {
             for &view in &fields.layouts_in_type[ty as usize] {
                 first_trusted.entry(view).or_insert(Place::NOWHERE);
@@ -7394,24 +7112,22 @@ impl<'p, 's> Checker<'p, 's> {
         let mut vouched: Vec<(u32, Place)> = first_trusted.into_iter().collect();
         vouched.sort_unstable();
 
-        // An object that is not laid out is in a place of the type where it has been seen to get there, and may be where the program
-        // holds a value to the type of which its text says nothing, if there is such an object that is of the type.
         let mut foreign: Vec<(u32, Option<TypeId>, UntypedReason)> = Vec::new();
-        let mut kind_queries: Vec<(Question, u32, UntypedReason)> = Vec::new();
+        let mut kind_queries: Vec<(SubtypeQuery, u32, UntypedReason)> = Vec::new();
         let is_external_data = |c: &mut Checker<'p, 's>, ty: TypeId| c.is_tainted(ty) || !matches!(c.data(ty), TypeData::Intersection(_) | TypeData::Anon { origin: Origin::Module(..), .. });
-        let (own, published): (Vec<TypeId>, Vec<TypeId>) = noted.without_fixed_layout.iter().copied().partition(|ty| crate::local::is_local_number(ty.0));
+        let (own, published): (Vec<TypeId>, Vec<TypeId>) = recorded.without_fixed_layout.iter().copied().partition(|ty| crate::local::is_local_number(ty.0));
         let of_slices = self.map_slices(&published, LAYOUTS_PER_CHECKER, Some(in_parallel), &|c, slice| -> Vec<TypeId> { slice.iter().copied().filter(|&ty| is_external_data(c, ty)).collect() });
-        let mut given: Vec<TypeId> = of_slices.into_iter().flatten().collect();
-        given.extend(own.into_iter().filter(|&ty| is_external_data(self, ty)));
-        for ty in &given {
-            noted.without_fixed_layout.remove(ty);
+        let mut external_types: Vec<TypeId> = of_slices.into_iter().flatten().collect();
+        external_types.extend(own.into_iter().filter(|&ty| is_external_data(self, ty)));
+        for ty in &external_types {
+            recorded.without_fixed_layout.remove(ty);
         }
-        given.extend(redefined.iter().copied());
-        given.sort_unstable_by_key(|ty| ty.0);
-        given.dedup();
-        let required_names: FxHashSet<Atom> = (types.iter().zip(&facts)).filter(|(ty, _)| untyped_into.contains_key(*ty) && !noted.foreign.contains_key(*ty)).flat_map(|(_, facts)| facts.required.iter().map(|&name| Atom(name))).collect();
-        let (others, having, having_declared_only) = self.kinds_without_fixed_layout(&noted.without_fixed_layout, &given, &required_names, kinds_declared, in_parallel);
-        clock.say(format_args!("{} vouched for, {} kinds that are not laid out", vouched.len(), others.len()));
+        external_types.extend(redefined.iter().copied());
+        external_types.sort_unstable_by_key(|ty| ty.0);
+        external_types.dedup();
+        let required_names: FxHashSet<Atom> = (types.iter().zip(&facts)).filter(|(ty, _)| untyped_into.contains_key(*ty) && !recorded.foreign.contains_key(*ty)).flat_map(|(_, facts)| facts.required.iter().map(|&name| Atom(name))).collect();
+        let (others, having, having_declared_only) = self.kinds_without_fixed_layout(&recorded.without_fixed_layout, &external_types, &required_names, kinds_declared, in_parallel);
+        clock.log_progress(format_args!("{} vouched for, {} kinds that are not laid out", vouched.len(), others.len()));
         let is_namespace_kind = |c: &Self, kind: Kind| match kind {
             Kind::Of(ty) => matches!(c.data(ty), TypeData::Anon { origin: Origin::Module(..), .. }),
             Kind::ValueOf(sym) => c.files().flags(sym).contains(SymFlags::VALUE_MODULE),
@@ -7428,22 +7144,21 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         unowned_members.build_bit_sets_of_long_lists();
-        let (escaped, entered, receiving_untyped_if_escaped) = noted.untyped_object_evidence();
+        let (escaped, entered, receiving_untyped_if_escaped) = recorded.untyped_object_evidence();
         let opened = self.classes_accepting_untyped(&escaped, &entered, &receiving_untyped_if_escaped);
         let numbered: Vec<(usize, TypeId)> = views.iter().copied().enumerate().collect();
-        let held_by_js = self.p.aot.storage.records_reaching_javascript.lock().clone();
+        let stored_by_js = self.p.aot.storage.records_reaching_javascript.lock().clone();
         let ask = |c: &mut Checker<'p, 's>, slice: &[(usize, TypeId)]| {
             c.restrict_to_stored_names(&stored);
             let mut foreign: Vec<(u32, Option<TypeId>, UntypedReason)> = Vec::new();
-            let mut kind_queries: Vec<(Question, u32, UntypedReason)> = Vec::new();
+            let mut kind_queries: Vec<(SubtypeQuery, u32, UntypedReason)> = Vec::new();
             let (mut candidates, mut of_nobody): (Vec<u32>, Vec<u32>) = Default::default();
             for &(index, view) in slice {
-                let seen_at = noted.foreign.get(&view).map(|seen| seen.1);
-                if let Some(&(source, at)) = noted.foreign.get(&view) {
-                    // What a coercion lets through is whatever it was, laid out or not. It passes no cast for being that.
+                let seen_at = recorded.foreign.get(&view).map(|seen| seen.1);
+                if let Some(&(source, at)) = recorded.foreign.get(&view) {
                     let passing = source.filter(|_| !c.is_coercion_result_type(view));
                     foreign.push((index as u32, passing, UntypedReason::Seen { source, at }));
-                } else if let Some(&at) = held_by_js.get(&c.type_identity(view)) {
+                } else if let Some(&at) = stored_by_js.get(&c.type_identity(view)) {
                     foreign.push((index as u32, None, UntypedReason::ReachesJavaScript { at }));
                 } else if c.is_declared_only_record(view) {
                     foreign.push((index as u32, None, UntypedReason::DeclaredOnly));
@@ -7463,7 +7178,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 candidates.sort_unstable();
                 candidates.dedup();
-                let is_external_data = |candidate: &u32| matches!(others[*candidate as usize], Kind::ExternalTypes(_));
+                let is_external_data = |candidate: &u32| matches!(others[*candidate as usize], Kind::ExternalData(_));
                 let is_allocated_by_coercion = c.is_coercion_result_type(view) || flows_in.is_none();
                 if !is_allocated_by_coercion {
                     of_nobody.clear();
@@ -7480,11 +7195,11 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 kind_queries.extend(external_types.iter().map(|&candidate| {
                     let kind = others[candidate as usize];
-                    (Question { kind, view }, index as u32, UntypedReason::ExternalData { at, candidate: Candidate(kind) })
+                    (SubtypeQuery { kind, view }, index as u32, UntypedReason::ExternalData { at, candidate: Candidate(kind) })
                 }));
                 kind_queries.extend(candidates.iter().filter(|candidate| (is_namespace[**candidate as usize] || untyped_at.is_some()) && !is_external_data(candidate)).map(|&candidate| {
                     let kind = others[candidate as usize];
-                    (Question { kind, view }, index as u32, UntypedReason::Untyped { at, candidate: Candidate(kind) })
+                    (SubtypeQuery { kind, view }, index as u32, UntypedReason::Untyped { at, candidate: Candidate(kind) })
                 }));
             }
             (foreign, kind_queries)
@@ -7496,22 +7211,20 @@ impl<'p, 's> Checker<'p, 's> {
             kind_queries.extend(of_kinds);
         }
 
-        let mut upcasts: Vec<(u32, u32, Place)> = noted.upcasts.iter().filter_map(|(&(from, to), &at)| Some((*index_of.get(&from)?, *index_of.get(&to)?, at))).collect();
+        let mut upcasts: Vec<(u32, u32, Place)> = recorded.upcasts.iter().filter_map(|(&(from, to), &at)| Some((*index_of.get(&from)?, *index_of.get(&to)?, at))).collect();
         upcasts.sort_unstable();
-        let mut casts: Vec<(u32, u32)> = noted.casts.iter().filter_map(|(from, to)| Some((*index_of.get(from)?, *index_of.get(to)?))).collect();
+        let mut casts: Vec<(u32, u32)> = recorded.casts.iter().filter_map(|(from, to)| Some((*index_of.get(from)?, *index_of.get(to)?))).collect();
         casts.sort_unstable();
-        let mut guards: Vec<(u32, u32)> = noted.guards.iter().filter_map(|(from, to)| Some((*index_of.get(from)?, *index_of.get(to)?))).collect();
+        let mut guards: Vec<(u32, u32)> = recorded.guards.iter().filter_map(|(from, to)| Some((*index_of.get(from)?, *index_of.get(to)?))).collect();
         guards.sort_unstable();
-        let mut forced: Vec<(u32, u32)> = noted.forced.iter().filter_map(|(from, to)| Some((*index_of.get(from)?, *index_of.get(to)?))).collect();
+        let mut forced: Vec<(u32, u32)> = recorded.forced.iter().filter_map(|(from, to)| Some((*index_of.get(from)?, *index_of.get(to)?))).collect();
         forced.sort_unstable();
-        let mut tests: Vec<(u32, u32)> = noted.tests.iter().filter_map(|(from, to)| Some((*index_of.get(from)?, *index_of.get(to)?))).collect();
+        let mut tests: Vec<(u32, u32)> = recorded.tests.iter().filter_map(|(from, to)| Some((*index_of.get(from)?, *index_of.get(to)?))).collect();
         tests.sort_unstable();
-        // What is altered need not be a view: nothing may be looked at as it. It has no number then, and no set. What is seen to get to it may
-        // be altered, and what may fit it by its names.
         let altered: [MutatedTypes; 2] = [0, 1].map(|mutation: usize| {
             let besides: FxHashSet<TypeId> = mutated_types[mutation].iter().copied().filter(|ty| !index_of.contains_key(ty)).collect();
-            let into_besides = noted.upcasts.keys().chain(&noted.casts).chain(&noted.tests).filter(|edge| besides.contains(&edge.1)).filter_map(|edge| index_of.get(&edge.0).copied());
-            let mut views: Vec<u32> = mutated_types[mutation].iter().filter_map(|ty| index_of.get(ty).copied()).chain(into_besides).collect();
+            let extra_targets = recorded.upcasts.keys().chain(&recorded.casts).chain(&recorded.tests).filter(|edge| besides.contains(&edge.1)).filter_map(|edge| index_of.get(&edge.0).copied());
+            let mut views: Vec<u32> = mutated_types[mutation].iter().filter_map(|ty| index_of.get(ty).copied()).chain(extra_targets).collect();
             views.sort_unstable();
             views.dedup();
             let mut besides: Vec<TypeId> = besides.into_iter().collect();
@@ -7519,20 +7232,20 @@ impl<'p, 's> Checker<'p, 's> {
             let besides: Vec<Facts> = besides.into_iter().map(|ty| self.facts_of(ty, &any_object_type)).collect();
             MutatedTypes { views, besides, is_untyped: altered[mutation].is_untyped, is_any_layout: altered[mutation].is_any_layout }
         });
-        let mut untyped_inflow_sites: Vec<(u32, Place)> = noted.untyped_into.iter().filter_map(|(ty, &at)| Some((*index_of.get(ty)?, at))).collect();
-        let mut checked: Vec<(u32, Place)> = noted.checked_into.iter().filter_map(|(ty, &at)| Some((*index_of.get(ty)?, at))).collect();
+        let mut untyped_inflow_sites: Vec<(u32, Place)> = recorded.untyped_into.iter().filter_map(|(ty, &at)| Some((*index_of.get(ty)?, at))).collect();
+        let mut checked: Vec<(u32, Place)> = recorded.checked_into.iter().filter_map(|(ty, &at)| Some((*index_of.get(ty)?, at))).collect();
         checked.sort_unstable();
         untyped_inflow_sites.sort_unstable();
-        let mut untyped_inflow_pairs: Vec<(u32, u32)> = (noted.untyped_into_both.iter()).filter_map(|(arm, other)| Some((*index_of.get(arm)?, *index_of.get(other)?))).flat_map(|(arm, other)| [(arm, other), (other, arm)]).collect();
+        let mut untyped_inflow_pairs: Vec<(u32, u32)> = (recorded.untyped_into_both.iter()).filter_map(|(arm, other)| Some((*index_of.get(arm)?, *index_of.get(other)?))).flat_map(|(arm, other)| [(arm, other), (other, arm)]).collect();
         untyped_inflow_pairs.sort_unstable();
         untyped_inflow_pairs.dedup();
-        let mut any_inflow_sites: Vec<(u32, Place)> = noted.any_into.iter().filter_map(|(ty, &at)| Some((*index_of.get(ty)?, at))).collect();
+        let mut any_inflow_sites: Vec<(u32, Place)> = recorded.any_into.iter().filter_map(|(ty, &at)| Some((*index_of.get(ty)?, at))).collect();
         any_inflow_sites.sort_unstable();
         let by_layout_index = |callees: &FxHashMap<(TypeId, Atom), Callee>| -> Vec<(u32, Atom, Callee)> { callees.iter().filter_map(|(&(holder, name), &callee)| Some((*index_of.get(&holder)?, name, callee))).collect() };
-        let (callees_at_creation, callees_stored) = (by_layout_index(&noted.callees_at_creation), by_layout_index(&noted.callees_stored));
-        let creations = noted.creations.by_layout_index(&index_of);
-        let constructions = noted.constructions.by_layout_index(&index_of);
-        clock.say(format_args!("the edges: {} questions about kinds", kind_queries.len()));
+        let (callees_at_creation, callees_stored) = (by_layout_index(&recorded.callees_at_creation), by_layout_index(&recorded.callees_stored));
+        let creations = recorded.creations.by_layout_index(&index_of);
+        let constructions = recorded.constructions.by_layout_index(&index_of);
+        clock.log_progress(format_args!("the edges: {} questions about kinds", kind_queries.len()));
         let gathered = Gathered {
             types,
             asked_as,
@@ -7548,7 +7261,7 @@ impl<'p, 's> Checker<'p, 's> {
             untyped_inflow_pairs,
             any_inflow_sites,
             checked,
-            checked_by_path: noted.checked_by_path,
+            checked_by_path: recorded.checked_by_path,
             logs_type_errors: self.logs_type_errors(),
             logging_relaxation: LoggingRelaxation::Nothing,
             accepting_when_strict: Vec::new(),
@@ -7562,14 +7275,13 @@ impl<'p, 's> Checker<'p, 's> {
             stored,
             callees_at_creation,
             callees_stored,
-            escapes: noted.escapes,
+            escapes: recorded.escapes,
             creations,
             constructions,
         };
         Subtypes::new(gathered, clock)
     }
 
-    /// What kind of type it is, in a word that says nothing of the program.
     fn type_kind_label(&self, ty: TypeId) -> &'static str {
         match self.data(ty) {
             TypeData::Ref { .. } => "a reference",
@@ -7584,7 +7296,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// What is compared of the type before the relation is asked about it. `any_object_type`: the names that every object has, ascending.
     fn facts_of(&mut self, ty: TypeId, any_object_type: &[u32]) -> Facts {
         let mut flags = 0;
         for (is_so, flag) in [(self.is_coercion_result_type(ty), subtypes::IS_COERCION_RESULT), (self.is_instance_type(ty), subtypes::IS_INSTANCE), (self.has_type_variables(ty), subtypes::IS_GENERIC)] {
@@ -7613,9 +7324,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
             let of_prop = self.type_of_prop(prop, members.mapper);
-            // Also what no code of the program stores: plain data brings it along, and a read finds it.
             is_flat &= self.parts(of_prop).iter().all(|&part| self.has_primitive_flag(part));
-            // Nothing is ever made of a function either.
             is_flat_but_for_functions &= self.parts(of_prop).iter().all(|&part| self.has_primitive_flag(part) || matches!(self.built_in_for_type(part), Some(BuiltIn::Function)));
             if of_prop.is_any() || of_prop.is_never() || self.has_type_variables(of_prop) {
                 open.push(name);
@@ -7640,7 +7349,6 @@ impl<'p, 's> Checker<'p, 's> {
             if !named.is_empty() {
                 flags |= subtypes::HAS_CONSTANTS | if named.len() == 1 { subtypes::IS_CONCRETE } else { 0 };
             }
-            // A string is told from every number: no number but NaN has these bits, and no type names NaN.
             constants.extend(named.into_iter().map(|constant| match constant {
                 Literal::String(text) => (name, 0x7FF8_0001_0000_0000 | u64::from(text.0)),
                 Literal::Number(number) => (name, number.to_bits()),
@@ -7670,8 +7378,6 @@ impl<'p, 's> Checker<'p, 's> {
         Facts { flags, declared: declared.into(), live: live.into(), required: required.into(), constants: constants.into(), open: open.into(), hidden: hidden.into(), kind, ..Facts::default() }
     }
 
-    /// Appends the views that `ty` declares as supertypes: what it `extends`, the parts of an intersection. Beyond one that is no view, what
-    /// that declares.
     fn add_declared_supertypes(&mut self, ty: TypeId, index_of: &FxHashMap<TypeId, u32>, passed: &mut FxHashSet<TypeId>, out: &mut Vec<u32>) {
         let supertypes: Vec<TypeId> = match *self.data(ty) {
             TypeData::Ref { target, .. } if self.is_created_by_program(ty) => match self.members(ty) {
@@ -7693,50 +7399,44 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// The answers to the questions, in their order. Of the questions of a slice whether a view admits an object that is not laid out, those
-    /// after the first yes are not gone into and answered no: one yes is all that counts. `stored`: `Subtypes::stored`.
-    pub fn answer(&mut self, questions: &[Question], stored: &FxHashSet<Atom>) -> Vec<Answer> {
+    pub fn answer(&mut self, queries: &[SubtypeQuery], stored: &FxHashSet<Atom>) -> Vec<SubtypeAnswer> {
         self.restrict_to_stored_names(stored);
         let mut admitting = None;
-        let mut answers = Vec::with_capacity(questions.len());
-        for question in questions {
+        let mut answers = Vec::with_capacity(queries.len());
+        for query in queries {
             let not_known_before = self.aot.flows.unknown_count;
-            let is_so = match question.kind {
-                Kind::Allocated(made) => self.is_allocated_subtype(made, question.view),
-                Kind::Assignable(made) => self.is_allocated_subtype_by(made, question.view, false) || self.is_narrowed_from(question.view, made),
-                _ if admitting == Some(question.view) => false,
-                Kind::ExternalTypes(_) => {
-                    let given = self.kind_type(question.kind);
-                    let is_accepted = self.is_allocated_subtype_by(given, question.view, false) || self.may_be_subtype_at_runtime(given, question.view);
+            let is_so = match query.kind {
+                Kind::Allocated(created) => self.is_allocated_subtype(created, query.view),
+                Kind::Assignable(created) => self.is_allocated_subtype_by(created, query.view, false) || self.is_narrowed_from(query.view, created),
+                _ if admitting == Some(query.view) => false,
+                Kind::ExternalData(_) => {
+                    let external_type = self.kind_type(query.kind);
+                    let is_accepted = self.is_allocated_subtype_by(external_type, query.view, false) || self.may_be_subtype_at_runtime(external_type, query.view);
                     if is_accepted {
-                        admitting = Some(question.view);
+                        admitting = Some(query.view);
                     }
                     is_accepted
                 }
                 kind => {
                     let other = self.kind_type(kind);
-                    let is_accepted = self.is_allocated_subtype(other, question.view);
+                    let is_accepted = self.is_allocated_subtype(other, query.view);
                     if is_accepted {
-                        admitting = Some(question.view);
+                        admitting = Some(query.view);
                     }
                     is_accepted
                 }
             };
             answers.push(if self.aot.flows.unknown_count != not_known_before {
-                Answer::NotKnown
+                SubtypeAnswer::NotKnown
             } else if is_so {
-                Answer::Yes
+                SubtypeAnswer::Yes
             } else {
-                Answer::No
+                SubtypeAnswer::No
             });
         }
         answers
     }
 
-    // ───────────────────────────── why ─────────────────────────────
-
-    /// A line for each of `views` that admits objects that are not laid out, in their order: the view, and how it has come to that, back to
-    /// where such an object was let in or something untyped was held to a view.
     pub fn explain_untyped(&mut self, views: &[TypeId], membership: &Membership, is_left_out: &[bool]) -> Vec<String> {
         let mut lines = Vec::new();
         for (index, &view) in views.iter().enumerate() {
@@ -7745,7 +7445,6 @@ impl<'p, 's> Checker<'p, 's> {
                 continue;
             }
             let mut line = format!("foreign: {}: ", self.display_name(view));
-            // The reasons lead back to where something was let in. Should they not, the line ends.
             for _ in 0..32 {
                 let Some(reason) = why.take() else { break };
                 match reason {

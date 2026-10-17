@@ -105,6 +105,7 @@ const REPORTS_UNRELIABLE: u8 = 16;
 pub(super) const COMPLEXITY_OVERFLOW: u8 = 32;
 pub(super) const STACK_DEPTH_OVERFLOW: u8 = 64;
 const CREATED_DURING_WARMUP: u8 = 128;
+const CREATED_IN_CONDITIONAL_TYPE: u8 = 4;
 const OVERFLOW: u8 = COMPLEXITY_OVERFLOW | STACK_DEPTH_OVERFLOW;
 
 // VarianceFlags
@@ -2891,7 +2892,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let (sd, td) = (self.data(source), self.data(target));
         // `ObjectFlagsJSLiteral` on the target itself: without noImplicitAny a JS literal accepts any property.
-        if !self.p.files.options.no_implicit_any && self.has_js_literal_flag(target) {
+        if !self.p.files.has_no_implicit_any_everywhere() && self.has_js_literal_flag(target) {
             return false;
         }
         // A target that accepts anything accepts any object literal, but not any JSX attribute.
@@ -3948,6 +3949,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `relation.set(key, entry)`
     fn set_relation(&mut self, key: Key, entry: u8, stored: Stored) {
         let entry = if self.is_warming_up() && self.fuel.get() != u64::MAX { entry | CREATED_DURING_WARMUP } else { entry };
+        let entry = if self.is_resolving_conditional_type() { entry | CREATED_IN_CONDITIONAL_TYPE } else { entry };
         if self.p.relations.get(&self.task, &key).is_none() {
             self.insert_relation(key, entry, stored);
         } else {
@@ -3957,11 +3959,13 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `relation.set(key, entry)` for a key that has no entry.
     fn needs_recomparison(&mut self, entry: u8, key: Key) -> bool {
-        entry & CREATED_DURING_WARMUP != 0 && self.records_compared_pairs() && self.record_recompared(key)
+        let has_unrecorded_pairs = entry & CREATED_DURING_WARMUP != 0 || entry & CREATED_IN_CONDITIONAL_TYPE != 0 && !self.is_resolving_conditional_type();
+        has_unrecorded_pairs && self.records_compared_pairs() && self.record_recompared(key)
     }
 
     fn insert_relation(&mut self, key: Key, entry: u8, stored: Stored) {
         let entry = if self.is_warming_up() && self.fuel.get() != u64::MAX { entry | CREATED_DURING_WARMUP } else { entry };
+        let entry = if self.is_resolving_conditional_type() { entry | CREATED_IN_CONDITIONAL_TYPE } else { entry };
         self.generic_relation_entries_not_published += u64::from(key.is_hash_of_own_ids());
         self.relation_sizes[usize::from(key.2 & 0xf)] += 1;
         self.p.relations.insert(&self.task, key, entry, stored);
@@ -4021,6 +4025,16 @@ impl<'p, 's> Checker<'p, 's> {
                 .iter()
                 .map(|&on_stack| (on_stack, self.plain_recursion_identity(on_stack)))
                 .collect();
+            let not_plain = identities.iter().filter(|entry| entry.1 == NOT_PLAIN).count();
+            let can_reach_depth = not_plain >= max_depth
+                || identities.iter().any(|entry| {
+                    entry.1 != NOT_PLAIN
+                        && not_plain + identities.iter().filter(|other| other.1 == entry.1).count()
+                            >= max_depth
+                });
+            if !can_reach_depth {
+                return false;
+            }
             return self.is_deeply_nested_among(t, &identities, max_depth);
         }
         if let TypeData::Intersection(parts) = data
@@ -4063,6 +4077,13 @@ impl<'p, 's> Checker<'p, 's> {
             return true;
         }
         let identity = self.recursion_identity_as(t, data);
+        let possible_matches = identities
+            .iter()
+            .filter(|entry| entry.1 == NOT_PLAIN || entry.1 == identity)
+            .count();
+        if possible_matches < max_depth {
+            return false;
+        }
         let mut count = 0;
         let mut last = None;
         for &(on_stack, kept) in identities {

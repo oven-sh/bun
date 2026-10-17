@@ -1,5 +1,5 @@
-// Opt-in test. Seven HTTP servers implement the same routes, each written the way a user of that framework would write it:
-// Bun.serve, Hono, Elysia, node:http, Express and Fastify (./app/<name>.ts on top of ./app/shared.ts), and TanStack Start
+// Opt-in test. Eight HTTP servers implement the same routes, each written the way a user of that framework would write it:
+// Bun.serve, a thin typed framework over it (./app/thin-framework.ts), Hono, Elysia, node:http, Express and Fastify (./app/<name>.ts on top of ./app/shared.ts), and TanStack Start
 // (./tanstack, built with vite first, using the same shared.ts). Each one is built with `bun build --compile --aot`, startServer,
 // and sent requests. ./answers.ts has the expected responses.
 //
@@ -14,7 +14,7 @@
 //   TanStack Start pages           same HTML as Bun without --aot
 // ./go (net/http) and ./rust (axum) implement six of the routes. ./measure compares against them, so they are checked too.
 //
-//   AOT_SERVERS=1 bun test test/aot/servers                 all seven (about two minutes, mostly `bun install`)
+//   AOT_SERVERS=1 bun test test/aot/servers                 all eight (about two minutes, mostly `bun install`)
 //   AOT_SERVERS=express,fastify bun test test/aot/servers   only these
 //   AOT_SERVERS=go,rust bun test test/aot/servers           the two native servers; `cargo build` downloads crates
 //   AOT_SERVERS_MODULES=<node_modules folder> ..            use packages that are already installPackages; nothing is downloaded
@@ -30,7 +30,7 @@ import { built, spawned, unsupported } from "../run-programs";
 import { invalidOrders, invalidOrderBody, routes, type Route } from "./answers";
 import { installPackages, filterRequested, startServer, requestedServers } from "./run-servers";
 
-const servers = filterRequested(["bun", "hono", "elysia", "node", "express", "fastify", "tanstack"]);
+const servers = filterRequested(["bun", "thin", "hono", "elysia", "node", "express", "fastify", "tanstack"]);
 
 // Elysia types the request body as `unknown`. Under --aot a cast from `unknown` to the order type is checked at run time, so an
 // order of the wrong type throws a TypeError, which the route turns into a 400. Without --aot the handler continues with the order.

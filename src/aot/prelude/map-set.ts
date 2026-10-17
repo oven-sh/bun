@@ -1,7 +1,3 @@
-// Transcribed from Source/JavaScriptCore/builtins/MapPrototype.js and SetPrototype.js. The receiver had its original structure when the function was entered.
-// An iteration is at a table and the number of an entry. $mapNext() and $setNext() yield the number of the next entry that is alive, in the
-// table the collection has by then, or -1.
-
 declare function $collectionTable(c: unknown): unknown;
 declare function $mapNext(m: unknown, table: unknown, entry: number): number;
 declare function $mapKeyAt<K>(m: unknown, entry: number): K;

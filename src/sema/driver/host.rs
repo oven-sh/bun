@@ -25,7 +25,7 @@ use bun_sema::resolve::{
 use bun_sema::session::Arena;
 use bun_sema::util::SharedSort;
 use bun_sema::util::{FxHashMap, FxHashSet, ShardedMap};
-use crate::asked;
+use crate::fs_queries;
 use bun_sys::{EntryKind, ExistsAtType, Fd};
 use std::borrow::Cow;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -117,46 +117,88 @@ const ANCESTOR_LOOKUP_NAMES: [&[u8]; 4] = [b"node_modules", b"package.json", b"t
 
 const MAX_EARLY_READS_WHILE_BUNDLING: usize = 4;
 const BUNDLER_QUIET_AFTER: Duration = Duration::from_millis(5);
+const EARLY_PATH_BATCH_WINDOW: Duration = Duration::from_millis(1);
 
-pub(crate) struct SharedDirectoryCache {
+pub struct SharedDirectoryCache {
     listings: ShardedMap<Vec<u8>, bun_threading::Guarded<Option<([i64; 4], [Vec<Vec<u8>>; 3])>>>,
     bundler_sources: ShardedMap<Vec<u8>, &'static [u8]>,
+    scheduled_by_bundler: ShardedMap<Vec<u8>, ()>,
     created: Instant,
     last_delivery_nanos: AtomicU64,
     active_early_reads: AtomicU64,
+    early_parse_state: std::sync::atomic::AtomicU8,
 }
+
+const EARLY_PARSE_RUNNING: u8 = 0;
+const EARLY_PARSE_PAUSE_REQUESTED: u8 = 1;
+const EARLY_PARSE_PAUSED: u8 = 2;
 
 impl Default for SharedDirectoryCache {
     fn default() -> Self {
         SharedDirectoryCache {
             listings: ShardedMap::default(),
             bundler_sources: ShardedMap::default(),
+            scheduled_by_bundler: ShardedMap::default(),
             created: Instant::now(),
             last_delivery_nanos: AtomicU64::new(0),
             active_early_reads: AtomicU64::new(0),
+            early_parse_state: std::sync::atomic::AtomicU8::new(EARLY_PARSE_RUNNING),
         }
     }
 }
 
 pub(crate) struct EarlyRead<'a>(&'a AtomicU64);
 
+thread_local! {
+    static HOLDS_EARLY_READ: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 impl Drop for EarlyRead<'_> {
     fn drop(&mut self) {
+        HOLDS_EARLY_READ.set(false);
         self.0.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
 impl SharedDirectoryCache {
+    pub fn request_early_parse_pause(&self) {
+        self.early_parse_state.store(EARLY_PARSE_PAUSE_REQUESTED, Ordering::Release);
+    }
+
+    pub fn is_early_parse_paused(&self) -> bool {
+        self.early_parse_state.load(Ordering::Acquire) == EARLY_PARSE_PAUSED
+    }
+
+    pub fn resume_early_parse(&self) {
+        self.early_parse_state.store(EARLY_PARSE_RUNNING, Ordering::Release);
+    }
+
     fn is_bundler_quiet(&self) -> bool {
-        let since_delivery = (self.created.elapsed().as_nanos() as u64).saturating_sub(self.last_delivery_nanos.load(Ordering::Relaxed));
-        since_delivery >= BUNDLER_QUIET_AFTER.as_nanos() as u64
+        let last_delivery = self.last_delivery_nanos.load(Ordering::Relaxed);
+        last_delivery != 0 && (self.created.elapsed().as_nanos() as u64).saturating_sub(last_delivery) >= BUNDLER_QUIET_AFTER.as_nanos() as u64
     }
 
     fn try_begin_early_read(&self) -> Option<EarlyRead<'_>> {
         let active = self.active_early_reads.load(Ordering::Relaxed);
         let is_allowed = active < MAX_EARLY_READS_WHILE_BUNDLING as u64 || self.is_bundler_quiet();
         let has_begun = is_allowed && self.active_early_reads.compare_exchange(active, active + 1, Ordering::Relaxed, Ordering::Relaxed).is_ok();
-        has_begun.then(|| EarlyRead(&self.active_early_reads))
+        has_begun.then(|| {
+            HOLDS_EARLY_READ.set(true);
+            EarlyRead(&self.active_early_reads)
+        })
+    }
+
+    pub fn entries(&self, native_path: &[u8]) -> Option<Vec<(Vec<u8>, EntryKind)>> {
+        if fs_queries::is_recording() {
+            return None;
+        }
+        let path = from_native(native_path);
+        let path = &path[..without_trailing_slash(&path).len().max(root_length(&path))];
+        let Directory::Listed(listing) = self.list(path) else { return None };
+        let kind_of = |name: &Vec<u8>, kind: EntryKind| if listing.links.binary_search(name).is_ok() { EntryKind::SymLink } else { kind };
+        let files = listing.files.iter().map(|name| (name.clone(), kind_of(name, EntryKind::File)));
+        let directories = listing.directories.iter().map(|name| (name.clone(), kind_of(name, EntryKind::Directory)));
+        Some(files.chain(directories).collect())
     }
 
     fn list(&self, path: &[u8]) -> Directory {
@@ -201,7 +243,7 @@ impl Listing {
         }
     }
 
-    fn entry_answer(&self, hash: asked::Hash, name: &[u8]) -> u64 {
+    fn entry_answer(&self, hash: fs_queries::Hash, name: &[u8]) -> u64 {
         let mut said = Vec::new();
         self.write_entry(name, &mut said);
         hash(&said) | 1
@@ -214,14 +256,25 @@ impl Listing {
             && !ANCESTOR_LOOKUP_NAMES.contains(&name)
             && !self.in_memory.iter().any(|it| it == name)
         {
-            asked::note(asked::Kind::Entry, &inside(path, name), |hash| self.entry_answer(hash, name));
+            fs_queries::record_query(fs_queries::Kind::Entry, &inside(path, name), |hash| self.entry_answer(hash, name));
         }
     }
 
     /// Someone is about to be told of every name.
     fn record_all(&self) {
         if self.above.is_some() {
-            asked::invalidate_recording();
+            fs_queries::invalidate_recording();
+        }
+    }
+
+    fn duplicate(&self) -> Self {
+        Listing {
+            files: self.files.clone(),
+            directories: self.directories.clone(),
+            links: self.links.clone(),
+            folded: OnceLock::new(),
+            above: self.above.clone(),
+            in_memory: self.in_memory.clone(),
         }
     }
 
@@ -333,12 +386,35 @@ pub struct Disk {
     pub(crate) file_class_options: Vec<(Vec<u8>, ClassOptions)>,
     pub(crate) import_constants: FxHashMap<(Vec<u8>, Vec<u8>), Vec<u8>>,
     pub(crate) build_constants: Option<Arc<bun_sema::fold::BuildConstants>>,
-    pub(crate) early_paths: Option<bun_threading::Guarded<std::sync::mpsc::Receiver<(Vec<u8>, &'static [u8])>>>,
+    pub(crate) early_paths: Option<bun_threading::Guarded<std::sync::mpsc::Receiver<(Vec<u8>, Option<&'static [u8]>)>>>,
     pending_early_paths: bun_threading::Guarded<Vec<Vec<u8>>>,
     pub(crate) early_parse_cancelled: Option<Arc<std::sync::atomic::AtomicBool>>,
+    pub(crate) is_load_abandoned: Option<Arc<std::sync::atomic::AtomicBool>>,
+    pub(crate) observed: Option<bun_threading::Guarded<Vec<(Vec<u8>, Option<[i64; 4]>)>>>,
     /// `Request::is_one_program`: what is compiled.
     pub(crate) compiled: Option<Compiled>,
     pub(crate) decodes_like_runtime: bool,
+    pub(crate) deferred_imports: FxHashMap<Vec<u8>, Vec<Vec<u8>>>,
+    pub(crate) deferred_paths: FxHashSet<Vec<u8>>,
+    pub(crate) wait_for_deferred_sources: bun_threading::Guarded<Option<WaitForDeferredSources>>,
+    deferred: OnceLock<InstalledSources>,
+    pub(crate) abandoned: bun_threading::Guarded<Option<Abandoned>>,
+}
+
+struct InstalledSources {
+    already_read: AlreadyRead,
+    deferred_read: bun_threading::Guarded<Option<DeferredRead>>,
+    deferred_read_sources: OnceLock<AlreadyRead>,
+    in_memory: FxHashMap<Vec<u8>, InMemory>,
+    directories: FxHashMap<Vec<u8>, Directory>,
+    script_kinds: Vec<(Vec<u8>, ScriptKind)>,
+    file_jsx_options: Vec<(Vec<u8>, FileJsxOptions)>,
+    file_class_options: Vec<(Vec<u8>, ClassOptions)>,
+    import_constants: FxHashMap<(Vec<u8>, Vec<u8>), Vec<u8>>,
+    entry_points: Vec<Vec<u8>>,
+    code: FxHashSet<Vec<u8>>,
+    is_commonjs_code: FxHashMap<Vec<u8>, bool>,
+    build_constants: Option<Arc<bun_sema::fold::BuildConstants>>,
 }
 
 /// What `Host::builtin_files` goes by, and what it has found.
@@ -381,6 +457,32 @@ pub type AlreadyRead = FxHashMap<Vec<u8>, Cow<'static, [u8]>>;
 
 pub type DeferredRead = Box<dyn FnOnce() -> AlreadyRead + Send>;
 
+#[derive(Default)]
+pub struct DeferredSources {
+    pub paths: Vec<Vec<u8>>,
+    pub code: Vec<Vec<u8>>,
+    pub script_kinds: Vec<(Vec<u8>, ScriptKind)>,
+    pub already_read: AlreadyRead,
+    pub deferred_read: Option<DeferredRead>,
+    pub file_jsx_options: Vec<(Vec<u8>, FileJsxOptions)>,
+    pub file_class_options: Vec<(Vec<u8>, ClassOptions)>,
+    pub import_constants: Vec<((Vec<u8>, Vec<u8>), Vec<u8>)>,
+    pub code_kinds: FxHashMap<Vec<u8>, bool>,
+    pub build_constants: Option<Arc<bun_sema::fold::BuildConstants>>,
+}
+
+pub type WaitForDeferredSources = Box<dyn FnOnce() -> Option<DeferredSources> + Send>;
+
+#[derive(Default)]
+pub struct Abandoned {
+    pub conflicting_paths: Vec<Vec<u8>>,
+    pub is_outdated: bool,
+    pub deferred_sources: Option<DeferredSources>,
+    pub deferred_read: Option<DeferredRead>,
+    pub scripts_of_page: Option<ScriptsOfPage>,
+    pub before_read: Option<BeforeRead>,
+}
+
 /// Called with the path of a file, in the checker's format, right before the file is read, on the
 /// thread that reads it. A caller that starts to watch the file there sees every change to what is
 /// checked.
@@ -399,6 +501,7 @@ pub struct FileJsxOptions {
     pub factory: Vec<u8>,
     pub fragment: Vec<u8>,
     pub import_source: Vec<u8>,
+    pub overrides_pragmas: bool,
 }
 
 /// What the caller of a check has for its host.
@@ -413,15 +516,40 @@ pub struct Provided {
     pub file_class_options: Vec<(Vec<u8>, ClassOptions)>,
     pub import_constants: Vec<((Vec<u8>, Vec<u8>), Vec<u8>)>,
     pub build_constants: Option<Arc<bun_sema::fold::BuildConstants>>,
-    pub early_paths: Option<std::sync::mpsc::Receiver<(Vec<u8>, &'static [u8])>>,
+    pub early_paths: Option<std::sync::mpsc::Receiver<(Vec<u8>, Option<&'static [u8]>)>>,
     pub early_parse_cancelled: Option<Arc<std::sync::atomic::AtomicBool>>,
+    pub is_load_abandoned: Option<Arc<std::sync::atomic::AtomicBool>>,
+    pub observes_files: bool,
     /// With `Request::is_one_program`: none of the runtime's own modules is compiled with the program (`Host::builtin_files`).
     pub without_builtin_modules: bool,
     pub preserves_source_paths: bool,
     pub code_kinds: FxHashMap<Vec<u8>, bool>,
+    pub deferred_imports: Vec<(Vec<u8>, Vec<u8>)>,
+    pub deferred_paths: Vec<Vec<u8>>,
+    pub deferred_sources: Option<WaitForDeferredSources>,
     /// The text of a script keeps the UTF-8 byte order mark that the file starts with, which TypeScript drops. The parser
     /// takes it for a blank. `bun lint` has a rule about it, and writes the text back.
     pub keeps_byte_order_marks: bool,
+}
+
+impl Provided {
+    pub fn without_callbacks(&self) -> Provided {
+        Provided {
+            already_read: self.already_read.clone(),
+            file_jsx_options: self.file_jsx_options.clone(),
+            file_class_options: self.file_class_options.clone(),
+            import_constants: self.import_constants.clone(),
+            build_constants: self.build_constants.clone(),
+            without_builtin_modules: self.without_builtin_modules,
+            preserves_source_paths: self.preserves_source_paths,
+            code_kinds: self.code_kinds.clone(),
+            deferred_imports: self.deferred_imports.clone(),
+            deferred_paths: self.deferred_paths.clone(),
+            keeps_byte_order_marks: self.keeps_byte_order_marks,
+            is_load_abandoned: self.is_load_abandoned.clone(),
+            ..Default::default()
+        }
+    }
 }
 
 /// The names in one directory of the files of `AlreadyRead` and of the directories that lead to
@@ -584,11 +712,11 @@ fn decode_like_runtime(bytes: &[u8]) -> Vec<u8> {
 /// `vfs.FS.ReadFile` of the file at `path`, by that path alone.
 pub(crate) fn read_at(path: &[u8], keeps_mark: bool) -> Option<Cow<'static, [u8]>> {
     let bytes = bun_sys::File::read_from(Fd::cwd(), for_the_system(path)?).ok();
-    asked::note(asked::Kind::Text, path, |hash| asked::of_text(hash, bytes.as_deref()));
+    fs_queries::record_query(fs_queries::Kind::Text, path, |hash| fs_queries::of_text(hash, bytes.as_deref()));
     bytes.map(|bytes| decoded(bytes, keeps_mark))
 }
 
-fn directory_answer(hash: asked::Hash, directory: &Directory) -> u64 {
+fn directory_answer(hash: fs_queries::Hash, directory: &Directory) -> u64 {
     match directory {
         Directory::Missing => 0,
         Directory::Unreadable => 2,
@@ -617,20 +745,20 @@ fn kind_answer(is_directory: Option<bool>) -> u64 {
 }
 
 /// What the disk answers now to a question that `asked` has noted.
-pub(crate) fn current_answer(kind: asked::Kind, path: &[u8], hash: asked::Hash) -> u64 {
+pub(crate) fn current_answer(kind: fs_queries::Kind, path: &[u8], hash: fs_queries::Hash) -> u64 {
     match kind {
-        asked::Kind::Text => asked::of_text(hash, for_the_system(path).and_then(|path| bun_sys::File::read_from(Fd::cwd(), path).ok()).as_deref()),
-        asked::Kind::Listing => directory_answer(hash, &seen_from_below(path, retain_code_files(list_without_recording(path)))),
-        asked::Kind::Entry => match retain_code_files(list_without_recording(split(path).parent)) {
+        fs_queries::Kind::Text => fs_queries::of_text(hash, for_the_system(path).and_then(|path| bun_sys::File::read_from(Fd::cwd(), path).ok()).as_deref()),
+        fs_queries::Kind::Listing => directory_answer(hash, &seen_from_below(path, retain_code_files(list_without_recording(path)))),
+        fs_queries::Kind::Entry => match retain_code_files(list_without_recording(split(path).parent)) {
             Directory::Listed(listing) => listing.entry_answer(hash, split(path).name),
             _ => 0,
         },
-        asked::Kind::IsDirectory => kind_answer(for_the_system(&with_root(path)).and_then(|path| is_directory(Fd::cwd(), path))),
-        asked::Kind::RealPath => hash(&Disk::ask_for_real_path(path)) | 1,
-        asked::Kind::IsCaseSensitive => u64::from(is_file_system_case_sensitive(path)),
-        asked::Kind::NativeText => asked::of_text(hash, bun_sys::File::read_from(Fd::cwd(), path).ok().as_deref()),
-        asked::Kind::Exists => u64::from(bun_sys::exists(path)),
-        asked::Kind::Scanned => crate::scan_result(path, read_at(path, false).as_deref(), &|_| {}).1.map_or(0, |found| hash(&found) | 1),
+        fs_queries::Kind::IsDirectory => kind_answer(for_the_system(&with_root(path)).and_then(|path| is_directory(Fd::cwd(), path))),
+        fs_queries::Kind::RealPath => hash(&Disk::ask_for_real_path(path)) | 1,
+        fs_queries::Kind::IsCaseSensitive => u64::from(is_file_system_case_sensitive(path)),
+        fs_queries::Kind::NativeText => fs_queries::of_text(hash, bun_sys::File::read_from(Fd::cwd(), path).ok().as_deref()),
+        fs_queries::Kind::Exists => u64::from(bun_sys::exists(path)),
+        fs_queries::Kind::Scanned => crate::scan_result(path, read_at(path, false).as_deref(), &|_| {}).1.map_or(0, |found| hash(&found) | 1),
     }
 }
 
@@ -680,7 +808,40 @@ impl Disk {
     }
 
     pub(crate) fn has_already_read(&self, path: &[u8]) -> bool {
-        self.already_read.contains_key(&*to_path(path, self.case_sensitive))
+        let key = to_path(path, self.case_sensitive);
+        self.already_read.contains_key(&*key) || self.deferred.get().is_some_and(|deferred| deferred.already_read.contains_key(&*key))
+    }
+
+    fn observe(&self, path: &[u8]) -> Option<[i64; 4]> {
+        let times = Self::file_times(path);
+        if let Some(observed) = self.observed.as_ref().filter(|_| self.deferred.get().is_none()) {
+            observed.lock().push((path.to_vec(), times));
+        }
+        times
+    }
+
+    pub(crate) fn has_changed_since_observed(&self) -> bool {
+        let Some(observed) = &self.observed else { return false };
+        let observed = std::mem::take(&mut *observed.lock());
+        let has_changed = std::sync::atomic::AtomicBool::new(false);
+        self.parallel(observed.len(), &|at| {
+            let (path, times) = &observed[at];
+            if !has_changed.load(Ordering::Relaxed) && Self::file_times(path) != *times && !self.lists_same_names(path) {
+                has_changed.store(true, Ordering::Relaxed);
+            }
+        });
+        has_changed.into_inner()
+    }
+
+    fn lists_same_names(&self, path: &[u8]) -> bool {
+        let (Some(Directory::Listed(known)), Directory::Listed(now)) = (self.directories.get_ref(path), list(path)) else {
+            return false;
+        };
+        let now = match self.added_to(path) {
+            Some(more) => now.with(more),
+            None => now,
+        };
+        known.files == now.files && known.directories == now.directories && known.links == now.links
     }
 
     pub(crate) fn file_times(path: &[u8]) -> Option<[i64; 4]> {
@@ -755,9 +916,67 @@ impl Disk {
             early_paths: None,
             pending_early_paths: bun_threading::Guarded::new(Vec::new()),
             early_parse_cancelled: None,
+            is_load_abandoned: None,
+            observed: None,
             compiled: None,
             decodes_like_runtime: false,
+            deferred_imports: FxHashMap::default(),
+            deferred_paths: FxHashSet::default(),
+            wait_for_deferred_sources: bun_threading::Guarded::new(None),
+            deferred: OnceLock::new(),
+            abandoned: bun_threading::Guarded::new(None),
         }
+    }
+
+    pub(crate) fn install_deferred_sources(&self, cwd: &[u8], sources: DeferredSources) {
+        let path_of = |named: &[u8]| to_path(&self.as_written(&from_argument(cwd, named)), self.case_sensitive).into_owned();
+        let in_memory = InMemory::by_directory(&sources.already_read, self.case_sensitive);
+        let directories = (in_memory.iter())
+            .map(|(path, more)| {
+                let merged = match self.directory(path) {
+                    Directory::Listed(listing) => Directory::Listed(listing.duplicate().with(more)),
+                    Directory::Missing => Directory::Listed(Listing::default().with(more)),
+                    Directory::Unreadable => Directory::Unreadable,
+                };
+                (path.clone(), merged)
+            })
+            .collect();
+        let code: Vec<Vec<u8>> = sources.code.iter().map(|path| path_of(path)).collect();
+        let installed = InstalledSources {
+            is_commonjs_code: sources.code.iter().zip(&code).filter_map(|(given, path)| Some((path.clone(), *sources.code_kinds.get(given)?))).collect(),
+            code: code.into_iter().collect(),
+            entry_points: sources.paths.iter().map(|path| path_of(path)).collect(),
+            script_kinds: sources.script_kinds.iter().map(|(path, kind)| (path_of(path), *kind)).collect(),
+            file_jsx_options: sources.file_jsx_options.into_iter().map(|(path, of_file)| (path_of(&path), of_file)).collect(),
+            file_class_options: sources.file_class_options.into_iter().map(|(path, of_file)| (path_of(&path), of_file)).collect(),
+            import_constants: sources.import_constants.into_iter().collect(),
+            already_read: match self.case_sensitive {
+                true => sources.already_read,
+                false => sources.already_read.into_iter().map(|(path, text)| (to_file_name_lower_case(&path), text)).collect(),
+            },
+            deferred_read: bun_threading::Guarded::new(sources.deferred_read),
+            deferred_read_sources: OnceLock::new(),
+            in_memory,
+            directories,
+            build_constants: sources.build_constants,
+        };
+        let _ = self.deferred.set(installed);
+    }
+
+    pub(crate) fn take_deferred_read(&self) -> Option<DeferredRead> {
+        match self.deferred_read_sources.get().cloned() {
+            Some(texts) => Some(Box::new(move || texts)),
+            None => self.deferred_read.lock().take(),
+        }
+    }
+
+    fn known_directory(&self, path: &[u8]) -> Option<&Directory> {
+        if let Some(deferred) = self.deferred.get()
+            && let Some(known) = deferred.directories.get(&*to_path(path, self.case_sensitive))
+        {
+            return Some(known);
+        }
+        self.directories.get_ref(path)
     }
 
     /// The name of the file at `path` in `bundled_libs`, if it is there.
@@ -810,7 +1029,7 @@ impl Disk {
         let mut unknown = Vec::new();
         let mut at = path;
         let mut directory = loop {
-            if let Some(known) = self.directories.get_ref(at) {
+            if let Some(known) = self.known_directory(at) {
                 break known;
             }
             unknown.push(at);
@@ -843,8 +1062,11 @@ impl Disk {
         {
             return Directory::Missing;
         }
+        if self.observed.is_some() {
+            self.observe(path);
+        }
         let directory = match &self.shared_directory_cache {
-            Some(cache) if !asked::is_recording() => cache.list(path),
+            Some(cache) if !fs_queries::is_recording() => cache.list(path),
             _ => list(path),
         };
         match (directory, self.added_to(path)) {
@@ -865,18 +1087,20 @@ impl Disk {
     /// Whether `path` is a directory, for a path that `already_read` adds.
     fn find_in_memory(&self, path: &[u8]) -> Option<bool> {
         let Split { parent, name } = split(path);
-        let names = self.added_to(parent)?;
-        if name.is_empty() {
-            return Some(true);
-        }
-        let has = |names: &[Vec<u8>]| {
-            let mut names = names.iter();
-            names.any(|it| is_same_path(it, name, self.case_sensitive))
-        };
-        if has(&names.files) {
-            return Some(false);
-        }
-        has(&names.directories).then_some(true)
+        let deferred = self.deferred.get().and_then(|deferred| deferred.in_memory.get(&*to_path(parent, self.case_sensitive)));
+        [self.added_to(parent), deferred].into_iter().flatten().find_map(|names| {
+            if name.is_empty() {
+                return Some(true);
+            }
+            let has = |names: &[Vec<u8>]| {
+                let mut names = names.iter();
+                names.any(|it| is_same_path(it, name, self.case_sensitive))
+            };
+            if has(&names.files) {
+                return Some(false);
+            }
+            has(&names.directories).then_some(true)
+        })
     }
 
     /// Asks the system, which does not know what is only in memory.
@@ -906,7 +1130,7 @@ impl Disk {
         listing.record_implicit_flow(name);
         match listing.find(name, self.case_sensitive) {
             None if !name.is_ascii() || is_like_a_short_name(name) => None,
-            None if asked::is_recording() && !can_be_code(name) => None,
+            None if fs_queries::is_recording() && !can_be_code(name) => None,
             None if self.case_sensitive && listing.find(name, false).is_some() => None,
             found => Some(found),
         }
@@ -920,7 +1144,7 @@ impl Disk {
         let (mut name, mut real) = (path_buffer_pool::get(), path_buffer_pool::get());
         let found = bun_sys::realpath(z(native, &mut name), &mut real)
             .map_or_else(|_| path.to_vec(), from_native);
-        asked::note(asked::Kind::RealPath, path, |hash| hash(&found) | 1);
+        fs_queries::record_query(fs_queries::Kind::RealPath, path, |hash| hash(&found) | 1);
         found
     }
 
@@ -1030,14 +1254,14 @@ fn is_like_a_short_name(name: &[u8]) -> bool {
 /// Reads the entries of the directory at `path` from the system.
 fn list(path: &[u8]) -> Directory {
     let found = list_without_recording(path);
-    let found = if asked::is_recording() { seen_from_below(path, retain_code_files(found)) } else { found };
-    asked::note(asked::Kind::Listing, path, |hash| directory_answer(hash, &found));
+    let found = if fs_queries::is_recording() { seen_from_below(path, retain_code_files(found)) } else { found };
+    fs_queries::record_query(fs_queries::Kind::Listing, path, |hash| directory_answer(hash, &found));
     found
 }
 
 /// By its name. A file that cannot comes and goes without a question that `asked` has noted being answered otherwise.
 fn can_be_code(name: &[u8]) -> bool {
-    match name.iter().rposition(|&byte| byte == b'.') {
+    match bun_core::strings::last_index_of_char(name, b'.') {
         None => true,
         Some(dot) => matches!(&name[dot + 1..], b"ts" | b"tsx" | b"mts" | b"cts" | b"js" | b"jsx" | b"mjs" | b"cjs" | b"json"),
     }
@@ -1054,7 +1278,7 @@ fn retain_code_files(mut directory: Directory) -> Directory {
 
 fn seen_from_below(path: &[u8], mut directory: Directory) -> Directory {
     if let Directory::Listed(listing) = &mut directory {
-        listing.above = asked::child_toward_working_directory(path).map(|leads_down| (path.to_vec(), leads_down));
+        listing.above = fs_queries::child_toward_working_directory(path).map(|leads_down| (path.to_vec(), leads_down));
     }
     directory
 }
@@ -1120,7 +1344,7 @@ fn list_without_recording(path: &[u8]) -> Directory {
 /// project.
 fn is_file_system_case_sensitive(path: &[u8]) -> bool {
     let found = is_file_system_case_sensitive_unrecorded(path);
-    asked::note(asked::Kind::IsCaseSensitive, path, |_| u64::from(found));
+    fs_queries::record_query(fs_queries::Kind::IsCaseSensitive, path, |_| u64::from(found));
     found
 }
 
@@ -1532,7 +1756,18 @@ impl Disk {
         })
     }
 
-    fn store_bundler_sources(&self, sources: impl Iterator<Item = (Vec<u8>, &'static [u8])>) {
+    fn installed_deferred_read_sources<'a>(&self, deferred: &'a InstalledSources) -> &'a AlreadyRead {
+        deferred.deferred_read_sources.get_or_init(|| {
+            let wait = deferred.deferred_read.lock().take();
+            let texts = wait.map_or_else(AlreadyRead::default, |wait| wait());
+            match self.case_sensitive {
+                true => texts,
+                false => texts.into_iter().map(|(path, text)| (to_file_name_lower_case(&path), text)).collect(),
+            }
+        })
+    }
+
+    fn store_bundler_sources(&self, sources: impl Iterator<Item = (Vec<u8>, Option<&'static [u8]>)>) {
         let Some(cache) = &self.shared_directory_cache else { return };
         let mut sources = sources.peekable();
         if sources.peek().is_some() {
@@ -1541,8 +1776,16 @@ impl Disk {
         let mut pending = self.pending_early_paths.lock();
         for (path, contents) in sources {
             let path = from_native(&path);
-            cache.bundler_sources.insert_ref(to_path(&path, self.case_sensitive).into_owned(), bun_core::strings::without_utf8_bom(contents));
-            pending.push(path);
+            let key = to_path(&path, self.case_sensitive).into_owned();
+            match contents {
+                Some(contents) => {
+                    cache.bundler_sources.insert_ref(key, bun_core::strings::without_utf8_bom(contents));
+                    pending.push(path);
+                }
+                None => {
+                    cache.scheduled_by_bundler.insert_ref(key, ());
+                }
+            }
         }
     }
 
@@ -1558,7 +1801,7 @@ impl Disk {
 
     pub(crate) fn begin_early_read(&self) -> Option<EarlyRead<'_>> {
         let cache = self.shared_directory_cache.as_deref()?;
-        while !self.is_early_parse_cancelled() {
+        while !HOLDS_EARLY_READ.get() && !self.is_early_parse_cancelled() {
             if let Some(read) = cache.try_begin_early_read() {
                 return Some(read);
             }
@@ -1576,6 +1819,13 @@ impl Disk {
             let later = if text.is_empty() { self.deferred_read_sources().get(&*key) } else { None };
             return Some(later.unwrap_or(text).clone());
         }
+        if let Some(deferred) = self.deferred.get()
+            && let key = to_path(path, self.case_sensitive)
+            && let Some(text) = deferred.already_read.get(&*key)
+        {
+            let later = if text.is_empty() { self.installed_deferred_read_sources(deferred).get(&*key) } else { None };
+            return Some(later.unwrap_or(text).clone());
+        }
         if let Some(contents) = self.bundler_source(path) {
             return Some(Cow::Borrowed(contents));
         }
@@ -1588,6 +1838,9 @@ impl Disk {
             before_read(path);
         }
         for_the_system(path)?;
+        if self.observed.is_some() {
+            self.observe(path);
+        }
         let Split { parent, name } = split(path);
         // Not of a configuration file or a `package.json`, which are read as JSON.
         let keeps_mark = self.keeps_byte_order_marks && ScriptKind::from_file_name(path).is_some();
@@ -1621,7 +1874,7 @@ impl Disk {
             read_file(Fd::cwd(), path, &mut reader.buffer)
         });
         self.return_reader(reader);
-        asked::note(asked::Kind::Text, path, |hash| asked::of_text(hash, read.as_deref()));
+        fs_queries::record_query(fs_queries::Kind::Text, path, |hash| fs_queries::of_text(hash, read.as_deref()));
         read.map(|bytes| decoded(bytes, keeps_mark))
     }
 }
@@ -1649,7 +1902,7 @@ impl Asking<'_> {
 
     fn is_directory(path: &[u8]) -> Option<bool> {
         let found = for_the_system(&with_root(path)).and_then(|path| is_directory(Fd::cwd(), path));
-        asked::note(asked::Kind::IsDirectory, path, |_| kind_answer(found));
+        fs_queries::record_query(fs_queries::Kind::IsDirectory, path, |_| kind_answer(found));
         found
     }
 }
@@ -1888,20 +2141,45 @@ impl Host for Disk {
         &self.script_kinds_by_extension
     }
     fn next_early_paths(&self) -> Option<Vec<Vec<u8>>> {
+        let is_stopped = || self.early_parse_cancelled.as_ref().is_some_and(|cancelled| cancelled.load(Ordering::Relaxed));
         let receiver = self.early_paths.as_ref()?.lock();
-        if self.pending_early_paths.lock().is_empty() {
-            match receiver.recv_timeout(Duration::from_millis(5)) {
-                Ok(first) => self.store_bundler_sources(std::iter::once(first).chain(receiver.try_iter())),
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) if !self.is_early_parse_cancelled() => {}
-                Err(_) => return None,
+        loop {
+            if let Some(cache) = &self.shared_directory_cache
+                && cache.early_parse_state.load(Ordering::Acquire) == EARLY_PARSE_PAUSE_REQUESTED
+            {
+                self.store_bundler_sources(receiver.try_iter());
+                self.pending_early_paths.lock().clear();
+                cache.early_parse_state.store(EARLY_PARSE_PAUSED, Ordering::Release);
+                while cache.is_early_parse_paused() && !is_stopped() {
+                    std::thread::sleep(Duration::from_micros(200));
+                }
+            }
+            if is_stopped() {
+                return None;
+            }
+            if !self.pending_early_paths.lock().is_empty() {
+                break;
+            }
+            match receiver.recv_timeout(Duration::from_millis(2)) {
+                Ok(first) => {
+                    let mut batch = vec![first];
+                    let deadline = Instant::now() + EARLY_PATH_BATCH_WINDOW;
+                    while let Ok(next) = receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+                        batch.push(next);
+                    }
+                    self.store_bundler_sources(batch.into_iter());
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return None,
             }
         }
         Some(std::mem::take(&mut *self.pending_early_paths.lock()))
     }
     fn builtin_files(&self, loaded: &[Option<Box<Module<'_>>>], atoms: &Interner<'_>) -> Vec<(Vec<u8>, Builtin)> {
         let Some(compiled) = &self.compiled else { return Vec::new() };
-        let is_code = |module: &Module<'_>| compiled.code.contains(module.path.text);
-        let entry_points: FxHashSet<&[u8]> = compiled.entry_points.iter().map(Vec::as_slice).collect();
+        let deferred = self.deferred.get();
+        let is_code = |module: &Module<'_>| compiled.code.contains(module.path.text) || deferred.is_some_and(|deferred| deferred.code.contains(module.path.text));
+        let entry_points: FxHashSet<&[u8]> = compiled.entry_points.iter().chain(deferred.into_iter().flat_map(|deferred| &deferred.entry_points)).map(Vec::as_slice).collect();
         let is_entry_point = |module: &Module<'_>| entry_points.contains(module.path.text);
         let has = |is_so: &dyn Fn(&Module<'_>) -> bool| -> Vec<bool> { loaded.iter().map(|module| module.as_deref().is_some_and(is_so)).collect() };
         let mut is_compiled = has(&is_code);
@@ -1931,14 +2209,34 @@ impl Host for Disk {
     }
     fn is_runtime_commonjs(&self, path: &[u8]) -> Option<bool> {
         let known = &self.compiled.as_ref()?.is_commonjs_code;
-        if known.is_empty() {
+        let deferred = self.deferred.get().map(|deferred| &deferred.is_commonjs_code).filter(|deferred| !deferred.is_empty());
+        if known.is_empty() && deferred.is_none() {
             return None;
         }
-        known.get(&to_path(path, self.case_sensitive)[..]).copied()
+        let key = to_path(path, self.case_sensitive);
+        known.get(&key[..]).or_else(|| deferred?.get(&key[..])).copied()
+    }
+    fn is_deferred_import(&self, importer: &[u8], specifier: &[u8]) -> bool {
+        if self.deferred_paths.is_empty() && self.deferred_imports.is_empty() || self.deferred.get().is_some() {
+            return false;
+        }
+        if self.deferred_imports.get(importer).is_some_and(|specifiers| specifiers.iter().any(|it| it == specifier)) {
+            return true;
+        }
+        matches!(specifier.first(), Some(b'.' | b'/')) && self.is_deferred_path(&join(dirname::<Posix>(importer), specifier))
+    }
+    fn is_deferred_path(&self, path: &[u8]) -> bool {
+        !self.deferred_paths.is_empty() && self.deferred.get().is_none() && self.deferred_paths.contains(&*to_path(path, self.case_sensitive))
     }
     fn builtin_import(&self, importer: &[u8], specifier: &[u8]) -> Option<Option<Vec<u8>>> {
         if !self.import_constants.is_empty()
             && let Some(constant) = self.import_constants.get(&(importer.to_vec(), specifier.to_vec()))
+        {
+            return Some(Some(constant.clone()));
+        }
+        if let Some(deferred) = self.deferred.get()
+            && !deferred.import_constants.is_empty()
+            && let Some(constant) = deferred.import_constants.get(&(importer.to_vec(), specifier.to_vec()))
         {
             return Some(Some(constant.clone()));
         }
@@ -1953,11 +2251,12 @@ impl Host for Disk {
         if path.starts_with(bun_builtin_syntax::VIRTUAL_ROOT) {
             return (!is_declaration_file_name(path)).then_some(ScriptKind::Ts);
         }
-        if self.script_kinds.is_empty() && self.script_kinds_by_extension.is_empty() {
+        let deferred = self.deferred.get().map_or(&[][..], |deferred| &deferred.script_kinds[..]);
+        if self.script_kinds.is_empty() && self.script_kinds_by_extension.is_empty() && deferred.is_empty() {
             return None;
         }
         let key = to_path(path, self.case_sensitive);
-        if let Some(found) = self.script_kinds.iter().find(|it| it.0 == *key) {
+        if let Some(found) = self.script_kinds.iter().chain(deferred).find(|it| it.0 == *key) {
             return Some(found.1);
         }
         // A declaration file, and what is installed, is what its name says.
@@ -1988,11 +2287,15 @@ impl Host for Disk {
             options.bind.uses_ecmascript_bindings,
         );
         self.spent(Phase::Parse, began.elapsed());
-        if !self.file_jsx_options.is_empty()
+        let deferred_jsx_options = self.deferred.get().map_or(&[][..], |deferred| &deferred.file_jsx_options[..]);
+        if !(self.file_jsx_options.is_empty() && deferred_jsx_options.is_empty())
             && let key = to_path(path, self.case_sensitive)
-            && let Some((_, of_file)) = self.file_jsx_options.iter().find(|it| it.0 == *key)
+            && let Some((_, of_file)) = self.file_jsx_options.iter().chain(deferred_jsx_options).find(|it| it.0 == *key)
         {
             let pragmas = &mut file.jsx_pragmas;
+            if of_file.overrides_pragmas {
+                *pragmas = Default::default();
+            }
             pragmas.classic.get_or_insert(of_file.is_classic);
             for (pragma, said) in [(&mut pragmas.factory, &of_file.factory), (&mut pragmas.fragment_factory, &of_file.fragment), (&mut pragmas.import_source, &of_file.import_source)] {
                 if pragma.is_none() && !said.is_empty() {
@@ -2003,24 +2306,33 @@ impl Host for Disk {
         file
     }
     fn file_timestamps(&self, path: &[u8]) -> Option<[i64; 4]> {
-        let is_on_disk = !is_bundled(path) && !self.has_already_read(path) && self.bundler_source(path).is_none() && self.before_read.is_none() && !asked::is_recording();
-        is_on_disk.then(|| Disk::file_times(path)).flatten()
+        let is_on_disk = !is_bundled(path) && !self.has_already_read(path) && self.bundler_source(path).is_none() && self.before_read.is_none() && !fs_queries::is_recording();
+        is_on_disk.then(|| self.observe(path)).flatten()
     }
     fn has_bundler_source(&self, path: &[u8]) -> bool {
         self.bundler_source(path).is_some()
     }
+    fn is_scheduled_by_bundler(&self, path: &[u8]) -> bool {
+        self.is_early_pass && self.shared_directory_cache.as_ref().is_some_and(|cache| cache.scheduled_by_bundler.get_ref(&*to_path(path, self.case_sensitive)).is_some())
+    }
+    fn is_load_abandoned(&self) -> bool {
+        self.is_load_abandoned.as_ref().is_some_and(|abandoned| abandoned.load(Ordering::Relaxed))
+    }
     fn is_early_parse_cancelled(&self) -> bool {
         self.early_parse_cancelled.as_ref().is_some_and(|cancelled| cancelled.load(Ordering::Relaxed))
+            || self.is_early_pass && self.shared_directory_cache.as_ref().is_some_and(|cache| cache.early_parse_state.load(Ordering::Acquire) == EARLY_PARSE_PAUSE_REQUESTED)
     }
     fn uses_default_parse_settings(&self, path: &[u8]) -> bool {
-        (self.file_jsx_options.is_empty() || !self.file_jsx_options.iter().any(|it| it.0 == *to_path(path, self.case_sensitive))) && self.class_options(path).is_none()
+        let deferred = self.deferred.get().map_or(&[][..], |deferred| &deferred.file_jsx_options[..]);
+        (self.file_jsx_options.is_empty() && deferred.is_empty() || !self.file_jsx_options.iter().chain(deferred).any(|it| it.0 == *to_path(path, self.case_sensitive))) && self.class_options(path).is_none()
     }
     fn class_options(&self, path: &[u8]) -> Option<ClassOptions> {
-        if self.file_class_options.is_empty() {
+        let deferred = self.deferred.get().map_or(&[][..], |deferred| &deferred.file_class_options[..]);
+        if self.file_class_options.is_empty() && deferred.is_empty() {
             return None;
         }
         let key = to_path(path, self.case_sensitive);
-        self.file_class_options.iter().find(|it| it.0 == *key).map(|it| it.1)
+        self.file_class_options.iter().chain(deferred).find(|it| it.0 == *key).map(|it| it.1)
     }
     fn parse_package_json(&self, arena: &Arena, text: &[u8]) -> Option<Json> {
         parse_package_json(arena, text)
@@ -2029,7 +2341,7 @@ impl Host for Disk {
         self.caches.drop_those_of_the_parser();
     }
     fn build_constants(&self) -> Option<Arc<bun_sema::fold::BuildConstants>> {
-        self.build_constants.clone()
+        self.build_constants.clone().or_else(|| self.deferred.get()?.build_constants.clone())
     }
     fn threads(&self) -> usize {
         self.threads

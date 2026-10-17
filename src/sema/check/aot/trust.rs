@@ -1,17 +1,3 @@
-//! Which declarations the compiler trusts.
-//!
-//! The line is whether the checker has seen the code behind a claim.
-//! 1. Ordinary TypeScript (a body, a literal, a `new`) is checked against its annotation: a fact.
-//! 2. An escape hatch (`as`, `!`, a type guard, a value out of `any`) is asserted or coerced on the spot.
-//! 3. A declaration WITHOUT A BODY is a prediction: a `.d.ts`, `declare function`, `declare const`, `declare class`, `declare global`,
-//!    `declare module`, an overload list without an implementation, a file in whose place other code runs
-//!    (`Checker::is_declaration_only`). The static type of what it produces is `unknown`, the declared
-//!    type is the predicted type. Guarded fast path, generic fallback, never a `TypeError`.
-//!
-//! The predicate is on the declaration that PRODUCED the value, not on its type: `const o: FromADts = { .. }` is the program's own claim.
-//!
-//! What the engine implements itself stays trusted: `BUILTINS`.
-
 use crate::atom::{Atom, SYMBOL_NAME_PREFIX, known};
 use crate::bind::{Decl, MemberOwner, Parent, PatParent, SymFlags};
 use crate::check::Checker;
@@ -22,10 +8,8 @@ use crate::program::{FileId, Sym};
 use crate::types::{MapperId, Prop, PropFlags, PropSource, TypeData, TypeId};
 use crate::util::{FxHashMap, FxHashSet};
 
-/// Globals of the language that are no functions.
 const GLOBAL_VALUES: &[&str] = &["undefined", "NaN", "Infinity", "globalThis"];
 
-/// Interfaces of `lib.*.d.ts` that describe objects of a holder under another name.
 pub(super) const ALIASES: &[(&str, &str)] = &[
     ("ReadonlyArray", "Array"),
     ("ConcatArray", "Array"),
@@ -85,20 +69,13 @@ pub fn is_engine_global(name: &[u8]) -> bool {
     has_entry(b"", name) || names_of(name).is_some() || GLOBAL_VALUES.iter().chain(TYPED_ARRAYS).any(|known| known.as_bytes() == name)
 }
 
-/// What a declaration without a body claimed.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum Claim {
-    /// The value of an ambient variable, function, class, namespace or module.
     Binding,
-    /// The result of calling a value that is itself predicted.
     Call,
-    /// The same, where the declared result mentions a type parameter, so that its type is what the call puts in for that: inferred
-    /// from the arguments of the program, `lib.first(rows)`.
     GenericCall,
-    /// The same, where the program writes the type arguments: `lib.parse<Row[]>(text)`.
     GenericCallWithTypeArguments,
     New,
-    /// A property or an element of a value that is itself predicted, or a property of an engine object that the table has no entry for.
     Property,
     Await,
 }
@@ -106,7 +83,6 @@ pub enum Claim {
 impl Claim {
     const ALL: [Claim; 7] = [Claim::Binding, Claim::Call, Claim::GenericCall, Claim::GenericCallWithTypeArguments, Claim::New, Claim::Property, Claim::Await];
 
-    /// For `Checker::solve`.
     fn encode(claim: Option<Claim>) -> u64 {
         claim.map_or(0, |claim| Claim::ALL.iter().position(|&it| it == claim).map_or(0, |at| at as u64 + 1))
     }
@@ -142,7 +118,9 @@ pub(super) struct State {
     of_symbols: FxHashMap<Sym, SymbolClaim>,
     of_properties: FxHashMap<(TypeId, Atom), bool>,
     widened_by_store_cache: FxHashMap<(TypeId, Atom), bool>,
+    mistyped_computed_key_stores: Option<std::rc::Rc<FxHashMap<Atom, Vec<TypeId>>>>,
     external_assignment_cache: FxHashMap<(TypeId, Atom), bool>,
+    unknown_elements_cache: FxHashMap<(TypeId, Atom), bool>,
     literal_spreads: Option<((FileId, ExprId), std::rc::Rc<[crate::hir::PropId]>)>,
 }
 
@@ -153,8 +131,6 @@ impl State {
 }
 
 impl<'p, 's> Checker<'p, 's> {
-    /// If the checker's type of `e` rests on a declaration without a body that the engine does not implement: what was claimed. The
-    /// value is then `unknown` with the checker's type as its prediction.
     pub fn unverified_claim(&mut self, file: FileId, e: ExprId) -> Option<Claim> {
         if !matches!(
             self.hir(file)[e].kind,
@@ -165,7 +141,6 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(&known) = self.aot.trust.claims.get((file, e)) {
             return known;
         }
-        // Whether a value is predicted may depend on itself. What leans on nothing else is not: a prediction comes from somewhere.
         if let Some(assumed) = self.assumption(Query::Claim(file, e)) {
             return Claim::decode(assumed);
         }
@@ -184,13 +159,12 @@ impl<'p, 's> Checker<'p, 's> {
         found
     }
 
-    /// Whether `e` yields `unknown` although the checker has a type for it: a prediction, or what has been computed or read from one.
     pub fn is_predicted(&mut self, file: FileId, e: ExprId) -> bool {
         if let ExprKind::NonNull(asserted) = self.hir(file)[e].kind {
             return self.is_predicted(file, asserted);
         }
-        let yielded = self.result_type_of(file, e);
-        self.is_uninformative(yielded) && {
+        let produced = self.result_type_of(file, e);
+        self.is_uninformative(produced) && {
             let checked = self.type_of_expr(file, e);
             !self.is_uninformative(checked)
         }
@@ -220,6 +194,11 @@ impl<'p, 's> Checker<'p, 's> {
                     return Some(Claim::Property);
                 }
                 let receiver = self.type_of_expr(file, obj);
+                if let Some(name) = self.property_named_by_constant_symbol(file, index)
+                    && self.is_property_claimed(receiver, name)
+                {
+                    return Some(Claim::Property);
+                }
                 let is_listed_there = matches!(hir[index].kind, ExprKind::String(name) if self.has_ambient_class_member(receiver, name) || self.is_class_prototype_object(file, e, name));
                 (is_listed_there || self.has_ambient_index_signature(receiver)).then_some(Claim::Property)
             }
@@ -231,7 +210,6 @@ impl<'p, 's> Checker<'p, 's> {
                 if self.is_allocated_by_subclass_constructor(file, e, callee) {
                     return Some(Claim::Call);
                 }
-                // The type of the call is that of its first argument, and more.
                 if self.redefines_literal(file, e)
                     || self.returned_argument_of(file, e).is_some_and(|first| self.is_predicted(file, first))
                     || self.returned_argument_of_function(file, e).is_some_and(|handed| self.is_argument_returned_by_call(file, handed) && self.is_parameter_type_inferred_from_arguments(file, handed) && self.is_predicted(file, handed))
@@ -267,7 +245,6 @@ impl<'p, 's> Checker<'p, 's> {
                     {
                         return Some(if is_generic { Claim::GenericCall } else { Claim::Call });
                     }
-                    // What `lib.*.d.ts` declares is typed by what it is handed: `Object.entries(given)`.
                     let is_declared_by_lib = self.resolved_signature(file, e).sig.and_then(|sig| self.sig_decl(sig)).is_some_and(|(of, ..)| self.files.module(of).is_lib);
                     let arguments: Vec<ExprId> = hir.ids(hir[call].args).collect();
                     return (is_generic
@@ -324,18 +301,14 @@ impl<'p, 's> Checker<'p, 's> {
         self.is_ambient_value(declared) && !self.is_builtin_global(declared)
     }
 
-    /// `mine.map(f)`, `Mine.from(list)`, where `class Mine extends Array<number>`: `lib.*.d.ts` says that the call yields a `number[]`. The
-    /// engine makes what it yields through the constructor of the receiver (`Symbol.species`, `this`): a `Mine`. So of a method that
-    /// `lib.*.d.ts` declares, called on an object or on the constructor of a class that extends a class of the engine, what is declared
-    /// to be an object is a prediction.
     fn is_allocated_by_subclass_constructor(&mut self, file: FileId, e: ExprId, callee: ExprId) -> bool {
         let ExprKind::Dot { obj, .. } = self.hir(file)[callee].kind else { return false };
         let is_declared_by_lib = self.resolved_signature(file, e).sig.and_then(|sig| self.sig_decl(sig)).is_some_and(|(of, ..)| self.files.module(of).is_lib);
         if !is_declared_by_lib || matches!(self.hir(file)[obj].kind, ExprKind::Super) {
             return false;
         }
-        let yielded = self.type_of_expr(file, e);
-        if !self.parts(yielded).iter().copied().any(|part| self.is_object_type(part)) {
+        let produced = self.type_of_expr(file, e);
+        if !self.parts(produced).iter().copied().any(|part| self.is_object_type(part)) {
             return false;
         }
         let receiver = self.type_of_expr(file, obj);
@@ -347,8 +320,6 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// Whether no declaration of the symbol that gives it a value has code behind it: all are in a declaration file or under `declare`, and
-    /// no function among them has a body. An enum is its constants, wherever it is declared.
     fn symbol_claim(&mut self, sym: Sym) -> SymbolClaim {
         if let Some(&known) = self.aot.trust.of_symbols.get(&sym) {
             return known;
@@ -474,11 +445,11 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn is_promise_of_prediction(&mut self, file: FileId, e: ExprId) -> bool {
-        let yielded = self.result_type_of(file, e);
-        if yielded == self.type_of_expr(file, e) {
+        let produced = self.result_type_of(file, e);
+        if produced == self.type_of_expr(file, e) {
             return false;
         }
-        let promised = self.awaited(yielded);
+        let promised = self.awaited(produced);
         self.is_uninformative(promised)
     }
 
@@ -517,10 +488,7 @@ impl<'p, 's> Checker<'p, 's> {
         found
     }
 
-    /// `Math`, `JSON`, `Map`, `parseInt`, `console`, `undefined`: an ambient global that the table knows as a holder, a function or a
-    /// constructor, whichever declaration file declares it.
     fn is_builtin_global(&self, sym: Sym) -> bool {
-        // A module has no name.
         let name = self.files.symbol(sym).name;
         if name.is_none() || self.files.parent_of_symbol(sym).is_some() {
             return false;
@@ -528,8 +496,6 @@ impl<'p, 's> Checker<'p, 's> {
         is_engine_global(self.atoms().bytes(name))
     }
 
-    /// Whether `obj.name` reads a property that `lib.*.d.ts` declares for an object of the engine and the table has no entry for:
-    /// `error.message`, `match.index`, `fn.name`. What the program itself declares for such an object, `NodeArray.pos`, is its own claim.
     fn is_unlisted_property(&mut self, receiver: TypeId, name: Atom) -> bool {
         let receiver = self.non_nullable(receiver);
         let parts: &[TypeId] = self.parts(receiver);
@@ -542,9 +508,6 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// Whether the engine itself vouches for the type of `e`: it reads a property or calls a method that `lib.*.d.ts` declares for an object of
-    /// the engine, the table has an entry for it, and what is declared for it mentions no type parameter. `a.length`, `map.has(k)`,
-    /// `text.startsWith(p)`, `Array.isArray(x)`. Not `map.get(k)` or `a.find(f)`: what a container holds, its history says.
     pub fn is_guaranteed_by_engine(&mut self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
         let (obj, name) = match hir[e].kind {
@@ -573,7 +536,6 @@ impl<'p, 's> Checker<'p, 's> {
             })
     }
 
-    /// Whether the table knows the holder, as `lib.*.d.ts` names it: see `is_listed`.
     fn is_engine_holder(&self, holder: Atom) -> bool {
         let holder = self.atoms().bytes(holder);
         let holder = holder.strip_suffix(b"Constructor").filter(|rest| !rest.is_empty()).unwrap_or(holder);
@@ -581,10 +543,25 @@ impl<'p, 's> Checker<'p, 's> {
         names_of(holder).is_some() || TYPED_ARRAYS.iter().any(|known| known.as_bytes() == holder)
     }
 
-    /// Whether the property is one of an object literal that nothing is written down for, initialized with a prediction: `return {
-    /// performance }`. It is like an unannotated variable: its type was inferred from the declaration without a body, so what it holds
-    /// stays a prediction, and the field has room for anything.
+    fn getter_returns_external_data(&mut self, prop: &Prop) -> bool {
+        let getter = match Self::written_member_behind(prop).map_or(&prop.source, |written| &written.source) {
+            &PropSource::Literal(file, declared) if self.hir(file)[declared].kind == crate::hir::PropKind::Getter => match self.hir(file)[self.hir(file)[declared].value].kind {
+                ExprKind::Fn(func) => (file, func),
+                _ => return false,
+            },
+            &PropSource::Symbol(accessor) => match self.files().value_declaration(accessor) {
+                Some((file, Decl::Member(member))) if self.hir(file)[member].kind == MemberKind::Getter => (file, self.hir(file)[member].func),
+                _ => return false,
+            },
+            _ => return false,
+        };
+        getter.1.is_some() && self.hir(getter.0)[getter.1].ret.is_none() && self.is_compiled(getter.0) && !self.is_untyped_file(getter.0) && self.function_returns_external_data(getter.0, getter.1)
+    }
+
     pub fn is_prop_predicted(&mut self, prop: &Prop) -> bool {
+        if self.getter_returns_external_data(prop) {
+            return true;
+        }
         let Some(&Prop { source: PropSource::Literal(file, declared), .. }) = Self::written_member_behind(prop) else { return false };
         let value = self.hir(file)[declared].value;
         value.is_some() && self.is_predicted(file, value) || self.is_inferred_from_first_value(prop) || self.may_be_overridden_by_spread(file, declared)
@@ -660,9 +637,9 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// Whether some object of the type has such a property by the name.
     pub(super) fn has_predicted_prop(&mut self, ty: TypeId, name: Atom) -> bool {
         let ty = self.non_nullable(ty);
+        let ty = if matches!(self.data(ty), TypeData::ThisParam(_)) { self.apparent_type(ty) } else { ty };
         let parts: &[TypeId] = self.parts(ty);
         parts.iter().copied().any(|part| {
             let Some(members) = self.members(part) else { return false };
@@ -680,9 +657,81 @@ impl<'p, 's> Checker<'p, 's> {
         found
     }
 
+    fn is_same_declared_property(&mut self, prop: &Prop, holder: TypeId, receiver: TypeId, name: Atom) -> bool {
+        receiver == holder
+            || self.members(receiver).and_then(|members| members.resolved.prop(name)).is_some_and(|assigned| {
+                match (Self::written_member_behind(prop).map_or(&prop.source, |written| &written.source), Self::written_member_behind(assigned).map_or(&assigned.source, |written| &written.source)) {
+                    (PropSource::Literal(file, property), PropSource::Literal(other_file, other_property)) => file == other_file && property == other_property,
+                    (PropSource::Symbol(field), PropSource::Symbol(other_field)) => field == other_field,
+                    _ => false,
+                }
+            })
+    }
+
+    pub(super) fn property_holds_unknown_elements(&mut self, holder: TypeId, name: Atom) -> bool {
+        if let Some(&known) = self.aot.trust.unknown_elements_cache.get(&(holder, name)) {
+            return known;
+        }
+        self.aot.trust.unknown_elements_cache.insert((holder, name), false);
+        let found = self.find_property_with_unknown_elements(holder, name);
+        self.aot.trust.unknown_elements_cache.insert((holder, name), found);
+        found
+    }
+
+    fn find_property_with_unknown_elements(&mut self, holder: TypeId, name: Atom) -> bool {
+        let Some(members) = self.members(holder) else { return false };
+        let Some(prop) = members.resolved.prop(name) else { return false };
+        let Some(declared) = self.type_of_property(holder, name) else { return false };
+        if !self.is_container(declared) || !self.has_primitive_elements(declared) {
+            return false;
+        }
+        let initializer = match Self::written_member_behind(prop) {
+            Some(&Prop { source: PropSource::Literal(file, written), .. }) => (file, self.hir(file)[written].value),
+            _ => {
+                let PropSource::Symbol(field) = prop.source else { return false };
+                match self.files().value_declaration(field) {
+                    Some((file, Decl::Member(member))) if self.hir(file)[member].kind == MemberKind::Property && self.hir(file)[member].ty.is_none() => (file, self.hir(file)[member].init),
+                    _ => return false,
+                }
+            }
+        };
+        if self.holds_unknown_elements(initializer.0, initializer.1) {
+            return true;
+        }
+        if let Some(assignments) = self.property_assignments().get(&name) {
+            for &(file, assignment) in assignments {
+                let hir = self.hir(file);
+                let ExprKind::Assign { target, value, .. } = hir[assignment].kind else { continue };
+                let ExprKind::Dot { obj, .. } = hir[target].kind else { continue };
+                if self.is_property_of(prop, holder, file, obj, name) && self.holds_unknown_elements(file, value) {
+                    return true;
+                }
+            }
+        }
+        if let Some(mutations) = self.property_container_mutations().get(&name) {
+            for &(file, obj, value) in mutations {
+                if self.is_property_of(prop, holder, file, obj, name) && self.is_external_element(file, value) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn is_property_of(&mut self, prop: &Prop, holder: TypeId, file: FileId, obj: ExprId, name: Atom) -> bool {
+        let receiver = self.type_of_expr(file, obj);
+        let receiver = self.non_nullable(receiver);
+        let receiver = self.apparent_type(receiver);
+        self.is_same_declared_property(prop, holder, receiver, name)
+    }
+
     fn find_external_assignment(&mut self, holder: TypeId, name: Atom) -> bool {
         let Some(members) = self.members(holder) else { return false };
         let Some(prop) = members.resolved.prop(name) else { return false };
+        let Some(declared) = self.type_of_property(holder, name) else { return false };
+        if !self.every_type(declared, |c, part| c.is_primitive(part)) {
+            return false;
+        }
         if Self::written_member_behind(prop).is_none() {
             let PropSource::Symbol(field) = prop.source else { return false };
             let initializer = match self.files().value_declaration(field) {
@@ -693,6 +742,11 @@ impl<'p, 's> Checker<'p, 's> {
             if initializer.1.is_some() && self.is_derived_from_prediction(initializer.0, initializer.1, 0) {
                 return true;
             }
+            if let Some((file, Decl::ParameterProperty(parameter))) = self.files().value_declaration(field)
+                && self.parameter_receives_external_data(file, parameter)
+            {
+                return true;
+            }
         }
         let Some(assignments) = self.property_assignments().get(&name) else { return false };
         for &(file, assignment) in assignments {
@@ -701,7 +755,9 @@ impl<'p, 's> Checker<'p, 's> {
             let ExprKind::Dot { obj, .. } = hir[target].kind else { continue };
             let receiver = self.type_of_expr(file, obj);
             let receiver = self.non_nullable(receiver);
-            if self.is_uninformative(receiver) || !self.is_provably_assignable(holder, receiver) {
+            let receiver = self.apparent_type(receiver);
+            let is_same_property = self.is_same_declared_property(prop, holder, receiver, name);
+            if !is_same_property {
                 continue;
             }
             let stored = if matches!(op, None | Some(BinOp::And | BinOp::Or | BinOp::Nullish)) { value } else { assignment };
@@ -712,8 +768,55 @@ impl<'p, 's> Checker<'p, 's> {
         false
     }
 
+    fn mistyped_computed_key_stores(&mut self) -> std::rc::Rc<FxHashMap<Atom, Vec<TypeId>>> {
+        if let Some(known) = &self.aot.trust.mistyped_computed_key_stores {
+            return known.clone();
+        }
+        let mut found: FxHashMap<Atom, Vec<TypeId>> = FxHashMap::default();
+        for &(file, assignment) in self.union_key_assignments() {
+            let hir = self.hir(file);
+            let ExprKind::Assign { target, .. } = hir[assignment].kind else { continue };
+            let ExprKind::Index { obj, index, .. } = hir[target].kind else { continue };
+            let key = self.type_of_expr(file, index);
+            let names: Vec<Atom> = self.parts(key).iter().filter_map(|&part| match *self.data(part) {
+                TypeData::StringLit { value, .. } => Some(value),
+                _ => None,
+            }).collect();
+            if names.len() < 2 || names.len() != self.parts(key).len() {
+                continue;
+            }
+            let receiver = self.type_of_expr(file, obj);
+            let receiver = self.non_nullable(receiver);
+            let stored = self.type_of_expr(file, assignment);
+            if self.is_uninformative(receiver) || self.is_uninformative(stored) {
+                continue;
+            }
+            for name in names {
+                let Some(held) = self.type_of_property(receiver, name) else { continue };
+                if !self.is_provably_assignable(stored, held) {
+                    let receivers = found.entry(name).or_default();
+                    if !receivers.contains(&receiver) {
+                        receivers.push(receiver);
+                    }
+                }
+            }
+        }
+        let found = std::rc::Rc::new(found);
+        self.aot.trust.mistyped_computed_key_stores = Some(found.clone());
+        found
+    }
+
+    fn is_widened_by_computed_key_store(&mut self, holder: TypeId, name: Atom) -> bool {
+        if self.computed_key_assignments().is_empty() || self.union_key_assignments().is_empty() {
+            return false;
+        }
+        let stores = self.mistyped_computed_key_stores();
+        let Some(receivers) = stores.get(&name) else { return false };
+        receivers.iter().any(|&receiver| receiver == holder || self.is_provably_assignable(holder, receiver))
+    }
+
     pub fn is_widened_by_checked_source_store(&mut self, holder: TypeId, name: Atom) -> bool {
-        if self.is_inferred_property_assigned_external_data(holder, name) {
+        if self.is_inferred_property_assigned_external_data(holder, name) || self.is_widened_by_computed_key_store(holder, name) {
             return true;
         }
         let Some(stores) = self.stores_in_checked_sources().and_then(|stores| stores.get(&name)) else { return false };
@@ -752,6 +855,98 @@ impl<'p, 's> Checker<'p, 's> {
         is_so
     }
 
+    pub fn is_error_about_ambient_declaration(&mut self, file: FileId, start: u32, end: u32) -> bool {
+        let hir = self.hir(file);
+        let begins_at_start = |pos: u32| pos <= start && hir.text[pos as usize..start as usize].iter().all(|byte| byte.is_ascii_whitespace());
+        let mut expressions: Vec<ExprId> = Vec::new();
+        for (e, node) in hir.exprs.iter().enumerate() {
+            if node.end != end {
+                continue;
+            }
+            if !begins_at_start(node.pos) {
+                if let ExprKind::Dot { obj, .. } = node.kind
+                    && hir[obj].end <= start
+                {
+                    expressions.push(obj);
+                }
+                continue;
+            }
+            let e = ExprId(e as u32);
+            expressions.push(e);
+            if let Parent::Expr(parent) = self.bound(file).expr_parent[e.idx()]
+                && parent.is_some()
+            {
+                match hir[parent].kind {
+                    ExprKind::Call(call) | ExprKind::New(call) if hir[call].callee != e => expressions.push(hir[call].callee),
+                    ExprKind::Assign { target, value, .. } if target == e => expressions.push(value),
+                    _ => {}
+                }
+            }
+        }
+        for statement in hir.stmts.iter() {
+            if statement.start == start
+                && let crate::hir::StmtKind::Return(returned) = statement.kind
+                && returned.is_some()
+            {
+                expressions.push(returned);
+            }
+        }
+        let mut types: Vec<TypeId> = Vec::new();
+        for e in expressions {
+            types.push(self.type_of_expr(file, e));
+        }
+        for (node, written) in hir.types.iter().enumerate() {
+            if written.end <= end && begins_at_start(written.pos) {
+                types.push(self.type_from_node(file, crate::hir::TypeNodeId(node as u32)));
+            }
+        }
+        for (pat, node) in hir.pats.iter().enumerate() {
+            if node.end == end
+                && begins_at_start(node.pos)
+                && let Some(symbol) = self.bound(file).pat_symbol[pat].some()
+            {
+                types.push(self.type_of_symbol(self.files.sym(file, symbol)));
+            }
+        }
+        let mut seen = FxHashSet::default();
+        types.into_iter().any(|ty| self.mentions_ambient_declaration(ty, 0, &mut seen))
+    }
+
+    fn is_ambient_declaration_file(&self, file: FileId) -> bool {
+        self.is_declaration_only(file) && !self.files.module(file).is_lib
+    }
+
+    fn is_prop_declared_ambiently(&self, prop: &Prop) -> bool {
+        match &prop.source {
+            &PropSource::Symbol(declared) => self.is_ambient_declaration_file(declared.file),
+            PropSource::Intersected(_, parts) | PropSource::Mapped(_, _, Some(parts)) | PropSource::Copy(_, parts, _) | PropSource::ReverseMapped(_, parts) => parts.iter().any(|part| self.is_prop_declared_ambiently(part)),
+            _ => false,
+        }
+    }
+
+    fn mentions_ambient_declaration(&mut self, ty: TypeId, depth: u32, seen: &mut FxHashSet<TypeId>) -> bool {
+        const MAX_DEPTH: u32 = 4;
+        if depth > MAX_DEPTH || !seen.insert(ty) {
+            return false;
+        }
+        use crate::types::Origin;
+        let nested: Vec<TypeId> = match self.data(ty) {
+            TypeData::Union(parts) | TypeData::Intersection(parts) => parts.to_vec(),
+            TypeData::Ref { target, .. } if self.is_ambient_declaration_file(target.file) => return true,
+            TypeData::Ref { .. } | TypeData::Tuple { .. } => self.type_arguments(ty).to_vec(),
+            TypeData::Fns { decls, .. } => return decls.iter().any(|declaration| self.is_ambient_declaration_file(declaration.0)),
+            TypeData::Anon { origin: Origin::ClassStatic(symbol) | Origin::Function(symbol), .. } => return self.is_ambient_declaration_file(symbol.file),
+            TypeData::Anon { origin: Origin::TypeLiteral(declared_in, _), .. } if self.is_ambient_declaration_file(*declared_in) => return true,
+            TypeData::Anon { origin: Origin::TypeLiteral(..) | Origin::Mapped(..), .. } | TypeData::Synth(_) => {
+                return self.members(ty).is_some_and(|members| members.shape().props.iter().any(|prop| self.is_prop_declared_ambiently(prop)));
+            }
+            &TypeData::IndexedAccess { obj, index, .. } => vec![obj, index],
+            &TypeData::Keyof(of) => vec![of],
+            _ => return false,
+        };
+        nested.into_iter().any(|part| self.mentions_ambient_declaration(part, depth + 1, seen))
+    }
+
     pub fn is_predicted_through_spread(&mut self, ty: TypeId, name: Atom) -> bool {
         let TypeData::Synth(shape) = self.data(ty) else { return false };
         let Some((left, right)) = shape.created_from.filter(|_| shape.spread_rank < u32::MAX - 1 && !shape.is_object_rest_type) else { return false };
@@ -766,15 +961,12 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Whether some object of the type has the property from a class without a body: `this.props` and `this.state` where `class App extends
-    /// Component<Props, State>` of `@types/react`. The code behind that class stores to it, and nobody has held that code to what is declared.
     pub(super) fn has_ambient_class_member(&mut self, ty: TypeId, name: Atom) -> bool {
         let ty = self.non_nullable(ty);
         let parts: &[TypeId] = self.parts(ty);
         parts.iter().copied().any(|part| {
-            // `this` is of a type parameter.
             let apparent = self.apparent_type(part);
-            self.is_ambient_module_type(part) || self.is_declared_by_ambient_class(apparent, name, 0)
+            self.is_ambient_module_type(part) || !self.is_safe_validate_result_type(part) && self.is_declared_by_ambient_class(apparent, name, 0)
         })
     }
 
@@ -807,11 +999,9 @@ impl<'p, 's> Checker<'p, 's> {
             _ => None,
         };
         let decls = self.files.decls(declared);
-        // Also of an interface or a type literal there: `element.props`, where `interface ReactElement<P> { props: P }`.
         if decls.iter().all(|&(file, decl)| matches!(decl, Decl::Member(_)) && (self.is_declaration_only(file) || self.hir(file).is_ambient(self.hir(file).parent(self.hir(file).node(decl))))) {
             return true;
         }
-        // A field that the program declares again, `state = { seen: 0 }`: the code behind the class that it extends stores to it all the same.
         let TypeData::Ref { target, .. } = *self.data(class) else { return false };
         if decls.iter().all(|&(file, decl)| matches!(decl, Decl::Member(_)) && self.hir(file).is_ambient(self.hir(file).node(decl)))
             && self.base_types(target).into_vec().into_iter().any(|base| self.members(base).is_some_and(|members| members.resolved.prop(name).is_some()))
@@ -823,7 +1013,6 @@ impl<'p, 's> Checker<'p, 's> {
             && self.base_types(target).into_vec().into_iter().any(|base| self.is_declared_by_ambient_class(base, name, depth + 1))
     }
 
-    /// The name of the interface, class or namespace that declares the member.
     pub(super) fn declaring_container_name(&self, member: Sym) -> Option<Atom> {
         if let Some(parent) = self.files.parent_of_symbol(member) {
             return Some(self.files.symbol(parent).name);
@@ -838,9 +1027,6 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// `holder`: as `lib.*.d.ts` names it. `ArrayConstructor` is the static side of `Array`. A holder that the table does not know at all is no
-    /// object of the engine: `Intl.NumberFormat`, `URL`. Its values are predictions to begin with, so what is read from a fact of that
-    /// type is the claim of whoever annotated it.
     fn is_listed(&self, holder: Atom, name: Atom) -> bool {
         if holder.is_none() || name.is_none() {
             return true;
@@ -862,7 +1048,6 @@ impl<'p, 's> Checker<'p, 's> {
         if names_of(holder).is_none() && !is_typed_array {
             return true;
         }
-        // The iterator protocol has no entries: the engine's iterators and the program's generators implement it.
         let is_protocol = holder == b"Iterator" && matches!(name, b"next" | b"return" | b"throw");
         is_protocol || has_entry(holder, name) || is_typed_array && has_entry(b"TypedArray", name) || has_entry(b"Object", name)
     }

@@ -3,17 +3,18 @@
 // bracket, truncates the file) and runs `bun check --aot` on the result. A broken program must get diagnostics or pass;
 // a panic, a crash or a hang is a bug. Fixed cases found this way are in invalid-programs-no-crash.test.ts.
 //
-//   bun test test/aot/mutated-programs-no-crash                        300 mutants, always the same ones
+//   bun test test/aot/mutated-programs-no-crash                        300 mutants that are always the same, and 300 from a seed that no run has used
 //   AOT_FUZZ_MUTANTS=50000 AOT_FUZZ_SEED=7 bun test test/aot/mutated-programs-no-crash
 import { expect, test } from "bun:test";
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { availableParallelism } from "os";
 import { join } from "path";
+import { freshSeed } from "./fresh-seed";
 import { unsupported } from "./run-programs";
 
 const mutantCount = Number(process.env.AOT_FUZZ_MUTANTS) || 300;
-const seed = Number(process.env.AOT_FUZZ_SEED) || 1;
+const seeds = process.env.AOT_FUZZ_SEED ? [Number(process.env.AOT_FUZZ_SEED)] : [1, freshSeed];
 
 function mulberry32(state: number) {
   return () => {
@@ -79,8 +80,8 @@ function mutate(source: string, random: () => number): string {
   }
 }
 
-test.skipIf(!!unsupported)(
-  `bun check --aot survives ${mutantCount} mutated programs`,
+for (const seed of seeds) test.skipIf(!!unsupported)(
+  `bun check --aot survives ${mutantCount} mutated programs, AOT_FUZZ_SEED=${seed}`,
   async () => {
     using root = tempDir("aot-mutated-programs", {});
     const programs = singleFilePrograms(join(import.meta.dir, "programs"));

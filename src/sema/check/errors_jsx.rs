@@ -29,7 +29,7 @@ impl Checker<'_, '_> {
             return;
         }
         let options = &self.p.files.options;
-        let (jsx, no_implicit_any) = (options.jsx, options.no_implicit_any);
+        let (jsx, no_implicit_any) = (options.jsx, self.check_options(file).no_implicit_any);
         let atoms = &self.atoms();
         // `resolveImportsAndModuleAugmentations`: only `ScriptKindTSX` and `ScriptKindJSX` import it.
         let path = self.files().module(file).file_name();

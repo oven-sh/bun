@@ -50,6 +50,25 @@ describe.skipIf(!!unsupported)("compile/aot/react-compiler", () => {
   );
 
   test(
+    "component-file-loaded-by-require",
+    () =>
+      slot(async () => {
+        const main = join(programs, "component-file-loaded-by-require", "main.ts");
+        const executable = join(folder, "component-file-loaded-by-require");
+        const build = await spawned([bunExe(), "run", join(programs, "build.ts"), main, executable, "given"], programs, bunEnv);
+        built(build);
+        expect(build.stderr).toContain("given: read through: Item: 2 reads: closed");
+        const compiled = await spawned([executable], programs, bunEnv);
+        expect(compiled.signal).toBeNull();
+        expect(compiled.stderr).toContain("[react-compiler] a cache of ");
+        const plain = await spawned([bunExe(), "run", main], programs, bunEnv);
+        expect({ signal: plain.signal, exitCode: plain.exitCode }).toEqual({ signal: null, exitCode: 0 });
+        expect(told({ ...compiled, stderr: compiled.stderr.replace(/^\[react-compiler\] .*\n/gm, "") })).toEqual(told(plain));
+      }),
+    600_000,
+  );
+
+  test(
     "type-error-in-component-file",
     () =>
       slot(async () => {

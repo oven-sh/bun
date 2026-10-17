@@ -439,7 +439,7 @@ String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame)
     }
 
     if (auto position = frame.reportedPosition(); position && position->source)
-        return JSC::AOT::ProgramData::get()->sourceName(position->source);
+        return JSC::AOT::ProgramData::get()->sourceNameInFrames(position->source);
 
     auto* executable = frame.ownerExecutable();
     return executable ? sourceURL(executable->source()) : String();
@@ -455,7 +455,7 @@ String sourceURL(JSC::StackVisitor& visitor)
 #if ENABLE(AOT)
         if (auto function = visitor->aotFunction()) {
             if (auto position = function.reportedPositionFor(visitor->bytecodeIndex()); position && position->source)
-                return JSC::AOT::ProgramData::get()->sourceName(position->source);
+                return JSC::AOT::ProgramData::get()->sourceNameInFrames(position->source);
         }
 #endif
         return sourceURL(visitor->codeBlock());

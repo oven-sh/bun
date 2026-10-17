@@ -1,24 +1,18 @@
-//! Predictions: what a value probably is, where nothing holds it to a type. In a JavaScript function that goes for every value, in
-//! TypeScript for one of type `any`. What is expected is for the checker to say: see `sema/check/aot/javascript.rs`. Here it is described
-//! and put on the value. The type of the value stays what it is, and no value is tested or changed for the sake of a prediction.
-
 use super::types::MAX_DESCRIPTION_DEPTH;
 use super::{FileBuild, Fx, ImportSource, Source};
 use crate::builder::Var;
 use crate::declared::{Declared, Part, prim};
 use crate::id::{TyId, V};
-use crate::ir::{Args, LayoutKind, Op, Prediction, CoerceReason};
+use crate::ir::{Args, LayoutKind, Op, Operation, Prediction, CoerceReason};
 use bun_sema::bind::{Decl, PatParent, required_specifier};
 use bun_sema::check::{Checker, ImportedCode};
 use bun_sema::atom::Atom;
-use bun_sema::hir::{ExprId, FileKind, Flags, MemberKind, ParamId, PatId, PatKind, PropKey};
+use bun_sema::hir::{ExprId, FileKind, Flags, FnId, MemberKind, ParamId, PatId, PatKind, PropKey};
 use bun_sema::program::{FileId, Sym};
 use bun_sema::types::{TypeData, TypeId};
 use smallvec::SmallVec;
 
 impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
-    /// Once for the program, before anything is translated. A parameter is expected to be what the calls of its function pass. Behind an import the checker
-    /// sees the declaration of a function, often in a declaration file: it is told which code runs.
     pub(crate) fn imported_code(&mut self, imports: &[Sym]) -> Vec<(Sym, ImportedCode)> {
         let mut code = Vec::new();
         for &import in imports {
@@ -34,7 +28,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         code
     }
 
-    /// `const a = require("m")` and `const { a } = require("m")` in JavaScript, which the checker takes for imports.
     fn required_code(&self, import: Sym) -> Option<ImportedCode> {
         let (file, pat) = self.files.decls(import).into_iter().find_map(|(file, decl)| match decl {
             Decl::Require(pat) => Some((file, pat)),
@@ -56,11 +49,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         Some(ImportedCode::Export(self.required_file(file, specifier)?, name))
     }
 
-    /// In a JavaScript function no value is known for an object, an array or a function, not even one that has just been made. By such a
-    /// type the engine takes liberties that only TypeScript grants: an own `push` of an array does not shadow the built-in one. So the
-    /// type of what the operation yields is `anything`, and what it would have been is expected of it. `None`: the type stays. It is of
-    /// primitives, which have nothing of their own. Or it is one that the operations that follow go by: of an object that is being
-    /// made, of a value that has been held to the type of the place it is about to enter.
     pub(crate) fn allocated_as(&mut self, op: &Op, ty: TyId) -> Option<Prediction> {
         if !self.may_be_object_type(ty) || matches!(op, Op::New(_) | Op::NewWith { .. } | Op::Coerce { .. }) {
             return None;
@@ -74,23 +62,18 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         })
     }
 
-    /// Whether the type says of a value that it is an object of some kind, or may be. Not an environment, which the language does not
-    /// see.
     fn may_be_object_type(&self, ty: TyId) -> bool {
         let described = self.out.tys.get(ty);
         let is_environment = described.single_layout().is_some_and(|layout| self.out.layouts[layout.idx()].kind == LayoutKind::Environment);
         ty != self.out.tys.anything && described.has_objects() && !is_environment
     }
 
-    /// Whether the checker is asked what it expects of the value.
     fn wants_prediction(&self, fx: &Fx, value: V) -> bool {
         if fx.is_typed {
-            // Which function a function is, its type does not say.
             let ty = self.ty(fx, value);
             let described = self.out.tys.get(ty);
             return ty == self.out.tys.anything || (described.any_function && !described.any_object);
         }
-        // What has just been made says itself what it is. What a name that the program does not bind stands for, the engine knows.
         !matches!(
             fx.b.func.op(value),
             Some(
@@ -101,6 +84,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     | Op::Double(_)
                     | Op::Str(_)
                     | Op::BigInt(_)
+                    | Op::Symbol(_)
                     | Op::FuncRef(_)
                     | Op::Closure { .. }
                     | Op::ClosureOnce { .. }
@@ -112,9 +96,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         )
     }
 
-    /// The value of the expression `e`, with what the checker expects it to be.
     pub(crate) fn predict_expression(&mut self, fx: &mut Fx, value: V, e: ExprId) -> V {
-        // `new C()` with a class of TypeScript, once the object is made: see `allocated_as`.
         if !fx.is_typed && self.may_be_object_type(self.ty(fx, value)) {
             let prediction = self.description_prediction(self.ty(fx, value));
             return self.retype_with_prediction(fx, value, self.out.tys.anything, prediction);
@@ -144,8 +126,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         args
     }
 
-    /// `callee`: the value of the expression `e`, which is called or constructed. `new (C || (C = allocator.getC()))(..)`: where two ways meet, the operand
-    /// has no definition for the engine to go by, so what is expected is said of the value.
     pub(crate) fn predict_callee(&mut self, fx: &mut Fx, callee: V, e: ExprId) -> V {
         if !fx.is_typed || fx.b.func.op(callee).is_some() || fx.b.func.prediction(callee) != Prediction::None || !self.wants_prediction(fx, callee) {
             return callee;
@@ -156,6 +136,22 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 self.expect(fx, callee, prediction)
             }
             _ => callee,
+        }
+    }
+
+    pub(crate) fn predict_declared_method(&mut self, fx: &mut Fx, value: V, receiver: TypeId, name: &[u8]) -> V {
+        let name = self.c.atoms().intern(name);
+        let method = self.c.declared_method(receiver, name);
+        self.predict_method(fx, value, method)
+    }
+
+    pub(crate) fn predict_method(&mut self, fx: &mut Fx, value: V, method: Option<(FileId, FnId)>) -> V {
+        match method {
+            Some((file, func)) if self.shared.is_compiled(file) => {
+                let prediction = Prediction::Closure(self.forward_declare_function(file, func));
+                self.expect(fx, value, prediction)
+            }
+            _ => value,
         }
     }
 
@@ -175,7 +171,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// `value`: what `holder[key]` yields. Where nothing else is expected of it and `holder` is the dictionary that is held under a property: what the program stores there under the key.
     pub(crate) fn predict_by_key(&mut self, fx: &mut Fx, value: V, holder: ExprId) -> V {
         if !matches!(fx.b.func.op(value), Some(Op::ElemGet { .. })) || fx.b.func.prediction(value) != Prediction::None || !self.wants_prediction(fx, value) {
             return value;
@@ -189,7 +184,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// What arrives for the parameter `p`.
     pub(crate) fn predict_parameter(&mut self, fx: &mut Fx, value: V, p: ParamId) {
         if !self.wants_prediction(fx, value) {
             return;
@@ -199,7 +193,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.expect(fx, value, prediction);
     }
 
-    /// What the name `pat` of a pattern is bound to, unless something is expected of it already.
     pub(crate) fn predict_binding(&mut self, fx: &mut Fx, value: V, pat: PatId) -> V {
         if !self.wants_prediction(fx, value) || fx.b.func.prediction(value) != Prediction::None {
             return value;
@@ -209,7 +202,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.expect(fx, value, prediction)
     }
 
-    /// What a loop over `iterable` is handed at each turn.
     pub(crate) fn predict_iteration_value(&mut self, fx: &mut Fx, value: V, iterable: ExprId, is_await: bool) -> V {
         let Some(expected) = self.c.predicted_expr_type(fx.file, iterable) else { return value };
         let element = self.c.iterated_type(expected, is_await);
@@ -217,7 +209,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.expect(fx, value, prediction)
     }
 
-    /// What the variable `sym` of the source holds, for where the values that are stored to it meet.
     pub(crate) fn predict_variable(&mut self, fx: &mut Fx, var: Var, sym: Sym) {
         if fx.b.var_type(var) != self.out.tys.anything {
             return;
@@ -227,10 +218,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.set_var_prediction(var, prediction);
     }
 
-    /// Whether `callee`, which is `obj.name`, is expected to be a closure of one function of the program, and `obj` is not looked at as a
-    /// type of the program, by which the engine finds the function itself.
     pub(crate) fn expects_closure(&mut self, fx: &Fx, obj: V, callee: ExprId) -> bool {
-        // It finds nothing where the type says nothing of the property: what `class G extends (F as any)` inherits.
         if self.out.tys.get(self.ty(fx, obj)).parts.iter().any(|part| matches!(part, Part::Class(_))) {
             let checked = self.c.type_of_expr(fx.file, callee);
             if !self.c.is_uninformative(checked) {
@@ -240,8 +228,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.c.predicted_expr_function(fx.file, callee).is_some_and(|function| self.shared.is_compiled(function.0))
     }
 
-    /// The value with the prediction. Where something else is expected of it already, which holds elsewhere (`typeof x === "string" ?
-    /// x.length : x + 1`), it is the same value looked at anew: an `Upcast` to its own type, which is no code.
     fn expect(&mut self, fx: &mut Fx, value: V, prediction: Prediction) -> V {
         let ty = self.ty(fx, value);
         let so_far = fx.b.func.prediction(value);
@@ -254,8 +240,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if is_type_neutral || prediction == so_far {
             return value;
         }
-        // It has just been made, for the expression that this is expected of. Where the values of a variable meet, what is expected of the
-        // variable stays, and so does what a value is looked at with.
         let is_just_created = value.idx() + 1 == fx.b.func.values.len();
         let is_allocated_for_it = !matches!(fx.b.func.op(value), None | Some(Op::Coerce { .. }));
         if is_just_created && (so_far == Prediction::None || is_allocated_for_it) {
@@ -276,7 +260,23 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return op;
         }
         *obj = self.as_predicted_collection(fx, *obj);
+        if let Op::CallMethod { obj, name, .. } | Op::PropGet { obj, name } = &mut op
+            && matches!(self.out.strs.get(*name), b"next" | b"return" | b"throw")
+            && self.is_declared_generator(fx, *obj)
+        {
+            let ty = self.ty(fx, *obj);
+            *obj = fx.b.emit(Op::Operation { which: Operation::DeclaredGenerator, args: [*obj].into_iter().collect() }, ty);
+        }
         op
+    }
+
+    fn is_declared_generator(&self, fx: &Fx, value: V) -> bool {
+        let ty = self.ty(fx, value);
+        if ty.is_none() {
+            return false;
+        }
+        let described = self.out.tys.get(ty);
+        matches!(&described.parts[..], [Part::Global(name, _)] if self.out.strs.get(*name) == b"Generator") && described.prims & !prim::NULLISH == 0 && described.ints.is_none() && !described.any_object && !described.any_function
     }
 
     pub(crate) fn as_predicted_collection(&mut self, fx: &mut Fx, value: V) -> V {
@@ -300,7 +300,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.retype_with_prediction(fx, value, ty, Prediction::Ty(expected))
     }
 
-    /// The same value, looked at as of the type, which it is, and with the prediction.
     fn retype_with_prediction(&mut self, fx: &mut Fx, value: V, ty: TyId, prediction: Prediction) -> V {
         if let Some(&seen) = fx.expected.get(&(fx.b.block, value, prediction)) {
             return seen;
@@ -311,7 +310,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         seen
     }
 
-    /// The checker's type as a prediction. `integers`: which integers the numbers among it are, if that is known.
     fn prediction_for_type(&mut self, expected: TypeId, integers: impl FnOnce(&mut Checker<'p, 's>) -> Option<(i64, i64)>) -> Prediction {
         if let Some((file, func)) = self.c.function_for_type(expected) {
             return Prediction::Closure(self.forward_declare_function(file, func));
@@ -334,20 +332,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    /// That a value is anything, nil, some object or some function is nothing to be fast about.
     fn description_prediction(&self, ty: TyId) -> Prediction {
         let described = self.out.tys.get(ty);
         let is_telling = described.prims & !prim::NULLISH != 0 || described.ints.is_some() || !described.parts.is_empty();
         if is_telling && ty != self.out.tys.anything { Prediction::Ty(ty) } else { Prediction::None }
     }
 
-    /// As `ty_of` describes a type, except that no layout comes about for a guess: an object type that the checker has computed, as for
-    /// `{ ...a, b }`, may well be of objects that JavaScript makes, which have none.
     fn describe_predicted(&mut self, ty: TypeId) -> Declared {
         self.describe_predicted_at_depth(ty, 0)
     }
 
-    /// `depth`: as for `ty_at_depth`.
     fn describe_predicted_at_depth(&mut self, ty: TypeId, depth: u8) -> Declared {
         if depth > MAX_DESCRIPTION_DEPTH {
             return Declared::anything();
@@ -378,12 +372,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         match self.c.data(ty) {
             TypeData::Synth(_) | TypeData::ReverseMapped { .. } => Declared::any_object().nullable(),
-            // What its type arguments are makes no difference to what the engine tests for.
             TypeData::Ref { target, .. } if self.hir(target.file).kind == FileKind::Declaration && self.c.global_type_symbol(self.files.symbol(*target).name) == Some(*target) => {
                 let name = self.str(self.files.symbol(*target).name);
                 Declared::part(Part::Global(name, SmallVec::new())).nullable()
             }
-            // What a declaration file declares is there for host objects, which have no layout.
             _ if self.c.is_declared_only_record(ty) => Declared::any_object().nullable(),
             _ => {
                 let described = self.ty_of(ty);

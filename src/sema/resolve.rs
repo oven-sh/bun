@@ -145,11 +145,17 @@ pub trait Host: Sync {
     fn has_bundler_source(&self, _path: &[u8]) -> bool {
         false
     }
+    fn is_scheduled_by_bundler(&self, _path: &[u8]) -> bool {
+        false
+    }
     fn is_early_parse_cancelled(&self) -> bool {
         false
     }
     fn next_early_paths(&self) -> Option<Vec<Vec<u8>>> {
         None
+    }
+    fn is_load_abandoned(&self) -> bool {
+        false
     }
     /// Called once, when the program and `Options::code_roots` are loaded, with every file so far. The sources of the runtime
     /// that are compiled with them: they are loaded like `Options::code_roots`. Each with its `Module::builtin`.
@@ -173,6 +179,12 @@ pub trait Host: Sync {
     /// it, or nothing. Such a file refers to its like alone: the disk is not asked.
     fn builtin_import(&self, _importer: &[u8], _specifier: &[u8]) -> Option<Option<Vec<u8>>> {
         None
+    }
+    fn is_deferred_import(&self, _importer: &[u8], _specifier: &[u8]) -> bool {
+        false
+    }
+    fn is_deferred_path(&self, _path: &[u8]) -> bool {
+        false
     }
     /// Several programs are about to be loaded: from here on there is a `shared_file` for a
     /// declaration file. `variants`: a bit for each `variant_of_files` that more than one of them
@@ -578,6 +590,32 @@ pub struct ParseOptions {
     pub bind: crate::bind::BindOptions,
 }
 
+#[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
+pub struct CheckOptions {
+    pub no_implicit_any: bool,
+    pub strict_property_initialization: bool,
+    pub no_implicit_this: bool,
+    pub use_unknown_in_catch_variables: bool,
+    pub no_unchecked_indexed_access: bool,
+    pub no_property_access_from_index_signature: bool,
+    pub no_unused_locals: bool,
+    pub no_unused_parameters: bool,
+    pub no_implicit_returns: bool,
+    pub no_fallthrough_cases_in_switch: bool,
+    pub no_implicit_override: bool,
+    pub allow_unreachable_code: Option<bool>,
+    pub allow_unused_labels: Option<bool>,
+    pub erasable_syntax_only: bool,
+    pub allow_umd_global_access: bool,
+    pub allow_importing_ts_extensions: bool,
+    pub no_unchecked_side_effect_imports: bool,
+    pub isolated_modules: bool,
+    pub isolated_modules_reported: bool,
+    pub verbatim_module_syntax: bool,
+    pub preserve_const_enums: bool,
+    pub target: ScriptTarget,
+}
+
 #[derive(Default, Clone, Debug)]
 pub struct Options {
     /// The directory of `tsconfig.json`. Absolute, no trailing slash.
@@ -675,7 +713,6 @@ pub struct Options {
     pub detects_commonjs_by_free_names: bool,
     pub uses_engine_arithmetic: bool,
     pub uses_ecmascript_bindings: bool,
-    pub build_constants: Option<std::sync::Arc<crate::fold::BuildConstants>>,
     /// What `getUndefinedProperty` makes has no declaration and is not readonly. TypeScript makes one for a name from the first property it is asked for, whose declarations it keeps: which
     /// that is goes by the order of the check, so here by the files that share a task. Not a TypeScript option. The driver says: it is on for a program that is compiled, where a type
     /// has to be the same in every task.
@@ -865,7 +902,35 @@ impl Options {
                 detects_commonjs_by_free_names: self.detects_commonjs_by_free_names,
                 uses_ecmascript_bindings: self.uses_ecmascript_bindings,
                 is_forced_commonjs: None,
+                is_typed_bundle: false,
             },
+        }
+    }
+
+    pub fn for_checking(&self) -> CheckOptions {
+        CheckOptions {
+            no_implicit_any: self.no_implicit_any,
+            strict_property_initialization: self.strict_property_initialization,
+            no_implicit_this: self.no_implicit_this,
+            use_unknown_in_catch_variables: self.use_unknown_in_catch_variables,
+            no_unchecked_indexed_access: self.no_unchecked_indexed_access,
+            no_property_access_from_index_signature: self.no_property_access_from_index_signature,
+            no_unused_locals: self.no_unused_locals,
+            no_unused_parameters: self.no_unused_parameters,
+            no_implicit_returns: self.no_implicit_returns,
+            no_fallthrough_cases_in_switch: self.no_fallthrough_cases_in_switch,
+            no_implicit_override: self.no_implicit_override,
+            allow_unreachable_code: self.allow_unreachable_code,
+            allow_unused_labels: self.allow_unused_labels,
+            erasable_syntax_only: self.erasable_syntax_only,
+            allow_umd_global_access: self.allow_umd_global_access,
+            allow_importing_ts_extensions: self.allow_importing_ts_extensions,
+            no_unchecked_side_effect_imports: self.no_unchecked_side_effect_imports,
+            isolated_modules: self.isolated_modules,
+            isolated_modules_reported: self.isolated_modules_reported,
+            verbatim_module_syntax: self.verbatim_module_syntax,
+            preserve_const_enums: self.preserve_const_enums,
+            target: self.target,
         }
     }
 
@@ -2300,9 +2365,13 @@ pub(crate) fn try_extract_ts_extension(path: &[u8]) -> Option<&'static [u8]> {
         .find(|&e| file_extension_is(path, e))
 }
 
+pub(crate) fn is_typed_bundle(path: &[u8]) -> bool {
+    [&b".sound.ts"[..], b".sound.mts", b".sound.cts"].iter().any(|extension| path.ends_with(extension))
+}
+
 /// `GetImpliedNodeFormatForFile`, as far as the extension alone determines it.
 pub(crate) fn format_by_extension(path: &[u8]) -> ResolutionMode {
-    if file_extension_is_one_of(path, &[b".mts", b".mjs"]) {
+    if file_extension_is_one_of(path, &[b".mts", b".mjs", b".sound.ts"]) {
         ResolutionMode::Import
     } else if file_extension_is_one_of(path, &[b".cts", b".cjs"]) {
         ResolutionMode::Require
@@ -3085,7 +3154,7 @@ impl<'h> Resolver<'h> {
         {
             found = Found::of(self.in_type_roots(roots, true, spec, look.for_declarations()));
         }
-        found.file().map(real)
+        found.file().map(real).map(|found| self.typescript_beside_declarations(found, look))
     }
 
     /// `classicNameResolver` of TypeScript 5, after `paths`: a file, in the directory or in one above it. No directory is a
@@ -3862,6 +3931,13 @@ impl<'h> Resolver<'h> {
             _ => false,
         };
         is_json.then(|| self.try_file(&[stem, b".json"].concat(), look))?
+    }
+
+    fn typescript_beside_declarations(&self, declarations: Vec<u8>, look: Look) -> Vec<u8> {
+        const EXTENSIONS: [(&[u8], &[u8]); 3] = [(b".d.ts", b".js"), (b".d.mts", b".mjs"), (b".d.cts", b".cjs")];
+        let code = EXTENSIONS.iter().find_map(|(from, to)| Some([declarations.strip_suffix(*from)?, *to].concat()));
+        let is_typescript = |path: &Vec<u8>| look.typescript && self.host.script_kind(path).is_some_and(|kind| !kind.is_javascript());
+        code.filter(is_typescript).unwrap_or(declarations)
     }
 
     fn typescript_with_js_extension(&self, candidate: &[u8], look: Look) -> Option<Vec<u8>> {

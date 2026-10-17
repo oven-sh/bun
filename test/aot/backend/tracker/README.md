@@ -85,3 +85,15 @@ SERVER_CORES=0 CLIENT_CORES=4-7 POSTGRES_CORES=8-15 POSTMASTER_PID=$(head -1 "$P
 DATABASE_POOL=2 GO_RUN_ENV=DATABASE_POOL=64 RUST_RUN_ENV=DATABASE_POOL=64 \
   python3 ../measure/measure.py out out/golden out/rows.tsv issue,list,api-issue,mix aot,jit,go,rust
 ```
+
+`../card.py tracker` does all of the above in one command, from the builds to the tables, and adds a profile by layer:
+
+```sh
+DATABASE_URL=postgres://.. POSTMASTER_PID=$(head -1 "$PGDATA/postmaster.pid") POSTGRES_CORES=3-15 SERVER_CORES=0 CLIENT_CORES=1-2 \
+  python3 ../card.py tracker --bun <bun> --released <released bun> --out out
+```
+
+Its `memory` step (`../measure/memory.py`, `../measure/memory_table.py`) reads what the server process holds at idle, under the mix and
+after it: RSS split into anonymous and file-backed memory, by kind of mapping, and, from the engine's own account after two forced
+full collections, how much of it is alive JavaScript. `../measure/memory_kinds.py` goes further: from a trace of page faults (it needs
+root) it says what the anonymous pages hold: strings, the SQL driver, JIT code and tables, HTTP buffers. Its docstring has the commands.

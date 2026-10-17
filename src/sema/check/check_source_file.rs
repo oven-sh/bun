@@ -896,7 +896,7 @@ impl<'s> Checker<'_, 's> {
 
     /// `shouldCheckErasableSyntax`
     fn should_check_erasable_syntax(&self, file: FileId) -> bool {
-        self.p.files.options.erasable_syntax_only && !self.hir(file).is_js
+        self.check_options(file).erasable_syntax_only && !self.hir(file).is_js
     }
 
     /// From `checkAssertion`: 1294, of `<T>operand`, from the `<` up to `node.Expression().Pos()`.
@@ -1630,7 +1630,7 @@ impl<'s> Checker<'_, 's> {
                 self.current_source_element = saved;
                 self.check_type_node(file, hir[mapped].name_ty);
                 self.check_type_node(file, hir[mapped].ty);
-                if hir[mapped].ty.is_none() && self.p.files.options.no_implicit_any {
+                if hir[mapped].ty.is_none() && self.check_options(file).no_implicit_any {
                     self.error(file, node, 7039, &[]);
                 }
                 self.type_from_node(file, node);
@@ -1660,7 +1660,7 @@ impl<'s> Checker<'_, 's> {
             }
             self.enter_source_element(CurrentNode::Node(file, hir.node(node)));
             if !self.within_unreachable_code
-                && self.p.files.options.allow_unreachable_code != Some(true)
+                && self.check_options(file).allow_unreachable_code != Some(true)
                 && self.check_source_element_unreachable(file, node)
             {
                 self.within_unreachable_code = true;
@@ -1921,7 +1921,7 @@ impl<'s> Checker<'_, 's> {
                     }
                     self.check_source_elements(file, hir[c].body);
                     let fallthrough = bound.case_fallthrough[c.idx()];
-                    if self.p.files.options.no_fallthrough_cases_in_switch
+                    if self.check_options(file).no_fallthrough_cases_in_switch
                         && !self.is_restricted_to_fixed_set(file)
                         && fallthrough.is_some()
                         && self.is_reachable(file, fallthrough)
@@ -1955,7 +1955,7 @@ impl<'s> Checker<'_, 's> {
                 if !self.check_grammar_statement_in_ambient_context(file, s) {
                     self.check_grammar_duplicate_label(file, s, label);
                 }
-                if self.p.files.options.allow_unused_labels == Some(false)
+                if self.check_options(file).allow_unused_labels == Some(false)
                     && !self.is_restricted_to_fixed_set(file)
                     && bound.unused_labels.contains(&s)
                 {
@@ -1970,7 +1970,7 @@ impl<'s> Checker<'_, 's> {
                     if let ModuleName::Ident(name) = hir[module].name {
                         self.check_collisions_for_declaration_name(file, s, name);
                     }
-                    let options = &self.p.files.options;
+                    let options = self.check_options(file);
                     // `ShouldPreserveConstEnums`
                     let preserves_const_enums =
                         options.preserve_const_enums || options.isolated_modules;

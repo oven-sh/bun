@@ -70,3 +70,18 @@ A column that is stopped between its windows idles, and a JIT pays for that when
 column is a fresh process under load for `WARM_SECONDS`, and its rate is the middle of all its windows from `READ_FROM` seconds on.
 With `SPARE_CORES=4,5,6,7` the columns live side by side, each on a core of its own, and are read in the same weather.
 `TOGETHER=aot+released+jit/aot.2+go+rust` says who lives beside whom (`aot.2` is a copy of `aot`): compare only within a group.
+
+`LAYERS=yes` adds where a request's cycles and instructions go: the compiled application, stubs, Bun's own JavaScript modules, Bun's
+native code, the engine's C++, ICU, GC, malloc, libc and the kernel, next to the same split for Go and Rust. `table.py` prints the
+layers side by side and marks the layer that holds the largest part of each gap. The executables must have their symbols.
+
+## All of it in one command
+
+`card.py` runs every step above, for this application (`shop`) or for `tracker/`: it builds all columns, checks the responses,
+measures, profiles by layer and prints the tables. Its first lines list the steps and the environment it needs.
+
+```sh
+DATABASE_URL=postgres://.. POSTMASTER_PID=$(head -1 "$PGDATA/postmaster.pid") POSTGRES_CORES=8-15 \
+SERVER_CORES=0 SPARE_CORES=0,1,2,3 CLIENT_CORES=4-6 CARRIER_CORES=7 \
+  python3 card.py shop --bun <bun> --released <released bun> --out out
+```

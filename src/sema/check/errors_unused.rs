@@ -86,7 +86,7 @@ enum PropertyRead {
 
 impl Checker<'_, '_> {
     pub(super) fn check_unused(&mut self, file: FileId) {
-        let options = &self.p.files.options;
+        let options = self.check_options(file);
         let is_checked_against_them = !self.is_restricted_to_fixed_set(file);
         let (locals, parameters) = (options.no_unused_locals && is_checked_against_them, options.no_unused_parameters && is_checked_against_them);
         let renamed = std::mem::take(&mut self.renamed_binding_elements_in_types);
@@ -247,7 +247,7 @@ impl Checker<'_, '_> {
             if symbol.is_none()
                 || u.referenced[symbol.idx()] & VALUE != 0
                 || bound.is_unchecked(i)
-                || u.is_unchecked(e)
+                || u.is_unchecked(e) && !u.is_removed_by_folding(hir[e].pos)
                 || u.is_write_only(e)
                 || u.is_inside_declaration_of(e, symbol)
             {
@@ -349,7 +349,7 @@ impl Checker<'_, '_> {
     fn note_module_references(&mut self, file: FileId, u: &mut Unused) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // `canCollectSymbolAliasAccessibilityData`
-        let marks_aliases = !self.p.files.options.verbatim_module_syntax;
+        let marks_aliases = !self.check_options(file).verbatim_module_syntax;
         let mut aliases = None;
         for (i, import) in hir.import_equals.iter().enumerate() {
             let ImportEqualsTarget::Entity(names) = import.target else {
@@ -431,7 +431,7 @@ impl Checker<'_, '_> {
                 JsxEmit::React | JsxEmit::ReactJsx | JsxEmit::ReactJsxDev
             );
         let asks_the_checker =
-            !options.verbatim_module_syntax || transforms_jsx || options.emit_decorator_metadata;
+            !self.check_options(file).verbatim_module_syntax || transforms_jsx || options.emit_decorator_metadata;
         // `getModuleTransformer`, `ImpliedModuleTransformer`, `CommonJSModuleTransformer.visitSourceFile`
         let is_commonjs = options.module != ModuleKind::Preserve
             && self.emit_module_format_of_file(file) < ModuleKind::Es2015
@@ -441,7 +441,7 @@ impl Checker<'_, '_> {
             return;
         }
         // `ShouldPreserveConstEnums`
-        let preserves_const_enums = options.preserve_const_enums || options.isolated_modules;
+        let preserves_const_enums = self.check_options(file).preserve_const_enums || self.check_options(file).isolated_modules;
         // `shouldEmitEnumDeclaration`, `shouldEmitModuleDeclaration`
         let enums = hir.enums.iter().enumerate().filter_map(|(i, it)| {
             let is_emitted = !it.flags.contains(Flags::CONST) || preserves_const_enums;
@@ -775,8 +775,17 @@ impl Checker<'_, '_> {
                     | ExprKind::Assign { op: None, .. }
                     | ExprKind::PrivateIdentifier(_)
             ) || bound.is_unchecked(i)
-                || u.is_unchecked(e)
             {
+                continue;
+            }
+            if u.is_unchecked(e) {
+                if let ExprKind::Dot { name, .. } | ExprKind::PrivateIdentifier(name) =
+                    hir.exprs[i].kind
+                    && u.is_removed_by_folding(hir.exprs[i].pos)
+                    && is_private(name)
+                {
+                    u.note_members_named(name);
+                }
                 continue;
             }
             match hir.exprs[i].kind {
@@ -1010,7 +1019,7 @@ impl Checker<'_, '_> {
         let Some(visited) = self.task.file else {
             return;
         };
-        if !self.p.files.options.no_unused_locals {
+        if !self.check_options(file).no_unused_locals {
             return;
         }
         let receiver = self.apparent_type(receiver);
@@ -1326,7 +1335,10 @@ impl Unused<'_, '_> {
             let TypeNodeKind::Ref { name, .. } = hir.types[i].kind else {
                 continue;
             };
-            if bound.is_unchecked_type(i) || self.is_never_checked(hir.types[i].pos) {
+            if bound.is_unchecked_type(i)
+                || self.is_never_checked(hir.types[i].pos)
+                    && !self.is_removed_by_folding(hir.types[i].pos)
+            {
                 continue;
             }
             let Some(first) = hir.texts(name).next() else {
@@ -1802,6 +1814,12 @@ impl Unused<'_, '_> {
     fn is_never_checked(&self, pos: u32) -> bool {
         let mut never_checked = self.never_checked.iter();
         never_checked.any(|&(from, to)| (from..to).contains(&pos))
+    }
+
+    fn is_removed_by_folding(&self, pos: u32) -> bool {
+        self.files
+            .enclosing_dead_range_start(self.file, pos)
+            .is_some()
     }
 
     /// Not `is_never_checked` for the node of `scope`, a `ScopeKind::Block`. The scope does not

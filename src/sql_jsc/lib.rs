@@ -27,6 +27,9 @@ pub mod shared {
 
     pub mod datetime_text;
 
+    #[path = "RowDecoder.rs"]
+    pub mod row_decoder;
+
     #[path = "ObjectIterator.rs"]
     pub mod object_iterator;
 

@@ -227,7 +227,6 @@ const {
 const kEmptyObject: {} = { __proto__: null };
 
 const symbols = require("internal/quic/symbols");
-const kAttachFileHandle: typeof symbols.kAttachFileHandle = symbols.kAttachFileHandle;
 const kBlocked: typeof symbols.kBlocked = symbols.kBlocked;
 const kConnect: typeof symbols.kConnect = symbols.kConnect;
 const kDatagram: typeof symbols.kDatagram = symbols.kDatagram;
@@ -1539,6 +1538,7 @@ let assertIsQuicEndpoint;
 let assertIsQuicStream;
 let assertIsQuicSession;
 let assertHeadersSupported;
+let initLocalStream;
 let assertEndpointNotClosedOrClosing;
 let assertEndpointIsNotBusy;
 let isQuicStream;
@@ -1694,6 +1694,27 @@ class QuicStream {
     getQuicStreamState = function (stream) {
       assertIsQuicStream(stream);
       return stream.#inner.state;
+    };
+
+    // What the highWaterMark and on* setters store. #createStream makes their
+    // checks before it opens the stream, so that none can refuse an open one.
+    initLocalStream = function (stream, highWaterMark, onheaders, ontrailers, oninfo, onwanttrailers) {
+      const inner = stream.#inner;
+      const { state } = inner;
+      state.highWaterMark = highWaterMark;
+      if (state.writeDesiredSize === 0 && highWaterMark > 0) {
+        state.writeDesiredSize = highWaterMark;
+      }
+      if (onheaders) {
+        inner.onheaders = FunctionPrototypeBind(onheaders, stream);
+        state.wantsHeaders = true;
+      }
+      if (ontrailers) inner.ontrailers = FunctionPrototypeBind(ontrailers, stream);
+      if (oninfo) inner.oninfo = FunctionPrototypeBind(oninfo, stream);
+      if (onwanttrailers) {
+        inner.onwanttrailers = FunctionPrototypeBind(onwanttrailers, stream);
+        state.wantsTrailers = true;
+      }
     };
   }
 
@@ -2390,16 +2411,6 @@ class QuicStream {
   }
 
   /**
-   * Associates a FileHandle with this stream so it is closed automatically
-   * when the stream finishes. Called internally when a FileHandle is used
-   * as a body source.
-   * @param {FileHandle} fh
-   */
-  [kAttachFileHandle](fh) {
-    this.#inner.fileHandle = fh;
-  }
-
-  /**
    * Tells the peer to stop sending data for this stream. The optional error
    * code will be sent to the peer as part of the request. If the stream is
    * already destroyed, this is a no-op. No acknowledgement of this action
@@ -2609,7 +2620,20 @@ class QuicStream {
     const inner = this.#inner;
 
     if (inner.pendingTrailers) {
-      this.sendTrailers(inner.pendingTrailers);
+      // As Node v26.10.0 does (v26.3.0 lets the throw out of the callback and
+      // drops the answer):
+      // https://github.com/nodejs/node/blob/v26.10.0/lib/internal/quic/quic.js#L2794-L2807
+      let sent;
+      try {
+        sent = this.sendTrailers(inner.pendingTrailers);
+      } catch (error) {
+        this.destroy(error);
+        return;
+      }
+      if (!sent) {
+        this.destroy(ERR_QUIC_STREAM_ABORTED("Failed to submit trailing headers"));
+        return;
+      }
       inner.pendingTrailers = undefined;
     } else {
       const { onwanttrailers } = inner;
@@ -3266,15 +3290,72 @@ class QuicSession {
 
     const deferredBody = body !== undefined && (isBlob(body) || FileHandle.isFileHandle(body));
     const validatedBody = deferredBody ? undefined : validateBody(body);
+    if (deferredBody && FileHandle.isFileHandle(body)) {
+      // setBody() takes the lock once the stream is open. Node checks it at
+      // this point, in validateBody().
+      if (body[kFileLocked]) {
+        throw $ERR_INVALID_STATE("FileHandle is locked");
+      }
+      // setBody() reads the handle with createReadStream(), which throws for a
+      // closed handle and makes nothing.
+      if (body[kFileHandle] === -1) body.createReadStream();
+    }
 
-    const handle = this.#handle.openStream(direction, validatedBody);
+    // Node makes the checks from here to the header block on a stream that it
+    // already opened, and leaves that stream open when one of them throws:
+    // https://github.com/nodejs/node/blob/v26.10.0/lib/internal/quic/quic.js#L3465-L3500
+    // An open stream holds a stream ID that only a reset gives back, so the
+    // checks run first here, in Node's order.
+    validateInteger(highWaterMark, "highWaterMark", 0, 0xffffffff);
+    if (onheaders) {
+      validateFunction(onheaders, "onheaders");
+      assertHeadersSupported(this);
+    }
+    if (ontrailers) {
+      validateFunction(ontrailers, "ontrailers");
+      assertHeadersSupported(this);
+    }
+    if (oninfo) {
+      validateFunction(oninfo, "oninfo");
+      assertHeadersSupported(this);
+    }
+    if (onwanttrailers) {
+      validateFunction(onwanttrailers, "onwanttrailers");
+      assertHeadersSupported(this);
+    }
+    let headerBlock;
+    if (headers !== undefined) {
+      assertHeadersSupported(this);
+      validateObject(headers, "headers");
+      headerBlock = buildNgHeaderString(headers, assertValidPseudoHeader, true);
+    }
+    // An option getter or a header value's toString() can close the session.
+    if (this.#isClosedOrClosing) {
+      throw $ERR_INVALID_STATE("Session is closed. New streams cannot be opened.");
+    }
+
+    let packedPriority;
+    if (inner.state.headersSupported !== 2) {
+      const urgency = priority === "high" ? 0 : priority === "low" ? 7 : 3;
+      packedPriority = (urgency << 1) | (incremental ? 1 : 0);
+    }
+
+    // The priority and the header block go with the open: the native side
+    // opens a stream only for a header block that it can send.
+    const handle = this.#handle.openStream(
+      direction,
+      validatedBody,
+      packedPriority,
+      headerBlock,
+      validatedBody === undefined && !deferredBody,
+    );
     if (handle === undefined) {
       throw ERR_QUIC_OPEN_STREAM_FAILED();
     }
-
-    if (inner.state.headersSupported !== 2) {
-      const urgency = priority === "high" ? 0 : priority === "low" ? 7 : 3;
-      handle.setPriority((urgency << 1) | (incremental ? 1 : 0));
+    if (handle === false) {
+      // No stream was opened. Node opens one, drops the `false` that
+      // sendHeaders() answers and resolves with a stream that sent no headers.
+      throw ERR_QUIC_STREAM_ABORTED("Failed to submit headers");
     }
 
     const stream = new QuicStream(kPrivateConstructor, handle, this, direction, true);
@@ -3283,23 +3364,15 @@ class QuicSession {
       markPromiseAsHandled(stream.closed);
     }
 
-    if (FileHandle.isFileHandle(body)) {
-      stream[kAttachFileHandle](body);
-    }
-
-    stream.highWaterMark = highWaterMark;
-
-    if (onheaders) stream.onheaders = onheaders;
-    if (ontrailers) stream.ontrailers = ontrailers;
-    if (oninfo) stream.oninfo = oninfo;
-    if (onwanttrailers) stream.onwanttrailers = onwanttrailers;
-
-    if (headers !== undefined) {
-      stream.sendHeaders(headers, { terminal: validatedBody === undefined && !deferredBody });
-    }
-
-    if (deferredBody) {
-      stream.setBody(body);
+    try {
+      initLocalStream(stream, highWaterMark, onheaders, ontrailers, oninfo, onwanttrailers);
+      if (deferredBody) {
+        stream.setBody(body);
+      }
+    } catch (err) {
+      // The caller never gets this stream, so nothing else can end it.
+      stream.destroy();
+      throw err;
     }
 
     if (onSessionOpenStreamChannel.hasSubscribers) {

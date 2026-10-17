@@ -614,6 +614,19 @@ impl QuicSession {
     pub(super) fn is_server(&self) -> bool {
         self.is_server.get()
     }
+    /// Node's `Application::GetInternalErrorCode`. The state buffer gets the
+    /// HTTP/3 code only when the handshake is reported, and lsquic opens the
+    /// streams that waited for the handshake before that.
+    pub(super) fn internal_error_code(&self) -> u64 {
+        let is_http = self
+            .endpoint_ref()
+            .is_some_and(|ep| ep.is_http(self.is_server.get()));
+        if is_http {
+            H3_INTERNAL_ERROR
+        } else {
+            self.with_state(|s| s.internal_error_code)
+        }
+    }
     pub(super) fn push_event(&self, event: SessionEvent) {
         self.events.with_mut(|e| e.push(event));
     }
@@ -2065,8 +2078,25 @@ impl QuicSession {
         if self.destroyed.get() || self.conn.get().is_null() {
             return Ok(JSValue::UNDEFINED);
         }
-        let [direction, body] = frame.arguments_as_array::<2>();
+        let [direction, body, priority, headers, terminal] = frame.arguments_as_array::<5>();
         let unidirectional = direction.is_number() && direction.as_number() == 1.0;
+        // lsquic cannot take a stream ID back. Everything that can throw or
+        // refuse the call runs before the stream exists.
+        let priority = if priority.is_undefined() {
+            None
+        } else {
+            Some(priority.coerce_to_i32(global)? as u32)
+        };
+        let block = if headers.is_undefined() {
+            None
+        } else {
+            let block = super::stream::HeaderBlock::from_js(global, headers)?;
+            // lsquic never makes a unidirectional stream an HTTP stream.
+            if unidirectional || !block.is_sendable() {
+                return Ok(JSValue::FALSE);
+            }
+            Some(block)
+        };
         let (qs, handle) = super::stream::QuicStream::create(
             global,
             self.vtable,
@@ -2074,6 +2104,8 @@ impl QuicSession {
             frame.this(),
             null_mut(),
         )?;
+        // SAFETY: `qs` was just created, and its wrapper roots it.
+        let stream = unsafe { &*qs };
         if unidirectional {
             self.pending_local_uni.with_mut(|q| q.push_back(qs));
         } else {
@@ -2082,18 +2114,18 @@ impl QuicSession {
         self.streams.with_mut(|v| v.push(qs));
         self.bump_stream_stat(if unidirectional { STREAM_ID_UNI_BIT } else { 0 }, true);
         if let Some(buf) = body.as_array_buffer(global) {
-            // SAFETY: `qs` was just created.
-            unsafe {
-                (*qs).outbound.with_mut(|o| {
-                    o.started = true;
-                    o.data.extend(buf.byte_slice().iter().copied());
-                    o.end = super::stream::PendingEnd::Fin;
-                });
-                // As attach_source/init_streaming_source/send_headers do: this
-                // is what makes a later setOutbound() throw instead of
-                // appending a second body.
-                (*qs).with_state(|s| s.has_outbound = 1);
-            }
+            stream.outbound.with_mut(|o| {
+                o.started = true;
+                o.data.extend(buf.byte_slice().iter().copied());
+                o.end = super::stream::PendingEnd::Fin;
+            });
+            // As attach_source/init_streaming_source/send_headers do: this
+            // is what makes a later setOutbound() throw instead of
+            // appending a second body.
+            stream.with_state(|s| s.has_outbound = 1);
+        }
+        if let Some(packed) = priority {
+            stream.apply_priority(packed);
         }
         // SAFETY: `conn` is non-null (checked above) and live.
         if let Some(conn) = unsafe { lsquic::Conn::from_raw(self.conn.get()) } {
@@ -2102,6 +2134,11 @@ impl QuicSession {
             } else {
                 conn.make_stream();
             }
+        }
+        // After the request, so that a stream lsquic opens at once takes the
+        // block with no queue entry. The engine has not run yet.
+        if let Some(block) = block {
+            stream.send_own_headers(block, terminal.to_boolean());
         }
         self.schedule_process();
         Ok(handle)

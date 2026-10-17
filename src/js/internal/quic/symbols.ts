@@ -2,7 +2,6 @@
 
 const kInspect = Symbol.for("nodejs.util.inspect.custom");
 
-const kAttachFileHandle = Symbol("kAttachFileHandle");
 const kBlocked = Symbol("kBlocked");
 const kConnect = Symbol("kConnect");
 const kDrain = Symbol("kDrain");
@@ -35,7 +34,6 @@ const kTrailers = Symbol("kTrailers");
 const kVersionNegotiation = Symbol("kVersionNegotiation");
 
 export default {
-  kAttachFileHandle,
   kBlocked,
   kConnect,
   kDatagram,

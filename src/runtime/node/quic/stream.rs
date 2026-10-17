@@ -102,6 +102,36 @@ pub(super) struct Inbound {
     pub errored: bool,
 }
 
+/// `buildNgHeaderString`'s `[NUL-joined string, pair count]`, Latin-1 on the
+/// wire as node does (`StringBytes::Write(.., LATIN1)`).
+pub(super) struct HeaderBlock {
+    bytes: Vec<u8>,
+    /// The shim refuses a buffer that does not parse to exactly this many
+    /// pairs. That is what keeps the Latin-1 encode unspliceable.
+    count: c_int,
+    /// The string had no code unit above U+00FF, so the encode changed none.
+    lossless: bool,
+}
+
+impl HeaderBlock {
+    pub(super) fn from_js(global: &JSGlobalObject, tuple: JSValue) -> JsResult<Self> {
+        use crate::webcore::encoding::BunStringEncode as _;
+        let string = tuple.get_index(global, 0)?;
+        let count = tuple.get_index(global, 1)?.coerce_to_i32(global)?;
+        let string = bun_core::String::from_js(string, global)?;
+        Ok(Self {
+            lossless: string.is_8bit(),
+            bytes: string.encode(crate::node::types::Encoding::Latin1),
+            count,
+        })
+    }
+
+    /// Whether the shim hands the block to lsquic. It needs no stream to say.
+    pub(super) fn is_sendable(&self) -> bool {
+        lsquic::headers_sendable(&self.bytes, self.count, self.lossless)
+    }
+}
+
 /// `#[repr(C)]` so `vtable` is at offset 0 — the C shim reads it via
 /// `*(us_nq_vtable**)stream_ctx`. Without it Rust may reorder fields.
 #[repr(C)]
@@ -123,7 +153,9 @@ pub(crate) struct QuicStream {
     headers_received: Cell<bool>,
     /// RFC 9218 (urgency, incremental).
     priority: Cell<(u8, bool)>,
-    pending_headers: JsCell<Vec<(Vec<u8>, c_int, bool)>>,
+    /// Header blocks sent while lsquic has not opened the stream, each with
+    /// its end-of-stream flag. `bind_raw` submits them.
+    pending_headers: JsCell<Vec<(HeaderBlock, bool)>>,
     trailers_requested: Cell<bool>,
     blocked_reported: Cell<bool>,
     announce_suppressed: Cell<bool>,
@@ -236,19 +268,12 @@ impl QuicStream {
         // drain_outbound needs a write event, which nothing else requests
         // unless the JS side already started the writer.
         let mut want_write = false;
-        for (bytes, count, eos) in self.pending_headers.with_mut(core::mem::take) {
-            self.wrote_to_lsquic.set(true);
-            if s.send_headers(&bytes, count, eos) == 0 {
-                if eos {
-                    self.with_state(|st| {
-                        st.fin_sent = 1;
-                        st.write_ended = 1;
-                    });
-                    s.shutdown(1);
-                } else {
-                    want_write = true;
-                }
+        for (block, eos) in self.pending_headers.with_mut(core::mem::take) {
+            if !self.submit_block(s, &block, eos) {
+                self.fail_refused_block(s);
+                return;
             }
+            want_write |= !eos;
         }
         if uni {
             let session = self.session.get();
@@ -550,6 +575,66 @@ impl QuicStream {
         if let Some(session) = self.session_ref() {
             session.schedule_process();
         }
+    }
+
+    /// The one place a header block goes to lsquic. `false`: lsquic did not
+    /// take it.
+    fn submit_block(&self, s: lsquic::Stream, block: &HeaderBlock, eos: bool) -> bool {
+        if s.send_headers(&block.bytes, block.count, eos) != 0 {
+            return false;
+        }
+        self.wrote_to_lsquic.set(true);
+        self.with_state(|st| st.has_outbound = 1);
+        if eos {
+            self.with_state(|st| {
+                st.fin_sent = 1;
+                st.write_ended = 1;
+            });
+            s.shutdown(1);
+        }
+        true
+    }
+
+    fn queue_block(&self, block: HeaderBlock, eos: bool) {
+        self.pending_headers.with_mut(|q| q.push((block, eos)));
+        self.with_state(|s| s.has_outbound = 1);
+    }
+
+    /// The header block that came with `openStream`. lsquic takes it now, or
+    /// `bind_raw` submits it when lsquic opens the stream.
+    pub(super) fn send_own_headers(&self, block: HeaderBlock, eos: bool) {
+        let Some(s) = self.ls() else {
+            self.queue_block(block, eos);
+            return;
+        };
+        if !self.submit_block(s, &block, eos) {
+            self.fail_refused_block(s);
+        } else if !eos {
+            s.want_write(true);
+        }
+    }
+
+    /// lsquic refused a header block that node:quic submitted for the caller.
+    /// The caller holds a `true` from `sendHeaders()`, or the stream that
+    /// create*Stream resolved with, and has no refusal to read. The stream
+    /// ends as Node's `Stream::NotifyStreamOpened` ends it, with the
+    /// application's internal error: `stream.closed` rejects with that code.
+    fn fail_refused_block(&self, s: lsquic::Stream) {
+        let Some(session) = self.session_ref() else {
+            return;
+        };
+        let code = session.internal_error_code();
+        self.outbound.with_mut(|o| {
+            o.data.clear();
+            o.end = PendingEnd::None;
+        });
+        self.mark_reset(code);
+        self.with_state(|st| st.write_ended = 1);
+        s.reset(code);
+        s.stop_sending(code);
+        // The two frames are only queued. The close makes lsquic report the
+        // stream closed without an answer from the peer.
+        s.close();
     }
 
     pub(super) fn end_read_side(&self, global: &JSGlobalObject) {
@@ -909,6 +994,11 @@ impl QuicStream {
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
         let packed = frame.arguments_as_array::<1>()[0].coerce_to_i32(global)? as u32;
+        self.apply_priority(packed);
+        Ok(JSValue::UNDEFINED)
+    }
+    /// `packed` is `(urgency << 1) | incremental`.
+    pub(super) fn apply_priority(&self, packed: u32) {
         let (urgency, incremental) = ((packed >> 1) as u8, packed & 1 != 0);
         let previous = self.priority.replace((urgency, incremental));
         // Only an actual change goes on the wire: set_http_prio writes a
@@ -919,7 +1009,6 @@ impl QuicStream {
                 let _ = s.set_http_prio(urgency, incremental);
             }
         }
-        Ok(JSValue::UNDEFINED)
     }
     pub(crate) fn get_priority(&self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
         let (urgency, incremental) = self
@@ -939,44 +1028,31 @@ impl QuicStream {
             return Ok(JSValue::js_boolean(false));
         }
         let [kind_arg, header_tuple, flags] = frame.arguments_as_array::<3>();
-        // `buildNgHeaderString` returns [nul-joined string, pair count]; the
-        // count is what keeps the latin1 encode below unspliceable.
-        let header_string = header_tuple.get_index(global, 0)?;
-        let header_count = header_tuple.get_index(global, 1)?.coerce_to_i32(global)?;
-        // Latin-1 on the wire, as node does (`StringBytes::Write(.., LATIN1)`).
-        use crate::webcore::encoding::BunStringEncode as _;
-        let bytes = bun_core::String::from_js(header_string, global)?
-            .encode(crate::node::types::Encoding::Latin1);
+        let block = HeaderBlock::from_js(global, header_tuple)?;
         let is_trailing =
             kind_arg.coerce_to_i32(global)? as u32 == QUIC_STREAM_HEADERS_KIND_TRAILING;
         let eos = is_trailing
             || flags.coerce_to_i32(global)? & (QUIC_STREAM_HEADERS_FLAGS_TERMINAL as i32) != 0;
         let Some(s) = self.ls() else {
-            self.pending_headers
-                .with_mut(|q| q.push((bytes, header_count, eos)));
-            self.with_state(|s| s.has_outbound = 1);
+            // The answer an open stream gives for this block. A `true` here
+            // would queue a block that `bind_raw` can only fail the stream for.
+            if !block.is_sendable() {
+                return Ok(JSValue::js_boolean(false));
+            }
+            self.queue_block(block, eos);
             return Ok(JSValue::js_boolean(true));
         };
-        let rv = s.send_headers(&bytes, header_count, eos);
-        if rv == 0 {
-            self.wrote_to_lsquic.set(true);
-            self.with_state(|s| s.has_outbound = 1);
-            if eos {
-                self.with_state(|s| {
-                    s.fin_sent = 1;
-                    s.write_ended = 1;
-                });
-                s.shutdown(1);
-                if let Some(session) = self.session_ref() {
-                    session.schedule_process();
-                }
-            } else {
-                self.kick_write();
-            }
-            Ok(JSValue::js_boolean(true))
-        } else {
-            Ok(JSValue::js_boolean(false))
+        if !self.submit_block(s, &block, eos) {
+            return Ok(JSValue::js_boolean(false));
         }
+        if eos {
+            if let Some(session) = self.session_ref() {
+                session.schedule_process();
+            }
+        } else {
+            self.kick_write();
+        }
+        Ok(JSValue::js_boolean(true))
     }
 }
 

@@ -2,8 +2,11 @@
 // `onwanttrailers`, records `trailers_pending` rather than `fin_pending`)
 // must deliver it with a FIN, never retract it with a RESET_STREAM.
 import { describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
 import { createPrivateKey } from "node:crypto";
+import { subscribe, unsubscribe } from "node:diagnostics_channel";
 import { readFileSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { join } from "node:path";
 import { connect, listen, type QuicEndpoint, type SessionOptions } from "node:quic";
 
@@ -372,5 +375,305 @@ describe("headers queued before the handshake", () => {
     );
     expect(await Promise.race([gotHeaders.promise, closed])).toBe("/queued");
     client.close();
+  });
+});
+
+// node:quic sends a header block for the caller in three places: in
+// create*Stream({ headers }), for pendingTrailers, and when lsquic opens a
+// stream that had to wait.
+describe("a header block that node:quic cannot send", () => {
+  const encoder = new TextEncoder();
+  const request = { ":method": "POST", ":path": "/", ":scheme": "https", ":authority": "localhost" };
+  // What node:quic refuses with no stream to ask, and the error the caller gets.
+  const refusedBlocks: { fields: Record<string, string>; code: string }[] = [
+    // buildNgHeaderString() throws.
+    { fields: { connection: "close" }, code: "ERR_HTTP2_INVALID_CONNECTION_HEADERS" },
+    // Latin-1 on the wire makes a NUL of U+0100. The block then does not have
+    // the pair count that it declares.
+    { fields: { "x-bad": "a\u0100b" }, code: "ERR_QUIC_STREAM_ABORTED" },
+    // One field more than node:quic puts in a block.
+    {
+      fields: Object.fromEntries(Array.from({ length: 129 }, (_, i) => [`x-${i}`, "v"])),
+      code: "ERR_QUIC_STREAM_ABORTED",
+    },
+  ];
+  // Only lsquic refuses this one, and only on a stream. Each value fits in a
+  // field. The encoded block is longer than the 64 KiB that lsquic takes.
+  const tooLongForLsquic = {
+    ...request,
+    "x-a": Buffer.alloc(60_000, "a").toString(),
+    "x-b": Buffer.alloc(60_000, "b").toString(),
+  };
+
+  function answer(this: any) {
+    this.sendHeaders({ ":status": "200" }, { terminal: true });
+  }
+  const codeOf = (created: Promise<unknown>) =>
+    created.then(
+      () => "resolved",
+      (err: any) => err.code,
+    );
+
+  // One server and one client session. A graceful close waits for every
+  // stream, and a failed assertion can leave one open. So both ends are
+  // destroyed on the way out.
+  async function connected(serverOptions: Record<string, unknown>) {
+    // An idle timeout must not be what ends a session here.
+    const transportParams = { maxIdleTimeout: 60 };
+    // How `closed` settled for each stream that the server got, in order.
+    const serverStreams: { closed: string }[] = [];
+    const server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          const seen = { closed: "open" };
+          serverStreams.push(seen);
+          stream.closed.then(
+            () => (seen.closed = "resolved"),
+            (err: any) => (seen.closed = err.code),
+          );
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      { sni: { "*": { keys: [key], certs: [cert] } }, transportParams, ...serverOptions },
+    );
+    const client: any = await connect(server.address!, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams,
+    } as SessionOptions);
+    return {
+      client,
+      serverStreams,
+      async [Symbol.asyncDispose]() {
+        client.destroy();
+        await server.destroy();
+      },
+    };
+  }
+
+  // One request, and the answer to it. When the answer is here, both ends
+  // have handled everything that was sent before the request.
+  async function answeredRequest(client: any) {
+    const status = Promise.withResolvers<string>();
+    const stream = await client.createBidirectionalStream({
+      headers: request,
+      onheaders(headers: Record<string, string>) {
+        status.resolve(headers[":status"]);
+      },
+    });
+    stream.closed.then(() => status.reject(new Error("the stream closed with no answer")), status.reject);
+    return { id: stream.id, status: await status.promise };
+  }
+
+  test("create*Stream rejects and opens no stream", async () => {
+    await using link = await connected({ onheaders: answer });
+    const { client } = link;
+    const attempts = async () => {
+      const codes: string[] = [];
+      for (const { fields } of refusedBlocks) {
+        const headers = { ...request, ...fields };
+        codes.push(await codeOf(client.createBidirectionalStream({ headers })));
+        codes.push(await codeOf(client.createUnidirectionalStream({ headers })));
+      }
+      // HTTP/3 has no header block on a unidirectional stream.
+      codes.push(await codeOf(client.createUnidirectionalStream({ headers: request })));
+      return codes;
+    };
+    // lsquic opens no stream until the handshake ends. After that it opens a
+    // stream at once.
+    const beforeOpened = await attempts();
+    await client.opened;
+    const afterOpened = await attempts();
+
+    const codes = [...refusedBlocks.flatMap(({ code }) => [code, code]), "ERR_QUIC_STREAM_ABORTED"];
+    // The first stream that a client opens has the ID 0.
+    expect({
+      beforeOpened,
+      afterOpened,
+      next: await answeredRequest(client),
+      serverStreams: link.serverStreams.length,
+    }).toEqual({
+      beforeOpened: codes,
+      afterOpened: codes,
+      next: { id: 0n, status: "200" },
+      serverStreams: 1,
+    });
+    await client.close();
+  });
+
+  test("create*Stream checks its other options before it opens a stream", async () => {
+    using dir = tempDir("quic-create-options", { "body.txt": "body" });
+    const file = join(String(dir), "body.txt");
+    await using link = await connected({ onheaders: answer });
+    const { client } = link;
+    await client.opened;
+
+    // The stream that takes the lock is stream 0. `bun test` runs without
+    // --experimental-stream-iter, which a FileHandle body needs, so this
+    // stream fails at once. The lock stays.
+    const locked = await open(file);
+    const lockHolder = await client.createBidirectionalStream({ headers: request, body: locked });
+    lockHolder.closed.catch(() => {});
+    const closedHandle = await open(file);
+    await closedHandle.close();
+
+    const refused = {
+      highWaterMark: await codeOf(client.createBidirectionalStream({ highWaterMark: -1 })),
+      onheaders: await codeOf(client.createBidirectionalStream({ onheaders: 1 })),
+      lockedFileHandle: await codeOf(client.createBidirectionalStream({ body: locked })),
+      // Node checks the body before it checks highWaterMark.
+      lockedFileHandleFirst: await codeOf(client.createBidirectionalStream({ body: locked, highWaterMark: -1 })),
+      closedFileHandle: await codeOf(client.createBidirectionalStream({ body: closedHandle })),
+    };
+    expect({ refused, next: await answeredRequest(client) }).toEqual({
+      refused: {
+        highWaterMark: "ERR_OUT_OF_RANGE",
+        onheaders: "ERR_INVALID_ARG_TYPE",
+        lockedFileHandle: "ERR_INVALID_STATE",
+        lockedFileHandleFirst: "ERR_INVALID_STATE",
+        closedFileHandle: "EBADF",
+      },
+      next: { id: 4n, status: "200" },
+    });
+    await client.close();
+  });
+
+  test("a throw after the stream is open ends the stream", async () => {
+    await using link = await connected({ onheaders: answer });
+    const { client } = link;
+    await client.opened;
+
+    let closedStreams = 0;
+    const onClosed = (message: any) => {
+      if (message.session === client) closedStreams++;
+    };
+    subscribe("quic.stream.closed", onClosed);
+    try {
+      // bind() reads `name`. No check before the open can know that it throws.
+      const onheaders = Object.defineProperty(function () {}, "name", {
+        get() {
+          throw new Error("the name getter");
+        },
+      });
+      await expect(client.createBidirectionalStream({ headers: request, onheaders })).rejects.toThrow(
+        "the name getter",
+      );
+      expect(closedStreams).toBe(1);
+    } finally {
+      unsubscribe("quic.stream.closed", onClosed);
+    }
+    await client.close();
+  });
+
+  test("a block that only lsquic refuses fails the stream with H3_INTERNAL_ERROR", async () => {
+    await using link = await connected({ onheaders: answer });
+    const { client } = link;
+    const closedOf = (stream: any) => {
+      const seen = { closed: "open" };
+      stream.closed.then(
+        () => (seen.closed = "resolved"),
+        (err: any) => (seen.closed = `${err.code} ${err.errorCode}`),
+      );
+      return seen;
+    };
+
+    // lsquic opens these two when the handshake ends.
+    const queuedByCreate = closedOf(await client.createBidirectionalStream({ headers: tooLongForLsquic }));
+    const pending = await client.createBidirectionalStream();
+    const queuedBySend = closedOf(pending);
+    const queued = pending.sendHeaders(tooLongForLsquic);
+    await client.opened;
+    // lsquic opens this one at once.
+    const sentAtOpen = closedOf(await client.createBidirectionalStream({ headers: tooLongForLsquic }));
+
+    const { status } = await answeredRequest(client);
+    expect({ queued, closed: [queuedByCreate, queuedBySend, sentAtOpen].map(seen => seen.closed), status }).toEqual({
+      queued: true,
+      closed: Array(3).fill("ERR_QUIC_APPLICATION_ERROR 258"),
+      status: "200",
+    });
+    await client.close();
+  });
+
+  test("sendHeaders() on a pending stream answers false for a block that cannot be sent", async () => {
+    const paths: string[] = [];
+    await using link = await connected({
+      onheaders(this: any, headers: Record<string, string>) {
+        paths.push(headers[":path"]);
+        answer.call(this);
+      },
+    });
+    const { client } = link;
+
+    const answers: boolean[][] = [];
+    // The rows that the native side refuses.
+    for (const [i, { fields }] of refusedBlocks.slice(1).entries()) {
+      const stream = await client.createBidirectionalStream();
+      stream.closed.catch(() => {});
+      answers.push([
+        // The handshake is not over, so lsquic has not opened the stream.
+        stream.pending,
+        stream.sendHeaders({ ...request, ...fields }),
+        // The refusal changed nothing: the stream takes a block that can be sent.
+        stream.sendHeaders({ ...request, ":path": `/${i}` }, { terminal: true }),
+      ]);
+    }
+    await client.opened;
+    await answeredRequest(client);
+
+    expect({ answers, paths }).toEqual({
+      answers: [
+        [true, false, true],
+        [true, false, true],
+      ],
+      paths: ["/0", "/1", "/"],
+    });
+    await client.close();
+  });
+
+  test("pendingTrailers destroys the stream with the error", async () => {
+    const rows = new Map(refusedBlocks.map((row, i) => [`/${i}`, row]));
+    await using link = await connected({
+      onheaders(this: any, headers: Record<string, string>) {
+        const row = rows.get(headers[":path"]);
+        if (row === undefined) return answer.call(this);
+        this.sendHeaders({ ":status": "200" });
+        this.pendingTrailers = row.fields;
+        this.writer.writeSync(encoder.encode("body"));
+        this.writer.endSync();
+      },
+      // A stream is asked for its trailers only when this is set.
+      onwanttrailers() {},
+    });
+    const { client } = link;
+    await client.opened;
+
+    const bodies: Promise<string>[] = [];
+    for (const path of rows.keys()) {
+      const stream = await client.createBidirectionalStream({ headers: { ...request, ":path": path }, onheaders() {} });
+      stream.closed.catch(() => {});
+      const arrived = Promise.withResolvers<void>();
+      const body = (async () => {
+        let text = "";
+        for await (const batch of stream) {
+          for (const chunk of batch) text += Buffer.from(chunk).toString("latin1");
+          if (text === "body") arrived.resolve();
+        }
+        return text;
+      })();
+      body.catch(arrived.reject);
+      bodies.push(body);
+      await arrived.promise;
+    }
+    // The server asks a stream for its trailers when the body leaves. So it
+    // asked all three before it got this request.
+    await answeredRequest(client);
+
+    expect(link.serverStreams.slice(0, rows.size).map(seen => seen.closed)).toEqual(
+      refusedBlocks.map(({ code }) => code),
+    );
+    // destroy() still delivers a response that the stream wrote and ended.
+    expect(await Promise.all(bodies)).toEqual(Array(rows.size).fill("body"));
+    await client.close();
   });
 });

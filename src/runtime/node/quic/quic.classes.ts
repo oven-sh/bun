@@ -89,7 +89,7 @@ export default [
       },
       openStream: {
         fn: "openStream",
-        length: 2,
+        length: 5,
       },
       sendDatagram: {
         fn: "sendDatagram",

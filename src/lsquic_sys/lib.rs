@@ -217,6 +217,12 @@ unsafe extern "C" {
         expected: c_int,
         eos: c_int,
     ) -> c_int;
+    fn us_nq_headers_sendable(
+        buf: *const c_char,
+        len: usize,
+        expected: c_int,
+        lossless: c_int,
+    ) -> c_int;
     pub fn lsquic_stream_get_hset(s: *mut lsquic_stream) -> *mut c_void;
 
     fn us_nq_settings_set_idle_timeout(s: *mut lsquic_engine_settings, v: c_uint);
@@ -648,6 +654,20 @@ impl Stream {
         }
         // SAFETY: as above.
         unsafe { lsquic_stream_send_stop_sending(self.0, code) }
+    }
+}
+
+/// Whether [`Stream::send_headers`] would hand this block to lsquic, answered
+/// with no stream. `lossless`: the Latin-1 encode changed no code unit.
+pub fn headers_sendable(nul_joined: &[u8], expected: c_int, lossless: bool) -> bool {
+    // SAFETY: the shim only reads `nul_joined[..len]`.
+    unsafe {
+        us_nq_headers_sendable(
+            nul_joined.as_ptr().cast(),
+            nul_joined.len(),
+            expected,
+            lossless as c_int,
+        ) != 0
     }
 }
 

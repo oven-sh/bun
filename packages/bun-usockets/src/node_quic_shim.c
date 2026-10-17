@@ -295,9 +295,10 @@ const char *us_nq_hset_pairs(void *hset, size_t *len) {
 void us_nq_hset_free(void *hset) { nq_hsi_discard_header_set(hset); }
 
 #define US_NQ_MAX_HEADERS 128
-int us_nq_stream_send_headers(lsquic_stream_t *s, const char *buf, size_t len,
-                              int expected, int eos) {
-    struct lsxpack_header hdrs[US_NQ_MAX_HEADERS];
+/* Every check a header block gets before lsquic sees it. None needs a stream.
+ * Fills `hdrs` unless it is NULL. Returns the pair count, or -1. */
+static int nq_parse_headers(const char *buf, size_t len, int expected,
+                            struct lsxpack_header *hdrs) {
     int count = 0;
     size_t i = 0;
     if (expected < 0 || expected > US_NQ_MAX_HEADERS) return -1;
@@ -320,15 +321,38 @@ int us_nq_stream_send_headers(lsquic_stream_t *s, const char *buf, size_t len,
         unsigned char flags = (i < len) ? (unsigned char) buf[i++] : 0;
         if (name_len > LSXPACK_MAX_STRLEN || val_len > LSXPACK_MAX_STRLEN)
             return -1;
-        lsxpack_header_set_offset2(&hdrs[count], buf, name_off, name_len,
-                                   val_off, val_len);
-        if (flags & 1) {
-            hdrs[count].flags = LSXPACK_NEVER_INDEX;
-            hdrs[count].indexed_type = 2;
+        if (hdrs) {
+            lsxpack_header_set_offset2(&hdrs[count], buf, name_off, name_len,
+                                       val_off, val_len);
+            if (flags & 1) {
+                hdrs[count].flags = LSXPACK_NEVER_INDEX;
+                hdrs[count].indexed_type = 2;
+            }
         }
         count++;
     }
-    if (count != expected) return -1;
+    return count == expected ? count : -1;
+}
+
+/* Whether us_nq_stream_send_headers would hand this block to lsquic, asked
+ * before a stream is opened for it: lsquic cannot take a stream ID back. The
+ * send makes every check again, so a wrong answer here costs only the stream.
+ * `lossless` says the Latin-1 encode changed no code unit. buildNgHeaderString
+ * puts no NUL in a name or a value, so such a block has exactly `expected`
+ * pairs, and when the whole block is no longer than one field may be, no field
+ * is too long. Only a 16-bit or a long block takes the pass over the bytes. */
+int us_nq_headers_sendable(const char *buf, size_t len, int expected,
+                           int lossless) {
+    if (expected < 0 || expected > US_NQ_MAX_HEADERS) return 0;
+    if (lossless && len <= LSXPACK_MAX_STRLEN) return 1;
+    return nq_parse_headers(buf, len, expected, NULL) >= 0;
+}
+
+int us_nq_stream_send_headers(lsquic_stream_t *s, const char *buf, size_t len,
+                              int expected, int eos) {
+    struct lsxpack_header hdrs[US_NQ_MAX_HEADERS];
+    int count = nq_parse_headers(buf, len, expected, hdrs);
+    if (count < 0) return -1;
     lsquic_http_headers_t list = { count, hdrs };
     return lsquic_stream_send_headers(s, &list, eos);
 }

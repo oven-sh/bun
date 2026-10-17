@@ -7,9 +7,11 @@ use super::*;
 // The native symbols that Bun's C and C++ side provides to `bun_core`.
 use bun_sema_standalone as _;
 
+/// The tree of `text`, as a command has it when it has loaded a package.json.
 fn parse(text: &[u8], bump: &bun_alloc::Arena) -> Expr {
-    read(text, json::PACKAGE_JSON_OPTS, bump)
-        .unwrap_or_else(|| panic!("the parser does not read {:?}", bstr::BStr::new(text)))
+    let source = Source::init_path_string(b"package.json", text);
+    json::parse_package_json_utf8(&source, &mut Log::init(), bump)
+        .unwrap_or_else(|_| panic!("the parser does not read {:?}", bstr::BStr::new(text)))
 }
 
 /// The text of `old` when its tree is what the JSON `now` says.
@@ -429,39 +431,40 @@ fn the_tree_that_is_read_back_is_the_tree_that_was_saved() {
     let bump = bun_alloc::Arena::new();
     let old = b"{\n  // c\n  \"a\": 1,\n}\n";
     let root = parse(b"{\"a\": 1, \"b\": [true, null, \"s\"]}", &bump);
-    let (text, read) = print_and_read(old, root, Indentation::default(), &bump).expect("prints");
+    let (text, read) = print_and_read(old, root, Indentation::default()).expect("prints");
     assert_eq!(
         bstr::BStr::new(&text),
         "{\n  // c\n  \"a\": 1,\n  \"b\": [true, null, \"s\"],\n}\n"
     );
     assert!(is_tree(
-        &read.expect("read back"),
+        &read.expect("read back").root,
         &root,
         StackCheck::init()
     ));
     // Not another tree.
-    let other = parse(b"{\"a\": 1, \"b\": [true, null, \"t\"]}", &bump);
-    assert!(!is_tree(&other, &root, StackCheck::init()));
-    let other = parse(b"{\"b\": [true, null, \"s\"], \"a\": 1}", &bump);
-    assert!(!is_tree(&other, &root, StackCheck::init()));
-    let other = parse(
+    for other in [
+        &b"{\"a\": 1, \"b\": [true, null, \"t\"]}"[..],
+        b"{\"b\": [true, null, \"s\"], \"a\": 1}",
         b"{\"a\": 1.0000000000000002, \"b\": [true, null, \"s\"]}",
-        &bump,
-    );
-    assert!(!is_tree(&other, &root, StackCheck::init()));
+        b"{\"a\": 1, \"b\": [true, null, \"s\"], \"c\": 0}",
+        b"{\"a\": 1, \"b\": [true, null]}",
+        b"[1]",
+    ] {
+        let other = super::read(other, json::PACKAGE_JSON_OPTS, false).expect("reads");
+        assert!(!is_tree(&other.root, &root, StackCheck::init()));
+    }
 }
 
 #[test]
 fn strict_json_stays_strict_json() {
     bun_ast::initialize_store_or_reset();
-    let bump = bun_alloc::Arena::new();
     // With a comment, the text reads as the tree. It is the text of a file that has comments.
     let with_comment = b"{\"a\": [ // c\n] }";
-    assert!(read_as(with_comment, || true, &bump).is_some());
+    assert!(read_as(with_comment, || true, false).is_some());
     // It is not the text of a file that had none.
-    assert!(read_as(with_comment, || false, &bump).is_none());
-    assert!(read_as(b"{\"a\": [1,], }", || false, &bump).is_none());
-    assert!(read_as(b"{\"a\": [1]}", || false, &bump).is_some());
+    assert!(read_as(with_comment, || false, false).is_none());
+    assert!(read_as(b"{\"a\": [1,], }", || false, false).is_none());
+    assert!(read_as(b"{\"a\": [1]}", || false, false).is_some());
 }
 
 // ───── many texts and many edits ─────
@@ -828,7 +831,7 @@ fn comments_of(text: &[u8]) -> Vec<&[u8]> {
     let mut at = 0;
     while at < text.len() {
         match text[at] {
-            b'"' | b'\'' => at = scan::string_end(text, at).expect("a string ends"),
+            b'"' | b'\'' => at = scan::string(text, at).expect("a string ends").end,
             b'/' => {
                 let end = scan::comment_end(text, at).expect("a comment");
                 comments.push(&text[at..end]);
@@ -868,7 +871,7 @@ fn check(seed: u64, edits: usize) {
         value,
         "seed {seed}: the text is its value"
     );
-    let is_strict = read(old, json::JSONOptions::DEFAULT, &bump).is_some();
+    let is_strict = read(old, json::JSONOptions::DEFAULT, false).is_some();
     assert!(jsonc || is_strict, "seed {seed}: strict JSON");
     assert!(
         !is_strict || comments_of(old).is_empty(),
@@ -904,9 +907,12 @@ fn check(seed: u64, edits: usize) {
         "{}",
         context()
     );
-    let read_back =
-        read_as(&printed, || !is_strict, &bump).unwrap_or_else(|| panic!("{}", context()));
-    assert_eq!(value_of(&read_back), value, "{}", context());
+    assert!(
+        read_as(&printed, || !is_strict, false).is_some(),
+        "{}",
+        context()
+    );
+    assert_eq!(value_of(&parse(&printed, &bump)), value, "{}", context());
     if edits == 0 {
         assert_eq!(
             bstr::BStr::new(&printed),

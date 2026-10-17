@@ -408,6 +408,15 @@ impl ParsedJson {
         parse_to_rows(source, log, PACKAGE_JSON_OPTS, false)
     }
 
+    /// With the options as given, for a caller that reads one text in more than one dialect.
+    pub fn parse_with_opts(
+        opts: JSONOptions,
+        source: &bun_ast::Source,
+        log: &mut bun_ast::Log,
+    ) -> crate::Result<ParsedJson> {
+        parse_to_rows(source, log, opts, false)
+    }
+
     /// A document fetched from an npm registry: strict JSON with no duplicate-key warnings.
     pub fn parse_npm_manifest(
         source: &bun_ast::Source,
@@ -936,21 +945,44 @@ pub mod scan {
 
     /// Start of the next token at or after `p`; `None` when only whitespace and comments are left.
     pub fn next_token(contents: &[u8], p: usize) -> Option<usize> {
-        super::skip_ws_and_comments(contents, p)
+        // Most gaps are blanks and line feeds, and most tokens start with a byte that no gap
+        // has: those do not need the scanner of every gap.
+        let blanks = contents
+            .get(p..)?
+            .iter()
+            .take_while(|byte| matches!(byte, b' ' | b'\n'))
+            .count();
+        let p = p + blanks;
+        match contents.get(p) {
+            Some(&byte) if byte > b' ' && byte < 0x80 && byte != b'/' => Some(p),
+            _ => super::skip_ws_and_comments(contents, p),
+        }
     }
 
-    /// End of the string token that starts at `start`.
-    pub fn string_end(contents: &[u8], start: usize) -> Option<usize> {
+    #[derive(Clone, Copy)]
+    pub struct StringToken {
+        pub end: usize,
+        /// A backslash is in it. Without one, the string is the bytes between its quotes.
+        pub has_escape: bool,
+    }
+
+    /// The string token that starts at `start`.
+    pub fn string(contents: &[u8], start: usize) -> Option<StringToken> {
         let quote = *contents.get(start)?;
         if quote != b'"' && quote != b'\'' {
             return None;
         }
         let mut p = start + 1;
+        let mut has_escape = false;
         loop {
             p += strings::index_of_any(contents.get(p..)?, &[quote, b'\\'])?;
             if contents[p] == quote {
-                return Some(p + 1);
+                return Some(StringToken {
+                    end: p + 1,
+                    has_escape,
+                });
             }
+            has_escape = true;
             p += 2;
         }
     }
@@ -958,7 +990,7 @@ pub mod scan {
     /// End of the value (string, number, keyword, object or array) that starts at `start`.
     pub fn value_end(contents: &[u8], start: usize) -> Option<usize> {
         match *contents.get(start)? {
-            b'"' | b'\'' => string_end(contents, start),
+            b'"' | b'\'' => string(contents, start).map(|token| token.end),
             _ => super::skip_json_value(contents, start),
         }
     }

@@ -10,7 +10,7 @@
 //! of the tree is the member of the text that has its key, and it is as written if the parser
 //! reads the token of the text as the value of the tree.
 
-use bun_ast::{Expr, ExprData, G, Indentation, IndentationCharacter, Log, Source};
+use bun_ast::{E, Expr, ExprData, G, Indentation, IndentationCharacter, Log, Source};
 use bun_collections::index_sort;
 use bun_core::{MutableString, StackCheck, strings};
 use bun_js_printer as js_printer;
@@ -22,31 +22,38 @@ use crate::bun_json::{self as json, scan};
 
 /// The text of a package.json that was `old`, now that its tree is `root`.
 pub fn print(old: &[u8], root: Expr, indentation: Indentation) -> js_printer::Result<Vec<u8>> {
-    let bump = bun_alloc::Arena::new();
-    Ok(print_and_read(old, root, indentation, &bump)?.0)
+    Ok(write(old, root, indentation, false)?.0)
 }
 
-/// [`print`], and the tree that the parser reads the new text as.
-///
-/// The parser reads every text that is written over `old` before it is returned. A text that
-/// does not read as `root`, or that has a comment or a trailing comma when `old` has none, is
-/// not returned: that is a bug of this file, and no edit is lost to it. The whole file is then
-/// printed from `root`, as a file without a text is (an empty file, a root that was not parsed
-/// from `old`). That text has no tree: nothing has read it.
+/// [`print`], and what the parser read the new text as, with the position of every value.
+/// `None` for a text that was printed as a whole: nothing has read that one.
 pub(crate) fn print_and_read(
     old: &[u8],
     root: Expr,
     indentation: Indentation,
-    bump: &bun_alloc::Arena,
-) -> js_printer::Result<(Vec<u8>, Option<Expr>)> {
+) -> js_printer::Result<(Vec<u8>, Option<json::ParsedJson>)> {
+    write(old, root, indentation, true)
+}
+
+/// The parser reads every text that is written over `old` before it is returned. A text that
+/// does not read as `root`, or that has a comment or a trailing comma when `old` has none, is
+/// not returned: that is a bug of this file, and no edit is lost to it. The whole file is then
+/// printed from `root`, as a file without a text is (an empty file, a root that was not parsed
+/// from `old`).
+fn write(
+    old: &[u8],
+    root: Expr,
+    indentation: Indentation,
+    with_positions: bool,
+) -> js_printer::Result<(Vec<u8>, Option<json::ParsedJson>)> {
     let mut text = Text::new(old, indentation);
     let stack = text.stack;
     let is_wrong = match text.document(&root) {
         Ok(()) => {
             let new = text.out.list;
-            let is_jsonc = || read(old, json::JSONOptions::DEFAULT, bump).is_none();
-            if let Some(read) = read_as(&new, is_jsonc, bump)
-                && is_tree(&read, &root, stack)
+            let is_jsonc = || read(old, json::JSONOptions::DEFAULT, false).is_none();
+            if let Some(read) = read_as(&new, is_jsonc, with_positions)
+                && is_tree(&read.root, &root, stack)
             {
                 return Ok((new, Some(read)));
             }
@@ -58,8 +65,8 @@ pub(crate) fn print_and_read(
     };
     // A text that `root` was parsed from, and that no edit has changed, says it as it is.
     let same = old.to_vec();
-    if let Some(read) = read_as(&same, || true, bump)
-        && is_tree(&read, &root, stack)
+    if let Some(read) = read_as(&same, || true, with_positions)
+        && is_tree(&read.root, &root, stack)
     {
         return Ok((same, Some(read)));
     }
@@ -89,68 +96,87 @@ fn print_new_file(old: &[u8], root: Expr, indentation: Indentation) -> js_printe
     Ok(writer.ctx.written_without_trailing_zero().to_vec())
 }
 
-/// The tree that the parser reads `text` as. Strict JSON first: a text with a comment or a
-/// trailing comma has a tree only if `is_jsonc` says that it may have them.
-fn read_as(text: &[u8], is_jsonc: impl FnOnce() -> bool, bump: &bun_alloc::Arena) -> Option<Expr> {
-    read(text, json::JSONOptions::DEFAULT, bump).or_else(|| {
+/// What the parser reads `text` as. Strict JSON first: a text with a comment or a trailing
+/// comma is read only if `is_jsonc` says that it may have them.
+fn read_as(
+    text: &[u8],
+    is_jsonc: impl FnOnce() -> bool,
+    with_positions: bool,
+) -> Option<json::ParsedJson> {
+    read(text, json::JSONOptions::DEFAULT, with_positions).or_else(|| {
         if is_jsonc() {
-            read(text, json::PACKAGE_JSON_OPTS, bump)
+            read(text, json::PACKAGE_JSON_OPTS, with_positions)
         } else {
             None
         }
     })
 }
 
-fn read(text: &[u8], opts: json::JSONOptions, bump: &bun_alloc::Arena) -> Option<Expr> {
+/// The rows of the parser for `text`: no tree is made of them to compare them with one.
+fn read(text: &[u8], opts: json::JSONOptions, with_positions: bool) -> Option<json::ParsedJson> {
     bun_ast::initialize_store();
     let source = Source::init_path_string(b"package.json", text);
     let opts = json::JSONOptions {
         json_warn_duplicate_keys: false,
+        record_value_locs: with_positions,
         ..opts
     };
-    json::parse_package_json_utf8_with_opts(opts, &source, &mut Log::init(), bump)
-        .ok()
-        .map(|parsed| parsed.root)
+    json::ParsedJson::parse_with_opts(opts, &source, &mut Log::init()).ok()
 }
 
-/// Whether `read`, a tree of the parser, is the tree `root`.
+/// Whether `read`, what the parser read, is the tree `root`.
 fn is_tree(read: &Expr, root: &Expr, stack: StackCheck) -> bool {
+    match (&read.data, &root.data) {
+        (ExprData::EObjectJSON(read), ExprData::EObject(root)) => {
+            is_object(read.get(), root, stack)
+        }
+        (ExprData::EArrayJSON(read), ExprData::EArray(root)) => is_array(read.get(), root, stack),
+        _ => false,
+    }
+}
+
+fn is_object(read: &E::ObjectJSON, root: &E::Object, stack: StackCheck) -> bool {
+    let rows = read.properties();
+    rows.len() == root.properties.len()
+        && rows
+            .iter()
+            .zip(root.properties.iter())
+            .all(|(row, member)| match (&member.key, &member.value) {
+                (Some(key), Some(value)) => {
+                    is_string(row.key.slice(), key) && is_value(&row.value, value, stack)
+                }
+                _ => false,
+            })
+}
+
+fn is_array(read: &E::ArrayJSON, root: &E::Array, stack: StackCheck) -> bool {
+    let items = read.items();
+    items.len() == root.items.len()
+        && items
+            .iter()
+            .zip(root.items.iter())
+            .all(|(item, value)| is_value(item, value, stack))
+}
+
+fn is_string(read: &[u8], root: &Expr) -> bool {
+    matches!(&root.data, ExprData::EString(string) if string.next.is_none() && string.eql_bytes(read))
+}
+
+fn is_value(read: &E::JsonValue, root: &Expr, stack: StackCheck) -> bool {
     if !stack.is_safe_to_recurse() {
         return false;
     }
-    let is_same = |read: &Option<Expr>, root: &Option<Expr>| match (read, root) {
-        (Some(read), Some(root)) => is_tree(read, root, stack),
-        _ => false,
-    };
-    match (&read.data, &root.data) {
-        (ExprData::EObject(read), ExprData::EObject(root)) => {
-            read.properties.len() == root.properties.len()
-                && read
-                    .properties
-                    .iter()
-                    .zip(root.properties.iter())
-                    .all(|(read, root)| {
-                        is_same(&read.key, &root.key) && is_same(&read.value, &root.value)
-                    })
-        }
-        (ExprData::EArray(read), ExprData::EArray(root)) => {
-            read.items.len() == root.items.len()
-                && read
-                    .items
-                    .iter()
-                    .zip(root.items.iter())
-                    .all(|(read, root)| is_tree(read, root, stack))
-        }
-        (ExprData::EString(read), ExprData::EString(root)) => {
-            read.next.is_none() && root.next.is_none() && read.eql_string(root)
-        }
-        (ExprData::ENumber(read), ExprData::ENumber(root)) => {
+    match (read, &root.data) {
+        (E::JsonValue::Object(read), ExprData::EObject(root)) => is_object(read.get(), root, stack),
+        (E::JsonValue::Array(read), ExprData::EArray(root)) => is_array(read.get(), root, stack),
+        (E::JsonValue::String(read), _) => is_string(read.slice(), root),
+        (E::JsonValue::Number(read), ExprData::ENumber(root)) => {
             read.value().to_bits() == root.value().to_bits()
         }
         // The printer writes `null` for a number that JSON has no token for.
-        (ExprData::ENull(_), ExprData::ENumber(root)) => !root.value().is_finite(),
-        (ExprData::EBoolean(read), ExprData::EBoolean(root)) => read.value == root.value,
-        (ExprData::ENull(_), ExprData::ENull(_)) => true,
+        (E::JsonValue::Null, ExprData::ENumber(root)) => !root.value().is_finite(),
+        (E::JsonValue::Boolean(read), ExprData::EBoolean(root)) => *read == root.value,
+        (E::JsonValue::Null, ExprData::ENull(_)) => true,
         _ => false,
     }
 }
@@ -169,23 +195,20 @@ impl From<js_printer::Error> for Stop {
 
 type Step<T = ()> = Result<T, Stop>;
 
-/// A member of an object or an item of an array, as the old text has it. All fields are offsets.
+/// A member of an object or an item of an array, as the old text has it.
 #[derive(Clone, Copy)]
 struct Member {
-    /// Where the lines above it start: blank lines, comments, then its indentation.
-    lead: usize,
     /// The key of a member. An item has no key: `key..key_end` is its value.
     key: usize,
     key_end: usize,
     value: usize,
     value_end: usize,
     comma: Option<usize>,
-    /// Where the rest of its line ends: a comment, then the line break.
-    end: usize,
-    starts_line: bool,
-    ends_line: bool,
     /// `Text::containers` index of its value, if that is an object or an array.
     container: Option<usize>,
+    /// The key, the value: a string without an escape. What is between its quotes is the string.
+    key_is_plain: bool,
+    value_is_plain: bool,
 }
 
 impl Member {
@@ -194,6 +217,7 @@ impl Member {
             at: self.value,
             end: self.value_end,
             container: self.container,
+            is_plain: self.value_is_plain,
         }
     }
 }
@@ -204,6 +228,7 @@ struct OldValue {
     at: usize,
     end: usize,
     container: Option<usize>,
+    is_plain: bool,
 }
 
 /// An object or an array of the old text. Its members are `Text::members[first..first + len]`.
@@ -211,11 +236,35 @@ struct OldValue {
 struct Container {
     open: usize,
     close: usize,
+    first: usize,
+    len: usize,
+}
+
+/// Where the lines of a container are. Only a container that gets, loses or moves a member
+/// needs to know.
+struct Lines {
     /// Where the rest of the line of the opening bracket ends.
     head_end: usize,
     head_ends_line: bool,
-    first: usize,
-    len: usize,
+    members: Vec<MemberLines>,
+}
+
+/// The lines of a member.
+#[derive(Clone, Copy)]
+struct MemberLines {
+    /// Where the lines above it start: blank lines, comments, then its indentation.
+    lead: usize,
+    /// Where the rest of its line ends: a comment, then the line break.
+    end: usize,
+    starts_line: bool,
+    ends_line: bool,
+}
+
+impl Lines {
+    /// Whether the members of the container are on lines of their own.
+    fn has_lines(&self) -> bool {
+        self.head_ends_line || self.members.iter().any(|member| member.ends_line)
+    }
 }
 
 /// The members of an object or the items of an array of the tree.
@@ -447,11 +496,12 @@ impl<'a> Text<'a> {
             at: start,
             end: container.close + 1,
             container: Some(index),
+            is_plain: false,
         };
         self.put(&text[..start]);
         self.value(root, old)?;
         self.put(&text[old.end..]);
-        if self.out.list == text || self.has_lines(&container) {
+        if self.out.list == text || self.lines_of(&container).has_lines() {
             return Ok(());
         }
         // A root that is written on one line has no layout to keep: it gets the printer's.
@@ -501,7 +551,7 @@ impl<'a> Text<'a> {
         (from, false)
     }
 
-    /// Reads the container that opens at `open` and the containers in it, each byte once.
+    /// Reads the container that opens at `open` and the containers in it, each token once.
     /// Returns its index in `self.containers`.
     fn read(&mut self, open: usize) -> Step<usize> {
         if !self.stack.is_safe_to_recurse() {
@@ -517,105 +567,114 @@ impl<'a> Text<'a> {
             if text[token] == closing {
                 break token;
             }
-            let (key_end, value) = if is_object {
-                let key_end = scan::string_end(text, token).ok_or(Stop::NotTheText)?;
-                let colon = scan::next_token(text, key_end).ok_or(Stop::NotTheText)?;
+            let mut member = Member {
+                key: token,
+                key_end: 0,
+                value: token,
+                value_end: 0,
+                comma: None,
+                container: None,
+                key_is_plain: false,
+                value_is_plain: false,
+            };
+            if is_object {
+                let key = scan::string(text, token).ok_or(Stop::NotTheText)?;
+                let colon = scan::next_token(text, key.end).ok_or(Stop::NotTheText)?;
                 if text[colon] != b':' {
                     return Err(Stop::NotTheText);
                 }
-                let value = scan::next_token(text, colon + 1).ok_or(Stop::NotTheText)?;
-                (key_end, value)
-            } else {
-                (0, token)
-            };
-            let (value_end, container) = if matches!(text[value], b'{' | b'[') {
-                let container = self.read(value)?;
-                (self.containers[container].close + 1, Some(container))
-            } else {
-                let value_end = scan::value_end(text, value).ok_or(Stop::NotTheText)?;
-                (value_end, None)
-            };
-            let after = scan::next_token(text, value_end).ok_or(Stop::NotTheText)?;
-            let comma = (text[after] == b',').then_some(after);
-            if comma.is_none() && text[after] != closing {
+                member.key_end = key.end;
+                member.key_is_plain = !key.has_escape;
+                member.value = scan::next_token(text, colon + 1).ok_or(Stop::NotTheText)?;
+            }
+            match text[member.value] {
+                b'{' | b'[' => {
+                    let container = self.read(member.value)?;
+                    member.value_end = self.containers[container].close + 1;
+                    member.container = Some(container);
+                }
+                b'"' | b'\'' => {
+                    let string = scan::string(text, member.value).ok_or(Stop::NotTheText)?;
+                    member.value_end = string.end;
+                    member.value_is_plain = !string.has_escape;
+                }
+                _ => {
+                    member.value_end =
+                        scan::value_end(text, member.value).ok_or(Stop::NotTheText)?;
+                }
+            }
+            if !is_object {
+                member.key_end = member.value_end;
+                member.key_is_plain = member.value_is_plain;
+            }
+            at = scan::next_token(text, member.value_end).ok_or(Stop::NotTheText)?;
+            if text[at] == b',' {
+                member.comma = Some(at);
+                at += 1;
+            } else if text[at] != closing {
                 return Err(Stop::NotTheText);
             }
-            self.open_members.push(Member {
-                lead: 0,
-                key: token,
-                key_end: if is_object { key_end } else { value_end },
-                value,
-                value_end,
-                comma,
-                end: 0,
-                starts_line: false,
-                ends_line: false,
-                container,
-            });
-            at = comma.map_or(value_end, |comma| comma + 1);
+            self.open_members.push(member);
         };
-        let len = self.open_members.len() - mark;
-        let first_key = if len == 0 {
-            close
-        } else {
-            self.open_members[mark].key
-        };
-        let (head_end, head_ends_line) = self.rest_of_line(open + 1, first_key);
-        let (mut lead, mut at_line_start) = (head_end, head_ends_line);
-        for index in mark..mark + len {
-            let next_key = if index + 1 < mark + len {
-                self.open_members[index + 1].key
-            } else {
-                close
-            };
-            let member = self.open_members[index];
-            let after = member.comma.map_or(member.value_end, |comma| comma + 1);
-            let (end, ends_line) = self.rest_of_line(after, next_key);
-            self.open_members[index] = Member {
-                lead,
-                end,
-                starts_line: at_line_start,
-                ends_line,
-                ..member
-            };
-            (lead, at_line_start) = (end, ends_line);
-        }
         let first = self.members.len();
         self.members.extend_from_slice(&self.open_members[mark..]);
         self.open_members.truncate(mark);
         self.containers.push(Container {
             open,
             close,
-            head_end,
-            head_ends_line,
             first,
-            len,
+            len: first.abs_diff(self.members.len()),
         });
         Ok(self.containers.len() - 1)
     }
 
-    /// Whether the members of the container are on lines of their own.
-    fn has_lines(&self, container: &Container) -> bool {
-        container.head_ends_line
-            || (0..container.len).any(|index| self.member(container, index).ends_line)
+    /// Where the lines of `container` are.
+    fn lines_of(&self, container: &Container) -> Lines {
+        let first_key = if container.len == 0 {
+            container.close
+        } else {
+            self.member(container, 0).key
+        };
+        let (head_end, head_ends_line) = self.rest_of_line(container.open + 1, first_key);
+        let mut members = Vec::with_capacity(container.len);
+        let (mut lead, mut starts_line) = (head_end, head_ends_line);
+        for index in 0..container.len {
+            let member = self.member(container, index);
+            let next_key = if index + 1 < container.len {
+                self.member(container, index + 1).key
+            } else {
+                container.close
+            };
+            let after = member.comma.map_or(member.value_end, |comma| comma + 1);
+            let (end, ends_line) = self.rest_of_line(after, next_key);
+            members.push(MemberLines {
+                lead,
+                end,
+                starts_line,
+                ends_line,
+            });
+            (lead, starts_line) = (end, ends_line);
+        }
+        Lines {
+            head_end,
+            head_ends_line,
+            members,
+        }
     }
 
-    fn string_token_is(&mut self, token: &[u8], string: &[u8]) -> bool {
-        if !matches!(token.first(), Some(b'"' | b'\'')) {
-            return false;
-        }
-        // Without an escape, a string is the text between its quotes.
-        let between = &token[1..token.len() - 1];
-        if !strings::contains_char(between, b'\\') {
-            return between == string;
+    /// Whether the string token `token` spells `string`. `is_plain`: it has no escape.
+    fn string_token_is(&mut self, token: &[u8], is_plain: bool, string: &[u8]) -> bool {
+        if is_plain {
+            return &token[1..token.len() - 1] == string;
         }
         scan::string_value(token, &mut self.scratch) == Some(string)
     }
 
-    /// Whether `token` is how the old text spells `value`.
-    fn is_token(&mut self, token: &[u8], value: &Expr) -> bool {
+    /// Whether the token of `old` is how the old text spells `value`.
+    fn is_token(&mut self, old: OldValue, value: &Expr) -> bool {
+        let token = &self.text[old.at..old.end];
         if let Some(string) = string_of(value) {
-            return self.string_token_is(token, string);
+            return self.string_token_is(token, old.is_plain, string);
         }
         scalar_of_value(value).is_some_and(|value| {
             kind_of_token(token[0]) == Kind::Scalar
@@ -625,11 +684,10 @@ impl<'a> Text<'a> {
 
     /// Whether the member `old` of the text has the name `name`.
     fn is_named(&mut self, container: &Container, old: usize, name: Name<'_>) -> bool {
-        let text = self.text;
-        let member = self.member(container, old);
-        let token = &text[member.key..member.key_end];
+        let member = &self.members[container.first + old];
+        let (token, is_plain) = (&self.text[member.key..member.key_end], member.key_is_plain);
         match name {
-            Name::String(string) => self.string_token_is(token, string),
+            Name::String(string) => self.string_token_is(token, is_plain, string),
             Name::Scalar(value) => {
                 kind_of_token(token[0]) == Kind::Scalar
                     && scalar_of(token).is_some_and(|written| is_scalar(written, value))
@@ -669,6 +727,9 @@ impl<'a> Text<'a> {
             let member = self.member(container, index);
             let token = &text[member.key..member.key_end];
             let name = match kind_of_token(token[0]) {
+                Kind::String if member.key_is_plain => {
+                    Some(Name::String(&token[1..token.len() - 1]))
+                }
                 Kind::String => scan::string_value(token, &mut self.scratch).map(Name::String),
                 Kind::Scalar => scalar_of(token).map(Name::Scalar),
                 Kind::Object | Kind::Array => None,
@@ -853,7 +914,7 @@ impl<'a> Text<'a> {
         }
         let text = self.text;
         let Some((entries, container)) = self.container_of(value, old) else {
-            if self.is_token(&text[old.at..old.end], value) {
+            if self.is_token(old, value) {
                 self.put(&text[old.at..old.end]);
             } else {
                 self.print(value, self.line_indent(old.at))?;
@@ -871,9 +932,11 @@ impl<'a> Text<'a> {
                 .enumerate()
                 .all(|(index, pair)| *pair == Some(index));
         if is_in_place {
-            self.in_place(&container, entries)
-        } else if self.has_lines(&container) {
-            self.lines(&container, entries, &pairs, &stays)
+            return self.in_place(&container, entries);
+        }
+        let lines = self.lines_of(&container);
+        if lines.has_lines() {
+            self.lines(&container, &lines, entries, &pairs, &stays)
         } else {
             self.lay_out(&container, entries, &pairs, self.line_indent(old.at))
         }
@@ -888,9 +951,7 @@ impl<'a> Text<'a> {
         for index in 0..container.len {
             let member = self.member(container, index);
             let value = entries.value(index)?;
-            if member.container.is_none()
-                && self.is_token(&text[member.value..member.value_end], value)
-            {
+            if member.container.is_none() && self.is_token(member.old_value(), value) {
                 continue;
             }
             self.put(&text[copied..member.value]);
@@ -906,24 +967,21 @@ impl<'a> Text<'a> {
     fn lines(
         &mut self,
         container: &Container,
+        lines: &Lines,
         entries: Entries<'_>,
         pairs: &[Option<usize>],
         stays: &[bool],
     ) -> Step {
         let text = self.text;
         let old_len = container.len;
-        let tail = if old_len == 0 {
-            container.head_end
-        } else {
-            self.member(container, old_len - 1).end
-        };
+        let tail = lines.members.last().map_or(lines.head_end, |last| last.end);
 
         if pairs.is_empty() {
             // Nothing is left but the comments that were on lines of their own.
             let mark = self.out.list.len();
-            self.put(&text[container.open..container.head_end]);
+            self.put(&text[container.open..lines.head_end]);
             for old in 0..old_len {
-                self.comment_lines_above(&self.member(container, old));
+                self.comment_lines_above(&lines.members[old], self.member(container, old).key);
             }
             self.put(&text[tail..=container.close]);
             if !strings::contains_char(&self.out.list[mark..], b'/') {
@@ -935,21 +993,21 @@ impl<'a> Text<'a> {
 
         // A new member is indented like the first member that starts a line.
         let indent: Cow<'a, [u8]> = (0..old_len)
-            .map(|old| self.member(container, old))
-            .find(|member| member.starts_line)
+            .find(|old| lines.members[*old].starts_line)
             .map_or_else(
                 || Cow::Owned(self.indented(self.line_indent(container.open))),
-                |member| Cow::Borrowed(self.line_indent(member.key)),
+                |old| Cow::Borrowed(self.line_indent(self.member(container, old).key)),
             );
-        let (has_trailing_comma, close_has_line) = if old_len == 0 {
-            (false, container.head_ends_line)
-        } else {
-            let last = self.member(container, old_len - 1);
-            (last.comma.is_some(), last.ends_line)
+        let (has_trailing_comma, close_has_line) = match lines.members.last() {
+            None => (false, lines.head_ends_line),
+            Some(last) => (
+                self.member(container, old_len - 1).comma.is_some(),
+                last.ends_line,
+            ),
         };
 
-        self.put(&text[container.open..container.head_end]);
-        if !container.head_ends_line {
+        self.put(&text[container.open..lines.head_end]);
+        if !lines.head_ends_line {
             self.break_line();
         }
         for (index, pair) in pairs.iter().enumerate() {
@@ -973,14 +1031,15 @@ impl<'a> Text<'a> {
                 removed -= 1;
             }
             for removed in removed..old {
-                self.comment_lines_above(&self.member(container, removed));
+                let key = self.member(container, removed).key;
+                self.comment_lines_above(&lines.members[removed], key);
             }
-            let member = self.member(container, old);
-            if member.starts_line {
-                self.put(&text[member.lead..member.key]);
+            let (member, its) = (self.member(container, old), lines.members[old]);
+            if its.starts_line {
+                self.put(&text[its.lead..member.key]);
             } else {
                 self.put(&indent);
-                self.comments(member.lead, member.key, Blank::After);
+                self.comments(its.lead, member.key, Blank::After);
             }
             self.put(&text[member.key..member.value]);
             self.value(entries.value(index)?, member.old_value())?;
@@ -990,23 +1049,23 @@ impl<'a> Text<'a> {
                         self.put(b",");
                     }
                     self.comments(member.value_end, comma, Blank::Before);
-                    self.put(&text[comma + 1..member.end]);
+                    self.put(&text[comma + 1..its.end]);
                 }
                 Some(comma) => {
                     self.put(&text[member.value_end..comma]);
                     if has_comma {
                         self.put(b",");
                     }
-                    self.put(&text[comma + 1..member.end]);
+                    self.put(&text[comma + 1..its.end]);
                 }
                 None => {
                     if has_comma {
                         self.put(b",");
                     }
-                    self.put(&text[member.value_end..member.end]);
+                    self.put(&text[member.value_end..its.end]);
                 }
             }
-            if ends_line && !member.ends_line {
+            if ends_line && !its.ends_line {
                 self.break_line();
             }
         }
@@ -1015,15 +1074,16 @@ impl<'a> Text<'a> {
             removed -= 1;
         }
         for removed in removed..old_len {
-            self.comment_lines_above(&self.member(container, removed));
+            let key = self.member(container, removed).key;
+            self.comment_lines_above(&lines.members[removed], key);
         }
         self.put(&text[tail..=container.close]);
         Ok(())
     }
 
     /// Writes the lines above a member that is removed, if a comment is on them. A comment
-    /// that ends on the line of the member goes with the member.
-    fn comment_lines_above(&mut self, member: &Member) {
+    /// that ends on the line of the member goes with the member. `key` is where the member is.
+    fn comment_lines_above(&mut self, member: &MemberLines, key: usize) {
         if !member.starts_line {
             return;
         }
@@ -1032,7 +1092,7 @@ impl<'a> Text<'a> {
         let mut line = member.lead;
         let (mut has_comment, mut is_after_comment) = (false, false);
         let mut at = member.lead;
-        while at < member.key {
+        while at < key {
             match text[at] {
                 b'\n' | b'\r' => {
                     at += 1 + usize::from(text[at] == b'\r' && text.get(at + 1) == Some(&b'\n'));
@@ -1040,7 +1100,7 @@ impl<'a> Text<'a> {
                     has_comment |= is_after_comment;
                 }
                 b'/' => {
-                    at = scan::comment_end(text, at).unwrap_or(member.key);
+                    at = scan::comment_end(text, at).unwrap_or(key);
                     is_after_comment = true;
                 }
                 _ => at += 1,
@@ -1058,7 +1118,7 @@ impl<'a> Text<'a> {
         }
         let text = self.text;
         let Some((entries, container)) = self.container_of(value, old) else {
-            if self.is_token(&text[old.at..old.end], value) {
+            if self.is_token(old, value) {
                 self.put(&text[old.at..old.end]);
                 return Ok(());
             }

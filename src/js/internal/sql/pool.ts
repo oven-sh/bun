@@ -837,8 +837,11 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     }
     this.runUserCallback(this.connectionInfo.onconnect, null);
     this.#serve();
-    // The server has room: the callers that still wait do not have to wait for the next one to arrive.
-    this.#dialForQueued();
+    // The server has room: the callers that still wait do not have to wait for the next one to arrive. One more
+    // connection, not a start: a reservation that has just taken this one leaves nothing ready.
+    if (this.queue.length !== 0) {
+      this.#dial(false);
+    }
   }
 
   connectionClosed(connection: PooledConnection, err: Error, established: boolean) {

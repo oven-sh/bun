@@ -1432,6 +1432,28 @@ describe.each(scripted)("$adapter, scripted server", script => {
       for (const reserved of held) reserved.release();
     });
 
+    test.concurrent.each(["reserve", "begin"] as const)(
+      "the logins of a start do not start the pool again for %s() callers",
+      async how => {
+        const late: net.Socket[] = [];
+        await using server = await serverOf((socket, nth) => (nth <= 2 ? void late.push(socket) : refuseLogin(socket)));
+        const connected = new Calls();
+        const closed = new Calls();
+        const sql = new SQL({ url: url(server.port), max: 5, onconnect: connected.hit, onclose: closed.hit });
+        await using _ = unanswered(sql);
+        const held: unknown[] = [];
+        for (let i = 0; i < 6; i++) {
+          void outcome(how === "reserve" ? sql.reserve().then(reserved => held.push(reserved)) : sql.begin(() => {}));
+        }
+        // The refusals come first, so each login finds the pool below `max`, and a caller takes it for itself at once.
+        await closed.reached(3);
+        for (const socket of late) ready(socket);
+        await Promise.all([connected.reached(2), closed.reached(4)]);
+        // Five for the start, and the one more that the last login asks for.
+        expect(await server.dials()).toBe(6);
+      },
+    );
+
     test.concurrent("a connection that it loses is replaced at once, whatever the server said before", async () => {
       let answerWith = (socket: net.Socket, nth: number) => (nth <= 2 ? ready(socket) : refuseLogin(socket));
       await using server = await serverOf((socket, nth) => answerWith(socket, nth));

@@ -207,6 +207,29 @@ it("write result is not cumulative", async () => {
   await util.promisify(fs.close)(fd);
 });
 
+it("the FileSink constructor has a prototype property, so instanceof works", async () => {
+  using dir = tempDir("filesink-prototype", {});
+  const writer = Bun.file(path.join(String(dir), "out.txt")).writer();
+  // Close the file first: the checks below only look at the prototype chain.
+  await writer.end();
+  const proto = Object.getPrototypeOf(writer);
+  const FileSink = proto.constructor;
+
+  expect(FileSink.name).toBe("FileSink");
+  expect(Object.getOwnPropertyDescriptor(FileSink, "prototype")).toEqual({
+    value: proto,
+    writable: false,
+    enumerable: false,
+    configurable: false,
+  });
+  expect(typeof FileSink.prototype.end).toBe("function");
+
+  expect(writer instanceof FileSink).toBe(true);
+  // Each sink class gets its own prototype object.
+  expect(writer).not.toBeInstanceOf(Bun.ArrayBufferSink);
+  expect(new Bun.ArrayBufferSink()).not.toBeInstanceOf(FileSink);
+});
+
 // A backpressured write buffers everything `write(2)` would not take, so the
 // Promise it returns has to resolve with the chunk's own byte count. It used to
 // resolve with the partial `write(2)` return instead.

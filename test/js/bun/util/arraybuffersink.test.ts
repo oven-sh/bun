@@ -63,6 +63,25 @@ describe("ArrayBufferSink", () => {
     });
   }
 
+  it("the constructor has a prototype property, so instanceof works", () => {
+    const sink = new ArrayBufferSink();
+    const proto = Object.getPrototypeOf(sink);
+
+    expect(Object.getOwnPropertyDescriptor(ArrayBufferSink, "prototype")).toEqual({
+      value: proto,
+      writable: false,
+      enumerable: false,
+      configurable: false,
+    });
+    expect(ArrayBufferSink.prototype.constructor).toBe(ArrayBufferSink);
+    expect(typeof ArrayBufferSink.prototype.write).toBe("function");
+
+    expect(sink).toBeInstanceOf(ArrayBufferSink);
+    expect(sink instanceof ArrayBufferSink).toBe(true);
+    expect({} instanceof ArrayBufferSink).toBe(false);
+    expect(Object.create(proto)).toBeInstanceOf(ArrayBufferSink);
+  });
+
   // WHATWG streams accept Infinity as a highWaterMark. Bun 1.3.14 clamped it
   // and carried on; the Rust port passed i64::MAX to reserve_exact and aborted.
   // Spawned as a subprocess because the failure mode is SIGABRT.

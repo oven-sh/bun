@@ -45,7 +45,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:http`](https://nodejs.org/api/http.html)
 
-🟢 Fully implemented. `http.Server` does not extend `net.Server`. Bun ignores `listen(handle)` and the `fd`, `ipv6Only` and `signal` options of `listen()`. `keepAlive`/`keepAliveInitialDelay` on the server are no-ops.
+🟢 Fully implemented. `http.Server` does not extend `net.Server`. `listen({ fd })` serves on the file descriptor on Linux and macOS. In a `node:cluster` worker it emits an `ENOTSUP` error, where Node.js resolves the file descriptor in the primary. Bun ignores `listen(handle)` and the `ipv6Only` and `signal` options of `listen()`. `keepAlive`/`keepAliveInitialDelay` on the server are no-ops.
 
 ### [`node:https`](https://nodejs.org/api/https.html)
 

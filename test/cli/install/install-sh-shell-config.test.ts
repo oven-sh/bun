@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { isLinux, isMacOS, isWindows, tempDir } from "harness";
+import { isMacOS, isWindows, tempDir } from "harness";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { makeZipStored, restrictedPathDir } from "./fake-release";
@@ -50,11 +50,11 @@ function shellEnv(home: string, shell: string, github = "") {
   return { HOME: home, USER: "bun-test", TERM: "xterm", PATH: String(pathDir), SHELL: shell, GITHUB: github };
 }
 
-async function runInstaller(home: string, shell: string) {
+async function runInstaller(home: string, shell: string, extraEnv: Record<string, string> = {}) {
   using server = startReleaseServer();
   await using proc = Bun.spawn({
     cmd: ["bash", installScript],
-    env: shellEnv(home, shell, server.url.origin),
+    env: { ...shellEnv(home, shell, server.url.origin), ...extraEnv },
     cwd: home,
     stdout: "pipe",
     stderr: "pipe",
@@ -65,17 +65,18 @@ async function runInstaller(home: string, shell: string) {
 
 // Starts bash the way a terminal does (`-ic`: interactive non-login, as a
 // Linux terminal; `-lic`: interactive login, as a macOS terminal) and reports
-// which `bun` it finds.
+// which `bun` it finds. The system startup files can print to stdout too
+// (the Ubuntu sudo hint), so the answer sits behind a marker.
 async function bunOnPath(home: string, flags: "-ic" | "-lic") {
   await using proc = Bun.spawn({
-    cmd: ["bash", flags, "command -v bun || echo none"],
+    cmd: ["bash", flags, 'echo "bun-on-path=$(command -v bun || echo none)"'],
     env: shellEnv(home, "/bin/bash"),
     cwd: home,
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout] = await Promise.all([proc.stdout.text(), proc.exited]);
-  return stdout.trim();
+  const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return /^bun-on-path=(.*)$/m.exec(stdout)?.[1];
 }
 
 function countBunBlocks(path: string) {
@@ -114,7 +115,7 @@ describe.concurrent("install.sh shell config", () => {
   test.skipIf(!pathDir)("bash: a second run does not append a second block", async () => {
     using home = tempDir("install-sh-home", bashHome);
     const h = String(home);
-    const config = isLinux ? ".bashrc" : ".bash_profile";
+    const config = isMacOS ? ".bash_profile" : ".bashrc";
 
     const first = await runInstaller(h, "/bin/bash");
     expect(first.stdout).toContain(`Added "~/.bun/bin" to $PATH in "~/${config}"`);
@@ -126,6 +127,43 @@ describe.concurrent("install.sh shell config", () => {
     expect(second.exitCode).toBe(0);
 
     expect(countBunBlocks(join(h, ".bashrc")) + countBunBlocks(join(h, ".bash_profile"))).toBe(1);
+  });
+
+  test.skipIf(!pathDir || isMacOS)("bash: a hand-written ~/.bash_profile gets the block for login shells", async () => {
+    using home = tempDir("install-sh-home", {
+      ".bash_profile": "export EDITOR=vi\n",
+      ".bashrc": 'PS1="$ "\n',
+    });
+    const h = String(home);
+
+    const { stdout, exitCode } = await runInstaller(h, "/bin/bash");
+    expect(stdout).toContain('Added "~/.bun/bin" to $PATH in "~/.bashrc"');
+    expect(stdout).toContain('Added "~/.bun/bin" to $PATH in "~/.bash_profile" for login shells');
+    expect(exitCode).toBe(0);
+
+    const bin = join(h, ".bun/bin/bun");
+    expect([countBunBlocks(join(h, ".bash_profile")), countBunBlocks(join(h, ".bashrc"))]).toEqual([1, 1]);
+    expect(await bunOnPath(h, "-ic")).toBe(bin);
+    expect(await bunOnPath(h, "-lic")).toBe(bin);
+  });
+
+  test.skipIf(!pathDir)("bash: a second run with another BUN_INSTALL appends a block for it", async () => {
+    using home = tempDir("install-sh-home", bashHome);
+    const h = String(home);
+    const config = join(h, isMacOS ? ".bash_profile" : ".bashrc");
+
+    const first = await runInstaller(h, "/bin/bash");
+    expect(first.exitCode).toBe(0);
+
+    const second = await runInstaller(h, "/bin/bash", { BUN_INSTALL: join(h, "other") });
+    expect(second.stdout).toContain(`Added "~/other/bin" to $PATH in`);
+    expect(second.exitCode).toBe(0);
+
+    expect(countBunBlocks(config)).toBe(2);
+    expect(readFileSync(config, "utf8")).toEndWith(
+      '\n# bun\nexport BUN_INSTALL="$HOME/other"\nexport PATH="$BUN_INSTALL/bin:$PATH"\n',
+    );
+    expect(await bunOnPath(h, "-lic")).toBe(join(h, "other/bin/bun"));
   });
 
   test.skipIf(!pathDir)("zsh: a second run does not append a second block", async () => {

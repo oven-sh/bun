@@ -1257,6 +1257,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         loc,
                         b"cannot use export statement with \"type\" attribute",
                     );
+                } else if path.text == b"bun:bundle" {
+                    p.reject_bun_bundle_reexport(path.loc);
                 }
 
                 if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
@@ -1312,6 +1314,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             loc,
                             b"export from cannot be used with \"type\" attribute",
                         );
+                    } else if parsed_path.text == b"bun:bundle" {
+                        p.reject_bun_bundle_reexport(parsed_path.loc);
                     }
 
                     let import_record_index =

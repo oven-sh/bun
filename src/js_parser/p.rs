@@ -4127,8 +4127,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let is_macro =
             Self::ALLOW_MACROS && (path.is_macro || crate::Macro::is_macro_path(path.text));
         let mut stmt = stmt_;
-        // `with { type: "macro" }` does not take "bun:bundle" out of its branch below.
-        if is_macro && path.text != b"bun:bundle" {
+        if is_macro {
+            if path.text == b"bun:bundle" {
+                self.log().add_error(
+                    Some(self.source),
+                    path.loc,
+                    b"\"bun:bundle\" cannot be imported as a macro",
+                );
+                return Ok(self.s(S::Empty {}, loc));
+            }
             let id = self.add_import_record(ImportKind::Stmt, path.loc, path.text);
             self.import_records.items_mut()[id as usize].path.namespace = crate::Macro::NAMESPACE;
             self.import_records.items_mut()[id as usize]
@@ -4520,18 +4527,39 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// The "bun:bundle" import is removed at parse time and only a direct
-    /// `feature("FLAG")` call is replaced. Any other reference that is still
-    /// counted after the visit pass would be printed with no declaration.
     #[cold]
-    pub(crate) fn reject_bundler_feature_value_use(&mut self) {
+    pub(crate) fn reject_bun_bundle_reexport(&mut self, path_loc: bun_ast::Loc) {
+        self.log().add_error(
+            Some(self.source),
+            path_loc,
+            b"\"bun:bundle\" does not exist at runtime and cannot be re-exported",
+        );
+    }
+
+    #[cold]
+    pub(crate) fn reject_bundler_feature_value_uses(&mut self, parts: [&[js_ast::Part]; 3]) {
+        for part in parts.into_iter().flatten() {
+            self.reject_bundler_feature_value_use(&part.symbol_uses, part.stmts.slice());
+        }
+    }
+
+    /// The "bun:bundle" import is removed at parse time and only a direct
+    /// `feature("FLAG")` call is replaced, which also drops the use of its
+    /// target. A use that a part still has after its visit is any other
+    /// reference, in code that the visit pass did not know to be dead.
+    #[cold]
+    fn reject_bundler_feature_value_use(&mut self, uses: &SymbolUseMap, stmts: &[Stmt]) {
         let r#ref = self.bundler_feature_flag_ref;
-        let symbol = &self.symbols[r#ref.inner_index() as usize];
-        if symbol.use_count_estimate == 0 {
+        if uses
+            .get(&r#ref)
+            .is_none_or(|uses| uses.count_estimate() == 0)
+        {
             return;
         }
-        let name: &'a [u8] = symbol.original_name.slice();
-        let loc = match self.module_scope().members.get(name) {
+        let name: &'a [u8] = self.symbols[r#ref.inner_index() as usize]
+            .original_name
+            .slice();
+        let import_loc = match self.module_scope().members.get(name) {
             Some(member) if member.ref_.eql(r#ref) => member.loc,
             _ => bun_ast::Loc::EMPTY,
         };
@@ -4541,8 +4569,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             "\"bun:bundle\" does not exist at runtime, so \"{}\" has no value there",
             bstr::BStr::new(name)
         );
-        let notes: Box<[bun_ast::Data]> =
-            Box::new([bun_ast::range_data(None, bun_ast::Range::NONE, note)]);
+        // With one statement in the part, the use is in that statement.
+        let (loc, place, note_source, note_loc) = match stmts {
+            [stmt] if !stmt.loc.is_empty() => (
+                stmt.loc,
+                " in this statement",
+                Some(self.source),
+                import_loc,
+            ),
+            _ => (import_loc, "", None, bun_ast::Loc::EMPTY),
+        };
+        let notes: Box<[bun_ast::Data]> = Box::new([bun_ast::range_data(
+            note_source,
+            bun_ast::Range {
+                loc: note_loc,
+                ..Default::default()
+            },
+            note,
+        )]);
         self.log().add_range_error_fmt_with_notes(
             Some(self.source),
             bun_ast::Range {
@@ -4551,10 +4595,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
             notes,
             format_args!(
-                "\"{0}\" from \"bun:bundle\" is used as a value, but it can only be called directly, as in {0}(\"FLAG\")",
-                bstr::BStr::new(name)
+                "\"{0}\" from \"bun:bundle\" is used as a value{1}, but it can only be called directly, as in {0}(\"FLAG\")",
+                bstr::BStr::new(name),
+                place
             ),
         );
+    }
+
+    /// A type that is named before the import statement is an unbound symbol
+    /// that the import then links to its own.
+    fn is_bundler_feature_flag_ref(&self, r#ref: Ref) -> bool {
+        if !self.bundler_feature_flag_ref.is_valid() {
+            return false;
+        }
+        let mut r#ref = r#ref;
+        loop {
+            if r#ref.eql(self.bundler_feature_flag_ref) {
+                return true;
+            }
+            let symbol = &self.symbols[r#ref.inner_index() as usize];
+            if !symbol.has_link() {
+                return false;
+            }
+            r#ref = symbol.link.get();
+        }
     }
 
     #[cold]
@@ -5684,6 +5748,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else if self.declared_symbols.len() > 0 || !self.part_uses.is_empty() {
             // if the part is dead, invalidate all the usage counts
             let symbol_uses = self.take_symbol_uses()?;
+            if self.bundler_feature_flag_ref.is_valid() {
+                self.reject_bundler_feature_value_use(&symbol_uses, stmts);
+            }
             self.clear_symbol_usages_from_dead_part(&js_ast::Part {
                 declared_symbols: self.declared_symbols.clone()?,
                 symbol_uses,
@@ -7907,6 +7974,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.maybe_defined_helper(e)?
             }
             M::MPromise => ident!(b"Promise"),
+            // A type with the name of the "bun:bundle" binding resolves to that
+            // binding here. It has no value at runtime, so the type is `Object`.
+            M::MIdentifier(ref_) if self.is_bundler_feature_flag_ref(ref_) => ident!(b"Object"),
+            M::MDot(ref refs) if self.is_bundler_feature_flag_ref(refs[0]) => ident!(b"Object"),
             M::MIdentifier(ref_) => {
                 self.record_usage(ref_);
                 let e = if self.is_import_item.contains_key(&ref_) {

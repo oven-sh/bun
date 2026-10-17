@@ -1215,7 +1215,7 @@ impl<'a> Parser<'a> {
         visit_tracer.end();
 
         if p.bundler_feature_flag_ref.is_valid() {
-            p.reject_bundler_feature_value_use();
+            p.reject_bundler_feature_value_uses([&before, &parts, &after]);
         }
 
         // If there were errors while visiting, also halt here

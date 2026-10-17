@@ -427,12 +427,16 @@ console.log(x);
   }
 
   // "bun:bundle" does not exist at runtime and its import statement is removed.
-  // A binding that is not a direct `feature("FLAG")` call would be printed with
-  // no declaration, so each of these must fail the build.
+  // A binding that is not a direct `feature("FLAG")` call would have no
+  // declaration, so each of these must fail the build.
   const NAMESPACE = `"bun:bundle" cannot be imported as a namespace`;
   const DEFAULT = `"bun:bundle" has no export named "default"`;
-  const usedAsValue = (name: string) =>
-    `"${name}" from "bun:bundle" is used as a value, but it can only be called directly, as in ${name}("FLAG")`;
+  const MACRO = `"bun:bundle" cannot be imported as a macro`;
+  const REEXPORT = `"bun:bundle" does not exist at runtime and cannot be re-exported`;
+  // The error is at the statement with the use. It is at the import when the
+  // file is one part with more than one statement.
+  const usedAsValue = (name: string, where = " in this statement") =>
+    `"${name}" from "bun:bundle" is used as a value${where}, but it can only be called directly, as in ${name}("FLAG")`;
 
   const refusedAtImport: Record<string, [source: string, ...errors: string[]]> = {
     "/namespace.js": [`import * as flags from "bun:bundle"; if (flags.feature("FLAG")) console.log("on");`, NAMESPACE],
@@ -453,10 +457,17 @@ console.log(x);
       `import * as B from "bun:bundle"; const r: B.Registry = {}; console.log(r);`,
       NAMESPACE,
     ],
+    "/macro-attribute.js": [
+      `import { feature } from "bun:bundle" with { type: "macro" }; if (feature("FLAG")) console.log("on");`,
+      MACRO,
+    ],
     "/default-with-macro-attribute.js": [
       `import flags from "bun:bundle" with { type: "macro" }; const f = flags; console.log(f);`,
-      DEFAULT,
+      MACRO,
     ],
+    "/reexport-named.js": [`export { feature } from "bun:bundle";`, REEXPORT],
+    "/reexport-star.js": [`export * from "bun:bundle";`, REEXPORT],
+    "/reexport-namespace.js": [`export * as flags from "bun:bundle";`, REEXPORT],
   };
 
   const refusedAfterVisit: Record<string, [source: string, ...errors: string[]]> = {
@@ -464,6 +475,8 @@ console.log(x);
   };
   for (const [file, use] of Object.entries({
     "/alias.js": `const f = feature; if (f("FLAG")) console.log("on");`,
+    // Refused in every mode, also where the minifier could inline `f`.
+    "/function-alias.js": `function g() { const f = feature; return f("FLAG") ? "on" : "off"; } console.log(g());`,
     "/argument.js": `console.log(["FLAG"].map(feature));`,
     "/comma-call.js": `if ((0, feature)("FLAG")) console.log("on");`,
     "/method-call.js": `if (feature.call(null, "FLAG")) console.log("on");`,
@@ -477,7 +490,15 @@ console.log(x);
     "/after-return.js": `export function f() { return 1; console.log(feature); }`,
     // Refused while parsing, before tree shaking could remove the function.
     "/unused-function.js": `function unused() { return feature; }`,
+    // Refused although the statement itself is removed.
+    "/bare-statement.js": `feature;`,
+    "/void-statement.js": `void feature;`,
     "/import-equals.ts": `import f = feature;`,
+    // A replaced call, live or dead, must not hide a use in another statement.
+    "/use-before-call.js": `console.log(feature); feature("FLAG") ? 1 : 2;`,
+    "/use-after-call.js": `feature("FLAG") ? 1 : 2; console.log(feature);`,
+    "/use-before-dead-call.js": `console.log(typeof feature); if (feature("OFF")) { if (feature("FLAG")) console.log("on"); }`,
+    "/use-after-dead-call.js": `if (false) { if (feature("FLAG")) console.log("on"); } console.log(typeof feature);`,
   })) {
     refusedAfterVisit[file] = [`import { feature } from "bun:bundle"; ${use}`, usedAsValue("feature")];
   }
@@ -503,9 +524,17 @@ console.log(x);
       `import { feature, type Registry } from "bun:bundle"; const r: Registry = {}; console.log("type-specifier", feature("FLAG") ? "on" : "off", typeof r);`,
       "type-specifier on object",
     ],
+    "/type-reexport.ts": [
+      `export type { Registry } from "bun:bundle"; export type * from "bun:bundle"; console.log("type-reexport");`,
+      "type-reexport",
+    ],
     "/typeof-type.ts": [
       `import { feature } from "bun:bundle"; type F = typeof feature; const f: F | null = null; console.log("typeof-type", feature("FLAG") ? "on" : "off", f);`,
       "typeof-type on null",
+    ],
+    "/type-assertions.ts": [
+      `import { feature } from "bun:bundle"; console.log("type-assertions", (feature as any)("FLAG") ? "on" : "off", feature!("FLAG") ? "on" : "off", (<any>feature)("FLAG") ? "on" : "off", (feature satisfies unknown)("FLAG") ? "on" : "off", feature<string>("FLAG") ? "on" : "off");`,
+      "type-assertions on on on on on",
     ],
     "/optional-call.js": [
       `import { feature } from "bun:bundle"; console.log("optional-call", feature?.("FLAG") ? "on" : "off");`,
@@ -523,15 +552,34 @@ console.log(x);
       `import { feature } from "bun:bundle"; const len = feature => feature.length; console.log("shadowed", feature("FLAG") ? "on" : "off", len("abc"));`,
       "shadowed on 3",
     ],
+    // A use in a branch that is dead under the passed flags is not an error.
     "/dead-branch.js": [
       `import { feature } from "bun:bundle"; if (false) console.log(typeof feature); if (feature("OFF")) console.log(feature); console.log("dead-branch", feature("FLAG") ? "on" : "off");`,
       "dead-branch on",
+    ],
+    "/dead-call.js": [
+      `import { feature } from "bun:bundle"; if (feature("OFF")) { if (feature("FLAG")) console.log("never"); } false && (feature("FLAG") ? 1 : 2); console.log("dead-call", feature("FLAG") ? "on" : "off");`,
+      "dead-call on",
     ],
   };
 
   const refused = { ...refusedAtImport, ...refusedAfterVisit };
   const sourcesOf = (rows: Record<string, readonly [source: string, ...rest: string[]]>) =>
     Object.fromEntries(Object.entries(rows).map(([file, [source]]) => [file, source]));
+  const acceptedBundle = {
+    files: {
+      "/entry.js": Object.keys(accepted)
+        .map(file => `import ".${file}";`)
+        .join("\n"),
+      ...sourcesOf(accepted),
+    },
+    features: ["FLAG"],
+    run: {
+      stdout: Object.values(accepted)
+        .map(([, stdout]) => stdout)
+        .join("\n"),
+    },
+  };
 
   for (const backend of ["cli", "api"] as const) {
     itBundled(`feature_flag/${backend}/RefusesBindingsLeftInOutput`, {
@@ -542,32 +590,58 @@ console.log(x);
       bundleErrors: Object.fromEntries(Object.entries(refused).map(([file, [, ...errors]]) => [file, errors])),
     });
 
-    itBundled(`feature_flag/${backend}/AcceptsEveryValidForm`, {
-      backend,
-      files: {
-        "/entry.js": Object.keys(accepted)
-          .map(file => `import ".${file}";`)
-          .join("\n"),
-        ...sourcesOf(accepted),
-      },
-      features: ["FLAG"],
-      run: {
-        stdout: Object.values(accepted)
-          .map(([, stdout]) => stdout)
-          .join("\n"),
-      },
-    });
-
-    // The attribute does not make it a macro import. It is ignored, as `with { type: "json" }` is.
-    itBundled(`feature_flag/${backend}/IgnoresMacroAttribute`, {
-      backend,
-      files: {
-        "/a.js": `import { feature } from "bun:bundle" with { type: "macro" }; console.log(feature("FLAG") ? "on" : "off");`,
-      },
-      features: ["FLAG"],
-      run: { stdout: "on" },
-    });
+    itBundled(`feature_flag/${backend}/AcceptsEveryValidForm`, { backend, ...acceptedBundle });
   }
+  itBundled("feature_flag/AcceptsEveryValidFormMinified", {
+    backend: "api",
+    ...acceptedBundle,
+    minifySyntax: true,
+    minifyIdentifiers: true,
+  });
+  itBundled("feature_flag/AcceptsEveryValidFormWithoutTreeShaking", {
+    backend: "api",
+    ...acceptedBundle,
+    treeShaking: false,
+  });
+
+  // `(0, feature)("FLAG")` is a direct call once the minifier drops the `0`.
+  // An alias is not: it is refused also where the minifier could inline it.
+  itBundled("feature_flag/MinifySyntaxFoldsOnlyTheCommaCall", {
+    backend: "api",
+    files: {
+      "/comma-call.js": `import { feature } from "bun:bundle"; console.log((0, feature)("FLAG") ? "on" : "off");`,
+      "/function-alias.js": refusedAfterVisit["/function-alias.js"][0],
+    },
+    entryPoints: ["/comma-call.js", "/function-alias.js"],
+    features: ["FLAG"],
+    minifySyntax: true,
+    bundleErrors: { "/function-alias.js": [usedAsValue("feature")] },
+  });
+
+  test("the error is at the statement with the use, and the note is at the import", async () => {
+    using dir = tempDir("bundler-feature-flag", {
+      "far.js": [
+        `import { feature as enabled } from "bun:bundle";`,
+        `if (enabled("FLAG")) console.log("on");`,
+        `export function later() {`,
+        `  return [1, 2].map(enabled);`,
+        `}`,
+        `  const alias = enabled;`,
+      ].join("\n"),
+    });
+    const build = await Bun.build({ entrypoints: [`${dir}/far.js`], features: ["FLAG"], throw: false });
+    expect(
+      build.logs.map(log => ({
+        message: log.message,
+        at: [log.position?.line, log.position?.column],
+        note: [log.notes[0].position?.line, log.notes[0].position?.column],
+      })),
+    ).toEqual([
+      { message: usedAsValue("enabled"), at: [3, 8], note: [1, 10] },
+      { message: usedAsValue("enabled"), at: [6, 3], note: [1, 10] },
+    ]);
+    expect(build.success).toBe(false);
+  });
 
   async function spawnBun(cwd: string, ...args: string[]) {
     await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
@@ -582,9 +656,15 @@ console.log(x);
       NAMESPACE,
     ],
     ["a default import", `console.log("ran"); import flags from "bun:bundle"; flags.feature("FLAG");`, DEFAULT],
+    ["a re-export", `console.log("ran"); export { feature } from "bun:bundle";`, REEXPORT],
     [
       "a use that is not a call",
       `console.log("ran"); import { feature } from "bun:bundle"; const f = feature;`,
+      usedAsValue("feature"),
+    ],
+    [
+      "an alias in a function",
+      `console.log("ran"); import { feature } from "bun:bundle"; function g() { const f = feature; return f("FLAG") ? "on" : "off"; } console.log(g());`,
       usedAsValue("feature"),
     ],
   ])("bun run and bun test refuse %s", async (_, source, error) => {
@@ -603,37 +683,110 @@ console.log(x);
     expect(test.exitCode).toBe(1);
   });
 
-  test("Bun.Transpiler refuses them too", () => {
-    const transpiler = new Bun.Transpiler({ loader: "ts" });
-    const errorsOf = (fn: () => unknown): string[] => {
-      try {
-        fn();
-      } catch (e: any) {
-        return (e instanceof AggregateError ? e.errors : [e]).map(error => error.message);
-      }
-      return [];
-    };
+  // What Bun.Transpiler throws, with the place of a use taken out of the message.
+  const errorsOf = (fn: () => unknown): string[] => {
+    try {
+      fn();
+    } catch (e: any) {
+      return (e instanceof AggregateError ? e.errors : [e]).map(error =>
+        error.message.replace(" in this statement", ""),
+      );
+    }
+    return [];
+  };
+  const anywhere = (errors: string[]) => errors.map(error => error.replace(" in this statement", ""));
 
-    for (const [source, ...errors] of Object.values(refusedAtImport)) {
-      // scanImports() only parses. The import statement is refused while parsing.
+  test("Bun.Transpiler refuses them too", () => {
+    const plain = new Bun.Transpiler({ loader: "ts" });
+    const minifySyntax = new Bun.Transpiler({ loader: "ts", minify: { syntax: true } });
+    const keepsDeadCode = new Bun.Transpiler({ loader: "ts", deadCodeElimination: false });
+
+    for (const [file, [source, ...errors]] of Object.entries(refusedAtImport)) {
+      // scanImports() only parses. The statement is refused while parsing.
       expect({
-        scanImports: errorsOf(() => transpiler.scanImports(source)),
-        scan: errorsOf(() => transpiler.scan(source)),
-        transformSync: errorsOf(() => transpiler.transformSync(source)),
-      }).toEqual({ scanImports: errors, scan: errors, transformSync: errors });
+        file,
+        scanImports: errorsOf(() => plain.scanImports(source)),
+        scan: errorsOf(() => plain.scan(source)),
+        transformSync: errorsOf(() => plain.transformSync(source)),
+        minifySyntax: errorsOf(() => minifySyntax.transformSync(source)),
+        keepsDeadCode: errorsOf(() => keepsDeadCode.transformSync(source)),
+      }).toEqual({
+        file,
+        scanImports: errors,
+        scan: errors,
+        transformSync: errors,
+        minifySyntax: errors,
+        keepsDeadCode: errors,
+      });
     }
-    for (const [source, ...errors] of Object.values(refusedAfterVisit)) {
+    for (const [file, [source, ...errors]] of Object.entries(refusedAfterVisit)) {
       expect({
-        scan: errorsOf(() => transpiler.scan(source)),
-        transformSync: errorsOf(() => transpiler.transformSync(source)),
-      }).toEqual({ scan: errors, transformSync: errors });
+        file,
+        scan: errorsOf(() => plain.scan(source)),
+        transformSync: errorsOf(() => plain.transformSync(source)),
+        minifySyntax: errorsOf(() => minifySyntax.transformSync(source)),
+        keepsDeadCode: errorsOf(() => keepsDeadCode.transformSync(source)),
+      }).toEqual({
+        file,
+        scan: anywhere(errors),
+        transformSync: anywhere(errors),
+        // Only the comma call becomes a direct call when the syntax is minified.
+        minifySyntax: file === "/comma-call.js" ? [] : anywhere(errors),
+        keepsDeadCode: anywhere(errors),
+      });
     }
-    for (const [source] of Object.values(accepted)) {
-      expect(errorsOf(() => transpiler.transformSync(source))).toEqual([]);
+    for (const [file, [source]] of Object.entries(accepted)) {
+      expect({
+        file,
+        transformSync: errorsOf(() => plain.transformSync(source)),
+        minifySyntax: errorsOf(() => minifySyntax.transformSync(source)),
+        keepsDeadCode: errorsOf(() => keepsDeadCode.transformSync(source)),
+      }).toEqual({
+        file,
+        transformSync: [],
+        minifySyntax: [],
+        // A use in a dead branch is an error where the branch is kept.
+        keepsDeadCode: file === "/dead-branch.js" ? [usedAsValue("feature", "")] : [],
+      });
     }
   });
 
-  // A reference in a dead branch is refused only where the branch is printed.
+  // With `emitDecoratorMetadata`, a type that has the name of the binding
+  // resolves to the binding. That is not a use of its value.
+  test("a type named like the binding is not a use of it", () => {
+    const transpiler = new Bun.Transpiler({
+      loader: "ts",
+      tsconfig: { compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true } },
+    });
+    const prelude = `import { feature } from "bun:bundle"; function dec(...a: any[]): any {}`;
+    const call = `console.log(feature("FLAG") ? "on" : "off");`;
+    const types = {
+      "namespace member": `namespace Flags { export type feature = string } class K { @dec p: Flags.feature = "x"; }`,
+      "type parameter": `class K<feature> { @dec p: feature | undefined; }`,
+      "interface": `interface feature { id: number } class K { @dec p: feature | undefined; @dec q: feature[] = []; }`,
+      "namespace": `declare namespace feature { interface X { id: number } } class K { @dec p: feature.X | undefined; }`,
+    };
+    for (const [name, source] of Object.entries(types)) {
+      const output = transpiler.transformSync(`${prelude} ${source} ${call}`);
+      expect({ name, refersToBinding: /(?<![\w$.])feature(?![\w$])/.test(output) }).toEqual({
+        name,
+        refersToBinding: false,
+      });
+      // The import statement can come after the class.
+      expect(
+        errorsOf(() =>
+          transpiler.transformSync(
+            `function dec(...a: any[]): any {} ${source} ${call} import { feature } from "bun:bundle";`,
+          ),
+        ),
+      ).toEqual([]);
+      expect(errorsOf(() => transpiler.transformSync(`${prelude} ${source} const f = feature; ${call}`))).toEqual([
+        usedAsValue("feature", ""),
+      ]);
+    }
+  });
+
+  // A reference in a dead branch is refused only where the branch is kept.
   // `bun test --coverage` and `bun --print` turn dead code elimination off.
   test("a reference in a dead branch is refused only when dead code is kept", async () => {
     const source = `import { feature } from "bun:bundle"; if (false) console.log(typeof feature);`;

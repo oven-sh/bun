@@ -390,6 +390,7 @@ class ListenQuery {
   resolve!: () => void;
   reject!: (err: unknown) => void;
   [_results] = null;
+  [_flags] = SQLQueryFlags.none;
   [_handle]: $ZigGeneratedClasses.PostgresSQLQuery;
 
   constructor(handle: $ZigGeneratedClasses.PostgresSQLQuery) {

@@ -2374,7 +2374,7 @@ describe.concurrent("a client closes a pushed stream (RFC 9113 §8.4.2)", () => 
     expect(client.destroyed).toBe(true);
   }
 
-  test.each([
+  const closes: { name: string; act: (pushed: http2.ClientHttp2Stream) => void; events: string[]; wire: string[] }[] = [
     {
       name: "close(NGHTTP2_REFUSED_STREAM)",
       act: (pushed: http2.ClientHttp2Stream) => pushed.close(http2.constants.NGHTTP2_REFUSED_STREAM),
@@ -2399,29 +2399,33 @@ describe.concurrent("a client closes a pushed stream (RFC 9113 §8.4.2)", () => 
       events: ["close rstCode=0"],
       wire: ["RST_STREAM 0"],
     },
-  ])("$name in the 'stream' event resets the stream and lets the session close", async ({ act, events, wire }) => {
-    const raw = await RawH2Server.listen();
-    const { client, req, push } = connectAndRecordPush(raw, act);
-    try {
-      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
-      sendPush(raw);
-      // The pushed stream reports 'close' before the reset can reach the server. The server sends
-      // nothing until then: a read between close(code) and the destroy of any stream can make
-      // the client repeat the RST_STREAM.
-      await raw.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 2);
-      expect({
-        streamEvents: push.streamEvents,
-        events: push.events,
-        wire: await framesOnPushedStream(raw),
-      }).toEqual({ streamEvents: oneStreamEvent, events, wire });
-      await finishRequestAndClose(raw, client, req);
-    } finally {
-      client.destroy();
-      raw.close();
-    }
-  });
+  ];
+  test.each(closes)(
+    "$name in the 'stream' event resets the stream and lets the session close",
+    async ({ act, events, wire }) => {
+      const raw = await RawH2Server.listen();
+      const { client, req, push } = connectAndRecordPush(raw, act);
+      try {
+        await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+        sendPush(raw);
+        // The pushed stream reports 'close' before the reset can reach the server. The server sends
+        // nothing until then: a read between close(code) and the destroy of any stream can make
+        // the client repeat the RST_STREAM.
+        await raw.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 2);
+        expect({
+          streamEvents: push.streamEvents,
+          events: push.events,
+          wire: await framesOnPushedStream(raw),
+        }).toEqual({ streamEvents: oneStreamEvent, events, wire });
+        await finishRequestAndClose(raw, client, req);
+      } finally {
+        client.destroy();
+        raw.close();
+      }
+    },
+  );
 
-  test("a pushed response that was in flight when the client reset the stream opens no stream", async () => {
+  test("a pushed response that was in flight when the client reset the stream is ignored", async () => {
     const raw = await RawH2Server.listen();
     const { client, req, push } = connectAndRecordPush(raw, pushed =>
       pushed.close(http2.constants.NGHTTP2_REFUSED_STREAM),
@@ -2433,17 +2437,15 @@ describe.concurrent("a client closes a pushed stream (RFC 9113 §8.4.2)", () => 
       // The response that the server sent before the reset reached it.
       raw.sendFrame(FrameType.HEADERS, END_HEADERS, 2, RESPONSE_200);
       raw.sendFrame(FrameType.DATA, END_STREAM, 2, Buffer.from("late"));
-      const wire = await framesOnPushedStream(raw);
+      // The client sends nothing for the late frames.
       expect({
         streamEvents: push.streamEvents,
         events: push.events,
-        firstFrame: wire[0],
-        notAReset: wire.filter(f => !f.startsWith("RST_STREAM")),
+        wire: await framesOnPushedStream(raw),
       }).toEqual({
         streamEvents: oneStreamEvent,
         events: ["error ERR_HTTP2_STREAM_ERROR", "close rstCode=7"],
-        firstFrame: "RST_STREAM 7",
-        notAReset: [],
+        wire: ["RST_STREAM 7"],
       });
       // The late frames must not count as an open stream, or close() waits forever.
       await finishRequestAndClose(raw, client, req);
@@ -2570,33 +2572,131 @@ describe.concurrent("a client closes a pushed stream (RFC 9113 §8.4.2)", () => 
   });
 });
 
-// The same race on a request stream. node v26.3.0 closes the session here too.
-test("a response that was in flight when the client cancelled the request opens no stream", async () => {
-  const raw = await RawH2Server.listen();
-  const client = http2.connect(`http://127.0.0.1:${raw.port}`);
-  client.on("error", () => {});
-  try {
+// RFC 9113 §5.1: an endpoint ignores the frames that arrive on a stream it has closed. node v26.3.0
+// sends nothing for them, and a server counts every RST_STREAM against its reset limit.
+describe.concurrent("a late response on a request stream the client closed", () => {
+  // "x: y", a literal field that the decoder adds to its dynamic table (as index 62)
+  const TRAILERS = Buffer.concat([Buffer.from([0x40]), hpackLiteral("x"), hpackLiteral("y")]);
+  // ":status: 200" with "connection: close": a connection-specific field makes the block malformed.
+  const MALFORMED_RESPONSE = Buffer.concat([
+    RESPONSE_200,
+    Buffer.from([0x00]),
+    hpackLiteral("connection"),
+    hpackLiteral("close"),
+  ]);
+  const LATE_BODY_AND_TRAILERS = Buffer.concat([
+    encodeFrame(FrameType.DATA, 0, 1, Buffer.from("late ")),
+    encodeFrame(FrameType.DATA, 0, 1, Buffer.from("body")),
+    encodeFrame(FrameType.HEADERS, END_HEADERS | END_STREAM, 1, TRAILERS),
+  ]);
+
+  /** Connect and open request stream 1. Resolves once the client has the server's SETTINGS. */
+  async function connectAndRequest(raw: RawH2Server) {
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    const events: string[] = [];
     const req = client.request({ ":path": "/" });
-    req.on("error", () => {});
-    req.resume();
+    req.on("response", headers => events.push(`response ${headers[":status"]}`));
+    req.on("data", (chunk: Buffer) => events.push(`data ${chunk}`));
+    req.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}`));
+    req.on("close", () => events.push(`close rstCode=${req.rstCode}`));
     await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
     raw.sendFrame(FrameType.SETTINGS, 0, 0);
     raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
-    const reqClosed = once(req, "close");
-    req.close(http2.constants.NGHTTP2_CANCEL);
-    await raw.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
-    // The response that the server sent before the reset reached it.
-    raw.sendFrame(FrameType.HEADERS, END_HEADERS, 1, RESPONSE_200);
-    raw.sendFrame(FrameType.DATA, END_STREAM, 1, Buffer.from("late"));
     await twoRoundTrips(raw);
-    await reqClosed;
-    // The late frames must not count as an open stream, or close() waits forever.
+    return { client, req, events };
+  }
+
+  /** The codes of the RST_STREAM frames that the client sent on stream 1, a late one included. */
+  async function resetCodes(raw: RawH2Server) {
+    await twoRoundTrips(raw);
+    return raw.frames
+      .filter(f => f.type === FrameType.RST_STREAM && f.streamId === 1)
+      .map(f => f.payload.readUInt32BE(0));
+  }
+
+  async function closeSession(client: http2.ClientHttp2Session) {
     const sessionClosed = once(client, "close");
     client.close();
     await sessionClosed;
     expect(client.destroyed).toBe(true);
-  } finally {
-    client.destroy();
-    raw.close();
   }
+
+  test("after req.close(NGHTTP2_CANCEL), the response gets no reply and the session closes", async () => {
+    const raw = await RawH2Server.listen();
+    const { client, req, events } = await connectAndRequest(raw);
+    try {
+      req.close(http2.constants.NGHTTP2_CANCEL);
+      // The server sends nothing until it has the reset: see the pushed stream tests above.
+      await raw.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+      // The response that the server sent before the reset reached it. Its 49,152 bytes of DATA
+      // are past the half of the connection window at which the client sends a WINDOW_UPDATE.
+      const large = encodeFrame(FrameType.DATA, 0, 1, Buffer.alloc(16_384));
+      raw.socket!.write(
+        Buffer.concat([
+          encodeFrame(FrameType.HEADERS, END_HEADERS, 1, RESPONSE_200),
+          large,
+          large,
+          large,
+          encodeFrame(FrameType.HEADERS, END_HEADERS | END_STREAM, 1, TRAILERS),
+        ]),
+      );
+      const codes = await resetCodes(raw);
+      const credit = (id: number) =>
+        raw.frames
+          .filter(f => f.type === FrameType.WINDOW_UPDATE && f.streamId === id)
+          .reduce((sum, f) => sum + f.payload.readUInt32BE(0), 0);
+      expect({ codes, events, streamCredit: credit(1) }).toEqual({
+        codes: [ErrorCode.CANCEL],
+        events: ["close rstCode=8"],
+        streamCredit: 0,
+      });
+      expect(credit(0)).toBeGreaterThanOrEqual(32_767);
+
+      // The client decoded the blocks it dropped: this response names "x: y" by its table index.
+      const next = client.request({ ":path": "/" });
+      next.on("error", () => {});
+      next.resume();
+      const response = once(next, "response");
+      const nextClosed = once(next, "close");
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 3);
+      raw.sendFrame(FrameType.HEADERS, END_HEADERS | END_STREAM, 3, Buffer.from([0x88, 0xbe]));
+      const [headers] = await response;
+      expect(headers).toMatchObject({ ":status": 200, x: "y" });
+      await nextClosed;
+      // The late frames must not count as an open stream, or close() waits forever.
+      await closeSession(client);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  // The client resets the stream itself here. node v26.3.0 has no such case: it ends the session.
+  test.each([
+    { when: "a later read", sameRead: false },
+    { when: "the same read", sameRead: true },
+  ])("after a malformed response, the rest of the response in $when gets no reply", async ({ sameRead }) => {
+    const raw = await RawH2Server.listen();
+    const { client, events } = await connectAndRequest(raw);
+    try {
+      const malformed = encodeFrame(FrameType.HEADERS, END_HEADERS, 1, MALFORMED_RESPONSE);
+      if (sameRead) {
+        raw.socket!.write(Buffer.concat([malformed, LATE_BODY_AND_TRAILERS]));
+        await raw.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+      } else {
+        raw.socket!.write(malformed);
+        await raw.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+        raw.socket!.write(LATE_BODY_AND_TRAILERS);
+      }
+      expect({ codes: await resetCodes(raw), events }).toEqual({
+        codes: [ErrorCode.PROTOCOL_ERROR],
+        events: ["error ERR_HTTP2_STREAM_ERROR", "close rstCode=1"],
+      });
+      await closeSession(client);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
 });

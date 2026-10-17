@@ -122,7 +122,9 @@ struct HeaderBlockMeta {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum BlockDisposition {
     Deliver,
-    /// HEADERS arrived on a closed stream: answered with RST_STREAM(STREAM_CLOSED).
+    /// HEADERS on a closed stream: dropped without a reply (nghttp2's NGHTTP2_ERR_IGN_HEADER_BLOCK).
+    Ignored,
+    /// HEADERS on a client for a stream that never existed: answered with RST_STREAM(STREAM_CLOSED).
     StreamClosed,
     /// The embedder refused the stream (can_open_stream = false, node's maxSessionMemory):
     /// answered with RST_STREAM(ENHANCE_YOUR_CALM).
@@ -1055,6 +1057,8 @@ impl Connection {
         let unknown_on_client = is_new && !self.is_server && !sink.is_local_stream(hdr.stream_id);
         let mut disposition = if refused {
             BlockDisposition::Refused
+        } else if unknown_on_client && self.has_existed(sink, hdr.stream_id) {
+            BlockDisposition::Ignored
         } else if unknown_on_client {
             BlockDisposition::StreamClosed
         } else {
@@ -1093,10 +1097,7 @@ impl Connection {
                     // half already ended (half-closed (remote)) is escalated to a CONNECTION error
                     // of type STREAM_CLOSED — node surfaces it as NghttpError "Stream was already
                     // closed or invalid" and tears the session down. A stream that closed for any
-                    // other reason (e.g. we reset it and the peer's trailers were already in
-                    // flight) keeps the conservative stream-level handling: the block is still
-                    // decoded for HPACK sync (§4.3), then refused with RST_STREAM(STREAM_CLOSED)
-                    // by finish_header_block.
+                    // other reason (we reset it and the peer's trailers were in flight) is ignored.
                     if cur_state == State::HalfClosedRemote {
                         self.local_connection_error(
                             sink,
@@ -1106,7 +1107,7 @@ impl Connection {
                         );
                         return true;
                     }
-                    disposition = BlockDisposition::StreamClosed;
+                    disposition = BlockDisposition::Ignored;
                 }
             }
         }
@@ -1361,14 +1362,9 @@ impl Connection {
                 sink.on_stream_rejected(target);
                 return false;
             }
+            BlockDisposition::Ignored => return false,
             BlockDisposition::StreamClosed => {
-                // §5.1: HEADERS on a closed/half-closed-remote stream is a stream error of type
-                // STREAM_CLOSED. The block was decoded above purely for HPACK-table sync.
                 self.send_rst_stream(sink, target, ErrorCode::StreamClosed);
-                if let Some(s) = self.streams.get_mut(&target) {
-                    s.state = State::Closed;
-                }
-                sink.on_stream_reset(target, ErrorCode::StreamClosed.as_u32());
                 return false;
             }
             BlockDisposition::Deliver => {}

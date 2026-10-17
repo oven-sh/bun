@@ -27,7 +27,6 @@ import {
   UnionType,
   UnitType,
   type ValueKind,
-  WithValueType,
 } from "./bindgen-lib-internal.ts";
 import { cap, low } from "./helpers.ts";
 
@@ -136,8 +135,8 @@ export function analyze(files: readonly SchemaFile[]): Tables {
 
 const implementationType = (type: Type) => `${type.idlType}::ImplementationType`;
 const externType = (type: Type): string =>
-  type instanceof WithValueType
-    ? `Bun::Bindgen::ExternWithValue<${externType(type.inner)}>`
+  type.passesValue
+    ? `Bun::Bindgen::ExternWithValue<Bun::Bindgen::ExternOf<${type.idlType}>>`
     : `Bun::Bindgen::ExternOf<${type.idlType}>`;
 const toExtern = (variable: string) => `Bun::Bindgen::toExtern(${variable})`;
 
@@ -408,7 +407,11 @@ namespace Bun::Bindgen::Generated::${origin.namespace} {
 ${cppNamespaceSignature(namespace)}
 {
     JSC::JSGlobalObject* globalObject = owner->globalObject();
-    JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min<unsigned>(${namespace.functions.length}, JSC::JSFinalObject::maxInlineCapacity));
+    JSC::JSObject* object = ${
+      namespace.call
+        ? `JSC::JSFunction::create(vm, globalObject, ${namespace.call.length}, ${asciiLiteral(namespace.name)}, ${hostFunctionName(namespace.call)}, JSC::ImplementationVisibility::Public)`
+        : `JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min<unsigned>(${namespace.functions.length}, JSC::JSFinalObject::maxInlineCapacity))`
+    };
 ${namespace.functions
   .map(
     fn =>
@@ -543,22 +546,18 @@ function cppDeclareConverted(type: Type, variable: string, value: string, ctx: s
 /** Converts the arguments, then returns what `symbol(globalObject, ...leading, ...converted)` returns. */
 function cppCallBody(signature: Signature, symbol: string, leading: readonly string[] = []): string {
   const lines: string[] = [];
-  const rereads: string[] = [];
+  // Converting a later argument can run JavaScript that detaches or resizes a buffer.
+  const readLast: string[] = [];
   signature.args.forEach(({ name, type }, i) => {
     lines.push(`JSC::EnsureStillAliveScope argument${i} = callFrame->argument(${i});`);
     lines.push(`[[maybe_unused]] auto ctx${i} = Bun::Bindgen::LiteralConversionContext { ${asciiLiteral(name)} };`);
-    // Converting a later argument can run JavaScript that detaches or resizes the buffer.
-    if (type.borrowsHeap && i < signature.args.length - 1)
-      rereads.push(
-        `converted${i} = ${type.cppConvert(`argument${i}.value()`, `ctx${i}`, name)};`,
-        `scope.assertNoException();`,
-      );
+    readLast.push(...type.cppReadLast(`converted${i}`, `argument${i}.value()`));
     lines.push(...cppDeclareConverted(type, `converted${i}`, `argument${i}.value()`, `ctx${i}`, name));
     if (type.conversionThrows) lines.push(`RETURN_IF_EXCEPTION(scope, {});`);
   });
-  lines.push(...rereads);
+  lines.push(...readLast);
   const args = signature.args.map(({ type }, i) => {
-    return type instanceof WithValueType
+    return type.passesValue
       ? `${externType(type)} { ${toExtern(`converted${i}`)}, JSC::JSValue::encode(argument${i}.value()) }`
       : toExtern(`converted${i}`);
   });
@@ -952,11 +951,18 @@ const rustExternParameters = (signature: Signature, scope: RustScope) =>
 const rustArguments = (signature: Signature) => signature.args.map(rustArgumentName);
 /** Each argument gets the call's lifetime here: left to inference in the call, a body could ask for `'static`. */
 function rustTakeArguments(args: readonly { name: string; type: Type }[], scope: RustScope): string {
-  const taken = args.flatMap(arg => {
-    const name = rustArgumentName(arg);
-    const converted = arg.type.rustFromExtern(name, scope);
-    return converted === name ? [] : [`let ${name} = ${converted};\n`];
-  });
+  // What can return early comes last: by then Rust owns whatever the other arguments hand over.
+  const taken = args
+    .toSorted((a, b) => +a.type.rustFromExternThrows - +b.type.rustFromExternThrows)
+    .flatMap(arg => {
+      const name = rustArgumentName(arg);
+      const converted = arg.type.rustFromExtern(name, scope);
+      if (arg.type.rustFromExternThrows)
+        return [
+          `let ${name} = match ${converted} {\n    Ok(value) => value,\n    Err(error) => return error.into_host_fn_return(cx),\n};\n`,
+        ];
+      return converted === name ? [] : [`let ${name} = ${converted};\n`];
+    });
   if (taken.some(line => /\bheap\b/.test(line))) taken.unshift("let heap = &cx.heap;\n");
   return taken.join("");
 }

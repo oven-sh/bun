@@ -5797,6 +5797,41 @@ maybe(() => { return f; });
         });
       });
 
+      // The projects of a run are loaded and checked at the same time.
+      test("with many projects, every thread count reports the same, and each file is checked in its own project", async () => {
+        const compilerOptions = { strict: true, lib: ["es2022"], types: [] };
+        const project = JSON.stringify({ compilerOptions, include: ["src"] });
+        const files: Record<string, string> = {
+          ".oxlintrc.json": rc({ rules: { "typescript/no-floating-promises": "error" } }),
+          "broken/tsconfig.json": JSON.stringify({ compilerOptions: { ...compilerOptions, lib: ["es1"] } }),
+          "broken/a.ts": "Promise.resolve();\n",
+          // In no project. The two are one program.
+          "outside/global.ts": "const ofNoProject = Promise.resolve();\n",
+          "outside/a.ts": "ofNoProject;\nof0;\n",
+          // It has most of the files, so it gets several threads.
+          "large/tsconfig.json": project,
+          "large/src/own.d.ts": "declare const ofLarge: Promise<void>;\n",
+        };
+        const expected = ["broken/tsconfig.json:1:42 tsconfig-error", "outside/a.ts:1:1 no-floating-promises"];
+        for (let i = 0; i < 40; i++) {
+          files[`large/src/${i}.ts`] = "ofLarge;\nof0;\nexport {};\n";
+          expected.push(`large/src/${i}.ts:1:1 no-floating-promises`);
+        }
+        // A promise that a project declares is only a promise in the program of that project.
+        for (let i = 0; i < 12; i++) {
+          files[`small/${i}/tsconfig.json`] = project;
+          files[`small/${i}/src/own.d.ts`] = `declare const of${i}: Promise<void>;\n`;
+          files[`small/${i}/src/a.ts`] = `of${i};\nof${(i + 1) % 12};\nofLarge;\nofNoProject;\nexport {};\n`;
+          expected.push(`small/${i}/src/a.ts:1:1 no-floating-promises`);
+        }
+        const runs = await Promise.all(
+          [1, 2, 3, 8, 32].map(threads => lint(files, ["-f", "unix", "--type-aware", "--threads", `${threads}`])),
+        );
+        const places = [...runs[0].stdout.matchAll(/^(\S+:\d+:\d+): .*\((.*)\)\]$/gm)].map(it => `${it[1]} ${it[2]}`);
+        expect(places.sort()).toEqual(expected.sort());
+        expect(runs.map(it => [it.stdout, it.stderr, it.exitCode])).toEqual(runs.map(() => [runs[0].stdout, "", 1]));
+      });
+
       const kindsOfFixes = (Object.keys(flagSets) as (keyof typeof flagSets)[]).flatMap(flags =>
         [false, true].map((typed): [keyof typeof flagSets, boolean] => [flags, typed]),
       );
@@ -12538,7 +12573,7 @@ describe.concurrent("nativePluginRules", () => {
   test.each([
     [
       `["imprt"]`,
-      'Unknown plugin "imprt" in --native-plugin-rules\n  Available plugins: @typescript-eslint, react-hooks, import, n, react, prettier\n',
+      'Unknown plugin "imprt" in --native-plugin-rules\n  Available plugins: @typescript-eslint, react-hooks, import, n, react, prettier, json, markdown\n',
     ],
     [`["unicorn"]`, 'Unknown plugin "unicorn" in --native-plugin-rules'],
     [`["true"]`, 'Unknown plugin "true" in --native-plugin-rules'],

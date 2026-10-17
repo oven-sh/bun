@@ -224,6 +224,8 @@ pub struct File<'a> {
     pub(crate) inferred_from: Cell<Option<&'a dyn crate::linter::globals::InferredGlobals>>,
     pub(crate) inferred_globals: OnceCell<Option<crate::linter::globals::ProgramGlobals<'a>>>,
     is_later_script: Cell<bool>,
+    /// [`File::in_language`]
+    parsed: Option<(&'a crate::languages::Parsed, crate::source::LineBreaks)>,
     language: &'a LanguageOptions,
     body: hir::IdList<hir::StmtId>,
     path: &'a [u8],
@@ -283,8 +285,31 @@ impl<'a> File<'a> {
             inferred_from: Cell::new(None),
             inferred_globals: OnceCell::new(),
             is_later_script: Cell::new(false),
+            parsed: None,
             path,
         }
+    }
+
+    /// Turns a `File` that was built from an empty `hir` into a file in another [language](crate::languages). `text` is
+    /// the file's text, which isn't JavaScript, and `parsed` is what the language parsed it into.
+    pub fn in_language(
+        mut self,
+        text: &'a [u8],
+        parsed: &'a crate::languages::Parsed,
+        line_breaks: crate::source::LineBreaks,
+    ) -> File<'a> {
+        self.parsed = Some((parsed, line_breaks));
+        self.with_text(text)
+    }
+
+    #[inline]
+    pub(crate) fn parsed(&self) -> Option<&'a crate::languages::Parsed> {
+        Some(self.parsed?.0)
+    }
+
+    #[inline]
+    pub(crate) fn line_breaks(&self) -> crate::source::LineBreaks {
+        self.parsed.map_or_else(Default::default, |it| it.1)
     }
 
     /// It is a script in a `.vue`, `.svelte` or `.astro` file, and there is a script before it. oxlint lints each as a program of

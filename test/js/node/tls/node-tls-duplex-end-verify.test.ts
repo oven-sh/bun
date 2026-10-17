@@ -1871,6 +1871,136 @@ test("over a Duplex: destroy() after end() releases a Duplex that never complete
   }
 });
 
+// Two Duplexes that pass 64 KiB on in each turn of the event loop, so what one of them took waits in it.
+function slowPair(): [Duplex, Duplex] {
+  const makeSide = (peer: () => Duplex) => {
+    let ended = false;
+    const eof = () => {
+      if (ended) return;
+      ended = true;
+      peer().push(null);
+    };
+    const side = new Duplex({
+      read() {},
+      write(chunk, encoding, callback) {
+        let passed = 0;
+        const pass = () => {
+          if (side.destroyed) return;
+          peer().push(chunk.subarray(passed, (passed += 65536)));
+          if (passed < chunk.length) setImmediate(pass);
+          else callback();
+        };
+        pass();
+      },
+      final(callback) {
+        eof();
+        callback();
+      },
+      destroy(err, callback) {
+        eof();
+        callback(err);
+      },
+    });
+    return side;
+  };
+  const transport: Duplex = makeSide(() => otherEnd);
+  const otherEnd: Duplex = makeSide(() => transport);
+  return [transport, otherEnd];
+}
+
+// end() is complete when the Duplex has passed on what it took, so 'finish' and destroySoon() wait for that:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L155-L160
+for (const door of [
+  "tls.connect({ socket })",
+  "new TLSSocket(stream, { isServer: true })",
+  "server.emit('connection', stream)",
+]) {
+  test(`over a Duplex: ${door} delivers 2 MiB that it wrote before destroySoon()`, async () => {
+    const size = 2 * 1024 * 1024;
+    const [transport, otherEnd] = slowPair();
+    const sockets: (tls.TLSSocket | Duplex)[] = [transport, otherEnd];
+    try {
+      for (const stream of sockets) stream.on("error", () => {});
+      const accepted = Promise.withResolvers<tls.TLSSocket>();
+      if (door.startsWith("server.emit")) {
+        tls.createServer({ key, cert }, accepted.resolve).emit("connection", otherEnd);
+      } else {
+        const server = new tls.TLSSocket(otherEnd, { isServer: true, key, cert });
+        server.once("secure", () => accepted.resolve(server));
+      }
+      const client = tls.connect({ socket: transport, rejectUnauthorized: false });
+      sockets.push(client);
+      client.on("error", () => {});
+      const [server] = await Promise.all([
+        accepted.promise,
+        new Promise(secured => client.once("secureConnect", secured)),
+      ]);
+      sockets.push(server);
+      server.on("error", () => {});
+      const [writer, reader] = door.startsWith("tls.connect") ? [client, server] : [server, client];
+      let received = 0;
+      reader.on("data", chunk => (received += chunk.length));
+      const ended = new Promise(resolve => reader.once("end", resolve));
+      writer.write(Buffer.alloc(size, 1));
+      writer.destroySoon();
+      await ended;
+      assert.strictEqual(received, size);
+    } finally {
+      for (const socket of sockets) socket.destroy();
+    }
+  });
+}
+
+test("over a Duplex: destroySoon() toward a peer that stopped reading leaves the TLS socket open for its timeout", async () => {
+  let stalled = false;
+  const makeSide = peer =>
+    new Duplex({
+      read() {},
+      write(chunk, encoding, callback) {
+        if (stalled) return;
+        peer().push(chunk);
+        callback();
+      },
+    });
+  const transport = makeSide(() => otherEnd);
+  const otherEnd = makeSide(() => transport);
+  const server = new tls.TLSSocket(otherEnd, { isServer: true, key, cert });
+  const client = tls.connect({ socket: transport, rejectUnauthorized: false });
+  try {
+    for (const socket of [server, transport, otherEnd]) socket.on("error", () => {});
+    const events: string[] = [];
+    client.on("error", error => events.push(`error ${(error as NodeJS.ErrnoException).code}`));
+    for (const event of ["finish", "timeout", "close"]) client.on(event, () => events.push(event));
+    await Promise.all([
+      new Promise(secured => client.once("secureConnect", secured)),
+      new Promise(secured => server.once("secure", secured)),
+    ]);
+    await turn();
+    stalled = true;
+    const idleOrClosed = new Promise(resolve => client.once("timeout", resolve).once("close", resolve));
+    client.setTimeout(50);
+    client.write("last words");
+    client.destroySoon();
+    await idleOrClosed;
+    assert.deepStrictEqual(
+      { events, client: client.destroyed, transport: transport.destroyed },
+      { events: ["timeout"], client: false, transport: false },
+    );
+    // The socket is still the owner of its Duplex: a destroy() takes both, and the end() that waited reports nothing.
+    const closed = new Promise(resolve => client.once("close", resolve));
+    client.destroy();
+    assert.strictEqual(transport.destroyed, true);
+    await closed;
+    await turn();
+    assert.deepStrictEqual(events, ["timeout", "close"]);
+  } finally {
+    client.destroy();
+    server.destroy();
+    transport.destroy();
+    otherEnd.destroy();
+  }
+});
+
 test("over a Duplex: a TLS socket whose peer was destroyed takes its Duplex with it", async () => {
   const [transport, otherEnd] = duplexPair({ allowHalfOpen: false });
   const server = new tls.TLSSocket(otherEnd, { isServer: true, key, cert });

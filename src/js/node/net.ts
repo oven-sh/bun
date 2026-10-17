@@ -436,7 +436,11 @@ function endNT(self, socket, callback) {
   // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/net.js#L500
   // A TLS wrap made since _final attached this socket's handle, or left the fd to the raw half of `socket`.
   const current = self._handle;
+  const transport = unadoptedTransport(self);
+  const wasOpen = transport !== undefined && !(transport instanceof Socket) && !transport.writableEnded;
   (!socket || current?.[kAdoptedTLSRaw] ? current : socket)?.shutdown();
+  // A stream that this shutdown ended completes it from its end(): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L155-L160
+  if (wasOpen && transport.writableEnded && !transport.writableFinished) return void transport.end(() => callback());
   callback();
 }
 function emitCloseNT(self, hasError) {

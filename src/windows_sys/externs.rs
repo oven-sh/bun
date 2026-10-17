@@ -560,7 +560,8 @@ pub struct M128A {
 }
 
 /// `_CONTEXT` for AMD64 (winnt.h). Full layout so `RtlVirtualUnwind` can
-/// mutate it in place during a stack walk. Only `Rip`/`Rsp` are read by bun.
+/// mutate it in place during a stack walk. Only `Rip`/`Rsp`/`Rbp` are read by
+/// bun.
 #[cfg(all(windows, target_arch = "x86_64"))]
 #[repr(C, align(16))]
 #[derive(Clone, Copy)]
@@ -617,10 +618,11 @@ pub struct CONTEXT {
 const _: () = {
     assert!(core::mem::size_of::<CONTEXT>() == 1232);
     assert!(core::mem::offset_of!(CONTEXT, Rsp) == 0x98);
+    assert!(core::mem::offset_of!(CONTEXT, Rbp) == 0xa0);
     assert!(core::mem::offset_of!(CONTEXT, Rip) == 0xf8);
 };
 
-/// `_ARM64_NT_CONTEXT` (winnt.h). Only `Pc`/`Sp`/`Lr` are read by bun.
+/// `_ARM64_NT_CONTEXT` (winnt.h). Only `Fp`/`Lr`/`Sp`/`Pc` are read by bun.
 #[cfg(all(windows, target_arch = "aarch64"))]
 #[repr(C, align(16))]
 #[derive(Clone, Copy)]
@@ -644,6 +646,7 @@ pub struct CONTEXT {
 #[cfg(all(windows, target_arch = "aarch64"))]
 const _: () = {
     assert!(core::mem::size_of::<CONTEXT>() == 912);
+    assert!(core::mem::offset_of!(CONTEXT, Fp) == 0xf0);
     assert!(core::mem::offset_of!(CONTEXT, Lr) == 0xf8);
     assert!(core::mem::offset_of!(CONTEXT, Sp) == 0x100);
     assert!(core::mem::offset_of!(CONTEXT, Pc) == 0x108);
@@ -673,6 +676,10 @@ pub mod ntdll {
             EstablisherFrame: *mut u64,
             ContextPointers: *mut c_void,
         ) -> *mut c_void;
+        /// Fills `ContextRecord` with the caller's register state, as a seed
+        /// for `RtlVirtualUnwind`. `CONTEXT` carries the 16-byte alignment it
+        /// requires.
+        pub fn RtlCaptureContext(ContextRecord: *mut CONTEXT);
     }
 
     #[cfg_attr(windows, link(name = "ntdll"))]
@@ -827,6 +834,7 @@ pub mod kernel32 {
     pub const PAGE_READONLY: u32 = 0x02;
     pub const PAGE_READWRITE: u32 = 0x04;
     pub const PAGE_WRITECOPY: u32 = 0x08;
+    pub const PAGE_EXECUTE: u32 = 0x10;
     pub const PAGE_EXECUTE_READ: u32 = 0x20;
     pub const PAGE_EXECUTE_READWRITE: u32 = 0x40;
     pub const PAGE_EXECUTE_WRITECOPY: u32 = 0x80;

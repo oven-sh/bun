@@ -929,6 +929,153 @@ describe("SETTINGS ack ordering (RFC 9113 §6.5.3)", () => {
   });
 });
 
+describe("customSettings ids", () => {
+  const isSettings = (f: Frame) => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0;
+  function settingsEntries(payload: Buffer): number[][] {
+    const entries: number[][] = [];
+    for (let i = 0; i < payload.length; i += 6) {
+      entries.push([payload.readUInt16BE(i), payload.readUInt32BE(i + 2)]);
+    }
+    return entries;
+  }
+
+  /** A server with these options, and a raw client that has sent its preface and SETTINGS. */
+  async function connectRaw(options?: http2.ServerOptions) {
+    const server = http2.createServer(options);
+    const session = Promise.withResolvers<http2.ServerHttp2Session>();
+    server.on("session", session.resolve);
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    c.sendPreface();
+    c.sendEmptySettings();
+    return { server, c, session: session.promise };
+  }
+
+  // Recorded from node v26.3.0. node reads a key as Number(key), and only when its value is a number:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/util.js#L402-L478
+  // A row has the customSettings, the entries that getPackedSettings() returns and that the first
+  // SETTINGS frame carries, and localSettings.customSettings.
+  const rows: [string, any, number[][], Record<string, number>][] = [
+    ["a decimal key", { "16": 5 }, [[16, 5]], { "16": 5 }],
+    ["a hex key", { "0x10": 5 }, [[16, 5]], { "16": 5 }],
+    [
+      "an exponent and whitespace",
+      { "1e3": 6, " 12": 7, "\n13\t": 8 },
+      [
+        [1000, 6],
+        [12, 7],
+        [13, 8],
+      ],
+      { "12": 7, "13": 8, "1000": 6 },
+    ],
+    ["a fractional id", { "10.5": 8 }, [[10, 8]], { "10": 8 }],
+    ["two keys for one id", { "16": 7, "0x10": 5 }, [[16, 5]], { "16": 5 }],
+    [
+      "an id and its fraction",
+      { "10": 1, "10.5": 2 },
+      [
+        [10, 1],
+        [10, 2],
+      ],
+      { "10": 2 },
+    ],
+    ["values that are not numbers", { "16": "5", "17": undefined, abc: null, "18": 9 }, [[18, 9]], { "18": 9 }],
+    ["a symbol key", { [Symbol("x")]: 5, "20": 9 }, [[20, 9]], { "20": 9 }],
+    ["the top of the range", { "65535": 1, "0xffff": 2 }, [[65535, 2]], { "65535": 2 }],
+    ["a fractional value", { "16": 1.5 }, [[16, 1]], { "16": 1 }],
+  ];
+
+  test.each(rows)("%s: getPackedSettings() and a server agree with node", async (_, customSettings, entries, byId) => {
+    expect(settingsEntries(http2.getPackedSettings({ customSettings }))).toEqual(entries);
+
+    const { server, c, session } = await connectRaw({ settings: { customSettings } });
+    try {
+      const settings = await c.waitFor(isSettings);
+      expect(settingsEntries(settings.payload)).toEqual(entries);
+
+      const s = await session;
+      expect(s.localSettings.customSettings).toEqual(byId);
+      const acked = once(s, "localSettings");
+      c.sendSettingsAck();
+      const [local] = await acked;
+      expect(local.customSettings).toEqual(byId);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  // "0x11" and "1.7e1" both name id 17. node sends one entry, with the last value.
+  const update = { "0x11": 9, "1.7e1": 10, "10.5": 8 };
+  const updateEntries = [
+    [17, 10],
+    [10, 8],
+  ];
+
+  test("a server sends the ids from settings()", async () => {
+    const { server, c, session } = await connectRaw();
+    try {
+      const first = await c.waitFor(isSettings);
+      const s = await session;
+      s.settings({ customSettings: update });
+      const second = await c.waitFor(f => isSettings(f) && f !== first);
+      // A server's settings() also sends ENABLE_PUSH (id 2) with the value 0.
+      expect(settingsEntries(second.payload).filter(([id]) => id !== 2)).toEqual(updateEntries);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  test("a client sends the ids from connect() and settings()", async () => {
+    const raw = await RawH2Server.listen();
+    const customSettings = { "0x10": 5, "1e3": 6 };
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`, { settings: { customSettings } });
+    client.on("error", () => {});
+    const connected = once(client, "connect");
+    try {
+      const first = await raw.waitFor(isSettings);
+      expect(settingsEntries(first.payload)).toEqual([
+        [16, 5],
+        [1000, 6],
+      ]);
+      await connected;
+      expect(client.localSettings.customSettings).toEqual({ "16": 5, "1000": 6 });
+
+      client.settings({ customSettings: update });
+      const second = await raw.waitFor(f => isSettings(f) && f !== first);
+      expect(settingsEntries(second.payload)).toEqual(updateEntries);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  // Recorded from node v26.3.0. The "customSettings:id" and "customSettings:value" errors come from
+  // node's first pass. The "Range Error" errors come from its second pass.
+  test.each([
+    ["an id that is not a number", { abc: 5 }, 'Invalid value for setting "Range Error": NaN'],
+    ["an id above 0xffff", { "65536": 5 }, 'Invalid value for setting "customSettings:id": 65536'],
+    ["a negative id", { "-1": 5 }, 'Invalid value for setting "customSettings:id": -1'],
+    ["a negative value", { "16": -1 }, 'Invalid value for setting "customSettings:value": -1'],
+    ["a string value below 0", { "16": "-1" }, 'Invalid value for setting "customSettings:value": -1'],
+    ["a NaN value", { "16": NaN }, 'Invalid value for setting "Range Error": NaN'],
+  ])("getPackedSettings() throws the error node throws for %s", (_, customSettings: any, message) => {
+    let error: any;
+    try {
+      http2.getPackedSettings({ customSettings });
+    } catch (e) {
+      error = e;
+    }
+    expect({ name: error?.name, code: error?.code, message: error?.message }).toEqual({
+      name: "RangeError",
+      code: "ERR_HTTP2_INVALID_SETTING_VALUE",
+      message,
+    });
+  });
+});
+
 function requestHeaderBlock(method: "GET" | "POST", extra: Buffer = Buffer.alloc(0)): Buffer {
   return Buffer.concat([
     Buffer.from([method === "POST" ? 0x83 : 0x82, 0x86, 0x84, 0x01]),

@@ -156,14 +156,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     fn e_identifier(p: &mut Self, e: &mut Expr, in_: ExprIn) {
-        // The substitution revisit re-enters with an already-resolved `Ref`.
-        // `find_symbol` below only looks in `scope.members`, so a symbol that
-        // lives only in `scope.generated` (e.g. a React Compiler outlined
-        // function) would be re-bound to a fresh `Unbound` and the renamer
-        // would lose the link to its declaration.
-        if p.is_revisit_for_substitution {
-            return;
-        }
         let expr = *e;
         let mut e_ = expr
             .data
@@ -1829,16 +1821,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.visit_expr(&mut e_.expr);
         p.visit_expr(&mut e_.options);
 
-        // Already transposed (this is a re-visit, e.g. after the minifier
-        // substituted the expression into a later use): the import record and
-        // its namespace tracking stand; transposing again would mint a second
-        // record for the same call.
-        if e_.import_record_index != u32::MAX {
-            p.should_fold_typescript_constant_expressions =
-                prev_should_fold_typescript_constant_expressions;
-            return;
-        }
-
         // Import transposition is able to duplicate the options structure, so
         // only perform it if the expression is side effect free.
         //
@@ -2569,9 +2551,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let expr = *e;
         let _ = in_;
         let mut e_ = expr.data.e_arrow().expect("infallible: variant checked");
-        if p.is_revisit_for_substitution {
-            return;
-        }
 
         // The struct is `Copy`, so save/restore is a plain copy.
         let old_fn_or_arrow_data = p.fn_or_arrow_data_visit;
@@ -2698,9 +2677,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let expr = *e;
         let _ = in_;
         let mut e_ = expr.data.e_function().expect("infallible: variant checked");
-        if p.is_revisit_for_substitution {
-            return;
-        }
 
         let mut react_hook_data: Option<crate::parser::HookContext> = None;
         let prev_hook_ctx = p.react_refresh.hook_ctx_storage;
@@ -2776,9 +2752,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let expr = *e;
         let _ = in_;
         let mut e_ = expr.data.e_class().expect("infallible: variant checked");
-        if p.is_revisit_for_substitution {
-            return;
-        }
 
         // Save name from assignment context before visiting (nested visits may overwrite it)
         let decorator_name_from_context = p.decorator_class_name;

@@ -74,6 +74,39 @@ describe("assigning to an imported binding", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The minifier moves the single-use `v` into the statement that writes.
+  test.concurrent("a write that a single-use value moves into is still a run-time TypeError", async () => {
+    using dir = tempDir("assign-to-import-inlined", {
+      "m.mjs": mod,
+      "entry.mjs": `
+        import d, { x } from "./m.mjs";
+        import * as ns from "./m.mjs";
+        function write(g) { const v = g(); x = v; }
+        function writeDefault(g) { const v = g(); d = v; }
+        function writeNamespace(g) { const v = g(); ns = v; }
+        function update(g) { const v = g(); x += v; }
+        for (const f of [write, writeDefault, writeNamespace, update]) {
+          try { f(() => 5); console.log(f.name + ":no throw"); } catch (e) { console.log(f.name + ":" + e.constructor.name); }
+        }
+        console.log("ran:" + x);
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("write:TypeError\nwriteDefault:TypeError\nwriteNamespace:TypeError\nupdate:TypeError\nran:1\n");
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent.each([
     ["direct binding", `import { x } from "./m.mjs"; x = 5;\n`, 'Cannot assign to import "x"'],
     [

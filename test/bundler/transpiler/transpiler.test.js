@@ -4173,7 +4173,7 @@ console.log(foo, array);
       `);
     });
 
-    it.todo("substitution", () => {
+    it("substitution", () => {
       var transpiler = new Bun.Transpiler({
         inline: true,
         platform: "bun",
@@ -4198,24 +4198,18 @@ console.log(foo, array);
       check("let x = 1; return x + x", "let x = 1;\nreturn x + x;");
 
       // Can substitute into normal unary operators
-      check("let x = 1; return +x", "return 1;");
+      check("let x = 1; return +x", "return +1;");
       check("let x = 1; return -x", "return -1;");
       check("let x = 1; return !x", "return !1;");
       check("let x = 1; return ~x", "return ~1;");
       // TODO: remove needless return undefined;
       // check("let x = 1; return void x", "let x = 1;");
 
-      // esbuild does this:
-      // check("let x = 1; return typeof x", "return typeof 1;");
-      // we do:
-      check("let x = 1; return typeof x", 'return "number";');
+      check("let x = 1; return typeof x", "return typeof 1;");
 
       // Check substituting a side-effect free value into normal binary operators
-      // esbuild does this:
-      // check("let x = 1; return x + 2", "return 1 + 2;");
-      // we do:
-      check("let x = 1; return x + 2", "return 3;");
-      check("let x = 1; return 2 + x", "return 3;");
+      check("let x = 1; return x + 2", "return 1 + 2;");
+      check("let x = 1; return 2 + x", "return 2 + 1;");
       check("let x = 1; return x + arg0", "return 1 + arg0;");
       // check("let x = 1; return arg0 + x", "return arg0 + 1;");
       check("let x = 1; return x + fn()", "return 1 + fn();");
@@ -4318,6 +4312,15 @@ console.log(foo, array);
       check("let x = fn(); return arg0 && x;", "let x = fn();\nreturn arg0 && x;");
       check("let x = fn(); return arg0 ?? x;", "let x = fn();\nreturn arg0 ?? x;");
 
+      // A literal that an earlier substitution put on the left of "&&", "||" or
+      // "??" does not let code with side effects into the right side
+      check("let x = fn(); let k = 0; return [k && x];", "let x = fn();\nreturn [0 && x];");
+      check("let x = fn(); let k = 1; return [k || x];", "let x = fn();\nreturn [1 || x];");
+      check("let x = fn(); let k = 1; return [k ?? x];", "let x = fn();\nreturn [1 ?? x];");
+      check("let x = fn(); let k = 0; return k && x;", "let x = fn();\nreturn 0 && x;");
+      check("let x = [y]; let k = 0; return [k && x];", "let x = [y];\nreturn [0 && x];");
+      check("let x = []; let k = 0; return [k && x];", "return [0 && []];");
+
       // Test chaining
       check("let x = fn(); let y = x[prop]; let z = y.val; throw z", "throw fn()[prop].val;");
       check("let x = fn(), y = x[prop], z = y.val; throw z", "throw fn()[prop].val;");
@@ -4397,9 +4400,9 @@ console.log(foo, array);
       //   "let x = arg0; return arg1?.[a][x];",
       //   "let x = arg0;\nreturn arg1?.[a][x];",
       // );
-      check("let x = arg0; return arg1?.[a](x);", "let x = arg0;\nreturn (arg1?.[a])(x);");
-      check("let x = arg0; return arg1?.(a)[x];", "let x = arg0;\nreturn (arg1?.(a))[x];");
-      check("let x = arg0; return arg1?.(a)(x);", "let x = arg0;\nreturn (arg1?.(a))(x);");
+      check("let x = arg0; return arg1?.[a](x);", "let x = arg0;\nreturn arg1?.[a](x);");
+      check("let x = arg0; return arg1?.(a)[x];", "let x = arg0;\nreturn arg1?.(a)[x];");
+      check("let x = arg0; return arg1?.(a)(x);", "let x = arg0;\nreturn arg1?.(a)(x);");
 
       // Can substitute into an object as long as there are no side effects
       // beforehand. Note that computed properties must call "toString()" which
@@ -4419,7 +4422,7 @@ console.log(foo, array);
       //   "let x = arg0; return {y() {}, x};",
       //   "return { y() {\n}, x: arg0 };",
       // );
-      check("let x = arg0; return {[y]() {}, x};", "let x = arg0;\nreturn { [y]() {\n}, x };");
+      check("let x = arg0; return {[y]() {}, x};", "let x = arg0;\nreturn { [y]() {}, x };");
       check("let x = arg0; return {...x};", "return { ...arg0 };");
       check("let x = arg0; return {...x, y};", "return { ...arg0, y };");
       check("let x = arg0; return {x, ...y};", "return { x: arg0, ...y };");
@@ -6384,5 +6387,226 @@ describe("same-target destructuring with an unstable target", () => {
       stable: "a1b1",
     });
     expect(exitCode).toBe(0);
+  });
+});
+
+// The minifier moves a single-use `let`/`const` into the statement after it.
+// A call that was not written as `eval(x)` is an indirect eval, and the
+// statement it is in must still print it as one after the move: a direct
+// `eval(x)` in its place runs `x` with the caller's local variables in reach.
+describe("indirect eval in a statement that a single-use declaration moves into", () => {
+  const transpilers = {
+    "target bun": new Bun.Transpiler({ loader: "js", target: "bun" }),
+    "minify syntax": new Bun.Transpiler({ loader: "js", minify: { syntax: true } }),
+  };
+  const transformBody = (transpiler, source) =>
+    transpiler
+      .transformSync(`function f(code, o) {\n${source}\n}`)
+      .replace(/^function f\(code, o\) \{\n/, "")
+      .replace(/\n\}\n$/, "")
+      .replaceAll(/^  /gm, "");
+
+  describe.each(Object.keys(transpilers))("%s", name => {
+    const transpiler = transpilers[name];
+
+    it.each([
+      // The call is the value that moves.
+      [`const r = (0, eval)(code); return r + "!";`, `return (0, eval)(code) + "!";`],
+      [`const r = [(0, eval)(code)]; return r + "!";`, `return [(0, eval)(code)] + "!";`],
+      // The move puts `eval` itself into the callee.
+      [`const e = eval; return e(code) + "!";`, `return (0, eval)(code) + "!";`],
+      // The call is already in the statement, and another value moves in.
+      [`const s = [1]; return s + (0, eval)(code);`, `return [1] + (0, eval)(code);`],
+      [`const s = o.p; return s ? (0, eval)(code) : 0;`, `return o.p ? (0, eval)(code) : 0;`],
+      // Every callee that folds to the identifier `eval`.
+      [`const r = (1 ? eval : 0)(code); return r + "!";`, `return (0, eval)(code) + "!";`],
+      [`const r = (0 ? 0 : eval)(code); return r + "!";`, `return (0, eval)(code) + "!";`],
+      [`const r = (0 || eval)(code); return r + "!";`, `return (0, eval)(code) + "!";`],
+      [`const r = (1 && eval)(code); return r + "!";`, `return (0, eval)(code) + "!";`],
+      [`const r = (null ?? eval)(code); return r + "!";`, `return (0, eval)(code) + "!";`],
+      [`const r = [eval][0](code); return r + "!";`, `return (0, eval)(code) + "!";`],
+      // Every statement a declaration can move into.
+      [`const r = (0, eval)(code); return !r;`, `return !(0, eval)(code);`],
+      [`const r = (0, eval)(code); return r ? 1 : 2;`, `return (0, eval)(code) ? 1 : 2;`],
+      [`const r = (0, eval)(code); if (r + "!") return 1;`, `if ((0, eval)(code) + "!")\n  return 1;`],
+      [`const r = (0, eval)(code); r + "!";`, `(0, eval)(code) + "!";`],
+      [`const r = (0, eval)(code); throw r + "!";`, `throw (0, eval)(code) + "!";`],
+      [`const r = (0, eval)(code); switch (r + "!") {}`, `switch ((0, eval)(code) + "!") {\n}`],
+      [
+        `const r = (0, eval)(code); const q = r + "!"; return [q, q];`,
+        `const q = (0, eval)(code) + "!";\nreturn [q, q];`,
+      ],
+      // One move after another.
+      [`const e = eval; const r = e(code); const s = r + "!"; return s + "?";`, `return (0, eval)(code) + "!" + "?";`],
+      // No operator above the value that moves.
+      [`const r = (0, eval)(code); return r;`, `return (0, eval)(code);`],
+      [`const r = eval?.(code); return r + "!";`, `return eval?.(code) + "!";`],
+    ])("prints an indirect eval: %s", (source, expected) => {
+      expect(transformBody(transpiler, source)).toBe(expected);
+    });
+
+    // A scope with a direct eval is left as written: the code can name `r`.
+    it.each([
+      [`const r = eval(code); return r + "!";`, `const r = eval(code);\nreturn r + "!";`],
+      [`const r = (eval)(code); return r + "!";`, `const r = eval(code);\nreturn r + "!";`],
+    ])("keeps a direct eval: %s", (source, expected) => {
+      expect(transformBody(transpiler, source)).toBe(expected);
+    });
+  });
+});
+
+// The syntax minifier must not change what a function returns or throws, which
+// calls it makes, or the order of those calls. Each body runs as it is written
+// (the string goes to `new Function`, which no transpiler sees) and as the
+// transpiler prints it.
+describe("a function does the same thing after the syntax minifier", () => {
+  const transpilers = {
+    "minify syntax": new Bun.Transpiler({ loader: "js", minify: { syntax: true } }),
+    "target bun": new Bun.Transpiler({ loader: "js", target: "bun", inline: true }),
+  };
+
+  const show = value =>
+    Array.isArray(value)
+      ? `[${value.map(show)}]`
+      : value instanceof Error
+        ? value.constructor.name + (/initiali[sz]/.test(value.message) ? " (TDZ)" : "")
+        : `${typeof value}:${String(value)}`;
+
+  // A direct eval sees `fn` and calls it. An indirect eval does not.
+  const code = `typeof fn === "function" ? (fn(), "local") : "global"`;
+
+  function observe(source) {
+    const log = [];
+    const fn = () => log.push("fn");
+    const id = x => (log.push("id"), x);
+    const o = {
+      get p() {
+        return log.push("get p");
+      },
+      m() {
+        return log.push(this === o ? "m on o" : "m");
+      },
+    };
+    const f = new Function("fn", "id", "o", `${source}\nreturn f;`)(fn, id, o);
+    let outcome;
+    try {
+      outcome = "returned " + show(f(2, null, code));
+    } catch (thrown) {
+      outcome = "threw " + show(thrown);
+    }
+    return { outcome, log };
+  }
+
+  // Every statement that a single-use declaration can move into.
+  const statements = {
+    return: e => `return ${e};`,
+    expression: e => `${e}; return "stmt";`,
+    throw: e => `throw ${e};`,
+    if: e => `if (${e}) return "yes"; return "no";`,
+    switch: e => `switch (${e}) { case 1: return "one"; default: return "other"; }`,
+    declaration: e => `const out = ${e}; return [out, out];`,
+  };
+  const all = Object.keys(statements);
+
+  const rows = [];
+  const add = (declarations, expression, kinds = ["return"]) => {
+    for (const kind of kinds) rows.push(`${declarations} ${statements[kind](expression)}`);
+  };
+
+  // An indirect eval stays indirect: the call is the value that moves, the move
+  // makes the call, or the call is already in the statement.
+  for (const use of ['x + "!"', "!x", "x ? 1 : 2"]) add("const x = (0, eval)(code);", use, all);
+  for (const use of ["x", "[x]", "id(x)"]) add("const x = (0, eval)(code);", use);
+  for (const use of ['e(code) + "!"', "!e(code)", "e(code) ? 1 : 2"]) add("const e = eval;", use, all);
+  for (const use of ["e(code)", "[e(code)]"]) add("const e = eval;", use);
+  for (const use of ["s + (0, eval)(code)", "!s + (0, eval)(code)", "s ? (0, eval)(code) : 0"])
+    add("const s = [1];", use, all);
+  add("const s = [1];", "[s, (0, eval)(code)]");
+  for (const callee of [
+    "(1 ? eval : 0)",
+    "(0 ? 0 : eval)",
+    "(0 || eval)",
+    "(1 && eval)",
+    "(null ?? eval)",
+    "[eval][0]",
+    "eval?.",
+  ])
+    add(`const x = ${callee}(code);`, 'x + "!"');
+  add("const e = eval; const r = e(code); const s = r + '!';", 's + "?"');
+  // A direct eval stays direct.
+  add("const x = eval(code);", 'x + "!"', ["return", "if"]);
+
+  // A value with side effects still runs when an earlier move puts a literal on
+  // the left of "&&", "||" or "??".
+  for (const declaration of ["let x = fn();", "let x = [fn()];", "let x = a;"])
+    for (const literal of ["0", "1", "null"])
+      for (const use of [
+        "k && x",
+        "k || x",
+        "k ?? x",
+        "[k && x]",
+        "[k || x]",
+        "[k ?? x]",
+        "id(k && x)",
+        "!(k || x)",
+        '(k ?? x) + "!"',
+        "k ? x : 5",
+        "[(k && x) || 7]",
+      ])
+        add(`${declaration} let k = ${literal};`, use);
+  add("let x = fn(); let k = 0;", "k && x", all);
+  add("let x = fn(); let k = 0;", "[k && x]", all);
+
+  // A value does not move past something that it can change or that can change it.
+  for (const declaration of ["let x = fn();", "let x = o.p;", "let x = a;", "let x = 1;"])
+    for (const use of [
+      "x",
+      "typeof x",
+      'x + "!"',
+      "fn() + x",
+      "[fn(), x]",
+      "[o.p, x]",
+      "a + x",
+      "id(fn(), x)",
+      "b?.[x]",
+      "b?.m(x)",
+      "b ? x : 5",
+      "b && x",
+      "b ?? x",
+      "x()",
+      "o.m(x)",
+    ])
+      add(declaration, use);
+  // A method that moves into a call keeps its `this`.
+  for (const use of ["x()", "x?.()", "(0, x)()", "x.call(o)"]) add("let x = o.m;", use);
+
+  // Every case of a switch is in one scope: a later case can use the declaration.
+  // `a` is 2, so `a` starts in the case that declares and `a - 1` in the case after it.
+  for (const first of ["let k = 0; k && use(v);", "let k = 5; (k > 3) && use(v);", "use(v);", "if (v) break;"])
+    for (const later of ["return v;", "return () => v;", "return eval('v');", "return typeof v;"])
+      for (const selector of ["a", "a - 1"])
+        rows.push(
+          `function use(x) { return x; } const r = (() => { switch (${selector}) { case 2: let v = [1]; ${first} case 1: ${later} } })(); return typeof r === "function" ? r() : r;`,
+        );
+  rows.push(`switch (a + 1) { case 3: let acc = []; acc.push(3); case 2: acc.push(2); return acc; }`);
+  rows.push(`switch (a) { case 2: let v = fn(); return v + 1; default: return null; }`);
+  // The later use is in a block of the default clause, is a write, or reads a `const`.
+  for (const body of [
+    `switch (a) { case 2: let s = "s1"; use(s.length); default: { return s + "!"; } }`,
+    `let n = "outer"; switch (a) { case 2: let n = a; use(n); case 1: n = 5; } return n;`,
+    `switch (a) { case 2: const tag = { id: 1 }; use(tag); case 1: return typeof tag; }`,
+  ])
+    rows.push(`function use(x) { return x; } ${body}`);
+
+  it.each(Object.keys(transpilers))("%s", name => {
+    const transpiler = transpilers[name];
+    const differences = [];
+    for (const body of rows) {
+      const source = `function f(a, b, code) { ${body} }`;
+      const written = observe(source);
+      const transpiled = observe(transpiler.transformSync(source));
+      if (!Bun.deepEquals(written, transpiled)) differences.push({ body, written, transpiled });
+    }
+    expect(differences).toEqual([]);
   });
 });

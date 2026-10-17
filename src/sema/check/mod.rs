@@ -201,6 +201,7 @@ pub struct Program<'s> {
     /// `Checker::referenced_properties` of all tasks. The task that checks the file of a
     /// declaration does not see what another one has marked, so `finish_file` takes back what it
     /// has reported. A union: it does not depend on which task comes first.
+    /// Tasks write to this set and the next one directly. Add any other such field to `has_notes_outside_finished`.
     properties_referenced_before: Guarded<crate::util::FxHashSet<Sym>>,
     /// What `check_external_emit_helpers_of_later_files` has reported, of all tasks. `finish_file`
     /// keeps the first of each. It does not depend on which task comes first.

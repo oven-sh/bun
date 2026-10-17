@@ -16,7 +16,8 @@ use bun_core::strings;
 use bun_paths::path_buffer_pool;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
-use bun_sema::atom::RecentAtoms;
+use bun_sema::atom::{Atom, RecentAtoms};
+use bun_sema::bind::{SymFlags, SymbolId};
 use bun_sema::check::errors::Checked;
 use bun_sema::check::explain::Explained;
 use bun_sema::check::task::{Finished, Published};
@@ -26,7 +27,7 @@ use bun_sema::hir::{ExprTag, FileKind};
 use bun_sema::json::Json;
 use bun_sema::messages;
 use bun_sema::program::{
-    COMPARE_PATHS_CASE_SENSITIVE, FileId, Files, GlobalName, Run,
+    COMPARE_PATHS_CASE_SENSITIVE, Claim, FileId, Files, GlobalName, Run, SharedVerdict, Sym,
     declaration_emit_output_file_path, has_libraries, own_emit_output_file_path,
 };
 pub use bun_sema::resolve::ScriptKind;
@@ -421,6 +422,10 @@ struct Plan {
     steps: Vec<Vec<Task>>,
     /// By task of the step before the last. Empty: no file is split.
     ahead: Vec<Ahead>,
+    /// The number of its first step. Not 0 if another plan runs before this one.
+    first_step: usize,
+    /// Its tasks come from `of_one_thread`.
+    is_of_one_thread: bool,
 }
 
 impl Plan {
@@ -442,6 +447,8 @@ impl Plan {
         Plan {
             steps: vec![tasks],
             ahead: Vec::new(),
+            first_step: 0,
+            is_of_one_thread: false,
         }
     }
 
@@ -465,12 +472,12 @@ impl Plan {
         Plan::cut(files, size_of, &options)
     }
 
-    /// `count`: the number of files to check. `size_of(i)`: the source size of file `i` in bytes.
+    /// `files`: the files to check. `size_of(i)`: the source size of file `i` in bytes.
     ///
     /// No order among the tasks is needed: what they observe of each other is published, or each
     /// computes its own copy.
     fn new(
-        count: usize,
+        files: std::ops::Range<usize>,
         bytes_of: &dyn Fn(usize) -> usize,
         size_of: &dyn Fn(usize) -> usize,
         ranges_of: &dyn Fn(usize, usize) -> Vec<(u32, u32)>,
@@ -483,7 +490,7 @@ impl Plan {
         // light files. The files are a sample of the whole program, because its first files are not
         // representative of the rest.
         let is_heavy = |file: usize| bytes_of(file) > options.warm_up_max_bytes;
-        let light: Vec<usize> = (0..count).filter(|&file| !is_heavy(file)).collect();
+        let light: Vec<usize> = files.clone().filter(|&file| !is_heavy(file)).collect();
         let expected = options.warm_up_files.min(light.len());
         let warm_up = (0..expected).map(|i| light[i * light.len() / expected]);
         let warm_up: Vec<usize> = warm_up.collect();
@@ -495,7 +502,7 @@ impl Plan {
         // One step with all other files. The heaviest file of a program takes about as long as a
         // thread's share of the whole check, so there is one step in which heavy files run, and
         // they are started first.
-        let rest = (0..count).filter(|file| warm_up.binary_search(file).is_err());
+        let rest = files.filter(|file| warm_up.binary_search(file).is_err());
         let chunks = Plan::cut(rest.collect(), size_of, options);
         // `split_files`. `ranges_of(file, parts)`: see there.
         let cost: usize = chunks.iter().flatten().map(|&file| size_of(file)).sum();
@@ -525,7 +532,12 @@ impl Plan {
         } else {
             steps.push(split);
         }
-        Plan { steps, ahead }
+        Plan {
+            steps,
+            ahead,
+            first_step: 0,
+            is_of_one_thread: false,
+        }
     }
 
     /// `ahead`, if `number` is the step whose tasks it describes.
@@ -2863,6 +2875,21 @@ impl Host for WithOutputs<'_> {
     fn with_helpers(&self, helpers: usize, count: usize, work: &(dyn Fn(usize) + Sync)) {
         self.disk.with_helpers(helpers, count, work);
     }
+    fn parallel_while_others_wait(
+        &self,
+        blocked: usize,
+        count: usize,
+        work: &(dyn Fn(usize) + Sync),
+    ) {
+        match self.built_now {
+            // Each project has a thread of its own and as many helpers as this one.
+            Some(built_now) => {
+                let helpers = (self.helpers(built_now) + 1) * (blocked + 1) - 1;
+                self.disk.with_helpers(helpers, count, work);
+            }
+            None => self.disk.parallel(count, work),
+        }
+    }
     fn loaded(&self) {
         // The threads go on to parse the files of the next project.
         if (self.built_now).is_none_or(|it| it.load(Ordering::Relaxed) < 2) {
@@ -3917,10 +3944,82 @@ fn check_named_files(
         (to_check.into_iter()).partition(|&file| checker.reports_semantic_errors(file));
     drop(checker);
     let is_any_type_checked = !type_checked.is_empty();
-    let (to_check, only_emitted) = match is_any_type_checked {
+    let (mut to_check, only_emitted) = match is_any_type_checked {
         true => (type_checked, only_emitted),
         false => (only_emitted, type_checked),
     };
+    // The libraries are checked once for all the programs of a request that agree on them. "The libraries" are the files of
+    // `Files::global_part` that come before every other file of the program.
+    //
+    // A file outside the global part cannot change a symbol or a type that these files see. It could still decide whether an
+    // error in one of them gets reported, because TypeScript collects the diagnostics of a file right after it has checked
+    // that file, but only a file that comes earlier in program order can do that. So what is reported in them depends on:
+    // - the global part,
+    // - which of them are checked,
+    // - the options (`Options::write_check_key`).
+    // Those three are the key. The rest of a `Request` is the same for all of its programs.
+    //
+    // Most keys belong to one program, so the first program with a key only registers it and goes on as usual. The second one
+    // checks these files for all: before it runs any other task, so that whatever the check leaves behind comes from them.
+    // If it reports nothing, the programs after it skip these files and start from what it left behind. If it reports
+    // anything, every program checks them for itself.
+    let wants_only_errors = request.after_file.is_none()
+        && request.checked.is_none()
+        && !request.retains_everything
+        && !request.plan_options.reports_nothing_about_files
+        && request.plan_options.checkers == 0;
+    let global_part = run
+        .filter(|run| run.is_of_declaration_files() && wants_only_errors && is_any_type_checked)
+        .filter(|_| (to_check.first()).is_some_and(|it| program.files.module(*it).shared_id != 0))
+        .and_then(|run| Some((run, program.files.global_part(run)?)));
+    // Not 0 if this program checks files for all: how many, from the start of `to_check`.
+    let mut shared_count = 0;
+    let mut claim: Option<Claim<'_>> = None;
+    if let Some((run, (files, mut description))) = global_part {
+        let mut is_first = vec![false; program.files.modules.len()];
+        let first = program.files.order.iter().zip(&files);
+        for (file, _) in first.take_while(|(file, of_part)| file == of_part) {
+            is_first[file.idx()] = true;
+        }
+        let count = to_check.iter().take_while(|it| is_first[it.idx()]).count();
+        let number_of = |file: &FileId| program.files.module(*file).shared_id;
+        let checked = to_check[..count].iter().map(number_of);
+        description.extend(
+            [count as u32]
+                .into_iter()
+                .chain(checked)
+                .flat_map(u32::to_le_bytes),
+        );
+        let mut options = Vec::new();
+        program.files.options.write_check_key(&mut options);
+        description.extend(run.number_of(&options).to_le_bytes());
+        // The reverse of `portable` below.
+        let here = |file: u32, id: SymbolId, name: Atom| {
+            let file = *files.iter().find(|it| number_of(it) == file)?;
+            let symbols = &program.files.module(file).bound.symbols;
+            let is_it = symbols.get(id.idx()).is_some_and(|it| it.name == name);
+            is_it.then(|| program.files.canonical(Sym { file, id }))
+        };
+        let carried: Option<Vec<_>> = match (count != 0).then(|| run.claim_or_wait(description)) {
+            Some(SharedVerdict::Unknown(it)) => {
+                (claim, shared_count) = (Some(it), count);
+                None
+            }
+            Some(SharedVerdict::Clean(carried)) => (carried.iter())
+                .map(|it| Some((here(it.0, it.1, it.2)?, &it.3[..])))
+                .collect(),
+            Some(SharedVerdict::Unshared) | None => None,
+        };
+        if let Some(carried) = carried {
+            for (sym, variances) in carried {
+                program.assume_variances(sym, variances);
+            }
+            to_check.drain(..count);
+        }
+    }
+    let (to_check, claim) = (to_check, Guarded::new(claim));
+    // `Finished::only_variances` of the tasks that check those files. `None`: there is more than that.
+    let carried: Guarded<Option<Vec<(Sym, Box<[u8]>)>>> = Guarded::new(Some(Vec::new()));
     if let Some(progress) = request.progress {
         let bytes = to_check
             .iter()
@@ -4219,31 +4318,47 @@ fn check_named_files(
     let cost =
         costs.iter().sum::<usize>() + only_emitted.iter().map(|&it| cost_of(it)).sum::<usize>();
     // The thread that builds a project of a build checks it alone if the others have projects of their own.
-    let is_one_thread = (threads == 1 || host.is_of_one_thread())
-        && !request.plan_options.tasks_on_one_thread
+    let may_be_one_thread = !request.plan_options.tasks_on_one_thread
         && cost <= request.plan_options.one_thread_max_cost;
-    let all: Vec<usize> = (0..to_check.len()).collect();
-    let plan = match request.plan_options.checkers {
-        0 if is_one_thread => Plan {
-            steps: match Plan::of_one_thread(all, &size_of, &request.plan_options) {
-                tasks if tasks.is_empty() => Vec::new(),
-                tasks => vec![tasks],
+    let is_one_thread = (threads == 1 || host.is_of_one_thread()) && may_be_one_thread;
+    let plan_of =
+        |files: std::ops::Range<usize>, is_one_thread: bool| match request.plan_options.checkers {
+            0 if is_one_thread => Plan {
+                steps: match Plan::of_one_thread(files.collect(), &size_of, &request.plan_options) {
+                    tasks if tasks.is_empty() => Vec::new(),
+                    tasks => vec![tasks],
+                },
+                ahead: Vec::new(),
+                first_step: 0,
+                is_of_one_thread: true,
             },
+            0 => Plan::new(
+                files,
+                &bytes_of,
+                &size_of,
+                &ranges_of,
+                &request.plan_options,
+            ),
+            checkers => Plan::of_checkers(
+                files.len(),
+                &|index| place(to_check[index]) as usize,
+                program.files.order.len(),
+                checkers,
+            ),
+        };
+    // Other programs wait for the files that are checked for all, and this one may use their threads meanwhile.
+    let shared_plan = match shared_count {
+        0 => Plan {
+            steps: Vec::new(),
             ahead: Vec::new(),
+            first_step: 0,
+            is_of_one_thread: false,
         },
-        0 => Plan::new(
-            to_check.len(),
-            &bytes_of,
-            &size_of,
-            &ranges_of,
-            &request.plan_options,
-        ),
-        checkers => Plan::of_checkers(
-            to_check.len(),
-            &|index| place(to_check[index]) as usize,
-            program.files.order.len(),
-            checkers,
-        ),
+        count => plan_of(0..count, threads == 1 && may_be_one_thread),
+    };
+    let plan = Plan {
+        first_step: shared_plan.steps.len(),
+        ..plan_of(shared_count..to_check.len(), is_one_thread)
     };
     let in_parallel = |count: usize, work: &(dyn Fn(usize) + Sync)| {
         host.parallel(count, work);
@@ -4252,10 +4367,13 @@ fn check_named_files(
     // For every task since the last barrier: wall time, the number of files, the index of the first file.
     let task_times: Guarded<Vec<(Duration, usize, usize)>> = Guarded::new(Vec::new());
     // Returns the invalid tasks.
-    // `ahead`: by task. Empty: every task checks whole files.
     // `is_retry`: the valid tasks publish, so that the tasks retried after them find what they stored.
     let run_round =
-        |number: usize, step: &[Task], ahead: &[Ahead], expected: Requested, is_retry: bool| {
+        |plan: &Plan, number: usize, step: &[Task], expected: Requested, is_retry: bool| {
+            let ahead = match is_retry {
+                true => &[][..],
+                false => plan.ahead_of(number),
+            };
             // After the last step the published state is read by the loop over the files that are not
             // checked, which runs with `after_file`, and by a caller that goes on to query the program.
             // The tasks of split files read the ranges, and nothing else of the step before theirs.
@@ -4264,25 +4382,26 @@ fn check_named_files(
                 || request.retains_everything
                 || request.after_file.is_some()
                     && !request.plan_options.after_file_is_for_checked_files;
-            let tasks = step.len();
+            let (tasks, at) = (step.len(), plan.first_step + number);
             let weight_of = |i: usize| step[i].iter().map(|&it| size_of(it)).sum::<usize>();
             // The largest first, so that no thread begins it when the others are nearly done.
             let mut start_order: Vec<usize> = (0..tasks).collect();
             match request.order {
-                1 if is_one_thread => {}
+                1 if plan.is_of_one_thread => {}
                 1 => start_order.shared_sort_by_key(|&i| Reverse(weight_of(i))),
                 order => start_order.shared_sort_by_key(|&i| (i as u32 + 1).wrapping_mul(order)),
             }
             let outcomes: Vec<Guarded<Option<Outcome>>> =
                 (0..tasks).map(|_| Guarded::new(None)).collect();
             let (started, busy) = (Instant::now(), AtomicU64::new(0));
-            host.parallel(tasks, &|i| {
+            let blocked = claim.lock().as_ref().map_or(0, Claim::blocked);
+            host.parallel_while_others_wait(blocked, tasks, &|i| {
                 let (index, began) = (start_order[i], Instant::now());
                 let cost_before = request.task_clock.map(|clock| clock());
                 let files: Vec<FileId> = step[index].iter().map(|&file| to_check[file]).collect();
                 let outcome = match ahead.get(index).copied().flatten() {
-                    Some(range) => check_ahead(files[0], range, expected, [number, index]),
-                    None => check_chunk(&files, expected, Some((number, index, is_read_later))),
+                    Some(range) => check_ahead(files[0], range, expected, [at, index]),
+                    None => check_chunk(&files, expected, Some((at, index, is_read_later))),
                 };
                 *outcomes[index].lock() = Some(outcome);
                 let elapsed = began.elapsed();
@@ -4307,6 +4426,22 @@ fn check_named_files(
             if checker_count == 0 {
                 // The ranges take part like any task, at the place of their file, so the serial order is what it is without them.
                 let mut is_invalid = program.validate(&finished, is_read_later);
+                if std::ptr::eq(plan, &shared_plan) {
+                    let reports_nothing = |it: &Outcome| {
+                        it.incomplete.is_empty() && it.checked.iter().all(|it| it.1.is_empty())
+                    };
+                    let mut carried = carried.lock();
+                    if is_invalid.contains(&true) || !outcomes.iter().all(reports_nothing) {
+                        *carried = None;
+                    }
+                    for finished in &finished {
+                        match (finished.only_variances(), &mut *carried) {
+                            (Some(variances), Some(all)) => all
+                                .extend(variances.map(|(sym, variances)| (sym, variances.into()))),
+                            _ => *carried = None,
+                        }
+                    }
+                }
                 // A range that met an obstacle is not published, like an invalid one. Neither is retried: the task of the file
                 // evaluates what is missing.
                 let tolerated = request.plan_options.split_tolerates & 7;
@@ -4389,9 +4524,9 @@ fn check_named_files(
         };
     // Retries the files of invalid tasks until every task is valid (`Program::validate`). They are partitioned again, because a few long
     // tasks would leave most threads idle. The first task of a round is always valid, so every round has fewer files.
-    let run_step = |number: usize, step: &[Task], expected: Requested| {
+    let run_step = |plan: &Plan, number: usize, step: &[Task], expected: Requested| {
         program.compare_listings();
-        let mut invalid = run_round(number, step, plan.ahead_of(number), expected, false);
+        let mut invalid = run_round(plan, number, step, expected, false);
         let mut retried = 0;
         while !invalid.is_empty() {
             let mut files = invalid.concat();
@@ -4401,11 +4536,35 @@ fn check_named_files(
                 program.stop_comparing_listings();
             }
             retried = files.len();
-            let again = match is_one_thread {
+            let again = match plan.is_of_one_thread {
                 true => Plan::of_one_thread(files, &size_of, &request.plan_options),
                 false => Plan::cut(files, &size_of, &request.plan_options),
             };
-            invalid = run_round(number, &again, &[], expected, true);
+            invalid = run_round(plan, number, &again, expected, true);
+        }
+    };
+    // After `shared_plan`, before any other task of the program.
+    let publish_verdict = || {
+        let Some(claim) = claim.lock().take() else {
+            return;
+        };
+        // A merged symbol is made for each program. The symbol that the binder made for its first declaration is part of the
+        // shared file, so it has the same id in every program, and leads back to the merged one.
+        let portable = |(sym, variances): (Sym, Box<[u8]>)| {
+            let part = *program.files.parts(sym).first()?;
+            let (shared_id, symbol) = (
+                program.files.module(part.file).shared_id,
+                program.files.symbol(part),
+            );
+            let is_of_the_binder = !symbol.flags.contains(SymFlags::TRANSIENT);
+            (shared_id != 0 && is_of_the_binder && program.files.canonical(part) == sym)
+                .then_some((shared_id, part.id, symbol.name, variances))
+        };
+        let carried = carried.lock().take();
+        let carried = carried.filter(|_| !program.has_notes_outside_finished());
+        match carried.and_then(|it| it.into_iter().map(portable).collect()) {
+            Some(carried) => claim.report_clean(carried),
+            None => claim.report_not_clean(),
         }
     };
     // `NewDiagnosticForNode` without a node: the range is empty, not undefined.
@@ -4426,8 +4585,12 @@ fn check_named_files(
     // `type_checked`: the files that are, or else the others.
     let check_files = |expected: Requested, type_checked: bool| {
         if type_checked == is_any_type_checked {
+            for (number, step) in shared_plan.steps.iter().enumerate() {
+                run_step(&shared_plan, number, step, expected);
+            }
+            publish_verdict();
             for (number, step) in plan.steps.iter().enumerate() {
-                run_step(number, step, expected);
+                run_step(&plan, number, step, expected);
             }
         }
         if !type_checked {
@@ -4464,6 +4627,8 @@ fn check_named_files(
             false => options.is_incremental,
         };
     let emit_on_early_exit = || -> Vec<Diagnostic> {
+        // This program will not check the shared files. Another one has to.
+        drop(claim.lock().take());
         if emits_despite_errors {
             check_files(Requested::Declaration, true);
             check_files(Requested::Declaration, false);

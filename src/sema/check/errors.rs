@@ -40,6 +40,28 @@ pub struct Checked {
 }
 
 impl Checked {
+    /// Whether `finish_file` has nothing to report for the file unless another task reports something in it.
+    pub fn is_empty(&self) -> bool {
+        let Checked {
+            syntactic,
+            semantic,
+            declaration,
+            include,
+            expected_errors,
+            // Only drops what other tasks report.
+            never_checked: _,
+            unused_private_members,
+            declaration_file,
+        } = self;
+        syntactic.is_empty()
+            && semantic.as_ref().is_none_or(Vec::is_empty)
+            && declaration.is_empty()
+            && include.is_empty()
+            && expected_errors.is_empty()
+            && unused_private_members.is_empty()
+            && declaration_file.is_none()
+    }
+
     /// Moves the declaration diagnostics (`GetDeclarationDiagnostics`) into a `Checked` of their own, so that `finish_file` converts them
     /// separately. `None` if there are none.
     pub fn take_declaration_diagnostics(&mut self) -> Option<Checked> {

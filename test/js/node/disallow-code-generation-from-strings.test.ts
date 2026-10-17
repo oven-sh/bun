@@ -664,8 +664,11 @@ describe.concurrent("=strict runs static code only", () => {
           worker.onerror = e => reject(new Error(e.message));
         }),
         hotLoop: async () => {
-          const { numberOfDFGCompiles } = await import("bun:jsc");
+          const { numberOfDFGCompiles, noInline } = await import("bun:jsc");
           function hot(a, b) { return a + b; }
+          // Once this loop is optimized with hot() inlined, hot() itself no longer runs, and a
+          // DFG compile of it that is not installed by then never is: the loop would not end.
+          noInline(hot);
           let sum = 0;
           while (!numberOfDFGCompiles(hot)) sum = hot(sum, 1) | 0;
           return numberOfDFGCompiles(hot) > 0;

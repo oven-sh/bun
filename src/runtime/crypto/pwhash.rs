@@ -397,7 +397,7 @@ pub(crate) mod bcrypt {
         let rest = encoded.as_bytes().strip_prefix(b"$").ok_or_else(invalid)?;
         let (alg_id, rest) = strings::split_once_char(rest, b'$').ok_or_else(invalid)?;
         if alg_id != b"bcrypt" {
-            return Err(crate::Error::PasswordVerificationFailed);
+            return Err(invalid());
         }
 
         // r=N (rounds must fit in 6 bits; checked below)

@@ -353,8 +353,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) commonjs_named_exports: bun_ast::ast_result::CommonJSNamedExports,
     pub(crate) commonjs_named_exports_deoptimized: bool,
     pub(crate) commonjs_module_exports_assigned_deoptimized: bool,
-    /// The statements are the ones inside the function wrapper of a `// @bun @bun-cjs` file
-    /// (`Parser::parse_bun_cjs_wrapper`).
+    /// Set by `Parser::parse_bun_cjs_wrapper`.
     pub(crate) is_bun_cjs_wrapper_body: bool,
     /// Uses of `module` that became `module.exports` and stay in its use count.
     pub(crate) module_exports_rewrite_count: u32,

@@ -221,10 +221,7 @@ pub mod Runtime {
         /// This comment must never be used manually.
         pub dont_bundle_twice: bool,
 
-        /// Read a `// @bun @bun-cjs` file as the CommonJS module inside its function
-        /// wrapper, and fail for any other text below that pragma
-        /// (`Parser::parse_bun_cjs_wrapper`). When this and `dont_bundle_twice` are
-        /// off, such a file is parsed as it is written: one unused function expression.
+        /// Parse a `// @bun @bun-cjs` file as the CommonJS module inside its wrapper, or fail.
         pub unwrap_bun_cjs: bool,
 
         /// This is a list of packages which even when require() is used, we will

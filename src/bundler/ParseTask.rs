@@ -2676,8 +2676,7 @@ pub mod parse_worker {
                 task.module_type = from_ext;
             }
         }
-        // A `// @bun @bun-cjs` file is CommonJS whatever its extension or its package.json says,
-        // as it is for the module loader.
+        // The pragma decides, not the extension or package.json, as in the module loader.
         if loader.is_javascript_like() && js_parser::Parser::has_bun_cjs_pragma(entry_contents) {
             task.module_type = options::ModuleType::Cjs;
         }

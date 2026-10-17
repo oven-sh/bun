@@ -2542,8 +2542,7 @@ impl<'a> Parser<'a> {
         Ok(crate::Result::Ast(ast))
     }
 
-    /// Whether the file starts with `// @bun @bun-cjs` or `// @bun @bytecode @bun-cjs`, below an
-    /// optional hashbang line: see `bun_cjs_wrapper`.
+    /// `// @bun @bun-cjs` or `// @bun @bytecode @bun-cjs`, below an optional hashbang line.
     #[inline]
     pub fn has_bun_cjs_pragma(contents: &[u8]) -> bool {
         let has_hashbang = contents.starts_with(b"#!");
@@ -2554,8 +2553,7 @@ impl<'a> Parser<'a> {
             )
     }
 
-    /// Reads the CommonJS module inside the function wrapper of a `// @bun @bun-cjs` file
-    /// (`bun_cjs_wrapper`). Any other text below the pragma is an error.
+    /// Reads the CommonJS module inside `bun_cjs_wrapper`. Any other text is an error.
     #[cold]
     #[inline(never)]
     fn parse_bun_cjs_wrapper<const TS: bool>(
@@ -2589,14 +2587,11 @@ impl<'a> Parser<'a> {
         expect!(p.lexer.token == T::TCloseParen, bun_cjs_wrapper::EXPECTED);
         expect!(p.lexer.token == T::TOpenBrace, bun_cjs_wrapper::EXPECTED);
 
-        // The statements are a function's (a top-level `return`, `arguments`), so they must stay
-        // in a function when the file is bundled: no `exports.name = value` is lifted into an ES
-        // module export.
+        // A function's statements (top-level `return`, `arguments`) stay in one: no export lifting.
         p.commonjs_named_exports_deoptimized = true;
         p.is_bun_cjs_wrapper_body = true;
 
-        // The scope is still the module's, so the wrapper's five parameters are the CommonJS
-        // names that `prepare_for_visit_pass` declares there.
+        // Still in the module scope: the five parameters are its CommonJS symbols.
         let mut stmts =
             p.parse_stmts_up_to(T::TCloseBrace, &mut ParseStatementOptions::default())?;
 
@@ -2718,14 +2713,7 @@ struct PragmaState {
     seen_bytecode: bool,
 }
 
-/// A `// @bun @bun-cjs` file is what `bun build --target=bun --format=cjs` writes: the pragma
-/// line (`// @bun @bytecode @bun-cjs` with a bytecode cache), then one function expression in
-/// parentheses around the chunk. A hashbang line can come first.
-///
-/// The module loader evaluates the file and calls the value of its last statement with the
-/// five parameters below. It accepts any text whose last value is callable.
-/// `Parser::parse_bun_cjs_wrapper` reads only the text that the bundler writes: the header,
-/// the module, `})`, an optional `;`, and comments.
+/// The wrapper of a `// @bun @bun-cjs` file: the bundler writes it, the parser reads only it.
 pub mod bun_cjs_wrapper {
     macro_rules! define {
         ($first:literal $(, $rest:literal)*) => {

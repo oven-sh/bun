@@ -3749,6 +3749,12 @@ function rejectNoPayloadContentLengthNT(req) {
   req.destroy(streamErrorFromCode(constants.NGHTTP2_PROTOCOL_ERROR));
 }
 
+// node's onStreamClose: the code that the native layer reports for a stream does not replace the
+// code of a stream that user code closed before that. _destroy builds the 'error' from the code.
+function streamErrorCode(stream: Http2Stream, error: number) {
+  return stream.closed ? (stream.rstCode ?? NGHTTP2_NO_ERROR) : error;
+}
+
 function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
   if (stream) {
     if (stream.destroyed && stream.listenerCount("error") === 0) {
@@ -4085,6 +4091,7 @@ class ServerHttp2Session extends Http2Session {
       if (!self || typeof stream !== "object") return;
       self.#connections--;
       if (stream.id % 2 === 1) self.#peerInitiatedStreams--;
+      error = streamErrorCode(stream, error);
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     },
     streamEnd(self: ServerHttp2Session, stream: ServerHttp2Stream, state: number) {
@@ -5090,6 +5097,7 @@ class ClientHttp2Session extends Http2Session {
       if (!self || typeof stream !== "object") return;
 
       self.#connections--;
+      error = streamErrorCode(stream, error);
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     }),
     streamEnd: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, state: number) => {

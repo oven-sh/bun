@@ -196,8 +196,6 @@ pub enum Error {
     NotSupported,
     #[error("Unexpected")]
     Unexpected,
-    #[error("NotSameFileSystem")]
-    NotSameFileSystem,
     #[error("FailedToCopyFile")]
     FailedToCopyFile,
     #[error("InvalidBinCount")]
@@ -359,7 +357,6 @@ impl Error {
             Self::InvalidNPMLockfile => "InvalidNPMLockfile",
             Self::NotSupported => "NotSupported",
             Self::Unexpected => "Unexpected",
-            Self::NotSameFileSystem => "NotSameFileSystem",
             Self::FailedToCopyFile => "FailedToCopyFile",
             Self::InvalidBinCount => "InvalidBinCount",
             Self::InvalidBinContent => "InvalidBinContent",

@@ -274,6 +274,15 @@ pub fn e_from_negated(errno: core::ffi::c_int) -> E {
     }
 }
 
+/// "The file system cannot do this." On Darwin `ENOTSUP` is 45 and
+/// `EOPNOTSUPP` is 102, and the kernel reports 45. On Linux, FreeBSD and
+/// Windows the two names are one value, so a pattern that names both is an
+/// unreachable pattern there. Compare by equality.
+#[inline]
+pub fn is_not_supported(errno: E) -> bool {
+    errno == E::ENOTSUP || errno == E::EOPNOTSUPP
+}
+
 impl SystemErrno {
     /// The kernel is not bound to this table (FUSE, `ENOTSUPP` 524): an undeclared code is `EUNKNOWN`.
     #[inline]

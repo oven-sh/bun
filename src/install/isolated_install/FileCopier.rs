@@ -11,12 +11,16 @@ use bun_sys::{self as sys, Dir, E, EntryKind, Fd, walker_skippable, walker_skipp
 // the platform-native width. The auto separator mode normalizes `/` → `\` on Windows
 // during `from`/`append`, which is load-bearing for the Win32 calls below.
 // Length-checked like the Hardlinker's paths: the walker entries appended on Windows are unbounded.
+#[cfg(windows)]
 type AbsPathAutoOs =
     bun_paths::AbsPath<OSPathChar, { PathSeparators::AUTO }, { CheckLength::CHECK }>;
 type PathAutoOs =
     bun_paths::Path<OSPathChar, { Kind::ANY }, { PathSeparators::AUTO }, { CheckLength::CHECK }>;
 
 pub(crate) struct FileCopier {
+    /// `CopyFileW` takes the source as a path. POSIX opens each file from
+    /// the walker's directory fd.
+    #[cfg(windows)]
     pub(crate) src_path: AbsPathAutoOs,
     pub(crate) dest_subpath: PathAutoOs,
     pub(crate) walker: Walker,
@@ -25,11 +29,12 @@ pub(crate) struct FileCopier {
 impl FileCopier {
     pub(crate) fn init(
         src_dir: Fd,
-        src_path: bun_paths::AbsPath<OSPathChar, { PathSeparators::AUTO }>,
+        #[cfg(windows)] src_path: bun_paths::AbsPath<OSPathChar, { PathSeparators::AUTO }>,
         dest_subpath: bun_paths::Path<OSPathChar, { Kind::ANY }, { PathSeparators::AUTO }>,
         skip_dirnames: &[&OSPathSlice],
     ) -> Result<FileCopier, AllocError> {
         Ok(FileCopier {
+            #[cfg(windows)]
             src_path: src_path.into_checked(),
             dest_subpath: dest_subpath.into_checked(),
             walker: {

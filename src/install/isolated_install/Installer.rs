@@ -1536,7 +1536,7 @@ impl<'a> Installer<'a> {
             crate::prune::remove_entries_missing_from(&src, &dest);
         }
 
-        let hardlinked = {
+        {
             let mut src = OsAutoAbsPath::init_top_level_dir_long_path();
             let _ = src.append_join(path);
             let mut dest = OsAutoPath::init();
@@ -1544,75 +1544,13 @@ impl<'a> Installer<'a> {
 
             let mut hardlinker =
                 bun_core::handle_oom(Hardlinker::init(folder_dir, src, dest, skip_dirnames));
-            match hardlinker.link() {
-                Ok(()) => true,
-                Err(err) if needs_copy(&err) => false,
-                Err(err) => {
-                    print_link_error(
-                        "hardlink package folder",
-                        &err,
-                        &os_path(hardlinker.src.slice()),
-                        hardlinker.dest.slice(),
-                    );
-                    return Err(err);
-                }
-            }
-        };
-
-        if !hardlinked {
-            // rewind the dir cursor the hardlink walk consumed (Windows restarts the scan itself)
-            #[cfg(not(windows))]
-            sys::set_file_offset(folder_dir, 0)?;
-
-            #[cfg(windows)]
-            let mut src_path = OsAutoAbsPath::init();
-            #[cfg(not(windows))]
-            let src_path = OsAutoAbsPath::init();
-
-            #[cfg(windows)]
-            {
-                // One borrow: a second `src_path.buf()` for the length would invalidate `ptr`.
-                let buf = src_path.buf();
-                let cap = buf.len();
-                let ptr = buf.as_mut_ptr();
-                // SAFETY: FFI — `folder_dir` is an open handle; `ptr`
-                // points into a writable WPathBuffer of `cap` elements.
-                let src_path_len = unsafe {
-                    bun_sys::windows::GetFinalPathNameByHandleW(
-                        folder_dir.native(),
-                        ptr,
-                        u32::try_from(cap).expect("int cast"),
-                        0,
-                    )
-                };
-
-                if src_path_len == 0 {
-                    return Err(sys::Error::from_win32(
-                        sys::windows::Win32Error::get(),
-                        sys::Tag::copyfile,
-                    ));
-                }
-                if src_path_len as usize >= cap {
-                    return Err(sys::Error::from_code(
-                        sys::E::ENAMETOOLONG,
-                        sys::Tag::copyfile,
-                    ));
-                }
-
-                src_path.set_length(src_path_len as usize);
-            }
-
-            let mut dest = OsAutoPath::init();
-            self.append_store_path(&mut dest, entry_id);
-
-            let mut file_copier =
-                bun_core::handle_oom(FileCopier::init(folder_dir, src_path, dest, skip_dirnames));
-            if let Err(err) = file_copier.copy() {
+            // Refused links are about this folder, not the cache: no backend is stored.
+            if let Err(err) = hardlinker.link() {
                 print_link_error(
-                    "copy package",
+                    "hardlink package folder",
                     &err,
-                    &os_path(file_copier.src_path.slice()),
-                    file_copier.dest_subpath.slice(),
+                    &os_path(hardlinker.src.slice()),
+                    hardlinker.dest.slice(),
                 );
                 return Err(err);
             }
@@ -1727,7 +1665,9 @@ impl<'a> Installer<'a> {
                             };
                             backend = self.set_backend(match err.get_errno() {
                                 sys::Errno::EXDEV => InstallMethod::Copyfile,
-                                sys::Errno::EOPNOTSUPP => InstallMethod::Hardlink,
+                                errno if bun_errno::is_not_supported(errno) => {
+                                    InstallMethod::Hardlink
+                                }
                                 _ => break 'backend Err(err),
                             });
                             continue 'backend;
@@ -1756,20 +1696,24 @@ impl<'a> Installer<'a> {
 
                         let mut hardlinker =
                             bun_core::handle_oom(Hardlinker::init(dir, src, dest_subpath, &[]));
-                        let Err(err) = hardlinker.link() else {
-                            break 'backend Ok(());
-                        };
-                        if needs_copy(&err) {
-                            backend = self.set_backend(InstallMethod::Copyfile);
-                            continue 'backend;
+                        match hardlinker.link() {
+                            Ok(links_refused) => {
+                                if links_refused {
+                                    // The next package starts with a copy.
+                                    self.set_backend(InstallMethod::Copyfile);
+                                }
+                                break 'backend Ok(());
+                            }
+                            Err(err) => {
+                                print_link_error(
+                                    "hardlink package",
+                                    &err,
+                                    &bstr::BStr::new(subpath.slice()),
+                                    hardlinker.dest.slice(),
+                                );
+                                break 'backend Err(err);
+                            }
                         }
-                        print_link_error(
-                            "hardlink package",
-                            &err,
-                            &bstr::BStr::new(subpath.slice()),
-                            hardlinker.dest.slice(),
-                        );
-                        break 'backend Err(err);
                     }
 
                     _ => {
@@ -1785,11 +1729,18 @@ impl<'a> Installer<'a> {
                             .map_err(TaskError::LinkPackage)?;
                         let _dir_guard = sys::CloseOnDrop::new(dir);
 
+                        #[cfg(windows)]
                         let mut src = OsAutoAbsPath::from(cache_dir_path.slice()).assume_ok();
+                        #[cfg(windows)]
                         let _ = src.append(subpath.slice()); // OOM/capacity: fire-and-forget
 
-                        let mut file_copier =
-                            bun_core::handle_oom(FileCopier::init(dir, src, dest_subpath, &[]));
+                        let mut file_copier = bun_core::handle_oom(FileCopier::init(
+                            dir,
+                            #[cfg(windows)]
+                            src,
+                            dest_subpath,
+                            &[],
+                        ));
                         let Err(err) = file_copier.copy() else {
                             break 'backend Ok(());
                         };
@@ -2875,14 +2826,6 @@ pub(crate) fn remove_link(path: &ZStr) -> sys::Result<()> {
         }
     }
     sys::unlink(path)
-}
-
-/// EACCES/EPERM: FUSE (e.g. Android SDCARD) does not support hardlinks
-fn needs_copy(hardlink_err: &sys::Error) -> bool {
-    matches!(
-        hardlink_err.get_errno(),
-        sys::Errno::EXDEV | sys::Errno::EACCES | sys::Errno::EPERM
-    )
 }
 
 fn os_path(path: &[paths::OSPathChar]) -> bun_core::fmt::FormatOSPath<'_> {

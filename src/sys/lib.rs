@@ -8945,7 +8945,12 @@ pub use win_symlink_impl::{mkdir_w, symlink_or_junction, symlink_w, unlink_w};
 #[cfg(windows)]
 pub fn link_w(src: &bun_core::WStr, dest: &bun_core::WStr) -> Maybe<()> {
     if windows::CreateHardLinkW(dest.as_ptr(), src.as_ptr(), None) == 0 {
-        return Err(Error::from_win32(windows::Win32Error::get(), Tag::link));
+        return Err(match windows::Win32Error::get() {
+            // NTFS has a limit of 1023 hard links per file. The shared Win32
+            // table follows libuv, which has no row for this code.
+            windows::Win32Error::TOO_MANY_LINKS => Error::from_code(E::EMLINK, Tag::link),
+            code => Error::from_win32(code, Tag::link),
+        });
     }
     Ok(())
 }

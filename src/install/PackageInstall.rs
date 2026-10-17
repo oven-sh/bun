@@ -309,6 +309,173 @@ impl PackageInstall<'_> {
     }
 }
 
+// ───────────────────────────── link or copy ─────────────────────────────
+
+/// What a refused hard link says about the files that follow it in the walk.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum LinkRefusal {
+    /// This file has as many links as the file system allows. The next file
+    /// can still be linked.
+    CopyThisFile,
+    /// The file system does not link from the source to the destination.
+    /// Copy this file and every file after it.
+    CopyTheRest,
+    /// A copy fails for the same reason.
+    Fail,
+}
+
+/// Classifies a link error that is left after the walk's own EEXIST and
+/// ENOENT retries. Every link walk asks through [`copy_refused_link`], so
+/// this is the only list. It reads the `sys::Error`: the conversion to
+/// `crate::Error` turns every code that the errno table does not declare
+/// into EIO.
+fn link_refusal(err: &sys::Error) -> LinkRefusal {
+    use sys::E;
+    match err.get_errno() {
+        E::EMLINK => LinkRefusal::CopyThisFile,
+        E::ENOSPC | E::EDQUOT | E::EIO | E::EROFS | E::ENOMEM => LinkRefusal::Fail,
+        E::EEXIST | E::ENOENT | E::ENAMETOOLONG => LinkRefusal::Fail,
+        #[cfg(windows)]
+        E::UV_EMLINK => LinkRefusal::CopyThisFile,
+        #[cfg(windows)]
+        E::UV_ENOSPC | E::UV_EIO | E::UV_EROFS | E::UV_ENOMEM => LinkRefusal::Fail,
+        #[cfg(windows)]
+        E::UV_EEXIST | E::UV_ENOENT | E::UV_ENAMETOOLONG => LinkRefusal::Fail,
+        _ => LinkRefusal::CopyTheRest,
+    }
+}
+
+/// A link that was refused after the walk's own retries. Runs `copy` when a
+/// copy can stand in for the link. `Ok(true)`: the file system refuses every
+/// later link too, so the caller copies the rest of the walk.
+#[cold]
+#[inline(never)]
+pub(crate) fn copy_refused_link<E: From<sys::Error>>(
+    err: sys::Error,
+    copy: impl FnOnce() -> Result<(), E>,
+) -> Result<bool, E> {
+    let refusal = link_refusal(&err);
+    if refusal == LinkRefusal::Fail {
+        return Err(err.into());
+    }
+    copy()?;
+    Ok(refusal == LinkRefusal::CopyTheRest)
+}
+
+/// Creates `dest_path` as a new file. An existing file is unlinked first,
+/// never opened: see [`copy_to_new_file`].
+#[cfg(not(windows))]
+fn create_new_file(dest_dir: Fd, dest_path: &ZStr) -> sys::Result<Fd> {
+    let open = || {
+        sys::openat(
+            dest_dir,
+            dest_path,
+            sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL,
+            0o666,
+        )
+    };
+    match open() {
+        Err(err) if err.get_errno() == sys::E::EEXIST => {
+            let _ = sys::unlinkat(dest_dir, dest_path);
+            open()
+        }
+        result => result,
+    }
+}
+
+/// Copies an open file to `dest_path`. The destination can already be a hard
+/// link of the source (a reinstalled `file:` folder, a nested workspace), so
+/// it is created with `O_EXCL` after an unlink and never opened with
+/// `O_TRUNC`, which empties the source through the shared inode.
+/// Inlined: the copyfile backend runs this once per file.
+#[cfg(not(windows))]
+#[inline(always)]
+pub(crate) fn copy_to_new_file(
+    in_file: Fd,
+    dest_dir: Fd,
+    dest_path: &ZStr,
+    copy_file_state: &mut bun_sys::copy_file::CopyFileState,
+) -> sys::Result<()> {
+    bun_output::scoped_log!(
+        install,
+        "createFile {} {}\n",
+        dest_dir,
+        bstr::BStr::new(dest_path.as_bytes())
+    );
+    let outfile = match create_new_file(dest_dir, dest_path) {
+        Ok(f) => f,
+        Err(_) => {
+            let dest_dirname =
+                bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(dest_path.as_bytes());
+            if !dest_dirname.is_empty() {
+                let _ = bun_sys::FdDirExt::make_path(dest_dir, dest_dirname);
+            }
+            create_new_file(dest_dir, dest_path)?
+        }
+    };
+    let _close_out = sys::CloseOnDrop::new(outfile);
+
+    let stat = sys::fstat(in_file)?;
+    // Best effort: filesystems without permission bits reject fchmod.
+    let _ = sys::fchmod(outfile, stat.st_mode as bun_sys::Mode);
+
+    bun_sys::copy_file::copy_file_with_state(in_file, outfile, copy_file_state)
+}
+
+/// [`copy_to_new_file`] for a file that the package walker yields.
+#[cfg(not(windows))]
+pub(crate) fn copy_file_at(
+    src_dir: Fd,
+    src_basename: &ZStr,
+    dest_dir: Fd,
+    dest_path: &ZStr,
+    copy_file_state: &mut bun_sys::copy_file::CopyFileState,
+) -> sys::Result<()> {
+    let in_file = sys::openat(src_dir, src_basename, sys::O::RDONLY, 0)?;
+    let _close_in = sys::CloseOnDrop::new(in_file);
+    copy_to_new_file(in_file, dest_dir, dest_path, copy_file_state)
+}
+
+/// The Windows twin of [`copy_to_new_file`]. `CopyFileW` fails when the
+/// destination exists, because it cannot overwrite a hard link of `src`.
+#[cfg(windows)]
+#[inline(always)]
+pub(crate) fn copy_to_new_file_w(
+    src: &bun_core::WStr,
+    dest: &bun_core::WStr,
+) -> Result<(), bun_sys::windows::Win32Error> {
+    use bun_sys::windows;
+    // SAFETY: FFI — src/dest are valid NUL-terminated WStr buffers.
+    let copy_file = || unsafe { windows::CopyFileW(src.as_ptr(), dest.as_ptr(), 1) } != 0;
+    if copy_file() {
+        return Ok(());
+    }
+    if matches!(
+        windows::Win32Error::get(),
+        windows::Win32Error::FILE_EXISTS | windows::Win32Error::ALREADY_EXISTS
+    ) {
+        // SAFETY: FFI — dest is a valid NUL-terminated WStr buffer.
+        unsafe { windows::DeleteFileW(dest.as_ptr()) };
+        if copy_file() {
+            return Ok(());
+        }
+    }
+    Err(windows::Win32Error::get())
+}
+
+/// Names the file a copy stopped at, for `InstallResult::report`.
+#[cold]
+fn copy_failed(err: crate::Error, path: &OSPathSlice, file: &mut Vec<u8>) -> crate::Error {
+    use std::io::Write;
+    write!(
+        file,
+        "{}",
+        bun_core::fmt::fmt_os_path(path, Default::default())
+    )
+    .expect("infallible: in-memory write");
+    err
+}
+
 // ───────────────────────────── InstallDirState ─────────────────────────────
 
 /// What `init_install_dir` opens for one package install. `walker` owns the
@@ -1504,7 +1671,7 @@ impl PackageFiles<'_> {
                             // `from_raw`'s release-mode transmute on an unexpected value.
                             Err(e) => match e.get_errno() {
                                 sys::Errno::EXDEV => return Err(crate::Error::NotSupported), // not same file system
-                                sys::Errno::EOPNOTSUPP => {
+                                errno if bun_errno::is_not_supported(errno) => {
                                     return Err(crate::Error::NotSupported);
                                 }
                                 sys::Errno::ENOENT => {
@@ -1557,7 +1724,7 @@ impl PackageFiles<'_> {
             Ok(()) => Ok(InstallResult::Success),
             Err(e) => match e.get_errno() {
                 sys::Errno::EXDEV => Err(crate::Error::NotSupported), // not same file system
-                sys::Errno::EOPNOTSUPP => Err(crate::Error::NotSupported),
+                errno if bun_errno::is_not_supported(errno) => Err(crate::Error::NotSupported),
                 sys::Errno::ENOENT => Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT)),
                 // We first try to delete the directory
                 // But, this can happen if this package contains a node_modules folder
@@ -1716,17 +1883,6 @@ impl PackageFiles<'_> {
             Err(failure) => return InstallResult::Failure(failure),
         };
 
-        #[cold]
-        fn copy_failed(err: crate::Error, path: &OSPathSlice, file: &mut Vec<u8>) -> crate::Error {
-            use std::io::Write;
-            write!(
-                file,
-                "{}",
-                bun_core::fmt::fmt_os_path(path, Default::default())
-            )
-            .expect("infallible: in-memory write");
-            err
-        }
         let mut failed_file = Vec::new();
 
         #[cfg(not(windows))]
@@ -1745,55 +1901,13 @@ impl PackageFiles<'_> {
                 let in_file = sys::openat(entry.dir, entry.basename, sys::O::RDONLY, 0)?;
                 let _close_in = sys::CloseOnDrop::new(in_file);
 
-                bun_output::scoped_log!(
-                    install,
-                    "createFile {} {}\n",
+                copy_to_new_file(
+                    in_file,
                     destination_dir_.fd(),
-                    bstr::BStr::new(entry.path.as_bytes())
-                );
-                // The file can be a hardlink of `in_file`, and O_TRUNC would empty both.
-                let create = |path: &ZStr| {
-                    let open = || {
-                        sys::openat(
-                            destination_dir_.fd(),
-                            path,
-                            sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL,
-                            0o666,
-                        )
-                    };
-                    match open() {
-                        Err(err) if err.get_errno() == sys::E::EEXIST => {
-                            let _ = sys::unlinkat(destination_dir_, path);
-                            open()
-                        }
-                        result => result,
-                    }
-                };
-                let outfile = match create(entry.path) {
-                    Ok(f) => f,
-                    Err(_) => {
-                        let entry_dirname = bun_paths::resolve_path::dirname::<
-                            bun_paths::platform::Auto,
-                        >(entry.path.as_bytes());
-                        if !entry_dirname.is_empty() {
-                            let _ = bun_sys::MakePath::make_path::<OSPathChar>(
-                                destination_dir_,
-                                entry_dirname,
-                            );
-                        }
-                        create(entry.path).map_err(|err| {
-                            copy_failed(err.into(), entry.path.as_bytes(), failed_file)
-                        })?
-                    }
-                };
-                let _close_out = sys::CloseOnDrop::new(outfile);
-
-                let stat = sys::fstat(in_file)?;
-                // Best effort: filesystems without permission bits reject fchmod.
-                let _ = sys::fchmod(outfile, stat.st_mode as bun_sys::Mode);
-
-                bun_sys::copy_file::copy_file_with_state(in_file, outfile, &mut copy_file_state)
-                    .map_err(|err| copy_failed(err.into(), entry.path.as_bytes(), failed_file))?;
+                    entry.path,
+                    &mut copy_file_state,
+                )
+                .map_err(|err| copy_failed(err.into(), entry.path.as_bytes(), failed_file))?;
             }
 
             Ok(())
@@ -1801,28 +1915,10 @@ impl PackageFiles<'_> {
 
         #[cfg(windows)]
         let result = walk_install_dir_windows(&mut state, &mut |dest, src, entry_path| {
-            use bun_sys::windows;
-            // `dest` can be a hardlink of `src`, which CopyFileW cannot overwrite.
-            // SAFETY: FFI — src/dest are valid NUL-terminated WStr buffers.
-            let copy_file = || unsafe { windows::CopyFileW(src.as_ptr(), dest.as_ptr(), 1) } != 0;
-            if copy_file() {
-                return Ok(());
-            }
-            if matches!(
-                windows::Win32Error::get(),
-                windows::Win32Error::FILE_EXISTS | windows::Win32Error::ALREADY_EXISTS
-            ) {
-                // SAFETY: FFI — dest is a valid NUL-terminated WStr buffer.
-                unsafe { windows::DeleteFileW(dest.as_ptr()) };
-                if copy_file() {
-                    return Ok(());
-                }
-            }
-            Err(copy_failed(
-                windows::last_system_errno().into(),
-                entry_path,
-                &mut failed_file,
-            ))
+            use bun_sys::windows::Win32ErrorExt as _;
+            copy_to_new_file_w(src, dest).map_err(|code| {
+                copy_failed(code.to_system_errno().into(), entry_path, &mut failed_file)
+            })
         });
         #[cfg(not(windows))]
         let result = copy(&state.subdir, &mut state.walker, &mut failed_file);
@@ -1836,15 +1932,14 @@ impl PackageFiles<'_> {
         InstallResult::Success
     }
 
+    /// `Ok(true)`: the file system refused a link, and the walk copied from that file on.
     fn install_with_hardlink(
         &mut self,
         dest_dir: &Dir,
         skip_dirs: &[&OSPathSlice],
-    ) -> crate::Result<InstallResult> {
-        let mut state = match self.init_install_dir(dest_dir, Method::Hardlink, skip_dirs) {
-            Ok(state) => state,
-            Err(failure) => return Ok(InstallResult::Failure(failure)),
-        };
+    ) -> Result<bool, Box<Failure>> {
+        let mut state = self.init_install_dir(dest_dir, Method::Hardlink, skip_dirs)?;
+        let mut failed_file = Vec::new();
 
         #[cfg(windows)]
         type WinSlice<'b> = &'b mut [u16];
@@ -1855,22 +1950,58 @@ impl PackageFiles<'_> {
         #[cfg(not(windows))]
         type WinOffset = ();
 
+        /// The file system refused a link. Copies what is left of the walk.
+        #[cfg(unix)]
+        #[cold]
+        fn copy_rest(
+            destination_dir: &Dir,
+            walker: &mut Walker,
+            copy_file_state: &mut bun_sys::copy_file::CopyFileState,
+            failed_file: &mut Vec<u8>,
+        ) -> crate::Result<()> {
+            while let Some(entry) = walker.next()? {
+                match entry.kind {
+                    EntryKind::Directory => {
+                        bun_sys::MakePath::make_path::<OSPathChar>(
+                            destination_dir,
+                            entry.path.as_bytes(),
+                        )?;
+                    }
+                    EntryKind::File => copy_file_at(
+                        entry.dir,
+                        entry.basename,
+                        destination_dir.fd(),
+                        entry.path,
+                        copy_file_state,
+                    )
+                    .map_err(|err| copy_failed(err.into(), entry.path.as_bytes(), failed_file))?,
+                    _ => {}
+                }
+            }
+            Ok(())
+        }
+
         // Two overlapping slices into the same buffer (`head` is the whole
         // buffer, `to_copy_into` is its tail) would be two live aliasing
         // `&mut [u16]`, which is UB — pass head buffer + tail offset and
         // reslice inside.
+        //
+        // `Ok(true)`: see `install_with_hardlink`.
         fn copy(
             destination_dir: &Dir,
             walker: &mut Walker,
+            failed_file: &mut Vec<u8>,
             to_copy_into1_offset: WinOffset,
             head1: WinSlice<'_>,
             to_copy_into2_offset: WinOffset,
             head2: WinSlice<'_>,
-        ) -> crate::Result<()> {
+        ) -> crate::Result<bool> {
             #[cfg(not(windows))]
             let _ = (to_copy_into1_offset, head1, to_copy_into2_offset, head2);
+            #[cfg(unix)]
+            let mut copy_file_state = bun_sys::copy_file::CopyFileState::default();
             #[cfg(windows)]
-            let _ = destination_dir;
+            let _ = (destination_dir, failed_file);
             #[cfg(windows)]
             let queue = HardLinkWindowsInstallTask::init_queue();
             // Workers already run what was pushed: keep loop errors, always reach `queue.wait()`.
@@ -1899,33 +2030,48 @@ impl PackageFiles<'_> {
                             )?;
                         }
                         EntryKind::File => {
-                            // EACCES/EPERM: FUSE (e.g. Android SDCARD) does not support hardlinks
-                            fn map_linkat_err(err: sys::Error) -> crate::Error {
-                                match err.get_errno() {
-                                    sys::E::EXDEV | sys::E::EACCES | sys::E::EPERM => {
-                                        crate::Error::NotSameFileSystem
-                                    }
-                                    _ => err.into(),
-                                }
-                            }
-
                             if let Err(err) = sys::linkat(
                                 entry.dir,
                                 entry.basename,
                                 destination_dir.fd(),
                                 entry.path,
                             ) {
-                                if err.get_errno() == sys::E::EEXIST {
+                                let err = if err.get_errno() == sys::E::EEXIST {
                                     let _ = sys::unlinkat(destination_dir, entry.path);
-                                    sys::linkat(
+                                    match sys::linkat(
                                         entry.dir,
                                         entry.basename,
                                         destination_dir.fd(),
                                         entry.path,
-                                    )
-                                    .map_err(map_linkat_err)?;
+                                    ) {
+                                        Ok(()) => continue,
+                                        Err(err) => err,
+                                    }
                                 } else {
-                                    return Err(map_linkat_err(err));
+                                    err
+                                };
+                                // `move`: a closure that borrows `entry` makes every
+                                // iteration of this loop store `entry` to the stack.
+                                let (state, failed) = (&mut copy_file_state, &mut *failed_file);
+                                if copy_refused_link(err, move || {
+                                    copy_file_at(
+                                        entry.dir,
+                                        entry.basename,
+                                        destination_dir.fd(),
+                                        entry.path,
+                                        state,
+                                    )
+                                    .map_err(|err| {
+                                        copy_failed(err.into(), entry.path.as_bytes(), failed)
+                                    })
+                                })? {
+                                    copy_rest(
+                                        destination_dir,
+                                        walker,
+                                        &mut copy_file_state,
+                                        failed_file,
+                                    )?;
+                                    return Ok(true);
                                 }
                             }
                         }
@@ -1985,28 +2131,35 @@ impl PackageFiles<'_> {
                 }
             }
 
-            Ok(())
+            Ok(false)
         }
 
         #[cfg(windows)]
         let result = copy(
             &state.subdir,
             &mut state.walker,
+            &mut failed_file,
             state.to_copy_buf_off,
             &mut state.buf[..],
             state.to_copy_buf2_off,
             &mut state.buf2[..],
         );
         #[cfg(not(windows))]
-        let result = copy(&state.subdir, &mut state.walker, (), (), (), ());
+        let result = copy(
+            &state.subdir,
+            &mut state.walker,
+            &mut failed_file,
+            (),
+            (),
+            (),
+            (),
+        );
 
-        match result {
-            Ok(()) => Ok(InstallResult::Success),
-            // `link_files_into` falls back to copyfile on this one.
-            #[cfg(not(windows))]
-            Err(err @ crate::Error::NotSameFileSystem) => Err(err),
-            Err(err) => Ok(InstallResult::fail(err, Step::CopyingFiles)),
-        }
+        result.map_err(|err| {
+            let mut failure = Failure::boxed(err, Step::CopyingFiles);
+            failure.file = failed_file;
+            failure
+        })
     }
 
     fn install_with_symlink(
@@ -2639,7 +2792,18 @@ impl PackageFiles<'_> {
             }
             #[cfg(not(target_os = "macos"))]
             Method::Clonefile | Method::ClonefileEachDir => Ok(InstallResult::Success),
-            Method::Hardlink => self.install_with_hardlink(destination_dir, skip_dirs),
+            Method::Hardlink => Ok(
+                match self.install_with_hardlink(destination_dir, skip_dirs) {
+                    Ok(links_refused) => {
+                        // The next package starts with a copy.
+                        if links_refused && !is_folder {
+                            SUPPORTED_METHOD.store(Method::Copyfile as u8, Ordering::Relaxed);
+                        }
+                        InstallResult::Success
+                    }
+                    Err(failure) => InstallResult::Failure(failure),
+                },
+            ),
             Method::Symlink => self.install_with_symlink(destination_dir, skip_dirs),
             // TODO: linux io_uring
             Method::Copyfile => Ok(self.install_with_copyfile(destination_dir, skip_dirs)),
@@ -2647,7 +2811,7 @@ impl PackageFiles<'_> {
         match result {
             Ok(result) => result,
             #[cfg(not(windows))]
-            Err(crate::Error::NotSupported | crate::Error::NotSameFileSystem) => {
+            Err(crate::Error::NotSupported) => {
                 if !is_folder {
                     SUPPORTED_METHOD.store(Method::Copyfile as u8, Ordering::Relaxed);
                 }

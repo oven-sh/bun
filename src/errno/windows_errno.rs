@@ -311,6 +311,7 @@ impl E {
     pub const EHOSTUNREACH: E = E::HOSTUNREACH;
     pub const EALREADY: E = E::ALREADY;
     pub const EINPROGRESS: E = E::INPROGRESS;
+    pub const EDQUOT: E = E::DQUOT;
     pub const ECANCELED: E = E::CANCELED;
     pub const EUNKNOWN: E = E::UNKNOWN;
     pub const ECHARSET: E = E::CHARSET;

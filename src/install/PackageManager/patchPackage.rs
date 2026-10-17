@@ -1521,33 +1521,28 @@ fn copy_cache_entry(
         { bun_paths::path_options::PathSeparators::AUTO },
     >::from(to.as_slice())?;
 
-    let src_path: bun_paths::AbsPath<
-        bun_paths::OSPathChar,
-        { bun_paths::path_options::PathSeparators::AUTO },
-    > = 'src_path: {
-        #[cfg(windows)]
-        {
-            let mut path_buf = bun_paths::w_path_buffer_pool::get();
-            let abs_path = sys::get_fd_path_w(cache_dir, &mut path_buf)?;
+    #[cfg(windows)]
+    let src_path = {
+        let mut path_buf = bun_paths::w_path_buffer_pool::get();
+        let abs_path = sys::get_fd_path_w(cache_dir, &mut path_buf)?;
 
-            let mut sp = bun_paths::AbsPath::<
-                bun_paths::OSPathChar,
-                { bun_paths::path_options::PathSeparators::AUTO },
-            >::from(&*abs_path)
-            .unwrap();
-            sp.append(cache_dir_subpath)?;
-
-            break 'src_path sp;
-        }
-
-        // unused if not windows
-        #[cfg(not(windows))]
-        {
-            break 'src_path bun_paths::AbsPath::init();
-        }
+        let mut sp = bun_paths::AbsPath::<
+            bun_paths::OSPathChar,
+            { bun_paths::path_options::PathSeparators::AUTO },
+        >::from(&*abs_path)
+        .unwrap();
+        sp.append(cache_dir_subpath)?;
+        sp
     };
 
-    FileCopier::init(cached_package_folder.fd, src_path, dest_subpath, &[])?.copy()?;
+    FileCopier::init(
+        cached_package_folder.fd,
+        #[cfg(windows)]
+        src_path,
+        dest_subpath,
+        &[],
+    )?
+    .copy()?;
     Ok(())
 }
 

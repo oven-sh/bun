@@ -565,6 +565,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) is_inside_single_stmt_body: bool,
 
     /// We must be careful to avoid revisiting nodes that have scopes.
+    /// A revisit can be inside a `define` value, which other parses share.
     pub(crate) is_revisit_for_substitution: bool,
 
     pub(crate) method_call_must_be_replaced_with_undefined: bool,
@@ -940,6 +941,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.options.allow_unresolved,
                 crate::parser::options::AllowUnresolved::All
             )
+            // After a stack overflow the visit skipped a part of the arguments.
+            || self.reported_stack_overflow.get()
         {
             return Ok(());
         }
@@ -1561,7 +1564,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return self.transpose_require_resolve_known_string(arg);
         }
 
-        if self.options.warn_about_unbundled_modules {
+        // After a stack overflow the visit skipped a part of the arguments.
+        if self.options.warn_about_unbundled_modules && !self.reported_stack_overflow.get() {
             // Use a debug log so people can see this if they want to
             let r = js_lexer::range_of_identifier(self.source, arg.loc);
             self.log()
@@ -7310,6 +7314,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         }
                                     }
                                 }
+                                // The visit skipped this method.
+                                js_ast::ExprData::EMissing(_)
+                                    if self.reported_stack_overflow.get() => {}
                                 _ => unreachable!(),
                             }
                         }
@@ -7672,6 +7679,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
     ) {
         use js_ast::g::PropertyKind;
+
+        // The visit skipped this method.
+        if self.reported_stack_overflow.get() && prop.value.is_some_and(|value| value.is_missing())
+        {
+            return;
+        }
 
         // Local helper: bump-alloc an arg pair and call __legacyMetadataTS.
         // pulled out of the per-arm code to cut a ~3x repetition.
@@ -8394,7 +8407,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ///
     /// This function replaces all specifier strings with `e_special.resolved_specifier_string`
     pub(crate) fn handle_import_meta_hot_accept_call(&mut self, call: &mut E::Call) {
-        if call.args.len_u32() == 0 {
+        // After a stack overflow the visit skipped a part of the arguments.
+        if call.args.len_u32() == 0 || self.reported_stack_overflow.get() {
             return;
         }
         // match `data` by value (it is `Copy`) so the `StoreRef<_>`

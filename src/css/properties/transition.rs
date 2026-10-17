@@ -18,6 +18,7 @@ use crate::css_values::time::Time;
 use crate::VendorPrefix;
 use crate::compat;
 use crate::prefixes::Feature;
+use crate::targets::Targets;
 
 /// A value for the [transition](https://www.w3.org/TR/2018/WD-css-transitions-1-20181011/#transition-shorthand-property) property.
 #[derive(Clone, PartialEq)]
@@ -541,6 +542,10 @@ mod transition_handler_body {
             }
         }
 
+        // Entries the declaration already spells out (`-webkit-transform, transform`,
+        // which is also what this handler's own output looks like when a merged rule
+        // is minified again) must not be generated a second time below.
+        let as_written: SmallList<PropertyId, 4> = properties.iter().copied().collect();
         let mut rtl_properties: Option<SmallList<PropertyId, 1>> = None;
         let mut i: u32 = 0;
 
@@ -574,38 +579,23 @@ mod transition_handler_body {
                 }
                 _ => {
                     let index = i;
-                    // Expand vendor prefixes for targets.
-                    properties.slice_mut()[index as usize]
-                        .set_prefixes_for_targets(&context.targets);
-
-                    // Expand mask properties, which use different vendor-prefixed names.
+                    let targets = &context.targets;
+                    expand_prefixes(properties.r#mut(index), &as_written, targets);
                     if let Some(property_id) =
-                        masking::get_webkit_mask_property(properties.at(index))
+                        webkit_mask_property_to_insert(properties.at(index), &as_written, targets)
                     {
-                        if context
-                            .targets
-                            .prefixes(VendorPrefix::NONE, Feature::MaskBorder)
-                            .contains(VendorPrefix::WEBKIT)
-                        {
-                            properties.insert(index, property_id);
-                            i += 1;
-                        }
+                        properties.insert(index, property_id);
+                        i += 1;
                     }
 
                     if let Some(rtl_props) = &mut rtl_properties {
-                        rtl_props.slice_mut()[index as usize]
-                            .set_prefixes_for_targets(&context.targets);
-
-                        if let Some(property_id) =
-                            masking::get_webkit_mask_property(rtl_props.at(index))
-                        {
-                            if context
-                                .targets
-                                .prefixes(VendorPrefix::NONE, Feature::MaskBorder)
-                                .contains(VendorPrefix::WEBKIT)
-                            {
-                                rtl_props.insert(index, property_id);
-                            }
+                        expand_prefixes(rtl_props.r#mut(index), &as_written, targets);
+                        if let Some(property_id) = webkit_mask_property_to_insert(
+                            rtl_props.at(index),
+                            &as_written,
+                            targets,
+                        ) {
+                            rtl_props.insert(index, property_id);
                         }
                     }
                     i += 1;
@@ -614,6 +604,40 @@ mod transition_handler_body {
         }
 
         rtl_properties
+    }
+
+    /// Expands the vendor prefixes of `property_id` for the targets, minus the
+    /// prefixes that other entries of the same property in `as_written` already
+    /// carry: `-webkit-transform, transform` expands `transform` to the remaining
+    /// prefixes only, so each entry keeps its own duration, delay and timing function.
+    fn expand_prefixes(property_id: &mut PropertyId, as_written: &[PropertyId], targets: &Targets) {
+        let written = property_id.prefix();
+        property_id.set_prefixes_for_targets(targets);
+        let added = property_id.prefix().difference(written);
+        if added.is_empty() {
+            return;
+        }
+
+        let listed = as_written
+            .iter()
+            .filter(|p| p.tag() == property_id.tag())
+            .fold(VendorPrefix::empty(), |listed, p| listed | p.prefix());
+        *property_id = property_id.with_prefix(property_id.prefix().difference(added & listed));
+    }
+
+    /// The `-webkit-` mask property that animates alongside `property_id` for the
+    /// targets (`mask-border` -> `-webkit-mask-box-image`, which has a different
+    /// name rather than a prefix), unless the declaration already lists it.
+    fn webkit_mask_property_to_insert(
+        property_id: &PropertyId,
+        as_written: &[PropertyId],
+        targets: &Targets,
+    ) -> Option<PropertyId> {
+        let webkit = masking::get_webkit_mask_property(property_id)?;
+        let needed = targets
+            .prefixes(VendorPrefix::NONE, Feature::MaskBorder)
+            .contains(VendorPrefix::WEBKIT);
+        (needed && !as_written.contains(&webkit)).then_some(webkit)
     }
 
     enum LogicalPropertyId {

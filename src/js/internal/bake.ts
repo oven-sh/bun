@@ -36,6 +36,9 @@ Options:
   --console # print console logs from browser
   --no-console # don't print console logs from browser
   --check # type check the project first, and do not serve it if it has errors
+  --watch # start again when a file that it loaded changes
+  --hot # reload app/server.ts in place when it changes
+  --no-clear-screen # with --watch or --hot, do not clear the terminal on a reload
 `;
 
 type Page = {

@@ -97,11 +97,14 @@ pub(crate) struct ConfigureEnvOptions {
 pub(crate) struct RunCommand;
 
 /// What `RunCommand::boot_main` starts the VM with.
-#[derive(Clone, Copy, PartialEq, Eq)]
 enum BootMain {
-    /// The file at the entry path. An `.html` file is served by `src/js/internal/html.ts`.
-    File,
-    /// `bun bake`: `src/js/internal/bake.ts` serves the app in the working directory.
+    /// The file at `path`. An `.html` file is served by `src/js/internal/html.ts`.
+    File {
+        path: Box<[u8]>,
+        loader: Option<Loader>,
+    },
+    /// `bun bake`: `src/js/internal/bake.ts` serves the app in the working directory. There is no
+    /// entry module.
     Bake,
 }
 
@@ -966,15 +969,16 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         entry_path: Box<[u8]>,
         loader: Option<Loader>,
     ) -> crate::Result<()> {
-        Self::boot_main(ctx, entry_path, loader, BootMain::File)
+        Self::boot_main(
+            ctx,
+            BootMain::File {
+                path: entry_path,
+                loader,
+            },
+        )
     }
 
-    fn boot_main(
-        ctx: &mut ContextData,
-        entry_path: Box<[u8]>,
-        loader: Option<Loader>,
-        main: BootMain,
-    ) -> crate::Result<()> {
+    fn boot_main(ctx: &mut ContextData, main: BootMain) -> crate::Result<()> {
         if !ctx.debug.loaded_bunfig {
             arguments::load_config_path(
                 CommandTag::RunCommand,
@@ -985,12 +989,16 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         }
 
         // The shell does not need to initialize JSC (saves 1-3ms).
-        if strings::has_suffix_comptime(&entry_path, b".sh") {
+        if let BootMain::File {
+            path: entry_path, ..
+        } = &main
+            && strings::has_suffix_comptime(entry_path, b".sh")
+        {
             // It has no entry point to start from, like a script of a package.json.
             if ctx.runtime_options.check && !crate::cli::check_command::check_project_before(None) {
                 Global::exit(1);
             }
-            let exit_code = Self::boot_bun_shell(ctx, &entry_path)?;
+            let exit_code = Self::boot_bun_shell(ctx, entry_path)?;
             Global::exit(exit_code as u32);
         }
 
@@ -1000,9 +1008,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // `Run::start` does it then, once there is a file watcher.
         let watches = ctx.debug.hot_reload != cli::command::HotReload::None;
         if is_checked && !watches {
-            let has_type_errors = match main {
-                BootMain::File => {
-                    !Self::check_main(ctx, &entry_path, loader, &ctx.passthrough, None)
+            let has_type_errors = match &main {
+                BootMain::File { path, loader } => {
+                    !Self::check_main(ctx, path, *loader, &ctx.passthrough, None)
                 }
                 BootMain::Bake => !crate::cli::check_command::check_project_before(None),
             };
@@ -1047,14 +1055,19 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             bun_dns::Order::from_string_or_die(&ctx.runtime_options.dns_result_order) as u8;
         // `vm.main` is a BACKREF into these bytes and the runner never returns,
         // so the allocation is process-lifetime by construction.
-        let entry: &'static [u8] = Box::leak(entry_path);
+        let (entry, loader): (Option<&'static [u8]>, Option<Loader>) = match main {
+            BootMain::File { path, loader } => (Some(Box::leak(path)), loader),
+            BootMain::Bake => (None, None),
+        };
         // What `Run::start` passes to `vm.load_entry_point`; `mut` because the
         // cron-execution branch below may swap in a synthetic `cwd/[eval]` path
         // while `entry` stays the user's path for the loader check further down.
         let mut run_entry = entry;
         vm.set_main(entry);
 
-        if !ctx.runtime_options.eval.script.is_empty() {
+        if let Some(entry) = entry
+            && !ctx.runtime_options.eval.script.is_empty()
+        {
             // SAFETY: `ctx.runtime_options.eval.script` is process-lifetime
             // (CLI argv); erase the borrow lifetime so the `Source` (stored in
             // the VM for the process duration) can backref into it.
@@ -1071,7 +1084,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             if ctx.runtime_options.eval.eval_and_print {
                 vm.transpiler.options.dead_code_elimination = false;
             }
-        } else if !ctx.runtime_options.cron_title.is_empty()
+        } else if let Some(entry) = entry
+            && !ctx.runtime_options.cron_title.is_empty()
             && !ctx.runtime_options.cron_period.is_empty()
         {
             // Cron execution mode: wrap the entry point in
@@ -1110,8 +1124,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             )));
             // Override what
             // `Run::start` will pass to `vm.load_entry_point`.
-            run_entry = heap_entry;
-            vm.set_main(heap_entry);
+            run_entry = Some(heap_entry);
+            vm.set_main(Some(heap_entry));
         }
 
         // ctx → transpiler/resolver option mapping.
@@ -1159,16 +1173,17 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         );
         Self::do_preconnect(&ctx.runtime_options.preconnect);
 
-        vm.main_entry_point = match main {
-            BootMain::Bake => MainEntryPoint::Bake,
-            BootMain::File
+        // Only `bun bake` boots with no entry module.
+        vm.main_entry_point = match entry {
+            None => MainEntryPoint::Bake,
+            Some(entry)
                 if loader
                     .unwrap_or_else(|| vm.transpiler.options.loader(paths::extension(entry)))
                     == Loader::Html =>
             {
                 MainEntryPoint::Html
             }
-            BootMain::File => MainEntryPoint::File,
+            Some(_) => MainEntryPoint::File,
         };
 
         // `ctx.debug.hot_reload` → `vm.hot_reload` (a `u8` until the
@@ -1180,9 +1195,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ctx,
             vm,
             entry_path: run_entry,
-            unchecked: (is_checked && watches).then_some(match main {
-                BootMain::File => Unchecked::Main(loader),
-                BootMain::Bake => Unchecked::Project,
+            unchecked: (is_checked && watches).then_some(match entry {
+                Some(_) => Unchecked::Main(loader),
+                None => Unchecked::Project,
             }),
         }
         .start()
@@ -1259,7 +1274,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // buffer and the runner never returns, so the allocation is
         // process-lifetime by construction.
         let entry: &'static [u8] = Box::leak(entry_path);
-        vm.set_main(entry);
+        vm.set_main(Some(entry));
 
         // reshaped for borrowck — `b` borrows `vm.transpiler`
         // exclusively; `fail_with_build_error(vm)` needs the whole `vm`, so
@@ -1302,7 +1317,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         Run {
             ctx,
             vm,
-            entry_path: entry,
+            entry_path: Some(entry),
             unchecked: None,
         }
         .start()
@@ -1322,8 +1337,8 @@ pub(crate) struct Run<'a> {
     vm: &'a mut VirtualMachine,
     /// `vm.main` already points into these bytes; `'static` because the hot
     /// reloader stores them too (`boot` leaks the `Box<[u8]>`, cron mode uses
-    /// the runner arena).
-    entry_path: &'static [u8],
+    /// the runner arena). `None` for `bun bake`, which has no entry module.
+    entry_path: Option<&'static [u8]>,
     /// `--check` under `--watch`: what to type check before the program runs. With errors the
     /// program is not run, and the process waits for a change.
     unchecked: Option<Unchecked>,
@@ -1489,7 +1504,7 @@ impl Run<'_> {
                 unsafe {
                     bun_jsc::hot_reloader::HotReloader::enable_hot_module_reloading(
                         std::ptr::from_mut::<VirtualMachine>(vm),
-                        Some(entry),
+                        entry,
                     )
                 }
             }
@@ -1499,7 +1514,7 @@ impl Run<'_> {
                 unsafe {
                     bun_jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(
                         std::ptr::from_mut::<VirtualMachine>(vm),
-                        Some(entry),
+                        entry,
                     )
                 }
                 bun_jsc::posix_signal_handle::enable_watch_mode_signals(
@@ -1509,12 +1524,12 @@ impl Run<'_> {
             _ => {}
         }
 
-        if entry == b"." {
+        if entry == Some(b".".as_slice()) {
             // SAFETY: `vm.transpiler.fs` is the process-static `FileSystem`
             // singleton (set in `Transpiler::init`).
             let tld = unsafe { (*vm.transpiler.fs).top_level_dir };
             if !tld.is_empty() {
-                entry = tld;
+                entry = Some(tld);
             }
         }
 
@@ -1522,8 +1537,9 @@ impl Run<'_> {
             None => false,
             Some(Unchecked::Main(loader)) => {
                 let watching = crate::cli::check_command::watching(vm);
+                let main = (vm.main()).expect("a file entry point has a path");
                 let has_type_errors =
-                    !RunCommand::check_main(ctx, vm.main(), loader, &vm.argv, watching);
+                    !RunCommand::check_main(ctx, main, loader, &vm.argv, watching);
                 if has_type_errors {
                     // It is not read if the options are wrong.
                     vm.add_main_to_watcher_if_needed();
@@ -2756,27 +2772,50 @@ impl RunCommand {
 
         // `bun bake` in a project with no `bake` script, file or binary of its own.
         if target_name == b"bake" && bun_core::FeatureFlags::bake() {
-            // `bun bake --check` is `bun --check bake`.
-            if let Some(i) = ctx
-                .passthrough
-                .iter()
-                .position(|arg| &arg[..] == b"--check")
-            {
-                ctx.passthrough.remove(i);
-                if !ctx.runtime_options.check {
-                    ctx.runtime_options.check = true;
-                    let hot_reload = ctx.debug.hot_reload;
-                    cli::watch_instead_of_hot_for_check(ctx);
-                    if hot_reload != ctx.debug.hot_reload {
-                        cli::set_up_watch_restarts(ctx);
+            // These flags of `bun` mean the same after `bake` as before it: `bun bake --watch` is
+            // `bun --watch bake`.
+            let mut take_flag =
+                |flag: &[u8]| match ctx.passthrough.iter().position(|arg| &arg[..] == flag) {
+                    Some(i) => {
+                        ctx.passthrough.remove(i);
+                        true
+                    }
+                    None => false,
+                };
+            let (check, hot, watch, no_clear_screen) = (
+                take_flag(b"--check"),
+                take_flag(b"--hot"),
+                take_flag(b"--watch"),
+                take_flag(b"--no-clear-screen"),
+            );
+            let hot_reload = ctx.debug.hot_reload;
+            if hot_reload == cli::command::HotReload::None {
+                // As in the argument parser, `--hot` wins over `--watch`.
+                if hot {
+                    ctx.debug.hot_reload = cli::command::HotReload::Hot;
+                } else if watch {
+                    ctx.debug.hot_reload = cli::command::HotReload::Watch;
+                    #[cfg(not(windows))]
+                    {
+                        bun_core::set_auto_reload_on_crash(true);
                     }
                 }
+                if no_clear_screen && ctx.debug.hot_reload != cli::command::HotReload::None {
+                    let _ = bun_dotenv::HAS_NO_CLEAR_SCREEN_CLI_FLAG.set(true);
+                }
+            }
+            if check && !ctx.runtime_options.check {
+                ctx.runtime_options.check = true;
+                cli::watch_instead_of_hot_for_check(ctx);
+            }
+            if hot_reload != ctx.debug.hot_reload {
+                cli::set_up_watch_restarts(ctx);
             }
             Global::configure_allocator(core::Global::AllocatorConfiguration {
                 long_running: true,
                 ..Default::default()
             });
-            if let Err(err) = Self::boot_main(ctx, Box::default(), None, BootMain::Bake) {
+            if let Err(err) = Self::boot_main(ctx, BootMain::Bake) {
                 Self::boot_failed_exit(ctx, b"bake", &err);
             }
             return Ok(true);

@@ -742,6 +742,10 @@ pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
     if let Some(overridden_main) = vm.overridden_main.get() {
         return overridden_main;
     }
+    // No entry module (`bun bake`): an empty string, as `Bun.main` is always a string.
+    let Some(main) = vm.main() else {
+        return EncodedSlice::from_bytes(b"").to_js(global_this);
+    };
 
     // Attempt to use the resolved filesystem path
     // This makes `eval('require.main === module')` work when the main module is a symlink.
@@ -749,10 +753,10 @@ pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
     'use_resolved_path: {
         if vm.main_resolved_path.is_empty() {
             // If it's from eval, don't try to resolve it.
-            if strings::ends_with(vm.main(), b"[eval]") {
+            if strings::ends_with(main, b"[eval]") {
                 break 'use_resolved_path;
             }
-            if strings::ends_with(vm.main(), b"[stdin]") {
+            if strings::ends_with(main, b"[stdin]") {
                 break 'use_resolved_path;
             }
 
@@ -762,7 +766,7 @@ pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
                 } else {
                     Fd::cwd()
                 },
-                vm.main(),
+                main,
                 // Open with the minimum permissions necessary for resolving the file path.
                 if cfg!(any(target_os = "linux", target_os = "android")) {
                     sys::O::PATH
@@ -805,7 +809,7 @@ pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
             .or_pending_exception();
     }
 
-    EncodedSlice::from_bytes(vm.main()).to_js(global_this)
+    EncodedSlice::from_bytes(main).to_js(global_this)
 }
 
 // HOST_EXPORT(BunObject_setter_main, jsc)

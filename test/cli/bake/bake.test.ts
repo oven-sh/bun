@@ -330,3 +330,23 @@ test.concurrent("app/server.ts is not the entry module under bun bake", async ()
   const res = await fetch(new URL("/missing", url));
   expect(await res.json()).toEqual({ argv: ["--port=0"], main: "", metaMain: false });
 });
+
+test.concurrent.each([
+  { name: "bun bake --watch", flag: "--watch" },
+  { name: "bun bake --hot", flag: "--hot" },
+])("$name serves the new app/server.ts after a change", async ({ flag }) => {
+  using dir = tempDir("bake-command-reload", {
+    "app/server.ts": `export default { fetch: () => new Response("v1") };`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", flag, "--port=0"]);
+  const output = collectOutput(proc);
+  const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
+  expect(await get(url, "/")).toBe("200 v1");
+
+  await Bun.write(join(String(dir), "app/server.ts"), `export default { fetch: () => new Response("v2") };`);
+  // `--watch` starts the process again, on a new port; `--hot` keeps it. Each prints the URL again.
+  const [, next] = await output.waitFor(/url: http:\/\/\S+[\s\S]*url: (http:\/\/\S+)/);
+
+  expect(await get(next, "/")).toBe("200 v2");
+});

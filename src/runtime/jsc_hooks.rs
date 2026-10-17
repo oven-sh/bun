@@ -1450,7 +1450,7 @@ mod vm_loader_ctx {
                 .eval_source
                 .as_deref()
                 .map(core::ptr::from_ref::<bun_ast::Source>),
-            main() => &*core::ptr::from_ref::<[u8]>((*this).main()),
+            main() => (*this).main().map(|main| &*core::ptr::from_ref::<[u8]>(main)),
             read_dir_info_package_json(dir) => {
                 // Short-lived `&mut Resolver` (not `&mut VirtualMachine`) for
                 // the call — narrows the borrow re-entrant JS could alias.
@@ -2233,7 +2233,9 @@ fn transpile_source_code_of_any_provenance(
             let hash = bun_watcher::Watcher::get_hash(path.text);
             // SAFETY: per fn contract.
             let (main, main_hash) = unsafe { ((*jsc_vm).main(), (*jsc_vm).main_hash) };
-            let is_main = main.len() == path.text.len() && main_hash == hash && main == path.text;
+            let is_main = main.is_some_and(|main| {
+                main.len() == path.text.len() && main_hash == hash && main == path.text
+            });
 
             // ── Arena take/give-back ────────────────────────────────────────
             // Reuse the per-VM arena when free; allocate a
@@ -3266,7 +3268,7 @@ fn transpile_source_code_of_any_provenance(
         L::Wasm => {
             // SAFETY: per fn contract.
             let main = unsafe { &*jsc_vm }.main();
-            if referrer == b"undefined" && main == path.text {
+            if referrer == b"undefined" && main == Some(path.text) {
                 // Stash the WASM bytes on
                 // `globalThis.wasmSourceBytes` so the wasi runner avoids
                 // reading the file twice.
@@ -4025,7 +4027,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
     }
 
     // SAFETY: per fn contract.
-    let is_main = specifier == unsafe { &*jsc_vm }.main();
+    let is_main = unsafe { &*jsc_vm }.main() == Some(specifier);
 
     // package.json sniff for `.js`/`.ts` module-type.
     let dir = path.name().dir;
@@ -4511,7 +4513,8 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
             .copied();
         opt.unwrap_or_else(|| {
             // SAFETY: `jsc_vm` is the live per-thread VM.
-            if bun_core::strings::eql_long(specifier, unsafe { &*jsc_vm }.main(), true) {
+            let main = unsafe { &*jsc_vm }.main();
+            if main.is_some_and(|main| bun_core::strings::eql_long(specifier, main, true)) {
                 Loader::Js
             } else {
                 Loader::File

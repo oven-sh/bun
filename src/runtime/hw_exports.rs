@@ -154,16 +154,19 @@ pub(crate) fn specifier_is_eval_entry_point(this: &mut VirtualMachine, specifier
 /// origin `uncaughtException`. `main()` compare filters out an ESM entry that `import`s CJS.
 // HOST_EXPORT(Bun__VM__noteCommonJSEvaluation, c)
 pub(crate) fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSValue) {
-    if this.entry_point_result.evaluated_as_cjs || this.main().is_empty() {
+    if this.entry_point_result.evaluated_as_cjs {
         return;
     }
+    let Some(main) = this.main() else {
+        return;
+    };
     let global = this.global();
     // A failed conversion just skips the note; must never panic at an FFI
     // boundary.
     let Ok(specifier_str) = bun_core::String::from_js(specifier, global) else {
         return;
     };
-    if specifier_str.eql_utf8(this.main()) {
+    if specifier_str.eql_utf8(main) {
         this.entry_point_result.evaluated_as_cjs = true;
     }
 }

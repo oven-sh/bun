@@ -111,6 +111,11 @@ type Banner = {
   routes: { route: string; file: string }[];
 };
 
+// Under `bun --hot`, each reload calls `printBannerAndHandleShortcuts` again, but this module is
+// evaluated once. The listeners are added once, and use the server and banner of the latest call.
+let latestServer: Server<undefined> | undefined;
+let printLatestBanner: ((isFirst: boolean) => void) | undefined;
+
 /** Prints the startup message, and on a terminal, handles the keyboard shortcuts. */
 function printBannerAndHandleShortcuts(banner: Banner) {
   const { server, elapsed, pathname, routes } = banner;
@@ -171,8 +176,12 @@ function printBannerAndHandleShortcuts(banner: Banner) {
 
   printInitialMessage(true);
 
+  const installed = latestServer !== undefined;
+  latestServer = server;
+  printLatestBanner = printInitialMessage;
+
   // Keyboard shortcuts
-  if (process.stdin.isTTY) {
+  if (!installed && process.stdin.isTTY) {
     // Handle Ctrl+C and other termination signals
     process.on("SIGINT", () => process.exit());
     process.on("SIGHUP", () => process.exit());
@@ -188,11 +197,11 @@ function printBannerAndHandleShortcuts(banner: Banner) {
 
         case "c\n":
           console.clear();
-          printInitialMessage(false);
+          printLatestBanner!(false);
           break;
 
         case "o\n":
-          const url = server.url.toString();
+          const url = latestServer!.url.toString();
 
           // TODO: copy the AppleScript from create-react-app or Vite.
           const opener =
@@ -214,7 +223,7 @@ function printBannerAndHandleShortcuts(banner: Banner) {
 
         case "h\n":
           console.clear();
-          printInitialMessage(false);
+          printLatestBanner!(false);
           console.log("\n  Shortcuts\x1b[2m:\x1b[0m\n");
           console.log("  \x1b[2m→\x1b[0m   \x1b[36mc + Enter\x1b[0m   clear screen");
           console.log("  \x1b[2m→\x1b[0m   \x1b[36mo + Enter\x1b[0m   open in browser");

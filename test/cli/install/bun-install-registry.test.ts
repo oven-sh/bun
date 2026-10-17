@@ -14840,6 +14840,72 @@ describe("manifest conditional requests", () => {
     },
   );
 
+  /** Forwards to the registry at `upstream` and adds `headerLine` after the registry's own headers, as nginx's `add_header` does. */
+  async function startProxy(upstream: number, headerLine: string) {
+    const sockets: Socket[] = [];
+    const proxy = createTcpServer(socket => {
+      sockets.push(socket);
+      let received = "";
+      socket.on("error", () => {});
+      socket.on("data", async chunk => {
+        received += chunk;
+        const end = received.indexOf("\r\n\r\n");
+        if (end === -1) return;
+        const [requestLine, ...lines] = received.slice(0, end).split("\r\n");
+        received = received.slice(end + 4);
+        const response = await fetch(`http://localhost:${upstream}${requestLine.split(" ")[1]}`, {
+          headers: lines
+            .map((line): [string, string] => [
+              line.slice(0, line.indexOf(":")),
+              line.slice(line.indexOf(":") + 1).trim(),
+            ])
+            .filter(([name]) => name.toLowerCase() !== "host"),
+        });
+        let body = Buffer.from(await response.arrayBuffer());
+        if (response.headers.get("content-type")?.includes("json")) {
+          body = Buffer.from(body.toString().replaceAll(`localhost:${upstream}`, `localhost:${port}`));
+        }
+        const kept = [...response.headers].filter(([name]) => !["content-length", "connection"].includes(name));
+        socket.write(
+          [
+            `HTTP/1.1 ${response.status} ${response.statusText || "OK"}`,
+            ...kept.map(([name, value]) => `${name}: ${value}`),
+            headerLine,
+            `Content-Length: ${body.length}`,
+            "\r\n",
+          ].join("\r\n"),
+        );
+        socket.write(body);
+      });
+    });
+    await new Promise<void>(resolve => proxy.listen(0, resolve));
+    const port = (proxy.address() as { port: number }).port;
+    return {
+      port,
+      [Symbol.dispose]() {
+        proxy.close();
+        for (const socket of sockets) socket.destroy();
+      },
+    };
+  }
+
+  test.each(["no-cache", "no-store", "max-age=0"])(
+    "a second header line, Cache-Control: %s, counts next to the registry's max-age=300",
+    async added => {
+      const { server, requests } = startRegistry({ etag, cacheControl: "public, max-age=300" });
+      using _ = server;
+      using proxy = await startProxy(server.port, `Cache-Control: ${added}`);
+      await setup(proxy.port);
+
+      await install("1.0.0");
+      await install("1.0.0");
+      expect(requests.map(request => [request.ifNoneMatch, request.status])).toStrictEqual([
+        [null, 200],
+        [etag, 304],
+      ]);
+    },
+  );
+
   // registry.npmjs.org sends the first. Verdaccio sends only an ETag.
   test.each(["public, max-age=300", "max-age=31536000, immutable", "public", "(absent)"])(
     "Cache-Control: %s lets the next install use the cached manifest",

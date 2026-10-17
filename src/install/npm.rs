@@ -697,7 +697,11 @@ pub mod registry {
 
     pub(crate) fn manifest_expiry(headers: &picohttp::HeaderList) -> u32 {
         let mut max_age = u64::from(MAX_MANIFEST_AGE);
-        for directive in strings::split(headers.get(b"cache-control").unwrap_or(b""), b",") {
+        // A proxy in front of the registry can add a line of its own.
+        let lines = (headers.list.iter()).filter(|line| {
+            strings::eql_case_insensitive_ascii(line.name(), b"cache-control", true)
+        });
+        for directive in lines.flat_map(|line| strings::split(line.value(), b",")) {
             let directive = directive.trim_ascii();
             if strings::eql_case_insensitive_ascii(directive, b"no-cache", true)
                 || strings::eql_case_insensitive_ascii(directive, b"no-store", true)

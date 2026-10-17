@@ -78,6 +78,7 @@ const withApp = (extra: PackageJson): Tree => ({
 });
 
 const survivorTree = withApp({ dependencies: { ...(appPackageJson.dependencies as object), other: "workspace:*" } });
+const devSurvivorTree = withApp({ devDependencies: { other: "workspace:*" } });
 const rootSurvivorTree: Tree = { ...monorepo, root: { ...rootPackageJson, dependencies: { other: "workspace:*" } } };
 const hookTree = withApp({ scripts: { postinstall: "echo ok" } });
 
@@ -700,6 +701,30 @@ describe.each(linkers)("linker: %s", linker => {
     expect(await lockText(packageDir)).toBe(full);
     expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
   });
+
+  // A production image leaves out workspaces that the others only need for development, such as a shared tsconfig.
+  test.concurrent.each(["--production", "--omit=dev"])(
+    "a survivor's devDependency on a pruned workspace passes with %s",
+    async flag => {
+      const { packageDir, full } = await verbatimScenario(linker, devSurvivorTree, survivors);
+
+      await passes(packageDir, linker, [...frozenInstall, flag], [prunedNote]);
+
+      expect(await lockText(packageDir)).toBe(full);
+      expect(await exists(installedPath(packageDir, linker, "a-dep", "1.0.1"))).toBeTrue();
+    },
+  );
+
+  test.concurrent(
+    "a survivor's devDependency on a pruned workspace fails if devDependencies are installed",
+    async () => {
+      const { packageDir, full } = await verbatimScenario(linker, devSurvivorTree, survivors);
+
+      await frozenFails(packageDir, linker, [survivorError("app"), survivorNote]);
+
+      expect(await lockText(packageDir)).toBe(full);
+    },
+  );
 
   test.concurrent(
     "a plain install reports a survivor depending on a missing workspace with the same error",

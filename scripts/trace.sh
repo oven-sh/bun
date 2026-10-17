@@ -35,3 +35,6 @@ export BUN_JSC_alwaysGeneratePCToCodeOriginMap=1
 
 echo "Tracing ${file_to_run}..."
 xcrun xctrace record --template "Allocations" -output . --launch -- "./${DEBUG_BUN}" $file_to_run
+# perf record -k 1 --sample-cpu -e cycles:u -j any --call-graph dwarf,16384 -F 499 -p (pgrep -f "${BUN}")
+
+# DEBUGINFOD_URLS="" perf inject --jit --input perf.data --output=perf.jit.data -v

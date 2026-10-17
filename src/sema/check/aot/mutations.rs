@@ -621,6 +621,14 @@ impl<'p, 's> Checker<'p, 's> {
         if self.files.module(file).builtin.is_some() {
             operand.is_untyped = false;
         }
+        if operand.is_untyped
+            && let Some((of, created)) = self.object_create_held_by(file, of_operand, 0)
+        {
+            if let Some(Ok(birth)) = self.record_born_by_object_create(of, created) {
+                self.add_object_types(birth.born_as, &mut operand);
+            }
+            operand.is_untyped = false;
+        }
         let types = operand.types;
         let kind = if operand.depends_on_type_parameter {
             Operand::DependsOnTypeParameter

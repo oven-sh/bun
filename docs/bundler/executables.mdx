@@ -913,7 +913,7 @@ What no longer works in such an executable, on top of the table above:
 | | otherwise | in an executable that runs only its own code |
 | --- | --- | --- |
 | `f.constructor("code")`, for any function `f` | makes a function | throws an `EvalError` |
-| `BUN_OPTIONS=--preload ./x.js`, `--import` or `--require`, or `preload` in a `bunfig.toml` that the executable reads | loads the file first | prints the `EvalError` and exits |
+| `BUN_OPTIONS=--preload ./x.js`, `--import` or `--require`, or `preload` in a `bunfig.toml` that the executable reads | loads the file first | prints that the file was not compiled into the executable, and exits |
 | `BUN_INSPECT` | starts the debugger | prints an error and exits |
 | `BUN_INSPECT_CONNECT_TO`, which editors set for every process in their terminals | connects to the editor | is ignored |
 | `inspector.open()` from `node:inspector`, `startRemoteDebugger()` from `bun:jsc` | starts the debugger | throws an `EvalError` |

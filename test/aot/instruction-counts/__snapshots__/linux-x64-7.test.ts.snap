@@ -176,10 +176,10 @@ untyped, module level: 1291.65 instructions (the runtime 1144.35, module 68.95, 
 `;
 
 exports[`lists the keys of an instance that has an undeclared property 1`] = `
-"typed, function: 498.67 instructions (the runtime 402.26, stub ColdOperationValue 59, kernel 32.16, stub ColdOperationValue to operationAOTTypedOwnPropertyKeys with arguments 3, stub ColdOperationValue to operationAOTTypedOwnPropertyKeys 2, elsewhere 0.13, module 0.12), 322 bytes
-typed, module level: 495.52 instructions (the runtime 402.26, stub ColdOperationValue 59, module 30.13, stub ColdOperationValue to operationAOTTypedOwnPropertyKeys 2, stub ColdOperationValue to operationAOTTypedOwnPropertyKeys with arguments 2, elsewhere 0.13), 1733 bytes
-untyped, function: 77.39 instructions (kernel 77.27, module 0.12), 880 bytes
-untyped, module level: 76.23 instructions (module 76.23), 2440 bytes"
+"typed, function: 57.28 instructions (kernel 57.16, module 0.12), 391 bytes
+typed, module level: 55.13 instructions (module 55.13), 1790 bytes
+untyped, function: 78.39 instructions (kernel 78.27, module 0.12), 948 bytes
+untyped, module level: 77.23 instructions (module 77.23), 2486 bytes"
 `;
 
 exports[`makes an instance of a class whose constructor stores four arrow functions on \`this\` 1`] = `

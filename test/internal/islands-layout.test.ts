@@ -3,15 +3,24 @@ import { tempDir } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  decodeTable,
+  encodeTable,
+  inTableOrder,
+  itemsOf,
   misplaced,
   pageSize,
+  placeKinds,
   rangesThatCanGo,
   readPlan,
+  runsOf,
+  tableRoom,
   wholePages,
   writePlan,
   type Layout,
   type Needs,
+  type Table,
 } from "../../scripts/build/islands-layout.ts";
+import { packageOf } from "./icu-data-package.ts";
 
 type Section = [size: number, neededBy: string | "stays", options?: { output?: string; gap?: number; alignment?: number }];
 
@@ -108,10 +117,10 @@ describe("the stretches of an executable that can go", () => {
 
   test("the largest runs are kept when there are too many", () => {
     const sections: Section[] = [];
-    for (let index = 0; index < 300; index++) sections.push([pageSize + index * 16, "tools"], [16, "stays"]);
+    for (let index = 0; index < 2100; index++) sections.push([pageSize + index * 16, "tools"], [16, "stays"]);
     const kept = rangesThatCanGo(laidOut(sections), laidOut(sections), isMovable);
-    expect(kept.length).toBe(256);
-    expect(Math.min(...kept.map(range => range.end - range.start))).toBe(pageSize + 44 * 16);
+    expect(kept.length).toBe(2048);
+    expect(Math.min(...kept.map(range => range.end - range.start))).toBe(pageSize + 52 * 16);
   });
 });
 
@@ -186,5 +195,370 @@ describe("a plan", () => {
     expect(readPlan(path, ["tools"])).toBeUndefined();
     expect(readPlan(join(String(dir), "none"), ["tools"])).toBeUndefined();
     expect(readPlan(undefined, ["tools"])).toBeUndefined();
+  });
+});
+
+describe("the table of islands", () => {
+  const small: Table = {
+    stub: 0x201234,
+    smallestDoor: { exit: 12, return: 8 },
+    features: ["tools", "jit", "text"],
+    conditions: [
+      { feature: "jit", kind: "world", name: "open" },
+      { feature: "text", kind: "world", name: "open" },
+      { feature: "text", kind: "Bun", name: "Transpiler" },
+    ],
+    islands: [
+      { start: 0x204000, end: 0x208000, features: "tools" },
+      { start: 0x208000, end: 0x20c010, features: "tools,jit" },
+      { start: 0x300000, end: 0x304000, features: "tools" },
+    ],
+    doors: [
+      { address: 0x201000, feature: "tools", whenShut: "exit" },
+      {
+        address: 0x201080,
+        feature: "tools",
+        whenShut: "exit",
+        places: [
+          { address: 0x201301, kind: placeKinds.add32 },
+          { address: 0x205001, kind: placeKinds.add32 },
+          { address: 0x400008, kind: placeKinds.add64 },
+        ],
+      },
+      { address: 0x201100, feature: "jit", whenShut: "return", places: [{ address: 0x201311, kind: placeKinds.add32 }] },
+      { address: 0x201200, feature: "text", whenShut: "exit" },
+    ],
+  };
+  const empty: Table = { stub: 0, smallestDoor: { exit: 0, return: 0 }, features: [], conditions: [], islands: [], doors: [] };
+  const header = Buffer.from("bun-islands 2\n");
+  const inItsRoom = (table: Buffer) => Buffer.concat([table, Buffer.alloc(tableRoom - table.length)]);
+
+  function large(features: number, stretches: number, doors: number): Table {
+    let seed = 1;
+    const below = (limit: number) => (seed = (seed * 48271) % 2147483647) % limit;
+    const names = Array.from({ length: features }, (_, index) => `feature${index}`);
+    const facts = Array.from({ length: features * 2 }, (_, index) => ({ kind: ["Bun", "global", "module", "native"][index % 4]!, name: `node:name${index}` }));
+    const sets = Array.from({ length: Math.ceil(stretches / 2) }, () => [...new Set(Array.from({ length: 1 + below(5) }, () => names[below(features)]!))].join(","));
+    let end = 0x200000;
+    let address = 0;
+    return {
+      stub: 0x7654321,
+      smallestDoor: { exit: 10, return: 3 },
+      features: names,
+      conditions: names.flatMap(feature => Array.from({ length: 4 }, () => ({ feature, ...facts[below(facts.length)]! }))),
+      islands: Array.from({ length: stretches }, (_, index) => {
+        const start = end + (below(10) === 0 ? 16384 * (1 + below(64)) : 0);
+        end = start + 8 * (1 + below(16384));
+        return { start, end, features: sets[index % sets.length]! };
+      }),
+      doors: Array.from({ length: doors }, (_, index) => {
+        if (index % Math.ceil(doors / features) === 0) address = 0;
+        const bits = [21, 14, 14, 14, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 4, 4, 4, 4][address === 0 ? 0 : below(20)]!;
+        address += (1 << bits) + below(127 << bits);
+        return { address, feature: names[Math.floor(index / Math.ceil(doors / features))]!, whenShut: "exit" };
+      }),
+    };
+  }
+
+  test("what is written is what is read, out of a room that is larger", () => {
+    expect(decodeTable(inItsRoom(encodeTable(small)))).toEqual(small);
+    expect(decodeTable(encodeTable(small))).toEqual(small);
+    const table = large(120, 1500, 6000);
+    expect(decodeTable(inItsRoom(encodeTable(table)))).toEqual(table);
+  });
+
+  test("these are the bytes that src/exe_islands/lib.rs is tested on", () => {
+    expect(encodeTable(small).toString("hex")).toBe(
+      "62756e2d69736c616e647320320a" +
+        "b4a480010c08" +
+        "0305746f6f6c73036a69740474657874" +
+        "0205776f726c640342756e" +
+        "0200046f70656e010a5472616e7370696c6572" +
+        "000100020001" +
+        "020100020001" +
+        "0380808101ff7f00008f800101f0ff3cff7f00" +
+        "0280a08001800100000180a280010180a4800100" +
+        "02" + "0102" + "88b08208" + "80d007" + "b980f607" + "0000" + "88b18208",
+    );
+  });
+
+  test("a table of nothing", () => {
+    expect(encodeTable(empty)).toEqual(Buffer.concat([header, Buffer.alloc(9)]));
+    expect(decodeTable(inItsRoom(encodeTable(empty)))).toEqual(empty);
+  });
+
+  test("conditions are read by feature, and a fact that several features wait for is written once", () => {
+    const conditions = [small.conditions[2]!, small.conditions[0]!, small.conditions[1]!];
+    expect(decodeTable(encodeTable({ ...small, conditions })).conditions).toEqual([conditions[1]!, conditions[0]!, conditions[2]!]);
+    expect(encodeTable(small).toString("latin1").split("open").length).toBe(2);
+  });
+
+  test("the largest numbers", () => {
+    const most = Number.MAX_SAFE_INTEGER;
+    const table: Table = {
+      stub: most,
+      smallestDoor: { exit: most, return: most },
+      features: ["all"],
+      conditions: [],
+      islands: [
+        { start: 0, end: 1, features: "all" },
+        { start: 1, end: most, features: "all" },
+      ],
+      doors: [
+        { address: 0, feature: "all", whenShut: "exit" },
+        { address: most, feature: "all", whenShut: "exit" },
+        { address: most, feature: "all", whenShut: "return" },
+      ],
+    };
+    expect(decodeTable(encodeTable(table))).toEqual(table);
+    for (const stub of [most + 1, -1, 0.5, NaN, Infinity]) expect(() => encodeTable({ ...empty, stub })).toThrow("the table cannot hold the number");
+    const withStub = (...number: number[]) => Buffer.concat([header, Buffer.from(number), Buffer.alloc(32)]);
+    expect(decodeTable(withStub(0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x0f)).stub).toBe(most);
+    expect(() => decodeTable(withStub(0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x10))).toThrow("the table is malformed");
+    const pastTheEnd = encodeTable({ ...table, islands: [{ start: most - 1, end: most, features: "all" }], doors: [] });
+    expect(decodeTable(pastTheEnd).islands[0]!.end).toBe(most);
+    pastTheEnd[pastTheEnd.indexOf(Buffer.from("feffffffffffff0f", "hex")) + 8] = 1;
+    expect(() => decodeTable(pastTheEnd)).toThrow("the table is malformed");
+  });
+
+  test("6,000 doors, 1,500 stretches and 120 features leave a third of the room", () => {
+    expect(encodeTable(large(120, 1500, 6000)).length).toBeLessThan((tableRoom * 2) / 3);
+  });
+
+  test("a table that does not fit is not written", () => {
+    const length = encodeTable(small).length;
+    expect(encodeTable(small, length).length).toBe(length);
+    expect(() => encodeTable(small, length - 1)).toThrow(`the table takes ${length} bytes and there is room for ${length - 1}`);
+    expect(() => encodeTable(large(120, 1500, 40000))).toThrow(`bytes and there is room for ${tableRoom}`);
+  });
+
+  test("the number of a door is its place in the table: by feature, those that exit first, by address", () => {
+    const shuffled = [small.doors[3]!, small.doors[1]!, small.doors[2]!, small.doors[0]!];
+    expect(inTableOrder(small.features, shuffled)).toEqual(small.doors);
+    expect(() => encodeTable({ ...small, doors: shuffled })).toThrow("the doors are not in the order of the table");
+    const both: Table["doors"] = [
+      { address: 9, feature: "jit", whenShut: "return" },
+      { address: 5, feature: "jit", whenShut: "return" },
+      { address: 7, feature: "jit", whenShut: "exit" },
+    ];
+    expect(inTableOrder(small.features, both).map(door => door.address)).toEqual([7, 5, 9]);
+  });
+
+  test("what the table cannot say is refused", () => {
+    expect(() => encodeTable({ ...small, doors: [{ address: 1, feature: "other", whenShut: "exit" }] })).toThrow("the table does not list other");
+    expect(() => encodeTable({ ...small, conditions: [{ feature: "other", kind: "Bun", name: "serve" }] })).toThrow("the table does not list other");
+    expect(() => encodeTable({ ...small, islands: [{ start: 1, end: 2, features: "tools,other" }] })).toThrow("the table does not list other");
+    expect(() => encodeTable({ ...small, islands: [{ start: 1, end: 2, features: "" }] })).toThrow("the table does not list");
+    expect(() => encodeTable({ ...small, islands: [{ start: 2, end: 2, features: "tools" }] })).toThrow("the table cannot hold the number -1");
+    expect(() => encodeTable({ ...small, islands: [small.islands[1]!, small.islands[0]!] })).toThrow("the table cannot hold the number");
+    expect(() => encodeTable({ ...small, islands: [small.islands[0]!, { ...small.islands[1]!, start: 0x207fff }] })).toThrow("the table cannot hold the number -1");
+  });
+
+  test("a table that is cut short, or followed by something, or names what it does not list, is malformed", () => {
+    const whole = encodeTable(small);
+    expect(() => decodeTable(Buffer.alloc(tableRoom))).toThrow("there is no table");
+    expect(() => decodeTable(Buffer.from("bun-islands 1\nstub 201234\n"))).toThrow("there is no table");
+    for (let length = header.length; length < whole.length; length++) expect(() => decodeTable(whole.subarray(0, length))).toThrow("the table is malformed");
+    expect(() => decodeTable(Buffer.concat([whole, Buffer.from([0, 0, 1])]))).toThrow("the table is malformed");
+    const changed = (at: number, byte: number) => {
+      const copy = Buffer.from(whole);
+      copy[at] = byte;
+      return copy;
+    };
+    const after = (hex: string) => whole.indexOf(Buffer.from(hex, "hex")) + hex.length / 2;
+    expect(() => decodeTable(changed(after("0342756e02"), 2))).toThrow("the table is malformed");
+    expect(() => decodeTable(changed(after("5472616e7370696c65720001"), 2))).toThrow("the table is malformed");
+    expect(() => decodeTable(changed(after("0001000200010201"), 3))).toThrow("the table is malformed");
+    expect(() => decodeTable(changed(after("0380808101ff7f"), 2))).toThrow("the table is malformed");
+    expect(() => decodeTable(changed(header.length + 6, 0xff))).toThrow("the table is malformed");
+    expect(() => decodeTable(Buffer.concat([header, Buffer.from([0x80, 0]), Buffer.alloc(32)]))).toThrow("the table is malformed");
+    const withSet = (set: string) => Buffer.concat([header, Buffer.from("000000" + "0103616c6c" + "000000" + "01" + set, "hex"), Buffer.alloc(32)]);
+    expect(decodeTable(withSet("0100")).features).toEqual(["all"]);
+    expect(() => decodeTable(withSet("00"))).toThrow("the table is malformed");
+  });
+
+  describe("ICU's data package", () => {
+    const packages = [
+      {
+        start: 0x400000,
+        end: 0x480010,
+        runs: [
+          { first: 2, count: 3, features: "tools" },
+          { first: 5, count: 1, features: "tools,jit" },
+          { first: 200, count: 300, features: "tools" },
+        ],
+      },
+    ];
+    const withRuns = (...runs: (typeof packages)[number]["runs"]) => ({ ...small, packages: [{ start: 1, end: 2, runs }] });
+
+    test("stands behind the doors; these are the bytes that src/exe_islands/lib.rs is tested on", () => {
+      const written = encodeTable({ ...small, packages });
+      expect(written.subarray(0, encodeTable(small).length)).toEqual(encodeTable(small));
+      expect(written.subarray(encodeTable(small).length).toString("hex")).toBe("01" + "80808002" + "908020" + "03" + "020200" + "000001" + "c201ab0200");
+      expect(decodeTable(inItsRoom(written))).toEqual({ ...small, packages });
+      expect(decodeTable(written)).toEqual({ ...small, packages });
+    });
+
+    test("a table without one is written as before", () => {
+      expect(encodeTable({ ...small, packages: [] })).toEqual(encodeTable(small));
+      expect(decodeTable(inItsRoom(encodeTable(small))).packages).toBeUndefined();
+    });
+
+    test("a set of features that only items wait for is listed with those of the islands", () => {
+      const waiting = [{ start: 16, end: 32, runs: [{ first: 0, count: 1, features: "jit,text" }] }];
+      expect(decodeTable(encodeTable({ ...small, packages: waiting })).packages).toEqual(waiting);
+      expect(decodeTable(encodeTable({ ...small, islands: [], packages: waiting })).packages).toEqual(waiting);
+    });
+
+    test("the largest numbers, two packages, no runs", () => {
+      const most = Number.MAX_SAFE_INTEGER;
+      const two = [
+        { start: 0, end: most, runs: [{ first: 0, count: most, features: "tools" }] },
+        { start: most, end: most, runs: [{ first: most - 1, count: 1, features: "jit" }] },
+        { start: 5, end: 6, runs: [] },
+      ];
+      expect(decodeTable(encodeTable({ ...small, packages: two })).packages).toEqual(two);
+    });
+
+    test("400 runs of items beside 6,000 doors, 1,500 stretches and 120 features leave a third of the room", () => {
+      const table = large(120, 1500, 6000);
+      const runs = Array.from({ length: 400 }, (_, index) => ({ first: index * 12, count: 1 + (index % 11), features: table.islands[index]!.features }));
+      const written = encodeTable({ ...table, packages: [{ start: 0x8000000, end: 0xa000000, runs }] });
+      expect(written.length).toBeLessThan((tableRoom * 2) / 3);
+      expect(decodeTable(written).packages![0]!.runs).toEqual(runs);
+    });
+
+    test("what the table cannot say is refused", () => {
+      expect(() => encodeTable(withRuns({ first: 0, count: 1, features: "other" }))).toThrow("the table does not list other");
+      expect(() => encodeTable(withRuns({ first: 0, count: 0, features: "tools" }))).toThrow("the table cannot hold the number -1");
+      expect(() => encodeTable(withRuns({ first: 0, count: 2, features: "tools" }, { first: 1, count: 1, features: "jit" }))).toThrow("the table cannot hold the number -1");
+      expect(() => encodeTable({ ...small, packages: [{ start: 2, end: 1, runs: [] }] })).toThrow("the table cannot hold the number -1");
+    });
+
+    test("one that is cut short, or names a set that is not listed, is malformed", () => {
+      const written = encodeTable({ ...small, packages });
+      for (let length = encodeTable(small).length + 1; length < written.length; length++) expect(() => decodeTable(written.subarray(0, length))).toThrow("the table is malformed");
+      const unlisted = Buffer.from(written);
+      unlisted[unlisted.length - 1] = 2;
+      expect(() => decodeTable(unlisted)).toThrow("the table is malformed");
+    });
+  });
+
+  describe("the places that hold the address of a thin door", () => {
+    const withPlaces = (...places: Table["doors"][number]["places"][]): Table => ({
+      ...small,
+      doors: small.doors.map(({ places: _, ...door }, index) => (places[index] === undefined ? door : { ...door, places: places[index] })),
+    });
+    const fat = encodeTable(withPlaces());
+    const withSection = (hex: string) => Buffer.concat([fat.subarray(0, -1), Buffer.from(hex, "hex")]);
+
+    test("a table without them ends in a zero, as the room does", () => {
+      expect(fat.at(-1)).toBe(0);
+      expect(decodeTable(fat).doors.every(door => door.places === undefined)).toBe(true);
+      expect(decodeTable(inItsRoom(fat.subarray(0, -1)))).toEqual(decodeTable(fat));
+      expect(encodeTable(withPlaces([], undefined, []))).toEqual(fat);
+    });
+
+    test("one place, forty places, every kind", () => {
+      const forty = Array.from({ length: 40 }, (_, index) => ({ address: 0x200000 + index * index * 4, kind: index % 7 }));
+      const table = withPlaces([{ address: 0, kind: placeKinds.pointer36 }], undefined, undefined, forty);
+      expect(decodeTable(encodeTable(table))).toEqual(table);
+      expect(Object.values(placeKinds)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    });
+
+    test("the largest address", () => {
+      const most = (Number.MAX_SAFE_INTEGER - 7) / 8;
+      const table = withPlaces([{ address: most, kind: placeKinds.pointer36 }]);
+      expect(decodeTable(encodeTable(table))).toEqual(table);
+      expect(() => encodeTable(withPlaces([{ address: most + 1, kind: placeKinds.add32 }]))).toThrow("the table cannot hold the number");
+    });
+
+    test("they ascend, and are of a kind that the writer knows", () => {
+      const [first, second] = [
+        { address: 16, kind: placeKinds.add32 },
+        { address: 32, kind: placeKinds.add64 },
+      ];
+      expect(decodeTable(encodeTable(withPlaces([first, second]))).doors[0]!.places).toEqual([first, second]);
+      expect(() => encodeTable(withPlaces([second, first]))).toThrow("the places of a door are not in ascending order");
+      expect(() => encodeTable(withPlaces([first, { ...first, kind: placeKinds.add64 }]))).toThrow("the places of a door are not in ascending order");
+      for (const kind of [7, -1, 0.5]) expect(() => encodeTable(withPlaces([{ address: 16, kind }]))).toThrow("the table knows no place of the kind");
+    });
+
+    test("a section that names no door, the same door twice, the same place twice or an unknown kind is malformed", () => {
+      expect(decodeTable(withSection("01" + "03" + "00" + "08")).doors[3]!.places).toEqual([{ address: 1, kind: placeKinds.add32 }]);
+      expect(() => decodeTable(withSection("01" + "04" + "00" + "08"))).toThrow("the table is malformed");
+      expect(decodeTable(withSection("02" + "02" + "00" + "08" + "00" + "00" + "08")).doors[3]!.places).toHaveLength(1);
+      expect(() => decodeTable(withSection("02" + "03" + "00" + "08" + "00" + "00" + "08"))).toThrow("the table is malformed");
+      expect(decodeTable(withSection("01" + "00" + "01" + "08" + "09")).doors[0]!.places).toHaveLength(2);
+      expect(() => decodeTable(withSection("01" + "00" + "01" + "08" + "01"))).toThrow("the table is malformed");
+      expect(() => decodeTable(withSection("01" + "00" + "00" + "0f"))).toThrow("the table is malformed");
+      expect(() => decodeTable(withSection("01" + "00" + "01" + "08"))).toThrow("the table is malformed");
+      expect(() => decodeTable(withSection("01" + "00" + "ffffffff0f" + "08"))).toThrow("the table is malformed");
+    });
+  });
+});
+
+describe("the items of ICU's data package", () => {
+  const claims = [
+    { feature: "tools", pattern: /\.cnv$/ },
+    { feature: "collation", pattern: /^coll\// },
+    { feature: "text", pattern: /^coll\/root\.res$/ },
+    { feature: "locales", pattern: /^(?!en\.res$)[a-z]{2,3}\.res$/ },
+  ];
+  const features = ["tools", "text", "collation", "locales"];
+  const named = (...names: string[]) => names.map(name => ({ name, size: 16 }));
+
+  test("its items are named behind the first slash; each ends where the next begins and the last where the package ends", () => {
+    const items: [string, number][] = [
+      ["icudt75l/af.res", 48],
+      ["icudt75l/coll/de.res", 40],
+      ["icudt75l/zoneinfo64.res", 33],
+    ];
+    expect(itemsOf(packageOf(items))).toEqual([
+      { name: "af.res", size: 48 },
+      { name: "coll/de.res", size: 48 },
+      { name: "zoneinfo64.res", size: 33 },
+    ]);
+    expect(itemsOf(packageOf(items, 144)).map(item => item.name)).toEqual(["af.res", "coll/de.res", "zoneinfo64.res"]);
+    expect(itemsOf(packageOf([]))).toEqual([]);
+  });
+
+  test("something else, or a package that is cut short, is refused", () => {
+    const whole = packageOf([
+      ["icudt75l/af.res", 48],
+      ["icudt75l/zu.res", 16],
+    ]);
+    const changed = (at: number, byte: number) => {
+      const copy = Buffer.from(whole);
+      copy[at] = byte;
+      return copy;
+    };
+    for (const other of [Buffer.alloc(0), Buffer.alloc(64), changed(2, 0), changed(8, 1), changed(12, 0x52), changed(16, 2), whole.subarray(0, 40), changed(32, 0xff), changed(32 + 4 + 3, 0xff), changed(32 + 8 + 3, 0xff)]) {
+      expect(() => itemsOf(other)).toThrow("ICU's data package is malformed");
+    }
+  });
+
+  test("items that lie together and wait for the same features are one run", () => {
+    expect(runsOf(named("af.res", "ar.res", "coll/de.res", "coll/fr.res", "de.res"), claims, features)).toEqual([
+      { first: 0, count: 2, features: "locales" },
+      { first: 2, count: 2, features: "collation" },
+      { first: 4, count: 1, features: "locales" },
+    ]);
+  });
+
+  test("an item that nothing claims is in no run, and ends one", () => {
+    expect(runsOf(named("de.res", "en.res", "es.res", "zoneinfo64.res"), claims, features)).toEqual([
+      { first: 0, count: 1, features: "locales" },
+      { first: 2, count: 1, features: "locales" },
+    ]);
+    expect(runsOf(named("en.res", "zoneinfo64.res"), claims, features)).toEqual([]);
+  });
+
+  test("an item that several features claim waits for all of them, named in the order of the features", () => {
+    expect(runsOf(named("coll/de.res", "coll/root.res", "coll/sv.res"), [...claims].reverse(), features)).toEqual([
+      { first: 0, count: 1, features: "collation" },
+      { first: 1, count: 1, features: "text,collation" },
+      { first: 2, count: 1, features: "collation" },
+    ]);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import { unsupported } from "../aot/run-programs";
@@ -71,7 +71,7 @@ describe.skipIf(!hasIslands || !!unsupported)("--compile --aot --compile-trim-ru
     );
     expect(built.stderr).not.toContain("error:");
     expect(built.exitCode).toBe(0);
-    return statSync(join(folder, outfile)).size;
+    return statSync(join(folder, outfile + (isWindows ? ".exe" : ""))).size;
   }
 
   test("a program that names none of them has none of them", async () => {

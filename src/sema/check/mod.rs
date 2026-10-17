@@ -246,6 +246,7 @@ pub struct Program<'s> {
     pub rule_scopes: std::sync::OnceLock<crate::aot_rules::Scopes>,
     pub compiled_untyped: Guarded<Vec<CompilerDiagnostic>>,
     pub uncompiled_runtime_sources: Guarded<Vec<FileId>>,
+    pub reads_of_any_property: Guarded<Vec<(FileId, u32)>>,
     /// `autoArrayType`
     auto_array_type: TypeId,
     /// See `Services::file_info`. Made when it is first asked for.
@@ -528,6 +529,7 @@ impl<'s> Program<'s> {
             rule_scopes: Default::default(),
             compiled_untyped: Default::default(),
             uncompiled_runtime_sources: Default::default(),
+            reads_of_any_property: Default::default(),
             auto_array_type,
             package_names_of_linked_files: Default::default(),
             types,
@@ -637,6 +639,7 @@ impl<'s> Program<'s> {
         *self.compiler_diagnostics.get_mut() = Default::default();
         *self.compiled_untyped.get_mut() = Default::default();
         *self.uncompiled_runtime_sources.get_mut() = Default::default();
+        *self.reads_of_any_property.get_mut() = Default::default();
         self.rule_scopes = Default::default();
         // SAFETY: the driver calls this once, as its last use of the program, and the arena that holds the program drops nothing.
         unsafe { core::mem::ManuallyDrop::drop(&mut self.aot) };

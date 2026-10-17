@@ -241,8 +241,7 @@ pub struct Module<'s> {
     pub is_runtime_commonjs: Option<bool>,
     pub loader_entry_points: &'s [hir::ExprId],
     pub file_loader_entry_points: &'s [hir::ExprId],
-    pub world_openings: std::sync::OnceLock<&'s [(hir::ExprId, &'static str)]>,
-    pub reached_world_openings: std::sync::atomic::AtomicU64,
+    pub compiled_functions: std::sync::OnceLock<CompiledFunctions<'s>>,
     /// No file refers to it, and it adds no globally visible declarations. So only the task that
     /// checks it reads its HIR, which is freed at the end of that task (`Files::free_tree`), and
     /// nothing that mentions one of its nodes is published.
@@ -251,6 +250,22 @@ pub struct Module<'s> {
     adds_nothing: bool,
     /// Whether it contains a conditional or a mapped type node.
     has_conditional_or_mapped_type: bool,
+}
+
+pub struct CompiledFunctions<'s> {
+    pub defined: &'s [u64],
+    pub reached: &'s [u64],
+    pub is_evaluated: bool,
+}
+
+impl CompiledFunctions<'_> {
+    pub fn is_defined(&self, function: hir::FnId) -> bool {
+        self.defined[function.idx() / 64] & 1 << (function.idx() % 64) != 0
+    }
+
+    pub fn is_reached(&self, function: hir::FnId) -> bool {
+        self.reached[function.idx() / 64] & 1 << (function.idx() % 64) != 0
+    }
 }
 
 /// A module in the list of all modules. In a cell for `Files::free_tree`.
@@ -7010,8 +7025,7 @@ impl<'s> Files<'s> {
             is_runtime_commonjs: host.is_runtime_commonjs(path),
             loader_entry_points: &[],
             file_loader_entry_points: &[],
-            world_openings: std::sync::OnceLock::new(),
-            reached_world_openings: std::sync::atomic::AtomicU64::new(u64::MAX),
+            compiled_functions: std::sync::OnceLock::new(),
             is_leaf: false,
             adds_nothing,
             has_conditional_or_mapped_type,
@@ -7127,8 +7141,7 @@ impl<'s> Files<'s> {
                 is_runtime_commonjs,
                 loader_entry_points,
                 file_loader_entry_points,
-                world_openings,
-                reached_world_openings: _,
+                compiled_functions,
             } = self.module(file);
             // Of a program that is compiled. Nothing of it is shared.
             if !decisions.is_empty()
@@ -7141,7 +7154,7 @@ impl<'s> Files<'s> {
                 || is_runtime_commonjs.is_some()
                 || !loader_entry_points.is_empty()
                 || !file_loader_entry_points.is_empty()
-                || world_openings.get().is_some()
+                || compiled_functions.get().is_some()
             {
                 return None;
             }

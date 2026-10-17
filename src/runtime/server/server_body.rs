@@ -825,7 +825,6 @@ impl AnyRoute {
                     return Ok(Some(AnyRoute::Directory(route)));
                 }
 
-                #[cfg(not(windows))]
                 {
                     unsafe extern "C" {
                         safe fn Bun__hasBundler() -> bool;

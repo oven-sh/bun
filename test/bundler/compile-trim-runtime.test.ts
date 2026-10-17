@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import { unsupported } from "../aot/run-programs";
+
+const sizeOf = (executable: string) => statSync(executable + (isWindows ? ".exe" : "")).size;
 
 async function run(cmd: string[], cwd: string, env: Record<string, string | undefined> = bunEnv) {
   await using child = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
@@ -130,7 +132,7 @@ describe.skipIf(!hasIslands)("--compile-trim-runtime", () => {
         const whole = await run([join(folder, `${program}-whole`)], folder, env);
         expect(await run([join(folder, `${program}-trimmed`)], folder, env)).toEqual(whole);
         expect(whole.exitCode).toBe(0);
-        const saved = statSync(join(folder, `${program}-whole`)).size - statSync(join(folder, `${program}-trimmed`)).size;
+        const saved = sizeOf(join(folder, `${program}-whole`)) - sizeOf(join(folder, `${program}-trimmed`));
         expect(saved).toBeGreaterThan(30_000_000);
       }
     });
@@ -180,7 +182,9 @@ describe.skipIf(!hasIslands)("--compile-trim-runtime", () => {
       const preloads = { ...bunEnv, BUN_OPTIONS: "--preload ./preloaded.js" };
       expect((await run([whole], folder, preloads)).stdout).toStartWith("preloaded\nmade 2\n");
       const refused = await run([trimmed], folder, preloads);
-      expect(refused.stderr).toContain(refusal);
+      expect(refused.stderr).toContain(
+        "preloaded.js': it was not compiled into this executable, which was built with --compile-trim-runtime and loads nothing else",
+      );
       expect(refused).toMatchObject({ stdout: "", exitCode: 1 });
       const inspected = await run([trimmed], folder, { ...bunEnv, BUN_INSPECT: "ws://127.0.0.1:0/trimmed" });
       expect(inspected.stderr).toContain(
@@ -195,7 +199,7 @@ describe.skipIf(!hasIslands)("--compile-trim-runtime", () => {
       using dir = tempDir("compile-trim-runtime-by-use", programs);
       const folder = String(dir);
       const without = { ...bunEnv, BUN_TRIM_RUNTIME_WITHOUT: "htmlrewriter" };
-      const size = (name: string) => statSync(join(folder, name)).size;
+      const size = (name: string) => sizeOf(join(folder, name));
       const { whole, trimmed } = await built("names-html-rewriter", folder);
       expect(await run([whole], folder)).toEqual({ stdout: '<p class="seen">hello</p>\n', stderr: "", exitCode: 0 });
       expect(await run([trimmed], folder)).toEqual({ stdout: '<p class="seen">hello</p>\n', stderr: "", exitCode: 0 });
@@ -246,6 +250,6 @@ describe.skipIf(!hasIslands)("--compile-trim-runtime", () => {
       exitCode: 0,
     });
     expect(await run([join(folder, "hello")], folder)).toMatchObject({ stdout: "hello world\n", exitCode: 0 });
-    expect(statSync(process.execPath).size - statSync(join(folder, "hello")).size).toBeGreaterThan(30_000_000);
+    expect(statSync(process.execPath).size - sizeOf(join(folder, "hello"))).toBeGreaterThan(30_000_000);
   });
 });

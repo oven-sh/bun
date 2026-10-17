@@ -1062,7 +1062,6 @@ impl ServerConfig {
                     if !bun_core::FeatureFlags::bake() {
                         break 'brk;
                     }
-                    #[cfg(not(windows))]
                     {
                         unsafe extern "C" {
                             safe fn Bun__hasBundler() -> bool;

@@ -1,6 +1,6 @@
 // Factory functions in the style of the TypeScript compiler: `new T(..)` on a predicted constructor, two calls deep, with the result cast to a subtype by the caller.
 // IR= 1 createResolved : Resolved\.[0-9]+ (frame [0-9]+ )?= NewObjectWithShape
-// IR= 0 createTracedResolved : (Resolved|ObjectTy)\.[0-9]+ (frame [0-9]+ )?= NewObjectWithShape
+// IR= 1 createTracedResolved : Resolved\.[0-9]+ (frame [0-9]+ )?= NewObjectWithShape
 // IR+ ConstructWith
 declare const console: any;
 interface Ty { flags: number; id: number; checker: number; sym: string | undefined }

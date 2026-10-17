@@ -1,0 +1,142 @@
+import { placeKinds, type Place, type Table, type TableDoor } from "../../scripts/build/islands-layout.ts";
+
+function refuse(why: string): never {
+  throw new Error(`refused: ${why}`);
+}
+
+const hex = (value: number) => "0x" + value.toString(16);
+const signExtended = (field: number, bits: number) => (field << (32 - bits)) >> (32 - bits);
+
+function asField(value: number, bits: number): number {
+  if (!Number.isInteger(value) || value < -(2 ** (bits - 1)) || value >= 2 ** (bits - 1)) refuse(`${value} does not fit ${bits} bits`);
+  return (value & (2 ** bits - 1)) >>> 0;
+}
+
+export function redirect(file: Buffer, offset: number, place: Place, door: number, stub: number): void {
+  const delta = stub - door;
+  const distanceTo = (target: number) => target - place.address;
+  const pagesTo = (target: number) => Math.floor(target / 4096) - Math.floor(place.address / 4096);
+  const instruction = (mask: number, opcode: number) => {
+    const word = file.readUInt32LE(offset);
+    if ((word & mask) >>> 0 !== opcode) refuse(`${hex(word)} at ${hex(place.address)} is not the instruction of kind ${place.kind}`);
+    return word;
+  };
+  const pointsAtTheDoor = (holds: boolean) => holds || refuse(`the field at ${hex(place.address)} does not point at ${hex(door)}`);
+  const write = (word: number) => void file.writeUInt32LE(word >>> 0, offset);
+  switch (place.kind) {
+    case placeKinds.add32: {
+      const value = file.readInt32LE(offset) + delta;
+      if (value < -(2 ** 31) || value >= 2 ** 31) refuse(`${value} does not fit 32 bits`);
+      file.writeInt32LE(value, offset);
+      return;
+    }
+    case placeKinds.add64: {
+      const value = file.readBigUInt64LE(offset) + BigInt(delta);
+      if (value < 0n || value >= 1n << 64n) refuse(`${value} does not fit 64 bits`);
+      file.writeBigUInt64LE(value, offset);
+      return;
+    }
+    case placeKinds.pointer36: {
+      const value = file.readBigUInt64LE(offset);
+      const target = (value & 0xfffffffffn) + BigInt(delta);
+      if (value >> 63n !== 0n) refuse(`the pointer at ${hex(place.address)} is bound by name`);
+      if (target < 0n || target > 0xfffffffffn) refuse(`${target} does not fit 36 bits`);
+      file.writeBigUInt64LE((value & ~0xfffffffffn) | target, offset);
+      return;
+    }
+    case placeKinds.branch26: {
+      const word = instruction(0x7c000000, 0x14000000);
+      pointsAtTheDoor(signExtended(word, 26) * 4 === distanceTo(door));
+      return write((word & 0xfc000000) | asField(distanceTo(stub) / 4, 26));
+    }
+    case placeKinds.page21:
+    case placeKinds.adr21: {
+      const isPage = place.kind === placeKinds.page21;
+      const immediateFor = isPage ? pagesTo : distanceTo;
+      const word = instruction(0x9f000000, isPage ? 0x90000000 : 0x10000000);
+      pointsAtTheDoor(signExtended((((word >>> 5) & 0x7ffff) << 2) | ((word >>> 29) & 3), 21) === immediateFor(door));
+      const immediate = asField(immediateFor(stub), 21);
+      return write((word & 0x9f00001f) | ((immediate & 3) << 29) | ((immediate >>> 2) << 5));
+    }
+    case placeKinds.low12: {
+      const word = instruction(0xffc00000, 0x91000000);
+      pointsAtTheDoor(((word >>> 10) & 0xfff) === door % 4096);
+      return write((word & 0xffc003ff) | ((stub % 4096) << 10));
+    }
+    default:
+      refuse(`no place is of the kind ${place.kind}`);
+  }
+}
+
+export function shutDoors(file: Buffer, table: Table, excluded: string[], isArm64: boolean): Buffer {
+  const out = Buffer.from(file);
+  for (const feature of excluded) if (!table.features.includes(feature)) refuse(`there is no feature ${feature}`);
+  const firstHeader = Number(out.readBigUInt64LE(0x20));
+  const segments = Array.from({ length: out.readUInt16LE(0x38) }, (_, index) => firstHeader + index * out.readUInt16LE(0x36))
+    .filter(at => out.readUInt32LE(at) === 1)
+    .map(at => ({
+      isCode: (out.readUInt32LE(at + 4) & 1) !== 0,
+      offset: Number(out.readBigUInt64LE(at + 8)),
+      address: Number(out.readBigUInt64LE(at + 16)),
+      size: Number(out.readBigUInt64LE(at + 32)),
+    }));
+  const segmentOf = (address: number) =>
+    segments.find(segment => address >= segment.address && address - segment.address < segment.size) ?? refuse(`nothing in the file is loaded at ${hex(address)}`);
+  const offsetOf = (address: number) => segmentOf(address).offset + address - segmentOf(address).address;
+
+  const dead: { start: number; end: number }[] = [];
+  for (const { start, end, features } of [...table.islands].sort((a, b) => a.start - b.start)) {
+    if (!features.split(",").every(feature => excluded.includes(feature))) continue;
+    const last = dead.at(-1);
+    if (last !== undefined && start <= last.end) last.end = Math.max(last.end, end);
+    else dead.push({ start, end });
+  }
+  const isDead = (address: number) => dead.some(({ start, end }) => start <= address && address < end);
+  const trap = isArm64 ? [0x20, 0x00, 0x20, 0xd4] : [0xcc];
+  for (const { start, end } of dead) out.fill(Buffer.from(trap), offsetOf(start), offsetOf(start) + end - start);
+
+  const stubSize = (door: TableDoor) => (isArm64 ? (door.whenShut === "exit" ? 12 : 8) : door.whenShut === "exit" ? 10 : 3);
+  const layStub = (at: number, number: number, door: TableDoor) => {
+    const doorAndFeature = table.features.indexOf(door.feature) + number * 256;
+    const code = Buffer.alloc(stubSize(door));
+    if (isArm64 && door.whenShut === "exit") {
+      code.writeUInt32LE((0x52800000 | ((doorAndFeature & 0xffff) << 5)) >>> 0, 0);
+      code.writeUInt32LE((0x72a00000 | ((doorAndFeature >>> 16) << 5)) >>> 0, 4);
+      code.writeUInt32LE((0x14000000 | asField(Math.trunc((table.stub - (at + 8)) / 4), 26)) >>> 0, 8);
+    } else if (isArm64) {
+      code.writeUInt32LE(0x52800000, 0);
+      code.writeUInt32LE(0xd65f03c0, 4);
+    } else if (door.whenShut === "exit") {
+      code[0] = 0xbf;
+      code.writeUInt32LE(doorAndFeature, 1);
+      code[5] = 0xe9;
+      code.writeInt32LE(table.stub - (at + 10), 6);
+    } else code.set([0x31, 0xc0, 0xc3]);
+    code.copy(out, offsetOf(at));
+  };
+
+  const shut = table.doors.map((door, number) => ({ door, number })).filter(({ door }) => excluded.includes(door.feature));
+  const thin = shut.filter(({ door }) => door.places?.length);
+  const exitStubs = thin.filter(({ door }) => door.whenShut === "exit").reduce((sum, { door }) => sum + stubSize(door), 0);
+  const returnStub = thin.find(({ door }) => door.whenShut === "return");
+  const length = exitStubs + (returnStub === undefined ? 0 : stubSize(returnStub.door));
+  if (length > 0) {
+    const strip = dead
+      .map(({ start, end }) => ({ start: Math.ceil(start / 4) * 4, end }))
+      .find(({ start, end }) => start + length <= end && segmentOf(start).isCode && start + length - segmentOf(start).address <= segmentOf(start).size);
+    if (strip === undefined) refuse(`no dead code holds a strip of ${length} bytes`);
+    let nextExitStub = strip.start;
+    for (const { door, number } of thin) {
+      const at = door.whenShut === "exit" ? nextExitStub : strip.start + exitStubs;
+      if (door.whenShut === "exit") nextExitStub += stubSize(door);
+      layStub(at, number, door);
+      for (const place of door.places!) if (!isDead(place.address)) redirect(out, offsetOf(place.address), place, door.address, at);
+    }
+  }
+  for (const { door, number } of shut) {
+    if (door.places?.length || isDead(door.address)) continue;
+    if (stubSize(door) > table.smallestDoor[door.whenShut]) refuse(`the door at ${hex(door.address)} may be too small for its stub`);
+    layStub(door.address, number, door);
+  }
+  return out;
+}

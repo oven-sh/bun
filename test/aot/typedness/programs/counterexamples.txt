@@ -208,7 +208,7 @@ sloppy-delete-of-name: 0 layouts, 0 given, 0 open, places 0 of 8, reads 0 of 0
 sloppy-legacy-octal-literals: 0 layouts, 0 given, 0 open, places 0 of 8, reads 0 of 0
 sloppy-reserved-word-names: 0 layouts, 1 given, 0 open, places 0 of 8, reads 0 of 1
 small-untyped-objects-vs-larger-type: 3 layouts, 0 given, 4 open, places 20 of 38, reads 4 of 21
-spread-inherits-required-member: 2 layouts, 0 given, 3 open, places 7 of 16, reads 2 of 7
+spread-inherits-required-member: 0 layouts, 3 given, 0 open, places 4 of 13, reads 0 of 8
 spread-into-any-holding-literal: 2 layouts, 0 given, 2 open, places 4 of 12, reads 0 of 5
 spread-literal-for-intersection-parameter: 3 layouts, 1 given, 3 open, places 75 of 104, reads 2 of 16
 spread-literal-satisfies: 8 layouts, 0 given, 3 open, places 157 of 174, reads 6 of 10

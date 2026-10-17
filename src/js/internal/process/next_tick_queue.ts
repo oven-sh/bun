@@ -72,7 +72,7 @@ function listOf(...list: unknown[]): unknown[] {
   return list;
 }
 
-function callWithAnyArguments(callback, args) {
+function callWithAnyArguments(callback: any, args: any): unknown {
   switch (args.length) {
     case 1:
       return callback(args[0]);

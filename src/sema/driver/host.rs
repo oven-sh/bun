@@ -2302,7 +2302,7 @@ impl Host for Disk {
     fn program_is_compiled(&self, program: &bun_sema::check::Program<'_>) {
         let Some(compiled) = &self.compiled else { return };
         if let Some(found) = compiled.builtin_modules.lock().as_mut() {
-            crate::builtins::keep_what_the_compiled_program_reaches(found, program);
+            crate::builtins::keep_what_the_compiled_program_reaches(found, program, &|count, work| self.parallel(count, work));
         }
     }
     fn is_runtime_commonjs(&self, path: &[u8]) -> Option<bool> {

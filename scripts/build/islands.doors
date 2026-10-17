@@ -22,7 +22,7 @@ when text Bun plugin
 when text module bun:test
 when text native bun:test
 when text module bun:internal-for-testing
-smallest text 3000000
+smallest text 2000000
 door text return ^Bun__loadsModulesAtRunTime$
 door text exit ^Bun__transpileVirtualModule$
 door text exit ^Bun__AOT__functionSourceInFile$
@@ -54,7 +54,7 @@ door text exit ^Bun::jsInternalModuleBytecode\(
 feature bundler Bun.build, HTML imports and the development server
 when bundler Bun build
 when bundler loader html
-smallest bundler 1500000
+smallest bundler 1000000
 door bundler return ^Bun__hasBundler$
 door bundler exit ^<*bun_runtime::bake::(?!dev_server::http::(is_allowed_|host_without_port))
 door bundler exit ^<*bun_runtime::server::html_bundle::
@@ -69,7 +69,7 @@ when color Bun color
 door color exit ^BunObject_callback_color$
 feature htmlrewriter HTMLRewriter
 when htmlrewriter global HTMLRewriter
-smallest htmlrewriter 200000
+smallest htmlrewriter 100000
 door htmlrewriter exit ^<?<?bun_runtime::api::html_rewriter::
 door htmlrewriter exit ^core::ptr::drop_glue::<(alloc::boxed::Box<)?bun_runtime::api::html_rewriter::
 door htmlrewriter exit ^Bun__HTMLRewriter__
@@ -79,7 +79,7 @@ door htmlrewriter exit ^WebCore::JS(HTMLRewriter|HTMLRewriterTransform|TextChunk
 feature image Bun.Image
 when image Bun Image
 when image property image
-smallest image 300000
+smallest image 200000
 door image exit ^<*bun_runtime::image::
 door image exit ^BunObject_lazyPropCb_wrap_Image\(
 door image exit ^BlobPrototype__doImage$
@@ -87,6 +87,7 @@ door image exit ^WebCore::JSImage::(create(Prototype|Structure|Constructor)|dest
 feature sqlite bun:sqlite and node:sqlite
 when sqlite module bun:sqlite
 when sqlite module node:sqlite
+when sqlite native node:sqlite
 when sqlite native JSSQLStatement.cpp:createJSSQLStatementConstructor
 when sqlite loader sqlite
 when sqlite loader sqlite_embedded
@@ -101,11 +102,11 @@ feature webassembly WebAssembly
 when webassembly global WebAssembly
 when webassembly module node:wasi
 when webassembly loader wasm
-smallest webassembly 300000
+smallest webassembly 200000
 door webassembly exit ^JSC::createWebAssemblyProperty\(
 door webassembly exit ^JSC::(JS)?WebAssembly(?!StreamingContext::createStructure|Instance::destroy)\w*::
 door webassembly exit ^JSC::webAssembly\w+\(
-door webassembly exit ^JSC::Wasm::(?!(RTT|RecursionGroup|Subtype|Projection|TypeInformation|TypeSectionState)::|Tag::jsExceptionTag|Thunks::(initialize|singleton)|CodeInImage::(isInProcess|compile|layOut)|(prepare|activate)SignalingMemory|startTrackingCurrentThread|existingWorklistOrNull|trapHandler|Memory::addressIsInGrowableOrFastMemory|(wasm|js)CallingConvention\()(?!BBQ|OMG|OSREntryPlan|parseAndCompile(BBQ|OMG)|FunctionParser<JSC::Wasm::(BBQ|OMG)|(callPolymorphicCallee|materializeBaselineData|throwExceptionFromOMGThunk|crashDueTo(BBQ|OMG)StackOverflow|triggerOMGEntryTierUpThunk)Generator|ByteLoopIdiom|emit[A-Z]|Inlining|MergedProfile|CompilationContext|triggerOMG|shouldTriggerOMG|OpcodeOrigin|loadValuesIntoBuffer|doOSREntry|buildEntryBufferForCatch|InternalFunction|ModuleForImage|StorageType|toB3Type|maxAcceptableOffsetForNullReference|prepareForTailCallImpl)
+door webassembly exit ^JSC::Wasm::(?!(RTT\w*|RecursionGroup|Subtype|Projection|TypeInformation|TypeSectionState|Canonical\w+|GroupLookup|SingletonSelfRef|FieldType|StorageType|StructFieldEntry|TypeSlot)::|(encodeRef|hashEncodedRef|hashType|hashFieldType|equalTypes|equalFieldTypes|isRefWithRecursiveReference|breakCyclesForReclamation)\(|\w+[*&]+ |Tag::|Thunks::(initialize|singleton)|CodeInImage::(isInProcess|compile|layOut)|(prepare|activate)SignalingMemory|startTrackingCurrentThread|existingWorklistOrNull|trapHandler|Memory::addressIsInGrowableOrFastMemory|(wasm|js)CallingConvention\()(?!BBQ|OMG|OSREntryPlan|parseAndCompile(BBQ|OMG)|FunctionParser<JSC::Wasm::(BBQ|OMG)|(callPolymorphicCallee|materializeBaselineData|throwExceptionFromOMGThunk|crashDueTo(BBQ|OMG)StackOverflow|triggerOMGEntryTierUpThunk)Generator|ByteLoopIdiom|emit[A-Z]|Inlining|MergedProfile|CompilationContext|triggerOMG|shouldTriggerOMG|OpcodeOrigin|loadValuesIntoBuffer|doOSREntry|buildEntryBufferForCatch|InternalFunction|ModuleForImage|StorageType|toB3Type|maxAcceptableOffsetForNullReference|prepareForTailCallImpl)
 door webassembly exit ^JSC::Wasm::RTT::(emitJSToWasmICEntrypoint|jsToWasmICEntrypoint)\(
 door webassembly exit ^void JSC::WebAssemblyGCStructure::visitAdditionalChildren<
 door webassembly exit ^JSC::IPInt::(?!initialize|verifyInitialization)
@@ -263,7 +264,7 @@ door napi exit ^v8::shim::GlobalInternals\* JSC::LazyProperty<
 feature ffi bun:ffi and its C compiler
 when ffi module bun:ffi
 when ffi Bun FFI
-smallest ffi 100000
+smallest ffi 20000
 door ffi exit ^BunObject_lazyPropCb_(wrap_)?FFI\b
 door ffi exit ^JS2Rust___src_runtime_ffi_
 door ffi exit ^<*bun_runtime::ffi::
@@ -313,6 +314,34 @@ door intl exit ^JSC::Intl(DisplayNames|ListFormat(?!::formatToParts)|Locale|Plur
 door intl exit ^JSC::intl(DisplayNames|ListFormat|Locale|PluralRules|RelativeTimeFormat|Segmenter|Segments|SegmentIterator)\w*\(
 door intl exit ^JSC::(construct|call)Intl(DisplayNames|ListFormat|Locale|PluralRules|RelativeTimeFormat|Segmenter)\(
 door intl exit ^JSC::intlObjectFunc
+data tools \.(cnv|spp|cfu)$
+data tools ^(cnvalias|unames)\.icu$
+data tools ^translit/
+data text ^coll/(ucadata\.icu|(res_index|root|en|en_US)\.res)$
+data bundler ^coll/(ucadata\.icu|(res_index|root|en|en_US)\.res)$
+data intl ^brkitr/
+feature collation Intl.Collator and localeCompare
+when collation global Intl
+when collation property localeCompare
+smallest collation 0
+door collation exit ^JSC::IntlCollator::initializeCollator\(
+data collation ^coll/
+feature units units in Intl.NumberFormat, Intl.DurationFormat and toLocaleString
+when units global Intl
+when units property toLocaleString
+data units ^unit/
+data units ^(units|grammaticalFeatures)\.res$
+feature formatting Intl.NumberFormat, Intl.DateTimeFormat, toLocaleString, toLocaleDateString and toLocaleTimeString
+when formatting global Intl
+when formatting property toLocaleString
+when formatting property toLocaleDateString
+when formatting property toLocaleTimeString
+smallest formatting 0
+door formatting exit ^JSC::Intl(NumberFormat::initializeNumberFormat|DateTimeFormat::initializeDateTimeFormat)\(
+data formatting ^(curr|lang|region|rbnf)/
+data formatting ^zone/(?!(root|pool|en)\.res$)
+data formatting ^(?!(en|en_US|res_index)\.res$)[a-z]{2,3}(_[A-Za-z0-9]+)*\.res$
+data formatting ^(currencyNumericCodes|dayPeriods|genderList|plurals|pluralRanges)\.res$
 feature nodequic node:quic
 smallest nodequic 0
 when nodequic module node:quic
@@ -510,6 +539,8 @@ when x509 native postgres.rs:createBinding
 when x509 native mysql.rs:createBinding
 when x509 Bun s3
 when x509 Bun S3Client
+when x509 Bun file
+when x509 Bun write
 when x509 module node:quic
 when x509 native node_quic_binding.rs:createNodeQuicBinding
 door x509 exit ^(i2d_X509|PEM_write_bio_PUBKEY|PEM_write_bio_PKCS8PrivateKey)$
@@ -541,6 +572,8 @@ when tls native postgres.rs:createBinding
 when tls native mysql.rs:createBinding
 when tls Bun s3
 when tls Bun S3Client
+when tls Bun file
+when tls Bun write
 when tls module node:quic
 when tls native node_quic_binding.rs:createNodeQuicBinding
 door tls return ^us_internal_ssl_detach$

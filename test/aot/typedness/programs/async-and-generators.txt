@@ -59,4 +59,4 @@ using-and-await-using: 2 layouts, 0 given, 0 open, places 29 of 52, reads 3 of 3
 values-held-by-suspended-async: 8 layouts, 0 given, 3 open, places 240 of 286, reads 37 of 59
 values-live-across-calls-between-awaits: 0 layouts, 0 given, 1 open, places 43 of 58, reads 6 of 9
 yield-star-forwarding: 3 layouts, 0 given, 7 open, places 84 of 131, reads 4 of 72
-yielded-and-returned-thenables: 10 layouts, 0 given, 7 open, places 121 of 198, reads 11 of 55
+yielded-and-returned-thenables: 10 layouts, 0 given, 8 open, places 121 of 198, reads 11 of 53

@@ -9,7 +9,7 @@ use bun_sema::atom::Atom;
 use bun_sema::check::task::Finished;
 use bun_sema::check::{SubtypeAnswer, Checker, CompilerDiagnostic, ConstantSymbol, FieldKey, Identity, Int32Verdict, KindsDeclared, MethodStore, FlowNotes, NumberFlow, Program as Checked, SubtypeQuery, ReplacedMethods, compute_ecma_line_starts, expected_int32};
 use bun_sema::hir::{self, ClassId, Flags, StmtKind};
-use bun_sema::program::{Builtin, FileId, LoadedBy};
+use bun_sema::program::{Builtin, CompiledFunctions, FileId, LoadedBy};
 use bun_sema::resolve::get_relative_path_from_directory;
 use bun_sema::types::TypeId;
 use bun_sema::util::{InParallel, for_each_mut};
@@ -27,6 +27,7 @@ mod exports;
 mod by_name;
 mod costs;
 mod interpreted;
+mod keys;
 mod nullish;
 mod reads;
 mod reuse;
@@ -3029,31 +3030,32 @@ fn link_with_helper_threads<'scope>(
     }
     remove_unreached_parts(&mut fragments, &mut index.outline, &reach, in_parallel);
     {
-        let c = checked.checker();
-        for fragment in fragments.iter().filter(|fragment| fragment.file != NO_FILE) {
-            let file = fragment.file;
-            let Some(&openings) = checked.files.module(file).world_openings.get() else { continue };
-            let hir = checked.files.hir(file);
-            let mut reached_openings = 0u64;
-            for (number, &(place, _)) in openings.iter().enumerate() {
-                if place.is_some() && checked.files.enclosing_dead_range_start(file, hir[place].pos).is_some() {
-                    continue;
-                }
-                let mut holder = if place.is_none() { None } else { c.enclosing_fn_of_expr(file, place) };
-                while let Some(member) = holder.filter(|&member| matches!(hir[member].kind, hir::FnKind::Method | hir::FnKind::Getter | hir::FnKind::Setter) && hir[place].pos < hir[member].anchor) {
-                    holder = checked.files.bound(file).fns[member.idx()].enclosing.some();
-                }
-                let holds = |function: &crate::fragment::Function| match function.key {
-                    FuncKey::Function(_, held) | FuncKey::TypedBody(_, held) | FuncKey::GenericEntrypoint(_, held) => holder == Some(held),
-                    FuncKey::UntypedClone(_, held, root) => holder == Some(held) || holder == Some(root),
-                    _ => holder.is_none(),
+        let mut of_files: Vec<Option<(Vec<u64>, Vec<u64>, bool)>> = checked.files.modules.iter().map(|_| None).collect();
+        for fragment in &fragments {
+            for (function, &id) in fragment.funcs.iter().zip(&fragment.program_ids.funcs).filter(|it| it.0.body.is_some() && it.0.key.file() != NO_FILE) {
+                let file = function.key.file();
+                let (defined, reached, is_evaluated) = of_files[file.idx()].get_or_insert_with(|| {
+                    let words = checked.files.hir(file).fns.len().div_ceil(64);
+                    (vec![0; words], vec![0; words], false)
+                });
+                let has_body = reach.has(id, reached::BODY);
+                let held = match function.key {
+                    FuncKey::Function(_, held) | FuncKey::TypedBody(_, held) | FuncKey::GenericEntrypoint(_, held) => [held, held],
+                    FuncKey::UntypedClone(_, held, root) => [held, root],
+                    _ => {
+                        *is_evaluated |= has_body;
+                        continue;
+                    }
                 };
-                let holding: Vec<usize> = fragment.funcs.iter().enumerate().filter(|it| holds(it.1)).map(|it| it.0).collect();
-                if holding.is_empty() || holding.iter().any(|&index| reach.has(fragment.program_ids.funcs[index], reached::IS_REACHED)) {
-                    reached_openings |= 1 << number.min(63);
+                for held in held {
+                    defined[held.idx() / 64] |= 1 << (held.idx() % 64);
+                    reached[held.idx() / 64] |= u64::from(has_body) << (held.idx() % 64);
                 }
             }
-            checked.files.module(file).reached_world_openings.store(reached_openings, Ordering::Relaxed);
+        }
+        let arena = checked.session.arena();
+        for (module, (defined, reached, is_evaluated)) in checked.files.modules.iter().zip(of_files).filter_map(|it| Some((it.0, it.1?))) {
+            _ = module.compiled_functions.set(CompiledFunctions { defined: arena.alloc_slice_copy(&defined), reached: arena.alloc_slice_copy(&reached), is_evaluated });
         }
     }
     let is_record = |by: ReferencedBy| matches!(by, ReferencedBy::Layout(at) if matches!(fragments[at.fragment as usize].layouts[at.index as usize].key, LayoutKey::Record(_)));
@@ -4237,6 +4239,7 @@ fn link_with_helper_threads<'scope>(
     since = Instant::now();
     let typedness = typedness::measure(&program, &is_runtime_layout, &modules, checked, in_parallel);
     times.add("typedness", &mut since);
+    *checked.reads_of_any_property.lock() = keys::reads_of_any_property(&program, &modules, in_parallel);
     let failure_check = Some(FailureCheck { setup: setup_of_what_always_fails, modules });
     Linked { program, problems, members, explained, errors, skipped_builtin_modules, skipped_builtin_functions, found, typedness, times, failure_check }
 }

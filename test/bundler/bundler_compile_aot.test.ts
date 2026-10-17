@@ -2045,7 +2045,7 @@ test("--cpu-prof attributes native time to the calling function", async () => {
         return total;
       }
       const chosen = [busy, Math.max][process.argv.length > 99 ? 1 : 0]!;
-      console.log(chosen(6000, 1) + chosen(6000, 2) !== 0);
+      console.log(chosen(20000, 1) + chosen(20000, 2) !== 0);
     `,
   });
   const outfile = join(String(dir), "entry");

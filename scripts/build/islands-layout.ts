@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
 export const pageSize = 16384;
-const mostStretches = 256;
+const mostStretches = 2048;
 const mostHoles = 48;
 
 export interface Layout {
@@ -113,4 +113,274 @@ export function wholePages(ranges: Range[]): number {
     .sort((a, b) => b - a)
     .slice(0, mostHoles)
     .reduce((sum, bytes) => sum + bytes, 0);
+}
+
+export const tableRoom = 49152;
+const tableHeader = "bun-islands 2\n";
+
+export const placeKinds = { add32: 0, add64: 1, branch26: 2, page21: 3, low12: 4, adr21: 5, pointer36: 6 } as const;
+
+const isPlaceKind = (kind: number) => Object.values<number>(placeKinds).includes(kind);
+
+export interface Place {
+  address: number;
+  kind: number;
+}
+
+export interface TableDoor {
+  address: number;
+  feature: string;
+  whenShut: "exit" | "return";
+  places?: Place[];
+}
+
+export interface ItemRun {
+  first: number;
+  count: number;
+  features: string;
+}
+
+export interface DataPackage {
+  start: number;
+  end: number;
+  runs: ItemRun[];
+}
+
+export interface Table {
+  stub: number;
+  smallestDoor: { exit: number; return: number };
+  features: string[];
+  conditions: { feature: string; kind: string; name: string }[];
+  islands: Range[];
+  doors: TableDoor[];
+  packages?: DataPackage[];
+}
+
+export function inTableOrder<D extends TableDoor>(features: string[], doors: D[]): D[] {
+  const rank = (door: D) => features.indexOf(door.feature) * 2 + (door.whenShut === "exit" ? 0 : 1);
+  return [...doors].sort((a, b) => rank(a) - rank(b) || a.address - b.address);
+}
+
+export function encodeTable(table: Table, room = tableRoom): Buffer {
+  const bytes: number[] = [...Buffer.from(tableHeader)];
+  const number = (value: number) => {
+    if (!Number.isSafeInteger(value) || value < 0) throw new Error(`the table cannot hold the number ${value}`);
+    for (; value >= 128; value = Math.floor(value / 128)) bytes.push((value % 128) + 128);
+    bytes.push(value);
+  };
+  const text = (value: string) => {
+    const encoded = Buffer.from(value);
+    number(encoded.length);
+    bytes.push(...encoded);
+  };
+  const list = <T>(items: T[], write: (item: T) => void) => {
+    number(items.length);
+    items.forEach(write);
+  };
+  const indexIn = (items: string[], item: string) => {
+    const index = items.indexOf(item);
+    if (index < 0) throw new Error(`the table does not list ${item}`);
+    number(index);
+  };
+  const ascending = (addresses: number[]) => {
+    let last = 0;
+    for (const address of addresses) {
+      number(address - last);
+      last = address;
+    }
+  };
+  const distinct = (items: string[]) => [...new Set(items)];
+  const spell = (fact: { kind: string; name: string }) => `${fact.kind} ${fact.name}`;
+  const kinds = distinct(table.conditions.map(condition => condition.kind));
+  const facts = distinct(table.conditions.map(spell));
+  const packages = table.packages ?? [];
+  const sets = distinct([...table.islands, ...packages.flatMap(dataPackage => dataPackage.runs)].map(({ features }) => features));
+  for (const { feature } of [...table.conditions, ...table.doors]) if (!table.features.includes(feature)) throw new Error(`the table does not list ${feature}`);
+  if (inTableOrder(table.features, table.doors).some((door, index) => door !== table.doors[index])) throw new Error("the doors are not in the order of the table");
+
+  number(table.stub);
+  number(table.smallestDoor.exit);
+  number(table.smallestDoor.return);
+  list(table.features, text);
+  list(kinds, text);
+  list(facts, fact => {
+    const kind = fact.slice(0, fact.indexOf(" "));
+    indexIn(kinds, kind);
+    text(fact.slice(kind.length + 1));
+  });
+  for (const feature of table.features) {
+    list(
+      table.conditions.filter(condition => condition.feature === feature),
+      condition => indexIn(facts, spell(condition)),
+    );
+  }
+  list(sets, set => list(set.split(","), feature => indexIn(table.features, feature)));
+  number(table.islands.length);
+  let end = 0;
+  for (const island of table.islands) {
+    number(island.start - end);
+    number(island.end - island.start - 1);
+    indexIn(sets, island.features);
+    end = island.end;
+  }
+  for (const feature of table.features) {
+    for (const whenShut of ["exit", "return"]) {
+      const doors = table.doors.filter(door => door.feature === feature && door.whenShut === whenShut);
+      number(doors.length);
+      ascending(doors.map(door => door.address));
+    }
+  }
+  const thin = table.doors.map((door, index) => ({ index, places: door.places ?? [] })).filter(door => door.places.length > 0);
+  let next = 0;
+  list(thin, ({ index, places }) => {
+    number(index - next);
+    number(places.length - 1);
+    let last = -1;
+    for (const { address, kind } of places) {
+      if (!isPlaceKind(kind)) throw new Error(`the table knows no place of the kind ${kind}`);
+      if (address <= last) throw new Error("the places of a door are not in ascending order");
+      number((address - Math.max(last, 0)) * 8 + kind);
+      last = address;
+    }
+    next = index + 1;
+  });
+  if (packages.length > 0) {
+    list(packages, ({ start, end, runs }) => {
+      number(start);
+      number(end - start);
+      let next = 0;
+      list(runs, ({ first, count, features }) => {
+        number(first - next);
+        number(count - 1);
+        indexIn(sets, features);
+        next = first + count;
+      });
+    });
+  }
+  if (bytes.length > room) throw new Error(`the table takes ${bytes.length} bytes and there is room for ${room}`);
+  return Buffer.from(bytes);
+}
+
+export function decodeTable(bytes: Uint8Array): Table {
+  const malformed = (): never => {
+    throw new Error("the table is malformed");
+  };
+  let at = tableHeader.length;
+  if (Buffer.from(bytes.subarray(0, at)).toString("latin1") !== tableHeader) throw new Error("there is no table");
+  const number = () => {
+    let value = 0;
+    for (let scale = 1; ; scale *= 128) {
+      const byte = bytes[at++] ?? malformed();
+      value += (byte % 128) * scale;
+      if (!Number.isSafeInteger(value) || (byte === 0 && scale > 1)) malformed();
+      if (byte < 128) return value;
+    }
+  };
+  const text = () => {
+    const length = number();
+    if (length > bytes.length - at) malformed();
+    return Buffer.from(bytes.subarray(at, (at += length))).toString();
+  };
+  const list = <T>(read: () => T) => {
+    const length = number();
+    if (length > bytes.length - at) malformed();
+    return Array.from({ length }, read);
+  };
+  const oneOf = <T>(items: T[]) => items[number()] ?? malformed();
+  const sum = (a: number, b: number) => (Number.isSafeInteger(a + b) ? a + b : malformed());
+
+  const stub = number();
+  const smallestDoor = { exit: number(), return: number() };
+  const features = list(text);
+  const kinds = list(text);
+  const facts = list(() => ({ kind: oneOf(kinds), name: text() }));
+  const conditions = features.flatMap(feature => list(() => ({ feature, ...oneOf(facts) })));
+  const sets = list(() => {
+    const members = list(() => oneOf(features));
+    return members.length > 0 ? members.join(",") : malformed();
+  });
+  let end = 0;
+  const islands = list(() => {
+    const start = sum(end, number());
+    end = sum(sum(start, number()), 1);
+    return { start, end, features: oneOf(sets) };
+  });
+  const doors = features.flatMap(feature =>
+    (["exit", "return"] as const).flatMap(whenShut => {
+      let address = 0;
+      return list((): TableDoor => ({ address: (address = sum(address, number())), feature, whenShut }));
+    }),
+  );
+  let next = 0;
+  list(() => {
+    const index = sum(next, number());
+    const door = doors[index] ?? malformed();
+    const length = sum(number(), 1);
+    if (length > bytes.length - at) malformed();
+    let address = 0;
+    door.places = Array.from({ length }, (_, place) => {
+      const field = number();
+      const gap = Math.floor(field / 8);
+      if ((place > 0 && gap === 0) || !isPlaceKind(field % 8)) malformed();
+      return { address: (address = sum(address, gap)), kind: field % 8 };
+    });
+    next = index + 1;
+  });
+  const packages = at === bytes.length ? [] : list(() => {
+    const start = number();
+    const end = sum(start, number());
+    let next = 0;
+    const runs = list(() => {
+      const first = sum(next, number());
+      const count = sum(number(), 1);
+      next = sum(first, count);
+      return { first, count, features: oneOf(sets) };
+    });
+    return { start, end, runs };
+  });
+  if (bytes.subarray(at).some(byte => byte !== 0)) malformed();
+  return { stub, smallestDoor, features, conditions, islands, doors, ...(packages.length > 0 ? { packages } : {}) };
+}
+
+export interface Item {
+  name: string;
+  size: number;
+}
+
+export interface Claim {
+  feature: string;
+  pattern: RegExp;
+}
+
+export function itemsOf(dataPackage: Buffer): Item[] {
+  const malformed = (): never => {
+    throw new Error("ICU's data package is malformed");
+  };
+  const isCommonData = dataPackage.length >= 32 && dataPackage.readUInt16BE(2) === 0xda27 && dataPackage[8] === 0 && dataPackage.toString("latin1", 12, 17) === "CmnD\x01";
+  if (!isCommonData) malformed();
+  const contents = dataPackage.subarray(dataPackage.readUInt16LE(0));
+  const count = contents.length >= 4 ? contents.readUInt32LE(0) : malformed();
+  if (4 + count * 8 > contents.length) malformed();
+  const startOf = (index: number) => (index < count ? contents.readUInt32LE(8 + index * 8) : contents.length);
+  return Array.from({ length: count }, (_, index) => {
+    const name = contents.readUInt32LE(4 + index * 8);
+    const end = contents.indexOf(0, name);
+    const size = startOf(index + 1) - startOf(index);
+    if (end < 0 || size < 0 || startOf(index + 1) > contents.length) malformed();
+    const path = contents.toString("latin1", name, end);
+    return { name: path.slice(path.indexOf("/") + 1), size };
+  });
+}
+
+export function runsOf(items: Item[], claims: Claim[], features: string[]): ItemRun[] {
+  const runs: ItemRun[] = [];
+  items.forEach(({ name }, index) => {
+    const claimedBy = new Set(claims.filter(claim => claim.pattern.test(name)).map(claim => claim.feature));
+    if (claimedBy.size === 0) return;
+    const set = features.filter(feature => claimedBy.has(feature)).join(",");
+    const last = runs.at(-1);
+    if (last !== undefined && last.features === set && last.first + last.count === index) last.count++;
+    else runs.push({ first: index, count: 1, features: set });
+  });
+  return runs;
 }

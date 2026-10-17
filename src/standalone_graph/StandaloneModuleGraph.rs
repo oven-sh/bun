@@ -3287,7 +3287,7 @@ pub(crate) fn inject<'a>(
     };
     let _ = (&mut zname_owned, &mut zname);
 
-    if trims_runtime() && !matches!(target.os, CompileTargetOs::Mac | CompileTargetOs::Linux | CompileTargetOs::Freebsd) {
+    if trims_runtime() && !matches!(target.os, CompileTargetOs::Mac | CompileTargetOs::Linux | CompileTargetOs::Freebsd | CompileTargetOs::Windows) {
         bun_core::pretty_errorln!(
             "--compile-trim-runtime: nothing can be left out of this Bun: {}",
             bun_exe_islands::Error::UnrecognizedExecutable
@@ -3391,6 +3391,18 @@ pub(crate) fn inject<'a>(
                     cleanup(zname, cloned_executable_fd);
                     return None;
                 }
+            };
+            let input_bytes = if trims_runtime() {
+                match trim_runtime(input_bytes, has_aot_image, runtime_use) {
+                    Ok(trimmed) => trimmed,
+                    Err(e) => {
+                        bun_core::pretty_errorln!("--compile-trim-runtime: nothing can be left out of this Bun: {}", e);
+                        cleanup(zname, cloned_executable_fd);
+                        return None;
+                    }
+                }
+            } else {
+                input_bytes
             };
             let mut pe_file = match bun_pe::PEFile::init(&input_bytes) {
                 Ok(f) => f,

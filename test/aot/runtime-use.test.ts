@@ -173,7 +173,7 @@ describe.concurrent("process as a member of the global object", () => {
 });
 
 describe.concurrent("delete makes the engine create every lazy property of the object", () => {
-  const wildcards = (lines: string[]) => lines.filter(line => line.endsWith(" *"));
+  const wildcards = (lines: string[]) => lines.filter(line => line.endsWith(" *") && line !== "property *");
 
   test.each([
     ["the global object", `delete (globalThis as any).fetch;`, "global *"],
@@ -222,7 +222,7 @@ describe.concurrent("delete makes the engine create every lazy property of the o
 });
 
 describe.concurrent("asking an object for a member makes the engine create the member", () => {
-  const wildcards = (lines: string[]) => lines.filter(line => line.endsWith(" *"));
+  const wildcards = (lines: string[]) => lines.filter(line => line.endsWith(" *") && line !== "property *");
 
   test.each([
     ["in, of the global object", `console.log("HTMLRewriter" in globalThis);`, "global HTMLRewriter"],
@@ -300,6 +300,163 @@ describe.concurrent("only what is part of the compiled program counts", () => {
     const use = await of(`function sometimes() { return eval("1"); }\nconsole.log(sometimes);`);
     expect(use.whyOpen).toContain("a call of eval");
   });
+
+  test.each([
+    ["a function that nothing mentions", `function never() { return new HTMLRewriter(); }\nconsole.log(1);`],
+    ["a function nested in one that nothing mentions", `function never() { return () => new HTMLRewriter(); }\nconsole.log(1);`],
+    ["a function that only such a function mentions", `function inner() { return new HTMLRewriter(); }\nfunction never() { return inner(); }\nconsole.log(1);`],
+    ["a method of a class that nothing mentions", `class Never { make() { return new HTMLRewriter(); } }\nconsole.log(1);`],
+    ["a getter of a class that nothing mentions", `class Never { get made() { return new HTMLRewriter(); } }\nconsole.log(1);`],
+    ["a field of a class that nothing mentions", `function never() { class Never { made = new HTMLRewriter(); } return Never; }\nconsole.log(1);`],
+    ["a getter of an object in a function that nothing mentions", `function never() { return { get made() { return new HTMLRewriter(); } }; }\nconsole.log(1);`],
+    ["the default of a parameter of a function that nothing mentions", `function never(made = new HTMLRewriter()) { return made; }\nconsole.log(1);`],
+    ["a property of globalThis there", `function never() { return new (globalThis as any).HTMLRewriter(); }\nconsole.log(1);`],
+    ["a variable that holds the global object, read there", `const everything: any = globalThis;\nfunction never() { return new everything.HTMLRewriter(); }\nconsole.log(1);`],
+    ["a question there", `function never() { return "HTMLRewriter" in globalThis; }\nconsole.log(1);`],
+  ])("a global is not named by %s", async (_, text) => {
+    const use = await of(text);
+    expect({ world: use.world, named: use.facts.has("global HTMLRewriter"), exitCode: use.exitCode }).toEqual({ world: "closed", named: false, exitCode: 0 });
+  });
+
+  test.each([
+    ["a function that is called", `function made() { return new HTMLRewriter(); }\nmade();`],
+    ["a function that is handed on", `function made() { return new HTMLRewriter(); }\nconsole.log(made);`],
+    ["a function nested in one that is called", `function outer() { return () => new HTMLRewriter(); }\nconsole.log(outer());`],
+    ["a function that a called one calls", `function inner() { return new HTMLRewriter(); }\nfunction outer() { return inner(); }\nouter();`],
+    ["a method of a class that is constructed", `class Maker { make() { return new HTMLRewriter(); } }\nconsole.log(new Maker());`],
+    ["a getter of a class that is constructed", `class Maker { get made() { return new HTMLRewriter(); } }\nconsole.log(new Maker());`],
+    ["a setter of a class that is constructed", `class Maker { set made(value: unknown) { console.log(new HTMLRewriter(), value); } }\nconsole.log(new Maker());`],
+    ["a static method of a class that is handed on", `class Maker { static make() { return new HTMLRewriter(); } }\nconsole.log(Maker);`],
+    ["a field of a class that is constructed", `class Maker { made = new HTMLRewriter(); }\nconsole.log(new Maker());`],
+    ["a static block", `class Maker { static { console.log(new HTMLRewriter()); } }\nconsole.log(Maker);`],
+    ["the computed name of a method that nothing calls", `class Maker { [String(new HTMLRewriter())]() {} }\nconsole.log(Maker);`],
+    ["the base of a class", `function base() { return HTMLRewriter; }\nclass Maker extends base() {}\nconsole.log(Maker);`],
+    ["a getter of an object", `console.log({ get made() { return new HTMLRewriter(); } });`],
+    ["the computed name of a method of an object", `console.log({ [String(new HTMLRewriter())]() {} });`],
+    ["the default of a parameter", `function made(value = new HTMLRewriter()) { return value; }\nmade();`],
+    ["the default in a pattern", `function made({ value = new HTMLRewriter() } = {} as any) { return value; }\nmade();`],
+    ["a generator", `function* made() { yield new HTMLRewriter(); }\nconsole.log([...made()]);`],
+    ["an async function", `async function made() { return new HTMLRewriter(); }\nmade();`],
+    ["a callback", `[1].forEach(() => new HTMLRewriter());`],
+  ])("a global is named by %s", async (_, text) => {
+    const use = await of(text);
+    expect({ world: use.world, named: use.facts.has("global HTMLRewriter") }).toEqual({ world: "closed", named: true });
+  });
+
+  test.each([
+    ["Bun", "Bun color", `Bun.color("red", "css")`],
+    ["Bun, taken apart", "Bun color", `(() => { const { color } = Bun; return color; })()`],
+    ["process", "process umask", `process.umask()`],
+    ["console", "console takeHeapSnapshot", `console.takeHeapSnapshot()`],
+    ["console, all of it", "console *", `delete console.table`],
+  ])("%s: a member counts where it is reached", async (_, fact, expression) => {
+    const [never, reached] = await Promise.all([of(`function never() { return ${expression}; }\nconsole.log(1);`), of(`function made() { return ${expression}; }\nmade();`)]);
+    expect({ never: never.facts.has(fact), reached: reached.facts.has(fact) }).toEqual({ never: false, reached: true });
+  });
+
+  test("a file of which only one function is reached names what that function names", async () => {
+    const use = await runtimeUse({
+      "main.ts": `import { used } from "./lib";\ndeclare const console: any;\nconsole.log(used());`,
+      "lib.ts": declared + `export function used() { return Bun.color("red", "css"); }\nexport function unused() { return new HTMLRewriter(); }`,
+    });
+    expect({ world: use.world, color: use.facts.has("Bun color"), rewriter: use.facts.has("global HTMLRewriter") }).toEqual({ world: "closed", color: true, rewriter: false });
+  });
+
+  test("what a built-in function that native code calls leads to counts in every program", async () => {
+    const hello = await of(`console.log(1);`);
+    expect({ itself: hello.facts.has("Bun indexOfLine"), nested: hello.facts.has("process hrtime") }).toEqual({ itself: true, nested: true });
+  });
+
+  test("a built-in module names what its reached functions name", async () => {
+    const [hello, zlib] = await Promise.all([of(`console.log(1);`), runtimeUse({ "main.ts": `import { gzipSync } from "node:zlib";\ndeclare const console: any;\nconsole.log(gzipSync("a"));` })]);
+    const native = "native node_zlib_binding.rs:NativeZlib";
+    expect({ hello: hello.facts.has(native), zlib: zlib.facts.has(native) }).toEqual({ hello: false, zlib: true });
+  });
+});
+
+describe.concurrent("the module that Bun's own tests look into Bun with", () => {
+  test.each([
+    ["import", `import { crash_handler } from "bun:internal-for-testing";\ndeclare const console: any;\nconsole.log(crash_handler);`],
+    ["require", `declare const console: any, require: any;\nconsole.log(require("bun:internal-for-testing"));`],
+  ])("opens the world: %s", async (_, text) => {
+    const use = await runtimeUse({ "main.ts": "// @ts-nocheck\n" + text });
+    expect({ world: use.world, whyOpen: use.whyOpen }).toEqual({ world: "open", whyOpen: ["bun:internal-for-testing"] });
+  });
+});
+
+describe.concurrent("the names of properties", () => {
+  const given = `declare const given: any;\n`;
+  const property = async (text: string) => {
+    const use = await of(given + text);
+    const any = use.lines.some(line => line.startsWith("escapes property ") && line.endsWith("main.ts"));
+    return { world: use.world, named: use.facts.has("property localeCompare"), any: any && use.facts.has("property *") };
+  };
+
+  test.each([
+    ["a member", `console.log(given.localeCompare("a"));`],
+    ["a member of an optional chain", `console.log(given?.localeCompare);`],
+    ["a string in brackets", `console.log(given["localeCompare"]);`],
+    ["a template without holes in brackets", "console.log(given[`localeCompare`]);"],
+    ["a constant in brackets", `const key = "localeCompare";\nconsole.log(given[key]);`],
+    ["a member of super", `class Text extends String { compare() { return super.localeCompare("a"); } }\nconsole.log(new Text().compare());`],
+    ["a pattern", `const { localeCompare } = given;\nconsole.log(localeCompare);`],
+    ["a pattern that renames it", `const { localeCompare: compare } = given;\nconsole.log(compare);`],
+    ["a pattern inside a pattern", `const { inner: { localeCompare } } = given;\nconsole.log(localeCompare);`],
+    ["the pattern of a parameter", `function compare({ localeCompare }: any) { return localeCompare; }\nconsole.log(compare(given));`],
+    ["a pattern that is assigned to", `let compare;\n({ localeCompare: compare } = given);\nconsole.log(compare);`],
+    ["in", `console.log("localeCompare" in given);`],
+    ["Reflect.get", `console.log(Reflect.get(given, "localeCompare"));`],
+    ["Object.getOwnPropertyDescriptor", `console.log(Object.getOwnPropertyDescriptor(given, "localeCompare"));`],
+    ["Reflect.getOwnPropertyDescriptor", `console.log(Reflect.getOwnPropertyDescriptor(given, "localeCompare"));`],
+  ])("a property is named by %s", async (_, text) => {
+    expect(await property(text)).toEqual({ world: "closed", named: true, any: false });
+  });
+
+  test.each([
+    ["a string", `console.log("localeCompare");`],
+    ["the key of an object literal", `console.log({ localeCompare: 1 });`],
+    ["a method that the program defines", `class Text { localeCompare() { return 0; } }\nconsole.log(new Text());`],
+    ["a variable", `const localeCompare = 1;\nconsole.log(localeCompare);`],
+    ["a type", `type Compare = String["localeCompare"];\nlet compare: Compare | undefined;\nconsole.log(compare);`],
+    ["a function that nothing mentions", `function never() { return given.localeCompare("a"); }\nconsole.log(1);`],
+    ["a pattern in a function that nothing mentions", `function never({ localeCompare }: any) { return localeCompare; }\nconsole.log(1);`],
+  ])("a property is not named by %s", async (_, text) => {
+    expect(await property(text)).toEqual({ world: "closed", named: false, any: false });
+  });
+
+  test.each([
+    ["a parameter in brackets", `function read(key: string) { return given[key]; }\nconsole.log(read("a"));`],
+    ["a call of what a key finds", `function call(key: string) { return given[key](); }\nconsole.log(call("a"));`],
+    ["a variable that is assigned to", `let key = "a";\nkey = given.name;\nconsole.log(given[key]);`],
+    ["strings that are joined", `console.log(given["locale" + given.rest]);`],
+    ["a key of super", `class Text extends String { read(key: string) { return (super[key as any] as any); } }\nconsole.log(new Text().read("a"));`],
+    ["a computed key in a pattern", `function read(key: string) { const { [key]: value } = given; return value; }\nconsole.log(read("a"));`],
+    ["a computed key in a pattern that is assigned to", `function read(key: string) { let value; ({ [key]: value } = given); return value; }\nconsole.log(read("a"));`],
+    ["Reflect.get of a key", `function read(key: string) { return Reflect.get(given, key); }\nconsole.log(read("a"));`],
+    ["Object.getOwnPropertyDescriptor of a key", `function read(key: string) { return Object.getOwnPropertyDescriptor(given, key); }\nconsole.log(read("a"));`],
+    ["Object.getOwnPropertyDescriptors", `console.log(Object.getOwnPropertyDescriptors(given));`],
+    ["Reflect.get that is handed on", `const get = Reflect.get;\nconsole.log(get);`],
+    ["Reflect that is handed on", `console.log(Reflect);`],
+    ["Object that is handed on", `console.log(Object);`],
+  ])("any property may be read with %s", async (_, text) => {
+    expect(await property(text)).toEqual({ world: "closed", named: false, any: true });
+  });
+
+  test.each([
+    ["a number", `console.log(given[0]);`],
+    ["a counter", `for (let i = 0; i < given.length; i++) console.log(given[i]);`],
+    ["a counter that goes down", `let i = 10;\nwhile (i--) console.log(given[i]);`],
+    ["arithmetic", `for (let i = 0; i < given.length; i += 2) console.log(given[i + 1], given[i * 2], given[given.length - 1], given[i >> 1]);`],
+    ["a function of Math", `console.log(given[Math.floor(given.length / 2)]);`],
+    ["a well-known symbol", `console.log(given[Symbol.iterator]);`],
+    ["a symbol of the program's own", `const mine = Symbol("mine");\nconsole.log(given[mine]);`],
+    ["a store", `function store(key: string) { given[key] = 1; }\nstore("a");`],
+    ["a key of a class of the program's own", `class Point { x = 1; y = 2; }\nfunction read(point: Point, key: keyof Point) { return point[key]; }\nconsole.log(read(new Point(), "x"));`],
+    ["a number that is handed in", `function read(at: number) { return given[at]; }\nconsole.log(read(1));`],
+    ["a key in a function that nothing mentions", `function never(key: string) { return given[key]; }\nconsole.log(1);`],
+  ])("no other property is read with %s", async (_, text) => {
+    expect(await property(text)).toEqual({ world: "closed", named: false, any: false });
+  });
 });
 
 describe.concurrent("what a built-in module lets escape", () => {
@@ -309,7 +466,7 @@ describe.concurrent("what a built-in module lets escape", () => {
     expect(use.lines[0]).toBe("closed");
     expect(use.lines).toContain("process *");
     expect(use.lines.some(line => line.startsWith("escapes process "))).toBe(true);
-    expect(without.lines.filter(line => line.endsWith(" *") || line.startsWith("escapes "))).toEqual([]);
+    expect(without.lines.filter(line => !line.includes("property ") && (line.endsWith(" *") || line.startsWith("escapes ")))).toEqual([]);
   });
 });
 

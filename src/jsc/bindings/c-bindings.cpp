@@ -1183,29 +1183,6 @@ extern "C" void Bun__signpost_emit(os_log_t log, os_signpost_type_t type, os_sig
 
 #endif // OS(DARWIN) signpost code
 
-#if OS(DARWIN) || defined(__linux__) || defined(__FreeBSD__)
-
-#if OS(DARWIN)
-// exe_format/macho.rs expands the __BUN segment in place at this alignment
-// (the page size on Apple Silicon).
-#define BLOB_HEADER_ALIGNMENT (16 * 1024)
-#else
-// ELF: the section holds only this 8-byte header; exe_format/elf.rs places the
-// --compile payload at a page-aligned vaddr itself. A larger alignment raises
-// the RW PT_LOAD's p_align past the page size, which makes it overlap the
-// previous segment under strict-p_align loaders like UPX's stub (#40752).
-#define BLOB_HEADER_ALIGNMENT 8
-#endif
-
-extern "C" {
-struct BlobHeader {
-    uint64_t size; // 64-bit to ensure data[] starts at 8-byte aligned offset (required for bytecode cache)
-    uint8_t data[];
-} __attribute__((aligned(BLOB_HEADER_ALIGNMENT)));
-}
-
-#if !OS(WINDOWS)
-
 extern "C" __attribute__((weak)) const char Bun__trimmedFeatures[] = "";
 
 extern "C" [[noreturn]] void Bun__trimmedOut(uint32_t door)
@@ -1213,7 +1190,13 @@ extern "C" [[noreturn]] void Bun__trimmedOut(uint32_t door)
     const char* description = Bun__trimmedFeatures;
     for (uint32_t feature = door & 255; feature--;)
         description += strlen(description) + 1;
-    const auto print = [](const char* text) { (void)!write(STDERR_FILENO, text, strlen(text)); };
+    const auto print = [](const char* text) {
+#if OS(WINDOWS)
+        (void)_write(2, text, static_cast<unsigned>(strlen(text)));
+#else
+        (void)!write(STDERR_FILENO, text, strlen(text));
+#endif
+    };
     const char* actsAsBun = getenv("BUN_BE_BUN");
     print(actsAsBun && *actsAsBun ? "error: BUN_BE_BUN is set, but this executable was built with --compile-trim-runtime, without " : "error: this executable was built with --compile-trim-runtime, without ");
     print(description);
@@ -1249,7 +1232,26 @@ extern "C" __attribute__((noinline)) bool Bun__hasBundler()
     return hasBundler;
 }
 
+#if OS(DARWIN) || defined(__linux__) || defined(__FreeBSD__)
+
+#if OS(DARWIN)
+// exe_format/macho.rs expands the __BUN segment in place at this alignment
+// (the page size on Apple Silicon).
+#define BLOB_HEADER_ALIGNMENT (16 * 1024)
+#else
+// ELF: the section holds only this 8-byte header; exe_format/elf.rs places the
+// --compile payload at a page-aligned vaddr itself. A larger alignment raises
+// the RW PT_LOAD's p_align past the page size, which makes it overlap the
+// previous segment under strict-p_align loaders like UPX's stub (#40752).
+#define BLOB_HEADER_ALIGNMENT 8
 #endif
+
+extern "C" {
+struct BlobHeader {
+    uint64_t size; // 64-bit to ensure data[] starts at 8-byte aligned offset (required for bytecode cache)
+    uint8_t data[];
+} __attribute__((aligned(BLOB_HEADER_ALIGNMENT)));
+}
 
 #if OS(DARWIN)
 

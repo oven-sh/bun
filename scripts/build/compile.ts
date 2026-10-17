@@ -196,7 +196,11 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   if (cfg.islands) {
     assert(cfg.cxxfilt !== undefined, "islands need llvm-cxxfilt");
     n.rule("link_with_islands", {
-      command: `${cfg.jsRuntime} ${q(islandsScript(cfg))} ${q(islandsDoors(cfg))} ${q(cfg.cxxfilt)} $out.islands ${q(islandsPlanPath(cfg))} $out.islands-plan -- ${cxx} @$out.rsp $lazy $ldflags -o $out${machoPostlinkCommand(cfg)}`,
+      command:
+        `${cfg.jsRuntime} ${q(islandsScript(cfg))} ${q(islandsDoors(cfg))} ${q(cfg.cxxfilt)} $out.islands ${q(islandsPlanPath(cfg))} $out.islands-plan -- ` +
+        (cfg.windows
+          ? `${cxx} /nologo -fuse-ld=lld ${q(`/clang:-B${dirname(cfg.ld)}`)} @$out.rsp $lazy /Fe$out /link $ldflags`
+          : `${cxx} @$out.rsp $lazy $ldflags -o $out${machoPostlinkCommand(cfg)}`),
       description: "link $out with islands",
       rspfile: "$out.rsp",
       rspfile_content: "$in_newline",
@@ -487,6 +491,7 @@ export interface LinkOpts {
 
 const islandsScript = (cfg: Config) => resolve(cfg.cwd, "scripts", "build", "islands.ts");
 const islandsLayoutScript = (cfg: Config) => resolve(cfg.cwd, "scripts", "build", "islands-layout.ts");
+const islandsCoffScript = (cfg: Config) => resolve(cfg.cwd, "scripts", "build", "islands-coff.ts");
 const islandsDoors = (cfg: Config) => resolve(cfg.cwd, "scripts", "build", "islands.doors");
 
 /**
@@ -531,7 +536,7 @@ export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts
     toolIdentityFile(cfg, "cxx"),
     ...(cfg.ld !== "" ? [toolIdentityFile(cfg, "ld")] : []),
     ...(opts.implicitInputs ?? []),
-    ...(opts.islands && cfg.islands ? [islandsScript(cfg), islandsLayoutScript(cfg), islandsDoors(cfg)] : []),
+    ...(opts.islands && cfg.islands ? [islandsScript(cfg), islandsLayoutScript(cfg), islandsCoffScript(cfg), islandsDoors(cfg)] : []),
     ...lazyInputs,
   ];
   // lld-link writes the exe's import library under obj/ (flags.ts /IMPLIB)

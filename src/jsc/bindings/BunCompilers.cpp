@@ -9,12 +9,10 @@ extern "C" NEVER_INLINE void Bun__installCompilers()
 extern "C" NEVER_INLINE bool Bun__AOT__hasCompiler()
 {
 #if ENABLE(AOT)
-    bool hasCompiler = true;
+    uint32_t hasCompiler = 3;
 #else
-    bool hasCompiler = false;
+    uint32_t hasCompiler = 0;
 #endif
-#if !OS(WINDOWS)
     asm volatile("" : "+r"(hasCompiler));
-#endif
     return hasCompiler;
 }

@@ -47,7 +47,7 @@ failing-cast-in-initializer-at-load: 13 layouts, 0 given, 17 open, places 39 of 
 field-covariance-linked-list: 2 layouts, 0 given, 0 open, places 18 of 26, reads 4 of 12
 field-covariance: 12 layouts, 0 given, 0 open, places 53 of 78, reads 27 of 34
 field-made-readonly-via-untyped-ref: 2 layouts, 0 given, 3 open, places 13 of 25, reads 2 of 12
-for-in-changed-prototypes: 3 layouts, 25 given, 1 open, places 33 of 51, reads 4 of 31
+for-in-changed-prototypes: 3 layouts, 27 given, 1 open, places 33 of 51, reads 4 of 31
 for-in: 2 layouts, 10 given, 0 open, places 18 of 45, reads 2 of 26
 freeze: 1 layouts, 0 given, 1 open, places 2 of 10, reads 0 of 4
 frozen-and-sealed-objects: 5 layouts, 0 given, 3 open, places 16 of 24, reads 1 of 8

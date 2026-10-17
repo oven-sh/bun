@@ -4663,6 +4663,24 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    pub(super) fn object_create_held_by(&mut self, file: FileId, e: ExprId, depth: u32) -> Option<(FileId, ExprId)> {
+        let hir = self.hir(file);
+        match hir[e].kind {
+            _ if depth > 4 => None,
+            ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) => self.object_create_held_by(file, expr, depth + 1),
+            ExprKind::Ident(name) => {
+                let (of, held) = self.resolved_symbol_for(file, e, name).and_then(|sym| self.initializer_of_constant(sym))?;
+                self.object_create_held_by(of, held, depth + 1)
+            }
+            ExprKind::Call(_) if self.is_object_create(file, e) => Some((file, e)),
+            ExprKind::Call(call) if self.is_identity_call(file, e) || self.is_object_assign(file, e) => {
+                let first = hir.ids(hir[call].args).next()?;
+                self.object_create_held_by(file, first, depth + 1)
+            }
+            _ => None,
+        }
+    }
+
     fn runs_no_code(&mut self, file: FileId, e: ExprId) -> bool {
         if self.is_half_of_stack_in_use() {
             return false;
@@ -4823,6 +4841,10 @@ impl<'p, 's> Checker<'p, 's> {
             let given = self.type_of_expr(file, value);
             !self.is_uninformative(given) && self.is_assignable(given, declared)
         })
+    }
+
+    pub(super) fn members_left_to_prototype(&mut self, birth: &BornByObjectCreate) -> Vec<Atom> {
+        self.properties_of_type(birth.born_as).iter().filter(|prop| !prop.flags.contains(crate::types::PropFlags::OPTIONAL) && !birth.stored.iter().any(|stored| stored.0 == prop.name)).map(|prop| prop.name).collect()
     }
 
     pub fn is_completed_by_prototype(&mut self, record: TypeId, stored: &[(Atom, ExprId)], prototype: TypeId) -> bool {

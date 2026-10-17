@@ -16,7 +16,25 @@ import {
   writeSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { misplaced, pageSize, type Plan, rangesThatCanGo, readPlan, wholePages, writePlan } from "./islands-layout.ts";
+import { readCoffGraph, sectionInFile } from "./islands-coff.ts";
+import {
+  type Claim,
+  type DataPackage,
+  encodeTable,
+  inTableOrder,
+  itemsOf,
+  misplaced,
+  pageSize,
+  type Plan,
+  type Range,
+  rangesThatCanGo,
+  readPlan,
+  runsOf,
+  type TableDoor,
+  tableRoom,
+  wholePages,
+  writePlan,
+} from "./islands-layout.ts";
 
 interface Door {
   feature: string;
@@ -29,6 +47,7 @@ interface Doors {
   doors: Door[];
   conditions: { feature: string; kind: string; name: string }[];
   smallest: Map<string, number>;
+  data: Claim[];
 }
 
 interface Graph {
@@ -45,10 +64,12 @@ interface Graph {
   aliases: Map<number, [string, string][]>;
   externalNames: Set<string>;
   unreadObjects: string[];
+  confirmedByTheBytes: number;
+  sentOn: number;
+  boundElsewhere: string[];
   isArm64: boolean;
 }
 
-const tableRoom = 196608;
 const smallestIsland = 4096;
 const mostLeftOutside = 0.05;
 const namelessPrefix = "bun_nameless_";
@@ -56,7 +77,7 @@ const isCode = (output: string) => output === ".text" || output.startsWith(".tex
 const isMovable = (output: string) => isCode(output) || output === ".rodata" || output === ".bun_builtins";
 const mayMove = /^\.(text|rodata|bun_builtins)(\.|$)/;
 const isOrdinary = (output: string) => isMovable(output) || [".data", ".data.rel.ro", ".bss"].includes(output);
-const ignoredOutputs = /^\.(debug|gdb_index|symtab|strtab|comment|shstrtab|eh_frame|gcc_except_table|rela|tbss)/;
+const ignoredOutputs = /^\.(debug|gdb_index|symtab|strtab|comment|shstrtab|eh_frame|rela|tbss)/;
 const onlyForDebuggers = /^-Wl,--(gdb-index|compress-debug-sections=.*)$/;
 
 const startedAt = performance.now();
@@ -75,19 +96,20 @@ function fail(message: string): never {
 }
 
 function readDoors(path: string): Doors {
-  const result: Doors = { features: [], doors: [], conditions: [], smallest: new Map() };
+  const result: Doors = { features: [], doors: [], conditions: [], smallest: new Map(), data: [] };
   for (const line of readFileSync(path, "utf8").split("\n")) {
     const words = line.trim().split(/\s+/);
     if (words[0] === "feature") result.features.push({ name: words[1]!, description: words.slice(2).join(" ") });
     else if (words[0] === "when") result.conditions.push({ feature: words[1]!, kind: words[2]!, name: words[3]! });
     else if (words[0] === "smallest") result.smallest.set(words[1]!, Number(words[2]));
+    else if (words[0] === "data") result.data.push({ feature: words[1]!, pattern: new RegExp(words.slice(2).join(" ")) });
     else if (words[0] === "door") {
       if (words[2] !== "exit" && words[2] !== "return") fail(`${path}: a door exits or returns: ${line}`);
       result.doors.push({ feature: words[1]!, whenShut: words[2], pattern: new RegExp(words.slice(3).join(" ")) });
     }
   }
   const names = new Set(result.features.map(feature => feature.name));
-  for (const { feature } of [...result.doors, ...result.conditions]) if (!names.has(feature)) fail(`${path}: there is no feature ${feature}`);
+  for (const { feature } of [...result.doors, ...result.conditions, ...result.data]) if (!names.has(feature)) fail(`${path}: there is no feature ${feature}`);
   return result;
 }
 
@@ -192,21 +214,119 @@ function openElf(path: string, mode: "r" | "r+", base = 0): ElfFile | undefined 
 
 interface ObjectReferences {
   references: Map<string, Set<string>>;
+  boundAt: Map<string, Set<number>>;
   definitions: [string, string][];
   named: [string, string][];
+  namedByUnwindTables: Set<string>;
 }
 
-function readObject(path: string, liveSections: Set<string>): ObjectReferences | undefined {
-  const result: ObjectReferences = { references: new Map(), definitions: [], named: [] };
-  if (existsSync(path)) return readObjectAt(path, 0, liveSections, result) ? result : undefined;
+interface Image {
+  machine: number;
+  isPositionIndependent: boolean;
+  start: number;
+  byte(address: number): number | undefined;
+  signed32(address: number): number | undefined;
+  unsigned32(address: number): number | undefined;
+  unsigned64(address: number): number | undefined;
+}
+
+function imageOf(elf: ElfFile): Image {
+  const header = readAt(elf.fd, 0, 64);
+  const parts = elf.sections
+    .filter(section => (section.flags & 2) !== 0 && section.type !== 8 && section.size > 0)
+    .map(section => ({ start: section.address, end: section.address + section.size, data: readAt(elf.fd, section.offset, section.size) }));
+  return imageOfParts(parts, header.readUInt16LE(0x12), header.readUInt16LE(0x10) === 3);
+}
+
+function imageOfParts(parts: { start: number; end: number; data: Buffer }[], machine: number, isPositionIndependent: boolean): Image {
+  let last = parts[0];
+  const partWith = (address: number, length: number) => {
+    if (last === undefined || address < last.start || address + length > last.end) last = parts.find(part => part.start <= address && address + length <= part.end);
+    return last;
+  };
+  return {
+    machine,
+    isPositionIndependent,
+    start: Math.min(...parts.map(part => part.start)),
+    byte: address => partWith(address, 1)?.data[address - last!.start],
+    signed32: address => partWith(address, 4)?.data.readInt32LE(address - last!.start),
+    unsigned32: address => partWith(address, 4)?.data.readUInt32LE(address - last!.start),
+    unsigned64: address => {
+      const data = partWith(address, 8)?.data;
+      return data && data.readUInt32LE(address - last!.start) + data.readUInt32LE(address - last!.start + 4) * 0x100000000;
+    },
+  };
+}
+
+type AddressGiven = (type: number, place: number, addend: number, symbol: number) => number | undefined;
+
+function addressGivenOnX64(image: Image): AddressGiven {
+  const less = (value: number | undefined, by: number) => (value === undefined ? undefined : value - by);
+  return (type, place, addend) => {
+    if (type === 2 || type === 4) return less(image.signed32(place), addend - place);
+    if (type === 1) return image.isPositionIndependent ? undefined : less(image.unsigned64(place), addend);
+    if (type === 10) return less(image.unsigned32(place), addend);
+    if (type === 11) return less(image.signed32(place), addend);
+    if (type !== 9 && type !== 41 && type !== 42) return undefined;
+    const first = image.byte(place - 2);
+    const second = image.byte(place - 1);
+    if (first === 0xe9) return less(image.signed32(place - 1), -place - 3);
+    const target = less(image.signed32(place), -place - 4);
+    if (target === undefined) return undefined;
+    if ((first === 0x67 && second === 0xe8) || first === 0x8d) return target;
+    const readsTheSlot = first === 0x8b || (first === 0xff && (second === 0x15 || second === 0x25));
+    return readsTheSlot && !image.isPositionIndependent ? image.unsigned64(target) : undefined;
+  };
+}
+
+function addressGivenOnArm64(image: Image): AddressGiven {
+  const pages = new Map<number, [number, number]>();
+  const scaleOf = new Map([[277, 1], [278, 1], [284, 2], [285, 4], [286, 8], [299, 16]]);
+  const signed = (value: number, bits: number) => (value >= 2 ** (bits - 1) ? value - 2 ** bits : value);
+  const distance21 = (word: number) => signed((((word >>> 5) & 0x7ffff) << 2) | ((word >>> 29) & 3), 21);
+  const is = (word: number, mask: number, bits: number) => (word & mask) >>> 0 === bits;
+  return (type, place, addend, symbol) => {
+    if (type === 257) {
+      const value = image.isPositionIndependent ? undefined : image.unsigned64(place);
+      return value === undefined ? undefined : value - addend;
+    }
+    const word = type === 261 || type === 314 ? image.signed32(place) : image.unsigned32(place);
+    if (word === undefined) return undefined;
+    if (type === 261 || type === 314) return word + place - addend;
+    if (type === 282 || type === 283) return is(word, 0x7c000000, 0x14000000) ? place + signed(word & 0x3ffffff, 26) * 4 - addend : undefined;
+    if (type === 275 || type === 276 || type === 311) {
+      if (is(word, 0x9f000000, 0x90000000)) pages.set(symbol, [place - (place % 4096) + distance21(word) * 4096, addend]);
+      else pages.delete(symbol);
+      return undefined;
+    }
+    const scale = scaleOf.get(type);
+    if (scale === undefined && type !== 312) return undefined;
+    if (is(word, 0x9f000000, 0x10000000)) return place + distance21(word) - addend;
+    const page = pages.get(symbol);
+    if (page === undefined || page[1] !== addend) return undefined;
+    const low = (word >>> 10) & 0xfff;
+    if (scale !== undefined) return page[0] + low * scale - addend;
+    if (is(word, 0xffc00000, 0x91000000)) return page[0] + low;
+    return is(word, 0xffc00000, 0xf9400000) && !image.isPositionIndependent ? image.unsigned64(page[0] + low * 8) : undefined;
+  };
+}
+
+interface Linked {
+  image: Image;
+  placeOf(section: string, size: number): number | undefined;
+}
+
+function readObject(path: string, liveSections: Set<string>, linked: Linked): ObjectReferences | undefined {
+  const result: ObjectReferences = { references: new Map(), boundAt: new Map(), definitions: [], named: [], namedByUnwindTables: new Set() };
+  if (existsSync(path)) return readObjectAt(path, 0, liveSections, linked, result) ? result : undefined;
   const inArchive = /^(.*)\(([^()]*)\)$/.exec(path);
   const offsets = inArchive !== null && existsSync(inArchive[1]!) ? memberOffsets(inArchive[1]!, inArchive[2]!) : [];
-  return offsets.length > 0 && offsets.every(offset => readObjectAt(inArchive![1]!, offset, liveSections, result)) ? result : undefined;
+  return offsets.length > 0 && offsets.every(offset => readObjectAt(inArchive![1]!, offset, liveSections, linked, result)) ? result : undefined;
 }
 
 const isLaidAsItIs = (section: SectionHeader) => (section.flags & 2) !== 0 && (section.flags & 0x10) === 0 && section.size > 0 && !ignoredOutputs.test(section.name);
 
-function readObjectAt(path: string, base: number, liveSections: Set<string>, result: ObjectReferences): boolean {
+function readObjectAt(path: string, base: number, liveSections: Set<string>, linked: Linked, result: ObjectReferences): boolean {
   const elf = openElf(path, "r", base);
   if (elf === undefined) return false;
   const { fd, sections } = elf;
@@ -246,16 +366,41 @@ function readObjectAt(path: string, base: number, liveSections: Set<string>, res
       }
       return target;
     };
+    const addressGiven = linked.image.machine === 62 ? addressGivenOnX64(linked.image) : linked.image.machine === 183 ? addressGivenOnArm64(linked.image) : undefined;
+    const given = new Float64Array(addressGiven === undefined ? 0 : count).fill(-1);
     for (const section of sections) {
-      if (section.type !== 4) continue;
-      const source = sections[section.info]!.name;
+      const source = section.type === 4 || section.type === 9 || section.type === 0x40000014 ? sections[section.info]!.name : "";
+      if (source === ".eh_frame" && section.type === 4) {
+        const relocations = readAt(fd, section.offset, section.size);
+        for (let at = 0; at < relocations.length; at += 24) {
+          const target = targetOf(relocations.readUInt32LE(at + 12));
+          if (target[0] === "G") result.namedByUnwindTables.add(target.slice(1));
+        }
+      }
       if (!liveSections.has(source)) continue;
+      if (section.type !== 4) fail(`${path}: the references of ${source} are written in a way that is not read here (section type ${section.type})`);
       let set = result.references.get(source);
       if (set === undefined) result.references.set(source, (set = new Set()));
+      let bound = result.boundAt.get(source);
+      if (bound === undefined) result.boundAt.set(source, (bound = new Set()));
+      const start = addressGiven && linked.placeOf(source, sections[section.info]!.size);
       const relocations = readAt(fd, section.offset, section.size);
       for (let at = 0; at < relocations.length; at += 24) {
-        const target = targetOf(relocations.readUInt32LE(at + 12));
-        if (target !== "") set.add(target);
+        const symbol = relocations.readUInt32LE(at + 12);
+        const target = targetOf(symbol);
+        if (target === "") continue;
+        set.add(target);
+        if (start === undefined) continue;
+        if (given[symbol] === -1) {
+          const before = at > 0 && linked.image.machine === 62 ? relocations.readUInt32LE(at - 16) : 0;
+          if (before === 19 || before === 20) continue;
+          const place = start + relocations.readUInt32LE(at) + relocations.readUInt32LE(at + 4) * 0x100000000;
+          const addend = relocations.readUInt32LE(at + 16) + relocations.readInt32LE(at + 20) * 0x100000000;
+          const address = addressGiven!(relocations.readUInt32LE(at + 8), place, addend, symbol);
+          if (address === undefined) continue;
+          given[symbol] = address;
+        }
+        bound.add(given[symbol]!);
       }
     }
   }
@@ -306,6 +451,9 @@ function readGraph(executable: string, mapPath: string, log: string): Graph {
     aliases: new Map(),
     externalNames: new Set(),
     unreadObjects: [],
+    confirmedByTheBytes: 0,
+    sentOn: 0,
+    boundElsewhere: [],
     isArm64: false,
   };
   const count = found.length;
@@ -343,11 +491,17 @@ function readGraph(executable: string, mapPath: string, log: string): Graph {
     if (aliases === undefined) graph.aliases.set(node, [[object, "_" + name]]);
     else aliases.push([object, "_" + name]);
   }
+  const elf = openElf(executable, "r") ?? fail(`${executable} is not an ELF file`);
+  const image = imageOf(elf);
   const objects = new Map<string, ObjectReferences | undefined>();
   const defined = new Map<string, string[]>();
   for (const [object, live] of liveSections) {
     if (object === "<internal>") continue;
-    const read = readObject(object, live);
+    const placeOf = (section: string, size: number) => {
+      const nodes = nodesOf.get(object + "\0" + section)!.filter(node => graph.size[node] === size);
+      return nodes.length === 1 ? graph.address[nodes[0]!] : undefined;
+    };
+    const read = readObject(object, live, { image, placeOf });
     objects.set(object, read);
     if (read === undefined) graph.unreadObjects.push(object);
     for (const [name, section] of read?.definitions ?? []) {
@@ -363,7 +517,6 @@ function readGraph(executable: string, mapPath: string, log: string): Graph {
     }
     return undefined;
   };
-  const elf = openElf(executable, "r") ?? fail(`${executable} is not an ELF file`);
   const linked = elf.sections.find(section => section.type === 2) ?? fail(`${executable} has no symbol table`);
   const linkedSymbols = readAt(elf.fd, linked.offset, linked.size);
   const linkedStrings = readAt(elf.fd, elf.sections[linked.link]!.offset, elf.sections[linked.link]!.size);
@@ -373,6 +526,7 @@ function readGraph(executable: string, mapPath: string, log: string): Graph {
     if (linkedSymbols.readUInt16LE(at + 6) === 0 || type === 3 || type === 4 || type === 6) continue;
     const node = nodeAt(Number(linkedSymbols.readBigUInt64LE(at + 8)));
     if (node < 0) continue;
+    if (type === 10) graph.roots.add(node);
     const name = stringAt(linkedStrings, linkedSymbols.readUInt32LE(at));
     const nodes = linkedAt.get(name);
     if (nodes === undefined) linkedAt.set(name, [node]);
@@ -399,10 +553,33 @@ function readGraph(executable: string, mapPath: string, log: string): Graph {
         }
       }
     }
+    for (const name of read.namedByUnwindTables) {
+      for (const node of [resolveGlobal(name), ...(linkedAt.get(name) ?? [])]) if (node !== undefined) graph.roots.add(node);
+    }
   }
   if (leadNowhere.length > 0) {
     fail(`${leadNowhere.length} references lead to sections that the linker's map does not hold:` + leadNowhere.slice(0, 5).map(line => `\n  ${line}`).join(""));
   }
+  const onlyInTheBytes: [Set<number>, number][] = [];
+  for (const [object, read] of objects) {
+    for (const [source, addresses] of read?.boundAt ?? []) {
+      const same = nodesOf.get(object + "\0" + source)!;
+      const from = successors[same[0]!]!;
+      const isKnown = (node: number) => node >= 0 && (from.has(node) || same.includes(node));
+      for (const address of addresses) {
+        const node = address < image.start ? -1 : nodeAt(address);
+        if (node < 0 || graph.object[node] === "<internal>") continue;
+        if (isKnown(node) || isKnown(nodeAt(address - 1))) {
+          graph.confirmedByTheBytes++;
+          continue;
+        }
+        onlyInTheBytes.push([from, node]);
+        if ([...from].some(between => successors[between]!.has(node))) graph.sentOn++;
+        else graph.boundElsewhere.push(`${object}:(${source}) names ${graph.object[node]}:(${graph.section[node]})`);
+      }
+    }
+  }
+  for (const [from, node] of onlyInTheBytes) from.add(node);
   for (const nodes of nodesOf.values()) {
     for (const node of nodes.slice(1)) {
       successors[nodes[0]!]!.add(node);
@@ -430,8 +607,15 @@ function readGraph(executable: string, mapPath: string, log: string): Graph {
   return graph;
 }
 
+interface Sighting {
+  from: string;
+  offset: number;
+  inTheObject: number;
+}
+
 interface MachOReferences {
   references: Map<string, Set<string>>;
+  sightings: Map<string, Map<number, Sighting>>;
   externals: string[];
   kept: string[];
   isX64: boolean;
@@ -475,7 +659,7 @@ function readMachOObject(path: string): MachOReferences | undefined {
     }
     at += commands.readUInt32LE(at + 4);
   }
-  const result: MachOReferences = { references: new Map(), externals: [], kept: [], isX64 };
+  const result: MachOReferences = { references: new Map(), sightings: new Map(), externals: [], kept: [], isX64 };
   if (symbolTable === undefined) {
     closeSync(fd);
     return result;
@@ -501,7 +685,7 @@ function readMachOObject(path: string): MachOReferences | undefined {
     if (description & 0x20) result.kept.push(symbol.name);
   }
   const atoms = namesAt.map(names => [...names].sort((a, b) => a[0] - b[0]));
-  const atomAt = (section: number, address: number) => {
+  const startAndAtomAt = (section: number, address: number) => {
     const list = atoms[section - 1];
     if (list === undefined) return undefined;
     let low = 0;
@@ -511,8 +695,9 @@ function readMachOObject(path: string): MachOReferences | undefined {
       if (list[middle]![0] <= address) low = middle + 1;
       else high = middle;
     }
-    return low > 0 ? list[low - 1]![1] : undefined;
+    return low > 0 ? list[low - 1] : undefined;
   };
+  const atomAt = (section: number, address: number) => startAndAtomAt(section, address)?.[1];
   const refer = (from: string, to: string) => {
     const set = result.references.get(from);
     if (set === undefined) result.references.set(from, new Set([to]));
@@ -530,21 +715,38 @@ function readMachOObject(path: string): MachOReferences | undefined {
     if (section.segment === "__DWARF" || section.segment === "__LD") return;
     if (["__eh_frame", "__gcc_except_tab", "__compact_unwind"].includes(section.name)) return;
     const runsBeforeMain = ["__mod_init_func", "__init_offsets", "__mod_term_func", "__thread_vars"].includes(section.name);
-    if (runsBeforeMain || section.flags & 0x10000000) for (const [, name] of atoms[index]!) result.kept.push(name);
+    if (runsBeforeMain || (section.flags & 0x10000000 && section.name !== "__bun_builtins")) for (const [, name] of atoms[index]!) result.kept.push(name);
     if (section.count === 0) return;
     const relocations = readAt(fd, section.relocations, section.count * 8);
     let contents: Buffer | undefined;
+    let hasAddend = false;
+    let isSubtracted = false;
     for (let entry = 0; entry < relocations.length; entry += 8) {
       const word = relocations.readUInt32LE(entry + 4);
       const type = word >>> 28;
-      if (type === 10 && !isX64) continue;
+      if (type === 10 && !isX64) {
+        hasAddend = true;
+        continue;
+      }
+      const isPlain = !hasAddend && !isSubtracted;
+      hasAddend = false;
+      isSubtracted = type === (isX64 ? 5 : 1);
       const field = relocations.readInt32LE(entry);
       const from = atomAt(index + 1, section.address + field);
       if (from === undefined) continue;
       if ((word >>> 27) & 1) {
         const target = symbols[word & 0xffffff]!;
-        if ((target.type & 0x0e) === 0x0e) refer(from, "L" + (atomAt(target.section, target.value) ?? target.name));
-        else refer(from, "G" + target.name);
+        const to = (target.type & 0x0e) === 0x0e ? "L" + (atomAt(target.section, target.value) ?? target.name) : "G" + target.name;
+        refer(from, to);
+        if (!isPlain || isSubtracted || (section.flags & 0xff) === 1) continue;
+        let seen = result.sightings.get(to);
+        if (seen === undefined) result.sightings.set(to, (seen = new Map()));
+        if (seen.has(type)) continue;
+        const length = (word >>> 25) & 3;
+        const holdsAnAddend = length === 3 ? type === 0 : isX64 && length === 2;
+        if (holdsAnAddend) contents ??= readAt(fd, section.offset, section.size);
+        const inTheObject = !holdsAnAddend ? 0 : length === 3 ? contents!.readUInt32LE(field) + contents!.readInt32LE(field + 4) * 0x100000000 : contents!.readInt32LE(field);
+        seen.set(type, { from, offset: section.address + field - startAndAtomAt(index + 1, section.address + field)![0], inTheObject });
         continue;
       }
       const length = (word >>> 25) & 3;
@@ -562,7 +764,72 @@ function readMachOObject(path: string): MachOReferences | undefined {
   return result;
 }
 
-function readMachOGraph(mapPath: string, exportedSymbols: string): Graph {
+function machOImageOf(path: string): Image {
+  const fd = openSync(path, "r");
+  const header = readAt(fd, 0, 32);
+  const commands = readAt(fd, 32, header.readUInt32LE(20));
+  const parts: { start: number; end: number; data: Buffer }[] = [];
+  for (let at = 0; at < commands.length; at += commands.readUInt32LE(at + 4)) {
+    if (commands.readUInt32LE(at) !== 0x19 || fixedName(commands, at + 8) === "__LINKEDIT") continue;
+    const start = Number(commands.readBigUInt64LE(at + 24));
+    const size = Number(commands.readBigUInt64LE(at + 48));
+    if (size > 0) parts.push({ start, end: start + size, data: readAt(fd, Number(commands.readBigUInt64LE(at + 40)), size) });
+  }
+  closeSync(fd);
+  return imageOfParts(parts, header.readUInt32LE(4) === 0x01000007 ? 62 : 183, true);
+}
+
+function addressGivenInMachO(image: Image, seen: Map<number, Sighting>, placeOf: (sighting: Sighting) => number | undefined): number | undefined {
+  const signed = (value: number, bits: number) => (value >= 2 ** (bits - 1) ? value - 2 ** bits : value);
+  const is = (word: number, mask: number, bits: number) => (word & mask) >>> 0 === bits;
+  const pointerAt = (address: number) => {
+    const low = image.unsigned32(address);
+    const high = image.unsigned32(address + 4);
+    return low === undefined || high === undefined || high >>> 31 === 1 ? undefined : low + (high & 15) * 0x100000000;
+  };
+  const at = (type: number) => {
+    const sighting = seen.get(type);
+    const place = sighting && placeOf(sighting);
+    return place === undefined ? undefined : { place, inTheObject: sighting!.inTheObject };
+  };
+  const pointer = at(0);
+  const value = pointer && pointerAt(pointer.place);
+  if (value !== undefined && value !== 0) return value - pointer!.inTheObject;
+  if (image.machine === 62) {
+    for (const type of [2, 1, 6, 7, 8, 3]) {
+      const site = at(type);
+      const field = site && image.signed32(site.place);
+      if (field === undefined) continue;
+      if (type === 3 && image.byte(site!.place - 2) !== 0x8d) continue;
+      return field - site!.inTheObject + site!.place + 4;
+    }
+    return undefined;
+  }
+  const branch = at(2);
+  const call = branch && image.unsigned32(branch.place);
+  if (call !== undefined && is(call, 0x7c000000, 0x14000000)) return branch!.place + signed(call & 0x3ffffff, 26) * 4;
+  for (const [pageType, lowType] of [[3, 4], [5, 6]] as const) {
+    const high = at(pageType);
+    const first = high && image.unsigned32(high.place);
+    if (first === undefined) continue;
+    const distance = signed((((first >>> 5) & 0x7ffff) << 2) | ((first >>> 29) & 3), 21);
+    if (is(first, 0x9f000000, 0x10000000) && pageType === 3) return high!.place + distance;
+    if (!is(first, 0x9f000000, 0x90000000)) continue;
+    const page = high!.place - (high!.place % 4096) + distance * 4096;
+    const low = at(lowType);
+    const second = low && image.unsigned32(low.place);
+    if (second === undefined) continue;
+    const bits = (second >>> 10) & 0xfff;
+    if (is(second, 0x7fc00000, 0x11000000)) return page + bits;
+    if (!is(second, 0x3b000000, 0x39000000)) continue;
+    const scale = (second >>> 26) & 1 && (second >>> 23) & 1 ? 4 : second >>> 30;
+    if (pageType === 3) return page + bits * 2 ** scale;
+    return pointerAt(page + bits * 8);
+  }
+  return undefined;
+}
+
+function readMachOGraph(executable: string, mapPath: string, exportedSymbols: string): Graph {
   const files = new Map<number, string>();
   const sections: { address: number; size: number; name: string }[] = [];
   const found: { address: number; size: number; file: number; name: string }[] = [];
@@ -604,6 +871,9 @@ function readMachOGraph(mapPath: string, exportedSymbols: string): Graph {
     aliases: new Map(),
     externalNames: new Set(),
     unreadObjects: [],
+    confirmedByTheBytes: 0,
+    sentOn: 0,
+    boundElsewhere: [],
     isArm64: false,
   };
   let section = sections[0];
@@ -688,6 +958,37 @@ function readMachOGraph(mapPath: string, exportedSymbols: string): Graph {
       }
     }
   }
+  const image = machOImageOf(executable);
+  const nodeAt = (address: number) => {
+    let low = 0;
+    let high = found.length;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      if (found[middle]!.address <= address) low = middle + 1;
+      else high = middle;
+    }
+    return low > 0 && address < found[low - 1]!.address + found[low - 1]!.size ? low - 1 : -1;
+  };
+  for (const [file, read] of objects) {
+    if (read === undefined) continue;
+    for (const [target, seen] of read.sightings) {
+      const address = addressGivenInMachO(image, seen, sighting => {
+        const from = here(file, sighting.from);
+        return from === undefined ? undefined : found[from]!.address + sighting.offset;
+      });
+      const node = address === undefined ? -1 : nodeAt(address);
+      if (node < 0 || found[node]!.file === 0 || !/^__(TEXT,__(text|const|bun_builtins)|DATA)/.test(graph.output[node]!)) continue;
+      if (node === ((target[0] === "L" ? here(file, target.slice(1)) : undefined) ?? anywhere(target.slice(1)))) {
+        graph.confirmedByTheBytes++;
+        continue;
+      }
+      graph.boundElsewhere.push(`${files.get(file)} names ${target.slice(1).replaceAll("\x01", " | ")}, which lies in ${graph.object[node]}:${graph.section[node]}`);
+      for (const [source, targets] of read.references) {
+        const from = targets.has(target) ? here(file, source) : undefined;
+        if (from !== undefined && from !== node) successors[from]!.add(node);
+      }
+    }
+  }
   graph.successors = successors.map(set => [...set]);
   found.forEach((node, index) => {
     if (node.file === 0 || objects.get(node.file) === undefined) graph.roots.add(index);
@@ -739,6 +1040,24 @@ function demangle(demangler: string, names: string[]): string[] {
   return names.map(name => plainNames.get(name)!);
 }
 
+function startOfOwnName(plainName: string): number {
+  let depth = 0;
+  let start = 0;
+  for (let at = 0; at < plainName.length; at++) {
+    const character = plainName[at];
+    if (character === "(" && depth === 0 && !plainName.startsWith("(anonymous namespace)", at)) break;
+    if (character === "<" || character === "(" || character === "[") depth++;
+    else if (character === ">" || character === ")" || character === "]") depth--;
+    else if (character === " " && depth === 0) start = at + 1;
+  }
+  return start;
+}
+
+function isDoorFor(door: Door, plainName: string): boolean {
+  const match = door.pattern.exec(plainName);
+  return match !== null && match.index + match[0].length > startOfOwnName(plainName);
+}
+
 function functionOfSection(section: string): string | undefined {
   return /^\.text\.(?:unlikely\.|hot\.|startup\.|exit\.)?(.+)$/.exec(section)?.[1];
 }
@@ -750,14 +1069,14 @@ function analyze(graph: Graph, declared: Doors, demangler: string, foldedAway: s
   const doors = new Map<number, Door>();
   const matched = new Set<Door>();
   for (const [node, name] of plainName) {
-    const door = declared.doors.find(door => door.pattern.test(name));
+    const door = declared.doors.find(door => isDoorFor(door, name));
     if (door !== undefined) {
       doors.set(node, door);
       matched.add(door);
     }
   }
   for (const name of demangle(demangler, foldedAway)) {
-    for (const door of declared.doors) if (door.pattern.test(name)) matched.add(door);
+    for (const door of declared.doors) if (isDoorFor(door, name)) matched.add(door);
   }
   for (const door of declared.doors) {
     if (!matched.has(door) && !declared.smallest.has(door.feature)) fail(`no function matches the door ${door.pattern.source}`);
@@ -769,7 +1088,7 @@ function analyze(graph: Graph, declared: Doors, demangler: string, foldedAway: s
   for (const [node, aliases] of folded) {
     const names = plainAliases.slice(aliasAt, (aliasAt += aliases.length));
     const feature = doors.get(node)!.feature;
-    if (names.every(name => declared.doors.find(door => door.pattern.test(name))?.feature === feature)) continue;
+    if (names.every(name => declared.doors.find(door => isDoorFor(door, name))?.feature === feature)) continue;
     doors.delete(node);
     foldedOpen++;
   }
@@ -878,30 +1197,68 @@ interface Linker {
   link(name: string, rewrite: (path: string) => string | undefined, first: string[], last: string[], runs?: boolean, without?: RegExp): Link;
 }
 
-function tableOf(
-  declared: Doors,
-  stub: number,
-  islands: { start: number; end: number; features: string }[],
-  doors: { address: number; size: number; door: Door; name: string }[],
-): string {
-  const hex = (value: number) => value.toString(16);
-  const table =
-    `bun-islands 1\nstub ${hex(stub)}\n` +
-    declared.features.map(feature => `feature ${feature.name} ${feature.description}\n`).join("") +
-    declared.conditions.map(({ feature, kind, name }) => `when ${feature} ${kind} ${name}\n`).join("") +
-    [...islands]
-      .sort((a, b) => a.start - b.start)
-      .map(island => `island ${hex(island.start)} ${hex(island.end)} ${island.features}\n`)
-      .join("") +
-    doors
-      .map(({ address, size, door }) => `door ${hex(address)} ${hex(size)} ${door.feature} ${door.whenShut}\n`)
-      .join("");
-  if (table.length > tableRoom) fail(`the table takes ${table.length} bytes and there is room for ${tableRoom}`);
-  return table;
+interface ListedDoor extends TableDoor {
+  size: number;
 }
 
-function listedDoors(graph: Graph, check: Analysis, work: string, featuresOfIslandAt: (node: number) => string | undefined) {
-  const listed: { address: number; size: number; door: Door; name: string }[] = [];
+function dataPackagesOf(executable: string, graph: Graph, declared: Doors): DataPackage[] {
+  const elf = declared.data.length > 0 ? openElf(executable, "r") : undefined;
+  if (elf === undefined) return [];
+  const table = elf.sections.find(section => section.type === 2) ?? fail(`${executable} has no symbol table`);
+  const symbols = readAt(elf.fd, table.offset, table.size);
+  const strings = readAt(elf.fd, elf.sections[table.link]!.offset, elf.sections[table.link]!.size);
+  const addresses: number[] = [];
+  const starts: number[] = [];
+  for (let at = 0; at < symbols.length; at += 24) {
+    const section = symbols.readUInt16LE(at + 6);
+    if (section === 0 || (section >= 0xff00 && section < 0xffff) || (symbols[at + 4]! & 15) === 6) continue;
+    const address = Number(symbols.readBigUInt64LE(at + 8));
+    addresses.push(address);
+    if (/^icudt\d+_dat$/.test(stringAt(strings, symbols.readUInt32LE(at)))) starts.push(address);
+  }
+  const packages = [...new Set(starts)].map(start => {
+    const node = graph.address.findIndex((address, node) => address <= start && start < address + graph.size[node]!);
+    const section = elf.sections.find(section => (section.flags & 2) !== 0 && section.address <= start && start < section.address + section.size);
+    if (node < 0 || section === undefined) fail("ICU's data package lies in no section");
+    const end = addresses.reduce((end, address) => (address > start && address < end ? address : end), graph.address[node]! + graph.size[node]!);
+    const items = itemsOf(readAt(elf.fd, section.offset + (start - section.address), end - start));
+    const runs = runsOf(items, declared.data, declared.features.map(feature => feature.name));
+    const held = new Map<string, number>();
+    for (const run of runs) {
+      const bytes = items.slice(run.first, run.first + run.count).reduce((sum, item) => sum + item.size, 0);
+      held.set(run.features, (held.get(run.features) ?? 0) + bytes);
+    }
+    console.log(
+      `ICU's data: ${items.length} items, ${megabytes(end - start)}, of which can go, in ${runs.length} runs: ` + [...held].map(([features, bytes]) => `${features} ${megabytes(bytes)}`).join(", "),
+    );
+    return { start, end, runs };
+  });
+  closeSync(elf.fd);
+  return packages;
+}
+
+function tableOf(declared: Doors, stub: number, islands: Range[], doors: ListedDoor[], packages: DataPackage[]): Buffer {
+  const smallest = (whenShut: string) => {
+    const sizes = doors.filter(door => door.whenShut === whenShut).map(door => door.size);
+    return sizes.length > 0 ? Math.min(...sizes) : 0;
+  };
+  try {
+    return encodeTable({
+      stub,
+      smallestDoor: { exit: smallest("exit"), return: smallest("return") },
+      features: declared.features.map(feature => feature.name),
+      conditions: declared.conditions,
+      islands: [...islands].sort((a, b) => a.start - b.start),
+      doors,
+      packages,
+    });
+  } catch (error) {
+    fail((error as Error).message);
+  }
+}
+
+function listedDoors(graph: Graph, check: Analysis, declared: Doors, work: string, featuresOfIslandAt: (node: number) => string | undefined): ListedDoor[] {
+  const listed: (ListedDoor & { node: number })[] = [];
   const namedBy = new Map<number, number[]>();
   for (const node of check.core) {
     if (check.doors.has(node)) continue;
@@ -913,17 +1270,25 @@ function listedDoors(graph: Graph, check: Analysis, work: string, featuresOfIsla
     }
   }
   const spell = (node: number) => check.plainName.get(node) ?? `${graph.object[node]!.slice(graph.object[node]!.lastIndexOf("/") + 1)}:${graph.section[node]}`;
-  const review: string[] = [];
   for (const [node, door] of check.doors) {
     if (featuresOfIslandAt(node) === door.feature) continue;
     if (door.whenShut === "exit" && graph.successors[node]!.every(next => check.core.has(next))) continue;
-    const name = check.plainName.get(node)!;
-    if (graph.size[node]! < bytesToShut(graph, door)) fail(`the door ${name} has ${graph.size[node]} bytes: too few to be shut`);
-    review.push(`${listed.length} ${door.feature} ${graph.size[node]} ${name}\n` + [...new Set((namedBy.get(node) ?? []).map(spell))].map(by => `    ${by}\n`).join(""));
-    listed.push({ address: graph.address[node]!, size: graph.size[node]!, door, name });
+    if (graph.size[node]! < bytesToShut(graph, door)) fail(`the door ${check.plainName.get(node)} has ${graph.size[node]} bytes: too few to be shut`);
+    listed.push({ address: graph.address[node]!, size: graph.size[node]!, feature: door.feature, whenShut: door.whenShut, node });
   }
+  const ordered = inTableOrder(declared.features.map(feature => feature.name), listed);
+  const review = ordered.map(
+    ({ node, feature, size }, number) =>
+      `${number} ${feature} ${size} ${check.plainName.get(node)}\n` + [...new Set((namedBy.get(node) ?? []).map(spell))].map(by => `    ${by}\n`).join(""),
+  );
   writeFileSync(join(work, "doors.txt"), review.join(""));
-  return listed;
+  if (process.env.BUILDKITE !== undefined) {
+    console.log(
+      "the doors by number, and the first that names each:\n" +
+        ordered.map(({ node, feature }, number) => `door ${number} ${feature} ${check.plainName.get(node)} <- ${(namedBy.get(node) ?? []).slice(0, 1).map(spell).join("")}`.slice(0, 240)).join("\n"),
+    );
+  }
+  return ordered;
 }
 
 function islandsBySize(graph: Graph, analysis: Analysis, declared: Doors, isMovable: (output: string) => boolean) {
@@ -959,6 +1324,7 @@ interface FreshPlan extends Plan {
 
 interface Format {
   keepsDoorsApart: boolean;
+  linksTheSameInputsAgain?: boolean;
   isMovable(output: string): boolean;
   support: string[];
   flags: string[];
@@ -970,13 +1336,13 @@ interface Format {
   planFrom(graph: Graph, analysis: Analysis): FreshPlan;
   nameTheNameless(plan: FreshPlan, ours: string[]): Map<string, string>;
   stub(graph: Graph, analysis: Analysis): number | undefined;
-  write(table: string): void;
+  write(table: Buffer): void;
   tidyUp(): void;
 }
 
 function layOut({ work, declared, demangler, planPath, freshPlanPath, link }: Linker, format: Format): void {
   const foldedNames = (graph: Graph) => [...graph.aliases.values()].flat().map(([, name]) => name.replace(/^_/, ""));
-  const isDoor = (plainName: string) => declared.doors.some(door => door.pattern.test(plainName));
+  const isDoor = (plainName: string) => declared.doors.some(door => isDoorFor(door, plainName));
   const foldedDoors = (graph: Graph, analysis: Analysis) => {
     if (!format.keepsDoorsApart) return [];
     const names = foldedNames(graph);
@@ -1005,10 +1371,11 @@ function layOut({ work, declared, demangler, planPath, freshPlanPath, link }: Li
   }
 
   for (;;) {
+    const compiledBefore = format.linksTheSameInputsAgain ? undefined : native;
     const laid = link(
       "second",
-      native === undefined ? path => path : path => (isBitcode(path) ? undefined : (named.get(path) ?? path)),
-      [...format.support, ...(native ?? [])],
+      compiledBefore === undefined ? path => path : path => (isBitcode(path) ? undefined : (named.get(path) ?? path)),
+      [...format.support, ...(compiledBefore ?? [])],
       [...format.flags, ...format.flagsFor(plan)],
     );
     lap(native === undefined ? "link by an earlier build's plan" : "ordered link");
@@ -1017,6 +1384,11 @@ function layOut({ work, declared, demangler, planPath, freshPlanPath, link }: Li
     lap("graph");
     const analysis = analyze(graph, declared, demangler, foldedNames(graph));
     if (analysis.foldedOpen > 0) console.log(`${analysis.foldedOpen} doors were folded into other functions and stay open`);
+    console.log(
+      `the bytes the linker wrote confirm ${graph.confirmedByTheBytes} references; ${graph.sentOn} branches to a branch were sent on to its target; ${graph.boundElsewhere.length} references lead where the names did not` +
+        graph.boundElsewhere.slice(0, 5).map(line => `\n  ${line}`).join(""),
+    );
+    writeFileSync(join(work, "bound-elsewhere.txt"), graph.boundElsewhere.join("\n") + "\n");
     if (analysis.tooSmall > 0) console.log(`${analysis.tooSmall} functions that match a door are too small to be shut and are no doors`);
     const ranges = rangesThatCanGo(graph, analysis, format.isMovable);
     const faults = misplaced(graph, analysis, ranges);
@@ -1038,7 +1410,8 @@ function layOut({ work, declared, demangler, planPath, freshPlanPath, link }: Li
     }
 
     const stub = format.stub(graph, analysis) ?? fail("Bun__trimmedOut is gone");
-    format.write(tableOf(declared, graph.address[stub]!, ranges, listedDoors(graph, analysis, work, node => featuresAt(graph.address[node]!))));
+    const doors = listedDoors(graph, analysis, declared, work, node => featuresAt(graph.address[node]!));
+    format.write(tableOf(declared, graph.address[stub]!, ranges, doors, dataPackagesOf(laid.executable, graph, declared)));
     for (const island of fresh.islands) island.names = island.names.filter(name => !name.startsWith(namelessPrefix));
     if (freshPlanPath !== undefined) writePlan(freshPlanPath, fresh);
     format.tidyUp();
@@ -1050,6 +1423,18 @@ function layOut({ work, declared, demangler, planPath, freshPlanPath, link }: Li
         (isInherited && native === undefined ? " (laid out by an earlier build's plan)" : "") +
         ": " +
         [...held].map(([features, bytes]) => `${features} ${megabytes(bytes)}`).join(", "),
+    );
+    const fixed = new Map<string, number>();
+    for (const [node] of analysis.neededBy) {
+      if (!format.isMovable(graph.output[node]!)) fixed.set(graph.output[node]!, (fixed.get(graph.output[node]!) ?? 0) + graph.size[node]!);
+    }
+    console.log(
+      "only features need, in sections that are not cut: " +
+        [...fixed]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 8)
+          .map(([output, bytes]) => `${output} ${megabytes(bytes)}`)
+          .join(", "),
     );
     console.log(`islands took ${((performance.now() - startedAt) / 1000).toFixed(1)} s: ${laps.join(", ")}`);
     return;
@@ -1164,7 +1549,7 @@ function elf({ work, output, declared, command, assemble, link }: Linker): Forma
     write(table) {
       const file = openElf(resolve(output), "r+") ?? fail(`${output} is not an ELF file`);
       const room = file.sections.find(section => section.name === ".bun_islands") ?? fail("the room for the table is gone");
-      writeSync(file.fd, Buffer.from(table, "latin1"), 0, table.length, room.offset);
+      writeSync(file.fd, table, 0, table.length, room.offset);
       closeSync(file.fd);
     },
     tidyUp,
@@ -1172,7 +1557,7 @@ function elf({ work, output, declared, command, assemble, link }: Linker): Forma
 }
 
 function machO({ work, output, declared, command, assemble }: Linker): Format {
-  const isMovable = (output: string) => output === "__TEXT,__text" || output === "__TEXT,__const";
+  const isMovable = (output: string) => output === "__TEXT,__text" || output === "__TEXT,__const" || output === "__TEXT,__bun_builtins";
   const exportedSymbols = command[command.indexOf("-exported_symbols_list") + 1]!;
   const orderAt = command.findIndex(argument => argument.startsWith("-Wl,-order_file,"));
   const compiledAt = command.findIndex(argument => argument.startsWith("-Wl,-object_path_lto,"));
@@ -1211,7 +1596,7 @@ function machO({ work, output, declared, command, assemble }: Linker): Format {
       compileInto(join(work, "unused"));
       return readdirSync(compiled).map(name => join(compiled, name));
     },
-    read: link => readMachOGraph(link.map, exportedSymbols),
+    read: link => readMachOGraph(link.executable, link.map, exportedSymbols),
     planFrom(graph, analysis) {
       const { islands, bytesOf, numberOf } = islandsBySize(graph, analysis, declared, isMovable);
       const base = (path: string) => path.slice(path.lastIndexOf("/") + 1);
@@ -1262,10 +1647,103 @@ function machO({ work, output, declared, command, assemble }: Linker): Format {
         }
       }
       if (room < 0) fail("the room for the table is gone");
-      writeSync(fd, Buffer.from(table, "latin1"), 0, table.length, room);
+      writeSync(fd, table, 0, table.length, room);
       closeSync(fd);
     },
     tidyUp() {},
+  };
+}
+
+function coff({ work, output, declared, demangler, command, assemble, link }: Linker): Format {
+  const isMovable = (output: string) => output === ".text" || output === ".rdata";
+  const valueOf = (flag: string) => command.filter(argument => argument.toLowerCase().startsWith(flag)).map(argument => argument.slice(flag.length));
+  const at = (flag: string) => command.findIndex(argument => argument.toLowerCase().startsWith(flag));
+  const [orderAt, symbolMapAt] = [at("/order:@"), at("/map:")];
+  if (symbolMapAt < 0) fail("the link command names no /map");
+  const finalSymbolMap = command[symbolMapAt]!.slice(5);
+  const inherited = orderAt >= 0 ? readFileSync(command[orderAt]!.slice(8), "utf8") : "";
+  const orderFile = join(work, "order.txt");
+  const architecture = valueOf("/machine:")[0]!.toLowerCase();
+  const inside = (folder: string) => (existsSync(folder) ? readdirSync(folder).map(name => join(folder, name)) : []);
+  const libraryFolders = [
+    ...valueOf("/libpath:"),
+    ...valueOf("/winsysroot:").flatMap(root => [
+      ...inside(join(root, "VC", "Tools", "MSVC")).map(version => join(version, "lib", architecture)),
+      ...inside(join(root, "Windows Kits", "10", "Lib")).flatMap(version => [join(version, "ucrt", architecture), join(version, "um", architecture)]),
+    ]),
+  ];
+  const inputs: string[] = [];
+  link("listing", path => (inputs.push(path), undefined), [], [], false);
+  const inputDirectories = new Set([work, ...inputs.map(path => dirname(path))]);
+  const nameOf = { first: "first.exe", second: output.slice(output.lastIndexOf("/") + 1) };
+  const compiledBy = (link: "first" | "second") =>
+    [...inputDirectories].flatMap(directory =>
+      readdirSync(directory)
+        .filter(file => file.startsWith(nameOf[link] + ".lto."))
+        .map(file => join(directory, file)),
+    );
+  const tidyUp = () => {
+    for (const object of [...compiledBy("first"), ...compiledBy("second")]) rmSync(object);
+  };
+  tidyUp();
+  command[symbolMapAt] = "/map:" + join(work, "first.symbols.map");
+  return {
+    keepsDoorsApart: false,
+    linksTheSameInputsAgain: inputs.some(isBitcode),
+    isMovable,
+    support: [
+      assemble(
+        "room.s",
+        `.section .bunisl,"dr"\n.zero ${tableRoom}\n` +
+          `.section .rdata,"dr",discard,Bun__trimmedFeatures\n.globl Bun__trimmedFeatures\nBun__trimmedFeatures:\n` +
+          declared.features.map(feature => `.asciz ${JSON.stringify(feature.description)}\n`).join(""),
+      ),
+    ],
+    flags: ["/include:Bun__trimmedOut", "/lldsavetemps:prelink"],
+    onlyInTheFirstLink: [],
+    notInTheFirstLink: /^\/(debug|pdb)(:|$)/i,
+    flagsFor(plan) {
+      writeFileSync(orderFile, plan.islands.flatMap(island => island.names).join("\n") + "\n" + inherited, "latin1");
+      command[symbolMapAt] = "/map:" + finalSymbolMap;
+      if (orderAt >= 0) command[orderAt] = "/order:@" + orderFile;
+      return orderAt >= 0 ? [] : ["/order:@" + orderFile, "/ignore:4037"];
+    },
+    compiledBy,
+    read: link =>
+      readCoffGraph({
+        executable: link.executable,
+        chunkMap: link.map,
+        symbolMap: command[symbolMapAt]!.slice(5),
+        inputs: [...inputs, ...compiledBy("first"), ...compiledBy("second")],
+        libraryFolders,
+        undname: demangler.replace(/cxxfilt(?=[^\\/]*$)/, "undname"),
+        work,
+      }),
+    planFrom(graph, analysis) {
+      const { islands, bytesOf, numberOf } = islandsBySize(graph, analysis, declared, isMovable);
+      const islandOf = (node: number) => (isMovable(graph.output[node]!) && !staysAsDoor(analysis, node) ? (numberOf.get(analysis.neededBy.get(node) ?? "") ?? 0) : 0);
+      const islandOfName = new Map<string, number>();
+      graph.names.forEach((names, node) => {
+        for (const name of names) islandOfName.set(name, (islandOfName.get(name) ?? islandOf(node)) === islandOf(node) ? islandOf(node) : 0);
+      });
+      const plan = { doors: [], islands: islands.map(features => ({ features, names: [] as string[] })), bytesOf, nodes: [] as number[], nameless: new Map() };
+      graph.names.forEach((all, node) => {
+        const names = all.filter(name => islandOfName.get(name) === islandOf(node));
+        if (islandOf(node) === 0 || names.length === 0) return;
+        plan.islands[islandOf(node) - 1]!.names.push(...names);
+        plan.nodes.push(node);
+      });
+      return plan;
+    },
+    nameTheNameless: () => new Map(),
+    stub: (_, analysis) => [...analysis.plainName].find(([, name]) => name === "Bun__trimmedOut")?.[0],
+    write(table) {
+      const room = sectionInFile(resolve(output), ".bunisl") ?? fail("the room for the table is gone");
+      const fd = openSync(resolve(output), "r+");
+      writeSync(fd, table, 0, table.length, room.offset);
+      closeSync(fd);
+    },
+    tidyUp,
   };
 }
 
@@ -1277,15 +1755,23 @@ function main(): void {
     fail("usage: islands.ts <doors> <llvm-cxxfilt> <work directory> [<plan of an earlier build> <where to write this build's plan>] -- <link command>");
   }
   const isMachO = command.some(argument => argument.startsWith("-Wl,-map,"));
-  const mapFlag = isMachO ? "-Wl,-map," : "-Wl,-Map=";
-  const outputAt = command.indexOf("-o") + 1;
+  const isCoff = command.includes("/link");
+  const mapFlag = isCoff ? "/lldmap:" : isMachO ? "-Wl,-map," : "-Wl,-Map=";
+  const outputFlag = isCoff ? "/Fe" : "";
+  const outputAt = isCoff ? Math.max(0, command.findIndex(argument => argument.startsWith(outputFlag))) : command.indexOf("-o") + 1;
   const mapAt = command.findIndex(argument => argument.startsWith(mapFlag));
   if (outputAt === 0 || mapAt < 0) fail("the link command names no output or no map");
-  const output = command[outputAt]!;
+  const output = command[outputAt]!.slice(outputFlag.length);
   const finalMap = command[mapAt]!.slice(mapFlag.length);
   const compiler = command[0]!;
   const targetFlags = command.flatMap((argument, index) =>
-    /^(--target=|-mmacosx-version-min=)/.test(argument) ? [argument] : argument === "-isysroot" ? [argument, command[index + 1]!] : [],
+    /^(--target=|-mmacosx-version-min=)/.test(argument)
+      ? [argument]
+      : argument === "-isysroot"
+        ? [argument, command[index + 1]!]
+        : /^\/machine:/i.test(argument)
+          ? ["--driver-mode=gcc", `--target=${/arm64/i.test(argument) ? "aarch64" : "x86_64"}-pc-windows-msvc`]
+          : [],
   );
   rmSync(work, { recursive: true, force: true });
   mkdirSync(work, { recursive: true });
@@ -1306,18 +1792,18 @@ function main(): void {
       return source + ".o";
     },
     link(name, rewrite, first, last, runs = true, without) {
-      const executable = name === "second" ? output : join(work, name);
+      const executable = name === "second" ? output : join(work, name + (isCoff ? ".exe" : ""));
       const map = name === "second" ? finalMap : join(work, name + ".map");
       const rewritten = command.slice(1).flatMap((argument, index) => {
-        if (index + 1 === outputAt) return [executable];
+        if (index + 1 === outputAt) return [outputFlag + executable];
         if (index + 1 === mapAt) return [mapFlag + map];
         if (without?.test(argument)) return [];
-        const file = /^(-Wl,)?@(.*)$/.exec(argument);
+        const file = /^((?:\/clang:)?-Wl,)?@(.*)$/.exec(argument);
         if (file === null) return [argument];
         const lines = readFileSync(file[2]!, "utf8").split("\n").filter(line => line !== "");
         const kept = lines.flatMap(line => {
           const path = line.replace(/^"(.*)"$/, "$1");
-          if (path.startsWith("-")) return [line];
+          if (path.startsWith("-") || /^\/(start|end)-lib$/.test(path)) return [line];
           const replaced = rewrite(path);
           return replaced === undefined ? [] : [`"${replaced}"`];
         });
@@ -1332,7 +1818,7 @@ function main(): void {
       return { executable, map, log };
     },
   };
-  layOut(linker, isMachO ? machO(linker) : elf(linker));
+  layOut(linker, isCoff ? coff(linker) : isMachO ? machO(linker) : elf(linker));
 }
 
 main();

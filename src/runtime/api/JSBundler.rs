@@ -1025,7 +1025,6 @@ pub(crate) mod js_bundler {
             if let Some(dts) = config.get_boolean_loose(global_this, "dts")? {
                 this.dts = dts;
             }
-            #[cfg(not(windows))]
             if this.check || this.dts {
                 unsafe extern "C" {
                     safe fn Bun__hasTypeChecker() -> bool;

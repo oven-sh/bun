@@ -2593,6 +2593,8 @@ pub const UV_PRIORITIZED: c_int = 8;
 pub(crate) const UV_PIPE_NO_TRUNCATE: c_uint = 1;
 pub const UV_FS_SYMLINK_DIR: c_int = 0x0001;
 pub const UV_FS_SYMLINK_JUNCTION: c_int = 0x0002;
+/// As an atime or mtime of `uv_fs_utime`, `uv_fs_futime` or `uv_fs_lutime`: the current time.
+pub const UV_FS_UTIME_NOW: f64 = f64::INFINITY;
 pub const UV_RENAME: c_int = 1;
 pub const UV_CHANGE: c_int = 2;
 pub const UV_FS_EVENT_WATCH_ENTRY: c_int = 1;

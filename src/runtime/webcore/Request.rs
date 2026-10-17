@@ -237,10 +237,7 @@ impl Request {
         self.headers.set(headers.into());
     }
 
-    /// Returns the headers of the request. If the headers are not already cached, it will create a new FetchHeaders object.
-    /// If the headers are empty, it will look at request_context to get the headers.
-    /// If the headers are empty and request_context is null, it will create an empty FetchHeaders object
-    /// (holding the body's pending `Content-Type`, if any).
+    /// The header list, created on first use from the uws request or from the pending `Content-Type`.
     #[allow(clippy::mut_from_ref)]
     pub(crate) fn ensure_fetch_headers(
         &self,
@@ -280,8 +277,7 @@ impl Request {
         Ok(self.ensure_fetch_headers(global_this)?.to_js(global_this))
     }
 
-    /// Deep copy of the headers for another Request. An empty list copies as
-    /// `LazyHeaders::None`. A pending body `Content-Type` copies as pending.
+    /// Deep copy for another Request; an empty list copies as `LazyHeaders::None`.
     pub(crate) fn clone_headers(&self, global_this: &JSGlobalObject) -> JsResult<LazyHeaders> {
         if self.headers.get().list().is_none() {
             if let Some(uws_req) = self.request_context.get_request() {
@@ -395,8 +391,6 @@ impl Request {
         Ok(request)
     }
 
-    /// Fetch "extract a body": a `Blob` body's type becomes the `Content-Type`
-    /// unless the headers already carry one.
     fn append_content_type_from_body(&self, global_this: &JSGlobalObject) -> JsResult<()> {
         self.headers_mut()
             .append_content_type(self.body_value(), global_this)
@@ -1008,8 +1002,7 @@ impl Request {
         let url_or_object = arguments[0];
         let url_or_object_type = url_or_object.js_type();
         let mut fields: EnumSet<Fields> = EnumSet::empty();
-        // The body came from `init.body` or a Response, not from an input
-        // Request (whose headers come along with it).
+        // Set when the body is not the input Request's, whose headers already carry its type.
         let mut body_extracted = false;
 
         let is_first_argument_a_url =

@@ -1151,8 +1151,7 @@ impl LazyHeaders {
         }
     }
 
-    /// The `Content-Type` the headers carry: the list's, or the pending one.
-    /// A list without one gives `None`, as the fetch spec reads it.
+    /// The list's `Content-Type` (`None` when the list lacks one), or the pending one.
     pub(crate) fn content_type(&mut self) -> Option<Utf8Bytes<'_>> {
         match self {
             LazyHeaders::List(list) => list
@@ -1191,9 +1190,7 @@ impl LazyHeaders {
         }
     }
 
-    /// Fetch "extract a body": a `Blob` body's type becomes the `Content-Type`
-    /// unless the headers already carry one. A list is only written to, never
-    /// allocated, so a caller that never reads `.headers` pays no allocation.
+    /// Fetch "extract a body": a `Blob` body's type becomes the `Content-Type` unless one is set.
     pub(crate) fn append_content_type(
         &mut self,
         body: &BodyValue,

@@ -2291,8 +2291,7 @@ where
 
                 if let Some(headers_) = opts.fast_get(ctx, jsc::BuiltinName::Headers)? {
                     if let Some(headers__) = FetchHeaders::cast_(headers_, ctx.vm()) {
-                        // Copy the caller's `Headers`, as `new Request()` does,
-                        // so the Request owns a list it can write to.
+                        // Copy the caller's `Headers`, as `new Request()` does.
                         let original = bun_opaque::opaque_deref_mut(headers__.as_ptr());
                         // SAFETY: `clone_this` returns a fresh +1 ref.
                         headers = original

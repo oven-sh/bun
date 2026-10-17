@@ -242,7 +242,7 @@ test.concurrent.skipIf(!tsc || isDebug || isASAN)(
     expect(theirs.map(line => line.replace(/\(.*(TS\d+).*/, " $1")).sort()).toEqual(
       shapes.map(([limit], index) => `${index}-${limit}.ts TS2563`),
     );
-    expect(ours.filter(line => line.includes(": error ")).sort()).toEqual(theirs.sort());
+    expect(ours.sort()).toEqual(theirs.sort());
   },
 );
 

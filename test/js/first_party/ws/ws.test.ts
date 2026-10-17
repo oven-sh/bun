@@ -1314,7 +1314,8 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
                 events.push("close");
                 closed.resolve();
               });
-              upgraded.promise.then(() => ws.close());
+              // Not close(): that waits for a close frame of the peer.
+              upgraded.promise.then(() => ws.terminate());
             });
           });
           return true;
@@ -1337,8 +1338,11 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
       server.on("upgrade", (req, socket, head) => wss.handleUpgrade(req, socket, head, ws => ws.close(1000)));
       const head = upgradeRequest().replace("\r\n\r\n", `\r\n${header}\r\n\r\n`);
       await using upgrade = await receiveUpgrade(head + body, server);
-      // Resolves when the server has closed the connection: the close frame (opcode 8, code 1000), then the FIN.
-      expect((await upgrade.received()).split("\r\n\r\n")[1]).toBe("\x88\x02\x03\xe8");
+      // The close frame (opcode 8, code 1000). The server ends the connection when the client has answered it.
+      const closeFrame = "\x88\x02\x03\xe8";
+      await upgrade.received(closeFrame);
+      upgrade.client.write(Buffer.from([0x88, 0x82, 0x00, 0x00, 0x00, 0x00, 0x03, 0xe8]));
+      expect((await upgrade.received()).split("\r\n\r\n")[1]).toBe(closeFrame);
       wss.close();
     });
   }

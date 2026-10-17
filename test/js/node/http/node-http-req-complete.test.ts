@@ -497,6 +497,8 @@ describe("an Upgrade request with a body", { skip: Number(process.versions.node.
                 buffered: req.readableLength,
                 trailers: { ...req.trailers },
                 head: upgradeHead.toString("latin1"),
+                // The socket has read what it hands over as the head.
+                headCounted: (socket as Socket).bytesRead >= upgradeHead.length,
                 parserFreed: (socket as any).parser === null,
                 flowing: socket.readableFlowing,
                 // close, data, drain, end, error, timeout. A TLSSocket of Node.js has listeners of its own.
@@ -519,6 +521,7 @@ describe("an Upgrade request with a body", { skip: Number(process.versions.node.
               buffered: 5,
               trailers,
               head: rest,
+              headCounted: true,
               parserFreed: true,
               flowing: null,
               listeners: proto === "https" ? undefined : [0, 0, 0, 1, 0, 0],

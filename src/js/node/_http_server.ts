@@ -1511,6 +1511,7 @@ function handOffParkedUpgrade(server, socket, req, handle, promise, head: Buffer
     socket[kUpgradeIncoming] = req;
     req.once("end", clearUpgradeIncoming.bind(undefined, socket));
   }
+  socket.bytesRead += head.length;
   try {
     // No dispatch is on the stack: a listener that throws is an uncaught exception at once, as in Node.js.
     if (!server.emit("upgrade", req, socket, head)) socket.destroy();

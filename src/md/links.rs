@@ -769,7 +769,7 @@ impl Parser<'_> {
 
         // Render the wikilink
         self.at(base + start, base + start + 2);
-        self.renderer.enter_span(
+        self.enter_span_with(
             Span::Wikilink,
             SpanAttrs {
                 href: target,
@@ -895,7 +895,7 @@ impl Parser<'_> {
         beg: usize,
     ) -> crate::types::JsResult<()> {
         self.at(beg, beg + 1);
-        self.renderer.enter_span(
+        self.enter_span_with(
             Span::A,
             SpanAttrs {
                 href: url,
@@ -907,7 +907,7 @@ impl Parser<'_> {
         self.at(beg + 1, beg + 1 + url.len());
         self.emit_text(TextType::Normal, url)?;
         self.at(beg + 1 + url.len(), beg + 2 + url.len());
-        self.renderer.leave_span(Span::A)?;
+        self.leave_span(Span::A)?;
         Ok(())
     }
 
@@ -939,11 +939,8 @@ impl Parser<'_> {
         // Where the `[` is in the block's inline content.
         beg: usize,
     ) -> crate::types::JsResult<()> {
-        if self.image_nesting_level > 0 {
-            return Ok(());
-        }
         self.at(beg, beg + 2);
-        self.renderer.enter_span(
+        self.enter_span_with(
             Span::A,
             SpanAttrs {
                 href: label,
@@ -952,6 +949,6 @@ impl Parser<'_> {
             },
         )?;
         self.at(beg + 2 + label.len(), beg + 3 + label.len());
-        self.renderer.leave_span(Span::A)
+        self.leave_span(Span::A)
     }
 }

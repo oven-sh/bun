@@ -5070,6 +5070,22 @@ console.log(foo, array);
         expect(new Bun.Transpiler({ loader: "ts", target }).transformSync(input)).toBe(output);
       }
     });
+
+    // A require function has no `module` property.
+    it("require.main === module in a CommonJS file - every target", () => {
+      const input = `
+        module.exports = {};
+        if (require.main === module) main();
+        if (require.main !== module) other();
+      `;
+      const output =
+        "module.exports = {};\n" +
+        "if (require.main == module)\n  main();\n" +
+        "if (require.main != module)\n  other();\n";
+      for (const target of ["node", "bun", "browser"]) {
+        expect(new Bun.Transpiler({ loader: "js", target }).transformSync(input)).toBe(output);
+      }
+    });
   });
 
   describe("edge cases", () => {

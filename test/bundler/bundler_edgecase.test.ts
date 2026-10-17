@@ -2413,7 +2413,8 @@ describe("bundler", () => {
       ],
     });
   }
-  // With --splitting, another entry point imports "/lib.ts", so its module is in a shared chunk.
+  // With --splitting, a module that two chunks import is in a shared chunk, and `import.meta` there
+  // is the chunk's. The check is then false in every process, as with the bun target (#40601).
   itBundled("edgecase/ImportMetaMainTargetNodeSplitting", {
     files: {
       "/cli.ts": /* js */ `
@@ -2422,6 +2423,7 @@ describe("bundler", () => {
       `,
       "/lib.ts": /* js */ `
         export const libIsMain = import.meta.main;
+        if (import.meta.main) console.log("lib is the entry point");
       `,
     },
     entryPoints: ["/cli.ts", "/lib.ts"],
@@ -2429,7 +2431,31 @@ describe("bundler", () => {
     outdir: "/out",
     target: "node",
     format: "esm",
-    run: { runtime: "node", file: "/out/cli.js", stdout: `{"cli":true,"lib":false}` },
+    run: [
+      { runtime: "node", file: "/out/cli.js", stdout: `{"cli":true,"lib":false}` },
+      // "/out/lib.js" is the entry point here, but it only re-exports from the shared chunk.
+      { runtime: "node", file: "/out/lib.js", stdout: "" },
+    ],
+  });
+  // One entry point is enough: "/command.ts" is a chunk of its own and imports "/entry.ts" back.
+  itBundled("edgecase/ImportMetaMainTargetNodeSplittingBackImport", {
+    files: {
+      "/entry.ts": /* js */ `
+        export const version = "1.0.0";
+        if (import.meta.main) import("./command").then(command => command.run());
+      `,
+      "/command.ts": /* js */ `
+        import { version } from "./entry";
+        export function run() {
+          console.log("ran " + version);
+        }
+      `,
+    },
+    splitting: true,
+    outdir: "/out",
+    target: "node",
+    format: "esm",
+    run: { runtime: "node", file: "/out/entry.js", stdout: "" },
   });
   // A "#!/usr/bin/env bun" entry point is parsed for bun, which has no `__require`.
   itBundled("edgecase/ImportMetaMainTargetNodeBunShebang", {
@@ -2440,6 +2466,42 @@ console.log(import.meta.main, require.main === module);`,
     target: "node",
     format: "esm",
     run: { stdout: "true true" },
+  });
+  // A require function has no `module` property.
+  itBundled("edgecase/ImportMetaMainTargetNodeIife", {
+    files: {
+      "/entry.ts": /* js */ `
+        globalThis['ca' + 'pture'] = x => x;
+        console.log(capture(import.meta.main), capture(require.main !== module));
+      `,
+    },
+    target: "node",
+    format: "iife",
+    capture: ["__require.main == module", "__require.main != module"],
+  });
+  // "/entry.cjs" is wrapped in __commonJS. `module` has to be the output file's own.
+  itBundled("edgecase/RequireMainTargetNodeCjsWrappedEntry", {
+    files: {
+      "/entry.cjs": /* js */ `
+        module.exports = { name: "entry" };
+        const other = require("./other.cjs");
+        if (require.main === module) console.log("main ran", other.sawEntry);
+      `,
+      "/other.cjs": /* js */ `
+        const entry = require("./entry.cjs");
+        module.exports = { sawEntry: typeof entry };
+      `,
+    },
+    runtimeFiles: {
+      "/importer.cjs": `require("./out.cjs"); console.log("required only");`,
+    },
+    outfile: "/out.cjs",
+    target: "node",
+    format: "cjs",
+    run: [
+      { runtime: "node", stdout: "main ran object" },
+      { runtime: "node", file: "/importer.cjs", stdout: "required only" },
+    ],
   });
   itBundled("edgecase/build-cjs-module#20308", {
     files: {

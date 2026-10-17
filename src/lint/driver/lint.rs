@@ -69,8 +69,10 @@ pub(crate) struct Context<'c, 'm> {
     pub(crate) broken_fixes: &'c Guarded<Vec<(Vec<u8>, Vec<RuleId>)>>,
     /// The files and blocks that [may be misread](may_be_misread), with nobody there to read them.
     pub(crate) unread: &'c Guarded<Vec<Vec<u8>>>,
-    /// The files that only the `eslint` package can lint, when it isn't installed. They get no result.
-    pub(crate) needs_eslint: &'c Guarded<Vec<Vec<u8>>>,
+    /// The files that only the `eslint` package can lint, when it isn't installed or the config isn't an `eslint.config.js`,
+    /// which is the only kind that files are handed to `eslint` with. They get no result. Also the blocks that processors
+    /// find in files, like `a.md/0_0.css`.
+    pub(crate) needs_eslint: &'c Guarded<Vec<(Vec<u8>, Flavor)>>,
     /// Why files were [handed back](LintResult::handed_back), and how many for each reason.
     pub(crate) handed_back: &'c Guarded<Vec<(Reason, usize)>>,
     /// What oxlint says about the configuration files of TypeScript for which there is no program, so that no rule that

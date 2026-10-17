@@ -533,7 +533,7 @@ impl Run<'_> {
             return Err(Fatal(invalid_config(loader, &loaded, error)));
         }
         if route == Route::Unsupported && config.route_as_it_is(&path) == Route::Eslint {
-            context.needs_eslint.lock().push(path);
+            context.needs_eslint.lock().push((path, loaded.flavor));
             return Ok(Linted {
                 results: Vec::new(),
                 files: 0,
@@ -690,9 +690,8 @@ impl Run<'_> {
                 Status::Matched(config) => config.route_as_it_is(&it.path) == Route::Eslint,
                 _ => false,
             });
-        let paths = |targets: Vec<Target>| targets.into_iter().map(|it| it.path);
         let because: &[u8] = b"only an ESLint config can have a processor";
-        let with_processor: Vec<Vec<u8>> = paths(with_processor).collect();
+        let with_processor: Vec<Vec<u8>> = with_processor.into_iter().map(|it| it.path).collect();
         not_linted(
             loader,
             &self.environment.cwd,
@@ -700,7 +699,8 @@ impl Run<'_> {
             [because; 2],
             b"",
         );
-        context.needs_eslint.lock().extend(paths(for_eslint));
+        let for_eslint = for_eslint.into_iter().map(|it| (it.path, it.loaded.flavor));
+        context.needs_eslint.lock().extend(for_eslint);
         let known_to_need_eslint = context.needs_eslint.lock().len();
         let on_circular_fixes = |path: &[u8]| warn_about_circular_fixes(loader, path);
         let mut results = Vec::with_capacity(supported.len());
@@ -856,12 +856,16 @@ impl Run<'_> {
         if let Some(error) = failure.get_mut().take() {
             return Err(error);
         }
+        // A comment in a file can turn on a rule that needs `eslint`, which only shows when the file is read.
+        let needs_eslint = context.needs_eslint.lock();
+        let found_late = needs_eslint.get(known_to_need_eslint..).unwrap_or_default();
+        let found_late: FxHashSet<&[u8]> = found_late.iter().map(|it| &it.0[..]).collect();
         let files = supported
             .iter()
-            .filter(|it| matches!(it.status, Status::Matched(_)))
+            .filter(|it| {
+                matches!(it.status, Status::Matched(_)) && !found_late.contains(&it.path[..])
+            })
             .count();
-        // A comment in a file can turn on a rule that needs `eslint`, which only shows when the file is read.
-        let files = files - (context.needs_eslint.lock().len() - known_to_need_eslint);
         Ok(Linted {
             results: std::mem::take(results.get_mut()),
             files,
@@ -1279,14 +1283,25 @@ impl Run<'_> {
                 b"\n  To lint with that parser, install eslint: bun add -d eslint",
             ]);
         }
-        let mut needs_eslint: Vec<Vec<u8>> = std::mem::take(&mut *needs_eslint.lock());
-        bun_lint::utils::sort::sort_unstable(&mut needs_eslint);
+        let mut needs_eslint = std::mem::take(&mut *needs_eslint.lock());
+        bun_lint::utils::sort::sort_by(&mut needs_eslint, |a, b| a.0.cmp(&b.0));
+        // Each pass of `--fix` finds the same blocks.
+        needs_eslint.dedup();
+        let of = |is_flat: bool| -> Vec<Vec<u8>> {
+            let all = needs_eslint.iter();
+            all.filter(|it| (it.1 == Flavor::Eslint) == is_flat)
+                .map(|it| it.0.clone())
+                .collect()
+        };
         let because: [&[u8]; 2] = [
             b"it needs eslint, which is not installed",
             b"they need eslint, which is not installed",
         ];
         let hint = b"\n  Run bun add -d eslint";
-        not_linted(&loader, &environment.cwd, &needs_eslint, because, hint);
+        not_linted(&loader, &environment.cwd, &of(true), because, hint);
+        // An `.eslintrc` has no languages, so it's a parser that reads such a file.
+        let because: &[u8] = b"the parser in your config only works with an eslint.config.js";
+        not_linted(&loader, &environment.cwd, &of(false), [because; 2], b"");
         let mut seen: Vec<&Arc<_>> = Vec::new();
         let results = linted.iter().flat_map(|it| &it.results);
         let configs = results.filter_map(|it| it.linted.as_ref());

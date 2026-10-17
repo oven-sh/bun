@@ -29,8 +29,8 @@ fn thrown(message: Vec<u8>) -> LintResult {
     }
 }
 
-/// The result for a text that only the `eslint` package can lint, when it isn't installed. [`Context::verify_processed_text`]
-/// lists the file in [`Context::needs_eslint`].
+/// The result for a text that only the `eslint` package can lint, when it isn't installed. Whoever gets it adds the text to
+/// [`Context::needs_eslint`]: [`Context::verify_processed_text`] for a file, [`Context::verify_block`] for a part of one.
 fn needs_eslint() -> LintResult {
     LintResult {
         is_unread: true,
@@ -126,7 +126,13 @@ impl Context<'_, '_> {
             text,
             ..file
         };
-        self.verify_routed(loaded, block, &own)
+        let result = self.verify_routed(loaded, block, &own);
+        // The other blocks of the file are still linted, so the warning names this one.
+        if result.is_unread {
+            self.needs_eslint.lock().push((path, loaded.flavor));
+            return LintResult::default();
+        }
+        result
     }
 
     /// ESLint's `_verifyWithFlatConfigArrayAndWithoutProcessors`.
@@ -184,8 +190,8 @@ impl Context<'_, '_> {
                 if let Some(thrown) = result.thrown {
                     return Err(thrown);
                 }
-                // A block without a name is linted as the file itself.
-                is_unread |= result.is_unread && matches!(block, Block::Unnamed(_));
+                // That block is the whole file.
+                is_unread |= result.is_unread;
                 let (Block::Unnamed(text) | Block::Named { text, .. }) = block;
                 write_messages(&mut lists, &result.messages, &result.suppressed, text);
             }
@@ -264,6 +270,9 @@ impl Context<'_, '_> {
                 self.verify_with_processor(loaded, it, config, processor)
             }
             (Route::Processor, None) => thrown(no_such_processor(config)),
+            (Route::Unsupported, _) if config.route_as_it_is(it.path) == Route::Eslint => {
+                needs_eslint()
+            }
             // As a file of that kind.
             (Route::Unsupported | Route::Eslint, _) => LintResult::default(),
         }
@@ -331,7 +340,8 @@ impl Context<'_, '_> {
             &mut verify,
         );
         if is_unread {
-            self.needs_eslint.lock().push(path_to_verify.to_vec());
+            let file = (path_to_verify.to_vec(), loaded.flavor);
+            self.needs_eslint.lock().push(file);
             return None;
         }
         result.deprecated = deprecated;

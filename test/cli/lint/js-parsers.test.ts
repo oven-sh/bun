@@ -1907,6 +1907,116 @@ describe.concurrent("bun lint with the built-in JSON languages", () => {
         );
         expect(result.exitCode).toBe(2);
       });
+
+      // Files only go to the eslint package with an eslint.config.js, so installing it wouldn't help here.
+      test("with an .eslintrc, the warning doesn't tell you to install eslint", async () => {
+        const files = {
+          ".eslintrc.json": JSON.stringify({
+            root: true,
+            rules: { "no-var": "error" },
+            overrides: [{ files: ["*.foo"], parser: "some-parser" }],
+          }),
+          "node_modules/some-parser/package.json": JSON.stringify({ name: "some-parser", main: "index.js" }),
+          "node_modules/some-parser/index.js": "module.exports = { parse() {} };",
+          "a.js": "var a;\n",
+          "b.foo": "foo\n",
+        };
+        const result = await lint(files, ["-f", "unix", "."]);
+        expect(result.stdout).toContain("a.js:1:1: Unexpected var");
+        expect(result.stderr).toContain(
+          "1 file was not linted because the parser in your config only works with an eslint.config.js (1 *.foo): b.foo\n",
+        );
+        expect(result.stderr).not.toContain("bun add");
+        expect(result.exitCode).toBe(2);
+      });
+
+      describe("a block that a processor finds in a file", () => {
+        const project = {
+          ...jsonPackage(),
+          "fenced.mjs": fenced(true),
+          "eslint.config.mjs": `
+            import json from "@eslint/json";
+            import fenced from "./fenced.mjs";
+            const whole = { preprocess: (text, filename) => [{ text, filename: "whole.txt" }], postprocess: lists => lists.flat() };
+            const own = { languages: { text: {} }, processors: { whole } };
+            export default [
+              { files: ["**/*.md"], plugins: { fenced }, processor: "fenced/fenced" },
+              { files: ["**/*.js"], rules: { "no-var": "error" } },
+              { files: ["**/*.jsonc"], plugins: { json }, language: "json/jsonc", rules: { "json/no-duplicate-keys": "error" } },
+              { files: ["**/*.css", "**/*.txt"], plugins: { own }, language: "own/text" },
+              { files: ["*.txt"], processor: "own/whole" },
+            ];`,
+        };
+        const fence = (language: string, code: string) => `\`\`\`${language}\n${code}\n\`\`\`\n\n`;
+
+        test("is named in the warning, and the file's other blocks are reported", async () => {
+          const files = {
+            ...project,
+            "a.md": [
+              fence("js", "var a;"),
+              // The config gives it a language that isn't built in.
+              fence("css", "a {}"),
+              fence("jsonc", text),
+              // A comment turns on a rule that isn't built in.
+              fence("jsonc", `/* eslint json/only-in-the-package: "error" */ ${text}`),
+              fence("js", "var b;"),
+            ].join(""),
+            "b.js": "var c;\n",
+          };
+          const result = await lint(files, ["-f", "json", "a.md", "b.js"]);
+          expect(summary(result.raw).replaceAll(/ \[fix.*/g, "")).toBe(
+            [
+              "a.md: 2:1 no-var Unexpected var, use let or const instead.",
+              'a.md: 10:11 json/no-duplicate-keys Duplicate key "a" found.',
+              "a.md: 18:1 no-var Unexpected var, use let or const instead.",
+              "b.js: 1:1 no-var Unexpected var, use let or const instead.",
+            ].join("\n"),
+          );
+          expect(result.stderr).toContain(
+            "2 files were not linted because they need eslint, which is not installed (1 *.css, 1 *.jsonc): a.md/1_block.css, a.md/3_block.jsonc\n  Run bun add -d eslint",
+          );
+          expect(result.stderr).toContain("Linted 2 files");
+          expect(result.exitCode).toBe(2);
+        });
+
+        test("--fix fixes the other blocks, and names the block once", async () => {
+          const files = { ...project, "a.md": fence("js", "var a = 1; var b = 2;") + fence("css", "a {}") };
+          const result = await lint(files, ["--fix", "a.md"], ["a.md"]);
+          expect(result.files["a.md"]).toBe(fence("js", "let a = 1; let b = 2;") + fence("css", "a {}"));
+          expect(result.stderr).toContain(
+            "1 file was not linted because it needs eslint, which is not installed (1 *.css): a.md/1_block.css\n",
+          );
+          expect(result.exitCode).toBe(2);
+        });
+
+        test("with a name, which is the whole file: the warning names the file", async () => {
+          const result = await lint({ ...project, "b.txt": "text\n", "b.js": "var c;\n" }, [
+            "-f",
+            "json",
+            "b.txt",
+            "b.js",
+          ]);
+          expect(summary(result.raw)).toStartWith("b.js: 1:1 no-var");
+          expect(result.raw).not.toContain("b.txt");
+          expect(result.stderr).toContain(warning("b.txt"));
+          expect(result.stderr).toContain("Linted 1 file\n");
+          expect(result.exitCode).toBe(2);
+        });
+
+        // ESLint skips such a block too, and says nothing.
+        test("is skipped without a warning if no config object is for its name", async () => {
+          const languages = ["ts", "yaml", "json", "sh", "html", "py", "rs", "toml", "vue", "scss"];
+          const readme = languages.map(language => fence(language, "a {}")).join("");
+          const result = await lint({ ...project, "README.md": fence("js", "let a;") + readme }, [
+            "-f",
+            "json",
+            "README.md",
+          ]);
+          expect(summary(result.raw)).toBe("");
+          expect(result.stderr).not.toContain("not linted");
+          expect(result.exitCode).toBe(0);
+        });
+      });
     });
   });
 });

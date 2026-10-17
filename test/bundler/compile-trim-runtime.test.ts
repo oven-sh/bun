@@ -26,6 +26,29 @@ const programs = {
     for (let i = 0; i < 3_000_000; i++) sum = (sum + i) | 0;
     console.log(sum);
   `,
+  "everything-by-name.ts": `
+    import { builtinModules } from "node:module";
+    process.noDeprecation = true;
+    const names: string[] = [...builtinModules, "bun", "bun:test", "bun:jsc", "bun:ffi", "bun:sqlite", "node:test", "node:sqlite"];
+    for (const name of [...new Set(names)].sort()) {
+      try {
+        console.log(name, Object.keys(require(name) as object).length);
+      } catch (error) {
+        console.log(name, "throws", (error as Error).message);
+      }
+    }
+    for (const object of [Bun, globalThis, process] as unknown as Record<string, unknown>[]) {
+      const kinds: string[] = [];
+      for (const key of Object.getOwnPropertyNames(object).sort()) {
+        try {
+          kinds.push(key + ":" + typeof object[key]);
+        } catch {
+          kinds.push(key + ":throws");
+        }
+      }
+      console.log(kinds.join(" "));
+    }
+  `,
   "asks-for-the-checker.ts": `
     const entrypoints = [process.env.FOLDER + "/entry.ts"];
     for (const options of [{ check: true }, { dts: true }, { compile: { aot: true } }]) {
@@ -76,7 +99,7 @@ describe.skipIf(!hasIslands)("--compile-trim-runtime", () => {
       using dir = tempDir("compile-trim-runtime", programs);
       const folder = String(dir);
       const env = { ...bunEnv, FOLDER: folder };
-      for (const program of ["hello", "near-the-doors"]) {
+      for (const program of ["hello", "near-the-doors", "everything-by-name"]) {
         const build = [bunExe(), "build", "--compile", ...flags, `${program}.ts`, "--outfile"];
         expect(await run([...build, `${program}-whole`], folder)).toMatchObject({ exitCode: 0 });
         expect(await run([...build, `${program}-trimmed`, "--compile-trim-runtime"], folder)).toMatchObject({ exitCode: 0 });

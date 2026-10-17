@@ -5,7 +5,6 @@ declare function $mapValueAt<V>(m: unknown, entry: number): V;
 declare function $setNext(s: unknown, table: unknown, entry: number): number;
 declare function $setKeyAt<T>(s: unknown, entry: number): T;
 declare function $call<R>(f: unknown, thisArg: unknown, ...args: unknown[]): R;
-declare function $isOriginalArray(x: unknown): boolean;
 
 export function Map$forEach<K, V>(m: Map<K, V>, f: unknown, thisArg: unknown): void {
     if (typeof f !== "function") throw new TypeError("Map.prototype.forEach callback must be a function");
@@ -18,15 +17,6 @@ export function Map$forEach<K, V>(m: Map<K, V>, f: unknown, thisArg: unknown): v
         $call<unknown>(f, thisArg, $mapValueAt<V>(m, entry), $mapKeyAt<K>(m, entry), m);
         entry++;
     }
-}
-
-export function Set$construct<T>(items: unknown): Set<T> {
-    const isOriginal: boolean = $isOriginalArray(items);
-    if (!isOriginal) return new (Set as any)(items, undefined);
-    const array = items as T[];
-    const set = new Set<T>();
-    for (let k = 0; k < array.length; k++) set.add(array[k]);
-    return set;
 }
 
 export function Set$forEach<T>(s: Set<T>, f: unknown, thisArg: unknown): void {

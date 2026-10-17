@@ -1,9 +1,11 @@
 // The read of a private field is told apart from the read of a private accessor or method: only the first is known to run no code of the program's.
-// IR= 1 field CallBuiltin PrivateFieldGet
+// IR+ CallBuiltin PrivateFieldGet
+// IR= 1 field CallDirect f[0-9]+ \(v[0-9]+\)$
 // IR= 0 field CallBuiltin PrivateGet#
-// IR= 1 accessor CallBuiltin PrivateGet#
+// IR+ CallBuiltin PrivateGet#
+// IR= 1 accessor CallDirect f[0-9]+ \(v[0-9]+\)$
 // IR= 0 accessor CallBuiltin PrivateFieldGet
-// IR= 1 method CallBuiltin PrivateGet#
+// IR= 1 method CallDirect f[0-9]+ \(v[0-9]+\)$
 // IR= 0 method CallBuiltin PrivateFieldGet
 const calls = [];
 class Holder {

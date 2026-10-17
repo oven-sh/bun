@@ -16,10 +16,14 @@
 // IR= 1 computedName CallBuiltin CallHeadersMethod
 // IR= 2 computedInJoin CallBuiltin CallHeadersMethod
 // IR= 0 methodKept CallBuiltin CallHeadersMethod
-// IR= 0 escapesByReturn CallBuiltin CallHeadersMethod
-// IR= 0 escapesAsArgument CallBuiltin CallHeadersMethod
-// IR= 0 isTested CallBuiltin CallHeadersMethod
-// IR= 0 otherMethod CallBuiltin CallHeadersMethod
+// IR= 1 escapesByReturn CallBuiltin CallHeadersMethod
+// IR= 0 escapesByReturn CallBuiltin HostObjectHasCachedValue
+// IR= 1 escapesAsArgument CallBuiltin CallHeadersMethod
+// IR= 0 escapesAsArgument CallBuiltin HostObjectHasCachedValue
+// IR= 1 isTested CallBuiltin CallHeadersMethod
+// IR= 0 isTested CallBuiltin HostObjectHasCachedValue
+// IR= 1 otherMethod CallBuiltin CallHeadersMethod
+// IR= 0 otherMethod CallBuiltin HostObjectHasCachedValue
 // IR= 0 tooFewArguments CallBuiltin CallHeadersMethod
 // IR= 0 tooManyArguments CallBuiltin CallHeadersMethod
 export function setOne(holder, value) {

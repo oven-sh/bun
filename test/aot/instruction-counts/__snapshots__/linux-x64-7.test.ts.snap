@@ -219,7 +219,7 @@ untyped, module level: 77.53 instructions (module 53.23, stub AddAfterInt32Check
 
 exports[`skips white space in a string by charCodeAt 1`] = `
 "typed, function: 8.36 instructions (kernel 8.24, module 0.12), 306 bytes
-typed, module level: 8.14 instructions (module 8.14), 2082 bytes
+typed, module level: 9.13 instructions (module 9.13), 2094 bytes
 untyped, function: 8.41 instructions (kernel 8.29, module 0.12), 301 bytes
 untyped, module level: 9.17 instructions (module 9.17), 2271 bytes"
 `;

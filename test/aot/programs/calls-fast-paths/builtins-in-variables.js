@@ -6,7 +6,7 @@
 // IR= 1 larger IsBuiltinFunction v[0-9]+ Math.max
 // IR= 1 larger CallDirect f[0-9]+ \(v[0-9]+, v[0-9]+\)$
 // IR= 1 listOf IsBuiltinFunction v[0-9]+ Array$
-// IR= 1 listOf CallBuiltin Array#
+// IR= 1 listOf CallDirect f[0-9]+ \(v[0-9]+\)$
 // IR= 1 asObject IsBuiltinFunction v[0-9]+ Object$
 // IR= 1 asObject CallBuiltin Object#
 // IR= 1 keysOf IsBuiltinFunction v[0-9]+ Object$

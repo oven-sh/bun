@@ -1,12 +1,5 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
-exports[`makes a Set from an array of four strings 1`] = `
-"typed, function: 641.38 instructions (the runtime 273.61, stub SetAdd 226, kernel 117.42, stub OperationValueWithInstance 14, stub ConstructInternalFunction0 13, module 0.30, elsewhere -2.96), 533 bytes
-typed, module level: 633.45 instructions (the runtime 273.61, stub SetAdd 226, module 109.80, stub OperationValueWithInstance 14, stub ConstructInternalFunction0 13, elsewhere -2.96), 1495 bytes
-untyped, function: 653.40 instructions (the runtime 273.61, stub SetAdd 226, kernel 129.45, stub OperationValueWithInstance 14, stub ConstructInternalFunction0 13, module 0.30, elsewhere -2.96), 684 bytes
-untyped, module level: 639.45 instructions (the runtime 273.61, stub SetAdd 226, module 115.80, stub OperationValueWithInstance 14, stub ConstructInternalFunction0 13, elsewhere -2.96), 1525 bytes"
-`;
-
 exports[`assigns the four fields of a new instance of a class that has an accessor 1`] = `
 "typed, function: 1563.80 instructions (the runtime 1489, kernel 40.50, stub AllocateTypedObject 18, stub OperationVoidWithInstance 14, stub OperationVoidWithInstance to operationAOTTypedObjectAssignFrom 2, module 0.30), 366 bytes
 typed, module level: 1551.88 instructions (the runtime 1489, module 28.88, stub AllocateTypedObject 18, stub OperationVoidWithInstance 14, stub OperationVoidWithInstance to operationAOTTypedObjectAssignFrom 2), 1381 bytes
@@ -100,7 +93,7 @@ untyped, module level: 71.68 instructions (module 67.18, outlined code 4.50), 44
 
 exports[`skips white space in a string by index 1`] = `
 "typed, function: 8.36 instructions (kernel 8.24, module 0.12), 326 bytes
-typed, module level: 8.13 instructions (module 8.13), 2106 bytes
+typed, module level: 9.13 instructions (module 9.13), 2113 bytes
 untyped, function: 8.41 instructions (kernel 8.29, module 0.12), 315 bytes
 untyped, module level: 9.16 instructions (module 9.16), 2274 bytes"
 `;

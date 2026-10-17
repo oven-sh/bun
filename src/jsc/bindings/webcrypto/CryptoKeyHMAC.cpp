@@ -60,11 +60,17 @@ static size_t getKeyLengthFromHash(CryptoAlgorithmIdentifier hash)
     }
 }
 
-CryptoKeyHMAC::CryptoKeyHMAC(Vector<uint8_t>&& key, CryptoAlgorithmIdentifier hash, bool extractable, CryptoKeyUsageBitmap usage)
+CryptoKeyHMAC::CryptoKeyHMAC(Vector<uint8_t>&& key, size_t lengthBits, CryptoAlgorithmIdentifier hash, bool extractable, CryptoKeyUsageBitmap usage)
     : CryptoKey(CryptoAlgorithmIdentifier::HMAC, CryptoKeyType::Secret, extractable, usage)
     , m_hash(hash)
     , m_key(WTF::move(key))
+    , m_lengthBits(lengthBits)
 {
+    ASSERT(lengthIsValidForKeyData(m_lengthBits, m_key.size()));
+    // The key is "the first length bits of data" (https://w3c.github.io/webcrypto/#hmac-operations-import-key),
+    // so clear the bits of the last byte that are past the length, as Chromium does.
+    if (size_t trailingBits = m_key.size() * 8 - m_lengthBits)
+        m_key.last() &= static_cast<uint8_t>(0xFF << trailingBits);
 }
 
 CryptoKeyHMAC::~CryptoKeyHMAC() = default;
@@ -76,25 +82,20 @@ RefPtr<CryptoKeyHMAC> CryptoKeyHMAC::generate(size_t lengthBits, CryptoAlgorithm
         if (!lengthBits)
             return nullptr;
     }
-    // CommonHMAC only supports key length that is a multiple of 8. Therefore, here we are a little bit different
-    // from the spec as of 11 December 2014: https://www.w3.org/TR/WebCryptoAPI/#hmac-operations
-    if (lengthBits % 8)
-        return nullptr;
 
-    return adoptRef(new CryptoKeyHMAC(randomData(lengthBits / 8), hash, extractable, usages));
+    return adoptRef(new CryptoKeyHMAC(randomData((lengthBits + 7) / 8), lengthBits, hash, extractable, usages));
 }
 
 RefPtr<CryptoKeyHMAC> CryptoKeyHMAC::importRaw(size_t lengthBits, CryptoAlgorithmIdentifier hash, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages)
 {
-    size_t length = keyData.size() * 8;
-    if (!length)
+    if (keyData.isEmpty())
         return nullptr;
-    // CommonHMAC only supports key length that is a multiple of 8. Therefore, here we are a little bit different
-    // from the spec as of 11 December 2014: https://www.w3.org/TR/WebCryptoAPI/#hmac-operations
-    if (lengthBits && lengthBits != length)
+    if (!lengthBits)
+        lengthBits = keyData.size() * 8;
+    else if (!lengthIsValidForKeyData(lengthBits, keyData.size()))
         return nullptr;
 
-    return adoptRef(new CryptoKeyHMAC(WTF::move(keyData), hash, extractable, usages));
+    return adoptRef(new CryptoKeyHMAC(WTF::move(keyData), lengthBits, hash, extractable, usages));
 }
 
 JsonWebKey CryptoKeyHMAC::exportJwk() const
@@ -124,7 +125,7 @@ auto CryptoKeyHMAC::algorithm() const -> KeyAlgorithm
     CryptoHmacKeyAlgorithm result;
     result.name = CryptoAlgorithmRegistry::singleton().name(algorithmIdentifier());
     result.hash.name = CryptoAlgorithmRegistry::singleton().name(m_hash);
-    result.length = m_key.size() * 8;
+    result.length = m_lengthBits;
     return result;
 }
 

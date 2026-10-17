@@ -166,9 +166,11 @@ using namespace JSC;
     macro(requireMap) \
     macro(requireNativeModule) \
     macro(resolveSync) \
+    macro(runTail) \
     macro(sameSite) \
     macro(secure) \
     macro(self) \
+    macro(setColumnNameTransform) \
     macro(sharedFd) \
     macro(signal) \
     macro(size) \

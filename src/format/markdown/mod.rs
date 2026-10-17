@@ -6,7 +6,7 @@
 //! text ─ bun_md ─→ events ─ parse ─→ Tree (mdast) ─ preprocess ─→ sentences ─ printer ─→ the document of `css::doc`
 //! ```
 
-pub(crate) mod ast;
+pub mod ast;
 pub(crate) mod embed;
 mod parse;
 mod preprocess;
@@ -60,6 +60,148 @@ pub struct Scratch {
 /// Fills `tree` with the syntax of `text`, which is a description in a JSDoc comment. Returns the root.
 pub(crate) fn parse_plain(text: &[u8], tree: &mut ast::Tree) -> Option<ast::NodeId> {
     parse::parse_content(text, tree, true)
+}
+
+/// `normalizeIdentifier(label).toLowerCase()`, with micromark's `normalizeIdentifier`. It's the `identifier` of a node
+/// with that label.
+pub fn identifier_of(label: &[u8]) -> Vec<u8> {
+    let mut identifier = Vec::new();
+    strings::push_lowercase(&strings::normalize_identifier(label), &mut identifier);
+    identifier
+}
+
+/// The syntax extensions to enable on top of CommonMark.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub struct Extensions {
+    /// Tables, strikethrough, footnotes, task lists and autolink literals.
+    pub gfm: bool,
+    /// Inline `$a$`, and blocks fenced with `$$`.
+    pub math: bool,
+    /// A line with three of this character is a front matter fence.
+    pub front_matter: Option<u8>,
+}
+
+/// The start and end of the front matter's content in `text`, and the end of its closing fence.
+fn front_matter_between(text: &[u8], marker: u8) -> Option<(usize, usize, usize)> {
+    let line_end = |from: usize| {
+        let rest = text.get(from..).unwrap_or_default();
+        from + bun_core::strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len())
+    };
+    let is_fence = |line: &[u8]| {
+        line.len() >= 3
+            && line[..3].iter().all(|&byte| byte == marker)
+            && line[3..].iter().all(|byte| matches!(byte, b' ' | b'\t'))
+    };
+    let first_end = line_end(0);
+    if !is_fence(&text[..first_end]) {
+        return None;
+    }
+    let mut start = first_end + 1;
+    while start <= text.len() {
+        let end = line_end(start);
+        if is_fence(&text[start..end]) {
+            return Some((first_end + 1, (start - 1).max(first_end + 1), end));
+        }
+        start = end + 1;
+    }
+    None
+}
+
+/// The text in the form that the parser expects: every line break is `\n` and every NUL is U+FFFD.
+#[derive(Default)]
+struct AsRead {
+    bytes: Vec<u8>,
+    /// The offset in `bytes` of each replacement that changed the length, and how many more bytes the original text has
+    /// up to the end of that replacement.
+    changes: Vec<(u32, i32)>,
+    /// The offsets in `bytes` of the U+FFFD that replaced a NUL.
+    replaced: Vec<u32>,
+}
+
+impl AsRead {
+    const REPLACEMENT: &[u8] = "\u{FFFD}".as_bytes();
+
+    fn push_in_place_of(&mut self, bytes: &[u8], len_in_text: usize) {
+        let at = self.bytes.len() as u32;
+        if bytes.len() != len_in_text {
+            let more = self.changes.last().map_or(0, |it| it.1);
+            self.changes
+                .push((at, more + len_in_text as i32 - bytes.len() as i32));
+        }
+        if bytes == AsRead::REPLACEMENT {
+            self.replaced.push(at);
+        }
+        self.bytes.extend_from_slice(bytes);
+    }
+
+    fn new(mut rest: &[u8]) -> AsRead {
+        let mut this = AsRead::default();
+        this.bytes.reserve(rest.len());
+        while let Some(at) = bun_core::strings::index_of_any(rest, b"\r\0") {
+            this.bytes.extend_from_slice(&rest[..at]);
+            let len = 1 + usize::from(rest[at..].starts_with(b"\r\n"));
+            match rest[at] {
+                0 => this.push_in_place_of(AsRead::REPLACEMENT, 1),
+                _ => this.push_in_place_of(b"\n", len),
+            }
+            rest = &rest[at + len..];
+        }
+        this.bytes.extend_from_slice(rest);
+        this
+    }
+
+    /// Converts an offset in `bytes` to an offset in the original text.
+    fn offset_in_text(&self, offset: u32) -> u32 {
+        match self.changes.partition_point(|it| it.0 < offset) {
+            0 => offset,
+            count => offset.wrapping_add_signed(self.changes[count - 1].1),
+        }
+    }
+
+    fn has_replaced(&self, start: u32, end: u32) -> bool {
+        let first = self.replaced.partition_point(|&at| at < start);
+        self.replaced.get(first).is_some_and(|&at| at < end)
+    }
+}
+
+/// Fills `tree` with the mdast of `text`, which can have any kind of line break, and returns the root. Offsets in the
+/// tree are offsets into `text`. In a string that isn't a plain range of `text`, every line break is `\n`, except in
+/// those that [`ast::Tree::restore_line_breaks`] names.
+pub fn parse_to_mdast(text: &[u8], with: Extensions, tree: &mut ast::Tree) -> Option<ast::NodeId> {
+    let is_changed = bun_core::strings::index_of_any(text, b"\r\0").is_some();
+    let as_read = match is_changed {
+        true => AsRead::new(text),
+        false => AsRead::default(),
+    };
+    let read: &[u8] = if is_changed { &as_read.bytes } else { text };
+
+    let front_matter = (with.front_matter).and_then(|marker| front_matter_between(read, marker));
+    let syntax = parse::Syntax::CommonMark {
+        gfm: with.gfm,
+        math: with.math,
+    };
+    let root = parse::parse_lines(read, tree, syntax, front_matter.map_or(0, |it| it.2 + 1))?;
+    if let Some((start, end, fence_end)) = front_matter {
+        let node = tree.add(ast::Kind::FrontMatter, 0, fence_end as u32);
+        if let Some(node) = tree.get_mut(node) {
+            node.value = ast::Str::source(start as u32, end as u32);
+        }
+        tree.prepend(root, node);
+    }
+    if is_changed {
+        tree.map_offsets(
+            |offset| as_read.offset_in_text(offset),
+            |start, end, out| {
+                let has_replaced = as_read.has_replaced(start, end);
+                if has_replaced {
+                    out.extend_from_slice(&read[start as usize..end as usize]);
+                }
+                has_replaced
+            },
+        );
+        tree.restore_line_breaks(text);
+    }
+    Some(root)
 }
 
 /// Prettier's `inferParser(options, { language })`: the parser for code in `language`.

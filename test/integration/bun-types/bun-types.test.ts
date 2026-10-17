@@ -877,6 +877,48 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  describe("SQLite options", () => {
+    typeTest("accept a value that is not set with exactOptionalPropertyTypes", {
+      options: { exactOptionalPropertyTypes: true },
+      files: {
+        "sqlite-options.ts": `
+          import { SQL } from "bun";
+          import { Database, type DatabaseOptions } from "bun:sqlite";
+
+          declare const settings: {
+            readonly?: boolean;
+            create?: boolean;
+            readwrite?: boolean;
+            safeIntegers?: boolean;
+            strict?: boolean;
+            deterministic?: boolean;
+          };
+          declare const bytes: Uint8Array;
+          const db = new Database(":memory:", {
+            readonly: settings.readonly,
+            create: settings.create,
+            readwrite: settings.readwrite,
+            safeIntegers: settings.safeIntegers,
+            strict: settings.strict,
+          });
+          Database.deserialize(bytes, { readonly: settings.readonly, safeIntegers: settings.safeIntegers });
+          db.function("f", { deterministic: settings.deterministic, safeIntegers: settings.safeIntegers }, () => 1);
+          db.aggregate("g", { step: () => 1, inverse: undefined, deterministic: settings.deterministic });
+
+          // Bun.SQL passes its options on to bun:sqlite.
+          declare const databaseOptions: DatabaseOptions;
+          const sqlOptions: SQL.SQLiteOptions = databaseOptions;
+          new Database(":memory:", sqlOptions);
+          Database.deserialize(bytes, databaseOptions);
+        `,
+      },
+      emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,
+      diagnostics: diagnostics => {
+        expect(diagnostics.filter(d => d.line?.startsWith("sqlite-options.ts"))).toEqual([]);
+      },
+    });
+  });
+
   describe("Bunland reaching for JSX", () => {
     typeTest("Bun.markdown.react() returns type compatible with React.ReactElement", {
       packages: ["@types/react", "@types/react-dom"],

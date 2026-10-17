@@ -366,6 +366,27 @@ describe("expect()", () => {
     });
   });
 
+  test("resolves and rejects call then() of a pending Promise subclass", async () => {
+    class Lazy extends Promise {
+      thenCalls = 0;
+      then(onFulfilled, onRejected) {
+        this.thenCalls++;
+        return super.then(onFulfilled, onRejected);
+      }
+    }
+    for (const outcome of ["resolves", "rejects"]) {
+      const { promise, resolve, reject } = Promise.withResolvers.call(Lazy);
+      setTimeout(outcome === "resolves" ? resolve : reject, 0, 1);
+      await expect(promise)[outcome].toBe(1);
+      expect(promise.thenCalls).toBe(1);
+    }
+
+    const { promise, resolve } = Promise.withResolvers.call(Lazy);
+    setTimeout(resolve, 0);
+    await expect(() => promise).not.toThrow();
+    expect(promise.thenCalls).toBe(1);
+  });
+
   test("can call without an argument", () => {
     expect().toBe(undefined);
   });

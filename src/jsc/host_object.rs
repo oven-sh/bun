@@ -21,22 +21,13 @@ use crate::{JSFunction, JSGlobalObject, JSHostFn, JSValue};
 /// a [`JSHostFn`]); `arity` is the JS `function.length` reported to userland.
 pub type HostFnEntry = (&'static str, JSHostFn, u32);
 
-/// `{ name₀: fn₀, name₁: fn₁, … }` — fresh object pre-sized to `fns.len()`
-/// inline-capacity slots, then [`JSValue::put_host_functions`].
-///
-/// Use when the *whole* object is a fn table (TOML/YAML/JSONC/…). When
-/// the receiver is something else — a callable, a null-prototype binding bag
-/// with non-fn props mixed in — build it yourself and call
-/// [`JSValue::put_host_functions`] directly.
+/// `{ name₀: fn₀, name₁: fn₁, … }` — fresh object pre-sized to `fns.len()` inline-capacity slots.
 pub fn create_host_function_object(global: &JSGlobalObject, fns: &[HostFnEntry]) -> JSValue {
     JSValue::create_empty_object(global, fns.len()).put_host_functions(global, fns)
 }
 
 impl JSValue {
-    /// Install each `(name, shim, arity)` as a `JSFunction` property on `self`
-    /// and return `self` for chaining. The JS-visible `function.name` is the
-    /// table key; options are `Default` (public visibility, no intrinsic, no
-    /// constructor) — matching every hand-rolled ladder this replaces.
+    /// Puts each `(name, shim, arity)` on `self` as a function, and returns `self`.
     pub fn put_host_functions(self, global: &JSGlobalObject, fns: &[HostFnEntry]) -> JSValue {
         for &(name, host_fn, arity) in fns {
             self.put(

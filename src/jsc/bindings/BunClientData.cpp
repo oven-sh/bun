@@ -107,6 +107,7 @@ JSVMClientData::~JSVMClientData()
         client->remove();
         client->willDestroyVM();
     }
+    ASSERT(m_sqliteDatabases.isEmpty());
 
     m_normalWorld = nullptr;
     if (vmHandle)

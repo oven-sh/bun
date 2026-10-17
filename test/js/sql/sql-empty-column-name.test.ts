@@ -1,30 +1,12 @@
-// A result column whose name is the empty string crashed the process (null
-// dereference while building the row object) on both the Postgres and the
-// MySQL adapter: the name reaches SQLClient.cpp as an empty BunString, which
-// toWTFString() turns into a null WTF::String, and Identifier::fromString
-// dereferences the null impl. The row must instead decode to an object with a
-// "" key, the same as `({ "": value })` in JavaScript.
-//
-// MySQL and MariaDB name an un-aliased literal after its text, so an honest
-// server returns such a column for plain `select ''` (real-server coverage at
-// the bottom). Postgres itself rejects `as ""` (zero-length delimited
-// identifier), so for that adapter an empty name only comes from a proxy or a
-// misbehaving server; the mock servers in sql-empty-column-name.fixture.ts
-// cover it for both adapters. The fixture runs in a child process because the
-// failure mode is the process dying. All wire bytes come from ./wire-frames.ts.
-
 import { SQL } from "bun";
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, describeWithContainer, isCI, isDockerEnabled } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, describeWithContainer } from "harness";
 import path from "node:path";
 
 const fixture = path.join(import.meta.dir, "sql-empty-column-name.fixture.ts");
 
-// A result set wider than JSFinalObject::maxInlineCapacity (62) is built by a
-// different path than a narrow one: the column names are kept on the side and
-// put onto each row object individually instead of being baked into a
-// Structure once. The "7" column is stored as an array index rather than a
-// name, which selects a third path that interleaves the two kinds.
+// A result set wider than JSFinalObject::maxInlineCapacity (62) is built by a different path than a narrow one,
+// and a column named like an array index ("7") selects a third path that interleaves names and indices.
 const wide = (...overrides: [index: number, name: string][]) => {
   const names = Array.from({ length: 80 }, (_, i) => `c${i}`);
   for (const [index, name] of overrides) names[index] = name;
@@ -37,81 +19,68 @@ const scenarios: Record<string, string[]> = {
   "an unnamed column in a wide result set with an indexed column": wide([40, ""], [41, "7"]),
 };
 
-async function decodeThroughMockServer(
-  adapter: "postgres" | "mysql",
-  protocol: "simple" | "prepared",
-  names: string[],
-) {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), fixture, adapter, protocol, JSON.stringify(names)],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-    timeout: 20_000,
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  let rows: unknown = null;
-  try {
-    rows = JSON.parse(stdout);
-  } catch {}
-  // stderr is not asserted (debug/ASan builds print benign notes); it is part
-  // of the compared object so the crash report shows up when the fixture dies.
-  return { rows, exitCode, signalCode: proc.signalCode, stderr };
-}
+// Column i of every result set, mock or real, holds "v<i>".
+const expectedRow = (names: string[]) => Object.fromEntries(names.map((name, i) => [name, `v${i}`]));
 
-function expectedRow(names: string[]) {
-  return Object.fromEntries(names.map((name, i) => [name, `v${i}`]));
-}
+// PostgreSQL rejects `as ""`, so there the name can only come from a proxy or a broken server.
+test.concurrent(
+  'postgres: every mock-server scenario decodes to a row with a "" key, over both protocols',
+  async () => {
+    const jobs = (["simple", "prepared"] as const).flatMap(protocol =>
+      Object.entries(scenarios).map(([scenario, names]) => ({ scenario, protocol, names })),
+    );
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), fixture, JSON.stringify(jobs)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 60_000,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-describe.each(["postgres", "mysql"] as const)("%s: a result set with an empty column name", adapter => {
-  // The text protocol of each adapter carries every scenario; the row object is
-  // built the same way on both protocols, so the prepared (binary) protocol
-  // only needs to prove it reaches the same place.
-  test.concurrent.each(Object.entries(scenarios))(
-    '%s decodes to a row with a "" key',
-    async (_, names) => {
-      expect(await decodeThroughMockServer(adapter, "simple", names)).toEqual({
-        rows: [expectedRow(names)],
-        exitCode: 0,
-        signalCode: null,
-        stderr: expect.any(String),
-      });
-    },
-    30_000,
-  );
+    // One line per job, in job order: after a crash the list stops at the job that died.
+    const results = stdout
+      .split("\n")
+      .filter(Boolean)
+      .map(line => JSON.parse(line));
+    expect({ results, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      results: jobs.map(({ names, ...job }) => ({ ...job, rows: [expectedRow(names)] })),
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+    expect(results.map(({ rows }) => Object.keys(rows[0]))).toEqual(
+      jobs.map(({ names }) => Object.keys(expectedRow(names))),
+    );
+  },
+);
 
-  test.concurrent(
-    "a single unnamed column decodes over the prepared-statement protocol",
-    async () => {
-      expect(await decodeThroughMockServer(adapter, "prepared", [""])).toEqual({
-        rows: [{ "": "v0" }],
-        exitCode: 0,
-        signalCode: null,
-        stderr: expect.any(String),
-      });
-    },
-    30_000,
-  );
-});
+for (const image of ["mysql_plain", "mariadb_plain"]) {
+  describeWithContainer(`${image}: a result set with an empty column name`, { image, concurrent: true }, container => {
+    const connect = () => new SQL({ url: `mysql://root@${container.host}:${container.port}/bun_sql_test`, max: 1 });
 
-// Real-server coverage: `select ''` is enough to get an unnamed column out of
-// MySQL and MariaDB; the client decodes both servers' result sets identically.
-// Same gating as sql-mariadb-json.test.ts: only attempt the container when
-// something can provide it, since a half-working local docker would fail the
-// suite instead of skipping it.
-const mariadbProvided =
-  !!process.env.BUN_TEST_SERVICE_mariadb_plain || !!process.env.BUN_DOCKER_COORDINATOR || (isCI && isDockerEnabled());
-if (!mariadbProvided) {
-  describe.todo("mariadb: select '' returns a row with a \"\" key");
-} else {
-  describeWithContainer("mariadb", { image: "mariadb_plain" }, container => {
-    test("select '' returns a row with a \"\" key", async () => {
+    test("select '' returns a row with a \"\" key over both protocols", async () => {
       await container.ready;
-      await using sql = new SQL({ url: `mysql://root@${container.host}:${container.port}/bun_sql_test`, max: 1 });
+      await using sql = connect();
 
       expect(await sql`select ''`).toEqual([{ "": "" }]);
       expect(await sql`select ''`.simple()).toEqual([{ "": "" }]);
-      expect(await sql`select '', 'abc', 1 as n`).toEqual([{ "": "", abc: "abc", n: 1 }]);
+
+      const [row] = await sql`select '', 'abc', 1 as n`;
+      expect(row).toEqual({ "": "", abc: "abc", n: 1 });
+      expect(Object.keys(row)).toEqual(["", "abc", "n"]);
+    });
+
+    test.each(Object.entries(scenarios))("%s, over both protocols", async (_, names) => {
+      await container.ready;
+      await using sql = connect();
+
+      const expected = expectedRow(names);
+      const select = sql.unsafe("select " + names.map((name, i) => `'v${i}' as \`${name}\``).join(", "));
+      for (const rows of [await sql`${select}`, await sql`${select}`.simple()]) {
+        expect(rows).toEqual([expected]);
+        expect(Object.keys(rows[0])).toEqual(Object.keys(expected));
+      }
     });
   });
 }

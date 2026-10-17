@@ -87,15 +87,13 @@ describe.concurrent("Svelte", () => {
   }
 
   const [input, output] = ["<p   >a</p>\n<script>let  a</script>\n", "<script>\n  let a;\n</script>\n\n<p>a</p>\n"];
-  // A stand-in for Prettier, which says that it has been there.
+  // A stand-in for Prettier. Its output would show that it ran.
   const prettier = {
     "node_modules/prettier/package.json": '{ "name": "prettier", "version": "3.0.0", "main": "index.cjs" }',
     "node_modules/prettier/index.cjs": `exports.resolveConfig = async () => null;
 exports.format = async text => "<!-- by Prettier -->\\n" + text;
 `,
   };
-  const byPrettier = `<!-- by Prettier -->\n${input}`;
-  // A run that asks it starts a VM, which takes long in a debug build: one such run in a test.
 
   test("without a Prettier or oxfmt config components are formatted", async () => {
     expect(await format({ "a.svelte": input }, ["a.svelte"])).toMatchObject({
@@ -222,6 +220,17 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     expect(result.exitCode).toBe(1);
   });
 
+  test("the config imports Prettier's plugin as a module", async () => {
+    const files = {
+      "prettier.config.mjs":
+        'import * as svelte from "prettier-plugin-svelte";\nexport default { plugins: [svelte] };\n',
+      "node_modules/prettier-plugin-svelte/package.json": '{ "name": "prettier-plugin-svelte", "main": "index.cjs" }',
+      "node_modules/prettier-plugin-svelte/index.cjs": 'exports.parsers = { svelte: { astFormat: "svelte-ast" } };\n',
+      "a.svelte": input,
+    };
+    expect(await format(files, ["a.svelte"])).toMatchObject({ stderr: "", files: [output], exitCode: 0 });
+  });
+
   test("oxfmt gives a component on standard input back if it is not to format it", async () => {
     using dir = tempDir("bun-format-svelte", { ".oxfmtrc.json": "{}" });
     await using proc = spawn({
@@ -252,49 +261,145 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     expect((await format({ ...both, "a.svelte": input }, ["a.svelte"])).files).toEqual([output]);
   });
 
-  describe("another version of the plugin than 4.1.1 prints in another way, so the Prettier of the project is asked", () => {
+  describe("components never go to the project's Prettier", () => {
     const files = { ...prettier, ".prettierrc": prettierrc, "a.svelte": input };
 
-    test.each([[plugin("4.1.1")], [{}]])("not with 4.1.1, and not without any: %j", async installed => {
-      expect((await format({ ...files, ...installed }, ["a.svelte"])).files).toEqual([output]);
-    });
-
-    test.each(["4.1.0", "4.0.0", "3.5.2", "4.1.2", "5.0.0"])("%s", async version => {
-      expect((await format({ ...files, ...plugin(version) }, ["a.svelte"])).files).toEqual([byPrettier]);
-    });
-
-    test("so it is for a range", async () => {
-      const range = await format({ ...files, ...plugin("4.1.1") }, ["a.svelte"], ["--range-start=1"]);
-      expect(range.files).toEqual([byPrettier]);
-    });
-  });
-
-  test("the version is that of the plugin that the Prettier of the project would load: from the working directory", async () => {
-    const inApp = (files: Record<string, string>) =>
-      Object.fromEntries(Object.entries(files).map(([name, text]) => [`packages/app/${name}`, text]));
-    using dir = tempDir("bun-format-svelte", {
-      ".prettierrc": prettierrc,
-      ...inApp({ ...prettier, ...plugin("4.0.0"), "a.svelte": input }),
-    });
-    expect((await formatIn(join(String(dir), "packages/app"), ["a.svelte"])).files).toEqual([byPrettier]);
-  });
-
-  describe("a range or a cursor in the configuration is one too", () => {
-    const files = { ...prettier, ...plugin("4.1.1"), "a.svelte": input };
-    const forSvelte = (options: object) => ({ overrides: [{ files: "*.svelte", options }] });
-
-    test.each([[{ rangeStart: 1 }], [{ rangeEnd: 5 }], [forSvelte({ cursorOffset: 2 })], [forSvelte({ rangeEnd: 5 })]])(
-      "%j",
-      async config => {
-        const result = await format({ ...files, ".prettierrc": JSON.stringify({ plugins, ...config }) }, ["a.svelte"]);
-        expect(result.files).toEqual([byPrettier]);
+    test.each([undefined, "4.1.1", "4.1.0", "4.0.0", "3.5.2", "2.10.1", "4.1.2", "5.0.0"])(
+      "with version %s of the plugin installed",
+      async version => {
+        expect(await format({ ...files, ...(version && plugin(version)) }, ["a.svelte"])).toMatchObject({
+          stderr: "",
+          files: [output],
+          exitCode: 0,
+        });
       },
     );
 
-    test("not one for other files", async () => {
-      const config = { plugins, overrides: [{ files: "*.js", options: { rangeEnd: 5 } }] };
-      expect((await format({ ...files, ".prettierrc": JSON.stringify(config) }, ["a.svelte"])).files).toEqual([output]);
+    test("from standard input", async () => {
+      using dir = tempDir("bun-format-svelte", { ...files, ...plugin("3.5.2") });
+      for (const flags of [
+        ["--stdin-filepath", "b.svelte"],
+        ["--parser", "svelte"],
+      ]) {
+        await using proc = spawn({
+          cmd: [bunExe(), "fmt", ...flags],
+          env: bunEnv,
+          cwd: String(dir),
+          stdin: Buffer.from(input),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: output, stderr: "", exitCode: 0 });
+      }
     });
+  });
+
+  test("--parser svelte without the plugin is an unknown parser, as in Prettier, whatever else is listed", async () => {
+    using dir = tempDir("bun-format-svelte", {
+      ...prettier,
+      "node_modules/prettier-plugin-astro/package.json": '{ "name": "prettier-plugin-astro", "version": "1.0.0" }',
+      ".prettierrc": '{ "plugins": ["prettier-plugin-astro"] }',
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "fmt", "--parser", "svelte"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdin: Buffer.from(input),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "",
+      stderr: `error: Couldn't resolve parser "svelte".\n`,
+      exitCode: 1,
+    });
+  });
+
+  // Prettier can't format part of a component, as with HTML, CSS and Markdown. With the plugin, Prettier 3.9.9 then
+  // prints `<script ✂prettier:content✂="bGV0ICBh">{}</script>` in place of the script.
+  describe("a range leaves a component unchanged", () => {
+    const forSvelte = (options: object) => ({ overrides: [{ files: "*.svelte", options }] });
+    const configs = [{}, { ".prettierrc": prettierrc, ...prettier, ...plugin("4.1.1") }];
+
+    test.each(["--range-start=1", "--range-end=5", `--range-end=${input.length - 1}`, "--range-start=9 --range-end=3"])(
+      "%s",
+      async flags => {
+        for (const config of configs) {
+          expect(await format({ ...config, "a.svelte": input }, ["a.svelte"], flags.split(" "))).toMatchObject({
+            stderr: "",
+            files: [input],
+            exitCode: 0,
+          });
+        }
+      },
+    );
+
+    test.each([[{ rangeStart: 1 }], [{ rangeEnd: 5 }], [forSvelte({ rangeEnd: 5 })]])(
+      "in the config: %j",
+      async config => {
+        const files = { ...prettier, ".prettierrc": JSON.stringify({ plugins, ...config }), "a.svelte": input };
+        expect(await format(files, ["a.svelte"])).toMatchObject({ stderr: "", files: [input], exitCode: 0 });
+      },
+    );
+
+    test.each(["--range-start=0", `--range-end=${input.length}`, "--range-end=1000"])(
+      "a range that covers the whole file doesn't count: %s",
+      async flag => {
+        expect((await format({ "a.svelte": input }, ["a.svelte"], [flag])).files).toEqual([output]);
+      },
+    );
+
+    test("a range that's only for other files doesn't apply", async () => {
+      const config = { plugins, overrides: [{ files: "*.js", options: { rangeEnd: 5 } }] };
+      expect((await format({ ".prettierrc": JSON.stringify(config), "a.svelte": input }, ["a.svelte"])).files).toEqual([
+        output,
+      ]);
+    });
+
+    test("line breaks still follow endOfLine, and a byte order mark is kept", async () => {
+      const text = `\uFEFF${input.replaceAll("\n", "\r\n")}`;
+      const run = (endOfLine: string) =>
+        format({ "a.svelte": text }, ["a.svelte"], ["--range-start=3", `--end-of-line=${endOfLine}`]);
+      expect((await run("auto")).files).toEqual([text]);
+      expect((await run("lf")).files).toEqual([`\uFEFF${input}`]);
+    });
+
+    test("a syntax error is still reported", async () => {
+      const result = await format({ "a.svelte": "<p>{a +}</p>\n" }, ["a.svelte"], ["--range-start=1"]);
+      expect(result.stderr).toMatch(refusalOf("a.svelte"));
+      expect(result.exitCode).toBe(2);
+    });
+  });
+
+  // Prettier 3.9.9 looks the offset up in the text that the plugin parsed, where a placeholder replaces each script.
+  test.each([
+    [0, 0],
+    [17, 15],
+    [42, 38],
+    [55, 49],
+    [60, 51],
+    [67, 58],
+  ])("--cursor-offset=%d prints the cursor's offset in the formatted text: %d", async (before, after) => {
+    const text = '<script>\n  let   a = 1;\n</script>\n\n<p   class="x"  >{a   +  1}</p>\n';
+    for (const config of [{}, { ".prettierrc": prettierrc, ...prettier, ...plugin("4.1.1") }]) {
+      using dir = tempDir("bun-format-svelte", config);
+      await using proc = spawn({
+        cmd: [bunExe(), "fmt", "--stdin-filepath", "a.svelte", `--cursor-offset=${before}`],
+        env: bunEnv,
+        cwd: String(dir),
+        stdin: Buffer.from(text),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: '<script>\n  let a = 1;\n</script>\n\n<p class="x">{a + 1}</p>\n',
+        stderr: `${after}\n`,
+        exitCode: 0,
+      });
+    }
   });
 
   describe("a value of an option that this version of the plugin does not take", () => {
@@ -317,14 +422,11 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       });
     });
 
-    test("is for the Prettier of the project to judge with another version", async () => {
+    test("is also an error if the installed version accepts it", async () => {
       const project = { ...files, ...prettier, ...plugin("2.10.1") };
-      const config = { ".prettierrc": JSON.stringify({ plugins, ...options }) };
-      expect(await format({ ...project, ...config }, ["a.svelte", "b.js"])).toMatchObject({
-        stderr: "",
-        files: [byPrettier, "b;\n"],
-        exitCode: 0,
-      });
+      const result = await format({ ...project, ".prettierrc": JSON.stringify({ plugins, ...options }) }, ["a.svelte"]);
+      expect(result.stderr).toContain("error: Invalid svelteSortOrder value: scripts-markup-styles.\n");
+      expect(result).toMatchObject({ files: [input], exitCode: 2 });
     });
   });
 
@@ -332,21 +434,16 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
   describe("svelteStrictMode, which 4.1.1 does not have", () => {
     const files = { ".prettierrc": JSON.stringify({ plugins, svelteStrictMode: true }), "a.svelte": input };
 
-    test.each([[{}], [plugin("4.1.1")]])("is ignored, which is said, as Prettier says it: %j", async installed => {
-      expect(await format({ ...files, ...installed }, ["a.svelte"])).toMatchObject({
-        stderr: "warn: Ignored unknown option { svelteStrictMode: true }.\n",
-        files: [output],
-        exitCode: 0,
-      });
-    });
-
-    test("is for another version to judge, whose files go to the Prettier of the project", async () => {
-      expect(await format({ ...files, ...prettier, ...plugin("3.4.0") }, ["a.svelte"])).toMatchObject({
-        stderr: "",
-        files: [byPrettier],
-        exitCode: 0,
-      });
-    });
+    test.each([[{}], [plugin("4.1.1")], [{ ...prettier, ...plugin("3.4.0") }]])(
+      "is ignored with the same warning as Prettier's: %j",
+      async installed => {
+        expect(await format({ ...files, ...installed }, ["a.svelte"])).toMatchObject({
+          stderr: "warn: Ignored unknown option { svelteStrictMode: true }.\n",
+          files: [output],
+          exitCode: 0,
+        });
+      },
+    );
 
     test("the options that 4.1.1 has are known", async () => {
       const config = { plugins, svelte5CompilerPath: "", svelteAllowShorthand: true, svelteIndentScriptAndStyle: true };
@@ -2103,17 +2200,6 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     expect(result).toMatchObject({ stderr: "", files: ["<p>b</p>\n\n<style></style>\n"], exitCode: 0 });
   });
 
-  test("a range or a cursor is refused with the reason", async () => {
-    for (const flag of ["--range-start=1", "--range-end=2", "--cursor-offset=1"]) {
-      using dir = tempDir("bun-format-svelte", { "a.svelte": input });
-      const result = await formatIn(String(dir), ["a.svelte"], [flag, "a.svelte"]);
-      expect(result.stderr).toStartWith(
-        `error: A range or a cursor offset cannot be used with a Svelte file: "${join(String(dir), "a.svelte")}".\n`,
-      );
-      expect(result).toMatchObject({ files: [input], exitCode: 2 });
-    }
-  });
-
   // The plugin writes the error to stderr too, and goes on.
   describe("what is in a script or a style sheet and cannot be parsed stays as it is, with a warning", () => {
     const warning = (message: string, [line, column, shown]: [number, number, string], name = "a.svelte") =>
@@ -2475,7 +2561,8 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
 
   test("blocks of Svelte in Markdown are formatted where components are", async () => {
     const block = (text: string) => `# a\n\n\`\`\`svelte\n${text}\`\`\`\n`;
-    for (const config of [{}, { ".prettierrc": prettierrc }, { ".oxfmtrc.json": oxfmtrc }]) {
+    const withOtherVersion = { ".prettierrc": prettierrc, ...plugin("4.1.0") };
+    for (const config of [{}, { ".prettierrc": prettierrc }, withOtherVersion, { ".oxfmtrc.json": oxfmtrc }]) {
       expect(await format({ ...config, "a.md": block(input) }, ["a.md"])).toMatchObject({
         stderr: "",
         files: [block(output)],
@@ -2484,12 +2571,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       const refused = block("<p   >{a +}</p>\n");
       expect(await format({ ...config, "a.md": refused }, ["a.md"])).toMatchObject({ files: [refused], exitCode: 0 });
     }
-    const without = [
-      { ".prettierrc": "{}" },
-      { ".oxfmtrc.json": "{}" },
-      { ".prettierrc": prettierrc, ...plugin("4.1.0") },
-    ];
-    for (const config of without) {
+    for (const config of [{ ".prettierrc": "{}" }, { ".oxfmtrc.json": "{}" }]) {
       expect((await format({ ...config, "a.md": block(input) }, ["a.md"], ["--allow-unsupported"])).files).toEqual([
         block(input),
       ]);

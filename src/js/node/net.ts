@@ -3879,8 +3879,7 @@ Server.prototype.getConnections = function getConnections(callback) {
 
 Server.prototype.listen = function listen(port, hostname, backlogArg) {
   const argsLength = arguments.length;
-  // As in node's normalizeArgs: the callback is the last argument when it is a
-  // function, whatever the positions before it hold (`listen(port, host, undefined, cb)`).
+  // node's normalizeArgs: the last argument is the callback when it is a function.
   const lastArg = argsLength > 0 ? arguments[argsLength - 1] : undefined;
   let onListen = typeof lastArg === "function" ? lastArg : undefined;
   if (typeof port === "string") {

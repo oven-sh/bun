@@ -464,8 +464,7 @@ impl S3BlobStatTask {
         Ok(())
     }
 
-    /// The HEAD request behind `exists()`, `size()` and `stat()`. A file whose
-    /// store user JS took away rejects instead of reaching the S3 data.
+    /// The HEAD request behind `exists()`, `size()` and `stat()`.
     fn start(
         cx: &bun_jsc::JsThread<'_>,
         blob: &Blob,
@@ -482,7 +481,6 @@ impl S3BlobStatTask {
                 .to_js());
             }
         };
-        // The task adopts the reference, and `s3_store` reads through it.
         let this = S3BlobStatTask::new(S3BlobStatTask {
             promise: bun_jsc::JSPromiseStrong::init(cx.global()),
             store,
@@ -518,9 +516,7 @@ impl S3BlobStatTask {
     // Teardown (store deref, promise deinit, freeing the box) is handled by Box<Self> Drop.
 }
 
-/// An owned reference to the S3 store of `blob`, for `verb`. Every S3 method
-/// takes one before it reads its options: those getters are user JS, and user
-/// JS can take the store out of the Blob (`new Response([file])`).
+/// Owned: the option getters that run next are user JS, which can take the store out of `blob`.
 fn s3_store(blob: &Blob, global: &JSGlobalObject, verb: &str) -> JsResult<RefPtr<Store>> {
     match blob.store().cloned() {
         Some(store) if matches!(store.data, blob::store::Data::S3(_)) => Ok(store),
@@ -718,8 +714,7 @@ pub(crate) mod exports {
         global: *mut JSGlobalObject,
         callframe: *mut CallFrame,
     ) -> JSValue {
-        // SAFETY: JSC method shim passes live `m_ctx`/global/callframe. Shared: the
-        // option getters are user JS that can reach this same Blob.
+        // SAFETY: JSC method shim passes live `m_ctx`/global/callframe.
         let (this, global, callframe) = unsafe { (&*this, &*global, &*callframe) };
         bun_jsc::to_js_host_call(global, || super::get_presign_url(this, global, callframe))
     }

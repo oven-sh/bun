@@ -1423,6 +1423,7 @@ mod border_handler_body {
 
                     // Setting the `border` property resets `border-image`
                     self.border_image_handler.reset();
+                    self.category = Physical;
                     self.has_any = true;
                 }
                 Property::Unparsed(val) => {

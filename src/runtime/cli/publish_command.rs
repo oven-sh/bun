@@ -414,8 +414,12 @@ impl PublishCommand {
                 || arg.starts_with(b"-F")
         }) {
             Output::err_generic(
-                "refusing to publish: {} is before \"publish\", use \"bun publish {}\", or \"bun run\" for a script",
-                (bstr::BStr::new(flag), bstr::BStr::new(flag)),
+                "refusing to publish: {} is before \"publish\"",
+                (bun_fmt::escape_control_chars(flag),),
+            );
+            bun_core::note!(
+                "use <b>bun publish {}<r>, or <b>bun run<r> for a script named \"publish\"",
+                bun_fmt::escape_control_chars(flag)
             );
             Global::crash();
         }

@@ -3871,7 +3871,8 @@ describe.concurrent("--recursive and --filter", () => {
       const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       const [flag] = flags.split(" ");
       expect(err).toBe(
-        `error: refusing to publish: ${flag} is before "publish", use "bun publish ${flag}", or "bun run" for a script\n`,
+        `error: refusing to publish: ${flag} is before "publish"\n` +
+          `note: use bun publish ${flag}, or bun run for a script named "publish"\n`,
       );
       expect(published(out)).toEqual([]);
       expect(registry.asked).toEqual([]);

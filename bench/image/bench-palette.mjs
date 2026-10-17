@@ -1,13 +1,20 @@
-// Bun.Image palette PNG — time and output size of png({ palette: true, colors })
-// against truecolour png(), with and without dither.
+// Bun.Image palette PNG — time, output size and error of
+// png({ palette: true, colors }) against truecolour png(), with and without
+// dither.
 //
 // Fixtures are generated in-process so nothing binary is committed: a
 // screenshot-like image (flat areas, antialiased text, a gradient banner), the
 // same with a banner of one colour per column (under 256 colours, so it fits
-// the default palette), a photo-like one (gradients with noise) and a
-// thumbnail of it. Pass PNG/JPEG paths to measure real files instead. Run
-// with --sharp to add a sharp column (requires `bun install` in this dir
-// first).
+// the default palette), a photo-like one (gradients with noise), a thumbnail
+// of it, a flat image with sparse marks (opaque and with alpha) and a sprite
+// on a transparent background. Pass PNG/JPEG paths to measure real files
+// instead. Run with --sharp to add a sharp column (requires `bun install` in
+// this dir first) and with --rounds=N for N timed rounds per row (default 7).
+//
+// `error` is the mean squared difference per channel between the output and
+// the pixels Bun.Image decodes from the input, with colour multiplied by
+// alpha. `entries` is the palette size, as "different of all" when two entries
+// are the same colour.
 
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -39,7 +46,7 @@ function makePng(w, h, pixel) {
   ihdr[8] = 8;
   ihdr[9] = 6;
   const raw = new Uint8Array(h * (1 + w * 4));
-  const px = [0, 0, 0];
+  const px = [0, 0, 0, 255];
   for (let y = 0; y < h; y++) {
     const row = y * (1 + w * 4);
     for (let x = 0; x < w; x++) {
@@ -48,7 +55,7 @@ function makePng(w, h, pixel) {
       raw[p] = px[0];
       raw[p + 1] = px[1];
       raw[p + 2] = px[2];
-      raw[p + 3] = 255;
+      raw[p + 3] = px[3];
     }
   }
   return Buffer.concat([
@@ -60,7 +67,7 @@ function makePng(w, h, pixel) {
 }
 
 const hash = (x, y) => (Math.imul(x, 0x9e3779b1) ^ Math.imul(y, 0x85ebca6b)) >>> 0;
-const set = (px, r, g, b) => ((px[0] = r), (px[1] = g), (px[2] = b));
+const set = (px, r, g, b, a = 255) => ((px[0] = r), (px[1] = g), (px[2] = b), (px[3] = a));
 
 // 1920×1080: header, sidebar, text lines with 16 levels of edge coverage,
 // three flat buttons, one gradient banner. `bannerRows` is 1 for a banner
@@ -99,6 +106,118 @@ const photo = step => (x, y, px) => {
   );
 };
 
+// A flat background with one marked pixel every 32 columns and rows: 121
+// colours, or 321 with `alpha` (then the background is half transparent).
+// The marks sit 3, 8, 20, 50 and 127 levels from the background on each side
+// of each channel, so every cut takes a thin layer off the box that holds the
+// background, and that box keeps 99.9% of the pixels for 30 to 40 splits.
+const marks = alpha => (x, y, px) => {
+  const back = alpha ? 127 : 255;
+  if (x % 32 || y % 32) return set(px, 127, 127, 127, back);
+  const channels = alpha ? 4 : 3;
+  const i = (y / 32) * 60 + x / 32;
+  const k = i % (channels * 10);
+  const ch = k % channels;
+  const c = [127, 127, 127, back];
+  for (let o = 0, bit = 0; o < channels; o++) if (o !== ch) c[o] += ((i / (channels * 10)) >> bit++) & 1;
+  c[ch] = 127 + ((k / channels) & 1 ? 1 : -1) * [127, 50, 20, 8, 3][(k / (channels * 2)) | 0];
+  return set(px, c[0], c[1], c[2], c[3]);
+};
+// A round sprite on a fully transparent background: a body with a gradient,
+// an antialiased edge and a soft shadow below it.
+const sprite = (x, y, px) => {
+  const d = Math.hypot(x - 512, y - 480);
+  const cover = Math.min(1, Math.max(0, 300.5 - d));
+  const shadow = 0.5 * Math.exp(-(((x - 512) / 330) ** 2 + ((y - 840) / 40) ** 2));
+  const a = cover + (1 - cover) * shadow;
+  if (a < 1 / 510) return set(px, 0, 0, 0, 0);
+  const t = (y - 180) / 600;
+  const k = cover / a;
+  return set(px, k * (250 - 60 * t), k * (190 - 90 * t), k * (60 + 40 * t), 255 * a);
+};
+
+// An 8-bit PNG of colour type 2, 3 or 6, not interlaced (what Bun.Image
+// writes), as RGBA pixels and its palette entries.
+function decodePng(png) {
+  const dv = new DataView(png.buffer, png.byteOffset, png.byteLength);
+  let width = 0;
+  let height = 0;
+  let type = 0;
+  let plte = new Uint8Array(0);
+  let trns = new Uint8Array(0);
+  const idat = [];
+  for (let at = 8; at < png.length;) {
+    const length = dv.getUint32(at);
+    const name = String.fromCharCode(png[at + 4], png[at + 5], png[at + 6], png[at + 7]);
+    const data = png.subarray(at + 8, at + 8 + length);
+    if (name === "IHDR") {
+      width = dv.getUint32(at + 8);
+      height = dv.getUint32(at + 12);
+      type = png[at + 17];
+      if (png[at + 16] !== 8 || png[at + 20] !== 0 || ![2, 3, 6].includes(type)) {
+        throw new Error(`unsupported PNG: depth ${png[at + 16]}, colour type ${type}, interlace ${png[at + 20]}`);
+      }
+    } else if (name === "PLTE") plte = data;
+    else if (name === "tRNS") trns = data;
+    else if (name === "IDAT") idat.push(data);
+    at += 12 + length;
+  }
+  const bpp = type === 3 ? 1 : type === 2 ? 3 : 4;
+  const stride = width * bpp;
+  const raw = zlib.inflateSync(Buffer.concat(idat));
+  const rows = new Uint8Array(height * stride);
+  for (let y = 0; y < height; y++) {
+    const filter = raw[y * (stride + 1)];
+    const src = y * (stride + 1) + 1;
+    const out = y * stride;
+    for (let i = 0; i < stride; i++) {
+      const a = i >= bpp ? rows[out + i - bpp] : 0;
+      const b = y ? rows[out + i - stride] : 0;
+      const c = i >= bpp && y ? rows[out + i - stride - bpp] : 0;
+      let predicted = 0;
+      if (filter === 1) predicted = a;
+      else if (filter === 2) predicted = b;
+      else if (filter === 3) predicted = (a + b) >> 1;
+      else if (filter === 4) {
+        const pa = Math.abs(b - c);
+        const pb = Math.abs(a - c);
+        const pc = Math.abs(a + b - 2 * c);
+        predicted = pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+      }
+      rows[out + i] = raw[src + i] + predicted;
+    }
+  }
+  const rgba = new Uint8Array(width * height * 4);
+  const entries = [];
+  for (let i = 0; i < plte.length / 3; i++) {
+    entries.push([plte[i * 3], plte[i * 3 + 1], plte[i * 3 + 2], i < trns.length ? trns[i] : 255]);
+  }
+  for (let p = 0; p < width * height; p++) {
+    if (type === 3) rgba.set(entries[rows[p]], p * 4);
+    else {
+      rgba[p * 4] = rows[p * bpp];
+      rgba[p * 4 + 1] = rows[p * bpp + 1];
+      rgba[p * 4 + 2] = rows[p * bpp + 2];
+      rgba[p * 4 + 3] = type === 6 ? rows[p * bpp + 3] : 255;
+    }
+  }
+  return { rgba, entries };
+}
+// Mean squared difference per channel, with colour multiplied by alpha.
+function errorOf(source, output) {
+  let sum = 0;
+  for (let i = 0; i < source.length; i += 4) {
+    const sa = source[i + 3];
+    const oa = output[i + 3];
+    for (let c = 0; c < 3; c++) {
+      const d = (((source[i + c] * sa + 127) / 255) | 0) - (((output[i + c] * oa + 127) / 255) | 0);
+      sum += d * d;
+    }
+    sum += (sa - oa) * (sa - oa);
+  }
+  return sum / source.length;
+}
+
 const args = process.argv.slice(2);
 const paths = args.filter(a => !a.startsWith("--"));
 // [name, PNG, calls per sample]
@@ -109,6 +228,9 @@ const fixtures = paths.length
       ["screenshot 1920×1080, under 256 colours", makePng(1920, 1080, screenshot(0)), 1],
       ["photo 1024×768", makePng(1024, 768, photo(1)), 1],
       ["photo 64×48", makePng(64, 48, photo(16)), 50],
+      ["flat with sparse marks 1920×1080", makePng(1920, 1080, marks(false)), 1],
+      ["flat with sparse marks 1920×1080, with alpha", makePng(1920, 1080, marks(true)), 1],
+      ["sprite 1024×1024, with alpha", makePng(1024, 1024, sprite), 1],
     ];
 
 let sharp = null;
@@ -123,7 +245,7 @@ if (args.includes("--sharp")) {
   }
 }
 
-const ROUNDS = 7;
+const ROUNDS = Number(args.find(a => a.startsWith("--rounds="))?.slice(9) ?? 7);
 async function measure(fn, calls) {
   const times = [];
   let bytes = 0;
@@ -138,16 +260,28 @@ async function measure(fn, calls) {
 
 console.log(`\n### palette PNG, ${ROUNDS} rounds, ${process.platform}/${process.arch}, bun ${Bun.version}\n`);
 console.log(
-  `| input | output | min ms | median ms | bytes | vs truecolour |${sharp ? " sharp ms | sharp bytes |" : ""}`,
+  `| input | output | min ms | median ms | bytes | vs truecolour | error | entries |${sharp ? " sharp ms | sharp bytes |" : ""}`,
 );
-console.log(`|---|---|---:|---:|---:|---:|${sharp ? "---:|---:|" : ""}`);
+console.log(`|---|---|---:|---:|---:|---:|---:|---:|${sharp ? "---:|---:|" : ""}`);
 for (const [name, buf, calls] of fixtures) {
+  let source;
+  try {
+    source = decodePng(await new Bun.Image(buf).png().bytes()).rgba;
+  } catch (e) {
+    console.log(`| ${name} | not decoded: ${e.message} | | | | | | |${sharp ? " | |" : ""}`);
+    continue;
+  }
   const truecolour = await measure(() => new Bun.Image(buf).png().bytes(), calls);
   const rows = [["png()", truecolour, null]];
-  for (const colors of [2, 16, 64, 256]) {
+  for (const colors of [2, 16, 32, 64, 256]) {
     for (const dither of [false, true]) {
       const label = `palette, colors ${colors}${dither ? ", dither" : ""}`;
       const bun = await measure(() => new Bun.Image(buf).png({ palette: true, colors, dither }).bytes(), calls);
+      // Once per row, outside the timed rounds.
+      const { rgba, entries } = decodePng(await new Bun.Image(buf).png({ palette: true, colors, dither }).bytes());
+      const different = new Set(entries.map(e => e.join())).size;
+      bun.error = errorOf(source, rgba);
+      bun.entries = different === entries.length ? `${different}` : `${different} of ${entries.length}`;
       // sharp rounds colours up to 2, 4, 16 or 256.
       const other =
         sharp && colors !== 64
@@ -170,9 +304,10 @@ for (const [name, buf, calls] of fixtures) {
   ]);
   for (const [label, r, other] of rows) {
     const ratio = `${(truecolour.bytes / r.bytes).toFixed(2)}×`;
+    const error = r.error === undefined ? "" : r.error.toPrecision(4);
     const extra = sharp ? ` ${other ? other.min.toFixed(1) : ""} | ${other ? other.bytes : ""} |` : "";
     console.log(
-      `| ${name} | ${label} | ${r.min.toFixed(2)} | ${r.median.toFixed(2)} | ${r.bytes} | ${ratio} |${extra}`,
+      `| ${name} | ${label} | ${r.min.toFixed(2)} | ${r.median.toFixed(2)} | ${r.bytes} | ${ratio} | ${error} | ${r.entries ?? ""} |${extra}`,
     );
   }
 }

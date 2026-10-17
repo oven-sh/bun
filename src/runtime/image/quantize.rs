@@ -2,7 +2,7 @@
 //!
 //! Goal is "good enough to match Sharp's palette PNG path for screenshot
 //! compression", not perceptual perfection — Sharp uses libimagequant which
-//! is GPL, so we roll a small permissive one: boxes cut by squared error, each box's mean a palette
+//! is GPL, so we roll a small permissive one: boxes cut by squared error, each box one palette
 //! entry. Mapping is nearest-entry by squared RGBA distance, optionally with
 //! Floyd–Steinberg error diffusion (`dither: true`).
 
@@ -211,7 +211,7 @@ impl ColorBox {
     }
 }
 
-/// Split the pixels into `want` boxes (fewer if each is one colour). A box's mean is an entry.
+/// Split the pixels into `want` boxes (fewer if each is one colour). Each box gives one entry.
 fn split_boxes(pixels: &[[u8; 4]], want: usize) -> Result<Vec<u8>, AllocError> {
     // The boxes are ranges of a copy. A cut is a value of a channel: equal colours stay together.
     let mut pixels: Vec<[u8; 4]> = {
@@ -266,9 +266,28 @@ fn split_boxes(pixels: &[[u8; 4]], want: usize) -> Result<Vec<u8>, AllocError> {
     }
     let mut palette: Vec<u8> = Vec::with_capacity(boxes.len() * 4);
     for b in &boxes {
-        palette.extend_from_slice(&b.moments.mean());
+        let entry = majority(&pixels[b.lo..b.hi]).unwrap_or_else(|| b.moments.mean());
+        palette.extend_from_slice(&entry);
     }
     Ok(palette)
+}
+
+/// The colour that more than half of `pixels` have: a flat background stays exact.
+fn majority(pixels: &[[u8; 4]]) -> Option<[u8; 4]> {
+    // One vote per pixel finds the only colour that can have more than half. A count confirms it.
+    let (mut colour, mut votes) = ([0u8; 4], 0usize);
+    for &pixel in pixels {
+        if votes == 0 {
+            colour = pixel;
+        }
+        if pixel == colour {
+            votes += 1;
+        } else {
+            votes -= 1;
+        }
+    }
+    let count = pixels.iter().filter(|&&pixel| pixel == colour).count();
+    (count * 2 > pixels.len()).then_some(colour)
 }
 
 /// Pixel count and channel sums of the pixels that have one value of a channel.

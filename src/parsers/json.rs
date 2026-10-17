@@ -957,6 +957,7 @@ pub mod scan {
     }
 
     /// The gap at `p`; `None` when only whitespace and comments are left.
+    #[inline]
     pub fn gap(contents: &[u8], p: usize) -> Option<Gap> {
         // Most gaps are blanks and line feeds, and most tokens start with a byte that no gap
         // has: those do not need the scanner of every gap.
@@ -971,14 +972,17 @@ pub mod scan {
                 end: start,
                 has_comment: false,
             }),
-            _ => {
-                let end = super::skip_ws_and_comments(contents, start)?;
-                Some(Gap {
-                    end,
-                    has_comment: contents[start..end].contains(&b'/'),
-                })
-            }
+            _ => gap_of_any_kind(contents, start),
         }
+    }
+
+    #[inline(never)]
+    fn gap_of_any_kind(contents: &[u8], start: usize) -> Option<Gap> {
+        let end = super::skip_ws_and_comments(contents, start)?;
+        Some(Gap {
+            end,
+            has_comment: contents[start..end].contains(&b'/'),
+        })
     }
 
     #[derive(Clone, Copy)]

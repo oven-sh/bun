@@ -292,7 +292,6 @@ declare function $require(): TODO;
 declare function $requireESM(path: string, requirer?: JSCommonJSModule): any;
 declare const $requireMap: Map<string, JSCommonJSModule>;
 declare const $internalModuleRegistry: InternalFieldObject<any[]>;
-declare function $resolve(name: string, from: string): Promise<string>;
 declare function $resolveSync(
   name: string,
   from: string,

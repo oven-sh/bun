@@ -1056,8 +1056,7 @@ function buildSharedCreds(server, options) {
     ...options,
     pfx: undefined,
     _pfxExtraCACerts: undefined,
-    // Validated by setSecureContext() already; never applied natively. Not
-    // blanked, the size warning would be emitted twice.
+    // setSecureContext() validated it; a second pass would warn twice.
     dhparam: undefined,
     key: server.key,
     cert: server.cert,

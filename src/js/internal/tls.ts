@@ -227,13 +227,11 @@ function validateSecureContextOptions(options) {
       }
     }
   }
-  // BoringSSL (always used by Bun) has no automatic DH parameter selection.
-  // Matches Node's setDHParam('auto') throwing ERR_CRYPTO_UNSUPPORTED_OPERATION.
-  // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/internal/tls/secure-context.js#L254
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/secure-context.js#L254-L259
+  // BoringSSL has no SSL_CTX_set_dh_auto, so 'auto' is the unsupported-operation error.
   if (dhparam === "auto") {
     throw $ERR_CRYPTO_UNSUPPORTED_OPERATION("Automatic DH parameter selection is not supported");
   } else if (dhparam !== undefined && dhparam !== null) {
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/secure-context.js#L254-L259
     if (typeof dhparam !== "string" && !isArrayBufferView(dhparam)) {
       throw $ERR_INVALID_ARG_TYPE("options.dhparam", ["string", "Buffer", "TypedArray", "DataView"], dhparam);
     }

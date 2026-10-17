@@ -216,15 +216,10 @@ impl SecureContext {
         Ok(result)
     }
 
-    /// `SecureContext.validateDHParam(dhparam)` - the size policy of Node's
-    /// `SecureContext::SetDHParam` for a PKCS#3 "DH PARAMETERS" PEM given as a
-    /// string or a buffer: a prime under 1024 bits throws, one under 2048 bits
-    /// returns the SecurityWarning text, and a value that does not parse is
-    /// ignored (returns undefined). BoringSSL has no parser for the "X9.42 DH
-    /// PARAMETERS" form (`openssl dhparam -dsaparam`), so that form is also
-    /// ignored here while Node's OpenSSL reads it. BoringSSL has no DHE
-    /// suites, so nothing is set on an SSL_CTX. Same codegen shim arrangement
-    /// as `intern` (no `#[host_fn]` attribute here).
+    /// `SecureContext.validateDHParam(dhparam)` - Node's `SecureContext::SetDHParam`
+    /// size policy: under 1024 bits throws, under 2048 bits returns the warning
+    /// text, a value that is not a PKCS#3 "DH PARAMETERS" PEM is ignored.
+    /// BoringSSL has no DHE suites, so nothing is set on an SSL_CTX.
     pub(crate) fn validate_dh_param(
         global: &JSGlobalObject,
         callframe: &CallFrame,
@@ -266,8 +261,7 @@ impl SecureContext {
         };
         // SAFETY: `bio` came from `BIO_new_mem_buf` above.
         unsafe { boringssl::BIO_free(bio) };
-        // A failed parse leaves PEM/ASN.1 errors on the queue; they must not
-        // surface from the next unrelated BoringSSL call.
+        // Drop the PEM/ASN.1 errors of a failed parse.
         boringssl::ERR_clear_error();
         if dh.is_null() {
             return Ok(JSValue::UNDEFINED);

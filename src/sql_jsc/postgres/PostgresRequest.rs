@@ -147,7 +147,8 @@ fn parameter_text(
             received,
         ))));
     }
-    if !js_type.is_object() || js_type == JSType::JSDate {
+    // In JSON a Date is what its `toJSON` says, as it is inside an object.
+    if !js_type.is_object() || (js_type == JSType::JSDate && !tag.is_json()) {
         return Ok(None);
     }
 
@@ -169,7 +170,14 @@ fn parameter_text(
             ))));
         }
     }
-    Ok(Some(value.json_stringify_fast(global)?.into_js(global)?))
+    let json = value.json_stringify_fast(global)?;
+    if json.is_empty() {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "Cannot bind an object whose JSON is undefined to query parameter ${}",
+            index + 1,
+        )));
+    }
+    Ok(Some(json.into_js(global)?))
 }
 
 fn array_literal(global: &JSGlobalObject, list: JSValue, tag: types::Tag) -> JsResult<JSValue> {

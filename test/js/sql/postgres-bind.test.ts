@@ -133,8 +133,8 @@ const matrix: [label: string, value: () => unknown, cells: Cells, unprepared?: C
   [
     "an Invalid Date",
     () => new Date(NaN),
-    { "Invalid Date": "text", ERR_INVALID_ARG_TYPE: "bytea" },
-    { [textBytes("Invalid Date")]: "bytea" },
+    { "Invalid Date": "text", null: "json jsonb", ERR_INVALID_ARG_TYPE: "bytea" },
+    { rejected: "json jsonb", [textBytes("Invalid Date")]: "bytea" },
   ],
   ["a Buffer", () => Buffer.from("hi"), { "\\x6869": "text bytea" }],
   ["an ArrayBuffer", () => new Uint8Array([1, 2]).buffer, { "\\x0102": "text bytea" }],
@@ -561,6 +561,137 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
           await outcome("select $1::jsonb::text as v", [{}]),
           await outcome("select $1::text as v", [{}]),
         ]).toEqual(["{}", "{}", "{1,2}", "{1,2}", "{}", "{}"]);
+      });
+    });
+
+    describe("in json and jsonb a Date is what JSON.stringify makes of it", () => {
+      const day = 86400000;
+      // With `prepare: false` it takes another parameter that asks the server for the types.
+      const stored = (type: string, value: unknown) =>
+        (prepare
+          ? sql.unsafe(`select $1::${type}::text as v`, [value])
+          : sql.unsafe(`select $1::${type}::text as v, $2::int4[] as other`, [value, [1]])
+        ).then(
+          ([{ v }]) => v,
+          err => err,
+        );
+      const boom = new Error("boom");
+
+      test.each<[string, () => Date, unknown]>([
+        ["a Date", () => new Date(day), '"1970-01-02T00:00:00.000Z"'],
+        ["an Invalid Date", () => new Date(NaN), "null"],
+        ["the year 10000", () => new Date(253402300800000), '"+010000-01-01T00:00:00.000Z"'],
+        ["the year -1", () => new Date(-62198755200000), '"-000001-01-01T00:00:00.000Z"'],
+        ["a subclass", () => new (class extends Date {})(day), '"1970-01-02T00:00:00.000Z"'],
+        [
+          "a subclass with toJSON",
+          () =>
+            new (class extends Date {
+              toJSON() {
+                return "1970-01-02";
+              }
+            })(day),
+          '"1970-01-02"',
+        ],
+        [
+          "a subclass with toISOString",
+          () =>
+            new (class extends Date {
+              toISOString() {
+                return "iso!";
+              }
+            })(day),
+          '"iso!"',
+        ],
+        ["a toJSON of its own", () => Object.assign(new Date(day), { toJSON: () => "own" }), '"own"'],
+        ["a toJSON that returns an array", () => Object.assign(new Date(day), { toJSON: () => [1970] }), "[1970]"],
+        [
+          "a toJSON that throws",
+          () =>
+            Object.assign(new Date(day), {
+              toJSON() {
+                throw boom;
+              },
+            }),
+          boom,
+        ],
+        // Neither is asked for JSON.
+        ["a toString of its own", () => Object.assign(new Date(day), { toString: () => "day" }), '"1970-01-02T00:00:00.000Z"'], // prettier-ignore
+      ])("%s", async (_, date, json) => {
+        expect([await stored("json", date()), await stored("jsonb", date())]).toEqual([json, json]);
+      });
+
+      test("under a Date.prototype.toJSON of the program", async () => {
+        const toJSON = Date.prototype.toJSON;
+        Date.prototype.toJSON = () => "patched";
+        try {
+          expect(await stored("jsonb", new Date(day))).toBe('"patched"');
+        } finally {
+          Date.prototype.toJSON = toJSON;
+        }
+      });
+
+      test("alone as inside an object", async () => {
+        class Day extends Date {
+          toJSON() {
+            return "1970-01-02";
+          }
+        }
+        for (const date of [new Day(day), new Date(day), new Date(NaN)]) {
+          expect(`{"d": ${await stored("jsonb", date)}}`).toBe(await stored("jsonb", { d: date }));
+        }
+      });
+
+      test("every other type takes the instant", async () => {
+        const date = Object.assign(new Date(day), { toJSON: () => "own", toString: () => "day" });
+        expect([await stored("text", date), await stored("date", date), await stored("timestamptz", date)]).toEqual([
+          "1970-01-02T00:00:00.000Z",
+          "1970-01-02",
+          "1970-01-02 00:00:00+00",
+        ]);
+      });
+    });
+
+    describe("a value whose JSON is undefined", () => {
+      test.each<[string, () => unknown]>([
+        ["a toJSON that returns undefined", () => ({ toJSON: () => undefined })],
+        ["a toJSON that returns a function", () => ({ toJSON: () => () => 1 })],
+        ["a toJSON that returns a symbol", () => ({ toJSON: () => Symbol("s") })],
+        ["sql.json(undefined)", () => sql.json(undefined)],
+        ["sql.json(() => 1)", () => sql.json(() => 1)],
+      ])("%s is no parameter", async (_, value) => {
+        const codes: Record<string, string> = {};
+        for (const [name, type] of Object.entries(columns)) {
+          codes[name] = await sql.unsafe(`select $1::${type} as v`, [value()]).then(
+            ([{ v }]) => `stored ${JSON.stringify(v)}`,
+            err => `${err.name} ${err.code}`,
+          );
+        }
+        expect(codes).toEqual(
+          Object.fromEntries(Object.keys(columns).map(name => [name, "TypeError ERR_INVALID_ARG_TYPE"])),
+        );
+        expect(await sql.unsafe("select $1::int4 as a, $2::text as v", [1, value()]).catch(err => err.message)).toBe(
+          "Cannot bind an object whose JSON is undefined to query parameter $2",
+        );
+      });
+
+      test("a Date with such a toJSON", async () => {
+        const date = Object.assign(new Date(0), { toJSON: () => undefined });
+        expect(
+          await sql.unsafe("select $1::jsonb as v, $2::int4[] as other", [date, [1]]).catch(err => err.message),
+        ).toBe("Cannot bind an object whose JSON is undefined to query parameter $1");
+      });
+
+      test("a function is String(value), and no JSON", async () => {
+        const f = () => 1;
+        expect([
+          await sql.unsafe("select $1::text as v", [f]).then(([{ v }]) => v),
+          await sql.unsafe("select $1::jsonb as v", [f]).catch(err => err.message),
+        ]).toEqual(["() => 1", "Cannot bind an object whose JSON is undefined to query parameter $1"]);
+      });
+
+      test("null is JSON", async () => {
+        expect(await sql.unsafe("select $1::text as v", [{ toJSON: () => null }])).toEqual([{ v: "null" }]);
       });
     });
 

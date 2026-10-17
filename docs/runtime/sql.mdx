@@ -335,7 +335,7 @@ Bun converts a parameter by its JavaScript type. On PostgreSQL the type that the
 
 | JavaScript value                                             | PostgreSQL                                                                                                                                    | MySQL / MariaDB   | SQLite                                                       |
 | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ------------------------------------------------------------ |
-| `Date`                                                       | The instant for `timestamp` and `timestamptz`. ISO 8601 text for `date`, `time`, `text`                                                       | `DATETIME` in UTC | Not supported. Pass `date.toISOString()` or `date.getTime()` |
+| `Date`                                                       | The instant for `timestamp` and `timestamptz`. JSON for `json` and `jsonb`. ISO 8601 text for every other type, such as `date`, `text`        | `DATETIME` in UTC | Not supported. Pass `date.toISOString()` or `date.getTime()` |
 | Plain object                                                 | JSON. An error for a built-in array type                                                                                                      | JSON              | Not supported. Pass `sql.json(value)`                        |
 | Object with its own `toString()` or `Symbol.toPrimitive`     | JSON for `json` and `jsonb`. `String(value)` for every other type                                                                             | JSON              | Not supported. Pass `String(value)`                          |
 | `Array`                                                      | An array literal such as `{1,2}` for a built-in array type. JSON for `json` and `jsonb`. `String(value)`, such as `1,2`, for every other type | JSON              | Not supported. Pass `sql.json(value)`                        |
@@ -345,6 +345,8 @@ Bun converts a parameter by its JavaScript type. On PostgreSQL the type that the
 | `null`, `undefined`                                          | `NULL`                                                                                                                                        | `NULL`            | `NULL`                                                       |
 
 See [Numbers and BigInt](#numbers-and-bigint) for numbers and [Dates and time zones](#dates-and-time-zones) for `Date`.
+
+JSON is what `JSON.stringify(value)` returns, so a `toJSON()` method counts, also that of a `Date`. A value for which it returns `undefined` is an error.
 
 Bun never calls `valueOf()`, and it calls `Symbol.toPrimitive` with the hint `"string"`, also for a numeric parameter. An object that only has `valueOf()` is a plain object. Pass `Number(value)` to bind the number:
 

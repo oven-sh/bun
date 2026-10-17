@@ -1,6 +1,7 @@
 
 
 #include "BunString.h"
+#include "napi_external_string.h"
 #include "helpers.h"
 #include "root.h"
 #include "headers-handwritten.h"
@@ -344,7 +345,7 @@ Ref<WTF::StringImpl> threadShareableCopy(const WTF::StringImpl& impl)
 
 Ref<WTF::StringImpl> makeThreadShareable(WTF::StringImpl& impl)
 {
-    if (impl.isAtom() || impl.isSymbol() || impl.isSubString())
+    if (impl.isAtom() || impl.isSymbol() || impl.isSubString() || isNapiExternalString(impl))
         return threadShareableCopy(impl);
     if (!impl.isStatic()) {
         impl.hash();

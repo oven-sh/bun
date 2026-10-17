@@ -2764,7 +2764,7 @@ describe("minimum-release-age", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       // dependent-package@1.1.0 passes the gate on its own, but it requires
       // sibling-package@^1.1.0, and every match is too recent.
       expect(stderr.split("\n").filter(line => line.startsWith("error:"))).toEqual([

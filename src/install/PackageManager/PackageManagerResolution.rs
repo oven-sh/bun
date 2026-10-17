@@ -244,7 +244,12 @@ impl PackageManager {
                         } else {
                             Output::err_generic(
                                 "<b>{}@{}<r> not in catalog \"{}\"{}",
-                                (name, literal, bstr::BStr::new(catalog_name), declared_by),
+                                (
+                                    name,
+                                    literal,
+                                    bun_core::fmt::for_terminal(bstr::BStr::new(catalog_name)),
+                                    declared_by,
+                                ),
                             );
                             if can_add {
                                 bun_core::pretty_errorln!(

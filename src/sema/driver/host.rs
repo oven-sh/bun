@@ -235,8 +235,8 @@ impl Listing {
 /// same few directories repeatedly, mostly for entries that do not exist.
 pub struct Disk {
     pub threads: usize,
-    /// `take_turns`
-    turns: OnceLock<bun_threading::Semaphore>,
+    /// `Some` while several programs are read through it at the same time.
+    pub(crate) shares: bun_threading::Guarded<Option<Arc<crate::Shares>>>,
     pub(crate) caches: crate::ThreadCaches,
     /// A thread of the pool has made it. The other threads of the pool can all be waiting for what it is made for, so
     /// nothing waits for them: not the threads either that the request starts to coordinate its projects.
@@ -465,18 +465,6 @@ impl Disk {
         self.already_read.keys()
     }
 
-    /// From now on several programs are read through it at the same time. Each starts parallel regions of `threads` threads: of
-    /// all of them together, no more than `threads` work at a time.
-    pub(crate) fn take_turns(&self) {
-        self.turns.get_or_init(|| {
-            let turns = bun_threading::Semaphore::default();
-            for _ in 0..self.threads.max(1) {
-                turns.post();
-            }
-            turns
-        });
-    }
-
     /// `cwd`: the working directory, in the checker's path format.
     pub fn started_in(mut self, cwd: &[u8]) -> Self {
         self.working_directory = cwd.to_vec();
@@ -488,7 +476,7 @@ impl Disk {
         let case_sensitive = is_file_system_case_sensitive(project);
         Disk {
             threads,
-            turns: OnceLock::new(),
+            shares: bun_threading::Guarded::new(None),
             in_memory: InMemory::by_directory(&already_read, case_sensitive),
             already_read: match case_sensitive {
                 true => already_read,
@@ -1495,13 +1483,20 @@ impl Host for Disk {
         parse_package_json(arena, text)
     }
     fn loaded(&self) {
-        self.caches.drop_those_of_the_parser();
+        // Otherwise the threads go on to parse the files of the next program.
+        if self.shares.lock().is_none() {
+            self.caches.drop_those_of_the_parser();
+        }
     }
     fn threads(&self) -> usize {
         self.threads
     }
     fn io_pool(&self) -> Option<&bun_threading::ThreadPool> {
-        self.io_pool.as_deref()
+        // The threads that only read serve one load at a time.
+        match *self.shares.lock() {
+            Some(_) => None,
+            None => self.io_pool.as_deref(),
+        }
     }
     fn with_helpers(&self, helpers: usize, count: usize, work: &(dyn Fn(usize) + Sync)) {
         crate::for_each_with_helpers(&self.caches, helpers, count, run_of(count), work);
@@ -1510,13 +1505,11 @@ impl Host for Disk {
         if self.is_of_a_thread_of_the_pool {
             return self.with_helpers(0, count, work);
         }
-        crate::for_each_parallel_in_turns(
-            &self.caches,
-            self.threads,
-            count,
-            run_of(count),
-            self.turns.get(),
-            work,
-        );
+        let run = run_of(count);
+        let shares = self.shares.lock().clone();
+        match shares {
+            Some(shares) => crate::for_each_with_a_share(&self.caches, &shares, count, run, work),
+            None => crate::for_each_parallel_in_runs(&self.caches, self.threads, count, run, work),
+        }
     }
 }

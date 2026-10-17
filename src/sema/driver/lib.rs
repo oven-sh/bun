@@ -47,7 +47,7 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::cmp::Reverse;
 use std::collections::BTreeSet;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::thread::ThreadId;
 use std::time::{Duration, Instant};
@@ -125,18 +125,6 @@ pub fn for_each_parallel_in_runs(
     run: usize,
     work: &(dyn Fn(usize) + Sync),
 ) {
-    for_each_parallel_in_turns(caches, threads, count, run, None, work);
-}
-
-/// The same. `turns`: each thread takes one before it works, and gives it back.
-pub(crate) fn for_each_parallel_in_turns(
-    caches: &ThreadCaches,
-    threads: usize,
-    count: usize,
-    run: usize,
-    turns: Option<&bun_threading::Semaphore>,
-    work: &(dyn Fn(usize) + Sync),
-) {
     if count == 0 {
         return;
     }
@@ -153,14 +141,7 @@ pub(crate) fn for_each_parallel_in_turns(
         return region.work_off();
     }
     let mut runners = vec![(); region.threads];
-    pool_of_regions().each(
-        (),
-        |(), (), _| {
-            let _turn = turns.map(Turn::take);
-            region.work_off();
-        },
-        &mut runners,
-    );
+    pool_of_regions().each((), |(), (), _| region.work_off(), &mut runners);
 }
 
 /// The same, on the calling thread and on at most `helpers` threads of the pool. The calling thread begins at once, and in the
@@ -191,6 +172,144 @@ pub(crate) fn for_each_with_helpers(
         &mut vec![(); helpers],
         || region.work_off(),
     );
+}
+
+/// The same, on the calling thread, which runs a program, and on the other threads of that program's share. Spare threads join
+/// whenever there are some, until the work runs out.
+pub(crate) fn for_each_with_a_share(
+    caches: &ThreadCaches,
+    shares: &Shares,
+    count: usize,
+    run: usize,
+    work: &(dyn Fn(usize) + Sync),
+) {
+    let region = Region {
+        caches,
+        threads: 1,
+        next: AtomicUsize::new(0),
+        count,
+        run,
+        work,
+    };
+    if keeps_regions() {
+        return region.work_off();
+    }
+    let helpers = shares.helpers_of_this_thread();
+    pool_of_regions().each_while(
+        (),
+        |(), (), _| region.work_off(),
+        &mut vec![(); helpers.min(count.div_ceil(run).saturating_sub(1))],
+        || {
+            let _lent = caches.lend();
+            region.work_off_with_spare_threads(shares);
+        },
+    );
+}
+
+/// How a request's threads are divided among its programs while several of them run at the same time. Each program runs on a
+/// thread of its own, which loads and checks it, and has a fixed number of other threads to help with that.
+pub(crate) struct Shares {
+    state: Guarded<SharesState>,
+    has_changed: bun_threading::Condvar,
+    /// Threads with nothing to do, which any program may borrow. Whoever takes one back doesn't wait for the borrower, so this
+    /// can be negative.
+    spare: AtomicIsize,
+}
+
+struct SharesState {
+    /// The threads that no program has. Once every program has got its share, they are spare.
+    free: usize,
+    /// How many programs have got their share. They get it in turn, so that small ones don't keep a large one waiting.
+    served: usize,
+    programs: usize,
+    /// The thread that runs a program, and how many others that program has.
+    helpers: Vec<(ThreadId, usize)>,
+}
+
+impl Shares {
+    fn new(threads: usize, programs: usize) -> Shares {
+        Shares {
+            state: Guarded::new(SharesState {
+                free: threads,
+                served: 0,
+                programs,
+                helpers: Vec::new(),
+            }),
+            has_changed: bun_threading::Condvar::new(),
+            spare: AtomicIsize::new(0),
+        }
+    }
+
+    /// For program number `turn`. Waits until those before it have their shares and `threads` are free.
+    fn take(&self, turn: usize, threads: usize) {
+        let mut state = self.state.lock();
+        while state.served != turn || state.free < threads {
+            self.has_changed.wait_guarded(&mut state);
+        }
+        state.free -= threads;
+        state.served += 1;
+        if state.served == state.programs {
+            self.lend(std::mem::take(&mut state.free));
+        }
+        drop(state);
+        self.has_changed.notify_all();
+    }
+
+    fn give_back(&self, threads: usize) {
+        let mut state = self.state.lock();
+        if state.served == state.programs {
+            return self.lend(threads);
+        }
+        state.free += threads;
+        drop(state);
+        self.has_changed.notify_all();
+    }
+
+    fn lend(&self, threads: usize) {
+        self.spare.fetch_add(threads as isize, Ordering::Relaxed);
+    }
+
+    fn take_back(&self, threads: usize) {
+        self.spare.fetch_sub(threads as isize, Ordering::Relaxed);
+    }
+
+    /// Returns how many it got, at most `wanted`. The borrower lends each one again when it's done with it.
+    fn borrow(&self, wanted: usize) -> usize {
+        if wanted == 0 || self.spare.load(Ordering::Relaxed) <= 0 {
+            return 0;
+        }
+        let mut borrowed = 0;
+        let _ = (self.spare).try_update(Ordering::Relaxed, Ordering::Relaxed, |spare| {
+            borrowed = spare.clamp(0, wanted as isize);
+            Some(spare - borrowed)
+        });
+        borrowed as usize
+    }
+
+    fn helpers_of_this_thread(&self) -> usize {
+        let thread = std::thread::current().id();
+        let state = self.state.lock();
+        let found = state.helpers.iter().find(|it| it.0 == thread);
+        found.map_or(0, |it| it.1)
+    }
+}
+
+/// Until it is dropped, the calling thread runs a program that has `helpers` other threads.
+struct RunsHere<'a>(&'a Shares);
+
+impl<'a> RunsHere<'a> {
+    fn new(shares: &'a Shares, helpers: usize) -> RunsHere<'a> {
+        let thread = std::thread::current().id();
+        shares.state.lock().helpers.push((thread, helpers));
+        RunsHere(shares)
+    }
+}
+
+impl Drop for RunsHere<'_> {
+    fn drop(&mut self) {
+        let thread = std::thread::current().id();
+        self.0.state.lock().helpers.retain(|it| it.0 != thread);
+    }
 }
 
 static OWN_POOL: OnceLock<bun_threading::ThreadPool> = OnceLock::new();
@@ -235,22 +354,6 @@ fn pool_of_regions() -> &'static bun_threading::ThreadPool {
         .unwrap_or_else(|| bun_threading::WorkPool::get())
 }
 
-/// One of the turns of [`for_each_parallel_in_turns`], until it is dropped.
-struct Turn<'a>(&'a bun_threading::Semaphore);
-
-impl Turn<'_> {
-    fn take(turns: &bun_threading::Semaphore) -> Turn<'_> {
-        turns.wait();
-        Turn(turns)
-    }
-}
-
-impl Drop for Turn<'_> {
-    fn drop(&mut self) {
-        self.0.post();
-    }
-}
-
 /// What the threads of [`for_each_parallel_in_runs`] share.
 struct Region<'a> {
     caches: &'a ThreadCaches,
@@ -262,6 +365,33 @@ struct Region<'a> {
 }
 
 impl Region<'_> {
+    /// `work_off`, for a thread that has its caches. Before each run it looks for spare threads to help it.
+    fn work_off_with_spare_threads(&self, shares: &Shares) {
+        loop {
+            let claimed = self.next.load(Ordering::Relaxed);
+            let runs_left = self.count.saturating_sub(claimed).div_ceil(self.run);
+            let helpers = shares.borrow(runs_left.saturating_sub(1));
+            if helpers > 0 {
+                return pool_of_regions().each_while(
+                    (),
+                    |(), (), _| {
+                        self.work_off();
+                        shares.lend(1);
+                    },
+                    &mut vec![(); helpers],
+                    || self.work_off_with_spare_threads(shares),
+                );
+            }
+            let from = self.next.fetch_add(self.run, Ordering::Relaxed);
+            if from >= self.count {
+                break;
+            }
+            for i in from..(from + self.run).min(self.count) {
+                (self.work)(i);
+            }
+        }
+    }
+
     fn work_off(&self) {
         let _lent = self.caches.lend();
         loop {
@@ -355,6 +485,11 @@ pub struct PlanOptions {
     /// file or one that it references, or else the same for the configuration files further up
     /// (`findOrCreateDefaultConfiguredProjectWorker`). A file that none includes is not checked.
     pub only_in_a_project_that_includes: bool,
+    /// With `only_in_a_project_that_includes`: `Request::project` isn't the project of every file. It's the project of the files
+    /// that no project includes, which are checked after all. It is never refused, and shares no parsed file with the others.
+    /// Only if the request has more programs than threads. Otherwise those files stay unchecked: a request of their own, after
+    /// this one, has all the threads for them, and the memory of this one is free by then.
+    pub project_is_for_the_rest: bool,
     /// `CreateProgram` of tsgolint: there is no program for a configuration file that has an error, in itself or in what
     /// the program says about its options and its files (`GetProgramDiagnostics`). No file is checked in it: see
     /// `Report::refused`.
@@ -403,6 +538,7 @@ impl Default for PlanOptions {
             current_directory_is_of_the_project: false,
             reports_nothing_about_files: false,
             only_in_a_project_that_includes: false,
+            project_is_for_the_rest: false,
             refuses_broken_configurations: false,
             prefers_the_library_of_the_project: false,
             shares_every_file: false,
@@ -1429,7 +1565,9 @@ pub fn check_provided_then<R>(
         n => n,
     };
     let cwd = host::from_native(request.cwd);
-    let named = (request.project).or_else(|| request.paths.first().map(Vec::as_slice));
+    let of_every_file = !request.plan_options.project_is_for_the_rest;
+    let named = (request.project.filter(|_| of_every_file))
+        .or_else(|| request.paths.first().map(Vec::as_slice));
     let project = named.map_or_else(|| cwd.clone(), |it| host::from_argument(&cwd, it));
     let mut disk =
         host::Disk::with_already_read(threads, provided.already_read, &project).started_in(&cwd);
@@ -1725,7 +1863,9 @@ impl Projects {
         let mut below = nearest.clone();
         loop {
             // `--project` is the only one that is asked.
-            if !has_to_include || request.project.is_some() {
+            let is_the_only_one =
+                request.project.is_some() && !request.plan_options.project_is_for_the_rest;
+            if !has_to_include || is_the_only_one {
                 break;
             }
             // Up to the root. What is above `/C:` is `/`, which is no directory of Windows.
@@ -1908,6 +2048,10 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
         }
         None => None,
     };
+    let (explicit, for_the_rest) = match request.plan_options.project_is_for_the_rest {
+        true => (None, explicit),
+        false => (explicit, None),
+    };
     // `--project`, or else the configuration file nearest to a directory, or else nearest to the
     // working directory.
     // By directory: a run of the linter names every file of a repository.
@@ -1968,8 +2112,10 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
 
     // Each file is checked in its own project, once.
     let mut by_project: Vec<(Option<Vec<u8>>, Extent, Vec<Vec<u8>>)> = Vec::new();
+    // From the end: most files are in the same project as the one before.
     let mut add = |owner: Option<Vec<u8>>, extent: Extent, file: Vec<u8>| match by_project
         .iter_mut()
+        .rev()
         .find(|it| {
             it.1 == extent
                 && match (&it.0, &owner) {
@@ -1992,7 +2138,11 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
             }
             let nearest = config_in(dirname::<Posix>(path));
             match projects.owner_of(disk, request, nearest, path) {
-                Err(_) if request.plan_options.only_in_a_project_that_includes => {}
+                Err(_) if request.plan_options.only_in_a_project_that_includes => {
+                    if for_the_rest.is_some() {
+                        add(for_the_rest.clone(), Extent::Project, path.clone());
+                    }
+                }
                 Ok(owner) | Err(owner) => add(owner, Extent::Project, path.clone()),
             }
             continue;
@@ -2061,6 +2211,10 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
             files.retain(|it| !in_directories.contains(&*to_path(it, is_case_sensitive)));
         }
     }
+    let is_at_once = request.plan_options.memory != 0 && disk.threads() > 1;
+    if !(is_at_once && by_project.len() > disk.threads()) {
+        by_project.retain(|it| for_the_rest.is_none() || it.0 != for_the_rest);
+    }
     let only_the_globals = request.plan_options.only_the_globals;
     by_project.retain(|it| !it.2.is_empty() && !(only_the_globals && it.0.is_none()));
     if by_project.is_empty() && only_the_globals {
@@ -2092,9 +2246,13 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
     let of_run = Session::new();
     let at_once = match request.plan_options.memory {
         0 => 1,
-        _ if !RUNS_PROGRAMS_AT_ONCE => 1,
         _ => disk.threads().min(by_project.len()),
     };
+    // Those with the most files first, so that no thread begins a large one when the others are nearly done.
+    let mut in_order: Vec<usize> = (0..by_project.len()).collect();
+    if at_once > 1 {
+        in_order.shared_sort_by_key(|&it| Reverse(by_project[it].2.len()));
+    }
     let run = (!is_one).then(|| {
         let run = Run::new(&of_run, disk.provided_paths().cloned().collect());
         match request.plan_options.shares_every_file {
@@ -2104,30 +2262,37 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
     });
     let projects = Guarded::new(projects);
     let in_common = || run.as_ref().map_or(0, Run::bytes);
-    let room = Room::new(request.plan_options.memory, &in_common);
-    if at_once > 1 {
-        disk.take_turns();
-    }
+    let shares = (at_once > 1).then(|| Arc::new(Shares::new(disk.threads(), by_project.len())));
+    (*disk.shares.lock()).clone_from(&shares);
+    let room = Room {
+        bytes: (request.plan_options.memory / 4).max(1 << 30),
+        in_common: &in_common,
+        threads: disk.threads(),
+        shares: shares.as_deref(),
+        taken: Guarded::new(Taken::default()),
+        has_changed: bun_threading::Condvar::new(),
+    };
     let next = AtomicUsize::new(0);
     let reports: Vec<Guarded<Option<Report>>> =
         by_project.iter().map(|_| Guarded::new(None)).collect();
-    // In the order of the list, each when there is room for it.
+    // Each when there are threads and room for it.
     let check_the_next_ones = || {
         loop {
-            let index = next.fetch_add(1, Ordering::Relaxed);
-            let Some((config, extent, files)) = by_project.get(index) else {
+            let turn = next.fetch_add(1, Ordering::Relaxed);
+            let Some(&index) = in_order.get(turn) else {
                 break;
             };
+            let (config, extent, files) = &by_project[index];
             let own: FxHashSet<&[u8]> = (paths_by_project[index].iter())
                 .map(Vec::as_slice)
                 .collect();
             let elsewhere: FxHashSet<&[u8]> = all.difference(&own).copied().collect();
-            let place = room.enter();
+            let place = room.enter(turn, files.len(), all.len());
             let of = OfProject {
                 config: config.as_deref(),
                 named: Some((*extent, files.as_slice())),
                 elsewhere: (!is_one).then_some(&elsewhere),
-                run: run.as_ref(),
+                run: (run.as_ref()).filter(|_| for_the_rest.is_none() || *config != for_the_rest),
                 place: (at_once > 1).then_some(&place),
             };
             let (so_far, began) = (Report::default(), Instant::now());
@@ -2135,19 +2300,26 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
             *reports[index].lock() = Some(checked);
         }
     };
+    // A thread that loads and checks a program needs the stack of a worker. The calling thread has the stack it was given, so it
+    // only waits then.
     std::thread::scope(|scope| {
-        for _ in 1..at_once {
+        let (threads, mut started) = (if at_once > 1 { at_once } else { 0 }, 0);
+        for _ in 0..threads {
             // Without the thread, the others check its share.
-            let _ = std::thread::Builder::new()
+            let thread = std::thread::Builder::new()
                 .stack_size(STACK_OF_A_WORKER as usize)
                 .spawn_scoped(scope, || {
                     // As a thread of the pool does when it starts: the parsers check the stack.
                     bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Check"));
                     check_the_next_ones();
                 });
+            started += usize::from(thread.is_ok());
         }
-        check_the_next_ones();
+        if started == 0 {
+            check_the_next_ones();
+        }
     });
+    *disk.shares.lock() = None;
     for mut checked in reports {
         let Some(checked) = checked.get_mut().take() else {
             continue;
@@ -2191,20 +2363,18 @@ struct OfProject<'a, 'u> {
     place: Option<&'a Place<'a>>,
 }
 
-/// Not yet. A run with types over 110 programs takes 29 s in place of 45, with the same output, and 2.7 GB in place of 2.0. But
-/// that the bound by memory binds is not shown: told that there are 8 GB, so that 2 GB are the bound, that run peaks at 3.1 GB.
-const RUNS_PROGRAMS_AT_ONCE: bool = false;
-
-/// How many programs of a request run at the same time: as many as there is memory for. What a program takes is not known
-/// before its files are found. Until then it counts for as much as the largest so far has taken, and it is the only one of
-/// which that is so: files are found for one program at a time anyway (`WAITS_ACROSS_POOLS`). From then on it counts for what
-/// it has, and for what the check has added at the most so far. One that turns out larger than there is room for goes on when
-/// others have ended. The first one runs alone to its end, as the first measure.
+/// How many programs of a request run at the same time: as many as there are threads and memory for. What a program takes isn't
+/// known before its files are found. Until then it counts for what those that have ended took on average. From then on it
+/// counts for what it has, plus what a check has added on average. One that turns out larger than there is room for goes on
+/// when others have ended.
 struct Room<'a> {
-    /// For the programs and for what they have in common.
+    /// What the process may take.
     bytes: usize,
-    /// The bytes of what they have in common, which grows.
+    /// The bytes of what the programs have in common, which grows.
     in_common: &'a (dyn Fn() -> usize + Sync),
+    threads: usize,
+    /// `None`: one program runs after the other, with all threads.
+    shares: Option<&'a Shares>,
     taken: Guarded<Taken>,
     has_changed: bun_threading::Condvar,
 }
@@ -2213,16 +2383,17 @@ struct Room<'a> {
 struct Taken {
     bytes: usize,
     programs: usize,
-    /// The files of one are not found yet.
-    is_one_unknown: bool,
     /// Those whose files are found, and that go on.
     going_on: usize,
-    /// One has ended, so the two below are measures.
-    has_one_ended: bool,
-    /// The most that one has taken in the end.
+    /// Those that wait for room.
+    waiting: usize,
+    /// The most that one has taken so far.
     largest: usize,
-    /// The most that one has taken in the end, above what it had when its files were found.
-    most_added: usize,
+    ended: usize,
+    /// What those that have ended took, all together.
+    of_the_ended: usize,
+    /// The part of it that they took after their files were found.
+    added: usize,
 }
 
 /// Of a program in a `Room`, until it is dropped.
@@ -2232,51 +2403,67 @@ struct Place<'a> {
     /// What it had when its files were found.
     found: AtomicUsize,
     goes_on: std::sync::atomic::AtomicBool,
+    /// Its share of the threads.
+    threads: usize,
+    /// It has no more of the files than one thread has of the work, so one thread checks it.
+    is_for_one_thread: bool,
 }
 
-impl<'a> Room<'a> {
-    /// `memory`: `PlanOptions::memory`
-    fn new(memory: usize, in_common: &'a (dyn Fn() -> usize + Sync)) -> Room<'a> {
-        Room {
-            bytes: (memory / 4).max(1 << 30),
-            in_common,
-            taken: Guarded::new(Taken::default()),
-            has_changed: bun_threading::Condvar::new(),
+impl Room<'_> {
+    /// There is always room for a program of this size on each thread, unless `bytes` says otherwise.
+    const SMALL: usize = 64 << 20;
+
+    /// Whether the programs may count for `bytes` together. Then the request takes no more than half as much again as with one
+    /// program after the other, which is what they have in common and the largest, and the process no more than `self.bytes`.
+    /// Part of what the programs count for is resident already, so this errs on the safe side.
+    fn has(&self, taken: &Taken, bytes: usize) -> bool {
+        let in_common = (self.in_common)();
+        let resident = bun_sys::self_process_memory_usage().unwrap_or(in_common);
+        let one_after_the_other = in_common + taken.largest;
+        bytes <= (taken.largest + one_after_the_other / 2).max(self.threads * Room::SMALL)
+            && resident + bytes <= self.bytes
+    }
+
+    /// For a program that has `threads`. They have nothing to do meanwhile.
+    fn wait(
+        &self,
+        taken: &mut bun_threading::guarded::GuardedLock<'_, Taken, bun_threading::Mutex>,
+        threads: usize,
+    ) {
+        if let Some(shares) = self.shares {
+            shares.lend(threads);
+        }
+        taken.waiting += 1;
+        self.has_changed.wait_guarded(taken);
+        taken.waiting -= 1;
+        if let Some(shares) = self.shares {
+            shares.take_back(threads);
         }
     }
 
-    /// What is left of `bytes`, and no more than lets the request take half as much again as with one program after the other,
-    /// which is what they have in common and the largest. With a third there is room for too few: 110 programs take as long as
-    /// one after the other.
-    fn for_programs(&self, taken: &Taken) -> usize {
-        let in_common = (self.in_common)();
-        let left = self.bytes.saturating_sub(in_common);
-        left.min(taken.largest + (in_common + taken.largest) / 2)
-    }
-
-    /// Waits until there is room for one more, or nothing else runs.
-    fn enter(&self) -> Place<'_> {
+    /// For program number `turn`, which has `files` of `all` files. Waits until it has its threads, and until there is room for
+    /// one more or nothing else runs.
+    fn enter(&self, turn: usize, files: usize, all: usize) -> Place<'_> {
+        let threads = (files * self.threads / all.max(1)).clamp(1, self.threads);
+        if let Some(shares) = self.shares {
+            shares.take(turn, threads);
+        }
         let mut taken = self.taken.lock();
         loop {
-            let room = self.for_programs(&taken);
-            let fits =
-                taken.has_one_ended && !taken.is_one_unknown && taken.bytes + taken.largest <= room;
-            if taken.programs == 0 || fits {
-                let bytes = match taken.has_one_ended {
-                    true => taken.largest,
-                    false => room,
-                };
+            let bytes = (taken.of_the_ended / taken.ended.max(1)).max(Room::SMALL);
+            if taken.programs == 0 || self.has(&taken, taken.bytes + bytes) {
                 taken.programs += 1;
                 taken.bytes += bytes;
-                taken.is_one_unknown = true;
                 return Place {
                     room: self,
                     bytes: AtomicUsize::new(bytes),
                     found: AtomicUsize::new(0),
                     goes_on: std::sync::atomic::AtomicBool::new(false),
+                    threads,
+                    is_for_one_thread: files * self.threads <= all,
                 };
             }
-            self.has_changed.wait_guarded(&mut taken);
+            self.wait(&mut taken, threads);
         }
     }
 }
@@ -2294,15 +2481,12 @@ impl Place<'_> {
     fn has_found_its_files(&self, bytes: usize) {
         let mut taken = self.room.taken.lock();
         self.found.store(bytes, Ordering::Relaxed);
-        if !taken.has_one_ended {
-            return;
-        }
-        let expected = bytes + taken.most_added;
+        taken.largest = taken.largest.max(bytes);
+        let expected = bytes + taken.added / taken.ended.max(1);
         self.counts_for(&mut taken, expected);
-        taken.is_one_unknown = false;
         self.room.has_changed.notify_all();
-        while taken.going_on > 0 && taken.bytes > self.room.for_programs(&taken) {
-            self.room.has_changed.wait_guarded(&mut taken);
+        while taken.going_on > 0 && !self.room.has(&taken, taken.bytes) {
+            self.room.wait(&mut taken, self.threads);
         }
         taken.going_on += 1;
         self.goes_on.store(true, Ordering::Relaxed);
@@ -2312,10 +2496,10 @@ impl Place<'_> {
     fn has_taken(&self, bytes: usize) {
         let mut taken = self.room.taken.lock();
         let found = self.found.load(Ordering::Relaxed);
-        taken.has_one_ended = true;
-        taken.largest = taken.largest.max(bytes).max(found);
-        let added = bytes.saturating_sub(found);
-        taken.most_added = taken.most_added.max(added);
+        taken.largest = taken.largest.max(bytes);
+        taken.ended += 1;
+        taken.of_the_ended += bytes;
+        taken.added += bytes.saturating_sub(found);
         self.counts_for(&mut taken, bytes);
     }
 }
@@ -2325,12 +2509,19 @@ impl Drop for Place<'_> {
         let mut taken = self.room.taken.lock();
         taken.bytes = taken.bytes.saturating_sub(*self.bytes.get_mut());
         taken.programs -= 1;
-        match *self.goes_on.get_mut() {
-            true => taken.going_on -= 1,
-            false => taken.is_one_unknown = false,
+        if *self.goes_on.get_mut() {
+            taken.going_on -= 1;
         }
+        let is_one_waiting = taken.waiting > 0;
         drop(taken);
+        // What the allocator keeps of this program to use it again is resident too.
+        if is_one_waiting {
+            bun_core::Global::mimalloc_cleanup(true);
+        }
         self.room.has_changed.notify_all();
+        if let Some(shares) = self.room.shares {
+            shares.give_back(self.threads);
+        }
     }
 }
 
@@ -3655,6 +3846,7 @@ fn check_named_files(
     run: Option<&Run<'_>>,
     in_room: Option<&Place<'_>>,
 ) -> Report {
+    let _runs_here = in_room.and_then(|it| Some(RunsHere::new(it.room.shares?, it.threads - 1)));
     let threads = match request.threads {
         0 => usize::from(bun_core::get_thread_count()),
         n => n,
@@ -3685,7 +3877,12 @@ fn check_named_files(
             .map(of_configuration),
     );
     let always_reported = report.diagnostics.len();
-    let refuses = request.plan_options.refuses_broken_configurations;
+    let is_for_the_rest = request.plan_options.project_is_for_the_rest
+        && request.project.is_some_and(|it| {
+            let it = host::from_argument(&host::from_native(request.cwd), it);
+            is_same_path(&it, &config_path, host.is_case_sensitive())
+        });
+    let refuses = request.plan_options.refuses_broken_configurations && !is_for_the_rest;
     let refused = |diagnostics: Vec<Diagnostic>| Refused {
         config_path: config_path.clone(),
         diagnostics,
@@ -4317,6 +4514,10 @@ fn check_named_files(
     // Of all the files, so that those that are only emitted are not divided over an empty published state.
     let cost =
         costs.iter().sum::<usize>() + only_emitted.iter().map(|&it| cost_of(it)).sum::<usize>();
+    let threads = match in_room {
+        Some(place) if place.is_for_one_thread => 1,
+        _ => threads,
+    };
     // The thread that builds a project of a build checks it alone if the others have projects of their own.
     let may_be_one_thread = !request.plan_options.tasks_on_one_thread
         && cost <= request.plan_options.one_thread_max_cost;
@@ -4426,7 +4627,7 @@ fn check_named_files(
             if checker_count == 0 {
                 // The ranges take part like any task, at the place of their file, so the serial order is what it is without them.
                 let mut is_invalid = program.validate(&finished, is_read_later);
-                if std::ptr::eq(plan, &shared_plan) {
+                if std::ptr::eq(plan, &raw const shared_plan) {
                     let reports_nothing = |it: &Outcome| {
                         it.incomplete.is_empty() && it.checked.iter().all(|it| it.1.is_empty())
                     };

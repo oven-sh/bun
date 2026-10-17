@@ -1814,6 +1814,8 @@ differential("each project of a build gets its own errors in the libraries", asy
     },
     plain4: { files: { "index.ts": uses } },
   };
+  // lib.dom.d.ts takes a debug build too long.
+  if (isDebug || isASAN) for (const name of ["page1", "page2", "page3", "olderPage"]) delete projects[name];
   // A global file with no errors unless one of these options is on. Each option finds a different error in it.
   const sensitive = { ...outside, strict: false };
   const oneByOne: Record<string, object> = {

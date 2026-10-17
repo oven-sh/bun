@@ -298,6 +298,7 @@ fn run(args: &[String]) {
                 checks_only_named: defaults.checks_only_named,
                 reads_sources_of_references: defaults.reads_sources_of_references,
                 current_directory_is_of_the_project: defaults.current_directory_is_of_the_project,
+                project_is_for_the_rest: defaults.project_is_for_the_rest,
                 reports_nothing_about_files: defaults.reports_nothing_about_files,
                 only_in_a_project_that_includes: defaults.only_in_a_project_that_includes,
                 refuses_broken_configurations: defaults.refuses_broken_configurations,

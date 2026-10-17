@@ -1,17 +1,11 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, VerdaccioRegistry } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+import { TestRegistry } from "registry";
 
-let registry: VerdaccioRegistry;
-
-beforeAll(async () => {
-  registry = new VerdaccioRegistry();
-  await registry.start();
-});
-
-afterAll(() => {
-  registry.stop();
-});
+const registry = new TestRegistry();
+beforeAll(() => registry.start());
+afterAll(() => registry.stop());
 
 async function run(cmd: string[], cwd: string) {
   await using proc = Bun.spawn({

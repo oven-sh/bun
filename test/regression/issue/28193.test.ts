@@ -1,16 +1,10 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, VerdaccioRegistry } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { TestRegistry } from "registry";
 
-let registry: VerdaccioRegistry;
-
-beforeAll(async () => {
-  registry = new VerdaccioRegistry();
-  await registry.start();
-});
-
-afterAll(() => {
-  registry.stop();
-});
+const registry = new TestRegistry();
+beforeAll(() => registry.start());
+afterAll(() => registry.stop());
 
 function bunfig(scanner: string) {
   return `[install]\ncache = false\nregistry = "${registry.registryUrl()}"\n\n[install.security]\nscanner = "${scanner}"\n`;

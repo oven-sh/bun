@@ -1,18 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, tempDir, VerdaccioRegistry } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+import { TestRegistry } from "registry";
 
-let registry: VerdaccioRegistry;
-
-beforeAll(async () => {
-  registry = new VerdaccioRegistry();
-  await registry.start();
-});
-
-afterAll(() => {
-  registry.stop();
-});
+const registry = new TestRegistry();
+beforeAll(() => registry.start());
+afterAll(() => registry.stop());
 
 describe.concurrent("issue/00631", () => {
   it("JSON strings escaped properly", async () => {

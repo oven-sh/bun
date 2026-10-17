@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, tempDir, VerdaccioRegistry } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+import { TestRegistry } from "registry";
 
 // Issue #26657: pressing 'A' in `bun update --interactive` showed
 // "Selected X packages to update" and then "No packages selected for update",
@@ -9,16 +10,9 @@ import { join } from "path";
 // allowed by their range were silently dropped instead of being bumped to latest.
 //
 // The local registry's `no-deps` has 1.0.0, 1.0.1, 1.1.0 and 2.0.0 (latest).
-let registry: VerdaccioRegistry;
-
-beforeAll(async () => {
-  registry = new VerdaccioRegistry();
-  await registry.start();
-});
-
-afterAll(() => {
-  registry.stop();
-});
+const registry = new TestRegistry();
+beforeAll(() => registry.start());
+afterAll(() => registry.stop());
 
 function project(name: string, range: string) {
   return tempDir(name, {

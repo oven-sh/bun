@@ -1,16 +1,10 @@
 import { afterAll, beforeAll, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir, VerdaccioRegistry } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { TestRegistry } from "registry";
 
-let registry: VerdaccioRegistry;
-
-beforeAll(async () => {
-  registry = new VerdaccioRegistry();
-  await registry.start();
-});
-
-afterAll(() => {
-  registry.stop();
-});
+const registry = new TestRegistry();
+beforeAll(() => registry.start());
+afterAll(() => registry.stop());
 
 it("duplicate dependencies should warn instead of error", async () => {
   const package_json = JSON.stringify({

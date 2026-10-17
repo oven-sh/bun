@@ -4,6 +4,7 @@
 #include "JSCallbackArgs.h"
 #include "CryptoUtil.h"
 #include "KeyObject.h"
+#include <wtf/FixedVector.h>
 
 namespace Bun {
 JSC_DECLARE_HOST_FUNCTION(jsSignOneShot);
@@ -20,29 +21,29 @@ public:
         Verify
     };
 
-    SignJobCtx(Mode mode, RefPtr<KeyObjectData> keyData, Vector<uint8_t>&& data, ncrypto::Digest digest, std::optional<int32_t> padding, std::optional<int32_t> saltLength, DSASigEnc dsaSigEnc, bool unsupportedContext, Vector<uint8_t>&& signature = {})
-        : m_mode(mode)
-        , m_keyData(keyData)
+    SignJobCtx(Mode mode, RefPtr<KeyObjectData> keyData, Vector<uint8_t>&& data, ncrypto::Digest digest, std::optional<int32_t> padding, std::optional<int32_t> saltLength, DSASigEnc dsaSigEnc, FixedVector<uint8_t>&& context, Vector<uint8_t>&& signature = {})
+        : m_keyData(keyData)
         , m_data(WTF::move(data))
         , m_signature(WTF::move(signature))
+        , m_context(WTF::move(context))
         , m_digest(digest)
         , m_padding(padding)
         , m_saltLength(saltLength)
         , m_dsaSigEnc(dsaSigEnc)
-        , m_unsupportedContext(unsupportedContext)
+        , m_mode(mode)
     {
     }
 
     SignJobCtx(SignJobCtx&& other)
-        : m_mode(other.m_mode)
-        , m_keyData(WTF::move(other.m_keyData))
+        : m_keyData(WTF::move(other.m_keyData))
         , m_data(WTF::move(other.m_data))
         , m_signature(WTF::move(other.m_signature))
+        , m_context(WTF::move(other.m_context))
         , m_digest(other.m_digest)
         , m_padding(other.m_padding)
         , m_saltLength(other.m_saltLength)
         , m_dsaSigEnc(other.m_dsaSigEnc)
-        , m_unsupportedContext(other.m_unsupportedContext)
+        , m_mode(other.m_mode)
     {
     }
 
@@ -52,19 +53,19 @@ public:
     void runTask(JSC::JSGlobalObject*);
     JSCallbackArgs runFromJS(JSC::JSGlobalObject*);
     void deinit();
+    bool hasUnsupportedContext() const;
+    JSC::JSValue failureError(JSC::JSGlobalObject*, JSC::ThrowScope&) const;
 
-    Mode m_mode;
     RefPtr<KeyObjectData> m_keyData;
     Vector<uint8_t> m_data;
     Vector<uint8_t> m_signature;
+    // The `context` option. Zero bytes and an absent option are the same state.
+    FixedVector<uint8_t> m_context;
     ncrypto::Digest m_digest;
     std::optional<int32_t> m_padding;
     std::optional<int32_t> m_saltLength;
     DSASigEnc m_dsaSigEnc;
-    // A `context` signing option was provided for a key that cannot use one (BoringSSL has no
-    // Ed448, the only algorithm whose signatures take a context string), so the operation must
-    // fail with "Context parameter is unsupported" on both the sync and callback paths.
-    bool m_unsupportedContext = false;
+    Mode m_mode;
 
     std::optional<ByteSource> m_signResult = { std::nullopt };
     std::optional<bool> m_verifyResult = { std::nullopt };

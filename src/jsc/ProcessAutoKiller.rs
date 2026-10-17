@@ -68,12 +68,15 @@ impl ProcessAutoKiller {
     /// A process can ignore that on POSIX, so what the callback spawned itself stays ref'd, and
     /// is sent SIGKILL if it is still running `GRACE_MS` later: from `vm`'s event loop, or from
     /// [`Self::finish_before_exit`] when Bun exits first.
-    pub fn kill_on_timeout(&mut self, vm: *mut VirtualMachine) -> Result {
+    ///
+    /// # Safety
+    /// `self` is `vm.auto_killer`, and this is `vm`'s JS thread.
+    pub unsafe fn kill_on_timeout(&mut self, vm: *mut VirtualMachine) -> Result {
         let count = self.kill_processes(Some(self.scope));
         if !self.terminating.is_empty() {
             let timer = &raw mut self.timer;
-            // SAFETY: `self` is `vm.auto_killer`, so the node is address-stable while it is
-            // linked; JS thread. The real clock: the grace period is Bun's, not the test's.
+            // SAFETY: per fn contract, the node is address-stable while it is linked. The real
+            // clock: the grace period is Bun's, not the test's.
             unsafe {
                 if (*timer).state == TimerState::ACTIVE {
                     VirtualMachine::timer_remove(vm, timer);

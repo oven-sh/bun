@@ -101,7 +101,15 @@ impl Hardlinker {
             };
 
             let mut copy_the_rest = false;
-            while let Some(entry) = self.walker.next()? {
+            loop {
+                // Not `?`: it moves the entry and the error through one
+                // temporary, and the optimizer can then leave the dead half
+                // of that move in this loop (5 instructions per file on Linux).
+                let entry = match self.walker.next() {
+                    Ok(Some(entry)) => entry,
+                    Ok(None) => break,
+                    Err(err) => return Err(err),
+                };
                 // A `path.save()` ResetScope would hold `&mut Path` and keep
                 // `self.src`/`self.dest` exclusively borrowed for the rest of
                 // the iteration. Capture the saved lengths directly and restore
@@ -257,7 +265,13 @@ impl Hardlinker {
         #[cfg(not(windows))]
         {
             let mut copy_file_state = bun_sys::copy_file::CopyFileState::default();
-            while let Some(entry) = self.walker.next()? {
+            loop {
+                // Not `?`: see the Windows loop.
+                let entry = match self.walker.next() {
+                    Ok(Some(entry)) => entry,
+                    Ok(None) => break,
+                    Err(err) => return Err(err),
+                };
                 // A `dest.save()` ResetScope would hold `&mut Path` and keep
                 // `self.dest` exclusively borrowed across the body. Capture
                 // `len()` and restore via `set_length()` after the body so the
@@ -307,9 +321,7 @@ impl Hardlinker {
                             }) {
                                 Ok(false) => Ok(()),
                                 Ok(true) => {
-                                    return self
-                                        .copy_rest(dest_saved_len, &mut copy_file_state)
-                                        .map(|()| true);
+                                    return self.copy_rest(dest_saved_len, &mut copy_file_state);
                                 }
                                 Err(err) => Err(err),
                             }
@@ -368,14 +380,14 @@ impl Hardlinker {
 
     /// The file system refused a link. Copies what is left of the walk into
     /// the package directory. `dest` is that directory again once `dest_len`
-    /// cuts the refused entry's path off it.
+    /// cuts the refused entry's path off it. `Ok(true)`, for `link` to return.
     #[cfg(not(windows))]
     #[cold]
     fn copy_rest(
         &mut self,
         dest_len: usize,
         copy_file_state: &mut bun_sys::copy_file::CopyFileState,
-    ) -> sys::Result<()> {
+    ) -> sys::Result<bool> {
         self.dest.set_length(dest_len);
         let dest_dir = Fd::cwd().make_open_path(self.dest.slice())?;
         while let Some(entry) = self.walker.next()? {
@@ -391,6 +403,6 @@ impl Hardlinker {
                 _ => {}
             }
         }
-        Ok(())
+        Ok(true)
     }
 }

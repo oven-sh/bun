@@ -122,6 +122,29 @@ describe("bundler", () => {
     },
   });
 
+  // Test SVG image href hashing (https://github.com/oven-sh/bun/issues/44231)
+  itBundled("html/svg-image-href", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <body>
+    <svg xmlns="http://www.w3.org/2000/svg">
+      <image href="./thing.jpg">
+    </svg>
+  </body>
+</html>`,
+      "/thing.jpg": "fake image content",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      // Local SVG image should be hashed
+      api.expectFile("out/index.html").not.toContain("./thing.jpg");
+      api.expectFile("out/index.html").toMatch(/href=".*-[a-zA-Z0-9]+\.jpg"/);
+    },
+  });
+
   // Test external assets preservation
   itBundled("html/external-assets", {
     outdir: "out/",

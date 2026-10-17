@@ -27,6 +27,8 @@ pub(crate) struct Cmd {
     pub(crate) redirection_fd: Option<*mut CowFd>,
     pub(crate) exec: Exec,
     pub(crate) exit_code: Option<ExitCode>,
+    /// A `> ${buf}` target was too small. [`Cmd::next`] reports it when the command ends.
+    pub(crate) redirect_overflow: bool,
 }
 
 #[derive(Default, strum::IntoStaticStr)]
@@ -216,6 +218,7 @@ impl Cmd {
             redirection_fd: None,
             exec: Exec::None,
             exit_code: None,
+            redirect_overflow: false,
         }))
     }
 
@@ -293,12 +296,35 @@ impl Cmd {
                 }
                 CmdState::WaitingWriteErr => return Yield::suspended(),
                 CmdState::Done => {
-                    let exit = interp.as_cmd(this).exit_code.unwrap_or(0);
-                    let parent = interp.as_cmd(this).base.parent;
+                    let me = interp.as_cmd_mut(this);
+                    if core::mem::take(&mut me.redirect_overflow) {
+                        if me.exit_code.unwrap_or(0) == 0 {
+                            me.exit_code = Some(1);
+                        }
+                        // An async write re-enters this arm with the flag cleared.
+                        if let Some(y) = Self::write_redirect_overflow_error(interp, this) {
+                            return y;
+                        }
+                    }
+                    let me = interp.as_cmd(this);
+                    let exit = me.exit_code.unwrap_or(0);
+                    let parent = me.base.parent;
                     return interp.child_done(parent, this, exit);
                 }
             }
         }
+    }
+
+    /// The message a command prints for `ENOSPC` on its stdout.
+    fn write_redirect_overflow_error(interp: &Interpreter, this: NodeId) -> Option<Yield> {
+        let mut message: Vec<u8> = interp
+            .as_cmd(this)
+            .args
+            .first()
+            .map(|argv0| argv0.strip_suffix(&[0]).unwrap_or(argv0).to_vec())
+            .unwrap_or_default();
+        message.extend_from_slice(b": write error: No space left on device\n");
+        Builtin::cmd_write_stderr(interp, this, &message)
     }
 
     /// IOWriter completion callback for the error message written in
@@ -310,6 +336,10 @@ impl Cmd {
         _written: usize,
         e: Option<bun_sys::SystemError>,
     ) -> Yield {
+        // The overflow report: `next` ends the Cmd, whether or not stderr took the message.
+        if matches!(interp.as_cmd(this).state, CmdState::Done) {
+            return Yield::Next(this);
+        }
         if let Some(err) = e {
             interp.throw(crate::shell::ShellErr::from_system(err));
             return Yield::Failed(this);
@@ -988,7 +1018,9 @@ impl Cmd {
         &mut self,
         kind: OutKind,
         err: Option<bun_sys::SystemError>,
+        overflow: bool,
     ) -> Yield {
+        self.redirect_overflow |= overflow;
         match kind {
             OutKind::Stdout => self.buffered_output_close_stdout(err),
             OutKind::Stderr => self.buffered_output_close_stderr(err),

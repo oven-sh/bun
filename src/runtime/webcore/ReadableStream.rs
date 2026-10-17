@@ -192,8 +192,8 @@ impl ReadableStream {
         });
     }
 
-    /// Lift the whole payload out of an unread stream. On success the stream is spent (closed, disturbed, locked),
-    /// except a shared fd stream ([`Self::is_shared_fd_stream`]), which only lends its fd.
+    /// Lift the whole payload out of an unread stream. On success the stream is spent (closed, disturbed, locked).
+    /// A shared stream ([`Self::is_shared_stream`]) only lends its fd and stays unread.
     pub fn to_any_blob(&mut self, global_this: &JSGlobalObject) -> Option<webcore::blob::Any> {
         if self.is_disturbed(global_this) || self.is_locked(global_this) {
             return None;
@@ -225,7 +225,7 @@ impl ReadableStream {
                 // it should be lazy, file shouldn't have opened yet.
                 debug_assert!(!blobby.started.get());
                 // The caller takes the fd, not the stream's bytes.
-                if self.is_shared_fd_stream() {
+                if self.is_shared_stream() {
                     return Some(webcore::blob::Any::Blob(blob));
                 }
                 webcore::blob::Any::Blob(blob)
@@ -309,23 +309,9 @@ impl ReadableStream {
         ReadableStream__markConsumedAsBody(self.value, global_object);
     }
 
-    /// A stream over an fd store (`Bun.stdin.stream()`) is one cached object per Blob
-    /// (`get_stream_with_cache`), so a consumer must not leave it spent. Ask before the
-    /// source starts: `FileReader::on_start` moves the store out.
-    pub(crate) fn is_shared_fd_stream(&self) -> bool {
-        let Some(reader) = self.ptr.file() else {
-            return false;
-        };
-        let webcore::file_reader::Lazy::Blob(store) = reader.lazy.get() else {
-            return false;
-        };
-        let webcore::blob::store::Data::File(file) = &store.data else {
-            return false;
-        };
-        matches!(
-            file.pathlike,
-            webcore::node_types::PathOrFileDescriptor::Fd(_)
-        )
+    /// The Blob's one cached stream (`Bun.stdin.stream()`), see `FileReader::shared`.
+    pub(crate) fn is_shared_stream(&self) -> bool {
+        self.ptr.file().is_some_and(|reader| reader.shared.get())
     }
 
     /// Mark the stream disturbed + locked-without-reader. Called by native

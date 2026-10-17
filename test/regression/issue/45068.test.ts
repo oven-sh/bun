@@ -17,9 +17,13 @@ async function runWithStdin(source: string): Promise<[string, string, number]> {
   return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 }
 
+// Child commands run through bun itself so the tests do not need `cat` or `true`.
+const cat = `[process.execPath, "-e", "process.stdin.pipe(process.stdout)"]`;
+const noop = `[process.execPath, "-e", "0"]`;
+
 test.concurrent("process.stdin.resume() works after Bun.spawn took Bun.stdin.stream()", async () => {
   const [stdout, stderr, exitCode] = await runWithStdin(`
-    const child = Bun.spawn(["cat"], { stdout: "inherit", stdin: Bun.stdin.stream() });
+    const child = Bun.spawn(${cat}, { stdout: "inherit", stdin: Bun.stdin.stream() });
     await child.exited;
     process.stdin.resume();
     console.log("resume ok");
@@ -32,9 +36,9 @@ test.concurrent("process.stdin.resume() works after Bun.spawn took Bun.stdin.str
 
 test.concurrent("Bun.stdin.stream() stays readable after spawnSync, spawn, and the stdio array form", async () => {
   const [stdout, stderr, exitCode] = await runWithStdin(`
-    Bun.spawnSync(["true"], { stdin: Bun.stdin.stream() });
-    await Bun.spawn(["true"], { stdin: Bun.stdin.stream() }).exited;
-    await Bun.spawn(["true"], { stdio: [Bun.stdin.stream(), "inherit", "inherit"] }).exited;
+    Bun.spawnSync(${noop}, { stdin: Bun.stdin.stream() });
+    await Bun.spawn(${noop}, { stdin: Bun.stdin.stream() }).exited;
+    await Bun.spawn(${noop}, { stdio: [Bun.stdin.stream(), "inherit", "inherit"] }).exited;
     const stream = Bun.stdin.stream();
     console.log(stream.locked);
     const reader = stream.getReader();
@@ -48,7 +52,7 @@ test.concurrent("Bun.stdin.stream() stays readable after spawnSync, spawn, and t
 
 test.concurrent("process.stdin works after Bun.spawn took a Response over Bun.stdin.stream()", async () => {
   const [stdout, stderr, exitCode] = await runWithStdin(`
-    const child = Bun.spawn(["cat"], { stdout: "inherit", stdin: new Response(Bun.stdin.stream()) });
+    const child = Bun.spawn(${cat}, { stdout: "inherit", stdin: new Response(Bun.stdin.stream()) });
     await child.exited;
     process.stdin.resume();
     console.log("resume ok");
@@ -58,17 +62,34 @@ test.concurrent("process.stdin works after Bun.spawn took a Response over Bun.st
   expect(exitCode).toBe(0);
 });
 
-// bytes() lifts the fd out as a Blob. text() reads through the stream itself.
-for (const method of ["bytes", "text"]) {
-  test.concurrent(`process.stdin works after Response.${method}() over Bun.stdin.stream()`, async () => {
+// bytes(), arrayBuffer() and blob() lift the fd out as a Blob. text() reads through the stream itself.
+test.concurrent.each(["bytes", "arrayBuffer", "blob", "text"])(
+  "process.stdin works after Response.%s() over Bun.stdin.stream()",
+  async method => {
     const [stdout, stderr, exitCode] = await runWithStdin(`
       const response = new Response(Bun.stdin.stream());
-      console.log(JSON.stringify(Buffer.from(await response.${method}()).toString()), response.bodyUsed);
+      const body = await new Response(await response.${method}()).text();
+      console.log(JSON.stringify(body), response.bodyUsed);
       process.stdin.resume();
       process.stdin.on("end", () => console.log("stdin end"));
     `);
     expect(stderr).toBe("");
     expect(stdout).toBe('"from parent\\n" true\nstdin end\n');
     expect(exitCode).toBe(0);
-  });
-}
+  },
+);
+
+// A Response over the stdin Blob makes its own stream for `.body`. That one
+// is not shared, so a consumer leaves it locked as any body stream.
+test.concurrent("a Response body stream over Bun.stdin is spent, the cached stream is not", async () => {
+  const [stdout, stderr, exitCode] = await runWithStdin(`
+    const response = new Response(Bun.stdin);
+    const body = response.body;
+    console.log(body === Bun.stdin.stream());
+    await response.bytes();
+    console.log(body.locked, Bun.stdin.stream().locked);
+  `);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("false\ntrue false\n");
+  expect(exitCode).toBe(0);
+});

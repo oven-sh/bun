@@ -11,9 +11,7 @@ use super::response::{HeadersRef, LazyHeaders};
 use crate::api::AnyRequestContext;
 use crate::webcore::BlobExt as _;
 use crate::webcore::body::{self, BodyHiveHandle, BodyMixin, Value as BodyValue};
-use crate::webcore::jsc::{
-    CallFrame, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsRef, JsResult,
-};
+use crate::webcore::jsc::{CallFrame, JSGlobalObject, JSValue, JsError, JsRef, JsResult};
 use crate::webcore::{AbortSignal, Blob, CookieMap, FetchHeaders, ReadableStream, Response};
 use bun_alloc::AllocError;
 use bun_core::{Output, fmt as bun_fmt};
@@ -181,6 +179,10 @@ impl BodyMixin for Request {
         })
     }
     #[inline]
+    fn headers_content_type(&self) -> Option<bun_core::Utf8Bytes<'_>> {
+        self.headers_mut().content_type()
+    }
+    #[inline]
     fn get_form_data_encoding(
         &self,
     ) -> bun_jsc::JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
@@ -299,6 +301,11 @@ impl Request {
         headers.clone(global_this)
     }
 
+    /// See [`LazyHeaders::pending_content_type`].
+    pub(crate) fn pending_content_type(&self) -> Option<&[u8]> {
+        self.headers.get().pending_content_type()
+    }
+
     pub(crate) fn get_content_type(&self) -> JsResult<Option<bun_core::Utf8Bytes<'_>>> {
         if let Some(req) = self.request_context.get_request() {
             // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
@@ -308,19 +315,7 @@ impl Request {
             }
         }
 
-        match self.headers_mut() {
-            LazyHeaders::List(headers) => {
-                if let Some(value) = headers.fast_get(HTTPHeaderName::ContentType) {
-                    return Ok(Some(value.to_utf8()));
-                }
-            }
-            LazyHeaders::ContentType(content_type) => {
-                return Ok(Some(bun_core::Utf8Bytes::Borrowed(content_type.as_slice())));
-            }
-            LazyHeaders::None => {}
-        }
-
-        Ok(None)
+        Ok(self.headers_mut().content_type())
     }
 }
 

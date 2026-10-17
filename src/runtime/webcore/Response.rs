@@ -299,6 +299,10 @@ impl BodyMixin for Response {
         })
     }
     #[inline]
+    fn headers_content_type(&self) -> Option<Utf8Bytes<'_>> {
+        self.init_mut().headers.content_type()
+    }
+    #[inline]
     fn get_form_data_encoding(
         &self,
     ) -> bun_jsc::JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
@@ -571,19 +575,7 @@ impl Response {
     pub(crate) fn get_content_type(&self) -> JsResult<Option<Utf8Bytes<'_>>> {
         // R-2 escape hatch via `init_mut()` — `fast_get` (FFI out-param write)
         // does not re-enter JS.
-        match &mut self.init_mut().headers {
-            LazyHeaders::List(headers) => {
-                if let Some(value) = headers.fast_get(HTTPHeaderName::ContentType) {
-                    return Ok(Some(value.to_utf8()));
-                }
-            }
-            LazyHeaders::ContentType(content_type) => {
-                return Ok(Some(Utf8Bytes::Borrowed(content_type.as_slice())));
-            }
-            LazyHeaders::None => {}
-        }
-
-        Ok(None)
+        Ok(self.init_mut().headers.content_type())
     }
 }
 
@@ -1156,6 +1148,20 @@ impl LazyHeaders {
         match self {
             LazyHeaders::List(list) => Some(list),
             _ => None,
+        }
+    }
+
+    /// The `Content-Type` the headers carry: the list's, or the pending one.
+    /// A list without one gives `None`, as the fetch spec reads it.
+    pub(crate) fn content_type(&mut self) -> Option<Utf8Bytes<'_>> {
+        match self {
+            LazyHeaders::List(list) => list
+                .fast_get(HTTPHeaderName::ContentType)
+                .map(|value| value.to_utf8()),
+            LazyHeaders::ContentType(content_type) => {
+                Some(Utf8Bytes::Borrowed(content_type.as_slice()))
+            }
+            LazyHeaders::None => None,
         }
     }
 

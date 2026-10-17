@@ -1645,6 +1645,8 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     /// (FFI signature is `*mut`). Returning `NonNull` instead of `&FetchHeaders`
     /// avoids deriving `&mut T` from `&T` at the call sites (UB).
     fn get_fetch_headers(&self) -> Option<NonNull<FetchHeaders>>;
+    /// The `Content-Type` the owner's headers carry, without allocating the header list.
+    fn headers_content_type(&self) -> Option<bun_core::Utf8Bytes<'_>>;
     fn get_form_data_encoding(&self) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>>;
 
     // ────────────────────────────────────────────────────────────────────
@@ -2201,15 +2203,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         // SAFETY: `Blob::new` returns a freshly heap-allocated, ref-counted Blob.
         let blob = unsafe { &mut *blob_ptr };
         if blob.content_type().is_empty() {
-            if let Some(fetch_headers) = BodyMixin::get_fetch_headers(self) {
-                // `fetch_headers` is a live C++ FetchHeaders handle;
-                // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
-                let fetch_headers = bun_opaque::opaque_deref_mut(fetch_headers.as_ptr());
-                if let Some(content_type) = fetch_headers.fast_get(HTTPHeaderName::ContentType) {
-                    let content_slice = content_type.to_utf8();
-                    let mime_type = MimeType::init(content_slice.slice(), true, None);
-                    set_blob_content_type(blob, mime_type);
-                }
+            if let Some(content_slice) = BodyMixin::headers_content_type(self) {
+                let mime_type = MimeType::init(content_slice.slice(), true, None);
+                set_blob_content_type(blob, mime_type);
             }
             if !blob.content_type_was_set.get() && blob.store.get().is_some() {
                 set_blob_content_type(blob, bun_http_types::MimeType::TEXT);

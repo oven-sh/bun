@@ -2117,6 +2117,40 @@ describe("the body's Content-Type is still in the headers after the body is cons
     });
   }
 
+  test("fetch() sends the Content-Type that a rewrapped Request reports, headers unread", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: req => new Response(req.headers.get("content-type") ?? "(none)"),
+    });
+    const input = () => new Request(server.url, { method: "POST", body: bodies.Blob[0]() });
+    // The input's header list comes along, so its Content-Type wins over the new body's.
+    for (const body of ["plain", new Blob(["y"], { type: "text/x-other" })]) {
+      const res = await fetch(new Request(input(), { body }));
+      expect(await res.text()).toBe("text/x-custom");
+    }
+  });
+
+  test.each(["blob() first", "headers first"])("blob().type comes from the inherited Content-Type, %s", async order => {
+    const source = new Response(bodies.Blob[0]());
+    const rewrapped = [new Response("x", source), new Request(owners.Request(bodies.Blob[0]()), { body: "x" })];
+    for (const owner of rewrapped) {
+      if (order === "headers first") owner.headers;
+      expect((await owner.blob()).type).toBe("text/x-custom");
+    }
+  });
+
+  for (const [ownerName, make] of Object.entries(owners)) {
+    test(`${ownerName}: formData() reads the boundary from the headers`, async () => {
+      // Other headers in the init leave the body's Content-Type in place.
+      const parsed = make(bodies.FormData[0](), { headers: { "x-a": "1" } });
+      expect((await parsed.formData()).get("field")).toBe("value");
+      // Without the header there is no boundary, as in node.
+      const deleted = make(bodies.FormData[0]());
+      deleted.headers.delete("content-type");
+      await expect(deleted.formData()).rejects.toThrow(TypeError);
+    });
+  }
+
   test("Request(ReadableStream) has no Content-Type, like node", () => {
     const stream = new Blob(["value"], { type: "text/x-custom" }).stream();
     const req = new Request("http://example.com/", { method: "POST", body: stream });

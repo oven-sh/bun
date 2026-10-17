@@ -56,6 +56,22 @@ describe("web worker", () => {
       expect(result).toEqual("hello world");
     });
 
+    describe.each([
+      ["string", (specifier: string) => specifier],
+      ["array", (specifier: string) => [specifier]],
+    ])("preload that does not resolve (%s)", (_, shape) => {
+      test.each(["./this-preload-does-not-exist.js", './has a "quote".js'])(
+        "throws a TypeError that names %s",
+        specifier => {
+          const entry = new URL("worker-fixture-preload-entry.js", import.meta.url).href;
+          expect(() => new Worker(entry, { preload: shape(specifier) })).toThrow(
+            new TypeError(`ModuleNotFound resolving preload ${JSON.stringify(specifier)}`),
+          );
+          expect(() => new Worker(entry, { preload: shape(specifier) })).toThrow(TypeError);
+        },
+      );
+    });
+
     test("error in preload doesn't crash parent", async () => {
       const worker = new Worker(new URL("worker-fixture-preload-entry.js", import.meta.url).href, {
         preload: [new URL("worker-fixture-preload-bad.js", import.meta.url).href],
@@ -531,6 +547,8 @@ describe("web worker", () => {
     // terminate() landing while the worker reports that its entry point does not
     // resolve: the report is skipped, not turned into a panic.
     test("terminate() while the entry point fails to resolve", async () => {
+      // A worker takes about 150ms to start on a debug build, 2ms on release.
+      const rounds = isDebug ? 4 : 12;
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
@@ -544,7 +562,7 @@ describe("web worker", () => {
              await closed;
              done++;
            }
-           for (let r = 0; r < 12; r++) await Promise.all(Array.from({ length: 8 }, (_, i) => one(r * 8 + i)));
+           for (let r = 0; r < ${rounds}; r++) await Promise.all(Array.from({ length: 8 }, (_, i) => one(r * 8 + i)));
            console.log("done", done);`,
         ],
         env: bunEnv,
@@ -552,7 +570,7 @@ describe("web worker", () => {
         stderr: "inherit",
       });
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect(stdout).toBe("done 96\n");
+      expect(stdout).toBe(`done ${rounds * 8}\n`);
       expect(exitCode).toBe(0);
     });
 
@@ -687,7 +705,7 @@ describe("web worker", () => {
              let n = 0; (function pump(){ while (n < 16) { n++; readFile(\${JSON.stringify(process.argv[1])}, () => { n--; setImmediate(pump) }) } })();
              postMessage("busy")\`;
            const url = URL.createObjectURL(new Blob([src]));
-           for (let r = 0; r < 12; r++) await Promise.all(Array.from({ length: 4 }, (_, i) => new Promise(res => {
+           for (let r = 0; r < ${isDebug ? 4 : 12}; r++) await Promise.all(Array.from({ length: 4 }, (_, i) => new Promise(res => {
              const w = new Worker(url); w.addEventListener("close", res); w.onmessage = () => setTimeout(() => w.terminate(), (r + i) % 10) })));
            console.log("PASS");`,
           path.join(String(dir), "f.bin"),

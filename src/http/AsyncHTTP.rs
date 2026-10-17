@@ -69,15 +69,12 @@ unsafe impl bun_threading::Linked for AsyncHTTP<'static> {
 pub(crate) static ACTIVE_REQUESTS_COUNT: AtomicUsize = AtomicUsize::new(0);
 pub static MAX_SIMULTANEOUS_REQUESTS: AtomicUsize = AtomicUsize::new(256);
 
-/// The largest id `skip_ids_for_testing` lets the counter reach: `Number.MAX_SAFE_INTEGER`, so
-/// the id it returns is exact as a JS number and the counter cannot wrap back to 0.
+/// `Number.MAX_SAFE_INTEGER`: the largest id `skip_ids_for_testing` can return exactly.
 pub const MAX_SKIPPABLE_ID: u64 = (1 << 53) - 1;
 
-/// `fetchRequestIdInternals.skipIds(count)`: adds `count` to the id counter and returns the next
-/// id. `None`, with the counter unchanged, when the next id would pass `MAX_SKIPPABLE_ID`.
+/// `fetchRequestIdInternals.skipIds(count)`: returns the next id, or `None` past `MAX_SKIPPABLE_ID`.
 pub fn skip_ids_for_testing(count: u64) -> Option<u64> {
-    // Relaxed: the counter is only ever read and written by this one RMW, so no other memory
-    // is published through it.
+    // Relaxed: nothing else is published through the counter.
     crate::ASYNC_HTTP_ID_MONOTONIC
         .try_update(Ordering::Relaxed, Ordering::Relaxed, |id| {
             id.checked_add(count).filter(|next| *next <= MAX_SKIPPABLE_ID)

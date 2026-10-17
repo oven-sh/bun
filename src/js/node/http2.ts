@@ -33,6 +33,7 @@ const { kTimeout, getTimerDuration } = require("internal/timers");
 const tls = require("node:tls");
 const net = require("node:net");
 const fs = require("node:fs");
+const fsBinding = require("internal/fs/binding");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const kInfoHeaders = Symbol("sent-info-headers");
 const kStrictSingleValueFields = Symbol("strictSingleValueFields");
@@ -3136,7 +3137,7 @@ function processRespondWithFD(
     this.respond(headers, options);
   } catch (err) {
     // respond() rejected the headers (e.g. a request pseudo-header in the response): the fd opened
-    // for the file never reaches a read stream, so close it here before the stream is destroyed.
+    // for the file never reaches the file pipe, so close it here before the stream is destroyed.
     if (ownsFd) tryClose(fd);
     if (typeof onError === "function") {
       onError(err);
@@ -3156,65 +3157,140 @@ function processRespondWithFD(
     if (ownsFd) tryClose(fd);
     // Next tick: _final has to see a 'wantTrailers' listener added right after respondWithFD().
     process.nextTick(() => {
-      if (!this.destroyed && !this.closed) finishNativeStream(() => {});
+      if (!this.destroyed && !this.closed) finishNativeStream(noop);
     });
     return;
   }
 
-  const stream = this;
-  let fileStream;
+  new FilePipe(this, fd, offset, length, ownsFd, finishNativeStream).readNext();
+}
+
+// node's FileHandle::ReadStart reads at most 64 KiB at a time (src/node_file.cc).
+const kFilePipeChunkSize = 65536;
+function noop() {}
+// node startFilePipe (a FileHandle piped into the stream): one read in flight, the next once its chunk is written.
+class FilePipe {
+  stream: ServerHttp2Stream;
+  fd: number;
+  // null: the descriptor's own position.
+  position: number | null;
+  // < 0: to EOF.
+  remaining: number;
+  ownsFd: boolean;
+  finishNativeStream: (callback: () => void) => void;
+  // writeStream() sends or copies its payload before it returns, so one buffer serves every read.
+  chunk: Buffer;
+  reading = false;
+  // The engine can run the write callback inside writeStream(). `writing` parks it until the call returns.
+  writing = false;
+  written = false;
+  ended = false;
+  readNext: () => void = filePipeReadNext.bind(this);
+  onRead: (err: unknown, bytesRead?: number) => void = filePipeOnRead.bind(this);
+
+  constructor(
+    stream: ServerHttp2Stream,
+    fd: number,
+    offset: number,
+    length: number,
+    ownsFd: boolean,
+    finishNativeStream: (callback: () => void) => void,
+  ) {
+    this.stream = stream;
+    this.fd = fd;
+    this.position = offset < 0 ? null : offset;
+    this.remaining = length;
+    this.ownsFd = ownsFd;
+    this.finishNativeStream = finishNativeStream;
+    this.chunk = Buffer.allocUnsafeSlow(length < 0 ? kFilePipeChunkSize : $min(length, kFilePipeChunkSize));
+    if (ownsFd) stream.once("close", filePipeOnStreamClose.bind(this));
+  }
+}
+// A dropped chunk's write callback runs before `closed` or `destroyed` is set, but after the engine detaches the stream from its id.
+function filePipeStreamGone(stream: ServerHttp2Stream) {
+  if (stream.destroyed || stream.closed) return true;
+  const native = stream[bunHTTP2Session]?.[bunHTTP2Native];
+  if (!native) return true;
   try {
-    fileStream = fs.createReadStream(null, {
-      fd: fd,
-      // The read stream closes respondWithFile's fd. respondWithFD's stays the caller's (node).
-      autoClose: ownsFd,
-      start: offset < 0 ? undefined : offset,
-      end: length < 0 ? undefined : Math.min(Math.max(offset, 0) + length - 1, Number.MAX_SAFE_INTEGER),
-      emitClose: false,
-    });
+    return native.getStreamContext(stream.id) !== stream;
   } catch {
-    // The headers are out: an fd or range that createReadStream rejects ends like a failed read.
-    if (ownsFd) tryClose(fd);
-    onFileStreamError.$call(this);
+    return true;
+  }
+}
+// Like node's onFileUnpipe, only a descriptor the stream opened is closed, and never under a read on the pool.
+function filePipeEnd(pipe: FilePipe) {
+  if (pipe.ended) return;
+  pipe.ended = true;
+  if (pipe.ownsFd) fsBinding.closeCb(noop, pipe.fd);
+}
+function filePipeFinish(pipe: FilePipe) {
+  filePipeEnd(pipe);
+  // END_STREAM, or 'wantTrailers'.
+  pipe.finishNativeStream(noop);
+}
+function filePipeReadNext(this: FilePipe) {
+  if (this.ended) return;
+  if (this.writing) {
+    this.written = true;
     return;
   }
-  const sink = new Stream.Writable({
-    write(chunk, _encoding, cb) {
-      const native = stream[bunHTTP2Session]?.[bunHTTP2Native];
-      if (!native || stream.destroyed || stream.closed) {
-        cb();
-        return;
-      }
-      const status = native.writeStream(stream.id, chunk, undefined, false, cb, true);
-      if (status & kWriteFlushedWithoutCallback) process.nextTick(cb);
-    },
-    final(cb) {
-      if (stream.destroyed || stream.closed) {
-        cb();
-        return;
-      }
-      finishNativeStream(cb);
-    },
-  });
-  // A read error mid-transfer tears the stream down like node's onPipedFileHandleRead; if the
-  // stream itself goes away (peer reset, session destroy), stop reading the file. Like node's
-  // onFileUnpipe, only an fd the stream opened itself (respondWithFile) is closed here; an fd
-  // handed to respondWithFD stays the caller's to close.
-  fileStream.on("error", onFileStreamError.bind(this));
-  this.once("close", () => {
-    fileStream.unpipe(sink);
-    if (ownsFd) fileStream.destroy();
-    else fileStream.pause();
-  });
-  fileStream.pipe(sink);
+  if (filePipeStreamGone(this.stream)) return filePipeEnd(this);
+  const { remaining, chunk } = this;
+  if (remaining === 0) return filePipeFinish(this);
+  this.reading = true;
+  try {
+    fsBinding.readCb(
+      this.onRead,
+      this.fd,
+      chunk,
+      0,
+      remaining < 0 ? chunk.length : $min(remaining, chunk.length),
+      this.position,
+    );
+  } catch (err) {
+    // The headers are out: a descriptor or an offset that the binding rejects fails like a read, on a later turn.
+    process.nextTick(this.onRead, err);
+  }
 }
-function onFileStreamError(this: Http2Stream) {
-  if (!this.destroyed && !this.closed) this.close(NGHTTP2_INTERNAL_ERROR);
+function filePipeOnRead(this: FilePipe, err: unknown, bytesRead?: number) {
+  this.reading = false;
+  const { stream, chunk } = this;
+  const native = stream[bunHTTP2Session]?.[bunHTTP2Native];
+  if (!native || stream.destroyed || stream.closed) return filePipeEnd(this);
+  if (err) {
+    filePipeEnd(this);
+    // node onPipedFileHandleRead.
+    stream.close(NGHTTP2_INTERNAL_ERROR);
+    return;
+  }
+  // A short read is not EOF: the next read returns 0.
+  if (!bytesRead) return filePipeFinish(this);
+  if (this.position !== null) this.position += bytesRead;
+  if (this.remaining > 0) this.remaining -= bytesRead;
+  this.writing = true;
+  const status = native.writeStream(
+    stream.id,
+    bytesRead === chunk.length ? chunk : chunk.subarray(0, bytesRead),
+    undefined,
+    false,
+    this.readNext,
+    true,
+  );
+  this.writing = false;
+  // false: the stream cannot send DATA any more.
+  if (status === false) return filePipeEnd(this);
+  if (this.written || status & kWriteFlushedWithoutCallback) {
+    this.written = false;
+    this.readNext();
+  }
+}
+function filePipeOnStreamClose(this: FilePipe) {
+  if (!this.reading) filePipeEnd(this);
 }
 const kFileResponseFinal = Symbol("fileResponseFinal");
 // node processRespondWithFD: a file response closes the user-facing writable side
 // (`self._final = null; self.end()`), so a stream.end() issued by the user afterwards cannot cut
-// the transfer short. Returns the original _final, which the file sink runs once the whole file
+// the transfer short. Returns the original _final, which the file pipe runs once the whole file
 // has been handed to the native stream.
 function closeWritableForFileResponse(stream: Http2Stream) {
   const final = stream._final.bind(stream);

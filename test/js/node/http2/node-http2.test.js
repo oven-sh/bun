@@ -5508,70 +5508,393 @@ it.skipIf(!isLinux)(
 );
 
 // The throw is an uncaught exception, so the server gets a process of its own.
-it.skipIf(!isLinux)("http2 respondWithFile() closes the file it opened when statCheck throws", async () => {
-  using dir = tempDir("http2-stat-check-throws", { "file.txt": "0123456789" });
-  const script = `
-    const http2 = require("node:http2");
-    const fs = require("node:fs");
-    const file = fs.realpathSync(process.env.HTTP2_TEST_FILE);
+it.skipIf(!isLinux)(
+  "http2 respondWithFile() closes the file it opened when statCheck throws",
+  async () => {
+    using dir = tempDir("http2-stat-check-throws", { "file.txt": "0123456789" });
+    const script = `
+      const http2 = require("node:http2");
+      const fs = require("node:fs");
+      const file = fs.realpathSync(process.env.HTTP2_TEST_FILE);
+      const descriptorsOpenOnFile = () =>
+        fs.readdirSync("/proc/self/fd").filter(name => {
+          try {
+            return fs.readlinkSync("/proc/self/fd/" + name) === file;
+          } catch {
+            return false;
+          }
+        }).length;
+      let uncaught = 0;
+      let current;
+      // Nothing responds after the throw, so close the stream to let the client's request end.
+      process.on("uncaughtException", () => {
+        uncaught++;
+        current.close();
+      });
+      const server = http2.createServer();
+      server.on("stream", stream => {
+        current = stream;
+        stream.on("error", () => {});
+        stream.respondWithFile(file, {}, {
+          statCheck() {
+            throw new Error("statCheck threw");
+          },
+        });
+      });
+      server.listen(0, "127.0.0.1", async () => {
+        const client = http2.connect("http://127.0.0.1:" + server.address().port);
+        client.on("error", () => {});
+        for (let i = 0; i < 3; i++) {
+          await new Promise(resolve => {
+            const req = client.request();
+            req.on("error", () => {});
+            req.resume();
+            req.on("close", resolve);
+          });
+        }
+        const deadline = Date.now() + 3000;
+        while (descriptorsOpenOnFile() !== 0 && Date.now() < deadline) {
+          await new Promise(resolve => setImmediate(resolve));
+        }
+        console.log(JSON.stringify({ uncaught, open: descriptorsOpenOnFile() }));
+        client.destroy();
+        server.close();
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, HTTP2_TEST_FILE: path.join(String(dir), "file.txt") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ uncaught: 3, open: 0 }),
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+  // A debug build needs 3 to 5 s to start and load node:http2. Every other build keeps the default.
+  isDebug ? 15_000 : undefined,
+);
+
+// /proc/self/fdinfo has the descriptor's own position. With offset -1 it moves when a pool thread runs a read.
+function descriptorPosition(fd) {
+  return +/^pos:\s*(\d+)/m.exec(fs.readFileSync(`/proc/self/fdinfo/${fd}`, "utf8"))[1];
+}
+// Holds the JS thread until a pool thread has run a read: nothing that the caller queued can run before that.
+function positionOnceRead(fd) {
+  const deadline = Date.now() + 2000;
+  while (descriptorPosition(fd) === 0 && Date.now() < deadline);
+  return descriptorPosition(fd);
+}
+async function eventLoopTurns(count) {
+  for (let turn = 0; turn < count; turn++) await new Promise(resolve => setImmediate(resolve));
+}
+
+it.skipIf(!isLinux)("http2 respondWithFD() issues the first read of the file before it returns", async () => {
+  using dir = tempDir("http2-respond-with-fd-first-read", { "file.txt": Buffer.alloc(1000, "a").toString() });
+  const file = path.join(String(dir), "file.txt");
+  const seen = {};
+  const server = http2.createServer();
+  server.on("stream", (stream, headers) => {
+    stream.on("error", () => {});
+    const fd = fs.openSync(file, "r");
+    stream.on("close", () => fs.closeSync(fd));
+    if (headers[":path"] === "/statCheck") {
+      // With a statCheck the read is issued in the fstat callback, ahead of a tick queued from it.
+      const statCheck = () => void process.nextTick(() => (seen.statCheck = positionOnceRead(fd)));
+      stream.respondWithFD(fd, {}, { offset: -1, statCheck });
+    } else {
+      stream.respondWithFD(fd, {}, { offset: -1 });
+      seen.noStatCheck = positionOnceRead(fd);
+    }
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  const client = http2.connect(`http://localhost:${server.address().port}`);
+  client.on("error", () => {});
+
+  try {
+    for (const pathname of ["/", "/statCheck"]) {
+      expect((await collectHttp2Response(client, pathname)).body).toHaveLength(1000);
+    }
+    expect(seen).toEqual({ noStatCheck: 1000, statCheck: 1000 });
+  } finally {
+    client.destroy();
+    server.close();
+  }
+});
+
+it("http2 respondWithFD() and respondWithFile() read the file without the public fs functions", async () => {
+  using dir = tempDir("http2-respond-file-no-public-fs", { "file.txt": Buffer.alloc(100000, "a").toString() });
+  const file = path.join(String(dir), "file.txt");
+  const fd = fs.openSync(file, "r");
+  // node pipes the file natively: a program that patches these sees no call from a file response.
+  const calls = [];
+  const { createReadStream, read } = fs;
+  fs.createReadStream = (...args) => (calls.push("createReadStream"), createReadStream(...args));
+  fs.read = (...args) => (calls.push("read"), read(...args));
+  const server = http2.createServer();
+  server.on("stream", (stream, headers) => {
+    stream.on("error", () => {});
+    if (headers[":path"] === "/fd") stream.respondWithFD(fd);
+    else stream.respondWithFile(file);
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  const client = http2.connect(`http://localhost:${server.address().port}`);
+  client.on("error", () => {});
+
+  try {
+    for (const pathname of ["/fd", "/file"]) {
+      expect((await collectHttp2Response(client, pathname)).body).toHaveLength(100000);
+    }
+    expect(calls).toEqual([]);
+  } finally {
+    Object.assign(fs, { createReadStream, read });
+    client.destroy();
+    server.close();
+    fs.closeSync(fd);
+  }
+});
+
+it("http2 respondWithFD() on a closed FileHandle fails after it returns, like a read that fails", async () => {
+  const handle = await fs.promises.open(import.meta.path, "r");
+  await handle.close();
+  const { promise: serverError, resolve: onServerError } = Promise.withResolvers();
+  let onReturn;
+  const server = http2.createServer();
+  server.on("stream", stream => {
+    stream.respondWithFD(handle);
+    onReturn = { closed: stream.closed, destroyed: stream.destroyed, rstCode: stream.rstCode };
+    stream.on("error", err => onServerError(err.code));
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  const client = http2.connect(`http://localhost:${server.address().port}`);
+  client.on("error", () => {});
+
+  try {
+    // node v26.3.0: the headers are out, and the stream is reset on a later turn.
+    expect(await collectHttp2Response(client, "/")).toEqual({
+      status: 200,
+      contentLength: undefined,
+      body: "",
+      trailers: undefined,
+      error: "Stream closed with error code NGHTTP2_INTERNAL_ERROR",
+    });
+    expect(onReturn).toEqual({ closed: false, destroyed: false, rstCode: 0 });
+    expect(await serverError).toBe("ERR_HTTP2_STREAM_ERROR");
+  } finally {
+    client.destroy();
+    server.close();
+  }
+});
+
+it("http2 file responses of several chunks arrive whole and in order", async () => {
+  // 200000 bytes is four reads. No two 64 KiB chunks of it are equal.
+  const content = Buffer.alloc(200000);
+  for (let i = 0; i < content.length; i++) content[i] = 97 + ((i * 7 + (i >> 10)) % 26);
+  using dir = tempDir("http2-respond-file-chunks", { "file.txt": content.toString() });
+  const file = path.join(String(dir), "file.txt");
+  const trailers = { "x-trailer": "sent" };
+  // [method, options, first byte, end byte, content-length, trailers]
+  const cases = [
+    ["respondWithFD", {}, 0, 200000, undefined, undefined],
+    ["respondWithFD", { length: 150000 }, 0, 150000, undefined, undefined],
+    ["respondWithFD", { offset: 70000, length: 100000 }, 70000, 170000, undefined, undefined],
+    ["respondWithFD", { offset: -1 }, 0, 200000, undefined, undefined],
+    ["respondWithFD", { statCheck() {} }, 0, 200000, undefined, undefined],
+    ["respondWithFD", { waitForTrailers: true }, 0, 200000, undefined, trailers],
+    ["respondWithFile", {}, 0, 200000, "200000", undefined],
+    ["respondWithFile", { offset: 70000, length: 100000 }, 70000, 170000, "100000", undefined],
+    ["respondWithFile", { waitForTrailers: true }, 0, 200000, "200000", trailers],
+  ];
+  const server = http2.createServer();
+  server.on("stream", (stream, headers) => {
+    stream.on("error", () => {});
+    const [method, options] = cases[+headers[":path"].slice(1)];
+    if (options.waitForTrailers) stream.on("wantTrailers", () => stream.sendTrailers(trailers));
+    if (method === "respondWithFile") return stream.respondWithFile(file, {}, options);
+    const fd = fs.openSync(file, "r");
+    stream.on("close", () => fs.closeSync(fd));
+    stream.respondWithFD(fd, {}, options);
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  const client = http2.connect(`http://localhost:${server.address().port}`);
+  client.on("error", () => {});
+
+  try {
+    for (let i = 0; i < cases.length; i++) {
+      const [, , start, end, contentLength, expectedTrailers] = cases[i];
+      const { body, ...seen } = await collectHttp2Response(client, `/${i}`);
+      expect({ i, ...seen, length: body.length, intact: body === content.toString("latin1", start, end) }).toEqual({
+        i,
+        status: 200,
+        contentLength,
+        trailers: expectedTrailers,
+        error: undefined,
+        length: end - start,
+        intact: true,
+      });
+    }
+
+    // A client that stops reading leaves a chunk queued behind its window. The rest arrives once it reads again.
+    const req = client.request({ ":path": "/0" });
+    const { promise: closed, resolve: onClosed } = Promise.withResolvers();
+    let body = "";
+    let paused = false;
+    req.setEncoding("latin1");
+    req.on("error", () => {});
+    req.on("close", onClosed);
+    req.on("data", chunk => {
+      body += chunk;
+      if (paused) return;
+      paused = true;
+      req.pause();
+      eventLoopTurns(50).then(() => req.resume());
+    });
+    await closed;
+    expect({ length: body.length, intact: body === content.toString("latin1") }).toEqual({
+      length: 200000,
+      intact: true,
+    });
+  } finally {
+    client.destroy();
+    server.close();
+  }
+});
+
+// The position of a descriptor that is read with offset -1 shows every read of the file.
+it.skipIf(!isLinux)("http2 respondWithFD() reads no more of the file once the connection is gone", async () => {
+  using dir = tempDir("http2-respond-with-fd-socket-gone", { "file.txt": Buffer.alloc(1000000, "a").toString() });
+  const fd = fs.openSync(path.join(String(dir), "file.txt"), "r");
+  const { promise: streamClosed, resolve: onStreamClosed } = Promise.withResolvers();
+  const server = http2.createServer();
+  server.on("stream", stream => {
+    stream.on("error", () => {});
+    stream.on("close", onStreamClosed);
+    stream.respondWithFD(fd, {}, { offset: -1 });
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  const client = http2.connect(`http://localhost:${server.address().port}`);
+  client.on("error", () => {});
+
+  try {
+    // The client never reads: the response stalls with a chunk queued behind the flow-control window.
+    const req = client.request({ ":path": "/" });
+    req.on("error", () => {});
+    req.pause();
+    await once(req, "response");
+    // Stalled: the first read is in, and the position then stays where it is.
+    const deadline = Date.now() + 3000;
+    let stalledAt = 0;
+    for (let settled = 0; settled < 50 && Date.now() < deadline;) {
+      await eventLoopTurns(1);
+      const position = descriptorPosition(fd);
+      settled = position !== 0 && position === stalledAt ? settled + 1 : 0;
+      stalledAt = position;
+    }
+    expect(stalledAt).toBeGreaterThan(0);
+    expect(stalledAt).toBeLessThan(1000000);
+    client.destroy();
+    await streamClosed;
+    // Nothing signals a read that is not issued: give a stray one a bounded number of turns to land.
+    await eventLoopTurns(100);
+    expect(descriptorPosition(fd)).toBe(stalledAt);
+  } finally {
+    client.destroy();
+    server.close();
+    fs.closeSync(fd);
+  }
+});
+
+it.skipIf(!isLinux)("http2 respondWithFD() issues no read of the file once the stream is closed", async () => {
+  using dir = tempDir("http2-respond-with-fd-after-close", { "file.txt": Buffer.alloc(200000, "a").toString() });
+  const fd = fs.openSync(path.join(String(dir), "file.txt"), "r");
+  const { promise: positionAtClose, resolve: onClose } = Promise.withResolvers();
+  const server = http2.createServer();
+  server.on("stream", stream => {
+    stream.on("error", () => {});
+    stream.on("close", () => onClose(descriptorPosition(fd)));
+    stream.respondWithFD(fd, {}, { offset: -1 });
+    // The read that the call issued is in before the stream closes: a position that moves later is a later read.
+    positionOnceRead(fd);
+    stream.destroy();
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  const client = http2.connect(`http://localhost:${server.address().port}`);
+  client.on("error", () => {});
+
+  try {
+    await collectHttp2Response(client, "/");
+    const atClose = await positionAtClose;
+    // Nothing signals a read that is not issued: give a stray one a bounded number of turns to land.
+    await eventLoopTurns(100);
+    expect(descriptorPosition(fd)).toBe(atClose);
+  } finally {
+    client.destroy();
+    server.close();
+    fs.closeSync(fd);
+  }
+});
+
+// /proc/self/fd is what tells which file a descriptor is open on.
+it.skipIf(!isLinux)(
+  "http2 respondWithFile() closes the file it opened when the stream goes away mid-transfer",
+  async () => {
+    using dir = tempDir("http2-respond-with-file-teardown", { "file.txt": Buffer.alloc(1000000, "a").toString() });
+    const file = fs.realpathSync(path.join(String(dir), "file.txt"));
     const descriptorsOpenOnFile = () =>
       fs.readdirSync("/proc/self/fd").filter(name => {
         try {
-          return fs.readlinkSync("/proc/self/fd/" + name) === file;
+          return fs.readlinkSync(`/proc/self/fd/${name}`) === file;
         } catch {
           return false;
         }
       }).length;
-    let uncaught = 0;
-    let current;
-    // Nothing responds after the throw, so close the stream to let the client's request end.
-    process.on("uncaughtException", () => {
-      uncaught++;
-      current.close();
-    });
+    // Each one runs on the tick after the fstat callback, under the first read of the file.
+    const teardowns = {
+      "/destroy": stream => stream.destroy(),
+      "/close": stream => stream.close(),
+      "/session-destroy": stream => stream.session.destroy(),
+    };
     const server = http2.createServer();
-    server.on("stream", stream => {
-      current = stream;
+    server.on("session", session => session.on("error", () => {}));
+    server.on("stream", (stream, headers) => {
       stream.on("error", () => {});
-      stream.respondWithFile(file, {}, {
-        statCheck() {
-          throw new Error("statCheck threw");
-        },
-      });
+      const teardown = teardowns[headers[":path"]];
+      const statCheck = () => void (teardown && process.nextTick(teardown, stream));
+      stream.respondWithFile(file, {}, { statCheck });
     });
-    server.listen(0, "127.0.0.1", async () => {
-      const client = http2.connect("http://127.0.0.1:" + server.address().port);
+    await new Promise(resolve => server.listen(0, resolve));
+    const url = `http://localhost:${server.address().port}`;
+    let client = http2.connect(url);
+    client.on("error", () => {});
+
+    try {
+      // The client resets the stream while the file's chunk is queued behind its window.
+      const req = client.request({ ":path": "/queued" });
+      req.on("error", () => {});
+      req.pause();
+      await once(req, "response");
+      req.close(http2.constants.NGHTTP2_CANCEL);
+      await once(req, "close");
+      await collectHttp2Response(client, "/destroy");
+      await collectHttp2Response(client, "/close");
+      client.destroy();
+      // The last teardown takes the whole session with it.
+      client = http2.connect(url);
       client.on("error", () => {});
-      for (let i = 0; i < 3; i++) {
-        await new Promise(resolve => {
-          const req = client.request();
-          req.on("error", () => {});
-          req.resume();
-          req.on("close", resolve);
-        });
-      }
+      await collectHttp2Response(client, "/session-destroy");
+
       const deadline = Date.now() + 3000;
-      while (descriptorsOpenOnFile() !== 0 && Date.now() < deadline) {
-        await new Promise(resolve => setImmediate(resolve));
-      }
-      console.log(JSON.stringify({ uncaught, open: descriptorsOpenOnFile() }));
+      while (descriptorsOpenOnFile() !== 0 && Date.now() < deadline) await eventLoopTurns(1);
+      expect(descriptorsOpenOnFile()).toBe(0);
+    } finally {
       client.destroy();
       server.close();
-    });
-  `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: { ...bunEnv, HTTP2_TEST_FILE: path.join(String(dir), "file.txt") },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-    stdout: JSON.stringify({ uncaught: 3, open: 0 }),
-    stderr: "",
-    exitCode: 0,
-  });
-});
+    }
+  },
+);
 
 it("http2 client.request() on a destroyed or closed session uses the right error codes", async () => {
   // Node: destroyed session -> ERR_HTTP2_INVALID_SESSION,

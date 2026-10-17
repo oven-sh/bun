@@ -1360,6 +1360,8 @@ var mode = "free";
 
 - `feature()` requires a string literal argument — dynamic values are not supported
 - Bun completely removes the `bun:bundle` import from the output
+- Only the named import `import { feature } from "bun:bundle"` is supported. `bun:bundle` does not exist at runtime, so a default import, a namespace import (`import * as`) or a re-export (`export ... from "bun:bundle"`) is a build error
+- `feature` has no value at runtime, so it can only be called directly, as in `feature("FLAG")`. A use such as `const f = feature` is a build error
 - Works with `bun build`, `bun run`, and `bun test`
 - You can enable multiple flags: `--feature FLAG_A --feature FLAG_B`
 - For type safety, augment the `Registry` interface to restrict `feature()` to known flags

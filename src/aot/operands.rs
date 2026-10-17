@@ -1,4 +1,3 @@
-
 use crate::id::V;
 use crate::ir::Op;
 
@@ -45,8 +44,12 @@ impl Op {
             | Op::IterCloseForThrow(a)
             | Op::Yield(a)
             | Op::Await(a) => f(a),
-            Op::FieldSet { obj: a, value: b, .. }
-            | Op::PropSet { obj: a, value: b, .. }
+            Op::FieldSet {
+                obj: a, value: b, ..
+            }
+            | Op::PropSet {
+                obj: a, value: b, ..
+            }
             | Op::ElemGet { obj: a, key: b }
             | Op::ElemHas { obj: a, key: b }
             | Op::ElemDelete { obj: a, key: b }
@@ -65,7 +68,11 @@ impl Op {
                 f(key);
                 f(value);
             }
-            Op::Closure { captures: args, .. } | Op::NewArray(args) | Op::StrConcat(args) | Op::Operation { args, .. } | Op::CallDirect { args, .. } => args.iter_mut().for_each(f),
+            Op::Closure { captures: args, .. }
+            | Op::NewArray(args)
+            | Op::StrConcat(args)
+            | Op::Operation { args, .. }
+            | Op::CallDirect { args, .. } => args.iter_mut().for_each(f),
             Op::ClosureOnce { captures, env, .. } => {
                 captures.iter_mut().for_each(&mut f);
                 f(env);

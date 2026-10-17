@@ -2,7 +2,7 @@ use super::coerce::Ty;
 use super::{FileBuild, Fx, Jump};
 use crate::builder::Var;
 use crate::id::{BlockId, StrId, TyId, V};
-use crate::ir::{self, Op, Target, Term, CoerceReason};
+use crate::ir::{self, CoerceReason, Op, Target, Term};
 use bun_sema::atom::Atom;
 use bun_sema::hir::{ClassId, ExprId, ExprKind};
 use bun_sema::program::FileId;
@@ -20,12 +20,32 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let done = self.new_flag(fx);
         let no = self.emit(fx, Op::Bool(false));
         self.write(fx, done, no);
-        PatternIterator { iter, done, closing: fx.b.new_block() }
+        PatternIterator {
+            iter,
+            done,
+            closing: fx.b.new_block(),
+        }
     }
 
-    pub(crate) fn step_pattern_iterator(&mut self, fx: &mut Fx, it: &PatternIterator, index: i64, wants_value: bool, claim: TyId) -> V {
-        let (step, there, ended, join) = (fx.b.new_block(), fx.b.new_block(), fx.b.new_block(), fx.b.new_block());
-        let result = if claim.is_some() { fx.b.new_var(self.or_undefined(claim)) } else { self.new_temporary(fx) };
+    pub(crate) fn step_pattern_iterator(
+        &mut self,
+        fx: &mut Fx,
+        it: &PatternIterator,
+        index: i64,
+        wants_value: bool,
+        claim: TyId,
+    ) -> V {
+        let (step, there, ended, join) = (
+            fx.b.new_block(),
+            fx.b.new_block(),
+            fx.b.new_block(),
+            fx.b.new_block(),
+        );
+        let result = if claim.is_some() {
+            fx.b.new_var(self.or_undefined(claim))
+        } else {
+            self.new_temporary(fx)
+        };
         let undefined = self.emit(fx, Op::Undefined);
         self.write(fx, result, undefined);
         let done = self.read(fx, it.done);
@@ -33,12 +53,24 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.seal(step);
         fx.b.switch_to(step);
         let index = self.emit(fx, Op::Int(index));
-        let has = self.emit_throwing(fx, Op::IterHas { iter: it.iter, index });
+        let has = self.emit_throwing(
+            fx,
+            Op::IterHas {
+                iter: it.iter,
+                index,
+            },
+        );
         self.branch(fx, has, there, ended);
         fx.b.seal(there);
         fx.b.seal(ended);
         fx.b.switch_to(there);
-        let got = self.emit_throwing(fx, Op::IterGet { iter: it.iter, index });
+        let got = self.emit_throwing(
+            fx,
+            Op::IterGet {
+                iter: it.iter,
+                index,
+            },
+        );
         if wants_value {
             let got = self.coerce_to(fx, got, Ty::from_id(claim), CoerceReason::Claim);
             self.write(fx, result, got);
@@ -53,10 +85,20 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.read(fx, result)
     }
 
-    pub(crate) fn collect_pattern_iterator_rest(&mut self, fx: &mut Fx, it: &PatternIterator, from: i64) -> V {
+    pub(crate) fn collect_pattern_iterator_rest(
+        &mut self,
+        fx: &mut Fx,
+        it: &PatternIterator,
+        from: i64,
+    ) -> V {
         let array = self.emit_throwing(fx, Op::NewArray(ir::Args::new()));
         let index = self.new_counter(fx, from);
-        let (header, step, inside, exit) = (fx.b.new_block(), fx.b.new_block(), fx.b.new_block(), fx.b.new_block());
+        let (header, step, inside, exit) = (
+            fx.b.new_block(),
+            fx.b.new_block(),
+            fx.b.new_block(),
+            fx.b.new_block(),
+        );
         let done = self.read(fx, it.done);
         self.branch(fx, done, exit, header);
         fx.b.switch_to(header);
@@ -64,14 +106,33 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.seal(step);
         fx.b.switch_to(step);
         let at = self.read(fx, index);
-        let has = self.emit_throwing(fx, Op::IterHas { iter: it.iter, index: at });
+        let has = self.emit_throwing(
+            fx,
+            Op::IterHas {
+                iter: it.iter,
+                index: at,
+            },
+        );
         self.branch(fx, has, inside, exit);
         fx.b.seal(inside);
         fx.b.switch_to(inside);
         self.emit(fx, Op::Poll);
-        let value = self.emit_throwing(fx, Op::IterGet { iter: it.iter, index: at });
+        let value = self.emit_throwing(
+            fx,
+            Op::IterGet {
+                iter: it.iter,
+                index: at,
+            },
+        );
         let push = self.out.strs.intern(b"push");
-        self.emit_throwing(fx, Op::CallMethod { obj: array, name: push, args: [value].into_iter().collect() });
+        self.emit_throwing(
+            fx,
+            Op::CallMethod {
+                obj: array,
+                name: push,
+                args: [value].into_iter().collect(),
+            },
+        );
         self.count(fx, index, at);
         fx.b.jump(header);
         fx.b.seal(header);
@@ -82,7 +143,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         array
     }
 
-    pub(crate) fn with_pattern_iterator_close<R>(&mut self, fx: &mut Fx, it: &PatternIterator, f: impl FnOnce(&mut Self, &mut Fx) -> R) -> R {
+    pub(crate) fn with_pattern_iterator_close<R>(
+        &mut self,
+        fx: &mut Fx,
+        it: &PatternIterator,
+        f: impl FnOnce(&mut Self, &mut Fx) -> R,
+    ) -> R {
         if !self.out.funcs[fx.id.idx()].has(ir::func_flags::GENERATOR) {
             fx.handlers.push(it.closing);
             let result = f(self, fx);
@@ -93,7 +159,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let outer = fx.skip_close_if.insert(it.iter, done);
         let unwind_depth = fx.handlers.len();
         fx.handlers.push(it.closing);
-        fx.jumps.push(Jump { label: Atom::NONE, break_to: BlockId::NONE, continue_to: BlockId::NONE, iter: it.iter, unwind_depth, is_unlabeled_break_target: false, finally_context: None });
+        fx.jumps.push(Jump {
+            label: Atom::NONE,
+            break_to: BlockId::NONE,
+            continue_to: BlockId::NONE,
+            iter: it.iter,
+            unwind_depth,
+            is_unlabeled_break_target: false,
+            finally_context: None,
+        });
         let result = f(self, fx);
         fx.jumps.pop();
         fx.handlers.pop();
@@ -132,7 +206,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.seal(throw);
         fx.b.switch_to(throw);
         let unwind = fx.handlers.last().map(|&handler| Target::new(handler));
-        fx.b.terminate(Term::Throw { value: caught, unwind, pos: 0 });
+        fx.b.terminate(Term::Throw {
+            value: caught,
+            unwind,
+            pos: 0,
+        });
 
         fx.b.switch_to(after);
     }
@@ -144,18 +222,38 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.seal(throw);
         fx.b.seal(fine);
         fx.b.switch_to(throw);
-        self.throw_error(fx, b"TypeError", b"Cannot destructure a value that is undefined or null");
+        self.throw_error(
+            fx,
+            b"TypeError",
+            b"Cannot destructure a value that is undefined or null",
+        );
         fx.b.switch_to(fine);
     }
 
     pub(crate) fn throw_error(&mut self, fx: &mut Fx, class: &[u8], message: &[u8]) {
         let name = self.out.strs.intern(class);
-        let callee = self.emit_throwing(fx, Op::FreeGet { name, is_typeof: false });
+        let callee = self.emit_throwing(
+            fx,
+            Op::FreeGet {
+                name,
+                is_typeof: false,
+            },
+        );
         let message = self.out.strs.intern(message);
         let message = self.emit(fx, Op::Str(message));
-        let error = self.emit_throwing(fx, Op::Construct { callee, args: [message].into_iter().collect() });
+        let error = self.emit_throwing(
+            fx,
+            Op::Construct {
+                callee,
+                args: [message].into_iter().collect(),
+            },
+        );
         let unwind = fx.handlers.last().map(|&handler| Target::new(handler));
-        fx.b.terminate(Term::Throw { value: error, unwind, pos: 0 });
+        fx.b.terminate(Term::Throw {
+            value: error,
+            unwind,
+            pos: 0,
+        });
     }
 
     pub(crate) fn expr_with_name(&mut self, fx: &mut Fx, e: ExprId, name: Atom) -> V {
@@ -164,7 +262,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 Some(written) => self.out.strs.intern(&written),
                 None => match self.c.constant_symbol_of_property(name) {
                     Some(symbol) => {
-                        let text = self.c.constant_symbol_description(symbol).map_or(Vec::new(), |description| [b"[", &description[..], b"]"].concat());
+                        let text = self
+                            .c
+                            .constant_symbol_description(symbol)
+                            .map_or(Vec::new(), |description| {
+                                [b"[", &description[..], b"]"].concat()
+                            });
                         self.out.strs.intern(&text)
                     }
                     None => self.str(name),
@@ -175,7 +278,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.expr(fx, e)
     }
 
-    pub(crate) fn expr_with_key_name(&mut self, fx: &mut Fx, e: ExprId, written: ExprId, key: V) -> V {
+    pub(crate) fn expr_with_key_name(
+        &mut self,
+        fx: &mut Fx,
+        e: ExprId,
+        written: ExprId,
+        key: V,
+    ) -> V {
         let hir = self.hir(fx.file);
         match hir[self.inferred_name_target(fx, e)].kind {
             ExprKind::Fn(function) if hir[function].name.is_none() => {
@@ -195,16 +304,35 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    pub(crate) fn expr_with_name_into(&mut self, fx: &mut Fx, e: ExprId, name: Atom, want: Ty, why: CoerceReason) -> V {
-        if matches!(self.hir(fx.file)[self.inferred_name_target(fx, e)].kind, ExprKind::Fn(_) | ExprKind::Class(_)) {
+    pub(crate) fn expr_with_name_into(
+        &mut self,
+        fx: &mut Fx,
+        e: ExprId,
+        name: Atom,
+        want: Ty,
+        why: CoerceReason,
+    ) -> V {
+        if matches!(
+            self.hir(fx.file)[self.inferred_name_target(fx, e)].kind,
+            ExprKind::Fn(_) | ExprKind::Class(_)
+        ) {
             let value = self.expr_with_name(fx, e, name);
             return self.coerce_to(fx, value, want, why);
         }
         self.expr_into(fx, e, want, why)
     }
 
-    pub(crate) fn expr_with_name_into_if_convertible(&mut self, fx: &mut Fx, e: ExprId, name: Atom, want: Ty) -> V {
-        if matches!(self.hir(fx.file)[self.inferred_name_target(fx, e)].kind, ExprKind::Fn(_) | ExprKind::Class(_)) {
+    pub(crate) fn expr_with_name_into_if_convertible(
+        &mut self,
+        fx: &mut Fx,
+        e: ExprId,
+        name: Atom,
+        want: Ty,
+    ) -> V {
+        if matches!(
+            self.hir(fx.file)[self.inferred_name_target(fx, e)].kind,
+            ExprKind::Fn(_) | ExprKind::Class(_)
+        ) {
             return self.expr_with_name_into(fx, e, name, want, CoerceReason::Cast);
         }
         self.expr_into_if_convertible(fx, e, want)
@@ -212,7 +340,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     pub(crate) fn name_of_class(&mut self, file: FileId, class: ClassId) -> StrId {
         let name = self.hir(file)[class].name;
-        let is_default_export = self.hir(file)[class].flags.contains(bun_sema::hir::Flags::DEFAULT);
+        let is_default_export = self.hir(file)[class]
+            .flags
+            .contains(bun_sema::hir::Flags::DEFAULT);
         match self.inferred_class_names.get(&(file, class)) {
             _ if name.is_some() => self.str(name),
             Some(&given) => given,
@@ -223,7 +353,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     fn inferred_name_target(&self, fx: &Fx, mut e: ExprId) -> ExprId {
         let hir = self.hir(fx.file);
-        while let ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::AsConst(expr) | ExprKind::NonNull(expr) | ExprKind::Instantiation { expr, .. } = hir[e].kind {
+        while let ExprKind::As { expr, .. }
+        | ExprKind::Satisfies { expr, .. }
+        | ExprKind::AsConst(expr)
+        | ExprKind::NonNull(expr)
+        | ExprKind::Instantiation { expr, .. } = hir[e].kind
+        {
             e = expr;
         }
         e
@@ -233,10 +368,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let hir = self.hir(fx.file);
         match hir[self.inferred_name_target(fx, e)].kind {
             ExprKind::Fn(func) if hir[func].name.is_none() => {
-                self.inferred_function_names.entry((fx.file, func)).or_insert(name);
+                self.inferred_function_names
+                    .entry((fx.file, func))
+                    .or_insert(name);
             }
             ExprKind::Class(class) if hir[class].name.is_none() => {
-                self.inferred_class_names.entry((fx.file, class)).or_insert(name);
+                self.inferred_class_names
+                    .entry((fx.file, class))
+                    .or_insert(name);
             }
             _ => {}
         }

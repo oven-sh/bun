@@ -61,31 +61,49 @@ describe.skipIf(!hasIslands)("--compile-trim-runtime", () => {
   for (const flags of [[], ["--aot"]]) {
     const how = ["--compile", ...flags].join(" ");
 
-    test.skipIf(flags.length > 0 && !!unsupported)(`${how}: the executable is much smaller and prints the same`, async () => {
-      using dir = tempDir("compile-trim-runtime", programs);
-      const folder = String(dir);
-      const env = { ...bunEnv, FOLDER: folder };
-      for (const program of ["hello", "near-the-doors"]) {
-        const build = [bunExe(), "build", "--compile", ...flags, `${program}.ts`, "--outfile"];
-        expect(await run([...build, `${program}-whole`], folder)).toMatchObject({ exitCode: 0 });
-        expect(await run([...build, `${program}-trimmed`, "--compile-trim-runtime"], folder)).toMatchObject({ exitCode: 0 });
-        const whole = await run([join(folder, `${program}-whole`)], folder, env);
-        expect(await run([join(folder, `${program}-trimmed`)], folder, env)).toEqual(whole);
-        expect(whole.exitCode).toBe(0);
-        const saved = statSync(join(folder, `${program}-whole`)).size - statSync(join(folder, `${program}-trimmed`)).size;
-        expect(saved).toBeGreaterThan(30_000_000);
-      }
-    });
+    test.skipIf(flags.length > 0 && !!unsupported)(
+      `${how}: the executable is much smaller and prints the same`,
+      async () => {
+        using dir = tempDir("compile-trim-runtime", programs);
+        const folder = String(dir);
+        const env = { ...bunEnv, FOLDER: folder };
+        for (const program of ["hello", "near-the-doors"]) {
+          const build = [bunExe(), "build", "--compile", ...flags, `${program}.ts`, "--outfile"];
+          expect(await run([...build, `${program}-whole`], folder)).toMatchObject({ exitCode: 0 });
+          expect(await run([...build, `${program}-trimmed`, "--compile-trim-runtime"], folder)).toMatchObject({
+            exitCode: 0,
+          });
+          const whole = await run([join(folder, `${program}-whole`)], folder, env);
+          expect(await run([join(folder, `${program}-trimmed`)], folder, env)).toEqual(whole);
+          expect(whole.exitCode).toBe(0);
+          const saved =
+            statSync(join(folder, `${program}-whole`)).size - statSync(join(folder, `${program}-trimmed`)).size;
+          expect(saved).toBeGreaterThan(30_000_000);
+        }
+      },
+    );
 
-    test.skipIf(flags.length > 0 && !!unsupported)(`${how}: a part that was left out says so when it is asked for`, async () => {
-      using dir = tempDir("compile-trim-runtime-door", programs);
-      const folder = String(dir);
-      const build = [bunExe(), "build", "--compile", ...flags, "--compile-trim-runtime", "hello.ts", "--outfile", "hello"];
-      expect(await run(build, folder)).toMatchObject({ exitCode: 0 });
-      const asked = await run([join(folder, "hello"), "install"], folder, { ...bunEnv, BUN_BE_BUN: "1" });
-      expect(asked.stderr).toStartWith("error: this executable was built without the Bun command line");
-      expect(asked).toMatchObject({ stdout: "", exitCode: 70 });
-    });
+    test.skipIf(flags.length > 0 && !!unsupported)(
+      `${how}: a part that was left out says so when it is asked for`,
+      async () => {
+        using dir = tempDir("compile-trim-runtime-door", programs);
+        const folder = String(dir);
+        const build = [
+          bunExe(),
+          "build",
+          "--compile",
+          ...flags,
+          "--compile-trim-runtime",
+          "hello.ts",
+          "--outfile",
+          "hello",
+        ];
+        expect(await run(build, folder)).toMatchObject({ exitCode: 0 });
+        const asked = await run([join(folder, "hello"), "install"], folder, { ...bunEnv, BUN_BE_BUN: "1" });
+        expect(asked.stderr).toStartWith("error: this executable was built without the Bun command line");
+        expect(asked).toMatchObject({ stdout: "", exitCode: 70 });
+      },
+    );
   }
 
   test("compile: { trimRuntime: true }", async () => {

@@ -29,7 +29,11 @@ pub(super) enum AccessNode {
 impl AccessNode {
     pub(super) fn file(self) -> Option<FileId> {
         match self {
-            AccessNode::IndexedAccessType(file, _) | AccessNode::ElementAccess(file, _) | AccessNode::PropertyName(file, _) | AccessNode::BindingName(file, _) | AccessNode::Name((file, ..)) => Some(file),
+            AccessNode::IndexedAccessType(file, _)
+            | AccessNode::ElementAccess(file, _)
+            | AccessNode::PropertyName(file, _)
+            | AccessNode::BindingName(file, _)
+            | AccessNode::Name((file, ..)) => Some(file),
             AccessNode::None | AccessNode::Other => None,
         }
     }
@@ -996,7 +1000,8 @@ impl<'p, 's> Checker<'p, 's> {
                     });
                 }
                 if let Some((file, e)) = access_expression
-                    && let ExprKind::Index { obj, .. } | ExprKind::Dot { obj, .. } = self.hir(file)[e].kind
+                    && let ExprKind::Index { obj, .. } | ExprKind::Dot { obj, .. } =
+                        self.hir(file)[e].kind
                     && self.is_assignment_to_readonly_entity(file, e, obj, prop)
                     && let Some(index_node) = self.place_of_index_node(access_node)
                 {
@@ -1099,7 +1104,8 @@ impl<'p, 's> Checker<'p, 's> {
                     && info.key != TypeId::NUMBER
                 {
                     if let Some((file, e)) = access_expression
-                        && let ExprKind::Index { obj, .. } | ExprKind::Dot { obj, .. } = self.hir(file)[e].kind
+                        && let ExprKind::Index { obj, .. } | ExprKind::Dot { obj, .. } =
+                            self.hir(file)[e].kind
                     {
                         let at = self.place_inside_parentheses(file, e);
                         // `originalObjectType`
@@ -2596,7 +2602,9 @@ impl<'p, 's> Checker<'p, 's> {
         // `getIndexInfosOfType`: what `resolveUnionTypeMembers` has set, once it has run. This
         // object is also made for the properties alone, which resolve no members of the union.
         let index = match self.resolved_union_type_members(ty) {
-            Some(resolved) if resolved.shape().properties_of.is_none() => SmallVec::from_slice(resolved.index_infos()),
+            Some(resolved) if resolved.shape().properties_of.is_none() => {
+                SmallVec::from_slice(resolved.index_infos())
+            }
             _ => self.union_index_infos(parts),
         };
         shape.index.extend(index);

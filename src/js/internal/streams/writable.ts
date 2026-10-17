@@ -83,14 +83,14 @@ function resetBuffer(state: WritableState): void {
 
 function preallocatedEvents(): Record<string | symbol, unknown> {
   return {
-      close: undefined,
-      error: undefined,
-      prefinish: undefined,
-      finish: undefined,
-      drain: undefined,
-      // Skip uncommon events...
-      // [destroyImpl.kConstruct]: undefined,
-      // [destroyImpl.kDestroy]: undefined,
+    close: undefined,
+    error: undefined,
+    prefinish: undefined,
+    finish: undefined,
+    drain: undefined,
+    // Skip uncommon events...
+    // [destroyImpl.kConstruct]: undefined,
+    // [destroyImpl.kDestroy]: undefined,
   };
 }
 
@@ -467,7 +467,10 @@ function errorBuffer(state: WritableState): void {
     }
   }
 
-  callFinishedCallbacks(state, ((state.flags & kErrored) !== 0 ? state.erroredValue : null) ?? $ERR_STREAM_DESTROYED("end"));
+  callFinishedCallbacks(
+    state,
+    ((state.flags & kErrored) !== 0 ? state.erroredValue : null) ?? $ERR_STREAM_DESTROYED("end"),
+  );
 
   resetBuffer(state);
 }

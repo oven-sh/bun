@@ -37,7 +37,13 @@ test("nothing is refused here", () => expect(1).toBe(1));
 };
 
 async function bunTest(cwd: string, ...flags: string[]) {
-  await using proc = Bun.spawn({ cmd: [bunExe(), "test", ...flags], cwd, env: { ...bunEnv, NO_COLOR: "1" }, stdout: "pipe", stderr: "pipe" });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", ...flags],
+    cwd,
+    env: { ...bunEnv, NO_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { output: stdout + stderr, exitCode };
 }
@@ -47,20 +53,35 @@ test("bun test --aot names every refused change to a locked built-in, where it w
   const { output, exitCode } = await bunTest(String(dir), "--aot");
   const lines = output.split("\n");
   const heading = lines.findIndex(line => line.includes("locked built-ins"));
-  expect(lines[heading]).toBe("5 changes to locked built-ins refused during this run, caught or not; code that goes on after one may have been left half done:");
+  expect(lines[heading]).toBe(
+    "5 changes to locked built-ins refused during this run, caught or not; code that goes on after one may have been left half done:",
+  );
   expect(lines.slice(heading + 1, heading + 6)).toEqual([
-    expect.stringMatching(/^  Cannot change 'set' of Headers\.prototype, at a-patches\.test\.js:5:\d+, while a-patches\.test\.js ran$/),
-    expect.stringMatching(/^  Cannot change 'push' of Array\.prototype, at a-patches\.test\.js:20:\d+, while a-patches\.test\.js ran$/),
-    expect.stringMatching(/^  Cannot delete 'append' of Headers\.prototype, at a-patches\.test\.js:15:\d+, while a-patches\.test\.js ran$/),
-    expect.stringMatching(/^  Cannot change the prototype of Request\.prototype, at a-patches\.test\.js:16:\d+, while a-patches\.test\.js ran$/),
-    expect.stringMatching(/^  Cannot change 'toString' of URL\.prototype, at b-later\.test\.js:4:\d+, while b-later\.test\.js ran$/),
+    expect.stringMatching(
+      /^  Cannot change 'set' of Headers\.prototype, at a-patches\.test\.js:5:\d+, while a-patches\.test\.js ran$/,
+    ),
+    expect.stringMatching(
+      /^  Cannot change 'push' of Array\.prototype, at a-patches\.test\.js:20:\d+, while a-patches\.test\.js ran$/,
+    ),
+    expect.stringMatching(
+      /^  Cannot delete 'append' of Headers\.prototype, at a-patches\.test\.js:15:\d+, while a-patches\.test\.js ran$/,
+    ),
+    expect.stringMatching(
+      /^  Cannot change the prototype of Request\.prototype, at a-patches\.test\.js:16:\d+, while a-patches\.test\.js ran$/,
+    ),
+    expect.stringMatching(
+      /^  Cannot change 'toString' of URL\.prototype, at b-later\.test\.js:4:\d+, while b-later\.test\.js ran$/,
+    ),
   ]);
   expect(output).toContain(" 4 pass");
   expect(exitCode).toBe(0);
 });
 
 test("a run in which nothing is refused says nothing", async () => {
-  using dir = tempDir("aot-nothing-refused", { "package.json": files["package.json"], "c-clean.test.js": files["c-clean.test.js"] });
+  using dir = tempDir("aot-nothing-refused", {
+    "package.json": files["package.json"],
+    "c-clean.test.js": files["c-clean.test.js"],
+  });
   const { output, exitCode } = await bunTest(String(dir), "--aot");
   expect(output).not.toContain("locked built-ins");
   expect(exitCode).toBe(0);

@@ -195,7 +195,10 @@ const instanceRun = (tag: string | null, n: number, made: number, cjsN: number) 
 const tagOfGraph = '(typeof __tag !== "undefined" ? __tag : undefined)';
 function withTagInItsOwnBinding(text: string, isTypeScript: boolean): string {
   const changed = text
-    .replaceAll(/process: Object\.create\(process, \{ env: \{ value: \{ \.\.\.process\.env, TAG: ([^}]+?) \}, enumerable: true \} \}\)/g, "__tag: $1")
+    .replaceAll(
+      /process: Object\.create\(process, \{ env: \{ value: \{ \.\.\.process\.env, TAG: ([^}]+?) \}, enumerable: true \} \}\)/g,
+      "__tag: $1",
+    )
     .replaceAll("process.env.TAG", tagOfGraph);
   return isTypeScript && changed.includes("__tag !==") ? "declare var __tag: string | undefined;\n" + changed : changed;
 }
@@ -216,7 +219,10 @@ async function build(combo: Combo) {
   const dir = tempDir("module-graph-compile-" + combo.name.replace(/\W/g, "_"), {
     ...Object.fromEntries(Object.entries(sources).map(([name, text]) => [name, written(name, text)])),
     // not embedded: loaded from disk by the compiled program
-    "external.mjs": written("external.mjs", `(typeof __log !== "undefined" ? __log : undefined)?.push("external@" + (process.env.TAG ?? "host")); export const who = process.env.TAG ?? "host"; export async function describe(instanceUrl) { const t = await import(instanceUrl); const r = await t.runInstance(1); return { who, instanceTag: r.tag, instanceMeta: r.meta }; }`),
+    "external.mjs": written(
+      "external.mjs",
+      `(typeof __log !== "undefined" ? __log : undefined)?.push("external@" + (process.env.TAG ?? "host")); export const who = process.env.TAG ?? "host"; export async function describe(instanceUrl) { const t = await import(instanceUrl); const r = await t.runInstance(1); return { who, instanceTag: r.tag, instanceMeta: r.meta }; }`,
+    ),
   });
   const exe = join(String(dir), process.platform === "win32" ? "app.exe" : "app");
   await using proc = Bun.spawn({

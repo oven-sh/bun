@@ -62,18 +62,18 @@ const kReadable = 1 << 29;
 
 function preallocatedEvents(): Record<string | symbol, unknown> {
   return {
-      close: undefined,
-      error: undefined,
-      data: undefined,
-      end: undefined,
-      readable: undefined,
-      // Skip uncommon events...
-      // pause: undefined,
-      // resume: undefined,
-      // pipe: undefined,
-      // unpipe: undefined,
-      // [destroyImpl.kConstruct]: undefined,
-      // [destroyImpl.kDestroy]: undefined,
+    close: undefined,
+    error: undefined,
+    data: undefined,
+    end: undefined,
+    readable: undefined,
+    // Skip uncommon events...
+    // pause: undefined,
+    // resume: undefined,
+    // pipe: undefined,
+    // unpipe: undefined,
+    // [destroyImpl.kConstruct]: undefined,
+    // [destroyImpl.kDestroy]: undefined,
   };
 }
 
@@ -628,8 +628,7 @@ function emitReadable_(stream) {
   // 2. It is not ended.
   // 3. It is below the highWaterMark, so we can schedule
   //    another readable later.
-  state.flags |=
-    (state.flags & (kFlowing | kEnded)) === 0 && state.length <= state.highWaterMark ? kNeedReadable : 0;
+  state.flags |= (state.flags & (kFlowing | kEnded)) === 0 && state.length <= state.highWaterMark ? kNeedReadable : 0;
   flow(stream);
 }
 

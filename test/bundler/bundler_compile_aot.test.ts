@@ -4,7 +4,6 @@ import { bunEnv, bunExe, isASAN, tempDirWithBunTypes as tempDir } from "harness"
 import { join } from "path";
 import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
 
-
 const usesImage = (stdout: string) =>
   ({
     env: { BUN_AOT_VERBOSE: "1" },
@@ -451,7 +450,9 @@ describe("bundler", () => {
       },
       run: usesImage(
         [
-          ...["internal", "target", "main"].flatMap(label => ["mock.module", "jest.mock"].map(name => label + " " + name + " TypeError 3:1:ready 3:2")),
+          ...["internal", "target", "main"].flatMap(label =>
+            ["mock.module", "jest.mock"].map(name => label + " " + name + " TypeError 3:1:ready 3:2"),
+          ),
           "42 lazy31 lazy11",
           "",
         ].join("\n"),
@@ -485,7 +486,9 @@ describe("bundler", () => {
           export function fromUser() { return read() + " | " + table.kept + ":" + box.get() + ":" + helper(3); }
         `,
       },
-      run: usesImage(["helper", "table", "box"].map(name => name + " TypeError 1:2:3.5:4 | 1:3.5:6\n").join("") + "2\n"),
+      run: usesImage(
+        ["helper", "table", "box"].map(name => name + " TypeError 1:2:3.5:4 | 1:3.5:6\n").join("") + "2\n",
+      ),
     });
 
     itBundled("CompiledModulesCannotBeEvicted", {
@@ -909,9 +912,11 @@ describe("Bun.ModuleGraph with --aot", () => {
     },
   );
 
-  test.concurrent("generators of one graph stepped from another, and from the host, use their own variables", async () => {
-    expect(
-      await run(`
+  test.concurrent(
+    "generators of one graph stepped from another, and from the host, use their own variables",
+    async () => {
+      expect(
+        await run(`
         const a = await new Bun.ModuleGraph().import(url);
         const b = await new Bun.ModuleGraph().import(url);
         const host = await import(url);
@@ -944,8 +949,47 @@ describe("Bun.ModuleGraph with --aot", () => {
         out.push(new Map([[1, 2]]).entries().next().value!.join(), JSON.stringify(ofA.next()), Object.getPrototypeOf(ofA.next()) === Object.prototype);
         return out;
       `),
-    ).toEqual(everywhere([1, 2, "2/0/0", 6, "2/4/0", "3,4", "5/4/0", 5, 6, "5/7/0", "1,2", "5/7/3", "6,8,9,7", "7/10/3", 23008, 9004, "10/13/4", 11, "{\"value\":5,\"done\":true}", "{\"done\":true}", "12/13/4", "out", "12/15/4", 13, 14, "14/15/4", 51, "14/18/4", 5, 15, 6, "15/18/6", "1,2", "{\"value\":16,\"done\":false}", true]));
-  });
+      ).toEqual(
+        everywhere([
+          1,
+          2,
+          "2/0/0",
+          6,
+          "2/4/0",
+          "3,4",
+          "5/4/0",
+          5,
+          6,
+          "5/7/0",
+          "1,2",
+          "5/7/3",
+          "6,8,9,7",
+          "7/10/3",
+          23008,
+          9004,
+          "10/13/4",
+          11,
+          '{"value":5,"done":true}',
+          '{"done":true}',
+          "12/13/4",
+          "out",
+          "12/15/4",
+          13,
+          14,
+          "14/15/4",
+          51,
+          "14/18/4",
+          5,
+          15,
+          6,
+          "15/18/6",
+          "1,2",
+          '{"value":16,"done":false}',
+          true,
+        ]),
+      );
+    },
+  );
 
   const stateOfOneGraph = `
         import * as fs from "node:fs";
@@ -991,7 +1035,9 @@ describe("Bun.ModuleGraph with --aot", () => {
       `;
 
   test.concurrent("what belongs to one graph is not another's", async () => {
-    expect(await run(`
+    expect(
+      await run(
+        `
         const a = await new Bun.ModuleGraph().import(url);
         const b = await new Bun.ModuleGraph().import(url);
         const host = await import(url);
@@ -1020,21 +1066,106 @@ describe("Bun.ModuleGraph with --aot", () => {
         out.push(await new Promise(resolve => queueMicrotask(() => resolve(a.count()))), await new Promise(resolve => setTimeout(() => resolve(b.count()), 1)), await new Promise(resolve => setTimeout(resolve, 1)).then(a.count), state());
         out.push("objects", b.addExtra(a.makePoint(1, 2)), a.addExtra(a.makePoint(1, 2)), host.addExtra({ x: 1 }), b.copy(a.makeCrate()), a.copy(b.makePoint(3, 4)), a.copy(a.makeSmallCrate()), state());
         return out;
-      `, membersOfOneGraph)).toEqual(
+      `,
+        membersOfOneGraph,
+      ),
+    ).toEqual(
       everywhere([
-        "instanceof", true, false, false, true, false, true, true, false, 2, "point", "crate", 4000, "static", 1, 2,
-        1, 0, false, true, "throw", "Failure", "1/0/0", 1, "2/1/0", 2, "2/2/2", true, false, true, "classes",
-        4, 3, "4/3/2", 5, 4, true, false, "5/4/2", "hasInstance", false, true, true, "7/5/2", "iterate", "8,9", "6,7",
-        "9/7/2", "callbacks", "89", 10, "10", "11", 11, "12,13", "13/11/2", 14, 15, 12, 1316, 16, 17, 0, "17/14/2",
-        18, 50, 51, 19, "19/51/2", "jobs", 20, 52, "21,53,3", 5422, "22/54/3", 23, 55, 24, "24/55/3", "objects", 56,
-        25, 4, "{\"value\":1,\"n\":55}", "{\"x\":3,\"y\":4,\"n\":24}", "{\"value\":1,\"small\":2,\"n\":24}",
+        "instanceof",
+        true,
+        false,
+        false,
+        true,
+        false,
+        true,
+        true,
+        false,
+        2,
+        "point",
+        "crate",
+        4000,
+        "static",
+        1,
+        2,
+        1,
+        0,
+        false,
+        true,
+        "throw",
+        "Failure",
+        "1/0/0",
+        1,
+        "2/1/0",
+        2,
+        "2/2/2",
+        true,
+        false,
+        true,
+        "classes",
+        4,
+        3,
+        "4/3/2",
+        5,
+        4,
+        true,
+        false,
+        "5/4/2",
+        "hasInstance",
+        false,
+        true,
+        true,
+        "7/5/2",
+        "iterate",
+        "8,9",
+        "6,7",
+        "9/7/2",
+        "callbacks",
+        "89",
+        10,
+        "10",
+        "11",
+        11,
+        "12,13",
+        "13/11/2",
+        14,
+        15,
+        12,
+        1316,
+        16,
+        17,
+        0,
+        "17/14/2",
+        18,
+        50,
+        51,
+        19,
+        "19/51/2",
+        "jobs",
+        20,
+        52,
+        "21,53,3",
+        5422,
+        "22/54/3",
+        23,
+        55,
+        24,
+        "24/55/3",
+        "objects",
+        56,
+        25,
+        4,
+        '{"value":1,"n":55}',
+        '{"x":3,"y":4,"n":24}',
+        '{"value":1,"small":2,"n":24}',
         "24/55/3",
       ]),
     );
   });
 
   test.concurrent("private names and symbols of one graph are not another's", async () => {
-    expect(await run(`
+    expect(
+      await run(
+        `
         const a = await new Bun.ModuleGraph().import(url);
         const b = await new Bun.ModuleGraph().import(url);
         const host = await import(url);
@@ -1063,9 +1194,13 @@ describe("Bun.ModuleGraph with --aot", () => {
         out.push(keys, b.sumKeys(keyed), host.sumKeys(keyed));
         out.push("brand", a.Sealed.brand(a.makeSealed()), a.Sealed.brand(b.makeSealed()), host.Sealed.brand(a.makeSealed()), a.Sealed.brandByStore(a.makeSealed()), a.Sealed.brandByStore(b.makeSealed()));
         return out;
-      `, membersOfOneGraph)).toEqual(
+      `,
+        membersOfOneGraph,
+      ),
+    ).toEqual(
       everywhere([
-        "7,7,mine,1,2,8,true,true,true,8,8,function,9,3", "10,7,true,7,11,TypeError",
+        "7,7,mine,1,2,8,true,true,true,8,8,function,9,3",
+        "10,7,true,7,11,TypeError",
         "TypeError,TypeError,TypeError,TypeError,TypeError,TypeError,false,false,false,TypeError,TypeError,TypeError,TypeError,TypeError",
         "TypeError,TypeError,TypeError,TypeError,TypeError,TypeError",
         "TypeError,TypeError,TypeError,TypeError,TypeError,TypeError,false,false,false,TypeError,TypeError,TypeError,TypeError,TypeError",
@@ -1073,16 +1208,37 @@ describe("Bun.ModuleGraph with --aot", () => {
         "TypeError,TypeError,TypeError,TypeError,TypeError,TypeError,false,false,false,TypeError,TypeError,TypeError,TypeError,TypeError",
         "TypeError,TypeError,TypeError,TypeError,TypeError,TypeError",
         "TypeError,TypeError,TypeError,TypeError,TypeError,TypeError,false,false,false,TypeError,TypeError,TypeError,TypeError,TypeError",
-        "TypeError,TypeError,TypeError,TypeError,TypeError,TypeError", 191903000, 3, 1, "symbols", true, false,
-        "3,3,6,5,true,true,true,4,2,1,1", "undefined,undefined,6,undefined,false,false,false,undefined,3,2,1",
-        "undefined,undefined,6,undefined,false,false,false,undefined,3,2,1", 12, 3, 12, 3, 5000, 5, -5,
-        "brand", true, false, false, true, false,
+        "TypeError,TypeError,TypeError,TypeError,TypeError,TypeError",
+        191903000,
+        3,
+        1,
+        "symbols",
+        true,
+        false,
+        "3,3,6,5,true,true,true,4,2,1,1",
+        "undefined,undefined,6,undefined,false,false,false,undefined,3,2,1",
+        "undefined,undefined,6,undefined,false,false,false,undefined,3,2,1",
+        12,
+        3,
+        12,
+        3,
+        5000,
+        5,
+        -5,
+        "brand",
+        true,
+        false,
+        false,
+        true,
+        false,
       ]),
     );
   });
 
   test.concurrent("the state of a module is its graph's own, and what graphs share", async () => {
-    expect(await run(`
+    expect(
+      await run(
+        `
         const a = await new Bun.ModuleGraph().import(url);
         const b = await new Bun.ModuleGraph().import(url);
         const host = await import(url);
@@ -1101,28 +1257,124 @@ describe("Bun.ModuleGraph with --aot", () => {
         out.push(a.once() === a.once(), a.once() === b.once(), a.once().made, b.once().made, await a.promise, await b.promise, await host.promise);
         out.push("meta", a.meta.url === b.meta.url, a.meta.url === url, a.meta.main, b.meta.main, [a.current(), b.current(), host.current()].join("/"));
         return out;
-      `, stateOfOneGraph)).toEqual(
+      `,
+        stateOfOneGraph,
+      ),
+    ).toEqual(
       everywhere([
-        "fileSystem 001", "Emitter 111", "pattern 001", "list 001", "pair 001", "registry 001", "seen 001",
-        "Color 001", "Plain 001", "frozen 001", "big 111", "text 111", "meta 001", "Lazy 001", "WithStatics 001",
-        "namespaceLike 001", "numbers 001", "soon 001", "arrow 001", "date 001", "buffer 001", "error 001",
-        "promise 001", "getters 001", "Node 001", "wellKnown 111", "tagged 111", "symbolDescription 111", "state", 1,
-        2, 1, 0, false, 4, 3, 1, 0, 0, 0, false, "made at load", 5, false, true, false, false, "functions", 3, 4, 3,
-        false, true, false, false, true, 7, 4, false, 8, 9, 0, 5, "statics", "1", "1", 1, 2, 1, false, true, false,
-        "bindings", 2, 2, 1, 2, 2, true, false, true, false, 10, 6, 2, 2, 2, "meta", true, true, true, true, "10/6/2",
+        "fileSystem 001",
+        "Emitter 111",
+        "pattern 001",
+        "list 001",
+        "pair 001",
+        "registry 001",
+        "seen 001",
+        "Color 001",
+        "Plain 001",
+        "frozen 001",
+        "big 111",
+        "text 111",
+        "meta 001",
+        "Lazy 001",
+        "WithStatics 001",
+        "namespaceLike 001",
+        "numbers 001",
+        "soon 001",
+        "arrow 001",
+        "date 001",
+        "buffer 001",
+        "error 001",
+        "promise 001",
+        "getters 001",
+        "Node 001",
+        "wellKnown 111",
+        "tagged 111",
+        "symbolDescription 111",
+        "state",
+        1,
+        2,
+        1,
+        0,
+        false,
+        4,
+        3,
+        1,
+        0,
+        0,
+        0,
+        false,
+        "made at load",
+        5,
+        false,
+        true,
+        false,
+        false,
+        "functions",
+        3,
+        4,
+        3,
+        false,
+        true,
+        false,
+        false,
+        true,
+        7,
+        4,
+        false,
+        8,
+        9,
+        0,
+        5,
+        "statics",
+        "1",
+        "1",
+        1,
+        2,
+        1,
+        false,
+        true,
+        false,
+        "bindings",
+        2,
+        2,
+        1,
+        2,
+        2,
+        true,
+        false,
+        true,
+        false,
+        10,
+        6,
+        2,
+        2,
+        2,
+        "meta",
+        true,
+        true,
+        true,
+        true,
+        "10/6/2",
       ]),
     );
   });
 
   test.concurrent("import.meta of a second entry point that the host imports", async () => {
-    expect(await run(`
+    expect(
+      await run(
+        `
         const host = await import(url);
         return [host.meta.url === url, host.meta.main, host.meta.file];
-      `, stateOfOneGraph)).toEqual(everywhere([true,false,"app.js"]));
+      `,
+        stateOfOneGraph,
+      ),
+    ).toEqual(everywhere([true, false, "app.js"]));
   });
 
   test.concurrent("typed code of one graph works on another graph's objects", async () => {
-    expect(await run(`
+    expect(
+      await run(
+        `
         const a = await new Bun.ModuleGraph().import(url);
         const b = await new Bun.ModuleGraph().import(url);
         const host = await import(url);
@@ -1144,7 +1396,8 @@ describe("Bun.ModuleGraph with --aot", () => {
         out.push(hot, state());
         out.push(await a.awaitIt(b.later()), await a.awaitCall(b.later), a.sortBy([1, 3, 2], b.descending), a.mapWith([1, 2], b.addCount), state());
         return out;
-      `, `
+      `,
+        `
         export class Lazy { handler = () => count(); plain = function () { return count(); }; bump() { return count(); } get now() { return count(); } static make() { return new Lazy(); } }
         export class LazyHeir extends Lazy { override bump() { return super.bump() * 10; } }
         export function makeLazyHeir(): Lazy { return new LazyHeir(); }
@@ -1182,19 +1435,65 @@ describe("Bun.ModuleGraph with --aot", () => {
         export function toText(value: Lazy) { return String(value) + JSON.stringify(value); }
         export function keysOf(value: Lazy) { return Object.keys(value).join(); }
         export function cloneOf(value: Lazy) { return { ...value }.handler(); }
-      `)).toEqual(
+      `,
+      ),
+    ).toEqual(
       everywhere([
-        "1,2,3,4,50,6,7", "7/0/0", "true,true,true,true,true", "8,9,10,true,11", "11/0/0",
-        "1213,1415,lazy,runner,[object Object]{},handler,plain,16", "16/0/0", "1718,19,pair", "19/0/0",
-        "1,2,3,4,50,6,7", "19/7/0", "true,false,true,true,true", "8,9,10,true,11", "19/11/0",
-        "1213,1415,runner,runner,[object Object]{},handler,plain,16", "19/16/0", "1720,21,runner", "21/17/0",
-        "22,23,24,25,260,27,28", "28/17/0", "true,false,true,true,true", "29,30,31,true,32", "32/17/0",
-        "3334,3536,runner,runner,[object Object]{},handler,plain,37", "37/17/0", "3818,19,runner", "38/19/0",
-        "20,21,22,23,240,25,26", "38/26/0", "true,false,true,true,true", "27,28,29,true,30", "38/30/0",
-        "3132,3334,runner,runner,[object Object]{},handler,plain,35", "38/35/0", "3601,2,runner", "38/36/2",
-        "3,4,5,6,70,8,9", "38/36/9", "true,false,true,true,true", "10,11,12,true,13", "38/36/13",
-        "1415,1617,runner,runner,[object Object]{},handler,plain,18", "38/36/18", "1939,40,runner", "40/36/19",
-        41372038, 423921, 434022, "43/40/22", 309072, "2043/2040/22", 206144, 206245, "3,2,1", "2044,2046",
+        "1,2,3,4,50,6,7",
+        "7/0/0",
+        "true,true,true,true,true",
+        "8,9,10,true,11",
+        "11/0/0",
+        "1213,1415,lazy,runner,[object Object]{},handler,plain,16",
+        "16/0/0",
+        "1718,19,pair",
+        "19/0/0",
+        "1,2,3,4,50,6,7",
+        "19/7/0",
+        "true,false,true,true,true",
+        "8,9,10,true,11",
+        "19/11/0",
+        "1213,1415,runner,runner,[object Object]{},handler,plain,16",
+        "19/16/0",
+        "1720,21,runner",
+        "21/17/0",
+        "22,23,24,25,260,27,28",
+        "28/17/0",
+        "true,false,true,true,true",
+        "29,30,31,true,32",
+        "32/17/0",
+        "3334,3536,runner,runner,[object Object]{},handler,plain,37",
+        "37/17/0",
+        "3818,19,runner",
+        "38/19/0",
+        "20,21,22,23,240,25,26",
+        "38/26/0",
+        "true,false,true,true,true",
+        "27,28,29,true,30",
+        "38/30/0",
+        "3132,3334,runner,runner,[object Object]{},handler,plain,35",
+        "38/35/0",
+        "3601,2,runner",
+        "38/36/2",
+        "3,4,5,6,70,8,9",
+        "38/36/9",
+        "true,false,true,true,true",
+        "10,11,12,true,13",
+        "38/36/13",
+        "1415,1617,runner,runner,[object Object]{},handler,plain,18",
+        "38/36/18",
+        "1939,40,runner",
+        "40/36/19",
+        41372038,
+        423921,
+        434022,
+        "43/40/22",
+        309072,
+        "2043/2040/22",
+        206144,
+        206245,
+        "3,2,1",
+        "2044,2046",
         "2045/2044/22",
       ]),
     );
@@ -1368,33 +1667,30 @@ describe("Bun.ModuleGraph with --aot", () => {
   });
 });
 
-test.each(["forEach", "map"])(
-  "an uncaught error from the callback of %s is reported",
-  async method => {
-    using dir = tempDir("compile-aot-uncaught", {
-      "entry.ts": `[1].${method}(function callback() { throw new Error("thrown in the callback"); });`,
-    });
-    await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "--aot", "entry.ts", "--outfile", "out"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    expect([await build.stderr.text(), await build.exited]).toEqual([expect.not.stringContaining("error"), 0]);
-    await using proc = Bun.spawn({ cmd: [join(String(dir), "out")], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, firstLines: stderr.split("\n").slice(0, 3), exitCode }).toEqual({
-      stdout: "",
-      firstLines: [
-        "error: thrown in the callback",
-        expect.stringMatching(/^ +at callback \(.*entry\.ts:\d+:\d+\)$/),
-        expect.stringMatching(new RegExp(`^ +at ${method} `)),
-      ],
-      exitCode: 1,
-    });
-  },
-);
+test.each(["forEach", "map"])("an uncaught error from the callback of %s is reported", async method => {
+  using dir = tempDir("compile-aot-uncaught", {
+    "entry.ts": `[1].${method}(function callback() { throw new Error("thrown in the callback"); });`,
+  });
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", "--compile", "--aot", "entry.ts", "--outfile", "out"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect([await build.stderr.text(), await build.exited]).toEqual([expect.not.stringContaining("error"), 0]);
+  await using proc = Bun.spawn({ cmd: [join(String(dir), "out")], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, firstLines: stderr.split("\n").slice(0, 3), exitCode }).toEqual({
+    stdout: "",
+    firstLines: [
+      "error: thrown in the callback",
+      expect.stringMatching(/^ +at callback \(.*entry\.ts:\d+:\d+\)$/),
+      expect.stringMatching(new RegExp(`^ +at ${method} `)),
+    ],
+    exitCode: 1,
+  });
+});
 
 test("image and program data are used", async () => {
   using dir = tempDir("compile-aot-address", {
@@ -1428,35 +1724,36 @@ test("image and program data are used", async () => {
   });
 });
 
-test.each([
-  ["without a JIT", { BUN_JSC_useJIT: "0" }, ["--aot"]],
-])("a build %s produces the same code", async (_, env, flags) => {
-  using dir = tempDir("compile-aot-builder", {
-    "entry.ts": `console.log(/(\\d+)-(\\w+)/.exec("abc 123-foo")!.slice(1).join());`,
-  });
-  async function imageOf(outfile: string, env: Record<string, string>, flags: string[]) {
-    await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", ...flags, "entry.ts", "--outfile", outfile],
-      env: { ...bunEnv, ...env },
-      cwd: String(dir),
-      stdout: "ignore",
-      stderr: "pipe",
+test.each([["without a JIT", { BUN_JSC_useJIT: "0" }, ["--aot"]]])(
+  "a build %s produces the same code",
+  async (_, env, flags) => {
+    using dir = tempDir("compile-aot-builder", {
+      "entry.ts": `console.log(/(\\d+)-(\\w+)/.exec("abc 123-foo")!.slice(1).join());`,
     });
-    expect([await build.stderr.text(), await build.exited]).toEqual(["", 0]);
-    await using proc = Bun.spawn({
-      cmd: [join(String(dir), outfile)],
-      env: { ...bunEnv, BUN_AOT_VERBOSE: "1" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, exitCode }).toEqual({ stdout: "123,foo\n", exitCode: 0 });
-    return stderr.match(/^\[aot\] image: \d+ bytes, \d+ of code/m)?.[0];
-  }
-  const [expected, actual] = await Promise.all([imageOf("a", {}, ["--aot"]), imageOf("b", env, flags)]);
-  expect(expected).toStartWith("[aot] image: ");
-  expect(actual).toBe(expected);
-});
+    async function imageOf(outfile: string, env: Record<string, string>, flags: string[]) {
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", ...flags, "entry.ts", "--outfile", outfile],
+        env: { ...bunEnv, ...env },
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      expect([await build.stderr.text(), await build.exited]).toEqual(["", 0]);
+      await using proc = Bun.spawn({
+        cmd: [join(String(dir), outfile)],
+        env: { ...bunEnv, BUN_AOT_VERBOSE: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, exitCode }).toEqual({ stdout: "123,foo\n", exitCode: 0 });
+      return stderr.match(/^\[aot\] image: \d+ bytes, \d+ of code/m)?.[0];
+    }
+    const [expected, actual] = await Promise.all([imageOf("a", {}, ["--aot"]), imageOf("b", env, flags)]);
+    expect(expected).toStartWith("[aot] image: ");
+    expect(actual).toBe(expected);
+  },
+);
 
 test("file imports evaluate to the paths of the embedded files", async () => {
   using dir = tempDir("compile-aot-file-imports", {
@@ -1523,7 +1820,12 @@ test("builds are reproducible", async () => {
     }),
   );
   expect(new Set(hashes).size).toBe(1);
-  await using proc = Bun.spawn({ cmd: [join(String(dir), "0", "out.exe")], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  await using proc = Bun.spawn({
+    cmd: [join(String(dir), "0", "out.exe")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   expect([await proc.stdout.text(), await proc.exited]).toEqual(["3,6,9,12\n", 0]);
 });
 
@@ -1715,21 +2017,24 @@ test("image size limit is a build error", async () => {
   expect(existsSync(join(String(dir), "out"))).toBe(false);
 });
 
-test.each(["index", "frame", "callSites", "slots"])("a function record over its limit (%s) is a build error", async limit => {
-  using dir = tempDir("compile-aot-record-limit", { "entry.ts": `console.log(1);` });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", "entry.ts", "--outfile", "out"],
-    env: { ...bunEnv, BUN_JSC_aotImageLimitToExceedForTesting: limit },
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain("error: --aot: the program is too large");
-  expect(stderr).not.toContain("AOT: ");
-  expect(exitCode).toBe(1);
-  expect(existsSync(join(String(dir), "out"))).toBe(false);
-});
+test.each(["index", "frame", "callSites", "slots"])(
+  "a function record over its limit (%s) is a build error",
+  async limit => {
+    using dir = tempDir("compile-aot-record-limit", { "entry.ts": `console.log(1);` });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--aot", "entry.ts", "--outfile", "out"],
+      env: { ...bunEnv, BUN_JSC_aotImageLimitToExceedForTesting: limit },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("error: --aot: the program is too large");
+    expect(stderr).not.toContain("AOT: ");
+    expect(exitCode).toBe(1);
+    expect(existsSync(join(String(dir), "out"))).toBe(false);
+  },
+);
 
 test("code that cannot be compiled is a build error at its file, line and column", async () => {
   using dir = tempDir("compile-aot-declined", {
@@ -1748,7 +2053,9 @@ console.log(countDown(3));`,
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const why = "cannot be compiled ahead of time: it holds so many values at once";
   expect(stderr).toMatch(new RegExp("error: --aot: `countDown` " + why + "[^\\n]*\\n\\s+at [^\\n]*entry\\.ts:3:1\\b"));
-  expect(stderr).toMatch(new RegExp("error: --aot: the top-level code " + why + "[^\\n]*\\n\\s+at [^\\n]*entry\\.ts:1:1\\b"));
+  expect(stderr).toMatch(
+    new RegExp("error: --aot: the top-level code " + why + "[^\\n]*\\n\\s+at [^\\n]*entry\\.ts:1:1\\b"),
+  );
   expect(stderr).not.toContain("AOT: ");
   expect(exitCode).toBe(1);
   expect(existsSync(join(String(dir), "out"))).toBe(false);
@@ -1764,7 +2071,9 @@ test("an entry function that is not compiled is a build error", async () => {
     stderr: "pipe",
   });
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain("error: --aot: internal error: the entry function of a module was not compiled: it holds so many values at once");
+  expect(stderr).toContain(
+    "error: --aot: internal error: the entry function of a module was not compiled: it holds so many values at once",
+  );
   expect(stderr).not.toMatch(/^\s+at .*:0$/m);
   expect(stderr).not.toContain("AOT: ");
   expect(exitCode).toBe(1);
@@ -2056,7 +2365,10 @@ describe("--aot at run time", () => {
     ["equal literals share a string", (i: number) => "a literal that is repeated", 100],
     ["different literals do not", (i: number) => "a literal that is not repeated " + i, 3000],
   ] as const)("%s", async (_, literal, atLeast) => {
-    const rows = Array.from({ length: 3000 }, (_, i) => `  { kind: ${JSON.stringify(literal(i))}, list: [${JSON.stringify(literal(i))}, "x${i % 7}y"] },`);
+    const rows = Array.from(
+      { length: 3000 },
+      (_, i) => `  { kind: ${JSON.stringify(literal(i))}, list: [${JSON.stringify(literal(i))}, "x${i % 7}y"] },`,
+    );
     const { stdout, stderr, exitCode } = await run(`
       import { heapStats } from "bun:jsc";
       const rows = [
@@ -2088,6 +2400,10 @@ test("--aot with --bytecode-order is an error", async () => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "error: --aot does not support --bytecode-order\n", exitCode: 1 });
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "",
+    stderr: "error: --aot does not support --bytecode-order\n",
+    exitCode: 1,
+  });
   expect(existsSync(join(String(dir), "out"))).toBe(false);
 });

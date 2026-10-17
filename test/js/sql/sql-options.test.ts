@@ -1,7 +1,10 @@
 // Where the server is: adapter-env-var-precedence.test.ts. Which file is opened: sqlite-url-parsing.test.ts.
 import { SQL } from "bun";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { once } from "node:events";
+import net from "node:net";
+import { join } from "node:path";
 import util from "node:util";
 import { closedPort, listeningServer } from "./wire-frames";
 
@@ -380,6 +383,227 @@ describe("what the options object inherits", () => {
     expect(reads).toEqual([...new Set(reads)]);
     expect(reads.slice(0, 3).toSorted()).toEqual(["adapter", "filename", "url"]);
     expect(writes).toEqual([]);
+  });
+});
+
+// A merge of untrusted JSON, or a package, can leave keys on Object.prototype. They are not options.
+describe("what Object.prototype holds", () => {
+  /** Runs `run` with `values` on Object.prototype, the way an assignment leaves them. */
+  async function planted<T>(values: Record<string, unknown>, run: () => T | Promise<T>): Promise<T> {
+    const names = Object.keys(values);
+    for (const name of names) {
+      Object.defineProperty(Object.prototype, name, {
+        value: values[name],
+        configurable: true,
+        enumerable: true,
+        writable: true,
+      });
+    }
+    try {
+      return await run();
+    } finally {
+      for (const name of names) delete (Object.prototype as Record<string, unknown>)[name];
+    }
+  }
+
+  const url = "postgres://uu:up@uh:5433/ud";
+  /** The own keys of `sql.options`, which has no prototype. */
+  const resolved = (...args: unknown[]) => {
+    const sql = new SQL(...(args as [string]));
+    const options: Record<string, any> = { ...sql.options };
+    if (Object.hasOwn(options, "tls") && typeof options.tls === "object") options.tls = { ...options.tls };
+    if (options.adapter === "sqlite") sql.close();
+    return options;
+  };
+  const calls: [string, () => Record<string, any>][] = [
+    ["(url)", () => resolved(url)],
+    ["(url with a query)", () => resolved(`${url}?sslmode=verify-full&application_name=app`)],
+    ["(url, {})", () => resolved(url, {})],
+    ["(url, { adapter })", () => resolved(url, { adapter: "postgres" })],
+    ["({ url })", () => resolved({ url })],
+    ["({ url }, { max })", () => resolved({ url }, { max: 2 })],
+    ["()", () => resolved()],
+    ["(':memory:')", () => resolved(":memory:")],
+  ];
+
+  test.each<[string, Record<string, unknown>]>([
+    ["adapter", { adapter: "mysql" }],
+    ["adapter and filename", { adapter: "sqlite", filename: ":memory:" }],
+    ["url", { url: "mysql://pu:pp@ph:9/pd" }],
+    [
+      "hostname, port, username, password, database",
+      { hostname: "ph", port: 9, username: "pu", password: "pp", database: "pd" },
+    ],
+    ["host, user, pass, db", { host: "ph", user: "pu", pass: "pp", db: "pd" }],
+    ["path", { path: "/tmp/planted.sock" }],
+    ["socket", { socket: "/tmp/planted.sock" }],
+    ['ssl: "disable"', { ssl: "disable" }],
+    ["tls: false", { tls: false }],
+    ["tls: true", { tls: true }],
+    ["tls: { rejectUnauthorized: false }", { tls: { rejectUnauthorized: false } }],
+    ["connection", { connection: { search_path: "planted" } }],
+    ["a key that is not an option", { planted_parameter: "x" }],
+    ["max", { max: 1 }],
+    ["idleTimeout, connectionTimeout, maxLifetime", { idleTimeout: 1, connectionTimeout: 1, maxLifetime: 1 }],
+    ["idle_timeout, connect_timeout, max_lifetime", { idle_timeout: 1, connect_timeout: 1, max_lifetime: 1 }],
+    [
+      "prepare, bigint, allowPublicKeyRetrieval, foundRows",
+      { prepare: false, bigint: true, allowPublicKeyRetrieval: true, foundRows: true },
+    ],
+    ["channelBinding", { channelBinding: "require" }],
+    ["onconnect and onclose", { onconnect() {}, onclose() {} }],
+    ["transform", { transform: { undefined: null } }],
+  ])("%s: every call resolves to what it does in a clean process", async (_, values) => {
+    for (const [call, make] of calls) {
+      const clean = make();
+      expect({ call, options: await planted(values, make) }).toStrictEqual({ call, options: clean });
+    }
+  });
+
+  test("a tls that cannot be assigned does not make the constructor throw", () => {
+    Object.defineProperty(Object.prototype, "tls", { value: true, configurable: true });
+    try {
+      expect(optionsOf(url, { adapter: "postgres" }).sslMode).toBe(0);
+    } finally {
+      delete (Object.prototype as Record<string, unknown>).tls;
+    }
+  });
+
+  test("a Proxy as the options object does not pass it on", async () => {
+    const throughProxy = () => optionsOf(url, new Proxy({ adapter: "postgres" }, {}));
+    expect(await planted({ tls: true, max: 1 }, throughProxy)).toMatchObject({ sslMode: 0, max: 10 });
+  });
+
+  test("sql.options has no prototype and prints as before", async () => {
+    await using sql = new SQL(url, { max: 1 });
+    const options = sql.options as Record<string, any>;
+    expect(Object.getPrototypeOf(options)).toBeNull();
+    expect(Object.keys(options)).toEqual([
+      "adapter",
+      "hostname",
+      "port",
+      "username",
+      "password",
+      "database",
+      "tls",
+      "prepare",
+      "allowPublicKeyRetrieval",
+      "foundRows",
+      "channelBinding",
+      "bigint",
+      "sslMode",
+      "query",
+      "max",
+    ]);
+    const unset = () => [options.path, options.idleTimeout, options.onclose, options.transform];
+    expect(await planted({ path: "/tmp/planted.sock", idleTimeout: 1, onclose() {}, transform: {} }, unset)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    ]);
+    expect(Bun.inspect(options)).toStartWith("{\n  adapter: ");
+    expect(util.inspect(options)).toStartWith("{\n  adapter: ");
+  });
+
+  test("the options of an SQLite client have no prototype, and their password is not printed", async () => {
+    await using sql = new SQL({ adapter: "sqlite", filename: ":memory:", password: "sekret-password" });
+    const { options } = sql;
+    expect(Object.getPrototypeOf(options)).toBeNull();
+    expect(Object.keys(options)).toEqual(["adapter", "filename", "password"]);
+    expect(Bun.inspect(options)).toStartWith("{\n");
+    expect(Bun.inspect(options)).toContain('password: "[REDACTED]"');
+    expect(Bun.inspect(sql)).not.toContain("sekret-password");
+    await sql.begin(async tx => {
+      expect(tx.options).toBe(options);
+    });
+  });
+
+  test("what ends a transaction or a savepoint is not read from it", async () => {
+    await using sql = new SQL(":memory:");
+    await sql`create table rolled_back (a)`;
+    const failing = new Error("rolled back");
+    await planted({ BEFORE_COMMIT_OR_ROLLBACK: "COMMIT" }, async () => {
+      expect(
+        await sql
+          .begin(async tx => {
+            await tx`insert into rolled_back values (1)`;
+            throw failing;
+          })
+          .catch(e => e),
+      ).toBe(failing);
+      await sql.begin(async tx => {
+        expect(
+          await tx
+            .savepoint(async savepoint => {
+              await savepoint`insert into rolled_back values (2)`;
+              throw failing;
+            })
+            .catch(e => e),
+        ).toBe(failing);
+      });
+    });
+    expect(await sql`select a from rolled_back`).toEqual([]);
+  });
+
+  describe.skipIf(isWindows).each(["postgres", "mysql"] as const)("%s", adapter => {
+    /** A TCP server and a unix socket that close what connects to them, and count it. */
+    async function twoServers(path: string) {
+      const dials = { tcp: 0, unix: 0 };
+      const unix = net.createServer(socket => void (dials.unix++, socket.destroy()));
+      unix.listen(path);
+      await once(unix, "listening");
+      const { port, server: tcp } = await listeningServer(socket => void (dials.tcp++, socket.destroy()));
+      const first = Promise.race([
+        once(tcp, "connection").then(() => "tcp"),
+        once(unix, "connection").then(() => "unix"),
+      ]);
+      return { port, dials, first, close: () => void (tcp.close(), unix.close()) };
+    }
+    const client = (port: number) =>
+      new SQL({ adapter, hostname: "127.0.0.1", port, username: "u", database: "d", max: 1, connectionTimeout: 0.5 });
+
+    test("a path that appears after the client was made does not move a dial", async () => {
+      using dir = tempDir("sql-planted-path", {});
+      const path = join(String(dir), "planted.sock");
+      const { port, dials, first, close } = await twoServers(path);
+      const sql = client(port);
+      try {
+        await planted({ path }, async () => {
+          const connecting = sql.connect().catch(e => e);
+          expect(await first).toBe("tcp");
+          // It dials again until the time to connect is over.
+          expect(await connecting).toBeInstanceOf(Error);
+        });
+        expect(dials.unix).toBe(0);
+      } finally {
+        await sql.close({ timeout: 0 });
+        close();
+      }
+    });
+
+    // `state` is what a connection of the pool says about itself. The one of sql.listen() is not of the pool.
+    test.skipIf(adapter !== "postgres").each<[string, (path: string) => Record<string, unknown>]>([
+      ["path", path => ({ path })],
+      ["state", () => ({ state: 2 })],
+    ])("sql.listen() dials the server of the client (%s)", async (_, values) => {
+      using dir = tempDir("sql-planted-listen", {});
+      const path = join(String(dir), "planted.sock");
+      const { port, dials, first, close } = await twoServers(path);
+      const sql = client(port);
+      try {
+        await planted(values(path), async () => {
+          const listening = sql.listen("channel", () => {}).catch(e => e);
+          expect(await first).toBe("tcp");
+          await sql.close({ timeout: 0 });
+          expect(await listening).toBeInstanceOf(Error);
+        });
+        expect(dials.unix).toBe(0);
+      } finally {
+        await sql.close({ timeout: 0 });
+        close();
+      }
+    });
   });
 });
 

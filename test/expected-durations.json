@@ -16,3416 +16,4521 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/abort-is-reported.test.ts": {
+    "default": 34,
+    "asan": 199,
+    "musl": 163,
+    "windows": 84
+  },
   "aot/accessor-fields.test.ts": {
-    "default": 1433,
-    "musl": 840
+    "default": 724,
+    "asan": 9253,
+    "musl": 1292,
+    "windows": 2428
   },
   "aot/adjacent-strings-in-executables.test.ts": {
-    "default": 929,
-    "asan": 2922,
-    "musl": 963
+    "default": 784,
+    "asan": 8461,
+    "musl": 706,
+    "windows": 81
   },
   "aot/analysis-scaling/analysis-scaling.test.ts": {
-    "default": 7531,
-    "asan": 355,
-    "musl": 6338
+    "default": 12600,
+    "asan": 325,
+    "musl": 14628,
+    "windows": 71
   },
   "aot/annotated-variable-mismatch.test.ts": {
-    "default": 5733,
-    "asan": 11087,
-    "musl": 10204
+    "default": 5494,
+    "asan": 41292,
+    "musl": 6408,
+    "windows": 4790
   },
   "aot/aot-recursive-untyped-functions-build-time.test.ts": {
-    "default": 2865,
-    "asan": 1437,
-    "musl": 3269
+    "default": 3141,
+    "asan": 9856,
+    "musl": 2524,
+    "windows": 2040
   },
   "aot/arrays.test.ts": {
-    "default": 70477,
-    "asan": 13081,
-    "musl": 76497
+    "default": 63992,
+    "asan": 24487,
+    "musl": 76845,
+    "windows": 103187
   },
   "aot/assembled-patterns-in-code.test.ts": {
-    "default": 830,
-    "asan": 2650,
-    "musl": 974
+    "default": 682,
+    "asan": 7879,
+    "musl": 860,
+    "windows": 61
   },
   "aot/assembled-patterns-in-executables.test.ts": {
-    "default": 1338,
-    "asan": 4674,
-    "musl": 1273
+    "default": 1284,
+    "asan": 9269,
+    "musl": 1360,
+    "windows": 72
   },
   "aot/async-and-generators.test.ts": {
-    "default": 60646,
-    "asan": 35336,
-    "musl": 66386
+    "default": 53910,
+    "asan": 43677,
+    "musl": 67622,
+    "windows": 79977
   },
   "aot/audit-arguments-passed-via-any.test.ts": {
-    "default": 3667,
-    "asan": 2003,
-    "musl": 504
+    "default": 503,
+    "asan": 8602,
+    "musl": 530,
+    "windows": 1371
   },
   "aot/audit-reports-only-throwing-cases.test.ts": {
-    "default": 685,
-    "asan": 2973,
-    "musl": 760
+    "default": 608,
+    "asan": 26376,
+    "musl": 745,
+    "windows": 771
   },
   "aot/backend-packages/more-programs.test.ts": {
-    "default": 29182,
-    "asan": 153519,
-    "musl": 70729
+    "default": 27136,
+    "asan": 151125,
+    "musl": 67231,
+    "windows": 50254
   },
   "aot/backend-packages/programs-1.test.ts": {
-    "default": 54385,
-    "asan": 197814,
-    "musl": 149061
+    "default": 52672,
+    "asan": 198627,
+    "musl": 160676,
+    "windows": 92606
   },
   "aot/backend-packages/programs-2.test.ts": {
-    "default": 64875,
-    "musl": 160634
+    "default": 52886,
+    "asan": 139555,
+    "musl": 148878,
+    "windows": 91711
   },
   "aot/backend-packages/programs-3.test.ts": {
-    "default": 56563,
-    "asan": 260013,
-    "musl": 162680
+    "default": 48889,
+    "asan": 205678,
+    "musl": 147316,
+    "windows": 93748
   },
   "aot/backend-packages/programs-4.test.ts": {
-    "default": 54371,
-    "asan": 129432,
-    "musl": 172750
+    "default": 51041,
+    "asan": 112397,
+    "musl": 161865,
+    "windows": 97165
   },
   "aot/backend/backend.test.ts": {
-    "default": 50,
-    "asan": 369,
-    "musl": 46
+    "default": 49,
+    "asan": 358,
+    "musl": 55,
+    "windows": 72
   },
   "aot/backend/memory.test.ts": {
-    "default": 106,
-    "asan": 299,
-    "musl": 114
+    "default": 88,
+    "asan": 275,
+    "musl": 158,
+    "windows": 2414
   },
   "aot/backend/tracker/tracker.test.ts": {
-    "default": 39,
-    "asan": 376,
-    "musl": 59
+    "default": 36,
+    "asan": 469,
+    "musl": 46,
+    "windows": 69
   },
   "aot/bad-time/bad-time-1.test.ts": {
-    "default": 71269,
+    "default": 63400,
     "musl": 110
   },
   "aot/bad-time/bad-time-2.test.ts": {
-    "default": 67493,
-    "asan": 36771,
+    "default": 58967,
+    "asan": 55709,
     "musl": 60
   },
   "aot/bad-time/bad-time-3.test.ts": {
-    "default": 61650,
-    "asan": 95879,
+    "default": 112008,
+    "asan": 145260,
     "musl": 95
   },
   "aot/bad-time/bad-time-4.test.ts": {
-    "default": 70868,
-    "asan": 16423,
+    "default": 109322,
+    "asan": 24881,
     "musl": 95
   },
   "aot/bad-time/bad-time-5.test.ts": {
-    "default": 66519,
-    "asan": 16169,
+    "default": 94694,
+    "asan": 24497,
     "musl": 190
   },
   "aot/bad-time/bad-time-6.test.ts": {
-    "default": 121626,
-    "asan": 108835,
+    "default": 70266,
+    "asan": 164889,
     "musl": 66
   },
   "aot/bad-time/bad-time-7.test.ts": {
-    "default": 107582,
-    "asan": 107881,
+    "default": 61086,
+    "asan": 163443,
     "musl": 205
   },
   "aot/bad-time/bad-time-8.test.ts": {
-    "default": 83747,
-    "asan": 52436,
+    "default": 84268,
+    "asan": 79442,
     "musl": 45
   },
   "aot/buffer-accessors-relookup.test.ts": {
-    "default": 593,
-    "asan": 9008,
-    "musl": 909
+    "default": 538,
+    "asan": 9070,
+    "musl": 745,
+    "windows": 1536
   },
   "aot/build-flags.test.ts": {
-    "default": 38833,
-    "asan": 35861,
-    "musl": 11595
+    "default": 29170,
+    "asan": 52698,
+    "musl": 13039,
+    "windows": 25597
   },
   "aot/build-plugins.test.ts": {
-    "default": 25596,
-    "asan": 10135,
-    "musl": 12374
+    "default": 12131,
+    "asan": 36686,
+    "musl": 4037,
+    "windows": 8320
   },
   "aot/builtin-module-constructors-avoid-runtime.test.ts": {
-    "default": 1185,
-    "asan": 3569,
-    "musl": 1306
+    "default": 1013,
+    "asan": 9540,
+    "musl": 1264,
+    "windows": 2013
   },
   "aot/builtin-module-symbols-are-names.test.ts": {
-    "default": 1896,
-    "asan": 11749,
-    "musl": 2195
+    "default": 1820,
+    "asan": 10912,
+    "musl": 2092,
+    "windows": 3630
   },
   "aot/builtin-modules.test.ts": {
-    "default": 26097,
-    "musl": 26750
+    "default": 25354,
+    "asan": 14010,
+    "musl": 26563,
+    "windows": 35468
   },
   "aot/bun-intrinsics-any-installed-types.test.ts": {
-    "default": 8406,
-    "asan": 25061,
-    "musl": 8628
+    "default": 7662,
+    "asan": 100469,
+    "musl": 8454,
+    "windows": 20612
   },
   "aot/bun-wrap-computed-name.test.ts": {
-    "default": 8889,
-    "asan": 18111,
-    "musl": 8626
+    "default": 6438,
+    "asan": 18916,
+    "musl": 8004,
+    "windows": 7179
   },
   "aot/bundler-features.test.ts": {
-    "default": 30869,
-    "asan": 8918,
-    "musl": 13428
+    "default": 20349,
+    "asan": 11655,
+    "musl": 13286,
+    "windows": 24126
   },
   "aot/call-return-balance/call-return-balance.test.ts": {
-    "default": 90696,
-    "asan": 7049,
-    "musl": 72980
+    "default": 93347,
+    "asan": 6088,
+    "musl": 73611,
+    "windows": 60
   },
   "aot/calls-1.test.ts": {
-    "default": 65880,
-    "asan": 17649,
-    "musl": 66706
+    "default": 60360,
+    "asan": 32409,
+    "musl": 67325,
+    "windows": 98623
   },
   "aot/calls-2.test.ts": {
-    "default": 54427,
-    "asan": 19588,
-    "musl": 56464
+    "default": 58957,
+    "asan": 23977,
+    "musl": 60634,
+    "windows": 78636
   },
   "aot/calls-fast-paths.test.ts": {
-    "default": 101509,
-    "musl": 102932
+    "default": 94493,
+    "asan": 26260,
+    "musl": 98605,
+    "windows": 140441
   },
   "aot/carrier-executable.test.ts": {
-    "default": 1219,
-    "asan": 4797,
-    "musl": 1606
+    "default": 1076,
+    "asan": 17027,
+    "musl": 1174,
+    "windows": 1489
   },
   "aot/check-flags-with-check-script.test.ts": {
-    "default": 296,
-    "asan": 1614,
-    "musl": 313
+    "default": 302,
+    "asan": 14363,
+    "musl": 305,
+    "windows": 385
   },
   "aot/classes-and-closures.test.ts": {
-    "default": 52177,
-    "asan": 8233,
-    "musl": 61041
+    "default": 52799,
+    "asan": 21523,
+    "musl": 55458,
+    "windows": 78631
   },
   "aot/classes-use-enclosing-tsconfig.test.ts": {
-    "default": 829,
-    "asan": 2825,
-    "musl": 914
+    "default": 741,
+    "asan": 9713,
+    "musl": 758,
+    "windows": 2234
   },
   "aot/collector-stress/full-1.test.ts": {
-    "default": 158634,
-    "asan": 153561,
+    "default": 195733,
+    "asan": 232650,
     "musl": 44
   },
   "aot/collector-stress/full-10.test.ts": {
-    "default": 144810,
-    "asan": 146695,
+    "default": 185226,
+    "asan": 222248,
     "musl": 33
   },
   "aot/collector-stress/full-11.test.ts": {
-    "default": 142780,
-    "asan": 60800,
+    "default": 243823,
+    "asan": 92114,
     "musl": 39
   },
   "aot/collector-stress/full-12.test.ts": {
-    "default": 177232,
-    "asan": 134835,
+    "default": 161514,
+    "asan": 204280,
     "musl": 174
   },
   "aot/collector-stress/full-13.test.ts": {
-    "default": 146422,
-    "asan": 53945,
+    "default": 136373,
+    "asan": 81728,
     "musl": 41
   },
   "aot/collector-stress/full-14.test.ts": {
-    "default": 195848,
-    "asan": 60797,
+    "default": 73624,
+    "asan": 92109,
     "musl": 42
   },
   "aot/collector-stress/full-15.test.ts": {
-    "default": 158910,
-    "asan": 88891,
+    "default": 153467,
+    "asan": 134673,
     "musl": 41
   },
   "aot/collector-stress/full-16.test.ts": {
-    "default": 62108,
-    "asan": 101693,
+    "default": 61688,
+    "asan": 154068,
     "musl": 60
   },
   "aot/collector-stress/full-17.test.ts": {
-    "default": 169202,
+    "default": 156572,
     "musl": 39
   },
   "aot/collector-stress/full-18.test.ts": {
-    "default": 156639,
-    "asan": 103112,
+    "default": 110603,
+    "asan": 156218,
     "musl": 42
   },
   "aot/collector-stress/full-19.test.ts": {
-    "default": 226099,
-    "asan": 186886,
+    "default": 51980,
+    "asan": 283138,
     "musl": 44
   },
   "aot/collector-stress/full-2.test.ts": {
-    "default": 169121,
-    "asan": 172759,
+    "default": 82153,
+    "asan": 261736,
     "musl": 37
   },
   "aot/collector-stress/full-20.test.ts": {
-    "default": 200124,
-    "asan": 162963,
+    "default": 165456,
+    "asan": 246894,
     "musl": 36
   },
   "aot/collector-stress/full-21.test.ts": {
-    "default": 194292,
-    "asan": 151781,
+    "default": 180621,
+    "asan": 229953,
     "musl": 39
   },
   "aot/collector-stress/full-22.test.ts": {
-    "default": 154510,
-    "asan": 203730,
+    "default": 290597,
+    "asan": 308658,
     "musl": 36
   },
   "aot/collector-stress/full-23.test.ts": {
-    "default": 147986,
+    "default": 128490,
     "musl": 37
   },
   "aot/collector-stress/full-24.test.ts": {
-    "default": 185075,
-    "asan": 162675,
+    "default": 134498,
+    "asan": 246458,
     "musl": 38
   },
   "aot/collector-stress/full-25.test.ts": {
-    "default": 46044,
-    "asan": 47063,
+    "default": 167839,
+    "asan": 71302,
     "musl": 38
   },
   "aot/collector-stress/full-26.test.ts": {
-    "default": 213134,
-    "asan": 119157,
+    "default": 176600,
+    "asan": 180527,
     "musl": 37
   },
   "aot/collector-stress/full-27.test.ts": {
-    "default": 275706,
-    "asan": 162463,
+    "default": 170824,
+    "asan": 246137,
     "musl": 39
   },
   "aot/collector-stress/full-28.test.ts": {
-    "default": 220487,
-    "asan": 179536,
+    "default": 178174,
+    "asan": 272003,
     "musl": 43
   },
   "aot/collector-stress/full-29.test.ts": {
-    "default": 176223,
-    "asan": 179235,
+    "default": 182770,
+    "asan": 271547,
     "musl": 34
   },
   "aot/collector-stress/full-3.test.ts": {
-    "default": 159173,
-    "asan": 225340,
+    "default": 261669,
+    "asan": 341398,
     "musl": 39
   },
   "aot/collector-stress/full-30.test.ts": {
-    "default": 167149,
-    "asan": 93504,
+    "default": 129394,
+    "asan": 141662,
     "musl": 41
   },
   "aot/collector-stress/full-4.test.ts": {
-    "default": 144973,
-    "asan": 150029,
+    "default": 160994,
+    "asan": 227299,
     "musl": 40
   },
   "aot/collector-stress/full-5.test.ts": {
-    "default": 149216,
-    "asan": 59043,
+    "default": 269589,
+    "asan": 89452,
     "musl": 36
   },
   "aot/collector-stress/full-6.test.ts": {
-    "default": 160452,
-    "asan": 138401,
+    "default": 182170,
+    "asan": 209682,
     "musl": 43
   },
   "aot/collector-stress/full-7.test.ts": {
-    "default": 128407,
-    "asan": 61106,
+    "default": 185127,
+    "asan": 92578,
     "musl": 42
   },
   "aot/collector-stress/full-8.test.ts": {
-    "default": 242674,
+    "default": 160338,
     "musl": 38
   },
   "aot/collector-stress/full-9.test.ts": {
-    "default": 87538,
-    "asan": 159087,
+    "default": 183140,
+    "asan": 241022,
     "musl": 39
   },
   "aot/collector-stress/young-1.test.ts": {
-    "default": 172851,
-    "asan": 168184,
+    "default": 205870,
+    "asan": 254804,
     "musl": 43
   },
   "aot/collector-stress/young-10.test.ts": {
-    "default": 75847,
-    "asan": 159491,
+    "default": 51243,
+    "asan": 241634,
     "musl": 34
   },
   "aot/collector-stress/young-11.test.ts": {
-    "default": 44736,
-    "asan": 158370,
+    "default": 142155,
+    "asan": 239936,
     "musl": 35
   },
   "aot/collector-stress/young-12.test.ts": {
-    "default": 80045,
-    "asan": 162224,
+    "default": 183489,
+    "asan": 245775,
     "musl": 39
   },
   "aot/collector-stress/young-13.test.ts": {
-    "default": 62780,
-    "asan": 148884,
+    "default": 176567,
+    "asan": 225564,
     "musl": 33
   },
   "aot/collector-stress/young-14.test.ts": {
-    "default": 165943,
+    "default": 47565,
     "musl": 36
   },
   "aot/collector-stress/young-15.test.ts": {
-    "default": 58485,
-    "asan": 164321,
+    "default": 163277,
+    "asan": 248952,
     "musl": 37
   },
   "aot/collector-stress/young-16.test.ts": {
-    "default": 50554,
-    "asan": 111236,
+    "default": 148323,
+    "asan": 168526,
     "musl": 58
   },
   "aot/collector-stress/young-17.test.ts": {
-    "default": 108992,
-    "asan": 185881,
+    "default": 111138,
+    "asan": 281616,
     "musl": 35
   },
   "aot/collector-stress/young-18.test.ts": {
-    "default": 127835,
-    "asan": 176286,
+    "default": 148494,
+    "asan": 267079,
     "musl": 38
   },
   "aot/collector-stress/young-19.test.ts": {
-    "default": 122656,
-    "asan": 194373,
+    "default": 161885,
+    "asan": 294482,
     "musl": 44
   },
   "aot/collector-stress/young-2.test.ts": {
-    "default": 118132,
-    "asan": 288046,
+    "default": 200374,
+    "asan": 436399,
     "musl": 34
   },
   "aot/collector-stress/young-20.test.ts": {
-    "default": 183862,
-    "asan": 175867,
+    "default": 173991,
+    "asan": 266444,
     "musl": 40
   },
   "aot/collector-stress/young-3.test.ts": {
-    "default": 169700,
-    "asan": 246199,
+    "default": 159819,
+    "asan": 373000,
     "musl": 40
   },
   "aot/collector-stress/young-4.test.ts": {
-    "default": 89859,
-    "asan": 149226,
+    "default": 161942,
+    "asan": 226082,
     "musl": 41
   },
   "aot/collector-stress/young-5.test.ts": {
-    "default": 127158,
-    "asan": 152847,
+    "default": 50957,
+    "asan": 231568,
     "musl": 37
   },
   "aot/collector-stress/young-6.test.ts": {
-    "default": 148616,
-    "asan": 159261,
+    "default": 57658,
+    "asan": 241286,
     "musl": 40
   },
   "aot/collector-stress/young-7.test.ts": {
-    "default": 219619,
-    "asan": 166651,
+    "default": 91052,
+    "asan": 252482,
     "musl": 43
   },
   "aot/collector-stress/young-8.test.ts": {
-    "default": 188028,
+    "default": 71074,
     "musl": 37
   },
   "aot/collector-stress/young-9.test.ts": {
-    "default": 76634,
-    "asan": 162783,
+    "default": 61131,
+    "asan": 246622,
     "musl": 39
   },
   "aot/commonjs-cycle-in-place.test.ts": {
-    "default": 2582,
-    "asan": 6921,
-    "musl": 2940
+    "default": 2208,
+    "asan": 6570,
+    "musl": 2889,
+    "windows": 2524
   },
   "aot/commonjs-first-require-near-stack-limit.test.ts": {
-    "default": 5047,
-    "asan": 7850,
-    "musl": 2698
+    "default": 3344,
+    "asan": 25758,
+    "musl": 3228,
+    "windows": 6251
   },
   "aot/commonjs-module-children.test.ts": {
-    "default": 9933,
-    "asan": 27222,
-    "musl": 10374
+    "default": 10073,
+    "asan": 24751,
+    "musl": 11245,
+    "windows": 11693
   },
   "aot/commonjs-single-module-object-in-place.test.ts": {
-    "default": 10572,
-    "asan": 31400,
-    "musl": 11511
+    "default": 10335,
+    "asan": 84284,
+    "musl": 11542,
+    "windows": 14904
   },
   "aot/commonjs.test.ts": {
-    "default": 24371,
-    "asan": 7548,
-    "musl": 22231
+    "default": 23698,
+    "asan": 15259,
+    "musl": 29736,
+    "windows": 44540
   },
   "aot/compiled-files-by-path.test.ts": {
-    "default": 1140,
-    "musl": 1090
+    "default": 1076,
+    "asan": 10564,
+    "musl": 1162,
+    "windows": 2175
   },
   "aot/const-and-dead-zones.test.ts": {
-    "default": 3700,
-    "asan": 513,
-    "musl": 6571
+    "default": 3537,
+    "asan": 487,
+    "musl": 8992,
+    "windows": 6445
   },
   "aot/counterexamples-1.test.ts": {
-    "default": 63578,
-    "asan": 21847,
-    "musl": 75855
+    "default": 64498,
+    "asan": 42630,
+    "musl": 72033,
+    "windows": 113589
   },
   "aot/counterexamples-2.test.ts": {
-    "default": 63034,
-    "asan": 22918,
-    "musl": 66213
+    "default": 61181,
+    "asan": 49201,
+    "musl": 73673,
+    "windows": 109835
   },
   "aot/counterexamples-3.test.ts": {
-    "default": 67082,
-    "asan": 22535,
-    "musl": 71708
+    "default": 64312,
+    "asan": 50383,
+    "musl": 65494,
+    "windows": 103253
   },
   "aot/create-require-in-var.test.ts": {
-    "default": 6542,
-    "asan": 15225,
-    "musl": 6875
+    "default": 5714,
+    "asan": 16312,
+    "musl": 6880,
+    "windows": 6856
   },
   "aot/create-require-literal-names.test.ts": {
-    "default": 34206,
-    "asan": 71298,
-    "musl": 30952
+    "default": 29480,
+    "asan": 94602,
+    "musl": 34283,
+    "windows": 33214
   },
   "aot/data-from-outside-1.test.ts": {
-    "default": 76261,
-    "asan": 15047,
-    "musl": 83492
+    "default": 71208,
+    "asan": 33186,
+    "musl": 84880,
+    "windows": 115006
   },
   "aot/data-from-outside-2.test.ts": {
-    "default": 63522,
-    "asan": 19805,
-    "musl": 66615
+    "default": 64429,
+    "asan": 43290,
+    "musl": 64878,
+    "windows": 101251
   },
   "aot/debug-aot.test.ts": {
-    "default": 1060,
-    "asan": 3814,
-    "musl": 972
+    "default": 894,
+    "asan": 3388,
+    "musl": 965,
+    "windows": 1012
   },
   "aot/declarations.test.ts": {
-    "default": 10442,
-    "asan": 370,
-    "musl": 18292
+    "default": 9761,
+    "asan": 338,
+    "musl": 10369,
+    "windows": 17690
   },
   "aot/dependency-class-fields.test.ts": {
-    "default": 1318,
-    "asan": 4495,
-    "musl": 1452
+    "default": 1248,
+    "asan": 15752,
+    "musl": 1399,
+    "windows": 3712
   },
   "aot/dependency-detection.test.ts": {
-    "default": 2684,
-    "asan": 6598,
-    "musl": 2253
+    "default": 4704,
+    "asan": 80127,
+    "musl": 4174,
+    "windows": 8544
   },
   "aot/destructuring-defaults.test.ts": {
-    "default": 10587,
-    "musl": 8231
+    "default": 10893,
+    "asan": 10758,
+    "musl": 8028,
+    "windows": 14933
   },
   "aot/diagnostic-rules.test.ts": {
-    "default": 9897,
-    "asan": 25779,
-    "musl": 10038
+    "default": 12781,
+    "asan": 103869,
+    "musl": 13455,
+    "windows": 14273
   },
   "aot/direct-eval-sloppy-top-level-declarations.test.ts": {
-    "default": 75310,
-    "asan": 144555,
-    "musl": 72206
+    "default": 60888,
+    "asan": 161286,
+    "musl": 63747,
+    "windows": 68276
   },
   "aot/dual-package-import-and-require.test.ts": {
-    "default": 18114,
-    "asan": 19179,
-    "musl": 7764
+    "default": 10854,
+    "asan": 32663,
+    "musl": 7597,
+    "windows": 13412
   },
   "aot/early-errors.test.ts": {
-    "default": 15075,
-    "asan": 29648,
-    "musl": 11367
+    "default": 12698,
+    "asan": 63575,
+    "musl": 11910,
+    "windows": 13400
   },
   "aot/effects.test.ts": {
-    "default": 2682,
-    "asan": 358,
-    "musl": 2612
+    "default": 3514,
+    "asan": 335,
+    "musl": 2758,
+    "windows": 5847
   },
   "aot/engine-private-names-avoid-runtime.test.ts": {
-    "default": 1082,
-    "asan": 3440,
-    "musl": 1032
+    "default": 1042,
+    "asan": 9865,
+    "musl": 1104,
+    "windows": 2017
   },
   "aot/enums.test.ts": {
-    "default": 6661,
-    "musl": 5405
+    "default": 6295,
+    "asan": 9128,
+    "musl": 5608,
+    "windows": 10724
   },
   "aot/error-prototypes-unlocked.test.ts": {
-    "default": 11133,
-    "asan": 23399,
-    "musl": 14965
+    "default": 9205,
+    "asan": 37488,
+    "musl": 9559,
+    "windows": 12678
   },
   "aot/escape-analysis.test.ts": {
-    "default": 40358,
-    "asan": 10473,
-    "musl": 43539
+    "default": 38630,
+    "asan": 20871,
+    "musl": 40764,
+    "windows": 69814
   },
   "aot/every-platform.test.ts": {
-    "default": 1385,
-    "asan": 4873,
-    "musl": 1430
+    "default": 1515,
+    "asan": 11369,
+    "musl": 1738,
+    "windows": 2531
   },
   "aot/explain-joins.test.ts": {
-    "default": 564,
-    "asan": 2102,
-    "musl": 567
+    "default": 546,
+    "asan": 8016,
+    "musl": 606,
+    "windows": 1388
   },
   "aot/exports-used-by-unseen-files-in-place.test.ts": {
-    "default": 39982,
-    "asan": 84587,
-    "musl": 45086
+    "default": 35158,
+    "asan": 84712,
+    "musl": 40059,
+    "windows": 40253
   },
   "aot/extensionless-entry-points.test.ts": {
-    "default": 3558,
-    "asan": 9200,
-    "musl": 3458
+    "default": 3313,
+    "asan": 17082,
+    "musl": 3754,
+    "windows": 5436
   },
   "aot/external-sources-of-typed-objects.test.ts": {
-    "default": 10696,
-    "asan": 3795,
-    "musl": 10149
+    "default": 9649,
+    "asan": 10254,
+    "musl": 10654,
+    "windows": 14150
   },
   "aot/extra-entry-points-by-path.test.ts": {
-    "default": 11762,
-    "asan": 31854,
-    "musl": 12072
+    "default": 11954,
+    "asan": 61859,
+    "musl": 12764,
+    "windows": 15856
   },
   "aot/extra-entry-points.test.ts": {
-    "default": 13975,
-    "asan": 38808,
-    "musl": 14594
+    "default": 14024,
+    "asan": 69277,
+    "musl": 13096,
+    "windows": 17790
   },
   "aot/file-by-literal-and-computed-name.test.ts": {
-    "default": 8659,
-    "asan": 24764,
-    "musl": 10370
+    "default": 9063,
+    "asan": 52245,
+    "musl": 9938,
+    "windows": 13380
   },
   "aot/file-ending-like-compiler-output.test.ts": {
-    "default": 7770,
-    "asan": 23595,
-    "musl": 9125
+    "default": 8651,
+    "asan": 55600,
+    "musl": 8015,
+    "windows": 12913
   },
   "aot/file-kind-matches-bun.test.ts": {
-    "default": 46471,
-    "asan": 102001,
-    "musl": 48191
+    "default": 44549,
+    "asan": 139665,
+    "musl": 42096,
+    "windows": 55520
   },
   "aot/file-kinds.test.ts": {
-    "default": 29416,
-    "musl": 27071
+    "default": 26746,
+    "asan": 66426,
+    "musl": 27478,
+    "windows": 43091
   },
   "aot/file-under-other-tsconfig.test.ts": {
-    "default": 6073,
-    "asan": 20786,
-    "musl": 6218
+    "default": 5928,
+    "asan": 69422,
+    "musl": 6134,
+    "windows": 13263
   },
   "aot/files-referenced-in-unreachable-code.test.ts": {
-    "default": 2895,
-    "asan": 9286,
-    "musl": 2935
+    "default": 2581,
+    "asan": 13681,
+    "musl": 2634,
+    "windows": 3376
   },
   "aot/frameworks/angular.test.ts": {
-    "default": 10434,
-    "asan": 18051,
-    "musl": 27769
+    "default": 9866,
+    "asan": 18015,
+    "musl": 27940,
+    "windows": 17528
   },
   "aot/frameworks/astro.test.ts": {
-    "default": 5428,
-    "asan": 16512,
-    "musl": 12686
+    "default": 5632,
+    "asan": 16165,
+    "musl": 12630,
+    "windows": 10352
   },
   "aot/frameworks/next.test.ts": {
-    "default": 34299,
-    "asan": 86782,
-    "musl": 47789
+    "default": 37145,
+    "asan": 79330,
+    "musl": 48988,
+    "windows": 45215
   },
   "aot/frameworks/nuxt.test.ts": {
-    "default": 10463,
-    "asan": 45249,
-    "musl": 24508
+    "default": 9861,
+    "asan": 45947,
+    "musl": 28490,
+    "windows": 20641
   },
   "aot/frameworks/react-router.test.ts": {
-    "default": 5263,
-    "musl": 6065
+    "default": 4778,
+    "asan": 13265,
+    "musl": 6173,
+    "windows": 9662
   },
   "aot/frameworks/sveltekit.test.ts": {
-    "default": 6101,
-    "asan": 17596,
-    "musl": 7745
+    "default": 5002,
+    "asan": 16137,
+    "musl": 5910,
+    "windows": 8847
   },
   "aot/function-declarations-in-switch-cases.test.ts": {
-    "default": 36342,
-    "asan": 33151,
-    "musl": 16041
+    "default": 31456,
+    "asan": 48538,
+    "musl": 14987,
+    "windows": 20933
   },
   "aot/generated-builtins-vs-running-bun.test.ts": {
-    "default": 4756,
-    "asan": 3736,
-    "musl": 5042
+    "default": 5359,
+    "asan": 15612,
+    "musl": 4992,
+    "windows": 6772
   },
   "aot/generated-by-python.test.ts": {
-    "default": 160478,
-    "asan": 195921,
-    "musl": 185164
+    "default": 153385,
+    "asan": 410426,
+    "musl": 154657,
+    "windows": 189089
   },
   "aot/generated-cases-three-ways-1.test.ts": {
-    "default": 106931,
-    "asan": 51868,
-    "musl": 98812
+    "default": 88686,
+    "asan": 86436,
+    "musl": 82230,
+    "windows": 154129
   },
   "aot/generated-cases-three-ways-2.test.ts": {
-    "default": 72815,
-    "asan": 47301,
-    "musl": 69282
+    "default": 76885,
+    "asan": 77663,
+    "musl": 74879,
+    "windows": 84869
   },
   "aot/generated-cases-three-ways-3.test.ts": {
-    "default": 81885,
-    "asan": 48674,
-    "musl": 78420
+    "default": 73414,
+    "asan": 68043,
+    "musl": 74411,
+    "windows": 113024
   },
   "aot/generated-cases-three-ways-4.test.ts": {
-    "default": 8684,
-    "asan": 5240,
-    "musl": 7176
+    "default": 7151,
+    "asan": 12339,
+    "musl": 6774,
+    "windows": 23198
   },
   "aot/generated-cases-three-ways-5.test.ts": {
-    "default": 30798,
-    "asan": 21010,
-    "musl": 23719
+    "default": 29235,
+    "asan": 37955,
+    "musl": 23353,
+    "windows": 46844
   },
   "aot/generated-cases-three-ways-6.test.ts": {
-    "default": 60445,
-    "asan": 20132,
-    "musl": 41610
+    "default": 56725,
+    "asan": 38866,
+    "musl": 44960,
+    "windows": 101817
   },
   "aot/generated-cases-three-ways-7.test.ts": {
-    "default": 59868,
-    "asan": 20992,
-    "musl": 47382
+    "default": 55749,
+    "asan": 38811,
+    "musl": 44869,
+    "windows": 101178
   },
   "aot/generated-cases-three-ways-8.test.ts": {
-    "default": 27825,
-    "asan": 17315,
-    "musl": 20576
+    "default": 22902,
+    "asan": 31578,
+    "musl": 19302,
+    "windows": 48406
   },
   "aot/generated-code.test.ts": {
-    "default": 25871,
-    "musl": 39
+    "default": 25107,
+    "asan": 6474,
+    "musl": 42,
+    "windows": 58
   },
   "aot/generated-constant-expressions.test.ts": {
-    "default": 13685,
-    "asan": 10553,
-    "musl": 13155
+    "default": 12885,
+    "asan": 20885,
+    "musl": 11673,
+    "windows": 18420
   },
   "aot/generated-element-key-kinds.test.ts": {
-    "default": 1648,
-    "asan": 4490,
-    "musl": 1817
+    "default": 1601,
+    "asan": 16970,
+    "musl": 1669,
+    "windows": 2850
   },
   "aot/generated-escaping-objects.test.ts": {
-    "default": 15322,
-    "asan": 5291,
-    "musl": 14224
+    "default": 15505,
+    "asan": 16765,
+    "musl": 16151,
+    "windows": 19835
   },
   "aot/generated-fresh-seeds-1.test.ts": {
-    "default": 21600,
-    "asan": 71591,
-    "musl": 38
+    "default": 35,
+    "asan": 346,
+    "musl": 41,
+    "windows": 71
   },
   "aot/generated-fresh-seeds-2.test.ts": {
-    "default": 16445,
-    "asan": 45981,
-    "musl": 41
+    "default": 33,
+    "asan": 336,
+    "musl": 41,
+    "windows": 63
   },
   "aot/generated-fresh-seeds-3.test.ts": {
-    "default": 39,
-    "asan": 123579,
-    "musl": 37
+    "default": 36,
+    "asan": 349,
+    "musl": 42,
+    "windows": 61
   },
   "aot/generated-host-object-named-reads.test.ts": {
-    "default": 5557,
-    "musl": 5328
+    "default": 5967,
+    "asan": 15251,
+    "musl": 5865,
+    "windows": 8692
   },
   "aot/generated-joined-literals.test.ts": {
-    "default": 29625,
-    "asan": 8195,
-    "musl": 42296
+    "default": 24776,
+    "asan": 20191,
+    "musl": 23808,
+    "windows": 44421
   },
   "aot/generated-joined-values.test.ts": {
-    "default": 7146,
-    "asan": 4003,
-    "musl": 6687
+    "default": 7567,
+    "asan": 16007,
+    "musl": 6347,
+    "windows": 10612
   },
   "aot/generated-key-order.test.ts": {
-    "default": 2238,
-    "asan": 7894,
-    "musl": 2369
+    "default": 2248,
+    "asan": 17613,
+    "musl": 2457,
+    "windows": 4614
   },
   "aot/generated-module-graphs.test.ts": {
-    "default": 14782,
-    "asan": 4995,
-    "musl": 14074
+    "default": 13835,
+    "asan": 15922,
+    "musl": 14838,
+    "windows": 22234
   },
   "aot/generated-operand-kinds.test.ts": {
-    "default": 12053,
-    "asan": 9393,
-    "musl": 13255
+    "default": 11397,
+    "asan": 20285,
+    "musl": 12234,
+    "windows": 14909
   },
   "aot/generated-operands.test.ts": {
-    "default": 25476,
-    "asan": 11752,
-    "musl": 25039
+    "default": 26660,
+    "asan": 22262,
+    "musl": 26723,
+    "windows": 32049
   },
   "aot/generated-optional-numbers-in-loops.test.ts": {
-    "default": 12798,
-    "asan": 19319,
-    "musl": 13131
+    "default": 11502,
+    "asan": 29569,
+    "musl": 14910,
+    "windows": 14570
   },
   "aot/generated-reads-through-proxies.test.ts": {
-    "default": 10824,
-    "asan": 21226,
-    "musl": 11108
+    "default": 10282,
+    "asan": 30197,
+    "musl": 11404,
+    "windows": 12090
   },
   "aot/generated-regular-expressions.test.ts": {
-    "default": 99888,
-    "asan": 101003,
-    "musl": 99596
+    "default": 16742,
+    "asan": 18655,
+    "musl": 19143,
+    "windows": 20864
   },
   "aot/generated-replaced-globals.test.ts": {
-    "default": 123335,
-    "asan": 31569,
-    "musl": 117815
+    "default": 125759,
+    "asan": 51806,
+    "musl": 134577,
+    "windows": 125313
   },
   "aot/generated-small-functions.test.ts": {
-    "default": 3582,
-    "asan": 3869,
-    "musl": 2976
+    "default": 2622,
+    "asan": 15023,
+    "musl": 2860,
+    "windows": 4888
   },
   "aot/generated-sound-typescript.test.ts": {
-    "default": 916,
-    "asan": 3790,
-    "musl": 847
+    "default": 742,
+    "asan": 14268,
+    "musl": 835,
+    "windows": 2727
   },
   "aot/generated-sql-typed-rows.test.ts": {
-    "default": 13286,
-    "musl": 13269
+    "default": 12005,
+    "asan": 19116,
+    "musl": 13244,
+    "windows": 17158
   },
   "aot/generated-type-mismatches.test.ts": {
-    "default": 2045,
-    "asan": 3052,
-    "musl": 2062
+    "default": 2319,
+    "asan": 15361,
+    "musl": 2190,
+    "windows": 3639
   },
   "aot/generated-visible-typed-array-allocations.test.ts": {
-    "default": 3603,
-    "asan": 9487,
-    "musl": 4092
+    "default": 3508,
+    "asan": 20204,
+    "musl": 3370,
+    "windows": 4994
   },
   "aot/heap-limit-too-small.test.ts": {
-    "default": 1065,
-    "asan": 2896,
-    "musl": 942
+    "default": 918,
+    "asan": 9417,
+    "musl": 1046,
+    "windows": 64
   },
   "aot/heap-limit.test.ts": {
-    "default": 10634,
-    "asan": 18672,
-    "musl": 10244
+    "default": 11197,
+    "asan": 21596,
+    "musl": 11625,
+    "windows": 62
   },
   "aot/host-classes-match-bun-types.test.ts": {
-    "default": 129,
-    "asan": 694,
-    "musl": 113
+    "default": 100,
+    "asan": 650,
+    "musl": 107,
+    "windows": 186
   },
   "aot/host-classes.test.ts": {
-    "default": 14733,
-    "asan": 14392,
-    "musl": 13172
+    "default": 13882,
+    "asan": 22287,
+    "musl": 14705,
+    "windows": 18481
   },
   "aot/host-object-accessors.test.ts": {
-    "default": 32,
-    "musl": 33
+    "default": 28,
+    "asan": 239,
+    "musl": 37,
+    "windows": 57
   },
   "aot/http-shared-symbols-are-names.test.ts": {
-    "default": 1899,
-    "asan": 10524,
-    "musl": 2071
+    "default": 1938,
+    "asan": 10413,
+    "musl": 2045,
+    "windows": 3024
   },
   "aot/import-defer.test.ts": {
-    "default": 48060,
-    "asan": 61119,
-    "musl": 25581
+    "default": 45234,
+    "asan": 84363,
+    "musl": 20747,
+    "windows": 25720
   },
   "aot/in-place-executables.test.ts": {
-    "default": 37824,
-    "asan": 92329,
-    "musl": 40964
+    "default": 42559,
+    "asan": 209792,
+    "musl": 45308,
+    "windows": 51990
   },
   "aot/indirect-jumps/indirect-jumps.test.ts": {
-    "default": 1051,
-    "asan": 5868,
-    "musl": 1056
+    "default": 1473,
+    "asan": 6689,
+    "musl": 987,
+    "windows": 65
   },
   "aot/instruction-counts/linux-x64-2.test.ts": {
-    "default": 301391,
-    "asan": 376,
+    "default": 300629,
+    "asan": 570,
     "musl": 300397
   },
   "aot/instruction-counts/linux-x64-3.test.ts": {
-    "default": 213387,
-    "asan": 353,
+    "default": 273808,
+    "asan": 535,
     "musl": 300144
   },
   "aot/instruction-counts/linux-x64-4.test.ts": {
-    "default": 118370,
-    "asan": 351,
+    "default": 133006,
+    "asan": 532,
     "musl": 117106
   },
   "aot/instruction-counts/linux-x64-in-place.test.ts": {
-    "default": 78855,
-    "asan": 618,
+    "default": 61768,
+    "asan": 936,
     "musl": 82432
   },
   "aot/instruction-counts/linux-x64-outside-loops.test.ts": {
-    "default": 70100,
-    "asan": 342,
+    "default": 64640,
+    "asan": 518,
     "musl": 69516
   },
   "aot/instruction-counts/linux-x64-packages.test.ts": {
-    "default": 34058,
-    "asan": 509,
+    "default": 38959,
+    "asan": 771,
     "musl": 25717
   },
   "aot/instruction-counts/linux-x64-programs.test.ts": {
-    "default": 158650,
-    "asan": 1546,
+    "default": 135970,
+    "asan": 2342,
     "musl": 154526
   },
   "aot/instruction-counts/linux-x64.test.ts": {
-    "default": 186028,
-    "asan": 357,
+    "default": 195302,
+    "asan": 541,
     "musl": 183520
   },
   "aot/intl-fuzz/intl-fuzz.test.ts": {
-    "default": 20680,
-    "musl": 21618
+    "default": 20295,
+    "asan": 31250,
+    "musl": 21584,
+    "windows": 25763
   },
   "aot/intl-patterns-log.test.ts": {
-    "default": 603,
-    "asan": 1892,
-    "musl": 616
+    "default": 524,
+    "asan": 9054,
+    "musl": 617,
+    "windows": 1278
   },
   "aot/intl-patterns-of-another-icu.test.ts": {
-    "default": 6892,
-    "asan": 23421,
-    "musl": 8373
+    "default": 5787,
+    "asan": 14313,
+    "musl": 7193,
+    "windows": 9598
   },
   "aot/invalid-programs-no-crash.test.ts": {
-    "default": 1071,
-    "asan": 10225,
-    "musl": 972
+    "default": 1100,
+    "asan": 38495,
+    "musl": 975,
+    "windows": 1926
   },
   "aot/invalid-regexp-literals.test.ts": {
-    "default": 25894,
-    "asan": 104612,
-    "musl": 24075
+    "default": 27690,
+    "asan": 601089,
+    "musl": 27215,
+    "windows": 35870
   },
   "aot/jit-mode-eager-tier-up-1.test.ts": {
-    "default": 79492,
-    "asan": 37365,
-    "musl": 86910
+    "default": 83914,
+    "asan": 117736,
+    "musl": 84347,
+    "windows": 102447
   },
   "aot/jit-mode-eager-tier-up-2.test.ts": {
-    "default": 85935,
-    "asan": 21233,
-    "musl": 78198
+    "default": 80459,
+    "asan": 86968,
+    "musl": 92169,
+    "windows": 89705
   },
   "aot/jsdoc-import-tags.test.ts": {
-    "default": 24173,
-    "musl": 13802
+    "default": 23292,
+    "asan": 52507,
+    "musl": 15137,
+    "windows": 18449
   },
   "aot/json-dates-written-in-place.test.ts": {
-    "default": 653,
-    "asan": 2375,
-    "musl": 617
+    "default": 648,
+    "asan": 8027,
+    "musl": 602,
+    "windows": 1448
   },
   "aot/json-module-members.test.ts": {
-    "default": 18868,
-    "asan": 24117,
-    "musl": 9737
+    "default": 12463,
+    "asan": 39488,
+    "musl": 10597,
+    "windows": 14769
   },
   "aot/json-namespace-keys.test.ts": {
-    "default": 20905,
-    "asan": 17248,
-    "musl": 7348
+    "default": 19680,
+    "asan": 40426,
+    "musl": 9647,
+    "windows": 11727
   },
   "aot/json-stringify-buffer-release.test.ts": {
     "default": 1066,
-    "asan": 2335,
-    "musl": 558
+    "asan": 7958,
+    "musl": 548,
+    "windows": 1339
   },
   "aot/json-stringify-wide-output-memory.test.ts": {
-    "default": 50023,
-    "asan": 355,
-    "musl": 50023
+    "default": 1091,
+    "asan": 345,
+    "musl": 603,
+    "windows": 1393
   },
   "aot/jsx.test.ts": {
-    "default": 12533,
-    "asan": 2359,
-    "musl": 14173
+    "default": 11764,
+    "asan": 9259,
+    "musl": 13641,
+    "windows": 22177
   },
   "aot/key-names-in-executables.test.ts": {
-    "default": 1348,
-    "asan": 4821,
-    "musl": 1202
+    "default": 1315,
+    "asan": 11266,
+    "musl": 1184,
+    "windows": 57
   },
   "aot/language.test.ts": {
-    "default": 96575,
-    "asan": 12066,
-    "musl": 98543
+    "default": 92393,
+    "asan": 27293,
+    "musl": 97326,
+    "windows": 130202
   },
   "aot/leaf-commonjs-symbols-in-place.test.ts": {
-    "default": 3331,
-    "asan": 8497,
-    "musl": 2966
+    "default": 2566,
+    "asan": 9762,
+    "musl": 2825,
+    "windows": 3042
   },
   "aot/literal-strings.test.ts": {
-    "default": 9159,
-    "asan": 6140,
-    "musl": 8693
+    "default": 8885,
+    "asan": 12582,
+    "musl": 9549,
+    "windows": 15790
   },
   "aot/literal-types-in-executables.test.ts": {
-    "default": 1511,
-    "asan": 5724,
-    "musl": 1389
+    "default": 1583,
+    "asan": 8720,
+    "musl": 1369,
+    "windows": 69
   },
   "aot/literal-with-index-key-structures.test.ts": {
-    "default": 620,
-    "asan": 1962,
-    "musl": 583
+    "default": 559,
+    "asan": 8244,
+    "musl": 599,
+    "windows": 1399
   },
   "aot/loader-access-in-unreachable-code.test.ts": {
-    "default": 38593,
-    "musl": 40936
+    "default": 36172,
+    "asan": 212308,
+    "musl": 38483,
+    "windows": 52313
   },
   "aot/lock-error-names-object-and-property.test.ts": {
-    "default": 586,
-    "asan": 2007,
-    "musl": 620
+    "default": 578,
+    "asan": 9512,
+    "musl": 601,
+    "windows": 1326
   },
   "aot/locked-builtins.test.ts": {
-    "default": 5138,
-    "asan": 13370,
-    "musl": 5767
+    "default": 4614,
+    "asan": 17751,
+    "musl": 4878,
+    "windows": 5316
   },
   "aot/locked-host-prototypes.test.ts": {
-    "default": 1020,
-    "asan": 3851,
-    "musl": 908
+    "default": 1201,
+    "asan": 28605,
+    "musl": 1239,
+    "windows": 2108
+  },
+  "aot/log-mode-reports-class-prototype-writes.test.ts": {
+    "default": 342,
+    "asan": 14157,
+    "musl": 363,
+    "windows": 448
   },
   "aot/long-generated-functions.test.ts": {
-    "default": 8756,
-    "asan": 15765,
-    "musl": 8451
+    "default": 9797,
+    "asan": 37145,
+    "musl": 9501,
+    "windows": 11880
   },
   "aot/main-file-exports-then.test.ts": {
-    "default": 2131,
-    "asan": 7999,
-    "musl": 2137
+    "default": 2257,
+    "asan": 29671,
+    "musl": 2145,
+    "windows": 5238
   },
   "aot/many-closures-build-time.test.ts": {
-    "default": 4104,
-    "asan": 1385,
-    "musl": 3537
+    "default": 3744,
+    "asan": 7762,
+    "musl": 4046,
+    "windows": 4141
   },
   "aot/many-constants-build-time.test.ts": {
-    "default": 3997,
-    "musl": 5335
+    "default": 3399,
+    "asan": 8708,
+    "musl": 5799,
+    "windows": 4092
   },
   "aot/many-modules-in-place.test.ts": {
-    "default": 1325,
-    "asan": 231,
-    "musl": 1299
+    "default": 1218,
+    "asan": 218,
+    "musl": 1371,
+    "windows": 2369
+  },
+  "aot/matcher-wait-ends-with-the-test.test.ts": {
+    "default": 1842,
+    "asan": 8091,
+    "musl": 1851,
+    "windows": 1846
   },
   "aot/member-names-in-executables.test.ts": {
-    "default": 1140,
-    "asan": 4740,
-    "musl": 1086
+    "default": 1672,
+    "asan": 8960,
+    "musl": 1126,
+    "windows": 77
   },
   "aot/minify-map.test.ts": {
-    "default": 4002,
-    "asan": 14668,
-    "musl": 3678
+    "default": 4009,
+    "asan": 17019,
+    "musl": 3863,
+    "windows": 68
   },
   "aot/missing-builtin-export.test.ts": {
-    "default": 62121,
-    "asan": 36441,
-    "musl": 16981
+    "default": 50111,
+    "asan": 69849,
+    "musl": 17514,
+    "windows": 20520
   },
   "aot/mockable-function-arguments.test.ts": {
-    "default": 196,
-    "asan": 968,
-    "musl": 196
+    "default": 161,
+    "asan": 7504,
+    "musl": 193,
+    "windows": 257
   },
   "aot/mocked-barrels.test.ts": {
-    "default": 1465,
-    "asan": 3949,
-    "musl": 1440
+    "default": 1373,
+    "asan": 22648,
+    "musl": 1368,
+    "windows": 1592
   },
   "aot/mocked-classes-enums-constants.test.ts": {
-    "default": 767,
-    "asan": 2311,
-    "musl": 717
+    "default": 678,
+    "asan": 14675,
+    "musl": 763,
+    "windows": 902
   },
   "aot/mocked-commonjs-modules.test.ts": {
-    "default": 506,
-    "asan": 1551,
-    "musl": 518
+    "default": 456,
+    "asan": 7651,
+    "musl": 540,
+    "windows": 519
   },
   "aot/mocked-exports.test.ts": {
-    "default": 49974,
-    "asan": 103244,
-    "musl": 48525
+    "default": 47458,
+    "asan": 530348,
+    "musl": 48456,
+    "windows": 51826
   },
   "aot/mocked-json-modules.test.ts": {
-    "default": 443,
-    "asan": 1409,
-    "musl": 387
+    "default": 374,
+    "asan": 7489,
+    "musl": 389,
+    "windows": 473
   },
   "aot/mocked-numbers.test.ts": {
-    "default": 264,
-    "asan": 1147,
-    "musl": 276
+    "default": 299,
+    "asan": 7191,
+    "musl": 263,
+    "windows": 365
   },
   "aot/mocked-reassigned-bindings.test.ts": {
-    "default": 168,
-    "asan": 885,
-    "musl": 182
+    "default": 169,
+    "asan": 7433,
+    "musl": 181,
+    "windows": 228
   },
   "aot/mocks-named-by-tests.test.ts": {
-    "default": 850,
-    "musl": 800
+    "default": 757,
+    "asan": 14056,
+    "musl": 730,
+    "windows": 1043
   },
   "aot/mocks-with-test-runner-lookalikes.test.ts": {
-    "default": 381,
-    "asan": 1302,
-    "musl": 443
+    "default": 356,
+    "asan": 7399,
+    "musl": 425,
+    "windows": 419
   },
   "aot/module-exports-with-import-meta.test.ts": {
-    "default": 8520,
-    "asan": 15877,
-    "musl": 7210
+    "default": 5888,
+    "asan": 25721,
+    "musl": 6901,
+    "windows": 9024
   },
   "aot/module-not-found-names-importer.test.ts": {
-    "default": 6644,
-    "asan": 17640,
-    "musl": 6375
+    "default": 7019,
+    "asan": 29127,
+    "musl": 7709,
+    "windows": 8454
   },
   "aot/modules-three-ways-1.test.ts": {
-    "default": 16071,
-    "asan": 4686,
-    "musl": 12266
+    "default": 14719,
+    "asan": 10754,
+    "musl": 12538,
+    "windows": 29595
   },
   "aot/modules-three-ways-2.test.ts": {
-    "default": 17938,
-    "asan": 4324,
-    "musl": 12539
+    "default": 13473,
+    "asan": 10131,
+    "musl": 12944,
+    "windows": 27769
   },
   "aot/modules-three-ways-3.test.ts": {
-    "default": 15070,
-    "asan": 5107,
-    "musl": 10571
+    "default": 12959,
+    "asan": 10917,
+    "musl": 11932,
+    "windows": 25800
   },
   "aot/modules-three-ways-4.test.ts": {
-    "default": 15437,
-    "musl": 11445
+    "default": 13597,
+    "asan": 10882,
+    "musl": 12437,
+    "windows": 27330
   },
   "aot/modules.test.ts": {
-    "default": 53557,
-    "asan": 6104,
-    "musl": 61806
+    "default": 57508,
+    "asan": 23278,
+    "musl": 68269,
+    "windows": 79767
   },
   "aot/mutated-programs-no-crash.test.ts": {
-    "default": 45620,
-    "asan": 118441,
-    "musl": 27494
+    "default": 22000,
+    "asan": 300871,
+    "musl": 23729,
+    "windows": 25898
   },
   "aot/mutated-programs-same-output.test.ts": {
-    "default": 41467,
-    "asan": 108830,
-    "musl": 21768
+    "default": 21010,
+    "asan": 55162,
+    "musl": 21204,
+    "windows": 20912
   },
   "aot/name-ids-adjacent-within-code-region.test.ts": {
-    "default": 1063,
-    "asan": 4292,
-    "musl": 1117
+    "default": 1149,
+    "asan": 4593,
+    "musl": 1044,
+    "windows": 1258
   },
   "aot/name-ids-ordered-by-table-sites.test.ts": {
-    "default": 625,
-    "asan": 2640,
-    "musl": 625
+    "default": 484,
+    "asan": 2805,
+    "musl": 609,
+    "windows": 578
   },
   "aot/names-longer-than-file-name-max.test.ts": {
-    "default": 3333,
-    "asan": 10271,
-    "musl": 4103
+    "default": 3153,
+    "asan": 10537,
+    "musl": 3835,
+    "windows": 3628
   },
   "aot/names-longer-than-path-max.test.ts": {
-    "default": 5437,
-    "asan": 14052,
-    "musl": 5443
+    "default": 5603,
+    "asan": 32515,
+    "musl": 5564,
+    "windows": 969
   },
   "aot/namespace-awaited-in-loop.test.ts": {
-    "default": 2175,
-    "asan": 4009,
-    "musl": 1501
+    "default": 1333,
+    "asan": 10236,
+    "musl": 1342,
+    "windows": 3285
   },
   "aot/napi-addon.test.ts": {
-    "default": 15470,
-    "asan": 28129,
-    "musl": 14890
+    "default": 13579,
+    "asan": 37219,
+    "musl": 14993,
+    "windows": 84
   },
   "aot/narrowing.test.ts": {
-    "default": 10294,
-    "asan": 12294,
-    "musl": 9781
+    "default": 9117,
+    "asan": 12403,
+    "musl": 10317,
+    "windows": 19829
   },
   "aot/native-getters-alternating.test.ts": {
-    "default": 561,
-    "asan": 2880,
-    "musl": 588
+    "default": 649,
+    "asan": 8231,
+    "musl": 614,
+    "windows": 1349
   },
   "aot/native-setter-stores-call-directly.test.ts": {
-    "default": 1111,
-    "asan": 4062,
-    "musl": 1143
+    "default": 1178,
+    "asan": 15296,
+    "musl": 1056,
+    "windows": 4178
   },
   "aot/no-function-ends-in-call.test.ts": {
-    "default": 883,
-    "musl": 874
+    "default": 866,
+    "asan": 8961,
+    "musl": 837,
+    "windows": 62
   },
   "aot/no-new-executable-memory.test.ts": {
-    "default": 2771,
-    "asan": 6595,
-    "musl": 2482
+    "default": 2160,
+    "asan": 13815,
+    "musl": 2563,
+    "windows": 72
   },
   "aot/no-tsconfig-no-verbatim-module-syntax.test.ts": {
-    "default": 824,
-    "asan": 2828,
-    "musl": 875
+    "default": 721,
+    "asan": 14181,
+    "musl": 781,
+    "windows": 1425
+  },
+  "aot/node-http-overrides.test.ts": {
+    "default": 2442,
+    "asan": 13149,
+    "musl": 2615,
+    "windows": 3397
   },
   "aot/non-fatal-reports.test.ts": {
-    "default": 1905,
-    "asan": 6745,
-    "musl": 1810
+    "default": 1741,
+    "asan": 12803,
+    "musl": 2061,
+    "windows": 2277
   },
   "aot/objects.test.ts": {
-    "default": 36351,
-    "asan": 38309,
-    "musl": 39037
+    "default": 35207,
+    "asan": 21750,
+    "musl": 41868,
+    "windows": 58637
   },
   "aot/open-layouts.test.ts": {
-    "default": 22769,
-    "asan": 25495,
-    "musl": 12460
+    "default": 19328,
+    "asan": 90587,
+    "musl": 10674,
+    "windows": 16339
   },
   "aot/other-realm-in-place.test.ts": {
-    "default": 4556,
-    "asan": 11447,
-    "musl": 4348
+    "default": 4011,
+    "asan": 11344,
+    "musl": 4364,
+    "windows": 4896
+  },
+  "aot/own-paths.test.ts": {
+    "default": 3108,
+    "asan": 15419,
+    "musl": 3683,
+    "windows": 5117
   },
   "aot/packages-arithmetic.test.ts": {
-    "default": 4619,
-    "musl": 3990
+    "default": 5207,
+    "asan": 21277,
+    "musl": 4277,
+    "windows": 7993
   },
   "aot/packages-builtin-names.test.ts": {
-    "default": 1204,
-    "asan": 3936,
-    "musl": 1189
+    "default": 1197,
+    "asan": 10554,
+    "musl": 1242,
+    "windows": 1954
   },
   "aot/packages-class-idioms.test.ts": {
-    "default": 36305,
-    "asan": 89621,
-    "musl": 34858
+    "default": 33284,
+    "asan": 176381,
+    "musl": 35066,
+    "windows": 49030
   },
   "aot/packages-commonjs-interop-1.test.ts": {
-    "default": 5444,
-    "asan": 11433,
-    "musl": 4504
+    "default": 6121,
+    "asan": 23710,
+    "musl": 5160,
+    "windows": 10032
   },
   "aot/packages-commonjs-interop-2.test.ts": {
-    "default": 5631,
-    "asan": 11516,
-    "musl": 4601
+    "default": 5818,
+    "asan": 23854,
+    "musl": 4705,
+    "windows": 10487
   },
   "aot/packages-commonjs-interop-3.test.ts": {
-    "default": 5665,
-    "asan": 18431,
-    "musl": 5665
+    "default": 5099,
+    "asan": 24901,
+    "musl": 4901,
+    "windows": 10246
   },
   "aot/packages-computed-specifiers.test.ts": {
-    "default": 2511,
-    "asan": 5617,
-    "musl": 2537
+    "default": 2119,
+    "asan": 10813,
+    "musl": 2136,
+    "windows": 4835
   },
   "aot/packages-create-require.test.ts": {
-    "default": 2360,
-    "asan": 6236,
-    "musl": 2384
+    "default": 2645,
+    "asan": 12256,
+    "musl": 2293,
+    "windows": 3246
   },
   "aot/packages-cycles-and-order.test.ts": {
-    "default": 3489,
-    "asan": 6580,
-    "musl": 2697
+    "default": 3470,
+    "asan": 14305,
+    "musl": 2594,
+    "windows": 5847
   },
   "aot/packages-data-files.test.ts": {
-    "default": 2279,
-    "asan": 4221,
-    "musl": 1492
+    "default": 1571,
+    "asan": 10023,
+    "musl": 1539,
+    "windows": 3309
   },
   "aot/packages-export-styles-1.test.ts": {
-    "default": 7848,
-    "asan": 14514,
-    "musl": 5127
+    "default": 6784,
+    "asan": 33378,
+    "musl": 5335,
+    "windows": 10648
   },
   "aot/packages-export-styles-2.test.ts": {
-    "default": 4197,
-    "asan": 9308,
-    "musl": 3627
+    "default": 3639,
+    "asan": 20312,
+    "musl": 3706,
+    "windows": 7029
   },
   "aot/packages-export-styles-3.test.ts": {
-    "default": 6506,
-    "asan": 14356,
-    "musl": 6045
+    "default": 6649,
+    "asan": 34718,
+    "musl": 5958,
+    "windows": 13369
   },
   "aot/packages-export-styles-4.test.ts": {
-    "default": 4536,
-    "musl": 4010
+    "default": 4571,
+    "asan": 22421,
+    "musl": 4147,
+    "windows": 8229
   },
   "aot/packages-exports-conditions-1.test.ts": {
-    "default": 4616,
-    "asan": 9283,
-    "musl": 3759
+    "default": 4107,
+    "asan": 20272,
+    "musl": 3252,
+    "windows": 7922
   },
   "aot/packages-exports-conditions-2.test.ts": {
-    "default": 5770,
-    "asan": 12106,
-    "musl": 5297
+    "default": 5609,
+    "asan": 22869,
+    "musl": 4750,
+    "windows": 9266
   },
   "aot/packages-exports-conditions-3.test.ts": {
-    "default": 9834,
-    "asan": 13673,
-    "musl": 5180
+    "default": 6626,
+    "asan": 29969,
+    "musl": 5844,
+    "windows": 10663
   },
   "aot/packages-import-aliases.test.ts": {
-    "default": 3103,
-    "asan": 8738,
-    "musl": 3053
+    "default": 3393,
+    "asan": 20015,
+    "musl": 3350,
+    "windows": 6584
   },
   "aot/packages-import-meta.test.ts": {
-    "default": 2865,
-    "asan": 7843,
-    "musl": 2661
+    "default": 2666,
+    "asan": 14771,
+    "musl": 2751,
+    "windows": 4067
   },
   "aot/packages-library-idioms.test.ts": {
-    "default": 4129,
-    "asan": 9081,
-    "musl": 3326
+    "default": 4099,
+    "asan": 21152,
+    "musl": 3340,
+    "windows": 7773
   },
   "aot/packages-main-field-1.test.ts": {
-    "default": 6911,
-    "musl": 6748
+    "default": 6674,
+    "asan": 32007,
+    "musl": 6915,
+    "windows": 12962
   },
   "aot/packages-main-field-2.test.ts": {
-    "default": 9360,
-    "asan": 17378,
-    "musl": 6706
+    "default": 7173,
+    "asan": 32406,
+    "musl": 6446,
+    "windows": 12865
   },
   "aot/packages-namespace-keys.test.ts": {
-    "default": 40486,
-    "asan": 36717,
-    "musl": 10591
+    "default": 25481,
+    "asan": 43903,
+    "musl": 11541,
+    "windows": 26560
   },
   "aot/packages-package-versions.test.ts": {
-    "default": 599,
-    "asan": 2190,
-    "musl": 595
+    "default": 583,
+    "asan": 7998,
+    "musl": 655,
+    "windows": 1528
   },
   "aot/packages-patching-globals-1.test.ts": {
-    "default": 23956,
-    "asan": 51228,
-    "musl": 23066
+    "default": 22674,
+    "asan": 104036,
+    "musl": 21492,
+    "windows": 34503
   },
   "aot/packages-patching-globals-2.test.ts": {
-    "default": 37906,
-    "asan": 77184,
-    "musl": 37906
+    "default": 37604,
+    "asan": 122978,
+    "musl": 34304,
+    "windows": 43374
   },
   "aot/packages-patching-node.test.ts": {
-    "default": 53885,
-    "asan": 122647,
-    "musl": 54068
+    "default": 56249,
+    "asan": 192050,
+    "musl": 57822,
+    "windows": 61831
   },
   "aot/packages-require-esm.test.ts": {
-    "default": 2774,
-    "asan": 4888,
-    "musl": 1958
+    "default": 2746,
+    "asan": 12852,
+    "musl": 1837,
+    "windows": 3297
   },
   "aot/packages-shared-state.test.ts": {
-    "default": 2624,
-    "asan": 4397,
-    "musl": 1662
+    "default": 1604,
+    "asan": 10176,
+    "musl": 1735,
+    "windows": 3162
   },
   "aot/packages-star-exports.test.ts": {
-    "default": 3803,
-    "asan": 5727,
-    "musl": 2037
+    "default": 3073,
+    "asan": 12046,
+    "musl": 2338,
+    "windows": 5132
   },
   "aot/packages-subpaths.test.ts": {
-    "default": 7101,
-    "asan": 17932,
-    "musl": 6687
+    "default": 6637,
+    "asan": 29324,
+    "musl": 7748,
+    "windows": 10837
   },
   "aot/packages-symlinks.test.ts": {
-    "default": 599,
-    "asan": 2322,
-    "musl": 632
+    "default": 615,
+    "asan": 8087,
+    "musl": 613,
+    "windows": 1797
   },
   "aot/packages-throwing-modules.test.ts": {
-    "default": 605,
-    "asan": 2176,
-    "musl": 640
+    "default": 626,
+    "asan": 8594,
+    "musl": 589,
+    "windows": 1378
   },
   "aot/packages-top-level-await.test.ts": {
-    "default": 1247,
-    "musl": 1134
+    "default": 1211,
+    "asan": 9331,
+    "musl": 1111,
+    "windows": 2359
   },
   "aot/packages-unused-imports.test.ts": {
-    "default": 2723,
-    "asan": 5379,
-    "musl": 2159
+    "default": 2883,
+    "asan": 11889,
+    "musl": 2195,
+    "windows": 4200
   },
   "aot/packages-wrong-declarations-1.test.ts": {
-    "default": 3589,
-    "asan": 8479,
-    "musl": 3534
+    "default": 3586,
+    "asan": 18990,
+    "musl": 3844,
+    "windows": 6532
   },
   "aot/packages-wrong-declarations-2.test.ts": {
-    "default": 6530,
-    "asan": 13300,
-    "musl": 5031
+    "default": 6150,
+    "asan": 31784,
+    "musl": 5083,
+    "windows": 10515
   },
   "aot/perf/front-end.test.ts": {
-    "default": 33,
-    "asan": 236,
-    "musl": 33
+    "default": 32,
+    "asan": 218,
+    "musl": 34,
+    "windows": 103
   },
   "aot/perf/idioms.test.ts": {
-    "default": 64,
-    "asan": 230,
-    "musl": 32
+    "default": 28,
+    "asan": 224,
+    "musl": 34,
+    "windows": 51
   },
   "aot/perf/serial-time.test.ts": {
-    "default": 19873,
-    "asan": 60641,
-    "musl": 18513
+    "default": 20425,
+    "asan": 11753,
+    "musl": 20840,
+    "windows": 25804
   },
   "aot/plain-bun.test.ts": {
-    "default": 593,
-    "musl": 681
+    "default": 602,
+    "asan": 11411,
+    "musl": 640,
+    "windows": 767
   },
   "aot/plugin-answer-timing.test.ts": {
-    "default": 34754,
-    "asan": 44403,
-    "musl": 26564
+    "default": 26959,
+    "asan": 23647,
+    "musl": 23731,
+    "windows": 15635
   },
   "aot/preload-under-other-tsconfig.test.ts": {
-    "default": 1574,
-    "asan": 4788,
-    "musl": 1625
+    "default": 1477,
+    "asan": 10506,
+    "musl": 1798,
+    "windows": 1660
   },
   "aot/private-class-members.test.ts": {
-    "default": 43640,
-    "asan": 14149,
-    "musl": 45712
+    "default": 47847,
+    "asan": 31286,
+    "musl": 49847,
+    "windows": 68464
   },
   "aot/private-field-stores-after-full-gcs.test.ts": {
-    "default": 1340,
-    "asan": 3846,
-    "musl": 1190
+    "default": 2098,
+    "asan": 7316,
+    "musl": 1293,
+    "windows": 1892
   },
   "aot/process-platform-run-and-compile.test.ts": {
-    "default": 7716,
-    "asan": 25029,
-    "musl": 7716
+    "default": 6560,
+    "asan": 24135,
+    "musl": 8131,
+    "windows": 8685
   },
   "aot/project-files-outside-bundle.test.ts": {
-    "default": 9996,
-    "asan": 29103,
-    "musl": 9996
+    "default": 10070,
+    "asan": 86526,
+    "musl": 11470,
+    "windows": 14957
   },
   "aot/react-compiler.test.ts": {
-    "default": 8473,
-    "asan": 10497,
-    "musl": 5944
+    "default": 6101,
+    "asan": 35315,
+    "musl": 4306,
+    "windows": 8195
   },
   "aot/real-apps/programs.test.ts": {
-    "default": 8945,
-    "asan": 26701,
-    "musl": 8464
+    "default": 8556,
+    "asan": 119598,
+    "musl": 7855,
+    "windows": 15565
   },
   "aot/real-apps/real-apps.test.ts": {
-    "default": 115,
-    "asan": 354,
-    "musl": 68
+    "default": 71,
+    "asan": 363,
+    "musl": 72,
+    "windows": 110
   },
   "aot/real-apps/test-runs.test.ts": {
-    "default": 1334,
-    "asan": 5708,
-    "musl": 1218
+    "default": 1442,
+    "asan": 44651,
+    "musl": 1307,
+    "windows": 1631
+  },
+  "aot/real-apps/untyped-company.test.ts": {
+    "default": 8265,
+    "asan": 14262,
+    "musl": 8780,
+    "windows": 11581
   },
   "aot/record-type-order.test.ts": {
-    "default": 1247,
-    "asan": 4091,
-    "musl": 1162
+    "default": 1157,
+    "asan": 8559,
+    "musl": 1173,
+    "windows": 2700
   },
   "aot/recursive-typed-functions-build-time.test.ts": {
-    "default": 1056,
-    "asan": 1549,
-    "musl": 1021
+    "default": 1081,
+    "asan": 14470,
+    "musl": 1088,
+    "windows": 1094
   },
   "aot/reexport-only-modules-in-place.test.ts": {
-    "default": 3785,
-    "musl": 3952
+    "default": 3670,
+    "asan": 11290,
+    "musl": 3720,
+    "windows": 3833
   },
   "aot/regexp-jit-memory.test.ts": {
-    "default": 1219,
-    "asan": 3828,
-    "musl": 1238
+    "default": 1053,
+    "asan": 9277,
+    "musl": 1077,
+    "windows": 67
   },
   "aot/regexp-literals-and-interpreter.test.ts": {
-    "default": 1777,
-    "asan": 5971,
-    "musl": 15767
+    "default": 1625,
+    "asan": 22077,
+    "musl": 1728,
+    "windows": 4179
   },
   "aot/repeated-builds.test.ts": {
-    "default": 41542,
-    "asan": 14070,
-    "musl": 33628
+    "default": 42020,
+    "asan": 15626,
+    "musl": 38102,
+    "windows": 54433
   },
   "aot/request-socket-detached.test.ts": {
-    "default": 1508,
-    "asan": 17603,
-    "musl": 1599
+    "default": 1443,
+    "asan": 9596,
+    "musl": 1744,
+    "windows": 2270
   },
   "aot/request-with-body.test.ts": {
-    "default": 3518,
-    "asan": 19895,
-    "musl": 3425
+    "default": 3624,
+    "asan": 11612,
+    "musl": 3650,
+    "windows": 4579
   },
   "aot/request-without-body.test.ts": {
-    "default": 9867,
-    "asan": 38960,
-    "musl": 9620
+    "default": 10400,
+    "asan": 23841,
+    "musl": 10035,
+    "windows": 11339
   },
   "aot/require-cache-alias.test.ts": {
-    "default": 20604,
-    "musl": 22985
+    "default": 19956,
+    "asan": 49546,
+    "musl": 23755,
+    "windows": 21180
   },
   "aot/require-dirname-plus-literal.test.ts": {
-    "default": 8983,
-    "asan": 29484,
-    "musl": 8894
+    "default": 8979,
+    "asan": 99283,
+    "musl": 9097,
+    "windows": 20159
   },
   "aot/require-identity.test.ts": {
-    "default": 2006,
-    "asan": 6225,
-    "musl": 2122
+    "default": 2219,
+    "asan": 6153,
+    "musl": 2335,
+    "windows": 2159
   },
   "aot/require-spellings.test.ts": {
-    "default": 47064,
-    "asan": 71367,
-    "musl": 27916
+    "default": 41493,
+    "asan": 89097,
+    "musl": 28235,
+    "windows": 44427
   },
   "aot/required-modules-in-single-store-variables.test.ts": {
-    "default": 13109,
-    "asan": 23108,
-    "musl": 9496
+    "default": 10533,
+    "asan": 36534,
+    "musl": 8795,
+    "windows": 16023
   },
   "aot/resolve-filename-replaced.test.ts": {
-    "default": 12569,
-    "asan": 25297,
-    "musl": 12569
+    "default": 9497,
+    "asan": 26225,
+    "musl": 11482,
+    "windows": 11477
   },
   "aot/run-aot-accepts-matching-arguments.test.ts": {
-    "default": 1153,
-    "asan": 3591,
-    "musl": 1153
+    "default": 1221,
+    "asan": 22035,
+    "musl": 1256,
+    "windows": 1229
   },
   "aot/run-aot-accepts-matching-stores.test.ts": {
-    "default": 371,
-    "asan": 1294,
-    "musl": 356
+    "default": 372,
+    "asan": 7358,
+    "musl": 378,
+    "windows": 480
   },
   "aot/run-aot-analyzes-preloads.test.ts": {
-    "default": 851,
-    "asan": 3227,
-    "musl": 807
+    "default": 878,
+    "asan": 25584,
+    "musl": 754,
+    "windows": 994
   },
   "aot/run-aot-array-subclass-constructor-inlined.test.ts": {
-    "default": 627,
-    "asan": 3377,
-    "musl": 533
+    "default": 579,
+    "asan": 14790,
+    "musl": 568,
+    "windows": 720
   },
   "aot/run-aot-checks-field-stores.test.ts": {
-    "default": 845,
-    "asan": 2242,
-    "musl": 744
+    "default": 806,
+    "asan": 9410,
+    "musl": 747,
+    "windows": 910
   },
   "aot/run-aot-fails-file-with-type-error.test.ts": {
-    "default": 1758,
-    "asan": 6763,
-    "musl": 1797
+    "default": 1818,
+    "asan": 49411,
+    "musl": 1637,
+    "windows": 1884
   },
   "aot/run-aot-fixed-class-layouts.test.ts": {
-    "default": 4648,
-    "asan": 9440,
-    "musl": 4651
+    "default": 4198,
+    "asan": 35474,
+    "musl": 4971,
+    "windows": 4668
   },
   "aot/run-aot-frozen-arrays-jit-2.test.ts": {
-    "default": 14170
+    "default": 16083,
+    "asan": 278050,
+    "musl": 18443,
+    "windows": 19665
   },
   "aot/run-aot-frozen-arrays-jit-3.test.ts": {
-    "default": 14736
+    "default": 17731,
+    "asan": 303763,
+    "musl": 17687,
+    "windows": 20524
   },
   "aot/run-aot-frozen-arrays-jit.test.ts": {
-    "default": 51983,
-    "musl": 58309
+    "default": 18285,
+    "asan": 264662,
+    "musl": 21945,
+    "windows": 20280
   },
   "aot/run-aot-jit.test.ts": {
-    "default": 13078,
-    "asan": 48857,
-    "musl": 11312
+    "default": 13026,
+    "asan": 295410,
+    "musl": 11151,
+    "windows": 14591
   },
   "aot/run-aot-keeps-parentheses.test.ts": {
-    "default": 1111,
-    "asan": 3866,
-    "musl": 1047
+    "default": 984,
+    "asan": 9666,
+    "musl": 1155,
+    "windows": 1122
   },
   "aot/run-aot-logs-thrown-errors.test.ts": {
-    "default": 718,
-    "asan": 2800,
-    "musl": 576
+    "default": 624,
+    "asan": 24799,
+    "musl": 646,
+    "windows": 776
   },
   "aot/run-aot-matches-executable.test.ts": {
-    "default": 1656,
-    "asan": 4437,
-    "musl": 1432
+    "default": 1449,
+    "asan": 18341,
+    "musl": 1621,
+    "windows": 1723
   },
   "aot/run-aot-modified-arrays-every-tier.test.ts": {
-    "default": 838,
-    "asan": 8913,
-    "musl": 921
+    "default": 915,
+    "asan": 16281,
+    "musl": 954,
+    "windows": 939
   },
   "aot/run-aot-reads-elements.test.ts": {
-    "default": 616,
-    "asan": 1822,
-    "musl": 652
+    "default": 775,
+    "asan": 7854,
+    "musl": 675,
+    "windows": 813
   },
   "aot/run-aot-same-messages-every-tier.test.ts": {
-    "default": 7410,
-    "musl": 8061
+    "default": 7200,
+    "asan": 134781,
+    "musl": 8998,
+    "windows": 10031
   },
   "aot/run-aot-tail-calls.test.ts": {
-    "default": 942,
-    "asan": 4686,
-    "musl": 871
+    "default": 857,
+    "asan": 15761,
+    "musl": 1022,
+    "windows": 1038
   },
   "aot/run-aot-test-runner-globals.test.ts": {
-    "default": 192,
-    "asan": 1028,
-    "musl": 188
+    "default": 206,
+    "asan": 7093,
+    "musl": 180,
+    "windows": 258
   },
   "aot/run-aot-unused-parameter.test.ts": {
-    "default": 233,
-    "asan": 1187,
-    "musl": 246
+    "default": 226,
+    "asan": 7302,
+    "musl": 222,
+    "windows": 365
   },
   "aot/server-response-own-properties.test.ts": {
-    "default": 1549,
-    "asan": 16812,
-    "musl": 1588
+    "default": 2106,
+    "asan": 11009,
+    "musl": 1687,
+    "windows": 2419
   },
   "aot/servers/api.test.ts": {
-    "default": 44,
-    "asan": 349,
-    "musl": 44
+    "default": 33,
+    "asan": 343,
+    "musl": 42,
+    "windows": 65
   },
   "aot/servers/effect.test.ts": {
     "default": 39,
-    "asan": 350,
-    "musl": 38
+    "asan": 362,
+    "musl": 39,
+    "windows": 64
   },
   "aot/servers/features.test.ts": {
-    "default": 38,
-    "asan": 332,
-    "musl": 36
+    "default": 34,
+    "asan": 341,
+    "musl": 42,
+    "windows": 77
   },
   "aot/servers/layers.test.ts": {
-    "default": 218,
-    "asan": 477,
-    "musl": 260
+    "default": 232,
+    "asan": 445,
+    "musl": 280,
+    "windows": 3415
   },
   "aot/servers/servers.test.ts": {
-    "default": 42,
-    "asan": 336,
-    "musl": 45
+    "default": 38,
+    "asan": 345,
+    "musl": 40,
+    "windows": 71
   },
   "aot/shell-completions-list-flags.test.ts": {
-    "default": 603,
-    "asan": 340,
-    "musl": 36
+    "default": 536,
+    "asan": 854,
+    "musl": 38,
+    "windows": 66
   },
   "aot/small-benchmarks.test.ts": {
-    "default": 9322,
-    "asan": 4851,
-    "musl": 8781
+    "default": 9039,
+    "asan": 10184,
+    "musl": 7819,
+    "windows": 12548
   },
   "aot/small-program-memory.test.ts": {
-    "default": 449,
-    "asan": 1715,
-    "musl": 475
+    "default": 416,
+    "asan": 1853,
+    "musl": 450,
+    "windows": 55
   },
   "aot/specifiers-with-query.test.ts": {
-    "default": 5673,
-    "musl": 6026
+    "default": 5339,
+    "asan": 14142,
+    "musl": 6778,
+    "windows": 5506
   },
   "aot/spies-on-builtin-prototypes.test.ts": {
-    "default": 1220,
-    "asan": 3351,
-    "musl": 1128
+    "default": 1115,
+    "asan": 15461,
+    "musl": 1210,
+    "windows": 1450
   },
   "aot/spies-on-builtins.test.ts": {
-    "default": 908,
-    "asan": 2747,
-    "musl": 890
+    "default": 880,
+    "asan": 14323,
+    "musl": 888,
+    "windows": 870
   },
   "aot/sql-typed-rows.test.ts": {
-    "default": 2512,
-    "asan": 7390,
-    "musl": 2460
+    "default": 2651,
+    "asan": 18940,
+    "musl": 2866,
+    "windows": 4436
   },
   "aot/stack-frame-paths.test.ts": {
-    "default": 6272,
-    "asan": 15368,
-    "musl": 5576
+    "default": 6562,
+    "asan": 24775,
+    "musl": 6194,
+    "windows": 8290
   },
   "aot/startup-scaling/startup-scaling-1.test.ts": {
-    "default": 126192,
-    "asan": 363,
-    "musl": 34816
+    "default": 119669,
+    "asan": 341,
+    "musl": 35169,
+    "windows": 67
   },
   "aot/startup-scaling/startup-scaling-2.test.ts": {
-    "default": 115265,
-    "asan": 352,
-    "musl": 25443
+    "default": 108549,
+    "asan": 339,
+    "musl": 26599,
+    "windows": 63
   },
   "aot/startup-scaling/startup-scaling-3.test.ts": {
-    "default": 122173,
-    "musl": 28037
+    "default": 121328,
+    "asan": 343,
+    "musl": 27302,
+    "windows": 61
   },
   "aot/startup-scaling/startup-scaling-4.test.ts": {
-    "default": 112182,
-    "asan": 376,
-    "musl": 10787
+    "default": 97802,
+    "asan": 353,
+    "musl": 10236,
+    "windows": 62
   },
   "aot/startup-scaling/startup-scaling-in-place.test.ts": {
-    "default": 113651,
-    "asan": 358,
-    "musl": 8150
+    "default": 106592,
+    "asan": 343,
+    "musl": 8991,
+    "windows": 72
   },
   "aot/static-tls-size.test.ts": {
-    "default": 153,
-    "asan": 740,
-    "musl": 142
+    "default": 167,
+    "asan": 765,
+    "musl": 147,
+    "windows": 44
   },
   "aot/strings-1.test.ts": {
-    "default": 90009,
-    "asan": 16584,
-    "musl": 91775
+    "default": 95899,
+    "asan": 40374,
+    "musl": 89426,
+    "windows": 123483
   },
   "aot/strings-2.test.ts": {
-    "default": 109984,
-    "asan": 55659,
-    "musl": 109984
+    "default": 88582,
+    "asan": 42927,
+    "musl": 112342,
+    "windows": 141763
   },
   "aot/test-files-self-skip.test.ts": {
-    "default": 7107,
-    "asan": 614,
-    "musl": 144
+    "default": 681,
+    "asan": 609,
+    "musl": 166,
+    "windows": 291
   },
   "aot/test-runner-globals.test.ts": {
-    "default": 962,
-    "asan": 3648,
-    "musl": 864
+    "default": 953,
+    "asan": 32191,
+    "musl": 840,
+    "windows": 1212
   },
   "aot/tsconfig-governs-each-file.test.ts": {
-    "default": 3732,
-    "asan": 13930,
-    "musl": 3640
+    "default": 5308,
+    "asan": 115324,
+    "musl": 5363,
+    "windows": 8106
   },
   "aot/type-error-positions.test.ts": {
-    "default": 38305,
-    "asan": 74568,
-    "musl": 36681
+    "default": 36634,
+    "asan": 204340,
+    "musl": 36074,
+    "windows": 32874
   },
   "aot/type-errors-in-reached-code.test.ts": {
-    "default": 41045,
-    "asan": 50776,
-    "musl": 40095
+    "default": 40283,
+    "asan": 107495,
+    "musl": 40828,
+    "windows": 5677
   },
   "aot/type-rules.test.ts": {
-    "default": 109005,
-    "asan": 30151,
-    "musl": 119987
+    "default": 122895,
+    "asan": 53512,
+    "musl": 130317,
+    "windows": 170364
+  },
+  "aot/typed-builtin-modules-mark-no-layout.test.ts": {
+    "default": 1562,
+    "asan": 16311,
+    "musl": 1556,
+    "windows": 2988
   },
   "aot/typed-builtin-modules.test.ts": {
-    "default": 3000,
-    "asan": 11022,
-    "musl": 2956
+    "default": 3236,
+    "asan": 13194,
+    "musl": 3066,
+    "windows": 3928
   },
   "aot/typed-objects-1.test.ts": {
-    "default": 100676,
-    "musl": 102569
+    "default": 101950,
+    "asan": 66803,
+    "musl": 102779,
+    "windows": 139181
   },
   "aot/typed-objects-2.test.ts": {
-    "default": 116099,
-    "asan": 24554,
-    "musl": 111326
+    "default": 105932,
+    "asan": 45132,
+    "musl": 126892,
+    "windows": 164717
   },
   "aot/typed-objects-3.test.ts": {
-    "default": 94431,
-    "asan": 20361,
-    "musl": 92750
+    "default": 91471,
+    "asan": 33996,
+    "musl": 103522,
+    "windows": 133403
   },
   "aot/typed-packages-wide-trees.test.ts": {
-    "default": 59,
-    "asan": 350,
-    "musl": 35
+    "default": 36,
+    "asan": 341,
+    "musl": 41,
+    "windows": 56
   },
   "aot/typed-packages.test.ts": {
-    "default": 10186,
-    "asan": 23156,
-    "musl": 5819
+    "default": 8796,
+    "asan": 51101,
+    "musl": 5662,
+    "windows": 10771
   },
   "aot/typedness/typedness-1.test.ts": {
-    "default": 66560,
-    "asan": 42701,
-    "musl": 70096
+    "default": 68975,
+    "asan": 210573,
+    "musl": 70369,
+    "windows": 73222
   },
   "aot/typedness/typedness-10.test.ts": {
-    "default": 50734,
-    "asan": 26176,
-    "musl": 58522
+    "default": 52594,
+    "asan": 186565,
+    "musl": 56179,
+    "windows": 67213
   },
   "aot/typedness/typedness-2.test.ts": {
-    "default": 57910,
-    "musl": 56363
+    "default": 62164,
+    "asan": 208017,
+    "musl": 61475,
+    "windows": 77230
   },
   "aot/typedness/typedness-3.test.ts": {
-    "default": 59801,
-    "asan": 31651,
-    "musl": 52693
+    "default": 50904,
+    "asan": 220525,
+    "musl": 63284,
+    "windows": 65198
   },
   "aot/typedness/typedness-4.test.ts": {
-    "default": 56021,
-    "asan": 29378,
-    "musl": 56492
+    "default": 59967,
+    "asan": 98426,
+    "musl": 59350,
+    "windows": 63720
   },
   "aot/typedness/typedness-5.test.ts": {
-    "default": 56963,
-    "asan": 29033,
-    "musl": 57032
+    "default": 57934,
+    "asan": 202092,
+    "musl": 65182,
+    "windows": 73203
   },
   "aot/typedness/typedness-6.test.ts": {
-    "default": 54405,
-    "asan": 28239,
-    "musl": 57072
+    "default": 59129,
+    "asan": 209114,
+    "musl": 62627,
+    "windows": 66917
   },
   "aot/typedness/typedness-7.test.ts": {
-    "default": 65537,
-    "asan": 27719,
-    "musl": 65537
+    "default": 56409,
+    "asan": 26903,
+    "musl": 63577,
+    "windows": 71432
   },
   "aot/typedness/typedness-8.test.ts": {
-    "default": 53321,
-    "asan": 29869,
-    "musl": 53321
+    "default": 54893,
+    "asan": 45253,
+    "musl": 57913,
+    "windows": 66226
   },
   "aot/typedness/typedness-9.test.ts": {
-    "default": 61834,
-    "asan": 28609,
-    "musl": 54786
+    "default": 57147,
+    "asan": 195762,
+    "musl": 55502,
+    "windows": 64847
   },
   "aot/typescript-cases.test.ts": {
-    "default": 91261,
-    "asan": 180701,
-    "musl": 98394
+    "default": 7631,
+    "asan": 369491,
+    "musl": 98310,
+    "windows": 133520
   },
   "aot/unmarked-script-throws.test.ts": {
-    "default": 1720,
-    "asan": 4851,
-    "musl": 1800
+    "default": 1649,
+    "asan": 5094,
+    "musl": 1644,
+    "windows": 1878
   },
   "aot/unresolved-imports.test.ts": {
-    "default": 4007,
-    "asan": 11233,
-    "musl": 4202
+    "default": 4027,
+    "asan": 11331,
+    "musl": 4464,
+    "windows": 4152
   },
   "aot/untyped-code-1.test.ts": {
-    "default": 96944,
-    "asan": 24192,
-    "musl": 96944
+    "default": 86830,
+    "asan": 46944,
+    "musl": 104125,
+    "windows": 133461
   },
   "aot/untyped-code-2.test.ts": {
-    "default": 85575,
-    "asan": 11594,
-    "musl": 99591
+    "default": 94149,
+    "asan": 25466,
+    "musl": 89404,
+    "windows": 127345
   },
   "aot/untyped-code-3.test.ts": {
-    "default": 100559,
-    "musl": 104070
+    "default": 92720,
+    "asan": 72636,
+    "musl": 110871,
+    "windows": 137653
   },
   "aot/untyped-file-count.test.ts": {
-    "default": 1135,
-    "asan": 3521,
-    "musl": 1037
+    "default": 1026,
+    "asan": 15144,
+    "musl": 1146,
+    "windows": 2733
   },
   "aot/untyped-stress-1.test.ts": {
-    "default": 155366,
-    "asan": 50438,
-    "musl": 158650
+    "default": 145396,
+    "asan": 61570,
+    "musl": 164904,
+    "windows": 184785
   },
   "aot/untyped-stress-2.test.ts": {
-    "default": 174535,
-    "asan": 76224,
-    "musl": 167027
+    "default": 159396,
+    "asan": 115260,
+    "musl": 195717,
+    "windows": 219183
   },
   "aot/validation-by-types/both-modes.test.ts": {
-    "default": 6314,
-    "asan": 90028,
-    "musl": 6970
+    "default": 5923,
+    "asan": 98449,
+    "musl": 7272,
+    "windows": 6217
   },
   "aot/validation-by-types/both-spellings-without-installed-types.test.ts": {
-    "default": 688,
-    "asan": 2788,
-    "musl": 702
+    "default": 744,
+    "asan": 15033,
+    "musl": 796,
+    "windows": 1562
   },
   "aot/validation-by-types/fuzz.test.ts": {
-    "default": 37440,
-    "asan": 145603,
-    "musl": 43896
+    "default": 38762,
+    "asan": 27287,
+    "musl": 44538,
+    "windows": 42643
   },
   "aot/validation-by-types/recorded-issues.test.ts": {
-    "default": 25480,
-    "musl": 28147
+    "default": 25644,
+    "asan": 434473,
+    "musl": 28108,
+    "windows": 35162
   },
   "aot/validation-by-types/standard-functions-without-installed-types.test.ts": {
     "default": 592,
-    "asan": 2258,
-    "musl": 556
+    "asan": 8273,
+    "musl": 611,
+    "windows": 1537
   },
   "aot/validation-by-types/types-that-cannot-be-validated.test.ts": {
-    "default": 1050,
-    "asan": 4020,
-    "musl": 1024
+    "default": 996,
+    "asan": 31919,
+    "musl": 1082,
+    "windows": 895
   },
   "aot/values-against-their-types.test.ts": {
-    "default": 82270,
-    "asan": 43710,
-    "musl": 31532
+    "default": 80110,
+    "asan": 81413,
+    "musl": 30896,
+    "windows": 29825
   },
   "aot/variables-assigned-in-cycles.test.ts": {
-    "default": 1173,
-    "asan": 4982,
-    "musl": 1160
+    "default": 1121,
+    "asan": 7548,
+    "musl": 1320,
+    "windows": 1421
   },
   "aot/variant-stub-copies-1.test.ts": {
-    "default": 63278,
-    "asan": 64608
+    "default": 96892,
+    "asan": 111944,
+    "musl": 107344,
+    "windows": 124737
   },
   "aot/variant-stub-copies-2.test.ts": {
-    "default": 47855,
-    "asan": 57406
+    "default": 80010,
+    "asan": 86972,
+    "musl": 73382,
+    "windows": 109603
   },
   "aot/variant-stub-copies-3.test.ts": {
-    "default": 55541,
-    "asan": 62130,
-    "musl": 84323
+    "default": 88046,
+    "asan": 110902,
+    "musl": 94756,
+    "windows": 130729
   },
   "aot/variant-validated-facts-1.test.ts": {
-    "default": 113861,
-    "asan": 95283,
-    "musl": 132943
+    "default": 130553,
+    "asan": 148330,
+    "musl": 150657,
+    "windows": 154526
   },
   "aot/variant-validated-facts-2.test.ts": {
-    "default": 103785,
-    "asan": 77619,
-    "musl": 107504
+    "default": 112151,
+    "asan": 117595,
+    "musl": 100590,
+    "windows": 116427
   },
   "aot/variant-validated-facts-3.test.ts": {
-    "default": 111620,
-    "asan": 93660,
-    "musl": 123545
+    "default": 110392,
+    "asan": 141898,
+    "musl": 142635,
+    "windows": 140070
   },
   "aot/variant-validated-graphs-1.test.ts": {
-    "default": 250468,
-    "asan": 132138,
-    "musl": 250468
+    "default": 274444,
+    "asan": 167634,
+    "musl": 248670,
+    "windows": 294882
   },
   "aot/variant-validated-graphs-2.test.ts": {
-    "default": 37809,
-    "asan": 75379,
-    "musl": 241367
+    "default": 234992,
+    "asan": 114926,
+    "musl": 267668,
+    "windows": 300288
   },
   "aot/variant-validated-graphs-3.test.ts": {
-    "default": 210960,
-    "musl": 202506
+    "default": 219561,
+    "asan": 138577,
+    "musl": 194876,
+    "windows": 223042
   },
   "aot/variant-validated-graphs-4.test.ts": {
-    "default": 248868,
-    "asan": 69391,
-    "musl": 221708
+    "default": 280620,
+    "asan": 91872,
+    "musl": 259570,
+    "windows": 290587
   },
   "aot/variant-veneers-1.test.ts": {
-    "default": 96008,
-    "asan": 68384,
-    "musl": 91062
+    "default": 83240,
+    "asan": 117325,
+    "musl": 94604,
+    "windows": 124787
   },
   "aot/variant-veneers-2.test.ts": {
-    "default": 70489,
-    "asan": 57902,
-    "musl": 67703
+    "default": 70204,
+    "asan": 105091,
+    "musl": 79063,
+    "windows": 101173
   },
   "aot/variant-veneers-3.test.ts": {
-    "default": 92021,
-    "asan": 69905,
-    "musl": 99699
+    "default": 80321,
+    "asan": 114551,
+    "musl": 94608,
+    "windows": 123795
   },
   "aot/variant-wide-references-1.test.ts": {
-    "default": 85157,
-    "asan": 67226,
-    "musl": 95690
+    "default": 90826,
+    "asan": 108515,
+    "musl": 99717,
+    "windows": 133954
   },
   "aot/variant-wide-references-2.test.ts": {
-    "default": 66123,
-    "asan": 64585,
-    "musl": 75707
+    "default": 73692,
+    "asan": 109045,
+    "musl": 84369,
+    "windows": 102513
   },
   "aot/variant-wide-references-3.test.ts": {
-    "default": 81149,
-    "musl": 88827
+    "default": 80093,
+    "asan": 112003,
+    "musl": 94605,
+    "windows": 117912
   },
   "aot/variant-wide-references-out-of-range-1.test.ts": {
-    "default": 97665,
-    "asan": 69211,
-    "musl": 87027
+    "default": 95868,
+    "asan": 104857,
+    "musl": 93653,
+    "windows": 124518
   },
   "aot/variant-wide-references-out-of-range-2.test.ts": {
-    "default": 68058,
-    "asan": 62871,
-    "musl": 75471
+    "default": 65406,
+    "asan": 94699,
+    "musl": 77535,
+    "windows": 109292
   },
   "aot/variant-wide-references-out-of-range-3.test.ts": {
-    "default": 77158,
-    "asan": 61450,
-    "musl": 81944
+    "default": 89820,
+    "asan": 93099,
+    "musl": 83214,
+    "windows": 123850
   },
   "aot/warmed-blocks.test.ts": {
-    "default": 6615,
-    "asan": 334,
-    "musl": 7205
+    "default": 7658,
+    "asan": 506,
+    "musl": 7138,
+    "windows": 57
   },
   "aot/webassembly.test.ts": {
-    "default": 4024,
-    "asan": 365
+    "default": 4621,
+    "asan": 370,
+    "musl": 5182,
+    "windows": 10107
   },
   "aot/wide-references.test.ts": {
-    "default": 12648,
-    "asan": 16081
+    "default": 2458,
+    "asan": 8988,
+    "musl": 2544,
+    "windows": 4165
   },
   "aot/wide-strings-in-json-are-written-in-place.test.ts": {
-    "default": 564,
-    "asan": 2088,
-    "musl": 564
+    "default": 581,
+    "asan": 8249,
+    "musl": 639,
+    "windows": 1510
   },
   "aot/wide-union-build-time.test.ts": {
-    "default": 2857,
-    "asan": 2184,
-    "musl": 3355
+    "default": 2815,
+    "asan": 8859,
+    "musl": 3084,
+    "windows": 2378
   },
   "aot/without-executable-memory.test.ts": {
-    "default": 9846,
-    "asan": 57444,
-    "musl": 23681
+    "default": 8405,
+    "asan": 82405,
+    "musl": 19937,
+    "windows": 18256
   },
   "bake/hmr-socket-protocol.test.ts": {
-    "default": 80,
+    "default": 100,
     "asan": 460,
-    "musl": 80
+    "musl": 70,
+    "windows": 110,
+    "windows-aarch64": 150
   },
   "bundler/bun-build-dts-sound.test.ts": {
-    "default": 5070,
-    "asan": 51370
+    "default": 6110,
+    "asan": 50392,
+    "musl": 6035,
+    "windows": 5510,
+    "windows-aarch64": 5233
   },
   "bundler/bun-build-dts.test.ts": {
-    "default": 560,
-    "asan": 6810,
-    "musl": 560
+    "default": 580,
+    "asan": 4860,
+    "musl": 630,
+    "windows": 824,
+    "windows-aarch64": 965
   },
   "bundler/bundler_compile_aot.test.ts": {
-    "default": 161158,
-    "musl": 161158
+    "default": 163878,
+    "asan": 601923,
+    "musl": 193601,
+    "windows": 219444,
+    "windows-aarch64": 154167
   },
   "bundler/bundler_compile_prelinked.test.ts": {
-    "default": 20860,
-    "asan": 140620,
-    "musl": 9290
+    "default": 22380,
+    "asan": 86350,
+    "musl": 14780,
+    "windows": 49010,
+    "windows-aarch64": 34560
   },
   "bundler/bundler_merged_enum.test.ts": {
     "default": 80,
-    "asan": 1230,
-    "musl": 60
+    "asan": 1120,
+    "musl": 80,
+    "windows": 230,
+    "windows-aarch64": 180
   },
   "bundler/compile-aot-bun-sound.test.ts": {
-    "default": 870,
-    "asan": 26480,
-    "musl": 340
+    "default": 710,
+    "asan": 4070,
+    "musl": 380,
+    "windows": 610,
+    "windows-aarch64": 1100
   },
   "bundler/compile-aot-crash.test.ts": {
-    "default": 2220,
-    "asan": 290,
-    "musl": 1120
+    "default": 980,
+    "asan": 260,
+    "musl": 2050,
+    "windows": 40,
+    "windows-aarch64": 60
   },
   "bundler/compile-aot-heap-snapshot.test.ts": {
-    "default": 4530,
-    "asan": 18830,
-    "musl": 4700
+    "default": 3309,
+    "asan": 28163,
+    "musl": 4882,
+    "windows": 6427,
+    "windows-aarch64": 5567
   },
   "bundler/compile-aot-perf-map.test.ts": {
-    "default": 2900,
-    "asan": 19010,
-    "musl": 4880
+    "default": 3480,
+    "asan": 17744,
+    "musl": 3860,
+    "windows": 60,
+    "windows-aarch64": 50
   },
   "bundler/compile-aot-sourcemap.test.ts": {
-    "default": 5200,
-    "musl": 31870
+    "default": 4740,
+    "asan": 49308,
+    "musl": 4720,
+    "windows": 10640,
+    "windows-aarch64": 7880
   },
   "bundler/compile-aot-typed-packages.test.ts": {
-    "default": 93190,
-    "asan": 263080,
-    "musl": 78090
+    "default": 91523,
+    "asan": 326356,
+    "musl": 94983,
+    "windows": 50977,
+    "windows-aarch64": 40248
   },
   "bundler/compile-asset-streams.test.ts": {
-    "default": 3890,
-    "asan": 14610,
-    "musl": 3800
+    "default": 4020,
+    "asan": 19150,
+    "musl": 3240,
+    "windows": 40,
+    "windows-aarch64": 50
   },
   "bundler/css/forms-pseudo-elements-41120.test.ts": {
-    "default": 32,
-    "asan": 130,
-    "musl": 30
+    "default": 40,
+    "asan": 140,
+    "musl": 30,
+    "windows": 40,
+    "windows-aarch64": 30
   },
   "bundler/transpiler/react-compiler-fixtures-run.test.ts": {
-    "default": 1210,
-    "asan": 5270,
-    "musl": 980
+    "default": 1580,
+    "asan": 6770,
+    "musl": 720,
+    "windows": 1760,
+    "windows-aarch64": 2120
   },
   "bundler/transpiler/ts-import-alias-runs-once.test.ts": {
     "default": 60,
-    "asan": 420
+    "asan": 320,
+    "musl": 40,
+    "windows": 90,
+    "windows-aarch64": 70
   },
   "cli/aot-adoption.test.ts": {
-    "default": 178680,
-    "asan": 244660
+    "default": 145070,
+    "asan": 223027,
+    "musl": 107009,
+    "windows": 35846,
+    "windows-aarch64": 29601
   },
   "cli/aot-audit-members.test.ts": {
-    "default": 59508,
-    "asan": 44443,
-    "musl": 21130
+    "default": 65284,
+    "asan": 100986,
+    "musl": 18933,
+    "windows": 27885,
+    "windows-aarch64": 20971
   },
   "cli/aot-builtin-modules-and-computed-paths.test.ts": {
-    "default": 20070,
-    "asan": 61170,
-    "musl": 20070
+    "default": 18250,
+    "asan": 50284,
+    "musl": 19641,
+    "windows": 21226,
+    "windows-aarch64": 21343
   },
   "cli/aot-builtin-modules-and-names-handed-to-a-parameter.test.ts": {
-    "default": 23180,
-    "asan": 221020,
-    "musl": 25090
+    "default": 23224,
+    "asan": 21835,
+    "musl": 25339,
+    "windows": 5433,
+    "windows-aarch64": 4253
   },
   "cli/aot-builtin-modules-and-node-module.test.ts": {
-    "default": 69990,
-    "asan": 164130,
-    "musl": 69990
+    "default": 77233,
+    "asan": 116049,
+    "musl": 63830,
+    "windows": 65779,
+    "windows-aarch64": 25687
   },
   "cli/aot-builtin-modules-and-the-globals.test.ts": {
-    "default": 30220,
-    "asan": 76460
+    "default": 36024,
+    "asan": 89275,
+    "musl": 41919,
+    "windows": 20083,
+    "windows-aarch64": 14752
   },
   "cli/aot-builtin-modules-and-where-a-global-goes.test.ts": {
-    "default": 69530,
-    "musl": 56750
+    "default": 74207,
+    "asan": 62295,
+    "musl": 71481,
+    "windows": 38308,
+    "windows-aarch64": 50422
   },
   "cli/aot-builtin-modules-of-a-small-program.test.ts": {
-    "default": 35290,
-    "asan": 60980,
-    "musl": 20130
+    "default": 29894,
+    "asan": 34750,
+    "musl": 11950,
+    "windows": 10011,
+    "windows-aarch64": 9356
   },
   "cli/aot-compile-executable-path.test.ts": {
-    "default": 2630,
-    "asan": 16180,
-    "musl": 2360
+    "default": 2690,
+    "asan": 17351,
+    "musl": 2510,
+    "windows": 90,
+    "windows-aarch64": 350
   },
   "cli/aot-crash-if-interpreter-is-used.test.ts": {
-    "default": 26490,
-    "asan": 99940,
-    "musl": 25770
+    "default": 22696,
+    "asan": 66750,
+    "musl": 112050,
+    "windows": 69,
+    "windows-aarch64": 82
   },
   "cli/aot-docs.test.ts": {
-    "default": 2302,
-    "asan": 12488,
-    "musl": 1711
+    "default": 2920,
+    "asan": 25230,
+    "musl": 2470,
+    "windows": 137,
+    "windows-aarch64": 115
   },
   "cli/aot-environment.test.ts": {
-    "default": 1800,
-    "asan": 4230,
-    "musl": 690
+    "default": 1440,
+    "asan": 8005,
+    "musl": 960,
+    "windows": 1590,
+    "windows-aarch64": 1040
   },
   "cli/aot-huge-heap.test.ts": {
-    "default": 2140,
-    "asan": 17410,
-    "musl": 2260
+    "default": 2390,
+    "asan": 10440,
+    "musl": 2760,
+    "windows": 50,
+    "windows-aarch64": 50
   },
   "cli/aot-options-without-effect.test.ts": {
-    "default": 970,
-    "musl": 890
+    "default": 640,
+    "asan": 8139,
+    "musl": 910,
+    "windows": 1490,
+    "windows-aarch64": 1090
   },
   "cli/aot-unknown-flags.test.ts": {
-    "default": 320,
-    "asan": 3430,
-    "musl": 270
+    "default": 778,
+    "asan": 1504,
+    "musl": 248,
+    "windows": 955,
+    "windows-aarch64": 772
   },
   "cli/check/check.test.ts": {
-    "default": 28387,
-    "asan": 57817,
-    "musl": 20830
+    "default": 22667,
+    "asan": 46665,
+    "musl": 21500,
+    "windows": 27609,
+    "windows-aarch64": 31459
   },
   "cli/check/conformance/1.test.ts": {
-    "default": 27452,
-    "asan": 19119,
-    "musl": 29903
+    "default": 27957,
+    "asan": 21087,
+    "musl": 34294,
+    "windows": 30332,
+    "windows-aarch64": 23370
   },
   "cli/check/conformance/2.test.ts": {
-    "default": 26018,
-    "asan": 307,
-    "musl": 26460
+    "default": 30288,
+    "asan": 342,
+    "musl": 28988,
+    "windows": 34578,
+    "windows-aarch64": 20161
   },
   "cli/check/conformance/3.test.ts": {
-    "default": 27016,
-    "asan": 333,
-    "musl": 28807
+    "default": 34212,
+    "asan": 327,
+    "musl": 25777,
+    "windows": 32986,
+    "windows-aarch64": 20131
   },
   "cli/check/conformance/4.test.ts": {
-    "default": 18786,
-    "asan": 315
+    "default": 29236,
+    "asan": 301,
+    "musl": 30285,
+    "windows": 26320,
+    "windows-aarch64": 19546
   },
   "cli/check/conformance/5.test.ts": {
-    "default": 17958,
-    "asan": 311
+    "default": 26301,
+    "asan": 324,
+    "musl": 29053,
+    "windows": 31122,
+    "windows-aarch64": 25771
   },
   "cli/check/conformance/6.test.ts": {
-    "default": 24915,
-    "asan": 327,
-    "musl": 24915
+    "default": 27523,
+    "asan": 333,
+    "musl": 34396,
+    "windows": 25266,
+    "windows-aarch64": 18961
   },
   "cli/check/conformance/7.test.ts": {
-    "default": 30462,
-    "asan": 350,
-    "musl": 30462
+    "default": 32118,
+    "asan": 312,
+    "musl": 30872,
+    "windows": 30358,
+    "windows-aarch64": 28305
   },
   "cli/check/conformance/8.test.ts": {
-    "default": 31418,
-    "asan": 328,
-    "musl": 30838
+    "default": 34118,
+    "asan": 300,
+    "musl": 28879,
+    "windows": 30771,
+    "windows-aarch64": 30073
   },
   "cli/check/differential-cases-1.test.ts": {
-    "default": 42803,
-    "asan": 3649,
-    "musl": 39298
+    "default": 42709,
+    "asan": 3548,
+    "musl": 40188,
+    "windows": 48437,
+    "windows-aarch64": 54655
   },
   "cli/check/differential-cases-2.test.ts": {
-    "default": 33195,
-    "asan": 3740,
-    "musl": 33195
+    "default": 34079,
+    "asan": 1994,
+    "musl": 38137,
+    "windows": 36506,
+    "windows-aarch64": 44813
   },
   "cli/check/differential-cases-3.test.ts": {
-    "default": 44267,
-    "musl": 44267
+    "default": 46084,
+    "asan": 3694,
+    "musl": 43430,
+    "windows": 62311,
+    "windows-aarch64": 53654
   },
   "cli/check/differential-cases-4.test.ts": {
-    "default": 46839,
-    "asan": 3576,
-    "musl": 45153
+    "default": 49768,
+    "asan": 2893,
+    "musl": 42445,
+    "windows": 60421,
+    "windows-aarch64": 60044
   },
   "cli/check/differential.test.ts": {
-    "default": 32458,
-    "asan": 16358,
-    "musl": 29085
+    "default": 34390,
+    "asan": 14305,
+    "musl": 36940,
+    "windows": 52374,
+    "windows-aarch64": 37067
   },
   "cli/check/entry-points.test.ts": {
-    "default": 4909,
-    "asan": 10842,
-    "musl": 4205
+    "default": 4435,
+    "asan": 9466,
+    "musl": 5107,
+    "windows": 8280,
+    "windows-aarch64": 7710
   },
   "cli/check/narrowing-by-property.test.ts": {
-    "default": 70,
-    "asan": 389,
-    "musl": 42
+    "default": 44,
+    "asan": 366,
+    "musl": 43,
+    "windows": 88,
+    "windows-aarch64": 93
   },
   "cli/crash-if-interpreter-is-used.test.ts": {
-    "default": 15110,
-    "asan": 58610,
-    "musl": 14340
+    "default": 12118,
+    "asan": 59110,
+    "musl": 55775,
+    "windows": 85,
+    "windows-aarch64": 104
   },
   "cli/format/bunfig.test.ts": {
-    "default": 354,
-    "asan": 5669,
-    "musl": 715
+    "default": 372,
+    "asan": 5638,
+    "musl": 1003,
+    "windows": 953,
+    "windows-aarch64": 1653
   },
   "cli/format/conformance.test.ts": {
-    "default": 1457,
-    "musl": 1622
+    "default": 1634,
+    "asan": 2203,
+    "musl": 2282,
+    "windows": 2280,
+    "windows-aarch64": 2825
   },
   "cli/format/format-doctor.test.ts": {
-    "default": 119,
-    "asan": 1487,
-    "musl": 126
+    "default": 118,
+    "asan": 1532,
+    "musl": 142,
+    "windows": 322,
+    "windows-aarch64": 480
   },
   "cli/format/format.test.ts": {
-    "default": 24840,
-    "asan": 86361,
-    "musl": 18205
+    "default": 19800,
+    "asan": 80518,
+    "musl": 20058,
+    "windows": 33662,
+    "windows-aarch64": 29599
   },
   "cli/format/glob.test.ts": {
-    "default": 263,
-    "asan": 4872,
-    "musl": 294
+    "default": 359,
+    "asan": 5279,
+    "musl": 284,
+    "windows": 1412,
+    "windows-aarch64": 2098
   },
   "cli/format/oxfmt-cli/oxfmt-cli.test.ts": {
-    "default": 363,
-    "asan": 5139,
-    "musl": 373
+    "default": 353,
+    "asan": 5343,
+    "musl": 356,
+    "windows": 992,
+    "windows-aarch64": 2221
   },
   "cli/format/prettier-cli/prettier-cli.test.ts": {
-    "default": 243,
-    "asan": 3440,
-    "musl": 254
+    "default": 238,
+    "asan": 3546,
+    "musl": 235,
+    "windows": 980,
+    "windows-aarch64": 1563
   },
   "cli/format/sort-imports.test.ts": {
-    "default": 138,
-    "asan": 1356
+    "default": 172,
+    "asan": 1444,
+    "musl": 121,
+    "windows": 232,
+    "windows-aarch64": 344
   },
   "cli/format/sort-imports/sort-imports.test.ts": {
-    "default": 1659,
-    "asan": 16446
+    "default": 1606,
+    "asan": 17622,
+    "musl": 1322,
+    "windows": 3354,
+    "windows-aarch64": 4986
   },
   "cli/format/svelte/svelte.test.ts": {
-    "default": 2394,
-    "asan": 37923,
-    "musl": 2246
+    "default": 2337,
+    "asan": 24382,
+    "musl": 2482,
+    "windows": 4662,
+    "windows-aarch64": 7640
   },
   "cli/format/tailwind/tailwind.test.ts": {
-    "default": 1281,
-    "asan": 10162,
-    "musl": 1281
+    "default": 1148,
+    "asan": 9472,
+    "musl": 1243,
+    "windows": 2167,
+    "windows-aarch64": 2766
   },
   "cli/format/toml-layout.test.ts": {
     "default": 110,
-    "asan": 1190,
-    "musl": 77
+    "asan": 1092,
+    "musl": 75,
+    "windows": 155,
+    "windows-aarch64": 271
   },
   "cli/format/toml.test.ts": {
-    "default": 81,
-    "asan": 448,
-    "musl": 50
+    "default": 222,
+    "asan": 479,
+    "musl": 49,
+    "windows": 118,
+    "windows-aarch64": 131
   },
   "cli/format/words.test.ts": {
-    "default": 111,
-    "asan": 758,
-    "musl": 68
+    "default": 62,
+    "asan": 796,
+    "musl": 63,
+    "windows": 155,
+    "windows-aarch64": 226
   },
   "cli/inspect/compile-aot-inspector.test.ts": {
-    "default": 24470,
-    "musl": 883
+    "default": 941,
+    "asan": 8393,
+    "musl": 772,
+    "windows": 2739,
+    "windows-aarch64": 1957
   },
   "cli/inspect/compile-bytecode-tooling.test.ts": {
-    "default": 4890,
-    "asan": 19490,
-    "musl": 3250
+    "default": 710,
+    "asan": 3440,
+    "musl": 760,
+    "windows": 1750,
+    "windows-aarch64": 1370
   },
   "cli/install/bun-install-android-seccomp.test.ts": {
-    "default": 2540,
-    "asan": 3563,
-    "musl": 3742
+    "default": 2498,
+    "asan": 3712,
+    "musl": 5250,
+    "windows": 55,
+    "windows-aarch64": 61
   },
   "cli/install/bun-install-backends.test.ts": {
-    "default": 162,
-    "asan": 2126,
-    "musl": 151
+    "default": 141,
+    "asan": 2074,
+    "musl": 580,
+    "windows": 2313,
+    "windows-aarch64": 3635
   },
   "cli/install/bun-install-cache-publish.test.ts": {
-    "default": 2552,
-    "asan": 3850,
-    "musl": 122
+    "default": 2665,
+    "asan": 3749,
+    "musl": 152,
+    "windows": 1324,
+    "windows-aarch64": 2231
   },
   "cli/install/bun-install-env-file.test.ts": {
-    "default": 277,
-    "asan": 5437,
-    "musl": 370
+    "default": 261,
+    "asan": 5450,
+    "musl": 293,
+    "windows": 835,
+    "windows-aarch64": 1288
   },
   "cli/install/bun-install-link-path.test.ts": {
-    "default": 172,
-    "asan": 3371,
-    "musl": 210
+    "default": 188,
+    "asan": 2996,
+    "musl": 423,
+    "windows": 544,
+    "windows-aarch64": 1041
   },
   "cli/install/bun-install-non-ntfs-windows.test.ts": {
-    "default": 27,
-    "musl": 34
+    "default": 29,
+    "asan": 202,
+    "musl": 31,
+    "windows": 13081,
+    "windows-aarch64": 8920
   },
   "cli/install/bun-install-offline-misses.test.ts": {
-    "default": 257,
-    "asan": 2761,
-    "musl": 235
+    "default": 223,
+    "asan": 2538,
+    "musl": 245,
+    "windows": 1277,
+    "windows-aarch64": 3294
   },
   "cli/install/bun-install-package-extensions.test.ts": {
-    "default": 299,
-    "asan": 4511,
-    "musl": 283
+    "default": 274,
+    "asan": 4414,
+    "musl": 291,
+    "windows": 927,
+    "windows-aarch64": 1408
   },
   "cli/install/bun-install-staging.test.ts": {
-    "default": 3397,
-    "asan": 7020,
-    "musl": 1207
+    "default": 1777,
+    "asan": 9410,
+    "musl": 576,
+    "windows": 3517,
+    "windows-aarch64": 11221
   },
   "cli/install/bun-install-thread-spawn-failure.test.ts": {
-    "default": 362,
-    "asan": 205,
-    "musl": 30
+    "default": 2167,
+    "asan": 214,
+    "musl": 30,
+    "windows": 55,
+    "windows-aarch64": 62
   },
   "cli/install/bun-install-tmpdir-exdev.test.ts": {
-    "default": 33,
-    "asan": 349,
-    "musl": 37
+    "default": 64,
+    "asan": 328,
+    "musl": 40,
+    "windows": 51,
+    "windows-aarch64": 69
   },
   "cli/install/bun-install-windows-rename-retry.test.ts": {
-    "default": 35,
-    "asan": 213
+    "default": 64,
+    "asan": 218,
+    "musl": 33,
+    "windows": 4156,
+    "windows-aarch64": 3729
   },
   "cli/install/bun-pm-cache-pack.test.ts": {
-    "default": 774,
-    "asan": 9023
+    "default": 810,
+    "asan": 8992,
+    "musl": 916,
+    "windows": 4929,
+    "windows-aarch64": 7699
   },
   "cli/install/bun-pm-fetch.test.ts": {
-    "default": 448,
-    "asan": 15098,
-    "musl": 362
+    "default": 416,
+    "asan": 14587,
+    "musl": 405,
+    "windows": 2852,
+    "windows-aarch64": 4436
   },
   "cli/install/bunx-concurrent.test.ts": {
-    "default": 507,
-    "asan": 987,
-    "musl": 400
+    "default": 302,
+    "asan": 880,
+    "musl": 406,
+    "windows": 786,
+    "windows-aarch64": 1531
   },
   "cli/install/bunx-directories-bin.test.ts": {
-    "default": 76,
-    "asan": 480,
-    "musl": 46
+    "default": 42,
+    "asan": 465,
+    "musl": 40,
+    "windows": 46,
+    "windows-aarch64": 59
   },
   "cli/install/dt-unknown-readdir.test.ts": {
-    "default": 2483,
-    "asan": 2677,
-    "musl": 3666
+    "default": 141,
+    "asan": 2690,
+    "musl": 3580,
+    "windows": 70,
+    "windows-aarch64": 68
   },
   "cli/install/escape-control-characters.test.ts": {
-    "default": 183,
-    "asan": 2094,
-    "musl": 141
+    "default": 163,
+    "asan": 2299,
+    "musl": 132,
+    "windows": 490,
+    "windows-aarch64": 899
   },
   "cli/install/frozen-lockfile-member-pins.test.ts": {
-    "default": 196,
-    "musl": 196
+    "default": 189,
+    "asan": 2115,
+    "musl": 194,
+    "windows": 956,
+    "windows-aarch64": 1180
   },
   "cli/install/frozen-lockfile-outdated.test.ts": {
-    "default": 654,
-    "asan": 10733,
-    "musl": 676
+    "default": 621,
+    "asan": 10526,
+    "musl": 3137,
+    "windows": 2872,
+    "windows-aarch64": 5041
   },
   "cli/install/frozen-lockfile-workspace-names.test.ts": {
-    "default": 1001,
-    "asan": 16772,
-    "musl": 1023
+    "default": 984,
+    "asan": 16855,
+    "musl": 1693,
+    "windows": 2862,
+    "windows-aarch64": 5854
   },
   "cli/install/migration/npm-arborist.test.ts": {
-    "default": 1920,
-    "asan": 74010,
-    "musl": 760
+    "default": 890,
+    "asan": 13880,
+    "musl": 1000,
+    "windows": 2150,
+    "windows-aarch64": 4190
   },
   "cli/install/migration/yarn-berry.test.ts": {
     "default": 630,
-    "asan": 15000,
-    "musl": 600
+    "asan": 13550,
+    "musl": 700,
+    "windows": 3750,
+    "windows-aarch64": 12940
   },
   "cli/lint/aot-rules.test.ts": {
-    "default": 1471,
-    "asan": 5863,
-    "musl": 1204
+    "default": 1648,
+    "asan": 10915,
+    "musl": 1432,
+    "windows": 2078,
+    "windows-aarch64": 1922
   },
   "cli/lint/bun-rules.test.ts": {
-    "default": 1211,
-    "asan": 17709,
-    "musl": 1649
+    "default": 1370,
+    "asan": 16197,
+    "musl": 1538,
+    "windows": 2672,
+    "windows-aarch64": 3704
   },
   "cli/lint/bunfig.test.ts": {
-    "default": 4097,
-    "musl": 4765
+    "default": 4239,
+    "asan": 250320,
+    "musl": 5097,
+    "windows": 9580,
+    "windows-aarch64": 11530
   },
   "cli/lint/config-files.test.ts": {
-    "default": 10139,
-    "asan": 210970,
-    "musl": 10422
+    "default": 10941,
+    "asan": 190143,
+    "musl": 11497,
+    "windows": 22019,
+    "windows-aarch64": 28646
   },
   "cli/lint/conformance.test.ts": {
-    "default": 14024,
-    "asan": 8099,
-    "musl": 13478
+    "default": 14584,
+    "asan": 7436,
+    "musl": 13831,
+    "windows": 7100,
+    "windows-aarch64": 6638
   },
   "cli/lint/defaults.test.ts": {
-    "default": 748,
-    "asan": 6644,
-    "musl": 816
+    "default": 761,
+    "asan": 7287,
+    "musl": 714,
+    "windows": 2025,
+    "windows-aarch64": 3203
   },
   "cli/lint/doctor.test.ts": {
-    "default": 274,
-    "asan": 6110,
-    "musl": 278
+    "default": 336,
+    "asan": 6074,
+    "musl": 312,
+    "windows": 481,
+    "windows-aarch64": 667
   },
   "cli/lint/explain.test.ts": {
-    "default": 820,
-    "asan": 2504,
-    "musl": 275
+    "default": 1117,
+    "asan": 2724,
+    "musl": 296,
+    "windows": 387,
+    "windows-aarch64": 504
   },
   "cli/lint/git.test.ts": {
-    "default": 701,
-    "asan": 5305
+    "default": 775,
+    "asan": 5453,
+    "musl": 709,
+    "windows": 7021,
+    "windows-aarch64": 20719
   },
   "cli/lint/glob.test.ts": {
-    "default": 235,
-    "asan": 2827
+    "default": 288,
+    "asan": 3020,
+    "musl": 428,
+    "windows": 584,
+    "windows-aarch64": 800
   },
   "cli/lint/help.test.ts": {
-    "default": 385,
-    "asan": 4884,
-    "musl": 314
+    "default": 434,
+    "asan": 5043,
+    "musl": 374,
+    "windows": 937,
+    "windows-aarch64": 1415
   },
   "cli/lint/hints.test.ts": {
-    "default": 243,
-    "asan": 3099,
-    "musl": 243
+    "default": 229,
+    "asan": 2838,
+    "musl": 249,
+    "windows": 495,
+    "windows-aarch64": 691
   },
   "cli/lint/import-attributes.test.ts": {
-    "default": 138,
-    "asan": 6459,
-    "musl": 104
+    "default": 80,
+    "asan": 6080,
+    "musl": 87,
+    "windows": 166,
+    "windows-aarch64": 192
   },
   "cli/lint/init.test.ts": {
-    "default": 322,
-    "asan": 4412,
-    "musl": 288
+    "default": 303,
+    "asan": 4588,
+    "musl": 296,
+    "windows": 811,
+    "windows-aarch64": 1030
   },
   "cli/lint/js-parsers.test.ts": {
-    "default": 2347,
-    "asan": 44356,
-    "musl": 838
+    "default": 2884,
+    "asan": 91101,
+    "musl": 3486,
+    "windows": 5239,
+    "windows-aarch64": 5705
   },
   "cli/lint/js-plugins.test.ts": {
-    "default": 5396,
-    "musl": 5396
+    "default": 4705,
+    "asan": 244835,
+    "musl": 5421,
+    "windows": 6835,
+    "windows-aarch64": 6862
   },
   "cli/lint/json-parse.test.ts": {
-    "default": 442,
-    "asan": 7633,
-    "musl": 395
+    "default": 425,
+    "asan": 6972,
+    "musl": 409,
+    "windows": 787,
+    "windows-aarch64": 618
   },
   "cli/lint/lint.test.ts": {
-    "default": 13222,
-    "asan": 210095,
-    "musl": 14940
+    "default": 11556,
+    "asan": 192301,
+    "musl": 14850,
+    "windows": 24567,
+    "windows-aarch64": 39268
   },
   "cli/lint/messages.test.ts": {
-    "default": 93,
-    "asan": 6187,
-    "musl": 90
+    "default": 152,
+    "asan": 6219,
+    "musl": 140,
+    "windows": 208,
+    "windows-aarch64": 264
   },
   "cli/lint/native-rules.test.ts": {
-    "default": 1318,
-    "asan": 31360,
-    "musl": 1192
+    "default": 1242,
+    "asan": 31503,
+    "musl": 1321,
+    "windows": 2307,
+    "windows-aarch64": 3168
   },
   "cli/lint/output.test.ts": {
-    "default": 222,
-    "asan": 2131,
-    "musl": 222
+    "default": 218,
+    "asan": 2015,
+    "musl": 225,
+    "windows": 349,
+    "windows-aarch64": 438
   },
   "cli/lint/oxc-errors.test.ts": {
-    "default": 201,
-    "asan": 7522,
-    "musl": 203
+    "default": 227,
+    "asan": 7231,
+    "musl": 171,
+    "windows": 591,
+    "windows-aarch64": 1017
   },
   "cli/lint/oxc-names.test.ts": {
-    "default": 364,
-    "musl": 1957
+    "default": 428,
+    "asan": 2597,
+    "musl": 2716,
+    "windows": 2427,
+    "windows-aarch64": 4512
   },
   "cli/lint/prettier-rule.test.ts": {
-    "default": 393,
-    "asan": 23807,
-    "musl": 412
+    "default": 406,
+    "asan": 21195,
+    "musl": 490,
+    "windows": 676,
+    "windows-aarch64": 821
   },
   "cli/lint/react-compiler.test.ts": {
-    "default": 591,
-    "asan": 3514,
-    "musl": 422
+    "default": 480,
+    "asan": 3405,
+    "musl": 568,
+    "windows": 577,
+    "windows-aarch64": 599
   },
   "cli/lint/robustness.test.ts": {
-    "default": 4087,
-    "asan": 2235,
-    "musl": 4357
+    "default": 4517,
+    "asan": 3535,
+    "musl": 4289,
+    "windows": 5397,
+    "windows-aarch64": 4048
   },
   "cli/lint/rule-docs.test.ts": {
-    "default": 3943,
-    "asan": 14518,
-    "musl": 6924
+    "default": 3266,
+    "asan": 14212,
+    "musl": 6015,
+    "windows": 7194,
+    "windows-aarch64": 11223
   },
   "cli/lint/rule-throws.test.ts": {
-    "default": 434,
-    "asan": 69787,
-    "musl": 508
+    "default": 476,
+    "asan": 66892,
+    "musl": 481,
+    "windows": 1000,
+    "windows-aarch64": 1008
   },
   "cli/lint/rules.test.ts": {
-    "default": 742,
-    "asan": 2599
+    "default": 684,
+    "asan": 2419,
+    "musl": 2426,
+    "windows": 3064,
+    "windows-aarch64": 5983
   },
   "cli/lint/scanner.test.ts": {
-    "default": 105,
-    "asan": 6229
+    "default": 93,
+    "asan": 6228,
+    "musl": 118,
+    "windows": 321,
+    "windows-aarch64": 549
   },
   "cli/run/require-main-in-an-expression.test.ts": {
-    "default": 60,
-    "asan": 490,
-    "musl": 60
+    "default": 30,
+    "asan": 290,
+    "musl": 30,
+    "windows": 40,
+    "windows-aarch64": 180
   },
   "cli/run/run-aot.test.ts": {
-    "default": 70631,
-    "asan": 202750,
-    "musl": 70551
+    "default": 66172,
+    "asan": 161529,
+    "musl": 64999,
+    "windows": 71081,
+    "windows-aarch64": 50967
   },
   "cli/test/test-aot-coverage.test.ts": {
-    "default": 2150,
-    "asan": 7760,
-    "musl": 2150
+    "default": 1630,
+    "asan": 6750,
+    "musl": 1530,
+    "windows": 60,
+    "windows-aarch64": 60
   },
   "cli/test/test-aot-deep-equality.test.ts": {
-    "default": 3790,
-    "asan": 3051,
-    "musl": 3510
+    "default": 1130,
+    "asan": 6670,
+    "musl": 650,
+    "windows": 50,
+    "windows-aarch64": 80
   },
   "cli/test/test-aot-mocks-and-lazy-constants.test.ts": {
-    "default": 2320
+    "default": 2990,
+    "asan": 30363,
+    "musl": 3390,
+    "windows": 20,
+    "windows-aarch64": 50
   },
   "cli/test/test-aot.test.ts": {
-    "default": 10403,
-    "asan": 23391,
-    "musl": 10403
+    "default": 11550,
+    "asan": 30980,
+    "musl": 11340,
+    "windows": 10954,
+    "windows-aarch64": 8269
   },
   "internal/build-cli-config-flags.test.ts": {
-    "default": 350,
-    "asan": 2120,
-    "musl": 410
+    "default": 280,
+    "asan": 1530,
+    "musl": 270,
+    "windows": 280,
+    "windows-aarch64": 320
   },
   "internal/build-cmake-lists.test.ts": {
-    "default": 420,
-    "asan": 610,
-    "musl": 80
+    "default": 60,
+    "asan": 370,
+    "musl": 70,
+    "windows": 110,
+    "windows-aarch64": 150
   },
   "internal/build-link-lazy-objects.test.ts": {
-    "default": 180,
-    "asan": 390,
-    "musl": 60
+    "default": 220,
+    "asan": 340,
+    "musl": 70,
+    "windows": 80,
+    "windows-aarch64": 50
   },
   "internal/build-local-webkit.test.ts": {
-    "default": 240,
-    "asan": 641,
-    "musl": 170
+    "default": 250,
+    "asan": 1260,
+    "musl": 240,
+    "windows": 475,
+    "windows-aarch64": 1117
   },
   "internal/build-rust-units.test.ts": {
-    "default": 140,
-    "musl": 80
+    "default": 230,
+    "asan": 430,
+    "musl": 70,
+    "windows": 80,
+    "windows-aarch64": 80
   },
   "internal/build-timings.test.ts": {
-    "default": 160,
-    "asan": 800,
-    "musl": 70
+    "default": 230,
+    "asan": 500,
+    "musl": 70,
+    "windows": 80,
+    "windows-aarch64": 80
   },
   "internal/build-toolchain-identity.test.ts": {
-    "default": 410,
-    "asan": 1120,
-    "musl": 130
+    "default": 270,
+    "asan": 1460,
+    "musl": 140,
+    "windows": 50,
+    "windows-aarch64": 50
   },
   "internal/builtins-target.test.ts": {
-    "default": 6700,
-    "asan": 18450,
-    "musl": 2995
+    "default": 3570,
+    "asan": 14769,
+    "musl": 3481,
+    "windows": 3594,
+    "windows-aarch64": 3672
   },
   "internal/ci-slowest-tests.test.ts": {
-    "default": 30,
-    "asan": 180,
-    "musl": 30
+    "default": 70,
+    "asan": 340,
+    "musl": 40,
+    "windows": 50,
+    "windows-aarch64": 40
   },
   "internal/harness-max-rss.test.ts": {
-    "default": 342,
-    "asan": 998,
-    "musl": 263
+    "default": 327,
+    "asan": 1031,
+    "musl": 245,
+    "windows": 351,
+    "windows-aarch64": 228
   },
   "internal/install-ps1.test.ts": {
-    "default": 20,
-    "asan": 150,
-    "musl": 50
+    "default": 150,
+    "asan": 190,
+    "musl": 160,
+    "windows": 5490,
+    "windows-aarch64": 2910
   },
   "internal/prestart-map.test.ts": {
-    "default": 150
+    "default": 4130,
+    "asan": 580,
+    "musl": 90,
+    "windows": 400,
+    "windows-aarch64": 240
   },
   "js/bun/compile/jit-policy.test.ts": {
-    "default": 53080,
-    "asan": 1950,
-    "musl": 530
+    "default": 580,
+    "asan": 2390,
+    "musl": 1640,
+    "windows": 2320,
+    "windows-aarch64": 1710
   },
   "js/bun/gc/error-stack-finalizer-exception.test.ts": {
-    "default": 130,
-    "asan": 1200
+    "default": 70,
+    "asan": 1100,
+    "musl": 80,
+    "windows": 250,
+    "windows-aarch64": 140
   },
   "js/bun/http/node-http-pipeline-callbacks.test.ts": {
-    "default": 50,
-    "asan": 210,
-    "musl": 50
+    "default": 60,
+    "asan": 230,
+    "musl": 60,
+    "windows": 50,
+    "windows-aarch64": 50
   },
   "js/bun/jsc/sealed-global-object-error-message.test.ts": {
-    "default": 250,
-    "asan": 3290,
-    "musl": 760
+    "default": 90,
+    "asan": 460,
+    "musl": 80,
+    "windows": 130,
+    "windows-aarch64": 100
   },
   "js/bun/jsc/webkit-upgrade-23b0720b40.test.ts": {
     "default": 70,
-    "musl": 50
+    "asan": 340,
+    "musl": 50,
+    "windows": 70,
+    "windows-aarch64": 600
   },
   "js/bun/jsc/webkit-upgrade-7b485a76e9.test.ts": {
-    "default": 210,
-    "asan": 1410,
-    "musl": 210
+    "default": 260,
+    "asan": 1830,
+    "musl": 280,
+    "windows": 380,
+    "windows-aarch64": 320
   },
   "js/bun/jsc/webkit-upgrade-9b02218df6.test.ts": {
-    "default": 40,
-    "asan": 330,
-    "musl": 40
+    "default": 80,
+    "asan": 300,
+    "musl": 40,
+    "windows": 50,
+    "windows-aarch64": 60
   },
   "js/bun/jsc/webkit-upgrade-ccdcb8a026.test.ts": {
-    "default": 160,
-    "asan": 2060
+    "default": 70,
+    "asan": 370,
+    "musl": 40,
+    "windows": 100,
+    "windows-aarch64": 90
   },
   "js/bun/jsc/webkit-upgrade-dbdca7545d.test.ts": {
-    "default": 750,
-    "asan": 1210,
-    "musl": 250
+    "default": 90,
+    "asan": 1390,
+    "musl": 80,
+    "windows": 160,
+    "windows-aarch64": 150
   },
   "js/bun/jsc/webkit-upgrade-df289ce551.test.ts": {
-    "default": 90,
-    "asan": 950,
-    "musl": 60
+    "default": 50,
+    "asan": 450,
+    "musl": 60,
+    "windows": 80,
+    "windows-aarch64": 80
   },
   "js/bun/module-graph/module-graph-callbacks.test.ts": {
-    "default": 177,
-    "asan": 7681,
-    "musl": 160
+    "default": 153,
+    "asan": 7194,
+    "musl": 157,
+    "windows": 267,
+    "windows-aarch64": 333
   },
   "js/bun/module-graph/module-graph-compile.test.ts": {
-    "default": 3850,
-    "musl": 3092
+    "default": 3785,
+    "asan": 18265,
+    "musl": 3243,
+    "windows": 6067,
+    "windows-aarch64": 6432
   },
   "js/bun/module-graph/module-graph-gc.test.ts": {
-    "default": 892,
-    "asan": 6447,
-    "musl": 872
+    "default": 1031,
+    "asan": 8462,
+    "musl": 891,
+    "windows": 3223,
+    "windows-aarch64": 3972
   },
   "js/bun/module-graph/module-graph-io.test.ts": {
-    "default": 195,
-    "asan": 12685,
-    "musl": 235
+    "default": 199,
+    "asan": 11914,
+    "musl": 212,
+    "windows": 348,
+    "windows-aarch64": 407
   },
   "js/bun/module-graph/module-graph-isolation.test.ts": {
-    "default": 5735,
-    "asan": 19067,
-    "musl": 6499
+    "default": 6063,
+    "asan": 19954,
+    "musl": 5897,
+    "windows": 8487,
+    "windows-aarch64": 8351
   },
   "js/bun/module-graph/module-graph-matrix.test.ts": {
-    "default": 2265,
-    "asan": 18426,
-    "musl": 2088
+    "default": 2410,
+    "asan": 19282,
+    "musl": 2179,
+    "windows": 3175,
+    "windows-aarch64": 4375
   },
   "js/bun/module-graph/module-graph-workers.test.ts": {
-    "default": 18997,
-    "asan": 45229,
-    "musl": 22385
+    "default": 19993,
+    "asan": 46649,
+    "musl": 19930,
+    "windows": 88321,
+    "windows-aarch64": 63099
   },
   "js/bun/module-graph/module-graph.test.ts": {
-    "default": 1858,
-    "asan": 10956,
-    "musl": 1863
+    "default": 1937,
+    "asan": 12068,
+    "musl": 1831,
+    "windows": 3899,
+    "windows-aarch64": 5147
   },
   "js/bun/net/tls-fatal-error-closes.test.ts": {
-    "default": 190,
-    "asan": 1570,
-    "musl": 200
+    "default": 200,
+    "asan": 1150,
+    "musl": 200,
+    "windows": 370,
+    "windows-aarch64": 380
   },
   "js/bun/net/tls-reject-before-client-cert.test.ts": {
-    "default": 680,
-    "asan": 14410,
-    "musl": 670
+    "default": 710,
+    "asan": 3440,
+    "musl": 670,
+    "windows": 980,
+    "windows-aarch64": 1830
   },
   "js/bun/resolve/dynamic-import-evaluation-error-gc.test.ts": {
-    "default": 2580,
-    "asan": 2930,
-    "musl": 710
+    "default": 790,
+    "asan": 3830,
+    "musl": 770,
+    "windows": 30,
+    "windows-aarch64": 30
   },
   "js/bun/s3/s3-networksink-leak.test.ts": {
-    "default": 76,
-    "musl": 37
+    "default": 33,
+    "asan": 712,
+    "musl": 41,
+    "windows": 74,
+    "windows-aarch64": 94
   },
   "js/bun/s3/s3-upload-abort.test.ts": {
-    "default": 109,
-    "asan": 534,
-    "musl": 94
+    "default": 139,
+    "asan": 512,
+    "musl": 84,
+    "windows": 160,
+    "windows-aarch64": 177
   },
   "js/bun/s3/s3-upload-memory.test.ts": {
-    "default": 460,
-    "asan": 935,
-    "musl": 460
+    "default": 506,
+    "asan": 886,
+    "musl": 432,
+    "windows": 660,
+    "windows-aarch64": 603
   },
   "js/bun/spawn/spawn-pidfd-emfile.test.ts": {
-    "default": 330,
-    "asan": 580,
-    "musl": 330
+    "default": 40,
+    "asan": 600,
+    "musl": 50,
+    "windows": 30,
+    "windows-aarch64": 30
   },
   "js/bun/spawn/spawn-stdio-syscall-error.test.ts": {
-    "default": 360,
-    "asan": 4850,
-    "musl": 150
+    "default": 2700,
+    "asan": 1200,
+    "musl": 130,
+    "windows": 20,
+    "windows-aarch64": 30
   },
   "js/bun/spawn/spawn-sync-loop-init-fail.test.ts": {
-    "default": 30
+    "default": 70,
+    "asan": 510,
+    "musl": 130,
+    "windows": 20,
+    "windows-aarch64": 30
   },
   "js/bun/test/pretty-format-overridden-size.test.ts": {
-    "default": 60,
-    "asan": 330,
-    "musl": 30
+    "default": 30,
+    "asan": 350,
+    "musl": 20,
+    "windows": 40,
+    "windows-aarch64": 50
   },
   "js/bun/test/snapshot-tests/property-matchers.test.ts": {
-    "default": 150,
-    "asan": 220,
-    "musl": 50
+    "default": 40,
+    "asan": 200,
+    "musl": 30,
+    "windows": 80,
+    "windows-aarch64": 50
   },
   "js/bun/transpiler/transpiler-enum-concat-chain-oom.test.ts": {
-    "default": 90,
-    "asan": 330,
-    "musl": 310
+    "default": 40,
+    "asan": 670,
+    "musl": 30,
+    "windows": 80,
+    "windows-aarch64": 110
   },
   "js/bun/util/error-message-string-length-limit.test.ts": {
-    "default": 20,
-    "asan": 3450,
-    "musl": 1860
+    "default": 50,
+    "asan": 3890,
+    "musl": 1750,
+    "windows": 1580,
+    "windows-aarch64": 1100
   },
   "js/bun/util/utf8-conversion-limit.test.ts": {
-    "default": 60,
-    "asan": 8530,
-    "musl": 1920
+    "default": 30,
+    "asan": 2270,
+    "musl": 1870,
+    "windows": 2880,
+    "windows-aarch64": 950
   },
   "js/bun/wasm/compile-rss.test.ts": {
-    "default": 552,
-    "asan": 247,
-    "musl": 617
+    "default": 610,
+    "asan": 217,
+    "musl": 577,
+    "windows": 631,
+    "windows-aarch64": 700
   },
   "js/bun/websocket/websocket-server-fail-close-codes.test.ts": {
-    "default": 280,
-    "asan": 3120,
-    "musl": 650
+    "default": 340,
+    "asan": 4620,
+    "musl": 320,
+    "windows": 530,
+    "windows-aarch64": 950
   },
   "js/bun/websocket/websocket-server-forced-close.test.ts": {
-    "default": 160,
-    "asan": 3050,
-    "musl": 210
+    "default": 90,
+    "asan": 660,
+    "musl": 140,
+    "windows": 150,
+    "windows-aarch64": 130
   },
   "js/bun/websocket/websocket-server-permessage-deflate.test.ts": {
-    "default": 250,
-    "asan": 14490,
-    "musl": 280
+    "default": 240,
+    "asan": 2280,
+    "musl": 230,
+    "windows": 390,
+    "windows-aarch64": 420
   },
   "js/bun/websocket/websocket-server-upgrade-early-frames.test.ts": {
-    "default": 70,
-    "musl": 60
+    "default": 80,
+    "asan": 620,
+    "musl": 100,
+    "windows": 110,
+    "windows-aarch64": 140
   },
   "js/first_party/ws/ws-client-compat-agent.test.ts": {
-    "default": 1470,
-    "asan": 6620,
-    "musl": 1470
+    "default": 1020,
+    "asan": 4780,
+    "musl": 1710,
+    "windows": 1540,
+    "windows-aarch64": 1790
   },
   "js/first_party/ws/ws-client-compat-close.test.ts": {
-    "default": 1500,
-    "asan": 4160,
-    "musl": 1500
+    "default": 1930,
+    "asan": 5300,
+    "musl": 1030,
+    "windows": 1200,
+    "windows-aarch64": 2300
   },
   "js/first_party/ws/ws-client-compat-events.test.ts": {
-    "default": 1540,
-    "asan": 32600,
-    "musl": 1540
+    "default": 1240,
+    "asan": 23650,
+    "musl": 1780,
+    "windows": 1360,
+    "windows-aarch64": 1630
   },
   "js/first_party/ws/ws-client-compat-handshake.test.ts": {
-    "default": 19350,
-    "asan": 30180
+    "default": 17590,
+    "asan": 24620,
+    "musl": 17530,
+    "windows": 18270,
+    "windows-aarch64": 18530
   },
   "js/first_party/ws/ws-client-compat-receive.test.ts": {
-    "default": 1000,
-    "asan": 8290,
-    "musl": 950
+    "default": 1220,
+    "asan": 5120,
+    "musl": 930,
+    "windows": 1170,
+    "windows-aarch64": 1810
   },
   "js/first_party/ws/ws-client-compat-request.test.ts": {
-    "default": 770,
-    "musl": 770
+    "default": 760,
+    "asan": 4330,
+    "musl": 1050,
+    "windows": 820,
+    "windows-aarch64": 1120
   },
   "js/first_party/ws/ws-client-compat-response.test.ts": {
-    "default": 8790,
-    "asan": 12250,
-    "musl": 8790
+    "default": 9980,
+    "asan": 10550,
+    "musl": 8620,
+    "windows": 9070,
+    "windows-aarch64": 9390
   },
   "js/first_party/ws/ws-client-compat-send.test.ts": {
-    "default": 4040,
-    "asan": 4980,
-    "musl": 4040
+    "default": 610,
+    "asan": 5180,
+    "musl": 850,
+    "windows": 1250,
+    "windows-aarch64": 1390
   },
   "js/first_party/ws/ws-compat-shape.test.ts": {
-    "default": 3330,
-    "asan": 2360,
-    "musl": 500
+    "default": 1760,
+    "asan": 7710,
+    "musl": 470,
+    "windows": 490,
+    "windows-aarch64": 630
   },
   "js/first_party/ws/ws-server-compat-close.test.ts": {
-    "default": 990,
-    "asan": 9320
+    "default": 820,
+    "asan": 7770,
+    "musl": 1220,
+    "windows": 1640,
+    "windows-aarch64": 2400
   },
   "js/first_party/ws/ws-server-compat-events.test.ts": {
-    "default": 840,
-    "asan": 3950,
-    "musl": 750
+    "default": 390,
+    "asan": 3090,
+    "musl": 580,
+    "windows": 640,
+    "windows-aarch64": 1420
   },
   "js/first_party/ws/ws-server-compat-handshake.test.ts": {
-    "default": 790,
-    "asan": 5610,
-    "musl": 1160
+    "default": 1130,
+    "asan": 5480,
+    "musl": 820,
+    "windows": 1010,
+    "windows-aarch64": 1400
   },
   "js/first_party/ws/ws-server-compat-receive.test.ts": {
-    "default": 1500,
-    "asan": 39650,
-    "musl": 3650
+    "default": 1130,
+    "asan": 22720,
+    "musl": 1360,
+    "windows": 1460,
+    "windows-aarch64": 2670
   },
   "js/first_party/ws/ws-server-compat-send.test.ts": {
-    "default": 2110,
-    "asan": 69010,
-    "musl": 3300
+    "default": 2100,
+    "asan": 42230,
+    "musl": 1770,
+    "windows": 1570,
+    "windows-aarch64": 4030
   },
   "js/first_party/ws/ws-server-compat-transports.test.ts": {
-    "default": 2820,
-    "asan": 7900,
-    "musl": 2580
+    "default": 4810,
+    "asan": 6700,
+    "musl": 2330,
+    "windows": 2560,
+    "windows-aarch64": 2670
   },
   "js/first_party/ws/ws-stream-compat.test.ts": {
-    "default": 410,
-    "asan": 2810,
-    "musl": 460
+    "default": 400,
+    "asan": 2260,
+    "musl": 560,
+    "windows": 1000,
+    "windows-aarch64": 940
   },
   "js/first_party/ws/ws-stream-transport.test.ts": {
-    "default": 1660,
-    "asan": 6910,
-    "musl": 3620
+    "default": 1570,
+    "asan": 9950,
+    "musl": 1940,
+    "windows": 1960,
+    "windows-aarch64": 2060
   },
   "js/node/crypto/hkdf-zero-length.test.ts": {
-    "default": 20,
-    "asan": 140,
-    "musl": 60
+    "default": 40,
+    "asan": 170,
+    "musl": 50,
+    "windows": 80,
+    "windows-aarch64": 70
   },
   "js/node/disallow-code-generation-from-strings.test.ts": {
-    "default": 3410,
-    "asan": 6060,
-    "musl": 1230
+    "default": 5240,
+    "asan": 6400,
+    "musl": 1470,
+    "windows": 4110,
+    "windows-aarch64": 3480
   },
   "js/node/dns/dns-resolver-class.test.ts": {
-    "default": 60,
-    "asan": 180,
-    "musl": 60
+    "default": 30,
+    "asan": 200,
+    "musl": 70,
+    "windows": 40,
+    "windows-aarch64": 40
   },
   "js/node/fs/fs-eintr-darwin.test.ts": {
-    "default": 50,
-    "asan": 100,
-    "musl": 30
+    "default": 30,
+    "asan": 90,
+    "musl": 170,
+    "windows": 30,
+    "windows-aarch64": 20
   },
   "js/node/fs/fs-open-cloexec.test.ts": {
-    "default": 470,
-    "asan": 490,
-    "musl": 40
+    "default": 50,
+    "asan": 190,
+    "musl": 50,
+    "windows": 30,
+    "windows-aarch64": 30
   },
   "js/node/fs/fs-read-buffer-before-offset.test.ts": {
-    "default": 539,
-    "musl": 42
+    "default": 40,
+    "asan": 140,
+    "musl": 30,
+    "windows": 40,
+    "windows-aarch64": 70
   },
   "js/node/http/node-http-agent-free-socket.test.ts": {
-    "default": 296,
-    "asan": 1560
+    "default": 320,
+    "asan": 710,
+    "musl": 230,
+    "windows": 320,
+    "windows-aarch64": 440
   },
   "js/node/http/node-http-displaced-response.test.ts": {
-    "default": 610,
-    "asan": 14490,
-    "musl": 610
+    "default": 700,
+    "asan": 12630,
+    "musl": 790,
+    "windows": 680,
+    "windows-aarch64": 810
   },
   "js/node/http/node-http-incoming-socket.test.ts": {
-    "default": 2230,
-    "asan": 300,
-    "musl": 2230
+    "default": 50,
+    "asan": 600,
+    "musl": 60,
+    "windows": 100,
+    "windows-aarch64": 90
   },
   "js/node/http/node-http-maxHeadersCount.test.ts": {
-    "default": 800,
-    "asan": 1680,
-    "musl": 800
+    "default": 470,
+    "asan": 1730,
+    "musl": 870,
+    "windows": 580,
+    "windows-aarch64": 670
   },
   "js/node/http/node-http-own-keys-in-nodes-order.test.ts": {
-    "default": 420,
-    "asan": 230,
-    "musl": 420
+    "default": 40,
+    "asan": 270,
+    "musl": 240,
+    "windows": 80,
+    "windows-aarch64": 60
   },
   "js/node/http/node-http-req-complete.test.ts": {
-    "default": 2870,
-    "asan": 990,
-    "musl": 1800
+    "default": 350,
+    "asan": 920,
+    "musl": 360,
+    "windows": 700,
+    "windows-aarch64": 580
   },
   "js/node/http/node-http-server-close-drain.test.ts": {
-    "default": 1470,
-    "asan": 2580
+    "default": 1480,
+    "asan": 2940,
+    "musl": 1690,
+    "windows": 550,
+    "windows-aarch64": 650
   },
   "js/node/http/node-http-upgrade-body.test.ts": {
-    "default": 380,
-    "asan": 64200,
-    "musl": 560
+    "default": 240,
+    "asan": 29660,
+    "musl": 190,
+    "windows": 280,
+    "windows-aarch64": 320
   },
   "js/node/http/node-https-agent-checkserveridentity-reuse.test.ts": {
-    "default": 1230,
-    "asan": 2480,
-    "musl": 990
+    "default": 620,
+    "asan": 2280,
+    "musl": 860,
+    "windows": 730,
+    "windows-aarch64": 950
   },
   "js/node/http/node-https-server.test.ts": {
-    "default": 810,
-    "asan": 21320,
-    "musl": 890
+    "default": 410,
+    "asan": 17130,
+    "musl": 420,
+    "windows": 630,
+    "windows-aarch64": 600
   },
   "js/node/http2/node-http2-client-close.test.ts": {
-    "default": 710,
-    "asan": 1340,
-    "musl": 110
+    "default": 620,
+    "asan": 1250,
+    "musl": 200,
+    "windows": 910,
+    "windows-aarch64": 2570
   },
   "js/node/http2/node-http2-settings-ack-ordering.test.ts": {
-    "default": 50,
-    "asan": 510,
-    "musl": 70
+    "default": 120,
+    "asan": 280,
+    "musl": 50,
+    "windows": 40,
+    "windows-aarch64": 60
   },
   "js/node/path/posix-as-node.test.ts": {
-    "default": 5140,
-    "asan": 69570,
-    "musl": 4610
+    "default": 3023,
+    "asan": 19721,
+    "musl": 3106,
+    "windows": 4341,
+    "windows-aarch64": 3341
   },
   "js/node/path/wide-strings.test.ts": {
-    "default": 4560,
-    "asan": 62250,
-    "musl": 3860
+    "default": 3380,
+    "asan": 40020,
+    "musl": 3040,
+    "windows": 5457,
+    "windows-aarch64": 3520
   },
   "js/node/process/process-warning-printer.test.ts": {
-    "default": 62565,
-    "asan": 99030,
-    "musl": 28980
+    "default": 75396,
+    "asan": 81303,
+    "musl": 27283,
+    "windows": 64,
+    "windows-aarch64": 80
   },
   "js/node/stream/web-stream-state.test.ts": {
-    "default": 190,
-    "asan": 1660,
-    "musl": 270
+    "default": 200,
+    "asan": 1740,
+    "musl": 170,
+    "windows": 300,
+    "windows-aarch64": 450
   },
   "js/node/test/parallel/test-http-agent-free-socket-data-guard.js": {
-    "default": 10,
-    "musl": 104
+    "default": 19,
+    "asan": 27,
+    "musl": 106,
+    "windows": 30,
+    "windows-aarch64": 63
   },
   "js/node/test/parallel/test-http-max-headers-count-overflow.js": {
-    "default": 45,
+    "default": 74,
     "asan": 500,
-    "musl": 30
+    "musl": 12,
+    "windows": 91,
+    "windows-aarch64": 20
   },
   "js/node/test/parallel/test-http-parser-max-header-pairs-cache.js": {
-    "default": 31,
-    "asan": 297,
-    "musl": 11
+    "default": 27,
+    "asan": 246,
+    "musl": 19,
+    "windows": 61,
+    "windows-aarch64": 53
   },
   "js/node/test/parallel/test-http-raw-headers.js": {
-    "default": 43,
-    "asan": 168,
-    "musl": 26
+    "default": 90,
+    "asan": 500,
+    "musl": 20,
+    "windows": 6,
+    "windows-aarch64": 100
   },
   "js/node/test/parallel/test-http-response-drain-cork.js": {
-    "default": 30,
-    "asan": 500,
-    "musl": 66
+    "default": 55,
+    "asan": 50,
+    "musl": 65,
+    "windows": 73,
+    "windows-aarch64": 89
   },
   "js/node/test/parallel/test-http-server-close-idle-connections-pre-request.js": {
-    "default": 14,
-    "asan": 500,
-    "musl": 13
+    "default": 500,
+    "asan": 32,
+    "musl": 326,
+    "windows": 82,
+    "windows-aarch64": 13
   },
   "js/node/test/parallel/test-https-proxy-request-invalid-tls-options.mjs": {
-    "default": 70,
-    "asan": 120,
-    "musl": 70
+    "default": 93,
+    "asan": 67,
+    "musl": 29,
+    "windows": 103,
+    "windows-aarch64": 109
   },
   "js/node/tls/node-tls-duplex-end-verify.test.ts": {
-    "default": 720,
-    "asan": 2390,
-    "musl": 830
+    "default": 900,
+    "asan": 2740,
+    "musl": 960,
+    "windows": 2990,
+    "windows-aarch64": 3270
   },
   "js/node/tls/node-tls-raw-end.test.ts": {
-    "default": 40,
-    "asan": 350,
-    "musl": 60
+    "default": 160,
+    "asan": 190,
+    "musl": 50,
+    "windows": 70,
+    "windows-aarch64": 50
   },
   "js/node/tls/node-tls-wrapped-socket-close.test.ts": {
-    "default": 2180,
-    "musl": 1920
+    "default": 1510,
+    "asan": 6190,
+    "musl": 1710,
+    "windows": 2090,
+    "windows-aarch64": 3410
   },
   "js/sql/postgres-array-params.test.ts": {
-    "default": 766
+    "default": 647,
+    "asan": 1136,
+    "musl": 387,
+    "windows": 64,
+    "windows-aarch64": 71
   },
   "js/sql/postgres-auth.test.ts": {
-    "default": 500,
-    "musl": 427
+    "default": 626,
+    "asan": 1398,
+    "musl": 514,
+    "windows": 310,
+    "windows-aarch64": 388
   },
   "js/sql/postgres-bind-encode-throw.test.ts": {
-    "default": 270,
-    "asan": 10190
+    "default": 560,
+    "asan": 1171,
+    "musl": 198,
+    "windows": 89,
+    "windows-aarch64": 99
   },
   "js/sql/postgres-bind-wire.test.ts": {
-    "default": 80,
-    "asan": 570
+    "default": 180,
+    "asan": 1350,
+    "musl": 170,
+    "windows": 220,
+    "windows-aarch64": 200
   },
   "js/sql/postgres-bind.test.ts": {
-    "default": 774,
-    "musl": 643
+    "default": 1187,
+    "asan": 2209,
+    "musl": 1036,
+    "windows": 79,
+    "windows-aarch64": 71
   },
   "js/sql/postgres-bytea-bind.test.ts": {
-    "default": 1880,
-    "asan": 1170,
-    "musl": 1880
+    "default": 108,
+    "asan": 1225,
+    "musl": 197,
+    "windows": 57,
+    "windows-aarch64": 69
   },
   "js/sql/postgres-connection.test.ts": {
-    "default": 4399
+    "default": 4381,
+    "asan": 5488,
+    "musl": 3979,
+    "windows": 1216,
+    "windows-aarch64": 1250
   },
   "js/sql/postgres-copy.test.ts": {
-    "default": 1809
+    "default": 1992,
+    "asan": 3238,
+    "musl": 1370,
+    "windows": 134,
+    "windows-aarch64": 117
   },
   "js/sql/postgres-decode.test.ts": {
-    "default": 991,
-    "musl": 615
+    "default": 926,
+    "asan": 2305,
+    "musl": 747,
+    "windows": 58,
+    "windows-aarch64": 70
   },
   "js/sql/postgres-dispatch.test.ts": {
-    "default": 496,
-    "musl": 294
+    "default": 236,
+    "asan": 1402,
+    "musl": 276,
+    "windows": 171,
+    "windows-aarch64": 235
   },
   "js/sql/postgres-row-decode-error.test.ts": {
-    "default": 442,
-    "asan": 15170,
-    "musl": 442
+    "default": 628,
+    "asan": 496,
+    "musl": 100,
+    "windows": 88,
+    "windows-aarch64": 108
   },
   "js/sql/sql-begin-commit-rolled-back.test.ts": {
-    "default": 175,
-    "asan": 9580,
-    "musl": 188
+    "default": 179,
+    "asan": 285,
+    "musl": 58,
+    "windows": 67,
+    "windows-aarch64": 70
   },
   "js/sql/sql-errors.test.ts": {
-    "default": 1089,
-    "musl": 731
+    "default": 971,
+    "asan": 865,
+    "musl": 593,
+    "windows": 72,
+    "windows-aarch64": 84
   },
   "js/sql/sql-handles-servers.test.ts": {
-    "default": 487,
-    "musl": 709
+    "default": 1089,
+    "asan": 1548,
+    "musl": 461,
+    "windows": 122,
+    "windows-aarch64": 151
   },
   "js/sql/sql-handles.test.ts": {
-    "default": 800,
-    "musl": 800
+    "default": 810,
+    "asan": 11170,
+    "musl": 5250,
+    "windows": 1100,
+    "windows-aarch64": 1740
+  },
+  "js/sql/sql-hot-reload.test.ts": {
+    "default": 1504,
+    "asan": 3296,
+    "musl": 1443,
+    "windows": 61,
+    "windows-aarch64": 75
+  },
+  "js/sql/sql-mysql-connection.test.ts": {
+    "default": 1654,
+    "asan": 3765,
+    "musl": 1381,
+    "windows": 101,
+    "windows-aarch64": 163
   },
   "js/sql/sql-mysql-packet-overrun.test.ts": {
-    "default": 67
+    "default": 66,
+    "asan": 364,
+    "musl": 70,
+    "windows": 116,
+    "windows-aarch64": 126
   },
   "js/sql/sql-mysql-queued-query-failure.test.ts": {
-    "default": 410,
-    "asan": 770,
-    "musl": 195
+    "default": 136,
+    "asan": 932,
+    "musl": 194,
+    "windows": 69,
+    "windows-aarch64": 72
   },
   "js/sql/sql-mysql-row-decode-error.test.ts": {
-    "default": 16779
+    "default": 69,
+    "asan": 402,
+    "musl": 86,
+    "windows": 111,
+    "windows-aarch64": 128
   },
   "js/sql/sql-mysql-values.test.ts": {
-    "default": 374
+    "default": 466,
+    "asan": 1543,
+    "musl": 404,
+    "windows": 55,
+    "windows-aarch64": 68
   },
   "js/sql/sql-options.test.ts": {
-    "default": 300,
-    "musl": 300
+    "default": 250,
+    "asan": 2540,
+    "musl": 380,
+    "windows": 520,
+    "windows-aarch64": 340
   },
   "js/sql/sql-pool.test.ts": {
-    "default": 1185
+    "default": 1241,
+    "asan": 3780,
+    "musl": 1247,
+    "windows": 912,
+    "windows-aarch64": 1159
   },
   "js/sql/sql-query-building.test.ts": {
-    "default": 551
+    "default": 897,
+    "asan": 1564,
+    "musl": 715,
+    "windows": 153,
+    "windows-aarch64": 161
   },
   "js/sql/sql-result-columns.test.ts": {
-    "default": 319,
-    "musl": 299
+    "default": 373,
+    "asan": 1056,
+    "musl": 285,
+    "windows": 82,
+    "windows-aarch64": 95
   },
   "js/sql/sql-tls-ip-literal-host.test.ts": {
-    "default": 810,
-    "asan": 520,
-    "musl": 370
+    "default": 220,
+    "asan": 850,
+    "musl": 190,
+    "windows": 410,
+    "windows-aarch64": 470
   },
   "js/sql/sql-tls-server-identity.test.ts": {
-    "default": 237
+    "default": 241,
+    "asan": 850,
+    "musl": 249,
+    "windows": 228,
+    "windows-aarch64": 295
   },
   "js/sql/sql-transform.test.ts": {
-    "default": 348
+    "default": 1058,
+    "asan": 1509,
+    "musl": 335,
+    "windows": 235,
+    "windows-aarch64": 249
   },
   "js/web/broadcastchannel/broadcast-channel-new-target.test.ts": {
     "default": 60,
-    "asan": 320,
-    "musl": 20
+    "asan": 230,
+    "musl": 30,
+    "windows": 60,
+    "windows-aarch64": 70
   },
   "js/web/fetch/fetch-chunked-size.test.ts": {
-    "default": 1090,
-    "asan": 310,
-    "musl": 1090
+    "default": 70,
+    "asan": 710,
+    "musl": 70,
+    "windows": 80,
+    "windows-aarch64": 110
   },
   "js/web/fetch/fetch-session.test.ts": {
-    "default": 8230,
-    "asan": 9610,
-    "musl": 8200
+    "default": 8300,
+    "asan": 9000,
+    "musl": 8230,
+    "windows": 8690,
+    "windows-aarch64": 4680
   },
   "js/web/fetch/fetch.tls.ipv6.test.ts": {
-    "default": 30,
-    "asan": 130,
-    "musl": 20
+    "default": 20,
+    "asan": 110,
+    "musl": 20,
+    "windows": 80,
+    "windows-aarch64": 80
   },
   "js/web/websocket/websocket-new-target.test.ts": {
-    "default": 140,
-    "asan": 260,
-    "musl": 60
+    "default": 50,
+    "asan": 820,
+    "musl": 60,
+    "windows": 70,
+    "windows-aarch64": 70
   },
   "js/web/websocket/websocket-proxy-connect-reply.test.ts": {
-    "default": 142,
-    "asan": 758,
-    "musl": 151
+    "default": 163,
+    "asan": 725,
+    "musl": 141,
+    "windows": 240,
+    "windows-aarch64": 258
   },
   "js/web/websocket/websocket.tls.ipv6.test.ts": {
-    "default": 20,
-    "asan": 60,
-    "musl": 20
+    "default": 70,
+    "asan": 160,
+    "musl": 30,
+    "windows": 70,
+    "windows-aarch64": 70
   },
   "package.json": {
-    "default": 20638,
-    "asan": 24426,
-    "musl": 64443
+    "default": 21183,
+    "asan": 24158,
+    "musl": 66910,
+    "windows": 48846,
+    "windows-aarch64": 23898
   },
   "packages/registry/test/auth.test.ts": {
-    "default": 89,
-    "asan": 518,
-    "musl": 96
+    "default": 91,
+    "asan": 503,
+    "musl": 104,
+    "windows": 157,
+    "windows-aarch64": 156
   },
   "packages/registry/test/cli.test.ts": {
-    "default": 1202,
-    "asan": 2685,
-    "musl": 1227
+    "default": 1251,
+    "asan": 2650,
+    "musl": 1222,
+    "windows": 1329,
+    "windows-aarch64": 1474
   },
   "packages/registry/test/publish.test.ts": {
-    "default": 184,
-    "asan": 981,
-    "musl": 189
+    "default": 188,
+    "asan": 1136,
+    "musl": 191,
+    "windows": 277,
+    "windows-aarch64": 409
   },
   "packages/registry/test/read.test.ts": {
-    "default": 153,
-    "asan": 1273,
-    "musl": 152
+    "default": 177,
+    "asan": 1204,
+    "musl": 165,
+    "windows": 218,
+    "windows-aarch64": 351
   },
   "packages/s3-server/test/access.test.ts": {
-    "default": 399,
-    "asan": 2477,
-    "musl": 391
+    "default": 404,
+    "asan": 2416,
+    "musl": 428,
+    "windows": 515,
+    "windows-aarch64": 773
   },
   "packages/s3-server/test/auth.test.ts": {
-    "default": 397,
-    "asan": 2401
+    "default": 403,
+    "asan": 2378,
+    "musl": 413,
+    "windows": 550,
+    "windows-aarch64": 721
   },
   "packages/s3-server/test/bucket.test.ts": {
-    "default": 329,
-    "musl": 264
+    "default": 336,
+    "asan": 1595,
+    "musl": 313,
+    "windows": 416,
+    "windows-aarch64": 461
   },
   "packages/s3-server/test/cors.test.ts": {
-    "default": 124,
-    "asan": 711,
-    "musl": 92
+    "default": 119,
+    "asan": 712,
+    "musl": 89,
+    "windows": 161,
+    "windows-aarch64": 157
   },
   "packages/s3-server/test/list.test.ts": {
-    "default": 593,
-    "asan": 3227,
-    "musl": 593
+    "default": 450,
+    "asan": 2931,
+    "musl": 422,
+    "windows": 584,
+    "windows-aarch64": 737
   },
   "packages/s3-server/test/multipart.test.ts": {
-    "default": 1216,
-    "asan": 4367,
-    "musl": 1141
+    "default": 1189,
+    "asan": 4409,
+    "musl": 1244,
+    "windows": 1460,
+    "windows-aarch64": 1356
   },
   "packages/s3-server/test/object.test.ts": {
-    "default": 685,
-    "asan": 4102,
-    "musl": 685
+    "default": 701,
+    "asan": 3827,
+    "musl": 667,
+    "windows": 852,
+    "windows-aarch64": 1177
   },
   "packages/s3-server/test/policy.test.ts": {
-    "default": 803,
-    "asan": 7271
+    "default": 715,
+    "asan": 6856,
+    "musl": 801,
+    "windows": 1277,
+    "windows-aarch64": 1378
   },
   "packages/s3-server/test/post-object.test.ts": {
-    "default": 394,
-    "asan": 2523,
-    "musl": 379
+    "default": 361,
+    "asan": 2242,
+    "musl": 344,
+    "windows": 491,
+    "windows-aarch64": 701
   },
   "packages/s3-server/test/server.test.ts": {
-    "default": 295,
-    "musl": 291
+    "default": 322,
+    "asan": 1269,
+    "musl": 324,
+    "windows": 377,
+    "windows-aarch64": 446
   },
   "packages/s3-server/test/versioning.test.ts": {
-    "default": 361,
-    "asan": 1653,
-    "musl": 265
+    "default": 262,
+    "asan": 1639,
+    "musl": 277,
+    "windows": 377,
+    "windows-aarch64": 559
   },
   "regression/issue/17190.test.ts": {
-    "default": 60,
-    "asan": 190,
-    "musl": 40
+    "default": 40,
+    "asan": 220,
+    "musl": 50,
+    "windows": 40,
+    "windows-aarch64": 40
   },
   "regression/issue/30621.test.ts": {
-    "default": 130,
-    "asan": 520,
-    "musl": 70
+    "default": 30,
+    "asan": 440,
+    "musl": 40,
+    "windows": 60,
+    "windows-aarch64": 110
   },
   "regression/issue/39838.test.ts": {
-    "default": 150,
-    "musl": 630
+    "default": 170,
+    "asan": 600,
+    "musl": 140,
+    "windows": 290,
+    "windows-aarch64": 200
   },
   "regression/issue/40350.test.ts": {
-    "default": 110,
-    "asan": 640,
-    "musl": 70
+    "default": 210,
+    "asan": 440,
+    "musl": 50,
+    "windows": 100,
+    "windows-aarch64": 130
   },
   "regression/issue/40401.test.ts": {
-    "default": 80,
-    "asan": 190,
-    "musl": 50
+    "default": 50,
+    "asan": 200,
+    "musl": 60,
+    "windows": 50,
+    "windows-aarch64": 60
   },
   "regression/issue/42989.test.ts": {
     "default": 12030,
-    "asan": 12440,
-    "musl": 12040
+    "asan": 12320,
+    "musl": 12040,
+    "windows": 12050,
+    "windows-aarch64": 12070
   },
   "regression/issue/43831.test.ts": {
-    "default": 40,
+    "default": 60,
     "asan": 110,
-    "musl": 30
+    "musl": 20,
+    "windows": 70,
+    "windows-aarch64": 150
   },
   "regression/issue/44275.test.ts": {
-    "default": 60,
-    "asan": 540,
-    "musl": 50
+    "default": 50,
+    "asan": 600,
+    "musl": 60,
+    "windows": 90,
+    "windows-aarch64": 310
   },
   "bake/app-options.test.ts": {
     "default": 40,

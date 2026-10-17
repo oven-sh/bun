@@ -181,11 +181,11 @@ fn index_resolutions(lines: &[u8]) -> Vec<u8> {
             continue;
         }
         let inside = [b"/node_modules/".as_slice(), package_of(specifier), b"/"].concat();
-        let Some(at) = path.windows(inside.len()).rposition(|window| window == &inside[..]) else { continue };
+        let Some(at) = bun_core::strings::last_index_of(path, &inside) else { continue };
         packages.entry([&[1][..], &path[..at], b"\0", asked].concat()).or_insert(path);
-        let is_requested_by_application = !key[..end_of_folder].windows(14).any(|window| window == b"/node_modules/");
+        let is_requested_by_application = !bun_core::strings::contains(&key[..end_of_folder], b"/node_modules/");
         for store in [&b"/node_modules/.bun/"[..], b"/node_modules/.pnpm/"] {
-            if is_requested_by_application && let Some(at) = path.windows(store.len()).position(|window| window == store) {
+            if is_requested_by_application && let Some(at) = bun_core::strings::index_of(path, store) {
                 packages.entry([&[1][..], &path[..at], b"\0", asked].concat()).or_insert(path);
             }
         }
@@ -3258,8 +3258,8 @@ pub mod bv2_impl {
             // Here, because what is compiled has no import records any more when the files of the executable are gathered.
             if self.transpiler.options.preserve_source_paths {
                 let mut resolutions: Vec<u8> = Vec::new();
-                let program_paths: std::collections::HashSet<&[u8]> = all_sources.iter().filter(|source| source.path.is_file()).map(|source| source.path.text).collect();
-                let mut resolved_as_opposite_kind: std::collections::HashSet<(&[u8], &[u8], bool)> = Default::default();
+                let program_paths: bun_collections::hashbrown::HashSet<&[u8], bun_wyhash::BuildHasher> = all_sources.iter().filter(|source| source.path.is_file()).map(|source| source.path.text).collect();
+                let mut resolved_as_opposite_kind: bun_collections::hashbrown::HashSet<(&[u8], &[u8], bool), bun_wyhash::BuildHasher> = Default::default();
                 for (source, records) in all_sources.iter().zip(import_records).filter(|(source, _)| source.path.is_file()) {
                     let folder = &source.path.text[..bun_core::strings::last_index_of_char(source.path.text, b'/').unwrap_or(0)];
                     for record in records.as_slice().iter().filter(|record| record.source_index.is_valid()) {
@@ -3296,11 +3296,11 @@ pub mod bv2_impl {
                 self.graph.program_resolutions = super::index_resolutions(&resolutions);
             } else if self.transpiler.options.compiles_ahead_of_time() && self.graph.entry_points.as_slice().len() > 1 {
                 let entry_point_paths = || self.graph.entry_points.as_slice().iter().map(|index| &all_sources[index.get() as usize]).filter(|source| source.path.is_file()).map(|source| source.path.text);
-                let entry_points: std::collections::HashSet<&[u8]> = entry_point_paths().collect();
+                let entry_points: bun_collections::hashbrown::HashSet<&[u8], bun_wyhash::BuildHasher> = entry_point_paths().collect();
                 let application_dir = entry_point_paths().next().map_or(&b""[..], |path| &path[..bun_core::strings::last_index_of_char(path, b'/').unwrap_or(0)]);
                 let mut asked: std::collections::BTreeSet<(&[u8], &[u8])> = Default::default();
                 for &path in &entry_points {
-                    let Some(at) = path.windows(14).rposition(|window| window == b"/node_modules/") else { continue };
+                    let Some(at) = bun_core::strings::last_index_of(path, b"/node_modules/") else { continue };
                     let inside = &path[at + 14..];
                     let mut slashes = inside.iter().enumerate().filter(|(_, c)| **c == b'/').map(|(at, _)| at);
                     let Some(end) = (if inside.first() == Some(&b'@') { slashes.nth(1) } else { slashes.next() }) else { continue };
@@ -3504,7 +3504,6 @@ pub mod bv2_impl {
                 explain_to_log: self.transpiler.options.aot_explain_to_log,
                 rules: &self.transpiler.options.aot_rules,
                 logs_type_errors: self.transpiler.options.aot_logs_type_errors,
-                leaves_casts_unchecked: self.transpiler.options.aot_leaves_casts_unchecked,
                 early_analysis,
                 early_sources,
             };
@@ -3579,7 +3578,7 @@ pub mod bv2_impl {
             }
             let mut settings = Vec::with_capacity(candidates.len());
             for &index in &candidates {
-                let path = self.graph.input_files.items_source()[index].path.clone();
+                let path = self.graph.input_files.items_source()[index].path;
                 let target = self.graph.ast.items_target()[index];
                 let transpiler = self.transpiler_for_target(target);
                 let own_log = transpiler.log;
@@ -3634,7 +3633,7 @@ pub mod bv2_impl {
                         dirname_fd: bun_sys::Fd::INVALID,
                         file_descriptor: None,
                         file_fd_ptr: None,
-                        path: source.path.clone(),
+                        path: source.path,
                         loader,
                         jsx: jsx.clone(),
                         macro_remappings: Default::default(),
@@ -3816,7 +3815,7 @@ pub mod bv2_impl {
                                     dirname_fd: bun_sys::Fd::INVALID,
                                     file_descriptor: None,
                                     file_fd_ptr: None,
-                                    path: source.path.clone(),
+                                    path: source.path,
                                     loader: this.graph.input_files.items_loader()[index],
                                     jsx: transpiler.options.jsx.clone(),
                                     macro_remappings: Default::default(),
@@ -3928,7 +3927,7 @@ pub mod bv2_impl {
                                         dirname_fd: bun_sys::Fd::INVALID,
                                         file_descriptor: None,
                                         file_fd_ptr: None,
-                                        path: source.path.clone(),
+                                        path: source.path,
                                         loader: this.graph.input_files.items_loader()[index],
                                         jsx: transpiler.options.jsx.clone(),
                                         macro_remappings: Default::default(),
@@ -4089,7 +4088,7 @@ pub mod bv2_impl {
         fn empty_entry_point(&mut self, index: usize) -> Result<(), Error> {
             let heap = self.graph.heap;
             let target = self.graph.ast.items_target()[index];
-            let path = self.graph.input_files.items_source()[index].path.clone();
+            let path = self.graph.input_files.items_source()[index].path;
             let source: &mut bun_ast::Source = self.arena_create(bun_ast::Source {
                 path,
                 index: bun_ast::Index(index as u32),
@@ -6537,12 +6536,12 @@ pub mod bv2_impl {
                 }
                 #[cfg(unix)]
                 {
-                    use std::os::unix::ffi::OsStrExt as _;
+
                     for (source, loader) in self.graph.input_files.items_source().iter().zip(self.graph.input_files.items_loader()) {
                         if *loader != Loader::Napi || !source.path.is_file() {
                             continue;
                         }
-                        let Ok(addon) = std::fs::read(std::ffi::OsStr::from_bytes(source.path.text)) else { continue };
+                        let Ok(addon) = bun_sys::File::read_from(bun_core::Fd::cwd(), source.path.text) else { continue };
                         data_files.push(options::OutputFile::init(crate::output_file::Options {
                             data: crate::output_file::OptionsData::Buffer { data: addon.into_boxed_slice() },
                             output_path: [b".held".as_slice(), source.path.text].concat().into_boxed_slice(),
@@ -6557,7 +6556,7 @@ pub mod bv2_impl {
                     for source in self.graph.input_files.items_source().iter().filter(is_compiled) {
                         let path = source.path.text;
                         let mut from = 0;
-                        while let Some(at) = path[from..].windows(14).position(|window| window == b"/node_modules/") {
+                        while let Some(at) = bun_core::strings::index_of(&path[from..], b"/node_modules/") {
                             from += at + 14;
                             let mut slashes = path[from..].iter().enumerate().filter(|(_, c)| **c == b'/').map(|(at, _)| at);
                             let Some(end) = (if path.get(from) == Some(&b'@') { slashes.nth(1) } else { slashes.next() }) else { break };
@@ -6566,7 +6565,7 @@ pub mod bv2_impl {
                     }
                     for folder in package_dirs {
                         let path = [folder, b"/package.json"].concat();
-                        let Ok(text) = std::fs::read(std::ffi::OsStr::from_bytes(&path)) else { continue };
+                        let Ok(text) = bun_sys::File::read_from(bun_core::Fd::cwd(), &path) else { continue };
                         data_files.push(options::OutputFile::init(crate::output_file::Options {
                             data: crate::output_file::OptionsData::Buffer { data: text.into_boxed_slice() },
                             output_path: [b".held".as_slice(), &path].concat().into_boxed_slice(),
@@ -6589,7 +6588,7 @@ pub mod bv2_impl {
                     side: Some(crate::options::Side::Server),
                     ..Default::default()
                 }));
-                let json_modules: std::collections::HashSet<&[u8]> = self
+                let json_modules: bun_collections::hashbrown::HashSet<&[u8], bun_wyhash::BuildHasher> = self
                     .graph
                     .input_files
                     .items_source()
@@ -7634,7 +7633,7 @@ pub mod bv2_impl {
                 rolls_up_declarations: self.transpiler.options.rolls_up_declarations,
                 keeps_modules_apart: false,
             };
-            let typed = write_sound_files(request, self.transpiler.log_mut());
+            let typed = write_sound_files(&request, self.transpiler.log_mut());
             drop(written);
             drop(texts);
             if self.transpiler.options.drops_source_maps {

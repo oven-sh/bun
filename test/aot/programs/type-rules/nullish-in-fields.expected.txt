@@ -23,6 +23,6 @@ another prototype: no error undefined
 an heir of a Rec as a Rec: no error 1
 instance, delete: TypeError
 instance, null for a number: TypeError
-a property by the name of a field on the prototype of the class: TypeError
+a property by the name of a field on the prototype of the class: no error undefined
 1 total,label {"total":1,"label":"acc"}
 constructor function through any: no error 1

@@ -626,7 +626,3 @@ declare function $getByIdDirectPrivate<T = any, K extends string = string>(
 declare var $Promise: PromiseConstructor;
 
 declare function $isPromise<T>(value: unknown): value is Promise<T>;
-
-declare function $isCheckedStructure(object: unknown, index: number): boolean;
-declare function $setCheckedStructure(object: unknown, index: number): boolean;
-declare function $watchProperty(holder: object, key: string | symbol): boolean;

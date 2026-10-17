@@ -1,25 +1,9 @@
-// IRT= 0 upTo = Cast v\d+ As
-// IRT= 0 downTo = Cast v\d+ As
-// IRT= 0 boundOnLeft = Cast v\d+ As
-// IRT= 0 afterFailedTest = Cast v\d+ As
-// IRT= 0 underBranches = Cast v\d+ As
-// IRT= 1 inclusive = Cast v\d+ As
-// IRT= 1 otherVariable = Cast v\d+ As
-// IRT= 1 testedAfter = Cast v\d+ As
-// IRT= 1 byTwo = Cast v\d+ As
-// IRT= 1 insideTry = Cast v\d+ As
+// `i++` and `i--` on an `int32` are proven where a test on the way limits `i`. type-rules/int32-unproven-stores has the loops that are not.
+// IR- Cast v\d+ As integer
 import type { int32 } from "bun";
 
 const MAX: int32 = 2147483647;
 const MIN: int32 = -2147483648;
-
-function attempt(run: () => unknown): string {
-    try {
-        return String(run());
-    } catch (error) {
-        return (error as Error).constructor.name;
-    }
-}
 
 function upTo(from: int32, to: int32): number {
     let turns = 0;
@@ -65,42 +49,13 @@ function underBranches(from: int32, to: int32): number {
     return odd;
 }
 
-function inclusive(from: int32, to: int32): number {
-    let turns = 0;
-    for (let i: int32 = from; i <= to; i++)
-        turns++;
-    return turns;
-}
-
-function otherVariable(from: int32, to: int32, other: int32): number {
-    let at: int32 = other;
-    for (let i = from; i < to; i++)
-        at++;
-    return at;
-}
-
-function testedAfter(from: int32, to: int32): number {
-    let i: int32 = from;
-    do
-        i++;
-    while (i < to);
-    return i;
-}
-
-function byTwo(from: int32, to: int32): number {
-    let turns = 0;
-    for (let i: int32 = from; i < to; i += 2)
-        turns++;
-    return turns;
-}
-
 function refuseOdd(value: number): number {
     if (value & 1)
         throw new RangeError("odd");
     return 1;
 }
 
-function insideTry(from: int32, to: int32): number {
+function aroundTry(from: int32, to: int32): number {
     let turns = 0;
     for (let i: int32 = from; i < to; i++) {
         try {
@@ -112,25 +67,31 @@ function insideTry(from: int32, to: int32): number {
     return turns;
 }
 
-function reassigned(from: int32, to: int32, jump: int32): number {
-    let turns = 0;
-    for (let i: int32 = from; i < to; i++) {
-        if (i === 2)
-            i = jump;
-        turns++;
-    }
-    return turns;
+function belowConstant(from: int32): int32 {
+    return from < 1000 ? from + 1 : from;
 }
 
-const byName: { [name: string]: (...rest: any[]) => unknown } = { upTo, downTo, boundOnLeft, afterFailedTest, underBranches, inclusive, otherVariable, testedAfter, byTwo, insideTry, reassigned };
-console.log(upTo(0, 5), upTo(MAX - 3, MAX), upTo(MIN, MIN + 2), upTo(5, 0), byName.upTo(-2, 2));
-console.log(downTo(5, 0), downTo(MIN + 3, MIN), downTo(MAX, MAX - 2), downTo(0, 5), byName.downTo(2, -2));
-console.log(boundOnLeft(0, 5), boundOnLeft(MAX - 3, MAX), byName.boundOnLeft(3, 3));
-console.log(afterFailedTest(0, 5), afterFailedTest(MAX - 3, MAX), afterFailedTest(MAX, MAX), byName.afterFailedTest(7, 3));
-console.log(underBranches(0, 5), underBranches(MAX - 3, MAX), byName.underBranches(0, 0));
-console.log(inclusive(0, 5), attempt(() => inclusive(MAX - 3, MAX)), byName.inclusive(1, 0));
-console.log(otherVariable(0, 3, 4), attempt(() => otherVariable(0, 3, MAX - 1)), byName.otherVariable(0, 0, MAX));
-console.log(testedAfter(0, 5), attempt(() => testedAfter(MAX, 0)), byName.testedAfter(MAX - 1, 0));
-console.log(byTwo(0, 5), attempt(() => byTwo(MAX - 3, MAX)), byName.byTwo(MAX - 4, MAX - 1));
-console.log(insideTry(0, 4), insideTry(MAX - 2, MAX), byName.insideTry(1, 1));
-console.log(reassigned(0, 2, 9), reassigned(0, 10, 7), attempt(() => reassigned(0, 10, MAX)), byName.reassigned(3, 5, MAX));
+function withinLength(text: string, from: int32): int32 {
+    let at: int32 = from;
+    if (at < text.length)
+        at = at + 1;
+    return at;
+}
+
+class Reader {
+    limit: int32 = 10;
+    advance(at: int32): int32 {
+        const limit = this.limit;
+        return at < limit ? at + 1 : at;
+    }
+}
+
+const given: number[] = JSON.parse("[0, 5, -2, 2, 3, 7]");
+const [zero, five, low, two, three, seven] = given;
+console.log(upTo(0, 5), upTo(MAX - 3, MAX), upTo(MIN, MIN + 2), upTo(5, 0), upTo(low | 0, two | 0));
+console.log(downTo(5, 0), downTo(MIN + 3, MIN), downTo(MAX, MAX - 2), downTo(0, 5), downTo(two | 0, low | 0));
+console.log(boundOnLeft(0, 5), boundOnLeft(MAX - 3, MAX), boundOnLeft(three | 0, three | 0));
+console.log(afterFailedTest(0, 5), afterFailedTest(MAX - 3, MAX), afterFailedTest(MAX, MAX), afterFailedTest(seven | 0, three | 0));
+console.log(underBranches(0, 5), underBranches(MAX - 3, MAX), underBranches(zero | 0, zero | 0));
+console.log(aroundTry(0, 4), aroundTry(MAX - 2, MAX), aroundTry(five | 0, five | 0));
+console.log(belowConstant(999), belowConstant(1000), belowConstant(MIN), withinLength("abc", 2), withinLength("abc", 3), withinLength("abc", MIN), new Reader().advance(9), new Reader().advance(10));

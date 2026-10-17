@@ -202,12 +202,12 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn creation_notes_for(&mut self, file: FileId) -> Rc<Vec<(FnId, Point)>> {
         if let Some(known) = self.aot.creation.notes.get(&file) {
-            return known.clone();
+            return Rc::clone(known);
         }
         let mut notes = self.find_creation_notes_for(file);
         notes.sort_by_key(|note| note.0.0);
         let notes = Rc::new(notes);
-        self.aot.creation.notes.insert(file, notes.clone());
+        self.aot.creation.notes.insert(file, Rc::clone(&notes));
         notes
     }
 
@@ -373,7 +373,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn fresh_from_class_constructor(&mut self, file: FileId, class: ClassId) -> Rc<Fresh> {
         if let Some(known) = self.aot.creation.constructed.get(&(file, class)) {
-            return known.clone();
+            return Rc::clone(known);
         }
         if self.aot.creation.classes_in_progress.contains(&(file, class)) {
             return Rc::default();
@@ -412,13 +412,13 @@ impl<'p, 's> Checker<'p, 's> {
         }
         self.aot.creation.classes_in_progress.pop();
         let fresh = Rc::new(fresh);
-        self.aot.creation.constructed.insert((file, class), fresh.clone());
+        self.aot.creation.constructed.insert((file, class), Rc::clone(&fresh));
         fresh
     }
 
     fn constructor_effects_of(&mut self, file: FileId, func: FnId) -> Rc<Fresh> {
         if let Some(known) = self.aot.creation.constructor_effects.get(&(file, func)) {
-            return known.clone();
+            return Rc::clone(known);
         }
         if self.aot.creation.functions_in_progress.contains(&(file, func)) {
             return Rc::default();
@@ -432,7 +432,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         self.aot.creation.functions_in_progress.pop();
         let fresh = Rc::new(fresh);
-        self.aot.creation.constructor_effects.insert((file, func), fresh.clone());
+        self.aot.creation.constructor_effects.insert((file, func), Rc::clone(&fresh));
         fresh
     }
 
@@ -539,7 +539,7 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some((of, known)) = &self.aot.creation.property_store_roots
             && *of == file
         {
-            return known.clone();
+            return Rc::clone(known);
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut roots = FxHashSet::default();
@@ -556,7 +556,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let roots = Rc::new(roots);
-        self.aot.creation.property_store_roots = Some((file, roots.clone()));
+        self.aot.creation.property_store_roots = Some((file, Rc::clone(&roots)));
         roots
     }
 

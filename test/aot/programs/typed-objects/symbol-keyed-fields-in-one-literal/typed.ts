@@ -11,13 +11,13 @@ export interface Response {
   [kPending]: any;
 }
 export function ServerResponse() {}
-ServerResponse.prototype.end = function (this: Response) {
+ServerResponse.prototype.end = function end(this: Response) {
   this.finished = true;
   this[kState] = 2;
   this[kCallback]?.(this);
   return this;
 };
-ServerResponse.prototype.header = function (this: Response, name: string, value: string) {
+ServerResponse.prototype.header = function header(this: Response, name: string, value: string) {
   (this[kHeaders] ??= new Map()).set(name, value);
   return this[kHeaders]?.size;
 };

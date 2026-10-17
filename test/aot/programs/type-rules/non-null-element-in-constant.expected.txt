@@ -12,11 +12,11 @@ or other | false false false true undefined none | -1,-2 0 none
 0.5 false false false NaN NaN NaN 0 false false true undefined falsy none NaN | false false false NaN NaN NaN 0 false false true undefined falsy none NaN
 or other | false false false true undefined none | -1,-2 0 none
 4 0 1
-also passed: TypeError
-also returned: TypeError
-also in a template: TypeError
-also stored: TypeError
-also the value of &&: TypeError
+also passed: no error 0
+also returned: no error undefined
+also in a template: no error undefined
+also stored: no error 0
+also the value of &&: no error undefined
 also a member read: TypeError
-annotated: TypeError
-a variable that is assigned: TypeError
+annotated: no error false
+a variable that is assigned: no error false

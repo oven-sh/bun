@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { expect, setDefaultTimeout } from "bun:test";
 import { test } from "../../aot/supported";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 setDefaultTimeout(60_000);
 
@@ -20,13 +20,13 @@ async function ran(flags: string[]) {
   return stdout + stderr;
 }
 
-test.skipIf(isWindows)("bun test --aot --coverage warns that coverage is not measured", async () => {
+test("bun test --aot --coverage warns that coverage is not measured", async () => {
   const said = await ran(["--debug-aot", "--coverage"]);
   expect(said).toContain(warning);
   expect(said).not.toContain("% Funcs");
 });
 
-test.skipIf(isWindows)("either flag alone prints no such warning", async () => {
+test("either flag alone prints no such warning", async () => {
   expect(await ran(["--debug-aot"])).not.toContain(warning);
   const covered = await ran(["--coverage"]);
   expect(covered).not.toContain(warning);

@@ -22,6 +22,7 @@ pub enum Rule {
     ByName,
     CanThrow,
     Interpreted,
+    ReshapedLayout,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -103,12 +104,19 @@ pub static RULES: [RuleInfo; Rule::COUNT] = [
         default: Severity::Allow,
         help: "the program evaluates source text when it runs (eval, new Function, node:vm), and that code is interpreted",
     },
+    RuleInfo {
+        rule: Rule::ReshapedLayout,
+        name: "reshaped-layout",
+        codes: &[100080, 100081],
+        default: Severity::Allow,
+        help: "an object of unknown type is frozen or given another prototype, so the compiler has to expect that of every object",
+    },
 ];
 
 pub const EVERY_RULE: &str = "all";
 
 impl Rule {
-    pub const COUNT: usize = 9;
+    pub const COUNT: usize = 10;
 
     pub fn info(self) -> &'static RuleInfo {
         &RULES[self as usize]
@@ -296,6 +304,7 @@ pub struct Scopes {
     by_file: Vec<Severities>,
     pragmas: Vec<PragmaScope>,
     is_enabled: [bool; Rule::COUNT],
+    collects_everything: bool,
     base: Vec<u8>,
     baseline: Option<Baseline>,
     updates_baseline: bool,
@@ -319,7 +328,7 @@ impl Scopes {
         }
         if settings.settings.iter().all(|setting| setting.scope.is_none()) {
             let is_enabled = outside_files.map(|severity| is_denied_by_pragma || severity != Severity::Allow);
-            return Scopes { outside_files, by_file: Vec::new(), pragmas, is_enabled, base: base.to_vec(), baseline: settings.baseline.clone(), updates_baseline: settings.updates_baseline, counts: Default::default() };
+            return Scopes { outside_files, by_file: Vec::new(), pragmas, is_enabled, collects_everything: false, base: base.to_vec(), baseline: settings.baseline.clone(), updates_baseline: settings.updates_baseline, counts: Default::default() };
         }
         let patterns: Vec<Option<PathPattern>> = settings.settings.iter().map(|setting| setting.scope.as_deref().map(|scope| PathPattern::new(scope, base, files.is_case_sensitive))).collect();
         let by_file: Vec<Severities> = (files.modules.iter())
@@ -334,24 +343,41 @@ impl Scopes {
             })
             .collect();
         let is_enabled = std::array::from_fn(|rule| is_denied_by_pragma || by_file.iter().any(|severities| severities[rule] != Severity::Allow));
-        Scopes { outside_files, by_file, pragmas, is_enabled, base: base.to_vec(), baseline: settings.baseline.clone(), updates_baseline: settings.updates_baseline, counts: Default::default() }
+        Scopes { outside_files, by_file, pragmas, is_enabled, collects_everything: false, base: base.to_vec(), baseline: settings.baseline.clone(), updates_baseline: settings.updates_baseline, counts: Default::default() }
+    }
+
+    pub fn collecting_everything(self, collects_everything: bool) -> Scopes {
+        Scopes { collects_everything, ..self }
+    }
+
+    pub fn collects_everything(&self) -> bool {
+        self.collects_everything
     }
 
     pub fn is_enabled(&self, rule: Rule) -> bool {
-        self.is_enabled[rule as usize]
+        self.collects_everything || self.is_enabled[rule as usize]
+    }
+
+    fn severity_by_pragma(&self, rule: Rule, file: FileId, pos: u32) -> Option<Severity> {
+        let first = self.pragmas.partition_point(|pragma| pragma.file < file);
+        let around = self.pragmas[first..].iter().take_while(|pragma| pragma.file == file).filter(|pragma| pragma.applies_to[rule as usize] && (pragma.start..pragma.end).contains(&pos));
+        around.min_by_key(|pragma| pragma.end - pragma.start).map(|innermost| innermost.severity)
     }
 
     pub fn severity(&self, rule: Rule, file: FileId, pos: u32) -> Severity {
-        let first = self.pragmas.partition_point(|pragma| pragma.file < file);
-        let around = self.pragmas[first..].iter().take_while(|pragma| pragma.file == file).filter(|pragma| pragma.applies_to[rule as usize] && (pragma.start..pragma.end).contains(&pos));
-        match around.min_by_key(|pragma| pragma.end - pragma.start) {
-            Some(innermost) => innermost.severity,
-            None => self.by_file.get(file.idx()).unwrap_or(&self.outside_files)[rule as usize],
+        self.severity_by_pragma(rule, file, pos).unwrap_or_else(|| self.by_file.get(file.idx()).unwrap_or(&self.outside_files)[rule as usize])
+    }
+
+    pub fn is_wanted(&self, rule: Rule, file: FileId, pos: u32) -> bool {
+        match self.severity_by_pragma(rule, file, pos) {
+            Some(severity) => severity != Severity::Allow,
+            None => self.collects_everything || self.by_file.get(file.idx()).unwrap_or(&self.outside_files)[rule as usize] != Severity::Allow,
         }
     }
 
     pub fn may_apply_in(&self, rule: Rule, file: FileId) -> bool {
-        self.by_file.get(file.idx()).unwrap_or(&self.outside_files)[rule as usize] != Severity::Allow || self.pragmas.iter().any(|pragma| pragma.file == file && pragma.severity != Severity::Allow && pragma.applies_to[rule as usize])
+        self.collects_everything
+            || self.by_file.get(file.idx()).unwrap_or(&self.outside_files)[rule as usize] != Severity::Allow || self.pragmas.iter().any(|pragma| pragma.file == file && pragma.severity != Severity::Allow && pragma.applies_to[rule as usize])
     }
 
     pub fn severity_outside_files(&self, rule: Rule) -> Severity {

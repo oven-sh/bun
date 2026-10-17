@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { unsupported } from "./run-programs";
+import { unsupported, withoutCoreDump } from "./run-programs";
 import { bunEnv, bunExe, isLinux, isMacOS, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -70,7 +70,7 @@ async function build(name: string, directory: string) {
 const isSupported = !unsupported;
 
 async function whereItIsRefused(executable: string, directory: string, onLinux: "refuse" | "kill" = "kill") {
-  if (isLinux) return run([bunExe(), join(directory, "refuses.ts"), executable, onLinux]);
+  if (isLinux) return run(withoutCoreDump([bunExe(), join(directory, "refuses.ts"), executable, onLinux]));
   const signed = await run(["codesign", "--force", "--sign", "-", "--options", "runtime", executable]);
   expect(signed.exitCode).toBe(0);
   return run([executable]);

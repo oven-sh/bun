@@ -184,7 +184,7 @@ impl MachoFile {
 
         let mut tail: Vec<u8> = Vec::with_capacity(length - symbols_at + 16 * count as usize + names.len() + 16);
         tail.extend_from_slice(&self.data[symbols_at..symbols_at + 16 * locals]);
-        for row in rows.chunks_exact(12) {
+        for row in rows.as_chunks::<12>().0 {
             let at = |index: usize| u32::from_le_bytes([row[index], row[index + 1], row[index + 2], row[index + 3]]);
             tail.extend_from_slice(&symtab.strsize.checked_add(at(8))?.to_le_bytes());
             tail.extend_from_slice(&[macho::N_SECT, bun_ordinal, 0, 0]);
@@ -192,7 +192,7 @@ impl MachoFile {
         }
         tail.extend_from_slice(&self.data[symbols_at + 16 * locals..indirect_at]);
         let new_indirect_at = symbols_at + tail.len();
-        for index in self.data[indirect_at..strings_at].chunks_exact(4) {
+        for index in self.data[indirect_at..strings_at].as_chunks::<4>().0 {
             let index = u32::from_le_bytes([index[0], index[1], index[2], index[3]]);
             let moves = index & macho::INDIRECT_SYMBOL_LOCAL_OR_ABS == 0 && index >= dysymtab.nlocalsym;
             tail.extend_from_slice(&(if moves { index.checked_add(count)? } else { index }).to_le_bytes());
@@ -922,7 +922,7 @@ impl MachoSigner {
             for (pages, hashes) in page_runs.zip(hashes.chunks_mut(pages_per_thread * HASH_SIZE)) {
                 scope.spawn(move || {
                     // The last partial page is hashed unpadded, as codesign does.
-                    for (page, hash) in pages.chunks(PAGE_SIZE).zip(hashes.chunks_exact_mut(HASH_SIZE)) {
+                    for (page, hash) in pages.chunks(PAGE_SIZE).zip(hashes.as_chunks_mut::<HASH_SIZE>().0) {
                         let mut digest = [0u8; HASH_SIZE];
                         sha256_hash(page, &mut digest);
                         hash.copy_from_slice(&digest);

@@ -56,7 +56,7 @@ fn discriminated_arms(plan: &ValidationPlan, arms: &[u32]) -> Option<(Vec<u8>, V
 }
 
 fn utf16_length(text: &[u8]) -> i64 {
-    String::from_utf8_lossy(text).encode_utf16().count() as i64
+    i64::from(bun_core::strings::utf8_decoded_len_utf16(text))
 }
 
 #[derive(Default)]
@@ -97,7 +97,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 number
             }
         };
-        let plan = self.validators.plans[number as usize].clone();
+        let plan = Rc::clone(&self.validators.plans[number as usize]);
         if let Some(first) = plan.unsupported.first() {
             self.problems.push(Problem { file: fx.file, pos, what: Cow::Owned(format!("a type that cannot be validated: {first}")) });
             return Some(self.emit(fx, Op::Undefined));
@@ -156,7 +156,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 number
             }
         }?;
-        Some((self.validators.plans[number as usize].clone(), number))
+        Some((Rc::clone(&self.validators.plans[number as usize]), number))
     }
 
     pub(crate) fn parse_for_destination_type(&mut self, fx: &mut Fx, e: ExprId, call: CallId) -> Option<V> {
@@ -590,7 +590,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let want = Ty { id: self.ty_of(*ty), checked: *ty };
                 let list = self.emit_throwing(fx, Op::NewArray(Args::new()));
                 let list = self.coerce_to(fx, list, want, CoerceReason::Cast);
-                let (plan, element) = (plan.clone(), *element);
+                let (plan, element) = (Rc::clone(plan), *element);
                 let element_fails = if records_issues { fx.b.new_block() } else { fails };
                 let mut failed_at = V::NONE;
                 self.emit_loop(fx, input, |build, fx, at, item| {
@@ -634,7 +634,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 self.continue_if_object(fx, input, true, fails);
                 let created = self.emit(fx, Op::NewObject);
                 let keys = self.emit_global_method_call(fx, b"Object", b"keys", &[input]);
-                let (plan, held) = (plan.clone(), *held);
+                let (plan, held) = (Rc::clone(plan), *held);
                 self.emit_loop(fx, keys, |build, fx, _, key| {
                     let key = build.claim_type(fx, key, build.known.string);
                     let item = build.emit_throwing(fx, Op::ElemGet { obj: input, key });
@@ -699,7 +699,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         };
         self.validators.is_speculative = was_speculative;
         self.emit_rules(fx, &described.rules, checked, fails);
-        checked
+        self.as_int32_if_rules_say_so(fx, &described.rules, checked)
+    }
+
+    pub(super) fn as_int32_if_rules_say_so(&mut self, fx: &mut Fx, rules: &[Rule], value: V) -> V {
+        if rules != [Rule::Integer, Rule::AtLeast(f64::from(i32::MIN)), Rule::AtMost(f64::from(i32::MAX))] {
+            return value;
+        }
+        self.emit_conversion_to_int32(fx, value)
     }
 
     fn records_issues(&self, plan: &ValidationPlan, node: u32) -> bool {
@@ -785,7 +792,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             created @ (GeneratedFunction::Failure(number) | GeneratedFunction::SchemaFailure(number) | GeneratedFunction::Refusal(number)) => return self.emit_type_mismatch_result(fx, created, number),
             GeneratedFunction::TemplateMatcher(index) => return self.emit_template_matcher(fx, index),
         };
-        let plan = self.validators.plans[number as usize].clone();
+        let plan = Rc::clone(&self.validators.plans[number as usize]);
         let value = self.add_entry_param(fx, Ty::NONE);
         let fails = fx.b.new_block();
         let was_speculative = std::mem::replace(&mut self.validators.is_speculative, !records_issues);
@@ -920,7 +927,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         if let (Some(value), true) = (source, *others != OtherKeys::Omitted) {
             let keys = self.emit_global_method_call(fx, b"Object", b"keys", &[value]);
-            let (plan, others) = (plan.clone(), *others);
+            let (plan, others) = (Rc::clone(plan), *others);
             self.emit_loop(fx, keys, |build, fx, _, key| {
                 let key = build.claim_type(fx, key, build.known.string);
                 let (is_declared, is_other) = (fx.b.new_block(), fx.b.new_block());
@@ -950,7 +957,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn emit_schema_validator(&mut self, fx: &mut Fx, number: u32) {
-        let plan = self.validators.plans[number as usize].clone();
+        let plan = Rc::clone(&self.validators.plans[number as usize]);
         let value = self.add_entry_param(fx, Ty::NONE);
         let fails = fx.b.new_block();
         self.validators.is_at_call_site = true;

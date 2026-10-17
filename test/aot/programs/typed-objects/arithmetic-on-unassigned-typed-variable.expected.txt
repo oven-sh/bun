@@ -1,8 +1,0 @@
-NaN NaN NaN
-2 0 1
-NaN
-3
-NaN NaN
-2 1
-turns 0 turns 0 TypeError
-turns 2 turns 1 at 2

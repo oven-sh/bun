@@ -1,5 +1,7 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
+import { expect, setDefaultTimeout, test } from "bun:test";
+import { bunEnv, bunExe, tempDirWithBunTypes as tempDir } from "harness";
+
+setDefaultTimeout(60_000);
 
 async function linesSeen(cwd: string, aot: boolean) {
   await using proc = Bun.spawn({
@@ -40,7 +42,7 @@ const constants: Record<string, [declaration: string, read: string]> = {
 };
 
 for (const [name, [declaration, read]] of Object.entries(constants)) {
-  test.skipIf(isWindows).concurrent(`${name} is made before a mock that is installed after the import`, async () => {
+  test.concurrent(`${name} is made before a mock that is installed after the import`, async () => {
     const files = {
       "real.ts": real,
       "made.ts": `import { KEY, X, helper, Real } from "./real";\n${declaration}\n`,
@@ -62,7 +64,7 @@ for (const [name, [declaration, read]] of Object.entries(constants)) {
     expect(actual.passed).toBe(true);
   });
 
-  test.skipIf(isWindows).concurrent(`${name} is made after a mock that is installed before the import`, async () => {
+  test.concurrent(`${name} is made after a mock that is installed before the import`, async () => {
     const files = {
       "real.ts": real,
       "made.ts": `import { KEY, X, helper, Real } from "./real";\n${declaration}\n`,
@@ -84,7 +86,7 @@ for (const [name, [declaration, read]] of Object.entries(constants)) {
   });
 }
 
-test.skipIf(isWindows).concurrent("a table of functions is made before a spy on one of them", async () => {
+test.concurrent("a table of functions is made before a spy on one of them", async () => {
   const files = {
     "real.ts": real,
     "made.ts": `import { helper } from "./real";\nexport const table = { run: helper };\n`,
@@ -105,7 +107,7 @@ test.skipIf(isWindows).concurrent("a table of functions is made before a spy on 
   expect(actual.seen).toEqual(["see: real spied 1"]);
 });
 
-test.skipIf(isWindows).concurrent("two constants of one module are made at one time", async () => {
+test.concurrent("two constants of one module are made at one time", async () => {
   const files = {
     "real.ts": real,
     "made.ts": `import { KEY } from "./real";\nexport const first = { key: KEY };\nexport const second = { key: KEY };\n`,

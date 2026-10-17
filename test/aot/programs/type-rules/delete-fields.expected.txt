@@ -10,9 +10,9 @@ false
 9
 Object.create as Doc: no error
 own property by the name of a method: no error
-property added to the prototype of a class: TypeError
+property added to the prototype of a class: no error
 required field of an instance: TypeError
 method deleted from the prototype: no error
-own label num,note,next,label 0
+own label num,note,next,label 1
 1
 new (F as any)(): no error

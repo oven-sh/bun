@@ -285,7 +285,7 @@ exports.ok = r;
     "other.js": `globalThis.__n = (globalThis.__n || 0) + 1;
 exports.n = globalThis.__n;
 `,
-  }),
+  }, { differs: "Under --aot the prototypes of Request, Response, Blob, URL, URLSearchParams and Headers are locked: a store that would replace or add a method throws a TypeError." }),
   ...inBothModes("bun-object", "pn_bun_object", {
     "index.js": `var r = [];
 try { var o = Bun.file; Bun.file = function () { return "patched"; }; r.push(Bun.file("x")); Bun.file = o; } catch (e) { r.push(e.name); }

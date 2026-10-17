@@ -1,4 +1,4 @@
-// `x!` throws a TypeError if `x` is undefined or null, before the store and before the rest of the expression runs.
+// `x!` checks nothing, as in TypeScript: if `x` is undefined or null, it goes on as it is.
 function attempt(label: string, f: () => unknown) {
   try { console.log(label + ": no error", String(f())) } catch (e) { console.log(label + ":", e instanceof TypeError ? "TypeError" : "other " + e) }
 }
@@ -31,7 +31,7 @@ attempt("optional field of a class", () => new Late().read())
 function twice(n?: number) { return n! * 2 }
 attempt("optional parameter, left out", () => twice())
 attempt("optional parameter, undefined", () => twice(undefined))
-// It throws before the store, and before the rest of the expression runs: the field keeps its old value.
+// The store happens and the rest of the expression runs, as in JavaScript.
 const target: { v: number; note: string } = { v: 1, note: "kept" }
 attempt("stored to a field", () => { target.v = maybe(false)!; return target.v })
 console.log(target.v)

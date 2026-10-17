@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use bun_collections::hashbrown::HashSet;
 
 pub const FILE_NAME: &str = "index-of-the-compiled-program";
 
@@ -19,14 +19,14 @@ fn read_slot(index: &[u8], slot: usize) -> (u32, u32) {
 
 pub fn build(sorted_paths: &[u8], is_json_module: impl Fn(&[u8]) -> bool) -> Vec<u8> {
     let mut keys: Vec<(u32, u32)> = Vec::new();
-    let mut folders: HashSet<&[u8]> = HashSet::new();
+    let mut folders: HashSet<&[u8], bun_wyhash::BuildHasher> = HashSet::default();
     let mut offset = 0usize;
-    for path in sorted_paths.split(|&c| c == b'\n') {
+    for path in bun_core::strings::split(sorted_paths, b"\n") {
         if !path.is_empty() {
             let is_json = is_json_module(path);
             keys.push((offset as u32 + 1, (path.len() as u32) << 2 | is_json as u32));
             let mut folder = path;
-            while !is_json && let Some(at) = folder.iter().rposition(|&c| c == b'/') {
+            while !is_json && let Some(at) = bun_core::strings::last_index_of_char(folder, b'/') {
                 folder = &folder[..at];
                 if folder.is_empty() || !folders.insert(folder) {
                     break;

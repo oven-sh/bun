@@ -127,7 +127,7 @@ console.log(total, users.map(user => user.name).join());
     expect(stderr).not.toContain("hunter2");
   });
 
-  test("x!, a parameter reached through any, a loop variable, a constructor", async () => {
+  test("a parameter reached through any, a loop variable, a constructor; x! is not reported", async () => {
     const dir = project("aot-audit-kinds", {
       "app.ts": `const raw: any = JSON.parse('{"list":[1,"2"],"none":null}');
 const none: string | null = raw.none;
@@ -144,7 +144,6 @@ new (Point as any)("1");
     });
     const { stderr, exitCode } = await bun(dir, "--aot-audit", "app.ts");
     expect(brief(lines(stderr, "type-error"))).toEqual([
-      "non-null app.ts:3:7 would-throw",
       "enter-function app.ts:4:1 would-throw",
       "iterate-value app.ts:9:12 would-throw",
       "enter-function app.ts:10:15 would-throw",

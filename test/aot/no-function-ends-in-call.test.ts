@@ -2,7 +2,8 @@
 // address behind a call, so a function whose last instruction is a call, with the next function laid right behind it, hands out
 // a return address that is taken for the next function's: a throw, the stack of an Error or a cache that asks "who called me"
 // is then answered wrongly. The compiler lays something behind such a call. This test reads the machine code of an executable
-// and looks for a function that ends in a call all the same.
+// and looks for a function that ends in a call all the same. One call may stand last: the poll that a failed stack check in the
+// prologue branches to. It is told its function by the address of the call itself and returns to the prologue, never behind itself.
 import { expect, test } from "bun:test";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
@@ -25,13 +26,13 @@ function codeOf(executable: Buffer) {
   throw new Error("the executable holds no image of compiled code");
 }
 
-test.skipIf(isWindows || !!unsupported)(
+test.skipIf(!!unsupported)(
   "no compiled function ends in a call with the next function right behind it",
   async () => {
     await slot(async () => {
       using dir = tempDir("aot-ends-in-a-call", {});
       const folder = String(dir);
-      const executable = join(folder, "entry");
+      const executable = join(folder, isWindows ? "entry.exe" : "entry");
       const mapPath = join(folder, "entry.map");
       built(await spawned([bunExe(), "build", "--compile", "--aot", program, "--outfile", executable], folder, { ...bunEnv, BUN_JSC_aotMapFilePath: mapPath }));
       const [plain, compiled] = await Promise.all([spawned([bunExe(), "run", program], folder, bunEnv), spawned([executable], folder, bunEnv)]);
@@ -46,7 +47,7 @@ test.skipIf(isWindows || !!unsupported)(
         const fields = line.split("\t");
         if (fields[0] === "F") functions.push({ start: Number(fields[2]), end: Number(fields[2]) + Number(fields[3]) });
         else if (fields[0] === "C") copiesOfStubs.push(Number(fields[1]));
-        else if (fields[0] === "T") stubs.push(Number(fields[1]));
+        else if (fields[0] === "T" && fields[2] !== "PollAtPrologue") stubs.push(Number(fields[1]));
         else if (fields[0] === "U") entries.add(Number(fields[1]));
       }
       for (const { start } of functions) entries.add(start);

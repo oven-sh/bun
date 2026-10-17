@@ -110,7 +110,7 @@ pub struct Constants {
     pub minifies_identifiers: bool,
     pub function_sources: Option<Box<dyn Fn() -> FunctionSources + Send + Sync>>,
     pub logs_type_errors: bool,
-    pub leaves_casts_unchecked: bool,
+    pub leaves_decorators_to_the_bundler: bool,
     pub records_spans: bool,
     pub has_preloads: bool,
 }
@@ -249,7 +249,7 @@ impl<'a> Translation<'a> {
     }
 
     pub fn begin(&self, program: &Checked<'_>, entry_points: &[Vec<FileId>], in_parallel: InParallel<'_>) {
-        program.rule_scopes.get_or_init(|| rules::Scopes::new(&self.rules, program.files, &self.constants.root));
+        program.rule_scopes.get_or_init(|| rules::Scopes::new(&self.rules, program.files, &self.constants.root).collecting_everything(self.explain.costs || self.explain.costs_json));
         let mut partially_parsed = program.partially_parsed_files();
         partially_parsed.retain(|&file| program.files.hir(file).kind != FileKind::Declaration);
         if let Some(resolved) = self.constants.resolved.as_ref().filter(|_| !partially_parsed.is_empty()) {
@@ -415,7 +415,7 @@ impl<'a> Translation<'a> {
             .collect();
         let shown = |problem: &Problem| {
             let module = program.files.module(problem.file);
-            format!("{}:{}: --aot does not support {}", bstr::BStr::new(module.file_name()), line_of(problem.file, problem.pos), problem.what)
+            format!("{}:{}: --aot does not support {}", bstr::BStr::new(&runtime_path(module.file_name())), line_of(problem.file, problem.pos), problem.what)
         };
         let problems = linked.problems.iter().map(shown).collect();
         let skipped_builtin_modules = linked.skipped_builtin_modules.iter().map(|(id, problem)| (*id, shown(problem))).collect();

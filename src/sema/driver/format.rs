@@ -847,7 +847,7 @@ pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
             0 => BString::default(),
             n => {
                 let first = report.diagnostics.iter().find(|it| matches!(it.code, 100009..=100011));
-                let why = first.map_or(BString::default(), |first| match first.related.first() {
+                let why = first.map_or_else(BString::default, |first| match first.related.first() {
                     Some(error) => alloc_print!(": {} TS{}: {}", first.text.as_bstr(), error.code, error.text.as_bstr()),
                     None => alloc_print!(": {}", first.text.as_bstr()),
                 });

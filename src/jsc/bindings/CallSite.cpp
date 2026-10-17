@@ -49,13 +49,15 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
 
     bool isStrictFrame = encounteredStrictFrame;
     JSC::JSCell* callee = stackFrame.callee();
-    bool isHiddenBuiltin = !stackFrame.codeBlock() && stackFrame.stackFrame().codeBlockIfExists();
-    if (!isStrictFrame && !isHiddenBuiltin) {
-        if (auto* executable = stackFrame.stackFrame().ownerExecutable()) {
+    const JSC::StackFrame& frame = stackFrame.stackFrame();
+    bool isCompiled = frame.isTypedAOTFrame();
+    bool isCompiledHostFunction = frame.representsHostFunction();
+    bool isHiddenBuiltin = isCompiled ? !isCompiledHostFunction && frame.isBuiltinFunction() : !stackFrame.codeBlock() && frame.codeBlockIfExists();
+    if (!isStrictFrame && !isHiddenBuiltin && !isCompiledHostFunction) {
+        if (auto* executable = frame.ownerExecutable()) {
             isStrictFrame = executable->isInStrictContext();
-        } else if (stackFrame.stackFrame().isTypedAOTFrame()) {
-            // Compiled from the modules of a TypeScript program.
-            isStrictFrame = true;
+        } else if (isCompiled) {
+            isStrictFrame = !frame.isSloppyTypedAOTFrame();
         }
     }
 
@@ -73,7 +75,7 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
     // isToplevel() needs the real callee: m_function is undefined when the callee is hidden.
     if (!isStrictFrame) {
         auto* function = calleeFunction(callee);
-        if (function && !function->isHostFunction()) {
+        if (function ? !function->isHostFunction() : isCompiled && !isCompiledHostFunction && frame.codeType() == JSC::FunctionCode) {
             m_flags |= static_cast<unsigned int>(Flags::IsSloppyFunctionCall);
         }
     }
@@ -96,7 +98,7 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
     if (stackFrame.isConstructor()) {
         m_flags |= static_cast<unsigned int>(Flags::IsConstructor);
     }
-    if (isHiddenBuiltin || !stackFrame.stackFrame().hasLineAndColumnInfo()) {
+    if (isHiddenBuiltin || !frame.hasLineAndColumnInfo()) {
         m_flags |= static_cast<unsigned int>(Flags::IsNative);
     }
     if (stackFrame.isAsync()) {

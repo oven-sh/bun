@@ -1,8 +1,10 @@
-import { expect } from "bun:test";
+import { expect, setDefaultTimeout } from "bun:test";
 import { test } from "../../aot/supported";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
+import { bunEnv, bunExe, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
+
+setDefaultTimeout(60_000);
 
 const files = {
   "cases.ts": readFileSync(join(import.meta.dir, "../../aot/programs/typed-objects/deep-equality/cases.ts"), "utf8"),
@@ -48,7 +50,7 @@ async function rowsOf(cwd: string, aot: boolean) {
   return { rows: stdout.split("\n").filter(line => line.startsWith("ROW ")), stderr: exitCode ? stderr : "", exitCode };
 }
 
-test.skipIf(isWindows)("under bun test --aot, matchers that compare deeply answer for typed objects as for plain ones", async () => {
+test("under bun test --aot, matchers that compare deeply answer for typed objects as for plain ones", async () => {
   using expectedDir = tempDir("test-aot-deep-equality", files);
   using actualDir = tempDir("test-aot-deep-equality", files);
   const [expected, actual] = await Promise.all([rowsOf(String(expectedDir), false), rowsOf(String(actualDir), true)]);

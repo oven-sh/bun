@@ -139,27 +139,30 @@ fn rejection_of(program: &Program, func: &Func, ops: &[V], index: usize, mapped:
     None
 }
 
-pub(crate) fn find_join_sites(program: &Program) -> Vec<JoinSite> {
+pub(crate) fn find_join_sites(program: &Program, in_parallel: bun_sema::util::InParallel<'_>) -> Vec<JoinSite> {
+    const FUNCTIONS_PER_TASK: usize = 256;
     let (Some(map), Some(join)) = (program.strs.find(b"map"), program.strs.find(b"join")) else { return Vec::new() };
-    let mut sites = Vec::new();
-    for (id, func) in program.funcs.iter().enumerate() {
-        if func.has(func_flags::IS_BUILTIN) {
-            continue;
-        }
-        for block in &func.blocks {
-            for (index, &v) in block.ops.iter().enumerate() {
-                let Some(Op::CallMethod { obj: mapped, name, args: separators }) = func.op(v) else { continue };
-                if *name != join {
-                    continue;
+    let mut tasks: Vec<(usize, &[Func], Vec<JoinSite>)> = program.funcs.chunks(FUNCTIONS_PER_TASK).enumerate().map(|(task, funcs)| (task * FUNCTIONS_PER_TASK, funcs, Vec::new())).collect();
+    bun_sema::util::for_each_mut(&mut tasks, in_parallel, &|(first, funcs, sites)| {
+        for (offset, func) in funcs.iter().enumerate() {
+            if func.has(func_flags::IS_BUILTIN) {
+                continue;
+            }
+            for block in &func.blocks {
+                for (index, &v) in block.ops.iter().enumerate() {
+                    let Some(Op::CallMethod { obj: mapped, name, args: separators }) = func.op(v) else { continue };
+                    if *name != join {
+                        continue;
+                    }
+                    let callbacks = match func.op(*mapped) {
+                        Some(Op::CallMethod { name, args, .. }) if *name == map => args,
+                        Some(Op::Call { callee, this, args }) if matches!(func.op(*callee), Some(Op::PropGet { obj, name }) if *name == map && obj == this) => args,
+                        _ => continue,
+                    };
+                    sites.push(JoinSite { func: FuncId::new(*first + offset), join: v, rejection: rejection_of(program, func, &block.ops, index, *mapped, callbacks, separators) });
                 }
-                let callbacks = match func.op(*mapped) {
-                    Some(Op::CallMethod { name, args, .. }) if *name == map => args,
-                    Some(Op::Call { callee, this, args }) if matches!(func.op(*callee), Some(Op::PropGet { obj, name }) if *name == map && obj == this) => args,
-                    _ => continue,
-                };
-                sites.push(JoinSite { func: FuncId::new(id), join: v, rejection: rejection_of(program, func, &block.ops, index, *mapped, callbacks, separators) });
             }
         }
-    }
-    sites
+    });
+    tasks.into_iter().flat_map(|task| task.2).collect()
 }

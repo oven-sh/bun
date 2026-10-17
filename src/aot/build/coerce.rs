@@ -406,9 +406,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let described = self.out.tys.get(have.id);
             let has_no_layout = described.has_objects() && !described.parts.iter().any(|part| matches!(part, Part::Class(_)));
             if fx.is_typed && has_no_layout && !self.c.is_uninformative(have.checked) && !self.type_has_fixed_layout(have.checked) && !self.layout_types_in(want.id).is_empty() {
-                if !fx.uncoercible_objects.contains_key(&value) {
-                    fx.uncoercible_objects.insert(value, have.checked);
-                }
+                fx.uncoercible_objects.entry(value).or_insert(have.checked);
             }
             return value;
         }
@@ -485,7 +483,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 && let Some(both) = self.c.intersection_for_forced_cast(*source, *target)
             {
                 let described = self.out.tys.get(to).clone();
-                let mut joined = Declared { parts: Default::default(), ..described.clone() };
+                let mut joined = Declared { parts: Default::default(), ..described };
                 for part in described.parts.iter().filter(|part| !matches!(part, Part::Class(_))) {
                     joined = joined.or(&Declared::part(part.clone()));
                 }
@@ -512,6 +510,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         let block = fx.b.block;
         let held = self.emit_throwing(fx, Op::Coerce { value, to, why });
+        if matches!(why, CoerceReason::Flow | CoerceReason::Cast) && self.only_removes_union_members(have.id, to) {
+            fx.b.func.values[held.idx()].set_keeps_unconvertible_objects();
+        }
         fx.fitted.insert((block, value, want.id), held);
         fx.fitted.insert((fx.b.block, value, want.id), held);
         if want.checked != TypeId::UNRESOLVED {
@@ -784,7 +785,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     fn has_type_variable_without_layout(&mut self, ty: TypeId) -> bool {
         let bun_sema::types::TypeData::Intersection(parts) = self.c.data(ty) else { return false };
-        parts.to_vec().into_iter().any(|part| self.c.is_generic(part) && !self.type_has_fixed_layout(part))
+        parts.iter().copied().any(|part| self.c.is_generic(part) && !self.type_has_fixed_layout(part))
     }
 
     fn is_returned_directly(&self, fx: &Fx, e: ExprId) -> bool {
@@ -896,6 +897,24 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         {
             fx.b.func.values[held.idx()].def = crate::ir::Def::Op(Op::Coerce { value: of, to, why: CoerceReason::CastFresh });
         }
+    }
+
+    fn only_removes_union_members(&mut self, from: TyId, to: TyId) -> bool {
+        let records = |declared: &Declared| -> Vec<LayoutId> { declared.parts.iter().filter_map(|part| if let Part::Class(layout) = part { Some(*layout) } else { None }).collect() };
+        let (had, kept) = (records(self.out.tys.get(from)), records(self.out.tys.get(to)));
+        if self.out.tys.get(from).any_object || kept.is_empty() || !kept.iter().all(|record| had.contains(record)) {
+            return false;
+        }
+        for removed in had.iter().filter(|record| !kept.contains(record)) {
+            let Some(&removed) = self.layout_types.get(removed) else { return false };
+            for record in &kept {
+                let Some(&record) = self.layout_types.get(record) else { return false };
+                if self.c.is_comparable(record, removed) || self.c.is_comparable(removed, record) {
+                    return false;
+                }
+            }
+        }
+        true
     }
 
     pub(crate) fn keep_unconvertible_objects(&mut self, fx: &mut Fx, held: V, value: V) {
@@ -2267,9 +2286,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if this.is_some() {
             self.record_cast(Ty::from_id(anything), this, CoerceReason::Store);
             if self.out.funcs[func.idx()].kind != FuncKind::Constructor {
+                let makes_its_own_this = self.out.funcs[func.idx()].kind == FuncKind::Plain
+                    && match self.sources[func.idx()] {
+                        Source::Function { file, func, .. } => self.c.allocates_for_unknown_callers(file, func),
+                        _ => false,
+                    };
                 for view in self.layout_types_in(this) {
                     self.c.record_untyped_inflow(view);
-                    if !self.c.is_instance_type(view) {
+                    if !makes_its_own_this && !self.c.is_instance_type(view) {
                         self.c.record_any_inflow(view);
                     }
                 }

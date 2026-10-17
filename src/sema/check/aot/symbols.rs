@@ -235,7 +235,7 @@ impl<'p, 's> Checker<'p, 's> {
             return Some(ConstantSymbol::WellKnown(symbol));
         }
         let declaration = text.rsplit(|&byte| byte == b'@').next()?;
-        let mut numbers = std::str::from_utf8(declaration).ok()?.split('.').map(|number| number.parse::<u32>().ok());
+        let mut numbers = bun_core::strings::split(declaration, b".").map(|number| std::str::from_utf8(number).ok()?.parse::<u32>().ok());
         let (Some(Some(file)), Some(Some(id)), None) = (numbers.next(), numbers.next(), numbers.next()) else { return None };
         let held = self.constant_symbol_held_by(Sym { file: FileId(file), id: SymbolId(id) }, 0)?;
         (self.property_keyed_by_constant(held.declaration) == name).then_some(held.symbol)

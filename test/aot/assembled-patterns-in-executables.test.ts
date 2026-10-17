@@ -28,12 +28,12 @@ console.log(first.test(source + "12"), first.test(source), first.source.length, 
 };
 const hidden = ["patternBuiltInALoop", "patternBuiltAndByReplacing"];
 
-describe.skipIf(isWindows || !!unsupported)("compile/aot/assembled-patterns-in-executables", () => {
+describe.skipIf(!!unsupported)("compile/aot/assembled-patterns-in-executables", () => {
   const folder = String(tempDir("aot-assembled-patterns", sources));
   afterAll(() => rmSync(folder, { recursive: true, force: true }));
 
   async function build(name: string, flags: string[]) {
-    const executable = join(folder, name);
+    const executable = join(folder, isWindows ? `${name}.exe` : name);
     built(await spawned([bunExe(), "build", "--compile", "--minify", "--no-compile-function-source", ...flags, "./entry.ts", "--outfile", executable], folder, bunEnv));
     const run = await spawned([executable], folder, bunEnv);
     const bytes = readFileSync(executable);

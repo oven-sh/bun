@@ -8,7 +8,8 @@ import { join } from "path";
 // strangers, is decided by the engine in an --aot executable (class Coercion in JavaScriptCore/aot/AOTTypedObject.cpp) and foretold by
 // `bun --aot-audit` (canBeAllocated(), matchesShape() in src/runtime/cli/aot_audit.js, over the tables of src/aot/audit.rs). This test holds the
 // two to each other: every case of the fixtures runs plain, in an executable and under the audit.
-//   FALSE: the audit says would-throw and the executable does not throw. Never.
+//   FALSE: the audit says would-throw and the executable does not throw. Never. Nor does `bun run --aot`, which acts on the audit's
+//   half of the rule, throw where the executable does not.
 //   MISSED: the executable throws because the object does not fit, and the audit has no record on that line. Only where the case says
 //   `// silent: why`.
 // A case that is silent and named all the same fails too: the comment is then out of date.
@@ -52,7 +53,7 @@ describe.concurrent.skipIf(!compiles)("the audit and the executable hold an outs
     ["served", 11, 4],
     ["attributes", 33, 9],
     ["absent", 21, 6],
-    ["unmarked", 20, 11],
+    ["unmarked", 22, 8],
     ["siblings", 4, 0],
   ] as const)(
     "%s",
@@ -74,6 +75,7 @@ describe.concurrent.skipIf(!compiles)("the audit and the executable hold an outs
       const built = await spawned([join(dir, "built")], dir, { WHY: "1" });
       const audit = await spawned([bunExe(), "--aot-audit", "cases.ts"], dir);
       expect(audit.stdout).toBe(plain.stdout);
+      const enforced = await spawned([bunExe(), "run", "--aot", "cases.ts"], dir);
 
       const asPlain = answers(plain.stdout);
       const asBuilt = answers(built.stdout);
@@ -106,6 +108,9 @@ describe.concurrent.skipIf(!compiles)("the audit and the executable hold an outs
         } else if (!written.includes("// silent: ")) missed.push(written);
       }
       expect(falsely).toEqual([]);
+      const asEnforced = answers(enforced.stdout);
+      expect(asEnforced.size).toBe(numberOfCases);
+      expect([...asEnforced].filter(([number, said]) => said.startsWith("threw") && !asBuilt.get(number)!.startsWith("threw")).map(([number]) => lines[number + lineOfFirstCase - 2])).toEqual([]);
       expect(missed).toEqual([]);
       expect(outOfDate).toEqual([]);
       expect(named).toBeGreaterThanOrEqual(namedAtLeast);

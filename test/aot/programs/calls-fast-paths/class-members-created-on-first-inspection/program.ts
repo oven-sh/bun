@@ -13,7 +13,7 @@ function census(label: string): void {
 class A { constructor(public v: number) {} m1(): number { return this.v; } m2(): number { return 2; } m3(): number { return 3; } m4(): number { return 4; } m5(): number { return 5; } m6(): number { return 6; } m7(): number { return 7; } m8(): number { return 8; } get g1(): number { return 1; } get g2(): number { return 2; } static s1(): number { return 1; } static s2(): number { return 2; } }
 class B extends A { n1(): number { return 1; } n2(): number { return 2; } n3(): number { return 3; } n4(): number { return 4; } }
 class C { constructor(public v: number) {} m1(): number { return this.v; } m2(): number { return 2; } m3(): number { return 3; } m4(): number { return 4; } }
-console.log("heap cells of four kinds, more than at the line before"); census(""); census(""); census("nothing happened");
+console.log("heap cells of four kinds, more than at the line before"); census(""); census(""); census(""); census("nothing happened");
 const c = new C(3); let s = c.m1() + c.m2() + c.m3() + c.m4();
 census("new C and four typed calls");
 census("the snapshot has looked at C");

@@ -467,7 +467,7 @@ pub(crate) fn shorten(program: &mut Program, messages: &[(StrId, StrId)], uses: 
 
     let final_messages: FxHashMap<StrId, StrId> = (messages.iter())
         .map(|&(message, name)| {
-            let text = tdz_error_message(&program.strs.get(shortened(name)).to_vec());
+            let text = tdz_error_message(program.strs.get(shortened(name)));
             (message, program.strs.intern(&text))
         })
         .collect();

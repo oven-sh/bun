@@ -1,6 +1,5 @@
 // A record type whose objects typed code gives a prototype keeps its layout under that prototype, also where untyped code sees the objects: the methods are found, the fields stay fields, another prototype from untyped code is taken too.
 // IR+ ^shape \d+ Record "Point" .* other prototypes prototype set by typed code .*may-despecialize
-// CALLS- norm (GetByName|operationAOT)
 // VALIDATED compiles
 interface Point { x: number; y: number }
 const methods = { describe(this: any) { return "(" + this.x + ", " + this.y + ")" }, x: "inherited" }

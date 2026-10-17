@@ -5,7 +5,7 @@
 // THE CHECKER DOES NOT LOOK INTO A .d.ts (it says "0 files"; a name that does not exist there is silently any): python3 shapes_check.py checks all fz-shapes*.d.ts as .ts, and the births again.
 declare namespace FZ {
   // -------------------------------------------------------------------------------------------------------------------
-  // 1. Numbers. int32: four bytes and integer arithmetic; a value that is no int32 stored there is a TypeError at run time.
+  // 1. Numbers. int32: four bytes and integer arithmetic; the build proves every value that is stored there, or stops.
   // -------------------------------------------------------------------------------------------------------------------
   type int32 = import("bun").int32;
   type RequestStatus = int32; // Request.status: 10 OPENING 11 OPEN 12 CLOSING 13 CLOSED (aborting is the flag Request.aborted)
@@ -127,9 +127,9 @@ declare namespace FZ {
     status: RequestStatus;
     fatalError: Thrown; // null until fatalError() | abort()
     aborted: boolean;
-    nextSegmentId: SegmentId;
-    allPendingTasks: TaskCount;
-    pendingRootTasks: TaskCount;
+    nextSegmentId: number;
+    allPendingTasks: number;
+    pendingRootTasks: number;
     completedRootSegment: Segment | null;
     completedPreambleSegments: Segment[][] | null;
     byteSize: ByteSize;
@@ -209,7 +209,7 @@ declare namespace FZ {
   interface Segment { // birth 4278
     status: SegmentStatus;
     parentFlushed: boolean;
-    id: SegmentId;
+    id: number;
     index: ChunkIndex; // where in the parent's chunks it goes
     chunks: Chunk[];
     children: Segment[];
@@ -221,9 +221,9 @@ declare namespace FZ {
   }
   interface SuspenseBoundary { // birth 4136
     status: BoundaryStatus;
-    rootSegmentID: SegmentId;
+    rootSegmentID: number;
     parentFlushed: boolean;
-    pendingTasks: TaskCount;
+    pendingTasks: number;
     row: SuspenseListRow | null;
     completedSegments: Segment[];
     byteSize: ByteSize;
@@ -238,7 +238,7 @@ declare namespace FZ {
   interface BoundaryPreamble { content: PreambleState; fallback: PreambleState } // birth 5015 5443
   interface TrackedBoundary { contentKeyPath: KeyNode | null; fallbackNode: ReplayNode | null } // birth 5056: never null at the one birth; React's type has the nulls and 5694 tests for one
   interface SuspenseListRow { // birth 4395
-    pendingTasks: TaskCount;
+    pendingTasks: number;
     boundaries: SuspenseBoundary[] | null;
     hoistables: HoistableState;
     inheritedHoistables: HoistableState | null;
@@ -255,7 +255,7 @@ declare namespace FZ {
   //    object into the layout they are two objects, and createRenderState's stores (instructions |= 32, scriptResources[src] = null) are lost.)
   // -------------------------------------------------------------------------------------------------------------------
   interface PostponedHoles { workingMap: Map<KeyNode, ReplayNode>; rootNodes: ReplayNode[]; rootSlots: ResumeSlots } // birth 3999 4109
-  interface ReplaySet { nodes: ReplayNode[]; slots: ResumeSlots; pendingTasks: TaskCount } // birth 4066 5369 5460 5510 5622
+  interface ReplaySet { nodes: ReplayNode[]; slots: ResumeSlots; pendingTasks: number } // birth 4066 5369 5460 5510 5622
   interface PostponedState { // birth 7318: handed to the user (StaticResult.postponed), kept in Request.postponedState
     nextSegmentId: SegmentId;
     rootFormatContext: FormatContext;
@@ -344,7 +344,7 @@ declare namespace FZ {
     parentExit: string; // "none" at both births, never read
     name: ViewTransitionValue;
     autoName: ViewTransitionValue;
-    nameIdx: int32;
+    nameIdx: number;
   }
   interface HoistableState { styles: Set<StyleQueue>; stylesheets: Set<StylesheetResource>; suspenseyImages: boolean } // birth 2568
   interface StyleQueue { precedence: Chunk; rules: Chunk[]; hrefs: Chunk[]; sheets: Map<string, StylesheetResource> } // birth 1664 1816 2824

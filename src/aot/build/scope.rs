@@ -299,7 +299,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     fn hoisted_function_for(&self, sym: Sym) -> Option<(FileId, FnId)> {
         let with_body = |&(file, decl): &(FileId, Decl)| matches!(decl, Decl::Fn(func) if !matches!(self.hir(file)[func].body, hir::FnBody::None));
-        let Some((file, Decl::Fn(func))) = self.files.decls_of(sym).iter().copied().filter(with_body).next_back() else { return None };
+        let Some((file, Decl::Fn(func))) = self.files.decls_of(sym).iter().copied().rfind(with_body) else { return None };
         let hir = self.hir(file);
         let is_at_top_level = hir.ids(hir.body).any(|stmt| matches!(hir[stmt].kind, StmtKind::Fn(declared) if declared == func));
         (is_at_top_level && !self.is_commonjs(file)).then_some((file, func))
@@ -1533,8 +1533,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn destructures_parameters_at_entry(&mut self, file: FileId, func: FnId) -> bool {
-        let parameters: Vec<hir::ParamId> = self.hir(file)[func].params.iter().collect();
-        parameters.into_iter().any(|p| self.destructured_names(file, p).is_some()) && self.query(|c| c.is_exported_to_unseen_files(file, func)) && self.has_annotated_parameter(file, func)
+        self.hir(file)[func].params.iter().any(|p| self.destructured_names(file, p).is_some()) && self.query(|c| c.is_exported_to_unseen_files(file, func)) && self.has_annotated_parameter(file, func)
     }
 
     pub(crate) fn destructured_names(&self, file: FileId, p: hir::ParamId) -> Option<Vec<Atom>> {
@@ -1568,8 +1567,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if using.functions.contains(&func) || using.arrows.contains(&func) || self.shared.builtin_functions.for_declaration(file, func).is_some() {
             return false;
         }
-        let parameters: Vec<hir::ParamId> = self.hir(file)[func].params.iter().collect();
-        parameters.into_iter().any(|p| {
+        self.hir(file)[func].params.iter().any(|p| {
             let target_ty = self.param_ty(file, p).id;
             target_ty.is_some() && target_ty != self.out.tys.anything && self.param_cast_reason(file, p) == CoerceReason::Cast
         })
@@ -1788,7 +1786,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return None;
         }
         let with_body = |&(file, decl): &(FileId, Decl)| matches!(decl, Decl::Fn(func) if !matches!(self.hir(file)[func].body, hir::FnBody::None));
-        let Some((file, Decl::Fn(func))) = decls.iter().copied().filter(with_body).next_back() else { return None };
+        let Some((file, Decl::Fn(func))) = decls.iter().copied().rfind(with_body) else { return None };
         (!self.is_ambient(sym) && !self.is_assigned(sym)).then_some((file, func))
     }
 

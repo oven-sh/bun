@@ -214,14 +214,10 @@ bun build <entry points>
   or <code>log</code> to write a line to stderr and continue
 </ParamField>
 
-<ParamField path="--aot-unchecked-casts" type="boolean">
-  With <code>--aot</code>: <code>x as T</code> and <code>x!</code> check nothing, as in TypeScript. A value that does not
-  match goes on as it is
-</ParamField>
-
 <ParamField path="--aot-explain" type="string">
-  With <code>--aot</code>: print a report. <code>throws</code> lists every type check that can fail when the program
-  runs
+  With <code>--aot</code>: list the places where the compiler cannot use your types, the most expensive first.
+  <code>--aot-explain=costs-json</code> prints them as JSON. <code>--aot-explain=throws</code> lists every type check
+  that can fail when the program runs
 </ParamField>
 
 <ParamField path="--aot-huge-heap" type="boolean">

@@ -13,13 +13,13 @@
 // 4. bitArr and lastBitArr are FU.BitRow = number[], NOT int32[]: see BitRow.
 declare namespace FU {
   // ---------------------------------------------------------------------------------------------------------------------
-  // 1. Numbers. An int32 takes four bytes; storing anything else there throws at run time.
+  // 1. Numbers. An int32 takes four bytes; the build proves every value that is stored there, or stops.
   // ---------------------------------------------------------------------------------------------------------------------
   type int32 = import("bun").int32;
-  type DocIndex = int32; // IndexRecord.i, InternalResult.idx, FuseResult.refIndex: where the item stands in the user's list. forEach's index (344 349) or records.length (358); `-= 1` at 372. A carried index brings its own: section E
-  type ItemIndex = int32; // ArrayEntry.i, Match.idx, ResultMatch.refIndex, StackItem.nestedArrIndex: where a string stands in its array. forEach's index (425); -1 for the stack's first item (407)
-  type KeyIndex = int32; // where a key stands in FuseIndex.keys: KeysMap's values, the keys of RecordEntries
-  type TextIndex = int32; // a position in a text or a pattern: both halves of a RangeTuple, Chunk.startIndex, what indexOf gives. Negative at 1006 where the text is shorter than the pattern
+  type DocIndex = number; // IndexRecord.i, InternalResult.idx, FuseResult.refIndex: where the item stands in the user's list. forEach's index (344 349) or records.length (358); `-= 1` at 372. A carried index brings its own: section E
+  type ItemIndex = number; // ArrayEntry.i, Match.idx, ResultMatch.refIndex, StackItem.nestedArrIndex: where a string stands in its array. forEach's index (425); -1 for the stack's first item (407)
+  type KeyIndex = number; // where a key stands in FuseIndex.keys: KeysMap's values, the keys of RecordEntries
+  type TextIndex = number; // a position in a text or a pattern: both halves of a RangeTuple, Chunk.startIndex, what indexOf gives. Negative at 1006 where the text is shorter than the pattern
   type CharMask = int32; // Alphabet's values: made by | and << alone (724)
   type Bit = int32; // an element of matchMask: 1 (587) or +!!x (646)
   type ErrorCount = int32; // ScoreParams.errors: 0..32

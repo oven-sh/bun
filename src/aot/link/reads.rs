@@ -68,7 +68,7 @@ pub(super) fn retype_reads_from_subtypes(program: &mut Program, in_parallel: InP
                     match &value.def {
                         Def::Op(Op::PropSet { obj, name, .. }) => note(*obj, *name),
                         Def::Op(Op::Operation { which: Operation::Initialize, args }) => {
-                            for store in args[1..].chunks_exact(2) {
+                            for store in args[1..].as_chunks::<2>().0 {
                                 if let Some(&Op::Str(name)) = func.op(store[0]) {
                                     note(args[0], name);
                                 }

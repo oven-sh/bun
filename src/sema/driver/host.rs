@@ -595,7 +595,7 @@ pub type ScriptsOfPage = Box<dyn Fn(&[u8]) -> Vec<Vec<u8>> + Send + Sync>;
 /// `@jsxImportSource`. What the file does say itself goes before this.
 pub use bun_sema::resolve::ClassOptions;
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct FileJsxOptions {
     pub is_classic: bool,
     pub factory: Vec<u8>,

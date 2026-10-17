@@ -18,10 +18,10 @@ outside | prototype.got | Object.defineProperty: true | true other method method
 outside | prototype.got | Reflect.defineProperty: true | true other method method fixed
 outside | prototype.absent | delete: true | false undefined method method fixed
 outside | prototype.absent | Reflect.deleteProperty: true | false undefined method method fixed
-outside | prototype.absent | assign: TypeError | false undefined method method fixed
-outside | prototype.absent | Reflect.set: TypeError | false undefined method method fixed
-outside | prototype.absent | Object.defineProperty: TypeError | false undefined method method fixed
-outside | prototype.absent | Reflect.defineProperty: TypeError | false undefined method method fixed
+outside | prototype.absent | assign: true | true other method method fixed
+outside | prototype.absent | Reflect.set: true | true other method method fixed
+outside | prototype.absent | Object.defineProperty: true | true other method method fixed
+outside | prototype.absent | Reflect.defineProperty: true | true other method method fixed
 outside | class.fixed | delete: true | false undefined method method TypeError
 outside | class.fixed | Reflect.deleteProperty: true | false undefined method method TypeError
 outside | class.fixed | assign: true | true other method method other
@@ -60,10 +60,10 @@ static block | prototype.got | Object.defineProperty: true | true other method m
 static block | prototype.got | Reflect.defineProperty: true | true other method method fixed
 static block | prototype.absent | delete: true | false undefined method method fixed
 static block | prototype.absent | Reflect.deleteProperty: true | false undefined method method fixed
-static block | prototype.absent | assign: TypeError | false undefined method method fixed
-static block | prototype.absent | Reflect.set: TypeError | false undefined method method fixed
-static block | prototype.absent | Object.defineProperty: TypeError | false undefined method method fixed
-static block | prototype.absent | Reflect.defineProperty: TypeError | false undefined method method fixed
+static block | prototype.absent | assign: true | true other method method fixed
+static block | prototype.absent | Reflect.set: true | true other method method fixed
+static block | prototype.absent | Object.defineProperty: true | true other method method fixed
+static block | prototype.absent | Reflect.defineProperty: true | true other method method fixed
 static block | class.fixed | delete: true | false undefined method method TypeError
 static block | class.fixed | Reflect.deleteProperty: true | false undefined method method TypeError
 static block | class.fixed | assign: true | true other method method other

@@ -71,6 +71,7 @@ pub(crate) struct Mutations<T = TypeId> {
     instances_flowing_into_types: FxHashSet<T>,
     sites: [[u32; OPERANDS]; 2],
     widest: Widest,
+    places_marking_every_layout: Vec<(Mutation, Place)>,
     untyped_sites: UntypedSites,
     redefinition_counts: RedefinitionCounts,
 }
@@ -97,6 +98,7 @@ impl<T> Default for Mutations<T> {
             instances_flowing_into_types: FxHashSet::default(),
             sites: [[0; OPERANDS]; 2],
             widest: Default::default(),
+            places_marking_every_layout: Vec::new(),
             untyped_sites: Default::default(),
             redefinition_counts: Default::default(),
         }
@@ -113,6 +115,7 @@ impl<T: Copy + Eq + Hash> Mutations<T> {
     fn record_widest(&mut self, mutation: Mutation, is_any_layout: bool, at: Place) {
         let first = &mut self.widest[mutation as usize][usize::from(is_any_layout)];
         *first = Some(first.map_or(at, |first| first.min(at)));
+        self.places_marking_every_layout.push((mutation, at));
     }
 
     pub(super) fn absorb(&mut self, other: Mutations<T>) {
@@ -131,6 +134,7 @@ impl<T: Copy + Eq + Hash> Mutations<T> {
         self.escaped_types.extend(other.escaped_types);
         self.type_inflows.extend(other.type_inflows);
         self.instances_flowing_into_types.extend(other.instances_flowing_into_types);
+        self.places_marking_every_layout.extend(other.places_marking_every_layout);
         for (mine, theirs) in self.redefinition_counts.as_flattened_mut().as_flattened_mut().as_flattened_mut().iter_mut().zip(other.redefinition_counts.as_flattened().as_flattened().as_flattened()) {
             *mine += theirs;
         }
@@ -170,6 +174,7 @@ impl<T: Copy + Eq + Hash> Mutations<T> {
             instances_flowing_into_types: self.instances_flowing_into_types.into_iter().filter_map(&mut *rename).collect(),
             sites: self.sites,
             widest: self.widest,
+            places_marking_every_layout: self.places_marking_every_layout,
             untyped_sites: self.untyped_sites,
             redefinition_counts: self.redefinition_counts,
         }
@@ -708,8 +713,7 @@ impl<'p, 's> Checker<'p, 's> {
             _ => return None,
         };
         let of_function = self.type_of_expr(file, obj);
-        let signatures: Vec<SigId> = self.signatures(of_function, false).iter().copied().collect();
-        signatures.into_iter().find_map(|signature| self.mutation_for_signature(signature)).map(|mutation| (mutation, is_list))
+        self.signatures(of_function, false).iter().copied().find_map(|signature| self.mutation_for_signature(signature)).map(|mutation| (mutation, is_list))
     }
 
     fn is_proto_access(&mut self, file: FileId, target: ExprId) -> Option<ExprId> {
@@ -954,8 +958,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.has_mutating_builtin_signature(builtin_operand) {
             return;
         }
-        let own: Vec<SigId> = self.signatures(builtin_operand, false).iter().copied().collect();
-        let Some(mutation) = own.into_iter().find_map(|signature| self.mutation_for_signature(signature)) else { return };
+        let Some(mutation) = self.signatures(builtin_operand, false).iter().copied().find_map(|signature| self.mutation_for_signature(signature)) else { return };
         let of_place: Vec<SigId> = target.map_or(Vec::new(), |target| self.signatures(target, false).iter().copied().collect());
         if !of_place.is_empty() && of_place.iter().all(|&signature| self.mutation_for_signature(signature) == Some(mutation)) {
             return;
@@ -1019,9 +1022,11 @@ impl<'p, 's> Checker<'p, 's> {
                 && let Some(operand) = self.is_proto_access(file, target)
             {
                 self.record_untyped_site(Mutation::Prototype, file, Some(operand), e);
+                let at = Place { file, pos: hir[e].pos };
                 let recorded = self.recorded_mutations();
                 recorded.sites[Mutation::Prototype as usize][Operand::Untyped as usize] += 1;
                 recorded.on_untyped[Mutation::Prototype as usize] = true;
+                recorded.record_widest(Mutation::Prototype, false, at);
             }
         }
     }
@@ -1090,6 +1095,13 @@ impl<T> Mutations<T> {
 
     pub(super) fn widest(&self) -> Widest {
         self.widest
+    }
+
+    pub(super) fn places_marking_every_layout(&self) -> Vec<(Mutation, Place)> {
+        let mut places = self.places_marking_every_layout.clone();
+        places.sort_unstable();
+        places.dedup();
+        places
     }
 }
 

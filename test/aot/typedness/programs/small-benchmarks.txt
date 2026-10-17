@@ -10,4 +10,4 @@ tokens-maps-objects-2: 1 layouts, 0 given, 0 open, places 34 of 42, reads 8 of 1
 tokens-maps-objects-3: 1 layouts, 0 given, 0 open, places 33 of 43, reads 8 of 14
 tokens-maps-objects: 1 layouts, 0 given, 0 open, places 39 of 47, reads 11 of 17
 two-small-functions: 0 layouts, 0 given, 0 open, places 11 of 20, reads 0 of 3
-untyped-property-access: 0 layouts, 0 given, 0 open, places 10 of 20, reads 1 of 7
+untyped-property-access: 0 layouts, 0 given, 0 open, places 13 of 25, reads 1 of 7

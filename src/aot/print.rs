@@ -140,6 +140,7 @@ impl Program {
                     (class_flags::MAY_HAVE_OTHER_PROTOTYPE, " other prototypes"),
                     (class_flags::HAS_COMPUTED_STATIC_MEMBER, " unknown static names"),
                     (class_flags::CONSTRUCTOR_MAY_BE_REPLACED, " replaceable constructor"),
+                    (class_flags::PROTOTYPE_MAY_GAIN_MEMBERS, " extensible prototype"),
                 ] {
                     if layout.class_flags & flag != 0 {
                         o.push_str(what);

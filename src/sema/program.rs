@@ -4901,7 +4901,7 @@ impl<'s> Files<'s> {
             while let Some(more) = host.next_early_paths() {
                 let seeds: Vec<(&[u8], bool)> = (more.iter())
                     .filter(|path| !seen_ahead.contains(&path[..]))
-                    .map(|path| (&*slice_in(path, resolving.arena()), false))
+                    .map(|path| (slice_in(path, resolving.arena()), false))
                     .collect();
                 if !seeds.is_empty() {
                     Self::load_ahead(session, run, host, &resolver, options, None, false, &atoms, seeds, &mut seen_ahead);

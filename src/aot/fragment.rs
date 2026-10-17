@@ -3,7 +3,7 @@ use crate::declared::{Declared, DeclaredTable, Part};
 use crate::id::{BlockId, FuncId, GlobalId, LayoutId, ModuleId, StrId, TyId, V};
 use crate::ir::{Block, Def, Field, Func, FuncKind, Global, Layout, Literal, Method, NO_VARIABLE, Op, Operation, Prediction, Strs, Value, CoerceReason};
 use bun_sema::bind::SymbolId;
-use bun_sema::check::{Identity, MethodStore, FlowNotes, NumberFlow};
+use bun_sema::check::{CompilerDiagnostic, Identity, MethodStore, FlowNotes, NumberFlow};
 use bun_sema::hir::{ClassId, FnId};
 use bun_sema::program::FileId;
 use bun_sema::util::{InParallel, for_each_mut};
@@ -296,6 +296,8 @@ pub struct Fragment {
     pub regexp_literals: Vec<(StrId, StrId)>,
     pub method_stores: Vec<MethodStore<Identity>>,
     pub builtin_functions: Vec<(u32, FuncKey, u32)>,
+    pub unproven_int32_values: Vec<CompilerDiagnostic>,
+    pub declares_int32: bool,
     pub translation_count: u32,
     pub program_ids: LocalToProgram,
     pub summary: Summary,
@@ -884,8 +886,7 @@ impl Outline {
         for_each_mut(&mut outputs, in_parallel, &|BatchOutput { batch, first_slots, funcs, layouts, variables, lists, funcs_with_parts }| {
             let OutlineBatch { fragment, file, ids, summary, first, functions, shapes, variables: fragment_variables, is_preferred, list_len, .. } = &mut **batch;
             let ids: &LocalToProgram = ids;
-            let mut count = 0;
-            for (offset, function) in functions.iter_mut().enumerate().filter(|function| is_preferred[0][function.0]) {
+            for (count, (offset, function)) in functions.iter_mut().enumerate().filter(|function| is_preferred[0][function.0]).enumerate() {
                 let mut outline = outline_function(function, *fragment, first[0] + offset as u32, *file, ids, lists);
                 if summary.runtime_modules.binary_search_by_key(&outline.index, |found| found.0).is_ok() {
                     outline.flags |= outline_flags::REQUESTS_RUNTIME_MODULES;
@@ -895,26 +896,21 @@ impl Outline {
                 }
                 func_slots[outline.id as usize].store(first_slots[0] + count as u32, Ordering::Relaxed);
                 funcs[count].write(outline);
-                count += 1;
             }
             for body in functions.iter_mut().filter_map(|function| function.body.as_mut()) {
                 body.mentions = ReferencedIds::default();
             }
-            let mut count = 0;
-            for (offset, shape) in shapes.iter_mut().enumerate().filter(|shape| is_preferred[1][shape.0]) {
+            for (count, (offset, shape)) in shapes.iter_mut().enumerate().filter(|shape| is_preferred[1][shape.0]).enumerate() {
                 let index = first[1] + offset as u32;
                 let definition = shape.definition.as_mut().expect("the index preferred_flags no shape that is only named");
                 layouts[count].write(outline_layout(definition, *fragment, index, ids, lists));
                 definition.mentions = ReferencedIds::default();
                 layout_slots[ids.layouts[index as usize] as usize].store(first_slots[1] + count as u32, Ordering::Relaxed);
-                count += 1;
             }
-            let mut count = 0;
-            for (offset, variable) in fragment_variables.iter().enumerate().filter(|variable| is_preferred[2][variable.0]) {
+            for (count, (offset, variable)) in fragment_variables.iter().enumerate().filter(|variable| is_preferred[2][variable.0]).enumerate() {
                 let (index, declared) = (first[2] + offset as u32, variable.global.declared);
                 variables[count].write(VariableOutline { fragment: *fragment, index, declared, declared_id: if declared.is_none() { u32::MAX } else { ids.tys[declared.idx()] } });
                 variable_slots[ids.globals[index as usize] as usize].store(first_slots[2] + count as u32, Ordering::Relaxed);
-                count += 1;
             }
             assert_eq!(lists.written, *list_len, "the lists are as long as computed");
         });

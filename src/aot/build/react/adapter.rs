@@ -288,7 +288,7 @@ impl<'a, 'c, 'p, 's> Adapter<'a, 'c, 'p, 's> {
         let (hir, bound) = (self.hir, self.bound);
         let declared = &bound.symbols[symbol.idx()];
         let decls = declared.decls.as_slice();
-        let decl = decls.get(declared.value_declaration as usize).or(decls.first()).copied();
+        let decl = decls.get(declared.value_declaration as usize).or_else(|| decls.first()).copied();
         let kind = match decl {
             Some(Decl::Var(pat) | Decl::Require(pat)) => match self.var_kind(pat) {
                 Some(VarKind::Var) => symbol::Kind::Hoisted,

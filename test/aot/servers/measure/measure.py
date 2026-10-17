@@ -67,8 +67,8 @@ dropped like a disturbed one; a start without a clean round makes the row void (
 "guests" is the largest share seen on the server's core in a round that was kept.
 
 `--events ic_cache_fill_l2,l2_cache_req_stat.ic_fill_miss` counts more hardware events, by perf's names, in the window that counts
-instructions and cycles. On AMD Zen 4 these two are the lines of code fetched into the first-level cache and those that the L2 did not
-have either. A server whose requests run through more code than that cache holds is bound by them, not by its instructions.
+instructions and cycles. On AMD Zen 4 these two are the lines of code that the first-level cache took from the L2 and the lines that
+came from beyond the L2: neither is part of the other, and the lines fetched are their sum. A server whose requests run through more code than that cache holds is bound by them, not by its instructions.
 
 `--layers` shows where the cycles and instructions of a request go. One process per server, route and column is warmed up and
 then profiled with `perf record` under the same load. Every sample is charged to the layer that owns the code it fell in (see

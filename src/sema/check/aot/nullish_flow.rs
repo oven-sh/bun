@@ -342,11 +342,11 @@ pub fn edges_by_node(nodes: u32, runs: &[u32], parts: &[&[(u32, u32, u8)]], pick
 
 const EDGE_WALK_TASKS: usize = 64;
 
-fn split_into_tasks(pending: Vec<u32>) -> Vec<Vec<u32>> {
+fn split_into_tasks(pending: &[u32]) -> Vec<Vec<u32>> {
     pending.chunks(pending.len().div_ceil(EDGE_WALK_TASKS).max(1)).map(<[u32]>::to_vec).collect()
 }
 
-pub fn reach_backward(entering: &EdgesByNode, is_reached: Vec<bool>, pending: Vec<u32>, in_parallel: InParallel<'_>) -> Vec<bool> {
+pub fn reach_backward(entering: &EdgesByNode, is_reached: Vec<bool>, pending: &[u32], in_parallel: InParallel<'_>) -> Vec<bool> {
     use std::sync::atomic::{AtomicBool, Ordering};
     let is_reached: Vec<AtomicBool> = is_reached.into_iter().map(AtomicBool::new).collect();
     for_each_mut(&mut split_into_tasks(pending), in_parallel, &|pending| {
@@ -376,7 +376,7 @@ pub fn propagate_nullish(leaving: &EdgesByNode, more: &[(u32, u32, u8)], origins
         also_leaving.entry(from).or_default().push((to, nil));
     }
     let reaching: Vec<AtomicU8> = reaching.into_iter().map(AtomicU8::new).collect();
-    for_each_mut(&mut split_into_tasks(pending), in_parallel, &|pending| {
+    for_each_mut(&mut split_into_tasks(&pending), in_parallel, &|pending| {
         while let Some(node) = pending.pop() {
             let here = reaching[node as usize].load(Ordering::Relaxed);
             let at = leaving.at(node);

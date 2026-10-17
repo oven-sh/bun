@@ -178,8 +178,8 @@ impl<'a, 's> Syntax<'a, 's> {
 
     fn documentation_before(&self, at: u32) -> Option<&'a [u8]> {
         let trivia: &'a [u8] = &self.text[self.before_trivia(at) as usize..at as usize];
-        let start = trivia.windows(3).rposition(|window| window == b"/**")?;
-        let end = start + 3 + trivia[start + 3..].windows(2).position(|window| window == b"*/")? + 2;
+        let start = bun_core::strings::last_index_of(trivia, b"/**")?;
+        let end = start + 3 + bun_core::strings::index_of(&trivia[start + 3..], b"*/")? + 2;
         trivia[end..].iter().all(u8::is_ascii_whitespace).then_some(&trivia[start..end])
     }
 
@@ -1034,7 +1034,7 @@ impl Insertions {
     }
 
     fn apply(mut self, javascript: &[u8]) -> Vec<u8> {
-        self.list.sort_by(|a, b| (a.0, a.1, a.2).cmp(&(b.0, b.1, b.2)));
+        self.list.sort_by_key(|a| (a.0, a.1, a.2));
         let mut text = Vec::with_capacity(javascript.len() * 2);
         let mut at = 0;
         for (offset, _, _, inserted) in &self.list {
@@ -1460,6 +1460,7 @@ fn link(written: &mut [Option<Written<'_, '_>>], paths: &[&[u8]], mapped: usize,
     let entry = entry_point.and_then(|path| index_of.get(path)).and_then(|&index| written[index].as_ref()).and_then(|module| module.types);
     queue.extend(entry.iter().flat_map(|types| types.exports.iter().filter_map(|export| place_of(&export.1))));
     let exports_of_entry = entry.map_or(&[][..], |types| &types.exports[..]);
+    #[allow(clippy::disallowed_methods, reason = "adjacent-pair check, not a byte search")]
     let exported_twice: FxHashSet<&[u8]> = exports_of_entry.windows(2).filter(|pair| pair[0].0 == pair[1].0).map(|pair| &pair[0].0[..]).collect();
     taken.extend(exported_twice.iter().map(|name| name.to_vec()));
     let mut namespaces_with_code: Vec<Vec<u8>> = Vec::new();
@@ -1527,7 +1528,7 @@ fn link(written: &mut [Option<Written<'_, '_>>], paths: &[&[u8]], mapped: usize,
     for (index, module) in written.iter().enumerate() {
         let Some(module) = module else { continue };
         let mut in_order: Vec<(&[u8], &Declared)> = declared[index].iter().map(|(&name, found)| (name, found)).collect();
-        in_order.sort_by_key(|(_, found)| found.names.first().or(found.bindings.first()).copied());
+        in_order.sort_by_key(|(_, found)| found.names.first().or_else(|| found.bindings.first()).copied());
         for (name, found) in in_order {
             if declaring_place(index, Box::from(name)).0 != index {
                 linked.replaced_statements.extend(found.statements.iter().map(|statement| (index, statement.0)));
@@ -2286,7 +2287,10 @@ impl<'a> Transfer<'_, 'a, '_> {
                         StmtKind::Var(declarations) if self.is_bundle && depth == 0 && syntax.is_type_only_statement(id) => {
                             let mut names = Vec::new();
                             declarations.iter().for_each(|declaration: VarDeclId| syntax.identifiers(file[declaration].pat, &mut names));
-                            let is_new = names.iter().fold(false, |is_new, &name| ambient_values.insert(syntax.word(name)) || is_new);
+                            let mut is_new = false;
+                            for &name in &names {
+                                is_new |= ambient_values.insert(syntax.word(name));
+                            }
                             if !is_new {
                                 continue;
                             }
@@ -2348,7 +2352,7 @@ impl<'a> Transfer<'_, 'a, '_> {
                     };
                     let is_ignored = file.comment_directives.iter().any(|directive| syntax.after_trivia(directive.end) == statement.start);
                     let text = if is_ignored { [&b"// @ts-ignore\n"[..], &text].concat() } else { text };
-                    let text = documentation.map_or(text.clone(), |documentation| [documentation, b"\n", &text].concat());
+                    let text = documentation.map_or_else(|| text.clone(), |documentation| [documentation, b"\n", &text].concat());
                     let next = statements[place..].iter().map(|&next| &file[next]).find_map(anchor_of);
                     let next = next.map(|next| if depth == 0 { top_level[top_level.partition_point(|&start| start <= next).saturating_sub(1)] } else { next });
                     let is_signature = matches!(statement.kind, StmtKind::Fn(function) if matches!(file[function].body, FnBody::None)) && !file.modifiers_to_flags(statement.modifiers).contains(Flags::AMBIENT);
@@ -2505,7 +2509,7 @@ pub fn add_types_by_source_map(path: &[u8], javascript: &[u8], source_map: &[u8]
     if paths.len() != texts.len() {
         return Err("the source map does not hold the text of its sources".into());
     }
-    let directory = &path[..bun_core::strings::last_index_of_char(&path[..], b'/').unwrap_or(0)];
+    let directory = &path[..bun_core::strings::last_index_of_char(path, b'/').unwrap_or(0)];
     let is_known = |path: &Vec<u8>| bundle.is_some_and(|bundle| bundle.modules.iter().any(|module| module.path[..] == path[..]));
     let paths: Vec<Vec<u8>> = (paths.iter())
         .map(|source| crate::typed_packages::ancestors(directory).map(|from| absolute(from, source)).find(is_known).unwrap_or_else(|| absolute(directory, source)))
@@ -2749,7 +2753,7 @@ pub fn typed_outputs(outdir: &[u8], outputs: &[Output<'_>], modules: Option<&[Mo
         let typed_path = crate::typed_packages::typed_path_beside(output.path).ok_or_else(|| format!("{shown} is not named .js, .mjs or .cjs"))?;
         let erased = erase_types(&typed_path, &typed.text).map_err(|why| format!("{shown}: {why}"))?;
         if erased != output.javascript && !is_for_declarations {
-            let at = erased.iter().zip(output.javascript).position(|(erased, written)| erased != written).unwrap_or(erased.len().min(output.javascript.len()));
+            let at = erased.iter().zip(output.javascript).position(|(erased, written)| erased != written).unwrap_or_else(|| erased.len().min(output.javascript.len()));
             return Err(format!("{shown}: with its types erased the typed file differs from the JavaScript at offset {at}"));
         }
         found.push((typed_path, typed));

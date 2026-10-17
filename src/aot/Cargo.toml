@@ -13,6 +13,7 @@ bun_core.workspace = true
 bun_ast.workspace = true
 bun_alloc.workspace = true
 bun_paths.workspace = true
+bun_sys.workspace = true
 bun_threading.workspace = true
 bun_react_compiler = { path = "../react_compiler" }
 bstr.workspace = true

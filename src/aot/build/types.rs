@@ -300,7 +300,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     fn find_cast_target_ty(&mut self, ty: TyId) -> TyId {
         let described = self.out.tys.get(ty).clone();
-        let mut target = Declared { parts: Default::default(), ..described.clone() };
+        let mut target = Declared { parts: Default::default(), ..described };
         for part in &described.parts {
             match part {
                 Part::Class(view) if self.union_part_layouts.contains_key(view) => {
@@ -404,7 +404,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     return Declared::part(Part::Array(self.ty_at_depth(element, depth + 1)));
                 }
                 if let Some(extended) = self.c.extended_built_in(ty) {
-                    return self.refined_built_in_ty(ty, extended, depth);
+                    return self.refined_built_in_ty(ty, &extended, depth);
                 }
                 let mut object = None;
                 for &part in parts.iter() {
@@ -562,7 +562,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return Declared::part(Part::Array(self.ty_at_depth(element, depth + 1)));
         }
         if let Some(extended) = self.c.extended_built_in(ty) {
-            return self.refined_built_in_ty(ty, extended, depth);
+            return self.refined_built_in_ty(ty, &extended, depth);
         }
         if self.files.flags(target).contains(SymFlags::CLASS)
             && let Some((file, Decl::Class(class))) = self.value_declaration(target)
@@ -608,19 +608,19 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         Declared::any_object()
     }
 
-    fn refined_built_in_ty(&mut self, ty: TypeId, built_in: BuiltIn, depth: u8) -> Declared {
+    fn refined_built_in_ty(&mut self, ty: TypeId, built_in: &BuiltIn, depth: u8) -> Declared {
         let is_call_with_narrower_type = matches!(built_in, BuiltIn::Function)
             && (!self.c.signatures(ty, false).is_empty() || !self.c.signatures(ty, true).is_empty())
             && self.c.members(ty).is_some_and(|members| !members.shape().props.is_empty());
         if is_call_with_narrower_type { Declared::any_object() } else { self.built_in_ty(built_in, depth) }
     }
 
-    fn built_in_ty(&mut self, built_in: BuiltIn, depth: u8) -> Declared {
+    fn built_in_ty(&mut self, built_in: &BuiltIn, depth: u8) -> Declared {
         match built_in {
             BuiltIn::Function => Declared::any_function(),
             BuiltIn::Claimed => Declared::anything(),
             BuiltIn::Instance(class) => {
-                let class = self.describe_nested(class, depth);
+                let class = self.describe_nested(*class, depth);
                 self.out.tys.get(class).clone()
             }
         }
@@ -835,7 +835,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let inherited = if base.is_some() { self.out.layouts[base.idx()].fields.len() } else { 0 };
                 for i in 0..inherited {
                     self.out.layouts[layout.idx()].fields[i].declared = self.out.layouts[base.idx()].fields[i].declared;
-                    self.out.layouts[layout.idx()].fields[i].literals = self.out.layouts[base.idx()].fields[i].literals.clone();
+                    let literals = self.out.layouts[base.idx()].fields[i].literals.clone();
+                    self.out.layouts[layout.idx()].fields[i].literals = literals;
                     if let Some(&checked) = self.checked_fields.get(&(base, i as u32)) {
                         self.checked_fields.insert((layout, i as u32), checked);
                     }

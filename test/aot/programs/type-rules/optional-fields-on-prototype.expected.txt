@@ -2,10 +2,10 @@ function true [object Object]
 true function true true false true
 true [Function: toString]
 function function [object Object]
-a property added by a store: TypeError
-by defineProperty: TypeError
-an accessor: TypeError
-v|undefined|undefined|undefined l|undefined|undefined|undefined false
+a property added by a store: no error
+by defineProperty: no error
+an accessor: no error
+v|undefined|undefined|from prototype l|undefined|undefined|got true
 setPrototypeOf: no error
 made
 setPrototypeOf on a fresh literal: no error

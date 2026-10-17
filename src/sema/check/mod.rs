@@ -119,7 +119,7 @@ use std::sync::atomic::AtomicBool;
 use symbols::{AliasTarget, ExcludedMeanings};
 use task::{Open, OrderDependent, Stored, Task};
 
-pub use aot::{ClassFacts, MethodStore, ReplacedMethods};
+pub use aot::{AddedMembers, ClassFacts, MethodStore, ReplacedMethods};
 pub use aot::ImportedCode;
 pub use aot::{AotCheck, AotCheckKind};
 pub use aot::{CommonJsExports, ExportsReference};
@@ -244,6 +244,7 @@ pub struct Program<'s> {
     emit_helper_errors_of_earlier_files: Guarded<Vec<errors_emit_helpers::EarlierEmitHelperError>>,
     pub compiler_diagnostics: Guarded<Vec<CompilerDiagnostic>>,
     pub rule_scopes: std::sync::OnceLock<crate::aot_rules::Scopes>,
+    pub compiled_untyped: Guarded<Vec<CompilerDiagnostic>>,
     /// `autoArrayType`
     auto_array_type: TypeId,
     /// See `Services::file_info`. Made when it is first asked for.
@@ -524,6 +525,7 @@ impl<'s> Program<'s> {
             emit_helper_errors_of_earlier_files: Default::default(),
             compiler_diagnostics: Default::default(),
             rule_scopes: Default::default(),
+            compiled_untyped: Default::default(),
             auto_array_type,
             package_names_of_linked_files: Default::default(),
             types,
@@ -630,6 +632,8 @@ impl<'s> Program<'s> {
         self.diagnostics_of_re_resolved_calls = ByNodeIndirect::new_in(&no_nodes, session);
         self.key_properties = ByIdIndirect::new_in(session);
         self.distributed_intersections = ByKey::new_in(session);
+        *self.compiler_diagnostics.get_mut() = Default::default();
+        self.rule_scopes = Default::default();
         // SAFETY: the driver calls this once, as its last use of the program, and the arena that holds the program drops nothing.
         unsafe { core::mem::ManuallyDrop::drop(&mut self.aot) };
     }

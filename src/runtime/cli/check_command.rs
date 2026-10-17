@@ -65,7 +65,7 @@ const OTHERS: &[clap::Param<clap::Help>] = &[
     clap::param!(
         "--aot              Also report what <b>bun build --compile --aot<r> would reject in these entry points"
     ),
-    clap::param!("--aot-explain <word>...  With <b>--aot<r>: print a report. <b>throws<r> lists every type check that can fail when the program runs"),
+    clap::param!("--aot-explain <word>?...  With <b>--aot<r>: list the places where the compiler cannot use your types, the most expensive first. <b>costs-json<r> prints them as JSON. <b>throws<r> lists every type check that can fail when the program runs"),
     clap::param!("--cwd <path>       Set the working directory"),
     // `script_or_command` reads it.
     clap::param!(
@@ -510,30 +510,57 @@ impl CheckCommand {
     }
 
     fn exec_aot(options: &Options) -> ! {
+        let mut more_code: Vec<Vec<u8>> = Vec::new();
+        loop {
+            let missing = Self::check_aot(options, &more_code);
+            more_code.extend(missing);
+        }
+    }
+
+    fn check_aot(options: &Options, more_code: &[Vec<u8>]) -> Vec<Vec<u8>> {
         use bun_sema_driver::host::{from_argument, from_native};
         let (cwd, command_line) = (working_directory(), &options.command_line);
         if command_line.paths.is_empty() || command_line.build {
             usage_error(format_args!("--aot takes the entry points of a program"));
         }
-        let constants = bun_aot::Constants { root: from_native(&cwd), logs_type_errors: options.logs_type_errors, ..Default::default() };
+        let constants = bun_aot::Constants { root: from_native(&cwd), logs_type_errors: options.logs_type_errors, leaves_decorators_to_the_bundler: options.aot_out.is_none(), ..Default::default() };
         let (mut code, mut provided) = (Vec::new(), Provided { without_builtin_modules: options.without_builtin_modules, is_without_bundler: true, ..Default::default() });
         for &(name, text) in bun_aot::prelude::FILES {
             let path = bun_aot::prelude::path_of(&cwd, name);
             provided.already_read.insert(from_native(&path), text.as_bytes().into());
             code.push(path);
         }
+        code.extend(more_code.iter().cloned());
+        let missing: bun_threading::Guarded<Vec<Vec<u8>>> = bun_threading::Guarded::new(Vec::new());
         let said: bun_threading::Guarded<(Vec<String>, Vec<String>)> = bun_threading::Guarded::new(Default::default());
         let baseline_outcome = bun_threading::Guarded::new(None);
         let translation = bun_aot::Translation::new(&constants).explaining(explaining(&options.aot_explain)).enforcing(options.aot_rules.clone());
         let begin = |program: &bun_sema_driver::Program, in_parallel: bun_sema_driver::InParallel<'_>| {
             let roots = command_line.paths.iter().filter_map(|path| program.files.by_path.get(&from_argument(&from_native(&cwd), path)));
             let entry_points: Vec<Vec<_>> = roots.map(|root| vec![root]).collect();
+            if options.aot_out.is_none() {
+                for (index, module) in program.files.modules.iter().enumerate() {
+                    if !module.hir.decorators.is_empty() && !program.files.lowers_decorators(bun_sema_driver::FileId(index as u32)) {
+                        module.is_forced_untyped.store(true, core::sync::atomic::Ordering::Relaxed);
+                    }
+                }
+            }
             translation.begin(program, &entry_points, in_parallel);
+            let compiled_of_dependencies = (program.files.modules.iter().enumerate())
+                .filter(|(index, module)| module.is_dependency && matches!(bun_paths::extension(module.file_name()), b".ts" | b".tsx" | b".mts" | b".cts") && !module.file_name().starts_with(b"/$bun/") && !bun_core::strings::contains(module.path.text, b"/.bun-aot-prelude/") && translation.is_compiled(bun_sema_driver::FileId(*index as u32)))
+                .map(|(_, module)| bun_sema_driver::host::to_native(module.file_name()).to_vec());
+            missing.lock().extend(compiled_of_dependencies.filter(|path| !more_code.contains(path)));
+            if !missing.lock().is_empty() {
+                program.give_up();
+            }
         };
         let translate_file = |checker: &mut bun_sema_driver::Checker<'_, '_>, file: bun_sema_driver::FileId| translation.translate_file(checker, file);
         let record_file = |checker: &mut bun_sema_driver::Checker<'_, '_>, file: bun_sema_driver::FileId| translation.record_file(checker, file);
         let merge_notes = |program: &bun_sema_driver::Program| translation.merge_notes(program);
         let analyze = |program: &bun_sema_driver::Program, in_parallel: bun_sema_driver::InParallel<'_>, errors: &[(bun_sema_driver::FileId, u32)]| {
+            if !missing.lock().is_empty() {
+                return vec![false; errors.len()];
+            }
             let mut translated = translation.finish(program, in_parallel, errors);
             if let Some(path) = &options.aot_out
                 && translated.problems.is_empty()
@@ -560,6 +587,10 @@ impl CheckCommand {
             ..request(&cwd, command_line.project.as_deref(), &paths, &command_line.compiler_options, options.threads, None)
         };
         let report = bun_sema_driver::check_provided_then(&request, with_pages(&cwd, provided), |report| report);
+        let missing = core::mem::take(&mut *missing.lock());
+        if !missing.is_empty() {
+            return missing;
+        }
         let said = said.lock();
         print_explained(&said.0);
         if explaining(&options.aot_explain).rules_json {
@@ -751,14 +782,21 @@ pub(crate) fn watching(vm: &bun_jsc::virtual_machine::VirtualMachine) -> Option<
     }))
 }
 
+fn absolute_source_path<'a>(cwd: &'a [u8], path: &'a [u8]) -> &'a [u8] {
+    let is_relative_to_a_drive_only = cfg!(windows) && path.starts_with(b"/");
+    match is_relative_to_a_drive_only {
+        true => path,
+        false => bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(cwd, &[path]),
+    }
+}
+
 /// `sources` of `bun_bundler::options::TypeCheck`. A key of `files` of `Bun.build` may be relative,
 /// and its value may start with a byte order mark.
 fn already_read(cwd: &[u8], sources: &mut dyn Iterator<Item = (&[u8], &[u8])>) -> AlreadyRead {
     use bun_core::strings::without_utf8_bom;
-    use bun_paths::{platform::Auto, resolve_path::join_abs_string};
     sources
         .map(|(path, text)| {
-            let path = join_abs_string::<Auto>(cwd, &[path]);
+            let path = absolute_source_path(cwd, path);
             let text = without_utf8_bom(text).to_vec();
             (bun_sema_driver::host::from_native(path), text.into())
         })
@@ -771,10 +809,9 @@ fn already_read(cwd: &[u8], sources: &mut dyn Iterator<Item = (&[u8], &[u8])>) -
 /// The texts stay where they are, unchanged, for as long as the map, or anything that was read from it, is used.
 unsafe fn already_read_in_place(cwd: &[u8], sources: &mut dyn Iterator<Item = (&[u8], &[u8])>) -> AlreadyRead {
     use bun_core::strings::without_utf8_bom;
-    use bun_paths::{platform::Auto, resolve_path::join_abs_string};
     sources
         .map(|(path, text)| {
-            let path = join_abs_string::<Auto>(cwd, &[path]);
+            let path = absolute_source_path(cwd, path);
             // SAFETY: the caller's.
             let text: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(without_utf8_bom(text)) };
             (bun_sema_driver::host::from_native(path), text.into())
@@ -812,7 +849,7 @@ struct EarlyStart {
 
 enum AnalysisMessage {
     EarlyStart(EarlyStart),
-    Request(Handed<HandedRequest>),
+    Request(Box<Handed<HandedRequest>>),
 }
 
 struct EarlyAnalysis {
@@ -877,7 +914,7 @@ pub(crate) fn __bun_runtime_start_early_analysis(
         .stack_size(64 << 20)
         .spawn(move || {
             bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Analyze"));
-            bun_sema_driver::with_early_run(shared_directory_cache, |run| {
+            bun_sema_driver::with_early_run(&shared_directory_cache, |run| {
                 std::thread::scope(|scope| {
                     let parse_early = || {
                         bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Analyze"));
@@ -952,10 +989,10 @@ pub(crate) fn __bun_runtime_start_early_analysis(
                                 }
                             };
                             let paused = Some((run, &wait_for_early_parse_pause as &dyn Fn()));
-                            match analyze_sources(settings, &start.sources, start.printed_react_compiler_outputs, PendingRequest::Awaited(&next_request, is_load_abandoned), paused) {
+                            match analyze_sources(&settings, &start.sources, start.printed_react_compiler_outputs, PendingRequest::Awaited(&next_request, is_load_abandoned), paused) {
                                 Analyzed::Superseded(request) => {
                                     is_restarted = true;
-                                    Some(request)
+                                    Some(*request)
                                 }
                                 Analyzed::Finished(found) => {
                                     let unanswered = if is_received.get() { None } else { next_request() };
@@ -1015,7 +1052,7 @@ pub(crate) fn analyze_for_build(
         early.stop_early_passes();
         early.is_early_load_abandoned.store(is_superseding, Ordering::Relaxed);
         let message_sender = early.message_sender.take().expect("the analysis is asked for once");
-        message_sender.send(AnalysisMessage::Request(Handed(handed))).ok().expect("the analysis thread exited early");
+        message_sender.send(AnalysisMessage::Request(Box::new(Handed(handed)))).expect("the analysis thread exited early");
         return early.result_receiver.recv().expect("the analysis thread exited without a result").take();
     }
     // `Bun.build` bundles on a thread of its own, which has less stack than a task of the checker asks for.
@@ -1054,13 +1091,13 @@ struct AnalysisSettings<'a> {
 }
 
 enum PendingRequest<'a, 'c, 'i, 'l> {
-    Received(ReceivedRequest<'c, 'i, 'l>),
+    Received(Box<ReceivedRequest<'c, 'i, 'l>>),
     Awaited(&'a dyn Fn() -> Option<ReceivedRequest<'c, 'i, 'l>>, std::sync::Arc<AtomicBool>),
 }
 
 enum Analyzed<'c, 'i, 'l> {
     Finished(Option<bun_ast::type_tags::ProgramFacts>),
-    Superseded(ReceivedRequest<'c, 'i, 'l>),
+    Superseded(Box<ReceivedRequest<'c, 'i, 'l>>),
 }
 
 fn analyze_on_this_thread(
@@ -1080,7 +1117,7 @@ fn analyze_on_this_thread(
         preserve_source_paths: checked.preserve_source_paths,
         is_restarted,
     };
-    match analyze_sources(settings, &early_sources, printed_react_compiler_outputs, PendingRequest::Received((checked, log)), early) {
+    match analyze_sources(&settings, &early_sources, printed_react_compiler_outputs, PendingRequest::Received(Box::new((checked, log))), early) {
         Analyzed::Finished(found) => found,
         Analyzed::Superseded(_) => None,
     }
@@ -1152,14 +1189,14 @@ struct CompleteRequest {
 }
 
 fn analyze_sources<'c, 'i, 'l>(
-    settings: AnalysisSettings<'_>,
+    settings: &AnalysisSettings<'_>,
     early_sources: &EarlySources,
     printed_early_react_compiler_outputs: PrintedReactCompilerOutputs,
     pending_request: PendingRequest<'_, 'c, 'i, 'l>,
     early: Option<(bun_sema_driver::EarlyRun, &dyn Fn())>,
 ) -> Analyzed<'c, 'i, 'l> {
     use bun_sema_driver::host::from_native;
-    let AnalysisSettings { cwd, tsconfig, conditions, by_extension, rewrite_jest_for_tests, preserve_source_paths, is_restarted } = settings;
+    let AnalysisSettings { cwd, tsconfig, conditions, by_extension, rewrite_jest_for_tests, preserve_source_paths, is_restarted } = *settings;
     let is_started_early = matches!(pending_request, PendingRequest::Awaited(..));
     let jsx_options_of = |path: &[u8], of_file: bun_bundler::options::FileJsxOptions<'_>| {
         let of_file = bun_sema_driver::host::FileJsxOptions {
@@ -1298,7 +1335,6 @@ fn analyze_sources<'c, 'i, 'l>(
             explain_to_log,
             rules,
             logs_type_errors,
-            leaves_casts_unchecked,
             early_analysis: _,
             early_sources: _,
             release_asts,
@@ -1356,8 +1392,8 @@ fn analyze_sources<'c, 'i, 'l>(
         });
         deferred.already_read = preloaded_sources;
         let mut constants = bun_aot::Constants {
+            leaves_decorators_to_the_bundler: false,
             logs_type_errors,
-            leaves_casts_unchecked,
             records_spans: false,
             has_preloads: false,
             source_path_to_url: preserve_source_paths.then_some(file_url as fn(&[u8]) -> Vec<u8>),
@@ -1428,7 +1464,8 @@ fn analyze_sources<'c, 'i, 'l>(
         deferred
     };
     match pending_request {
-        PendingRequest::Received((checked, log)) => {
+        PendingRequest::Received(received) => {
+            let (checked, log) = *received;
             let mut deferred = complete(checked, log);
             provided.build_constants = deferred.build_constants.take();
             if let (Some(path), Some(complete_request)) = (bun_core::env_var::BUN_AOT_TYPED_SNAPSHOT.get(), complete_request.get()) {
@@ -1568,7 +1605,7 @@ fn analyze_sources<'c, 'i, 'l>(
     }
     let report = bun_sema_driver::check_provided_then(&request, with_pages(cwd, provided), |report| report);
     if let Some(request) = superseding_request.lock().take() {
-        return Analyzed::Superseded(request.take());
+        return Analyzed::Superseded(Box::new(request.take()));
     }
     let Some(log) = received_log.lock().take().map(Handed::take) else {
         return Analyzed::Finished(None);
@@ -1651,7 +1688,7 @@ fn print_explained(lines: &[String]) {
     for line in lines {
         let (writer, prefix) = match line.as_bytes().first() {
             Some(b'{') => (Output::writer(), ""),
-            Some(b'[') => (Output::error_writer(), ""),
+            Some(b'[' | b' ') | None => (Output::error_writer(), ""),
             _ => (Output::error_writer(), "aot: "),
         };
         let _ = writer.write_all(prefix.as_bytes());
@@ -1686,9 +1723,9 @@ fn first_error(report: &Report) -> Option<&Diagnostic> {
     report.diagnostics.iter().find(|reported| matches!(reported.category, Category::Error) && !bun_sema_driver::is_type_only_diagnostic(reported.code))
 }
 
-pub(crate) fn sound_files_for_build(asked: SoundFilesRequest<'_>, log: &mut bun_ast::Log) -> TypedOutputs {
+pub(crate) fn sound_files_for_build(asked: &SoundFilesRequest<'_>, log: &mut bun_ast::Log) -> TypedOutputs {
     use bun_sema_driver::sound_files::{ModuleTypes, Output, sound_files, typed_outputs, annotate_implicit_any, emitted_declarations_of};
-    let SoundFilesRequest { cwd, tsconfig, conditions, loaders, outdir, written, module_types, rolls_up_declarations, keeps_modules_apart } = asked;
+    let &SoundFilesRequest { cwd, tsconfig, conditions, loaders, outdir, written, module_types, rolls_up_declarations, keeps_modules_apart } = asked;
     let modules = module_types.and_then(|types| types.downcast_ref::<Vec<ModuleTypes>>());
     let outputs: Vec<Output<'_>> = written.iter().map(|file| Output { path: file.path, javascript: file.text, source_map: file.source_map, entry_point: file.entry_point }).collect();
     let by_extension = script_kinds_by_extension(loaders);
@@ -1762,7 +1799,7 @@ pub(crate) fn sound_files_for_build(asked: SoundFilesRequest<'_>, log: &mut bun_
     let report = check(&mut found.typed, &found.declarations_while_checked);
     if let Some(first) = first_error(&report) {
         let path = bun_sema_driver::host::to_native(&first.path);
-        let shown = BStr::new(path.strip_prefix(outdir).map_or(&path[..], |inside| inside.strip_prefix(std::path::MAIN_SEPARATOR_STR.as_bytes()).unwrap_or(inside)));
+        let shown = BStr::new(path.strip_prefix(outdir).map_or(path, |inside| inside.strip_prefix(std::path::MAIN_SEPARATOR_STR.as_bytes()).unwrap_or(inside)));
         let text = BStr::new(bun_core::strings::split(&first.text[..], b"\n").next().unwrap_or_default());
         log.add_warning_fmt(None, bun_ast::Loc::EMPTY, format_args!("{SKIPPED_SOUND_FILES}: with its types put back it has type errors, the first at {shown}:{}:{}: TS{}: {text}", first.line, first.column, first.code));
         return TypedOutputs { sound_files: Vec::new(), declaration_files };
@@ -1821,7 +1858,6 @@ fn check_and_emit_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_
         explain_to_log: _,
         rules: _,
         logs_type_errors: _,
-        leaves_casts_unchecked: _,
         early_analysis: _,
         early_sources: _,
         release_asts: _,
@@ -1993,7 +2029,7 @@ declare module "vitest*" { export * from "bun:test"; export const isDeclaredByBu
 "#;
     let module = &include_bytes!("../../../packages/bun-types/test.d.ts")[..];
     let named = &b"declare module \"bun:test\" {"[..];
-    let at = module.windows(named.len()).position(|text| text == named).expect("bun-types declares the module");
+    let at = bun_core::strings::index_of(module, named).expect("bun-types declares the module");
     [&globals[..], &module[..at], &b"declare module \"bun:test*\" {"[..], &module[at + named.len()..]].concat()
 }
 
@@ -2394,7 +2430,7 @@ pub(crate) fn audit_before(
             let _ = Output::error_writer().write_all(&out);
             Output::flush();
         }
-        *WRITTEN.lock() = out.clone();
+        (*WRITTEN.lock()).clone_from(&out);
         found.lock().said = out;
     }
     if !is_reanalysis {

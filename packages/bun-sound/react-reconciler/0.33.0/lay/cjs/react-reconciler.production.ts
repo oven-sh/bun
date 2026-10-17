@@ -1151,7 +1151,7 @@ export default function ($$$config: RR.HostConfig): RR.Reconciler {
                 var suspendedLanes = root.suspendedLanes,
                   pingedLanes = root.pingedLanes;
                 JSCompiler_inline_result =
-                  (1 << (31 - clz32(42 | syncTransitionLanes) + 1)) - 1;
+                  ((1 << (31 - clz32(42 | syncTransitionLanes) + 1)) - 1) as RR.Lanes;
                 JSCompiler_inline_result &=
                   pendingLanes & ~(suspendedLanes & ~pingedLanes);
                 JSCompiler_inline_result =
@@ -1384,7 +1384,7 @@ export default function ($$$config: RR.HostConfig): RR.Reconciler {
         thenableWithOverride.value = result;
         for (var i = 0; i < listeners.length; i++) (0, listeners[i])(result);
       },
-      function (error: RR.Thrown) { var error$asIndex: RR.int32;
+      function (error: RR.Thrown) { var error$asIndex: number;
         thenableWithOverride.status = "rejected";
         thenableWithOverride.reason = error;
         for (error$asIndex = 0; error$asIndex < listeners.length; error$asIndex++)
@@ -1415,7 +1415,7 @@ export default function ($$$config: RR.HostConfig): RR.Reconciler {
           pool: cacheFromPool
         };
   }
-  function shallowEqual(objA: RR.Comparand, objB: RR.Comparand): boolean { var keysB$asIndex: RR.int32;
+  function shallowEqual(objA: RR.Comparand, objB: RR.Comparand): boolean { var keysB$asIndex: number;
     if (objectIs(objA, objB)) return !0;
     if (
       "object" !== typeof objA ||
@@ -2221,14 +2221,14 @@ export default function ($$$config: RR.HostConfig): RR.Reconciler {
           returnFiber,
           currentFirstChild,
           newChild,
-          lanes
+          lanes as RR.Lanes
         );
         thenableState$1 = null;
         return firstChildFiber;
       } catch (x) {
         if (x === SuspenseException || x === SuspenseActionException) throw x;
         var fiber = createFiber(29, x, null, returnFiber.mode);
-        fiber.lanes = lanes;
+        fiber.lanes = lanes as RR.Lanes;
         fiber.return = returnFiber;
         return fiber;
       } finally {
@@ -2278,7 +2278,7 @@ export default function ($$$config: RR.HostConfig): RR.Reconciler {
     enqueueUpdate$1(fiber, null, null, lane);
     return getRootForUpdatedFiber(fiber);
   }
-  function markUpdateLaneFromFiberToRoot(sourceFiber: RR.Fiber, update: RR.ConcurrentUpdate | null, lane: RR.Lane): RR.FiberRoot | null { var sourceFiber$asInstance: RR.OffscreenInstance | null, sourceFiber$asUpdates: RR.FiberRoot["hiddenUpdates"], parent$asRoot: RR.FiberRoot, alternate$asList: RR.ConcurrentUpdate[] | null, isHidden$asIndex: RR.Lane;
+  function markUpdateLaneFromFiberToRoot(sourceFiber: RR.Fiber, update: RR.ConcurrentUpdate | null, lane: RR.Lane): RR.FiberRoot | null { var sourceFiber$asInstance: RR.OffscreenInstance | null, sourceFiber$asUpdates: RR.FiberRoot["hiddenUpdates"], parent$asRoot: RR.FiberRoot, alternate$asList: RR.ConcurrentUpdate[] | null, isHidden$asIndex: number;
     sourceFiber.lanes |= lane;
     var alternate: RR.Fiber | null = sourceFiber.alternate;
     null !== alternate && (alternate.lanes |= lane);
@@ -2554,7 +2554,7 @@ export default function ($$$config: RR.HostConfig): RR.Reconciler {
       throw Error(formatProdErrorMessage(191, callback));
     callback.call(context);
   }
-  function commitCallbacks(updateQueue: RR.UpdateQueue, context: RR.StateNode): void { var updateQueue$asIndex: RR.int32;
+  function commitCallbacks(updateQueue: RR.UpdateQueue, context: RR.StateNode): void { var updateQueue$asIndex: number;
     var callbacks = updateQueue.callbacks;
     if (null !== callbacks)
       for (
@@ -2575,7 +2575,7 @@ export default function ($$$config: RR.HostConfig): RR.Reconciler {
     push(currentTreeHiddenStackCursor, currentTreeHiddenStackCursor.current);
   }
   function popHiddenContext(): void {
-    entangledRenderLanes = prevEntangledRenderLanesCursor.current;
+    entangledRenderLanes = prevEntangledRenderLanesCursor.current as RR.Lanes;
     pop(currentTreeHiddenStackCursor);
     pop(prevEntangledRenderLanesCursor);
   }
@@ -5122,7 +5122,7 @@ export default function ($$$config: RR.HostConfig): RR.Reconciler {
       revealOrder = nextProps.revealOrder,
       tailMode = nextProps.tail;
     nextProps$asChildren = nextProps.children;
-    var suspenseContext: RR.SuspenseContext = suspenseStackCursor.current,
+    var suspenseContext: RR.SuspenseContext = suspenseStackCursor.current as RR.SuspenseContext,
       shouldForceFallback = 0 !== (suspenseContext & 2);
     shouldForceFallback
       ? ((suspenseContext = (suspenseContext & 1) | 2),
@@ -6189,7 +6189,7 @@ export default function ($$$config: RR.HostConfig): RR.Reconciler {
                     type,
                     null,
                     newProps,
-                    renderLanes
+                    renderLanes as RR.Lanes
                   )))
             : nextResource
               ? nextResource !== current.memoizedState
@@ -6216,7 +6216,7 @@ export default function ($$$config: RR.HostConfig): RR.Reconciler {
                   type,
                   nextResource$asOldProps,
                   newProps,
-                  renderLanes
+                  renderLanes as RR.Lanes
                 ));
           return null;
         }
@@ -6298,7 +6298,7 @@ export default function ($$$config: RR.HostConfig): RR.Reconciler {
           workInProgress.type,
           null === current ? null : current.memoizedProps,
           workInProgress.pendingProps,
-          renderLanes
+          renderLanes as RR.Lanes
         );
         return null;
       case 6:
@@ -6426,7 +6426,7 @@ export default function ($$$config: RR.HostConfig): RR.Reconciler {
         }
         popSuspenseHandler(workInProgress);
         if (0 !== (workInProgress.flags & 128))
-          return (workInProgress.lanes = renderLanes), workInProgress;
+          return (workInProgress.lanes = renderLanes as RR.Lanes), workInProgress;
         renderLanes = null !== newProps$asState;
         current = null !== current && null !== current.memoizedState;
         renderLanes &&
@@ -6490,7 +6490,7 @@ export default function ($$$config: RR.HostConfig): RR.Reconciler {
                     null !== renderLanes;
 
                   )
-                    resetWorkInProgress(renderLanes, current),
+                    resetWorkInProgress(renderLanes, current as RR.Lanes),
                       (renderLanes = renderLanes.sibling);
                   push(
                     suspenseStackCursor,
@@ -7987,7 +7987,7 @@ export default function ($$$config: RR.HostConfig): RR.Reconciler {
     finishedRoot$jscomp$0: RR.FiberRoot,
     parentFiber: RR.Fiber,
     includeWorkInProgressEffects: boolean
-  ): void { var parentFiber$asChild: RR.Fiber | null, current$asWork: RR.Fiber, finishedRoot$asInstance: RR.ClassInstance, finishedRoot$asQueue: RR.UpdateQueue | null, finishedRoot$asIndex: RR.int32;
+  ): void { var parentFiber$asChild: RR.Fiber | null, current$asWork: RR.Fiber, finishedRoot$asInstance: RR.ClassInstance, finishedRoot$asQueue: RR.UpdateQueue | null, finishedRoot$asIndex: number;
     includeWorkInProgressEffects =
       includeWorkInProgressEffects && 0 !== (parentFiber.subtreeFlags & 8772);
     for (parentFiber$asChild = parentFiber.child; null !== parentFiber$asChild; ) {
@@ -8658,7 +8658,7 @@ export default function ($$$config: RR.HostConfig): RR.Reconciler {
     if (null === hostRoot$asFiber) throw Error(formatProdErrorMessage(362));
     return (hostRoot$asFiber.stateNode as RR.FiberRoot).current!;
   }
-  function matchSelector(fiber$jscomp$0: RR.Fiber, selector: RR.Selector): boolean { var fiber$jscomp$0$asStack: (RR.Fiber | number)[], fiber$jscomp$0$asText: string | null, fiber$jscomp$0$asTestName: unknown, selector$asSelectors: RR.Selector[], selector$asResult: boolean, fiber$asChild: RR.Fiber | null, tag$asIndex: RR.int32;
+  function matchSelector(fiber$jscomp$0: RR.Fiber, selector: RR.Selector): boolean { var fiber$jscomp$0$asStack: (RR.Fiber | number)[], fiber$jscomp$0$asText: string | null, fiber$jscomp$0$asTestName: unknown, selector$asSelectors: RR.Selector[], selector$asResult: boolean, fiber$asChild: RR.Fiber | null, tag$asIndex: number;
     var tag: RR.WorkTag = fiber$jscomp$0.tag;
     switch (selector.$$typeof) {
       case COMPONENT_TYPE:
@@ -8787,7 +8787,7 @@ export default function ($$$config: RR.HostConfig): RR.Reconciler {
       ? workInProgressRootRenderLanes & -workInProgressRootRenderLanes
       : null !== ReactSharedInternals.T
         ? requestTransitionLane()
-        : resolveUpdatePriority();
+        : resolveUpdatePriority() as RR.Lane;
   }
   function requestDeferredLane(): RR.Lane { var lane$asHandler: RR.Fiber | null;
     if (0 === workInProgressDeferredLane)
@@ -11213,7 +11213,7 @@ export default function ($$$config: RR.HostConfig): RR.Reconciler {
   ) {
     return createFiberRoot(
       containerInfo,
-      tag,
+      tag as RR.RootTag,
       !1,
       null,
       hydrationCallbacks,
@@ -11247,7 +11247,7 @@ export default function ($$$config: RR.HostConfig): RR.Reconciler {
   ) { var initialChildren$asRoot: RR.FiberRoot, callback$asLane: RR.Lane, containerInfo$asFiber: RR.Fiber, tag$asLane: RR.Lane, hydrationCallbacks$asUpdate: RR.Update;
     initialChildren$asRoot = createFiberRoot(
       containerInfo,
-      tag,
+      tag as RR.RootTag,
       !0,
       initialChildren,
       hydrationCallbacks,
@@ -11331,7 +11331,7 @@ export default function ($$$config: RR.HostConfig): RR.Reconciler {
     }
   };
   exports.findAllNodes = findAllNodes;
-  exports.findBoundingRects = function (hostRoot, selectors) { var hostRoot$asRects: RR.BoundingRect[], selectors$asNodes: RR.StateNode[], selectors$asIndex: RR.int32, i$asRect: RR.BoundingRect;
+  exports.findBoundingRects = function (hostRoot, selectors) { var hostRoot$asRects: RR.BoundingRect[], selectors$asNodes: RR.StateNode[], selectors$asIndex: number, i$asRect: RR.BoundingRect;
     if (!supportsTestSelectors) throw Error(formatProdErrorMessage(363));
     selectors$asNodes = findAllNodes(hostRoot, selectors);
     hostRoot$asRects = [];
@@ -11424,7 +11424,7 @@ export default function ($$$config: RR.HostConfig): RR.Reconciler {
     }
   };
   exports.flushSyncWork = flushSyncWork;
-  exports.focusWithin = function (hostRoot, selectors) { var hostRoot$asRoot: RR.Fiber, hostRoot$asIndex: RR.int32, selectors$asPaths: RR.Fiber[], selectors$asStack: RR.Fiber[], fiber$asChild: RR.Fiber | null;
+  exports.focusWithin = function (hostRoot, selectors) { var hostRoot$asRoot: RR.Fiber, hostRoot$asIndex: number, selectors$asPaths: RR.Fiber[], selectors$asStack: RR.Fiber[], fiber$asChild: RR.Fiber | null;
     if (!supportsTestSelectors) throw Error(formatProdErrorMessage(363));
     hostRoot$asRoot = findFiberRootForHostRoot(hostRoot);
     selectors$asPaths = findPaths(hostRoot$asRoot, selectors);
@@ -11727,8 +11727,8 @@ namespace RR {
   export type HookFlags = int32;
   export type RootTag = int32;
   export type UpdateTag = int32;
-  export type EventPriority = int32;
-  export type SchedulerPriority = int32;
+  export type EventPriority = number;
+  export type SchedulerPriority = number;
   export type ExecutionContext = int32;
   export type RootExitStatus = int32;
   export type SuspendedReason = int32;

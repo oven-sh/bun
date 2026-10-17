@@ -30,8 +30,8 @@ declare namespace RR {
   type HookFlags = int32; // Effect.tag: 1 HasEffect 2 Insertion 4 Layout 8 Passive
   type RootTag = int32;
   type UpdateTag = int32; // Update.tag: 0 UpdateState 1 ReplaceState 2 ForceUpdate 3 CaptureUpdate
-  type EventPriority = int32; // a Lane: 2 | 8 | 32 | 268435456
-  type SchedulerPriority = int32;
+  type EventPriority = number; // a Lane: 2 | 8 | 32 | 268435456; the host's functions give it and take it
+  type SchedulerPriority = number; // the scheduler's own constants
   type ExecutionContext = int32; // 2 Render 4 Commit
   type RootExitStatus = int32; // 0..6
   type SuspendedReason = int32; // 0..9

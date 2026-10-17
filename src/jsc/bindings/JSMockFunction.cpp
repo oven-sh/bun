@@ -1563,6 +1563,11 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
         isLockedBuiltin = true;
     }
 
+    if (JSC::AOT::Typed::isModuleNamespace(object)) {
+        throwTypeError(globalObject, scope, makeString("Cannot spy on `"_s, String(propertyKey.uid()), "`: the exports of a module cannot be replaced in ahead-of-time compiled programs"_s));
+        return {};
+    }
+
     // easymode: regular property or missing property
     if (!hasValue || slot.isValue()) {
         JSValue value = jsUndefined();

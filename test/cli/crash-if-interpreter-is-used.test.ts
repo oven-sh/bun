@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
-import { unsupported } from "../aot/run-programs";
+import { unsupported, withoutCoreDump } from "../aot/run-programs";
 
 test("BUN_JSC_crashIfInterpreterIsUsed names the code and crashes", async () => {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", "console.log(1)"],
+    cmd: withoutCoreDump([bunExe(), "-e", "console.log(1)"]),
     env: { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" },
     stdout: "pipe",
     stderr: "pipe",
@@ -37,7 +37,7 @@ test.skipIf(isWindows || !!unsupported)("BUN_INSPECT spares nothing but the debu
   await using build = Bun.spawn({ cmd: [bunExe(), "build", "--compile", "--aot", "program.mjs", "--outfile", "program"], cwd: String(folder), env: bunEnv, stdout: "ignore", stderr: "pipe" });
   expect({ stderr: await build.stderr.text(), exitCode: await build.exited }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
   await using proc = Bun.spawn({
-    cmd: [join(String(folder), "program")],
+    cmd: withoutCoreDump([join(String(folder), "program")]),
     cwd: String(folder),
     env: { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1", BUN_INSPECT: "ws://127.0.0.1:0/crash-if-interpreter" },
     stdout: "pipe",
@@ -56,7 +56,7 @@ async function runCompiled(files: Record<string, string>, isExecutable: boolean)
     expect({ stderr: await build.stderr.text(), exitCode: await build.exited }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
   }
   await using proc = Bun.spawn({
-    cmd: isExecutable ? [join(String(folder), "program")] : [bunExe(), "run", "--debug-aot", "program.mjs"],
+    cmd: withoutCoreDump(isExecutable ? [join(String(folder), "program")] : [bunExe(), "run", "--debug-aot", "program.mjs"]),
     cwd: String(folder),
     env: { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" },
     stdout: "pipe",

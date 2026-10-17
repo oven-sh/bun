@@ -166,6 +166,7 @@ dependencies = [
  "bun_paths",
  "bun_react_compiler",
  "bun_sema",
+ "bun_sys",
  "bun_threading",
  "hashbrown 0.15.5",
  "rustc-hash",

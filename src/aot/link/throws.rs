@@ -1056,15 +1056,15 @@ impl<'a> Flow<'a> {
     }
 
     fn is_trusted_holder(&self, index: usize, v: V) -> bool {
-        self.builtin_holder(index, v).is_some_and(|holder| holder.is_global_object() || is_engine_global(holder.name.split('.').next().unwrap_or_default().as_bytes()))
+        self.builtin_holder(index, v).is_some_and(|holder| holder.is_global_object() || is_engine_global(bun_core::strings::split(holder.name.as_bytes(), b".").next().unwrap_or_default()))
     }
 
     fn constant_key(&self, index: usize, func: &Func, key: V) -> Option<Vec<u8>> {
-        match func.op(strip_casts(func, key))? {
-            &Op::Str(text) => Some(self.program.strs.get(text).to_vec()),
-            &Op::Int(number) if number >= 0 => Some(number.to_string().into_bytes()),
-            &Op::ToKey(of) => self.constant_key(index, func, of),
-            &Op::PropGet { obj, name } if self.builtin_holder(index, obj).is_some_and(|holder| holder.name == "Symbol" && holder.known_value(self.program.strs.get(name)).is_some_and(|held| held.type_of == "symbol")) => Some([b"@@", self.program.strs.get(name)].concat()),
+        match *func.op(strip_casts(func, key))? {
+            Op::Str(text) => Some(self.program.strs.get(text).to_vec()),
+            Op::Int(number) if number >= 0 => Some(number.to_string().into_bytes()),
+            Op::ToKey(of) => self.constant_key(index, func, of),
+            Op::PropGet { obj, name } if self.builtin_holder(index, obj).is_some_and(|holder| holder.name == "Symbol" && holder.known_value(self.program.strs.get(name)).is_some_and(|held| held.type_of == "symbol")) => Some([b"@@", self.program.strs.get(name)].concat()),
             _ => None,
         }
     }
@@ -1233,7 +1233,7 @@ impl<'a> Flow<'a> {
             }
         }
         if had.has_objects() {
-            created.parts = produced.parts.clone();
+            created.parts.clone_from(&produced.parts);
             created.any_object = produced.any_object;
             created.any_function = produced.any_function;
         }
@@ -1838,7 +1838,7 @@ fn text_of(program: &Program, ty: &Declared, depth: u32) -> String {
             Part::Global(name, _) => parts.push(bstr::BStr::new(program.strs.get(*name)).to_string()),
             Part::Array(element) if depth < 2 && element.is_some() => {
                 let element = text_of(program, program.tys.get(*element), depth + 1);
-                parts.push(if element.contains(" | ") { format!("({element})[]") } else { format!("{element}[]") });
+                parts.push(if bun_core::strings::contains(element.as_bytes(), b" | ") { format!("({element})[]") } else { format!("{element}[]") });
             }
             Part::Array(_) => parts.push("any[]".to_owned()),
         }
@@ -2000,10 +2000,10 @@ impl<'a> Report<'a, '_> {
         let func = &program.funcs[index];
         let text = |name: StrId| if name.is_some() { bstr::BStr::new(program.strs.get(name)).to_string() } else { "..".to_owned() };
         let path = if func.module.is_some() { text(program.modules[func.module.idx()].display_path) } else { "..".to_owned() };
-        if let Some((_, inside)) = path.rsplit_once("node_modules/") {
-            let mut names = inside.split('/');
+        if let Some((_, inside)) = bun_core::strings::rsplit_once(path.as_bytes(), b"node_modules/") {
+            let mut names = bun_core::strings::split(inside, b"/").map(bstr::BStr::new);
             let first = names.next().unwrap_or_default();
-            return (ExternalSourceKind::DeclaredOnly, format!("the package {}", if first.starts_with('@') { format!("{first}/{}", names.next().unwrap_or_default()) } else { first.to_owned() }));
+            return (ExternalSourceKind::DeclaredOnly, format!("the package {}", if first.starts_with(b"@") { format!("{first}/{}", names.next().unwrap_or_default()) } else { first.to_string() }));
         }
         if func.has(func_flags::IS_BUILTIN | func_flags::IS_IN_BUILTIN_MODULE) {
             return (ExternalSourceKind::DeclaredOnly, format!("the runtime's {path}"));
@@ -2083,9 +2083,9 @@ impl<'a> Report<'a, '_> {
         while let Some(&Op::Coerce { value, .. }) = func.op(root) {
             root = value;
         }
-        match func.op(root)? {
-            &Op::Double(bits) => Some(f64::from_bits(bits)),
-            &Op::Unary { op: UnOp::Neg, a } if matches!(func.op(a), Some(Op::Int(0))) => Some(-0.0),
+        match *func.op(root)? {
+            Op::Double(bits) => Some(f64::from_bits(bits)),
+            Op::Unary { op: UnOp::Neg, a } if matches!(func.op(a), Some(Op::Int(0))) => Some(-0.0),
             _ => None,
         }
     }
@@ -2228,7 +2228,7 @@ impl<'a> Report<'a, '_> {
                         uses.entry(value).or_insert((kind, Use::Named(into.fields[field as usize].name)));
                     }
                     Some(&Op::GlobalSet(global, value)) => {
-                        uses.entry(value).or_insert((Kind::Variable, Use::Named(program.globals[global.idx()].name)));
+                        uses.entry(value).or_insert_with(|| (Kind::Variable, Use::Named(program.globals[global.idx()].name)));
                     }
                     _ => {}
                 }
@@ -2246,7 +2246,7 @@ impl<'a> Report<'a, '_> {
             Def::Op(Op::CallDirect { func: typed, .. }) => Some(*typed),
             _ => None,
         })?;
-        program.declared_parameter_types.get(&(behind.idx() as u32)).unwrap_or(&program.funcs[behind.idx()].params).get(number as usize).copied().filter(|&written| self.flow.is_informative(written))
+        program.declared_parameter_types.get(&(behind.idx() as u32)).unwrap_or_else(|| &program.funcs[behind.idx()].params).get(number as usize).copied().filter(|&written| self.flow.is_informative(written))
     }
 
     fn use_text(&self, func: &Func, used: Use) -> String {
@@ -2705,7 +2705,7 @@ impl<'a> Report<'a, '_> {
                 return self.add(func, pos, Kind::PrototypeWrite, Verdict::Wrong, String::new(), String::new(), format!("`{shown}` is {verb} on the prototype of the generator function {named}, which is frozen"), context);
             }
             if let (Some(&class), Some(name)) = (self.class_of.get(&owner), name)
-                && program.layouts[class.idx()].class_flags & class_flags::HAS_FIXED_LAYOUT != 0
+                && program.layouts[class.idx()].class_flags & (class_flags::HAS_FIXED_LAYOUT | class_flags::PROTOTYPE_MAY_GAIN_MEMBERS) == class_flags::HAS_FIXED_LAYOUT
                 && !self.declares_member(class, name)
                 && !(program.strs.get(name) == b"constructor" && program.layouts[class.idx()].class_flags & class_flags::CONSTRUCTOR_MAY_BE_REPLACED != 0)
             {
@@ -3031,7 +3031,7 @@ impl<'a> Report<'a, '_> {
                 let named = self.name_of_function(callee);
                 self.risk = self.risk_of(&wanted);
                 self.is_at_entrypoint = callee.has(func_flags::IS_VALUE) && self.has_checking_entrypoint[called.idx()];
-                let written = program.declared_parameter_types.get(&(called.idx() as u32)).map_or(wanted.clone(), |written| self.flow.get(written[number]).clone());
+                let written = program.declared_parameter_types.get(&(called.idx() as u32)).map_or_else(|| wanted.clone(), |written| self.flow.get(written[number]).clone());
                 self.add(func, pos, Kind::Argument, verdict, text_of(program, &written, 0), found, format!("argument {} of {named}", number + 1), origin);
             }
         }
@@ -3090,7 +3090,7 @@ impl<'a> Report<'a, '_> {
             if created.has(func_flags::GENERATOR) {
                 self.name = Some("generator-prototype-write");
                 self.add(func, pos, Kind::PrototypeWrite, Verdict::Wrong, String::new(), String::new(), format!("`{shown}` on the prototype of the generator function {named}, which is frozen"), context);
-            } else if self.class_of.get(&owner).is_some_and(|class| program.layouts[class.idx()].class_flags & class_flags::HAS_FIXED_LAYOUT != 0) {
+            } else if self.class_of.get(&owner).is_some_and(|class| program.layouts[class.idx()].class_flags & (class_flags::HAS_FIXED_LAYOUT | class_flags::PROTOTYPE_MAY_GAIN_MEMBERS) == class_flags::HAS_FIXED_LAYOUT) {
                 self.add(func, pos, Kind::PrototypeWrite, Verdict::Unknown, String::new(), String::new(), format!("`{shown}` on the prototype of the class {named}: members cannot be added to class prototypes"), context);
             }
             return;
@@ -3308,7 +3308,7 @@ fn finalize_sites(mut sites: Vec<Site>, passing_sites: &FxHashSet<(u32, u32, Kin
             site.verdict = site.verdict.min(Verdict::Unknown);
         }
     }
-    sites.sort_by(|a, b| (a.module, a.pos, a.kind, a.ordinal, std::cmp::Reverse(a.verdict)).cmp(&(b.module, b.pos, b.kind, b.ordinal, std::cmp::Reverse(b.verdict))));
+    sites.sort_by_key(|a| (a.module, a.pos, a.kind, a.ordinal, std::cmp::Reverse(a.verdict)));
     sites.dedup_by(|next, retained| (next.module, next.pos, next.kind, next.ordinal) == (retained.module, retained.pos, retained.kind, retained.ordinal));
     sites
 }
@@ -3317,16 +3317,16 @@ pub(super) fn set_up(program: &Program, in_parallel: InParallel<'_>) -> Setup {
     Setup::new(program, false, in_parallel)
 }
 
-pub(super) fn find_always_failing_sites(program: &Program, setup: Setup, in_parallel: InParallel<'_>) -> Vec<Site> {
-    let asked = ReportContext::new(program, &setup, false);
-    let mut first = Flow::new(program, &setup, false, None);
+pub(super) fn find_always_failing_sites(program: &Program, setup: &Setup, in_parallel: InParallel<'_>) -> Vec<Site> {
+    let asked = ReportContext::new(program, setup, false);
+    let mut first = Flow::new(program, setup, false, None);
     for &index in setup.constant_stores.iter().chain(&setup.constant_stores) {
         first.run(index);
     }
     let frozen = first.freeze();
     let mut runs: Vec<(Range<usize>, Vec<Site>, FxHashSet<(u32, u32, Kind)>)> = runs_of(program).map(|run| (run, Vec::new(), FxHashSet::default())).collect();
     for_each_mut(&mut runs, in_parallel, &|(run, sites, passing_sites)| {
-        let mut flow = Flow::new(program, &setup, false, Some(&frozen));
+        let mut flow = Flow::new(program, setup, false, Some(&frozen));
         let mut report = asked.report(&mut flow);
         asked.analyze(&mut report, run.clone());
         (*sites, *passing_sites) = (report.sites, report.passing_sites);
@@ -3374,6 +3374,7 @@ pub(super) struct FallibleCheck {
     pub(super) what: String,
     pub(super) origin: Option<(u32, u32, String)>,
     pub(super) fix: &'static str,
+    pub(super) is_of_parameters: bool,
 }
 
 pub(super) fn find_fallible_checks(program: &Program, logs_type_errors: bool, in_parallel: InParallel<'_>) -> Vec<FallibleCheck> {
@@ -3382,7 +3383,7 @@ pub(super) fn find_fallible_checks(program: &Program, logs_type_errors: bool, in
         .map(|site| {
             let expectation = if site.expected.is_empty() { String::new() } else { format!("expected {}, may get {}", site.expected, site.shown()) };
             let separator = if site.detail.is_empty() || expectation.is_empty() { "" } else { ": " };
-            FallibleCheck { module: site.module, pos: site.pos, what: format!("{}{separator}{expectation}", site.detail), fix: site.fix(), origin: site.origin.filter(|origin| origin.0 != u32::MAX && origin.1 != 0 && (origin.0, origin.1) != (site.module, site.pos)) }
+            FallibleCheck { module: site.module, pos: site.pos, what: format!("{}{separator}{expectation}", site.detail), fix: site.fix(), is_of_parameters: site.kind == Kind::Parameter, origin: site.origin.filter(|origin| origin.0 != u32::MAX && origin.1 != 0 && (origin.0, origin.1) != (site.module, site.pos)) }
         })
         .collect()
 }

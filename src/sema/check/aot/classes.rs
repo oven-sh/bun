@@ -12,7 +12,7 @@ use crate::util::{FxHashMap, FxHashSet};
 use super::OnceLock;
 use super::flows::Place;
 use super::storage::Primitive;
-use crate::aot_rules::{Rule, Scopes, Severity};
+use crate::aot_rules::{Rule, Scopes};
 use crate::check::CompilerDiagnostic;
 
 #[derive(Default)]
@@ -31,7 +31,7 @@ pub(super) struct Shared {
     property_container_mutations: OnceLock<FxHashMap<Atom, Vec<(FileId, ExprId, ExprId)>>>,
     computed_key_assignments: OnceLock<Vec<(FileId, ExprId)>>,
     union_key_assignments: OnceLock<Vec<(FileId, ExprId)>>,
-    union_key_assignments_search: std::sync::Mutex<()>,
+    union_key_assignments_search: bun_threading::Guarded<()>,
     method_assignments_by_name: OnceLock<FxHashMap<Atom, Vec<(FileId, ClassId)>>>,
 }
 
@@ -68,6 +68,7 @@ struct MutablePrototypes {
 
 enum NamedFunction {
     Constructor(FileId, FnId),
+    Class(FileId, ClassId),
     Other,
     Unknown,
 }
@@ -99,6 +100,12 @@ impl<T> MethodStore<T> {
     pub fn renamed<U>(self, rename: impl FnOnce(T) -> Option<U>) -> Option<MethodStore<U>> {
         Some(MethodStore { object: rename(self.object)?, name: self.name, defines: self.defines })
     }
+}
+
+#[derive(Default)]
+pub struct AddedMembers {
+    pub names: Vec<Box<[u8]>>,
+    pub has_unknown_name: bool,
 }
 
 #[derive(Default)]
@@ -547,7 +554,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     pub fn is_primitive_wrapper(&mut self, ty: TypeId) -> bool {
         let TypeData::Intersection(parts) = self.data(ty) else { return false };
-        parts.to_vec().into_iter().any(|part| {
+        parts.iter().copied().any(|part| {
             self.is_object_type(part)
                 && (self.class_for_type(part, false).is_some() || self.members(part).is_some_and(|members| members.shape().props.iter().any(|prop| prop.flags.contains(PropFlags::METHOD))))
         })
@@ -858,10 +865,23 @@ impl<'p, 's> Checker<'p, 's> {
                 continue;
             }
             let at = Place { file: of.0, pos: self.hir(of.0)[key].pos };
-            let Some(Primitive::String(name)) = self.constant_value_of(of.0, key) else { return Err(at) };
+            let Some(Primitive::String(name)) = self.constant_value_of(of.0, key).or_else(|| self.constant_exported_by_module(of.0, key)) else { return Err(at) };
             names.push((name, at));
         }
         Ok(names)
+    }
+
+    fn constant_exported_by_module(&mut self, file: FileId, member: ExprId) -> Option<Primitive> {
+        let hir = self.hir(file);
+        let ExprKind::Dot { obj, chain: Chain::No, .. } = hir[member].kind else { return None };
+        let ExprKind::Ident(name) = hir[obj].kind else { return None };
+        let namespace = self.resolve_identifier(file, obj, name, true).ok()??;
+        if !self.files().symbol(namespace).decls.iter().any(|decl| matches!(decl, Decl::ImportNamespace(_))) {
+            return None;
+        }
+        let exported = self.resolve_entity_name_expression(file, member, SymFlags::VALUE)?;
+        self.initializer_of_const(exported)?;
+        self.const_value(exported)
     }
 
     pub fn declared_only_properties(&mut self, file: FileId, class: ClassId) -> Vec<Atom> {
@@ -912,7 +932,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     pub fn assigns_fields(&self, file: FileId, class: ClassId) -> bool {
         let hir = self.hir(file);
-        self.bound(file).class_options.map_or(self.files().options.specified_use_define_for_class_fields == Some(false), |own| !own.use_define_for_class_fields)
+        self.bound(file).class_options.map_or_else(|| self.files().options.specified_use_define_for_class_fields == Some(false), |own| !own.use_define_for_class_fields)
             && !hir.is_js
             && self.files().module(file).builtin.is_none()
             && !hir[class].members.iter().any(|member| {
@@ -1310,6 +1330,7 @@ impl<'p, 's> Checker<'p, 's> {
         if matches!(hir.kind, FileKind::Declaration | FileKind::Json) || bound.ran_out_of_stack {
             return;
         }
+        let is_in_builtin_module = self.files.module(file).builtin.is_some();
         let mut is_prototype = |c: &Checker<'p, 's>, e: ExprId| {
             let of = match hir[skip_assertions(hir, e)].kind {
                 ExprKind::Dot { obj, name, .. } if name == known::prototype => obj,
@@ -1319,10 +1340,10 @@ impl<'p, 's> Checker<'p, 's> {
             let named = c.resolve_function_expr(file, of, 0);
             places[match named {
                 NamedFunction::Other => 0,
-                NamedFunction::Constructor(..) => 1,
+                NamedFunction::Constructor(..) | NamedFunction::Class(..) => 1,
                 NamedFunction::Unknown => 2,
             }] += 1;
-            !matches!(named, NamedFunction::Other)
+            !matches!(named, NamedFunction::Other) && !(is_in_builtin_module && matches!(named, NamedFunction::Class(..)))
         };
         for (index, node) in hir.exprs.iter().enumerate() {
             if bound.expr_parent[index] == Parent::None {
@@ -1495,7 +1516,7 @@ impl<'p, 's> Checker<'p, 's> {
                     let mut args = hir.ids(hir[call].args);
                     let Some(first) = args.next() else { continue };
                     let is_replaced = match self.global_method_names(file, call) {
-                        Some((b"Object" | b"Reflect", b"defineProperty")) | Some((b"Reflect", b"set")) => args.next().is_some_and(|key| names_prototype(key)),
+                        Some((b"Object" | b"Reflect", b"defineProperty")) | Some((b"Reflect", b"set")) => args.next().is_some_and(&names_prototype),
                         Some((b"Object", b"defineProperties" | b"assign")) => args.any(|source| {
                             matches!(hir[skip_assertions(hir, source)].kind, ExprKind::Object(props) if props.iter().any(|p| matches!(hir[p].key, PropKey::Name(name) if name == known::prototype)))
                         }),
@@ -1519,8 +1540,96 @@ impl<'p, 's> Checker<'p, 's> {
                     found.every = true;
                     found.all_since.get_or_insert(super::flows::Place { file, pos: hir[function].pos });
                 }
-                NamedFunction::Unknown | NamedFunction::Other => {}
+                NamedFunction::Unknown | NamedFunction::Other | NamedFunction::Class(..) => {}
             }
+        }
+    }
+
+    pub fn classes_with_extensible_prototypes(&self) -> FxHashMap<(FileId, ClassId), AddedMembers> {
+        let mut found: FxHashMap<(FileId, ClassId), AddedMembers> = FxHashMap::default();
+        for file in self.files_declaring_classes() {
+            if self.files.module(file).builtin.is_some() {
+                continue;
+            }
+            let (hir, bound) = (self.hir(file), self.bound(file));
+            for (index, node) in hir.exprs.iter().enumerate() {
+                if bound.expr_parent[index] == Parent::None {
+                    continue;
+                }
+                let owner = match node.kind {
+                    ExprKind::Dot { obj, name, .. } if name == known::prototype => obj,
+                    ExprKind::Index { obj, index: key, .. } if matches!(hir[key].kind, ExprKind::String(name) if name == known::prototype) => obj,
+                    _ => continue,
+                };
+                let NamedFunction::Class(of, class) = self.resolve_function_expr(file, owner, 0) else { continue };
+                let mut names = Vec::new();
+                let Some(are_all_known) = self.names_added_through(file, ExprId(index as u32), &mut names) else { continue };
+                let added = found.entry((of, class)).or_default();
+                added.has_unknown_name |= !are_all_known;
+                added.names.extend(names.into_iter().map(|name| Box::from(self.atoms().bytes(name))));
+            }
+        }
+        found
+    }
+
+    fn names_added_through(&self, file: FileId, prototype: ExprId, names: &mut Vec<Atom>) -> Option<bool> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut asserted = prototype;
+        while let Parent::Expr(parent) = bound.expr_parent[asserted.idx()]
+            && parent.is_some()
+            && matches!(hir[parent].kind, ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) if expr == asserted)
+        {
+            asserted = parent;
+        }
+        let Parent::Expr(parent) = bound.expr_parent[asserted.idx()] else { return Some(false) };
+        let Some(parent) = parent.some() else { return Some(false) };
+        if let ExprKind::Call(call) = hir[parent].kind {
+            let becomes_a_prototype_at = match self.global_method_names(file, call) {
+                Some((_, b"setPrototypeOf")) => Some(1),
+                Some((b"Object", b"create")) => Some(0),
+                _ => None,
+            };
+            if becomes_a_prototype_at.is_some_and(|index| hir.ids(hir[call].args).nth(index) == Some(asserted)) {
+                return None;
+            }
+        }
+        if self.prototype_use(file, prototype) != PrototypeUse::Accessed {
+            return Some(false);
+        }
+        let named_by = |key: ExprId| match hir[key].kind {
+            ExprKind::String(name) => Some(name),
+            _ => self.property_named_by_constant_symbol(file, key),
+        };
+        let is_stored_to = self.access_store_kind(file, parent) == Some(false);
+        match hir[parent].kind {
+            ExprKind::Dot { name, .. } if is_stored_to => {
+                names.push(name);
+                Some(true)
+            }
+            ExprKind::Index { index: key, .. } if is_stored_to => {
+                let named = named_by(key);
+                names.extend(named);
+                Some(named.is_some())
+            }
+            ExprKind::Call(call) => {
+                let mut rest = hir.ids(hir[call].args).skip(1);
+                if matches!(self.global_method_names(file, call), Some((_, b"defineProperty" | b"set"))) {
+                    let named = rest.next().and_then(named_by);
+                    names.extend(named);
+                    return Some(named.is_some());
+                }
+                let mut are_all_known = true;
+                for source in rest {
+                    let ExprKind::Object(props) = hir[skip_assertions(hir, source)].kind else { return Some(false) };
+                    for p in props.iter() {
+                        let named = if hir[p].kind == PropKind::Spread { None } else { self.known_member_name(file, hir[p].key) };
+                        names.extend(named);
+                        are_all_known &= named.is_some();
+                    }
+                }
+                Some(are_all_known)
+            }
+            _ => None,
         }
     }
 
@@ -1567,7 +1676,8 @@ impl<'p, 's> Checker<'p, 's> {
         let constructor = |of: FileId, func: FnId| self.is_constructor_function(of, func).then_some(NamedFunction::Constructor(of, func));
         match hir[e].kind {
             ExprKind::Fn(func) => constructor(file, func).unwrap_or(NamedFunction::Other),
-            ExprKind::Class(_) | ExprKind::Object(_) | ExprKind::Array(_) => NamedFunction::Other,
+            ExprKind::Class(class) => NamedFunction::Class(file, class),
+            ExprKind::Object(_) | ExprKind::Array(_) => NamedFunction::Other,
             ExprKind::Ident(name) => {
                 let Some(mut sym) = self.resolve_identifier(file, e, name, true).ok().flatten() else { return NamedFunction::Unknown };
                 if self.files.flags(sym).contains(SymFlags::ALIAS) {
@@ -1587,6 +1697,7 @@ impl<'p, 's> Checker<'p, 's> {
                         _ => NamedFunction::Unknown,
                     },
                     Some((_, Decl::Param(_) | Decl::Require(_))) | None => NamedFunction::Unknown,
+                    Some((of, Decl::Class(class))) => NamedFunction::Class(of, class),
                     Some(_) => NamedFunction::Other,
                 }
             }
@@ -1868,7 +1979,7 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(known) = shared.get() {
             return known;
         }
-        let _search = program.aot.classes.union_key_assignments_search.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _search = program.aot.classes.union_key_assignments_search.lock();
         if let Some(known) = shared.get() {
             return known;
         }
@@ -2189,7 +2300,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             for &file in &files {
                 if self.bound(file).ran_out_of_stack {
-                    found.mutated = found.candidates.clone();
+                    found.mutated.clone_from(&found.candidates);
                     break;
                 }
                 let hir = self.hir(file);
@@ -2475,7 +2586,7 @@ const MAX_BASE_CLASSES_EXPLAINED: usize = 4;
 const MAX_FIELD_NAMES_SHOWN: usize = 5;
 
 impl<'p, 's> Checker<'p, 's> {
-    fn class_site(&self, (file, class): (FileId, ClassId)) -> Place {
+    pub(super) fn class_site(&self, (file, class): (FileId, ClassId)) -> Place {
         let c = &self.hir(file)[class];
         Place { file, pos: if c.name.is_some() { c.name_pos } else { c.start } }
     }
@@ -2496,12 +2607,12 @@ impl<'p, 's> Checker<'p, 's> {
             if !is_fixed {
                 let related = self.missing_layout_reasons(class, &has_fixed_layout);
                 let (rule, code) = if related.iter().any(|reason| reason.code == 100056) { (Rule::UntypedBase, 100027) } else { (Rule::LostLayout, 100023) };
-                if scopes.severity(rule, at.file, at.pos) != Severity::Allow {
+                if scopes.is_wanted(rule, at.file, at.pos) {
                     found.push(CompilerDiagnostic { related, ..self.finding_at(at, code, vec![name]) });
                 }
                 continue;
             }
-            if scopes.severity(Rule::LostLayout, at.file, at.pos) == Severity::Allow {
+            if !scopes.is_wanted(Rule::LostLayout, at.file, at.pos) {
                 continue;
             }
             let dropped: Vec<(Atom, FieldConflict)> = self.declared_only_fields(class.0, class.1).into_iter().filter_map(|(name, conflict)| Some((name, conflict?))).collect();

@@ -17,14 +17,17 @@ declare module "bun" {
   /**
    * A whole number from -2147483648 to 2147483647.
    *
-   * To TypeScript this is `number`. In an executable built with `bun build --compile --aot`
-   * it is a type of its own: a field, variable, parameter or result of this type takes four bytes
-   * and arithmetic on it needs no check for fractions. A value that is not such a number throws a
-   * `TypeError` where it enters, and a constant that is not stops the build.
+   * To TypeScript, and to Bun without `--aot`, this is `number`. `bun build --compile --aot` keeps a
+   * variable, field, parameter or result of this type in four bytes, and arithmetic on it needs no
+   * check for fractions. Nothing is checked when the program runs: the build proves that every value
+   * stored there is an int32, and reports an error where it cannot. `| 0` makes any number one.
    *
    * ```ts
    * import type { int32 } from "bun";
    * class Cursor { line: int32 = 0; column: int32 = 0; }
+   * function advance(cursor: Cursor, by: int32) {
+   *   cursor.column = (cursor.column + by) | 0; // without `| 0` the sum could overflow: error TS100031
+   * }
    * ```
    */
   type int32 = number;
@@ -3840,7 +3843,7 @@ declare module "bun" {
     compile?: boolean | Bun.Build.CompileTarget | CompileBuildOptions;
   }
 
-  type AotReport = "throws" | "throws-all" | "throws-json" | "throws-all-json" | "rules-json";
+  type AotReport = "throws" | "throws-all" | "throws-json" | "throws-all-json" | "rules-json" | "costs" | "costs-json";
 
   interface CompileBuildOptions {
     target?: Bun.Build.CompileTarget;
@@ -3933,24 +3936,14 @@ declare module "bun" {
      */
     aotTypeErrors?: "throw" | "log";
     /**
-     * With `aot`: `x as T` and `x!` check nothing, as in TypeScript.
-     *
-     * By default an executable built with `aot` checks the value at a cast and at `!`, and throws a
-     * `TypeError` if it does not match. With this option the value goes on as it is, as it does
-     * without `aot`.
-     *
-     * Equivalent CLI flag: `--aot-unchecked-casts`
-     *
-     * @default false
-     */
-    aotUncheckedCasts?: boolean;
-    /**
      * With `aot`: reports to add to the `logs` of the build, at level `"verbose"`.
      *
      * - `"throws"`: every type check that can fail when the program runs, where the value comes from and how to fix it
      * - `"throws-all"`: also the checks that can only fail if typed code produced a value of the wrong type
      * - `"throws-json"`, `"throws-all-json"`: the same, one JSON object per line
      * - `"rules-json"`: what the rules of `[aot]` in bunfig.toml found, one JSON object per line
+     * - `"costs"`: the places where the compiler cannot use the types, with what each costs and how to fix it, the most expensive first
+     * - `"costs-json"`: the same, one JSON object per line
      *
      * Equivalent CLI flag: `--aot-explain`
      */

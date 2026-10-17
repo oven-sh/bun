@@ -1,8 +1,0 @@
-host,port,extra1,tags,extra2,secure {"host":"h","port":80,"extra1":1,"tags":[],"extra2":2,"secure":false} false 0 3
-host,port,secure RangeError host,port {"host":"one","port":80}
-field made an accessor: no error
-99 after 1 host,port {"host":"after","port":99}
-field made read-only: no error
-TypeError host,port {"host":"written","port":80} 80 written undefined
-method added to the prototype of a class: TypeError
-false 5 0 x,y

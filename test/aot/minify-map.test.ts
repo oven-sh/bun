@@ -54,12 +54,12 @@ export class RepositoryOfTheTest {
 const printed = ["lookUpTwiceInTheTest", "readsLimitOfTheTest", "limitOfTheTest", "refuseInTheTest", "folderOfTheTest/classOfTheTest.ts", "entryOfTheTest.ts"];
 const hidden = ["lookUpTwiceInTheTest", "readsLimitOfTheTest", "limitOfTheTest", "refuseInTheTest", "RepositoryOfTheTest", "RecordOfTheTest", "timesAskedInTheTest", "countInTheTest", "folderOfTheTest", "classOfTheTest", "entryOfTheTest"];
 
-describe.skipIf(isWindows || !!unsupported)("compile/aot/minify-map", () => {
+describe.skipIf(!!unsupported)("compile/aot/minify-map", () => {
   const folder = String(tempDir("aot-minify-map", sources));
   afterAll(() => rmSync(folder, { recursive: true, force: true }));
 
   async function build(name: string, flags: string[]) {
-    const executable = join(folder, name);
+    const executable = join(folder, isWindows ? `${name}.exe` : name);
     built(await spawned([bunExe(), "build", "--compile", "--aot", "--no-compile-function-source", ...flags, "./entryOfTheTest.ts", "--outfile", executable], folder, bunEnv));
     const run = await spawned([executable], folder, bunEnv);
     const bytes = readFileSync(executable).toString("latin1");

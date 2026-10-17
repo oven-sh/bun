@@ -258,7 +258,6 @@ pub(crate) mod js_bundler {
         pub(crate) aot_explain: Vec<Box<[u8]>>,
         pub(crate) aot: bool,
         pub(crate) logs_type_errors: bool,
-        pub(crate) leaves_casts_unchecked: bool,
         pub(crate) crash_if_interpreter_is_used: bool,
         pub(crate) function_source: bool,
         /// `compile.jitPolicy`: the tier-up threshold scale the executable starts with (1 = normal JIT policy).
@@ -289,7 +288,6 @@ pub(crate) mod js_bundler {
                 aot_explain: Vec::new(),
                 aot: false,
                 logs_type_errors: false,
-                leaves_casts_unchecked: false,
                 crash_if_interpreter_is_used: false,
                 function_source: true,
                 jit_policy: 1.0,
@@ -310,7 +308,7 @@ pub(crate) mod js_bundler {
             };
             // errdefer this.deinit() — Drop handles owned fields
 
-            for name in ["aot", "aotExplain", "aotTypeErrors", "aotUncheckedCasts"] {
+            for name in ["aot", "aotExplain", "aotTypeErrors"] {
                 if config.get(global_this, name)?.is_some() {
                     return Err(global_this.throw_invalid_arguments(format_args!(
                         "{name} is an option of compile. Write compile: {{ {name}: .. }}"
@@ -554,10 +552,6 @@ pub(crate) mod js_bundler {
                 };
             }
 
-            if let Some(unchecked) = object.get_boolean_loose(global_this, "aotUncheckedCasts")? {
-                this.leaves_casts_unchecked = unchecked;
-            }
-
             if let Some(crash) = object.get_boolean_loose(global_this, "aotCrashIfInterpreterIsUsed")? {
                 this.crash_if_interpreter_is_used = crash;
             }
@@ -565,8 +559,6 @@ pub(crate) mod js_bundler {
             if !this.aot {
                 let needs_aot = if this.logs_type_errors {
                     Some("aotTypeErrors")
-                } else if this.leaves_casts_unchecked {
-                    Some("aotUncheckedCasts")
                 } else if this.crash_if_interpreter_is_used {
                     Some("aotCrashIfInterpreterIsUsed")
                 } else {

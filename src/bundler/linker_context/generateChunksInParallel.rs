@@ -1814,7 +1814,7 @@ fn builtin_modules_of_compiled_entry_point<'a>(c: &'a LinkerContext, chunk: &Chu
     let Some(facts) = c.facts.as_ref().filter(|facts| facts.typed.is_some() && chunk.is_entry_point()) else {
         return &[];
     };
-    let path = &*c.parse_graph().input_files.items_source()[chunk.entry_point.source_index() as usize].path.text;
+    let path = c.parse_graph().input_files.items_source()[chunk.entry_point.source_index() as usize].path.text;
     let entry_point = facts.entry_points.iter().position(|compiled| **compiled == *path);
     entry_point.and_then(|entry_point| facts.builtin_modules_of_entry_points.get(entry_point)).map_or(&[], Vec::as_slice)
 }
@@ -2173,7 +2173,7 @@ impl SourceMapsByEntryOffset {
         };
         let mut names: Vec<Box<[u8]>> = Vec::new();
         for item in sources.get().items() {
-            names.push(Box::from(&*item.as_str()?));
+            names.push(Box::from(item.as_str()?));
         }
         let blob = bun_sourcemap::InternalSourceMap::from_vlq(vlq, 0).ok()?;
         Some((blob, names))

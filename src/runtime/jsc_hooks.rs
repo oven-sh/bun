@@ -4873,7 +4873,7 @@ fn extract_owner_uid() -> u32 {
 fn write_next_to_libraries(addon_path: &[u8]) -> Option<Vec<u8>> {
     use std::io::Write as _;
     use std::os::unix::ffi::OsStrExt as _;
-    use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _, OpenOptionsExt as _};
+    use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
     let as_path = |bytes: &[u8]| std::path::PathBuf::from(std::ffi::OsStr::from_bytes(bytes));
 
     let graph = bun_standalone_graph::Graph::get_ref()?;
@@ -4892,22 +4892,22 @@ fn write_next_to_libraries(addon_path: &[u8]) -> Option<Vec<u8>> {
     let mut folder = Fs::RealFS::tmpdir_path().to_vec();
     folder.extend_from_slice(format!("/.bun-{uid}-{hash:x}").as_bytes());
     let _ = std::fs::DirBuilder::new().mode(0o700).create(as_path(&folder));
-    // `symlink_metadata`: a planted link is not followed.
-    let is_ours = std::fs::symlink_metadata(as_path(&folder)).is_ok_and(|it| it.is_dir() && it.uid() == uid && it.mode() & 0o077 == 0);
+    // `lstat`: a planted link is not followed.
+    let is_ours = bun_sys::lstat(&bun_core::ZBox::from_bytes(&folder)).is_ok_and(|it| bun_sys::S::ISDIR(it.st_mode as u32) && it.st_uid == uid && it.st_mode & 0o077 == 0);
     if !is_ours {
         return None;
     }
     for (path, contents) in files {
-        let to = as_path(&[&folder[..], path].concat());
-        if std::fs::symlink_metadata(&to).is_ok_and(|it| it.is_file() && it.len() == contents.len() as u64) {
+        let to = bun_core::ZBox::from_vec([&folder[..], path].concat());
+        if bun_sys::lstat(&to).is_ok_and(|it| bun_sys::S::ISREG(it.st_mode as u32) && it.st_size as usize == contents.len()) {
             continue;
         }
-        std::fs::DirBuilder::new().mode(0o700).recursive(true).create(to.parent()?).ok()?;
-        let scratch = as_path(&[&folder[..], path, format!(".{}", std::process::id()).as_bytes()].concat());
-        let mut file = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&scratch).ok()?;
+        std::fs::DirBuilder::new().mode(0o700).recursive(true).create(as_path(&to).parent()?).ok()?;
+        let scratch = bun_core::ZBox::from_vec([&folder[..], path, format!(".{}", std::process::id()).as_bytes()].concat());
+        let mut file = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(as_path(&scratch)).ok()?;
         file.write_all(contents).ok()?;
         drop(file);
-        std::fs::rename(&scratch, &to).ok()?;
+        bun_sys::rename(&scratch, &to).ok()?;
     }
     Some([&folder[..], addon_path].concat())
 }

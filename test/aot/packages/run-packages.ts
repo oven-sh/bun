@@ -100,7 +100,7 @@ export function packages(topic: string, cases: Case[], part = 1, parts = 1, root
 
   // Paths differ between the sources and an executable, which has its files under a root of its own.
   const withoutPaths = (text: string) =>
-    text.replaceAll("/private" + folder, "<folder>").replaceAll(folder, "<folder>").replaceAll("/$bunfs/root", "<folder>").replaceAll("B:/~BUN/root", "<folder>");
+    text.replaceAll("/private" + folder, "<folder>").replaceAll(folder, "<folder>").replaceAll("/$bunfs/root", "<folder>").replaceAll("B:/~BUN/root", "<folder>").replace(/<folder>\\[^\s:"'`]*/g, path => path.replaceAll("\\", "/"));
   const result = (run: { stdout: string; stderr: string; exitCode: number }) => {
     const { stdout, stderr, exitCode } = told({ ...run, stdout: withoutPaths(run.stdout), stderr: withoutPaths(run.stderr) });
     return stdout + (exitCode ? `exit code ${exitCode}\n${stderr}\n` : stderr);

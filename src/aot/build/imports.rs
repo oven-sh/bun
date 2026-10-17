@@ -74,8 +74,8 @@ pub(crate) fn is_builtin_specifier(specifier: &[u8]) -> bool {
 fn known_builtin_exports(specifier: &[u8]) -> Option<(&'static [u8], &'static [&'static [u8]])> {
     static TABLE: std::sync::OnceLock<Vec<(&'static [u8], Vec<&'static [u8]>)>> = std::sync::OnceLock::new();
     let table = TABLE.get_or_init(|| {
-        let lines = include_str!("../builtin-export-names.txt").lines();
-        lines.filter_map(|line| line.split_once(' ')).map(|(module, names)| (module.as_bytes(), names.split(' ').map(str::as_bytes).collect())).collect()
+        let lines = bun_core::strings::split(include_str!("../builtin-export-names.txt").as_bytes(), b"\n").map(|line| line.strip_suffix(b"\r").unwrap_or(line));
+        lines.filter_map(|line| bun_core::strings::split_once_char(line, b' ')).map(|(module, names)| (module, bun_core::strings::split(names, b" ").collect())).collect()
     });
     let find = |name: &[u8]| table.binary_search_by_key(&name, |module| module.0).ok();
     let found = find(specifier).or_else(|| find(&[&b"node:"[..], specifier].concat()))?;

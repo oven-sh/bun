@@ -200,10 +200,10 @@ fn with_dense_locations(dump: &str) -> String {
     const INDEX: &str = "index: Some(";
     let mut dense = String::with_capacity(dump.len());
     let mut rest = dump;
-    while let Some(at) = rest.find(INDEX) {
+    while let Some(at) = bun_core::strings::index_of(rest.as_bytes(), INDEX.as_bytes()) {
         let (before, after) = rest.split_at(at + INDEX.len());
         dense.push_str(before);
-        let digits = after.find(')').unwrap_or(after.len());
+        let digits = bun_core::strings::index_of_char_usize(after.as_bytes(), b')').unwrap_or(after.len());
         match after[..digits].parse::<u32>() {
             Ok(start) => dense.push_str(&(start / SPARSE_STRIDE).to_string()),
             Err(_) => dense.push_str(&after[..digits]),

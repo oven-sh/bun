@@ -62,7 +62,7 @@
 18 looked at text
 18 held TypeError
 18 past the end undefined
-18 past the end, held TypeError
+18 past the end, held NaN
 19 store TypeError
 19 looked at 1
 20 store TypeError

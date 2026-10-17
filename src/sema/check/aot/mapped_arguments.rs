@@ -29,10 +29,10 @@ enum ArgumentsUse {
 impl<'p, 's> Checker<'p, 's> {
     pub(super) fn file_mapped_arguments(&mut self, file: FileId) -> Rc<Mapped> {
         if let Some(known) = self.aot.mapped_arguments.by_file.get(&file) {
-            return known.clone();
+            return Rc::clone(known);
         }
         let found = Rc::new(self.find_file_mapped_arguments(file));
-        self.aot.mapped_arguments.by_file.insert(file, found.clone());
+        self.aot.mapped_arguments.by_file.insert(file, Rc::clone(&found));
         found
     }
 

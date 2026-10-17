@@ -3,5 +3,11 @@
   "require-cache-strict.import.mjs": "compiled",
   "seen-by-the-program.typed.ts": {
     "output": "before [false,\"b\",false]\npatched THROWS TypeError [--aot: expected boolean, got string \"patched emit\"]\nafter [false,\"b\",false]\n"
+  },
+  "url-global-classes-sloppy.import.mjs": {
+    "output": "ok [\"TypeError\",\"TypeError\",\"TypeError\",\"mock\",1]\n"
+  },
+  "url-global-classes-strict.import.mjs": {
+    "output": "ok [\"TypeError\",\"TypeError\",\"TypeError\",\"mock\",1]\n"
   }
 }

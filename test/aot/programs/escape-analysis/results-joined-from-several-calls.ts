@@ -2,6 +2,7 @@
 // IR= 0 forwardedByBranches GetById|NewObjectWithShape
 // IR= 0 dispatchedByClass GetById|NewObjectWithShape
 // IR= 0 chosenByCondition GetById|NewObjectWithShape
+// IR= 0 chosenOfThree GetById|NewObjectWithShape
 // IR= 0 carriedByLoop GetById|NewObjectWithShape
 // IR= 0 differentOrderOfFields GetById|NewObjectWithShape
 // IR= 1 readAfterOtherWork GetById|NewObjectWithShape

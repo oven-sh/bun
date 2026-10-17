@@ -721,7 +721,7 @@ test("--aot requires --format=esm", async () => {
 });
 
 describe("Bun.ModuleGraph with --aot", () => {
-  async function run(entry: string) {
+  async function run(entry: string, more = "") {
     using dir = tempDir("compile-aot-module-graph", {
       "entry.ts": `
         declare const tag: string | undefined;
@@ -772,6 +772,7 @@ describe("Bun.ModuleGraph with --aot", () => {
         export interface Point { x: number; y: number }
         export function makePoint(x: number, y: number): Point { return { x, y }; }
         export function movePoint(point: Point) { point.x += n; return point.x * 10 + point.y; }
+        ${more}
       `,
     });
     await using build = Bun.spawn({
@@ -797,6 +798,85 @@ describe("Bun.ModuleGraph with --aot", () => {
   }
   const everywhere = (value: unknown) =>
     ["main", "worker"].map(where => ({ where, stdout: JSON.stringify(value), stderr: "", exitCode: 0 }));
+  const membersOfOneGraph = `
+        export class Crate { value = 1; method() { return n; } }
+        export class SmallCrate extends Crate { small = 2; }
+        export function makeCrate(): Crate { return new Crate(); }
+        export function makeSmallCrate(): Crate { return new SmallCrate(); }
+        export function isCrate(value: unknown) { return value instanceof Crate; }
+        export function isSmallCrate(value: Crate | SmallCrate | null) { return value instanceof SmallCrate; }
+        export function countCrates(values: unknown[]) { let found = 0; for (let i = 0; i < values.length; i++) if (values[i] instanceof Crate) found++; return found; }
+        export function kindOf(value: Crate | Point | string) { return typeof value === "string" ? "string" : value instanceof Crate ? "crate" : "point"; }
+        export class Tally { static total = 0; static add() { return ++Tally.total; } }
+        export const table = { one: 1 };
+        const strings = (parts: TemplateStringsArray) => parts;
+        export function template() { return strings\`x\`; }
+        export class Failure extends Error { code = 5; }
+        export function fail(): never { count(); throw new Failure("failed"); }
+        export function isFailure(value: unknown) { return value instanceof Failure; }
+        export function catchAndCount(f: () => void) { try { f(); } catch { return count(); } return -1; }
+        export function finallyCount(f: () => void) { try { try { f(); } finally { count(); } } catch { count(); } return n; }
+        export class Even { static [Symbol.hasInstance](value: number) { return (value + count()) % 2 === 0; } }
+        export class Steps { left = 2; [Symbol.iterator]() { return this; } next() { return this.left-- > 0 ? { value: count(), done: false } : { value: undefined, done: true }; } }
+        export function replacer() { return String(count()); }
+        export function getTrap() { return count(); }
+        export function thenable(resolve: (value: number) => void) { resolve(count()); }
+        export const handlers = [() => count(), function () { return count(); }];
+        export function addExtra(point: any) { point.extra = n; return point.extra + point.x; }
+        export function copy(value: object) { return JSON.stringify({ ...value, n }); }
+        export async function laterTwice(f: () => Promise<number>) { const first = await f(); return first * 100 + count(); }
+        export function argumentsCount() { return arguments.length + count(); }
+        export const bound = count.bind(null);
+        export function callWith(f: (this: unknown) => number) { return f.call(null) * 100 + count(); }
+        export function viaDefault(value = count()) { return value; }
+        export const accessor = { get now() { return count(); }, set now(value: number) { n = value; } };
+        export class Sealed {
+          #secret = 7;
+          #text = "mine";
+          #method() { return 8; }
+          get #accessor() { return 9; }
+          set #accessor(value: number) { this.#secret = value; }
+          static #shared = 10;
+          static read(value: Sealed) { return value.#secret; }
+          static readAny(value: any) { return value.#secret; }
+          static readText(value: Sealed) { return value.#text; }
+          static write(value: Sealed) { value.#secret = 1; return value.#secret; }
+          static writeAny(value: any) { value.#secret = 2; return value.#secret; }
+          static add(value: Sealed) { value.#secret += 1; return value.#secret; }
+          static has(value: Sealed) { return #secret in value; }
+          static hasAny(value: object) { return #secret in value; }
+          static hasMethod(value: Sealed) { return #method in value; }
+          static call(value: Sealed) { return value.#method(); }
+          static callAny(value: any) { return value.#method(); }
+          static method(value: Sealed) { return typeof value.#method; }
+          static get(value: Sealed) { return value.#accessor; }
+          static set(value: Sealed) { value.#accessor = 3; return value.#secret; }
+          static shared(value: typeof Sealed) { return value.#shared; }
+          static sum(values: Sealed[]) { let sum = 0; for (let i = 0; i < values.length; i++) { try { sum += values[i]!.#secret; } catch { sum -= 1; } } return sum; }
+          static sumAny(values: any[]) { let sum = 0; for (let i = 0; i < values.length; i++) { try { sum += values[i].#secret; } catch { sum -= 1; } } return sum; }
+          static countOwn(values: Sealed[]) { let own = 0; for (let i = 0; i < values.length; i++) if (#secret in values[i]!) own++; return own; }
+          own() { return this.#secret; }
+          sameAs(other: Sealed) { return this.#secret === other.#secret; }
+        }
+        export class SealedHeir extends Sealed { #deeper = 11; static deeper(value: SealedHeir) { return value.#deeper; } }
+        export function makeSealed() { return new Sealed(); }
+        export function makeSealedHeir() { return new SealedHeir(); }
+        const key = Symbol("key");
+        const action = Symbol("action");
+        const shared = Symbol.for("shared");
+        export class Keyed { [key]?: number = 3; [shared] = 6; [action]() { return 4; } }
+        export function makeKeyed() { return new Keyed(); }
+        export function makeMarked() { return { [key]: 5, plain: 1 }; }
+        export function keyOf() { return key; }
+        export function readKey(value: any) { return value[key]; }
+        export function readKeyed(value: Keyed) { return value[key]; }
+        export function readShared(value: Keyed) { return value[shared]; }
+        export function writeKey(value: any) { value[key] = 12; return Object.getOwnPropertySymbols(value).length; }
+        export function hasKey(value: object) { return key in value; }
+        export function hasKeyed(value: Keyed) { return key in value; }
+        export function act(value: any) { return value[action]?.(); }
+        export function sumKeys(values: any[]) { let sum = 0; for (let i = 0; i < values.length; i++) sum += values[i][key] ?? -1; return sum; }
+      `;
 
   test.concurrent("separate module state per graph", async () => {
     expect(
@@ -863,6 +943,178 @@ describe("Bun.ModuleGraph with --aot", () => {
         return out;
       `),
     ).toEqual(everywhere([1, 2, "2/0/0", 6, "2/4/0", "3,4", "5/4/0", 5, 6, "5/7/0", "1,2", "5/7/3", "6,8,9,7", "7/10/3", 23008, 9004, "10/13/4", 11, "{\"value\":5,\"done\":true}", "{\"done\":true}", "12/13/4", "out", "12/15/4", 13, 14, "14/15/4", 51, "14/18/4", 5, 15, 6, "15/18/6", "1,2", "{\"value\":16,\"done\":false}", true]));
+  });
+
+  const stateOfOneGraph = `
+        import * as fs from "node:fs";
+        import { EventEmitter } from "node:events";
+        export const fileSystem = fs;
+        export const Emitter = EventEmitter;
+        export const pattern = /a/g;
+        export function advance(text: string) { pattern.test(text); return pattern.lastIndex; }
+        export function freshPattern() { return /b/y; }
+        export const list = [1, 2, 3];
+        export const pair = [1, "one"] as const;
+        export const registry = new Map<string, number>();
+        export const seen = new WeakSet<object>();
+        export function mark(value: object) { const had = seen.has(value); seen.add(value); return had; }
+        export enum Color { Red, Green }
+        export const enum Shade { Dark = 5 }
+        export function shade() { return Shade.Dark; }
+        export function Plain(this: any) { this.made = count(); }
+        Plain.prototype.tell = function () { return n; };
+        export const frozen = Object.freeze({ deep: { value: 1 } });
+        export const big = 12345678901234567890n;
+        export const text = "shared text";
+        export const meta = import.meta;
+        export class Lazy { handler = () => count(); static make() { return new Lazy(); } }
+        export class WithStatics { static items: number[] = []; static #hidden = 0; static bump() { return ++WithStatics.#hidden; } static { WithStatics.items.push(count()); } }
+        export const namespaceLike = { nested: { count } };
+        export function* numbers() { yield 1; }
+        export async function soon() { return 1; }
+        export const arrow = () => n;
+        export function defaults({ step = count() }: { step?: number } = {}) { return step; }
+        export const date = new Date(0);
+        export const buffer = new Uint8Array(2);
+        export const error = new Error("made at load");
+        export const promise = Promise.resolve(count());
+        export let reassigned = 1;
+        export function reassign() { reassigned++; return reassigned; }
+        export const getters = { get self() { return getters; } };
+        export class Node { next: Node | null = null; static root = new Node(); }
+        export function once() { return (once as any).cache ??= { made: count() }; }
+        export const tagged = ((parts: TemplateStringsArray, ...values: number[]) => parts.raw.join("|") + values.join())\`a\${1}b\`;
+        export const symbolDescription = Symbol("described").description;
+        export const wellKnown = Symbol.iterator;
+      `;
+
+  test.concurrent("what belongs to one graph is not another's", async () => {
+    expect(await run(`
+        const a = await new Bun.ModuleGraph().import(url);
+        const b = await new Bun.ModuleGraph().import(url);
+        const host = await import(url);
+        const state = () => [a.current(), b.current(), host.current()].join("/");
+        const out: unknown[] = [];
+        const attempt = (f: () => unknown) => { try { return f(); } catch (error) { return (error as Error).constructor.name; } };
+        out.push("instanceof", a.isCrate(a.makeCrate()), b.isCrate(a.makeCrate()), host.isCrate(b.makeSmallCrate()), b.isCrate(b.makeSmallCrate()), a.makeCrate() instanceof b.Crate, a.makeCrate() instanceof a.Crate);
+        out.push(a.isSmallCrate(a.makeSmallCrate()), a.isSmallCrate(b.makeSmallCrate()), a.countCrates([a.makeCrate(), b.makeCrate(), host.makeCrate(), a.makeSmallCrate(), {}, 1]), a.kindOf(b.makeCrate()), a.kindOf(a.makeCrate()));
+        let hot = 0;
+        const mixed = [a.makeCrate(), b.makeCrate(), a.makeSmallCrate(), b.makeSmallCrate()];
+        for (let i = 0; i < 2000; i++) hot += a.countCrates(mixed);
+        out.push(hot);
+        out.push("static", a.Tally.add(), a.Tally.add(), b.Tally.add(), host.Tally.total, a.table === b.table, a.template() === a.template());
+        out.push("throw", attempt(a.fail), state(), b.catchAndCount(a.fail), state(), host.finallyCount(b.fail), state());
+        try { a.fail(); } catch (error) { out.push(a.isFailure(error), b.isFailure(error), error instanceof Error); }
+        out.push("classes", new a.Derived().field, (Reflect.construct(b.Derived, []) as any).field, state());
+        class Mine extends a.Derived { own = b.count(); }
+        const mine: any = new Mine();
+        out.push(mine.field, mine.own, mine instanceof a.Empty, mine instanceof b.Empty, state());
+        out.push("hasInstance", (1 as any) instanceof a.Even, (1 as any) instanceof a.Even, (1 as any) instanceof b.Even, state());
+        out.push("iterate", [...new a.Steps()].join(), Array.from(new b.Steps()).join(), state());
+        out.push("callbacks", "xx".replace(/x/g, b.replacer), (new Proxy({}, { get: a.getTrap }) as any).anything, JSON.stringify({ toJSON: b.count }), String({ toString: a.replacer }), +{ valueOf: b.count }, Array.from({ length: 2 }, a.count).join(), state());
+        out.push(a.handlers[0](), a.handlers[1](), b.bound(), a.callWith(b.count), b.argumentsCount(1, 2), a.viaDefault(), a.viaDefault(0), state());
+        out.push(a.accessor.now, (b.accessor.now = 50), b.accessor.now, (Object.defineProperty({}, "x", { get: a.count }) as any).x, state());
+        out.push("jobs", await { then: a.thenable }, await Promise.resolve().then(b.count), (await Promise.all([a.later(), b.later(), host.later()])).join(), await a.laterTwice(b.later), state());
+        out.push(await new Promise(resolve => queueMicrotask(() => resolve(a.count()))), await new Promise(resolve => setTimeout(() => resolve(b.count()), 1)), await new Promise(resolve => setTimeout(resolve, 1)).then(a.count), state());
+        out.push("objects", b.addExtra(a.makePoint(1, 2)), a.addExtra(a.makePoint(1, 2)), host.addExtra({ x: 1 }), b.copy(a.makeCrate()), a.copy(b.makePoint(3, 4)), a.copy(a.makeSmallCrate()), state());
+        return out;
+      `, membersOfOneGraph)).toEqual(
+      everywhere([
+        "instanceof", true, false, false, true, false, true, true, false, 2, "point", "crate", 4000, "static", 1, 2,
+        1, 0, false, true, "throw", "Failure", "1/0/0", 1, "2/1/0", 2, "2/2/2", true, false, true, "classes",
+        4, 3, "4/3/2", 5, 4, true, false, "5/4/2", "hasInstance", false, true, true, "7/5/2", "iterate", "8,9", "6,7",
+        "9/7/2", "callbacks", "89", 10, "10", "11", 11, "12,13", "13/11/2", 14, 15, 12, 1316, 16, 17, 0, "17/14/2",
+        18, 50, 51, 19, "19/51/2", "jobs", 20, 52, "21,53,3", 5422, "22/54/3", 23, 55, 24, "24/55/3", "objects", 56,
+        25, 4, "{\"value\":1,\"n\":55}", "{\"x\":3,\"y\":4,\"n\":24}", "{\"value\":1,\"small\":2,\"n\":24}",
+        "24/55/3",
+      ]),
+    );
+  });
+
+  test.failing("private names and symbols of one graph are not another's", async () => {
+    expect(await run(`
+        const a = await new Bun.ModuleGraph().import(url);
+        const b = await new Bun.ModuleGraph().import(url);
+        const host = await import(url);
+        const out: unknown[] = [];
+        const attempt = (f: () => unknown) => { try { return f(); } catch (error) { return (error as Error).constructor.name; } };
+        for (const [reader, maker] of [[a, a], [a, b], [b, a], [host, a], [a, host]]) {
+          const S = reader.Sealed;
+          const fresh = () => maker.makeSealed();
+          out.push([S.read, S.readAny, S.readText, S.write, S.writeAny, S.add, S.has, S.hasAny, S.hasMethod, S.call, S.callAny, S.method, S.get, S.set].map(f => attempt(() => f(fresh()))).join());
+          out.push([attempt(() => S.shared(maker.Sealed)), attempt(() => S.prototype.own.call(fresh())), attempt(() => reader.makeSealed().sameAs(fresh())), attempt(() => S.read(maker.makeSealedHeir())), attempt(() => reader.SealedHeir.deeper(maker.makeSealedHeir())), attempt(() => reader.SealedHeir.deeper(fresh()))].join());
+        }
+        const sealed = [a.makeSealed(), b.makeSealed(), a.makeSealedHeir(), host.makeSealed(), a.makeSealed()];
+        let sum = 0;
+        for (let i = 0; i < 1000; i++) sum += a.Sealed.sum(sealed) * 10000 + a.Sealed.sumAny(sealed) * 100 + a.Sealed.countOwn(sealed);
+        out.push(sum, b.Sealed.sum(sealed), host.Sealed.countOwn(sealed));
+        out.push("symbols", a.keyOf() === a.keyOf(), a.keyOf() === b.keyOf());
+        for (const [reader, maker] of [[a, a], [a, b], [host, b]]) {
+          out.push([reader.readKey(maker.makeKeyed()), reader.readKeyed(maker.makeKeyed()), reader.readShared(maker.makeKeyed()), reader.readKey(maker.makeMarked()), reader.hasKey(maker.makeKeyed()), reader.hasKeyed(maker.makeKeyed()), reader.hasKey(maker.makeMarked()), reader.act(maker.makeKeyed()), reader.writeKey(maker.makeKeyed()), reader.writeKey(maker.makeMarked()), reader.writeKey({})].map(String).join());
+        }
+        const written = b.makeKeyed();
+        a.writeKey(written);
+        out.push(a.readKey(written), b.readKey(written), written[a.keyOf()], written[b.keyOf()]);
+        const keyed = [a.makeKeyed(), b.makeKeyed(), a.makeMarked(), b.makeMarked(), {}];
+        let keys = 0;
+        for (let i = 0; i < 1000; i++) keys += a.sumKeys(keyed);
+        out.push(keys, b.sumKeys(keyed), host.sumKeys(keyed));
+        return out;
+      `, membersOfOneGraph)).toEqual(
+      everywhere([
+        "7,7,mine,1,2,8,true,true,true,8,8,function,9,3", "10,7,true,7,11,TypeError",
+        "TypeError,TypeError,TypeError,TypeError,TypeError,TypeError,false,false,false,TypeError,TypeError,TypeError,TypeError,TypeError",
+        "TypeError,TypeError,TypeError,TypeError,TypeError,TypeError",
+        "TypeError,TypeError,TypeError,TypeError,TypeError,TypeError,false,false,false,TypeError,TypeError,TypeError,TypeError,TypeError",
+        "TypeError,TypeError,TypeError,TypeError,TypeError,TypeError",
+        "TypeError,TypeError,TypeError,TypeError,TypeError,TypeError,false,false,false,TypeError,TypeError,TypeError,TypeError,TypeError",
+        "TypeError,TypeError,TypeError,TypeError,TypeError,TypeError",
+        "TypeError,TypeError,TypeError,TypeError,TypeError,TypeError,false,false,false,TypeError,TypeError,TypeError,TypeError,TypeError",
+        "TypeError,TypeError,TypeError,TypeError,TypeError,TypeError", 191903000, 3, 1, "symbols", true, false,
+        "3,3,6,5,true,true,true,4,2,1,1", "undefined,undefined,6,undefined,false,false,false,undefined,3,2,1",
+        "undefined,undefined,6,undefined,false,false,false,undefined,3,2,1", 12, 3, 12, 3, 5000, 5, -5,
+      ]),
+    );
+  });
+
+  test.concurrent("the state of a module is its graph's own, and what graphs share", async () => {
+    expect(await run(`
+        const a = await new Bun.ModuleGraph().import(url);
+        const b = await new Bun.ModuleGraph().import(url);
+        const host = await import(url);
+        const out: unknown[] = [];
+        const same = (name: string) => [a[name] === b[name], a[name] === host[name], a[name] === a[name]].map(Number).join("");
+        for (const name of ["fileSystem", "Emitter", "pattern", "list", "pair", "registry", "seen", "Color", "Plain", "frozen", "big", "text", "meta", "Lazy", "WithStatics", "namespaceLike", "numbers", "soon", "arrow", "date", "buffer", "error", "promise", "getters", "Node", "wellKnown", "tagged", "symbolDescription"]) out.push(name + " " + same(name));
+        out.push("state", a.advance("aaa"), a.advance("aaa"), b.advance("aaa"), host.pattern.lastIndex, a.freshPattern() === a.freshPattern());
+        a.list.push(4); a.registry.set("x", 1); a.buffer[0] = 9; a.date.setTime(5); (a.Color as any).Blue = 2; a.error.message = "changed";
+        out.push(a.list.length, b.list.length, a.registry.size, b.registry.size, b.buffer[0], b.date.getTime(), "Blue" in b.Color, b.error.message, a.shade());
+        const shared = {};
+        out.push(a.mark(shared), a.mark(shared), b.mark(shared), host.mark(shared));
+        out.push("functions", new a.Plain().made, new a.Plain().tell(), new b.Plain().tell(), new a.Plain() instanceof b.Plain, new a.Plain() instanceof a.Plain, a.Plain.prototype === b.Plain.prototype, a.numbers.prototype === b.numbers.prototype, Object.getPrototypeOf(a.numbers) === Object.getPrototypeOf(b.numbers));
+        out.push(a.Lazy.make().handler(), b.Lazy.make().handler(), a.Lazy.make().handler === a.Lazy.make().handler, a.namespaceLike.nested.count(), a.defaults(), a.defaults({ step: 0 }), b.defaults());
+        out.push("statics", a.WithStatics.items.join(), b.WithStatics.items.join(), a.WithStatics.bump(), a.WithStatics.bump(), b.WithStatics.bump(), a.Node.root === b.Node.root, a.Node.root instanceof a.Node, a.Node.root instanceof b.Node);
+        out.push("bindings", a.reassign(), a.reassigned, b.reassigned, host.reassign(), host.reassigned, a.getters.self === a.getters, a.getters.self === b.getters);
+        out.push(a.once() === a.once(), a.once() === b.once(), a.once().made, b.once().made, await a.promise, await b.promise, await host.promise);
+        out.push("meta", a.meta.url === b.meta.url, a.meta.url === url, a.meta.main, b.meta.main, [a.current(), b.current(), host.current()].join("/"));
+        return out;
+      `, stateOfOneGraph)).toEqual(
+      everywhere([
+        "fileSystem 001", "Emitter 111", "pattern 001", "list 001", "pair 001", "registry 001", "seen 001",
+        "Color 001", "Plain 001", "frozen 001", "big 111", "text 111", "meta 001", "Lazy 001", "WithStatics 001",
+        "namespaceLike 001", "numbers 001", "soon 001", "arrow 001", "date 001", "buffer 001", "error 001",
+        "promise 001", "getters 001", "Node 001", "wellKnown 111", "tagged 111", "symbolDescription 111", "state", 1,
+        2, 1, 0, false, 4, 3, 1, 0, 0, 0, false, "made at load", 5, false, true, false, false, "functions", 3, 4, 3,
+        false, true, false, false, true, 7, 4, false, 8, 9, 0, 5, "statics", "1", "1", 1, 2, 1, false, true, false,
+        "bindings", 2, 2, 1, 2, 2, true, false, true, false, 10, 6, 2, 2, 2, "meta", true, true, true, true, "10/6/2",
+      ]),
+    );
+  });
+
+  test.failing("import.meta of a second entry point that the host imports", async () => {
+    expect(await run(`
+        const host = await import(url);
+        return [host.meta.url === url, host.meta.main, host.meta.file];
+      `, stateOfOneGraph)).toEqual(everywhere([true,false,"app.js"]));
   });
 
   test.concurrent("closure outlives its graph", async () => {
@@ -1229,7 +1481,7 @@ test("compiles RegExps with the u and v flags", async () => {
   expect(await numberOfRegExps("some.ts", "true,true,true,true\n")).toBe(none + 4);
 });
 
-test("hot run-time RegExps are compiled", async () => {
+test("run-time RegExps are never compiled, however hot: they run on a flat program", async () => {
   using dir = tempDir("compile-aot-regexp-at-run-time", {
     "entry.ts": `
       const build = (word: string) => new RegExp(["(\\\\w+)@", "(\\\\w+)\\\\.", word].join(""));
@@ -1258,19 +1510,19 @@ test("hot run-time RegExps are compiled", async () => {
   });
   const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
   expect(stdout).toBe("foo,bar999 foo,bar\n2\n");
+  const lines = stderr.split("\n");
   const whatHappenedTo = (word: string) =>
-    stderr
-      .split("\n")
-      .filter(line => line.endsWith(`${word}/"`))
-      .map(line => line.slice(0, line.indexOf(" this regular expression")));
+    lines.flatMap((line, i) =>
+      line.endsWith(`${word}/"`) ? [line.slice(0, line.indexOf(" this regular expression")), lines[i + 1]] : [],
+    );
   expect({
     usedOnce: whatHappenedTo("c[o]ld"),
     usedOften: whatHappenedTo("h[o]t"),
     usedOnLongText: whatHappenedTo("l[o]ng"),
   }).toEqual({
-    usedOnce: ["Interpreting"],
-    usedOften: ["Interpreting", "Compiled"],
-    usedOnLongText: ["Compiled"],
+    usedOnce: ["Can't JIT", "Runs on a flat program"],
+    usedOften: ["Can't JIT", "Runs on a flat program"],
+    usedOnLongText: ["Can't JIT", "Runs on a flat program"],
   });
   expect(exitCode).toBe(0);
 });

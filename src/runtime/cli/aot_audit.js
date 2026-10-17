@@ -388,8 +388,9 @@
 
   function report(file, step, kind, type, value, action) {
     if (isEnforcing) {
-      if (action !== "would-throw" || kind === "as-refuse") return;
+      if (action !== "would-throw" || (kind === "as-refuse" && ((type.p & ~(UNDEFINED | NULL)) !== 0 || type.i !== undefined))) return;
       if (logs && refusal === undefined && (checksMockValues || !isAnyModuleMocked())) log(file, step, kind, type, value, "threw");
+      if (kind === "as-refuse") return refuse("Cannot convert " + shown(value, type) + " to " + type.t);
       if (kind === "array-not-plain" && isArray(value) && !isProxy(value) && value[iterator] !== arrayIterator) return refuse("Cannot iterate over the array: it has its own Symbol.iterator method, which is not called where the declared type is an array, a tuple or a typed array");
       if (kind === "array-not-plain") return refuse("Cannot read array element: the array or its prototype chain has accessors or a Proxy, which are not run for an array of a declared element type");
       if (step.what === "NonNull") return refuse("non-null assertion failed: " + (step.text !== undefined ? "`" + step.text + "`" : "value") + " is " + shown(value, type));
@@ -471,7 +472,7 @@
     const of = (present, value, bit) => ((given & present) !== 0 ? (given & value) !== 0 : current !== undefined && (was & bit) !== 0) ? bit : 0;
     const is = of(2, 4, 1) | of(8, 16, 2) | of(32, 64, 4);
     if (!isAccessor && is === was) return (given & 128) !== 0 ? ofStore() : undefined;
-    if (shape.frozen && !isAccessor && ((is & 2) !== 0 || field.optional || field.absent === true)) return (given & 128) !== 0 ? ofStore() : undefined;
+    if ((shape.frozen || (is & 1) !== 0) && !isAccessor && ((is & 2) !== 0 || field.optional || field.absent === true)) return (given & 128) !== 0 ? ofStore() : undefined;
     return "Cannot redefine property '" + name + "' of " + shape.name + ": declared properties stay writable, enumerable and configurable data properties";
   }
 
@@ -504,7 +505,7 @@
       const name = names[i], field = shape.fields[name], descriptor = getOwnPropertyDescriptor(object, name);
       if (descriptor === undefined) continue;
       const isData = descriptor.get === undefined && descriptor.set === undefined;
-      if (!isData || !(shape.frozen === true ? descriptor.enumerable || field.optional || field.absent === true : descriptor.writable && descriptor.enumerable && descriptor.configurable)) {
+      if (!isData || !((shape.frozen === true || descriptor.writable) && (descriptor.enumerable || field.optional || field.absent === true))) {
         if (step.kind === "field-redefine") reportRule(file, step, step.kind, shape.name + "." + name);
       } else if (!fits(field.to, descriptor.value) && !(field.optional && descriptor.value === undefined)) reportRule(file, step, "field-store-untyped", shape.name + "." + name, field.to, descriptor.value);
     }
@@ -660,7 +661,7 @@
       if (step.kind === "class-made") {
         tag(getOwnPropertyDescriptor(value, "prototype")?.value, id);
         if (isEnforcing && step.shape !== undefined && shapeBy(step.shape) !== null) guardInstancesOf(value);
-        return fixClassPrototype(value, step.replaceable, step.constructorMayBeReplaced);
+        return fixClassPrototype(value, step.replaceable, step.constructorMayBeReplaced, step.prototypeMayGainMembers);
       }
       if (fits(type, value)) return passed(group, value, id);
       if (step.second) return isEnforcing ? 5 : undefined;

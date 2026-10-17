@@ -107,8 +107,8 @@ describe.concurrent("severities", () => {
 
 describe.concurrent("flags", () => {
   test.each([
-    [["check", "--aot", "--aot-deny=open-layouts", "main.ts"], 'error: --aot-deny does not take "open-layouts". Did you mean open-layout? The rules are untyped-file, untyped-package, lost-layout, untyped-base, open-layout, external-type, by-name, can-throw, interpreted, all\n'],
-    [["build", "--compile", "--aot", "--aot-warn=nothing-like-it", "main.ts", "--outfile", "app"], 'error: --aot-warn does not take "nothing-like-it". The rules are untyped-file, untyped-package, lost-layout, untyped-base, open-layout, external-type, by-name, can-throw, interpreted, all\n'],
+    [["check", "--aot", "--aot-deny=open-layouts", "main.ts"], 'error: --aot-deny does not take "open-layouts". Did you mean open-layout? The rules are untyped-file, untyped-package, lost-layout, untyped-base, open-layout, external-type, by-name, can-throw, interpreted, reshaped-layout, all\n'],
+    [["build", "--compile", "--aot", "--aot-warn=nothing-like-it", "main.ts", "--outfile", "app"], 'error: --aot-warn does not take "nothing-like-it". The rules are untyped-file, untyped-package, lost-layout, untyped-base, open-layout, external-type, by-name, can-throw, interpreted, reshaped-layout, all\n'],
     [["check", "--aot-deny=all", "main.ts"], "error: --aot-deny requires --aot\n"],
     [["build", "--compile", "--aot-allow=all", "main.ts", "--outfile", "app"], "error: --aot-allow requires --aot\n"],
   ])("bun %j", async (cmd, message) => {
@@ -179,7 +179,7 @@ describe.concurrent("bunfig.toml", () => {
   test("an unknown rule in the file is an error", async () => {
     const { stderr, exitCode } = await check({ ...openPoint, "bunfig.toml": `[aot]\nwarn = ["open-layuot"]\n` });
     expect({ said: stderr.split("\n")[0], exitCode }).toEqual({
-      said: 'error: aot.warn in bunfig.toml does not take "open-layuot". Did you mean open-layout? The rules are untyped-file, untyped-package, lost-layout, untyped-base, open-layout, external-type, by-name, can-throw, interpreted, all',
+      said: 'error: aot.warn in bunfig.toml does not take "open-layuot". Did you mean open-layout? The rules are untyped-file, untyped-package, lost-layout, untyped-base, open-layout, external-type, by-name, can-throw, interpreted, reshaped-layout, all',
       exitCode: 1,
     });
   }, 60_000);

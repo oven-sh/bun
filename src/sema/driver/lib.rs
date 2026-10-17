@@ -469,12 +469,12 @@ impl EarlyRun {
     }
 }
 
-pub fn with_early_run<R>(shared_directory_cache: Arc<host::SharedDirectoryCache>, then: impl FnOnce(EarlyRun) -> R) -> R {
+pub fn with_early_run<R>(shared_directory_cache: &Arc<host::SharedDirectoryCache>, then: impl FnOnce(EarlyRun) -> R) -> R {
     let result = {
         let session = Session::new();
         let run = Run::early(&session);
         let scanned_files = ScannedFiles::new(FxHashMap::default());
-        then(EarlyRun((&raw const run).cast(), &raw const scanned_files, &raw const shared_directory_cache))
+        then(EarlyRun((&raw const run).cast(), &raw const scanned_files, &raw const *shared_directory_cache))
     };
     THREADS_STILL_TO_RELEASE.fetch_add(1, Ordering::AcqRel);
     release_free_pages_of(pool_of_regions());
@@ -1570,7 +1570,7 @@ fn is_missing_runtime_type_library(reported: &Diagnostic) -> bool {
 pub(crate) const PRELUDE_DIRECTORY: &[u8] = b"/.bun-aot-prelude/";
 
 fn invalidation_key<'a>(files: &'a bun_sema::program::Files<'_>, module: &'a bun_sema::program::Module<'_>) -> (&'a [u8], &'a [u8]) {
-    package_of(files, module).unwrap_or((module.path.text, module.file_name()))
+    package_of(files, module).unwrap_or_else(|| (module.path.text, module.file_name()))
 }
 
 fn from_compiler_diagnostic(program: &Program, found: &CompilerDiagnostic) -> Diagnostic {
@@ -1901,7 +1901,7 @@ pub fn check_provided_then<R>(
     let mut is_reloaded_for_changed_files = false;
     loop {
         let checked = check_provided_once(request, provided, |mut report| match report.abandoned.take_if(|abandoned| abandoned.is_outdated || !abandoned.conflicting_paths.is_empty()) {
-            Some(abandoned) => Err(abandoned),
+            Some(abandoned) => Err(Box::new(abandoned)),
             None => {
                 report.reloaded_paths = std::mem::take(&mut reloaded_paths);
                 report.is_reloaded_for_changed_files = is_reloaded_for_changed_files;
@@ -2329,6 +2329,34 @@ impl Projects {
         self.load(disk, request, config).is_some_and(|it| it.files.is_empty() && !it.references.is_empty())
     }
 
+    fn options_that_all_agree_on(&mut self, disk: &host::Disk, request: &Request, owners: &[Option<Vec<u8>>]) -> Option<Vec<(Vec<u8>, Json)>> {
+        let defaults = project_without_config(disk, request, &host::from_native(request.cwd), &[]).raw_compiler_options;
+        let mut of_owners: Vec<Vec<(Vec<u8>, Json)>> = Vec::new();
+        for owner in owners {
+            of_owners.push(match owner {
+                Some(config) => self.load(disk, request, config)?.raw_compiler_options.clone(),
+                None => defaults.clone(),
+            });
+        }
+        fn said<'a>(options: &'a [(Vec<u8>, Json)], name: &[u8]) -> Option<&'a Json> {
+            options.iter().find(|option| option.0 == name).map(|option| &option.1)
+        }
+        let (mut seen, mut agreed): (Vec<&[u8]>, Vec<(Vec<u8>, Json)>) = Default::default();
+        for name in of_owners.iter().flatten().map(|option| &option.0[..]) {
+            if seen.contains(&name) {
+                continue;
+            }
+            seen.push(name);
+            let first = said(&of_owners[0], name);
+            let value = match of_owners.iter().all(|options| said(options, name) == first) {
+                true => first,
+                false => said(&defaults, name),
+            };
+            agreed.extend(value.map(|value| (name.to_vec(), value.clone())));
+        }
+        Some(agreed)
+    }
+
     fn outputs_of_referenced_projects<'a>(&mut self, disk: &host::Disk, request: &Request, roots: impl Iterator<Item = &'a Vec<u8>>) -> Vec<(Vec<u8>, Vec<u8>)> {
         let (mut seen, mut outputs): (Vec<Vec<u8>>, Vec<(Vec<u8>, Vec<u8>)>) = Default::default();
         let mut pending: Vec<(Vec<u8>, bool)> = roots.map(|root| (root.clone(), false)).collect();
@@ -2607,8 +2635,10 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
         };
         let above_all = config_in(common_directory(on_disk().map(|path| dirname::<Posix>(path))));
         let referenced_outputs = projects.outputs_of_referenced_projects(disk, request, owners.iter().flatten().chain(&above_all));
+        let agreed_options = (owner.is_none() && owners.len() > 1).then(|| projects.options_that_all_agree_on(disk, request, &owners)).flatten();
         let of = OfProject {
             config: owner.as_deref(),
+            agreed_options: agreed_options.as_deref(),
             referenced_outputs: &referenced_outputs,
             named: Some((Extent::Project, paths.as_slice())),
             elsewhere: None,
@@ -2618,13 +2648,14 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
             place: None,
         };
         let projects = Guarded::new(projects);
-        return check_project_of(disk, request, &projects, of, report, started);
+        return check_project_of(disk, request, &projects, &of, report, started);
     }
     if paths.is_empty() {
         match project_in(&cwd) {
             Some(config) => {
                 let of = OfProject {
                     config: Some(&config),
+                    agreed_options: None,
                     referenced_outputs: &[],
                     named: None,
                     elsewhere: None,
@@ -2632,7 +2663,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
                     place: None,
                 };
                 let projects = Guarded::new(projects);
-                return check_project_of(disk, request, &projects, of, report, started);
+                return check_project_of(disk, request, &projects, &of, report, started);
             }
             None => {
                 // `tsc` prints its help. Which of them is meant is not for a guess: they are
@@ -2833,6 +2864,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
             let place = room.enter(turn, files.len(), all.len());
             let of = OfProject {
                 config: config.as_deref(),
+                agreed_options: None,
                 referenced_outputs: &[],
                 named: Some((*extent, files.as_slice())),
                 elsewhere: (!is_one).then_some(&elsewhere),
@@ -2840,7 +2872,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
                 place: (at_once > 1).then_some(&place),
             };
             let (so_far, began) = (Report::default(), Instant::now());
-            let checked = check_project_of(disk, request, &projects, of, so_far, began);
+            let checked = check_project_of(disk, request, &projects, &of, so_far, began);
             *reports[index].lock() = Some(checked);
         }
     };
@@ -2897,6 +2929,7 @@ enum Extent {
 struct OfProject<'a, 'u> {
     /// `None`: there is no configuration file.
     config: Option<&'a [u8]>,
+    agreed_options: Option<&'a [(Vec<u8>, Json)]>,
     referenced_outputs: &'a [(Vec<u8>, Vec<u8>)],
     /// `None`: all of its files.
     named: Option<(Extent, &'a [Vec<u8>])>,
@@ -3074,7 +3107,7 @@ fn check_project_of(
     disk: &host::Disk,
     request: &Request,
     projects: &Guarded<Projects>,
-    of: OfProject<'_, '_>,
+    of: &OfProject<'_, '_>,
     mut report: Report,
     started: Instant,
 ) -> Report {
@@ -3114,7 +3147,10 @@ fn check_project_of(
         None => {
             let cwd = host::from_native(request.cwd);
             let files = of.named.map(|it| it.1).unwrap_or_default();
-            project_without_config(disk, request, &cwd, files)
+            match of.agreed_options {
+                Some(agreed) => config::without_config(disk, &cwd, Json::Object(agreed.to_vec()), files.to_vec()),
+                None => project_without_config(disk, request, &cwd, files),
+            }
         }
     };
     let is_case_sensitive = disk.is_case_sensitive();
@@ -3463,7 +3499,7 @@ fn find_global_declarations(disk: &host::Disk, others: &[&Vec<u8>], scanned_earl
 
 fn shared_directory_length(path: &[u8], other: &[u8]) -> usize {
     let shared = path.iter().zip(other).take_while(|(byte, other_byte)| byte == other_byte).count();
-    path[..shared].iter().rposition(|&byte| byte == b'/').map_or(0, |slash| slash + 1)
+    strings::last_index_of_char(&path[..shared], b'/').map_or(0, |slash| slash + 1)
 }
 
 const SCANNING_THREADS: usize = 6;
@@ -4790,7 +4826,7 @@ fn package_of_specifier(specifier: &[u8]) -> &[u8] {
 type GlobalDeclarationsByRoot = Guarded<FxHashMap<Vec<u8>, Option<Option<Vec<u8>>>>>;
 
 fn package_global_declarations(host: &dyn Host, installed_above: &[Vec<u8>], package: &[u8], looked_into: &GlobalDeclarationsByRoot) -> Option<Vec<u8>> {
-    let typed = [&b"@types/"[..], &package.strip_prefix(b"@").unwrap_or(package).replace(b"/", b"__")].concat();
+    let typed = [&b"@types/"[..], &strings::replace_owned(package.strip_prefix(b"@").unwrap_or(package), b"/", b"__")].concat();
     for packages in installed_above {
         for name in [package, &typed[..]] {
             let root = inside(packages, name);
@@ -5177,7 +5213,7 @@ fn check_named_files(
         to_check.retain(|&f| !is_owned_elsewhere(path(f)));
     }
     if let Some(only) = request.only {
-        to_check.retain(|&f| strings::split(&only, b"\0").any(|only| strings::contains(program.files.modules[f.idx()].file_name(), only)));
+        to_check.retain(|&f| strings::split(only, b"\0").any(|only| strings::contains(program.files.modules[f.idx()].file_name(), only)));
     }
     let mut compiled_untyped: Vec<Diagnostic> = Vec::new();
     if request.is_one_program && !program.has_bailed_out() {
@@ -5188,7 +5224,7 @@ fn check_named_files(
         for file in compiled.filter_map(|path| program.files.by_path.get(&path)) {
             is_left_out[file.idx()] = true;
         }
-        let code_reaches = host.is_without_bundler().then(|| files_that_code_reaches(&program.files));
+        let code_reaches = host.is_without_bundler().then(|| files_that_code_reaches(program.files));
         to_check.retain(|file| {
             let is_typed_dependency = matches!(modules[file.idx()].hir.kind, FileKind::Ts | FileKind::Tsx) && modules[file.idx()].is_dependency;
             is_left_out[file.idx()] |= is_typed_dependency && code_reaches.as_ref().is_some_and(|code_reaches| code_reaches[file.idx()]);
@@ -5279,7 +5315,7 @@ fn check_named_files(
                     if first.is_none() && !is_cut_short {
                         continue;
                     }
-                    let (count, (directory, name)) = (1 + errors.count(), invalidation_key(&program.files, &modules[i]));
+                    let (count, (directory, name)) = (1 + errors.count(), invalidation_key(program.files, &modules[i]));
                     let text = &modules[i].hir.text;
                     let typed_version = first.and_then(|_| typed_packages::typed_version_providing(request.cwd, host::to_native(directory), name, host::to_native(modules[i].path.text), text));
                     let known = fallen.iter().position(|known| known.0 == directory);
@@ -5316,18 +5352,21 @@ fn check_named_files(
             program.publish(&mut finished, &in_parallel, request.digests);
         }
         for &i in &on_trial {
-            if fallen.iter().any(|known| known.0 == invalidation_key(&program.files, &modules[i]).0) {
+            if fallen.iter().any(|known| known.0 == invalidation_key(program.files, &modules[i]).0) {
                 modules[i].is_forced_untyped.store(true, Ordering::Relaxed);
             }
         }
         compiled_untyped.extend(fallen.into_iter().filter_map(|(directory, name, count, place, first, typed_version)| {
             let count = count.to_string().into_bytes();
-            let reported = match (typed_version, is_package_dir(&program.files, directory)) {
+            let reported = match (typed_version, is_package_dir(program.files, directory)) {
                 (Some(typed_version), _) => global(100021, &[name.to_vec(), typed_version, count, place]),
                 (None, true) => global(100009, &[name.to_vec(), count, place]),
                 (None, false) => global(100010, &[displayed_path(name).into_owned(), count, place]),
             };
             let file = first.as_ref().and_then(|first| program.files.by_path.get(&first.path));
+            if let (Some(file), Some(first)) = (file, &first) {
+                program.compiled_untyped.lock().push(CompilerDiagnostic { file, start: first.start, end: first.end, code: reported.code, args: reported.args.iter().map(|arg| arg.to_vec()).collect(), related: Vec::new() });
+            }
             with_rule_severity(program, file, Diagnostic { related: first.into_iter().collect(), ..reported }).filter(|reported| is_beyond_baseline(program, reported))
         }));
     }
@@ -6371,11 +6410,11 @@ fn check_named_files(
                     Err(gave_up) => gave_up,
                 };
                 let modules = &program.files.modules;
-                let (directory, name) = invalidation_key(&program.files, &modules[gave_up.typed_side.idx()]);
-                for module in modules.iter().filter(|module| invalidation_key(&program.files, module).0 == directory) {
+                let (directory, name) = invalidation_key(program.files, &modules[gave_up.typed_side.idx()]);
+                for module in modules.iter().filter(|module| invalidation_key(program.files, module).0 == directory) {
                     module.is_forced_untyped.store(true, Ordering::Relaxed);
                 }
-                let name = match is_package_dir(&program.files, directory) {
+                let name = match is_package_dir(program.files, directory) {
                     true => name.to_vec(),
                     false => displayed_path(name).into_owned(),
                 };

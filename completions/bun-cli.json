@@ -4685,6 +4685,13 @@
           "multiple": false
         },
         {
+          "name": "aot-unchecked-casts",
+          "description": "With --aot: `x as T` and `x!` check nothing, as in TypeScript. A value that does not match goes on as it is",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
           "name": "aot-huge-heap",
           "description": "With --aot: let each thread have more than 32 GB of objects. The executable uses more memory and runs slower",
           "hasValue": false,

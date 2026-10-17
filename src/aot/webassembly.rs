@@ -28,7 +28,7 @@ pub(crate) fn add_referenced_files(program: &mut Program) {
     let mut found: Vec<Vec<u8>> = Vec::new();
     for (module, name) in named {
         let (Ok(module), Ok(name)) = (std::str::from_utf8(module), std::str::from_utf8(name)) else { continue };
-        let read = (Path::new(module).ancestors().skip(1).take(MAX_PARENT_FOLDERS)).find_map(|folder| std::fs::read(folder.join(name)).ok());
+        let read = (Path::new(module).ancestors().skip(1).take(MAX_PARENT_FOLDERS)).find_map(|folder| bun_sys::File::read_from(bun_sys::Fd::cwd(), folder.join(name).as_os_str().as_encoded_bytes()).ok());
         if let Some(bytes) = read.filter(|bytes| bytes.starts_with(WASM_MAGIC) && !found.contains(bytes)) {
             found.push(bytes);
         }

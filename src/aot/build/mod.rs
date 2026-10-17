@@ -344,7 +344,7 @@ impl<'a> Shared<'a> {
             constants,
             bundle: imports::Bundle::new(program.files, &roots, constants),
             roots,
-            entry_points: entry_points.to_vec(),
+            entry_points,
             prelude: (crate::prelude::FILES.iter().filter(|file| file.0 != crate::prelude::RUNTIME_HELPERS.0))
                 .filter_map(|&(name, _)| program.files.by_path.get(&crate::prelude::path_of(&constants.root, name)))
                 .collect(),
@@ -376,7 +376,6 @@ impl<'a> Shared<'a> {
         };
         let mut c = program.checker();
         c.set_logs_type_errors(constants.logs_type_errors);
-        c.set_leaves_casts_unchecked(constants.leaves_casts_unchecked);
         c.set_declaration_only_files(shared.bundle.iter().flat_map(|bundle| bundle.declaring()));
         if !constants.ignores_dce_annotations && constants.source_path_to_url.is_none() {
             let marked = (0..program.files.modules.len() as u32).map(FileId).map(|file| (file, shared.calls_marked_pure[file.idx()].get_or_init(|| comments::calls_marked_pure(c.hir(file)))));
@@ -1730,7 +1729,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     pub(crate) fn lazy_declarations_in(&mut self, file: FileId) -> Rc<Vec<(u32, u32, Sym)>> {
         if let Some(known) = self.lazy_declarations.get(&file) {
-            return known.clone();
+            return Rc::clone(known);
         }
         let hir = self.hir(file);
         let mut found = Vec::new();
@@ -1747,7 +1746,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
         }
         let found = Rc::new(found);
-        self.lazy_declarations.insert(file, found.clone());
+        self.lazy_declarations.insert(file, Rc::clone(&found));
         found
     }
 
@@ -1946,7 +1945,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     fn lazy_variable_uses(&mut self) -> Rc<Vec<(u32, FnId, Sym)>> {
         if let Some(known) = &self.lazy_uses {
-            return known.clone();
+            return Rc::clone(known);
         }
         let file = self.file;
         let (hir, bound) = (self.hir(file), self.c.bound(file));
@@ -1975,13 +1974,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         uses.sort_unstable_by_key(|&(pos, ..)| pos);
         let uses = Rc::new(uses);
-        self.lazy_uses = Some(uses.clone());
+        self.lazy_uses = Some(Rc::clone(&uses));
         uses
     }
 
     fn lazy_module_uses(&mut self) -> Rc<Vec<(u32, FnId, FileId, u32)>> {
         if let Some(known) = &self.lazy_module_uses {
-            return known.clone();
+            return Rc::clone(known);
         }
         let file = self.file;
         let (hir, bound) = (self.hir(file), self.c.bound(file));
@@ -2010,7 +2009,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             *innermost = open.last().map_or(0, |&(start, _)| start + 1);
         }
         let uses = Rc::new(uses);
-        self.lazy_module_uses = Some(uses.clone());
+        self.lazy_module_uses = Some(Rc::clone(&uses));
         uses
     }
 
@@ -2516,7 +2515,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
         }
         let first_activation = Activation::Call(FnId(0));
-        for (_, key) in self.activation_layout_positions.range((start, first_activation)..(end, first_activation)).copied().collect::<Vec<_>>() {
+        for (_, key) in self.activation_layout_positions.range((start, first_activation)..(end, first_activation)).copied() {
             if let Some(layout) = self.activation_layouts.remove(&key) {
                 undo.activation_layouts.push((key, Some(layout)));
             }
@@ -2566,7 +2565,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     fn define_referenced_classes(&mut self) {
         let mut classes: Vec<(LayoutId, (FileId, ClassId))> = self.classes.iter().map(|(&class, info)| (info.layout, class)).collect();
-        classes.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+        classes.sort_unstable_by_key(|a| std::cmp::Reverse(a.0));
         for (layout, (file, class)) in classes {
             let info = self.classes[&(file, class)];
             if info.ctor.is_some() || info.facts.has_fixed_layout && self.has_resolved_field_types(layout) {
@@ -2621,7 +2620,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 }
             }
         }
+        let (mut unproven_int32_values, mut declares_int32) = (Vec::new(), false);
         if file != NO_FILE {
+            self.c.translate_untyped_clone(None);
+            declares_int32 = self.c.has_seen_int32_annotation();
+            if declares_int32 {
+                unproven_int32_values = self.c.find_unproven_int32_values(file);
+            }
             self.c.record_escapes_in(file);
         }
         let (notes, mut problems) = (self.take_notes(), std::mem::take(&mut self.problems));
@@ -2730,7 +2735,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             })
             .collect();
         let globals = out.globals.into_iter().zip(global_keys).map(|(global, key)| Variable { key, global }).collect();
-        Box::new(Fragment { file, path, strs: out.strs, tys: out.tys, modules: module_files, globals, layouts, funcs, mutated_globals, prototype_property_names, regexp_literals, method_stores, builtin_functions, translation_count: 1, program_ids: Default::default(), summary: Default::default() })
+        Box::new(Fragment { file, path, strs: out.strs, tys: out.tys, modules: module_files, globals, layouts, funcs, mutated_globals, prototype_property_names, regexp_literals, method_stores, builtin_functions, unproven_int32_values, declares_int32, translation_count: 1, program_ids: Default::default(), summary: Default::default() })
     }
 
     fn build_func(&mut self, id: FuncId) {
@@ -3128,7 +3133,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     pub(crate) fn captured(&mut self, file: FileId) -> Rc<FxHashSet<Sym>> {
         if let Some(known) = self.captured.get(&file) {
-            return known.clone();
+            return Rc::clone(known);
         }
         let hir = self.hir(file);
         let bound = self.c.bound(file);
@@ -3205,13 +3210,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             captured.insert(self.export_value_symbol(export));
         }
         let captured = Rc::new(captured);
-        self.captured.insert(file, captured.clone());
+        self.captured.insert(file, Rc::clone(&captured));
         self.function_values.insert(file, Rc::new(function_values));
         captured
     }
 
     pub(crate) fn function_values(&mut self, file: FileId) -> Rc<FxHashSet<Sym>> {
         self.captured(file);
-        self.function_values[&file].clone()
+        Rc::clone(&self.function_values[&file])
     }
 }

@@ -1,14 +1,15 @@
 use super::flows::{ExternalCause, ExternalMark, Membership, Place, UntypedReason};
+use super::mutations::Mutation;
 use super::identity::Identity;
-use crate::aot_rules::{Rule, Scopes, Severity};
+use crate::aot_rules::{Rule, Scopes};
 use crate::check::spans::token_end;
 use crate::check::{Checker, CompilerDiagnostic};
 use crate::atom::Atom;
 use crate::bind::{Decl, SymFlags, SymbolId};
-use crate::hir::{ExprId, ExprKind, FileKind, ImportEqualsTarget, StmtKind};
+use crate::hir::{ClassId, ExprId, ExprKind, FileKind, ImportEqualsTarget, StmtKind};
 use crate::program::FileId;
 use crate::types::{Origin, TypeData, TypeId};
-use crate::util::FxHashMap;
+use crate::util::{FxHashMap, FxHashSet};
 use bun_core::strings;
 
 const MAX_REASONS_SHOWN: usize = 6;
@@ -23,6 +24,13 @@ struct UntypedPackage {
 }
 
 fn package_name(directory: &[u8]) -> &[u8] {
+    const INSTALLED_IN: &[u8] = b"/node_modules/";
+    if let Some(at) = bun_core::strings::last_index_of(directory, INSTALLED_IN) {
+        let inside = &directory[at + INSTALLED_IN.len()..];
+        let segments = if inside.starts_with(b"@") { 2 } else { 1 };
+        let end = inside.iter().enumerate().filter(|byte| *byte.1 == b'/').nth(segments - 1).map_or(inside.len(), |slash| slash.0);
+        return &inside[..end];
+    }
     let start_of_last = |path: &[u8]| strings::last_index_of_char(path, b'/').map_or(0, |at| at + 1);
     let name = start_of_last(directory);
     let scope = start_of_last(&directory[..name.saturating_sub(1)]);
@@ -36,13 +44,13 @@ impl<'p, 's> Checker<'p, 's> {
         CompilerDiagnostic { file: at.file, start: at.pos, end, code, args, related: Vec::new() }
     }
 
-    pub fn find_open_layouts(&mut self, views: &[TypeId], membership: &Membership, is_left_out: &[bool], scopes: &Scopes) -> Vec<CompilerDiagnostic> {
+    pub fn find_open_layouts(&mut self, views: &[TypeId], membership: &Membership, is_left_out: &[bool], scopes: &Scopes) -> Vec<(usize, CompilerDiagnostic)> {
         let mut found = Vec::new();
         for (index, &view) in views.iter().enumerate() {
             let Some(first) = membership.untyped_reasons[index].filter(|_| !is_left_out[index]) else { continue };
             let is_inferred = matches!(self.data(view), TypeData::Anon { origin: Origin::ObjectLiteral(..) | Origin::WidenedLiteral(..), .. }) && self.alias_of_type(view).is_none();
             let Some(declared) = self.type_declaration_site(view).filter(|_| !is_inferred) else { continue };
-            if scopes.severity(Rule::OpenLayout, declared.file, declared.pos) == Severity::Allow {
+            if !scopes.is_wanted(Rule::OpenLayout, declared.file, declared.pos) {
                 continue;
             }
             let name_of = |c: &mut Self, view: u32| views.get(view as usize).map_or_else(Vec::new, |&view| c.display_name(view).into_bytes());
@@ -80,14 +88,25 @@ impl<'p, 's> Checker<'p, 's> {
                 related.push(self.finding_at(at, code, args));
             }
             let name = self.display_name(view).into_bytes();
-            found.push(CompilerDiagnostic { related, ..self.finding_at(declared, 100022, vec![name]) });
+            found.push((index, CompilerDiagnostic { related, ..self.finding_at(declared, 100022, vec![name]) }));
+        }
+        found
+    }
+
+    pub fn find_reshaped_layouts(&self, membership: &Membership, scopes: &Scopes) -> Vec<CompilerDiagnostic> {
+        let mut found = Vec::new();
+        for (mutation, code) in [(Mutation::IntegrityLevel, 100080), (Mutation::Prototype, 100081)] {
+            let mut places = membership.places_marking_every_layout.iter().filter(|place| place.0 == mutation && scopes.is_wanted(Rule::ReshapedLayout, place.1.file, place.1.pos)).map(|place| place.1);
+            let Some(first) = places.next() else { continue };
+            let related = places.map(|at| self.finding_at(at, 100082, Vec::new())).collect();
+            found.push(CompilerDiagnostic { related, ..self.finding_at(first, code, Vec::new()) });
         }
         found
     }
 
     pub fn find_external_types(&mut self, scopes: &Scopes) -> Vec<CompilerDiagnostic> {
         let (marks, external_types) = self.external_marks();
-        let is_reported_at = |c: &Self, declared: Place| c.is_compiled(declared.file) && !c.is_untyped_file(declared.file) && scopes.severity(Rule::ExternalType, declared.file, declared.pos) != Severity::Allow;
+        let is_reported_at = |c: &Self, declared: Place| c.is_compiled(declared.file) && !c.is_untyped_file(declared.file) && scopes.is_wanted(Rule::ExternalType, declared.file, declared.pos);
         let mut reported: Vec<(Place, Vec<u8>, Identity, bool)> = (marks.iter().filter(|mark| external_types.contains(mark.0)))
             .filter_map(|(&identity, mark)| Some((mark.declared?, mark.name.clone(), identity, false)))
             .filter(|reported| is_reported_at(self, reported.0))
@@ -120,13 +139,29 @@ impl<'p, 's> Checker<'p, 's> {
         found
     }
 
+    pub fn find_other_places_where_external_data_enters(&mut self) -> Vec<(Place, CompilerDiagnostic)> {
+        let marks = self.external_marks().0;
+        let mut found: Vec<(Place, Place, Vec<u8>)> = Vec::new();
+        for (identity, at) in self.places_where_external_data_enters() {
+            let Some(mark) = marks.get(&identity) else { continue };
+            let Some(reported) = self.steps_to_external_source(&marks, identity, mark.declared.unwrap_or(at)).pop() else { continue };
+            let reported = Place { file: reported.file, pos: reported.start };
+            if reported != at {
+                found.push((reported, at, mark.name.clone()));
+            }
+        }
+        found.sort_unstable();
+        found.dedup_by_key(|other| (other.0, other.1));
+        found.into_iter().map(|(reported, at, name)| (reported, self.finding_at(at, 100063, vec![name]))).collect()
+    }
+
     fn steps_to_external_source(&self, marks: &FxHashMap<Identity, ExternalMark>, identity: Identity, declared: Place) -> Vec<CompilerDiagnostic> {
         let mut steps = Vec::new();
         let mut next = Some(identity);
         while let Some(mark) = next.take().and_then(|identity| marks.get(&identity)).filter(|_| steps.len() < MAX_STEPS_FOLLOWED) {
             let other = mark.from.and_then(|from| marks.get(&from));
             let names = || vec![mark.name.clone(), other.map_or_else(Vec::new, |other| other.name.clone())];
-            let nearby = mark.declared.or(other.and_then(|other| other.declared)).unwrap_or(declared);
+            let nearby = mark.declared.or_else(|| other.and_then(|other| other.declared)).unwrap_or(declared);
             let (code, args, at) = match mark.cause {
                 ExternalCause::UsedAs { at } => (100063, names(), at),
                 ExternalCause::CreatedByGeneratedCode { at } => (100064, names(), at),
@@ -153,7 +188,7 @@ impl<'p, 's> Checker<'p, 's> {
         steps
     }
 
-    fn untyped_receiver_reasons(&mut self, file: FileId, receiver: ExprId, marks: &FxHashMap<Identity, ExternalMark>) -> Option<Vec<CompilerDiagnostic>> {
+    fn untyped_receiver_reasons(&mut self, file: FileId, receiver: ExprId, marks: &FxHashMap<Identity, ExternalMark>, classes_without_layout: &FxHashSet<(FileId, ClassId)>) -> Option<Vec<CompilerDiagnostic>> {
         let hir = self.hir(file);
         let at = Place { file, pos: hir[receiver].pos };
         self.prepare_enclosing(file, receiver);
@@ -201,6 +236,8 @@ impl<'p, 's> Checker<'p, 's> {
                 reasons.extend(self.steps_to_external_source(marks, resembled, nearby));
             } else if self.is_tainted(part) && marks.contains_key(&identity) {
                 reasons.extend(self.steps_to_external_source(marks, identity, nearby));
+            } else if let Some(class) = self.class_for_type(part, false).filter(|class| classes_without_layout.contains(class)) {
+                reasons.push(self.finding_at(self.class_site(class), 100085, vec![name]));
             } else if self.type_declaration_site(part).is_some_and(|declared| self.hir(declared.file).kind == FileKind::Declaration || self.is_untyped_file(declared.file)) {
                 is_created_elsewhere = true;
             } else if matches!(self.data(part), TypeData::TypeParam(..)) {
@@ -213,16 +250,43 @@ impl<'p, 's> Checker<'p, 's> {
         (!reasons.is_empty() || !is_created_elsewhere).then_some(reasons)
     }
 
-    pub fn find_accesses_by_name(&mut self, accesses: &[(FileId, ExprId, u32, Vec<u8>)], scopes: &Scopes) -> (Vec<CompilerDiagnostic>, usize) {
+    fn declared_type_of_receiver(&mut self, file: FileId, receiver: ExprId) -> Option<(Place, Vec<u8>, bool)> {
+        let ty = self.type_of_expr(file, receiver);
+        let ty = self.reduced(ty);
+        let mut found = None;
+        for part in self.parts(ty).to_vec() {
+            let Some(declared) = self.type_declaration_site(part).filter(|_| self.may_hold_objects(part)) else { continue };
+            let is_declared_outside_typed_code = self.hir(declared.file).kind == FileKind::Declaration || self.is_untyped_file(declared.file);
+            if found.is_none() || is_declared_outside_typed_code {
+                found = Some((declared, self.display_name(part).into_bytes(), is_declared_outside_typed_code));
+            }
+            if is_declared_outside_typed_code {
+                break;
+            }
+        }
+        found
+    }
+
+    pub fn explain_untyped_values(&mut self, values: &[(FileId, ExprId)], classes_without_layout: &FxHashSet<(FileId, ClassId)>) -> Vec<Vec<CompilerDiagnostic>> {
         let marks = self.external_marks().0;
-        let (mut found, mut unexplained) = (Vec::new(), 0);
+        values.iter().map(|&(file, value)| self.untyped_receiver_reasons(file, value, &marks, classes_without_layout).unwrap_or_default()).collect()
+    }
+
+    pub fn find_accesses_by_name(&mut self, accesses: &[(FileId, ExprId, u32, Vec<u8>)], classes_without_layout: &FxHashSet<(FileId, ClassId)>, scopes: &Scopes) -> (Vec<CompilerDiagnostic>, Vec<(Place, Option<(Place, Vec<u8>, bool)>)>) {
+        let marks = self.external_marks().0;
+        let (mut found, mut unexplained) = (Vec::new(), Vec::new());
         for &(file, receiver, name_pos, ref name) in accesses {
-            if scopes.severity(Rule::ByName, file, name_pos) == Severity::Allow {
+            if !scopes.is_wanted(Rule::ByName, file, name_pos) {
                 continue;
             }
-            let Some(related) = self.untyped_receiver_reasons(file, receiver, &marks) else { continue };
+            let Some(related) = self.untyped_receiver_reasons(file, receiver, &marks, classes_without_layout) else {
+                if scopes.collects_everything() {
+                    unexplained.push((Place { file, pos: name_pos }, self.declared_type_of_receiver(file, receiver)));
+                }
+                continue;
+            };
             if related.is_empty() {
-                unexplained += 1;
+                unexplained.push((Place { file, pos: name_pos }, self.declared_type_of_receiver(file, receiver)));
                 continue;
             }
             found.push(CompilerDiagnostic { related, ..self.finding_at(Place { file, pos: name_pos }, 100030, vec![name.clone()]) });
@@ -242,16 +306,22 @@ impl<'p, 's> Checker<'p, 's> {
         Place { file, pos: statement.map_or(0, |stmt| hir[stmt].start) }
     }
 
+    pub fn name_of_package_holding(&self, file: FileId) -> Option<Vec<u8>> {
+        let module = self.files().module(file);
+        (module.is_dependency && module.package_directory.is_some()).then(|| package_name(self.atoms().bytes(module.package_directory)).to_vec())
+    }
+
     pub fn find_untyped_packages(&self, linked: &[FileId], scopes: &Scopes) -> Vec<CompilerDiagnostic> {
         let files = self.files();
         let is_program_code = |file: FileId| files.module(file).builtin.is_none() && !strings::contains(files.module(file).path.text, b"/.bun-aot-prelude/");
-        let mut packages: FxHashMap<Atom, UntypedPackage> = FxHashMap::default();
+        let name_of = |module: &crate::program::Module<'_>| package_name(self.atoms().bytes(module.package_directory));
+        let mut packages: FxHashMap<&[u8], UntypedPackage> = FxHashMap::default();
         let mut all_source_bytes = 0;
         for &file in linked.iter().filter(|&&file| is_program_code(file)) {
             let module = files.module(file);
             all_source_bytes += module.hir.source_len as usize;
             if module.is_dependency && module.package_directory.is_some() && module.hir.is_js {
-                let package = packages.entry(module.package_directory).or_default();
+                let package = packages.entry(name_of(module)).or_default();
                 package.files += 1;
                 package.first_file.get_or_insert(file);
                 package.source_bytes += module.hir.source_len as usize;
@@ -261,10 +331,10 @@ impl<'p, 's> Checker<'p, 's> {
             let module = files.module(file);
             for &specifier in module.bound.specifiers.iter() {
                 let Some(imported) = module.imported_file(specifier).map(|imported| files.module(imported)) else { continue };
-                if imported.package_directory == module.package_directory {
+                if imported.package_directory == module.package_directory || imported.package_directory.is_none() || module.package_directory.is_some() && name_of(imported) == name_of(module) {
                     continue;
                 }
-                let Some(package) = packages.get_mut(&imported.package_directory) else { continue };
+                let Some(package) = packages.get_mut(name_of(imported)) else { continue };
                 let candidate = (module.is_dependency, self.import_site(file, specifier));
                 if package.importer.is_none_or(|known| candidate < known) {
                     package.importer = Some(candidate);
@@ -272,15 +342,14 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let mut found: Vec<CompilerDiagnostic> = Vec::new();
-        for (directory, package) in packages {
-            let Some(at) = package.importer.map(|importer| importer.1).or(package.first_file.map(|file| Place { file, pos: 0 })) else { continue };
-            if scopes.severity(Rule::UntypedPackage, at.file, at.pos) == Severity::Allow {
+        for (name, package) in packages {
+            let Some(at) = package.importer.map(|importer| importer.1).or_else(|| package.first_file.map(|file| Place { file, pos: 0 })) else { continue };
+            if !scopes.is_wanted(Rule::UntypedPackage, at.file, at.pos) {
                 continue;
             }
             let share = format!("{:.1}", 100.0 * package.source_bytes as f64 / all_source_bytes.max(1) as f64);
-            let name = package_name(self.atoms().bytes(directory)).to_vec();
             let files = format!("{} {}", package.files, if package.files == 1 { "file" } else { "files" });
-            found.push(self.finding_at(at, 100026, vec![name, files.into_bytes(), share.into_bytes()]));
+            found.push(self.finding_at(at, 100026, vec![name.to_vec(), files.into_bytes(), share.into_bytes()]));
         }
         found
     }

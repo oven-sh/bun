@@ -6,7 +6,7 @@
 // THE CHECKER DOES NOT LOOK INTO A .d.ts (it says "0 files"; a name that does not exist there is silently any): python3 shapes_check.py checks all fz-shapes*.d.ts as .ts, and the births again.
 declare namespace FZ {
   // -------------------------------------------------------------------------------------------------------------------
-  // 1. Numbers. int32: four bytes and integer arithmetic; a value that is no int32 stored there is a TypeError at run time.
+  // 1. Numbers. int32: four bytes and integer arithmetic; the build proves every value that is stored there, or stops.
   // -------------------------------------------------------------------------------------------------------------------
   type int32 = import("bun").int32;
   type RequestStatus = int32; // Request.status, 19.2.8: 10 OPENING 11 OPEN 12 ABORTING 13 CLOSING 14 CLOSED
@@ -116,9 +116,9 @@ declare namespace FZ {
     progressiveChunkSize: number; // 12800 | what is handed over: Infinity at the one call of the legacy bundle (6557): NOT int32
     status: RequestStatus;
     fatalError: Thrown; // null until fatalError() | abort()
-    nextSegmentId: SegmentId;
-    allPendingTasks: TaskCount;
-    pendingRootTasks: TaskCount;
+    nextSegmentId: number;
+    allPendingTasks: number;
+    pendingRootTasks: number;
     completedRootSegment: Segment | null;
     completedPreambleSegments: Segment[][] | null;
     byteSize: ByteSize;
@@ -195,7 +195,7 @@ declare namespace FZ {
   interface Segment { // birth 3900
     status: SegmentStatus;
     parentFlushed: boolean;
-    id: SegmentId;
+    id: number;
     index: ChunkIndex; // where in the parent's chunks it goes
     chunks: Chunk[];
     children: Segment[];
@@ -207,9 +207,9 @@ declare namespace FZ {
   }
   interface SuspenseBoundary { // birth 3773
     status: BoundaryStatus;
-    rootSegmentID: SegmentId;
+    rootSegmentID: number;
     parentFlushed: boolean;
-    pendingTasks: TaskCount;
+    pendingTasks: number;
     row: SuspenseListRow | null;
     completedSegments: Segment[];
     byteSize: ByteSize;
@@ -223,7 +223,7 @@ declare namespace FZ {
     trackedFallbackNode: ReplayNode | null; // born null; stored 4538
   }
   interface SuspenseListRow { // birth 4013
-    pendingTasks: TaskCount;
+    pendingTasks: number;
     boundaries: SuspenseBoundary[] | null;
     hoistables: HoistableState;
     inheritedHoistables: HoistableState | null;
@@ -236,7 +236,7 @@ declare namespace FZ {
   //    no task is born with a replay from outside: the code for both is in the text all the same, and is typed.
   // -------------------------------------------------------------------------------------------------------------------
   interface PostponedHoles { workingMap: Map<KeyNode, ReplayNode>; rootNodes: ReplayNode[]; rootSlots: ResumeSlots } // NO BIRTH in the legacy bundle
-  interface ReplaySet { nodes: ReplayNode[]; slots: ResumeSlots; pendingTasks: TaskCount } // birth 4824 4910 4950 5065
+  interface ReplaySet { nodes: ReplayNode[]; slots: ResumeSlots; pendingTasks: number } // birth 4824 4910 4950 5065
 
   // -------------------------------------------------------------------------------------------------------------------
   // 7. The DOM side: RenderState, ResumableState, FormatContext, resources
@@ -281,7 +281,7 @@ declare namespace FZ {
   interface NoncePair { script: Nonce; style: Nonce } // birth 2879
   interface ResumableState { // birth 319
     idPrefix: string; // "" | options.identifierPrefix (given: React's type says string)
-    nextFormID: int32;
+    nextFormID: number;
     streamingFormat: int32; // 0, never read
     bootstrapScriptContent?: BootstrapScriptContent; // undefined at the one call of the legacy bundle (6551). OPTIONAL as in the other bundles' ResumableState
     bootstrapScripts?: BootstrapScripts; // likewise

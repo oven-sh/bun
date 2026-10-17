@@ -487,11 +487,10 @@ impl Expect {
     }
 
     fn has_settled_before_timeout(global_this: &JSGlobalObject, promise: bun_jsc::AnyPromise) -> JsResult<bool> {
-        let running = bun_test::clone_active_strong();
-        global_this
-            .bun_vm()
-            .as_mut()
-            .event_loop_mut()
+        let vm = global_this.bun_vm().as_mut();
+        let is_under_aot = crate::cli::aot_audit::is_enforcing() || vm.standalone_module_graph.is_some();
+        let running = if is_under_aot { bun_test::clone_active_strong() } else { None };
+        vm.event_loop_mut()
             .wait_for_promise_unless(promise, || {
                 running.as_ref().is_some_and(|buntest| buntest.get().execution.has_timed_out_entry())
             })

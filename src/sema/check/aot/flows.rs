@@ -805,6 +805,7 @@ pub(super) struct State {
     taint_query_depth: u32,
     is_searching_from_sources: bool,
     records_external_causes: bool,
+    external_data_followed_from: Option<Place>,
     external_cause_round: u32,
     types_being_walked: Vec<Identity>,
     is_boundary_bounded: bool,
@@ -1096,6 +1097,7 @@ pub struct Membership {
     pub(super) mutation_evidence: [u32; 5],
     pub(super) untyped_mutations: UntypedMutations,
     pub(super) widest_mutations: WidestMutations,
+    pub(super) places_marking_every_layout: Vec<(Mutation, Place)>,
     pub(super) constructions_are_incomplete: bool,
     pub(super) redefinition_counts: CountedRedefinitions,
     pub sizes: Sizes,
@@ -1304,6 +1306,7 @@ impl<'s> Program<'s> {
         }
         self.aot.storage.is_search_under_way.store(is_searched_again, Ordering::Relaxed);
         self.aot.storage.external_marks.lock().clear();
+        self.aot.storage.places_where_external_data_enters.lock().clear();
         let search = Search { is_continuation: is_searched_again, seen_by_other_declarations: self.checker().importers_with_other_declarations(), ..Search::new(searchers.max(1)) };
         search.external_types.write().continued_by_pairs = is_searched_again;
         let finished: Vec<Guarded<Option<Finished<'s>>>> = (0..search.searchers).map(|_| Guarded::new(None)).collect();
@@ -2696,7 +2699,7 @@ impl<'p, 's> Checker<'p, 's> {
         let declared = self.sig_of_fn(declared_in, func);
         let parameters = self.sig_params(declared);
         let Some(taking) = self.param_type_at(&parameters, index) else { return false };
-        self.sig_type_params(declared).iter().any(|&parameter| parameter == taking)
+        self.sig_type_params(declared).contains(&taking)
     }
 
     pub fn accepts_undefined(&mut self, ty: TypeId) -> bool {
@@ -2954,7 +2957,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn declared_value_kinds(&mut self, ty: TypeId) -> u16 {
         let ty = self.reduced(ty);
         match self.data(ty) {
-            TypeData::Union(parts) => parts.to_vec().into_iter().fold(0, |all, part| all | self.declared_value_kinds(part)),
+            TypeData::Union(parts) => parts.iter().copied().fold(0, |all, part| all | self.declared_value_kinds(part)),
             TypeData::Intrinsic(intrinsic) => match intrinsic {
                 Intrinsic::String => said::STRING,
                 Intrinsic::Number => said::NUMBER,
@@ -3122,7 +3125,7 @@ impl<'p, 's> Checker<'p, 's> {
         let own_pairs = self.compared_targets_by_source();
         self.aot = Default::default();
         self.aot.flows.is_searching_from_sources = true;
-        self.aot.flows.seen_before = meeting.search.seen_before.clone();
+        self.aot.flows.seen_before.clone_from(&meeting.search.seen_before);
         if let FilePartition::Rest { .. } = share {
             for file in (0..program.files.modules.len() as u32).map(FileId) {
                 if self.is_untyped_file(file) {
@@ -3327,6 +3330,9 @@ impl<'p, 's> Checker<'p, 's> {
             if from == Some(identity) {
                 continue;
             }
+            if let (None, ExternalCause::UsedAs { at } | ExternalCause::CreatedByGeneratedCode { at } | ExternalCause::CrossesBoundary { at }) = (from, cause) {
+                self.p.aot.storage.places_where_external_data_enters.lock().push((identity, self.aot.flows.external_data_followed_from.unwrap_or(at)));
+            }
             let improve = |known: &mut ExternalMark| {
                 if (rank, cause, from) < (known.rank, known.cause, known.from) {
                     (known.rank, known.cause, known.from) = (rank, cause, from);
@@ -3345,10 +3351,17 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn note_external_causes(&mut self, types: &[TypeId], cause: ExternalCause, from: Option<Identity>) {
         if self.aot.flows.records_external_causes {
-            for ty in types.to_vec() {
+            for ty in types.iter().copied() {
                 self.note_external_cause(ty, cause, from);
             }
         }
+    }
+
+    pub(super) fn places_where_external_data_enters(&self) -> Vec<(Identity, Place)> {
+        let mut places = self.p.aot.storage.places_where_external_data_enters.lock().clone();
+        places.sort_unstable();
+        places.dedup();
+        places
     }
 
     pub(super) fn external_marks(&mut self) -> (FxHashMap<Identity, ExternalMark>, &'p FxHashSet<Identity>) {
@@ -3632,8 +3645,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn add_inspected_casts(&mut self, file: FileId, out: &mut Vec<InspectedCast>) {
         let hir = self.hir(file);
-        let leaves_casts_unchecked = self.leaves_casts_unchecked() && self.files().module(file).builtin.is_none();
-        let casts = self.file_exprs_by_kind(file).of(ExprTag::As).iter().filter(|_| !leaves_casts_unchecked).filter_map(|&cast| match hir[cast].kind {
+        let casts = self.file_exprs_by_kind(file).of(ExprTag::As).iter().filter_map(|&cast| match hir[cast].kind {
             ExprKind::As { expr, ty } => Some((ty, expr, Some(cast))),
             _ => None,
         });
@@ -4001,7 +4013,7 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         }
         if let TypeData::Union(parts) = self.data(ty) {
-            for part in parts.to_vec() {
+            for part in parts.iter().copied() {
                 self.add_escaping_values(part, parameters_cross, typed_side, at, handed_over, seen, out);
             }
             return;
@@ -4108,9 +4120,9 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn display_path(&self, file: FileId) -> String {
         let path = bstr::BStr::new(self.files().module(file).file_name()).to_string();
-        match path.rsplit_once("/node_modules/") {
-            Some((_, inside)) => inside.to_owned(),
-            None => path.rsplit('/').next().unwrap_or(&path).to_owned(),
+        match bun_core::strings::last_index_of(path.as_bytes(), b"/node_modules/") {
+            Some(at) => path[at + "/node_modules/".len()..].to_owned(),
+            None => path[bun_core::strings::last_index_of_char(path.as_bytes(), b'/').map_or(0, |at| at + 1)..].to_owned(),
         }
     }
 
@@ -4128,7 +4140,7 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         }
         if let TypeData::Union(parts) = self.data(ty) {
-            for part in parts.to_vec() {
+            for part in parts.iter().copied() {
                 self.add_boundary_types(part, seen, out);
             }
             return;
@@ -4467,14 +4479,13 @@ impl<'p, 's> Checker<'p, 's> {
     fn add_external_data_target_types(&mut self, file: FileId, out: &mut Vec<TypeId>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let by_kind = self.file_exprs_by_kind(file);
-        let mut pending: Vec<ExprId> = Vec::new();
-        let leaves_casts_unchecked = self.leaves_casts_unchecked() && self.files().module(file).builtin.is_none();
+        let mut pending: Vec<(ExprId, ExprId)> = Vec::new();
         for &call in by_kind.of(ExprTag::Call) {
             if self.is_external_data_source(file, call) {
-                pending.push(call);
+                pending.push((call, call));
             }
         }
-        for &cast in by_kind.of(ExprTag::As).iter().filter(|_| !leaves_casts_unchecked) {
+        for &cast in by_kind.of(ExprTag::As) {
             if let ExprKind::As { expr, ty } = hir[cast].kind {
                 let written = self.type_from_node(file, ty);
                 let target = if written.is_any() || written == TypeId::UNKNOWN {
@@ -4492,15 +4503,12 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let mut holders: FxHashSet<SymbolId> = FxHashSet::default();
-        while let Some(mut produced) = pending.pop() {
+        while let Some((mut produced, source)) = pending.pop() {
+            self.aot.flows.external_data_followed_from = Some(Place { file, pos: hir[source].pos });
             let is_kept_by_name = loop {
                 match bound.expr_parent[produced.idx()] {
                     Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
                         ExprKind::As { ty, .. } => {
-                            let written = self.type_from_node(file, ty);
-                            if leaves_casts_unchecked && !written.is_any() && written != TypeId::UNKNOWN {
-                                break true;
-                            }
                             let target = self.type_from_node(file, ty);
                             self.note_external_cause(target, ExternalCause::UsedAs { at: Place { file, pos: hir[produced].pos } }, None);
                             out.push(target);
@@ -4515,7 +4523,7 @@ impl<'p, 's> Checker<'p, 's> {
                     Parent::VarInit(d) if hir[d].ty.is_none() && matches!(hir[hir[d].pat].kind, PatKind::Ident(_)) => {
                         let holder = bound.pat_symbol[hir[d].pat.idx()];
                         if holders.insert(holder) {
-                            pending.extend(by_kind.of(ExprTag::Ident).iter().copied().filter(|name| bound.expr_symbol[name.idx()] == holder));
+                            pending.extend(by_kind.of(ExprTag::Ident).iter().copied().filter(|name| bound.expr_symbol[name.idx()] == holder).map(|name| (name, source)));
                         }
                         break true;
                     }
@@ -4531,6 +4539,7 @@ impl<'p, 's> Checker<'p, 's> {
                 out.push(expected);
             }
         }
+        self.aot.flows.external_data_followed_from = None;
     }
 
     pub fn is_syntactically_fresh_graph(&mut self, file: FileId, e: ExprId) -> bool {
@@ -5129,8 +5138,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let (found, is_cacheable) = self.compute_cacheable(|c| {
             c.parts(ty).iter().any(|&part| {
-                let signatures: Vec<SigId> = c.signatures(part, false).iter().copied().collect();
-                signatures.into_iter().any(|signature| c.sig_predicate(signature).is_some())
+                c.signatures(part, false).iter().copied().any(|signature| c.sig_predicate(signature).is_some())
             })
         });
         if !found && is_cacheable && !self.is_warming_up() && !self.has_order_dependent_results() {
@@ -5143,7 +5151,8 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.results_are_provisional()
             && let Some(known) = self.aot.flows.untyped_type_guards.get(&shown)
         {
-            for guard in known.to_vec() {
+            let known = known.to_vec();
+            for guard in known {
                 self.record_untyped_inflow_to_classes(guard);
             }
             return;
@@ -5155,7 +5164,7 @@ impl<'p, 's> Checker<'p, 's> {
                 for signature in signatures {
                     let Some(predicate) = c.sig_predicate(signature) else { continue };
                     let (Some(index), Some(guard)) = (predicate.param, predicate.ty) else { continue };
-                    let Some(guarded) = c.sig_params(signature).iter().nth(index).map(|parameter| parameter.ty) else { continue };
+                    let Some(guarded) = c.sig_params(signature).get(index).map(|parameter| parameter.ty) else { continue };
                     if c.is_untyped(guarded) {
                         guards.push(guard);
                     }
@@ -7030,7 +7039,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             std::sync::Arc::new(bits)
         });
-        self.aot.flows.stored = Some(bits.clone());
+        self.aot.flows.stored = Some(Arc::clone(bits));
     }
 
     pub(in crate::check) fn is_created_by_program(&self, ty: TypeId) -> bool {
@@ -7414,7 +7423,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let untyped_at = untyped_into.get(&view).copied().filter(|_| seen_at.is_none());
                 let trusted_at = vouched.binary_search_by_key(&(index as u32), |target| target.0).ok().map(|found| vouched[found].1);
                 let flows_in = seen_at.or(untyped_at).or(trusted_at);
-                let Some(at) = flows_in.or(has_namespaces.then_some(Place::NOWHERE)) else { continue };
+                let Some(at) = flows_in.or_else(|| has_namespaces.then_some(Place::NOWHERE)) else { continue };
                 candidates.clear();
                 c.add_candidates(&having, view, &mut candidates);
                 if untyped_at.is_some() && !facts[index].required.is_empty() {

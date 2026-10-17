@@ -39,3 +39,7 @@ untyped-code/stores-to-adjacent-names    counts calls into the runtime
 untyped-code/trap-key-is-known-atom    counts calls into the runtime
 untyped-code/lookups-not-repeated    counts calls into the runtime
 untyped-code/getters-add-receiver-property    counts calls into the runtime
+untyped-code/spread-of-objects-with-another-prototype    counts calls into the runtime
+untyped-code/lazy-builtin-class-keeps-property-caches    counts calls into the runtime
+host-classes/fields-of-host-subclasses-avoid-runtime    counts calls into the runtime
+untyped-code/prototype-freeze-and-assign-invalidate-by-name    counts calls into the runtime

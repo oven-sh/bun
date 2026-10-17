@@ -328,6 +328,7 @@ mod _impl {
                         // An optional value is only ever written `--name=value`.
                         if param.takes_value != bun_clap::Values::None
                             && param.takes_value != bun_clap::Values::OneOptional
+                            && param.takes_value != bun_clap::Values::ManyOptional
                         {
                             if let Some(name) = param.names.long {
                                 let mut k = Vec::with_capacity(2 + name.len());
@@ -420,7 +421,7 @@ mod _impl {
                 args_list.push(BunString::static_("[worker eval]"));
             } else {
                 args_list.push(BunString::borrow_utf8(
-                    entry_point_source_path.unwrap_or(vm.main()),
+                    entry_point_source_path.unwrap_or_else(|| vm.main()),
                 ));
             }
         }

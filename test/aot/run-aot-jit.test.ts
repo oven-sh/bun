@@ -259,7 +259,7 @@ describe("type-check cache", () => {
     rmSync(at("another-project"), { recursive: true });
     expect(await started(dir, String(cache))).toEqual(refused);
     expect(written()).toBe(first);
-    mkdirSync(at("node_modules/late"), { recursive: true });
+    mkdirSync(at("node_modules/@types/bun"), { recursive: true });
     expect(await started(dir, String(cache))).toEqual(refused);
     const second = written();
     expect(second).toBeGreaterThan(first);
@@ -462,14 +462,14 @@ describe("at run time", () => {
       console.log(flag, typeof flag, zero);`);
     expect(stdout).toBe("3\n51 number\nfalse boolean 0\n");
   });
-  test("`!` throws on undefined and null", async () => {
+  test("`x!` checks nothing; `let x!: T` throws when it is read before it is set", async () => {
     const { stdout } = await run(`
       const names = new Map<string, string>();
       ${attempt(`const name: string = names.get("bob")!; console.log(name);`)}
       let size!: number;
       function read() { return size + 1; }
       ${attempt(`console.log(read());`)}`);
-    expect(stdout).toBe(`TypeError: expected string, got undefined${note}\nTypeError: non-null assertion failed: \`size\` is undefined${note}\n`);
+    expect(stdout).toBe(`undefined\nTypeError: non-null assertion failed: \`size\` is undefined${note}\n`);
   });
   test("an array type takes a real array only", async () => {
     const { stdout } = await run(`

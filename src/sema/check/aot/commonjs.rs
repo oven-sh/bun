@@ -838,9 +838,8 @@ impl<'p, 's> Checker<'p, 's> {
                 let (of, name) = variable_of(&modules, mention.module, name)?;
                 Some((of, modules.get(&of)?.stores.get(&name).into_iter().flatten().map(|store| store.value).collect::<Vec<ExprId>>()))
             };
-            let values: Vec<ExprId> = modules.get(&keeper).and_then(|module| module.stores.get(&stored_as)).into_iter().flatten().map(|store| store.value).collect();
-            if let Some(value) = values.into_iter().find(|&value| value.is_none() || !self.ignores_this(keeper, value, 0, &named_by)) {
-                with_object.entry(holder_by_symbol(&modules, module)).or_insert(match value.some().map(|value| self.hir(keeper)[value].kind) {
+            if let Some(value) = modules.get(&keeper).and_then(|module| module.stores.get(&stored_as)).into_iter().flatten().map(|store| store.value).find(|&value| value.is_none() || !self.ignores_this(keeper, value, 0, &named_by)) {
+                with_object.entry(holder_by_symbol(&modules, module)).or_insert_with(|| match value.some().map(|value| self.hir(keeper)[value].kind) {
                     Some(ExprKind::Fn(_)) => "a method call hands it to a function that mentions `this`",
                     Some(ExprKind::Ident(_)) => "a method call hands it to what a name holds, which may look at `this`",
                     Some(ExprKind::Call(_) | ExprKind::New(_)) => "a method call passes it to the result of a call, which may inspect `this`",

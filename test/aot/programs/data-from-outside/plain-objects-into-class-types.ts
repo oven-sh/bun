@@ -1,16 +1,16 @@
 // Further ways by which plain data that has all the members of a class comes to be held to it: a spread argument, a static field, the default of a parameter, a typed function that untyped code calls, a type guard handed on as a value, a union with a built-in class. Each row has a class of its own, because a class that admits such objects does so in the whole program. `x as unknown as T` yields the value of x: where x is typed, nothing untyped enters.
-// IR+ ^shape .*"PushedBySpread".* foreign
-// IR+ ^shape .*"Spliced".* foreign
-// IR+ ^shape .*"InAStaticField".* foreign
-// IR+ ^shape .*"ByADefault".* foreign
-// IR+ ^shape .*"GivenToAnArrow".* foreign
-// IR+ ^shape .*"GivenToAFunctionExpression".* foreign
-// IR+ ^shape .*"GivenToADeclaredFunction".* foreign
-// IR+ ^shape .*"GivenToAReducer".* foreign
-// IR+ ^shape .*"FilteredByAGuard".* foreign
-// IR+ ^shape .*"FoundByAGuard".* foreign
-// IR+ ^shape .*"InAUnionWithAnError".* foreign
-// IR- ^shape .*"CastFromATypedValue".* foreign
+// IR+ ^shape .*"PushedBySpread".* accepts-untyped
+// IR+ ^shape .*"Spliced".* accepts-untyped
+// IR+ ^shape .*"InAStaticField".* accepts-untyped
+// IR+ ^shape .*"ByADefault".* accepts-untyped
+// IR+ ^shape .*"GivenToAnArrow".* accepts-untyped
+// IR+ ^shape .*"GivenToAFunctionExpression".* accepts-untyped
+// IR+ ^shape .*"GivenToADeclaredFunction".* accepts-untyped
+// IR+ ^shape .*"GivenToAReducer".* accepts-untyped
+// IR+ ^shape .*"FilteredByAGuard".* accepts-untyped
+// IR+ ^shape .*"FoundByAGuard".* accepts-untyped
+// IR+ ^shape .*"InAUnionWithAnError".* accepts-untyped
+// IR- ^shape .*"CastFromATypedValue".* accepts-untyped
 function obj(entries: any[]): any { const o: any = {}; for (const entry of entries) o[entry[0]] = entry[1]; return o; }
 function data(): any { return [obj([["id", 1], ["name", "given"]]), obj([["name", "second"], ["id", 2]])]; }
 

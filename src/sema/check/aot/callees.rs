@@ -336,7 +336,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn ends_with_exit(&self, file: FileId, stmts: IdList<StmtId>) -> bool {
         let hir = self.hir(file);
-        let last = hir.ids(stmts).filter(|&stmt| !matches!(hir[stmt].kind, StmtKind::Fn(_) | StmtKind::Interface(_) | StmtKind::TypeAlias(_) | StmtKind::Empty)).last();
+        let last = hir.ids(stmts).rfind(|&stmt| !matches!(hir[stmt].kind, StmtKind::Fn(_) | StmtKind::Interface(_) | StmtKind::TypeAlias(_) | StmtKind::Empty));
         last.is_some_and(|last| self.always_exits(file, last))
     }
 
@@ -606,8 +606,8 @@ impl<'p, 's> Checker<'p, 's> {
         let Some((of, init)) = self.literal_for_value_expr(file, obj, depth) else { return unknown };
         let hir = self.hir(of);
         let ExprKind::Object(props) = hir[init].kind else { return unknown };
-        let found = props.iter().filter(|p| matches!(hir[*p].key, PropKey::Name(key) if key == name) && matches!(hir[*p].kind, PropKind::Init | PropKind::Shorthand | PropKind::Method));
-        match found.last() {
+        let mut found = props.iter().filter(|p| matches!(hir[*p].key, PropKey::Name(key) if key == name) && matches!(hir[*p].kind, PropKind::Init | PropKind::Shorthand | PropKind::Method));
+        match found.next_back() {
             Some(p) => self.result_callees_of(of, hir[p].value, depth).callee,
             None => unknown,
         }

@@ -1,8 +1,8 @@
 // A generic class or interface is filled from untyped data: `this.items = data` with `items: T[]`. What T is bound to admits plain data that has all its members. What is bound to the type parameter of a generic class that only typed values enter stays as it is.
-// IR+ ^shape .*"InARepository".* foreign
-// IR+ ^shape .*"InAPage".* foreign
-// IR+ ^shape .*"InAMapOfARepository".* foreign
-// IR- ^shape .*"OnlyTypedValuesEnter".* foreign
+// IR+ ^shape .*"InARepository".* accepts-untyped
+// IR+ ^shape .*"InAPage".* accepts-untyped
+// IR+ ^shape .*"InAMapOfARepository".* accepts-untyped
+// IR- ^shape .*"OnlyTypedValuesEnter".* accepts-untyped
 function obj(entries: any[]): any { const o: any = {}; for (const entry of entries) o[entry[0]] = entry[1]; return o; }
 function data(): any { return [obj([["id", 1], ["name", "given"]]), obj([["name", "second"], ["id", 2]])]; }
 

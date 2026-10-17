@@ -17,7 +17,7 @@
 // WHAT THIS VERSION HAS AND 19.2.8 HAS NOT: Task.isFallback (the last member).
 declare namespace FZ {
   // -------------------------------------------------------------------------------------------------------------------
-  // 1. Numbers. int32: four bytes and integer arithmetic; a value that is no int32 stored there is a TypeError at run time.
+  // 1. Numbers. int32: four bytes and integer arithmetic; the build proves every value that is stored there, or stops.
   // -------------------------------------------------------------------------------------------------------------------
   type int32 = import("bun").int32;
   type RequestStatus = int32; // Request.status: 10 OPENING 11 OPEN 12 ABORTING 13 CLOSING 14 CLOSED
@@ -130,9 +130,9 @@ declare namespace FZ {
     progressiveChunkSize: number; // 12800 | options.progressiveChunkSize (given: React's type says number)
     status: RequestStatus;
     fatalError: Thrown; // null until fatalError() | abort()
-    nextSegmentId: SegmentId;
-    allPendingTasks: TaskCount;
-    pendingRootTasks: TaskCount;
+    nextSegmentId: number;
+    allPendingTasks: number;
+    pendingRootTasks: number;
     completedRootSegment: Segment | null;
     abortableTasks: Set<Task>;
     pingedTasks: Task[];
@@ -204,7 +204,7 @@ declare namespace FZ {
   }
   interface Segment { // birth 3687
     status: SegmentStatus;
-    id: SegmentId;
+    id: number;
     index: ChunkIndex; // where in the parent's chunks it goes
     parentFlushed: boolean;
     chunks: Chunk[];
@@ -216,9 +216,9 @@ declare namespace FZ {
   }
   interface SuspenseBoundary { // birth 3579
     status: BoundaryStatus;
-    rootSegmentID: SegmentId;
+    rootSegmentID: number;
     parentFlushed: boolean;
-    pendingTasks: TaskCount;
+    pendingTasks: number;
     completedSegments: Segment[];
     byteSize: ByteSize; // 0 throughout
     fallbackAbortableTasks: Set<Task>;
@@ -234,7 +234,7 @@ declare namespace FZ {
   //    with a replay but from a task that has one (createReplayTask's callers: 4413 4604): the code that reads them is typed all the same.
   // -------------------------------------------------------------------------------------------------------------------
   interface PostponedHoles { workingMap: Map<KeyNode, ReplayNode>; rootNodes: ReplayNode[]; rootSlots: ResumeSlots } // NO BIRTH in this bundle (19.3.0's createPrerenderRequest makes it); workingMap alone is read (4049 4599)
-  interface ReplaySet { nodes: ReplayNode[]; slots: ResumeSlots; pendingTasks: TaskCount } // birth 4298 4371 4416 4532
+  interface ReplaySet { nodes: ReplayNode[]; slots: ResumeSlots; pendingTasks: number } // birth 4298 4371 4416 4532
 
   // -------------------------------------------------------------------------------------------------------------------
   // 7. The DOM side: RenderState, ResumableState, FormatContext, resources
@@ -278,7 +278,7 @@ declare namespace FZ {
   }
   interface ResumableState { // birth 410
     idPrefix: string; // "" | options.identifierPrefix (given: React's type says string)
-    nextFormID: int32;
+    nextFormID: number;
     streamingFormat: int32; // 0, never read
     bootstrapScriptContent: BootstrapScriptContent; // NOT OPTIONAL HERE (19.3.0: optional, for what JSON made of a postponed state): one birth, all 17 members, no resume
     bootstrapScripts: BootstrapScripts;

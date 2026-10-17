@@ -10,7 +10,7 @@
 // WHAT THIS VERSION HAS AND 19.2.8 HAS NOT: Task.isFallback, PreambleState.contribution, createPreambleState (boundaries DO get preambles here: 4127 4481).
 declare namespace FZ {
   // -------------------------------------------------------------------------------------------------------------------
-  // 1. Numbers. int32: four bytes and integer arithmetic; a value that is no int32 stored there is a TypeError at run time.
+  // 1. Numbers. int32: four bytes and integer arithmetic; the build proves every value that is stored there, or stops.
   // -------------------------------------------------------------------------------------------------------------------
   type int32 = import("bun").int32;
   type RequestStatus = int32; // Request.status: 10 OPENING 11 OPEN 12 ABORTING 13 CLOSING 14 CLOSED
@@ -119,9 +119,9 @@ declare namespace FZ {
     progressiveChunkSize: number; // 12800 | what is handed over: Infinity at the one call of the legacy bundle (5846): NOT int32
     status: RequestStatus;
     fatalError: Thrown; // null until fatalError() | abort()
-    nextSegmentId: SegmentId;
-    allPendingTasks: TaskCount;
-    pendingRootTasks: TaskCount;
+    nextSegmentId: number;
+    allPendingTasks: number;
+    pendingRootTasks: number;
     completedRootSegment: Segment | null;
     completedPreambleSegments: Segment[][] | null;
     abortableTasks: Set<Task>;
@@ -197,7 +197,7 @@ declare namespace FZ {
   interface Segment { // birth 3749
     status: SegmentStatus;
     parentFlushed: boolean;
-    id: SegmentId;
+    id: number;
     index: ChunkIndex; // where in the parent's chunks it goes
     chunks: Chunk[];
     children: Segment[];
@@ -209,9 +209,9 @@ declare namespace FZ {
   }
   interface SuspenseBoundary { // birth 3636
     status: BoundaryStatus;
-    rootSegmentID: SegmentId;
+    rootSegmentID: number;
     parentFlushed: boolean;
-    pendingTasks: TaskCount;
+    pendingTasks: number;
     completedSegments: Segment[];
     byteSize: ByteSize;
     fallbackAbortableTasks: Set<Task>;
@@ -229,7 +229,7 @@ declare namespace FZ {
   //    no task is born with a replay from outside: the code for both is in the text all the same, and is typed.
   // -------------------------------------------------------------------------------------------------------------------
   interface PostponedHoles { workingMap: Map<KeyNode, ReplayNode>; rootNodes: ReplayNode[]; rootSlots: ResumeSlots } // NO BIRTH in the legacy bundle
-  interface ReplaySet { nodes: ReplayNode[]; slots: ResumeSlots; pendingTasks: TaskCount } // birth 4412 4495 4533 4648
+  interface ReplaySet { nodes: ReplayNode[]; slots: ResumeSlots; pendingTasks: number } // birth 4412 4495 4533 4648
 
   // -------------------------------------------------------------------------------------------------------------------
   // 7. The DOM side: RenderState, ResumableState, FormatContext, resources
@@ -271,7 +271,7 @@ declare namespace FZ {
   }
   interface ResumableState { // birth 312
     idPrefix: string; // "" | options.identifierPrefix (given: React's type says string)
-    nextFormID: int32;
+    nextFormID: number;
     streamingFormat: int32; // 0, never read
     bootstrapScriptContent?: BootstrapScriptContent; // undefined at the one call of the legacy bundle (5840). OPTIONAL as in the other bundles' ResumableState
     bootstrapScripts?: BootstrapScripts; // likewise

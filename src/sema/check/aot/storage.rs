@@ -116,7 +116,6 @@ pub(super) struct Shared {
     modules: OnceLock<ModuleGraph>,
     lazy_modules: OnceLock<FxHashSet<FileId>>,
     logs_type_errors: OnceLock<bool>,
-    leaves_casts_unchecked: OnceLock<bool>,
     marked_pure: OnceLock<FxHashMap<FileId, Vec<u32>>>,
     replaced: OnceLock<[FxHashSet<Vec<u8>>; 2]>,
     evaluates_before_importers_cache: ByFile<bool>,
@@ -134,10 +133,12 @@ pub(super) struct Shared {
     pub(super) pairs_compared: bun_threading::Guarded<Vec<(super::Identity, super::Identity)>>,
     pub(super) records_reaching_javascript: bun_threading::Guarded<FxHashMap<super::Identity, super::flows::Place>>,
     pub(super) external_marks: bun_threading::Guarded<FxHashMap<super::Identity, super::flows::ExternalMark>>,
+    pub(super) places_where_external_data_enters: bun_threading::Guarded<Vec<(super::Identity, super::flows::Place)>>,
     receiving_untyped_from_js: std::sync::OnceLock<FxHashSet<Sym>>,
     forwardable_imports: std::sync::OnceLock<FxHashMap<Sym, Vec<(FileId, ExprId)>>>,
     functions_receiving_component_props: OnceLock<FxHashSet<Sym>>,
     sql_row_types: OnceLock<FxHashSet<Sym>>,
+    jsx_factories: OnceLock<FxHashSet<(FileId, FnId)>>,
     calls_by_default_parameter_function: OnceLock<FxHashMap<Atom, Vec<(FileId, ExprId)>>>,
     import_calls: OnceLock<FxHashMap<Sym, Vec<(FileId, ExprId)>>>,
     member_mentions: OnceLock<FxHashMap<Atom, Vec<(FileId, ExprId)>>>,
@@ -567,8 +568,8 @@ impl ModuleGraph {
             let (mut members, mut at) = (vec![root], 0);
             while at < members.len() {
                 for &importer in graph.importers.get(&members[at]).into_iter().flatten() {
-                    if !graph.cycle.contains_key(&importer) {
-                        graph.cycle.insert(importer, number as u32);
+                    if let std::collections::hash_map::Entry::Vacant(e) = graph.cycle.entry(importer) {
+                        e.insert(number as u32);
                         members.push(importer);
                     }
                 }
@@ -1602,7 +1603,7 @@ impl<'p, 's> Checker<'p, 's> {
             return true;
         }
         if self.hir(file)[p].ty.is_some() {
-            return func.is_some() && (self.is_param_stricter_than_inherited(file, func, p) || self.is_param_supplied_by_host(file, func, p));
+            return func.is_some() && (self.is_param_stricter_than_inherited(file, func, p) || self.is_param_supplied_by_host(file, func, p) || self.is_jsx_factory(file, func));
         }
         if func.is_some() && self.is_callback_param_checked_at_entry(file, func, p) {
             return false;
@@ -1771,9 +1772,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             DataFlowNode::Variable(sym) => {
                 let Some((file, _)) = self.files().value_declaration(sym) else { return Vec::new() };
-                let targets: Vec<ExprId> = self.bound(file).assignments_to(sym.id).iter().map(|assignment| assignment.1).collect();
-                targets
-                    .into_iter()
+                self.bound(file).assignments_to(sym.id).iter().map(|assignment| assignment.1)
                     .filter_map(|target| match self.target_store(file, target) {
                         Some(super::integers::Store::Value(stored) | super::integers::Store::Computed(stored)) => Some((file, stored)),
                         _ => None,
@@ -1894,14 +1893,12 @@ impl<'p, 's> Checker<'p, 's> {
     fn spreads_container_of_unknown_elements(&mut self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
         let ExprKind::Array(elements) = hir[e].kind else { return false };
-        let spread: Vec<ExprId> = hir
+        hir
             .ids(elements)
             .filter_map(|element| match hir[element].kind {
                 ExprKind::Spread(operand) => Some(operand),
                 _ => None,
-            })
-            .collect();
-        spread.into_iter().any(|operand| self.holds_unknown_elements(file, operand) || self.is_predicted(file, operand))
+            }).any(|operand| self.holds_unknown_elements(file, operand) || self.is_predicted(file, operand))
     }
 
     fn allocated_container_elements(&mut self, file: FileId, e: ExprId) -> Vec<ExprId> {
@@ -2135,14 +2132,12 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn passes_container_of_unknown_elements(&mut self, file: FileId, call: CallId) -> bool {
         let hir = self.hir(file);
-        let arguments: Vec<ExprId> = hir
+        hir
             .ids(hir[call].args)
             .map(|argument| match hir[argument].kind {
                 ExprKind::Spread(operand) => operand,
                 _ => argument,
-            })
-            .collect();
-        arguments.into_iter().any(|argument| self.holds_unknown_elements(file, argument))
+            }).any(|argument| self.holds_unknown_elements(file, argument))
     }
 
     fn copies_container_of_unknown_elements(&mut self, file: FileId, e: ExprId, call: CallId) -> bool {
@@ -2288,6 +2283,52 @@ impl<'p, 's> Checker<'p, 's> {
         !self.is_uninformative(written) && parts.iter().copied().all(|part| self.is_primitive_or_built_in(part)) && (self.is_host_callback(file, func) || self.is_argument_of_untyped_call(file, func))
     }
 
+    fn is_jsx_factory(&mut self, file: FileId, func: FnId) -> bool {
+        let program = self.p;
+        program.aot.storage.jsx_factories.get_or_init(|| self.find_jsx_factories()).contains(&(file, func))
+    }
+
+    fn find_jsx_factories(&mut self) -> FxHashSet<(FileId, FnId)> {
+        let (files, atoms) = (self.files(), self.atoms());
+        let names: Vec<Atom> = [&b"jsx"[..], b"jsxs", b"jsxDEV", b"createElement"].into_iter().filter_map(|name| atoms.lookup(name)).collect();
+        let (mut called, mut seen): (Vec<TypeId>, FxHashSet<Sym>) = Default::default();
+        for file in (0..files.modules.len() as u32).map(FileId) {
+            if !self.is_compiled(file) || self.hir(file).jsx.is_empty() {
+                continue;
+            }
+            if let Some(runtime) = files.jsx_runtime(file) {
+                let text = atoms.bytes(runtime);
+                let package = text.strip_suffix(b"/jsx-runtime").or_else(|| text.strip_suffix(b"/jsx-dev-runtime")).and_then(|package| atoms.lookup(package));
+                let modules = [Some(runtime), package].into_iter().flatten().filter_map(|specifier| files.module(file).imported_file(specifier));
+                let exported: Vec<Sym> = modules.flat_map(|module| names.iter().filter_map(move |&name| files.export(files.file_symbol(module), name))).collect();
+                for exported in exported {
+                    let exported = if files.flags(exported).contains(SymFlags::ALIAS) { files.resolve_alias(exported) } else { Some(exported) };
+                    if let Some(exported) = exported.filter(|&exported| seen.insert(exported)) {
+                        called.push(self.type_of_symbol(exported));
+                    }
+                }
+                continue;
+            }
+            for &element in self.file_exprs_by_kind(file).of(ExprTag::Jsx) {
+                let (entity, Some(named)) = self.classic_jsx_factory(file, element, false) else { continue };
+                if !seen.insert(named) {
+                    continue;
+                }
+                let named = if files.flags(named).contains(SymFlags::ALIAS) { files.resolve_alias(named) } else { Some(named) };
+                let Some(named) = named else { continue };
+                let named = self.type_of_symbol(named);
+                called.extend(entity[1..].iter().try_fold(named, |object, &name| self.type_of_property(object, name)));
+            }
+        }
+        let mut factories = FxHashSet::default();
+        for ty in called {
+            for (of, func, _) in self.signatures(ty, false).iter().copied().filter_map(|signature| self.sig_decl(signature)) {
+                factories.insert(self.implementation_for(of, func).unwrap_or((of, func)));
+            }
+        }
+        factories
+    }
+
     fn is_argument_of_untyped_call(&mut self, file: FileId, func: FnId) -> bool {
         let FnOwner::Expr(e) = self.bound(file).fns[func.idx()].owner else { return false };
         let Parent::Expr(parent) = self.bound(file).expr_parent[e.idx()] else { return false };
@@ -2361,7 +2402,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.is_declaration_only(declared_in) && !self.files().module(declared_in).is_lib
     }
 
-    fn is_in_untyped_clone_span(&self, file: FileId, pos: u32) -> bool {
+    pub(super) fn is_in_untyped_clone_span(&self, file: FileId, pos: u32) -> bool {
         let Some((of, spans)) = &self.aot.storage.untyped_clone_spans else { return false };
         *of == file && spans[..spans.partition_point(|span| span.0 <= pos)].last().is_some_and(|span| pos < span.1)
     }
@@ -2533,8 +2574,7 @@ impl<'p, 's> Checker<'p, 's> {
             Parent::Expr(parent) if parent.is_some() && matches!(hir[parent].kind, ExprKind::Call(call) if hir[call].callee == mention) => Some(parent),
             _ => None,
         };
-        let calls: Vec<ExprId> = self.symbol_mentions(file, named).into_iter().filter_map(call_of).collect();
-        if calls.into_iter().any(|call| self.escapes_typed_code(file, call, is_held_in_a_literal) || self.escapes_from(file, call, is_held_in_a_literal, hops)) {
+        if self.symbol_mentions(file, named).into_iter().filter_map(call_of).any(|call| self.escapes_typed_code(file, call, is_held_in_a_literal) || self.escapes_from(file, call, is_held_in_a_literal, hops)) {
             return true;
         }
         if self.aot.storage.is_cross_file_query {
@@ -2544,7 +2584,8 @@ impl<'p, 's> Checker<'p, 's> {
         let exported = self.files().export_symbol_of_value_symbol_if_exported(sym);
         let program = self.p;
         let standing = program.aot.storage.import_calls.get_or_init(|| self.find_import_calls());
-        let mut calls: Vec<(FileId, ExprId)> = standing.get(&sym).into_iter().flatten().copied().collect();
+        let mut calls: Vec<(FileId, ExprId)> = Vec::new();
+        calls.extend(standing.get(&sym).into_iter().flatten().copied());
         if exported != sym {
             calls.extend(standing.get(&exported).into_iter().flatten().copied());
         }
@@ -2686,9 +2727,8 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         }
         let ExprKind::Call(call) = hir[parent].kind else { return false };
-        let arguments: Vec<ExprId> = hir.ids(hir[call].args).collect();
         hir[call].callee == e
-            && arguments.into_iter().any(|argument| {
+            && hir.ids(hir[call].args).any(|argument| {
                 self.prepare_enclosing(file, argument);
                 self.type_of_expr(file, argument).is_any()
             })
@@ -2853,7 +2893,8 @@ impl<'p, 's> Checker<'p, 's> {
         if !own.iter().any(|p| self.hir(file)[p].ty.is_some()) {
             return false;
         }
-        let mut places: Vec<crate::types::SigId> = self.contextual_signature(file, func).into_iter().collect();
+        let mut places: Vec<crate::types::SigId> = Vec::new();
+        places.extend(self.contextual_signature(file, func));
         let named = self.function_name_symbol(file, func);
         for mention in self.symbol_mentions(file, named) {
             let Some(entered) = self.contextual_type_of_literal(file, mention) else { continue };
@@ -2912,10 +2953,7 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         }
         let (start, end) = (f.start, self.end_of_fn(file, func));
-        if (0..hir.classes.len() as u32).map(ClassId).any(|class| start <= hir[class].start && hir[class].start < end) {
-            return false;
-        }
-        true
+        !(0..hir.classes.len() as u32).map(ClassId).any(|class| start <= hir[class].start && hir[class].start < end)
     }
 
     pub fn method_has_untyped_clone(&mut self, file: FileId, func: FnId) -> bool {
@@ -2971,8 +3009,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn object_parameter_indices(&mut self, file: FileId, func: FnId) -> Vec<usize> {
-        let parameters: Vec<ParamId> = self.hir(file)[func].params.iter().collect();
-        (parameters.into_iter().enumerate())
+        (self.hir(file)[func].params.iter().enumerate())
             .filter(|&(_, p)| {
                 (self.hir(file)[p].ty.is_some() || self.is_callback_param_checked_at_entry(file, func, p)) && {
                     let written = self.type_of_param(file, p);
@@ -3007,7 +3044,8 @@ impl<'p, 's> Checker<'p, 's> {
         let exported = self.files().export_symbol_of_value_symbol_if_exported(sym);
         let program = self.p;
         let standing = program.aot.storage.forwardable_imports.get_or_init(|| self.find_forwardable_imports());
-        let mut mentions: Vec<(FileId, ExprId)> = standing.get(&sym).into_iter().flatten().copied().collect();
+        let mut mentions: Vec<(FileId, ExprId)> = Vec::new();
+        mentions.extend(standing.get(&sym).into_iter().flatten().copied());
         if exported != sym {
             mentions.extend(standing.get(&exported).into_iter().flatten().copied());
         }
@@ -3087,8 +3125,7 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(called) = program.aot.storage.untyped_argument_calls.get() else { return false };
         let (by_name, by_parameters) = if for_the_report.is_some() { (&called.handed_over, &called.by_parameters_as_values) } else { (&called.by_name, &called.by_parameters) };
         if !(by_parameters.is_empty() && called.escaping_parameter_lists.is_empty()) && for_the_report != Some(false) {
-            let parameters: Vec<ParamId> = self.hir(file)[func].params.iter().collect();
-            let types: Vec<TypeId> = parameters.into_iter().map(|p| self.type_of_param(file, p)).collect();
+            let types: Vec<TypeId> = self.hir(file)[func].params.iter().map(|p| self.type_of_param(file, p)).collect();
             let identities: Vec<super::Identity> = types.into_iter().map(|ty| self.type_identity(ty)).collect();
             if by_parameters.contains(&identities) || called.escaping_parameter_lists.contains(&identities) {
                 return true;
@@ -3205,8 +3242,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 let is_uninformative = is_untyped
                     || call.is_some_and(|call| {
-                        let arguments: Vec<ExprId> = hir.ids(hir[call].args).collect();
-                        arguments.into_iter().any(|argument| {
+                        hir.ids(hir[call].args).any(|argument| {
                             self.prepare_enclosing(other, argument);
                             let given = self.type_of_expr(other, argument);
                             given.is_any()
@@ -3798,8 +3834,7 @@ impl<'p, 's> Checker<'p, 's> {
             FnBody::Expr(value) => Some(value),
             _ => None,
         };
-        let returned: Vec<ExprId> = of_body.into_iter().chain(of_statements).collect();
-        if !returned.into_iter().any(|value| self.is_predicted(file, value)) {
+        if !of_body.into_iter().chain(of_statements).any(|value| self.is_predicted(file, value)) {
             return false;
         }
         let Some((called_in, called, _)) = self.resolved_signature(file, parent).sig.and_then(|sig| self.sig_decl(sig)) else { return false };
@@ -3935,7 +3970,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         if let Some(known) = looked_at.functions.iter_mut().find(|known| known.0 == (file, func)) {
-            known.1 = created.clone();
+            known.1.clone_from(&created);
         }
         created
     }
@@ -4055,7 +4090,7 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                 }
                 if let Some(known) = looked_at.variables.iter_mut().find(|known| known.0 == sym) {
-                    known.1 = created.clone();
+                    known.1.clone_from(&created);
                 }
                 created
             }
@@ -4250,7 +4285,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn redefinitions(&mut self) -> Rc<[Redefinition]> {
         if let Some(known) = &self.aot.storage.redefinitions {
-            return known.clone();
+            return Rc::clone(known);
         }
         let calls = self.calls_that_may_redefine();
         let mut found = Vec::new();
@@ -4260,7 +4295,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut seen: FxHashSet<Redefinition> = FxHashSet::default();
         found.retain(|redefinition| seen.insert(redefinition.clone()));
         let found: Rc<[Redefinition]> = found.into();
-        self.aot.storage.redefinitions = Some(found.clone());
+        self.aot.storage.redefinitions = Some(Rc::clone(&found));
         found
     }
 
@@ -4288,7 +4323,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn proxy_type_parameters(&mut self) -> Rc<[TypeId]> {
         if let Some(known) = &self.aot.storage.proxy_type_parameters {
-            return known.clone();
+            return Rc::clone(known);
         }
         let mut found = Vec::new();
         for &(file, e) in self.proxy_constructions() {
@@ -4306,7 +4341,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let found: Rc<[TypeId]> = found.into();
-        self.aot.storage.proxy_type_parameters = Some(found.clone());
+        self.aot.storage.proxy_type_parameters = Some(Rc::clone(&found));
         found
     }
 
@@ -4332,12 +4367,11 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         }
         let of_proxies = self.proxy_type_parameters();
-        let arguments: Vec<ExprId> = hir.ids(hir[call].args).filter(|&argument| matches!(hir[argument].kind, ExprKind::Ident(_) | ExprKind::Dot { .. })).collect();
+
         !of_proxies.is_empty()
-            && arguments.into_iter().any(|argument| {
+            && hir.ids(hir[call].args).filter(|&argument| matches!(hir[argument].kind, ExprKind::Ident(_) | ExprKind::Dot { .. })).any(|argument| {
                 let handed_over = self.type_of_expr(file, argument);
-                let own: Vec<crate::types::SigId> = self.signatures(handed_over, false).iter().copied().collect();
-                own.into_iter().any(|own| self.sig_type_params(own).iter().any(|parameter| of_proxies.contains(parameter)))
+                self.signatures(handed_over, false).iter().copied().any(|own| self.sig_type_params(own).iter().any(|parameter| of_proxies.contains(parameter)))
             })
     }
 
@@ -4355,8 +4389,7 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         }
         let handed_over = self.type_of_expr(file, e);
-        let own: Vec<crate::types::SigId> = self.signatures(handed_over, false).iter().copied().collect();
-        if !own.into_iter().any(|own| self.sig_type_params(own).iter().any(|parameter| of_proxies.contains(parameter))) {
+        if !self.signatures(handed_over, false).iter().copied().any(|own| self.sig_type_params(own).iter().any(|parameter| of_proxies.contains(parameter))) {
             return;
         }
         for &part in self.parts(target) {
@@ -4686,6 +4719,11 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     pub(super) fn checked_type_of(&mut self, file: FileId, e: ExprId) -> (TypeId, bool) {
+        let (held, may_be_undefined) = self.checked_type_and_whether_left_undefined(file, e);
+        (held, may_be_undefined || self.accepts_nullish(held))
+    }
+
+    pub(super) fn checked_type_and_whether_left_undefined(&mut self, file: FileId, e: ExprId) -> (TypeId, bool) {
         let is_left_out = self.is_optional_chain(file, e) || self.may_return_uninitialized_variable(file, e);
         let refers_to_typed_binding = self.refers_to_typed_binding(file, e);
         let is_predicted_element = matches!(self.hir(file)[e].kind, ExprKind::Index { .. }) && self.is_predicted(file, e);
@@ -4696,7 +4734,7 @@ impl<'p, 's> Checker<'p, 's> {
             None if matches!(self.hir(file)[e].kind, ExprKind::As { .. } | ExprKind::NonNull(_) | ExprKind::Satisfies { .. } | ExprKind::AsConst(_) | ExprKind::Assign { op: None, .. } | ExprKind::Binary { .. } | ExprKind::Assign { op: Some(_), .. } | ExprKind::Cond { .. } | ExprKind::Unary { op: UnOp::Minus | UnOp::BitNot | UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec, .. } | ExprKind::Call(_) | ExprKind::Await(_) | ExprKind::TaggedTemplate(_)) => (self.result_type_of(file, e), is_left_out),
             None => (self.type_of_expr(file, e), is_left_out),
         };
-        (held, may_be_undefined || self.accepts_nullish(held))
+        (held, may_be_undefined)
     }
 
     pub fn is_optional_chain(&self, file: FileId, e: ExprId) -> bool {
@@ -4874,8 +4912,7 @@ impl<'p, 's> Checker<'p, 's> {
                 {
                     stored.push(self.hir(of)[d].init);
                 }
-                let targets: Vec<ExprId> = self.bound(of).assignments_to(sym.id).iter().map(|assignment| assignment.1).collect();
-                stored.extend(targets.into_iter().filter_map(|target| match self.target_store(of, target) {
+                stored.extend(self.bound(of).assignments_to(sym.id).iter().map(|assignment| assignment.1).filter_map(|target| match self.target_store(of, target) {
                     Some(super::integers::Store::Value(value)) => Some(value),
                     _ => None,
                 }));
@@ -4996,7 +5033,7 @@ impl<'p, 's> Checker<'p, 's> {
         loop {
             match self.enclosing_site(file, parent) {
                 Some(at) if at == site => return pos >= end,
-                Some(at) => match self.creation_site(file, at).or_else(|| self.earliest_run(file, at).filter(|_| goes_by_earliest_run)) {
+                Some(at) => match goes_by_earliest_run.then(|| self.earliest_run(file, at)).flatten().or_else(|| self.creation_site(file, at)) {
                     Some(created) => (pos, parent) = created,
                     None => return false,
                 },
@@ -5013,8 +5050,49 @@ impl<'p, 's> Checker<'p, 's> {
             Site::File | Site::Initializer(_) => return None,
         };
         let &pos = self.earliest_runs_in(file).get(&func)?;
-        let FnOwner::Stmt(stmt) = bound.fns[func.idx()].owner else { return None };
+        let stmt = match bound.fns[func.idx()].owner {
+            FnOwner::Stmt(stmt) => stmt,
+            FnOwner::Expr(e) => bound.var_stmt[self.declaration_holding_value_at(file, bound.expr_parent[e.idx()])?.idx()],
+            _ => return None,
+        };
         Some((pos, bound.stmt_parent[stmt.idx()]))
+    }
+
+    fn declaration_holding_value_at(&self, file: FileId, mut parent: Parent) -> Option<VarDeclId> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        loop {
+            parent = match parent {
+                Parent::VarInit(d) => return Some(d),
+                Parent::Prop(prop) if hir[prop].kind != PropKind::Spread => Parent::Expr(bound.prop_owner[prop.idx()]),
+                Parent::Expr(e) if e.is_some() => match hir[e].kind {
+                    ExprKind::Object(_)
+                    | ExprKind::Array(_)
+                    | ExprKind::As { .. }
+                    | ExprKind::Satisfies { .. }
+                    | ExprKind::AsConst(_)
+                    | ExprKind::NonNull(_)
+                    | ExprKind::Cond { .. }
+                    | ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, .. } => bound.expr_parent[e.idx()],
+                    ExprKind::Assign { op: None, target, .. } => return self.declaration_of_literal_stored_into(file, e, target),
+                    _ => return None,
+                },
+                _ => return None,
+            };
+        }
+    }
+
+    fn declaration_of_literal_stored_into(&self, file: FileId, assignment: ExprId, target: ExprId) -> Option<VarDeclId> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let Parent::Stmt(stmt) = bound.expr_parent[assignment.idx()] else { return None };
+        let ExprKind::Dot { obj, name, chain: Chain::No, .. } = hir[target].kind else { return None };
+        if !matches!(hir[stmt].kind, StmtKind::Expr(_)) || !matches!(bound.stmt_parent[stmt.idx()], Parent::FnBody(_) | Parent::File) || !matches!(hir[obj].kind, ExprKind::Ident(_)) || name == crate::atom::known::__proto__ {
+            return None;
+        }
+        let [Decl::Var(pat)] = bound.symbols.get(bound.expr_symbol[obj.idx()].idx())?.decls.as_slice() else { return None };
+        let PatParent::Var(d) = bound.pat_parent[pat.idx()] else { return None };
+        let ExprKind::Object(props) = hir[hir[d].init.some()?].kind else { return None };
+        let has_only_plain_properties = props.iter().all(|prop| matches!(hir[prop].kind, PropKind::Init | PropKind::Shorthand | PropKind::Method) && matches!(hir[prop].key, PropKey::Name(key) if key != crate::atom::known::__proto__));
+        (has_only_plain_properties && hir[stmt].start >= hir[d].loc.end).then_some(d)
     }
 
     fn earliest_runs_in(&self, file: FileId) -> &'p FxHashMap<FnId, u32> {
@@ -5055,22 +5133,96 @@ impl<'p, 's> Checker<'p, 's> {
                 runs.insert(func, u32::MAX);
             }
         }
+        let mut holders: FxHashMap<SymbolId, (Site, Vec<FnId>)> = FxHashMap::default();
+        for (d, declaration) in hir.var_decls.iter().enumerate() {
+            let (id, stmt) = (bound.pat_symbol[declaration.pat.idx()], bound.var_stmt[d]);
+            let Some(symbol) = bound.symbols.get(id.idx()) else { continue };
+            if declaration.init.is_none()
+                || !matches!(declaration.kind, VarKind::Var | VarKind::Let | VarKind::Const)
+                || stmt.is_none()
+                || !matches!(hir[declaration.pat].kind, PatKind::Ident(_))
+                || !matches!(bound.stmt_parent[stmt.idx()], Parent::FnBody(_) | Parent::File)
+            {
+                continue;
+            }
+            let is_referenced_elsewhere = declaration.flags.intersects(Flags::EXPORT | Flags::AMBIENT)
+                || symbol.flags.intersects(SymFlags::MERGED | SymFlags::ALIAS)
+                || symbol.decls.len() != 1
+                || bound.stmt_parent[stmt.idx()] == Parent::File && hir.exports.iter().any(|export| export.spec.is_none() && export.items.iter().any(|item| hir[item].local == symbol.name));
+            if is_referenced_elsewhere {
+                continue;
+            }
+            let Some(site) = self.enclosing_site(file, bound.stmt_parent[stmt.idx()]) else { continue };
+            if site != Site::File || self.files().module(file).is_module() {
+                holders.insert(id, (site, Vec::new()));
+            }
+        }
+        let holder_around = |parent: Parent, home: Site| {
+            let d = self.declaration_holding_value_at(file, parent)?;
+            Some(bound.pat_symbol[hir[d].pat.idx()]).filter(|id| holders.get(id).is_some_and(|holder| holder.0 == home))
+        };
+        let mut held: Vec<(SymbolId, FnId)> = Vec::new();
+        let mut home_of_held: FxHashMap<FnId, Site> = FxHashMap::default();
+        for func in (0..hir.fns.len() as u32).map(FnId) {
+            let FnOwner::Expr(e) = bound.fns[func.idx()].owner else { continue };
+            let Some(home) = self.enclosing_site(file, bound.expr_parent[e.idx()]) else { continue };
+            if let Some(holder) = holder_around(bound.expr_parent[e.idx()], home) {
+                held.push((holder, func));
+                home_of_held.insert(func, home);
+                runs.insert(func, u32::MAX);
+            }
+        }
         let mut referenced_in: Vec<(FnId, FnId)> = Vec::new();
+        let mut holders_referenced_in: Vec<(FnId, SymbolId)> = Vec::new();
+        let mut holders_held: Vec<(SymbolId, SymbolId)> = Vec::new();
+        let mut earliest_mentions: FxHashMap<SymbolId, u32> = FxHashMap::default();
         for &e in index.of(ExprTag::Ident) {
-            let Some(&(func, home)) = declared.get(&bound.expr_symbol[e.idx()]) else { continue };
+            let named = bound.expr_symbol[e.idx()];
+            let (func, home) = match (declared.get(&named), holders.get(&named)) {
+                (Some(&(func, home)), _) => (func, home),
+                (None, Some(holder)) => (FnId::NONE, holder.0),
+                (None, None) => continue,
+            };
             let (mut pos, mut parent) = (hir[e].pos, bound.expr_parent[e.idx()]);
             if parent == Parent::None || bound.is_in_type_query(e) {
                 continue;
             }
+            if func.is_none()
+                && let Parent::Expr(access) = parent
+                && access.is_some()
+                && let Parent::Expr(assignment) = bound.expr_parent[access.idx()]
+                && assignment.is_some()
+                && matches!(hir[assignment].kind, ExprKind::Assign { op: None, target, .. } if target == access && self.declaration_of_literal_stored_into(file, assignment, target).is_some())
+            {
+                continue;
+            }
             let earliest = loop {
                 match self.enclosing_site(file, parent) {
-                    Some(at) if at == home => break pos,
+                    Some(at) if at == home => match holder_around(parent, home) {
+                        Some(holder) if func.is_some() => {
+                            held.push((holder, func));
+                            break u32::MAX;
+                        }
+                        Some(holder) => {
+                            holders_held.push((holder, named));
+                            break u32::MAX;
+                        }
+                        None => break pos,
+                    },
                     Some(at) => {
                         let around = match at {
                             Site::Body(around) => around,
                             Site::Parameter(p) => bound.param_fn[p.idx()],
                             Site::File | Site::Initializer(_) => FnId::NONE,
                         };
+                        if home_of_held.get(&around) == Some(&home) {
+                            if func.is_some() {
+                                referenced_in.push((around, func));
+                            } else {
+                                holders_referenced_in.push((around, named));
+                            }
+                            break u32::MAX;
+                        }
                         if let Some(created) = self.creation_site(file, at) {
                             (pos, parent) = created;
                         } else if around.is_some()
@@ -5078,7 +5230,11 @@ impl<'p, 's> Checker<'p, 's> {
                             && let FnOwner::Stmt(stmt) = bound.fns[around.idx()].owner
                         {
                             if self.enclosing_site(file, bound.stmt_parent[stmt.idx()]) == Some(home) {
-                                referenced_in.push((around, func));
+                                if func.is_some() {
+                                    referenced_in.push((around, func));
+                                } else {
+                                    holders_referenced_in.push((around, named));
+                                }
                                 break u32::MAX;
                             }
                             (pos, parent) = (hir[stmt].start, bound.stmt_parent[stmt.idx()]);
@@ -5089,23 +5245,44 @@ impl<'p, 's> Checker<'p, 's> {
                     None => break 0,
                 }
             };
-            let so_far = runs.entry(func).or_insert(u32::MAX);
+            let so_far = if func.is_some() { runs.entry(func).or_insert(u32::MAX) } else { earliest_mentions.entry(named).or_insert(u32::MAX) };
             *so_far = earliest.min(*so_far);
+        }
+        for (holder, func) in held {
+            if let Some(of_holder) = holders.get_mut(&holder) {
+                of_holder.1.push(func);
+            }
         }
         referenced_in.sort_unstable_by_key(|&(from, to)| (from.0, to.0));
         referenced_in.dedup();
-        let mut by_position: Vec<(u32, FnId)> = runs.iter().map(|(&func, &pos)| (pos, func)).collect();
-        by_position.sort_unstable_by_key(|&(pos, func)| (pos, func.0));
+        holders_referenced_in.sort_unstable_by_key(|&(from, to)| (from.0, to.0));
+        holders_referenced_in.dedup();
+        holders_held.sort_unstable_by_key(|&(from, to)| (from.0, to.0));
+        holders_held.dedup();
+        let mut by_position: Vec<(u32, FnId, SymbolId)> = runs.iter().map(|(&func, &pos)| (pos, func, SymbolId::NONE)).chain(earliest_mentions.iter().map(|(&holder, &pos)| (pos, FnId::NONE, holder))).collect();
+        by_position.sort_unstable_by_key(|&(pos, func, holder)| (pos, func.0, holder.0));
         let mut is_settled: FxHashSet<FnId> = FxHashSet::default();
-        for (pos, first) in by_position {
-            let mut pending = vec![first];
-            while let Some(from) = pending.pop() {
-                if !is_settled.insert(from) {
+        let mut is_holder_settled: FxHashSet<SymbolId> = FxHashSet::default();
+        for (pos, first, first_holder) in by_position {
+            let (mut pending, mut pending_holders) = (vec![first], vec![first_holder]);
+            loop {
+                if let Some(holder) = pending_holders.pop() {
+                    if holder.is_some() && is_holder_settled.insert(holder) {
+                        pending.extend(holders.get(&holder).into_iter().flat_map(|of_holder| of_holder.1.iter().copied()));
+                        let start = holders_held.partition_point(|edge| edge.0.0 < holder.0);
+                        pending_holders.extend(holders_held[start..].iter().take_while(|edge| edge.0 == holder).map(|edge| edge.1));
+                    }
+                    continue;
+                }
+                let Some(from) = pending.pop() else { break };
+                if from.is_none() || !is_settled.insert(from) {
                     continue;
                 }
                 runs.insert(from, pos);
                 let start = referenced_in.partition_point(|edge| edge.0.0 < from.0);
                 pending.extend(referenced_in[start..].iter().take_while(|edge| edge.0 == from).map(|edge| edge.1));
+                let start = holders_referenced_in.partition_point(|edge| edge.0.0 < from.0);
+                pending_holders.extend(holders_referenced_in[start..].iter().take_while(|edge| edge.0 == from).map(|edge| edge.1));
             }
         }
         runs
@@ -5375,14 +5552,6 @@ impl<'p, 's> Checker<'p, 's> {
 
     pub fn logs_type_errors(&self) -> bool {
         self.p.aot.storage.logs_type_errors.get().copied().unwrap_or(false)
-    }
-
-    pub fn set_leaves_casts_unchecked(&self, leaves: bool) {
-        self.p.aot.storage.leaves_casts_unchecked.get_or_init(|| leaves);
-    }
-
-    pub fn leaves_casts_unchecked(&self) -> bool {
-        self.p.aot.storage.leaves_casts_unchecked.get().copied().unwrap_or(false)
     }
 
     pub fn set_lazy_modules(&self, modules: &FxHashSet<FileId>) {
@@ -7172,7 +7341,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             StmtKind::Return(e) => {
                 let value = self.walk(cx, file, e)?;
-                let Some(activation) = cx.running.last_mut() else { return None };
+                let activation = cx.running.last_mut()?;
                 if activation.constructs.is_some() && e.is_some() {
                     return cx.bail("walk: a constructor that returns something");
                 }

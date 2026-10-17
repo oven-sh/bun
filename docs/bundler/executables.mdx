@@ -423,7 +423,7 @@ Bun.unsafe.setJITPolicy(1); // back to the normal JIT policy
 The compiler sees your whole program at once, and the executable differs from one built without `--aot` in these ways:
 
 - **Types are enforced.** The compiler relies on your TypeScript types, so a value that does not match its type throws a `TypeError`, and `as` between primitive types converts. [Adopting `--aot`](/bundler/aot-adoption) shows how to find the places this affects before you ship.
-- **`int32` is a 32-bit integer.** `import type { int32 } from "bun"` names a whole number from -2147483648 to 2147483647. To TypeScript it is `number`. With `--aot`, a field, variable, parameter or result of that type takes four bytes, a value that is not such a number throws a `TypeError` where it enters, and a constant that is not stops the build. Only the type that `"bun"` declares has this meaning, under whatever name you import or alias it. A `type int32 = number` of your own is a `number`.
+- **`int32` is a 32-bit integer, and the build proves it.** `import type { int32 } from "bun"` names a whole number from -2147483648 to 2147483647. To TypeScript, and to Bun without `--aot`, it is `number`. With `--aot`, a variable, field, parameter or result of that type takes four bytes, and the build stops at any value stored there that it cannot prove to be an int32. Nothing is checked when the program runs. See [32-bit integers](#32-bit-integers).
 - **Data can be validated by its TypeScript type.** `Bun.validate<T>(value)` and `Bun.parse<T>(text)` check what comes from outside against the type `T` that you have already written. See [Validate data by its type](#validate-data-by-its-type).
 - **An array type means an ordinary array.** When the TypeScript type of a value is an array or a tuple, such as `number[]`, reading an element that is defined as a getter throws a `TypeError` instead of calling the getter. The same applies to an element that the array would inherit from a getter or a `Proxy` on its prototype chain. `a[i]`, `for...of` and destructuring are affected. `for...of` and destructuring also throw for an array, or an instance of a subclass of `Array`, that has its own `[Symbol.iterator]` method, instead of calling that method. The same goes for typed arrays such as `Uint8Array`. Declare the value as `Iterable<T>` if you want the method to be called. Assignments still call setters, methods such as `map` and `join` and the spread syntax still call getters, and arrays that typed code never sees behave as usual.
 - **The JIT is off.** Bun interprets code that the build cannot see: `eval`, `new Function`, `import()` of a `data:` or `blob:` URL that your program puts together when it runs, files that your program loads from disk when it runs, and Workers created from a blob URL. Some libraries generate their hot code with `new Function` when they start, among them zod 4, ajv, fast-json-stringify and Elysia, and that code stays interpreted for as long as your program runs. If a library has an option to work without generated code, measure both ways: `z.config({ jitless: true })` makes `parse` in zod 4 about 2.5 times cheaper, while `new Elysia({ aot: false })` makes a request slower.
@@ -444,6 +444,57 @@ The compiler sees your whole program at once, and the executable differs from on
 - **Some error messages differ.** `null is not an object (evaluating 'o.a.c')` becomes `Cannot read properties of null (reading 'c')`, and `o.b is not a function` becomes `b is not a function, it is undefined`. A service that groups errors by message sees new groups.
 
 The build target must be the platform and the version of Bun that runs the build. `bun build` reports an error for any other `--target`.
+
+#### 32-bit integers
+
+```ts cursor.ts icon="/icons/typescript.svg"
+import type { int32 } from "bun";
+
+class Cursor {
+  line: int32 = 0;
+  column: int32 = 0;
+}
+
+function advance(cursor: Cursor, by: int32): int32 {
+  cursor.column = (cursor.column + by) | 0;
+  return cursor.column;
+}
+```
+
+`int32` is a promise that you write and the build proves. `bun build --compile --aot` and `bun check --aot` look at every value that is stored into an `int32`: an initializer, an assignment, `+=`, `++`, an argument, a `return`, a property of an object literal. A value that is not provably an int32 is error `TS100031`, and the message says what the compiler found and what to write:
+
+```txt
+cursor.ts(9,19): error TS100031: Property 'column' of 'Cursor' is an 'int32', and the compiler cannot prove that 'cursor.column + by' is one: it can be anything from -4294967296 to 4294967294. Write '(cursor.column + by) | 0'.
+```
+
+Because every store is proven, the executable has no test for it and never throws because of it. `| 0` is ordinary JavaScript: it gives the same 32-bit value with `--aot`, without it, and in every other engine.
+
+| Proven                                                              | Not proven, and what to write                                                    |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| a whole number in range: `7`, `-1`, `2 ** 31 - 1`                   | `1.5`, `2 ** 31`, `-0`, `NaN`: error `TS100032`                                  |
+| another `int32`: a variable, a field, a parameter, a result         | a `number`, an `any`: `n \| 0`                                                   |
+| `a \| b`, `a & b`, `a ^ b`, `~a`, `a << n`, `a >> n`, of any numbers  | `a >>> 0`, which goes up to 4294967295: `a \| 0`                                  |
+| `Math.imul(a, b)`, `Math.clz32(a)`                                  | `a * b`: `Math.imul(a, b)`                                                       |
+| `text.length`, `text.indexOf(..)`                                   | `array.length`, which goes up to 4294967295: `array.length \| 0`                  |
+| arithmetic that stays in range: `(a & 255) * 3 + 1`                 | `a + b`, `a - b` of two `int32` values, which can overflow: `(a + b) \| 0`        |
+| `i + 1` and `i++` where a test limits `i`: `i < end`, `i < text.length` | `i++` with no limit in sight, or under `i <= end`: `i = (i + 1) \| 0`         |
+| `a % b` where `a` is not negative and `b` is positive               | `a / b`, `Math.floor(x)`: `(a / b) \| 0`                                          |
+|                                                                     | `bytes[i]`, which is `undefined` when `i` is out of range: `bytes[i] \| 0`        |
+|                                                                     | `text.charCodeAt(i)`, which is `NaN` when `i` is out of range: `text.charCodeAt(i) \| 0` |
+
+`value as int32` is proven too, because with `--aot` `as` converts between primitives: it is `value | 0`. Without `--aot` it does nothing, so a value that was not an int32 stays what it was. Prefer `| 0`, which is the same everywhere; `as int32` is for text that may only gain types, such as the typed version of a package.
+
+The compiler has to see every store, so three more things are errors:
+
+- A function with an `int32` parameter that is used as a value, as in `numbers.map(half)`, is error `TS100033`: the compiler cannot see what it will be called with. Call it directly, as in `numbers.map(n => half(n | 0))`, or declare the parameter `number`. `half.bind(null, 3)` is fine, because it supplies every `int32` parameter.
+- An object of one type that is used as another type, where a member is an `int32` in only one of the two, is error `TS100034`: a store through the one declaration would reach the other. That goes for a class and the interface it implements, a class and its base class, and an object literal that is passed as an interface.
+- An `int32` that is assigned by destructuring, by the head of a `for...of` loop or from a spread argument is error `TS100031`.
+
+The proof covers the code that the compiler sees through types. Untyped code is held to `int32` the way it is held to every other type, when the program runs: storing `1.5` into `cursor.column` through `any` with a computed key, with `Object.assign` or from a JavaScript file throws a `TypeError`, and so does reading the `column` of an object that came out of `JSON.parse` and was never validated. [Validate data by its type](#validate-data-by-its-type) checks an `int32` property as a whole number in range.
+
+`int32` has this meaning where it is the whole type of a variable, field, parameter or result. Inside another type, as in `int32[]`, `int32 | undefined` or `Map<string, int32>`, it is `number`. An optional property or parameter, `column?: int32`, is an int32 or `undefined`. Only the type that `"bun"` declares has this meaning, under whatever name you import or alias it: a `type int32 = number` of your own is a `number`.
+
+You rarely need it for a local variable. The compiler works out the range of a loop counter or an index by itself, and keeps it in a register as an integer. `int32` pays off in the fields of objects that you create by the million, where it halves the size of a number, and in the parameters and results that carry those fields around.
 
 #### Validate data by its type
 
@@ -501,7 +552,7 @@ bun test --aot
 Before the first line of your program runs, Bun type checks it together with everything it imports. A type error, or anything else that stops `bun build --compile --aot`, ends the process with exit code 1. While the program runs:
 
 - A value that does not match its declared type throws the `TypeError` that the executable throws, at the same place.
-- `as` converts between `string`, `number` and `boolean`, and `x!` throws for `null` and `undefined`.
+- `as` converts between `string`, `number` and `boolean`.
 - Built-in objects are immutable, and objects of a declared type keep their shape.
 
 The check takes a fraction of a second for a small program and seconds for a large one. Bun keeps its result. If no file that the check read has changed since, the next start skips it and is almost as fast as `bun run`. After an edit a small program is checked again as a whole. In a program with 1 MiB or more of TypeScript of its own, if you have only edited your own TypeScript files, and in a way that no other file can see (inside a function, say, without changing what it takes or returns), only those files are checked before your program starts, and the check of the whole program runs beside it. A problem that only the whole-program check can find is then reported late: your program, or your tests, have already begun when Bun prints it and exits with code 1. The result is kept beside the transpiler's cache, so `BUN_RUNTIME_TRANSPILER_CACHE_PATH=0` turns this off, and deleting that folder is always safe. Kept results take at most 1 GiB together: the oldest are deleted first.
@@ -537,7 +588,7 @@ Some options cannot differ between the files of one program:
 | Options | What the program uses |
 | --- | --- |
 | `strictNullChecks`, `exactOptionalPropertyTypes`, `strictFunctionTypes`, `strictBindCallApply`, `strictBuiltinIteratorReturn` | On if the `tsconfig.json` of any of your TypeScript files turns it on. If a file whose own `tsconfig.json` leaves one off has type errors, they do not stop the build: Bun prints a warning and compiles that file without its types, which is slower but behaves the same. |
-| `lib`, `types`, global declarations in files that a `tsconfig.json` includes, `module`, `moduleResolution`, `skipLibCheck` and the rest | The `tsconfig.json` of the entry points. If they have different ones, the one nearest to the folder that contains all of them, or else Bun's defaults. |
+| `lib`, `types`, global declarations in files that a `tsconfig.json` includes, `module`, `moduleResolution`, `skipLibCheck` and the rest | The `tsconfig.json` of the entry points. If they have different ones, the one nearest to the folder that contains all of them. If there is none, or it only has `references`, each option is what all of them say, and Bun's default where they differ. |
 
 To list every place where your program would behave differently, without stopping at the first one, use [`bun --aot-audit`](/bundler/aot-adoption).
 

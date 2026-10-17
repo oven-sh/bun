@@ -70,5 +70,5 @@ export const jscNames = {
   ],
 };
 
-// Namespaces of src/js/*.d.ts. They have no value.
-export const typeNames = ["ZigGeneratedClasses"];
+// Types and namespaces of src/js/*.d.ts. They have no value.
+export const typeNames = ["AnyObject", "ZigGeneratedClasses"];

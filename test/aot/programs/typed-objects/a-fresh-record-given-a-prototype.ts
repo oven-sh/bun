@@ -34,8 +34,8 @@ const seen: unknown[] = []
 const known = makeSeen(2, seen, kinds[3])
 console.log(seen[0] === known, kindOf(known), sum(known))
 function attempt(what: string, run: () => unknown) { try { console.log(what, String(run())) } catch (error) { console.log(what, (error as Error).constructor.name) } }
-attempt("a number", () => sum(make(3, 5 as any)))
-attempt("undefined", () => sum(make(3, undefined as any)))
+attempt("a number", () => sum(make(3, JSON.parse("5"))))
+attempt("undefined", () => sum(make(3, JSON.parse("[]")[0])))
 attempt("a cycle", () => { const base: Point = { x: 1, y: 2 }; const heir = Object.create(base); Object.setPrototypeOf(base, heir); return "no error" })
 attempt("itself", () => { const self: Point = { x: 1, y: 2 }; Object.setPrototypeOf(self, self); return "no error" })
 attempt("frozen", () => { const frozen: Point = { x: 1, y: 2 }; Object.freeze(frozen); Object.setPrototypeOf(frozen, kinds[0]); return "no error" })

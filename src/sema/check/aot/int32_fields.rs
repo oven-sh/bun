@@ -668,7 +668,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    fn function_for_syntax(&mut self, file: FileId, mut e: ExprId) -> Option<(FileId, FnId)> {
+    pub(super) fn function_for_syntax(&mut self, file: FileId, mut e: ExprId) -> Option<(FileId, FnId)> {
         let hir = self.hir(file);
         loop {
             match hir[e].kind {

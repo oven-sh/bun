@@ -26,7 +26,7 @@ pub(super) struct State {
 impl<'p, 's> Checker<'p, 's> {
     pub fn undeclared_fields_for(&mut self, ty: TypeId) -> Rc<Vec<(Atom, TypeId)>> {
         if let Some(known) = self.aot.undeclared_fields.fields.get(&ty) {
-            return known.clone();
+            return Rc::clone(known);
         }
         let stores = self.constructor_stores_through_any();
         let mut found: Vec<(Atom, TypeId)> = Vec::new();
@@ -42,7 +42,7 @@ impl<'p, 's> Checker<'p, 's> {
             found.sort_by(|a, b| self.atoms().bytes(a.0).cmp(self.atoms().bytes(b.0)));
         }
         let found = Rc::new(found);
-        self.aot.undeclared_fields.fields.insert(ty, found.clone());
+        self.aot.undeclared_fields.fields.insert(ty, Rc::clone(&found));
         found
     }
 
@@ -111,7 +111,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn constructor_stores_through_any(&mut self) -> Rc<Vec<Store>> {
         if let Some(known) = &self.aot.undeclared_fields.stores {
-            return known.clone();
+            return Rc::clone(known);
         }
         let files: &'p [FileId] = self.p.aot.undeclared_fields.typed_files.get_or_init(|| self.files_declaring_classes().into_iter().filter(|&file| self.is_compiled(file) && !self.hir(file).is_js).collect());
         let mut stores: Vec<Store> = Vec::new();
@@ -127,7 +127,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let stores = Rc::new(stores);
-        self.aot.undeclared_fields.stores = Some(stores.clone());
+        self.aot.undeclared_fields.stores = Some(Rc::clone(&stores));
         stores
     }
 

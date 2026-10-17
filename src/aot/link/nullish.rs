@@ -317,13 +317,13 @@ impl FunctionValueWorker<'_, '_> {
     }
 }
 
-fn propagate_function_values<'a>(program: &Program, nodes: &Nodes, leaving: impl FnOnce() -> &'a EdgesByNode, found: Vec<FunctionValueFlows>, mut state: Vec<u32>) -> NullishEdges {
+fn propagate_function_values<'a>(program: &Program, nodes: &Nodes, leaving: impl FnOnce() -> &'a EdgesByNode, found: &[FunctionValueFlows], mut state: Vec<u32>) -> NullishEdges {
     use node_state::{HAS_ADDED_EDGES, HAS_SITES, LEAKS};
     let mut more = NullishEdges::default();
     let mut sites: Vec<&Site> = Vec::with_capacity(found.iter().map(|part| part.sites.len()).sum());
     let mut sites_at: FxHashMap<u32, SmallVec<[u32; 1]>> = FxHashMap::with_capacity_and_hasher(found.iter().flat_map(|part| &part.sites).map(|site| site.callees.len()).sum(), Default::default());
     let mut pending: Vec<(FuncId, u32)> = Vec::with_capacity(found.iter().map(|part| part.allocation_sites.len()).sum());
-    for part in &found {
+    for part in found {
         for site in &part.sites {
             for &callee in &site.callees {
                 state[callee as usize] |= HAS_SITES;
@@ -531,11 +531,11 @@ fn fields_reachable_by_name(program: &Program, known: &FieldsByName, ty: TyId, n
         return Arc::default();
     }
     if let Some(found) = known.lock().get(&name) {
-        return found.clone();
+        return Arc::clone(found);
     }
     let of_objects = program.layouts.iter().enumerate().filter(|of| of.1.kind != crate::ir::LayoutKind::Environment);
     let found: Arc<[(LayoutId, u32)]> = of_objects.filter_map(|(index, layout)| Some((LayoutId::new(index), layout.field(name)?))).collect();
-    known.lock().insert(name, found.clone());
+    known.lock().insert(name, Arc::clone(&found));
     found
 }
 
@@ -812,7 +812,6 @@ struct Report<'a> {
     edges: Vec<(u32, u32)>,
     origins: Vec<(u32, u8)>,
     connected: FxHashSet<(LayoutId, u32)>,
-    untyped_object_edges: Vec<(u32, u32)>,
     function_flows: FunctionValueFlows,
     methods_by_name: &'a FxHashMap<StrId, Vec<FuncId>>,
     static_methods_by_constructor: &'a FxHashMap<FuncId, Vec<(StrId, FuncId)>>,
@@ -989,7 +988,6 @@ impl Report<'_> {
                             for &stored in stored {
                                 flows.uses.push(Use { value: stored, from: node(V::new(stored as usize)), to: node(v), block: at, jump: NO_JUMP });
                             }
-                            self.untyped_object_edges.push((node(value), node(v)));
                             continue;
                         }
                         propagate(&mut flows, value, node(v));
@@ -1125,7 +1123,7 @@ impl Report<'_> {
                         }
                     }
                     Some(Op::Operation { which: Operation::Initialize, args }) => {
-                        for store in args[1..].chunks_exact(2) {
+                        for store in args[1..].as_chunks::<2>().0 {
                             let Some(&Op::Str(name)) = func.op(store[0]) else {
                                 self.function_flows.leaks.extend(seen(store[1]));
                                 continue;
@@ -1482,7 +1480,7 @@ pub(super) fn widen_for_nullish(program: &mut Program, contents: &[u8], fields_b
             }
         }
         let static_methods_by_constructor = &static_methods_by_constructor;
-        let report = || Report { program, nodes: &nodes, edges: Vec::new(), origins: Vec::new(), connected: FxHashSet::default(), untyped_object_edges: Vec::new(), function_flows: FunctionValueFlows::default(), methods_by_name, static_methods_by_constructor, fields_by_name, definite_fields: FxHashMap::default(), functions_found: FxHashMap::default() };
+        let report = || Report { program, nodes: &nodes, edges: Vec::new(), origins: Vec::new(), connected: FxHashSet::default(), function_flows: FunctionValueFlows::default(), methods_by_name, static_methods_by_constructor, fields_by_name, definite_fields: FxHashMap::default(), functions_found: FxHashMap::default() };
         let mut slices: Vec<(usize, Report<'_>, NullishEdges)> = (0..program.funcs.len()).step_by(FUNCTIONS_PER_TASK).map(|first| (first, report(), NullishEdges::default())).collect();
         let mut state = vec![0u32; nodes.count as usize];
         let mut state_left = &mut state[..nodes.results as usize];
@@ -1503,7 +1501,6 @@ pub(super) fn widen_for_nullish(program: &mut Program, contents: &[u8], fields_b
                 state[(node - nodes.values[*first]) as usize] |= node_state::LEAKS;
             }
             found.edges.extend(report.edges.drain(..).map(|(from, to)| (from, to, NULLISH | UNTYPED_OBJECT)));
-            found.edges.extend(report.untyped_object_edges.drain(..).map(|(from, to)| (from, to, UNTYPED_OBJECT)));
             found.edges.extend(report.function_flows.moves.drain(..).map(|(from, to)| (from, to, 0)));
             found.origins.append(&mut report.origins);
         });
@@ -1541,7 +1538,7 @@ pub(super) fn widen_for_nullish(program: &mut Program, contents: &[u8], fields_b
                 awaited.recv().expect("the thread that makes the edges panicked");
                 created.get().expect("the edges are made before that is said")
             };
-            propagate_function_values(program, of_nodes, leaving, found, state)
+            propagate_function_values(program, of_nodes, leaving, &found, state)
         });
         let beside = scope.spawn(move || while_waiting(program));
         let leaving = leaving.get_or_init(|| edges_by_node(nodes.count, &runs, &parts, |edge| Some((edge.0, edge.1)), in_parallel));
@@ -1574,7 +1571,7 @@ pub(super) fn widen_for_nullish(program: &mut Program, contents: &[u8], fields_b
                 }
             }
             let entering = entering.join().expect("the thread that makes the entering edges panicked");
-            flows_into_field = reach_backward(&entering, flows_into_field, pending, in_parallel);
+            flows_into_field = reach_backward(&entering, flows_into_field, &pending, in_parallel);
         }
         beside.join().expect("the thread that works beside the nullish flows panicked");
         let (reads_from, stand_ins, handed, from_containers) = flattened.join().expect("the thread that flattens the reported lists panicked");

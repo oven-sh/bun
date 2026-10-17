@@ -1046,7 +1046,7 @@ JSC_DEFINE_HOST_FUNCTION(jsAOTAuditFixClassPrototype, (JSC::JSGlobalObject * glo
             replaceable.append(JSC::Identifier::fromString(vm, text));
         }
     }
-    JSC::asObject(prototype)->lockAsClassPrototype(globalObject, replaceable.span(), callFrame->argument(2).isTrue());
+    JSC::asObject(prototype)->lockAsClassPrototype(globalObject, replaceable.span(), callFrame->argument(2).isTrue(), callFrame->argument(3).isTrue());
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
@@ -1373,7 +1373,7 @@ extern "C" void Bun__AOTAudit__install(Zig::GlobalObject* globalObject, const ui
     arguments.append(JSC::JSFunction::create(vm, globalObject, 2, "cellKind"_s, jsAOTAuditCellKind, JSC::ImplementationVisibility::Private));
     arguments.append(JSC::JSFunction::create(vm, globalObject, 0, "isAnyModuleMocked"_s, jsAOTAuditIsAnyModuleMocked, JSC::ImplementationVisibility::Private));
     arguments.append(JSC::JSFunction::create(vm, globalObject, 1, "isPlainArray"_s, jsAOTAuditIsPlainArray, JSC::ImplementationVisibility::Private));
-    arguments.append(JSC::JSFunction::create(vm, globalObject, 3, "fixClassPrototype"_s, jsAOTAuditFixClassPrototype, JSC::ImplementationVisibility::Private));
+    arguments.append(JSC::JSFunction::create(vm, globalObject, 4, "fixClassPrototype"_s, jsAOTAuditFixClassPrototype, JSC::ImplementationVisibility::Private));
     arguments.append(JSC::JSFunction::create(vm, globalObject, 1, "guardInstancesOf"_s, jsAOTAuditGuardInstancesOf, JSC::ImplementationVisibility::Private));
     arguments.append(JSC::JSFunction::create(vm, globalObject, 1, "setGuard"_s, jsAOTAuditSetGuard, JSC::ImplementationVisibility::Private));
     arguments.append(JSC::JSFunction::create(vm, globalObject, 1, "describeValue"_s, jsAOTAuditDescribeValue, JSC::ImplementationVisibility::Private));

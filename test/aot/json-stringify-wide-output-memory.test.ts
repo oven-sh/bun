@@ -7,6 +7,8 @@ import { join } from "node:path";
 
 const files = {
   "main.ts": `
+    declare const process: { argv: string[]; resourceUsage(): { maxRSS: number } };
+    declare const console: { log(...values: unknown[]): void };
     const sentence = "the quick brown fox jumps over the lazy dog. ";
     const history: { role: string; content: string }[] = [];
     for (let i = 0; i < 400; i++) history.push({ role: i % 2 ? "assistant" : "user", content: sentence.repeat(1000) });

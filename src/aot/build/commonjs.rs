@@ -1754,8 +1754,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if !self.shared.constants.has_test_globals || !NAMES.contains(&self.c.atoms().bytes(name)) || !self.is_free(fx, e, name) {
             return None;
         }
-        let imports_it = |specifier: &Atom| matches!(self.c.atoms().bytes(*specifier), b"bun:test" | b"@jest/globals" | b"vitest");
-        if self.c.bound(fx.file).specifiers.iter().any(imports_it) {
+        let hir = self.hir(fx.file);
+        let is_test_package = |specifier: Atom| matches!(self.c.atoms().bytes(specifier), b"bun:test" | b"@jest/globals" | b"vitest");
+        let uses = hir.specifier_uses.iter().filter(|used| used.kind != bun_sema::hir::SpecifierKind::ImportType && is_test_package(used.spec)).count();
+        let erased = hir.imports.iter().filter(|import| import.type_only && is_test_package(import.spec)).count() + hir.exports.iter().filter(|export| export.type_only && is_test_package(export.spec)).count();
+        if uses > erased {
             return None;
         }
         let module = self.out.strs.intern(b"bun:test");

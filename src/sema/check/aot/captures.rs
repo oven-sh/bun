@@ -164,7 +164,7 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some((of, known)) = &self.aot.captures.latest
             && *of == file
         {
-            return known.clone();
+            return Arc::clone(known);
         }
         let program = self.p;
         let shared = program.aot.captures.by_file.get_or_init(program.files.modules.len(), file, || RwLock::new(None));
@@ -173,10 +173,10 @@ impl<'p, 's> Checker<'p, 's> {
             Some(known) => known,
             None => {
                 let found = Arc::new(self.find_file_captures(file));
-                shared.write().get_or_insert(found).clone()
+                Arc::clone(shared.write().get_or_insert(found))
             }
         };
-        self.aot.captures.latest = Some((file, found.clone()));
+        self.aot.captures.latest = Some((file, Arc::clone(&found)));
         found
     }
 

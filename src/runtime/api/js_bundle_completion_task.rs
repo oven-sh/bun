@@ -1051,7 +1051,6 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.aot_explain = (config.compile.as_ref()).map_or_else(Vec::new, |compile| compile.aot_explain.clone());
         transpiler.options.aot_explain_to_log = true;
         transpiler.options.aot_logs_type_errors = (config.compile.as_ref()).is_some_and(|compile| compile.logs_type_errors);
-        transpiler.options.aot_leaves_casts_unchecked = (config.compile.as_ref()).is_some_and(|compile| compile.leaves_casts_unchecked);
         transpiler.options.compile_function_source =
             (config.compile.as_ref()).is_none_or(|compile| compile.function_source);
         transpiler.options.analyze = Some(crate::cli::check_command::analyze_for_build);

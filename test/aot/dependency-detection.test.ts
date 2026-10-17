@@ -131,6 +131,26 @@ test.each([
   expect(checked.said).toContain("ships-typescript");
 }, 120_000);
 
+test("bun check --aot compiles the classes of a typed package, as the build and bun run --aot do", async () => {
+  using dir = tempDir("aot-dependency-classes", {
+    "package.json": JSON.stringify({ name: "app" }),
+    "tsconfig.json": strict(),
+    "main.ts": `import { Context } from "ships-typescript";\nconst context = new Context();\nconsole.log(context.request.param());\n`,
+    "node_modules/ships-typescript/package.json": JSON.stringify({ name: "ships-typescript", main: "index.ts", types: "index.ts" }),
+    "node_modules/ships-typescript/index.ts": `export { Context } from "./context";\n`,
+    "node_modules/ships-typescript/context.ts": `import { Request } from "./request";\nexport class Context {\n  #request: Request | undefined;\n  get request(): Request { return (this.#request ??= new Request("a")); }\n}\n`,
+    "node_modules/ships-typescript/request.ts": `export class Request {\n  name: string;\n  constructor(name: string) { this.name = name; }\n  param(): string { return this.name; }\n}\n`,
+  });
+  const built = await build(String(dir), "./main.ts");
+  expect({ exitCode: built.exitCode, stdout: built.stdout }).toEqual({ exitCode: 0, stdout: "a\n" });
+  const ran = await withoutBundler(String(dir), "run", "--aot", "main.ts");
+  expect({ exitCode: ran.exitCode, stdout: ran.stdout }).toEqual({ exitCode: 0, stdout: "a\n" });
+  const checked = await withoutBundler(String(dir), "check", "--aot", "main.ts");
+  expect(checked.said).toContain("No type errors");
+  expect(checked.said).not.toContain("does not support");
+  expect(checked.exitCode).toBe(0);
+}, 120_000);
+
 test("a type error beside a decorated class of a dependency does not stop the build either", async () => {
   using dir = tempDir("aot-dependency-decorated", {
     "package.json": JSON.stringify({ name: "app" }),

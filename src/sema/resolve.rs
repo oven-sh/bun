@@ -4208,7 +4208,7 @@ impl<'h> Resolver<'h> {
         const EXTENSIONS: [(&[u8], &[u8]); 3] = [(b".d.ts", b".js"), (b".d.mts", b".mjs"), (b".d.cts", b".cjs")];
         let code = EXTENSIONS.iter().find_map(|(from, to)| Some([declarations.strip_suffix(*from)?, *to].concat()));
         let is_typescript = |path: &Vec<u8>| look.typescript && self.host.script_kind(path).is_some_and(|kind| !kind.is_javascript());
-        code.filter(is_typescript).unwrap_or(declarations)
+        code.filter(is_typescript).filter(|path| self.is_file(path)).unwrap_or(declarations)
     }
 
     fn typescript_with_js_extension(&self, candidate: &[u8], look: Look) -> Option<Vec<u8>> {

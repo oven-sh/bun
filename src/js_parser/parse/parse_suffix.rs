@@ -1453,10 +1453,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         left: &mut Expr,
         is_in_optional_chain: bool,
     ) {
-        let is_called = matches!(
-            p.lexer.token,
-            T::TOpenParen | T::TQuestionDot | T::TNoSubstitutionTemplateLiteral | T::TTemplateHead
-        );
+        let is_called = match p.lexer.token {
+            T::TOpenParen | T::TNoSubstitutionTemplateLiteral | T::TTemplateHead => true,
+            T::TQuestionDot => matches!(
+                p.source.contents[p.lexer.end..].iter().find(|byte| !byte.is_ascii_whitespace()),
+                Some(b'(' | b'<' | b'/')
+            ),
+            _ => false,
+        };
         if is_called || p.lexer.token.is_assign() || matches!(p.lexer.token, T::TPlusPlus | T::TMinusMinus) {
             let marked = bun_ast::audited::unmarked(*left);
             if !is_called || matches!(marked.data, ExprData::EDot(..) | ExprData::EIndex(..) | ExprData::EIdentifier(..)) {
@@ -1464,7 +1468,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return;
             }
         }
-        let goes_on = is_called || matches!(p.lexer.token, T::TDot | T::TOpenBracket | T::TExclamation);
+        let goes_on = is_called || matches!(p.lexer.token, T::TDot | T::TOpenBracket | T::TExclamation | T::TQuestionDot);
         if (is_in_optional_chain && goes_on) || left.loc.start < 0 {
             return;
         }

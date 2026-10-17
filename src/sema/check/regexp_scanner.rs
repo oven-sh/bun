@@ -1604,7 +1604,7 @@ pub fn get_spelling_suggestion<'c, T: Copy>(
             if candidate_name.len() < 3 && !candidate_name.eq_ignore_ascii_case(name) {
                 continue;
             }
-            let differs_by_case = |a: u8, b: u8| a.to_ascii_lowercase() == b.to_ascii_lowercase();
+            let differs_by_case = |a: u8, b: u8| a.eq_ignore_ascii_case(&b);
             let Some(distance) = levenshtein_with_max(name, candidate_name, best_distance, differs_by_case) else {
                 continue;
             };

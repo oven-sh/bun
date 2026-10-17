@@ -1,12 +1,12 @@
 // TypeScript's classes are structural: plain data with all the members of a class is of its type. Parsed data that is held to an array, a Map, a Set, a Promise, a tuple or a record OF such a class is read as in plain Bun, as data held to the class itself is. Each row has a class of its own, because a class that admits such objects does so in the whole program. A class with a private or protected member or a #name is compared by its declaration: only its own instances are of its type, and it stays as it is.
-// IR+ ^shape .*"InAnnotatedArray".* foreign
-// IR+ ^shape .*"InResultArray".* foreign
-// IR+ ^shape .*"InCastArrayPassedOn".* foreign
-// IR+ ^shape .*"InCastArrayStored".* foreign
-// IR+ ^shape .*"InFieldOfAClass".* foreign
-// IR- ^shape .*"NeverGiven".* foreign
-// IR- ^shape .*"WithAPrivateField".* foreign
-// IR- ^shape .*"WithAPrivateName".* foreign
+// IR+ ^shape .*"InAnnotatedArray".* accepts-untyped
+// IR+ ^shape .*"InResultArray".* accepts-untyped
+// IR+ ^shape .*"InCastArrayPassedOn".* accepts-untyped
+// IR+ ^shape .*"InCastArrayStored".* accepts-untyped
+// IR+ ^shape .*"InFieldOfAClass".* accepts-untyped
+// IR- ^shape .*"NeverGiven".* accepts-untyped
+// IR- ^shape .*"WithAPrivateField".* accepts-untyped
+// IR- ^shape .*"WithAPrivateName".* accepts-untyped
 class InAnnotatedArray { field: string = "made"; }
 class InResultArray { field: string = "made"; }
 class InCastArrayPassedOn { field: string = "made"; }

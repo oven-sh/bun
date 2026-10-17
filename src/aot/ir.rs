@@ -55,7 +55,7 @@ impl Args {
                 None => std::alloc::alloc(Args::layout(new_cap)),
             }
         };
-        let Some(head) = NonNull::new(block.cast::<ArgsHead>()) else { std::alloc::handle_alloc_error(Args::layout(new_cap)) };
+        let Some(head) = NonNull::new(block).map(NonNull::cast::<ArgsHead>) else { std::alloc::handle_alloc_error(Args::layout(new_cap)) };
         // SAFETY: the block has room for a head.
         unsafe { head.write(ArgsHead { len: len as u32, cap: new_cap as u32 }) };
         self.0 = Some(head);
@@ -433,6 +433,7 @@ pub mod class_flags {
     pub const CONSTRUCTOR_MAY_BE_REPLACED: u32 = 1 << 9;
     pub const MAY_BE_REUSED: u32 = 1 << 10;
     pub const PROTOTYPE_IS_SET_BY_TYPED_CODE: u32 = 1 << 13;
+    pub const PROTOTYPE_MAY_GAIN_MEMBERS: u32 = 1 << 15;
     pub const HAS_NO_OWN_INSTANCES: u32 = 1 << 14;
 }
 
@@ -667,7 +668,7 @@ pub enum Op {
     Await(V),
 }
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Target {
     pub block: BlockId,
     pub args: Args,
@@ -679,7 +680,7 @@ impl Target {
     }
 }
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Term {
     Jump(Target),
     Branch { cond: V, then: Target, otherwise: Target },

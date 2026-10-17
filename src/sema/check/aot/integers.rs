@@ -9,10 +9,11 @@ use crate::hir::{
     TypeNodeId, TypeNodeKind, UnOp, VarKind,
 };
 use crate::program::{FileId, Sym};
-use crate::types::{EnumValue, Prop, PropSource, TypeData, TypeId};
+use crate::types::{EnumValue, Prop, PropFlags, PropSource, TypeData, TypeId};
 use crate::util::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use super::OnceLock;
 
 const MAX_EXACT: i64 = 1 << 53;
@@ -45,6 +46,12 @@ struct Numbers {
 }
 
 type Found = Option<Numbers>;
+
+impl Place {
+    pub(super) fn is_declared_int32(&self) -> bool {
+        self.declared_range.is_some()
+    }
+}
 
 impl Numbers {
     const NOTHING: Numbers = Numbers { minimum: 1, maximum: 0, nil: false, ignores_nullish: false };
@@ -86,8 +93,20 @@ impl Numbers {
         Numbers { nil: self.nil, ignores_nullish: self.ignores_nullish, ..Numbers::integers(self.minimum.max(minimum), self.maximum.min(maximum)) }
     }
 
+    fn without(self, excluded: Option<i64>) -> Numbers {
+        match excluded {
+            Some(value) if self.minimum == value => self.within(value + 1, i64::MAX),
+            Some(value) if self.maximum == value => self.within(i64::MIN, value - 1),
+            _ => self,
+        }
+    }
+
     fn truthy(self) -> Numbers {
         Numbers::integers(if self.minimum == 0 { 1 } else { self.minimum }, if self.maximum == 0 { -1 } else { self.maximum })
+    }
+
+    fn stored_as_a_number(self) -> Numbers {
+        Numbers { ignores_nullish: self.ignores_nullish || self.nil, ..self }
     }
 
     fn with_nullish_as_zero(self) -> Numbers {
@@ -162,6 +181,8 @@ pub(super) struct Place {
     is_stored_elsewhere: bool,
     by_type: Found,
     declared_range: Found,
+    enters_as_declared: bool,
+    holds_numbers_only: bool,
 }
 
 #[derive(Default)]
@@ -176,6 +197,7 @@ struct Test {
     at: FlowId,
     minimum: i64,
     maximum: i64,
+    excluded: Option<i64>,
 }
 
 type Tests = SmallVec<[Test; 4]>;
@@ -202,6 +224,12 @@ enum Child {
 pub(super) struct Shared {
     free_names: OnceLock<FxHashSet<Atom>>,
     uses: ByFile<Uses>,
+    has_seen_int32_annotation: AtomicBool,
+}
+
+pub(super) enum Int32Proof {
+    Proven,
+    Unproven { range: Option<(i64, i64)>, may_be_nullish: bool },
 }
 
 #[derive(Default)]
@@ -377,8 +405,24 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    fn is_int32_annotation(&mut self, file: FileId, node: TypeNodeId, depth: u8) -> bool {
-        if node.is_none() || depth == 8 || depth == 0 && self.is_untyped_file(file) {
+    pub fn has_seen_int32_annotation(&self) -> bool {
+        self.p.aot.integers.has_seen_int32_annotation.load(Ordering::Relaxed)
+    }
+
+    pub(super) fn int32_proof(&mut self, file: FileId, store: Store) -> Int32Proof {
+        match self.store_numbers(file, store, View::Kept, Basis::Exact) {
+            Some(found) if !found.nil && found.range().is_none_or(|(minimum, maximum)| minimum >= INT32.0 && maximum <= INT32.1) => Int32Proof::Proven,
+            Some(found) => Int32Proof::Unproven { range: found.range(), may_be_nullish: found.nil },
+            None => Int32Proof::Unproven { range: None, may_be_nullish: false },
+        }
+    }
+
+    pub fn is_cast_to_int32(&mut self, file: FileId, e: ExprId) -> bool {
+        matches!(self.hir(file)[e].kind, ExprKind::As { ty, .. } if self.is_int32_annotation(file, ty, 0))
+    }
+
+    pub(super) fn is_int32_annotation(&mut self, file: FileId, node: TypeNodeId, depth: u8) -> bool {
+        if node.is_none() || depth == 8 || depth == 0 && (self.is_untyped_file(file) || self.is_in_untyped_clone_span(file, self.hir(file)[node].pos)) {
             return false;
         }
         let found = match self.hir(file)[node].kind {
@@ -394,6 +438,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let Some(sym) = found else { return false };
         if self.bun_intrinsic(sym).is_some_and(|name| self.atoms().bytes(name) == b"int32") {
+            self.p.aot.integers.has_seen_int32_annotation.store(true, Ordering::Relaxed);
             return true;
         }
         let declared = self.files().decls_of(sym).iter().copied().find_map(|(file, decl)| match decl {
@@ -417,6 +462,7 @@ impl<'p, 's> Checker<'p, 's> {
                 PatParent::Param(p) => hir[p].ty,
                 _ => return None,
             },
+            Decl::Member(m) if hir[m].kind == MemberKind::Getter => hir[hir[m].func].ret,
             Decl::Member(m) => hir[m].ty,
             Decl::ParameterProperty(p) => hir[p].ty,
             _ => return None,
@@ -427,6 +473,7 @@ impl<'p, 's> Checker<'p, 's> {
     pub fn annotated_prop_integer_range(&mut self, prop: &Prop) -> Option<(i64, i64)> {
         match &prop.source {
             PropSource::Symbol(sym) => self.annotated_symbol_integer_range(*sym),
+            PropSource::Intersected(_, parts) => parts.iter().try_fold(None, |_, part| self.annotated_prop_integer_range(part).map(Some)).flatten(),
             _ => None,
         }
     }
@@ -505,7 +552,7 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         }
         let text = self.atoms().bytes(name);
-        names.iter().any(|&it| it == text) && self.global_type_symbol(name) == Some(*target)
+        names.contains(&text) && self.global_type_symbol(name) == Some(*target)
     }
 
     fn max_length_of(&mut self, ty: TypeId) -> Option<i64> {
@@ -703,7 +750,10 @@ impl<'p, 's> Checker<'p, 's> {
                 | ExprKind::NonNull(_)
         );
         if has_own_type && self.has_trusted_type(file, e) {
-            let (ty, may_be_undefined) = self.trusted_type_of(file, e);
+            let (ty, mut may_be_undefined) = self.trusted_type_of(file, e);
+            if may_be_undefined && found.is_some() && self.is_every_store_seen(file, e) {
+                may_be_undefined = self.checked_type_and_whether_left_undefined(file, e).1;
+            }
             let by_type = self.numbers_by_type(ty);
             if let ExprKind::Index { obj, index, .. } = kind {
                 let ignores_nullish = self.is_number_type(ty);
@@ -726,6 +776,25 @@ impl<'p, 's> Checker<'p, 's> {
         let round = if state.is_converging { state.round } else { 0 };
         state.values.insert(key, (found, round));
         found
+    }
+
+    fn is_every_store_seen(&mut self, file: FileId, e: ExprId) -> bool {
+        match self.hir(file)[e].kind {
+            ExprKind::Ident(_) => {
+                let (bound, local) = (self.bound(file), self.bound(file).expr_symbol[e.idx()]);
+                let Some(symbol) = bound.symbols.get(local.idx()) else { return false };
+                let at = if symbol.flags.contains(SymFlags::ALIAS) { self.files().resolve_alias(self.files().sym(file, local)) } else { Some(Sym { file, id: local }) };
+                at.is_some_and(|at| {
+                    let place = self.integer_slot(at);
+                    (place.is_followed || place.declared_range.is_some()) && !(place.is_parameter && place.starts_undefined)
+                })
+            }
+            ExprKind::Dot { name: known::length, chain: Chain::No, .. } => true,
+            ExprKind::Dot { obj, name, chain: Chain::No, .. } => self.annotated_property_numbers(file, e, obj, name).is_some_and(|declared| !declared.nil),
+            ExprKind::Call(_) => self.annotated_result_numbers(file, e).is_some(),
+            ExprKind::As { .. } => self.is_cast_to_int32(file, e),
+            _ => false,
+        }
     }
 
     fn numbers_by_syntax(&mut self, file: FileId, e: ExprId, view: View, basis: Basis) -> Found {
@@ -774,12 +843,17 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Cond { yes, no, .. } => either(self.numbers_of_expr(file, yes, view, basis), self.numbers_of_expr(file, no, view, basis)),
             ExprKind::Satisfies { expr, .. } | ExprKind::AsConst(expr) | ExprKind::Instantiation { expr, .. } => self.numbers_of_expr(file, expr, view, basis),
             ExprKind::As { expr, .. } | ExprKind::NonNull(expr) if self.is_untyped_file(file) => self.numbers_of_expr(file, expr, view, basis),
+            ExprKind::As { expr, .. } if self.is_cast_to_int32(file, e) => {
+                let converted = Numbers::integers(INT32.0, INT32.1);
+                Some(self.numbers_of_expr(file, expr, view, basis).filter(|operand| !operand.nil && operand.range().is_some_and(|(minimum, maximum)| minimum >= INT32.0 && maximum <= INT32.1)).unwrap_or(converted))
+            }
             ExprKind::As { expr, .. } => {
                 let operand = self.numbers_of_expr(file, expr, view, basis)?;
                 let target = self.type_of_expr(file, e);
                 let is_unchanged = operand == Numbers::NOTHING || self.is_uninformative(target) || !operand.nil && self.some_type(target, |c, part| c.is_number_like(part));
                 is_unchanged.then_some(operand)
             }
+            ExprKind::NonNull(expr) if self.files().module(file).builtin.is_none() => self.numbers_of_expr(file, expr, view, basis).map(|it| Numbers { ignores_nullish: it.ignores_nullish || it.nil, ..it }),
             ExprKind::NonNull(expr) => self.numbers_of_expr(file, expr, view, basis).map(|it| Numbers { nil: false, ignores_nullish: false, ..it }),
             ExprKind::Dot { obj, name, chain: Chain::No, .. } => self.property_numbers(file, e, obj, name, basis),
             ExprKind::Call(call) => self.call_numbers(file, e, call, basis),
@@ -801,6 +875,12 @@ impl<'p, 's> Checker<'p, 's> {
     fn binary_numbers(&mut self, file: FileId, e: ExprId, op: BinOp, left: ExprId, right: ExprId, basis: Basis) -> Found {
         let is_bitwise = matches!(op, BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr | BinOp::UShr);
         if !is_bitwise {
+            if matches!(op, BinOp::Div | BinOp::Pow) {
+                return match self.constant_value_of(file, e) {
+                    Some(Primitive::Number(value)) => integer(value),
+                    _ => None,
+                };
+            }
             if !matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Rem) {
                 return None;
             }
@@ -869,7 +949,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let Some(tests) = self.dominating_tests(file, e, at, basis) else { return held };
         if is_constant {
-            return held.map(|held| tests.iter().fold(held, |held, test| held.within(test.minimum, test.maximum)));
+            return held.map(|held| tests.iter().fold(held, |held, test| held.within(test.minimum, test.maximum).without(test.excluded)));
         }
         let flow = bound.expr_flow[e.idx()];
         if flow.is_none() || flow == UNREACHABLE {
@@ -893,7 +973,7 @@ impl<'p, 's> Checker<'p, 's> {
             return if self.integer_slot(at).is_followed { self.slot_numbers(at, basis) } else { None };
         }
         if name != known::length {
-            return None;
+            return self.annotated_property_numbers(file, e, obj, name);
         }
         if self.is_untyped_file(file) {
             return match self.result_kinds_of(file, obj) {
@@ -911,6 +991,31 @@ impl<'p, 's> Checker<'p, 's> {
         Some(Numbers::integers(0, maximum))
     }
 
+    fn annotated_property_numbers(&mut self, file: FileId, e: ExprId, obj: ExprId, name: Atom) -> Found {
+        if self.is_untyped_file(file) {
+            return None;
+        }
+        let holder = self.type_of_expr(file, obj);
+        let (prop, _) = self.get_property_of_type(holder, name)?;
+        let (minimum, maximum) = self.annotated_prop_integer_range(prop)?;
+        let is_fact = self.has_trusted_type(file, e) && !self.is_in_untyped_clone_span(file, self.hir(file)[e].pos);
+        is_fact.then(|| Numbers { nil: prop.flags.contains(PropFlags::OPTIONAL), ..Numbers::integers(minimum, maximum) })
+    }
+
+    fn annotated_result_numbers(&mut self, file: FileId, e: ExprId) -> Found {
+        if self.is_untyped_file(file) {
+            return None;
+        }
+        let (declared_in, signature, _) = self.resolved_signature(file, e).sig.and_then(|sig| self.sig_decl(sig))?;
+        let (of, func) = self.implementation_for(declared_in, signature)?;
+        if !self.is_compiled(of) || self.hir(of)[func].flags.intersects(Flags::ASYNC | Flags::GENERATOR | Flags::AMBIENT) {
+            return None;
+        }
+        let (minimum, maximum) = self.annotated_result_integer_range(of, func)?;
+        let is_fact = self.has_trusted_type(file, e) && !self.is_in_untyped_clone_span(file, self.hir(file)[e].pos);
+        is_fact.then(|| Numbers::integers(minimum, maximum))
+    }
+
     pub(super) fn refers_to_global_object(&mut self, file: FileId, e: ExprId, name: &[u8]) -> bool {
         let ExprKind::Ident(written) = self.hir(file)[e].kind else { return false };
         self.bound(file).expr_symbol[e.idx()].is_none()
@@ -926,6 +1031,9 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn call_numbers(&mut self, file: FileId, e: ExprId, call: CallId, basis: Basis) -> Found {
+        if let Some(annotated) = self.annotated_result_numbers(file, e) {
+            return Some(annotated);
+        }
         let hir = self.hir(file);
         let call = &hir[call];
         let ExprKind::Dot { obj, name, chain: Chain::No, .. } = hir[call.callee].kind else { return None };
@@ -1187,7 +1295,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn declared_int32_range(&mut self, at: Sym) -> Found {
         let (minimum, maximum) = self.annotated_symbol_integer_range(at)?;
-        Some(Numbers { nil: true, ignores_nullish: true, ..Numbers::integers(minimum, maximum) })
+        Some(Numbers::integers(minimum, maximum))
     }
 
     fn slot_stores(&mut self, at: Sym) -> Option<Place> {
@@ -1205,7 +1313,10 @@ impl<'p, 's> Checker<'p, 's> {
         for &decl in symbol.decls.iter() {
             let declared_in = match decl {
                 Decl::Var(pat) => self.add_variable_initializer(file, pat, symbol.name, &mut place)?,
-                Decl::Param(pat) => self.add_parameter_arguments(file, pat, uses, &mut place)?,
+                Decl::Param(pat) => match self.add_int32_parameter(file, pat, &mut place) {
+                    Some(declared_in) => declared_in,
+                    None => self.add_parameter_arguments(file, pat, uses, &mut place)?,
+                },
                 Decl::Member(member) => self.add_private_field_initializer(file, member, &mut place)?,
                 _ => return None,
             };
@@ -1223,6 +1334,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.is_untyped_file(file) {
             let ty = self.stored_type(self.files().sym(file, at.id));
             place.by_type = self.numbers_by_type(ty);
+            place.holds_numbers_only = self.is_number_type(ty);
         }
         Some(place)
     }
@@ -1365,6 +1477,24 @@ impl<'p, 's> Checker<'p, 's> {
         Some(Container::Fn(func))
     }
 
+    fn add_int32_parameter(&mut self, file: FileId, pat: PatId, place: &mut Place) -> Option<Container> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let PatParent::Param(p) = bound.pat_parent[pat.idx()] else { return None };
+        let (func, param) = (bound.param_fn[p.idx()], &hir[p]);
+        if matches!(hir[func].body, FnBody::None) || param.flags.contains(Flags::REST) || !self.is_int32_annotation(file, param.ty, 0) || self.mentions_arguments_object(file, func) {
+            return None;
+        }
+        let name = bound.symbols.get(bound.pat_symbol[pat.idx()].idx())?.name;
+        if matches!(hir[func].body, FnBody::Block(body) if hir.ids(body).any(|stmt| matches!(hir[stmt].kind, StmtKind::Fn(inner) if hir[inner].name == name))) {
+            return None;
+        }
+        place.stores.extend(param.default.some().map(Store::Value));
+        place.is_parameter = true;
+        place.enters_as_declared = true;
+        place.starts_undefined = param.flags.contains(Flags::OPTIONAL);
+        Some(Container::Fn(func))
+    }
+
     fn slot_numbers(&mut self, at: Sym, basis: Basis) -> Found {
         match basis {
             Basis::Rough => self.slot_numbers_first_pass(at),
@@ -1428,6 +1558,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let by_type = place.by_type.filter(|by_type| !by_type.has_no_number());
         let mut all = if place.starts_undefined { Numbers::NULLISH } else { Numbers::NOTHING };
+        if place.enters_as_declared {
+            all = all.or(place.declared_range?);
+        }
         for (index, &store) in place.stores.iter().enumerate() {
             let stored = match (self.store_numbers(at.file, store, View::Kept, Basis::Rough), by_type, place.declared_range) {
                 (Some(stored), _, Some(declared)) => stored.within(declared.minimum, declared.maximum),
@@ -1436,6 +1569,7 @@ impl<'p, 's> Checker<'p, 's> {
                 (None, Some(_), None) => Numbers { nil: true, ignores_nullish: true, ..Numbers::NOTHING },
                 (None, None, None) => return None,
             };
+            let stored = if place.holds_numbers_only { stored.stored_as_a_number() } else { stored };
             all = all.or(if place.defaulted.contains(&index) { Numbers { ignores_nullish: false, ..stored } } else { stored });
         }
         Some(match by_type {
@@ -1455,6 +1589,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn numbers_at(&mut self, walk: &mut Walk, start: FlowId) -> Found {
         let bound = self.bound(walk.at.file);
         let (mut minimum, mut maximum) = (i64::MIN, i64::MAX);
+        let mut excluded: SmallVec<[i64; 2]> = SmallVec::new();
         let mut flow = start;
         let found = loop {
             walk.steps += 1;
@@ -1463,6 +1598,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             for test in walk.tests.iter().filter(|test| test.at == flow) {
                 (minimum, maximum) = (minimum.max(test.minimum), maximum.min(test.maximum));
+                excluded.extend(test.excluded);
             }
             match bound.flow[flow.idx()] {
                 Flow::Unreachable => break Some(Numbers::NOTHING),
@@ -1505,7 +1641,7 @@ impl<'p, 's> Checker<'p, 's> {
                 },
             }
         };
-        found.map(|found| found.within(minimum, maximum))
+        found.map(|found| excluded.iter().fold(found.within(minimum, maximum), |found, &value| found.without(Some(value))))
     }
 
     pub(super) fn is_store_to_slot(&self, at: Sym, target: FlowTarget) -> bool {
@@ -1522,14 +1658,15 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         let file = walk.at.file;
-        Some(match target {
+        let stored = match target {
             FlowTarget::Var(d) => self.numbers_of_expr(file, self.hir(file)[d].init, View::Here, walk.basis),
             FlowTarget::Pat(_) => None,
             FlowTarget::Expr(e) => match self.target_store(file, e) {
                 Some(store) => self.store_numbers(file, store, View::Here, walk.basis),
                 None => None,
             },
-        })
+        };
+        Some(if self.integer_slot(walk.at).holds_numbers_only { stored.map(Numbers::stored_as_a_number) } else { stored })
     }
 
     pub(super) fn is_assigned_in_loop(&mut self, at: Sym, head: FlowId) -> bool {
@@ -1712,13 +1849,13 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(other) = self.numbers_of_expr(file, other, View::Here, basis) else { return };
         let flow = bound.expr_flow[name.idx()];
         if other == Numbers::NOTHING {
-            return tests.push(Test { at: flow, minimum: 1, maximum: 0 });
+            return tests.push(Test { at: flow, minimum: 1, maximum: 0, excluded: None });
         }
         let Some((low, mut high)) = other.numbers() else { return };
         if let Some(addend) = addend {
             let Some(addend) = self.numbers_of_expr(file, addend, View::Here, basis) else { return };
             if addend == Numbers::NOTHING {
-                return tests.push(Test { at: flow, minimum: 1, maximum: 0 });
+                return tests.push(Test { at: flow, minimum: 1, maximum: 0, excluded: None });
             }
             let Some((least_added, _)) = addend.numbers() else { return };
             high = high.saturating_sub(least_added);
@@ -1729,8 +1866,9 @@ impl<'p, 's> Checker<'p, 's> {
             (BinOp::Gt, true) | (BinOp::Le, false) => (low + 1, i64::MAX),
             (BinOp::Ge, true) | (BinOp::Lt, false) => (low, i64::MAX),
             (BinOp::EqEqEq | BinOp::EqEq, true) | (BinOp::NotEqEq | BinOp::NotEq, false) => (low, high),
+            _ if low == high => return tests.push(Test { at: flow, minimum: i64::MIN, maximum: i64::MAX, excluded: Some(low) }),
             _ => return,
         };
-        tests.push(Test { at: flow, minimum, maximum });
+        tests.push(Test { at: flow, minimum, maximum, excluded: None });
     }
 }

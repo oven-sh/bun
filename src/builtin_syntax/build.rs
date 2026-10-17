@@ -32,7 +32,7 @@ fn main() {
     let written_for = bytes
         .get(4..)
         .unwrap_or_default()
-        .chunks_exact(1 + 63 + 4 + 4)
+        .as_chunks::<{ 1 + 63 + 4 + 4 }>().0.iter()
         .take(files)
         .filter_map(|record| record.get(1..1 + record[0] as usize))
         .find_map(|name| name.strip_prefix(b"table-"))

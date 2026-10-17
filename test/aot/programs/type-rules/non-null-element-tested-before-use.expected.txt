@@ -8,9 +8,9 @@ thrown: RangeError
 thrown: RangeError
 -1 none none none none none none 6  none none none
 thrown: RangeError
-ahead of the test: TypeError
-on the other side of the test: TypeError
-in a closure behind the test: TypeError
+ahead of the test: none
+on the other side of the test: 1
+in a closure behind the test: none
 behind a test of something else: TypeError
-behind one way into a join: TypeError
-null is not undefined: TypeError
+behind one way into a join: 1
+null is not undefined: NaN

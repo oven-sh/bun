@@ -7747,7 +7747,7 @@ impl<'p, 's> Checker<'p, 's> {
                                 prop_set.push(prop);
                             }
                         } else {
-                            let hash_of = |prop: &Prop<'s>| std::hash::BuildHasher::hash_one(&crate::util::FxBuild::default(), prop);
+                            let hash_of = |prop: &Prop<'s>| std::hash::BuildHasher::hash_one(&crate::util::FxBuild, prop);
                             if prop_indices_by_hash.is_empty() {
                                 for (index, known) in prop_set.iter().enumerate() {
                                     prop_indices_by_hash.entry(hash_of(known)).or_default().push(index as u32);

@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
+import { withoutCoreDump } from "../aot/run-programs";
 import { describe, test } from "../aot/supported";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
 const flag = "--aot-crash-if-interpreter-is-used";
@@ -12,7 +13,7 @@ const childTripped = JSON.stringify({ stdout: "", tripped: true, succeeded: fals
 const tripsOnLateFile = /^crashIfInterpreterIsUsed: .*late\.cjs/m;
 
 async function run(cmd: string[], cwd: string, env: Record<string, string> = {}) {
-  await using proc = Bun.spawn({ cmd, cwd, env: { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: undefined, CHILD_BUN: bunExe(), ...env }, stdout: "pipe", stderr: "pipe" });
+  await using proc = Bun.spawn({ cmd: withoutCoreDump(cmd), cwd, env: { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: undefined, CHILD_BUN: bunExe(), ...env }, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
@@ -23,7 +24,7 @@ async function build(cwd: string, ...flags: string[]) {
   return join(cwd, "program");
 }
 
-describe.skipIf(isWindows).concurrent(flag, () => {
+describe.concurrent(flag, () => {
   test("a child process of the executable does not inherit it", async () => {
     using folder = tempDir("aot-crash-if-interpreter", { "program.mjs": startsChild });
     const { stdout, stderr, exitCode } = await run([await build(String(folder), flag)], String(folder));

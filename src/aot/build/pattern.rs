@@ -7,6 +7,7 @@ use bun_sema::atom::Atom;
 use bun_sema::hir::{ClassId, ExprId, ExprKind};
 use bun_sema::program::FileId;
 
+#[derive(Copy, Clone)]
 pub(crate) struct PatternIterator {
     iter: V,
     done: Var,

@@ -69,8 +69,8 @@ pub(super) struct TypeCaches {
 impl TypeCaches {
     pub(super) fn release(&self) {
         let taken = (self.index_and_call_facts.take(), self.function_members.take(), self.nested_pairs_cache.take(), self.plain_data.take());
-        std::thread::spawn(move || drop(taken));
+        let _ = std::thread::Builder::new().spawn(move || drop(taken));
         let escape_caches = (self.object_types.take(), self.nested_flows.take());
-        std::thread::spawn(move || drop(escape_caches));
+        let _ = std::thread::Builder::new().spawn(move || drop(escape_caches));
     }
 }

@@ -292,7 +292,7 @@ pub fn describe(program: &Program, ty: TyId) -> String {
             Part::Class(_) => {}
             Part::Array(elements) => {
                 let element = if elements.is_some() { describe(program, *elements) } else { "any".to_owned() };
-                let text = if element.contains(" | ") { format!("({element})[]") } else { format!("{element}[]") };
+                let text = if bun_core::strings::contains(element.as_bytes(), b" | ") { format!("({element})[]") } else { format!("{element}[]") };
                 append_member(&mut result, true, &text);
             }
             Part::Global(name, _) => append_member(&mut result, true, &bstr::BStr::new(program.strs.get(*name)).to_string()),
@@ -747,7 +747,7 @@ fn entered_slots(program: &Program, func: &Func) -> FxHashMap<V, EntrySlot> {
                     entered.entry(value).or_insert(EntrySlot::Field);
                 }
                 Some(&Op::FieldSet { value, layout, .. }) => {
-                    entered.entry(value).or_insert(if program.layouts[layout.idx()].kind == LayoutKind::Environment { EntrySlot::Variable } else { EntrySlot::Field });
+                    entered.entry(value).or_insert_with(|| if program.layouts[layout.idx()].kind == LayoutKind::Environment { EntrySlot::Variable } else { EntrySlot::Field });
                 }
                 Some(Op::Operation { which: Operation::Initialize, args }) => {
                     for &arg in args {
@@ -771,7 +771,7 @@ fn entered_calls(program: &Program, func: &Func) -> FxHashMap<V, (u32, usize)> {
             let Some(callee) = program.funcs.get(callee.idx()).filter(|callee| callee.module.is_some()) else { continue };
             let first = callee.captures.len() + usize::from(callee.has(func_flags::HAS_THIS));
             for (index, &arg) in args.iter().enumerate().skip(first) {
-                entered.entry(arg).or_insert((func.values[v.idx()].pos, index - first));
+                entered.entry(arg).or_insert_with(|| (func.values[v.idx()].pos, index - first));
             }
         }
     }
@@ -1223,6 +1223,7 @@ fn add_classes(program: &Program, modules: &mut [Module]) {
             quoted(&mut step, program.strs.get(method.name));
         }
         let _ = write!(step, "],\"constructorMayBeReplaced\":{}", layout.class_flags & class_flags::CONSTRUCTOR_MAY_BE_REPLACED != 0);
+        let _ = write!(step, ",\"prototypeMayGainMembers\":{}", layout.class_flags & class_flags::PROTOTYPE_MAY_GAIN_MEMBERS != 0);
         let key = &linked.keys[index];
         if !key.is_empty() {
             step.push_str(",\"shape\":");
@@ -1475,7 +1476,7 @@ fn walk_module(
                     .filter(|&chain| span.start <= chains[chain].start && chains[chain].end <= span.end && chains[chain].step == span.step)
                     .filter(|&chain| (chains[chain].start, chains[chain].end) == (span.start, span.end) || !joins.contains(&(span.start, span.end)));
                 let chain = earlier.unwrap_or_else(|| {
-                    chains.push(Chain { start: span.start, end: span.end, step: span.step, passes: class::ALL | class::TAGGED | class::ARRAY, integer_range: Some(FULL_INT32_RANGE).filter(|_| span.step == 0), steps: Vec::new() });
+                    chains.push(Chain { start: span.start, end: span.end, step: span.step, passes: class::ALL | class::TAGGED | class::ARRAY, integer_range: (span.step == 0).then_some(FULL_INT32_RANGE), steps: Vec::new() });
                     chains.len() - 1
                 });
                 (chains[chain].start, chains[chain].end) = (span.start, span.end);

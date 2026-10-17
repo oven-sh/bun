@@ -6,7 +6,7 @@ import { describe, test } from "../supported";
 
 type Mode = "bun run --aot" | "bun build --compile --aot";
 const programs: { file: string; shapeOf: string; expected: string; differs: Mode[] }[] = [
-  { file: "type-guard-casts-before-it-tests.ts", shapeOf: "ts-pattern", expected: "false false true\n", differs: ["bun build --compile --aot"] },
+  { file: "type-guard-casts-before-it-tests.ts", shapeOf: "ts-pattern", expected: "false false true\n", differs: ["bun run --aot", "bun build --compile --aot"] },
   { file: "handler-called-with-part-of-its-context.ts", shapeOf: "Elysia", expected: "/\n", differs: ["bun build --compile --aot"] },
   { file: "overload-wider-than-its-implementation.ts", shapeOf: "Redux Toolkit", expected: "made\n", differs: ["bun run --aot", "bun build --compile --aot"] },
   { file: "draft-proxy-stands-for-an-array.ts", shapeOf: "immer", expected: "true 2 true\n1,2\n", differs: ["bun run --aot", "bun build --compile --aot"] },

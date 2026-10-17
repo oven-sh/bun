@@ -1,0 +1,50 @@
+// Object.setPrototypeOf(o, p) where o is a typed record that has been seen since it was made, as Express does with a request and a response when node:http's own objects have layouts. It went to the runtime every time. What the change does to a typed record follows from the Structure before and the prototype alone (the Structure after; whether reads of absent fields must ask the chain), so the stub that calls the host function remembers it, for layouts no object of which has ever been anybody's prototype. Every case below where more decides is tried AFTER the pair has been remembered.
+const attempt = function (what: string, run: () => any): void { try { console.log(what + ":", run()); } catch (error: any) { console.log(what + ":", error.constructor.name); } };
+interface Message { url: string; size: number; inner: { a: number }; note?: string; code?: number }
+function makeMessage(size: number): Message { return { url: "/" + size, size, inner: { a: size } }; }
+const kept: Message[] = [];
+for (let i = 0; i < 400; i++) kept.push(makeMessage(i));
+let typedSum = 0;
+for (const m of kept) typedSum += m.size + m.url.length + m.inner.a + (m.note ?? "").length + (m.code ?? 0);
+console.log(typedSum);
+const loose: any[] = (function (list: any): any { return list; })(kept);
+const parent: any = { kind: "parent", note: "inherited", greet(this: any): string { return "hello " + this.url; } };
+const other: any = { kind: "other", code: 7, greet(this: any): string { return "bye " + this.url; } };
+const adopt = function (o: any, p: any): any { return Object.setPrototypeOf(o, p); };
+const look = function (o: any): string { return [o.url, o.size, o.inner.a, o.note, o.code, o.kind, typeof o.greet === "function" ? o.greet() : "-", Object.keys(o).join()].join(" "); };
+let sum = 0;
+for (let i = 0; i < 200; i++) { const o = loose[i]; sum += (adopt(o, parent) === o ? 1 : 0) + (Object.getPrototypeOf(o) === parent ? 1 : 0) + o.greet().length + String(o.note).length; }
+console.log(sum);
+console.log(look(loose[0]), "|", look(loose[199]), "|", look(loose[200]));
+let typedAgain = 0;
+for (const m of kept) typedAgain += m.size + (m.note ?? "none").length + (m.code ?? 1);
+console.log(typedAgain);
+attempt("another prototype", function (): any { return look(adopt(loose[201], other)); });
+attempt("there and back", function (): any { const o = loose[202]; adopt(o, parent); adopt(o, other); adopt(o, parent); return look(o); });
+attempt("back to Object.prototype", function (): any { const o = loose[203]; adopt(o, parent); adopt(o, Object.prototype); return look(o); });
+attempt("the same twice", function (): any { const o = loose[204]; adopt(o, parent); adopt(o, parent); return look(o); });
+attempt("null", function (): any { const o = adopt(loose[205], null); return [o.url, o.note, Object.getPrototypeOf(o)].join(" "); });
+attempt("its optional field is set first", function (): any { const o = loose[206]; o.note = "own"; adopt(o, parent); return look(o); });
+attempt("and deleted afterwards", function (): any { const o = loose[206]; delete o.note; return look(o); });
+attempt("a property beyond the layout first", function (): any { const o = loose[207]; o.extra = 1; adopt(o, parent); return look(o); });
+attempt("again with that property", function (): any { let out = ""; for (let i = 208; i < 212; i++) { const o = loose[i]; o.extra = i; adopt(o, parent); out += o.extra + o.kind + " "; } return out; });
+attempt("a property beyond the layout afterwards", function (): any { const o = loose[212]; adopt(o, parent); o.late = 2; return look(o); });
+attempt("not extensible", function (): any { return look(adopt(Object.preventExtensions(loose[213]), parent)); });
+attempt("sealed", function (): any { return look(adopt(Object.seal(loose[214]), parent)); });
+attempt("frozen", function (): any { return look(adopt(Object.freeze(loose[215]), parent)); });
+attempt("through a value", function (): any { const set: any = (function (f: any): any { return f; })(Object.setPrototypeOf); let out = 0; for (let i = 216; i < 240; i++) out += set(loose[i], parent).greet().length; return out; });
+attempt("the prototype gets a name later", function (): any { parent.added = "yes"; return [loose[0].added, loose[216].added, loose[300].added].join(" "); });
+attempt("the prototype loses the inherited name", function (): any { delete parent.note; const o = adopt(loose[240], parent); return [o.note, loose[0].note].join(" "); });
+attempt("a proxy as the prototype", function (): any { const seen: string[] = []; const p = new Proxy(other, { get(target: any, key: any, receiver: any): any { seen.push(String(key)); return Reflect.get(target, key, receiver); } }); const o = adopt(loose[241], p); return [o.kind, o.url, seen.join()].join(" "); });
+attempt("many prototypes", function (): any { const all: any[] = []; for (let i = 0; i < 40; i++) all.push({ id: i }); let total = 0; for (let round = 0; round < 3; round++) for (let i = 0; i < 40; i++) total += adopt(loose[250 + i], all[i]).id; return total; });
+if (typeof (globalThis as any).gc === "function") (globalThis as any).gc();
+attempt("after a collection", function (): any { let total = 0; for (let i = 300; i < 330; i++) total += adopt(loose[i], parent).greet().length; return total; });
+attempt("one of them becomes a prototype", function (): any { const middle = loose[330]; adopt(middle, parent); const heir = Object.create(middle); const before = [heir.url, heir.kind].join(); adopt(middle, other); return [before, heir.url, heir.kind, heir.greet()].join(" "); });
+attempt("a cycle", function (): any { const top = loose[331]; const below = Object.create(top); return look(adopt(top, below)); });
+attempt("a longer cycle", function (): any { const top = loose[332]; const low = Object.create(Object.create(top)); return look(adopt(top, low)); });
+attempt("itself", function (): any { return look(adopt(loose[333], loose[333])); });
+attempt("an heir sees the change after it has read", function (): any { const middle = loose[334]; const heir = Object.create(middle); let seen = ""; for (let i = 0; i < 5; i++) seen += String(heir.kind) + ","; adopt(middle, other); for (let i = 0; i < 5; i++) seen += String(heir.kind) + ","; adopt(middle, parent); for (let i = 0; i < 5; i++) seen += String(heir.kind) + ","; return seen; });
+attempt("and the others still change", function (): any { let total = 0; for (let i = 340; i < 370; i++) total += adopt(loose[i], parent).greet().length + adopt(loose[i], other).greet().length; return total; });
+let typedLast = 0;
+for (const m of kept) typedLast += m.size + m.inner.a + (m.note ?? "none").length + (m.code ?? 1);
+console.log(typedLast);

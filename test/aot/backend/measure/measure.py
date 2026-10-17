@@ -59,8 +59,8 @@ samples times period over the counted total (well under 1: the kernel dropped sa
 single stubs too where <executable>.map exists (`BUN_JSC_aotMapFilePath=<executable>.map bun build --compile --aot ..`). The
 executables must not be stripped. table.py prints the layers side by side.
 EVENTS="ic_cache_fill_l2,l2_cache_req_stat.ic_fill_miss": more hardware events by perf's names, counted with instructions and cycles, per
-request, as fields of their own. On AMD Zen 4 these two are the lines of code fetched into the first-level cache and those that the
-L2 did not have either. At most four, or perf takes turns (counted=MULTIPLEXED).
+request, as fields of their own. On AMD Zen 4 these two are the lines of code that the first-level cache took from the L2 and the
+lines that came from beyond the L2: neither is part of the other, and the lines fetched are their sum. At most four, or perf takes turns (counted=MULTIPLEXED).
 COPIES: the pages of an executable file stay where they are in the page cache for as long as the file lives, so all processes of one
 file share one placement of its code in physical memory, and two files with the same bytes can differ by some percent in cycles.
 Every start therefore runs a copy of the executable that was made for it, in /dev/shm, under a path of the same length for every column.

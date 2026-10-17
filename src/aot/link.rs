@@ -24,8 +24,8 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
 mod exports;
-mod integer_ranges;
 mod by_name;
+mod costs;
 mod interpreted;
 mod nullish;
 mod reads;
@@ -64,7 +64,7 @@ impl Linked {
         let result = std::thread::scope(|scope| {
             let beside = spawn_outside_pool(scope, || beside(program));
             if let Some(FailureCheck { setup, modules }) = failure_check.take() {
-                found.extend(always_failing_sites(checked, program, setup, &modules, in_parallel));
+                found.extend(always_failing_sites(checked, program, &setup, &modules, in_parallel));
             }
             beside.join().expect("the thread beside the failure check panicked")
         });
@@ -73,7 +73,7 @@ impl Linked {
     }
 }
 
-fn always_failing_sites(checked: &Checked<'_>, program: &Program, setup: throws::Setup, modules: &[FileId], in_parallel: InParallel<'_>) -> Vec<CompilerDiagnostic> {
+fn always_failing_sites(checked: &Checked<'_>, program: &Program, setup: &throws::Setup, modules: &[FileId], in_parallel: InParallel<'_>) -> Vec<CompilerDiagnostic> {
     let logs_type_errors = checked.checker().logs_type_errors();
     let mut directives = bun_sema::check::CommentDirectives::default();
     throws::find_always_failing_sites(program, setup, in_parallel).iter().filter_map(|site| {
@@ -121,15 +121,19 @@ pub struct Explain {
     pub throws_json: bool,
     pub throws_all: bool,
     pub rules_json: bool,
+    pub costs: bool,
+    pub costs_json: bool,
 }
 
 impl Explain {
-    pub const REPORTS: [&'static str; 5] = ["throws", "throws-all", "throws-json", "throws-all-json", "rules-json"];
-    pub const WORDS: [&'static str; 13] = ["mutations", "deferred", "fields", "foreign", "given", "integers", "joins", "plugins", "rows", "throws", "throws-all", "throws-all-json", "throws-json"];
+    pub const REPORTS: [&'static str; 7] = ["throws", "throws-all", "throws-json", "throws-all-json", "rules-json", "costs", "costs-json"];
+    pub const WORDS: [&'static str; 15] = ["mutations", "costs", "costs-json", "deferred", "fields", "foreign", "given", "integers", "joins", "plugins", "rows", "throws", "throws-all", "throws-all-json", "throws-json"];
 
     pub fn set(&mut self, word: &[u8]) -> bool {
         let asked = match word {
             b"mutations" => &mut self.mutations,
+            b"" | b"costs" => &mut self.costs,
+            b"costs-json" => &mut self.costs_json,
             b"deferred" => &mut self.deferred,
             b"fields" => &mut self.fields,
             b"foreign" => &mut self.foreign,
@@ -319,6 +323,7 @@ impl Index {
     }
 }
 
+#[derive(Copy, Clone)]
 enum Work {
     Root(u32, bool),
     Func(u32),
@@ -1805,7 +1810,7 @@ fn explain_start(program: &Program, evaluating: &[(FuncId, FuncKey)]) -> Vec<Str
                         Op::FuncRef(func) => format!("FuncRef{}", of_class(*func)),
                         Op::Closure { func, .. } => format!("Closure{}", of_class(*func)),
                         Op::CallDirect { func, .. } if program.funcs[func.idx()].kind == FuncKind::Module => "CallDirect of such a function".to_owned(),
-                        _ => format!("{op:?}").split(|c: char| !c.is_ascii_alphanumeric()).next().unwrap_or_default().to_owned(),
+                        _ => format!("{op:?}").chars().take_while(char::is_ascii_alphanumeric).collect(),
                     };
                     operations += 1;
                     *by_name.entry(name).or_default() += 1;
@@ -2457,6 +2462,7 @@ fn layout_type_texts(checked: &Checked<'_>, program: &Program, slice: &[(LayoutI
     LayoutTypeTexts { fields: texts, declared_at }
 }
 
+#[derive(Copy, Clone)]
 pub struct Errors<'a> {
     pub places: &'a [(FileId, u32)],
     pub in_dropped_imports: &'a [bool],
@@ -2532,9 +2538,9 @@ fn classify_error_location(checked: &Checked<'_>, fragments: &[Fragment], index:
                 reason.get_or_insert_with(|| OutsideProgramReason::NotReached(name_of(function)));
                 continue;
             }
-            match body.cut.iter().find(holds) {
-                Some(cut) => reason = Some(OutsideProgramReason::Cut(cut.0)),
-                None => return None,
+            {
+                let cut = body.cut.iter().find(holds)?;
+                reason = Some(OutsideProgramReason::Cut(cut.0))
             }
         }
         return reason;
@@ -2558,8 +2564,7 @@ fn classify_error_location(checked: &Checked<'_>, fragments: &[Fragment], index:
         _ => None,
     })?;
     let exports_locals = hir.ids(hir.body).any(|stmt| matches!(hir[stmt].kind, StmtKind::ExportNamed(export) if hir[export].spec.is_none()));
-    let mentions: Vec<u32> = hir.exprs.iter().filter(|e| matches!(e.kind, hir::ExprKind::Ident(name) if name == imported.local)).map(|e| e.pos).collect();
-    let is_unused = !exports_locals && mentions.into_iter().all(|mention| classify_error_location(checked, fragments, index, reach, ids, (file, mention), is_imported_for_types).is_some());
+    let is_unused = !exports_locals && hir.exprs.iter().filter(|e| matches!(e.kind, hir::ExprKind::Ident(name) if name == imported.local)).map(|e| e.pos).all(|mention| classify_error_location(checked, fragments, index, reach, ids, (file, mention), is_imported_for_types).is_some());
     is_unused.then_some(OutsideProgramReason::DroppedImport)
 }
 
@@ -2662,6 +2667,10 @@ fn make_line_tables(checked: &Checked<'_>, shown_from: &[u8], shows_whole_paths:
     });
 }
 
+#[allow(
+    clippy::large_stack_frames,
+    reason = "runs once per build and never calls itself; most of the frame is its `Checker`s, 22 KB each"
+)]
 fn link_with_helper_threads<'scope>(
     scope: &'scope std::thread::Scope<'scope, '_>,
     checked: &'scope Checked<'_>,
@@ -2684,6 +2693,8 @@ fn link_with_helper_threads<'scope>(
 ) -> Linked {
     let (mut times, mut since) = (Times::default(), Instant::now());
     fragments.sort_by_cached_key(|fragment| checked.files.rank_of_file(fragment.file));
+    let unproven_int32_values: Vec<CompilerDiagnostic> = fragments.iter_mut().flat_map(|fragment| std::mem::take(&mut fragment.unproven_int32_values)).collect();
+    let declares_int32 = fragments.iter().any(|fragment| fragment.declares_int32);
     let translated: Vec<FileId> = fragments.iter().map(|fragment| fragment.file).filter(|&file| file != NO_FILE).collect();
     let is_opaque = |file: FileId| file != NO_FILE && checked.files.module(file).is_opaque();
     let is_runtime = |file: FileId| file != NO_FILE && checked.files.module(file).builtin.is_some();
@@ -2995,7 +3006,7 @@ fn link_with_helper_threads<'scope>(
         checked.files.hir(file).kind == hir::FileKind::Declaration && bun_core::strings::contains(checked.files.module(file).path.text, b"/node_modules/")
     };
     let place_of = |(&place, &is_in_dropped_import): (&(FileId, u32), &bool)| {
-        let elsewhere = classify_error_location(checked, &fragments, &index, &reach, ids, place, &mut is_imported_for_types).or(is_in_dropped_import.then_some(OutsideProgramReason::DroppedImport));
+        let elsewhere = classify_error_location(checked, &fragments, &index, &reach, ids, place, &mut is_imported_for_types).or_else(|| is_in_dropped_import.then_some(OutsideProgramReason::DroppedImport));
         elsewhere.or_else(|| is_in_regexp_literal(place).then_some(OutsideProgramReason::RegExpLiteral)).or_else(|| is_private_name_in_optional_chain(place).then_some(OutsideProgramReason::PrivateNameInOptionalChain))
             .or_else(|| is_private_name_of_enclosing_class(place).then_some(OutsideProgramReason::PrivateNameOfEnclosingClass))
             .or_else(|| is_static_member_named_constructor(place).then_some(OutsideProgramReason::StaticMemberNamedConstructor))
@@ -3005,6 +3016,10 @@ fn link_with_helper_threads<'scope>(
     let errors: Vec<Option<OutsideProgramReason>> = places.iter().zip(in_dropped_imports).map(place_of).collect();
     if errors.iter().any(Option::is_none) {
         return Linked { problems, errors, times, ..Linked::default() };
+    }
+    let found: Vec<CompilerDiagnostic> = unproven_int32_values.into_iter().filter(|unproven| classify_error_location(checked, &fragments, &index, &reach, ids, (unproven.file, unproven.start), &mut is_imported_for_types).is_none()).collect();
+    if !found.is_empty() {
+        return Linked { problems, errors, times, found, ..Linked::default() };
     }
 
     let runtime_flags: FxHashSet<FileId> = builtin_modules.iter().map(|module| module.1).collect();
@@ -3507,6 +3522,23 @@ fn link_with_helper_threads<'scope>(
             }
         }
     }
+    let extensible = c.classes_with_extensible_prototypes();
+    for index in 0..program.layouts.len() {
+        let Some(added) = classes[index].and_then(|class| extensible.get(&class)) else { continue };
+        let may_replace_constructor = added.has_unknown_name || added.names.iter().any(|name| **name == *b"constructor");
+        program.layouts[index].class_flags |= class_flags::PROTOTYPE_MAY_GAIN_MEMBERS | if may_replace_constructor { class_flags::CONSTRUCTOR_MAY_BE_REPLACED } else { 0 };
+        let mut at = LayoutId::new(index);
+        while at.is_some() {
+            let is_ancestor = at.idx() != index;
+            let (layouts, strs) = (&mut program.layouts, &program.strs);
+            for method in layouts[at.idx()].methods.iter_mut().filter(|method| method.name.is_some() && method.flags & method_flags::STATIC == 0) {
+                if is_ancestor || added.has_unknown_name || added.names.iter().any(|name| **name == *strs.get(method.name)) {
+                    method.flags |= method_flags::MAY_BE_REPLACED;
+                }
+            }
+            at = layouts[at.idx()].base;
+        }
+    }
 
     let has_replaced_static_member = |layout: &Layout| layout.methods.iter().any(|method| method.flags & method_flags::STATIC != 0 && method.flags & method_flags::MAY_BE_REPLACED != 0);
     for &(layout, _) in views.iter().filter(|view| classes[view.0.idx()].is_some()) {
@@ -3816,7 +3848,6 @@ fn link_with_helper_threads<'scope>(
         }
     }
     nullish::narrow_integer_arithmetic(&mut program, in_parallel);
-    integer_ranges::eliminate_redundant_integer_casts(&mut program, in_parallel);
     times.add("nil", &mut since);
     say("the subtypes are in the program");
     times.add("members", &mut since);
@@ -3880,54 +3911,43 @@ fn link_with_helper_threads<'scope>(
     say("the texts of the types");
     let mut explained = Vec::new();
     let mut found = Vec::new();
+    let (mut open_layouts_found, mut chains_by_name, mut checks_of_parameters, mut accesses_without_known_cause) = (Vec::new(), Vec::new(), FxHashSet::default(), Vec::new());
+    if declares_int32 {
+        found.append(&mut c.find_int32_members_seen_through_other_types(&asked, &membership));
+    }
     if let Some(scopes) = checked.rule_scopes.get().filter(|scopes| scopes.is_enabled(Rule::OpenLayout)) {
         let is_left_out: Vec<bool> = views.iter().map(|view| is_runtime_layout.get(view.0.idx()).copied().unwrap_or(false)).collect();
-        found.append(&mut c.find_open_layouts(&asked, &membership, &is_left_out, scopes));
+        for (view, finding) in c.find_open_layouts(&asked, &membership, &is_left_out, scopes) {
+            open_layouts_found.push((views[view].0, found.len()));
+            found.push(finding);
+        }
+    }
+    if let Some(scopes) = checked.rule_scopes.get().filter(|scopes| scopes.is_enabled(Rule::ReshapedLayout)) {
+        found.append(&mut c.find_reshaped_layouts(&membership, scopes));
     }
     if let Some(scopes) = checked.rule_scopes.get().filter(|scopes| scopes.is_enabled(Rule::ExternalType)) {
         found.append(&mut checked.checker().find_external_types(scopes));
     }
+    let is_declared_by_program = |index: usize, layout: &Layout| layout.kind == LayoutKind::Instance && !is_runtime_layout.get(index).copied().unwrap_or(false);
+    let looks_at_classes = checked.rule_scopes.get().is_some_and(|scopes| [Rule::ByName, Rule::LostLayout, Rule::UntypedBase].into_iter().any(|rule| scopes.is_enabled(rule)));
+    let declared: Vec<((FileId, ClassId), bool)> = (program.layouts.iter().enumerate())
+        .filter(|&(index, layout)| looks_at_classes && is_declared_by_program(index, layout))
+        .filter_map(|(index, layout)| Some((classes[index]?, layout.class_flags & class_flags::HAS_FIXED_LAYOUT != 0)))
+        .collect();
+    let classes_without_layout: FxHashSet<(FileId, ClassId)> = declared.iter().filter(|class| !class.1).map(|class| class.0).collect();
     if let Some(scopes) = checked.rule_scopes.get().filter(|scopes| scopes.is_enabled(Rule::ByName)) {
         let is_wanted_module: Vec<bool> = modules.iter().map(|&file| scopes.may_apply_in(Rule::ByName, file)).collect();
         let sites = by_name::find_sites(&program, &is_wanted_module, in_parallel);
-        let mut accesses = Vec::new();
-        for of_module in sites.chunk_by(|a, b| a.module == b.module) {
-            let file = modules[of_module[0].module as usize];
-            let (hir, atoms) = (checked.files.hir(file), &checked.files.atoms);
-            let is_site = |pos: u32, name: bun_sema::atom::Atom, is_call: bool| program.strs.find(atoms.bytes(name)).is_some_and(|name| of_module.binary_search(&by_name::Site { module: of_module[0].module, pos, name, is_call }).is_ok());
-            let members: Vec<(hir::ExprId, hir::ExprId, bun_sema::atom::Atom, u32)> = (hir.exprs.iter().enumerate())
-                .filter_map(|(index, node)| match node.kind {
-                    hir::ExprKind::Dot { obj, name, name_pos, .. } => Some((hir::ExprId(index as u32), obj, name, name_pos)),
-                    _ => None,
-                })
-                .filter(|&(member, _, name, name_pos)| is_site(crate::positions::object_pos(hir, member), name, false) || is_site(name_pos, name, true))
-                .collect();
-            let by_name: FxHashSet<hir::ExprId> = members.iter().map(|member| member.0).collect();
-            for (_, obj, name, name_pos) in members {
-                let mut origin = crate::positions::skip_assertions(hir, obj);
-                while let hir::ExprKind::Await(awaited) = hir[origin].kind {
-                    origin = crate::positions::skip_assertions(hir, awaited);
-                }
-                if let hir::ExprKind::Call(call) = hir[origin].kind {
-                    origin = crate::positions::skip_assertions(hir, hir[call].callee);
-                }
-                if !by_name.contains(&origin) {
-                    accesses.push((file, obj, name_pos, atoms.bytes(name).to_vec()));
-                }
-            }
-        }
-        let (mut reported, unexplained) = checked.checker().find_accesses_by_name(&accesses, scopes);
+        chains_by_name = by_name::find_chains(&program, checked, &modules, &sites);
+        let accesses: Vec<(FileId, hir::ExprId, u32, Vec<u8>)> = chains_by_name.iter().filter(|chain| !chain.begins_with_a_store).map(|chain| (chain.file, chain.receiver, chain.name_pos, chain.name.clone())).collect();
+        let (mut reported, unexplained) = checked.checker().find_accesses_by_name(&accesses, &classes_without_layout, scopes);
         if explain.mutations {
-            explained.push(format!("by-name: {} sites in the code, {} first in their chain, {} with a reason, {unexplained} without", sites.len(), accesses.len(), reported.len()));
+            explained.push(format!("by-name: {} sites in the code, {} first in their chain, {} with a reason, {} without", sites.len(), accesses.len(), reported.len(), unexplained.len()));
         }
         found.append(&mut reported);
+        accesses_without_known_cause = unexplained;
     }
     if let Some(scopes) = checked.rule_scopes.get().filter(|scopes| scopes.is_enabled(Rule::LostLayout) || scopes.is_enabled(Rule::UntypedBase)) {
-        let is_declared_by_program = |index: usize, layout: &Layout| layout.kind == LayoutKind::Instance && !is_runtime_layout.get(index).copied().unwrap_or(false);
-        let declared: Vec<((FileId, ClassId), bool)> = (program.layouts.iter().enumerate())
-            .filter(|&(index, layout)| is_declared_by_program(index, layout))
-            .filter_map(|(index, layout)| Some((classes[index]?, layout.class_flags & class_flags::HAS_FIXED_LAYOUT != 0)))
-            .collect();
         found.append(&mut c.find_lost_layouts(&declared, scopes));
     }
     if explain.foreign {
@@ -4034,8 +4054,11 @@ fn link_with_helper_threads<'scope>(
                 CompilerDiagnostic { file, start: pos, end, code, args, related: Vec::new() }
             };
             for check in throws::find_fallible_checks(&program, checked.checker().logs_type_errors(), in_parallel) {
-                if scopes.severity(Rule::CanThrow, modules[check.module as usize], check.pos) == Severity::Allow {
+                if !scopes.is_wanted(Rule::CanThrow, modules[check.module as usize], check.pos) {
                     continue;
+                }
+                if check.is_of_parameters {
+                    checks_of_parameters.insert((modules[check.module as usize], check.pos));
                 }
                 let origin = check.origin.into_iter().map(|(module, pos, what)| at(module, pos, 100018, vec![what.into_bytes()]));
                 let related = origin.chain([at(check.module, check.pos, 100049, vec![check.fix.as_bytes().to_vec()])]).collect();
@@ -4056,12 +4079,12 @@ fn link_with_helper_threads<'scope>(
         explained.append(&mut c.explain_int32_fields(&by_text));
     }
     program.flagged_values = crate::build::string_sets::find_string_set_sizes(&program, &contents, in_parallel);
-    for site in crate::build::fused_joins::find_join_sites(&program) {
+    for site in crate::build::fused_joins::find_join_sites(&program, in_parallel) {
         if explain.joins {
             let func = &program.funcs[site.func.idx()];
             let text = &checked.files.hir(modules[func.module.idx()]).text;
             let before = &text[..(func.values[site.join.idx()].pos as usize).min(text.len())];
-            let line = before.iter().filter(|&&byte| byte == b'\n').count() + 1;
+            let line = bun_core::strings::count_char(before, b'\n') + 1;
             let path = bstr::BStr::new(program.strs.get(program.modules[func.module.idx()].display_path));
             explained.push(match &site.rejection {
                 None => format!("joins: {path}:{line}: map().join() is fused into one loop"),
@@ -4091,7 +4114,7 @@ fn link_with_helper_threads<'scope>(
     if let Some(scopes) = checked.rule_scopes.get().filter(|scopes| scopes.is_enabled(Rule::Interpreted)) {
         for site in interpreted::find_sites(&program, in_parallel) {
             let file = modules[site.module as usize];
-            if scopes.severity(Rule::Interpreted, file, site.pos) != Severity::Allow {
+            if scopes.is_wanted(Rule::Interpreted, file, site.pos) {
                 let hir = checked.files.hir(file);
                 let end = bun_sema::check::spans::token_end(&hir.text, site.pos as usize, hir.kind == hir::FileKind::Tsx) as u32;
                 found.push(CompilerDiagnostic { file, start: site.pos, end, code: 100025, args: vec![site.evaluator], related: Vec::new() });
@@ -4100,6 +4123,16 @@ fn link_with_helper_threads<'scope>(
     }
     if let Some(scopes) = checked.rule_scopes.get().filter(|scopes| scopes.is_enabled(Rule::UntypedPackage)) {
         found.append(&mut c.find_untyped_packages(&modules, scopes));
+    }
+    if explain.costs || explain.costs_json {
+        let other_places = checked.checker().find_other_places_where_external_data_enters();
+        let sources = costs::Sources { classes_without_layout: &classes_without_layout, other_places_where_external_data_enters: &other_places, program: &program, checked, modules: &modules, shown_from, found: &found, open_layouts: &open_layouts_found, chains: &chains_by_name, checks_of_parameters: &checks_of_parameters, accesses_without_known_cause: &accesses_without_known_cause };
+        for as_json in [false, true].into_iter().filter(|&as_json| if as_json { explain.costs_json } else { explain.costs }) {
+            explained.append(&mut costs::explain(&sources, as_json, in_parallel));
+        }
+        if let Some(scopes) = checked.rule_scopes.get() {
+            found.retain(|finding| Rule::of_code(finding.code).is_none_or(|rule| scopes.severity(rule, finding.file, finding.start) != Severity::Allow));
+        }
     }
     since = Instant::now();
     let typedness = typedness::measure(&program, &is_runtime_layout, &modules, checked, in_parallel);

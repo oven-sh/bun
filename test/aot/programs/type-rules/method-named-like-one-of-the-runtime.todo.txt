@@ -1,0 +1,1 @@
+Known failure, on Linux x64 only: `seen = this.peek()` throws "expected number, got undefined" where plain Bun, the executable on macOS arm64 and the same classes with the method called peekAtTheField, look, read or next go on. The call is looked up by the name of the method over the whole program, and the whole program holds the runtime's own modules.

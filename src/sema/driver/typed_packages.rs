@@ -332,9 +332,9 @@ pub(crate) fn sha256(bytes: &[u8]) -> [u8; 32] {
         tail.push(0);
     }
     tail.extend_from_slice(&(bytes.len() as u64 * 8).to_be_bytes());
-    for block in bytes.chunks_exact(64).chain(tail.chunks_exact(64)) {
+    for block in bytes.as_chunks::<64>().0.iter().chain(tail.as_chunks::<64>().0) {
         let mut w = [0u32; 64];
-        for (word, four) in w.iter_mut().zip(block.chunks_exact(4)) {
+        for (word, four) in w.iter_mut().zip(block.as_chunks::<4>().0) {
             *word = u32::from_be_bytes([four[0], four[1], four[2], four[3]]);
         }
         for i in 16..64 {
@@ -355,7 +355,7 @@ pub(crate) fn sha256(bytes: &[u8]) -> [u8; 32] {
         }
     }
     let mut digest = [0u8; 32];
-    for (four, word) in digest.chunks_exact_mut(4).zip(state) {
+    for (four, word) in digest.as_chunks_mut::<4>().0.iter_mut().zip(state) {
         four.copy_from_slice(&word.to_be_bytes());
     }
     digest

@@ -54,7 +54,7 @@ fn names_of(holder: &[u8]) -> Option<&'static FxHashSet<&'static [u8]>> {
     let names_by_holder = NAMES_BY_HOLDER.get_or_init(|| {
         let mut names_by_holder: FxHashMap<&'static [u8], FxHashSet<&'static [u8]>> = FxHashMap::default();
         for entry in BUILTINS {
-            names_by_holder.entry(entry.0.as_bytes()).or_insert_with(|| entry.1.split(' ').map(str::as_bytes).collect());
+            names_by_holder.entry(entry.0.as_bytes()).or_insert_with(|| bun_core::strings::split(entry.1.as_bytes(), b" ").collect());
         }
         names_by_holder
     });
@@ -211,6 +211,9 @@ impl<'p, 's> Checker<'p, 's> {
                 if matches!(self.validation_call(file, e), Some((super::ValidationCall::Validate | super::ValidationCall::SafeValidate | super::ValidationCall::Parse, _))) {
                     return None;
                 }
+                if self.evaluates_text(file, callee) {
+                    return Some(Claim::Call);
+                }
                 if self.is_allocated_by_subclass_constructor(file, e, callee) {
                     return Some(Claim::Call);
                 }
@@ -250,9 +253,9 @@ impl<'p, 's> Checker<'p, 's> {
                         return Some(if is_generic { Claim::GenericCall } else { Claim::Call });
                     }
                     let is_declared_by_lib = self.resolved_signature(file, e).sig.and_then(|sig| self.sig_decl(sig)).is_some_and(|(of, ..)| self.files.module(of).is_lib);
-                    let arguments: Vec<ExprId> = hir.ids(hir[call].args).collect();
+
                     return (is_generic
-                        && arguments.into_iter().any(|argument| {
+                        && hir.ids(hir[call].args).any(|argument| {
                             is_declared_by_lib && (self.holds_prediction(file, argument) || self.spreads_unnamed_members(file, argument)) || matches!(hir[argument].kind, ExprKind::Fn(func) if self.is_callback_typed_by_own_prediction(file, func))
                         }))
                     .then_some(Claim::GenericCall);
@@ -263,7 +266,7 @@ impl<'p, 's> Checker<'p, 's> {
                     (true, false) => Claim::GenericCallWithTypeArguments,
                 })
             }
-            ExprKind::New(call) => self.is_predicted(file, hir[call].callee).then_some(Claim::New),
+            ExprKind::New(call) => (self.is_predicted(file, hir[call].callee) || self.evaluates_text(file, hir[call].callee)).then_some(Claim::New),
             ExprKind::Await(operand) => (self.is_predicted(file, operand) || self.is_promise_of_prediction(file, operand) || self.may_be_thenable(file, operand)).then_some(Claim::Await),
             ExprKind::ImportCall { args } => {
                 let ExprKind::String(specifier) = hir[hir.id_at(args, 0)].kind else { return None };
@@ -272,6 +275,13 @@ impl<'p, 's> Checker<'p, 's> {
             }
             _ => None,
         }
+    }
+
+    fn evaluates_text(&mut self, file: FileId, mut callee: ExprId) -> bool {
+        while let ExprKind::Binary { op: BinOp::Comma, right, .. } = self.hir(file)[callee].kind {
+            callee = right;
+        }
+        self.refers_to_global_object(file, callee, b"Function") || self.refers_to_global_object(file, callee, b"eval")
     }
 
     pub(super) fn is_primitive_read_after_cast(&mut self, file: FileId, e: ExprId) -> bool {
@@ -558,12 +568,12 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn getter_returns_external_data(&mut self, prop: &Prop) -> bool {
-        let getter = match Self::written_member_behind(prop).map_or(&prop.source, |written| &written.source) {
-            &PropSource::Literal(file, declared) if self.hir(file)[declared].kind == crate::hir::PropKind::Getter => match self.hir(file)[self.hir(file)[declared].value].kind {
+        let getter = match *Self::written_member_behind(prop).map_or(&prop.source, |written| &written.source) {
+            PropSource::Literal(file, declared) if self.hir(file)[declared].kind == crate::hir::PropKind::Getter => match self.hir(file)[self.hir(file)[declared].value].kind {
                 ExprKind::Fn(func) => (file, func),
                 _ => return false,
             },
-            &PropSource::Symbol(accessor) => match self.files().value_declaration(accessor) {
+            PropSource::Symbol(accessor) => match self.files().value_declaration(accessor) {
                 Some((file, Decl::Member(member))) if self.hir(file)[member].kind == MemberKind::Getter => (file, self.hir(file)[member].func),
                 _ => return false,
             },
@@ -584,8 +594,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn spreads_unnamed_members(&mut self, file: FileId, literal: ExprId) -> bool {
         let hir = self.hir(file);
         let ExprKind::Object(props) = hir[literal].kind else { return false };
-        let sources: Vec<ExprId> = props.iter().filter(|&p| hir[p].kind == crate::hir::PropKind::Spread).map(|p| hir[p].value).collect();
-        sources.into_iter().any(|source| {
+        props.iter().filter(|&p| hir[p].kind == crate::hir::PropKind::Spread).map(|p| hir[p].value).any(|source| {
             let spread = self.type_of_expr(file, source);
             let spread = self.non_nullable(spread);
             let parts: &[TypeId] = self.parts(spread);
@@ -609,8 +618,7 @@ impl<'p, 's> Checker<'p, 's> {
                 spreads
             }
         };
-        let behind: Vec<ExprId> = spreads.iter().filter(|p| p.0 >= declared.0).map(|&p| hir[p].value).collect();
-        behind.into_iter().any(|source| {
+        spreads.iter().filter(|p| p.0 >= declared.0).map(|&p| hir[p].value).any(|source| {
             let spread = self.type_of_expr(file, source);
             let spread = self.non_nullable(spread);
             let parts: &[TypeId] = self.parts(spread);
@@ -784,7 +792,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn mistyped_computed_key_stores(&mut self) -> std::rc::Rc<FxHashMap<Atom, Vec<TypeId>>> {
         if let Some(known) = &self.aot.trust.mistyped_computed_key_stores {
-            return known.clone();
+            return std::rc::Rc::clone(known);
         }
         let mut found: FxHashMap<Atom, Vec<TypeId>> = FxHashMap::default();
         for &(file, assignment) in self.union_key_assignments() {
@@ -816,7 +824,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let found = std::rc::Rc::new(found);
-        self.aot.trust.mistyped_computed_key_stores = Some(found.clone());
+        self.aot.trust.mistyped_computed_key_stores = Some(std::rc::Rc::clone(&found));
         found
     }
 

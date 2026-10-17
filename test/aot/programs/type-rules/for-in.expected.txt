@@ -4,9 +4,9 @@ an object of the type for prototype: no error true
 no prototype: no error true
 the prototype it has: no error true
 ad undefined 3
-enumerable addition to the prototype of a class: TypeError
+enumerable addition to the prototype of a class: no error stored
 another prototype for the prototype of a class: TypeError
-pq
+pqpatched
 05adxb 05adxb {"0":1,"5":1,"a":1,"d":2,"x":1,"b":"late"}
 1dza
 field made an accessor: no error defined

@@ -51,12 +51,12 @@ export function mark(options: Options): void {
 };
 const hidden = ["modeThatOnlyATypeLists", "stateThatOnlyATypeLists", "kindThatOnlyATypeLists", "modeMadeInAModuleThatIsCut"];
 
-describe.skipIf(isWindows || !!unsupported)("compile/aot/literal-types-in-executables", () => {
+describe.skipIf(!!unsupported)("compile/aot/literal-types-in-executables", () => {
   const folder = String(tempDir("aot-literal-types", sources));
   afterAll(() => rmSync(folder, { recursive: true, force: true }));
 
   async function build(name: string, flags: string[]) {
-    const executable = join(folder, name);
+    const executable = join(folder, isWindows ? `${name}.exe` : name);
     built(await spawned([bunExe(), "build", "--compile", "--minify", "--no-compile-function-source", "--define", 'process.env.BUILD_KIND="external"', ...flags, "./entry.ts", "--outfile", executable], folder, bunEnv));
     const run = await spawned([executable], folder, bunEnv);
     const bytes = readFileSync(executable);

@@ -49,7 +49,7 @@ pub(crate) fn child_toward_working_directory(directory: &[u8]) -> Option<Vec<u8>
     let working_directory = WORKING_DIRECTORY.lock();
     let below = working_directory.strip_prefix(directory)?;
     let below = if directory.ends_with(b"/") { below } else { below.strip_prefix(b"/")? };
-    let name = below.split(|&byte| byte == b'/').next()?;
+    let name = bun_core::strings::split(below, b"/").next()?;
     (!name.is_empty()).then(|| name.to_vec())
 }
 
@@ -63,6 +63,7 @@ pub fn end() -> Option<Vec<FsQuery>> {
     let Recording { mut queries, is_invalidated, .. } = RECORDED.lock().take()?;
     queries.sort_unstable();
     queries.dedup();
+    #[allow(clippy::disallowed_methods, reason = "adjacent-pair check, not a byte search")]
     let has_conflicting_answers = queries.windows(2).any(|pair| (pair[0].kind, &pair[0].path) == (pair[1].kind, &pair[1].path));
     (!is_invalidated && !has_conflicting_answers).then_some(queries)
 }

@@ -346,7 +346,7 @@ impl<'a> OutputSlice<'a> {
     }
 
     fn put<const N: usize>(&mut self, words: [u32; N]) {
-        for (place, word) in self.take(4 * N).0.chunks_exact_mut(4).zip(words) {
+        for (place, word) in self.take(4 * N).0.as_chunks_mut::<4>().0.iter_mut().zip(words) {
             place.write_copy_of_slice(&word.to_le_bytes());
         }
     }
@@ -464,7 +464,7 @@ impl FunctionWriter<'_> {
                 if value.is_in_tail_position() && matches!(r.opcode, Opcode::Call | Opcode::CallMethod | Opcode::CallDirect | Opcode::Operation) {
                     r.immediates[1] = CALL_IS_IN_TAIL_POSITION;
                 }
-                if value.keeps_unconvertible_objects() && matches!(r.opcode, Opcode::Cast) {
+                if value.keeps_unconvertible_objects() && matches!(r.opcode, Opcode::Cast) && matches!(r.immediates[1] & 0xff, 1 | 4) {
                     r.immediates[1] |= CAST_KEEPS_UNCONVERTIBLE_OBJECTS;
                 }
                 if is_marked.get(number) == Some(&true) {

@@ -601,7 +601,7 @@ impl<'a> ElfFile<&'a mut [u8]> {
     }
 
     pub fn bun_section_in_pieces(mut self, payload: &'a [u8]) -> Result<Option<[Piece<'a>; 6]>, ElfError> {
-        let ehdr = read_ehdr(&self.data);
+        let ehdr = read_ehdr(self.data);
         let bun_section = self.find_bun_section(ehdr)?;
         let bun_section_offset = bun_section.file_offset;
         let bun_section_vaddr = bun_section.vaddr;
@@ -814,7 +814,7 @@ pub fn symbols_tail(
 
     let symtab_offset = place(&mut bytes);
     bytes.extend_from_slice(&[0u8; 24]);
-    for row in rows.chunks_exact(12) {
+    for row in rows.as_chunks::<12>().0 {
         let at = |index: usize| u32::from_le_bytes([row[index], row[index + 1], row[index + 2], row[index + 3]]);
         bytes.extend_from_slice(&at(8).checked_add(1)?.to_le_bytes());
         bytes.extend_from_slice(&[STT_FUNC, 0]);

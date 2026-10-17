@@ -493,7 +493,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let integer = self.emit_parser_operation(fx, Operation::JSONInteger, &[], exact_integer);
                 let others: Vec<Rule> = described.rules.iter().filter(|&rule| *rule != Rule::Integer).cloned().collect();
                 self.emit_rules(fx, &others, integer, fails);
-                return (integer, end);
+                return (self.as_int32_if_rules_say_so(fx, &described.rules, integer), end);
             }
             Planned::Primitive(PlannedPrimitive::Number) => self.emit_parsed_number(fx, cursor, fails),
             Planned::Primitive(PlannedPrimitive::Boolean) => {
@@ -604,7 +604,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     pub(super) fn emit_parser(&mut self, fx: &mut Fx, number: u32, node: u32) {
-        let plan = self.validators.plans[number as usize].clone();
+        let plan = Rc::clone(&self.validators.plans[number as usize]);
         let start = self.add_entry_param(fx, Ty::from_id(self.known.counter));
         let fails = fx.b.new_block();
         let was_speculative = std::mem::replace(&mut self.validators.is_speculative, true);

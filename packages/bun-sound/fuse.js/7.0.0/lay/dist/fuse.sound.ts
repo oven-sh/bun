@@ -170,7 +170,7 @@ function get(obj: FU.Doc, path: FU.KeySrc): FU.FieldValue {
   let list: FU.Given[] = [];
   let arr = false;
 
-  const deepGet = (obj: FU.Given, path: string[], index: FU.int32): void => {
+  const deepGet = (obj: FU.Given, path: string[], index: number): void => {
     if (!isDefined(obj)) {
       return
     }
@@ -377,7 +377,7 @@ class FuseIndex { declare norm: FU.Norm; declare getFn: FU.GetFn; declare isCrea
   getValueForItemAtKeyId(item: FU.RecordEntries, keyId: string): FU.RecordEntry | FU.ArrayEntry[] | undefined {
     return item[this._keysMap[keyId]]
   }
-  size(): FU.int32 {
+  size(): number {
     return this.records.length
   }
   _addString(doc: FU.Doc, docIndex: FU.DocIndex) {
@@ -1780,10 +1780,10 @@ namespace FU {
 }
 namespace FU {
   export type int32 = import("bun").int32;
-  export type DocIndex = int32;
-  export type ItemIndex = int32;
-  export type KeyIndex = int32;
-  export type TextIndex = int32;
+  export type DocIndex = number;
+  export type ItemIndex = number;
+  export type KeyIndex = number;
+  export type TextIndex = number;
   export type CharMask = int32;
   export type Bit = int32;
   export type ErrorCount = int32;

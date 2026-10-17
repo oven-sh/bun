@@ -1,8 +1,6 @@
-// @ts-check
 // Hardcoded module "node:_http_outgoing"
 // This is a port of Node.js's lib/_http_outgoing.js
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js
-const { kBytesWritten, kChunkedBuffer, kChunkedLength, kCorked, kLenientValidation } = require("internal/http");
 const { Stream } = require("internal/stream");
 const { isUint8Array, validateString } = require("internal/validators");
 const { deprecate } = require("internal/util/deprecate");
@@ -17,8 +15,6 @@ const {
   kUniqueHeaders,
   kHandle,
   utcDate,
-  isPlainResponse,
-  nop,
 } = require("internal/http");
 const {
   validateHeaderName,
@@ -123,7 +119,13 @@ function validatedLowercaseHeaderName(name) {
   return lowercased;
 }
 
+const kCorked = Symbol("corked");
+const kChunkedBuffer = Symbol("kChunkedBuffer");
+const kChunkedLength = Symbol("kChunkedLength");
+const kBytesWritten = Symbol("kBytesWritten");
+const kLenientValidation = Symbol("kLenientValidation");
 
+const nop = () => {};
 
 const RE_CONN_CLOSE = /(?:^|\W)close(?:$|\W)/i;
 
@@ -206,10 +208,9 @@ function OutgoingMessage(
   this[kRejectNonStandardBodyWrites] = rejectNonStandardBodyWrites;
   // Declared here so the memoizing _isLenientHeaderValidation never
   // shape-transitions the message when it caches.
-  this[kLenientValidation] = null;
+  this[kLenientValidation] = undefined;
 }
 $toClass(OutgoingMessage, "OutgoingMessage", Stream);
-type ServerResponseFields = import("internal/http").ServerResponseFields;
 
 // Check if lenient header validation should be used.
 // For ClientRequest: checks this.httpValidation or this.insecureHTTPParser
@@ -218,9 +219,9 @@ type ServerResponseFields = import("internal/http").ServerResponseFields;
 // Every input is fixed for the life of the message, but setHeader and
 // appendHeader consult this once per header: compute once, cache in the
 // constructor-declared slot.
-const isLenientHeaderValidation = (OutgoingMessage.prototype._isLenientHeaderValidation = function (this: ServerResponseFields) {
+OutgoingMessage.prototype._isLenientHeaderValidation = function () {
   const cached = this[kLenientValidation];
-  if (cached != null) return cached;
+  if (cached !== undefined) return cached;
 
   let result;
   // New httpValidation option takes priority (ClientRequest case)
@@ -247,73 +248,73 @@ const isLenientHeaderValidation = (OutgoingMessage.prototype._isLenientHeaderVal
     }
   }
   return (this[kLenientValidation] = result);
-});
+};
 
 ObjectDefineProperty(OutgoingMessage.prototype, "errored", {
   __proto__: null,
-  get(this: ServerResponseFields) {
+  get() {
     return this[kErrored];
   },
 });
 
 ObjectDefineProperty(OutgoingMessage.prototype, "closed", {
   __proto__: null,
-  get(this: ServerResponseFields) {
+  get() {
     return this._closed;
   },
 });
 
 ObjectDefineProperty(OutgoingMessage.prototype, "writableFinished", {
   __proto__: null,
-  get(this: ServerResponseFields) {
+  get() {
     return this.finished && this.outputSize === 0 && (!this[kSocket] || this[kSocket].writableLength === 0);
   },
 });
 
 ObjectDefineProperty(OutgoingMessage.prototype, "writableObjectMode", {
   __proto__: null,
-  get(this: ServerResponseFields) {
+  get() {
     return false;
   },
 });
 
 ObjectDefineProperty(OutgoingMessage.prototype, "writableLength", {
   __proto__: null,
-  get(this: ServerResponseFields) {
+  get() {
     return this.outputSize + this[kChunkedLength] + (this[kSocket] ? this[kSocket].writableLength : 0);
   },
 });
 
 ObjectDefineProperty(OutgoingMessage.prototype, "writableHighWaterMark", {
   __proto__: null,
-  get(this: ServerResponseFields) {
+  get() {
     return this[kSocket] ? this[kSocket].writableHighWaterMark : this[kHighWaterMark];
   },
 });
 
 ObjectDefineProperty(OutgoingMessage.prototype, "writableCorked", {
   __proto__: null,
-  get(this: ServerResponseFields) {
+  get() {
     return this[kCorked];
   },
 });
 
 ObjectDefineProperty(OutgoingMessage.prototype, "connection", {
   __proto__: null,
-  get: function (this: ServerResponseFields) {
+  get: function () {
     return this[kSocket];
   },
-  set: function (this: ServerResponseFields, val) {
+  set: function (val) {
     this.socket = val;
   },
 });
 
 ObjectDefineProperty(OutgoingMessage.prototype, "socket", {
   __proto__: null,
-  get: function (this: ServerResponseFields) {
+  get: function () {
     return this[kSocket];
   },
-  set: function (this: ServerResponseFields, val) {
+  set: function (val) {
     for (let n = 0; n < this[kCorked]; n++) {
       val?.cork();
       this[kSocket]?.uncork();
@@ -322,7 +323,7 @@ ObjectDefineProperty(OutgoingMessage.prototype, "socket", {
   },
 });
 
-OutgoingMessage.prototype._renderHeaders = function _renderHeaders(this: ServerResponseFields) {
+OutgoingMessage.prototype._renderHeaders = function _renderHeaders() {
   if (this._header) {
     throw $ERR_HTTP_HEADERS_SENT("render");
   }
@@ -342,14 +343,14 @@ OutgoingMessage.prototype._renderHeaders = function _renderHeaders(this: ServerR
   return headers;
 };
 
-OutgoingMessage.prototype.cork = function cork(this: ServerResponseFields) {
+OutgoingMessage.prototype.cork = function cork() {
   this[kCorked]++;
   if (this[kSocket]) {
     this[kSocket].cork();
   }
 };
 
-OutgoingMessage.prototype.uncork = function uncork(this: ServerResponseFields) {
+OutgoingMessage.prototype.uncork = function uncork() {
   this[kCorked]--;
   if (this[kSocket]) {
     this[kSocket].uncork();
@@ -386,7 +387,7 @@ function runChunkCallbacks(callbacks, err) {
   }
 }
 
-OutgoingMessage.prototype.setTimeout = function setTimeout(this: ServerResponseFields, msecs, callback) {
+OutgoingMessage.prototype.setTimeout = function setTimeout(msecs, callback) {
   if (callback) {
     this.on("timeout", callback);
   }
@@ -404,7 +405,7 @@ OutgoingMessage.prototype.setTimeout = function setTimeout(this: ServerResponseF
 // It's possible that the socket will be destroyed, and removed from
 // any messages, before ever calling this.  In that case, just skip
 // it, since something else is destroying this connection anyway.
-OutgoingMessage.prototype.destroy = function destroy(this: ServerResponseFields, error) {
+OutgoingMessage.prototype.destroy = function destroy(error) {
   if (this.destroyed) {
     return this;
   }
@@ -429,7 +430,7 @@ function emitDestroyNT(self) {
 }
 
 // This abstract either writing directly to the socket or buffering it.
-OutgoingMessage.prototype._send = function _send(this: ServerResponseFields, data, encoding, callback, byteLength) {
+OutgoingMessage.prototype._send = function _send(data, encoding, callback, byteLength) {
   // This is a shameful hack to get the headers and first body chunk onto
   // the same packet. Future versions of Node are going to take care of
   // this at a lower level and in a more general way.
@@ -716,12 +717,12 @@ function parseUniqueHeadersOption(headers) {
   return unique;
 }
 
-OutgoingMessage.prototype.setHeader = function setHeader(this: ServerResponseFields, name, value) {
+OutgoingMessage.prototype.setHeader = function setHeader(name, value) {
   if (this._header) {
     throw $ERR_HTTP_HEADERS_SENT("set");
   }
   const field = validatedLowercaseHeaderName(name);
-  validateHeaderValueLenient(name, value, isPlainResponse(this) ? isLenientHeaderValidation.$call(this) : this._isLenientHeaderValidation());
+  validateHeaderValueLenient(name, value, this._isLenientHeaderValidation());
 
   let headers = this[kOutHeaders];
   if (headers === null) this[kOutHeaders] = headers = { __proto__: null };
@@ -730,20 +731,7 @@ OutgoingMessage.prototype.setHeader = function setHeader(this: ServerResponseFie
   return this;
 };
 
-function setHeaderOfPlainResponse(message: ServerResponseFields, name, value) {
-  if (message._header) {
-    throw $ERR_HTTP_HEADERS_SENT("set");
-  }
-  const field = validatedLowercaseHeaderName(name);
-  validateHeaderValueLenient(name, value, isLenientHeaderValidation.$call(message));
-
-  let headers = message[kOutHeaders];
-  if (headers === null) message[kOutHeaders] = headers = { __proto__: null };
-
-  headers[field] = [name, value];
-}
-
-OutgoingMessage.prototype.setHeaders = function setHeaders(this: ServerResponseFields, headers) {
+OutgoingMessage.prototype.setHeaders = function setHeaders(headers) {
   if (this._header) {
     throw $ERR_HTTP_HEADERS_SENT("set");
   }
@@ -780,7 +768,7 @@ OutgoingMessage.prototype.setHeaders = function setHeaders(this: ServerResponseF
   return this;
 };
 
-OutgoingMessage.prototype.appendHeader = function appendHeader(this: ServerResponseFields, name, value) {
+OutgoingMessage.prototype.appendHeader = function appendHeader(name, value) {
   if (this._header) {
     throw $ERR_HTTP_HEADERS_SENT("append");
   }
@@ -809,7 +797,7 @@ OutgoingMessage.prototype.appendHeader = function appendHeader(this: ServerRespo
   return this;
 };
 
-OutgoingMessage.prototype.getHeader = function getHeader(this: ServerResponseFields, name) {
+OutgoingMessage.prototype.getHeader = function getHeader(name) {
   validateString(name, "name");
 
   const headers = this[kOutHeaders];
@@ -820,12 +808,12 @@ OutgoingMessage.prototype.getHeader = function getHeader(this: ServerResponseFie
 };
 
 // Returns an array of the names of the current outgoing headers.
-OutgoingMessage.prototype.getHeaderNames = function getHeaderNames(this: ServerResponseFields) {
+OutgoingMessage.prototype.getHeaderNames = function getHeaderNames() {
   return this[kOutHeaders] !== null ? ObjectKeys(this[kOutHeaders]) : [];
 };
 
 // Returns an array of the names of the current outgoing raw headers.
-OutgoingMessage.prototype.getRawHeaderNames = function getRawHeaderNames(this: ServerResponseFields) {
+OutgoingMessage.prototype.getRawHeaderNames = function getRawHeaderNames() {
   const headersMap: Record<string, [name: string, value: number | string | readonly string[]]> | null =
     this[kOutHeaders];
   if (headersMap === null) return [];
@@ -842,7 +830,7 @@ OutgoingMessage.prototype.getRawHeaderNames = function getRawHeaderNames(this: S
 };
 
 // Returns a shallow copy of the current outgoing headers.
-OutgoingMessage.prototype.getHeaders = function getHeaders(this: ServerResponseFields) {
+OutgoingMessage.prototype.getHeaders = function getHeaders() {
   const headers = this[kOutHeaders];
   const ret = { __proto__: null };
   if (headers) {
@@ -858,12 +846,12 @@ OutgoingMessage.prototype.getHeaders = function getHeaders(this: ServerResponseF
   return ret;
 };
 
-OutgoingMessage.prototype.hasHeader = function hasHeader(this: ServerResponseFields, name) {
+OutgoingMessage.prototype.hasHeader = function hasHeader(name) {
   validateString(name, "name");
   return this[kOutHeaders] !== null && !!this[kOutHeaders][lowercaseHeaderName(name)];
 };
 
-OutgoingMessage.prototype.removeHeader = function removeHeader(this: ServerResponseFields, name) {
+OutgoingMessage.prototype.removeHeader = function removeHeader(name) {
   validateString(name, "name");
 
   if (this._header) {
@@ -892,7 +880,7 @@ OutgoingMessage.prototype.removeHeader = function removeHeader(this: ServerRespo
   }
 };
 
-OutgoingMessage.prototype._implicitHeader = function _implicitHeader(this: ServerResponseFields) {
+OutgoingMessage.prototype._implicitHeader = function _implicitHeader() {
   throw $ERR_METHOD_NOT_IMPLEMENTED("_implicitHeader()");
 };
 
@@ -900,27 +888,27 @@ ObjectDefineProperty(OutgoingMessage.prototype, "headersSent", {
   __proto__: null,
   configurable: true,
   enumerable: true,
-  get: function (this: ServerResponseFields) {
+  get: function () {
     return !!this._header;
   },
 });
 
 ObjectDefineProperty(OutgoingMessage.prototype, "writableEnded", {
   __proto__: null,
-  get: function (this: ServerResponseFields) {
+  get: function () {
     return this.finished;
   },
 });
 
 ObjectDefineProperty(OutgoingMessage.prototype, "writableNeedDrain", {
   __proto__: null,
-  get: function (this: ServerResponseFields) {
+  get: function () {
     return !this.destroyed && !this.finished && this[kNeedDrain];
   },
 });
 
 const crlf_buf = Buffer.from("\r\n");
-OutgoingMessage.prototype.write = function write(this: ServerResponseFields, chunk, encoding, callback) {
+OutgoingMessage.prototype.write = function write(chunk, encoding, callback) {
   if (typeof encoding === "function") {
     callback = encoding;
     encoding = null;
@@ -1047,7 +1035,7 @@ function connectionCorkNT(conn) {
   conn.uncork();
 }
 
-OutgoingMessage.prototype.addTrailers = function addTrailers(this: ServerResponseFields, headers) {
+OutgoingMessage.prototype.addTrailers = function addTrailers(headers) {
   this._trailer = "";
   const keys = ObjectKeys(headers);
   const isArray = ArrayIsArray(headers);
@@ -1094,7 +1082,7 @@ function onFinish(outmsg) {
   outmsg.emit("finish");
 }
 
-OutgoingMessage.prototype.end = function end(this: ServerResponseFields, chunk, encoding, callback) {
+OutgoingMessage.prototype.end = function end(chunk, encoding, callback) {
   if (typeof chunk === "function") {
     callback = chunk;
     chunk = null;
@@ -1171,7 +1159,7 @@ OutgoingMessage.prototype.end = function end(this: ServerResponseFields, chunk, 
 
 // This function is called once all user data are flushed to the socket.
 // Note that it has a chance that the socket is not drained.
-OutgoingMessage.prototype._finish = function _finish(this: ServerResponseFields) {
+OutgoingMessage.prototype._finish = function _finish() {
   $assert(this[kSocket]);
   this.emit("prefinish");
 };
@@ -1195,7 +1183,7 @@ OutgoingMessage.prototype._finish = function _finish(this: ServerResponseFields)
 //
 // This function, _flush(), is called by both the Server and Client
 // to attempt to flush any pending messages out to the socket.
-OutgoingMessage.prototype._flush = function _flush(this: ServerResponseFields) {
+OutgoingMessage.prototype._flush = function _flush() {
   const socket = this[kSocket];
 
   if (socket?.writable) {
@@ -1212,7 +1200,7 @@ OutgoingMessage.prototype._flush = function _flush(this: ServerResponseFields) {
   }
 };
 
-OutgoingMessage.prototype._flushOutput = function _flushOutput(this: ServerResponseFields, socket) {
+OutgoingMessage.prototype._flushOutput = function _flushOutput(socket) {
   const outputLength = this.outputData.length;
   if (outputLength <= 0) return undefined;
 
@@ -1236,7 +1224,7 @@ OutgoingMessage.prototype._flushOutput = function _flushOutput(this: ServerRespo
   return ret;
 };
 
-OutgoingMessage.prototype.flushHeaders = function flushHeaders(this: ServerResponseFields) {
+OutgoingMessage.prototype.flushHeaders = function flushHeaders() {
   if (!this._header) {
     this._implicitHeader();
   }
@@ -1245,7 +1233,7 @@ OutgoingMessage.prototype.flushHeaders = function flushHeaders(this: ServerRespo
   this._send("");
 };
 
-OutgoingMessage.prototype.pipe = function pipe(this: ServerResponseFields) {
+OutgoingMessage.prototype.pipe = function pipe() {
   // OutgoingMessage should be write-only. Piping from it is disabled.
   this.emit("error", $ERR_STREAM_CANNOT_PIPE());
 };
@@ -1352,7 +1340,6 @@ ObjectDefineProperty(OutgoingMessage.prototype, "_headerNames", {
 });
 
 export default {
-  setHeaderOfPlainResponse,
   kHighWaterMark,
   kUniqueHeaders,
   kOutHeaders,

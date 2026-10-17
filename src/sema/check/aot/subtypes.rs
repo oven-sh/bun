@@ -380,7 +380,7 @@ impl Subtypes {
         let mut gathered = Self::into_gathered(self.gathered);
         gathered.kind_queries = self.kind_queries;
         if gathered.logs_type_errors {
-            gathered.kind_queries_retry = gathered.kind_queries.clone();
+            gathered.kind_queries_retry.clone_from(&gathered.kind_queries);
         }
         let mut again = Subtypes::new_run(gathered, self.clock, true, self.answered, self.kind_query_answers);
         again.subtypes_by_flow = subtypes_by_flow;
@@ -420,7 +420,7 @@ impl Subtypes {
             gathered.conversions_when_strict = self.becomes;
         }
         gathered.logging_relaxation = opens;
-        gathered.kind_queries = gathered.kind_queries_retry.clone();
+        gathered.kind_queries.clone_from(&gathered.kind_queries_retry);
         let mut again = Subtypes::new_run(gathered, self.clock, true, self.answered, self.kind_query_answers);
         again.subtypes_by_flow = subtypes_by_flow;
         again
@@ -2030,7 +2030,7 @@ impl Subtypes {
             if let Some(by_flow) = self.subtypes_by_flow.get(view) {
                 reach.structural_subtypes = reach.members.iter().copied().filter(|member| by_flow.binary_search(member).is_err()).collect();
             }
-            reach.specializations = self.becomes[view].clone();
+            reach.specializations.clone_from(&self.becomes[view]);
             reach.is_allocated = set.binary_search(&(view as u32)).is_ok();
             reach.is_transition_target_only = reach.is_allocated && self.gathered.facts[view].flags & (HAS_SITE | IS_COPIED) == 0;
             reach.accepts_untyped = layout_types_cache < set.len();
@@ -2135,6 +2135,7 @@ impl Subtypes {
         let mutation_evidence = [count(&|view| is_record(view)), count(&|view| gives_up[view]), count(&|view| is_known_escaped[view]), count(&|view| is_record(view) && !gives_up[view] && !is_known_escaped[view]), count(&|view| !is_record(view) && !is_known_escaped[view])];
         let (mutation_sites, untyped_mutations) = self.gathered.escapes.with_mutations(|recorded| (recorded.sites(), recorded.untyped_sites()));
         let (widest_mutations, redefinition_counts) = self.gathered.escapes.with_mutations(|recorded| (recorded.widest(), recorded.redefinition_counts()));
+        let places_marking_every_layout = self.gathered.escapes.with_mutations(|recorded| recorded.places_marking_every_layout());
         for reach in reached.iter_mut() {
             let mut read: FxHashMap<Atom, Callee> = FxHashMap::default();
             for &layout in &reach.members {
@@ -2164,6 +2165,7 @@ impl Subtypes {
             mutation_evidence,
             untyped_mutations,
             widest_mutations,
+            places_marking_every_layout,
             redefinition_counts,
             sizes: self.sizes,
             untyped_reasons,

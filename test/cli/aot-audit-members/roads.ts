@@ -181,7 +181,7 @@ t(() => { function isR(x: unknown): x is R54 { return true; } const d: unknown =
 t(() => { function isR(x: unknown): x is R55 { return true; } const d: unknown = json(G55); if (isR(d)) return typeof d.ctx; return 0; }); // a predicate, then the object member: fits
 t(() => { function isR(x: unknown): x is R55 { return true; } const d: unknown = json(L); if (isR(d)) return typeof d.ctx; return 0; }); // a predicate, then the object member: LACKS
 t(() => { const d: R56 | string = anyv(json(G56)); if (typeof d !== "string") return d.id; return 0; }); // in guard: fits
-t(() => { const d: R56 | string = anyv(json(L)); if (typeof d !== "string") return d.id; return 0; }); // in guard: LACKS // silent: the object is let in where the variable is declared and refused where the union is narrowed
+t(() => { const d: R56 | string = anyv(json(L)); if (typeof d !== "string") return d.id; return 0; }); // in guard: LACKS
 t(() => { try { throw json(G57); } catch (e) { const v: R57 = e as any; return typeof v; } }); // catch: fits
 t(() => { try { throw json(L); } catch (e) { const v: R57 = e as any; return typeof v; } }); // catch: LACKS // silent: a claim is tested where its binding is first read, and `typeof` of a name is no read
 await ta(async () => { const v: R58 = await Promise.resolve(anyv(json(G58))); return typeof v; }); // await of a promise of any: fits

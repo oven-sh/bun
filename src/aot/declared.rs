@@ -126,7 +126,7 @@ impl Declared {
         let any_object = self.any_object || other.any_object;
         let mut parts = SmallVec::new();
         if !any_object {
-            parts = self.parts.clone();
+            parts.clone_from(&self.parts);
             parts.extend(other.parts.iter().cloned());
             parts.sort_unstable();
             parts.dedup();

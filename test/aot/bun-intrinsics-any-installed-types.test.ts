@@ -11,9 +11,7 @@ type Inline = import("bun").int32;
 function half(n: int32): number { return n / 2; }
 function twice(n: Inline): number { return n * 2; }
 const given: number[] = JSON.parse("[4, 1.5]");
-for (const n of given) {
-  try { console.log(half(n), twice(n)); } catch (error) { console.log((error as Error).constructor.name); }
-}
+for (const n of given) console.log(half(n | 0), twice(n));
 console.log(typeof inspect);
 `;
 const options = (more: object) => JSON.stringify({ compilerOptions: { strict: true, skipLibCheck: false, ...more } });
@@ -45,9 +43,7 @@ const programWithTheGlobal = `
 declare const console: { log(...values: unknown[]): void };
 function half(n: Bun.int32): number { return n / 2; }
 const given: number[] = JSON.parse("[4, 1.5]");
-for (const n of given) {
-  try { console.log(half(n)); } catch (error) { console.log((error as Error).constructor.name); }
-}
+for (const n of given) console.log(half(n));
 console.log(typeof Bun.inspect, Bun.parse<{ a: number }>('{"a":1}').a);
 `;
 const typesThatDeclareTheGlobal = {
@@ -71,7 +67,8 @@ async function buildAndRun(files: Record<string, string>) {
 for (const [world, files] of Object.entries({ ...worlds, "a bun-types that declares the global too": typesThatDeclareTheGlobal })) {
   test(`the global Bun has what "bun" has with ${world}`, async () => {
     const main = "main.ts" in files ? `/// <reference path="./stranger.d.ts" />` + programWithTheGlobal : programWithTheGlobal;
-    expect(await buildAndRun({ ...files, "main.ts": main })).toEqual({ stdout: "2\nTypeError\nfunction 1\n", stderr: "", exitCode: 0 });
+    expect(await buildAndRun({ ...files, "main.ts": main })).toEqual({ said: expect.stringContaining("TS100031: Parameter 'n' of 'half' is an 'int32'"), built: 1 });
+    expect(await buildAndRun({ ...files, "main.ts": main.replace("half(n))", "half(n | 0))") })).toEqual({ stdout: "2\n0.5\nfunction 1\n", stderr: "", exitCode: 0 });
   }, 120_000);
 }
 
@@ -96,9 +93,6 @@ for (const [world, files] of Object.entries(worlds)) {
     const outfile = join(String(dir), "out" + (isWindows ? ".exe" : ""));
     await using build = Bun.spawn({ cmd: [bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", outfile], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
     const [said, built] = await Promise.all([build.stderr.text(), build.exited]);
-    expect({ said: built ? said : "", built }).toEqual({ said: "", built: 0 });
-    await using ran = Bun.spawn({ cmd: [outfile], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "2 8\nTypeError\nfunction\n", stderr: "", exitCode: 0 });
+    expect({ errors: said.split("\n").filter(line => line.startsWith("error: ")).map(line => line.slice(0, 60)), built }).toEqual({ errors: ["error: TS100031: Parameter 'n' of 'twice' is an 'int32', and"], built: 1 });
   }, 120_000);
 }

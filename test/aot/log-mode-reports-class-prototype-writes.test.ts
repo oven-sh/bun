@@ -1,7 +1,8 @@
-// Under --aot the prototype of a class of the program is fixed. `--aot-type-errors=log` must name every change that the default mode
-// refuses: when the program ran in place (`bun run --aot`, `bun test --aot`) it neither refused nor reported them, so a suite that
+// Under --aot the prototype of a class of the program is fixed, but for the changes that the compiler sees in the program's text.
+// `--aot-type-errors=log` must name every change that the default mode refuses: when the program ran in place (`bun run --aot`, `bun test --aot`) it neither refused nor reported them, so a suite that
 // failed by default passed in log mode with an empty log.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 const program = `
@@ -14,21 +15,31 @@ class Store {
     return --this.closed;
   }
 }
-const anything: any = Store.prototype;
+const anything: any = Reflect.get(Store, "prototype");
 const attempts: [string, () => unknown][] = [
-  ["assignment", () => ((Store.prototype as any).extra = 1)],
-  ["assignment through an alias", () => (anything.aliased = 1)],
+  ["assignment", () => (anything.extra = 1)],
+  ["assignment by a computed key", () => (anything[["ali", "ased"].join("")] = 1)],
   ["replace a method", () => (anything.close = () => 7)],
-  ["Object.defineProperty, a new name", () => Object.defineProperty(Store.prototype, "defined", { value: 1, configurable: true })],
-  ["Object.defineProperty, a new symbol", () => Object.defineProperty(Store.prototype, Symbol.iterator, { value: 1, configurable: true })],
-  ["Object.defineProperty, a method", () => Object.defineProperty(Store.prototype, "open", { value: () => 8 })],
-  ["Object.defineProperties", () => Object.defineProperties(Store.prototype, { several: { value: 1 } })],
-  ["Reflect.defineProperty", () => Reflect.defineProperty(Store.prototype, "reflected", { value: 1 })],
-  ["Reflect.set", () => Reflect.set(Store.prototype, "set", 1)],
-  ["Object.assign", () => Object.assign(Store.prototype, { assigned: 1 })],
+  ["Object.defineProperty, a new name", () => Object.defineProperty(anything, "defined", { value: 1, configurable: true })],
+  ["Object.defineProperty, a new symbol", () => Object.defineProperty(anything, Symbol.iterator, { value: 1, configurable: true })],
+  ["Object.defineProperty, a method", () => Object.defineProperty(anything, "open", { value: () => 8 })],
+  ["Object.defineProperties", () => Object.defineProperties(anything, { several: { value: 1 } })],
+  ["Reflect.defineProperty", () => Reflect.defineProperty(anything, "reflected", { value: 1 })],
+  ["Reflect.set", () => Reflect.set(anything, "set", 1)],
+  ["Object.assign", () => Object.assign(anything, { assigned: 1 })],
   ["delete", () => delete anything.open],
-  ["Object.setPrototypeOf", () => Object.setPrototypeOf(Store.prototype, { inherited: 1 })],
+  ["Object.setPrototypeOf", () => Object.setPrototypeOf(anything, { inherited: 1 })],
+  ["assignment, seen", () => ((Seen.prototype as any).extra = 1)],
+  ["Object.defineProperty, a new name, seen", () => Object.defineProperty(Seen.prototype, "defined", { value: 1, configurable: true })],
+  ["Object.assign, seen", () => Object.assign(Seen.prototype, { assigned: 1 })],
+  ["replace a method, seen", () => ((Seen.prototype as any).close = () => 7)],
 ];
+class Seen {
+  closed = 0;
+  close(): number {
+    return ++this.closed;
+  }
+}
 for (const [name, attempt] of attempts) {
   try {
     const result = attempt();
@@ -50,7 +61,7 @@ async function run(cwd: string, args: string[]) {
   const lines = (stdout + stderr).split("\n").filter(Boolean);
   return {
     said: lines.filter(line => !line.startsWith("[aot]")),
-    records: lines.filter(line => line.startsWith("[aot] type-error")).map(line => line.split(" ").slice(3, 5).join(" ").replace(/:\d+$/, "")),
+    records: [...new Set(lines.filter(line => line.startsWith("[aot] type-error")).map(line => line.split(" ").slice(3, 5).join(" ").replace(/:\d+$/, "")))],
     exitCode,
   };
 }
@@ -69,5 +80,6 @@ test("bun run --aot names the class in what it refuses, before the class has an 
   const { said } = await run(String(dir), ["run", "--aot", "./program.ts"]);
   expect(said).toContain("Object.defineProperty, a new symbol: Cannot change [Symbol.iterator] of Store.prototype: classes are fixed in a program compiled with --aot");
   expect(said).toContain("replace a method: done");
+  expect(said.slice(-4)).toEqual(["assignment, seen: 1", "Object.defineProperty, a new name, seen: done", "Object.assign, seen: done", "replace a method, seen: done"]);
   expect(said.join("\n")).not.toContain("built-ins are locked");
 });

@@ -73,7 +73,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let Some(predicate) = self.c.sig_predicate(signature) else { return };
         let Some(narrowed) = predicate.ty else { return };
         let declared = match predicate.param {
-            Some(index) => match self.c.sig_params(signature).iter().nth(index) {
+            Some(index) => match self.c.sig_params(signature).get(index) {
                 Some(param) => Ty { id: self.ty_of(param.ty), checked: param.ty },
                 None => return,
             },
@@ -253,6 +253,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let described = self.ty_of(slot_type);
             let views = self.layout_types_in(described);
             self.c.accepts_untyped(held, &views);
+        }
+        let mut written = e;
+        while let ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) | ExprKind::AsConst(expr) = self.hir(fx.file)[written].kind {
+            written = expr;
+        }
+        let has_plain_result = !fx.returns_this && !self.out.funcs[fx.id.idx()].has(func_flags::ASYNC | func_flags::GENERATOR);
+        if fx.is_typed && has_plain_result && !matches!(self.hir(fx.file)[written].kind, ExprKind::Call(_)) && self.c.type_of_expr(fx.file, e).is_never() {
+            let result = self.out.funcs[fx.id.idx()].result;
+            return self.expr_into(fx, e, Ty::from_id(result), CoerceReason::Claim);
         }
         match self.return_coercion(fx) {
             Some((want, why)) if !fx.returns_this => self.expr_into(fx, e, want, why),
@@ -1108,8 +1117,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                         fx.b.terminate(Term::Unreachable);
                     }
                     let next = bodies.get(i + 1).copied().unwrap_or(exit);
-                    if i + 1 < bodies.len() {
-                    }
+
                     fx.b.jump(next);
                 }
                 fx.disposable_stack = outer_stack;

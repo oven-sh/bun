@@ -463,7 +463,7 @@ mod retained {
             // SAFETY: `stat` is plain data for which all zeros is a valid value.
             let mut found: libc::stat = unsafe { bun_core::ffi::zeroed_unchecked() };
             // SAFETY: the path is NUL-terminated and `found` is a valid out-param.
-            if unsafe { libc::stat(executable.as_ptr().cast(), &mut found) } != 0 {
+            if unsafe { libc::stat(executable.as_ptr().cast(), &raw mut found) } != 0 {
                 return None;
             }
             let cwd = crate::cli::check_command::working_directory();
@@ -675,7 +675,7 @@ mod retained {
                 // SAFETY: `stat` is plain data for which all zeros is a valid value.
                 let mut found: libc::stat = unsafe { bun_core::ffi::zeroed_unchecked() };
                 // SAFETY: the path is NUL-terminated and `found` is a valid out-param.
-                if unsafe { libc::stat(path.as_ptr(), &mut found) } != 0 {
+                if unsafe { libc::stat(path.as_ptr(), &raw mut found) } != 0 {
                     continue;
                 }
                 if is_kept {
@@ -731,7 +731,7 @@ fn analyze_whole_program_in_child(entry_points: &[Vec<u8>], code: &[Vec<u8>]) ->
         // SAFETY: `siginfo_t` is plain data for which all zeros is a valid value.
         let mut ended: libc::siginfo_t = unsafe { bun_core::ffi::zeroed_unchecked() };
         // SAFETY: `ended` is a valid out-param.
-        while unsafe { libc::waitid(libc::P_PID, child.id() as libc::id_t, &mut ended, libc::WEXITED | libc::WNOWAIT) } == -1 && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {}
+        while unsafe { libc::waitid(libc::P_PID, child.id() as libc::id_t, &raw mut ended, libc::WEXITED | libc::WNOWAIT) } == -1 && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {}
         {
             let mut running = CHILD.lock();
             *running = 0;
@@ -1165,7 +1165,7 @@ fn analyze_for_parent_process(is_for_tests: bool) {
     let bytes = match (&start, queries) {
         (Some(start), _) if HAS_BUILD_BLOCKING_ERROR.load(Ordering::Acquire) => {
             start.forget();
-            [&STOPS[..], &RENDERED_DIAGNOSTICS.lock()[..]].concat()
+            [STOPS, &RENDERED_DIAGNOSTICS.lock()[..]].concat()
         }
         (Some(start), Some(queries)) if is_result_cacheable => {
             let threads = usize::from(bun_core::get_thread_count()).min(16);

@@ -10,27 +10,27 @@
 // SECTIONS BEHIND THE NAMESPACE: A the module's variables · B the classes' fields · C EVERY FUNCTION'S HEAD, TO BE COPIED · D births without an interface · E THE BORDER · F idioms.
 declare namespace SV {
   // -------------------------------------------------------------------------------------------------------------------
-  // 1. Numbers. int32: four bytes and integer arithmetic; a value that is no int32 stored there is a TypeError at run time.
+  // 1. Numbers. int32: four bytes and integer arithmetic; the build proves every value that is stored there, or stops.
   // -------------------------------------------------------------------------------------------------------------------
   type int32 = import("bun").int32;
   type NodeType = int32; // SerovalNode.t: 0 Number 1 String 2 Constant 3 BigInt 4 IndexedValue 5 Date 6 RegExp 7 Set 8 Map 9 Array 10 Object 11 NullConstructor 12 Promise 13 Error 14 AggregateError 15 TypedArray 16 BigIntTypedArray 17 WKSymbol 18 Reference 19 ArrayBuffer 20 DataView 21 Boxed 22 PromiseConstructor 23 PromiseSuccess 24 PromiseFailure 25 Plugin 26 SpecialReference 27 IteratorFactory 28 IteratorFactoryInstance 29 AsyncIteratorFactory 30 AsyncIteratorFactoryInstance 31 StreamConstructor 32 StreamNext 33 StreamThrow 34 StreamReturn 35 Sequence 36 Temporal
-  type RefId = int32; // SerovalNode.i, every `id` of the parser and the serializer: refs.size at the moment the value is first met (921)
+  type RefId = number; // SerovalNode.i, every `id` of the parser and the serializer: refs.size at the moment the value is first met (921)
   type Mode = int32; // 1 Vanilla 2 Cross
   type ParserType = int32; // ParserContext.type: 1 Sync 2 Stream
-  type Features = int32; // bits: 1 AggregateError 2 ArrowFunction 4 ErrorPrototypeStack 8 ObjectAssign 16 BigIntTypedArray 32 RegExp 64 Temporal. Made by ^ & ~ alone (901 1339 3091)
-  type Depth = int32; // every `depth`: 0, + 1 an object
-  type ObjectFlag = int32; // SerovalNode.o, FlaggedObject.type: 0 None 1 NonExtensible 2 Sealed 3 Frozen
+  type Features = number; // bits: 1 AggregateError 2 ArrowFunction 4 ErrorPrototypeStack 8 ObjectAssign 16 BigIntTypedArray 32 RegExp 64 Temporal. Made by ^ & ~ alone (901 1339 3091)
+  type Depth = number; // every `depth`: 0, + 1 an object
+  type ObjectFlag = number; // SerovalNode.o, FlaggedObject.type: 0 None 1 NonExtensible 2 Sealed 3 Frozen
   type ConstantTag = int32; // s at t 2: 0 null 1 undefined 2 true 3 false 4 -0 5 Infinity 6 -Infinity 7 NaN
   type SymbolTag = int32; // s at t 17: 0..12: the key of SYMBOL_STRING | SYMBOL_REF
   type ErrorTag = int32; // s at t 13 14: 0 Error 1 EvalError 2 RangeError 3 ReferenceError 4 SyntaxError 5 TypeError 6 URIError
   type SpecialRef = int32; // s at t 26: 0 MapSentinel 1 PromiseConstructor 2 PromiseSuccess 3 PromiseFailure 4 StreamConstructor 5 ArrayBufferConstructor
   type TemporalType = int32; // c at t 36: 0 Instant 1 Duration 2 PlainDate 3 PlainDateTime 4 PlainMonthDay 5 PlainTime 6 PlainYearMonth 7 ZonedDateTime
   type PromiseStatus = int32; // s at t 12: 1 fulfilled 0 rejected
-  type SequenceIndex = int32; // Sequence.t | .d, s and l at t 35: -1 = never
+  type SequenceIndex = number; // Sequence.t | .d, s and l at t 35: -1 = never
   type NodeLength = int32; // SerovalNode.l: a view's length | byteLength (at most 1e6: 436 440 444 throw beyond) · at t 35 a SequenceIndex
   type AssignmentType = int32; // Assignment.t: 0 Index 1 Add 2 Set 3 Delete 4 Define
   type RefKind = int32; // ParsedRef.type: 0 Fresh 1 Indexed 2 Referenced
-  type Count = int32; // StreamParserState.pending, Stream.count, Serializer.pending | .ids, an index into vars
+  type Count = number; // StreamParserState.pending, Stream.count, Serializer.pending | .ids, an index into vars
   type DepthLimit = number; // options.depthLimit || 1000: THE USER'S NUMBER: NOT int32 (Infinity is a sensible one). The authors' type says number
   type ByteOffset = number; // SerovalNode.b: a view's byteOffset into THE USER'S BUFFER: NOT int32
   type Base64Limit = number; // maxBase64Length: any safe integer >= 0 gets through 1332: NOT int32

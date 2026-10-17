@@ -101,7 +101,7 @@ pub struct ValidationPlan {
 
 fn write_json_text(out: &mut Vec<u8>, text: &[u8]) {
     out.push(b'"');
-    for unit in String::from_utf8_lossy(text).encode_utf16() {
+    for unit in bstr::BStr::new(text).to_string().encode_utf16() {
         match unit {
             0x22 | 0x5c => out.extend_from_slice(&[b'\\', unit as u8]),
             0x20..=0x7e => out.push(unit as u8),
@@ -409,7 +409,7 @@ impl Checker<'_, '_> {
 
     pub fn validation_plan(&mut self, ty: TypeId, omits_invalid_optional_members: bool) -> ValidationPlan {
         let mut planning = Planning { omits_invalid_optional_members, ..Planning::default() };
-        let shown = String::from_utf8_lossy(&self.type_to_string(ty)).into_owned();
+        let shown = bstr::BStr::new(&self.type_to_string(ty)).to_string();
         planning.plan.root = self.plan_type(&mut planning, ty, &shown);
         for node in 0..planning.plan.nodes.len() as u32 {
             planning.plan.nodes[node as usize].is_recursive = planning.plan.reaches_inline(node, node, &mut Vec::new());
@@ -617,7 +617,7 @@ impl Checker<'_, '_> {
             (b"Format", Some(Constant::Text(name))) => match format_pattern(&name) {
                 Some(pattern) => Rule::Format { name, pattern: pattern.to_vec() },
                 None => {
-                    planning.plan.unsupported.push(format!("{at}: {}", String::from_utf8_lossy(&self.type_to_string(part))));
+                    planning.plan.unsupported.push(format!("{at}: {}", bstr::BStr::new(&self.type_to_string(part))));
                     return true;
                 }
             },
@@ -638,7 +638,7 @@ impl Checker<'_, '_> {
                 return true;
             }
             _ => {
-                planning.plan.unsupported.push(format!("{at}: {}", String::from_utf8_lossy(&self.type_to_string(part))));
+                planning.plan.unsupported.push(format!("{at}: {}", bstr::BStr::new(&self.type_to_string(part))));
                 return true;
             }
         };
@@ -658,7 +658,7 @@ impl Checker<'_, '_> {
                 _ => None,
             })
             .collect::<Option<Vec<Placeholder>>>()?;
-        Some(Rule::Template { name: self.type_to_string(ty).to_vec(), texts, placeholders })
+        Some(Rule::Template { name: self.type_to_string(ty), texts, placeholders })
     }
 
     fn plan_type(&mut self, planning: &mut Planning, ty: TypeId, at: &str) -> u32 {
@@ -666,8 +666,7 @@ impl Checker<'_, '_> {
         let mut tags = Tags::default();
         let mut base = ty;
         if let TypeData::Intersection(ref parts) = *self.data(ty) {
-            let parts: Vec<TypeId> = parts.iter().copied().collect();
-            let others: Vec<TypeId> = parts.into_iter().filter(|&part| !self.read_tag(planning, part, &mut tags, at)).collect();
+            let others: Vec<TypeId> = parts.iter().copied().filter(|&part| !self.read_tag(planning, part, &mut tags, at)).collect();
             let primitives: Vec<TypeId> = others.iter().copied().filter(|&part| self.is_primitive_part(part)).collect();
             let others = if primitives.is_empty() { others } else { primitives };
             base = match others[..] {
@@ -697,6 +696,16 @@ impl Checker<'_, '_> {
         node
     }
 
+    fn plan_integer_within(&mut self, planning: &mut Planning, (minimum, maximum): (i64, i64), declared: TypeId, at: &str) -> u32 {
+        let integer = planning.add(Planned::Primitive(PlannedPrimitive::Number));
+        planning.plan.nodes[integer as usize].rules = vec![Rule::Integer, Rule::AtLeast(minimum as f64), Rule::AtMost(maximum as f64)];
+        if !self.accepts_undefined(declared) {
+            return integer;
+        }
+        let undefined = self.plan_type(planning, TypeId::UNDEFINED, at);
+        planning.add(Planned::Union { ty: declared, arms: vec![integer, undefined] })
+    }
+
     fn plan_untagged(&mut self, planning: &mut Planning, ty: TypeId, is_strict: bool, at: &str) -> Planned {
         if let Some(constant) = self.primitive_constant(ty) {
             return match constant {
@@ -710,7 +719,7 @@ impl Checker<'_, '_> {
             if planning.is_exact {
                 return Planned::Nothing;
             }
-            planning.plan.unsupported.push(format!("{at}: {}", String::from_utf8_lossy(&checker.type_to_string(ty))));
+            planning.plan.unsupported.push(format!("{at}: {}", bstr::BStr::new(&checker.type_to_string(ty))));
             Planned::Anything
         };
         match *self.data(ty) {
@@ -774,7 +783,10 @@ impl Checker<'_, '_> {
                 for prop in props {
                     let declared = self.type_of_prop(prop, members.mapper);
                     let name = self.atoms().bytes(prop.name).to_vec();
-                    let node = self.plan_type(planning, declared, &format!("{at}.{}", String::from_utf8_lossy(&name)));
+                    let node = match self.annotated_prop_integer_range(prop) {
+                        Some(range) => self.plan_integer_within(planning, range, declared, at),
+                        None => self.plan_type(planning, declared, &format!("{at}.{}", bstr::BStr::new(&name))),
+                    };
                     let is_optional = prop.flags.contains(PropFlags::OPTIONAL);
                     planned.push(PlannedMember { name, node, is_optional, is_omitted_when_invalid: is_optional && planning.omits_invalid_optional_members });
                 }

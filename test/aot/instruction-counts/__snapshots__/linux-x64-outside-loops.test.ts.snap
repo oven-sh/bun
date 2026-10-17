@@ -1,7 +1,7 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
 exports[`adds, subtracts and multiplies numbers, outside loops 1`] = `
-"typed, function: 40.50 instructions (kernel 35.50, module 3, stub Add 2), 912 bytes
+"typed, function: 40.50 instructions (kernel 35.50, module 3, stub Add 2), 952 bytes
 typed, function that no loop calls: 42.25 instructions (kernel 24.75, stub Add 10, module 3.50, stub SubDoubleOnRightAsDouble 1.50, stub MulDoubleAsDouble 1.25, stub SubDoubleAsDouble 1.25), 539 bytes
 untyped, function: 27.50 instructions (kernel 24.50, module 3), 575 bytes
 untyped, function that no loop calls: 31.50 instructions (kernel 11.25, stub Add 10, stub Sub 4, module 3.50, stub Mul 2.75), 243 bytes"
@@ -11,7 +11,7 @@ exports[`looks for a number in an array, outside loops 1`] = `
 "typed, function: 57.25 instructions (kernel 30, stub ArrayIndexOf 24.25, module 3), 1268 bytes
 typed, function that no loop calls: 58 instructions (kernel 30.25, stub ArrayIndexOf 24.25, module 3.50), 1278 bytes
 untyped, function: 72.25 instructions (kernel 45, stub ArrayIndexOf 24.25, module 3), 1749 bytes
-untyped, function that no loop calls: 84 instructions (kernel 39.25, stub ArrayIndexOf 24.25, a function without a name 9, stub Add 8, module 3.50), 1446 bytes"
+untyped, function that no loop calls: 81 instructions (kernel 39.25, stub ArrayIndexOf 24.25, stub Add 8, a function without a name 6, module 3.50), 1446 bytes"
 `;
 
 exports[`compares the length of an array with a number, outside loops 1`] = `
@@ -25,7 +25,7 @@ exports[`makes an array of five numbers, outside loops 1`] = `
 "typed, function: 731.50 instructions (the runtime 593, kernel 46, stub ColdOperationValue 45, elsewhere 37.75, module 6, stub ColdOperationValue to operationAOTTypedNewArray with arguments 2.25, stub ColdOperationValue to operationAOTTypedNewArray 1.50), 663 bytes
 typed, function that no loop calls: 720.25 instructions (the runtime 624, elsewhere 37.75, kernel 35.50, stub OperationValueWithInstance 14, module 7, stub OperationValueWithInstance to operationAOTTypedNewArray 2), 324 bytes
 untyped, function: 727.50 instructions (the runtime 593, kernel 66, elsewhere 37.75, stub ColdOperationValueWithoutFPRs 21, module 6, stub ColdOperationValueWithoutFPRs to operationAOTTypedNewArray with arguments 2.25, stub ColdOperationValueWithoutFPRs to operationAOTTypedNewArray 1.50), 1216 bytes
-untyped, function that no loop calls: 744.25 instructions (the runtime 624, kernel 38.50, elsewhere 37.75, stub OperationValueWithInstance 14, stub GetLengthByName 13, stub Add 8, module 7, stub OperationValueWithInstance to operationAOTTypedNewArray 2), 560 bytes"
+untyped, function that no loop calls: 705.50 instructions (the runtime 585.50, kernel 38.50, elsewhere 37.50, stub OperationValueWithInstance 14, stub GetLengthByName 13, stub Add 8, module 7, stub OperationValueWithInstance to operationAOTTypedNewArray 2), 504 bytes"
 `;
 
 exports[`maps a short array with a small function, outside loops 1`] = `
@@ -64,10 +64,10 @@ untyped, function that no loop calls: 31.25 instructions (stub PutByValAtIndex 1
 `;
 
 exports[`awaits an async function, outside loops 1`] = `
-"typed, function: 902 instructions (the runtime 663.50, stub AwaitBySavingFrame 39, stub EnterSavedFrame 33, module 27, kernel 23, answer 22, stub EnterResume 21.50, stub TypedNewPromise 21, elsewhere 17, stub OperationVoidWithInstance 14, stub RestoreSavedFrameToStack 11, stub ResolvePromiseAfterAwait 9, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 1), 259 bytes
-typed, function that no loop calls: 923.50 instructions (the runtime 663.50, stub AwaitBySavingFrame 39, stub EnterSavedFrame 33, module 31.50, kernel 23, answer 22, stub EnterResume 21.50, stub TypedNewPromise 21, elsewhere 17, stub OperationVoidWithInstance 14, stub RestoreSavedFrameToStack 11, stub Call0 10.50, stub ResolvePromiseAfterAwait 9, stub CallValue0 6, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 1, stub CallValueWithoutThis0 0.50), 259 bytes
-untyped, function: 903.50 instructions (the runtime 663.50, stub AwaitBySavingFrame 39.50, stub EnterSavedFrame 33, module 27, answer 22, stub EnterResume 21.50, stub TypedNewPromise 21, elsewhere 17, kernel 16, stub OperationVoidWithInstance 14, stub RestoreSavedFrameToStack 11, stub ResolvePromiseAfterAwait 9, stub Add 8, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 1), 162 bytes
-untyped, function that no loop calls: 925 instructions (the runtime 663.50, stub AwaitBySavingFrame 39.50, stub EnterSavedFrame 33, module 31.50, answer 22, stub EnterResume 21.50, stub TypedNewPromise 21, elsewhere 17, kernel 16, stub OperationVoidWithInstance 14, stub RestoreSavedFrameToStack 11, stub Call0 10.50, stub ResolvePromiseAfterAwait 9, stub Add 8, stub CallValue0 6, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 1, stub CallValueWithoutThis0 0.50), 162 bytes"
+"typed, function: 824.50 instructions (the runtime 612, stub AwaitCallBySavingFrame 33, stub EnterSavedFrame 33, module 27, kernel 23, stub EnterResume 21.50, elsewhere 17, answer 16, stub OperationVoidWithInstance 14, stub RestoreSavedFrameToStack 11, stub ResolvePromiseAfterAwait 9, stub TypedNewPromise 7, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 1), 257 bytes
+typed, function that no loop calls: 846 instructions (the runtime 612, stub AwaitCallBySavingFrame 33, stub EnterSavedFrame 33, module 31.50, kernel 23, stub EnterResume 21.50, elsewhere 17, answer 16, stub OperationVoidWithInstance 14, stub RestoreSavedFrameToStack 11, stub Call0 10.50, stub ResolvePromiseAfterAwait 9, stub TypedNewPromise 7, stub CallValue0 6, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 1, stub CallValueWithoutThis0 0.50), 257 bytes
+untyped, function: 826 instructions (the runtime 612, stub AwaitCallBySavingFrame 33.50, stub EnterSavedFrame 33, module 27, stub EnterResume 21.50, elsewhere 17, answer 16, kernel 16, stub OperationVoidWithInstance 14, stub RestoreSavedFrameToStack 11, stub ResolvePromiseAfterAwait 9, stub Add 8, stub TypedNewPromise 7, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 1), 160 bytes
+untyped, function that no loop calls: 847.50 instructions (the runtime 612, stub AwaitCallBySavingFrame 33.50, stub EnterSavedFrame 33, module 31.50, stub EnterResume 21.50, elsewhere 17, answer 16, kernel 16, stub OperationVoidWithInstance 14, stub RestoreSavedFrameToStack 11, stub Call0 10.50, stub ResolvePromiseAfterAwait 9, stub Add 8, stub TypedNewPromise 7, stub CallValue0 6, stub OperationVoidWithInstance to operationAOTTypedParkAsyncFunction 1, stub CallValueWithoutThis0 0.50), 160 bytes"
 `;
 
 exports[`awaits a promise that is settled, outside loops 1`] = `
@@ -78,8 +78,8 @@ untyped, function that no loop calls: 891.50 instructions (the runtime 663.50, s
 `;
 
 exports[`calls an arrow function that is a field of a class, outside loops 1`] = `
-"typed, function: 13 instructions (kernel 10, module 3), 653 bytes
-typed, function that no loop calls: 41.75 instructions (kernel 15.25, elsewhere 15, add 8, module 3.50), 475 bytes
+"typed, function: 21 instructions (kernel 15, add 3, module 3), 778 bytes
+typed, function that no loop calls: 17.75 instructions (kernel 8.25, add 6, module 3.50), 202 bytes
 untyped, function: 87.75 instructions (kernel 40.75, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 30, stub PutByNameWithDirectColumnPreservingTwo 14, module 3), 1116 bytes
 untyped, function that no loop calls: 112.75 instructions (add 18, kernel 16.25, stub Add 16, stub PutByNameWithDirectColumn 14, stub CallValueNamed1 12, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 10, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDI 10, stub GetByNameWithDirectColumnWithReceiverInRAX 10, module 3.50, exports of call-arrow-function-field.untyped.function-that-no-loop-calls.js 3), 343 bytes"
 `;
@@ -100,21 +100,21 @@ untyped, function that no loop calls: 120.75 instructions (Counter.add 18, kerne
 
 exports[`calls a function of a host object, outside loops 1`] = `
 "typed, function: 286 instructions (the runtime 119, elsewhere 71.50, stub CallMethodByName0 25, stub CallHostFunction0 24, kernel 17.50, stub GreaterAfterInt32Check 17, stub CallValue0 9, module 3), 382 bytes
-typed, function that no loop calls: 297.25 instructions (the runtime 119, elsewhere 82, stub CallMethodByName0 25, stub CallHostFunction0 24, kernel 17.75, stub GreaterAfterInt32Check 17, stub CallValue0 9, module 3.50), 399 bytes
+typed, function that no loop calls: 261.50 instructions (the runtime 110, elsewhere 55.25, stub CallMethodByName0 25, stub CallHostFunction0 24, kernel 17.75, stub GreaterAfterInt32Check 17, stub CallValue0 9, module 3.50), 399 bytes
 untyped, function: 289.50 instructions (the runtime 119, elsewhere 75, stub CallMethodByName0 25, stub CallHostFunction0 24, kernel 17.50, stub GreaterAfterInt32Check 17, stub CallValue0 9, module 3), 382 bytes
 untyped, function that no loop calls: 293.75 instructions (the runtime 119, elsewhere 78.50, stub CallMethodByName0 25, stub CallHostFunction0 24, kernel 17.75, stub GreaterAfterInt32Check 17, stub CallValue0 9, module 3.50), 399 bytes"
 `;
 
 exports[`makes a string of an integer, outside loops 1`] = `
 "typed, function: 23.75 instructions (kernel 20.75, module 3), 735 bytes
-typed, function that no loop calls: 123.25 instructions (stub HelperAddStrings 55, stub Add 24, stub ValueAddWithFastPath 18, kernel 14.75, a function without a name 8, module 3.50), 292 bytes
+typed, function that no loop calls: 30.25 instructions (kernel 14.75, a function without a name 12, module 3.50), 292 bytes
 untyped, function: 30.50 instructions (kernel 27.50, module 3), 889 bytes
-untyped, function that no loop calls: 132.25 instructions (stub HelperAddStrings 55, stub Add 32, stub ValueAddWithFastPath 18, kernel 15.75, a function without a name 8, module 3.50), 328 bytes"
+untyped, function that no loop calls: 39.25 instructions (kernel 15.75, a function without a name 12, stub Add 8, module 3.50), 328 bytes"
 `;
 
 exports[`looks up an object that a Map holds, outside loops 1`] = `
 "typed, function: 28.50 instructions (kernel 25.50, module 3), 522 bytes
-typed, function that no loop calls: 52.75 instructions (stub MapGetByBits 24, a function without a name 17, kernel 8.25, module 3.50), 197 bytes
+typed, function that no loop calls: 43.75 instructions (a function without a name 32, kernel 8.25, module 3.50), 197 bytes
 untyped, function: 88.25 instructions (stub MapGet 58, kernel 27.25, module 3), 812 bytes
 untyped, function that no loop calls: 112.75 instructions (stub MapGet 58, kernel 17.25, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 14, stub Add 8, stub MapGetOrCallValue 6, stub ReadInheritedOutOfLineByName 6, module 3.50), 363 bytes"
 `;
@@ -129,8 +129,8 @@ untyped, function that no loop calls: 105.75 instructions (stub MapGet 51, kerne
 exports[`makes an instance of a class, outside loops 1`] = `
 "typed, function: 36 instructions (stub AllocateTypedObject 18, kernel 12, module 6), 148 bytes
 typed, function that no loop calls: 37.50 instructions (stub AllocateTypedObject 18, kernel 12.50, module 7), 158 bytes
-untyped, function: 72.50 instructions (kernel 36.50, stub PutByNameWithDirectColumnPreservingTwo 28, stub NewObjectLiteral2 22, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 10, stub Add 8, module 6, stub TypedClosure 4, the runtime -42), 486 bytes
-untyped, function that no loop calls: 74 instructions (kernel 37, stub PutByNameWithDirectColumnPreservingTwo 28, stub NewObjectLiteral2 22, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 10, stub Add 8, module 7, stub TypedClosure 4, the runtime -42), 489 bytes"
+untyped, function: 63 instructions (kernel 36.50, stub PutByNameWithDirectColumnPreservingTwo 28, stub NewObjectLiteral2 22, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 10, stub Add 8, module 6, stub TypedClosure 4, the runtime -51.50), 486 bytes
+untyped, function that no loop calls: 64.50 instructions (kernel 37, stub PutByNameWithDirectColumnPreservingTwo 28, stub NewObjectLiteral2 22, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 10, stub Add 8, module 7, stub TypedClosure 4, the runtime -51.50), 489 bytes"
 `;
 
 exports[`makes a promise, outside loops 1`] = `
@@ -141,10 +141,10 @@ untyped, function that no loop calls: 210 instructions (stub NewTypedClosure1 64
 `;
 
 exports[`joins a string and a number that is not an integer, outside loops 1`] = `
-"typed, function: 496.63 instructions (the runtime 336.13, kernel 60.50, stub ColdPlainOperation 58, elsewhere 37, module 3, stub ColdPlainOperation to operationAOTTypedDoubleToString 2), 2093 bytes
-typed, function that no loop calls: 630.38 instructions (the runtime 479.13, elsewhere 36, stub ValueAddWithFastPath 26, stub Add 24, stub HelperAddStrings 24, a function without a name 21, kernel 16.75, module 3.50), 334 bytes
-untyped, function: 606.13 instructions (the runtime 450, kernel 56.75, elsewhere 37.38, stub ColdOperationValueWithoutFPRs 21, stub AddAfterInt32Check 18, stub ValueAddWithFastPath 6.50, stub Add 6, stub HelperAddStrings 6, module 3, stub ColdOperationValueWithoutFPRs to operationAOTTypedToString 1.50), 1907 bytes
-untyped, function that no loop calls: 653.25 instructions (the runtime 487.75, stub Add 51.50, elsewhere 36, stub ValueAddWithFastPath 26, stub HelperAddStrings 24, kernel 20, a function without a name 4.50, module 3.50), 414 bytes"
+"typed, function: 169.50 instructions (kernel 60.50, stub ColdPlainOperation 58, the runtime 46, module 3, stub ColdPlainOperation to operationAOTTypedDoubleToString 2), 2093 bytes
+typed, function that no loop calls: 145.25 instructions (a function without a name 51, the runtime 46, stub ColdPlainOperationWithoutFPRs 26, kernel 16.75, module 3.50, stub ColdPlainOperationWithoutFPRs to operationAOTTypedDoubleToString 2), 334 bytes
+untyped, function: 283.75 instructions (the runtime 161.25, kernel 56.75, stub ColdOperationValueWithoutFPRs 21, stub AddAfterInt32Check 18, stub ValueAddWithFastPath 6.50, stub Add 6, stub HelperAddStrings 6, stub FrontEndTypedToString 3.75, module 3, stub ColdOperationValueWithoutFPRs to operationAOTTypedToString 1.50), 1907 bytes
+untyped, function that no loop calls: 293.25 instructions (the runtime 163.75, a function without a name 33.75, stub Add 33.50, stub ColdOperationValueWithoutFPRs 21, kernel 20, stub ValueAddWithFastPath 6.50, stub HelperAddStrings 6, stub FrontEndTypedToString 3.75, module 3.50, stub ColdOperationValueWithoutFPRs to operationAOTTypedToString 1.50), 414 bytes"
 `;
 
 exports[`reads and writes fields of an object, outside loops 1`] = `
@@ -170,9 +170,9 @@ untyped, function that no loop calls: 32 instructions (kernel 20.50, stub Add 8,
 
 exports[`joins two strings, outside loops 1`] = `
 "typed, function: 49.25 instructions (kernel 46.25, module 3), 1257 bytes
-typed, function that no loop calls: 82.25 instructions (stub Add 52, kernel 16.75, a function without a name 10, module 3.50), 311 bytes
+typed, function that no loop calls: 59.25 instructions (a function without a name 39, kernel 16.75, module 3.50), 311 bytes
 untyped, function: 53.75 instructions (kernel 50.75, module 3), 1118 bytes
-untyped, function that no loop calls: 85.75 instructions (stub Add 60, kernel 16.25, a function without a name 6, module 3.50), 321 bytes"
+untyped, function that no loop calls: 62.75 instructions (a function without a name 35, kernel 16.25, stub Add 8, module 3.50), 321 bytes"
 `;
 
 exports[`compares a string with constants, outside loops 1`] = `

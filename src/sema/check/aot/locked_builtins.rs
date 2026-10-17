@@ -93,7 +93,7 @@ impl Builtin {
     pub fn replaceable(&self) -> impl Iterator<Item = &'static str> {
         let names = strings::split(self.properties.as_bytes(), b" ");
         let unmarked = names.filter(|it| !matches!(it.first(), Some(b'~' | b'=' | b'!' | b'-')));
-        unmarked.filter_map(|it| str::from_utf8(it).ok()?.split(':').next())
+        unmarked.filter_map(|it| str::from_utf8(strings::split(it, b":").next()?).ok())
     }
 
     pub fn has_property(&self, name: &[u8]) -> bool {

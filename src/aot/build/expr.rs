@@ -54,6 +54,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             && let ExprKind::As { expr: operand, .. } = self.hir(fx.file)[e].kind
             && !fx.sink.is_some_and(|sink| sink.e == e)
             && self.c.is_host_bound(fx.file, e)
+            && !self.converts_to_int32_beneath_assertions(fx, e)
         {
             let written = self.skip_assertions(fx, operand);
             return self.expr(fx, written);
@@ -826,10 +827,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             ExprKind::As { expr, ty } => {
                 let checked = self.c.type_from_node(fx.file, ty);
                 let to = Ty { id: self.ty_of(checked), checked };
-                if self.is_cast_left_unchecked(fx, expr, checked, to.id) {
-                    let value = self.expr(fx, expr);
-                    return self.apply_assertions(fx, e, value, false);
-                }
                 let mut source = expr;
                 while let ExprKind::As { expr: inner, .. } | ExprKind::NonNull(inner) | ExprKind::Satisfies { expr: inner, .. } = self.hir(fx.file)[source].kind {
                     source = inner;
@@ -873,10 +870,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     return self.optional_chain(fx, e);
                 }
                 let to = self.non_null_ty(fx, e);
-                let text = self.reference_text(fx, expr);
-                if self.shared.constants.leaves_casts_unchecked && !self.is_builtin_file(fx.file) {
+                if !self.is_builtin_file(fx.file) {
                     return self.expr_into(fx, expr, to, CoerceReason::Store);
                 }
+                let text = self.reference_text(fx, expr);
                 let held = self.expr_into(fx, expr, to, CoerceReason::NonNull(text));
                 let own = self.ty(fx, held);
                 let is_literally_nullish = match hir[self.skip_assertions(fx, expr)].kind {
@@ -2165,23 +2162,19 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    fn is_cast_left_unchecked(&mut self, fx: &Fx, operand: ExprId, checked: TypeId, to: TyId) -> bool {
-        if !self.shared.constants.leaves_casts_unchecked || self.is_builtin_file(fx.file) || to.is_none() || to == self.out.tys.anything {
-            return false;
-        }
-        let written = self.c.type_of_expr(fx.file, operand);
-        self.c.is_untyped(written) || !self.c.is_provably_assignable(written, checked)
-    }
-
     fn apply_assertions(&mut self, fx: &mut Fx, e: ExprId, value: V, all: bool) -> V {
         let (ExprKind::As { expr, .. } | ExprKind::NonNull(expr) | ExprKind::Satisfies { expr, .. }) = self.hir(fx.file)[e].kind else { return value };
         let value = if all { self.apply_assertions(fx, expr, value, all) } else { value };
         match self.hir(fx.file)[e].kind {
+            ExprKind::As { .. } if self.c.is_cast_to_int32(fx.file, e) => {
+                fx.narrowed.remove(&value);
+                self.emit_conversion_to_int32(fx, value)
+            }
             ExprKind::As { ty, .. } => {
                 fx.narrowed.remove(&value);
                 let (checked, known) = (self.c.type_from_node(fx.file, ty), self.c.result_type_of(fx.file, e));
                 let named = self.ty_of(checked);
-                if self.is_forced_cast_to_builtin(fx, e, checked, named) || self.is_cast_left_unchecked(fx, expr, checked, named) {
+                if self.is_forced_cast_to_builtin(fx, e, checked, named) {
                     let forced = self.emit(fx, Op::Coerce { value, to: named, why: CoerceReason::Forced });
                     fx.checked.insert(forced, checked);
                     return forced;
@@ -2233,12 +2226,33 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
             ExprKind::NonNull(_) => {
                 let to = self.non_null_ty(fx, e);
-                let text = self.reference_text(fx, expr);
-                let why = if self.shared.constants.leaves_casts_unchecked && !self.is_builtin_file(fx.file) { CoerceReason::Store } else { CoerceReason::NonNull(text) };
+                let why = if self.is_builtin_file(fx.file) { CoerceReason::NonNull(self.reference_text(fx, expr)) } else { CoerceReason::Store };
                 self.coerce_at(fx, expr, value, to, why)
             }
             _ => value,
         }
+    }
+
+    fn converts_to_int32_beneath_assertions(&mut self, fx: &Fx, mut e: ExprId) -> bool {
+        while let ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) | ExprKind::AsConst(expr) = self.hir(fx.file)[e].kind {
+            if self.c.is_cast_to_int32(fx.file, e) {
+                return true;
+            }
+            e = expr;
+        }
+        false
+    }
+
+    pub(crate) fn emit_conversion_to_int32(&mut self, fx: &mut Fx, value: V) -> V {
+        let have = self.ty(fx, value);
+        let described = self.out.tys.get(have);
+        if have.is_some() && described.prims == 0 && !described.has_objects() && described.ints.is_some_and(|(minimum, maximum)| minimum >= i64::from(i32::MIN) && maximum <= i64::from(i32::MAX)) {
+            return value;
+        }
+        let zero = self.emit(fx, Op::Int(0));
+        let converted = self.emit_throwing(fx, Op::Binary { op: BinOp::BitOr, a: value, b: zero });
+        fx.b.func.values[converted.idx()].ty = self.known.int32;
+        converted
     }
 
     fn optional_chain(&mut self, fx: &mut Fx, e: ExprId) -> V {
@@ -2635,6 +2649,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let copied = self.c.non_nullable(written);
         let may_be_nullish = copied != written;
         if !self.is_record_type(copied) {
+            return None;
+        }
+        let replaces_with_any = props.iter().skip(1).any(|p| hir[p].kind != PropKind::Spread && self.c.type_of_expr(fx.file, hir[p].value).is_any());
+        if replaces_with_any && self.c.contextual_type_of_literal_before_bounds(fx.file, e).is_none() {
             return None;
         }
         let layout = self.record_layout(copied)?;
@@ -4748,12 +4766,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.seal(more);
         fx.b.seal(done);
         fx.b.switch_to(done);
+        let a = self.coerce_for_lenient_sink(fx, sink, a);
         match op {
             hir::BinOp::And => self.write_falsy_as(fx, result, a, why),
-            _ => {
-                let a = self.coerce_for_lenient_sink(fx, sink, a);
-                self.write_as(fx, result, a, why)
-            }
+            _ => self.write_as(fx, result, a, why),
         }
         fx.b.jump(join);
         fx.b.switch_to(more);
@@ -4930,8 +4946,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.seal(edge);
         fx.b.switch_to(edge);
         let value = if retained.is_tested { value } else { self.coerce_tested_value(fx, value, e) };
+        let value = self.coerce_for_lenient_sink(fx, retained.sink, value);
         if retained.when {
-            let value = self.coerce_for_lenient_sink(fx, retained.sink, value);
             self.write_as(fx, retained.result, value, retained.why);
         } else {
             self.write_falsy_as(fx, retained.result, value, retained.why);
@@ -4968,7 +4984,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let value = self.expr_for_test(fx, e);
             let boolean = Ty::from_id(self.known.boolean);
             let have = Ty::from_id(self.ty(fx, value));
-            let truthy = if self.is_within(have, boolean) { value } else { self.emit(fx, Op::Truthy(value)) };
+            let always_yields_boolean = matches!(
+                fx.b.func.op(value),
+                Some(Op::Bool(_) | Op::Not(_) | Op::Truthy(_) | Op::Relational { .. } | Op::StrictEq { .. } | Op::LooseEq { .. } | Op::InstanceOf { .. } | Op::IsNullish(_) | Op::IsInstance { .. } | Op::PropHas { .. } | Op::ElemHas { .. } | Op::PropDelete { .. } | Op::ElemDelete { .. } | Op::IterHas { .. })
+            );
+            let truthy = if self.is_within(have, boolean) && (negated || always_yields_boolean) { value } else { self.emit(fx, Op::Truthy(value)) };
             return if negated { self.emit(fx, Op::Not(truthy)) } else { truthy };
         }
         let (truthy, falsy, join) = (fx.b.new_block(), fx.b.new_block(), fx.b.new_block());

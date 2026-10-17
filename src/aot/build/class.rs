@@ -844,7 +844,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             DecoratorOwner::Param(p) => matches!(bound.fns.get(bound.param_fn[p.idx()].idx()).map(|func| func.owner), Some(FnOwner::Member(member)) if bound.member_owner[member.idx()] == MemberOwner::Class(class)),
         });
         let lowers_decorators = is_decorated && self.files.lowers_decorators(file);
-        if is_decorated && !lowers_decorators {
+        if is_decorated && !lowers_decorators && !self.shared.constants.leaves_decorators_to_the_bundler {
             self.problem(file, c.start, "a decorator");
         }
         let key_name = std::mem::replace(&mut self.key_name_value, V::NONE);
@@ -1141,7 +1141,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
             let own = declared_on(DecoratorOwner::Member(member));
             let PropKey::Name(key) = m.key else { continue };
-            let Some(at) = own.first().copied().or(parameter_types.first().map(|written| written.1)) else { continue };
+            let Some(at) = own.first().copied().or_else(|| parameter_types.first().map(|written| written.1)) else { continue };
             let mut elements: Args = Args::new();
             for &written in &own {
                 elements.push(self.expr(fx, written));
@@ -1194,7 +1194,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             self.call_decorator_helper(fx, at, b"decorateMember", &[elements, prototype, key, descriptor]);
         }
         let own = declared_on(DecoratorOwner::Class(class));
-        let Some(at) = own.first().copied().or(of_constructor.first().map(|written| written.1)) else { return };
+        let Some(at) = own.first().copied().or_else(|| of_constructor.first().map(|written| written.1)) else { return };
         let mut elements: Args = Args::new();
         for &written in &own {
             elements.push(self.expr(fx, written));

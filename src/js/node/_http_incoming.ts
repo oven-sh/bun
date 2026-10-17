@@ -1,16 +1,12 @@
-// @ts-check
 // Hardcoded module "node:_http_incoming"
 // This is a port of Node.js's lib/_http_incoming.js adapted so that the
 // native Bun.serve-based node:http server can construct IncomingMessage
 // instances directly from its native handle (the `kHandle` constructor form).
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_incoming.js
-const { kConnection } = require("internal/http");
-const { kHeaders, kHeadersCount, kRawHeaders, kTrailers, kTrailersCount } = require("internal/http");
-const { kCapture, kShapeMode } = require("internal/event_emitter_symbols");
 const Readable = require("internal/streams/readable");
 // callback-style stream.finished (returns a cleanup function)
 const finished = require("internal/streams/end-of-stream");
-const { advanceFlags, addFlags, flagsOf, internals, createByteReadableState } = require("internal/streams/state");
+const { advanceFlags, addFlags, flagsOf, internals } = require("internal/streams/state");
 const { kAutoDestroyed } = require("internal/shared");
 
 const {
@@ -29,28 +25,18 @@ const {
   onDataIncomingMessage,
   kAbortController,
   kReqShouldKeepAlive,
-  absentName,
-  isPlainRequest,
-  originalOf,
-  requestOriginals,
-  isPlainSocket,
-  resolvesToOriginals,
-  storesMakeOwnProperties,
 } = require("internal/http");
 
 const ObjectDefineProperty = Object.defineProperty;
 const ProcessNextTick = process.nextTick;
-const { capturedTick1, tick1, tick2, tick3 } = require("internal/process/ticks");
-const { constructReadable, resumeOnNextTick, endOnNextTick } = internals;
+const constructReadable = internals.constructReadable!;
+const resumeOnNextTick = internals.resumeOnNextTick!;
+const endOnNextTick = internals.endOnNextTick!;
 const { emit, listenerCount, read, push, resume, destroy } = Readable.prototype;
 
 const kAutoDestroy = 1 << 2;
 const kEmitClose = 1 << 3;
-const kErrorEmitted = 1 << 1;
 const kDestroyed = 1 << 4;
-const kPaused = 1 << 26;
-const kHasReadable = 1 << 28;
-const kReadable = 1 << 29;
 const kClosed = 1 << 5;
 const kCloseEmitted = 1 << 6;
 const kConstructed = 1 << 8;
@@ -76,10 +62,15 @@ const ObjectPrototypeLookupGetter: (this: unknown, name: PropertyKey) => Functio
   Object.prototype as any
 ).__lookupGetter__;
 
+const kHeaders = Symbol("kHeaders");
 const kHeadersDistinct = Symbol("kHeadersDistinct");
+const kHeadersCount = Symbol("kHeadersCount");
 // Cache slot for the lazy req.rawHeaders. The bytes live on kHeaderSource
 // (never cleared - unlike kHandle - so post-_destroy access still works).
+const kRawHeaders = Symbol("kRawHeaders");
+const kTrailers = Symbol("kTrailers");
 const kTrailersDistinct = Symbol("kTrailersDistinct");
+const kTrailersCount = Symbol("kTrailersCount");
 
 type IncomingMessage = import("node:http").IncomingMessage;
 
@@ -179,90 +170,6 @@ function IncomingMessage(socket) {
   this._readableState.readingMore = true;
 }
 $toClass(IncomingMessage, "IncomingMessage", Readable);
-type IncomingMessageFields = import("internal/http").IncomingMessageFields;
-const EventEmitterPrototype: any = require("node:events").prototype;
-const IncomingMessagePrototype: object = IncomingMessage.prototype;
-
-type Original = import("internal/http").Original;
-type Connection = import("internal/http").Connection;
-type ReadableState = import("internal/streams/state").ReadableState;
-let failedRequestPrototypeChecks = 0;
-function checkRequestPrototype(): boolean {
-  if (!IS_BUN_AOT) return false;
-  if (failedRequestPrototypeChecks > 1000) return false;
-  const sample = createIncomingMessage("", "", null, false, null);
-  if (resolvesToOriginals(sample, requestOriginals) && storesMakeOwnProperties(sample) && $setCheckedStructure(IncomingMessagePrototype, 11)) return true;
-  failedRequestPrototypeChecks++;
-  return false;
-}
-function isRequestPrototypePlain(): boolean {
-  if (!IS_BUN_AOT) return false;
-  return $isCheckedStructure(IncomingMessagePrototype, 11) || checkRequestPrototype();
-}
-function dumpRequest(req: IncomingMessageFields) {
-  if (!isPlainRequest(req)) return req._dump();
-  if (!req._dumped) {
-    req._dumped = true;
-    if (req._eventsCount !== 0) req.removeAllListeners("data");
-    else if (req._events !== undefined) req[kShapeMode] = false;
-    if (endsUnwatched(req)) return;
-    req.resume();
-  }
-}
-function needsDump(req: IncomingMessageFields): boolean {
-  if (!isPlainRequest(req)) return !req._consuming && !req._readableState?.resumeScheduled;
-  const state: ReadableState = req._readableState;
-  return !req._consuming && (state.flags & kResumeScheduled) === 0;
-}
-function hasEmittedEnd(req: IncomingMessageFields): boolean {
-  if (!isPlainRequest(req)) return req.readableEnded;
-  const state: ReadableState = req._readableState;
-  return (state.flags & kEndEmitted) !== 0;
-}
-function readableHighWaterMarkOf(socket: any) {
-  if (isPlainSocket(socket)) {
-    const connection: Connection = socket[kConnection];
-    if (socket._readableState === connection.readableState) return connection.readableState.highWaterMark;
-  }
-  return socket.readableHighWaterMark;
-}
-function createIncomingMessage(url: any, method: any, handle: any, hasBody: any, socket: any): IncomingMessageFields {
-  const state = createByteReadableState(socket ? readableHighWaterMarkOf(socket) : undefined);
-  addFlags(state, kReadingMore);
-  const capture = EventEmitterPrototype[kCapture];
-  const req: IncomingMessageFields = {
-    _events: { close: undefined, error: undefined, data: undefined, end: undefined, readable: undefined },
-    _eventsCount: 0,
-    _readableState: state,
-    [kShapeMode]: true,
-    _maxListeners: undefined,
-    [kCapture]: capture,
-    socket: socket,
-    complete: false,
-    rawTrailers: [],
-    upgrade: null,
-    url: url,
-    method: method,
-    client: socket,
-    [kHandle]: handle,
-    _consuming: false,
-    _dumped: false,
-    _closed: false,
-    [kHeaders]: null,
-    [kHeadersCount]: 0,
-    [kTrailers]: null,
-    [kTrailersCount]: 0,
-    [abortedSymbol]: false,
-    [eofInProgress]: false,
-    [kReqShouldKeepAlive]: undefined,
-    [kRawHeaders]: null,
-    [kHeaderSource]: handle,
-    [kAbortController]: null,
-    [noBodySymbol]: !hasBody,
-  };
-  Object.setPrototypeOf(req, IncomingMessagePrototype);
-  return req;
-}
 
 // Defaults observed before the parser (or the native server) fills these in.
 IncomingMessage.prototype.httpVersion = "1.1";
@@ -277,20 +184,20 @@ IncomingMessage.prototype.joinDuplicateHeaders = false;
 
 ObjectDefineProperty(IncomingMessage.prototype, "connection", {
   __proto__: null,
-  get: function (this: IncomingMessageFields) {
+  get: function () {
     return this.socket;
   },
-  set: function (this: IncomingMessageFields, val) {
+  set: function (val) {
     this.socket = val;
   },
 });
 
 ObjectDefineProperty(IncomingMessage.prototype, "aborted", {
   __proto__: null,
-  get: function (this: IncomingMessageFields) {
+  get: function () {
     return this[abortedSymbol];
   },
-  set: function (this: IncomingMessageFields, val) {
+  set: function (val) {
     this[abortedSymbol] = val;
   },
 });
@@ -316,7 +223,7 @@ ObjectDefineProperty(IncomingMessage.prototype, "rawHeaders", {
   // accessor can at least stay visible to for-in.
   enumerable: true,
   get: getRawHeaders,
-  set: function (this: IncomingMessageFields, value) {
+  set: function (value) {
     this[kRawHeaders] = value;
     this[kHeadersCount] = value ? value.length : 0;
   },
@@ -324,7 +231,7 @@ ObjectDefineProperty(IncomingMessage.prototype, "rawHeaders", {
 
 ObjectDefineProperty(IncomingMessage.prototype, "headers", {
   __proto__: null,
-  get: function (this: IncomingMessageFields) {
+  get: function () {
     let dst = this[kHeaders];
     if (!dst) {
       const addHeaderLine = this._addHeaderLine;
@@ -350,14 +257,14 @@ ObjectDefineProperty(IncomingMessage.prototype, "headers", {
     }
     return dst;
   },
-  set: function (this: IncomingMessageFields, val) {
+  set: function (val) {
     this[kHeaders] = val;
   },
 });
 
 ObjectDefineProperty(IncomingMessage.prototype, "headersDistinct", {
   __proto__: null,
-  get: function (this: IncomingMessageFields) {
+  get: function () {
     if (!this[kHeadersDistinct]) {
       this[kHeadersDistinct] = { __proto__: null };
 
@@ -370,14 +277,14 @@ ObjectDefineProperty(IncomingMessage.prototype, "headersDistinct", {
     }
     return this[kHeadersDistinct];
   },
-  set: function (this: IncomingMessageFields, val) {
+  set: function (val) {
     this[kHeadersDistinct] = val;
   },
 });
 
 ObjectDefineProperty(IncomingMessage.prototype, "trailers", {
   __proto__: null,
-  get: function (this: IncomingMessageFields) {
+  get: function () {
     if (!this[kTrailers]) {
       this[kTrailers] = {};
 
@@ -390,14 +297,14 @@ ObjectDefineProperty(IncomingMessage.prototype, "trailers", {
     }
     return this[kTrailers];
   },
-  set: function (this: IncomingMessageFields, val) {
+  set: function (val) {
     this[kTrailers] = val;
   },
 });
 
 ObjectDefineProperty(IncomingMessage.prototype, "trailersDistinct", {
   __proto__: null,
-  get: function (this: IncomingMessageFields) {
+  get: function () {
     if (!this[kTrailersDistinct]) {
       this[kTrailersDistinct] = { __proto__: null };
 
@@ -410,7 +317,7 @@ ObjectDefineProperty(IncomingMessage.prototype, "trailersDistinct", {
     }
     return this[kTrailersDistinct];
   },
-  set: function (this: IncomingMessageFields, val) {
+  set: function (val) {
     this[kTrailersDistinct] = val;
   },
 });
@@ -418,7 +325,7 @@ ObjectDefineProperty(IncomingMessage.prototype, "trailersDistinct", {
 ObjectDefineProperty(IncomingMessage.prototype, "signal", {
   __proto__: null,
   configurable: true,
-  get: function (this: IncomingMessageFields) {
+  get: function () {
     if (this[kAbortController] === null) {
       const ac = new AbortController();
       this[kAbortController] = ac;
@@ -437,25 +344,14 @@ ObjectDefineProperty(IncomingMessage.prototype, "signal", {
 // Like Node.js: req.setTimeout configures the inactivity timeout of the
 // underlying socket; the 'timeout' event itself reaches the request through
 // the server's socket timeout handling.
-IncomingMessage.prototype.setTimeout = function setTimeout(this: IncomingMessageFields, msecs, callback) {
+IncomingMessage.prototype.setTimeout = function setTimeout(msecs, callback) {
   if (callback) this.on("timeout", callback);
   this.socket?.setTimeout(msecs);
   return this;
 };
 
-function resumeConnection(req: IncomingMessageFields) {
+function resumeConnection(req) {
   const socket = req.socket;
-  if (socket && isPlainSocket(socket)) {
-    const connection: Connection = socket[kConnection];
-    const state = connection.readableState;
-    if (socket._readableState === state) {
-      const flags = state.flags;
-      if ((flags & (kHasReadable | kReadable)) === kHasReadable || (flags & (kDestroyed | kErrorEmitted | kEndEmitted)) !== 0) return;
-      if (req.upgrade || socket[kHandoffResponse] !== undefined) onIncomingMessageResumeNodeHTTPResponse.$call(req);
-      else if (!socket._paused && (connection.streamingEnabled || connection.upgradeIncoming !== undefined || (flags & (kFlowing | kHasPaused | kPaused)) !== (kFlowing | kHasPaused))) socket.resume();
-      return;
-    }
-  }
   if (socket && socket.readable) {
     if (req.upgrade || socket[kHandoffResponse] !== undefined) {
       // Upgrade request with a body (Node 26 semantics): reading the request
@@ -472,7 +368,7 @@ function resumeConnection(req: IncomingMessageFields) {
   }
 }
 
-IncomingMessage.prototype._read = function _read(this: IncomingMessageFields, _n) {
+IncomingMessage.prototype._read = function _read(_n) {
   if (!this._consuming) {
     this._readableState.readingMore = false;
     this._consuming = true;
@@ -516,7 +412,7 @@ IncomingMessage.prototype._read = function _read(this: IncomingMessageFields, _n
 // It's possible that the socket will be destroyed, and removed from
 // any messages, before ever calling this.  In that case, just skip
 // it, since something else is destroying this connection anyway.
-IncomingMessage.prototype._destroy = function _destroy(this: IncomingMessageFields, err, cb) {
+IncomingMessage.prototype._destroy = function _destroy(err, cb) {
   const shouldEmitAborted = !this.readableEnded || !this.complete;
 
   if (shouldEmitAborted) {
@@ -851,7 +747,7 @@ function _addHeaderLineDistinct(field, value, dest) {
   }
 }
 
-IncomingMessage.prototype._dumpAndCloseReadable = function _dumpAndCloseReadable(this: IncomingMessageFields) {
+IncomingMessage.prototype._dumpAndCloseReadable = function _dumpAndCloseReadable() {
   this._dumped = true;
   this._readableState.ended = true;
   this._readableState.endEmitted = true;
@@ -862,7 +758,7 @@ IncomingMessage.prototype._dumpAndCloseReadable = function _dumpAndCloseReadable
 
 // Call this instead of resume() if we want to just
 // dump all the data to /dev/null
-IncomingMessage.prototype._dump = function _dump(this: IncomingMessageFields) {
+IncomingMessage.prototype._dump = function _dump() {
   if (!this._dumped) {
     this._dumped = true;
     // If there is buffered data, it may trigger 'data' events.
@@ -876,39 +772,33 @@ IncomingMessage.prototype._dump = function _dump(this: IncomingMessageFields) {
 
 const { _read: incomingMessageRead, _destroy: incomingMessageDestroy } = IncomingMessage.prototype;
 
-if (IS_BUN_AOT) {
-  for (const name of ["_read", "_destroy", "_dump"]) requestOriginals.push(originalOf(IncomingMessage.prototype, name));
-  for (const name of ["read", "push", "resume", "destroy", "removeAllListeners", "readableEnded"]) requestOriginals.push(originalOf(Readable.prototype, name));
-  for (const name of ["emit", "listenerCount"]) requestOriginals.push(originalOf(EventEmitterPrototype, name));
-  for (const name of ["writable", "_writableState"]) requestOriginals.push(absentName(name));
-}
-
-function isUnheard(req: IncomingMessageFields, name) {
-  if (!(IS_BUN_AOT && isPlainRequest(req)) && req.emit !== emit) return false;
+function isUnheard(req, name) {
+  if (req.emit !== emit) return false;
   if (req._eventsCount === 0) return true;
   const events = req._events;
   return events !== undefined && events[name] === undefined;
 }
 
-function endsUnwatched(req: IncomingMessageFields) {
+function endsUnwatched(req) {
   if (
     !req[noBodySymbol] ||
-    (!(IS_BUN_AOT && isPlainRequest(req)) && req.resume !== resume)
+    req.resume !== resume
   ) {
     return false;
   }
-  const state: ReadableState = req._readableState;
+  const state = req._readableState;
   if (!advanceFlags(state, kFlagsUntouched, kFlagsResumed)) return false;
-  tick2(resumeUnwatched, req, state);
+  process.nextTick(resumeUnwatched, req, state);
   return true;
 }
 
-function resumeUnwatched(req: IncomingMessageFields, state: ReadableState) {
+function resumeUnwatched(req, state) {
   if (
     !req[kHandle] ||
     req._consuming ||
     req[eofInProgress] ||
-    (!(IS_BUN_AOT && isPlainRequest(req)) && (req.read !== read || req._read !== incomingMessageRead)) ||
+    req.read !== read ||
+    req._read !== incomingMessageRead ||
     req._readableState !== state ||
     !isUnheard(req, "resume") ||
     !advanceFlags(state, kFlagsResumed, kFlagsReading)
@@ -918,13 +808,14 @@ function resumeUnwatched(req: IncomingMessageFields, state: ReadableState) {
   req._consuming = true;
   resumeConnection(req);
   req[eofInProgress] = true;
-  tick1(endUnwatched, req);
+  process.nextTick(endUnwatched, req);
 }
 
-function endUnwatched(req: IncomingMessageFields) {
-  const state: ReadableState = req._readableState;
+function endUnwatched(req) {
+  const state = req._readableState;
   if (
-    (!(IS_BUN_AOT && isPlainRequest(req)) && (req.push !== push || req.read !== read)) ||
+    req.push !== push ||
+    req.read !== read ||
     !isUnheard(req, "readable") ||
     !advanceFlags(state, kFlagsReading, kFlagsEnded)
   ) {
@@ -932,10 +823,10 @@ function endUnwatched(req: IncomingMessageFields) {
   }
   req.complete = true;
   const parser = req.socket?.parser;
-  tick3(destroyUnwatched, req, state, parser != null && parser.incoming === req ? parser : undefined);
+  process.nextTick(destroyUnwatched, req, state, parser != null && parser.incoming === req ? parser : undefined);
 }
 
-function destroyUnwatched(req: IncomingMessageFields, state: ReadableState, parser) {
+function destroyUnwatched(req, state, parser) {
   try {
     destroyOnNextTick(req, state);
   } finally {
@@ -943,12 +834,15 @@ function destroyUnwatched(req: IncomingMessageFields, state: ReadableState, pars
   }
 }
 
-function destroyOnNextTick(req: IncomingMessageFields, state: ReadableState) {
+function destroyOnNextTick(req, state) {
   const handle = req[kHandle];
   if (
     !handle ||
     !req.complete ||
-    (!(IS_BUN_AOT && isPlainRequest(req)) && (req.writable || req._writableState || req.destroy !== destroy || req._destroy !== incomingMessageDestroy)) ||
+    req.writable ||
+    req._writableState ||
+    req.destroy !== destroy ||
+    req._destroy !== incomingMessageDestroy ||
     req._readableState !== state ||
     !isUnheard(req, "end") ||
     !advanceFlags(state, kFlagsEnded, kFlagsDestroyed)
@@ -958,20 +852,20 @@ function destroyOnNextTick(req: IncomingMessageFields, state: ReadableState) {
   req[kAutoDestroyed] = true;
   req[kHandle] = undefined;
   handle.onabort = handle.ondata = undefined;
-  tick1(closeUnwatched, req);
+  process.nextTick(closeUnwatched, req);
 }
 
-function closeUnwatched(req: IncomingMessageFields) {
-  if (!isPlainRequest(req) && req.listenerCount !== listenerCount) req.listenerCount("error");
-  const state: ReadableState = req._readableState;
+function closeUnwatched(req) {
+  if (req.listenerCount !== listenerCount) req.listenerCount("error");
+  const state = req._readableState;
   if (!advanceFlags(state, kFlagsDestroyed, kFlagsClosed)) addFlags(state, kClosed);
-  capturedTick1(ProcessNextTick, emitCloseUnwatched, req);
+  ProcessNextTick(emitCloseUnwatched, req);
 }
 
-function emitCloseUnwatched(req: IncomingMessageFields) {
-  const state: ReadableState = req._readableState;
+function emitCloseUnwatched(req) {
+  const state = req._readableState;
   if (!advanceFlags(state, kFlagsClosed, kFlagsClosed | kCloseEmitted)) addFlags(state, kCloseEmitted);
-  if (!isUnheard(req, "close") && (state.flags & kEmitClose) !== 0) req.emit("close");
+  if (!isUnheard(req, "close") && (flagsOf(state) & kEmitClose) !== 0) req.emit("close");
 }
 
 function onError(self, error, cb) {
@@ -984,4 +878,4 @@ function onError(self, error, cb) {
   }
 }
 
-export { IncomingMessage, createIncomingMessage, dumpRequest, hasEmittedEnd, isRequestPrototypePlain, needsDump, kReqShouldKeepAlive, readStart, readStop };
+export { IncomingMessage, kReqShouldKeepAlive, readStart, readStop };

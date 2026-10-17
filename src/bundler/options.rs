@@ -1262,7 +1262,6 @@ pub struct TypeChecked<'a, 'i> {
     pub explain_to_log: bool,
     pub rules: &'a [Box<[u8]>],
     pub logs_type_errors: bool,
-    pub leaves_casts_unchecked: bool,
     pub early_analysis: Option<EarlyAnalysis>,
     pub early_sources: Option<(std::sync::Arc<EarlySources>, PrintedReactCompilerOutputs)>,
     pub release_asts: &'i mut dyn FnMut(),
@@ -1278,7 +1277,7 @@ pub struct EarlySource {
 
 impl PartialEq for EarlySource {
     fn eq(&self, other: &EarlySource) -> bool {
-        self.path == other.path && self.loader == other.loader && (std::ptr::eq::<[u8]>(&*self.text, &*other.text) || self.text == other.text)
+        self.path == other.path && self.loader == other.loader && (std::ptr::eq::<[u8]>(&raw const *self.text, &raw const *other.text) || self.text == other.text)
     }
 }
 
@@ -1297,7 +1296,7 @@ pub struct EarlySources {
     pub react_compiler_paths: Vec<Box<[u8]>>,
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Eq)]
 pub struct OwnedFileJsxOptions {
     pub is_classic: bool,
     pub factory: Box<[u8]>,
@@ -1351,7 +1350,7 @@ pub struct FileJsxOptions<'a> {
     pub overrides_pragmas: bool,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct FileClassOptions {
     pub use_define_for_class_fields: bool,
     pub experimental_decorators: bool,
@@ -1410,7 +1409,7 @@ pub struct TypedOutputs {
 
 pub const SKIPPED_SOUND_FILES: &str = "--dts: the typed JavaScript that --aot compiles a package from is left out";
 
-pub type WriteSoundFiles = fn(request: SoundFilesRequest<'_>, log: &mut bun_ast::Log) -> TypedOutputs;
+pub type WriteSoundFiles = fn(request: &SoundFilesRequest<'_>, log: &mut bun_ast::Log) -> TypedOutputs;
 
 pub type TypedPackage =
     fn(root: &[u8], defines: &[(Box<[u8]>, Box<[u8]>)], directory: &[u8], name: &[u8]) -> (Vec<(Box<[u8]>, Box<[u8]>, bool)>, Option<Box<str>>);
@@ -1578,7 +1577,6 @@ pub struct BundleOptions<'a> {
     pub aot_explain_to_log: bool,
     pub aot_rules: Vec<Box<[u8]>>,
     pub aot_logs_type_errors: bool,
-    pub aot_leaves_casts_unchecked: bool,
     pub preserve_source_paths: bool,
     pub compile_function_source: bool,
     /// `--compile --bytecode`: payload order files to lay the bytecode out by (`bytecode_order`), most important first.
@@ -1824,7 +1822,6 @@ impl<'a> BundleOptions<'a> {
             aot_explain_to_log: self.aot_explain_to_log,
             aot_rules: self.aot_rules.clone(),
             aot_logs_type_errors: self.aot_logs_type_errors,
-            aot_leaves_casts_unchecked: self.aot_leaves_casts_unchecked,
             preserve_source_paths: self.preserve_source_paths,
             compile_function_source: self.compile_function_source,
             bytecode_order: self.bytecode_order.clone(),
@@ -2090,7 +2087,6 @@ impl<'a> BundleOptions<'a> {
             aot_explain_to_log: false,
             aot_rules: Vec::new(),
             aot_logs_type_errors: false,
-            aot_leaves_casts_unchecked: false,
             preserve_source_paths: false,
             compile_function_source: true,
             bytecode_depth: u32::MAX,

@@ -51,7 +51,7 @@ function scan32(text: string): number {
   let at: int32 = 0;
   while (at < text.length) {
     const character = text[at];
-    if (character === "`" || character === "*" || character === "[" || character === "@" || character === "#") found++;
+    if (character === "`" || character === "*" || character === "[" || character === "@" || character === "#") found = (found + 1) | 0;
     at++;
   }
   return found + at;
@@ -123,18 +123,18 @@ function closure32(text: string): number {
   let found: int32 = 0;
   let at: int32 = 0;
   const jump = (end: int32) => {
-    found++;
+    found = (found + 1) | 0;
     at = end;
   };
   while (at < text.length) {
     if (text[at] === "`") {
       const close = text.indexOf("`", at + 1);
       if (close > at + 1) {
-        jump(close + 1);
+        jump((close + 1) | 0);
         continue;
       }
     }
-    at++;
+    at = (at + 1) | 0;
   }
   return found + at;
 }

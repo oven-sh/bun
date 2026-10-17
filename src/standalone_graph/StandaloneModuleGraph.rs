@@ -319,9 +319,9 @@ impl StandaloneModuleGraph {
                 Entry::JsonModule => None,
             };
         }
-        static NAMES: std::sync::OnceLock<std::collections::HashMap<&'static [u8], bool>> = std::sync::OnceLock::new();
+        static NAMES: std::sync::OnceLock<bun_collections::HashMap<&'static [u8], bool>> = std::sync::OnceLock::new();
         let names = NAMES.get_or_init(|| {
-            let mut names = std::collections::HashMap::new();
+            let mut names = bun_collections::HashMap::new();
             for path in self.compiled_sources() {
                 names.insert(path, false);
                 let mut folder = path;
@@ -355,7 +355,7 @@ impl StandaloneModuleGraph {
         self.files.values().iter().filter_map(|file| {
             let path = file.name.strip_prefix(PRESERVED_PATHS_ROOT.as_bytes())?;
             let name = bun_paths::basename(path);
-            let is_one = name.ends_with(b".so") || name.ends_with(b".dylib") || name.windows(4).any(|window| window == b".so.");
+            let is_one = name.ends_with(b".so") || name.ends_with(b".dylib") || strings::contains(name, b".so.");
             is_one.then(|| (path, file.contents.as_bytes()))
         })
     }
@@ -609,7 +609,7 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
         key.extend_from_slice(specifier);
         key.extend_from_slice(if is_require { b"\0r" } else { b"\0i" });
         thread_local! {
-            static LOOKUP_CACHE: core::cell::RefCell<std::collections::HashMap<Vec<u8>, Option<&'static [u8]>>> = Default::default();
+            static LOOKUP_CACHE: core::cell::RefCell<bun_collections::HashMap<Vec<u8>, Option<&'static [u8]>>> = Default::default();
         }
         if let Some(answer) = LOOKUP_CACHE.with_borrow(|answers| answers.get(&key[..]).copied()) {
             return answer;
@@ -747,8 +747,14 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
         if !self.flags.intersects(Flags::PRESERVES_SOURCE_PATHS | Flags::HAS_ENTRY_POINT_PATHS) {
             return None;
         }
-        static NAMES: std::sync::OnceLock<std::collections::HashMap<&'static [u8], &'static [u8]>> = std::sync::OnceLock::new();
-        let names = NAMES.get_or_init(|| self.files.values().iter().filter(|file| !file.source_path.is_empty()).map(|file| (file.source_path, file.name)).collect());
+        static NAMES: std::sync::OnceLock<bun_collections::HashMap<&'static [u8], &'static [u8]>> = std::sync::OnceLock::new();
+        let names = NAMES.get_or_init(|| {
+            let mut names = bun_collections::HashMap::new();
+            for file in self.files.values().iter().filter(|file| !file.source_path.is_empty()) {
+                names.insert(file.source_path, file.name);
+            }
+            names
+        });
         names.get(source_path).copied()
     }
     fn has_entry_point_paths(&self) -> bool {
@@ -1630,7 +1636,7 @@ impl StandaloneModuleGraph {
             record_at += size_of::<StringPointer>() * modules_list_count;
         }
         let source_path_for = |i: usize| {
-            source_paths.map_or(StringPointer::default(), |at| StringPointer {
+            source_paths.map_or_else(StringPointer::default, |at| StringPointer {
                 offset: read_u32(at + size_of::<StringPointer>() * i),
                 length: read_u32(at + size_of::<StringPointer>() * i + 4),
             })
@@ -2739,7 +2745,7 @@ fn privately_modified_page_offsets(private_mapping: &[u8], page_size: usize) -> 
     const IS_SWAPPED: u64 = 1 << 62;
     const IS_FILE_PAGE: u64 = 1 << 61;
     let address = private_mapping.as_ptr() as usize;
-    if page_size == 0 || address % page_size != 0 {
+    if page_size == 0 || !address.is_multiple_of(page_size) {
         return None;
     }
     let mut entries = vec![0u8; private_mapping.len().div_ceil(page_size) * 8];
@@ -2749,8 +2755,8 @@ fn privately_modified_page_offsets(private_mapping: &[u8], page_size: usize) -> 
     }
     let is_modified = |entry: u64| entry & (IS_PRESENT | IS_SWAPPED) != 0 && entry & IS_FILE_PAGE == 0;
     Some(
-        (entries.chunks_exact(8).enumerate())
-            .filter(|(_, entry)| is_modified(u64::from_ne_bytes((*entry).try_into().expect("eight bytes"))))
+        (entries.as_chunks::<8>().0.iter().enumerate())
+            .filter(|(_, entry)| is_modified(u64::from_ne_bytes(**entry)))
             .map(|(page, _)| page * page_size)
             .collect(),
     )
@@ -3816,7 +3822,7 @@ pub fn to_graph_fd(
         return Err(CompileError::Reason(CompileErrorReason::NoOutputFiles));
     }
 
-    let failed = |e: bun_sys::Error| message("failed to write a temporary file", e.name().as_ref());
+    let failed = |e: bun_sys::Error| message("failed to write a temporary file", e.name());
     #[cfg(unix)]
     let fd = {
         let mut name_buf = bun_paths::path_buffer_pool::get();
@@ -4121,7 +4127,7 @@ impl StandaloneModuleGraph {
             0,
         )?;
         // SAFETY: the mapping is page-aligned and longer than eight bytes: checked above.
-        let len = usize::try_from(u64::from_le(unsafe { map.cast::<u64>().read() })).unwrap_or(usize::MAX);
+        let len = usize::try_from(u64::from_le_bytes(unsafe { map.cast::<[u8; 8]>().read() })).unwrap_or(usize::MAX);
         if len > size - size_of::<u64>() {
             fd.close();
             return Ok(None);
@@ -4159,7 +4165,7 @@ impl StandaloneModuleGraph {
             return Ok(None);
         }
         // SAFETY: the view is aligned to the allocation granularity and longer than eight bytes: checked above.
-        let len = usize::try_from(u64::from_le(unsafe { map.cast::<u64>().read() })).unwrap_or(usize::MAX);
+        let len = usize::try_from(u64::from_le_bytes(unsafe { map.cast::<[u8; 8]>().read() })).unwrap_or(usize::MAX);
         if len > size - size_of::<u64>() {
             return Ok(None);
         }

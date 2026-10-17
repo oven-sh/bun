@@ -522,20 +522,20 @@ const STREAM_CONSTRUCTOR = () => {
 	let success = false;
 	let count: SV.Count = 0;
 	const internal = {
-		flush(value: SV.Given, mode: SV.StreamEvent, x?: SV.int32): void {
+		flush(value: SV.Given, mode: SV.StreamEvent, x?: number): void {
 			for (x = 0; x < count; x++) {
 				const listener = listeners[x];
 				if (listener) listener[mode](value);
 			}
 		},
-		up(listener: SV.StreamListener, x?: SV.int32, z?: SV.int32, current?: SV.Given): void {
+		up(listener: SV.StreamListener, x?: number, z?: number, current?: SV.Given): void {
 			for (x = 0, z = buffer.length; x < z; x++) {
 				current = buffer[x];
 				if (!alive && x === z - 1) listener[success ? "return" : "throw"](current);
 				else listener.next(current);
 			}
 		},
-		on(listener: SV.StreamListener, temp: SV.int32 = 0): SV.Cleanup {
+		on(listener: SV.StreamListener, temp: number = 0): SV.Cleanup {
 			let subscribed = alive;
 			if (alive) {
 				for (temp = 0; temp < count; temp++) if (!listeners[temp]) break;
@@ -586,7 +586,7 @@ const STREAM_CONSTRUCTOR = () => {
 };
 const SERIALIZED_STREAM_CONSTRUCTOR = /* @__PURE__ */ STREAM_CONSTRUCTOR.toString();
 const ITERATOR_CONSTRUCTOR = (symbol: symbol) => (sequence: InstanceType<typeof Sequence>) => () => {
-	let index: SV.int32 = 0;
+	let index: number = 0;
 	const instance: SV.Deserialized = {
 		[symbol]() {
 			return instance;
@@ -610,11 +610,11 @@ const ITERATOR_CONSTRUCTOR = (symbol: symbol) => (sequence: InstanceType<typeof 
 const SERIALIZED_ITERATOR_CONSTRUCTOR = /* @__PURE__ */ ITERATOR_CONSTRUCTOR.toString();
 const ASYNC_ITERATOR_CONSTRUCTOR = (symbol: symbol, createPromise: () => SV.Deferred) => (stream: InstanceType<typeof Stream>) => () => {
 	let count: SV.Count = 0;
-	let doneAt: SV.int32 = -1;
+	let doneAt: number = -1;
 	let isThrow = false;
 	const buffer: SV.Given[] = [];
 	const pending: SV.Deferred[] = [];
-	const internal = { finalize(i: SV.int32 = 0, len: SV.int32 = pending.length): void {
+	const internal = { finalize(i: number = 0, len: number = pending.length): void {
 		for (; i < len; i++) /*$*/(/*$*/pending[i].s/*$*/ as SV.SettleStep)/*$*/({
 			done: true,
 			value: void 0
@@ -1977,7 +1977,7 @@ function createObjectAssign(ctx: SV.SerializerContext, ref: SV.RefId, key: strin
 	}
 	createAssignment(ctx.base, getRefParam(ctx, ref) + "." + key, value);
 }
-function createSequenceAssign(ctx: SV.SerializerContext, ref: SV.RefId, index: SV.int32, value: string): void {
+function createSequenceAssign(ctx: SV.SerializerContext, ref: SV.RefId, index: number, value: string): void {
 	createAssignment(ctx.base, getRefParam(ctx, ref) + ".v[" + index + "]", value);
 }
 /**
@@ -2009,7 +2009,7 @@ function assignIndexedValue(ctx: SV.SerializerContext, index: SV.RefId, value: s
 function serializeReference(node: SV.SerovalNode): string {
 	return "__SEROVAL_REFS__.get(\"" + /*$*/(/*$*/node.s/*$*/ as string)/*$*/ + "\")";
 }
-function serializeArrayItem(ctx: SV.SerializerContext, id: SV.RefId, item: SV.NodeItem, index: SV.int32): string {
+function serializeArrayItem(ctx: SV.SerializerContext, id: SV.RefId, item: SV.NodeItem, index: number): string {
 	if (item) {
 		if (isIndexedValueInStack(ctx.base, item)) {
 			markSerializerRef(ctx.base, id);
@@ -2028,7 +2028,7 @@ function serializeArray(ctx: SV.SerializerContext, node: SV.SerovalNode): string
 		ctx.base.stack.push(id);
 		let values = serializeArrayItem(ctx, id, list[0], 0);
 		let isHoley = values === "";
-		for (let i: SV.int32 = 1, item: string; i < len; i++) {
+		for (let i: number = 1, item: string; i < len; i++) {
 			item = serializeArrayItem(ctx, id, list[i], i);
 			values += "," + item;
 			isHoley = item === "";
@@ -2369,7 +2369,7 @@ function serializeStreamThrow(ctx: SV.SerializerContext, node: SV.SerovalNode): 
 function serializeStreamReturn(ctx: SV.SerializerContext, node: SV.SerovalNode): string {
 	return getRefParam(ctx, node.i!) + ".return(" + serialize$1(ctx, node.f!) + ")";
 }
-function serializeSequenceItem(ctx: SV.SerializerContext, id: SV.RefId, index: SV.int32, item: SV.SerovalNode): string {
+function serializeSequenceItem(ctx: SV.SerializerContext, id: SV.RefId, index: number, item: SV.SerovalNode): string {
 	const base = ctx.base;
 	if (isIndexedValueInStack(base, item)) {
 		markSerializerRef(base, id);
@@ -2385,7 +2385,7 @@ function serializeSequence(ctx: SV.SerializerContext, node: SV.SerovalNode): str
 	if (size > 0) {
 		ctx.base.stack.push(id);
 		let result = serializeSequenceItem(ctx, id, 0, items[0]/*$*/ as SV.SerovalNode/*$*/);
-		for (let i: SV.int32 = 1, item = result; i < size; i++) {
+		for (let i: number = 1, item = result; i < size; i++) {
 			item = serializeSequenceItem(ctx, id, i, items[i]/*$*/ as SV.SerovalNode/*$*/);
 			result += (item && result && ",") + item;
 		}

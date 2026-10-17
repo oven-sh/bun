@@ -84,7 +84,7 @@ fn is_read_only_by_literal_names(module: &Module<'_>, atoms: &Interner<'_>, star
             _ => false,
         })
     };
-    let is_symbol = |key: ExprId| creates_symbol(key) || matches!(hir[key].kind, ExprKind::Ident(_)) && initializer_of_constant(key).is_some_and(|created| creates_symbol(created));
+    let is_symbol = |key: ExprId| creates_symbol(key) || matches!(hir[key].kind, ExprKind::Ident(_)) && initializer_of_constant(key).is_some_and(&creates_symbol);
     let is_stored_to = |member: ExprId| matches!(bound.expr_parent[member.idx()], Parent::Expr(around) if matches!(hir[around].kind, ExprKind::Assign { op: None, target, .. } if target == member));
     let receives_property = |call: bun_sema::hir::CallId, e: ExprId| {
         !hir[call].args.is_empty()
@@ -662,7 +662,7 @@ impl Scan<'_, '_> {
                 && hir.specifier_uses.iter().filter(|used| has_loader_access(used.spec)).all(|used| matches!(used.kind, SpecifierKind::Import | SpecifierKind::SideEffect | SpecifierKind::ImportType | SpecifierKind::RequireCall))
                 && !hir.exports.iter().any(|export| has_loader_access(export.spec))
                 && !hir.ids(hir.body).any(|stmt| matches!(hir[stmt].kind, StmtKind::ExportStar { spec, .. } if has_loader_access(spec)))
-                && hir.imports.iter().filter(|import| !import.type_only && has_loader_access(import.spec)).all(|import| import.named.iter().all(|spec| is_safe_name(spec)));
+                && hir.imports.iter().filter(|import| !import.type_only && has_loader_access(import.spec)).all(|import| import.named.iter().all(&is_safe_name));
             let called_by = |e: ExprId| match bound.expr_parent[e.idx()] {
                 Parent::Expr(around) => match hir[around].kind {
                     ExprKind::Call(call) if hir[call].callee == e => Some((around, call)),

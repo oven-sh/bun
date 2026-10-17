@@ -232,8 +232,10 @@ tree was refused; with eleven of them optional it is accepted, at no measurable 
 **One shape per layout.** If fifty "kinds" of node are created by one literal, that is one interface, not
 a union of fifty. Never write a union of two created shapes on a variable.
 
-**Small integers** (`type int32 = import("bun").int32; type Flags = int32`) are kept in four bytes. The compiler declares that type itself, whatever `bun-types` is installed; an alias of your own that is only called `int32` is a number. Storing anything else
-there throws, so a number that comes from outside is not an `int32`.
+**Small integers** (`type int32 = import("bun").int32; type Flags = int32`) are kept in four bytes. The compiler declares that type itself, whatever `bun-types` is installed; an alias of your own that is only called `int32` is a number. The build
+proves that every value stored there is an int32 and stops where it cannot (`TS100031`). A typed version cannot add `| 0`, so a place that is stepped with
+`++` or takes a sum or a length is a `number`, and so is a parameter of a function that is used as a value. A number that comes from outside is cast where it
+comes in, `resolveUpdatePriority() as Lane`: with `--aot` that cast is `| 0`.
 
 **A literal with no declared type is a trap.** `{ next: null }` gets a field that can only hold `null`.
 Every literal with a `null`, `undefined` or constant member that is filled in later needs a declared type.

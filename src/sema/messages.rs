@@ -94,6 +94,11 @@ static OWN_MESSAGES: &[(u32, Category, &str)] = &[
     (100028, Category::Warning, "This type check can fail when the program runs: {0}."),
     (100029, Category::Warning, "'{0}' describes data from outside the type system, so the compiler cannot rely on its shape: every property access through it is looked up by name or checked when the program runs."),
     (100030, Category::Warning, "'{0}' is looked up by name when the program runs: the compiler does not know the layout of the object."),
+    (100031, Category::Error, "{0} is an 'int32', and the compiler cannot prove that {1} is one: {2}. {3}"),
+    (100032, Category::Error, "{0} is an 'int32', and {1} is not: {2}."),
+    (100033, Category::Error, "{0} is an 'int32', and the function is used as a value here, so the compiler cannot see every call. Call the function directly, or declare the parameter 'number' and convert it inside with '| 0'."),
+    (100034, Category::Error, "A '{1}' is used as a '{2}', and '{0}' is an 'int32' in only one of the two. Declare it 'int32' in both, or in neither."),
+    (100035, Category::Message, "'{0}' is declared here."),
     (100039, Category::Message, "The baseline allows {0} of these in this file, and there are {1}."),
     (100040, Category::Message, "A value of type 'any' or 'unknown' is assigned to it here."),
     (100041, Category::Message, "A value from outside the type system is assigned to it here."),
@@ -135,6 +140,16 @@ static OWN_MESSAGES: &[(u32, Category, &str)] = &[
     (100077, Category::Message, "The object is the result of this call, which returns '{0}'."),
     (100078, Category::Message, "'{0}' has an index signature, so its objects are dictionaries and have no layout."),
     (100079, Category::Message, "The type of this object is the type parameter '{0}'."),
+    (100080, Category::Warning, "This can freeze any object of the program, because the compiler does not know what it is applied to: every store to a field first tests whether the object is frozen."),
+    (100081, Category::Warning, "This can change the prototype of any object of the program, because the compiler does not know what it is applied to: an object made from a literal may inherit from anything."),
+    (100082, Category::Message, "So can this."),
+    (100083, Category::Warning, "'{0}' is JavaScript, so it is compiled without types."),
+    (100084, Category::Warning, "'{0}' has type errors, so it is compiled without its types."),
+    (100085, Category::Message, "'{0}' is a class without a fixed layout."),
+    (100086, Category::Warning, "{0} calls the functions it is given without knowing their parameter types, so each of them checks its arguments when it is entered."),
+    (100087, Category::Warning, "The compiler does not know the type of what '{0}' is given here, so the call is not specialized for it."),
+    (100088, Category::Warning, "Objects made by {0} have no layout that the compiler knows, so their properties are looked up by name."),
+    (100089, Category::Warning, "The compiler has no layout for '{0}', so the properties of its objects are looked up by name."),
 ];
 
 const _: () = {

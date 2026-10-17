@@ -462,13 +462,10 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--aot                            Compile JavaScript to machine code ahead of time in standalone executable. Requires --compile. Implies --bytecode"
         ),
         parse_param!(
-            "--aot-explain <STR>...           With --aot: print a report. --aot-explain=throws lists every type check that can fail when the program runs"
+            "--aot-explain <STR>?...          With --aot: list the places where the compiler cannot use your types, the most expensive first. --aot-explain=costs-json prints them as JSON. --aot-explain=throws lists every type check that can fail when the program runs"
         ),
         parse_param!(
             "--aot-type-errors <STR>          With --aot: what the executable does when a value does not match its TypeScript type: \"throw\" (default), or \"log\" to write a line to stderr and continue"
-        ),
-        parse_param!(
-            "--aot-unchecked-casts            With --aot: `x as T` and `x!` check nothing, as in TypeScript. A value that does not match goes on as it is"
         ),
         parse_param!(
             "--aot-huge-heap                  With --aot: let each thread have more than 32 GB of objects. The executable uses more memory and runs slower"
@@ -2652,11 +2649,6 @@ fn parse_build_command_options(
                 Global::exit(1);
             }
         };
-    }
-    ctx.bundler_options.aot_leaves_casts_unchecked = args.flag(b"--aot-unchecked-casts");
-    if ctx.bundler_options.aot_leaves_casts_unchecked && !ctx.bundler_options.aot {
-        Output::err_generic("--aot-unchecked-casts requires --aot", ());
-        Global::crash();
     }
     if ctx.bundler_options.aot {
         if let Some(why) = crate::cli::aot::unsupported_reason(&ctx.bundler_options.compile_target) {

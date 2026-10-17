@@ -348,9 +348,9 @@ impl<'p, 's> Checker<'p, 's> {
             if !self.aot.escape_closure.bound.insert(part) {
                 continue;
             }
-            let parameters: Vec<TypeId> = self.type_params_of_symbol(target).iter().copied().collect();
+
             let arguments: Vec<TypeId> = self.type_arguments(part).to_vec();
-            for (parameter, argument) in parameters.into_iter().zip(arguments) {
+            for (parameter, argument) in self.type_params_of_symbol(target).iter().copied().zip(arguments) {
                 self.record_type_parameter_inflow(argument, parameter);
             }
         }
@@ -686,8 +686,7 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         }
         let class = self.type_of_expr(file, arguments[0]);
-        let signatures: Vec<SigId> = self.signatures(class, true).iter().copied().collect();
-        let mut pending: Vec<TypeId> = signatures.into_iter().map(|signature| self.sig_return(signature)).collect();
+        let mut pending: Vec<TypeId> = self.signatures(class, true).iter().copied().map(|signature| self.sig_return(signature)).collect();
         let mut seen: FxHashSet<TypeId> = FxHashSet::default();
         while let Some(created) = pending.pop() {
             if !seen.insert(created) {
@@ -1297,8 +1296,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if part.is_any() {
                     return true;
                 }
-                let signatures: Vec<SigId> = self.signatures(part, false).iter().copied().collect();
-                signatures.into_iter().any(|signature| {
+                self.signatures(part, false).iter().copied().any(|signature| {
                     let parameters = self.sig_params(signature);
                     let this = self.sig_this_type(signature);
                     (0..parameters.len()).filter_map(|index| self.param_type_at(&parameters, index)).chain(this).collect::<Vec<TypeId>>().into_iter().any(|parameter| self.is_untyped_for_objects(parameter))
@@ -1366,7 +1364,8 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         }
         let hir = self.hir(file);
-        let mut operands: Vec<ExprId> = hir.ids(hir[call].args).collect();
+        let mut operands: Vec<ExprId> = Vec::new();
+        operands.extend(hir.ids(hir[call].args));
         if let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } = hir[hir[call].callee].kind {
             operands.push(obj);
         }
@@ -1377,8 +1376,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if part.is_any() {
                     return true;
                 }
-                let signatures: Vec<SigId> = self.signatures(part, false).iter().copied().collect();
-                signatures.into_iter().any(|signature| {
+                self.signatures(part, false).iter().copied().any(|signature| {
                     if let Some((holder, name)) = self.built_in_for_function(file, operand, signature) {
                         return !self.only_inspects(holder, name);
                     }

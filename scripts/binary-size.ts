@@ -85,13 +85,19 @@ agent(["artifact", "upload", "binary-sizes.json"]);
 
 type Baseline = { label: string; href?: string; sizes: Sizes };
 
-/** The newest build of main, or the newest in `state`. Buildkite redirects to it without a token. */
-async function latestMainBuild(state?: string): Promise<number> {
-  const url = `https://buildkite.com/${org}/${pipeline}/builds/latest?branch=main${state ? `&state=${state}` : ""}`;
+/** Newest first. From git and not GitHub's API, whose hourly quota CI shares and runs out of. */
+function recentMainCommits(): string[] {
+  const fetched = Bun.spawnSync(["git", "fetch", "--depth=15", "--filter=tree:0", "origin", "main"]);
+  if (fetched.exitCode !== 0) throw new Error(`git fetch origin main: ${fetched.stderr.toString().trim()}`);
+  return Bun.spawnSync(["git", "rev-list", "FETCH_HEAD"]).stdout.toString().trim().split("\n");
+}
+
+/** Buildkite redirects to the build of a commit without a token. */
+async function buildNumberForCommit(sha: string): Promise<number | undefined> {
+  const url = `https://buildkite.com/${org}/${pipeline}/builds/latest?branch=main&commit=${sha}`;
   const res = await fetch(url, { redirect: "manual" });
   const m = res.headers.get("location")?.match(/\/builds\/(\d+)/);
-  if (!m) throw new Error(`buildkite builds/latest: ${res.status}`);
-  return parseInt(m[1], 10);
+  return m ? parseInt(m[1], 10) : undefined;
 }
 
 async function sizesFromBuild(n: number): Promise<{ sizes: Sizes; release?: boolean } | undefined> {
@@ -106,8 +112,9 @@ async function sizesFromBuild(n: number): Promise<{ sizes: Sizes; release?: bool
   return (await Bun.file(`${dir}/binary-sizes.json`).json()) as { sizes: Sizes; release?: boolean };
 }
 
-async function baselineFromBuild(n: number): Promise<Baseline | undefined> {
-  if (String(n) === String(buildNumber)) return;
+async function baselineFromCommit(sha: string): Promise<Baseline | undefined> {
+  const n = await buildNumberForCommit(sha);
+  if (!n || String(n) === String(buildNumber)) return;
   const record = await sizesFromBuild(n);
   if (!record) return;
   // Only compare like-for-like: canary builds against canary baselines, release
@@ -117,13 +124,13 @@ async function baselineFromBuild(n: number): Promise<Baseline | undefined> {
   return { label: `main #${n}`, href: `https://buildkite.com/${org}/${pipeline}/builds/${n}`, sizes: record.sizes };
 }
 
-// Canary: main's newest build publishes binary-sizes.json long before it finishes. Until it
-// has, or when it is of the other kind (canary vs release), main's newest finished build.
+// Canary: walk recent main commits until one whose build has a matching
+// (canary vs release) binary-sizes.json.
 console.log(`--- Fetching ${buildKind} baseline`);
 let canaryNote = "";
 const canary: Baseline | undefined = await (async () => {
-  for (const state of [undefined, "finished"]) {
-    const b = await baselineFromBuild(await latestMainBuild(state));
+  for (const sha of recentMainCommits()) {
+    const b = await baselineFromCommit(sha);
     if (b) return b;
   }
   canaryNote = `no recent main ${buildKind} build has binary-sizes.json yet`;

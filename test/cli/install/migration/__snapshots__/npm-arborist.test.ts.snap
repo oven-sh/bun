@@ -2700,6 +2700,10 @@ bun install --frozen-lockfile exit code: 0
 exports[`package-lock.json migration fixes arborist fixtures bundle-metadep-duplication--x 1`] = `
 "migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
+error: ConnectionRefused downloading package manifest @isaacs/bundle-metadep-duplication-z
+error: ConnectionRefused downloading package manifest abbrev
+error: @isaacs/bundle-metadep-duplication-z@1 failed to resolve
+error: abbrev@1 failed to resolve
 bun install --frozen-lockfile exit code: 1
 
 {
@@ -3666,6 +3670,9 @@ exports[`package-lock.json migration fixes arborist fixtures edit-package-json--
 "warn: skipping 1 unused package-lock.json entry: "node_modules/semver"
 migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
+error: lockfile had changes, but lockfile is frozen
+note: dependencies in package.json changed since bun.lock was saved: walden was removed
+note: try re-running without --frozen-lockfile and commit the updated lockfile
 bun install --frozen-lockfile exit code: 1
 
 {
@@ -3707,6 +3714,8 @@ bun install --frozen-lockfile exit code: 1
 exports[`package-lock.json migration fixes arborist fixtures edit-package-json--workspaces-changed 1`] = `
 "migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
+error: ConnectionRefused downloading package manifest b
+error: b@^1.0.0 failed to resolve
 bun install --frozen-lockfile exit code: 1
 
 {
@@ -3740,6 +3749,8 @@ bun install --frozen-lockfile exit code: 1
 exports[`package-lock.json migration fixes arborist fixtures engine-specification 1`] = `
 "migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
+error: ConnectionRefused downloading package manifest engine-specifying-test-package
+error: engine-specifying-test-package@^1.0.0 failed to resolve
 bun install --frozen-lockfile exit code: 1
 
 {
@@ -3766,6 +3777,7 @@ exports[`package-lock.json migration fixes arborist fixtures external-link-dep 1
 "warn: skipping "app@file:./app" from package-lock.json: no entry for this dependency of "../cli-750"
 migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
+warn: dependencies in ../cli-750/package.json changed since lockfile was saved (run 'bun install')
 bun install --frozen-lockfile exit code: 0
 
 {
@@ -3800,6 +3812,8 @@ warn: skipping "b" from package-lock.json: transitive folder dependency "../a/no
 warn: skipping 3 unused package-lock.json entries: "../a", "../i", "../m"
 migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
+warn: dependencies in ../m/node_modules/n/o/package.json changed since lockfile was saved (run 'bun install')
+warn: dependencies in ../m/node_modules/n/o2/package.json changed since lockfile was saved (run 'bun install')
 bun install --frozen-lockfile exit code: 0
 
 {
@@ -3942,6 +3956,10 @@ bun pm migrate exit code: 1"
 exports[`package-lock.json migration fixes arborist fixtures optional-dep-allinstall-fail 1`] = `
 "migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
+warn: ConnectionRefused downloading package manifest @isaacs/testing-fail-allinstall
+error: lockfile had changes, but lockfile is frozen
+note: dependencies in package.json changed since bun.lock was saved: @isaacs/testing-fail-postinstall was removed
+note: try re-running without --frozen-lockfile and commit the updated lockfile
 bun install --frozen-lockfile exit code: 1
 
 {
@@ -3965,6 +3983,10 @@ bun install --frozen-lockfile exit code: 1
 exports[`package-lock.json migration fixes arborist fixtures optional-dep-install-fail 1`] = `
 "migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
+warn: ConnectionRefused downloading package manifest @isaacs/testing-fail-install
+error: lockfile had changes, but lockfile is frozen
+note: dependencies in package.json changed since bun.lock was saved: @isaacs/testing-fail-postinstall was removed
+note: try re-running without --frozen-lockfile and commit the updated lockfile
 bun install --frozen-lockfile exit code: 1
 
 {
@@ -4011,6 +4033,10 @@ bun install --frozen-lockfile exit code: 0
 exports[`package-lock.json migration fixes arborist fixtures optional-dep-preinstall-fail 1`] = `
 "migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
+warn: ConnectionRefused downloading package manifest @isaacs/testing-fail-preinstall
+error: lockfile had changes, but lockfile is frozen
+note: dependencies in package.json changed since bun.lock was saved: @isaacs/testing-fail-postinstall was removed
+note: try re-running without --frozen-lockfile and commit the updated lockfile
 bun install --frozen-lockfile exit code: 1
 
 {
@@ -4034,6 +4060,10 @@ bun install --frozen-lockfile exit code: 1
 exports[`package-lock.json migration fixes arborist fixtures optional-engine-specification 1`] = `
 "migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
+warn: ConnectionRefused downloading package manifest engine-specifying-test-package
+error: lockfile had changes, but lockfile is frozen
+note: dependencies in package.json changed since bun.lock was saved: @bonkydog/test was removed
+note: try re-running without --frozen-lockfile and commit the updated lockfile
 bun install --frozen-lockfile exit code: 1
 
 {
@@ -4216,6 +4246,7 @@ bun install --frozen-lockfile exit code: 0
 exports[`package-lock.json migration fixes arborist fixtures prune-lockfile 1`] = `
 "migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
+error: lockfile had changes, but lockfile is frozen
 bun install --frozen-lockfile exit code: 1
 
 {
@@ -4514,6 +4545,8 @@ exports[`package-lock.json migration fixes arborist fixtures two-bundled-deps 1`
 "warn: skipping 415 unused package-lock.json entries: "node_modules/@babel/code-frame", "node_modules/@babel/generator", "node_modules/@babel/generator/node_modules/source-map", "node_modules/@babel/helper-function-name", "node_modules/@babel/helper-get-function-arity" and 410 more
 migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
+error: ConnectionRefused downloading package manifest tap
+error: tap@^14.10.5 failed to resolve
 bun install --frozen-lockfile exit code: 1
 
 {
@@ -4572,6 +4605,8 @@ bun install --frozen-lockfile exit code: 0
 exports[`package-lock.json migration fixes arborist fixtures workspaces-add-new-dep 1`] = `
 "migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
+error: ConnectionRefused downloading package manifest abbrev
+error: abbrev@^1.1.1 failed to resolve
 bun install --frozen-lockfile exit code: 1
 
 {
@@ -4664,6 +4699,8 @@ exports[`package-lock.json migration fixes arborist fixtures workspaces-need-upd
 "warn: skipping 4 unused package-lock.json entries: "a", "b", "node_modules/once", "node_modules/wrappy"
 migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
+warn: skipping workspace "a": package.json has no "name"
+warn: skipping workspace "b": package.json has no "name"
 bun install --frozen-lockfile exit code: 0
 
 {

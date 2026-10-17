@@ -2575,7 +2575,10 @@ struct Destination {
     address: JSValue,
 }
 
-fn get_us_error<const USE_WSA: bool>(res: c_int, tag: bun_sys::Tag) -> Option<bun_sys::Error> {
+pub(crate) fn get_us_error<const USE_WSA: bool>(
+    res: c_int,
+    tag: bun_sys::Tag,
+) -> Option<bun_sys::Error> {
     #[cfg(windows)]
     {
         // setsockopt returns 0 on success, but errnoSys considers 0 to be failure on Windows.

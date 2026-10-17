@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { rm, writeFile } from "fs/promises";
+import { readFile, rm, writeFile } from "fs/promises";
 import { bunExe, compileFixture, bunEnv as env, isLinux, isMusl, readdirSorted, tempDir } from "harness";
 import { join } from "path";
 import { pathToFileURL } from "url";
@@ -206,6 +206,30 @@ describe.each(["--prefer-offline", "--offline"])("%s with an expired cached mani
       expect(urls.slice(before).filter(u => !u.endsWith(".tgz"))).toEqual([]);
     }
   });
+});
+
+it("--offline leaves a cached manifest that another version of bun wrote where it is", async () => {
+  setHandler(dummyRegistry([], { "0.0.3": {} }));
+  const warm = await install(await newProject({ baz: "0.0.3" }), []);
+  expect(warm.err).not.toContain("error:");
+  expect(warm.code).toBe(0);
+
+  const names = (await readdirSorted(cache_dir)).filter(name => name.endsWith(".npm"));
+  expect(names).toHaveLength(1);
+  const path = join(cache_dir, names[0]);
+  const own = await readFile(path);
+  // The header ends with the number of the format and a line feed.
+  const header = own.indexOf("\n", own.indexOf("\n") + 1);
+  expect(own.subarray(0, header).toString()).toMatch(/^#!\/usr\/bin\/env bun\nbun-npm-manifest-cache-v0\.0\.\d$/);
+  const other = Buffer.from(own);
+  other[header - 1] = own[header - 1] === 0x39 ? 0x30 : own[header - 1] + 1;
+  await writeFile(path, other);
+
+  const r = await install(await newProject({ baz: "<=0.0.3" }), ["--offline"]);
+  expect(r.err).toContain('--offline: no cached manifest for "baz"');
+  expect(r.code).toBe(1);
+  expect(await readdirSorted(cache_dir)).toContain(names[0]);
+  expect((await readFile(path)).equals(other)).toBe(true);
 });
 
 it("--offline skips an optional dependency that is not in the cache", async () => {

@@ -407,7 +407,7 @@ describe("bun install .env loading and the security scanner", () => {
       "`env = false` in a --config bunfig",
       {
         argv: ["install", "--config=ci/bunfig.toml"],
-        files: { "ci/bunfig.toml": `env = false\n${scannerBunfig}` },
+        files: { "ci/bunfig.toml": `env = false\n${scannerBunfig}`, "ci/scanner.ts": scannerSource },
       },
       shell,
     ],

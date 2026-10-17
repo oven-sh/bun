@@ -1,4 +1,5 @@
 import { shellInternals } from "bun:internal-for-testing";
+import { bunEnv, bunExe } from "harness";
 import { createTestBuilder, redirect } from "./util";
 const { parse } = shellInternals;
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -1066,5 +1067,33 @@ describe("parse shell invalid input", () => {
     await TestBuilder.command`echo (echo foo && echo hi)`.error("Unexpected token: `(`").run();
 
     await TestBuilder.command`echo foo >`.error("Redirection with no file").run();
+  });
+
+  // Every `if` clause is one more level of parser recursion. Without a depth
+  // guard the parser runs off the end of the native stack.
+  test("if clauses nested too deeply throw instead of overflowing the stack", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const depth = 20000;
+        const src = "if true; then ".repeat(depth) + "echo x" + "; fi".repeat(depth);
+        try {
+          Bun.$\`\${{ raw: src }}\`;
+          console.log("parsed");
+        } catch (e) {
+          console.log("error:", e.message);
+        }
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("error: Nesting depth exceeded\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 });

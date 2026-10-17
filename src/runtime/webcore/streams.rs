@@ -2644,7 +2644,7 @@ impl NetworkSink {
         unsafe { crate::webcore::s3::client::S3UploadStreamWrapper::deref(wrapper) };
     }
 
-    pub(crate) fn end_from_js(&mut self, _cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
+    pub(crate) fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
         let _ = self.end(None);
         if self.end_promise.has_value() {
             // we are already waiting for the end
@@ -2654,6 +2654,10 @@ impl NetworkSink {
             // we need to wait for the task to end
             self.end_promise = JSPromiseStrong::init(self.global_this());
             return bun_sys::Result::Ok(self.end_promise.value());
+        }
+        // The upload failed (or its signal fired) while nothing waited on it.
+        if let Some(err) = self.upstream_error.get() {
+            return bun_sys::Result::Ok(JSPromise::rejected_promise(cx.global(), err).to_js());
         }
         // task already detached
         bun_sys::Result::Ok(JSValue::js_number(0.0))

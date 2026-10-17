@@ -277,6 +277,7 @@ use crate::node::types::PathLikeExt as _;
 use crate::server::jsc::CallFrame;
 use crate::server::{AnyRequestContext, FileResponseStream, HTTPStatusText, file_response_stream};
 use crate::webcore::blob::BlobExt as _;
+use crate::webcore::blob::store::S3Ext as _;
 use crate::webcore::{Blob, ReadableStream, body as Body, s3 as S3};
 use bun_jsc::SysErrorJsc as _;
 
@@ -2728,7 +2729,8 @@ where
                         path,
                         Self::on_s3_size_resolved_thunk,
                         this.as_ctx_ptr().cast::<c_void>(),
-                        s3.request_payer,
+                        &s3.request_config(),
+                        None,
                     ); // TODO: properly propagate exception upwards
                     return;
                 }

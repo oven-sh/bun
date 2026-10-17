@@ -630,6 +630,29 @@ await s3file.delete();
 
 `delete` is the same as `unlink`.
 
+### Timeouts and cancellation
+
+An endpoint that accepts the connection and never answers would otherwise hold a request for the process-wide HTTP idle timeout (5 minutes). Two options bound it, with the same names as `fetch()`:
+
+- `timeout`: the idle timeout of each request, in milliseconds. The request fails with an `S3Error` whose `code` is `"Timeout"` when the server sends nothing for this long. A transfer that keeps moving is not cut off. `false` or `0` turns it off. It can be set on the client, on the file, or per call. Each retry gets a fresh timeout, so an operation with `retry` can take up to `(retry + 1) * timeout`.
+- `signal`: an `AbortSignal` for one operation. The promise rejects with `signal.reason`, and an upload in progress is aborted on the server. It is accepted on `stat`, `exists`, `size`, `delete`, `unlink`, `write`, `writer`, and `list`, not on `file()`.
+
+```ts s3.ts icon="/icons/typescript.svg"
+const client = new Bun.S3Client({ timeout: 10_000 });
+
+// Fail once the endpoint stalls for 2 seconds
+const text = await client.file("my-file.txt", { timeout: 2_000 }).text();
+
+// Bound the whole operation to 5 seconds: rejects with a TimeoutError
+const stat = await client.stat("my-file.txt", { signal: AbortSignal.timeout(5_000) });
+
+// Cancel an upload
+const controller = new AbortController();
+const upload = client.write("my-file.txt", bigFile, { signal: controller.signal });
+controller.abort();
+await upload; // rejects with controller.signal.reason
+```
+
 ## Error codes
 
 When Bun's S3 API throws an error, the error has a `code` property with one of the following values:

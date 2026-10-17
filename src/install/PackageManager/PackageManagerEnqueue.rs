@@ -659,7 +659,6 @@ pub fn enqueue_dependency_to_root(
 
     // A failed lookup stands until the event loop has gone around; a 404 as long as a manifest.
     let turn = this.event_loop.iteration_number();
-    let mut manifest_task_id: Option<Task::Id> = None;
 
     if this.lockfile.buffers.resolutions[dep_id as usize] == invalid_package_id {
         // Copy to the stack: `bind_row` can call `Package::from_npm`, which grows
@@ -667,15 +666,7 @@ pub fn enqueue_dependency_to_root(
         let dependency = this.lockfile.buffers.dependencies[dep_id as usize].clone();
         let (install_peer, is_root) = (false, true);
 
-        // A rule can change the manifest that the import asks for. `Err` is the one it waits for.
-        let mut replacement = None;
-        manifest_task_id = match asked_version(this, dep_id, &dependency, is_root, &mut replacement)
-        {
-            Ok(asked) => (asked.version.tag.is_npm())
-                .then(|| Task::Id::for_manifest(this.lockfile.str(&asked.name))),
-            Err(task_id) => Some(task_id),
-        };
-        if let Some(manifest_task_id) = manifest_task_id
+        if let Some(manifest_task_id) = manifest_task_of_import(this, dep_id, &dependency)
             && (this.network_dedupe_map.get(&manifest_task_id)).is_some_and(|entry| {
                 entry.missed_in.is_some_and(|missed_in| missed_in != turn)
                     && i64::from(entry.missing_until) <= bun_core::time::timestamp()
@@ -712,7 +703,9 @@ pub fn enqueue_dependency_to_root(
     };
 
     if resolution_id == invalid_package_id {
-        if let Some(manifest_task_id) = manifest_task_id {
+        // Asked again: an alias's manifest that came in between says if the import follows it.
+        let dependency = this.lockfile.buffers.dependencies[dep_id as usize].clone();
+        if let Some(manifest_task_id) = manifest_task_of_import(this, dep_id, &dependency) {
             if let Some(entry) = this.network_dedupe_map.get_mut(&manifest_task_id) {
                 entry.missed_in = Some(turn);
             }
@@ -724,6 +717,21 @@ pub fn enqueue_dependency_to_root(
     DependencyToEnqueue::Resolution {
         resolution: this.lockfile.packages.items_resolution()[resolution_id as usize],
         package_id: resolution_id,
+    }
+}
+
+/// The manifest that an import asks for now: its own, a rule's, or an alias's that it waits for.
+#[inline(never)]
+fn manifest_task_of_import(
+    this: &mut PackageManager,
+    id: DependencyID,
+    dependency: &Dependency,
+) -> Option<Task::Id> {
+    let (is_root, mut replacement) = (true, None);
+    match asked_version(this, id, dependency, is_root, &mut replacement) {
+        Ok(asked) => (asked.version.tag.is_npm())
+            .then(|| Task::Id::for_manifest(this.lockfile.str(&asked.name))),
+        Err(task_id) => Some(task_id),
     }
 }
 

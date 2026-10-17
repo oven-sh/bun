@@ -895,22 +895,25 @@ describe("a rule for a tarball or git dependency", () => {
     "fork-bee-script": { name: "bee", version: "2.0.0", scripts: { postinstall: "echo fork > ran.txt" } },
     // What the specifier of `b` names when the package calls itself something else.
     other: { name: "other", version: "1.0.0" },
-    // The `b` and the `a` of the registry that this server is for the tests that set `registry`.
+    // The `b`, the `a` and the `c` of the registry that this server is for the tests that set `registry`.
     "registry-b": { name: "b", version: "3.0.0", main: "package.json" },
-    "registry-a": { name: "a", version: "3.0.0", dependencies: { b: "^3.0.0" } },
+    "registry-a": { name: "a", version: "3.0.0", main: "package.json", dependencies: { b: "^3.0.0" } },
+    "registry-c": { name: "c", version: "3.5.0" },
   };
   type Id = keyof typeof packages;
   type Kind = "tarball" | "git";
   // The git cells need the `git` program.
   const kinds: Kind[] = Bun.which("git") ? ["tarball", "git"] : ["tarball"];
+  // The registry's `b`, then `other` as a `kind`, then the tarball `v`.
+  const z = (kind: Kind) => (spec: ReturnType<typeof at>) => ({
+    name: "z",
+    version: "1.0.0",
+    dependencies: { b: "3.0.0", other: spec[kind]("other"), v: spec.tarball("v") },
+  });
   // Tarballs that depend on other packages of their test.
   const dependents: Record<string, (spec: ReturnType<typeof at>) => object> = {
-    // The registry's `b`, then the tarball `other`, then the tarball `v`.
-    z: spec => ({
-      name: "z",
-      version: "1.0.0",
-      dependencies: { b: "3.0.0", other: spec.tarball("other"), v: spec.tarball("v") },
-    }),
+    "z-tarball": z("tarball"),
+    "z-git": z("git"),
     v: () => ({ name: "v", version: "1.0.0", dependencies: { a: "3.0.0" } }),
   };
 
@@ -978,9 +981,9 @@ describe("a rule for a tarball or git dependency", () => {
         await held.get(pathname);
         if (gone.has(pathname)) return new Response(null, { status: 404 });
         if (failing.has(pathname)) return new Response("{}", { status: 500 });
-        const manifest = /^\/(\w+)\/registry\/(a|b)$/.exec(pathname);
+        const manifest = /^\/(\w+)\/registry\/(a|b|c)$/.exec(pathname);
         if (manifest) {
-          const found = packages[`registry-${manifest[2] as "a" | "b"}`];
+          const found = packages[`registry-${manifest[2] as "a" | "b" | "c"}`];
           const dist = { tarball: `${origin}/${manifest[1]}/registry-${manifest[2]}.tgz` };
           return Response.json({
             name: found.name,
@@ -1028,7 +1031,7 @@ describe("a rule for a tarball or git dependency", () => {
       tarball,
       git: (id: string) => `git+${pathToFileURL(join(String(repos), id))}#v1`,
       github: (id: string) => `github:${test}/${id}#v1`,
-      /** For `bunWith`: `a` and `b` are also registry packages, `registry-a` and `registry-b`. */
+      /** For `bunWith`: `a`, `b` and `c` are also registry packages, `registry-a` and so on. */
       registry: { BUN_CONFIG_REGISTRY: `${origin}/${test}/registry/`, GITHUB_API_URL: origin },
       requested: (id: string) => requests.filter(pathname => paths(id).includes(pathname)).length,
       /** The server has `id` no more. */
@@ -1352,17 +1355,18 @@ describe("a rule for a tarball or git dependency", () => {
     if (kind === "tarball") expect(spec.requested("fork-bee")).toBe(3);
   });
 
-  // `z` depends on the registry's `b`, on the tarball `other` and on the tarball `v`. The project has `other` already,
-  // so that dependency of `z` is bound while `b` waits for its manifest. It must not wait for the download once more
-  // when its turn comes: a tarball is added in the order of the dependencies that wait, and `v` would then be added
-  // only after everything else has arrived. The server keeps the tarball of `b` until `a`, which only `v` depends
-  // on, is resolved and downloaded.
-  test.concurrent(
-    "bun install --force adds a tarball in its turn after a dependency on one that is there",
-    async () => {
+  // `z` depends on the registry's `b`, on `other` and on the tarball `v`. The project has `other` already, so that
+  // dependency of `z` is bound while `b` waits for its manifest. It must not wait for the download once more when its
+  // turn comes: a download is added in the order of the dependencies that wait, and `v` would then be added only
+  // after everything else has arrived. The server keeps the tarball of `b` until `a`, which only `v` depends on, is
+  // resolved and downloaded.
+  test.concurrent.each(kinds)(
+    "bun install --force adds a tarball in its turn after a dependency on a %s that is there",
+    async kind => {
       const spec = at();
       spec.hold("registry-b", "registry-a");
-      const dir = await project({ name: "foo", dependencies: { other: spec.tarball("other"), z: spec.tarball("z") } });
+      const dependencies = { other: spec[kind]("other"), z: spec.tarball(`z-${kind}`) };
+      const dir = await project({ name: "foo", dependencies });
 
       const { stderr, exitCode } = await bunWith(spec.registry, dir, "install", "--force");
 
@@ -1372,6 +1376,9 @@ describe("a rule for a tarball or git dependency", () => {
         a: "a@3.0.0",
         b: "b@3.0.0",
       });
+      // Both dependencies on `other` have the one entry of bun.lock, which pins the commit of a git repository.
+      const pinned = kind === "git" ? spec.git("other").replace("#v1", `#${commits.other}`) : spec.tarball("other");
+      expect(await locked(dir, "other")).toBe(`other@${pinned}`);
       expect(exitCode).toBe(0);
     },
   );
@@ -1732,25 +1739,47 @@ describe("a rule for a tarball or git dependency", () => {
       expect(exitCode).toBe(0);
     });
 
-    // `a@3.0.0` can share the folder of the project's alias `a`, and the manifest of `b` says whether it does.
-    test.concurrent("asks again for the manifest of an alias that the import can follow", async () => {
-      const spec = at();
-      spec.fail("b");
-
-      const { stdout, stderr, exitCode } = await autoInstall(
-        spec.registry,
-        spec.heal,
-        { name: "foo", dependencies: { a: "npm:b@^3.0.0" } },
-        `const results = [attempt("a@3.0.0")];
+    // `a@3.0.0` can share the folder of the project's alias `a`, and the manifest of the alias says whether it does.
+    // A turn looks a bare name up twice and a subpath once: only the subpath shows where the first lookup put the miss.
+    describe.each(["a@3.0.0", "a@3.0.0/package.json"])("the project has an alias for %s", specifier => {
+      const script = `const results = [attempt(${JSON.stringify(specifier)})];
          await turn(); // the registry answers from here on
-         results.push(attempt("a@3.0.0"));
-         console.log(JSON.stringify(results));`,
-      );
+         results.push(attempt(${JSON.stringify(specifier)}));
+         console.log(JSON.stringify(results));`;
 
-      expect({ stdout, stderr }).toEqual({ stdout: JSON.stringify(["MODULE_NOT_FOUND", "3.0.0"]), stderr: "" });
-      // one lookup that failed and was tried again once, and the one after that
-      expect({ b: spec.requested("b"), a: spec.requested("a") }).toEqual({ b: 3, a: 0 });
-      expect(exitCode).toBe(0);
+      test.concurrent("asks again for the manifest of an alias that the import can follow", async () => {
+        const spec = at();
+        spec.fail("b");
+
+        const { stdout, stderr, exitCode } = await autoInstall(
+          spec.registry,
+          spec.heal,
+          { name: "foo", dependencies: { a: "npm:b@^3.0.0" } },
+          script,
+        );
+
+        expect({ stdout, stderr }).toEqual({ stdout: JSON.stringify(["MODULE_NOT_FOUND", "3.0.0"]), stderr: "" });
+        // one lookup that failed and was tried again once, and the one after that
+        expect({ b: spec.requested("b"), a: spec.requested("a") }).toEqual({ b: 3, a: 0 });
+        expect(exitCode).toBe(0);
+      });
+
+      // The `c` of the alias is 3.5.0, so the import is the `a` of the registry, whose manifest is the one that fails.
+      test.concurrent("asks again for the manifest of its own name when it cannot follow the alias", async () => {
+        const spec = at();
+        spec.fail("a");
+
+        const { stdout, stderr, exitCode } = await autoInstall(
+          spec.registry,
+          spec.heal,
+          { name: "foo", dependencies: { a: "npm:c@^3.0.0" } },
+          script,
+        );
+
+        expect({ stdout, stderr }).toEqual({ stdout: JSON.stringify(["MODULE_NOT_FOUND", "3.0.0"]), stderr: "" });
+        expect({ c: spec.requested("c"), a: spec.requested("a") }).toEqual({ c: 1, a: 3 });
+        expect(exitCode).toBe(0);
+      });
     });
 
     // The manifest that the registry sent has no 2.0.0. The next import asks again, and 2.0.0 is out by then.

@@ -325,7 +325,9 @@ pub(super) enum SessionEvent {
         count: u32,
         acked: bool,
     },
-    EarlyDataFailed,
+    EarlyDataFailed {
+        early: Vec<*mut super::stream::QuicStream>,
+    },
     /// HTTP/3 ORIGIN frame payload (RFC 9412).
     Origin(Vec<u8>),
     /// Version Negotiation packet (RFC 8999 sec 6).
@@ -689,38 +691,80 @@ impl QuicSession {
             }
         }
     }
+    /// One wrapper per request that lsquic counts as delayed, oldest first.
+    fn pending_local(&self, uni: bool) -> &JsCell<VecDeque<*mut super::stream::QuicStream>> {
+        if uni {
+            &self.pending_local_uni
+        } else {
+            &self.pending_local_bidi
+        }
+    }
     pub(super) fn take_pending_local_stream(
         &self,
         uni: bool,
     ) -> Option<*mut super::stream::QuicStream> {
-        let queue = if uni {
-            &self.pending_local_uni
+        self.pending_local(uni).with_mut(VecDeque::pop_front)
+    }
+    /// Takes back `n` of the requests that lsquic counts as delayed.
+    fn cancel_delayed_requests(&self, uni: bool, n: usize) {
+        let Some(c) = self.conn() else { return };
+        let n = c_uint::try_from(n).unwrap_or(c_uint::MAX);
+        if uni {
+            c.cancel_pending_uni_streams(n);
         } else {
-            &self.pending_local_bidi
-        };
-        // Skip the tombstones `remove_stream` leaves: stopping at the first
-        // one would strand the live request behind it until the next
-        // MAX_STREAMS grant.
-        while let Some(p) = queue.with_mut(VecDeque::pop_front) {
-            if !p.is_null() && self.streams.get().contains(&p) {
-                return Some(p);
-            }
+            c.cancel_pending_streams(n);
         }
-        None
     }
     pub(super) fn remove_stream(&self, stream: *mut super::stream::QuicStream) {
         self.streams.with_mut(|v| v.retain(|&s| s != stream));
-        // Null the slot rather than drop it: these are positional FIFOs
-        // lsquic fulfils in order, and a recycled allocation at the same
-        // address would otherwise bind to the wrong wrapper.
-        for queue in [&self.pending_local_bidi, &self.pending_local_uni] {
-            queue.with_mut(|v| {
-                for slot in v.iter_mut() {
-                    if *slot == stream {
-                        *slot = null_mut();
-                    }
-                }
-            });
+        // lsquic would otherwise create a stream that nothing waits for.
+        for uni in [false, true] {
+            let queue = self.pending_local(uni);
+            if let Some(at) = queue.get().iter().position(|&s| s == stream) {
+                queue.with_mut(|q| q.remove(at));
+                self.cancel_delayed_requests(uni, 1);
+                break;
+            }
+        }
+        self.debug_assert_pending_paired();
+    }
+    /// While going away, lsquic refuses `make_stream` with an anonymous `on_new_stream(NULL)`.
+    fn unqueue_if_refused(&self) {
+        let queue = &self.pending_local_bidi;
+        let waiting = queue.get().len();
+        if waiting == 0 {
+            return;
+        }
+        let Some(c) = self.conn() else { return };
+        if waiting > c.cancel_pending_streams(0) as usize {
+            queue.with_mut(VecDeque::pop_back);
+        }
+    }
+    /// At a GOAWAY lsquic drops its delayed bidi requests, anonymously, and keeps the uni ones.
+    fn drop_pending_requests_on_goaway(&self) {
+        let n = self.pending_local_bidi.with_mut(|q| {
+            let n = q.len();
+            q.clear();
+            n
+        });
+        if n != 0 {
+            self.cancel_delayed_requests(false, n);
+        }
+    }
+    /// Not valid inside `on_new_stream`: lsquic updates its count after that callback returns.
+    fn debug_assert_pending_paired(&self) {
+        #[cfg(debug_assertions)]
+        if let Some(c) = self.conn() {
+            assert_eq!(
+                self.pending_local_bidi.get().len(),
+                c.cancel_pending_streams(0) as usize,
+                "bidi streams waiting in the session vs requests delayed in lsquic"
+            );
+            assert_eq!(
+                self.pending_local_uni.get().len(),
+                c.cancel_pending_uni_streams(0) as usize,
+                "uni streams waiting in the session vs requests delayed in lsquic"
+            );
         }
     }
     fn bump_stream_stat(&self, id: u64, local: bool) {
@@ -880,6 +924,7 @@ impl QuicSession {
     }
 
     pub(super) fn process_events(&self, global: &JSGlobalObject) {
+        self.debug_assert_pending_paired();
         self.refresh_conn_stats();
         // Every callback below can run user JS that destroys this session
         // (dropping the wrapper Strong) and can trigger GC, so hold a Strong
@@ -1268,7 +1313,7 @@ impl QuicSession {
                     );
                 }
             }
-            SessionEvent::EarlyDataFailed => {
+            SessionEvent::EarlyDataFailed { early } => {
                 // Node parity: their `closed` promises reject with an
                 // application error.
                 let code = self.with_state(|s| {
@@ -1278,8 +1323,7 @@ impl QuicSession {
                         1
                     }
                 });
-                let streams: Vec<*mut super::stream::QuicStream> = self.streams.get().clone();
-                for sp in streams {
+                for sp in early {
                     if let Some(stream) = self.live_stream(sp) {
                         stream.cancel_early_rejected(code);
                     }
@@ -1460,7 +1504,7 @@ impl QuicSession {
                 // no onStreamClose -- but it still has to leave `streams`
                 // and drop its self-root, or it lives until teardown.
                 if stream.is_announce_suppressed() {
-                    self.streams.with_mut(|v| v.retain(|&s| s != stream_ptr));
+                    self.remove_stream(stream_ptr);
                     stream.release_close_root();
                     return Ok(());
                 }
@@ -1487,9 +1531,9 @@ impl QuicSession {
                 let Some(stream) = self.live_stream(stream_ptr) else {
                     return Ok(());
                 };
-                self.streams.with_mut(|v| v.retain(|&s| s != stream_ptr));
+                self.remove_stream(stream_ptr);
                 // Nothing else reaches this stream now, so drop the
-                // self-root; `stream` stays valid because the retain above
+                // self-root; `stream` stays valid because `remove_stream` above
                 // only dropped a pointer.
                 stream.release_close_root();
             }
@@ -1916,6 +1960,7 @@ impl QuicSession {
             if let Some(c) = self.conn() {
                 c.going_away();
             }
+            self.drop_pending_requests_on_goaway();
             self.close_after_streams.set(true);
             self.deferred_close
                 .with_mut(|d| *d = Some((app, code, reason)));
@@ -2101,8 +2146,10 @@ impl QuicSession {
                 conn.make_uni_stream();
             } else {
                 conn.make_stream();
+                self.unqueue_if_refused();
             }
         }
+        self.debug_assert_pending_paired();
         self.schedule_process();
         Ok(handle)
     }
@@ -2418,6 +2465,7 @@ lsquic_callback! {
     }
 
     pub(super) fn on_goaway_received(session: &QuicSession) {
+        session.drop_pending_requests_on_goaway();
         session.push_event(SessionEvent::GoawayReceived);
     }
 
@@ -2604,7 +2652,13 @@ lsquic_callback! {
         // Front of the queue: lsquic resets the early streams before this
         // callback, so their clean closes are already queued and would settle
         // `closed` before the rejection node delivers could land.
-        session.events.with_mut(|e| e.insert(0, SessionEvent::EarlyDataFailed));
+        let streams = session.streams.get();
+        // SAFETY: registered pointers are live (`live_stream`).
+        let bound = streams.iter().filter(|&&s| unsafe { !(*s).is_pending() });
+        let early = bound.copied().collect();
+        session
+            .events
+            .with_mut(|e| e.insert(0, SessionEvent::EarlyDataFailed { early }));
         session.schedule_process();
     }
 

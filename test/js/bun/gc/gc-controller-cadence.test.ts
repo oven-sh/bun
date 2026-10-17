@@ -632,35 +632,35 @@ describe.concurrent.skipIf(isDebug)("marking helper threads", () => {
   // A ring of 1024 small objects replaced 200k times over: about 60 MB of short-lived objects, so about 7 eden
   // collections at the 8 MB budget, each with under 1 MB to mark (the ring is written, so it is remembered). The first
   // one is left out: what ran before the loop can leave it more.
-  const ring = `
-    const ring = new Array(1024).fill(null);
+  const ring = (size: number) => `
+    const ring = new Array(${size}).fill(null);
     for (let i = 0; i < 200000; i++) {
       const key = "key" + i;
-      ring[i & 1023] = { v: key, i, a: new Array(24).fill(i) };
+      ring[i & ${size - 1}] = { v: key, i, a: new Array(24).fill(i) };
     }
     console.log("done", ring.length);
   `;
-  async function smallEdenCollectionsOf(extraEnv?: Record<string, string>) {
-    const collections = await collectionsOf(ring, extraEnv);
+  async function edenCollectionsOf(size: number, extraEnv?: Record<string, string>) {
+    const collections = await collectionsOf(ring(size), extraEnv);
     const edens = collections.filter(c => c.scope === "Eden").slice(1);
     expect(edens.length, JSON.stringify(collections)).toBeGreaterThanOrEqual(3);
-    for (const eden of edens) expect(eden.markedKB, JSON.stringify(eden)).toBeLessThan(1024);
     return edens;
   }
 
   // Every one of them is marked by the collector's thread alone.
   test("stay out of a collection that marks little", async () => {
-    const edens = await smallEdenCollectionsOf();
+    const edens = await edenCollectionsOf(1024);
+    for (const eden of edens) expect(eden.markedKB, JSON.stringify(eden)).toBeLessThan(1024);
     expect(
       edens.map(c => c.helpersKB),
       JSON.stringify(edens),
     ).toEqual(edens.map(() => 0));
   });
 
-  // The GC race tests depend on this: with the threshold at 0 they join from the start, and a few hundred KB spread over
-  // 7 collections is enough for them to take some of it.
+  // The GC race tests depend on this: with the threshold at 0 they join from the start. A ring four times the size gives
+  // each collection about 1 MB to mark, of which the collector donates some to them.
   test("join from the start with BUN_JSC_minimumBytesMarkedForParallelMarking=0", async () => {
-    const edens = await smallEdenCollectionsOf({ BUN_JSC_minimumBytesMarkedForParallelMarking: "0" });
+    const edens = await edenCollectionsOf(4096, { BUN_JSC_minimumBytesMarkedForParallelMarking: "0" });
     expect(
       edens.reduce((sum, c) => sum + c.helpersKB, 0),
       JSON.stringify(edens),

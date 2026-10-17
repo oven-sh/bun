@@ -1,7 +1,8 @@
 /// <reference types="./plugins" />
 import { plugin } from "bun";
-import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
+import { beforeAll, describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, isASAN } from "harness";
 import { resolve } from "path";
 
 declare global {
@@ -197,6 +198,25 @@ plugin({
   },
 });
 
+declare global {
+  var bufferSourceContents: any;
+}
+
+plugin({
+  name: "buffer source contents",
+  setup(builder) {
+    globalThis.bufferSourceContents = "";
+    builder.onResolve({ filter: /.*/, namespace: "buffer-source" }, ({ path }) => ({
+      namespace: "buffer-source",
+      path,
+    }));
+    builder.onLoad({ filter: /.*/, namespace: "buffer-source" }, () => ({
+      contents: globalThis.bufferSourceContents,
+      loader: "js",
+    }));
+  },
+});
+
 // This is to test that it works when imported from a separate file
 import { tempDir } from "harness";
 import { render as svelteRender } from "svelte/server";
@@ -329,6 +349,212 @@ describe("dynamic import", () => {
     const result = await import("async-obj:hello42");
     expect(result.foo).toBe(42);
     expect(result.default).toBe(43);
+  });
+});
+
+// The bytes of a buffer `contents` are UTF-8, as the bytes of a file are.
+describe("onLoad contents accepts BufferSource", () => {
+  const text = "h\u00e9llo \u20ac \u{1F600}";
+  const source = new TextEncoder().encode(`export default ${JSON.stringify(text)};`);
+
+  it("accepts ArrayBuffer", async () => {
+    const ab = new ArrayBuffer(source.byteLength);
+    new Uint8Array(ab).set(source);
+    globalThis.bufferSourceContents = ab;
+    const result = await import("buffer-source:arraybuffer");
+    expect(result.default).toBe(text);
+  });
+
+  it("accepts SharedArrayBuffer", async () => {
+    const sab = new SharedArrayBuffer(source.byteLength);
+    new Uint8Array(sab).set(source);
+    globalThis.bufferSourceContents = sab;
+    const result = await import("buffer-source:sharedarraybuffer");
+    expect(result.default).toBe(text);
+  });
+
+  it("accepts Uint8Array backed by SharedArrayBuffer", async () => {
+    const sab = new SharedArrayBuffer(source.byteLength);
+    new Uint8Array(sab).set(source);
+    globalThis.bufferSourceContents = new Uint8Array(sab);
+    const result = await import("buffer-source:u8-over-sab");
+    expect(result.default).toBe(text);
+  });
+
+  it("accepts DataView", async () => {
+    globalThis.bufferSourceContents = new DataView(source.buffer, source.byteOffset, source.byteLength);
+    const result = await import("buffer-source:dataview");
+    expect(result.default).toBe(text);
+  });
+
+  it("reads bytes that are not UTF-8 the way it reads them from a file", async () => {
+    const bytes = Buffer.concat([Buffer.from("export default 'a"), Buffer.from([0xff, 0xc3]), Buffer.from("b';")]);
+    using dir = tempDir("plugin-contents-not-utf8", { "file.js": bytes });
+    const fromFile = (await import(resolve(String(dir), "file.js"))).default;
+    globalThis.bufferSourceContents = bytes;
+    const fromBuffer = (await import("buffer-source:not-utf8")).default;
+    expect(fromBuffer).toBe(fromFile);
+  });
+
+  it("rejects plain objects", async () => {
+    globalThis.bufferSourceContents = { byteLength: 3 };
+    await expect(import("buffer-source:bad-object")).rejects.toThrow(
+      'Expected "contents" to be a string, an ArrayBufferView or an ArrayBuffer',
+    );
+  });
+
+  // The transpiler reads a copy of the bytes. Here the copy is larger than what can be allocated.
+  it.each(["Uint8Array", "ArrayBuffer"])("%s: fails the load when the copy cannot be allocated", async kind => {
+    const limit = 1024 * 1024;
+    const bytes = new Uint8Array(limit + 1).fill(0x20);
+    globalThis.bufferSourceContents = kind === "ArrayBuffer" ? bytes.buffer : bytes;
+    const outOfMemory = { name: "RangeError", message: "Out of memory" };
+    const error = ({ name, message }: Error) => ({ name, message });
+
+    const previous = setSyntheticAllocationLimitForTesting(limit);
+    try {
+      expect(await import(`buffer-source:too-large-import-${kind}`).then(() => "loaded", error)).toEqual(outOfMemory);
+      expect(() => require(`buffer-source:too-large-require-${kind}`)).toThrow(expect.objectContaining(outOfMemory));
+      // The onLoad of this namespace returns a promise that is pending.
+      globalThis.asyncOnLoad = globalThis.bufferSourceContents;
+      expect(await import(`async:too-large-${kind}`).then(() => "loaded", error)).toEqual(outOfMemory);
+    } finally {
+      setSyntheticAllocationLimitForTesting(previous);
+      globalThis.asyncOnLoad = "";
+    }
+    expect(Object.keys(await import(`buffer-source:large-${kind}`))).toEqual([]);
+  });
+});
+
+// Runs plugin-buffer-contents-fixture.ts. `result` is the one line of JSON that it prints.
+async function contentsFixture(args: string[], env: Record<string, string> = {}) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), resolve(import.meta.dir, "plugin-buffer-contents-fixture.ts"), ...args],
+    env: {
+      ...bunEnv,
+      // A debug build then aborts on an exception that no scope checked.
+      BUN_JSC_validateExceptionChecks: "1",
+      // With the system allocator, ASAN reports a read of the source after it is freed.
+      // symbolize=0: a report with symbols takes longer than the test timeout.
+      // detect_leaks=0: with Malloc=1, LeakSanitizer sees what JSC never frees.
+      ...(isASAN && {
+        Malloc: "1",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":"),
+      }),
+      ...env,
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // A debug build logs each macro call to stdout first.
+  const last = stdout.trim().split("\n").at(-1)!;
+  let result: any = last;
+  try {
+    result = JSON.parse(last);
+  } catch {}
+  return { result, stderr: stderr.trim(), exitCode };
+}
+
+// The transpiler reads the source of a module until it has printed the module.
+// A macro runs JS in that time. So the transpiler reads a copy of the bytes of
+// a buffer `contents`, and holds a reference to the characters of a string
+// `contents`.
+describe("onLoad contents while a macro runs", () => {
+  const forms = [
+    "onLoad import",
+    "onLoad require",
+    "async onLoad import",
+    "build.module import",
+    "build.module require",
+  ];
+
+  // What JS can do to each kind of `contents` while the transpiler reads the module.
+  const mutations: Record<string, string[]> = {
+    "Buffer": ["overwrite"],
+    "Uint8Array": ["overwrite", "transfer", "resize"],
+    "DataView": ["overwrite", "transfer", "resize"],
+    "ArrayBuffer": ["overwrite", "transfer"],
+    "resizable ArrayBuffer": ["overwrite", "transfer", "resize"],
+    "SharedArrayBuffer": ["overwrite"],
+    "growable SharedArrayBuffer": ["overwrite"],
+  };
+  // One process loads a module for each kind, mutation and form.
+  let mutated: Awaited<ReturnType<typeof contentsFixture>>;
+  beforeAll(async () => {
+    mutated = await contentsFixture(["mutate", JSON.stringify(mutations)]);
+  });
+  for (const [kind, hows] of Object.entries(mutations)) {
+    it(`${kind}: transpiles the bytes it was given when a macro changes them`, () => {
+      const transpiled: Record<string, unknown> = {};
+      for (const how of hows) {
+        for (const form of forms) {
+          transpiled[`${how}, ${form}`] = { during: how, after: "after the mutation", mutated: true };
+        }
+      }
+      expect({ ...mutated, result: mutated.result?.[kind] }).toEqual({ result: transpiled, stderr: "", exitCode: 0 });
+    });
+  }
+
+  it.concurrent("string: keeps the characters of a substring when a macro makes the string drop them", async () => {
+    const transpiled = { during: "1 key, 128 strings", intact: true };
+    expect(await contentsFixture(["string"])).toEqual({
+      result: Object.fromEntries(forms.map(form => [form, transpiled])),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("takes the bytes after it read the whole result, and leaves the buffer as it was", async () => {
+    const taken = {
+      "loader getter": "second",
+      "promise reaction": "second",
+      "scratch": ["one", "two"],
+      "scratch after the loads": { byteLength: 64, text: 'export const which = "two";' },
+      "zero length": [],
+      "detached": [],
+    };
+    expect(await contentsFixture(["order", "Buffer", "ArrayBuffer"])).toEqual({
+      result: { "Buffer": taken, "ArrayBuffer": taken },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("fails the load when the bytes are too many to parse", async () => {
+    const tooLarge = { error: "File is too large to parse (2 GiB maximum)" };
+    const failed = { import: tooLarge, require: tooLarge };
+    expect(await contentsFixture(["limit", "Uint8Array", "ArrayBuffer"])).toEqual({
+      result: { "Uint8Array": failed, "ArrayBuffer": failed },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+// Another thread can write a SharedArrayBuffer at any time. Each of these
+// processes keeps two threads busy, so they run one after the other.
+describe("onLoad contents while a worker writes it", () => {
+  for (const kind of ["SharedArrayBuffer", "Uint8Array"]) {
+    const name = kind === "Uint8Array" ? "Uint8Array on a SharedArrayBuffer" : kind;
+    it(`${name}: transpiles one value of each byte`, async () => {
+      expect(await contentsFixture(["worker", kind])).toEqual({ result: { overlapped: 20 }, stderr: "", exitCode: 0 });
+    });
+  }
+
+  // If not, a later load of a source gets the output of other bytes from the cache, in any process.
+  it("the transpiler cache has the output of the bytes that it hashed", async () => {
+    using cache = tempDir("plugin-buffer-contents-cache", {});
+    const env = {
+      BUN_RUNTIME_TRANSPILER_CACHE_PATH: String(cache),
+      // A debug build reads a cache entry only with this.
+      BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
+    };
+    expect(await contentsFixture(["cache", "Uint8Array"], env)).toEqual({
+      result: { overlapped: 16, wrong: [], entries: true },
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 

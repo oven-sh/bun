@@ -35,7 +35,7 @@ type PluginBuilder = {
     args: { filter: RegExp; namespace?: string },
     callback: (args: { path: string; defer: () => Promise<void> }) => {
       loader?: Loader;
-      contents?: string;
+      contents?: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer;
       exports?: Record<string, any>;
     },
   ) => void;
@@ -197,7 +197,7 @@ onLoad(
   args: { filter: RegExp; namespace?: string },
   callback: (args: { path: string; namespace: string; loader: Loader; defer: () => Promise<void> }) => {
     loader?: Loader;
-    contents?: string;
+    contents?: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer;
     exports?: Record<string, any>;
   },
 ): void;
@@ -213,7 +213,7 @@ The second argument to `onLoad()` is a callback that runs for each matching modu
 
 The callback receives the path to the matching module, its namespace, its default loader, and a `defer` function.
 
-The callback can return a new `contents` string for the module as well as a new `loader`.
+The callback can return new `contents` for the module as well as a new `loader`. `contents` is a string or a buffer of UTF-8 bytes: an `ArrayBuffer`, a `SharedArrayBuffer`, a typed array or a `DataView`. Bun copies the bytes of a buffer before it parses them.
 
 For example:
 

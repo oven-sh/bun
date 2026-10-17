@@ -250,6 +250,11 @@ static const unsigned char* taggedUTF16Ptr(const char16_t* ptr)
     return reinterpret_cast<const unsigned char*>(reinterpret_cast<uintptr_t>(ptr) | (static_cast<uint64_t>(1) << 63));
 }
 
+static const unsigned char* taggedUTF8Ptr(const unsigned char* ptr)
+{
+    return reinterpret_cast<const unsigned char*>(reinterpret_cast<uintptr_t>(ptr) | (static_cast<uint64_t>(1) << 61));
+}
+
 // Overload for `StringImpl*` so callers like `toEncodedSlice(string.impl())` resolve here
 // instead of implicitly constructing a temporary `WTF::StringView` (which, in debug builds
 // with CHECK_STRINGVIEW_LIFETIME, takes a lock and heap-allocates an UnderlyingString entry).
@@ -267,14 +272,6 @@ static EncodedSlice toEncodedSlice(const WTF::StringView& str)
         ? EncodedSliceEmpty
         : EncodedSlice { str.is8Bit() ? byteCast<uint8_t>(str.span8().data()) : taggedUTF16Ptr(str.span16().data()),
               str.length() };
-}
-
-static EncodedSlice toEncodedSlice(JSC::JSString* str, JSC::JSGlobalObject* global)
-{
-    if (str->isSubstring()) {
-        return toEncodedSlice(str->view(global));
-    }
-    return toEncodedSlice(str->value(global));
 }
 
 static void throwException(JSC::ThrowScope& scope, JSC::EncodedJSValue err, JSC::JSGlobalObject* global)

@@ -3,6 +3,7 @@
 #include "headers-handwritten.h"
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "ModuleLoader.h"
+#include "VectorSizeLimit.h"
 #include "JavaScriptCore/Identifier.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSCInlines.h>
@@ -204,6 +205,51 @@ PendingVirtualModuleResult* PendingVirtualModuleResult::create(JSC::JSGlobalObje
     return virtualModule;
 }
 
+static std::optional<std::span<const uint8_t>> bufferContentsBytes(JSC::JSValue contents)
+{
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(contents))
+        return view->span();
+    if (auto* buffer = dynamicDowncast<JSC::JSArrayBuffer>(contents)) {
+        if (auto* impl = buffer->impl())
+            return impl->span();
+    }
+    return std::nullopt;
+}
+
+// Keeps the source text of a plugin-served module alive and unchanged while the transpiler reads it.
+struct SourceTextOwner {
+    WTF::String string;
+    WTF::Vector<uint8_t> bytes;
+};
+
+// False: an exception is pending.
+static bool sourceTextForTranspile(Zig::GlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue contents, SourceTextOwner& owner, EncodedSlice& source)
+{
+    if (contents.isString()) {
+        // A JSString swaps its StringImpl for an atom when a macro uses it as a property key.
+        owner.string = asString(contents)->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        source = Zig::toEncodedSlice(owner.string.impl());
+        return true;
+    }
+
+    // A macro runs JS meanwhile, and another thread can write a SharedArrayBuffer.
+    auto bytes = bufferContentsBytes(contents);
+    ASSERT(bytes);
+    // The limit and the message of the parser: Source::MAX_PARSEABLE_LEN.
+    if (bytes->size() > std::numeric_limits<int32_t>::max()) [[unlikely]] {
+        throwRangeError(globalObject, scope, "File is too large to parse (2 GiB maximum)"_s);
+        return false;
+    }
+    if (bytes->size() > Bun::maxVectorSize<uint8_t>() || !owner.bytes.tryAppend(*bytes)) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return false;
+    }
+    // Bytes are what a file holds: UTF-8. An untagged EncodedSlice is Latin-1.
+    source = owner.bytes.isEmpty() ? EncodedSlice {} : EncodedSlice { Zig::taggedUTF8Ptr(owner.bytes.span().data()), owner.bytes.size() };
+    return true;
+}
+
 OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::JSValue objectValue, BunString* specifier, bool wasModuleMock)
 {
     OnLoadResult result = {};
@@ -296,23 +342,11 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
         (void)scope.tryClearException();
         return result;
     }
-    if (contentsValue) {
-        if (contentsValue.isString()) {
-            JSC::JSString* contentsJSString = contentsValue.toStringOrNull(globalObject);
-            RETURN_IF_EXCEPTION(scope, result);
-            if (contentsJSString) {
-                result.value.sourceText.string = Zig::toEncodedSlice(contentsJSString, globalObject);
-                RETURN_IF_EXCEPTION(scope, result);
-                result.value.sourceText.value = contentsValue;
-            }
-        } else if (JSC::JSArrayBufferView* view = dynamicDowncast<JSC::JSArrayBufferView>(contentsValue)) {
-            result.value.sourceText.string = EncodedSlice { reinterpret_cast<const unsigned char*>(view->vector()), view->byteLength() };
-            result.value.sourceText.value = contentsValue;
-        }
-    }
+    if (contentsValue && (contentsValue.isString() || bufferContentsBytes(contentsValue)))
+        result.value.sourceText.value = contentsValue;
 
     if (result.value.sourceText.value.isEmpty()) [[unlikely]] {
-        throwException(globalObject, scope, createError(globalObject, "Expected \"contents\" to be a string or an ArrayBufferView"_s));
+        throwException(globalObject, scope, createError(globalObject, "Expected \"contents\" to be a string, an ArrayBufferView or an ArrayBuffer"_s));
         result.value.error = scope.exception();
         (void)scope.tryClearException();
         return result;
@@ -391,7 +425,11 @@ static JSValue handleVirtualModuleResult(
 
     switch (onLoadResult.type) {
     case OnLoadResultTypeCode: {
-        Bun__transpileVirtualModule(globalObject, specifier, referrer, &onLoadResult.value.sourceText.string, onLoadResult.value.sourceText.loader, res);
+        auto& sourceText = onLoadResult.value.sourceText;
+        SourceTextOwner owner;
+        if (!sourceTextForTranspile(globalObject, scope, sourceText.value, owner, sourceText.string)) [[unlikely]]
+            return rejectOrResolve({});
+        Bun__transpileVirtualModule(globalObject, specifier, referrer, &sourceText.string, sourceText.loader, res);
         if (!res->success) {
             RELEASE_AND_RETURN(scope, reject(JSValue::decode(res->result.err)));
         }

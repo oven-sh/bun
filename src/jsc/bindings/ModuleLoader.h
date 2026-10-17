@@ -32,7 +32,9 @@ const OnLoadResultType OnLoadResultTypeObject = 2;
 const OnLoadResultType OnLoadResultTypePromise = 3;
 
 struct CodeString {
+    // Empty until handleVirtualModuleResult points it at the source text for the transpiler.
     EncodedSlice string;
+    // `contents` as the plugin returned it: a string, a typed array, a DataView, an ArrayBuffer or a SharedArrayBuffer.
     JSC::JSValue value;
     BunLoaderType loader;
 };
@@ -49,6 +51,7 @@ struct OnLoadResult {
     OnLoadResultType type;
     bool wasMock;
 };
+static_assert(std::is_trivially_copyable_v<OnLoadResult>, "returned by value: it names the source, the caller of the transpiler owns the bytes");
 
 extern "C" bool isBunTest;
 

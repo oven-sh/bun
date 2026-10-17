@@ -573,8 +573,15 @@ export function runOnLoadPlugins(
           }
         }
 
-        if (!(typeof contents === "string") && !$isTypedArrayView(contents)) {
-          throw new TypeError('onLoad plugins must return an object with "contents" as a string or Uint8Array');
+        if (
+          !(typeof contents === "string") &&
+          !$isTypedArrayView(contents) &&
+          !$inheritsArrayBuffer(contents) &&
+          !$inheritsDataView(contents)
+        ) {
+          throw new TypeError(
+            'onLoad plugins must return an object with "contents" as a string, an ArrayBufferView or an ArrayBuffer',
+          );
         }
 
         if (!(typeof loader === "string")) {

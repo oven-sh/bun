@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
-import { describe, test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { describe, test } from "./supported";
 
 // A static import that cannot be resolved fails the load of every module that reaches it, before any of them is evaluated, and the error
 // names the file that wrote the import. Libraries try an optional dependency this way: `import("./adapter.mjs").catch(..)`.
@@ -69,7 +69,13 @@ describe.concurrent.each(Object.keys(programs))("%s", entry => {
   test("bun run --aot does what bun run does", async () => {
     using dir = tempDir("unresolved-imports", { ...files, [entry]: programs[entry] });
     const run = async (flags: string[]) => {
-      await using proc = Bun.spawn({ cmd: [bunExe(), "run", ...flags, entry], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", ...flags, entry],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       return { stdout, errors: stderr.split("\n").filter(line => line.startsWith("error")), exitCode };
     };

@@ -9,14 +9,28 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     pub(crate) fn jsx_unused(&mut self, fx: &mut Fx, jsx: JsxId) {
         let hir = self.hir(fx.file);
         let element = &hir[jsx];
-        let has_effect = |value: ExprId| value.is_some() && !matches!(hir[value].kind, ExprKind::Missing | ExprKind::String(_));
-        if element.tag.is_some() && !matches!(hir[element.tag].kind, ExprKind::Ident(_) | ExprKind::String(_)) {
+        let has_effect = |value: ExprId| {
+            value.is_some() && !matches!(hir[value].kind, ExprKind::Missing | ExprKind::String(_))
+        };
+        if element.tag.is_some()
+            && !matches!(
+                hir[element.tag].kind,
+                ExprKind::Ident(_) | ExprKind::String(_)
+            )
+        {
             self.expr_for_effect(fx, element.tag);
         }
         let key_name = self.c.atoms().lookup(b"key");
-        let is_key = |p: hir::PropId| hir[p].kind != PropKind::Spread && matches!(hir[p].key, PropKey::Name(name) if Some(name) == key_name);
-        let first_spread = element.attrs.iter().position(|p| hir[p].kind == PropKind::Spread);
-        let has_key_after_spread = first_spread.is_some_and(|first| element.attrs.iter().skip(first).any(is_key));
+        let is_key = |p: hir::PropId| {
+            hir[p].kind != PropKind::Spread
+                && matches!(hir[p].key, PropKey::Name(name) if Some(name) == key_name)
+        };
+        let first_spread = element
+            .attrs
+            .iter()
+            .position(|p| hir[p].kind == PropKind::Spread);
+        let has_key_after_spread =
+            first_spread.is_some_and(|first| element.attrs.iter().skip(first).any(is_key));
         let is_automatic = self.jsx_runtime(fx.file).is_some() && !has_key_after_spread;
         let (mut filled, mut key) = (V::NONE, ExprId::NONE);
         for p in element.attrs.iter() {
@@ -45,13 +59,23 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let element = &hir[jsx];
         let pos = hir[e].pos;
         let runtime = self.jsx_runtime(fx.file);
-        let is_dev = runtime.is_some_and(|runtime| self.c.atoms().bytes(runtime).ends_with(b"jsx-dev-runtime"));
+        let is_dev = runtime
+            .is_some_and(|runtime| self.c.atoms().bytes(runtime).ends_with(b"jsx-dev-runtime"));
         let key_name = self.c.atoms().lookup(b"key");
-        let is_named_key = |p: hir::PropId| hir[p].kind != PropKind::Spread && matches!(hir[p].key, PropKey::Name(name) if Some(name) == key_name);
-        let has_value = |p: hir::PropId| hir[p].value.is_some() && !matches!(hir[hir[p].value].kind, ExprKind::Missing);
+        let is_named_key = |p: hir::PropId| {
+            hir[p].kind != PropKind::Spread
+                && matches!(hir[p].key, PropKey::Name(name) if Some(name) == key_name)
+        };
+        let has_value = |p: hir::PropId| {
+            hir[p].value.is_some() && !matches!(hir[hir[p].value].kind, ExprKind::Missing)
+        };
         let is_key = |p: hir::PropId| is_named_key(p) && has_value(p);
-        let first_spread = element.attrs.iter().position(|p| hir[p].kind == PropKind::Spread);
-        let has_key_after_spread = first_spread.is_some_and(|first| element.attrs.iter().skip(first).any(is_key));
+        let first_spread = element
+            .attrs
+            .iter()
+            .position(|p| hir[p].kind == PropKind::Spread);
+        let has_key_after_spread =
+            first_spread.is_some_and(|first| element.attrs.iter().skip(first).any(is_key));
         let automatic = runtime.filter(|_| !has_key_after_spread);
 
         let mut is_component = false;
@@ -77,10 +101,21 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
         };
 
-        let has_spread = element.attrs.iter().any(|p| hir[p].kind == PropKind::Spread);
-        let cloned_as = if has_spread && is_component && automatic.is_some() { self.cloned_jsx_props_layout(fx, e, jsx) } else { None };
+        let has_spread = element
+            .attrs
+            .iter()
+            .any(|p| hir[p].kind == PropKind::Spread);
+        let cloned_as = if has_spread && is_component && automatic.is_some() {
+            self.cloned_jsx_props_layout(fx, e, jsx)
+        } else {
+            None
+        };
         let is_cloned = cloned_as.is_some();
-        let mut filled = if has_spread && !is_cloned { self.emit(fx, Op::NewObject) } else { V::NONE };
+        let mut filled = if has_spread && !is_cloned {
+            self.emit(fx, Op::NewObject)
+        } else {
+            V::NONE
+        };
         let mut copied = TypeId::UNRESOLVED;
         let (mut names, mut values): (Vec<StrId>, Vec<V>) = (Vec::new(), Vec::new());
         let mut key = None;
@@ -116,17 +151,27 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                         filled = self.operation(fx, Operation::CloneObjectWith, &operands);
                     }
                     fx.checked.insert(filled, copied);
-                    fx.b.func.values[filled.idx()].set_prediction(Prediction::Ty(self.ty_of(copied)));
+                    fx.b.func.values[filled.idx()]
+                        .set_prediction(Prediction::Ty(self.ty_of(copied)));
                 } else {
                     self.operation(fx, Operation::CopyDataProperties, &[filled, source]);
                 }
                 continue;
             }
-            let PropKey::Name(name) = attr.key else { continue };
+            let PropKey::Name(name) = attr.key else {
+                continue;
+            };
             let value = self.jsx_attribute_value(fx, attr.value);
             let name = self.str(name);
             if is_cloned {
-                self.emit_throwing(fx, Op::PropSet { obj: filled, name, value });
+                self.emit_throwing(
+                    fx,
+                    Op::PropSet {
+                        obj: filled,
+                        name,
+                        value,
+                    },
+                );
             } else if has_spread {
                 let name = self.emit(fx, Op::Str(name));
                 self.operation(fx, Operation::DefineField, &[filled, name, value]);
@@ -141,7 +186,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             match hir[child].kind {
                 ExprKind::Missing => {}
                 ExprKind::String(_) if self.is_jsx_text(fx, child) => {
-                    let text = jsx_text(&hir.text[hir[child].pos as usize..hir[child].end as usize]);
+                    let text =
+                        jsx_text(&hir.text[hir[child].pos as usize..hir[child].end as usize]);
                     if !text.is_empty() {
                         let s = self.out.strs.intern(&text);
                         children.push(self.emit(fx, Op::Str(s)));
@@ -161,9 +207,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let (callee, this) = match runtime {
                 Some(runtime) => {
                     let text = self.c.atoms().bytes(runtime);
-                    let package = text.strip_suffix(b"/jsx-runtime").or_else(|| text.strip_suffix(b"/jsx-dev-runtime")).unwrap_or(text);
+                    let package = text
+                        .strip_suffix(b"/jsx-runtime")
+                        .or_else(|| text.strip_suffix(b"/jsx-dev-runtime"))
+                        .unwrap_or(text);
                     let package = self.c.atoms().intern(package);
-                    (self.module_binding(fx, package, b"createElement", pos), self.emit(fx, Op::Undefined))
+                    (
+                        self.module_binding(fx, package, b"createElement", pos),
+                        self.emit(fx, Op::Undefined),
+                    )
                 }
                 None => self.classic_jsx_entity(fx, e, false),
             };
@@ -173,10 +225,21 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         };
         let is_static = children.len() > 1;
         if !children.is_empty() {
-            let value = if is_static { self.emit_throwing(fx, Op::NewArray(children.iter().copied().collect())) } else { children[0] };
+            let value = if is_static {
+                self.emit_throwing(fx, Op::NewArray(children.iter().copied().collect()))
+            } else {
+                children[0]
+            };
             let name = self.out.strs.intern(b"children");
             if is_cloned {
-                self.emit_throwing(fx, Op::PropSet { obj: filled, name, value });
+                self.emit_throwing(
+                    fx,
+                    Op::PropSet {
+                        obj: filled,
+                        name,
+                        value,
+                    },
+                );
             } else if has_spread {
                 let name = self.emit(fx, Op::Str(name));
                 self.operation(fx, Operation::DefineField, &[filled, name, value]);
@@ -190,11 +253,21 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         } else if has_spread {
             filled
         } else {
-            let layout = if is_component { self.jsx_props_layout(fx, e) } else { None };
+            let layout = if is_component {
+                self.jsx_props_layout(fx, e)
+            } else {
+                None
+            };
             self.emit_jsx_props(fx, layout, &names, &values)
         };
 
-        let factory: &[u8] = if is_dev { b"jsxDEV" } else if is_static { b"jsxs" } else { b"jsx" };
+        let factory: &[u8] = if is_dev {
+            b"jsxDEV"
+        } else if is_static {
+            b"jsxs"
+        } else {
+            b"jsx"
+        };
         let key = key.map(|value| self.jsx_attribute_value(fx, value));
         let callee = self.module_binding(fx, automatic, factory, pos);
         let this = self.emit(fx, Op::Undefined);
@@ -208,7 +281,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if is_dev {
             args.push(self.emit(fx, Op::Bool(is_static)));
         }
-        let value = self.emit_throwing(fx, Op::Call { callee, this, args: args.into_iter().collect() });
+        let value = self.emit_throwing(
+            fx,
+            Op::Call {
+                callee,
+                this,
+                args: args.into_iter().collect(),
+            },
+        );
         self.coerce_to_expr_type(fx, value, e)
     }
 
@@ -244,7 +324,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let element = &hir[jsx];
         let preceding_keys = element.attrs.iter().take_while(|&p| matches!(hir[p].key, PropKey::Name(name) if hir[p].kind != PropKind::Spread && self.c.atoms().bytes(name) == b"key")).count();
         let mut written = element.attrs.iter().skip(preceding_keys);
-        let spread = written.next().filter(|&first| hir[first].kind == PropKind::Spread)?;
+        let spread = written
+            .next()
+            .filter(|&first| hir[first].kind == PropKind::Spread)?;
         let copied = self.c.type_of_expr(fx.file, hir[spread].value);
         if !fx.is_typed || !self.is_record_type(copied) {
             return None;
@@ -253,27 +335,45 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let base = *self.layout_types.get(&declared)?;
         let is_field = |this: &mut Self, name: Atom| {
             let field = this.str(name);
-            this.out.layouts[declared.idx()].field(field).is_some() && !this.c.is_immutable_discriminant(base, name)
+            this.out.layouts[declared.idx()].field(field).is_some()
+                && !this.c.is_immutable_discriminant(base, name)
         };
-        let is_filled = (layout == declared || (self.ty_of(copied) != self.out.tys.anything && self.does_spread_fit_layout_except(declared, base, copied, &[])))
+        let is_filled = (layout == declared
+            || (self.ty_of(copied) != self.out.tys.anything
+                && self.does_spread_fit_layout_except(declared, base, copied, &[])))
             && written.all(|p| match hir[p].key {
                 PropKey::Name(name) if hir[p].kind != PropKind::Spread => is_field(self, name),
                 _ => false,
             })
-            && (!self.has_jsx_children(fx, jsx) || self.c.atoms().lookup(b"children").is_some_and(|children| is_field(self, children)));
+            && (!self.has_jsx_children(fx, jsx)
+                || self
+                    .c
+                    .atoms()
+                    .lookup(b"children")
+                    .is_some_and(|children| is_field(self, children)));
         is_filled.then_some(declared)
     }
 
     fn has_jsx_children(&self, fx: &Fx, jsx: JsxId) -> bool {
         let hir = self.hir(fx.file);
-        hir.ids(hir[jsx].children).any(|child| match hir[child].kind {
-            ExprKind::Missing => false,
-            ExprKind::String(_) if self.is_jsx_text(fx, child) => !jsx_text(&hir.text[hir[child].pos as usize..hir[child].end as usize]).is_empty(),
-            _ => true,
-        })
+        hir.ids(hir[jsx].children)
+            .any(|child| match hir[child].kind {
+                ExprKind::Missing => false,
+                ExprKind::String(_) if self.is_jsx_text(fx, child) => {
+                    !jsx_text(&hir.text[hir[child].pos as usize..hir[child].end as usize])
+                        .is_empty()
+                }
+                _ => true,
+            })
     }
 
-    fn emit_jsx_props(&mut self, fx: &mut Fx, layout: Option<LayoutId>, names: &[StrId], values: &[V]) -> V {
+    fn emit_jsx_props(
+        &mut self,
+        fx: &mut Fx,
+        layout: Option<LayoutId>,
+        names: &[StrId],
+        values: &[V],
+    ) -> V {
         if let Some(layout) = layout.filter(|&layout| self.names_fit_layout(layout, names)) {
             return self.emit_typed_object(fx, layout, names, values, None);
         }
@@ -285,9 +385,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         props
     }
 
-    fn classic_jsx_entity(&mut self, fx: &mut Fx, element: ExprId, is_fragment_tag: bool) -> (V, V) {
+    fn classic_jsx_entity(
+        &mut self,
+        fx: &mut Fx,
+        element: ExprId,
+        is_fragment_tag: bool,
+    ) -> (V, V) {
         let pos = self.hir(fx.file)[element].pos;
-        let (entity, found) = self.c.classic_jsx_factory(fx.file, element, is_fragment_tag);
+        let (entity, found) = self
+            .c
+            .classic_jsx_factory(fx.file, element, is_fragment_tag);
         if let Some(named) = found {
             let sym = self.value_symbol(named);
             let is_at_hand = fx.locals.contains_key(&sym)
@@ -296,9 +403,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     Some(super::Place::Global(_)) => true,
                     None => false,
                 };
-            let is_rebound = self.value_declaration(sym).is_some_and(|(of, decl)| !self.c.is_bound_once(of, decl));
+            let is_rebound = self
+                .value_declaration(sym)
+                .is_some_and(|(of, decl)| !self.c.is_bound_once(of, decl));
             if sym.file == fx.file && is_rebound && !is_at_hand {
-                self.problem(fx.file, pos, "a locally bound JSX factory (jsxFactory) that is used from a nested function");
+                self.problem(
+                    fx.file,
+                    pos,
+                    "a locally bound JSX factory (jsxFactory) that is used from a nested function",
+                );
             }
         }
         let mut this = self.emit(fx, Op::Undefined);
@@ -317,7 +430,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         before.iter().rev().find(|byte| !byte.is_ascii_whitespace()) != Some(&b'{')
     }
 
-    pub(crate) fn module_binding(&mut self, fx: &mut Fx, specifier: Atom, name: &[u8], pos: u32) -> V {
+    pub(crate) fn module_binding(
+        &mut self,
+        fx: &mut Fx,
+        specifier: Atom,
+        name: &[u8],
+        pos: u32,
+    ) -> V {
         if let Some(imported) = self.imported_file(fx.file, specifier)
             && self.has_exports_object(imported)
         {
@@ -331,7 +450,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         let namespace = self.external_module(fx, specifier);
         let name = self.out.strs.intern(name);
-        self.emit_throwing(fx, Op::PropGet { obj: namespace, name })
+        self.emit_throwing(
+            fx,
+            Op::PropGet {
+                obj: namespace,
+                name,
+            },
+        )
     }
 }
 
@@ -366,9 +491,15 @@ pub(super) fn decode_entities(text: &[u8]) -> Vec<u8> {
         {
             let name = &text[i + 1..i + 1 + length];
             let code = match name {
-                [b'#', b'x' | b'X', digits @ ..] => std::str::from_utf8(digits).ok().and_then(|digits| u32::from_str_radix(digits, 16).ok()),
-                [b'#', digits @ ..] => std::str::from_utf8(digits).ok().and_then(|digits| digits.parse().ok()),
-                _ => bun_ast::lexer_tables::JSX_ENTITY.get(name).map(|&code| code as u32),
+                [b'#', b'x' | b'X', digits @ ..] => std::str::from_utf8(digits)
+                    .ok()
+                    .and_then(|digits| u32::from_str_radix(digits, 16).ok()),
+                [b'#', digits @ ..] => std::str::from_utf8(digits)
+                    .ok()
+                    .and_then(|digits| digits.parse().ok()),
+                _ => bun_ast::lexer_tables::JSX_ENTITY
+                    .get(name)
+                    .map(|&code| code as u32),
             };
             if let Some(decoded) = code.and_then(char::from_u32) {
                 out.extend_from_slice(decoded.encode_utf8(&mut [0; 4]).as_bytes());

@@ -39,12 +39,33 @@ describe.skipIf(!!unsupported)("compile/aot/key-names-in-executables", () => {
 
   async function build(name: string, flags: string[]) {
     const executable = join(folder, isWindows ? `${name}.exe` : name);
-    built(await spawned([bunExe(), "build", "--compile", "--minify", "--no-compile-function-source", "--define", 'process.env.BUILD_KIND="external"', ...flags, "./entry.ts", "--outfile", executable], folder, bunEnv));
+    built(
+      await spawned(
+        [
+          bunExe(),
+          "build",
+          "--compile",
+          "--minify",
+          "--no-compile-function-source",
+          "--define",
+          'process.env.BUILD_KIND="external"',
+          ...flags,
+          "./entry.ts",
+          "--outfile",
+          executable,
+        ],
+        folder,
+        bunEnv,
+      ),
+    );
     const run = await spawned([executable], folder, bunEnv);
     const bytes = readFileSync(executable);
     rmSync(executable);
     expect(run.exitCode).toBe(0);
-    return { printed: run.stdout, holds: (text: string) => bytes.includes(text, 0, "latin1") || bytes.includes(text, 0, "utf16le") };
+    return {
+      printed: run.stdout,
+      holds: (text: string) => bytes.includes(text, 0, "latin1") || bytes.includes(text, 0, "utf16le"),
+    };
   }
 
   test("a name that only the type of a key mentions is in neither executable", async () => {

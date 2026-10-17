@@ -829,7 +829,9 @@ impl<'p, 's> Checker<'p, 's> {
         // no guard, and resolves the members again with the base types that there are so far.
         if let TypeData::Ref { target, .. } = *self.data(key)
             && self.base_types_so_far.iter().any(|it| it.0 == target)
-            && self.innermost(Query::Shape(key), self.resolution_start).is_some()
+            && self
+                .innermost(Query::Shape(key), self.resolution_start)
+                .is_some()
         {
             self.note_members_in_place();
             let shape = meanwhile(self);
@@ -843,7 +845,9 @@ impl<'p, 's> Checker<'p, 's> {
                 origin: Origin::Mapped(..),
                 ..
             }
-        ) && self.innermost(Query::Shape(key), self.resolution_start).is_some()
+        ) && self
+            .innermost(Query::Shape(key), self.resolution_start)
+            .is_some()
         {
             self.note_members_in_place();
             let shape = meanwhile(self);
@@ -864,7 +868,9 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.enter(Query::Shape(key)) {
             // `enter` also fails for lack of stack space.
             let is_in_progress = !self.is_stack_low()
-                && self.innermost(Query::Shape(key), self.resolution_start).is_some();
+                && self
+                    .innermost(Query::Shape(key), self.resolution_start)
+                    .is_some();
             let shape = if is_in_progress {
                 meanwhile(self)
             } else {
@@ -7462,9 +7468,8 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Option<(TypeId, Found)> {
         let (found, how) = self.find_property(left_type, apparent_type, name, access)?;
         // `noUncheckedIndexedAccess`: a value read through an index signature may be missing.
-        let may_be_missing = how == Found::ByIndex
-            && access == Access::Read
-            && self.index_may_be_missing(within);
+        let may_be_missing =
+            how == Found::ByIndex && access == Access::Read && self.index_may_be_missing(within);
         let found = if may_be_missing {
             self.with_missing(found)
         } else {
@@ -7678,8 +7683,10 @@ impl<'p, 's> Checker<'p, 's> {
         // `prop != singleProp`, `propSet.Add(prop)`: a symbol that many members inherit is
         // considered once.
         let mut symbols: SmallVec<[(*const Prop<'p>, MapperId); 8]> = SmallVec::new();
-        let mut symbol_set: crate::util::FxHashSet<(*const Prop<'p>, MapperId)> = Default::default();
-        let mut prop_indices_by_hash: crate::util::FxHashMap<u64, SmallVec<[u32; 1]>> = Default::default();
+        let mut symbol_set: crate::util::FxHashSet<(*const Prop<'p>, MapperId)> =
+            Default::default();
+        let mut prop_indices_by_hash: crate::util::FxHashMap<u64, SmallVec<[u32; 1]>> =
+            Default::default();
         let mut merged_instantiations = false;
         let (mut flags, mut is_public, mut first_owner) =
             (PropFlags::empty(), false, containing_type);
@@ -7747,14 +7754,22 @@ impl<'p, 's> Checker<'p, 's> {
                                 prop_set.push(prop);
                             }
                         } else {
-                            let hash_of = |prop: &Prop<'s>| std::hash::BuildHasher::hash_one(&crate::util::FxBuild, prop);
+                            let hash_of = |prop: &Prop<'s>| {
+                                std::hash::BuildHasher::hash_one(&crate::util::FxBuild, prop)
+                            };
                             if prop_indices_by_hash.is_empty() {
                                 for (index, known) in prop_set.iter().enumerate() {
-                                    prop_indices_by_hash.entry(hash_of(known)).or_default().push(index as u32);
+                                    prop_indices_by_hash
+                                        .entry(hash_of(known))
+                                        .or_default()
+                                        .push(index as u32);
                                 }
                             }
                             let indices = prop_indices_by_hash.entry(hash_of(&prop)).or_default();
-                            if !indices.iter().any(|&index| prop_set[index as usize] == prop) {
+                            if !indices
+                                .iter()
+                                .any(|&index| prop_set[index as usize] == prop)
+                            {
                                 indices.push(prop_set.len() as u32);
                                 prop_set.push(prop);
                             }
@@ -8247,7 +8262,13 @@ impl<'p, 's> Checker<'p, 's> {
                 if earlier.is_some() {
                     continue;
                 }
-                let Some(matching) = self.find_matching_signatures(lists, sig, i, &mut lists_without_match, &mut first_param_mismatches) else {
+                let Some(matching) = self.find_matching_signatures(
+                    lists,
+                    sig,
+                    i,
+                    &mut lists_without_match,
+                    &mut first_param_mismatches,
+                ) else {
                     continue;
                 };
                 if let [_] = matching[..] {
@@ -8342,11 +8363,28 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return None;
         }
-        if !lists_without_match.is_empty() && self.fuel.get() == u64::MAX && !self.are_compared_pairs_recorded() {
+        if !lists_without_match.is_empty()
+            && self.fuel.get() == u64::MAX
+            && !self.are_compared_pairs_recorded()
+        {
             for &i in lists_without_match.iter() {
                 if i != list_index
-                    && self.find_matching_signature(&lists[i], sig, PartialMatch::No, IgnoreReturnTypes::Yes).is_none()
-                    && self.find_matching_signature(&lists[i], sig, PartialMatch::Yes, IgnoreReturnTypes::Yes).is_none()
+                    && self
+                        .find_matching_signature(
+                            &lists[i],
+                            sig,
+                            PartialMatch::No,
+                            IgnoreReturnTypes::Yes,
+                        )
+                        .is_none()
+                    && self
+                        .find_matching_signature(
+                            &lists[i],
+                            sig,
+                            PartialMatch::Yes,
+                            IgnoreReturnTypes::Yes,
+                        )
+                        .is_none()
                 {
                     return None;
                 }
@@ -8363,7 +8401,12 @@ impl<'p, 's> Checker<'p, 's> {
                 match exact {
                     Some(exact) => exact,
                     // Failing that, one with fewer parameters matches.
-                    None => match self.find_matching_signature(list, sig, PartialMatch::Yes, ignore_return_types) {
+                    None => match self.find_matching_signature(
+                        list,
+                        sig,
+                        PartialMatch::Yes,
+                        ignore_return_types,
+                    ) {
                         Some(partial) => partial,
                         None => {
                             lists_without_match.retain(|known| *known != i);

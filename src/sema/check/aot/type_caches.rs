@@ -10,7 +10,9 @@ pub(super) struct ShardedCache<K, V> {
 
 impl<K, V> Default for ShardedCache<K, V> {
     fn default() -> ShardedCache<K, V> {
-        ShardedCache { shards: (0..64).map(|_| RwLock::new(FxHashMap::default())).collect() }
+        ShardedCache {
+            shards: (0..64).map(|_| RwLock::new(FxHashMap::default())).collect(),
+        }
     }
 }
 
@@ -28,7 +30,10 @@ impl<K: Copy + Eq + Hash, V> ShardedCache<K, V> {
     }
 
     fn take(&self) -> Vec<FxHashMap<K, V>> {
-        self.shards.iter().map(|shard| std::mem::take(&mut *shard.write())).collect()
+        self.shards
+            .iter()
+            .map(|shard| std::mem::take(&mut *shard.write()))
+            .collect()
     }
 }
 
@@ -48,7 +53,13 @@ impl NestedPairs {
     }
 
     pub(super) fn is_published(&self) -> bool {
-        self.pairs.iter().all(|&(held, slot_type)| is_published(held) && is_published(slot_type)) && self.runs.iter().all(|&(from, to, ..)| is_published(from) && is_published(to))
+        self.pairs
+            .iter()
+            .all(|&(held, slot_type)| is_published(held) && is_published(slot_type))
+            && self
+                .runs
+                .iter()
+                .all(|&(from, to, ..)| is_published(from) && is_published(to))
     }
 }
 
@@ -68,7 +79,12 @@ pub(super) struct TypeCaches {
 
 impl TypeCaches {
     pub(super) fn release(&self) {
-        let taken = (self.index_and_call_facts.take(), self.function_members.take(), self.nested_pairs_cache.take(), self.plain_data.take());
+        let taken = (
+            self.index_and_call_facts.take(),
+            self.function_members.take(),
+            self.nested_pairs_cache.take(),
+            self.plain_data.take(),
+        );
         let _ = std::thread::Builder::new().spawn(move || drop(taken));
         let escape_caches = (self.object_types.take(), self.nested_flows.take());
         let _ = std::thread::Builder::new().spawn(move || drop(escape_caches));

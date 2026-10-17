@@ -1,10 +1,10 @@
 // The pages about --aot show commands and what they print. Each command that is directly followed by its output is run
 // here. Every line of the output on the page has to be printed, in that order; a page may leave lines out.
 import { describe, expect, test } from "bun:test";
-import { unsupported } from "../aot/run-programs";
 import { mkdirSync, readFileSync, realpathSync, symlinkSync } from "fs";
-import { bunEnv, bunExe, isArm64, isLinux, isMacOS, tempDirWithBunTypes } from "harness";
+import { bunEnv, bunExe, tempDirWithBunTypes } from "harness";
 import { join } from "path";
+import { unsupported } from "../aot/run-programs";
 
 const compiles = !unsupported;
 
@@ -28,7 +28,8 @@ function examplesOf(page: string) {
     if (/^[\w./-]+\.\w+$/.test(name)) files[name] = text;
     if (language === "bash") commands = { text: text.trim(), line: page.slice(0, block.index).split("\n").length };
     if (language === "bash" && !text.trim().split("\n").every(isRunHere)) commands = undefined;
-    if (language === "txt" && commands) examples.push({ line: commands.line, commands: commands.text, printed: text, filesAbove: { ...files } });
+    if (language === "txt" && commands)
+      examples.push({ line: commands.line, commands: commands.text, printed: text, filesAbove: { ...files } });
     if (language === "txt") commands = undefined;
     end = block.index + block[0].length;
   }

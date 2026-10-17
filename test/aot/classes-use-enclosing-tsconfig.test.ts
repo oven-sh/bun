@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { test } from "./supported";
 
 const held = `export class Held { late: string | undefined; first = 1; }\n`;
 const marked = `
@@ -44,7 +44,10 @@ test("fields and decorators of a file go by the tsconfig.json around that file, 
   for (const flags of [[], ["--aot"]]) {
     const outfile = join(String(dir), "out" + flags.length + (isWindows ? ".exe" : ""));
     const built = await run(String(dir), [bunExe(), "build", "--compile", ...flags, "./main.ts", "--outfile", outfile]);
-    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
+      stderr: "",
+      exitCode: 0,
+    });
     answers.push(await run(String(dir), [outfile]));
   }
   expect(answers[0].stdout.split("\n").slice(0, 4)).toEqual(["first", "first", "first", "late,first"]);

@@ -798,8 +798,18 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             loader: Some(Self::loader_of_main(ctx, vm.main(), None)),
             text: Some(&ctx.runtime_options.eval.script[..]).filter(|it| !it.is_empty()),
         };
-        let entry_points: Vec<_> = std::iter::once(main).chain(preloads.iter().map(|path| crate::cli::check_command::EntryPoint::file(path))).collect();
-        cli::aot_audit::prepare(&entry_points, crate::cli::check_command::watching(vm), false)
+        let entry_points: Vec<_> = std::iter::once(main)
+            .chain(
+                preloads
+                    .iter()
+                    .map(|path| crate::cli::check_command::EntryPoint::file(path)),
+            )
+            .collect();
+        cli::aot_audit::prepare(
+            &entry_points,
+            crate::cli::check_command::watching(vm),
+            false,
+        )
     }
 
     /// What the module loader loads the main module at `path` with, where `boot` is given `loader`.
@@ -1261,7 +1271,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         if let Some(report) = ctx.runtime_options.aot_decode_crash_report.take() {
             let frames = bun_crash_handler::report_compiled_frames(&report);
             if frames.is_empty() {
-                Output::err_generic("--aot-decode-crash-report: that report has no frames from this executable's compiled code", ());
+                Output::err_generic(
+                    "--aot-decode-crash-report: that report has no frames from this executable's compiled code",
+                    (),
+                );
                 Global::exit(1);
             }
             let _ = Output::writer().write_all(&frames);
@@ -1536,7 +1549,8 @@ impl Run<'_> {
             let watching = crate::cli::check_command::watching(vm);
             !RunCommand::check_main(ctx, vm.main(), loader, &vm.argv, watching)
         });
-        let has_type_errors = has_type_errors || ctx.runtime_options.aot_audit && !RunCommand::audit_main(ctx, vm);
+        let has_type_errors =
+            has_type_errors || ctx.runtime_options.aot_audit && !RunCommand::audit_main(ctx, vm);
         if has_type_errors {
             // It is not read if the options are wrong.
             vm.add_main_to_watcher_if_needed();
@@ -1558,7 +1572,8 @@ impl Run<'_> {
                         fn JSC__AOT__entryPointIsCommonJS(global: *const JSGlobalObject) -> bool;
                     }
                     // SAFETY: `global` valid for VM lifetime.
-                    let is_rejection = !vm.entry_point_result.evaluated_as_cjs && !unsafe { JSC__AOT__entryPointIsCommonJS(global) };
+                    let is_rejection = !vm.entry_point_result.evaluated_as_cjs
+                        && !unsafe { JSC__AOT__entryPointIsCommonJS(global) };
                     // SAFETY: `global` valid for VM lifetime.
                     let handled = vm.uncaught_exception(unsafe { &*global }, result, is_rejection);
                     promise.set_handled();

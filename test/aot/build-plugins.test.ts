@@ -88,12 +88,30 @@ describe.concurrent("compile/aot/plugins of Bun.build", () => {
             const executable = join(folder, how + (isWindows ? ".exe" : ""));
             const built = await spawned([bunExe(), "build.ts", "./" + main, executable, how], folder, bunEnv);
             if (how === "aot" && refusedWithAot) {
-              expect({ how, stdout: built.stdout, exitCode: built.exitCode }).toEqual({ how, stdout: expect.stringContaining(refusedWithAot), exitCode: 1 });
+              expect({ how, stdout: built.stdout, exitCode: built.exitCode }).toEqual({
+                how,
+                stdout: expect.stringContaining(refusedWithAot),
+                exitCode: 1,
+              });
               continue;
             }
-            expect({ how, stdout: built.stdout, stderr: built.stderr, exitCode: built.exitCode }).toEqual({ how, stdout: expect.any(String), stderr: expect.any(String), exitCode: 0 });
-            const ran = await spawned([executable], folder, how === "aot" ? { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" } : bunEnv);
-            expect({ how, stdout: ran.stdout, exitCode: ran.exitCode, signal: ran.signal }).toEqual({ how, stdout: prints, exitCode: 0, signal: null });
+            expect({ how, stdout: built.stdout, stderr: built.stderr, exitCode: built.exitCode }).toEqual({
+              how,
+              stdout: expect.any(String),
+              stderr: expect.any(String),
+              exitCode: 0,
+            });
+            const ran = await spawned(
+              [executable],
+              folder,
+              how === "aot" ? { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" } : bunEnv,
+            );
+            expect({ how, stdout: ran.stdout, exitCode: ran.exitCode, signal: ran.signal }).toEqual({
+              how,
+              stdout: prints,
+              exitCode: 0,
+              signal: null,
+            });
           }
         }),
       600_000,

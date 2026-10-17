@@ -24,71 +24,64 @@
  */
 
 $linkTimeConstant;
-export function performIteration(iterable)
-{
-    "use strict";
-    // This is performing a spread operation on the iterable passed in,
-    // and returning the result in an array.
-    // https://tc39.github.io/ecma262/#sec-runtime-semantics-arrayaccumulation
+export function performIteration(iterable) {
+  "use strict";
+  // This is performing a spread operation on the iterable passed in,
+  // and returning the result in an array.
+  // https://tc39.github.io/ecma262/#sec-runtime-semantics-arrayaccumulation
 
-    var result = [];
-    if ($isUndefinedOrNull(iterable))
-        throw new TypeError('Spread syntax requires ...iterable not be null or undefined');
-    
-    var iteratorMethod = iterable[Symbol.iterator];
-    if (!$isCallable(iteratorMethod))
-        throw new TypeError('Spread syntax requires ...iterable[Symbol.iterator] to be a function');
+  var result = [];
+  if ($isUndefinedOrNull(iterable)) throw new TypeError("Spread syntax requires ...iterable not be null or undefined");
 
-    var iterator = iteratorMethod.$call(iterable);
-    var next = iterator.next;
-    var item;
-    var index = 0;
-    while (true) {
-        item = next.$call(iterator);
-        if (!$isObject(item))
-            throw new TypeError("Iterator result interface is not an object");
-        if (item.done)
-            return result;
-        $putByValDirect(result, index++, item.value);
-    }
+  var iteratorMethod = iterable[Symbol.iterator];
+  if (!$isCallable(iteratorMethod))
+    throw new TypeError("Spread syntax requires ...iterable[Symbol.iterator] to be a function");
+
+  var iterator = iteratorMethod.$call(iterable);
+  var next = iterator.next;
+  var item;
+  var index = 0;
+  while (true) {
+    item = next.$call(iterator);
+    if (!$isObject(item)) throw new TypeError("Iterator result interface is not an object");
+    if (item.done) return result;
+    $putByValDirect(result, index++, item.value);
+  }
 }
 
 $linkTimeConstant;
-export function wrappedIterator(iterator)
-{
-    var wrapper = $Object.$create(null);
-    wrapper[Symbol.iterator] = function() { return iterator; }
-    return wrapper;
+export function wrappedIterator(iterator) {
+  var wrapper = $Object.$create(null);
+  wrapper[Symbol.iterator] = function () {
+    return iterator;
+  };
+  return wrapper;
 }
 
 $linkTimeConstant;
-export function builtinSetIterable(set)
-{
-    "use strict";
-    
-    if (!$isSet(set))
-        throw new TypeError("builtinSetIterable called with non-Set object.");
+export function builtinSetIterable(set) {
+  "use strict";
 
-    // Using the private @@iterator only guarantees that the symbol itself has not been modified, but does not protect
-    // against the iterator itself having been replaced. For Sets, `@values` has a copy of the function originally
-    // placed at `Symbol.iterator`.
-    var iteratorFunction = set.$values;
-    
-    return $wrappedIterator(iteratorFunction.$call(set));
+  if (!$isSet(set)) throw new TypeError("builtinSetIterable called with non-Set object.");
+
+  // Using the private @@iterator only guarantees that the symbol itself has not been modified, but does not protect
+  // against the iterator itself having been replaced. For Sets, `@values` has a copy of the function originally
+  // placed at `Symbol.iterator`.
+  var iteratorFunction = set.$values;
+
+  return $wrappedIterator(iteratorFunction.$call(set));
 }
 
 $linkTimeConstant;
-export function builtinMapIterable(map)
-{
-    "use strict";
-    
-    if (!$isMap(map))
-        throw new TypeError("builtinMapIterable called with non-Map object.");
+export function builtinMapIterable(map) {
+  "use strict";
 
-    // Using the private @@iterator only guarantees that the symbol itself has not been modified, but does not protect
-    // against the iterator itself having been replaced. For Maps, `@entries` has a copy of the function originally
-    // placed at `Symbol.iterator`.
-    var iteratorFunction = map.$entries;
+  if (!$isMap(map)) throw new TypeError("builtinMapIterable called with non-Map object.");
 
-    return $wrappedIterator(iteratorFunction.$call(map));
+  // Using the private @@iterator only guarantees that the symbol itself has not been modified, but does not protect
+  // against the iterator itself having been replaced. For Maps, `@entries` has a copy of the function originally
+  // placed at `Symbol.iterator`.
+  var iteratorFunction = map.$entries;
+
+  return $wrappedIterator(iteratorFunction.$call(map));
 }

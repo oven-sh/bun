@@ -2393,7 +2393,10 @@ fn is_as_yarn_resolves(lockfile: &Lockfile, row: DependencyID, package_id: Packa
         version.try_npm().is_some_and(|npm| {
             let resolved = lockfile.packages.items_resolution()[package_id as usize].npm();
             npm.name.slice(buf) == lockfile.packages.items_name()[package_id as usize].slice(buf)
-                && npm.version.satisfies(resolved.version, buf, buf)
+                // As in `rows_outside_overrides`: these resolve to `latest`, also to a prerelease.
+                && (npm.version.is_empty()
+                    || crate::npm::is_any_version_range(version.literal.slice(buf))
+                    || npm.version.satisfies(resolved.version, buf, buf))
         })
     })
 }

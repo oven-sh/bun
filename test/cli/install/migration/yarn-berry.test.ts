@@ -614,6 +614,41 @@ describe("yarn berry migration", () => {
     expect(exitCode).toBe(0);
   });
 
+  // `*` overlaps with every range. It resolves to `latest`, here a prerelease, which no range accepts.
+  test.concurrent("a name@range resolution leaves a * on that name at the prerelease that is latest", async () => {
+    const { packageDir: dir } = await testRegistry.createTestDir({
+      files: {
+        "package.json": JSON.stringify({
+          name: "berry-range-resolution-any",
+          dependencies: { "prereleases-3": "*" },
+          resolutions: { "prereleases-3@npm:^5.0.0-alpha.100": "5.0.0-alpha.150" },
+        }),
+        "yarn.lock": yarnLock({
+          "berry-range-resolution-any@workspace:.": [
+            "version: 0.0.0-use.local",
+            'resolution: "berry-range-resolution-any@workspace:."',
+            "dependencies:",
+            '  prereleases-3: "npm:*"',
+            "languageName: unknown",
+            "linkType: soft",
+          ],
+          "prereleases-3@npm:*": [
+            "version: 5.0.0-alpha.153",
+            'resolution: "prereleases-3@npm:5.0.0-alpha.153"',
+            "languageName: node",
+            "linkType: hard",
+          ],
+        }),
+      },
+    });
+
+    const { stderr, exitCode } = await run(dir, "pm", "migrate");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect(lockedVersions(await bunLockOf(dir))).toEqual(["prereleases-3@5.0.0-alpha.153"]);
+    await expectFrozenInstall(dir);
+  });
+
   describe("a bun.lock row that the resolution for its range does not allow", () => {
     const npmEntry = (version: string) => [
       `version: ${version}`,

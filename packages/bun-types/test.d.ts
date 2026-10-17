@@ -328,7 +328,7 @@ declare module "bun:test" {
    * });
    * ```
    *
-   * @param fn the function to run
+   * @param fn the function to run. A truthy argument to its `done` callback is reported as an error.
    */
   export function beforeAll(
     fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
@@ -342,7 +342,7 @@ declare module "bun:test" {
    *
    * If the function throws, the test does not run.
    *
-   * @param fn the function to run
+   * @param fn the function to run. A truthy argument to its `done` callback is reported as an error.
    */
   export function beforeEach(
     fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
@@ -364,7 +364,7 @@ declare module "bun:test" {
    * });
    * ```
    *
-   * @param fn the function to run
+   * @param fn the function to run. A truthy argument to its `done` callback is reported as an error.
    */
   export function afterAll(
     fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
@@ -376,7 +376,7 @@ declare module "bun:test" {
    * Use this for cleanup, like closing a socket or
    * deleting temporary files.
    *
-   * @param fn the function to run
+   * @param fn the function to run. A truthy argument to its `done` callback is reported as an error.
    */
   export function afterEach(
     fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
@@ -397,7 +397,7 @@ declare module "bun:test" {
    * });
    * ```
    *
-   * @param fn the function to run
+   * @param fn the function to run. A truthy argument to its `done` callback is reported as an error.
    */
   export function onTestFinished(
     fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
@@ -613,7 +613,8 @@ declare module "bun:test" {
    * ```
    *
    * @param label the label for the test
-   * @param fn the test function
+   * @param fn the test function. A truthy argument to its `done` callback fails the test.
+   * `done()` and a falsy argument pass.
    */
   export const test: Test<[]>;
   export { test as it, xtest as xit };

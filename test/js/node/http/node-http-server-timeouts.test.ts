@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { once } from "node:events";
 import http from "node:http";
 import net from "node:net";
-import { pipeline, Writable } from "node:stream";
+import { pipeline, Readable, Writable } from "node:stream";
 
 // Each test opens a raw TCP socket against a server whose timeout knob is a
 // few hundred ms and waits for the server to close the connection. A small
@@ -454,6 +454,178 @@ describe("node:http server timeout enforcement", () => {
       });
     } finally {
       client.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+});
+
+// The stream destroyer sets req.socket to null and leaves the connection open.
+// When the listener also ends the response in that tick, 'finish' must still
+// close the connection or arm its keep-alive timeout.
+describe.concurrent("node:http server: the stream destroyer ran on req and the response ended in the same tick", () => {
+  type Observed = { events: string[]; timeoutInFinish: number | undefined; url: string | undefined };
+  const post = (path: string) => `POST ${path} HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\nhello`;
+
+  // Sends the requests (one after each response, or all in one write) and
+  // resolves with the responses once the connection has closed.
+  function exchange(port: number, requests: string[], options: { pipelined?: boolean; clientEnds?: boolean } = {}) {
+    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+    const socket = net.connect(port, "127.0.0.1");
+    const responses: string[] = [];
+    let buffered = "";
+    let sent = 0;
+    socket.setNoDelay(true);
+    socket.on("error", reject);
+    socket.on("connect", () => {
+      if (options.pipelined) {
+        sent = requests.length;
+        socket.write(requests.join(""));
+      } else {
+        socket.write(requests[sent++]);
+      }
+    });
+    socket.on("data", chunk => {
+      buffered += chunk.toString("latin1");
+      for (;;) {
+        const headEnd = buffered.indexOf("\r\n\r\n");
+        if (headEnd === -1) return;
+        const length = Number(/^content-length: (\d+)$/im.exec(buffered.slice(0, headEnd))?.[1] ?? 0);
+        if (buffered.length < headEnd + 4 + length) return;
+        responses.push(buffered.slice(0, headEnd + 4 + length));
+        buffered = buffered.slice(headEnd + 4 + length);
+        if (sent < requests.length) socket.write(requests[sent++]);
+        else if (options.clientEnds && responses.length === requests.length) socket.end();
+      }
+    });
+    socket.on("end", () => socket.end());
+    socket.on("close", () => resolve(responses));
+    return promise;
+  }
+
+  function destroyAndAnswer(observed: Observed[], beforeEnd?: (res: http.ServerResponse) => void) {
+    return (req: http.IncomingMessage, res: http.ServerResponse) => {
+      const socket = req.socket;
+      const seen: Observed = { events: [], timeoutInFinish: undefined, url: req.url };
+      observed.push(seen);
+      res.on("finish", () => {
+        seen.events.push("finish");
+        seen.timeoutInFinish = socket.timeout;
+      });
+      res.on("close", () => seen.events.push("close"));
+      Readable.toWeb(req).cancel();
+      beforeEnd?.(res);
+      res.statusCode = 401;
+      res.end("no", () => seen.events.push("end callback"));
+    };
+  }
+
+  const statusLines = (responses: string[]) => responses.map(response => response.slice(0, response.indexOf("\r\n")));
+  const delivered = ["finish", "end callback", "close"];
+
+  test("the keep-alive timeout is armed and closes the idle connection", async () => {
+    const observed: Observed[] = [];
+    const server = http.createServer(destroyAndAnswer(observed));
+    server.keepAliveTimeout = 300;
+    server.keepAliveTimeoutBuffer = 0;
+    const port = await listen(server);
+    try {
+      const responses = await exchange(port, [post("/1")]);
+      expect({ statusLines: statusLines(responses), observed }).toEqual({
+        statusLines: ["HTTP/1.1 401 Unauthorized"],
+        observed: [{ events: delivered, timeoutInFinish: 300, url: "/1" }],
+      });
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  test("the keep-alive timeout replaces server.timeout on the connection", async () => {
+    const observed: Observed[] = [];
+    const server = http.createServer(destroyAndAnswer(observed));
+    server.timeout = 60_000;
+    server.keepAliveTimeout = 300;
+    server.keepAliveTimeoutBuffer = 0;
+    const port = await listen(server);
+    try {
+      const responses = await exchange(port, [post("/1")]);
+      expect({ statusLines: statusLines(responses), observed }).toEqual({
+        statusLines: ["HTTP/1.1 401 Unauthorized"],
+        observed: [{ events: delivered, timeoutInFinish: 300, url: "/1" }],
+      });
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  test("keepAliveTimeout = 0 leaves server.timeout on the connection", async () => {
+    const observed: Observed[] = [];
+    const server = http.createServer(destroyAndAnswer(observed));
+    server.timeout = 60_000;
+    server.keepAliveTimeout = 0;
+    const port = await listen(server);
+    try {
+      const responses = await exchange(port, [post("/1"), post("/2")], { clientEnds: true });
+      expect({ statusLines: statusLines(responses), observed }).toEqual({
+        statusLines: ["HTTP/1.1 401 Unauthorized", "HTTP/1.1 401 Unauthorized"],
+        observed: [
+          { events: delivered, timeoutInFinish: 60_000, url: "/1" },
+          { events: delivered, timeoutInFinish: 60_000, url: "/2" },
+        ],
+      });
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  test("a pipelined pair is answered in order, then the idle connection is closed", async () => {
+    const observed: Observed[] = [];
+    const server = http.createServer(destroyAndAnswer(observed));
+    server.keepAliveTimeout = 300;
+    server.keepAliveTimeoutBuffer = 0;
+    const port = await listen(server);
+    try {
+      const responses = await exchange(port, [post("/1"), post("/2")], { pipelined: true });
+      expect({
+        statusLines: statusLines(responses),
+        events: observed.map(seen => [seen.url, ...seen.events]),
+        lastTimeoutInFinish: observed.at(-1)?.timeoutInFinish,
+      }).toEqual({
+        statusLines: ["HTTP/1.1 401 Unauthorized", "HTTP/1.1 401 Unauthorized"],
+        events: [
+          ["/1", ...delivered],
+          ["/2", ...delivered],
+        ],
+        lastTimeoutInFinish: 300,
+      });
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  test.each([
+    ["a Connection: close response header", (res: http.ServerResponse) => void res.setHeader("Connection", "close")],
+    ["res.shouldKeepAlive = false", (res: http.ServerResponse) => void (res.shouldKeepAlive = false)],
+  ])("%s closes the connection", async (_name, mustClose) => {
+    const observed: Observed[] = [];
+    const server = http.createServer(destroyAndAnswer(observed, mustClose));
+    const port = await listen(server);
+    try {
+      const responses = await exchange(port, [post("/1")]);
+      expect({
+        statusLines: statusLines(responses),
+        connection: responses.map(response => /^connection: (.*)\r$/im.exec(response)?.[1]),
+        events: observed.map(seen => seen.events),
+      }).toEqual({
+        statusLines: ["HTTP/1.1 401 Unauthorized"],
+        connection: ["close"],
+        events: [delivered],
+      });
+    } finally {
       server.closeAllConnections();
       server.close();
     }

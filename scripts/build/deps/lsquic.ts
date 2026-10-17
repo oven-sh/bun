@@ -134,6 +134,11 @@ export const lsquic: Dependency = {
     // H3_CLOSED_CRITICAL_STREAM and closes the connection, which kills the
     // requests the graceful stop was draining. Reject only request streams.
     "patches/lsquic/goaway-accept-uni-streams.patch",
+    // ci_going_away() skips the GOAWAY write for a server connection that has
+    // not carried a request, and with it the call that makes the connection
+    // tickable. Its CONNECTION_CLOSE then waited for the next alarm or packet,
+    // and a graceful server.stop() waited with it.
+    "patches/lsquic/going-away-tickable.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

@@ -67,6 +67,11 @@ struct Http3Context {
             rd->~Http3ResponseData();
         });
 
+        us_quic_socket_context_on_released(ctx, [](us_quic_socket_context_t *ctx) {
+            Http3ContextData *cd = (Http3ContextData *) us_quic_socket_context_ext(ctx);
+            if (cd->onReleased) cd->onReleased(cd->onReleasedUser);
+        });
+
         return (Http3Context *) ctx;
     }
 

@@ -14,6 +14,9 @@ struct Http3ContextData {
         Http3Request *httpRequest;
     };
     HttpRouter<RouterData> router;
+    /* H3App::onReleased */
+    void (*onReleased)(void *user) = nullptr;
+    void *onReleasedUser = nullptr;
 };
 
 }

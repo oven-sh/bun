@@ -1,4 +1,5 @@
 import type { ServerWebSocket } from "bun";
+import { socketFaultInjection } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { createHash, createPrivateKey, randomBytes, X509Certificate } from "crypto";
 import { readFileSync } from "fs";
@@ -1516,6 +1517,444 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
     });
   });
 
+  // A graceful stop() keeps the UDP socket for the connections that still have
+  // a response to deliver: the last of them goes once the peer has acknowledged
+  // it, and takes the socket with it. The promise of stop() settles from that
+  // release, so the port is free for the statement behind the await. Nothing is
+  // awaited at the top level: only the server keeps the process alive for that
+  // statement. stop() in the microtask runs inside lsquic's process_conns, the
+  // later task does not.
+  const inFlightStop = (beforeStop: string, http1: boolean, afterStop: string) => `
+    const tls = ${JSON.stringify(tls)};
+    const inHandler = Promise.withResolvers();
+    const proceed = Promise.withResolvers();
+    const options = { hostname: "127.0.0.1", tls, http3: true, http1: ${http1} };
+    const h3 = { protocol: "http3", tls: { rejectUnauthorized: false } };
+    const server = Bun.serve({
+      ...options, port: 0,
+      async fetch() {
+        inHandler.resolve();
+        await proceed.promise;
+        return new Response("first");
+      },
+    });
+    const port = server.port;
+    const first = fetch("https://127.0.0.1:" + port + "/", h3).then(r => r.text());
+    inHandler.promise.then(async () => {
+      ${beforeStop}
+      const stopped = server.stop();
+      proceed.resolve();
+      await stopped;
+      ${afterStop}
+    });
+  `;
+
+  test.each([
+    ["in a microtask of the handler", false, ""],
+    ["in a later task", false, "await new Promise(resolve => setImmediate(resolve));"],
+    ["in a later task", true, "await new Promise(resolve => setImmediate(resolve));"],
+  ])(
+    "await server.stop() %s with an H3 request in flight, then Bun.serve on the same port binds (http1: %p)",
+    async (_where, http1, beforeStop) => {
+      const script = inFlightStop(
+        beforeStop,
+        http1,
+        `
+          const second = Bun.serve({ ...options, port, fetch: () => new Response("second") });
+          const answers = [await first, await fetch("https://127.0.0.1:" + port + "/", h3).then(r => r.text())];
+          await second.stop(true);
+          console.log(answers.join(","));
+        `,
+      );
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: "first,second\n", stderr: "" });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // The port is free for every binder, not only for the next HTTP/3 listener.
+  test("await server.stop() with an H3 request in flight, then Bun.udpSocket on the same port binds", async () => {
+    const script = inFlightStop(
+      "",
+      false,
+      `
+        (await Bun.udpSocket({ port, hostname: "127.0.0.1" })).close();
+        console.log("bound," + (await first));
+      `,
+    );
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "bound,first\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  describe("server.stop() with nothing to deliver frees the UDP port", () => {
+    const options = { hostname: "127.0.0.1", tls, http3: true, http1: false, fetch: () => new Response("ok") };
+
+    test("before it returns, with no H3 connection", async () => {
+      const first = Bun.serve({ ...options, port: 0 });
+      const port = first.port!;
+      const stopped = first.stop();
+      await using second = Bun.serve({ ...options, port });
+      expect(second.port).toBe(port);
+      await stopped;
+    });
+
+    test("behind the await, with an idle H3 connection", async () => {
+      await using first = Bun.serve({ ...options, port: 0 });
+      const port = first.port!;
+      for (let i = 0; i < 2; i++) expect(await fetchH3(port, "/").then(res => res.text())).toBe("ok");
+      expect(first.pendingRequests).toBe(0);
+      await first.stop();
+      await using second = Bun.serve({ ...options, port });
+      expect(second.port).toBe(port);
+    });
+
+    // Such a connection gets no GOAWAY, and lsquic did not tick it: its
+    // CONNECTION_CLOSE waited for the next alarm. The server can close it at
+    // once only when the client has acknowledged the server's SETTINGS, which
+    // has no signal here, so each attempt gives the acknowledgement more time.
+    test("before it returns, with an H3 connection that has not carried a request", async () => {
+      let freed = false;
+      for (let wait = 1; wait <= 128 && !freed; wait *= 2) {
+        await using server = Bun.serve({ ...options, port: 0 });
+        const port = server.port!;
+        const session = await connect(
+          { address: "127.0.0.1", port } as SocketAddress,
+          { alpn: "h3", servername: "localhost", verifyPeer: "manual", onerror() {} } as SessionOptions,
+        );
+        session.closed.catch(() => {});
+        try {
+          await session.opened;
+          await Bun.sleep(wait);
+          const stopped = server.stop();
+          try {
+            (await Bun.udpSocket({ port, hostname: "127.0.0.1" })).close();
+            freed = true;
+          } catch (e) {
+            if ((e as NodeJS.ErrnoException).code !== "EADDRINUSE") throw e;
+          }
+          server.stop(true);
+          await stopped;
+        } finally {
+          if (!session.destroyed) session.close().catch(() => {});
+        }
+      }
+      expect(freed).toBe(true);
+    });
+  });
+
+  // A graceful stop() leaves a connection with a request in flight open. A
+  // later stop(true), or the disposal of the server, must still reach it: abort
+  // the connection with CONNECTION_CLOSE and close the UDP socket. From a later
+  // task the socket is closed when the call returns. Inside the handler lsquic's
+  // process_conns is on the stack and both stops are deferred until it returns.
+  test.each([
+    ["server.stop(true)", "server.stop(true);"],
+    ["server[Symbol.dispose]()", "server[Symbol.dispose]();"],
+  ])("server.stop() then %s with a parked H3 request frees the UDP port", async (_how, force) => {
+    const script = (handler: string, main: string) => `
+      const tls = ${JSON.stringify(tls)};
+      const inHandler = Promise.withResolvers();
+      const server = Bun.serve({
+        port: 0, hostname: "127.0.0.1", tls, http3: true, http1: false,
+        async fetch() {
+          ${handler}
+          await new Promise(() => {});
+        },
+      });
+      const port = server.port;
+      const outcome = fetch("https://127.0.0.1:" + port + "/", {
+        protocol: "http3", tls: { rejectUnauthorized: false },
+        method: "POST",
+        body: new ReadableStream({ start(c) { c.enqueue("payload"); c.close(); } }),
+      }).then(r => r.text(), e => e.code);
+      ${main}
+      console.log("bound," + (await outcome));
+    `;
+    const scripts = {
+      "from a later task": script(
+        `inHandler.resolve();`,
+        `
+          await inHandler.promise;
+          await new Promise(resolve => setImmediate(resolve));
+          const stopped = server.stop();
+          ${force}
+          (await Bun.udpSocket({ port, hostname: "127.0.0.1" })).close();
+          await stopped;
+        `,
+      ),
+      "inside the handler": script(
+        `inHandler.resolve(server.stop()); ${force}`,
+        `
+          await inHandler.promise;
+          (await Bun.udpSocket({ port, hostname: "127.0.0.1" })).close();
+        `,
+      ),
+    };
+    const results: Record<string, object> = {};
+    for (const [where, source] of Object.entries(scripts)) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", source],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      results[where] = { stdout, stderr, exitCode };
+    }
+    const expected = { stdout: "bound,HTTP3StreamReset\n", stderr: "", exitCode: 0 };
+    expect(results).toEqual({ "from a later task": expected, "inside the handler": expected });
+  });
+
+  // The context that started the server stops it abruptly through its abort
+  // handle, which has to reach the connection that the graceful stop left.
+  test("server.stop() then dispose() of its Bun.ModuleGraph with a parked H3 request frees the UDP port", async () => {
+    const script = `
+      const tls = ${JSON.stringify(tls)};
+      const inHandler = Promise.withResolvers();
+      const graph = new Bun.ModuleGraph();
+      const server = graph.run(() =>
+        Bun.serve({
+          port: 0, hostname: "127.0.0.1", tls, http3: true, http1: false,
+          async fetch() {
+            inHandler.resolve();
+            await new Promise(() => {});
+          },
+        }),
+      );
+      const port = server.port;
+      const outcome = fetch("https://127.0.0.1:" + port + "/", {
+        protocol: "http3", tls: { rejectUnauthorized: false },
+        method: "POST",
+        body: new ReadableStream({ start(c) { c.enqueue("payload"); c.close(); } }),
+      }).then(r => r.text(), e => e.code);
+      await inHandler.promise;
+      await new Promise(resolve => setImmediate(resolve));
+      server.stop();
+      graph.dispose();
+      (await Bun.udpSocket({ port, hostname: "127.0.0.1" })).close();
+      console.log("bound," + (await outcome));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "bound,HTTP3StreamReset\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // The rebind takes the UDP socket from under the connections of the stopped
+  // server, one of them idle. They cannot send their CONNECTION_CLOSE any more,
+  // and the promise of stop(true) still has to settle when the handler returns.
+  test("server.stop(true) then Bun.serve on the same port inside an H3 handler settles the promise of the stop", async () => {
+    const script = `
+      const tls = ${JSON.stringify(tls)};
+      const options = { hostname: "127.0.0.1", tls, http3: true, http1: false };
+      const h3 = session => ({ protocol: "http3", tls: { rejectUnauthorized: false }, session });
+      const first = Bun.serve({
+        ...options, port: 0,
+        fetch(req) {
+          if (new URL(req.url).pathname !== "/stop") return new Response("idle");
+          const stopped = first.stop(true);
+          const second = Bun.serve({ ...options, port: first.port, fetch: () => new Response("second") });
+          stopped.then(async () => {
+            await second.stop(true);
+            console.log("the first server stopped");
+            process.exit(0);
+          });
+          return new Response("stopping");
+        },
+      });
+      const origin = "https://127.0.0.1:" + first.port;
+      await fetch(origin + "/idle", h3(new Bun.FetchSession())).then(r => r.text());
+      fetch(origin + "/stop", h3(new Bun.FetchSession())).catch(() => {});
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "the first server stopped\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // The client is killed while its request is parked, so nothing acknowledges
+  // the response: the connection drains until lsquic's idle timer closes it or
+  // an abrupt stop does. Until then a repeated stop() returns the same promise.
+  test.each([
+    ["server.stop(true)", 30, (server: { stop(abrupt: boolean): unknown }) => void server.stop(true)],
+    ["the idle timeout", 1, () => {}],
+  ])(
+    "a graceful stop() whose H3 peer vanished stays pending until %s ends the drain",
+    async (_how, idleTimeout, end) => {
+      const inHandler = Promise.withResolvers<void>();
+      const proceed = Promise.withResolvers<void>();
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        tls,
+        http3: true,
+        http1: false,
+        idleTimeout,
+        async fetch() {
+          inHandler.resolve();
+          await proceed.promise;
+          return new Response("first");
+        },
+      });
+      try {
+        const port = server.port!;
+        await using client = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `await fetch("https://127.0.0.1:${port}/", { protocol: "http3", tls: { rejectUnauthorized: false } }).then(r => r.text());`,
+          ],
+          env: bunEnv,
+          stdout: "ignore",
+          stderr: "inherit",
+        });
+        client.exited.then(code =>
+          inHandler.reject(new Error(`the client exited before its request arrived: ${code}`)),
+        );
+        await inHandler.promise;
+        client.kill("SIGKILL");
+        await client.exited;
+        const stopped = server.stop();
+        proceed.resolve();
+        while (server.pendingRequests !== 0) await new Promise<void>(resolve => setImmediate(resolve));
+        expect({ same: server.stop() === stopped, status: Bun.peek.status(stopped) }).toEqual({
+          same: true,
+          status: "pending",
+        });
+        end(server);
+        await stopped;
+        (await Bun.udpSocket({ port, hostname: "127.0.0.1" })).close();
+      } finally {
+        server.stop(true);
+      }
+    },
+  );
+
+  // The event loop closes a UDP socket whose receive fails, and nothing tells
+  // the server. The connections have no socket left, so quic.c closes them
+  // then: a stop() that waited for them to drain would hold its promise for
+  // the idle timeout. The fault is armed in the server process only. The next
+  // datagram from a client fails its receive, so the acknowledgement of the
+  // last response never arrives. A stop() of a server with nothing left
+  // returns a settled promise, else the pending promise of the first stop().
+  test.skipIf(!socketFaultInjection.available()).each([
+    ["32 connections, closed before the stop", 32, "", "server.stop();"],
+    ["1 connection, closed during the drain", 1, "server.stop();", ""],
+  ])(
+    "a graceful stop() does not wait for the H3 connections of a UDP socket that the loop closed on a receive error (%s)",
+    async (_what, connections, inHandler, afterClose) => {
+      const script = `
+        import { socketFaultInjection as fault } from "bun:internal-for-testing";
+        const armed = Promise.withResolvers();
+        const server = Bun.serve({
+          port: 0, hostname: "127.0.0.1", tls: ${JSON.stringify(tls)}, http3: true, http1: false,
+          fetch(req) {
+            if (new URL(req.url).pathname !== "/arm") return new Response("ok");
+            fault.set({ syscall: "recvmsg", action: "errno", errno: "ENOBUFS" });
+            ${inHandler}
+            armed.resolve();
+            return new Response("armed");
+          },
+        });
+        const port = server.port;
+        console.error("PORT=" + port);
+        await armed.promise;
+        while (true) {
+          try {
+            (await Bun.udpSocket({ port, hostname: "127.0.0.1" })).close();
+            break;
+          } catch (e) {
+            if (e.code !== "EADDRINUSE") throw e;
+          }
+          await new Promise(resolve => setImmediate(resolve));
+        }
+        ${afterClose}
+        console.error("STOPPED " + Bun.peek.status(server.stop()));
+      `;
+      await withCustomServer(script, async (port, _send, waitForStderr) => {
+        using sessions = new DisposableStack();
+        const open = Array.from({ length: connections }, () => sessions.use(new Bun.FetchSession()));
+        const get = (session: Bun.FetchSession, path: string) =>
+          fetchH3(port, path, { session } as RequestInit).then(res => res.text());
+        // One at a time, so lsquic keeps its first send batch size: the close
+        // then covers more connections than one batch holds.
+        for (const session of open) expect(await get(session, "/")).toBe("ok");
+        expect(await get(open[0], "/arm")).toBe("armed");
+        expect((await waitForStderr(/STOPPED (\w+)/))[1]).toBe("fulfilled");
+      });
+    },
+  );
+
+  // Nothing references the stopped server, and the collector must not finalize
+  // it while a connection still drains: that frees the QUIC engine.
+  test("a stopped H3 server that nothing references delivers the response in flight across a GC", async () => {
+    const script = `
+      const tls = ${JSON.stringify(tls)};
+      const body = Buffer.alloc(1024 * 1024, "abcdefghijklmnop");
+      const inHandler = Promise.withResolvers();
+      const proceed = Promise.withResolvers();
+      let port, stop;
+      (function () {
+        const server = Bun.serve({
+          port: 0, hostname: "127.0.0.1", tls, http3: true, http1: false,
+          async fetch() {
+            inHandler.resolve();
+            await proceed.promise;
+            return new Response(new ReadableStream({
+              type: "direct",
+              async pull(controller) { controller.write(body); await controller.end(); },
+            }));
+          },
+        });
+        port = server.port;
+        stop = () => void server.stop();
+      })();
+      const received = fetch("https://127.0.0.1:" + port + "/", { protocol: "http3", tls: { rejectUnauthorized: false } })
+        .then(r => r.bytes()).then(bytes => bytes.length, e => e.code);
+      await inHandler.promise;
+      stop();
+      stop = undefined;
+      proceed.resolve();
+      for (let i = 0; i < 8; i++) {
+        Bun.gc(true);
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      console.log(await received);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "1048576\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
   // Each QUIC connection counts as a virtual poll (loop->num_polls); after
   // server.stop() drains, the last conn close releases the UDP fd and the
   // loop has no polls left — the process exits without process.exit().
@@ -1554,6 +1993,64 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
     const exitCode = await proc.exited;
     expect(exitCode).toBe(0);
   });
+
+  // The server holds the loop until its last QUIC connection has gone, so a
+  // program whose last act is `await server.stop()` still delivers the response
+  // that was in flight, and the statement behind the await still runs. 1 MB
+  // needs several round trips of acknowledgements.
+  test.each([false, true])(
+    "a server that stops with a 1 MB H3 response in flight delivers it before the process ends (http1: %p)",
+    async http1 => {
+      const expected = Buffer.alloc(1024 * 1024, "abcdefghijklmnop");
+      const script = `
+        const body = Buffer.alloc(1024 * 1024, "abcdefghijklmnop");
+        const server = Bun.serve({
+          port: 0, hostname: "127.0.0.1", tls: ${JSON.stringify(tls)}, http3: true, http1: ${http1},
+          fetch() {
+            setImmediate(async () => {
+              await server.stop();
+              (await Bun.udpSocket({ port, hostname: "127.0.0.1" })).close();
+              console.log("stopped, port free");
+            });
+            return new Response(body);
+          },
+        });
+        const port = server.port;
+        console.log("PORT=" + port);
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      let stdout = "";
+      const reader = proc.stdout.getReader();
+      const decoder = new TextDecoder();
+      const readUntil = async (done: () => boolean) => {
+        while (!done()) {
+          const chunk = await reader.read();
+          if (chunk.done) return;
+          stdout += decoder.decode(chunk.value, { stream: true });
+        }
+      };
+      await readUntil(() => /PORT=\d+\n/.test(stdout));
+      const port = Number(stdout.match(/PORT=(\d+)/)?.[1]);
+      expect(port).toBeGreaterThan(0);
+      const [body, , stderr, exitCode] = await Promise.all([
+        fetchH3(port, "/").then(res => res.bytes()),
+        readUntil(() => false),
+        proc.stderr.text(),
+        proc.exited,
+      ]);
+      expect({ whole: Buffer.compare(body, expected) === 0, stdout, stderr, exitCode }).toEqual({
+        whole: true,
+        stdout: `PORT=${port}\nstopped, port free\n`,
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
 
   // The HEADERS of the first response on a connection wait for the QPACK encoder
   // stream, and lsquic takes no DATA until they are out. A small streamed body is

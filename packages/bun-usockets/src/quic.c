@@ -58,6 +58,10 @@ struct us_quic_socket_context_s {
     /* us_quic_socket_context_shutdown ran while `processing` was set;
      * us_quic_engine_leave finishes it. */
     int shutdown_pending;
+    /* us_quic_listen_socket_close ran, or the last UDP fd closed under live
+     * conns, while `processing` was set; us_quic_engine_leave runs
+     * us_quic_abort_conns. */
+    int abort_pending;
     int is_client;
     unsigned int conn_count;
     unsigned int conn_ext_size;
@@ -84,6 +88,7 @@ struct us_quic_socket_context_s {
     void (*on_hsk_done)(us_quic_socket_t *, int);
     void (*on_goaway)(us_quic_socket_t *);
     void (*on_close)(us_quic_socket_t *);
+    void (*on_released)(us_quic_socket_context_t *);
     void (*on_stream_open)(us_quic_stream_t *, int);
     void (*on_stream_headers)(us_quic_stream_t *);
     void (*on_stream_data)(us_quic_stream_t *, const char *, unsigned int, int);
@@ -221,6 +226,19 @@ static void us_quic_send_unsent(us_quic_socket_context_t *ctx) {
     us_quic_engine_leave(ctx);
 }
 
+/* Closes every conn at once, with the engine off the stack. Under
+ * process_conns lsquic_conn_abort only marks a conn, and cooldown skips a conn
+ * that is already going away: abort again, so the tick below closes them all. */
+static void us_quic_abort_conns(us_quic_socket_context_t *ctx) {
+    if (!ctx->engine) return;
+    for (us_quic_socket_t *qs = ctx->conns; qs; qs = qs->next) {
+        if (qs->conn) lsquic_conn_abort(qs->conn);
+    }
+    lsquic_engine_cooldown(ctx->engine);
+    us_quic_process(ctx);
+    us_quic_send_unsent(ctx);
+}
+
 /* ───── packets out ───── */
 
 static inline socklen_t sa_len(const struct sockaddr *sa) {
@@ -310,10 +328,10 @@ static int us_quic_sendmmsg(int fd, struct mmsghdr *mm, unsigned k) {
  * retires that one datagram through ci_packet_too_large and feeds DPLPMTUD.
  *
  * A datagram the kernel refuses for any other reason (EPERM from a firewall
- * rule, EACCES, ENETUNREACH, ...) is counted as sent. To lsquic that is a
- * packet lost on the wire: the loss timer retransmits it with backoff, and the
- * handshake or idle timeout ends a connection that never gets through. Neither
- * remaining outcome fits:
+ * rule, EACCES, ENETUNREACH, ...) is counted as sent, and so is one whose UDP
+ * socket has closed. To lsquic that is a packet lost on the wire: the loss
+ * timer retransmits it with backoff, and the handshake or idle timeout ends a
+ * connection that never gets through. Neither remaining outcome fits:
  *   - With the errno passed through, lsquic closes the connection that owns
  *     specs[sent]. On a shared unconnected UDP socket Linux reports a pending
  *     ICMP error on the next send to *any* destination, so the error isn't
@@ -330,7 +348,7 @@ static int us_quic_packets_out(void *out_ctx, const struct lsquic_out_spec *spec
     struct mmsghdr mm[BATCH];
     while (sent < n) {
         us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) specs[sent].peer_ctx;
-        if (!ls->udp) { errno = EBADF; break; }
+        if (!ls->udp) { sent++; continue; }
         int fd = us_poll_fd((struct us_poll_t *) ls->udp);
         unsigned k = 0;
         while (k < BATCH && sent + k < n && specs[sent + k].peer_ctx == (void *) ls) {
@@ -365,7 +383,7 @@ static int us_quic_packets_out(void *out_ctx, const struct lsquic_out_spec *spec
 #else
     for (; sent < n; sent++) {
         us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) specs[sent].peer_ctx;
-        if (!ls->udp) { errno = EBADF; break; }
+        if (!ls->udp) continue;
         LIBUS_SOCKET_DESCRIPTOR fd = us_poll_fd((struct us_poll_t *) ls->udp);
         if (us_quic_send_one(fd, &specs[sent]) < 0) {
             int stop = us_quic_send_would_block(errno) || errno == EMSGSIZE;
@@ -378,16 +396,13 @@ static int us_quic_packets_out(void *out_ctx, const struct lsquic_out_spec *spec
 #endif
 
     /* EMSGSIZE goes to lsquic as it is. Everything else that stops the loop is
-     * backpressure, or a UDP socket that is already closed: report EAGAIN, so
-     * the engine pauses and resumes from on_drain → send_unsent_packets (or
-     * from its one-second failsafe when there is no socket left to poll). */
+     * backpressure: report EAGAIN, so the engine pauses and resumes from
+     * on_drain → send_unsent_packets. */
     if (sent < n && errno != EMSGSIZE) {
         errno = EAGAIN;
         us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) specs[sent].peer_ctx;
-        if (ls->udp) {
-            us_poll_change((struct us_poll_t *) ls->udp, ls->ctx->loop,
-                LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
-        }
+        us_poll_change((struct us_poll_t *) ls->udp, ls->ctx->loop,
+            LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
     }
     return (int) sent;
 }
@@ -415,6 +430,18 @@ static void us_quic_udp_on_drain(struct us_udp_socket_t *u) {
     us_quic_send_unsent(ls->ctx);
 }
 
+/* Nothing of this context is on the wire: no UDP socket, no connection. */
+static int us_quic_is_released(us_quic_socket_context_t *ctx) {
+    return !ctx->listeners && ctx->conn_count == 0;
+}
+
+/* The last UDP fd and the last conn go in either order: a drain closes the fd
+ * with the last conn, us_quic_release_pending_port and the loop's close on a
+ * socket error take the fd from under live conns. Both ends call this. */
+static void us_quic_report_if_released(us_quic_socket_context_t *ctx) {
+    if (ctx->on_released && us_quic_is_released(ctx)) ctx->on_released(ctx);
+}
+
 static void us_quic_udp_on_close(struct us_udp_socket_t *u) {
     us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) us_udp_socket_user(u);
     us_quic_socket_context_t *ctx = ls->ctx;
@@ -429,6 +456,14 @@ static void us_quic_udp_on_close(struct us_udp_socket_t *u) {
     }
     ls->next = ctx->closed_listeners;
     ctx->closed_listeners = ls;
+    /* Conns with no UDP fd left have no wire, and the owner waits for the
+     * release: close them, now or when the engine leaves. */
+    if (ctx->on_released && !ctx->listeners && ctx->conn_count) {
+        if (ctx->processing) ctx->abort_pending = 1;
+        else us_quic_abort_conns(ctx);
+        return;
+    }
+    us_quic_report_if_released(ctx);
 }
 
 /* ───── SSL ───── */
@@ -635,10 +670,14 @@ static void us_quic_on_conn_closed(lsquic_conn_t *conn) {
 #endif
     ctx->conn_count--;
     us_internal_disable_sweep_timer(ctx->loop);
-    /* During graceful drain the UDP fd is the only thing left holding the
-     * loop; release it when the last conn closes so the process can exit. */
-    if (ctx->closing && ctx->conn_count == 0) {
-        while (ctx->listeners) us_udp_socket_close(ctx->listeners->udp);
+    if (ctx->conn_count == 0) {
+        if (ctx->closing && ctx->listeners) {
+            /* The graceful drain ends here: release the UDP fd, the only thing
+             * left holding the loop. us_quic_udp_on_close reports the release. */
+            while (ctx->listeners) us_udp_socket_close(ctx->listeners->udp);
+        } else {
+            us_quic_report_if_released(ctx);
+        }
     }
 }
 
@@ -900,6 +939,9 @@ void us_quic_socket_context_shutdown(us_quic_socket_context_t *ctx) {
 void us_quic_socket_context_free(us_quic_socket_context_t *ctx) {
     if (!ctx) return;
     ctx->closing = 1;
+    /* The owner is going away with the context: the fd and conn teardown below
+     * must not call into it. */
+    ctx->on_released = NULL;
     struct us_loop_t *loop = ctx->loop;
     for (us_quic_socket_context_t **pp = &loop->data.quic_head; *pp; pp = &(*pp)->next) {
         if (*pp == ctx) { *pp = ctx->next; break; }
@@ -1001,18 +1043,11 @@ us_quic_listen_socket_t *us_quic_socket_context_listen(
     return ls;
 }
 
-static void us_quic_listen_socket_finish_close(us_quic_listen_socket_t *ls) {
-    if (ls->ctx->engine) {
-        lsquic_engine_cooldown(ls->ctx->engine);
-        us_quic_process(ls->ctx);
-        us_quic_send_unsent(ls->ctx);
-    }
-    /* on_conn_closed releases every fd when the last conn of a closing ctx goes. */
-    if (ls->udp) us_udp_socket_close(ls->udp);
-}
-
 void us_quic_listen_socket_close(us_quic_listen_socket_t *ls) {
-    if (!ls || !ls->udp) return;
+    if (!ls) return;
+    us_quic_socket_context_t *ctx = ls->ctx;
+    /* The fd can be gone with conns left (us_quic_report_if_released): abort those. */
+    if (!ls->udp && !ctx->conns) return;
     /* Send CONNECTION_CLOSE on every live conn before the fd disappears;
      * cooldown alone only schedules GOAWAY, which leaves peers waiting on
      * in-flight streams that this abrupt close will never serve.
@@ -1026,26 +1061,26 @@ void us_quic_listen_socket_close(us_quic_listen_socket_t *ls) {
      * abrupt stop() went silent and pooled clients reused the dead session
      * until idle-timeout. IFC_ABORTED takes the IFC_IMMEDIATE_CLOSE_FLAGS
      * path which always packs CONNECTION_CLOSE. */
-    if (ls->ctx->engine) {
-        for (us_quic_socket_t *qs = ls->ctx->conns; qs; qs = qs->next) {
-            if (qs->conn) lsquic_conn_abort(qs->conn);
-        }
+    if (ctx->engine && ctx->processing) {
         /* stop(true) from a request handler, or from a microtask it resolved.
          * The aborted conns only pack their CONNECTION_CLOSE once the running
          * tick resumes, so the fd has to outlive that call. */
-        if (ls->ctx->processing) {
-            ls->close_pending = 1;
-            return;
+        for (us_quic_socket_t *qs = ctx->conns; qs; qs = qs->next) {
+            if (qs->conn) lsquic_conn_abort(qs->conn);
         }
+        ctx->abort_pending = 1;
+        if (ls->udp) ls->close_pending = 1;
+        return;
     }
-    us_quic_listen_socket_finish_close(ls);
+    us_quic_abort_conns(ctx);
+    if (ls->udp) us_udp_socket_close(ls->udp);
 }
 
 static void us_quic_finish_pending_closes(us_quic_socket_context_t *ctx) {
     for (us_quic_listen_socket_t *ls = ctx->listeners; ls; ) {
         if (!ls->close_pending) { ls = ls->next; continue; }
         ls->close_pending = 0;
-        us_quic_listen_socket_finish_close(ls);
+        us_udp_socket_close(ls->udp);
         /* udp_on_close unlinked `ls`; restart from the head. */
         ls = ctx->listeners;
     }
@@ -1058,7 +1093,16 @@ static void us_quic_after_engine_call(us_quic_socket_context_t *ctx) {
         ctx->shutdown_pending = 0;
         us_quic_socket_context_finish_shutdown(ctx);
     }
-    us_quic_finish_pending_closes(ctx);
+    if (ctx->abort_pending) {
+        /* Also for a listener whose fd us_quic_release_pending_port already took. */
+        ctx->abort_pending = 0;
+        us_quic_abort_conns(ctx);
+        us_quic_finish_pending_closes(ctx);
+    }
+}
+
+int us_quic_listen_socket_is_released(us_quic_listen_socket_t *ls) {
+    return us_quic_is_released(ls->ctx);
 }
 
 int us_quic_listen_socket_port(us_quic_listen_socket_t *ls) {
@@ -1086,6 +1130,7 @@ DEF_CB(on_open, void (*cb)(us_quic_socket_t *))
 DEF_CB(on_hsk_done, void (*cb)(us_quic_socket_t *, int))
 DEF_CB(on_goaway, void (*cb)(us_quic_socket_t *))
 DEF_CB(on_close, void (*cb)(us_quic_socket_t *))
+DEF_CB(on_released, void (*cb)(us_quic_socket_context_t *))
 DEF_CB(on_stream_open, void (*cb)(us_quic_stream_t *, int))
 DEF_CB(on_stream_headers, void (*cb)(us_quic_stream_t *))
 DEF_CB(on_stream_data, void (*cb)(us_quic_stream_t *, const char *, unsigned int, int))

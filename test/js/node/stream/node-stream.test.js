@@ -423,6 +423,88 @@ it("Readable.fromWeb with ReadableStream.prototype grafted into the prototype ch
   expect(exitCode).toBe(0);
 });
 
+// The native pull(view, flags) sets flags[0] when the source is done. The Readable keeps the flags
+// array in a property with a symbol key, so user code can put another value there.
+it("Readable.fromWeb does not store into a value that user code put in the closeState property", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { Readable } = require("node:stream");
+        // (module (type $s (struct (field (mut i32)))) (func (export "mk") (result (ref null $s)) struct.new_default $s))
+        const bytes = new Uint8Array([0,0x61,0x73,0x6d,1,0,0,0, 1,10,2, 0x5f,1,0x7f,1, 0x60,0,1,0x63,0, 3,2,1,1, 7,6,1,2,0x6d,0x6b,0,0, 10,7,1,5,0,0xfb,1,0,0x0b]);
+        const traps = [];
+        const trap = name => (target, key, ...rest) => (traps.push(name + " " + String(key)), Reflect[name](target, key, ...rest));
+        const values = {
+          "frozen object": Object.freeze({}),
+          "Proxy": new Proxy([false], { set: trap("set"), defineProperty: trap("defineProperty") }),
+          "WebAssembly GC reference": new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.mk(),
+          "string": "x",
+          "number": 1234,
+        };
+        // The source sets the flag when a pull() gets data and the end together. A Blob of this size gives such a pull().
+        const blob = new Blob([Buffer.alloc(256 * 1024, "a")]);
+        for (const name in values) {
+          const readable = Readable.fromWeb(blob.stream());
+          const key = Object.getOwnPropertySymbols(readable).find(symbol => symbol.description === "closeState");
+          const value = (readable[key] = values[name]);
+          let read = 0;
+          for await (const chunk of readable) read += chunk.length;
+          const keys = Object(value) === value ? Reflect.ownKeys(value) : [];
+          console.log(JSON.stringify({ name, read, keys, traps }));
+        }
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim().split("\n"), stderr }).toEqual({
+    stdout: [
+      '{"name":"frozen object","read":262144,"keys":[],"traps":[]}',
+      '{"name":"Proxy","read":262144,"keys":["0","length"],"traps":[]}',
+      '{"name":"WebAssembly GC reference","read":262144,"keys":[],"traps":[]}',
+      '{"name":"string","read":262144,"keys":[],"traps":[]}',
+      '{"name":"number","read":262144,"keys":[],"traps":[]}',
+    ],
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
+// The Blob source has no setFlowing() method, so the Readable reads the name from Object.prototype,
+// and a method there gets the native source as its this value.
+it("the native source of Readable.fromWeb accepts pull(view) without the flags array", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { Readable } = require("node:stream");
+        const pulled = [];
+        Object.defineProperty(Object.prototype, "setFlowing", {
+          configurable: true,
+          value() {
+            delete Object.prototype.setFlowing;
+            this.start(65536);
+            const view = new Uint8Array(64);
+            pulled.push(Buffer.from(view.subarray(0, this.pull(view))).toString());
+          },
+        });
+        const readable = Readable.fromWeb(new Blob(["hello world"]).stream());
+        readable.on("close", () => console.log(JSON.stringify(pulled)));
+        readable.resume();
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: '["hello world"]\n', stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
 // An error from the underlying web stream must surface on the node Readable as an
 // 'error' event (and destroy it), not as a global unhandled rejection.
 it("Readable.fromWeb propagates web stream errors to 'error' and destroys", async () => {

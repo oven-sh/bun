@@ -356,7 +356,7 @@ fn set_fake_timer_marker(global: &JSGlobalObject, enabled: bool) -> JsResult<()>
     // testing-library/react checks Object.hasOwnProperty.call(setTimeout, 'clock')
     // to detect if fake timers are enabled.
     if enabled {
-        set_timeout_fn.put(global, "clock", JSValue::TRUE);
+        bun_jsc::cpp::JSMock__defineFakeTimersMarker(global, set_timeout_fn)?;
     } else {
         set_timeout_fn.delete_property(global, "clock")?;
     }
@@ -397,12 +397,13 @@ fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
         }
     }
 
-    // SAFETY: per-thread `timer::All`; `activate` does not re-enter `All`.
-    unsafe { (*timer_all()).fake_timers.activate(js_now, global) };
-
     // Set setTimeout.clock = true to signal that fake timers are enabled.
     // This is used by testing-library/react to detect if jest.advanceTimersByTime should be called.
+    // It can run user code and throw, so it comes before the fake clock turns on.
     set_fake_timer_marker(global, true)?;
+
+    // SAFETY: per-thread `timer::All`; `activate` does not re-enter `All`.
+    unsafe { (*timer_all()).fake_timers.activate(js_now, global) };
 
     Ok(frame.this())
 }

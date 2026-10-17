@@ -1444,6 +1444,17 @@ extern "C" [[ZIG_EXPORT(nothrow)]] double JSMock__getCurrentUnixTimeMs()
     return WTF::WallTime::now().secondsSinceEpoch().milliseconds();
 }
 
+// `target` is what `globalThis.setTimeout` holds, so it can be any object. A target that refuses the marker gets none.
+extern "C" [[ZIG_EXPORT(check_slow)]] void JSMock__defineFakeTimersMarker(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedTarget)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSObject* target = asObject(JSValue::decode(encodedTarget));
+    target->createDataProperty(globalObject, Identifier::fromString(vm, "clock"_s), jsBoolean(true), false);
+    RETURN_IF_EXCEPTION(scope, );
+}
+
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsNow, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     return JSValue::encode(jsNumber(globalObject->jsDateNow()));

@@ -3126,8 +3126,11 @@ it("keeps the leading slashes of the pathname in the request-target", async () =
   // as written, like node and curl do. See #45330.
   const targets: string[] = [];
   await using server = net.createServer(socket => {
-    socket.once("data", data => {
-      targets.push(data.toString("utf8").split("\r\n")[0]);
+    let head = "";
+    socket.on("data", data => {
+      head += data.toString("utf8");
+      if (!head.includes("\r\n\r\n")) return;
+      targets.push(head.split("\r\n")[0]);
       socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
     });
   });

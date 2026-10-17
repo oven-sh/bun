@@ -1014,7 +1014,8 @@ pub(super) unsafe extern "C" fn on_new_stream(
     let is_local = (id & 1 == 0) != session.is_server();
     if is_local {
         if let Some(qs) = session.take_pending_local_stream(id & STREAM_ID_UNI_BIT as u64 != 0) {
-            // SAFETY: pending streams are kept alive by their wrapper Strong.
+            // SAFETY: a queued wrapper holds its strong self-root. `teardown`
+            // takes it out of the queue (`remove_stream`) before the downgrade.
             unsafe { (*qs).bind_raw(s) };
             session.push_event(SessionEvent::StreamReady {
                 stream: qs,

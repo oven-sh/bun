@@ -1144,6 +1144,7 @@ class ChildProcess extends EventEmitter {
   #handle;
   #closesNeeded = 1;
   #closesGot = 0;
+  #pendingMessages = [];
 
   declare send?: (message, handle?, options?, callback?) => boolean;
   declare disconnect?: () => void;
@@ -1512,6 +1513,7 @@ class ChildProcess extends EventEmitter {
         this.send = this.#send;
         this.disconnect = this.#disconnect;
         this.channel = new Control();
+        this.on("newListener", () => process.nextTick(() => this.#emitPendingMessages()));
         Object.defineProperty(this, "_channel", {
           get() {
             return this.channel;
@@ -1563,8 +1565,20 @@ class ChildProcess extends EventEmitter {
     }
   }
 
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L954-L964
   #emitIpcMessage(message, _, handle) {
-    this.emit(isInternalIpcMessage(message) ? "internalMessage" : "message", message, handle);
+    if (isInternalIpcMessage(message)) this.emit("internalMessage", message, handle);
+    else if (this.listenerCount("message") > 0) this.emit("message", message, handle);
+    else this.#pendingMessages.push([message, handle]);
+  }
+
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L726-L742
+  #emitPendingMessages() {
+    if (!this.connected || this.listenerCount("message") === 0) return;
+    const messages = this.#pendingMessages;
+    this.#pendingMessages = [];
+    // One tick each: a listener that throws must not cost the messages after it.
+    for (const [message, handle] of messages) process.nextTick(() => this.emit("message", message, handle));
   }
 
   #send(message, handle, options, callback) {

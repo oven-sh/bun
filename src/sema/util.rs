@@ -42,8 +42,9 @@ impl<T> SharedSort<T> for [T] {
         index_sort::sort_slice_by(self, T::cmp);
     }
 
+    /// Some of TypeScript's comparisons aren't total orders, and the sorts of the standard library may panic on those.
     fn shared_sort_by(&mut self, compare: impl FnMut(&T, &T) -> std::cmp::Ordering) {
-        index_sort::sort_slice_by(self, compare);
+        index_sort::merge_sort_slice_by(self, compare);
     }
 
     fn shared_sort_by_key<K: Ord>(&mut self, mut key: impl FnMut(&T) -> K) {

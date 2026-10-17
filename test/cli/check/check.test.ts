@@ -2994,6 +2994,43 @@ export { n, area, u };
   });
 
   describe("cases not covered by TypeScript's test suite", () => {
+    // `sortByBestName` orders two modules by their specifiers, and a module and a namespace by their places. With modules
+    // on both sides of the namespace that goes in a circle.
+    test.each([9, 11, 40])(
+      "a type of a namespace that 10 modules before it and %i after it export again",
+      async after => {
+        const two = (i: number) => String(i).padStart(2, "0");
+        const before = Array.from({ length: 9 }, (_, i) => `features/shared/f${two(i)}`);
+        using dir = tempDir("bun-check", {
+          "tsconfig.json": JSON.stringify({
+            compilerOptions: {
+              strict: true,
+              declaration: true,
+              noEmit: true,
+              module: "esnext",
+              moduleResolution: "bundler",
+              target: "esnext",
+              types: [],
+            },
+            include: ["**/*.ts"],
+          }),
+          "legacy.d.ts":
+            "declare namespace Legacy { interface Options { verbose: boolean } }\ndeclare function defaults(): Legacy.Options;\n",
+          "features/shared/shim.ts": "export import Options = Legacy.Options;\n",
+          ...Object.fromEntries(before.map(name => [`${name}.ts`, 'export * from "./shim";\n'])),
+          // It sorts before legacy.d.ts, so what it imports is loaded before that.
+          "app.ts": `${before.map(name => `import "./${name}";\n`).join("")}export {};\n`,
+          ...Object.fromEntries(
+            Array.from({ length: after }, (_, i) => [`page${two(i)}.ts`, 'export * from "./features/shared/shim";\n']),
+          ),
+          "main.ts": "export const options = defaults();\nexport const wrong: number = 'no';\n",
+        });
+        const { stdout, exitCode } = await check(dir);
+        expect(stdout).toStartWith("main.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.");
+        expect(exitCode).toBe(1);
+      },
+    );
+
     test("a variable referenced in a callback inside its own initializer", async () => {
       using dir = project({
         "a.ts": `

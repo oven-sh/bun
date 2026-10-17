@@ -314,7 +314,8 @@ mod tests {
         assert_eq!(a, b);
     }
 
-    const LENGTHS: [usize; 7] = [0, 1, 2, 21, 22, 100, 1000];
+    // Around the length of a run, and of two.
+    const LENGTHS: [usize; 11] = [0, 1, 2, 19, 20, 21, 22, 40, 41, 100, 1000];
 
     fn shuffled(len: usize) -> Vec<u32> {
         (0..len as u32)

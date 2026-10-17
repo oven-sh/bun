@@ -1413,33 +1413,87 @@ describe("client: the request ends before its HEADERS frame is sent", () => {
     });
   });
 
-  // The upload of the first request blocks the socket: the peer opens every window and reads
-  // nothing. The second request waits behind the peer's stream limit, ends and closes. When it
-  // gets its id, its END_STREAM frame waits for the socket, and close() sends RST_STREAM right
-  // after the HEADERS frame: the session drops the frame that waited. The request had no body
-  // left to send, so it finishes and closes.
+  // A peer that opens every window and reads nothing: the upload of the first request blocks the
+  // socket.
+  async function peerThatNeverReads(settings: Buffer) {
+    const sockets = new Set<net.Socket>();
+    const opened = Buffer.concat([
+      frame(FRAME.SETTINGS, 0, 0, settings),
+      frame(FRAME.WINDOW_UPDATE, 0, 0, uint32(0x7fffffff - WINDOW)),
+    ]);
+    const server = net.createServer(socket => {
+      sockets.add(socket);
+      socket.on("error", () => {});
+      socket.pause();
+      socket.write(opened);
+    });
+    const port = await listen(server);
+    return {
+      port,
+      close() {
+        for (const socket of sockets) socket.destroy();
+        server.close();
+      },
+    };
+  }
+  // SETTINGS_INITIAL_WINDOW_SIZE = 2^31-1.
+  const openWindow = Buffer.concat([Buffer.from([0, 4]), uint32(0x7fffffff)]);
+
+  // The peer's SETTINGS are in the socket before the session exists, so the windows are open at
+  // the connect. Both requests are made before the connect, and the second one ends and closes.
+  // The first one writes its upload when it has its id: that blocks the socket before the second
+  // one gets 'ready'. The END_STREAM frame of the second one then waits for the socket, and close()
+  // sends RST_STREAM right after the HEADERS frame: the session drops the frame that waited. The
+  // request had no body left to send, so it finishes and closes.
   test(
     "a request that ended and closed before it had an id finishes without its END_STREAM frame",
     {
       skip: !isBun,
     },
     async () => {
-      const sockets = new Set<net.Socket>();
-      const MAX = 0x7fffffff;
-      // SETTINGS_INITIAL_WINDOW_SIZE = 2^31-1, SETTINGS_MAX_CONCURRENT_STREAMS = 1.
-      const settings = Buffer.concat([Buffer.from([0, 4]), uint32(MAX), Buffer.from([0, 3]), uint32(1)]);
-      const opened = Buffer.concat([
-        frame(FRAME.SETTINGS, 0, 0, settings),
-        frame(FRAME.WINDOW_UPDATE, 0, 0, uint32(MAX - WINDOW)),
-      ]);
-      const server = net.createServer(socket => {
-        sockets.add(socket);
-        socket.on("error", () => {});
-        socket.pause();
-        socket.write(opened);
+      const peer = await peerThatNeverReads(openWindow);
+      const transport = net.connect(peer.port, "127.0.0.1");
+      transport.on("error", () => {});
+      await once(transport, "readable");
+      const session = http2.connect(`http://127.0.0.1:${peer.port}`, {
+        maxSessionMemory: 1000,
+        createConnection: () => transport,
       });
-      const port = await listen(server);
-      const session = http2.connect(`http://127.0.0.1:${port}`, { maxSessionMemory: 1000 });
+      try {
+        session.on("error", () => {});
+        const upload = session.request({ ":method": "POST", ":path": "/" });
+        upload.on("error", () => {});
+        upload.once("ready", () => upload.write(Buffer.alloc(24 << 20, 97)));
+
+        const request = session.request({ ":method": "POST", ":path": "/" });
+        request.on("error", () => {});
+        assert.strictEqual(request.pending, true);
+        const events: string[] = [];
+        request.on("finish", () => events.push("finish"));
+        const closed = closeOf(request);
+        request.end();
+        request.close();
+        await closed;
+        assert.deepStrictEqual({ events, pending: request.pending }, { events: ["finish"], pending: false });
+      } finally {
+        session.destroy();
+        peer.close();
+      }
+    },
+  );
+
+  // The second request waits behind the peer's stream limit, ends and closes: close() drops it
+  // from the queue. It finishes, and it closes with no id when the first request gives the slot
+  // back.
+  test(
+    "a request that ended and closed while it waited behind the peer's stream limit is never sent",
+    {
+      skip: !isBun,
+    },
+    async () => {
+      // SETTINGS_MAX_CONCURRENT_STREAMS = 1.
+      const peer = await peerThatNeverReads(Buffer.concat([openWindow, Buffer.from([0, 3]), uint32(1)]));
+      const session = http2.connect(`http://127.0.0.1:${peer.port}`, { maxSessionMemory: 1000 });
       try {
         session.on("error", () => {});
         await once(session, "remoteSettings");
@@ -1459,11 +1513,10 @@ describe("client: the request ends before its HEADERS frame is sent", () => {
         request.close();
         upload.destroy();
         await closed;
-        assert.deepStrictEqual(events, ["finish"]);
+        assert.deepStrictEqual({ events, pending: request.pending }, { events: ["finish"], pending: true });
       } finally {
         session.destroy();
-        for (const socket of sockets) socket.destroy();
-        server.close();
+        peer.close();
       }
     },
   );

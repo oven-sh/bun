@@ -233,9 +233,22 @@ describe.concurrent("the examples in 'bun patch --help'", () => {
       patchFile: true,
       indexJs: patched,
     });
-    expect(await Bun.file(join(dir, patchesDir, "no-deps@1.0.0.patch")).text()).toContain(
-      "+module.exports = 'patched';",
-    );
+    expect(await Bun.file(join(dir, patchesDir, "no-deps@1.0.0.patch")).text()).toMatchInlineSnapshot(`
+      "diff --git a/index.js b/index.js
+      index bb9c6f6876154493527577cd78279aa6bb686ebb..486c735f2b33e6d1beb1de227b99684124172cb9 100644
+      --- a/index.js
+      +++ b/index.js
+      @@ -1,7 +1 @@
+      -module.exports = require(\`./package.json\`);
+      -
+      -for (const key of [\`dependencies\`, \`devDependencies\`, \`peerDependencies\`]) {
+      -  for (const dep of Object.keys(module.exports[key] || {})) {
+      -    module.exports[key][dep] = require(dep);
+      -  }
+      -}
+      +module.exports = 'patched';
+      "
+    `);
   });
 });
 

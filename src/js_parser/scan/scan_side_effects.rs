@@ -572,11 +572,21 @@ impl SideEffects {
 
     fn should_keep_stmts_in_dead_control_flow(stmts: bun_ast::StmtNodeList, bump: &Bump) -> bool {
         for child in stmts.slice() {
-            if Self::should_keep_stmt_in_dead_control_flow(*child, bump) {
+            if Self::should_keep_nested_stmt_in_dead_control_flow(*child, bump) {
                 return true;
             }
         }
         false
+    }
+
+    /// Body-recursion variant: a function declaration reached through an
+    /// enclosing statement's body is block-scoped there (plain sloppy-mode
+    /// functions were already relocated), so it drops with the dead husk.
+    fn should_keep_nested_stmt_in_dead_control_flow(stmt: Stmt, bump: &Bump) -> bool {
+        if matches!(stmt.data, StmtData::SFunction(_)) {
+            return false;
+        }
+        Self::should_keep_stmt_in_dead_control_flow(stmt, bump)
     }
 
     /// If this is in a dead branch, then we want to trim as much dead code as we
@@ -666,21 +676,21 @@ impl SideEffects {
             }
 
             StmtData::SIf(if_) => {
-                if Self::should_keep_stmt_in_dead_control_flow(if_.yes, bump) {
+                if Self::should_keep_nested_stmt_in_dead_control_flow(if_.yes, bump) {
                     return true;
                 }
                 match if_.no {
-                    Some(no) => Self::should_keep_stmt_in_dead_control_flow(no, bump),
+                    Some(no) => Self::should_keep_nested_stmt_in_dead_control_flow(no, bump),
                     None => false,
                 }
             }
 
             StmtData::SWhile(while_) => {
-                Self::should_keep_stmt_in_dead_control_flow(while_.body, bump)
+                Self::should_keep_nested_stmt_in_dead_control_flow(while_.body, bump)
             }
 
             StmtData::SDoWhile(do_while) => {
-                Self::should_keep_stmt_in_dead_control_flow(do_while.body, bump)
+                Self::should_keep_nested_stmt_in_dead_control_flow(do_while.body, bump)
             }
 
             StmtData::SFor(for_) => {
@@ -689,22 +699,32 @@ impl SideEffects {
                         return true;
                     }
                 }
-                Self::should_keep_stmt_in_dead_control_flow(for_.body, bump)
+                Self::should_keep_nested_stmt_in_dead_control_flow(for_.body, bump)
             }
 
             StmtData::SForIn(for_) => {
                 Self::should_keep_stmt_in_dead_control_flow(for_.init, bump)
-                    || Self::should_keep_stmt_in_dead_control_flow(for_.body, bump)
+                    || Self::should_keep_nested_stmt_in_dead_control_flow(for_.body, bump)
             }
 
             StmtData::SForOf(for_) => {
                 Self::should_keep_stmt_in_dead_control_flow(for_.init, bump)
-                    || Self::should_keep_stmt_in_dead_control_flow(for_.body, bump)
+                    || Self::should_keep_nested_stmt_in_dead_control_flow(for_.body, bump)
             }
 
             StmtData::SLabel(label) => {
-                Self::should_keep_stmt_in_dead_control_flow(label.stmt, bump)
+                Self::should_keep_nested_stmt_in_dead_control_flow(label.stmt, bump)
             }
+
+            StmtData::SWith(with) => {
+                Self::should_keep_nested_stmt_in_dead_control_flow(with.body, bump)
+            }
+
+            StmtData::SSwitch(switch_) => switch_
+                .cases
+                .slice()
+                .iter()
+                .any(|case| Self::should_keep_stmts_in_dead_control_flow(case.body, bump)),
 
             _ => true,
         }

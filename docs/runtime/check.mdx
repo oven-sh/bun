@@ -438,7 +438,7 @@ for (const log of result.logs) {
 
 ## If `package.json` has a `check` script
 
-Your script wins. `bun check` runs it, like `bun run check`. To run the type checker in that project, use `bun --check`.
+Your script wins. `bun check` runs it, like `bun run check`, and passes it your flags. To run the type checker in that project, pass `--no-script`.
 
 ```json package.json icon="file-json"
 {
@@ -449,9 +449,13 @@ Your script wins. `bun check` runs it, like `bun run check`. To run the type che
 ```
 
 ```bash terminal icon="terminal"
-bun check   # runs "biome check"
-bun --check # type checks the project
+bun check                # runs "biome check"
+bun check --no-script    # type checks the project
+bun check --no-script -b # with any other flag or path
+bun --check              # type checks the project too
 ```
+
+Writing a tool or a CI step that runs in projects you don't control? `bun check --no-script` is always the type checker.
 
 Inside the `check` script, and in any script it starts, `bun check` is the type checker. That makes `"check": "bun check"` work.
 
@@ -461,7 +465,7 @@ Inside the `check` script, and in any script it starts, `bun check` is the type 
   script `typecheck`.
 </Warning>
 
-With `--filter` or `--workspaces`, `check` always means the `check` script of each package.
+With `--filter` or `--workspaces`, `check` means the `check` script of each package.
 
 ```bash terminal icon="terminal"
 bun --filter '*' check # runs the "check" script of every package
@@ -600,7 +604,7 @@ declare module "*.module.css" {
 
 ### `bun check` runs a script instead of the type checker
 
-Your `package.json` has a `check` script. Use `bun --check`. See [If `package.json` has a `check` script](#if-packagejson-has-a-check-script).
+Your `package.json` has a `check` script. Use `bun check --no-script`. See [If `package.json` has a `check` script](#if-packagejson-has-a-check-script).
 
 ### `bun check` and my editor disagree
 
@@ -679,5 +683,6 @@ bun check [flags] [...files or directories]
 | `--threads <n>`          | Number of threads. Default: one per CPU core                        |
 | `--timing`               | Print how long loading and checking took                            |
 | `--cwd <path>`           | Set the working directory                                           |
+| `--no-script`            | Run the type checker even if the project has a `check` script       |
 | `--strict`, `--target`…  | Any compiler option, as for `tsc`. Overrides `tsconfig.json`        |
 | `-h`, `--help`           | Print the help menu                                                 |

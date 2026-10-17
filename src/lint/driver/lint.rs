@@ -58,10 +58,11 @@ pub(crate) struct Context<'c, 'm> {
     pub(crate) js_plugins: &'c Host<'c>,
     /// The rules that comments turn on and that did not run: they are of plugins that are not loaded.
     pub(crate) skipped_in_comments: &'c Guarded<Vec<Box<[u8]>>>,
-    /// The files in which the type checker ran out of stack, so that the rules that need types may have missed something.
+    /// The files in which the type checker ran out of stack, so that the rules that need types may have missed something. With
+    /// the paths of the operating system.
     pub(crate) out_of_stack: &'c Guarded<Vec<Vec<u8>>>,
-    /// The programs whose configuration file does not say what it includes, each with all the files that were linted in it.
-    /// With the paths of the operating system. See `typed::is_out_of_proportion`.
+    /// The programs whose configuration file does not say what it includes, with the paths of the operating system. See
+    /// `typed::is_out_of_proportion`.
     pub(crate) without_include: &'c Guarded<Vec<bun_sema_driver::WithoutInclude>>,
     /// The files that fixes would have left with a syntax error, each with the rules whose fixes are not applied for that.
     pub(crate) broken_fixes: &'c Guarded<Vec<(Vec<u8>, Vec<RuleId>)>>,

@@ -82,7 +82,6 @@ interface BundledBuiltin {
   constructAbility: string;
   overriddenName: string;
   source: string;
-  params: string[];
   visibility: string;
   sourceOffset: number;
 }
@@ -338,7 +337,6 @@ $$capture_start$$(${fn.async ? "async " : ""}${
       name: fn.name,
       directives: fn.directives,
       source: finalReplacement,
-      params: fn.params,
       // Async functions automatically get Private visibility because the parser
       // upgrades them when they use await (see Parser.cpp parseFunctionBody)
       visibility: fn.directives.visibility ?? (fn.directives.linkTimeConstant || fn.async ? "Private" : "Public"),

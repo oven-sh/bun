@@ -3875,6 +3875,30 @@ describe.concurrent("--recursive and --filter", () => {
     expect(exitCode).toBe(1);
   });
 
+  test.each(["--filter=*", "-F=*", "-F*", "-r", "--recursive", "--filter publish"])(
+    "`bun %s publish` publishes nothing",
+    async flags => {
+      using registry = workspaceRegistry();
+      using dir = workspace(registry.mock, { named: { name: "publish", version: "1.0.0" } });
+
+      await using proc = spawn({
+        cmd: [bunExe(), ...flags.split(" "), "publish"],
+        cwd: String(dir),
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [flag] = flags.split(" ");
+      expect(err).toBe(
+        `error: refusing to publish: ${flag} is before "publish", use "bun publish ${flag}", or "bun run" for a script\n`,
+      );
+      expect(published(out)).toEqual([]);
+      expect(registry.asked).toEqual([]);
+      expect(exitCode).toBe(1);
+    },
+  );
+
   test("--filter publishes only the matching packages", async () => {
     using registry = workspaceRegistry();
     using dir = workspace(registry.mock);

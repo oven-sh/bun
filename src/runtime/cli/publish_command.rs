@@ -414,6 +414,21 @@ impl PublishCommand {
             Global::crash();
         }
 
+        // `bun --filter='*' publish` reads as "run the `publish` script of every workspace".
+        let mut flags_before =
+            (bun_core::argv().into_iter().skip(1)).take_while(|arg| *arg != b"publish");
+        if let Some(flag) = flags_before.find(|arg| {
+            matches!(*arg, b"-r" | b"--recursive" | b"--filter")
+                || arg.starts_with(b"--filter=")
+                || arg.starts_with(b"-F")
+        }) {
+            Output::err_generic(
+                "refusing to publish: {} is before \"publish\", use \"bun publish {}\", or \"bun run\" for a script",
+                (bstr::BStr::new(flag), bstr::BStr::new(flag)),
+            );
+            Global::crash();
+        }
+
         let (manager, original_cwd) =
             match PackageManager::init(&mut *ctx, &cli, Subcommand::Publish) {
                 Ok(v) => v,

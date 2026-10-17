@@ -123,11 +123,12 @@ const GUIDANCE: Record<CheckName, string[]> = {
     "unintended side effect of a linker-flag or toolchain change; find that change.",
   ],
   "reserved sections": [
-    "`bun build --compile` edits these sections in place in a copy of this executable, and finds",
-    "them by name. One that is missing, resized or not zero-filled means its definition (see",
-    "src/jsc/bindings/c-bindings.cpp) was dropped or padded on the way to the link: dead-strip,",
-    "LTO, a sanitizer redzone. Fix the definition. Changing the size changes what every compiled",
-    "executable can hold, so it is a deliberate decision, not a fix for this check.",
+    "`bun build --compile` writes into these sections in a copy of this executable, and finds",
+    "them by segment and name. One that is missing, resized or not zero-filled means its",
+    "definition (see src/jsc/bindings/c-bindings.cpp) was dropped, padded or moved on the way to",
+    "the link: dead-strip, LTO, a sanitizer redzone, a segment rename. Fix the definition. The",
+    "names and sizes are what other versions of bun expect, so changing one is a deliberate",
+    "decision, not a fix for this check.",
   ],
   size: [
     "This program is written to stay tiny (no CRT, no allocator, no formatting). A jump in size",

@@ -2042,63 +2042,6 @@ impl CompileResult {
     }
 }
 
-/// Read the file that `--macos-info-plist` / `compile.macos.infoPlist` names.
-///
-/// The bytes go into the executable as they are. What macOS accepts there is a property list with a dictionary at its
-/// root: `codesign` refuses to sign an executable whose `__TEXT,__info_plist` is anything else, so that is checked here.
-pub fn load_info_plist(path: &[u8]) -> Result<Box<[u8]>, CompileError> {
-    let bytes = match bun_sys::File::read_from(Fd::cwd(), path) {
-        Ok(bytes) => bytes,
-        Err(err) => {
-            return Err(CompileError::fmt(format_args!(
-                "failed to read the Info.plist {}: {}",
-                bun_core::fmt::quote(path),
-                err.without_path()
-            )));
-        }
-    };
-    if !is_plist_dictionary(&bytes) {
-        return Err(CompileError::fmt(format_args!(
-            "{} is not an Info.plist: expected an XML or binary property list with a dictionary at its root",
-            bun_core::fmt::quote(path)
-        )));
-    }
-    Ok(bytes.into_boxed_slice())
-}
-
-/// A binary property list (by its magic only), or an XML one whose root element is `<dict>`.
-fn is_plist_dictionary(bytes: &[u8]) -> bool {
-    if bytes.starts_with(b"bplist00") {
-        return true;
-    }
-    let Some(plist) = strings::index_of(bytes, b"<plist") else {
-        return false;
-    };
-    let Some(tag_end) = strings::index_of_char_usize(&bytes[plist..], b'>') else {
-        return false;
-    };
-    // CoreFoundation skips whitespace, comments and processing instructions in front of the root element.
-    let mut rest = &bytes[plist + tag_end + 1..];
-    loop {
-        rest = rest.trim_ascii_start();
-        let close: &[u8] = if rest.starts_with(b"<!--") {
-            b"-->"
-        } else if rest.starts_with(b"<?") {
-            b"?>"
-        } else {
-            break;
-        };
-        match strings::index_of(rest, close) {
-            Some(end) => rest = &rest[end + close.len()..],
-            None => return false,
-        }
-    }
-    matches!(
-        rest.strip_prefix(b"<dict"),
-        Some([b'>' | b'/' | b' ' | b'\t' | b'\r' | b'\n', ..])
-    )
-}
-
 /// The temp copy of the executable that `inject` wrote the module graph into:
 /// its open fd plus the absolute path it was created at, which the caller
 /// renames into place (an fd cannot be mapped back to a path on every
@@ -2378,14 +2321,18 @@ pub(crate) fn inject<'a>(
                     return Err(InjectError::Printed);
                 }
             };
-            if let Some(plist) = inject_options.macos.info_plist.as_deref() {
-                if let Err(e) = macho_file.set_info_plist(plist) {
-                    cleanup(zname, cloned_executable_fd);
-                    return Err(InjectError::Reason(CompileError::fmt(format_args!(
-                        "failed to embed the Info.plist: {}",
-                        e
-                    ))));
+            match inject_options.macos.info_plist.as_deref() {
+                Some(plist) => {
+                    if let Err(e) = macho_file.set_info_plist(plist) {
+                        cleanup(zname, cloned_executable_fd);
+                        return Err(InjectError::Reason(CompileError::fmt(format_args!(
+                            "failed to embed the Info.plist in {}: {}",
+                            bun_core::fmt::quote(self_exe.as_bytes()),
+                            e
+                        ))));
+                    }
                 }
+                None => macho_file.clear_info_plist(),
             }
             if let Err(e) = macho_file.write_section(bytes) {
                 bun_core::pretty_errorln!("Error writing standalone module graph: {}", e);

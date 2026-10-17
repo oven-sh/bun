@@ -433,17 +433,26 @@ pub(crate) mod js_bundler {
                             info_plist,
                         ));
                     }
-                    // Only a macOS executable has a place for it. `compile.macos` has no effect on other targets.
-                    if this.compile_target.os == bun_core::env::OperatingSystem::Mac {
-                        let path = info_plist.to_utf8(global_this)?;
-                        match StandaloneModuleGraph::load_info_plist(path.slice()) {
-                            Ok(bytes) => this.macos.info_plist = Some(bytes),
-                            Err(err) => {
-                                return Err(global_this.throw_invalid_arguments(format_args!(
-                                    "compile.macos.infoPlist: {}",
-                                    bstr::BStr::new(err.slice())
-                                )));
-                            }
+                    let path = info_plist.to_utf8(global_this)?;
+                    if bun_core::strings::contains_char(path.slice(), 0) {
+                        return Err(global_this
+                            .err(
+                                jsc::ErrorCode::INVALID_ARG_VALUE,
+                                format_args!(
+                                    "The property 'compile.macos.infoPlist' must be a string without null bytes. Received {}",
+                                    bun_core::fmt::quote(path.slice())
+                                ),
+                            )
+                            .throw());
+                    }
+                    // Read and checked whatever the target is, like `windows.icon`. Only a macOS executable takes it.
+                    match bun_standalone_graph::info_plist::load(path.slice()) {
+                        Ok(bytes) => this.macos.info_plist = Some(bytes),
+                        Err(err) => {
+                            return Err(global_this.throw_invalid_arguments(format_args!(
+                                "compile.macos.infoPlist: {}",
+                                bstr::BStr::new(err.slice())
+                            )));
                         }
                     }
                 }

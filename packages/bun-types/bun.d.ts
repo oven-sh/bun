@@ -3828,10 +3828,12 @@ declare module "bun" {
        * The file is an XML or binary property list with a dictionary at its
        * root, and at most 4096 bytes. A relative path resolves against the
        * current working directory. The option also works when cross-compiling.
-       * It has no effect when the target is not macOS.
+       * The file is read and checked for every target, and it goes into the
+       * executable only when the target is macOS.
        *
-       * The ad-hoc signature Bun puts on the executable does not cover the
-       * `Info.plist`. Sign the executable with `codesign` to seal it.
+       * On arm64, the ad-hoc signature Bun puts on the executable hashes the
+       * `Info.plist` but does not bind it. Sign the executable with
+       * `codesign` to bind it.
        *
        * Equivalent CLI flag: `--macos-info-plist <path>`
        *

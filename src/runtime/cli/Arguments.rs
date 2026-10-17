@@ -2586,7 +2586,7 @@ fn parse_build_command_options(
             Output::err_generic("--macos-info-plist requires a macOS compile target", ());
             Global::crash();
         }
-        match bun_standalone_graph::StandaloneModuleGraph::load_info_plist(path) {
+        match bun_standalone_graph::info_plist::load(path) {
             Ok(bytes) => ctx.bundler_options.macos.info_plist = Some(bytes),
             Err(err) => {
                 Output::err_generic("{}", format_args!("{}", BStr::new(err.slice())));

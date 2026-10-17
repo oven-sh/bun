@@ -132,8 +132,8 @@ export interface BinaryExpectations {
     segmentMaxProt: Record<string, string>;
     /**
      * `segment,section` → exact size, zero-filled. Room `bun build --compile`
-     * writes into in place (src/exe_format/macho.rs finds it by name in the
-     * executable it copies, which may be another version's), so the name and
+     * writes into (src/exe_format/macho.rs finds it by name in the executable
+     * it copies, which may be another version's), so the segment, the name and
      * the size are a contract with every bun that compiles against this one.
      */
     reservedSections: Record<string, number>;
@@ -486,10 +486,12 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
         macho: {
           flags: ["PIE", "TWOLEVEL", "DYLDLINK"],
           segmentMaxProt: { __TEXT: "r-x", __DATA_CONST: "rw-", __DATA: "rw-", __LINKEDIT: "r--" },
-          // --macos-info-plist renames the slot to __info_plist in a compiled
-          // executable. In bun itself that name would be bun's own Info.plist
-          // to macOS, and codesign refuses one that is not a property list.
-          reservedSections: { "__TEXT,__bun_plist": 4096 },
+          // __BUN,__bun takes the module graph. __TEXT,__bun_plist takes the
+          // --macos-info-plist file and is renamed __info_plist with it. macOS
+          // reads that name only in the segment named __TEXT, so the section
+          // has to stay there. In bun itself the name would make it bun's own
+          // Info.plist, and codesign refuses one that is not a property list.
+          reservedSections: { "__BUN,__bun": 16 * 1024, "__TEXT,__bun_plist": 4096 },
           forbiddenSections: ["__TEXT,__info_plist"],
         },
       };

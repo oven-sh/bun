@@ -1136,7 +1136,7 @@ When compiling a standalone executable for macOS, you can embed an `Info.plist` 
 <Tabs>
   <Tab title="CLI">
     ```bash terminal icon="terminal"
-    bun build --compile --macos-info-plist=./Info.plist ./app.ts --outfile myapp
+    bun build --compile --macos-info-plist=./app.plist ./app.ts --outfile myapp
     ```
 
   </Tab>
@@ -1147,7 +1147,7 @@ When compiling a standalone executable for macOS, you can embed an `Info.plist` 
       compile: {
         outfile: "./myapp",
         macos: {
-          infoPlist: "./Info.plist",
+          infoPlist: "./app.plist",
         },
       },
     });
@@ -1155,7 +1155,7 @@ When compiling a standalone executable for macOS, you can embed an `Info.plist` 
   </Tab>
 </Tabs>
 
-```xml Info.plist icon="file-code"
+```xml app.plist icon="file-code"
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -1168,15 +1168,17 @@ When compiling a standalone executable for macOS, you can embed an `Info.plist` 
 </plist>
 ```
 
-A program that is not inside an `.app` bundle has no `Info.plist` file. macOS reads its `Info.plist` from the `__TEXT,__info_plist` section of the executable instead, and that is where Bun puts the file. It is the same section that `ld -sectcreate __TEXT __info_plist Info.plist` creates. The compiled program then has the bundle identifier and the other keys of that `Info.plist` (`CFBundleGetMainBundle()`, `NSBundle.mainBundle`).
+Bun puts the file into the `__TEXT,__info_plist` section of the executable. It is the same section that `ld -sectcreate __TEXT __info_plist` creates, and it is where macOS reads the `Info.plist` of a program that is not inside an `.app` bundle. The compiled program then has the bundle identifier and the other keys of that file (`CFBundleGetMainBundle()`, `NSBundle.mainBundle`), and they travel with the executable.
 
-- The file is an XML or binary property list with a dictionary at its root.
-- The file can be at most 4096 bytes. A binary property list is smaller than the XML form. To convert one, run `plutil -convert binary1 Info.plist`.
+- The file is an XML or binary property list with a dictionary at its root. Bun does not check its keys, and it does not expand Xcode build settings such as `$(PRODUCT_BUNDLE_IDENTIFIER)`.
+- The file can be at most 4096 bytes. If it is larger, remove the indentation and the `<!DOCTYPE>` line, or convert it to a binary property list, which is usually smaller. On macOS: `plutil -convert binary1 -o app.binary.plist app.plist`.
 - The option works when cross-compiling, for example with `--target=bun-darwin-arm64` on Linux.
-- The Bun executable that the program is built from must support the option. An older one, from `--target=bun-darwin-arm64-v1.x.y` or `--compile-executable-path`, fails with an error.
-- In the JavaScript API, `compile.macos` has no effect when the target is not macOS. The CLI flag is an error for such a target.
+- The Bun executable that the program is built from must have room for the file. An older one, from `--target=bun-darwin-arm64-v1.x.y` or `--compile-executable-path`, fails with an error.
+- A program compiled from a compiled executable does not inherit its `Info.plist`.
+- If the directory of the executable has a file named `Info.plist`, and the `CFBundleExecutable` of that file is the name of the executable, macOS uses that file and not the embedded one.
+- In the JavaScript API, `compile.macos.infoPlist` is read and checked for every target, and it goes into the executable only when the target is macOS. The CLI flag is an error for another target.
 
-The ad-hoc signature that Bun puts on an arm64 executable does not cover the `Info.plist`. To seal the `Info.plist` into the signature, sign the executable with `codesign` (see below). `codesign` also takes the signing identifier from `CFBundleIdentifier`.
+On arm64, Bun signs the executable ad hoc. That signature hashes the `Info.plist` with the rest of the file, but it does not bind it, and its identifier is `a.out`: `codesign -dvv` prints `Identifier=a.out` and `Info.plist=not bound`. To bind the `Info.plist`, sign the executable with `codesign` (see below). `codesign` also takes the signing identifier from `CFBundleIdentifier`.
 
 ---
 

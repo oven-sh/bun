@@ -477,13 +477,6 @@ impl<'a> AsAstNodes<'a> for Func<'a> {
     }
 }
 
-impl<'a> AsAstNodes<'a> for Class<'a> {
-    #[inline]
-    fn as_ast_nodes(self) -> AstNodes<'a> {
-        AstNodes::Class(self)
-    }
-}
-
 impl<'a> AsAstNodes<'a> for Param<'a> {
     fn as_ast_nodes(self) -> AstNodes<'a> {
         match self.func().and_then(Func::this_param) {

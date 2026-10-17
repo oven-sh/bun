@@ -3103,15 +3103,6 @@ impl<T: Follow> Follow for Option<T> {
     }
 }
 
-impl<T: Follow> Follow for Box<T> {
-    fn visit<V: Visitor>(&self, visitor: &mut V) {
-        (**self).visit(visitor);
-    }
-    fn follow(&mut self, link: &Link) {
-        (**self).follow(link);
-    }
-}
-
 impl<T: Follow> Follow for [T] {
     fn visit<V: Visitor>(&self, visitor: &mut V) {
         visitor.plain(&self.len());

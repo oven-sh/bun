@@ -1803,8 +1803,8 @@ class QuicStream {
     assertIsQuicStream(this);
     const inner = this.#inner;
     // Only a stream that was pending at creation gets a deferred.
-    inner.pendingOpen ??= { __proto__: null, promise: PromiseResolve(), resolve: undefined, reject: undefined };
-    return inner.pendingOpen.promise;
+    const pendingOpen = (inner.pendingOpen ??= { promise: PromiseResolve(), resolve: undefined, reject: undefined });
+    return pendingOpen.promise;
   }
 
   /**

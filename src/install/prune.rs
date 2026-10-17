@@ -26,7 +26,10 @@ use crate::package_manager::Options::{Enable, LogLevel};
 use crate::package_manager::patch_package::{isolated_store_folders, package_for_folder};
 use crate::package_manager::workspace_selection::{self, RootSelection};
 use crate::package_manager::{ROOT_PACKAGE_JSON_PATH, WorkspaceFilter};
-use crate::{DependencyID, Features, PackageID, PackageManager, ResolutionTag, invalid_package_id};
+use crate::{
+    Dependency, DependencyID, Features, PackageID, PackageManager, ResolutionTag,
+    invalid_package_id,
+};
 
 const STORE_DIR: &[u8] = b"node_modules/.bun";
 const ROOT_DIR: &[u8] = b"node_modules";
@@ -1757,18 +1760,26 @@ fn shipped(manager: &PackageManager, cache: sys::Fd, pkg_id: PackageID, alias: &
     }
 }
 
-/// Returns true if the folder `entry` holds the same version as the package `pkg_id`, or if its
+/// Opens `<alias>` in a `node_modules`. The alias can have a scope.
+fn open_package(node_modules: &Dir, alias: &[u8]) -> Option<Dir> {
+    let mut parts = strings::split(alias, b"/");
+    let mut package = node_modules.open_at(parts.next()?).ok()?;
+    for part in parts {
+        package = package.open_at(part).ok()?;
+    }
+    Some(package)
+}
+
+/// Returns true if the folder `package` holds the same version as the package `pkg_id`, or if its
 /// version cannot be read.
-fn may_hold_version_of(lockfile: &Lockfile, entry: &Entry, pkg_id: PackageID) -> bool {
+fn may_hold_version_of(lockfile: &Lockfile, package: &Dir, pkg_id: PackageID) -> bool {
     let Some(res) = lockfile.packages.items_resolution().get(pkg_id as usize) else {
         return true;
     };
     if res.tag != ResolutionTag::Npm {
         return true;
     }
-    let Some((_, Some(version))) =
-        (entry.dir.open_at(entry.name).ok()).and_then(|package| installed_package_json(&package))
-    else {
+    let Some((_, Some(version))) = installed_package_json(package) else {
         return true;
     };
     let resolved = (res.npm().version.fmt(&lockfile.buffers.string_bytes)).to_string();
@@ -1816,9 +1827,9 @@ fn remove_from_older_places(
     };
     let mut plan = Plan::default();
     for (id, older) in trees.iter().enumerate().skip(1) {
-        let only_older: Vec<(u64, PackageID)> = (older.dependencies.get(rows).iter())
-            .map(|&row| (deps[row as usize].name_hash, resolutions[row as usize]))
-            .filter(|&(name_hash, _)| today(tree::place_key(folders[id], name_hash)).is_none())
+        let only_older: Vec<(&Dependency, PackageID)> = (older.dependencies.get(rows).iter())
+            .map(|&row| (&deps[row as usize], resolutions[row as usize]))
+            .filter(|(dep, _)| today(tree::place_key(folders[id], dep.name_hash)).is_none())
             .collect();
         if only_older.is_empty() {
             continue;
@@ -1858,24 +1869,46 @@ fn remove_from_older_places(
         let Some(dir) = open_tree_folder(lockfile, older.id, &mut plan.linked_folders) else {
             continue;
         };
+        let mut stays: Vec<(u64, PackageID)> = (only_older.iter())
+            .filter(|&&(dep, resolved)| {
+                let alias = dep.name.slice(buf);
+                let Some(package) = open_package(&dir, alias) else {
+                    return false;
+                };
+                let keeps_same_version = match shipped(manager, cache, owner, alias) {
+                    Shipped::Yes => return true,
+                    Shipped::No => same_version == SameVersion::Keep,
+                    Shipped::Unknown => true,
+                };
+                keeps_same_version && may_hold_version_of(lockfile, &package, resolved)
+            })
+            .map(|&(dep, resolved)| (dep.name_hash, resolved))
+            .collect();
+        // A copy that stays loads its dependencies from this folder first, so they stay with it.
+        let mut next = 0;
+        while let Some(&(_, package)) = stays.get(next) {
+            next += 1;
+            let Some(needs) = lockfile.packages.items_dependencies().get(package as usize) else {
+                continue;
+            };
+            for need in needs.get(deps) {
+                let found = (only_older.iter()).find(|(dep, _)| dep.name_hash == need.name_hash);
+                if let Some(&(dep, resolved)) = found
+                    && !stays.iter().any(|kept| kept.0 == dep.name_hash)
+                {
+                    stays.push((dep.name_hash, resolved));
+                }
+            }
+        }
         scan_folder(
             dir,
             &path,
             false,
             &|entry: &Entry| {
                 let name_hash = bun_semver::semver_string::Builder::string_hash(entry.alias);
-                let Some(&(_, resolved)) = only_older.iter().find(|row| row.0 == name_hash) else {
-                    return true;
-                };
-                if entry.kind != EntryKind::Directory {
-                    return true;
-                }
-                let keeps_same_version = match shipped(manager, cache, owner, entry.alias) {
-                    Shipped::Yes => return true,
-                    Shipped::No => same_version == SameVersion::Keep,
-                    Shipped::Unknown => true,
-                };
-                keeps_same_version && may_hold_version_of(lockfile, entry, resolved)
+                entry.kind != EntryKind::Directory
+                    || !only_older.iter().any(|(dep, _)| dep.name_hash == name_hash)
+                    || stays.iter().any(|kept| kept.0 == name_hash)
             },
             &mut plan,
         );

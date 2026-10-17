@@ -1257,8 +1257,10 @@ describe.skipIf(!sqliteHasSession)("Session / changeset", () => {
                 db.exec("CREATE TABLE t(a PRIMARY KEY)");
                 const session = db.createSession();
                 let caught = null;
+                // The session extension ran PRAGMA table_info before SQLite
+                // 3.49.0; macOS CI loads Apple's older libsqlite3.
                 db.setAuthorizer((action, p1) => {
-                  if (action === constants.SQLITE_PRAGMA && p1 === "table_xinfo" && caught === null) {
+                  if (action === constants.SQLITE_PRAGMA && /^table_x?info$/.test(p1) && caught === null) {
                     try { closer(session); } catch (e) { caught = errOf(e); }
                   }
                   return constants.SQLITE_OK;
@@ -1365,13 +1367,14 @@ describe.skipIf(!sqliteHasSession)("Session / changeset", () => {
     const session = db.createSession();
     db.close();
     db.open();
-    // closeInternal() freed the sqlite3_session* but left the wrapper's
-    // pointer intact; after re-open the db is "open" again, so without the
-    // origin-connection check changeset()/close() would dereference freed
-    // memory (heap-use-after-free / double-free under ASAN).
-    expect(() => session.changeset()).toThrow(/database is not open/);
-    expect(() => session.patchset()).toThrow(/database is not open/);
-    expect(() => session.close()).toThrow(/database is not open/);
+    // closeInternal() freed the sqlite3_session* and nulled the shared
+    // record's handle; after re-open the db is "open" again, so the wrapper
+    // reports the session as closed (Node's message) instead of
+    // dereferencing freed memory (heap-use-after-free / double-free under
+    // ASAN).
+    expect(() => session.changeset()).toThrow(/session is not open/);
+    expect(() => session.patchset()).toThrow(/session is not open/);
+    expect(() => session.close()).toThrow(/session is not open/);
     // Symbol.dispose swallows.
     expect(() => session[Symbol.dispose]()).not.toThrow();
     db.close();

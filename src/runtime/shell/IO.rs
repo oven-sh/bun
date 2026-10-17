@@ -210,6 +210,7 @@ impl CmdIO {
             match &stdio[1] {
                 // Windows: `Dup2` is a pipe that only a captured stdout reads.
                 Stdio::Fd(fd) if cfg!(windows) => Stdio::Fd(*fd),
+                Stdio::Inherit if cfg!(windows) => Stdio::Fd(Fd::stdout()),
                 _ => Stdio::Dup2(Dup2 {
                     out: StdioKind::Stderr,
                     to: StdioKind::Stdout,

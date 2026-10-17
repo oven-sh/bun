@@ -2223,14 +2223,23 @@ describe("deno_task", () => {
         test("a Response that is rejected keeps its body", async () => {
           const results = [];
           for (const name of ["echo", BUN, "nosuch_cmd_zz"]) {
-            const response = new Response("keep");
-            const rejected = await $`${name} --version > ${response}`.quiet().then(
-              () => false,
-              () => true,
-            );
-            results.push({ rejected, bodyUsed: response.bodyUsed, body: await response.text() });
+            for (const body of ["keep", new Blob(["keep"]).stream()]) {
+              const response = new Response(body);
+              const rejected = await $`${name} --version > ${response}`.quiet().then(
+                () => false,
+                () => true,
+              );
+              results.push({
+                rejected,
+                bodyUsed: response.bodyUsed,
+                streamLocked: typeof body !== "string" && body.locked,
+                text: await response.text(),
+              });
+            }
           }
-          expect(results).toEqual(Array(3).fill({ rejected: true, bodyUsed: false, body: "keep" }));
+          expect(results).toEqual(
+            Array(6).fill({ rejected: true, bodyUsed: false, streamLocked: false, text: "keep" }),
+          );
         });
       });
     });

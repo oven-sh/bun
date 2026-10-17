@@ -979,7 +979,6 @@ impl Cmd {
             JsObject::Blob(blob) => blob_file(blob),
             JsObject::Response(response) => {
                 let body = response.get_body_value();
-                body.to_blob_if_possible();
                 // Take only a body that is a file: a rejected target keeps its body.
                 let file = match &*body {
                     crate::webcore::body::Value::Blob(blob) => blob_file(blob),

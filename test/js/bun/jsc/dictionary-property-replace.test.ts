@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow } from "harness";
 
 // An object with more than 128 properties gets a dictionary structure of its own.
 // Before the JavaScriptCore change for #44796, the first overwrite of each property
@@ -24,14 +24,14 @@ async function run(source: string, env: Record<string, string> = {}) {
 test.concurrent(
   "the first overwrite of each property on a dictionary object does not allocate per property",
   async () => {
-    // 500 objects with 800 properties each. Every property is overwritten once.
+    // 200 objects with 800 properties each. Every property is overwritten once.
     // With the per-offset WatchpointSet, RSS grows by about 64 bytes per
-    // property: 32 MiB here. With the bit, the growth is the rare data of 500
-    // structures: under 1 MiB, with up to 4 MiB of JIT and GC noise. A debug
-    // build with ASAN needs about 8 s for the 800,000 stores, so the test gets
-    // a longer timeout.
-    const stdout = await run(`
-      const N = 800, OBJECTS = 500;
+    // property: 10 to 14 MiB, on release and debug builds alike (the sets come
+    // from bmalloc, which ASAN does not pad). With the bit, the measured growth
+    // is -2 to 2 MiB of JIT and GC noise on both. The sum check proves that every
+    // store happened.
+    const code = `
+      const N = 800, OBJECTS = 200;
       const keys = Array.from({ length: N }, (_, i) => "key" + i);
       const objects = [];
       for (let o = 0; o < OBJECTS; o++) {
@@ -45,13 +45,11 @@ test.concurrent(
       const after = process.memoryUsage.rss();
       let sum = 0;
       for (const data of objects) sum += data[keys[N - 1]];
-      console.log(JSON.stringify({ sum, deltaMiB: (after - before) / 2 ** 20 }));
-    `);
-    const { sum, deltaMiB } = JSON.parse(stdout);
-    expect(sum).toBe(-(800 - 1) * 500);
-    expect(deltaMiB).toBeLessThan(12);
+      if (sum !== -(N - 1) * OBJECTS) throw new Error("sum " + sum);
+      console.log(JSON.stringify({ deltaMiB: (after - before) / 2 ** 20 }));
+    `;
+    await expectRssDeltaBelow(["-e", code], { release: 4, debug: 3.5 });
   },
-  60_000,
 );
 
 // A property of a dictionary object can be watched for replacement by optimized

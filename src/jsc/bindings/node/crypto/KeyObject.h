@@ -44,9 +44,45 @@ public:
     };
 
 private:
-    // Helpers for `prepareAsymmetricKey`
+    static constexpr WebCore::CryptoKeyType keyTypeForMode(PrepareAsymmetricKeyMode mode)
+    {
+        return mode == PrepareAsymmetricKeyMode::ConsumePublic || mode == PrepareAsymmetricKeyMode::CreatePublic
+            ? WebCore::CryptoKeyType::Public
+            : WebCore::CryptoKeyType::Private;
+    }
+
+    // A validated key argument that is not read yet: it holds owners, never a pointer into a buffer.
+    struct PreparedAsymmetricKey {
+        WTF_FORBID_HEAP_ALLOCATION;
+
+    public:
+        std::optional<RefPtr<KeyObjectData>> keyData { std::nullopt };
+        JSC::JSValue keyDataOwner {};
+        ncrypto::EVPKeyPointer::PKFormatType formatType { ncrypto::EVPKeyPointer::PKFormatType::PEM };
+        std::optional<ncrypto::EVPKeyPointer::PKEncodingType> encodingType { std::nullopt };
+        const EVP_CIPHER* cipher { nullptr };
+        JSC::JSArrayBufferView* passphraseOwner { nullptr };
+        // The raw formats only.
+        WTF::String asymmetricKeyType {};
+        JSC::JSValue namedCurve {};
+    };
+
+    // Node's prepareAsymmetricKey(key, ctx, name). It reads no key bytes: `importPreparedKey` does.
+    static PreparedAsymmetricKey prepareAsymmetricKey(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue keyValue, PrepareAsymmetricKeyMode mode, WTF::ASCIILiteral name);
+    static KeyObject importPreparedKey(JSC::JSGlobalObject*, JSC::ThrowScope&, PreparedAsymmetricKey&&, PrepareAsymmetricKeyMode mode);
+
+    // Helpers for `importPreparedKey`
     static KeyObject getKeyObjectHandleFromJwk(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSObject* jwk, PrepareAsymmetricKeyMode mode);
     static KeyObject getKeyObjectHandleFromRaw(JSC::JSGlobalObject*, JSC::ThrowScope&, std::span<const uint8_t> keyData, ncrypto::EVPKeyPointer::PKFormatType format, const WTF::String& asymmetricKeyType, JSC::JSValue namedCurveValue);
+    static KeyObject getPublicOrPrivateKey(
+        JSC::JSGlobalObject* globalObject,
+        JSC::ThrowScope& scope,
+        std::span<const uint8_t> keyData,
+        WebCore::CryptoKeyType keyType,
+        ncrypto::EVPKeyPointer::PKFormatType formatType,
+        std::optional<ncrypto::EVPKeyPointer::PKEncodingType> encodingType,
+        const EVP_CIPHER* cipher,
+        std::optional<ncrypto::DataPointer> passphrase);
 
 public:
     static ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig getPrivateKeyEncoding(
@@ -64,28 +100,34 @@ public:
         KeyEncodingContext ctx,
         ncrypto::EVPKeyPointer::AsymmetricKeyEncodingConfig& config);
 
-    static KeyObject getPublicOrPrivateKey(
-        JSC::JSGlobalObject* globalObject,
-        JSC::ThrowScope& scope,
-        std::span<const uint8_t> keyData,
-        WebCore::CryptoKeyType keyType,
-        ncrypto::EVPKeyPointer::PKFormatType formatType,
-        std::optional<ncrypto::EVPKeyPointer::PKEncodingType> encodingType,
-        const EVP_CIPHER* cipher,
-        std::optional<ncrypto::DataPointer> passphrase);
+    // The key argument of a node:crypto function as a key. Inline: an extra frame costs 28 instructions per key.
+    ALWAYS_INLINE static KeyObject getAsymmetricKeyFromJS(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue keyValue, PrepareAsymmetricKeyMode mode, WTF::ASCIILiteral name = "key"_s)
+    {
+        auto prepared = prepareAsymmetricKey(globalObject, scope, keyValue, mode, name);
+        RETURN_IF_EXCEPTION(scope, {});
+        // A KeyObject or a CryptoKey is a key already: there is nothing to import.
+        if (prepared.keyData) {
+            return create(keyTypeForMode(mode), WTF::move(*prepared.keyData));
+        }
+        return importPreparedKey(globalObject, scope, WTF::move(prepared), mode);
+    }
+    ALWAYS_INLINE static KeyObject getPrivateKeyFromJS(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue keyValue, WTF::ASCIILiteral name = "key"_s)
+    {
+        return getAsymmetricKeyFromJS(globalObject, scope, keyValue, PrepareAsymmetricKeyMode::ConsumePrivate, name);
+    }
+    ALWAYS_INLINE static KeyObject getPublicOrPrivateKeyFromJS(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue keyValue, WTF::ASCIILiteral name = "key"_s)
+    {
+        return getAsymmetricKeyFromJS(globalObject, scope, keyValue, PrepareAsymmetricKeyMode::ConsumePublic, name);
+    }
 
-    struct PrepareAsymmetricKeyResult {
-        std::optional<RefPtr<KeyObjectData>> keyData { std::nullopt };
-        JSC::GCOwnedDataScope<std::span<const uint8_t>> keyDataView { nullptr, {} };
-        ncrypto::EVPKeyPointer::PKFormatType formatType;
-        std::optional<ncrypto::EVPKeyPointer::PKEncodingType> encodingType { std::nullopt };
-        const EVP_CIPHER* cipher { nullptr };
-        std::optional<ncrypto::DataPointer> passphrase = { std::nullopt };
+    struct KeyArgument {
+        JSC::JSValue value;
+        PrepareAsymmetricKeyMode mode;
+        WTF::ASCIILiteral name;
     };
+    // Two key arguments of one function. As in node, both are validated before either is read.
+    static std::pair<KeyObject, KeyObject> getAsymmetricKeysFromJS(JSC::JSGlobalObject*, JSC::ThrowScope&, const KeyArgument& first, const KeyArgument& second);
 
-    static PrepareAsymmetricKeyResult prepareAsymmetricKey(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue keyValue, PrepareAsymmetricKeyMode mode);
-    static PrepareAsymmetricKeyResult preparePrivateKey(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue keyValue);
-    static PrepareAsymmetricKeyResult preparePublicOrPrivateKey(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue keyValue);
     static KeyObject prepareSecretKey(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue keyValue, JSC::JSValue encodingValue, bool bufferOnly = false);
 
     JSC::JSValue exportJwkEdKey(JSC::JSGlobalObject*, JSC::ThrowScope&, WebCore::CryptoKeyType exportType);

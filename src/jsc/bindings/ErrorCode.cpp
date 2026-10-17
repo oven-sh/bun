@@ -1566,6 +1566,18 @@ JSC::EncodedJSValue CRYPTO_INCOMPATIBLE_KEY_OPTIONS(JSC::ThrowScope& throwScope,
     return {};
 }
 
+JSC::EncodedJSValue CRYPTO_INCOMPATIBLE_KEY(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral name, const WTF::String& message)
+{
+    MessageBuilder builder;
+    builder.append("Incompatible "_s);
+    builder.append(name);
+    builder.append(": "_s);
+    builder.append(message);
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INCOMPATIBLE_KEY, builder));
+    throwScope.release();
+    return {};
+}
+
 JSC::EncodedJSValue CRYPTO_INVALID_DIGEST(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::StringView& digest)
 {
     MessageBuilder builder;

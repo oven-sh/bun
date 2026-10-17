@@ -267,6 +267,14 @@ pub(crate) trait Sink {
     fn highest_started_stream_id(&self) -> u32 {
         0
     }
+    /// Highest stream id the embedder opened with its own HEADERS (nghttp2's last_sent_stream_id).
+    fn highest_local_stream_id(&self) -> u32 {
+        0
+    }
+    /// Whether the embedder already sent END_STREAM or RST_STREAM on `stream_id`.
+    fn is_local_half_closed(&self, _stream_id: u32) -> bool {
+        false
+    }
     /// Whether the embedder's reader for `stream_id` is currently consuming data. While it is
     /// paused, the stream's receive window is not replenished (mirrors node, where
     /// nghttp2_session_consume_stream is only called while the JS readable is flowing) so the
@@ -1843,6 +1851,28 @@ impl Connection {
             );
             return true;
         }
+        // §6.6: the parent is a stream this client opened. An even or idle id fails the session.
+        let parent = hdr.stream_id;
+        let parent_state = self.streams.get(&parent).map(|s| s.state);
+        let parent_idle = parent_state.is_none() && parent > sink.highest_local_stream_id();
+        if parent & 1 == 0 || parent_idle {
+            self.send_go_away(
+                sink,
+                ErrorCode::ProtocolError,
+                b"PUSH_PROMISE on an idle or server-initiated stream",
+            );
+            return true;
+        }
+        // nghttp2 fails the session for a half-closed (remote) parent, not for a closed one.
+        if parent_state == Some(State::HalfClosedRemote) && !sink.is_local_half_closed(parent) {
+            self.local_connection_error(
+                sink,
+                ErrorCode::StreamClosed,
+                wire::lib_error::STREAM_CLOSED,
+                b"PUSH_PROMISE: stream closed",
+            );
+            return true;
+        }
 
         // Reserve the promised (even) stream.
         let send_init = self.remote_settings.initial_window_size;
@@ -2141,8 +2171,17 @@ mod tests {
         pushes: RefCell<Vec<(u32, u32)>>,
         altsvc: RefCell<Vec<(u32, Vec<u8>, Vec<u8>)>>,
         origins: RefCell<Vec<Vec<u8>>>,
+        /// What an embedder that sends its own request HEADERS reports about them.
+        highest_local_stream_id: Cell<u32>,
+        local_half_closed: Cell<bool>,
     }
     impl Sink for CaptureSink {
+        fn highest_local_stream_id(&self) -> u32 {
+            self.highest_local_stream_id.get()
+        }
+        fn is_local_half_closed(&self, _id: u32) -> bool {
+            self.local_half_closed.get()
+        }
         fn write(&self, bytes: &[u8]) -> WriteResult {
             self.out.borrow_mut().extend_from_slice(bytes);
             WriteResult::Sent
@@ -2406,8 +2445,7 @@ mod tests {
 
         // Client receives it: on_push_promise(parent=1, promised=2) then the request headers.
         let csink = CaptureSink::default();
-        let mut client = Connection::new(false, Settings::default());
-        client.preface_received = wire::CONNECTION_PREFACE.len();
+        let mut client = client_with_request(&csink, true);
         let fed = client.receive(&csink, &bytes);
         assert!(!fed.fatal);
         assert_eq!(fed.consumed, bytes.len());
@@ -2440,6 +2478,106 @@ mod tests {
         let fed = c.receive(&sink, &f);
         assert!(fed.fatal);
         assert_eq!(sink.local_error.get(), Some(wire::lib_error::PROTO));
+    }
+
+    /// A client engine whose request on stream 1 is on the wire, ended or still open.
+    fn client_with_request(sink: &CaptureSink, end_stream: bool) -> Connection {
+        let mut client = Connection::new(false, Settings::default());
+        client.begin_header_block();
+        assert!(client.encode_header(b":method", b"POST", false));
+        client.send_header_block(sink, 1, end_stream);
+        sink.out.borrow_mut().clear();
+        client
+    }
+
+    /// PUSH_PROMISE on `parent` reserving `promised`, carrying a complete GET request block.
+    fn push_promise(parent: u32, promised: u32) -> Vec<u8> {
+        let mut payload = promised.to_be_bytes().to_vec();
+        payload.extend_from_slice(&encode_block(&[
+            (b":method", b"GET"),
+            (b":scheme", b"http"),
+            (b":path", b"/"),
+            (b":authority", b"localhost"),
+        ]));
+        frame(
+            FrameType::PushPromise,
+            wire::flags::END_HEADERS,
+            parent,
+            &payload,
+        )
+    }
+
+    /// Response HEADERS on stream 1 that end the server's half of it.
+    fn final_response() -> Vec<u8> {
+        let flags = wire::flags::END_HEADERS | wire::flags::END_STREAM;
+        let block = encode_block(&[(b":status", b"200")]);
+        frame(FrameType::Headers, flags, 1, &block)
+    }
+
+    fn assert_push_rejected(sink: &CaptureSink, fed: Feed, lib_error: i32) {
+        assert!(fed.fatal);
+        assert_eq!(sink.local_error.get(), Some(lib_error));
+        assert!(sink.pushes.borrow().is_empty());
+    }
+
+    #[test]
+    fn push_promise_on_idle_parent_is_goaway() {
+        // Stream 1 is the only one the client opened.
+        let sink = CaptureSink::default();
+        let mut client = client_with_request(&sink, true);
+        let fed = client.receive(&sink, &push_promise(3, 2));
+        assert_push_rejected(&sink, fed, wire::lib_error::PROTO);
+    }
+
+    #[test]
+    fn push_promise_on_server_initiated_parent_is_goaway() {
+        // 2 is below the embedder's mark, so only its parity can reject it.
+        let sink = CaptureSink::default();
+        sink.highest_local_stream_id.set(3);
+        let mut client = Connection::new(false, Settings::default());
+        let fed = client.receive(&sink, &push_promise(2, 4));
+        assert_push_rejected(&sink, fed, wire::lib_error::PROTO);
+    }
+
+    #[test]
+    fn push_promise_on_parent_the_embedder_opened_is_accepted() {
+        // The embedder sent the request HEADERS itself: the engine has no entry for stream 1.
+        let sink = CaptureSink::default();
+        sink.highest_local_stream_id.set(1);
+        let mut client = Connection::new(false, Settings::default());
+        let fed = client.receive(&sink, &push_promise(1, 2));
+        assert!(!fed.fatal);
+        assert_eq!(*sink.pushes.borrow(), vec![(1, 2)]);
+    }
+
+    #[test]
+    fn push_promise_on_half_closed_remote_parent_is_stream_closed() {
+        let sink = CaptureSink::default();
+        let mut client = client_with_request(&sink, false);
+        client.receive(&sink, &final_response());
+        assert_eq!(
+            client.streams.get(&1).map(|s| s.state),
+            Some(State::HalfClosedRemote)
+        );
+        let fed = client.receive(&sink, &push_promise(1, 2));
+        assert_push_rejected(&sink, fed, wire::lib_error::STREAM_CLOSED);
+    }
+
+    #[test]
+    fn push_promise_on_parent_the_embedder_closed_is_accepted() {
+        // The engine's entry reads HalfClosedRemote, but the embedder already ended its half.
+        let sink = CaptureSink::default();
+        sink.highest_local_stream_id.set(1);
+        sink.local_half_closed.set(true);
+        let mut client = Connection::new(false, Settings::default());
+        client.receive(&sink, &final_response());
+        assert_eq!(
+            client.streams.get(&1).map(|s| s.state),
+            Some(State::HalfClosedRemote)
+        );
+        let fed = client.receive(&sink, &push_promise(1, 2));
+        assert!(!fed.fatal);
+        assert_eq!(*sink.pushes.borrow(), vec![(1, 2)]);
     }
 
     #[test]

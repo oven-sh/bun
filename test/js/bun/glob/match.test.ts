@@ -2483,8 +2483,8 @@ describe("Glob.match", () => {
     ["a/{c,{**,d}}", ["a/c", "a/d", "a/x/y", "a/"], ["a", "b/x"]],
     ["a/{c,{**,d}}/e", ["a/e", "a/c/e", "a/x/y/e", "a/c/x/e"], ["a/x/y/f", "a/x/y"]],
     ["a/{{**,c},b}/d", ["a/d", "a/x/y/d", "a/b/x/d"], ["a/x/y", "a/x/y/e"]],
-    ["a{**/b/**,c}", ["a/b/z/w", "ax/b/z/w", "ac"], []],
-    ["src/app{**/gen/**,-old}/x.ts", ["src/app/gen/x.ts", "src/appq/gen/r/s/x.ts", "src/app-old/x.ts"], []],
+    ["a{**/b/**,c}", ["a/b/z/w", "ax/b/z/w", "ac"], ["ab"]],
+    ["src/app{**/gen/**,-old}/x.ts", ["src/app/gen/x.ts", "src/appq/gen/r/s/x.ts", "src/app-old/x.ts"], ["src/app/x.ts"]],
     ["!a/{**,b}", ["a", "c/x/y"], ["a/x/y", "a/b"]],
     // It is a `*` when text follows the group, or when it has text before it in its alternative.
     ["a/{**,b}x", ["a/yx", "a/bx", "a/x"], ["a/y/zx"]],

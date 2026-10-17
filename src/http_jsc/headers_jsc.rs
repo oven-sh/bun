@@ -1,11 +1,14 @@
-//! JSC bridges for `bun.http.{Headers,H2Client,H3Client}`. Keeps `src/http/`
+//! JSC bridges for `bun.http.{Headers,AsyncHTTP,H2Client,H3Client}`. Keeps `src/http/`
 //! free of JSC types.
 
 use core::sync::atomic::Ordering;
 
 use bun_http::Headers;
 use bun_http::headers::{EntryList, api};
-use bun_jsc::{CallFrame, FetchHeaders, HTTPHeaderName, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{
+    CallFrame, FetchHeaders, HTTPHeaderName, IntegerRange, JSGlobalObject, JSValue, JsResult,
+    RangeErrorOptions,
+};
 
 /// Moved up from `bun_http` so it can
 /// name `FetchHeaders` directly instead of dispatching through a vtable.
@@ -109,6 +112,36 @@ pub fn from_fetch_headers(
     headers
 }
 
+struct AsyncHTTPTestingAPIs;
+
+impl AsyncHTTPTestingAPIs {
+    /// `skipIds(count)`: see `bun_http::async_http::skip_ids_for_testing`.
+    fn skip_ids(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        use bun_http::async_http::skip_ids_for_testing;
+        let [count] = frame.arguments_as_array::<1>();
+        let count: u64 = global.validate_integer_range(
+            count,
+            0,
+            IntegerRange {
+                min: 0,
+                field_name: b"count",
+                ..Default::default()
+            },
+        )?;
+        match skip_ids_for_testing(count) {
+            Some(next_id) => Ok(JSValue::js_number_from_uint64(next_id)),
+            None => Err(global.throw_range_error(
+                i64::try_from(count).unwrap_or(i64::MAX),
+                RangeErrorOptions {
+                    field_name: b"count",
+                    msg: b"small enough that the next request id is <= Number.MAX_SAFE_INTEGER",
+                    ..Default::default()
+                },
+            )),
+        }
+    }
+}
+
 struct H2TestingAPIs;
 
 impl H2TestingAPIs {
@@ -170,4 +203,8 @@ pub fn h2_live_counts(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
 #[inline]
 pub fn h3_quic_live_counts(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     H3TestingAPIs::quic_live_counts(global, frame)
+}
+#[inline]
+pub fn async_http_skip_ids(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    AsyncHTTPTestingAPIs::skip_ids(global, frame)
 }

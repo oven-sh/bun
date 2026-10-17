@@ -46,7 +46,7 @@ pub struct AsyncHTTP<'a> {
 
     pub client: HTTPClient<'a>,
     pub err: Option<crate::Error>,
-    pub async_http_id: u32,
+    pub async_http_id: u64,
 
     pub elapsed: u64,
 
@@ -68,6 +68,20 @@ unsafe impl bun_threading::Linked for AsyncHTTP<'static> {
 
 pub(crate) static ACTIVE_REQUESTS_COUNT: AtomicUsize = AtomicUsize::new(0);
 pub static MAX_SIMULTANEOUS_REQUESTS: AtomicUsize = AtomicUsize::new(256);
+
+/// `Number.MAX_SAFE_INTEGER`: the largest id `skip_ids_for_testing` can return exactly.
+pub const MAX_SKIPPABLE_ID: u64 = (1 << 53) - 1;
+
+/// `fetchRequestIdInternals.skipIds(count)`: returns the next id, or `None` past `MAX_SKIPPABLE_ID`.
+pub fn skip_ids_for_testing(count: u64) -> Option<u64> {
+    // Relaxed: nothing else is published through the counter.
+    crate::ASYNC_HTTP_ID_MONOTONIC
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |id| {
+            id.checked_add(count).filter(|next| *next <= MAX_SKIPPABLE_ID)
+        })
+        .ok()
+        .map(|id| id + count)
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // helpers
@@ -156,7 +170,7 @@ fn make_client<'a>(
     header_entries: headers::EntryList,
     header_buf: &'a [u8],
     signals: Signals,
-    async_http_id: u32,
+    async_http_id: u64,
     http_proxy: Option<URL<'a>>,
     proxy_headers: Option<Headers>,
     redirect_type: FetchRedirect,
@@ -425,6 +439,7 @@ impl<'a> AsyncHTTP<'a> {
             .map(|s| s.aborted.is_some())
             .unwrap_or(false)
         {
+            // Relaxed: see `skip_ids_for_testing`.
             crate::ASYNC_HTTP_ID_MONOTONIC.fetch_add(1, Ordering::Relaxed)
         } else {
             0

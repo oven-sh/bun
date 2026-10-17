@@ -49,15 +49,20 @@ Bun.serve({
     open(ws) {}, // a socket is opened
     close(ws, code, message) {}, // a socket is closed
     drain(ws) {}, // the socket is ready to receive more data
+    ping(ws, data) {}, // a ping is received
+    pong(ws, data) {}, // a pong is received
+    error(error, ws) {}, // one of the handlers above threw
   },
 });
 ```
+
+Every handler is optional.
 
 <Accordion title="An API designed for speed">
 
 In Bun, you declare handlers once per server, instead of per socket.
 
-You pass a single `WebSocketHandler` object to `Bun.serve()` with methods for `open`, `message`, `close`, `drain`, and `error`. This design differs from the client-side `WebSocket` class, which extends `EventTarget` (`onmessage`, `onopen`, `onclose`).
+You pass a single `WebSocketHandler` object to `Bun.serve()` with methods for `open`, `message`, `close`, `drain`, `ping`, `pong`, and `error`. This design differs from the client-side `WebSocket` class, which extends `EventTarget` (`onmessage`, `onopen`, `onclose`).
 
 Clients tend to have few socket connections open, so an event-based API makes sense there.
 
@@ -94,7 +99,7 @@ Bun.serve({
   websocket: {
     message(ws, message) {
       ws.send("Hello world"); // string
-      ws.send(response.arrayBuffer()); // ArrayBuffer
+      ws.send(new ArrayBuffer(8)); // ArrayBuffer
       ws.send(new Uint8Array([1, 2, 3])); // TypedArray | DataView
       ws.send(new Blob(["binary"])); // Blob
     },
@@ -109,7 +114,7 @@ Once the upgrade succeeds, Bun sends a `101 Switching Protocols` response per th
 {/* prettier-ignore */}
 ```ts server.ts icon="/icons/typescript.svg"
 Bun.serve({
-  fetch(req, server) {
+  async fetch(req, server) {
     const sessionId = await generateSessionId();
     server.upgrade(req, {
       headers: { // [!code ++]
@@ -134,16 +139,24 @@ type WebSocketData = {
   authToken: string;
 };
 
+const ALLOWED_ORIGINS = new Set(["https://my-app.example"]);
+
 Bun.serve({
   fetch(req, server) {
-    const cookies = new Bun.CookieMap(req.headers.get("cookie")!);
+    // browsers always send Origin, so reject requests from other sites
+    const origin = req.headers.get("origin");
+    if (origin && !ALLOWED_ORIGINS.has(origin)) {
+      return new Response("Forbidden", { status: 403 });
+    }
+
+    const cookies = new Bun.CookieMap(req.headers.get("cookie") ?? "");
 
     server.upgrade(req, {
       // this object must conform to WebSocketData
       data: {
         createdAt: Date.now(),
-        channelId: new URL(req.url).searchParams.get("channelId"),
-        authToken: cookies.get("X-Token"),
+        channelId: new URL(req.url).searchParams.get("channelId") ?? "general",
+        authToken: cookies.get("X-Token") ?? "",
       },
     });
 
@@ -181,12 +194,14 @@ socket.addEventListener("message", event => {
 });
 ```
 
-<Info>
-**Identifying users**
+<Warning>
+**Identifying users with cookies**
 
 The browser sends cookies set on the page along with the WebSocket upgrade request. They are available on `req.headers` in the `fetch` handler. Parse them to identify the connecting user and set `data` accordingly.
 
-</Info>
+The same-origin policy doesn't apply to WebSocket handshakes. Depending on the cookie's `SameSite` attribute, a page on another site can open a socket that sends your user's cookies ([cross-site WebSocket hijacking](https://portswigger.net/web-security/websockets/cross-site-websocket-hijacking)). Check the `Origin` header against an allowlist before calling `server.upgrade()`.
+
+</Warning>
 
 ### Pub/Sub
 
@@ -222,8 +237,8 @@ const server = Bun.serve({
       console.log(ws.subscriptions); // ["the-group-chat"]
     },
     close(ws) {
+      // Bun unsubscribes closed sockets from all topics automatically
       const msg = `${ws.data.username} has left the chat`;
-      ws.unsubscribe("the-group-chat");
       server.publish("the-group-chat", msg);
     },
   },
@@ -236,6 +251,7 @@ Calling `.publish(topic, data)` sends the message to all subscribers of a topic 
 
 ```ts
 const server = Bun.serve({
+  fetch(req, server) {}, // upgrade logic
   websocket: {
     // ...
   },
@@ -251,31 +267,124 @@ Enable per-message [compression](https://websockets.readthedocs.io/en/stable/top
 
 ```ts server.ts icon="/icons/typescript.svg"
 Bun.serve({
+  fetch(req, server) {}, // upgrade logic
   websocket: {
     perMessageDeflate: true, // [!code ++]
   },
 });
 ```
 
-To compress an individual message, pass a `boolean` as the second argument to `.send()`.
+Bun then negotiates compression with clients that support it. You choose per message whether to compress. `ws.send()` and `ws.publish()` don't compress unless you pass `true` as the last argument.
 
 ```ts
 ws.send("Hello world", true);
+ws.publish("the-group-chat", "Hello world", true);
 ```
 
-For fine-grained control over compression characteristics, refer to the [Reference](#reference).
+`server.publish()` is the exception. It compresses unless you pass `false`. Compression makes short messages larger, so pass `false` for those.
+
+```ts
+server.publish("the-group-chat", "Hello world"); // compressed
+server.publish("the-group-chat", "Hello world", false); // uncompressed
+```
+
+Clients that didn't negotiate compression always receive uncompressed messages.
+
+To configure each direction separately, pass an object.
+
+```ts server.ts icon="/icons/typescript.svg"
+Bun.serve({
+  fetch(req, server) {}, // upgrade logic
+  websocket: {
+    perMessageDeflate: {
+      compress: "16KB", // messages the server sends
+      decompress: "shared", // messages the server receives
+    },
+  },
+});
+```
+
+| Value                 | `compress`                                               | `decompress`                                                         |
+| --------------------- | -------------------------------------------------------- | -------------------------------------------------------------------- |
+| `"shared"`, `true`    | One compressor for all sockets, reset after each message | One decompressor for all sockets                                     |
+| `"3KB"` ... `"256KB"` | Per-socket compressor that keeps context across messages | Per-socket decompressor with that window size (max 32 KB)            |
+| `"dedicated"`         | Same as `"256KB"`                                        | Same as `"32KB"`                                                     |
+| `"disable"`, `false`  | Never compress, even if `send()` passes `true`           | No per-socket decompressor. Uses `"shared"` if `compress` is enabled |
+
+Per-socket compressors compress better, but each connection uses that much memory (`"16KB"` costs 16 KB per connection). Disabling both directions disables the extension.
 
 ### Backpressure
 
 The `.send(message)` method of `ServerWebSocket` returns a `number` indicating the result of the operation.
 
 - `-1` — The message was enqueued but there is backpressure
-- `0` — The message was dropped due to a connection issue
+- `0` — The message was dropped because the connection is closed or already has more than `backpressureLimit` bytes buffered
 - `1+` — The number of bytes sent
+
+Sending an empty payload (`ws.send("")`, `ws.ping()`, `ws.pong()`) succeeds but also returns `0`.
+
+After `-1`, Bun calls the `drain` handler once the buffered data has been written.
+
+Bun checks `backpressureLimit` before queueing a message, so a connection can buffer up to the limit plus one message. `.publish()` buffers unsent bytes separately for each subscriber, so keep messages small when a topic has many subscribers.
+
+To slow down a client that sends faster than you can consume, call `ws.pause()`. Bun stops reading from the socket, so the client sees TCP backpressure. `ws.resume()` starts reading again, and `ws.isPaused` reports the current state. The idle timeout is suspended while a socket is paused. Messages already read from the socket are still delivered.
+
+```ts
+Bun.serve({
+  fetch(req, server) {}, // upgrade logic
+  websocket: {
+    message(ws, message) {
+      if (!file.write(message)) {
+        ws.pause();
+        file.once("drain", () => ws.resume());
+      }
+    },
+  },
+});
+```
+
+### Closing connections
+
+`ws.close(code, reason)` sends a Close frame and then closes the connection. The `close` handler receives the same code and reason.
+
+```ts
+ws.close(); // 1000
+ws.close(1011, "Something went wrong");
+ws.terminate(); // no Close frame
+```
+
+- Clients only accept `1000`-`1003`, `1007`-`1014` and `3000`-`4999`. A browser that receives any other code reports `1006`.
+- `0`, `1005` and `1006` send a Close frame with no code, so you can forward the code from a `close` handler to another socket.
+- The reason is truncated to 123 bytes of UTF-8.
+
+When the client violates the protocol, Bun sends a Close frame with `1002` (protocol error), `1007` (invalid UTF-8 or compressed data) or `1009` (message too big). The `close` handler receives `1006`, with a description of the problem as the reason.
+
+`server.stop()` doesn't close open WebSockets. `server.stop(true)` closes each one with `1001`.
+
+### Errors
+
+When a handler throws, Bun calls the `error` handler with the error and the socket. Unlike the other handlers, the socket is the second argument. Without an `error` handler, the error is an uncaught exception. If the `open` handler throws, Bun closes the socket.
+
+```ts
+Bun.serve({
+  fetch(req, server) {}, // upgrade logic
+  websocket: {
+    message(ws, message) {
+      throw new Error("oops");
+    },
+    error(error, ws) {
+      console.error(ws.remoteAddress, error);
+      ws.close(1011);
+    },
+  },
+});
+```
+
+Bun doesn't call `error` when an `async` handler rejects. That's an unhandled rejection.
 
 ### Timeouts and limits
 
-By default, Bun closes a WebSocket connection that has been idle for 120 seconds. Configure this with the `idleTimeout` parameter.
+By default, Bun closes a WebSocket connection that has been idle for 120 seconds. Configure this with the `idleTimeout` parameter, an integer number of seconds from `0` to `960`. Values from `1` to `7` round up to `8`.
 
 ```ts
 Bun.serve({
@@ -286,7 +395,9 @@ Bun.serve({
 });
 ```
 
-Bun also closes a WebSocket connection if it receives a message larger than 16 MB. Configure this with the `maxPayloadLength` parameter.
+Bun pings the client shortly before the timeout, and the client's pong keeps an idle connection open. Set `sendPings: false` to disable this. `idleTimeout: 0` disables both the timeout and the automatic pings.
+
+Bun also closes a WebSocket connection, with code `1009`, if it receives a message larger than 16 MB. Configure this with the `maxPayloadLength` parameter. For compressed messages, the limit applies to the decompressed size.
 
 ```ts
 Bun.serve({
@@ -297,9 +408,15 @@ Bun.serve({
 });
 ```
 
+| Option              | Default | Range             | `0` means                        |
+| ------------------- | ------- | ----------------- | -------------------------------- |
+| `idleTimeout`       | 120 s   | `0` to `960`      | No timeout, no automatic pings   |
+| `maxPayloadLength`  | 16 MB   | `0` to `2^32 - 1` | Only empty messages are accepted |
+| `backpressureLimit` | 16 MB   | `0` to `2^32 - 1` | No limit                         |
+
 ---
 
-## Connect to a `Websocket` server
+## Connect to a `WebSocket` server
 
 Bun implements the `WebSocket` class. To create a WebSocket client that connects to a `ws://` or `wss://` server, create an instance of `WebSocket`, as you would in the browser.
 
@@ -312,13 +429,30 @@ const socket2 = new WebSocket("ws://localhost:3000", ["soap", "wamp"]);
 
 Browsers send cookies set on the page along with the WebSocket upgrade request. This is a standard feature of the `WebSocket` API.
 
-In Bun, you can also set custom headers directly in the constructor. This is a Bun-specific extension of the `WebSocket` standard. _It does not work in browsers._
+In Bun, the second argument can also be an options object. This is a Bun-specific extension of the `WebSocket` standard. _It does not work in browsers._
 
 ```ts
-const socket = new WebSocket("ws://localhost:3000", {
-  headers: {/* custom headers */}, // [!code ++]
+const socket = new WebSocket("wss://localhost:3000", {
+  headers: { Authorization: "Bearer token" }, // custom headers for the upgrade request
+  protocols: ["soap", "wamp"], // subprotocols to offer
+  tls: { ca: Bun.file("./ca.pem") }, // TLS options, as in fetch()
+  proxy: "http://proxy.example.com:8080", // HTTP or HTTPS proxy
+  perMessageDeflate: false, // don't offer compression (default: true)
 });
 ```
+
+With an `https://` proxy, `tls` applies to both the proxy and the server. To configure them separately, pass `proxy.tls`. The proxy then uses only `proxy.tls`, and the server uses only `tls`. `serverName` and `checkServerIdentity` are never shared: the ones in `tls` are for the server, and the ones in `proxy.tls` are for the proxy.
+
+```ts
+const socket = new WebSocket("wss://example.com", {
+  proxy: {
+    url: "https://proxy.internal:8443",
+    tls: { ca: Bun.file("./proxy-ca.pem") }, // only for the connection to the proxy
+  },
+});
+```
+
+Bun's client also has `ping()`, `pong()` and `terminate()` methods, `ping` and `pong` events, and `binaryType = "nodebuffer"` (the default), which delivers binary messages as `Buffer`.
 
 To add event listeners to the socket:
 
@@ -335,6 +469,8 @@ socket.addEventListener("close", event => {});
 // error handler
 socket.addEventListener("error", event => {});
 ```
+
+`socket.close(code, reason)` sends a Close frame and sets `readyState` to `CLOSING`. The `close` event fires once the connection closes. Its `code` and `reason` come from the server's Close frame (`1005` if the frame had no code). If the connection ended without a Close frame, `code` is `1006`. If the server hasn't closed the connection after 30 seconds ([`BUN_CONFIG_WS_CLOSE_TIMEOUT`](/runtime/environment-variables)), Bun closes it. `socket.terminate()` closes it immediately.
 
 ### Backpressure
 
@@ -354,74 +490,19 @@ socket.addEventListener("message", event => {
 
 `pause()` and `resume()` return `true` when they took effect (or will, once a connecting socket opens) and `false` when there is no socket to act on; `socket.isPaused` reports the current state. Messages already decoded when `pause()` is called may still be delivered. The `ws` package's `pause()`, `resume()`, and `isPaused` map to the same methods.
 
+A paused client doesn't read from the socket, so until `resume()` it doesn't reply to pings or notice a Close frame or a disconnect. `send()`, `ping()`, and `pong()` still work. If a pause can outlast the server's idle timeout (120 seconds by default in `Bun.serve`), send a frame on a timer.
+
+```ts
+socket.pause();
+const heartbeat = setInterval(() => socket.pong(), 30_000);
+file.once("drain", () => {
+  clearInterval(heartbeat);
+  socket.resume();
+});
+```
+
 ---
 
 ## Reference
 
-```ts See Typescript Definitions expandable
-namespace Bun {
-  export function serve(params: {
-    fetch: (req: Request, server: Server) => Response | Promise<Response>;
-    websocket?: {
-      message: (ws: ServerWebSocket, message: string | ArrayBuffer | Uint8Array) => void;
-      open?: (ws: ServerWebSocket) => void;
-      close?: (ws: ServerWebSocket, code: number, reason: string) => void;
-      error?: (ws: ServerWebSocket, error: Error) => void;
-      drain?: (ws: ServerWebSocket) => void;
-
-      maxPayloadLength?: number; // default: 16 * 1024 * 1024 = 16 MB
-      idleTimeout?: number; // default: 120 (seconds)
-      backpressureLimit?: number; // default: 16 * 1024 * 1024 = 16 MB
-      closeOnBackpressureLimit?: boolean; // default: false
-      sendPings?: boolean; // default: true
-      publishToSelf?: boolean; // default: false
-
-      perMessageDeflate?:
-        | boolean
-        | {
-            compress?: boolean | Compressor;
-            decompress?: boolean | Compressor;
-          };
-    };
-  }): Server;
-}
-
-type Compressor =
-  | `"disable"`
-  | `"shared"`
-  | `"dedicated"`
-  | `"3KB"`
-  | `"4KB"`
-  | `"8KB"`
-  | `"16KB"`
-  | `"32KB"`
-  | `"64KB"`
-  | `"128KB"`
-  | `"256KB"`;
-
-interface Server {
-  pendingWebSockets: number;
-  publish(topic: string, data: string | ArrayBufferView | ArrayBuffer | Blob, compress?: boolean): number;
-  upgrade(
-    req: Request,
-    options?: {
-      headers?: HeadersInit;
-      data?: any;
-    },
-  ): boolean;
-}
-
-interface ServerWebSocket {
-  readonly data: any;
-  readonly readyState: number;
-  readonly remoteAddress: string;
-  readonly subscriptions: string[];
-  send(message: string | ArrayBuffer | Uint8Array | Blob, compress?: boolean): number;
-  close(code?: number, reason?: string): void;
-  subscribe(topic: string): boolean;
-  unsubscribe(topic: string): boolean;
-  publish(topic: string, message: string | ArrayBuffer | Uint8Array | Blob): void;
-  isSubscribed(topic: string): boolean;
-  cork(cb: (ws: ServerWebSocket) => void): void;
-}
-```
+See the API reference for [`WebSocketHandler`](https://bun.com/reference/bun/WebSocketHandler) (the `websocket` option), [`ServerWebSocket`](https://bun.com/reference/bun/ServerWebSocket), [`Server`](https://bun.com/reference/bun/Server) and the [`WebSocket`](https://bun.com/reference/globals/WebSocket) client.

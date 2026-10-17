@@ -66,10 +66,7 @@ describe.concurrent.each(["close", "terminate"] as const)("ws.%s() while OPEN", 
     }
   });
 
-  // m_connectedWebSocketKind is cleared synchronously but m_state only moves
-  // to CLOSED in the queued task; m_state = CLOSING in between routes send()
-  // to its CLOSING branch instead of RELEASE_ASSERT_NOT_REACHED.
-  test("send() between the call and the close event does not crash", async () => {
+  test("send() between the call and the close event only adds its payload to bufferedAmount", async () => {
     await using server = upgradeServer();
     const ws = await open(server);
 
@@ -82,10 +79,13 @@ describe.concurrent.each(["close", "terminate"] as const)("ws.%s() while OPEN", 
     ws.send(new Uint8Array([1, 2, 3]));
     // @ts-ignore - Bun extension
     ws.ping?.("p");
-    expect(ws.bufferedAmount).toBeGreaterThan(0);
+    expect(ws.bufferedAmount).toBe("after".length + 3);
 
     await closed;
     expect(ws.readyState).toBe(WebSocket.CLOSED);
+    expect(ws.bufferedAmount).toBe("after".length + 3);
+    ws.send(new Blob(["four"]));
+    expect(ws.bufferedAmount).toBe("after".length + 3 + 4);
   });
 });
 

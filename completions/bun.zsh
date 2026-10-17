@@ -792,11 +792,14 @@ _bun_check_completion() {
         '--project[Path to a tsconfig.json or its directory]:project:_files' \
         '-p[Path to a tsconfig.json or its directory]:project:_files' \
         '--pretty[Show source code around each error]' \
+        '--build[Check the projects in references too, like tsc -b]' \
+        '-b[Check the projects in references too, like tsc -b]' \
         '--no-pretty[One line per error]' \
         '--all[Show every error]' \
         '--threads[Number of threads]:threads' \
         '--timing[Print load and check times]' \
         '--cwd[Set the working directory]:cwd:_files -/' \
+        '--no-script[Run the type checker even if the project has a check script]' \
         '--help[Print this help menu]' \
         '-h[Print this help menu]' &&
         ret=0
@@ -847,11 +850,12 @@ _bun_lint_completion() {
         '--fix-dangerously[Apply every fix and suggestion, even those that can change behavior]' \
         '--type-aware[Also run the rules that need types]' \
         '--no-type-aware[Skip the rules that need types]' \
-        '--tsconfig[Use this tsconfig.json for the rules that need types]:tsconfig:_files' \
+        '--tsconfig[Use this tsconfig.json instead of the nearest one]:tsconfig:_files' \
         '--type-check[With --type-aware, report type errors too]' \
         '--infer-globals[Also treat what the project'"'"'s types declare as globals]' \
         '--no-infer-globals[Do not take globals from the project'"'"'s types]' \
         '--threads[Number of threads (default\: one per CPU core)]:threads' \
+        '--no-script[Run the linter even if the project has a lint script]' \
         '--version[Print the version of Bun]' \
         '-v[Print the version of Bun]' \
         '--help[Print the common flags. With --all, every flag]' \
@@ -944,7 +948,7 @@ _bun_fmt_completion() {
         '--staged[Only format files that are staged in git, and stage them again]' \
         '--changed[Only format files that differ from a branch or commit (default\: the default branch)]' \
         '--stdin-filepath[Format standard input as this file and print the result]:stdin-filepath:_files' \
-        '--ignore-path[Read ignore patterns from these files (default\: .gitignore and .prettierignore)]:ignore-path:_files' \
+        '--ignore-path[Read ignore patterns from these files (default\: .gitignore, .prettierignore, .git/info/exclude)]:ignore-path:_files' \
         '--ignore-pattern[Skip files that match this pattern]:ignore-pattern' \
         '--with-node-modules[Format files in node_modules too]' \
         '--no-error-on-unmatched-pattern[Do not fail when an argument matches no file]' \
@@ -965,6 +969,7 @@ _bun_fmt_completion() {
         '--timing[Print how long each phase took]' \
         '--threads[Number of threads (default\: one per CPU core)]:threads' \
         '--debug-check[Do not write. Fail if formatting a file would change what it means]' \
+        '--no-script[Run the formatter even if the project has a fmt script]' \
         '--version[Print the version of Bun]' \
         '-v[Print the version of Bun]' \
         '--help[Print the common flags. With --all, every flag]' \

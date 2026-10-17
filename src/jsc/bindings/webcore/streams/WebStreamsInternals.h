@@ -17,6 +17,7 @@
 
 #include "root.h"
 #include "StreamsForward.h"
+#include "AsyncContextFrame.h"
 #include "BunStreamConsumers.h"
 
 // These three are used by name below (`JSC::JSUint8Array*` is a typedef and cannot be
@@ -369,17 +370,9 @@ void readableStreamDefaultReaderErrorReadRequests(JSC::JSGlobalObject*, JSReadab
 // a promise of one.
 // Restores the stream's construction-time async-context snapshot around a user
 // source callback (pull/cancel and the direct pull). Defined in WebStreamsMisc.cpp.
-class StreamAsyncContextScope {
-    WTF_MAKE_NONCOPYABLE(StreamAsyncContextScope);
-
+class StreamAsyncContextScope : public AsyncContextScope {
 public:
     StreamAsyncContextScope(JSC::JSGlobalObject*, JSReadableStream*);
-    ~StreamAsyncContextScope();
-
-private:
-    JSC::VM& m_vm;
-    JSC::InternalFieldTuple* m_asyncContextData { nullptr };
-    JSC::JSValue m_previous;
 };
 
 enum class ConsumerFillStep : uint8_t { Done,

@@ -6,7 +6,7 @@ use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
 use crate::{
-    ArrayBuffer, JSGlobalObject, JSObject, JSString, JSValue, JsError, JsThread,
+    ArrayBuffer, ErrorCode, JSGlobalObject, JSObject, JSString, JSValue, JsError, JsThread,
     MarkedArgumentBuffer, Strong,
 };
 
@@ -57,6 +57,18 @@ impl<'a> JsHeap<'a> {
         ))
     }
 
+    /// A `Uint8Array` whose bytes are whatever the allocator left there.
+    #[inline]
+    pub fn create_uninitialized_uint8_array(
+        &self,
+        length: usize,
+    ) -> Result<'a, JsLocal<'a, BufferSource>> {
+        JsLocal::from_js_result(JSValue::create_uninitialized_uint8_array(
+            self.global(),
+            length,
+        ))
+    }
+
     /// An `Error` for the body to return. It is thrown after that.
     #[cold]
     pub fn error(&self, args: core::fmt::Arguments<'_>) -> Error<'a> {
@@ -73,6 +85,12 @@ impl<'a> JsHeap<'a> {
     #[cold]
     pub fn range_error(&self, args: core::fmt::Arguments<'_>) -> Error<'a> {
         Error::unthrown(self.global().create_range_error_instance(args))
+    }
+
+    /// As [`error`](Self::error), with a `code`, which also picks the class.
+    #[cold]
+    pub fn error_with_code(&self, code: ErrorCode, args: core::fmt::Arguments<'_>) -> Error<'a> {
+        Error::unthrown(code.fmt(self.global(), args))
     }
 }
 
@@ -155,6 +173,19 @@ impl<'a> Error<'a> {
             ErrorState::Pending(error) => error,
             ErrorState::ToThrow(value) => global.throw_value(value),
         }
+    }
+}
+
+impl From<JsError> for Error<'_> {
+    #[inline(always)]
+    fn from(error: JsError) -> Self {
+        Error::pending(error)
+    }
+}
+impl From<bun_alloc::AllocError> for Error<'_> {
+    #[cold]
+    fn from(error: bun_alloc::AllocError) -> Self {
+        Error::pending(error.into())
     }
 }
 
@@ -297,6 +328,37 @@ impl<'a> JsLocal<'a, BufferSource> {
         let result = f(array_buffer.as_ref().map_or(&[], ArrayBuffer::byte_slice));
         self.0.ensure_still_alive();
         result
+    }
+}
+
+/// The bytes of a buffer that may be a `SharedArrayBuffer`'s, which another thread can write at any time. There is no
+/// `&[u8]` of them: a byte can differ each time it is read, and only what is written for that reads them.
+#[derive(Clone, Copy)]
+pub struct PossiblySharedBytes<'a> {
+    data: *const u8,
+    length: usize,
+    lifetime: PhantomData<&'a ()>,
+}
+
+impl PossiblySharedBytes<'_> {
+    /// `None` if `range` starts beyond the end.
+    #[inline]
+    pub fn get(self, range: core::ops::RangeFrom<usize>) -> Option<Self> {
+        let length = self.length.checked_sub(range.start)?;
+        // SAFETY: at most one past the end.
+        let data = unsafe { self.data.add(range.start) };
+        Some(Self {
+            data,
+            length,
+            ..self
+        })
+    }
+
+    /// The byte there can have changed by the time this returns.
+    #[inline]
+    pub fn index_of_char(self, needle: u8) -> Option<usize> {
+        // SAFETY: readable for `'a`.
+        unsafe { bun_highway::index_of_char_raw(self.data, self.length, needle) }
     }
 }
 
@@ -530,10 +592,26 @@ pub mod to_js {
         Ok(value.into_value(heap))
     }
 
-    #[inline]
-    pub fn utf8<'a>(heap: &JsHeap<'a>, value: impl AsRef<[u8]>) -> Result<'a, JsLocal<'a>> {
-        heap.create_utf8_string(value.as_ref())
-            .map(JsLocal::as_value)
+    /// A body whose bytes do not outlive it returns the string, from [`JsHeap::create_utf8_string`].
+    pub trait Utf8<'a> {
+        fn into_string(self, heap: &JsHeap<'a>) -> Result<'a, JsLocal<'a, JSString>>;
+    }
+    impl<'a, T: AsRef<[u8]>> Utf8<'a> for T {
+        #[inline]
+        fn into_string(self, heap: &JsHeap<'a>) -> Result<'a, JsLocal<'a, JSString>> {
+            heap.create_utf8_string(self.as_ref())
+        }
+    }
+    impl<'a> Utf8<'a> for JsLocal<'a, JSString> {
+        #[inline(always)]
+        fn into_string(self, _: &JsHeap<'a>) -> Result<'a, JsLocal<'a, JSString>> {
+            Ok(self)
+        }
+    }
+
+    #[inline(always)]
+    pub fn utf8<'a>(heap: &JsHeap<'a>, value: impl Utf8<'a>) -> Result<'a, JsLocal<'a>> {
+        value.into_string(heap).map(JsLocal::as_value)
     }
 
     #[inline]

@@ -1417,6 +1417,86 @@ test.concurrent.each([
   expect(exitCode).toBe(0);
 });
 
+test.each([0, -1])("an error made under Error.stackTraceLimit = %p has its header as its stack", limit => {
+  class Sub extends Error {
+    name = "Sub";
+  }
+  const errors = [];
+  const origLimit = Error.stackTraceLimit;
+  Error.stackTraceLimit = limit;
+  try {
+    errors.push(
+      new Error("m"),
+      Error("m"),
+      new Error(),
+      new TypeError("m"),
+      new Sub("m"),
+      new AggregateError([], "m"),
+      structuredClone(new Error("m")),
+    );
+    new Array(-1);
+  } catch (e) {
+    e.message = "m";
+    errors.push(e);
+  } finally {
+    Error.stackTraceLimit = origLimit;
+  }
+  expect(errors.map(e => [Object.hasOwn(e, "stack"), e.stack])).toEqual([
+    [true, "Error: m"],
+    [true, "Error: m"],
+    [true, "Error"],
+    [true, "TypeError: m"],
+    [true, "Sub: m"],
+    [true, "AggregateError: m"],
+    [true, "Error: m"],
+    [true, "RangeError: m"],
+  ]);
+  expect(errors.filter(e => "sourceURL" in e)).toEqual([]);
+  // A clone with a stack has a line and a column, whatever it is a clone of.
+  expect(errors.filter(e => "line" in e || "column" in e)).toEqual([errors[6]]);
+});
+
+test("Error.prepareStackTrace gets no call sites under Error.stackTraceLimit = 0", () => {
+  const origLimit = Error.stackTraceLimit;
+  Error.stackTraceLimit = 0;
+  let stack;
+  try {
+    Error.prepareStackTrace = (error, callSites) => [error.message, callSites];
+    stack = new Error("m").stack;
+  } finally {
+    Error.stackTraceLimit = origLimit;
+  }
+  expect(stack).toEqual(["m", []]);
+});
+
+test("an error that native code makes with no JavaScript on the stack has a stack", async () => {
+  const errors = await Promise.all([
+    readFile("/nonexistent-stack-test").catch(e => e),
+    new Promise(resolve => readFileCallback("/nonexistent-stack-test", resolve)),
+    opendir("/nonexistent-stack-test").catch(e => e),
+    WebAssembly.compile(new Uint8Array([1, 2, 3])).catch(e => e),
+  ]);
+  expect(errors.map(e => e.stack?.split("\n")[0])).toEqual(errors.map(e => `${e.name}: ${e.message}`));
+});
+
+test("a SyntaxError from import() of a file that only JavaScriptCore's parser rejects has the file's line", async () => {
+  using dir = tempDir("parse-error-position", {
+    "bad.ts": `type A = number;\ninterface B { x: A }\n\n\nconst q: A = 1;\n"".test(/[a-0]/);\nexport {};\n`,
+  });
+  const file = join(String(dir), "bad.ts");
+  const error = await import(file).catch(e => e);
+  expect({ stack: error.stack.split("\n")[1], line: error.line, sourceURL: error.sourceURL }).toEqual({
+    stack: `    at <parse> (${file}:6)`,
+    line: 6,
+    sourceURL: file,
+  });
+
+  Error.prepareStackTrace = () => {
+    throw new RangeError("from prepareStackTrace");
+  };
+  expect(await import(file + "?again").catch(e => e)).toBeInstanceOf(SyntaxError);
+});
+
 test("Error.stackTraceLimit default matches the limit captureStackTrace applies", async () => {
   // Run in a fresh process so nothing has written to Error.stackTraceLimit yet.
   const src = `
@@ -2093,63 +2173,6 @@ test.skipIf(totalmem() < 10 * 1024 ** 3)(
   },
   30_000,
 );
-
-test.each([0, -1])("an error made under Error.stackTraceLimit = %p has its header as its stack", limit => {
-  class Sub extends Error {
-    name = "Sub";
-  }
-  const origLimit = Error.stackTraceLimit;
-  Error.stackTraceLimit = limit;
-  try {
-    const errors = [
-      new Error("m"),
-      Error("m"),
-      new Error(),
-      new TypeError("m"),
-      new Sub("m"),
-      new AggregateError([], "m"),
-    ];
-    try {
-      new Array(-1);
-    } catch (e) {
-      e.message = "m";
-      errors.push(e);
-    }
-    expect(errors.map(e => [Object.hasOwn(e, "stack"), e.stack])).toEqual([
-      [true, "Error: m"],
-      [true, "Error: m"],
-      [true, "Error"],
-      [true, "TypeError: m"],
-      [true, "Sub: m"],
-      [true, "AggregateError: m"],
-      [true, "RangeError: m"],
-    ]);
-    expect(errors.filter(e => "line" in e || "column" in e || "sourceURL" in e)).toEqual([]);
-    expect(structuredClone(errors[0]).stack).toBe("Error: m");
-  } finally {
-    Error.stackTraceLimit = origLimit;
-  }
-});
-
-test("Error.prepareStackTrace gets no call sites under Error.stackTraceLimit = 0", () => {
-  const origLimit = Error.stackTraceLimit;
-  Error.stackTraceLimit = 0;
-  try {
-    Error.prepareStackTrace = (error, callSites) => [error.message, callSites];
-    expect(new Error("m").stack).toEqual(["m", []]);
-  } finally {
-    Error.stackTraceLimit = origLimit;
-  }
-});
-
-test("an error that native code makes with no JavaScript on the stack has a stack", async () => {
-  const errors = await Promise.all([
-    readFile("/nonexistent-stack-test").catch(e => e),
-    new Promise(resolve => readFileCallback("/nonexistent-stack-test", resolve)),
-    opendir("/nonexistent-stack-test").catch(e => e),
-    WebAssembly.compile(new Uint8Array([1, 2, 3])).catch(e => e),
-  ]);
-  expect(errors.map(e => e.stack?.split("\n")[0])).toEqual(errors.map(e => `${e.name}: ${e.message}`));
 
 test("a SyntaxError gets an `at <parse>` line only if it has a source", async () => {
   const thrownBy = fn => {

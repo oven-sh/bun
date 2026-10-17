@@ -21,7 +21,9 @@ use bun_sema::bind::{SymFlags, SymbolId};
 use bun_sema::check::errors::Checked;
 use bun_sema::check::explain::Explained;
 use bun_sema::check::task::{Finished, Published};
-use bun_sema::check::{FOREIGN_EVALUATION_KINDS, Program, Requested, compute_ecma_line_starts};
+use bun_sema::check::{
+    FOREIGN_EVALUATION_KINDS, INFERENCE_WALK_COUNTS, Program, Requested, compute_ecma_line_starts,
+};
 use bun_sema::config::{self, ConfigError};
 use bun_sema::hir::{ExprTag, FileKind};
 use bun_sema::json::Json;
@@ -1313,6 +1315,8 @@ pub struct Report {
     pub load_phases: [Duration; Phase::ALL.len()],
     /// The maximum stack usage of any file, in bytes.
     pub deepest_stack: usize,
+    /// `Checker::inference_walk_counts`, summed over the tasks.
+    pub inference_walks: [u64; INFERENCE_WALK_COUNTS.len()],
 }
 
 impl Report {
@@ -1351,6 +1355,9 @@ impl Report {
             *phase += more;
         }
         self.deepest_stack = self.deepest_stack.max(other.deepest_stack);
+        for (sum, more) in self.inference_walks.iter_mut().zip(other.inference_walks) {
+            *sum += more;
+        }
     }
 
     /// `BuildTask.report`
@@ -4231,6 +4238,7 @@ fn check_named_files(
     let emit_diagnostics: Guarded<Vec<Diagnostic>> = Guarded::new(Vec::new());
     let incomplete: Guarded<Vec<Incomplete>> = Guarded::new(Vec::new());
     let deepest_stack = AtomicUsize::new(0);
+    let inference_walks = Guarded::new([0u64; INFERENCE_WALK_COUNTS.len()]);
     // `Files::parse_and_bind` retains the text of every file except those of the default library.
     let text_of = |file: FileId| {
         let module = &program.files.modules[file.idx()];
@@ -4389,6 +4397,10 @@ fn check_named_files(
                 }
             }
             deepest_stack.fetch_max(checker.deepest_stack(), Ordering::Relaxed);
+            let walks = checker.inference_walk_counts();
+            for (sum, more) in inference_walks.lock().iter_mut().zip(walks) {
+                *sum += more;
+            }
             let mut outcome = Outcome {
                 finished: task.map(|_| checker.end_task()),
                 checked,
@@ -4927,6 +4939,7 @@ fn check_named_files(
         }
     }
     report.deepest_stack = deepest_stack.into_inner();
+    report.inference_walks = *inference_walks.lock();
     report.steps = std::mem::take(&mut *steps.lock());
     report.incomplete = std::mem::take(&mut *incomplete.lock());
     report.incomplete.shared_sort();

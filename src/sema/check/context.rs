@@ -1139,7 +1139,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `isGenericMappedType(t) && getMappedTypeNameTypeKind(t) != MappedTypeNameTypeKindRemapping`
     fn is_generic_mapped_without_remapping(&mut self, t: TypeId) -> bool {
-        if self.mapped_origin(t).is_none() || !self.is_generic(t) {
+        if !self.is_mapped_type(t) || !self.is_generic(t) {
             return false;
         }
         match self.mapped_name_type(t) {
@@ -1355,13 +1355,22 @@ impl<'p, 's> Checker<'p, 's> {
         this_argument: TypeId,
     ) -> TypeId {
         let key = (t, this_argument);
-        if let Some(&cached) = self.apparent_types_of_intersections.get(&key) {
+        let cached = match t == this_argument {
+            true => self.apparent_types_of_intersections.get(t),
+            false => self.apparent_types_with_this_argument.get(&key).copied(),
+        };
+        if let Some(cached) = cached {
             return cached;
         }
         let before = self.non_cacheable_mark();
         let result = self.type_with_this_argument_ex(t, this_argument, true);
-        if before == self.non_cacheable_mark() {
-            self.apparent_types_of_intersections.insert(key, result);
+        if before != self.non_cacheable_mark() {
+            return result;
+        }
+        if t == this_argument {
+            self.apparent_types_of_intersections.insert(t, result);
+        } else {
+            (self.apparent_types_with_this_argument).insert(key, result);
         }
         result
     }
@@ -1678,7 +1687,7 @@ impl<'p, 's> Checker<'p, 's> {
                 | ExprKind::True
                 | ExprKind::False
                 | ExprKind::Null
-        ) || self.every_type(actual, |c, t| c.is_primitive(t))
+        ) || self.is_every_type_of_kind(actual, tf::PRIMITIVE)
             && self.cached_type_of_expr(file, e) == Some(actual);
         (actual, is_final)
     }
@@ -2224,7 +2233,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `getApparentType`: a type parameter is replaced by its constraint, also inside an
         // intersection.
         let context = self.map_type_unreduced(context, |c, m| {
-            if c.is_deferred(m) || matches!(c.data(m), TypeData::Intersection(_)) {
+            if c.is_deferred(m) || c.is_intersection(m) {
                 c.base_constraint(m)
             } else {
                 m

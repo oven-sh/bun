@@ -121,6 +121,7 @@ use symbols::{AliasTarget, ExcludedMeanings};
 use task::{Open, OrderDependent, Stored, Task};
 
 pub use call::ResolvedCall;
+pub use infer::INFERENCE_WALK_COUNTS;
 pub use shape::Members;
 pub use spans::compute_ecma_line_starts;
 
@@ -464,7 +465,7 @@ impl<'s> Program<'s> {
             types.publish_constant(match files.global_type_of_arity(known::Array, 1) {
                 Some(target) => TypeData::Ref {
                     target,
-                    args: ArenaBox::copy_from_slice_in(&[TypeId::AUTO], arena).into(),
+                    args: TypeArguments::given_in(&[TypeId::AUTO], arena),
                 },
                 // It is a marker: without a global `Array` it is still a distinct type.
                 None => TypeData::Synth(ArenaBox::new_in(
@@ -694,6 +695,7 @@ impl<'s> Program<'s> {
             circular_before_parameter_symbol: Default::default(),
             parameter_symbol_taken_as_unresolved: None,
             taints: 0,
+            incomplete_flow_taints: 0,
             checked_type_references: (None, Vec::new()),
             taints_before_patterns: 0,
             cycles: 0,
@@ -729,12 +731,13 @@ impl<'s> Program<'s> {
             active_mappers: Default::default(),
             limits: 0,
             instantiation_limit_hits: 0,
+            limits_in_earlier_files: 0,
             comparisons_of_deeply_nested_types: 0,
             instantiations_up_to_a_limit: Default::default(),
             relations_cut_short: Default::default(),
             enum_relation: Default::default(),
             enum_literal_types: Default::default(),
-            unknown_like_unions: Default::default(),
+            task_facts: Default::default(),
             relation_sizes: [0; 6],
             generic_relation_entries_not_published: 0,
             variances_cut_short: Default::default(),
@@ -765,11 +768,11 @@ impl<'s> Program<'s> {
             never_in_progress: Vec::new(),
             reduced_unions: Default::default(),
             union_members: Default::default(),
+            unlisted_intersections: Default::default(),
             never_in_progress_from: Vec::new(),
             reverse_mapped_inferences_from: Vec::new(),
             defaults_in_progress: Vec::new(),
             identical_base_types_in_progress: Vec::new(),
-            generic_object_flags: FxHashMap::default(),
             names_of_small_numbers: Default::default(),
             generic_mapped_types_in_progress: Vec::new(),
             generic_mapped_types_cut_short: Vec::new(),
@@ -809,6 +812,7 @@ impl<'s> Program<'s> {
             declaration_indent: None,
             has_ambient_context: false,
             suggestions_among_globals: Default::default(),
+            checked_leaves: Default::default(),
             alias_symbols: Default::default(),
             links: Default::default(),
             could_contain_type_variables: Default::default(),
@@ -843,6 +847,7 @@ impl<'s> Program<'s> {
             discriminated: Default::default(),
             contextual_properties: Default::default(),
             apparent_types_of_intersections: Default::default(),
+            apparent_types_with_this_argument: Default::default(),
             deferred_nodes: Default::default(),
             deferred_type_parameters: Vec::new(),
             emit_helpers_checked_early: Vec::new(),
@@ -877,7 +882,6 @@ impl<'s> Program<'s> {
             restrictive_instantiations_kept: Default::default(),
             kept_a_renamed_param: Default::default(),
             instantiating_generic_argument: None,
-            inferred_between_same_extends: Default::default(),
             prepared: Default::default(),
             last_prepared: (FileId(u32::MAX), FnId::NONE),
             prepared_exprs: (FileId(u32::MAX), Vec::new()),
@@ -1318,6 +1322,8 @@ pub struct Checker<'p, 's> {
     parameter_symbol_taken_as_unresolved: Option<(FileId, ParamId)>,
     /// Number of times frames were marked non-cacheable for any reason except `mark_tainted_by_pattern_from`.
     taints: u64,
+    /// How many of them, and of `cycles`, are from `taint_from`.
+    incomplete_flow_taints: u64,
     /// See `is_type_reference_checked`: the file, and a bit for each of its type nodes.
     checked_type_references: (Option<FileId>, Vec<u64>),
     /// `taints` when the first entry of `contextual_binding_patterns` was pushed. `u64::MAX` if the innermost frame was non-cacheable then.
@@ -1404,6 +1410,8 @@ pub struct Checker<'p, 's> {
     limits: u64,
     /// How many times `instantiate` returned the error type at a limit since `check_file` began.
     instantiation_limit_hits: u64,
+    /// The sum of the two at the end of each file that `check_file` has finished.
+    limits_in_earlier_files: u64,
     /// How many comparisons were `TernaryMaybe` because both types were deeply nested (`isDeeplyNestedType`). That depends on the
     /// comparisons in progress and on the order in which the types were created.
     comparisons_of_deeply_nested_types: u64,
@@ -1418,9 +1426,8 @@ pub struct Checker<'p, 's> {
     enum_relation: FxHashMap<(Sym, Sym), bool>,
     /// `enumLiteralTypes` and `enumNaNLiteralTypes`, by the enum symbol and the value.
     enum_literal_types: FxHashMap<(Sym, crate::types::EnumValue), TypeId>,
-    /// `ObjectFlagsIsUnknownLikeUnion` of the unions that have
-    /// `ObjectFlagsIsUnknownLikeUnionComputed`, `undefined` and `null`.
-    unknown_like_unions: FxHashMap<TypeId, bool>,
+    /// See `shortcuts::task_fact`.
+    task_facts: shortcuts::TaskFacts,
     /// `Relation.size()`, indexed by `relate::Relation`: the entries of `relations` that this task
     /// has stored. Those of the files that a single checker would have checked before are not
     /// counted.
@@ -1449,7 +1456,8 @@ pub struct Checker<'p, 's> {
     order_dependent: FxHashMap<Sym, u32>,
     /// A 64-bit Bloom filter for the keys of `order_dependent`.
     order_dependent_filter: u64,
-    simplified: FxHashMap<(TypeId, bool), TypeId>,
+    /// `simplifiedForReading` and `simplifiedForWriting`.
+    simplified: [shortcuts::TypeMap<TypeId>; 2],
     /// A 256-bit filter of the property names of `Object`, `Function`, `CallableFunction` and
     /// `NewableFunction`: a name whose bit is clear is not one of them. All zero: not built yet.
     pub(super) inherited_names: [u64; 4],
@@ -1483,9 +1491,11 @@ pub struct Checker<'p, 's> {
     /// The intersections being tested for being uninhabited.
     pub(super) never_in_progress: Vec<TypeId>,
     /// `resolvedReducedType` of a union, once the answer for every member is final.
-    reduced_unions: FxHashMap<TypeId, TypeId>,
+    reduced_unions: shortcuts::TypeMap<TypeId>,
     /// See `union_property`.
     union_members: union_property::UnionMembers<'p>,
+    /// See check/unlisted_intersections.rs.
+    unlisted_intersections: shape::UnlistedIntersections<'p>,
     /// The height of `stack` at which `is_empty_intersection` began, for each one in progress.
     pub(super) never_in_progress_from: Vec<usize>,
     /// The height of `stack` at which the worker of each `inferReverseMappedType` in progress began.
@@ -1497,12 +1507,9 @@ pub struct Checker<'p, 's> {
     /// `ObjectFlagsIdenticalBaseTypeCalculated` and has not returned, each with the height of
     /// `stack` when that began.
     identical_base_types_in_progress: Vec<(TypeId, usize)>,
-    /// The mapped types with an `as` clause for which `isGenericMappedType` is in progress.
-    /// `ObjectFlagsIsGenericTypeComputed` with the two flags, of the unions and intersections in which there is a mapped
-    /// type. The others have them in `Types::generic_object_flags`.
-    generic_object_flags: FxHashMap<TypeId, (bool, bool)>,
     /// `number_name` of the index, `NONE` where it has not been asked for.
     names_of_small_numbers: std::cell::RefCell<Vec<Atom>>,
+    /// The mapped types with an `as` clause for which `isGenericMappedType` is in progress.
     generic_mapped_types_in_progress: Vec<(FileId, TypeNodeId)>,
     /// Those for which it has ended at the limit of `instantiation_count` since `check_file` began.
     generic_mapped_types_cut_short: Vec<TypeId>,
@@ -1569,6 +1576,7 @@ pub struct Checker<'p, 's> {
     /// Whether anything in the file that is being checked is in an ambient context.
     has_ambient_context: bool,
     suggestions_among_globals: errors::SuggestionsAmongGlobals,
+    checked_leaves: errors::CheckedLeaves,
     /// `t.alias.symbol` by type: see `alias_symbol_of_type`.
     alias_symbols: std::cell::RefCell<FxHashMap<TypeId, Option<Sym>>>,
     /// The derived parts of conditional and mapped types, and the aliases of types.
@@ -1620,7 +1628,7 @@ pub struct Checker<'p, 's> {
     /// The contexts of the unions being widened. A `*WideningContext` is an index into it.
     widening_contexts: Vec<symbols::WideningContext<'p>>,
     /// `cachedTypes[CachedTypeKindWidened]`
-    widened_types: FxHashMap<TypeId, TypeId>,
+    widened_types: shortcuts::TypeMap<TypeId>,
     /// `iterationTypesCache`, by the type and `IterationUse::cache_flags`. The flag: tsgo has the
     /// entry too (`iterable_types`).
     iteration_types_cache: FxHashMap<(TypeId, u8), (symbols::Iter3, bool)>,
@@ -1708,9 +1716,10 @@ pub struct Checker<'p, 's> {
     discriminated: FxHashMap<(FileId, ExprId, TypeId), TypeId>,
     /// See `contextual_property_of_value`.
     contextual_properties: FxHashMap<(TypeId, Atom, Option<TypeId>), Option<TypeId>>,
-    /// `resolvedApparentType`, `cachedTypes[CachedTypeKindApparentType]`: by the intersection and
-    /// the `this` argument.
-    apparent_types_of_intersections: FxHashMap<(TypeId, TypeId), TypeId>,
+    /// `resolvedApparentType` of an intersection: the `this` argument is the intersection.
+    apparent_types_of_intersections: shortcuts::TypeMap<TypeId>,
+    /// `cachedTypes[CachedTypeKindApparentType]`: by the intersection and another `this` argument.
+    apparent_types_with_this_argument: FxHashMap<(TypeId, TypeId), TypeId>,
     /// The next target to be related to is a member of an intersection.
     /// The diagnostics `resolveCall` has just reported. `resolved_signature` takes them, and stores
     /// them only together with the entry of `calls`.
@@ -1784,9 +1793,6 @@ pub struct Checker<'p, 's> {
     /// The argument whose generic signature `instantiateTypeWithSingleGenericCallSignature` is
     /// instantiating, and the depth of `stack` when it began: `currentNode` is still the argument.
     instantiating_generic_argument: Option<(FileId, ExprId, usize)>,
-    /// The extends types of conditional types that were related to an instantiation of the same
-    /// declaration with the same extends type: the inference between the two has been made.
-    inferred_between_same_extends: crate::util::FxHashSet<TypeId>,
     /// Functions whose context `prepare_enclosing` has already prepared.
     prepared: crate::util::FxHashSet<(FileId, FnId)>,
     last_prepared: (FileId, FnId),
@@ -3566,6 +3572,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.frames[at].incomplete_flow = true;
         }
         self.taints += 1;
+        self.incomplete_flow_taints += 1;
         self.note_cycle();
     }
 
@@ -3641,7 +3648,17 @@ impl<'p, 's> Checker<'p, 's> {
     /// `TypeFlagsObject`, except for an evolving array.
     #[inline]
     pub fn is_object_type(&self, ty: TypeId) -> bool {
-        self.flags(ty) & tf::OBJECT != 0 && !matches!(self.data(ty), TypeData::EvolvingArray(_))
+        let by_record = || {
+            self.flags(ty) & tf::OBJECT != 0 && !matches!(self.data(ty), TypeData::EvolvingArray(_))
+        };
+        if !shortcuts::KINDS_FROM_FLAGS {
+            return by_record();
+        }
+        let is_object_type = self.types().is_object_type(ty);
+        if shortcuts::SHADOW && is_object_type != by_record() {
+            self.fact_differs("an object type", &[ty]);
+        }
+        is_object_type
     }
 
     #[inline]
@@ -3780,6 +3797,9 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn with_freshness(&self, ty: TypeId, fresh: bool) -> TypeId {
+        if !fresh && self.is_without_fresh_literal(ty) {
+            return ty;
+        }
         match *self.data(ty) {
             TypeData::StringLit { value, fresh: f } if f != fresh => {
                 self.intern(TypeData::StringLit { value, fresh })
@@ -3814,11 +3834,14 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     pub fn is_fresh_literal(&self, ty: TypeId) -> bool {
-        relate::is_fresh_literal_kind(self.data(ty))
+        !self.is_without_fresh_literal(ty) && relate::is_fresh_literal_kind(self.data(ty))
     }
 
     /// The literal type as an annotation would denote it.
     pub fn regular(&mut self, ty: TypeId) -> TypeId {
+        if self.is_without_fresh_literal(ty) {
+            return ty;
+        }
         match self.data(ty) {
             TypeData::Union(members) if members.iter().any(|&m| self.is_fresh_literal(m)) => {
                 self.map_type(ty, |c, m| c.with_freshness(m, false))
@@ -3854,6 +3877,9 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The type of a mutable location initialized with `ty`: a fresh `"a"` becomes `string`.
     pub fn widen_literal(&mut self, ty: TypeId) -> TypeId {
+        if self.is_without_fresh_literal(ty) {
+            return ty;
+        }
         match self.data(ty) {
             TypeData::Union(members) => {
                 if !members.iter().any(|&m| self.is_fresh_literal(m)) {

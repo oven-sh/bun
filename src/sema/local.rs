@@ -13,11 +13,9 @@
 //! tables, `crate::check::task` the task. Their memory is on the regular heap, and the thread that
 //! runs the task frees it when the task ends.
 
-use crate::util::{LocalVec, Placement, Places};
-use std::alloc::Global;
+use crate::util::{LocalVec, Placement, free_slot, is_too_full, place_of, search, slots_for};
 use std::cell::{Cell, RefCell};
 use std::marker::PhantomData;
-use std::sync::atomic::Ordering;
 
 /// Set in the id of a type, a signature, a mapper, a component list, an atom or a handle that
 /// belongs to a task.
@@ -81,7 +79,6 @@ pub(crate) struct OfTask;
 
 impl Placement for OfTask {
     const LEAST: usize = 256;
-    const STORE: Ordering = Ordering::Relaxed;
     /// The tag is hashed again: its low bits alone are a poor index.
     #[inline]
     fn start(tag: u32) -> usize {
@@ -89,41 +86,94 @@ impl Placement for OfTask {
     }
 }
 
+/// `false`: `Found::fill` searches for the free slot again.
+const FILLS_THE_VACANCY: bool = true;
+
 /// Finds indices by the hash of the values they represent. It is added to through a shared
 /// reference, by the one thread that has it.
+#[derive(Default)]
 pub struct Found {
-    places: RefCell<Places<OfTask>>,
+    /// None, or a power of two of them: see `place_of`. No other thread reads them, so their address
+    /// and their number are here, and a table that a bigger one replaces is freed at once.
+    slots: RefCell<Box<[u64]>>,
     count: Cell<usize>,
 }
 
-impl Default for Found {
-    fn default() -> Self {
-        Found {
-            places: RefCell::new(Places::new_in(Global)),
-            count: Cell::new(0),
-        }
-    }
+/// Where a search of a `Found` for a hash has ended without a result.
+#[derive(Copy, Clone)]
+pub struct Vacancy {
+    /// The free slot.
+    at: usize,
+    /// The number of slots at the time.
+    of: usize,
+}
+
+impl Vacancy {
+    /// Nothing has been searched.
+    const UNKNOWN: Vacancy = Vacancy { at: 0, of: 0 };
 }
 
 impl Found {
     /// `is_it` does not add to this.
     #[inline]
     pub fn find(&self, spread: u64, is_it: impl FnMut(u32) -> bool) -> Option<u32> {
-        self.places.borrow().find(spread, Ordering::Relaxed, is_it)
+        self.find_or_vacancy(spread, is_it).ok()
     }
 
-    /// A table that a bigger one replaces is freed at once: no other thread reads it.
+    /// `find`. `Err`: for `fill`.
+    #[inline]
+    pub fn find_or_vacancy(
+        &self,
+        spread: u64,
+        is_it: impl FnMut(u32) -> bool,
+    ) -> Result<u32, Vacancy> {
+        let held = self.slots.borrow();
+        let slots: &[u64] = &held;
+        let of = slots.len();
+        if of == 0 {
+            return Err(Vacancy::UNKNOWN);
+        }
+        search::<OfTask>(of, spread, |at| slots[at], is_it).map_err(|at| Vacancy { at, of })
+    }
+
     #[inline]
     pub fn add(&self, spread: u64, number: u32) {
-        let count = self.count.replace(self.count.get() + 1);
-        let mut places = self.places.borrow_mut();
-        places.add(count, 1, std::iter::once((spread, number)));
-        places.forget_older();
+        self.fill(Vacancy::UNKNOWN, spread, number);
+    }
+
+    /// `add`, after `find_or_vacancy` has returned `vacancy` for `spread`, with no `clear` in
+    /// between. Whatever has been added since: a slot is never freed, so if that slot is still free
+    /// in a table of that size, it is still the first free one that a search for `spread` gets to.
+    #[inline]
+    pub fn fill(&self, vacancy: Vacancy, spread: u64, number: u32) {
+        let count = self.count.get() + 1;
+        self.count.set(count);
+        let mut held = self.slots.borrow_mut();
+        if is_too_full(count, held.len()) {
+            Self::grow(&mut held, count);
+        }
+        let slots: &mut [u64] = &mut held;
+        let at = match slots.get(vacancy.at) {
+            Some(0) if FILLS_THE_VACANCY && vacancy.of == slots.len() => vacancy.at,
+            _ => free_slot::<OfTask>(slots.len(), spread as u32, |at| slots[at]),
+        };
+        slots[at] = place_of(spread, number);
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn grow(slots: &mut Box<[u64]>, count: usize) {
+        let mut bigger = vec![0; slots_for::<OfTask>(count, slots.len())].into_boxed_slice();
+        for &place in slots.iter().filter(|&&place| place != 0) {
+            let at = free_slot::<OfTask>(bigger.len(), (place >> 32) as u32, |at| bigger[at]);
+            bigger[at] = place;
+        }
+        *slots = bigger;
     }
 
     pub fn clear(&mut self) {
         if self.count.replace(0) != 0 {
-            self.places.get_mut().clear();
+            *self.slots.get_mut() = Box::default();
         }
     }
 }
@@ -162,9 +212,9 @@ impl<K: Eq, V> Hashed<K, V> {
     /// Does not overwrite an existing entry. Returns the stored value.
     #[inline]
     pub fn insert(&mut self, spread: u64, key: K, value: V) -> &V {
-        let place = match self.place(spread, &key) {
-            Some(place) => place,
-            None => self.add(spread, key, value),
+        let place = match self.place_or_vacancy(spread, &key) {
+            Ok(place) => place,
+            Err(vacancy) => self.add(vacancy, spread, key, value),
         };
         &self.entries[place as usize].1
     }
@@ -173,17 +223,22 @@ impl<K: Eq, V> Hashed<K, V> {
     /// order.
     #[inline]
     pub fn replace(&mut self, spread: u64, key: K, value: V) {
-        match self.place(spread, &key) {
-            Some(place) => self.entries[place as usize].1 = value,
-            None => {
-                self.add(spread, key, value);
+        match self.place_or_vacancy(spread, &key) {
+            Ok(place) => self.entries[place as usize].1 = value,
+            Err(vacancy) => {
+                self.add(vacancy, spread, key, value);
             }
         }
     }
 
-    fn add(&mut self, spread: u64, key: K, value: V) -> u32 {
+    #[inline]
+    fn place_or_vacancy(&self, spread: u64, key: &K) -> Result<u32, Vacancy> {
+        (self.found).find_or_vacancy(spread, |place| self.entries[place as usize].0 == *key)
+    }
+
+    fn add(&mut self, vacancy: Vacancy, spread: u64, key: K, value: V) -> u32 {
         let place = self.entries.len() as u32;
-        self.found.add(spread, place);
+        self.found.fill(vacancy, spread, place);
         self.entries.push((key, value));
         place
     }

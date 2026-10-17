@@ -2072,7 +2072,7 @@ impl<'p, 's> Checker<'p, 's> {
             _ => {}
         }
         if context.is_none()
-            && let Some(&cached) = self.widened_types.get(&ty)
+            && let Some(cached) = self.widened_types.get(ty)
         {
             return cached;
         }
@@ -2249,7 +2249,7 @@ impl<'p, 's> Checker<'p, 's> {
                 .any(|&t| t != ty && self.is_object_literal_type(t))
         });
         let Some(context) = context else {
-            if let Some(&cached) = self.widened_types.get(&ty) {
+            if let Some(cached) = self.widened_types.get(ty) {
                 return cached;
             }
             let before = self.non_cacheable_mark();
@@ -2367,10 +2367,9 @@ impl<'p, 's> Checker<'p, 's> {
             .flags
             .intersects(PropFlags::METHOD | PropFlags::ACCESSOR)
         {
-            return Prop {
-                mapper: self.compose(prop.mapper, mapper),
-                ..prop.clone_in(self.arena)
-            };
+            let mut same = prop.clone_in(self.arena);
+            self.compose_mapper_of_prop(&mut same, mapper);
+            return same;
         }
         let widened = self.get_widened_type_of_property(prop, mapper, context);
         Prop {
@@ -4184,11 +4183,9 @@ impl<'p, 's> Checker<'p, 's> {
                     ..Shape::new_in(self.arena)
                 };
                 for prop in &members.shape().props {
-                    let mapper = self.compose(prop.mapper, mapper);
-                    shape.props.push(Prop {
-                        mapper,
-                        ..prop.clone_in(self.arena)
-                    });
+                    let mut prop = prop.clone_in(self.arena);
+                    self.compose_mapper_of_prop(&mut prop, mapper);
+                    shape.props.push(prop);
                 }
                 for (name, value, default) in missing_elements {
                     let ty = self.type_from_binding_element(
@@ -4497,7 +4494,7 @@ impl<'p, 's> Checker<'p, 's> {
                     };
                     let expected = expected.map(|t| self.unwrap_return_type(file, func, t));
                     let returned =
-                        if expected.is_some_and(|t| self.some_type(t, |_, m| m.is_undefined())) {
+                        if expected.is_some_and(|t| self.is_some_type_of_kind(t, tf::UNDEFINED)) {
                             TypeId::UNDEFINED
                         } else {
                             TypeId::VOID
@@ -4803,9 +4800,7 @@ impl<'p, 's> Checker<'p, 's> {
             _ => {
                 let ty = self.widen_literal(ty);
                 // `getWidenedUniqueESSymbolType`
-                if !self.some_type(ty, |c, m| {
-                    matches!(c.data(m), TypeData::UniqueSymbol { .. })
-                }) {
+                if !self.is_some_type_of_kind(ty, tf::UNIQUE_ES_SYMBOL) {
                     return ty;
                 }
                 self.map_type(ty, |c, m| {
@@ -4822,6 +4817,29 @@ impl<'p, 's> Checker<'p, 's> {
     /// `isLiteralOfContextualType`: whether `contextual` accepts the literal type `candidate`, as
     /// opposed to its base type only.
     pub fn is_literal_context(&mut self, candidate: TypeId, contextual: TypeId) -> bool {
+        // Without a type variable in `contextual` no constraint is asked for, and all that counts of each constituent is
+        // its kind.
+        let kinds = self.types().member_flags(contextual);
+        if !shortcuts::LITERAL_CONTEXTS || kinds & tf::INSTANTIABLE_NON_PRIMITIVE != 0 {
+            return self.is_literal_context_of_each(candidate, contextual);
+        }
+        let candidates = self.types().member_flags(candidate);
+        let takes_strings =
+            tf::STRING_LITERAL | tf::TEMPLATE_LITERAL | tf::STRING_MAPPING | tf::INDEX;
+        let others =
+            tf::NUMBER_LITERAL | tf::BIGINT_LITERAL | tf::BOOLEAN_LITERAL | tf::UNIQUE_ES_SYMBOL;
+        let is_literal_context = kinds & takes_strings != 0 && candidates & tf::STRING_LITERAL != 0
+            || kinds & candidates & others != 0;
+        if shortcuts::SHADOW
+            && is_literal_context != self.is_literal_context_of_each(candidate, contextual)
+        {
+            self.fact_differs_for("isLiteralOfContextualType", &[candidate, contextual]);
+        }
+        is_literal_context
+    }
+
+    /// `is_literal_context`, constituent by constituent.
+    fn is_literal_context_of_each(&mut self, candidate: TypeId, contextual: TypeId) -> bool {
         if let TypeData::Union(parts) | TypeData::Intersection(parts) = self.data(contextual) {
             return parts.iter().any(|&p| self.is_literal_context(candidate, p));
         }

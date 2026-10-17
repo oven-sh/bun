@@ -20,7 +20,7 @@ use crate::program::{FileId, Sym};
 use crate::session::Session;
 use crate::types::{ComponentsId, Follow, Link, MapperId, Marks, OwnStore, SigId, TypeId, Visitor};
 use crate::util::memory::{Cells, Zeroed};
-use crate::util::{AppendVec, FxHasher, SHARDS, ShardedMap, shard_of, spread_hash};
+use crate::util::{AppendVec, FxHasher, ShardedMap, shard_among, spread_hash};
 use std::alloc::{Allocator, Global};
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
@@ -651,7 +651,7 @@ impl<I: Id, T, P: Policy, A: Alloc> ByIdIndirect<I, T, P, A> {
 
 /// A memo table for keys that are more than a single id.
 pub struct ByKey<K, V, P: Policy = Frozen, A: Alloc = Global> {
-    published: ShardedMap<K, V, A>,
+    published: ShardedMap<K, V, A, PUBLISHED_SHARDS>,
     slot: Slot<HashedInTask<K, V>>,
     policy: PhantomData<fn(P)>,
 }
@@ -1663,9 +1663,13 @@ impl<'s, I: Id + Follow, T: Follow + Send + Sync + 's, A: Alloc> Publish<'s>
 /// How many threads can fill a `ByKey` concurrently. Each owns an equal number of the map's shards.
 const PARTS: usize = 8;
 
+/// The number of shards of the published part of a `ByKey`, a multiple of `PARTS`. One for each
+/// thread that fills it, and no more: see `shard_among`.
+const PUBLISHED_SHARDS: usize = PARTS;
+
 #[inline]
 fn part_of(spread: u64) -> usize {
-    shard_of(spread) / (SHARDS / PARTS)
+    shard_among(spread, PUBLISHED_SHARDS) / (PUBLISHED_SHARDS / PARTS)
 }
 
 /// The entries of a `ByKey` passed to the barrier.
@@ -1756,7 +1760,7 @@ where
             })
             .max()
             .unwrap_or(0);
-        let shards = SHARDS / PARTS;
+        let shards = PUBLISHED_SHARDS / PARTS;
         (self.published).reserve(
             part * shards..(part + 1) * shards,
             of_largest_share / shards,

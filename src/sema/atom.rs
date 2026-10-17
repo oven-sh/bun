@@ -5,7 +5,9 @@
 use crate::local::LOCAL;
 use crate::session::Session;
 use crate::types::OwnStore;
+use crate::util::memory::Cells;
 use crate::util::{AppendVec, GrowingPlaces, SHARDS, shard_of, spread_hash};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 /// A name. Its number is its index in a list that every parser thread appends to, so it differs
 /// from run to run: atoms have no order.
@@ -145,6 +147,9 @@ pub struct Interner<'s> {
     /// The atoms below `first`: see `over`. Other programs may add to this table concurrently.
     below: &'s Tables,
     first: u32,
+    /// Sequence number of `tables` among all that have been created. Every `intern` reads it, so it
+    /// is not in `Tables`, next to the length of `texts`, which every new atom of any thread writes.
+    number: u64,
 }
 
 /// On the regular heap, and without a lifetime: they are written through a shared reference, so a lifetime in them
@@ -153,8 +158,8 @@ pub struct Interner<'s> {
 struct Tables {
     shards: Box<[GrowingPlaces; SHARDS]>,
     texts: Texts,
-    /// Sequence number of this interner among all that have been created.
-    number: u64,
+    /// `class_of` each text, `class::BITS` bits for each.
+    classes: Cells<AtomicU32>,
     /// `Interner::in_common`
     is_in_common: bool,
 }
@@ -164,10 +169,80 @@ impl Tables {
         Tables {
             shards: Box::new(std::array::from_fn(|_| GrowingPlaces::default())),
             texts: AppendVec::new(),
-            number: NEXT_NUMBER.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            classes: Cells::default(),
             is_in_common,
         }
     }
+
+    /// `text` is about to be the text at `index` of `texts`. Whoever adds a text calls it before another thread can
+    /// learn of the atom. Nearly all texts have the class 0, and nothing is written for them.
+    fn set_class(&self, index: u32, text: &[u8]) {
+        let class = class_of(text);
+        if class != 0 {
+            let shifted = class << (index % class::PER_CELL * class::BITS);
+            (self.classes.cell(index / class::PER_CELL)).fetch_or(shifted, Ordering::Relaxed);
+        }
+    }
+
+    #[inline]
+    fn class(&self, index: u32) -> u32 {
+        let cell = self.classes.existing(index / class::PER_CELL);
+        let classes = cell.map_or(0, |cell| cell.load(Ordering::Relaxed));
+        classes >> (index % class::PER_CELL * class::BITS) & ((1 << class::BITS) - 1)
+    }
+}
+
+/// What the checker asks about a name without wanting its text. The texts of a large program do not fit in the cache of
+/// the processor, and these do.
+mod class {
+    /// It starts with `SYMBOL_NAME_PREFIX`.
+    pub(super) const IS_SYMBOL_NAME: u32 = 1;
+    /// It starts with `PRIVATE_NAME_PREFIX`.
+    pub(super) const IS_PRIVATE_SYMBOL_NAME: u32 = 1 << 1;
+    /// It starts with `#`.
+    pub(super) const STARTS_WITH_HASH: u32 = 1 << 2;
+    /// `is_numeric_literal_name`
+    pub(super) const IS_NUMERIC: u32 = 1 << 3;
+    pub(super) const BITS: u32 = 4;
+    pub(super) const PER_CELL: u32 = u32::BITS / BITS;
+}
+
+/// `false`: the class of a name is worked out from its text every time.
+const KEEPS_CLASSES: bool = true;
+
+/// `true`: a class that is read is also worked out from the text, and the two must be the same.
+const CHECKS_CLASSES: bool = false;
+
+/// The bits of `class` for a text.
+fn class_of(text: &[u8]) -> u32 {
+    match text {
+        [0xFE, b'@', ..] => class::IS_SYMBOL_NAME,
+        [0xFE, b'#', ..] => class::IS_PRIVATE_SYMBOL_NAME,
+        [b'#', ..] => class::STARTS_WITH_HASH,
+        _ if is_numeric_literal_name(text) => class::IS_NUMERIC,
+        _ => 0,
+    }
+}
+
+/// `isNumericLiteralName`: the name round-trips through a number and back to a string.
+fn is_numeric_literal_name(text: &[u8]) -> bool {
+    // The string form of a number begins with a digit or a `-`, or is one of two words.
+    match text.first().copied() {
+        Some(b'0'..=b'9') => {
+            // An integer that a number represents exactly prints as its digits.
+            if text.len() <= 15 && text.iter().all(u8::is_ascii_digit) {
+                return text[0] != b'0' || text.len() == 1;
+            }
+        }
+        Some(b'-') => {}
+        Some(b'I') => return text == b"Infinity",
+        Some(b'N') => return text == b"NaN",
+        _ => return false,
+    }
+    std::str::from_utf8(text)
+        .ok()
+        .and_then(|s| s.parse::<f64>().ok())
+        .is_some_and(|n| number_to_string(n) == text)
 }
 
 /// It compiles because an `Interner<'s>` is covariant in `'s`: one that outlives a program is an interner of the program.
@@ -638,6 +713,7 @@ impl<'s> Interner<'s> {
             tables,
             below: tables,
             first: 0,
+            number: next_interner_number(),
         };
         for (i, text) in known::TEXTS.iter().enumerate() {
             let atom = this.intern(text.as_bytes());
@@ -664,6 +740,7 @@ impl<'s> Interner<'s> {
             below: below.tables,
             // Texts are pushed under their shard's lock. With all shards locked, none below this length is incomplete.
             first: GrowingPlaces::while_none_grows(&shards[..], || texts.len()),
+            number: next_interner_number(),
         }
     }
 
@@ -682,7 +759,7 @@ impl<'s> Interner<'s> {
     /// interner is invalid for another.
     #[inline]
     pub fn number(&self) -> u64 {
-        self.tables.number
+        self.number
     }
 
     pub fn intern(&self, text: &[u8]) -> Atom {
@@ -693,8 +770,8 @@ impl<'s> Interner<'s> {
         let spread = spread_hash(&(start, end));
         RECENT.with_borrow_mut(|recent| {
             // Nothing in this scope re-enters it.
-            if recent.of != self.tables.number {
-                recent.of = self.tables.number;
+            if recent.of != self.number {
+                recent.of = self.number;
                 match recent.entries.is_empty() {
                     true => recent.entries = vec![Recent::NOTHING; 1 << Recent::BITS],
                     false => recent.entries.fill(Recent::NOTHING),
@@ -724,8 +801,26 @@ impl<'s> Interner<'s> {
         if let Some(atom) = shard.find(spread, is_it) {
             return Atom(atom);
         }
-        let add = || self.first + texts.push(text.into());
+        let add = || {
+            let index = texts.push(text.into());
+            self.tables.set_class(index, text);
+            self.first + index
+        };
         Atom(shard.find_or_add(spread, is_it, add))
+    }
+
+    /// For the merge at the barrier, which is about to add `text` as the text of `atom`.
+    pub(crate) fn set_class(&self, atom: Atom, text: &[u8]) {
+        self.tables.set_class(atom.0 - self.first, text);
+    }
+
+    /// `class_of` the text of `atom`.
+    #[inline]
+    fn class(&self, atom: Atom) -> u32 {
+        match atom.0.checked_sub(self.first) {
+            Some(own) => self.tables.class(own),
+            None => self.below.class(atom.0),
+        }
     }
 
     #[inline]
@@ -826,10 +921,43 @@ impl<'p, 's> Atoms<'p, 's> {
         self.intern(&[SYMBOL_NAME_PREFIX, name].concat())
     }
 
+    /// `class_of` the text of `atom`.
+    #[inline]
+    fn class(&self, atom: Atom) -> u32 {
+        if !KEEPS_CLASSES || atom.is_own() {
+            return class_of(self.bytes(atom));
+        }
+        let class = self.published.class(atom);
+        assert!(
+            !CHECKS_CLASSES || atom.is_none() || class == class_of(self.bytes(atom)),
+            "the class {class} is kept for the name {:?}",
+            bstr::BStr::new(self.bytes(atom))
+        );
+        class
+    }
+
     /// `isLateBoundName`
     #[inline]
     pub fn is_symbol_name(&self, atom: Atom) -> bool {
-        atom.is_some() && self.bytes(atom).starts_with(SYMBOL_NAME_PREFIX)
+        atom.is_some() && self.class(atom) & class::IS_SYMBOL_NAME != 0
+    }
+
+    /// `IsPrivateIdentifierSymbol`: it starts with `PRIVATE_NAME_PREFIX`.
+    #[inline]
+    pub fn is_private_symbol_name(&self, atom: Atom) -> bool {
+        self.class(atom) & class::IS_PRIVATE_SYMBOL_NAME != 0
+    }
+
+    /// It starts with `PRIVATE_NAME_PREFIX` or with `#`.
+    #[inline]
+    pub fn is_private_name(&self, atom: Atom) -> bool {
+        self.class(atom) & (class::IS_PRIVATE_SYMBOL_NAME | class::STARTS_WITH_HASH) != 0
+    }
+
+    /// `isNumericLiteralName`
+    #[inline]
+    pub fn is_numeric_name(&self, atom: Atom) -> bool {
+        self.class(atom) & class::IS_NUMERIC != 0
     }
 
     /// `EscapeInternalSymbolName`: the byte that no text contains is printed as `__`.

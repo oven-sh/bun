@@ -533,6 +533,11 @@ fn run(args: &[String]) {
                         .map(|(kind, count)| format!("{kind} {count}"))
                         .collect();
                     error_line!("foreign evaluations by kind: {}", by_kind.join(", "));
+                    let walks = bun_sema::check::INFERENCE_WALK_COUNTS.iter();
+                    let walks: Vec<String> = (walks.zip(report.inference_walks))
+                        .map(|(name, count)| format!("{name} {count}"))
+                        .collect();
+                    error_line!("inference walks: {}", walks.join(", "));
                     let by_step = report.steps.iter().map(|step| step.entries.published);
                     let by_step: Vec<String> = by_step.map(|n| n.to_string()).collect();
                     error_line!("entries published by step: {}", by_step.join(" "));

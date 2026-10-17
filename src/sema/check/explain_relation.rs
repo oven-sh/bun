@@ -987,9 +987,7 @@ impl<'p, 's> Checker<'p, 's> {
             if !(list.iter()).any(|&t| t.is_never() && t != TypeId::UNIQUE_LITERAL)
                 && list.iter().any(|&t| t != list[0])
                 && list.iter().any(|&t| {
-                    self.is_boolean(t)
-                        || self.is_pattern_literal(t)
-                        || self.every_type(t, |c, m| c.is_unit(m))
+                    self.is_boolean(t) || self.is_pattern_literal(t) || self.is_every_type_unit(t)
                 })
                 && self.type_of_prop(prop, members.mapper).is_never()
             {
@@ -1046,7 +1044,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut generalized_source_type = source_type.clone();
         // `isLiteralType`
         if !target.is_never()
-            && self.every_type(source, |c, m| c.is_unit(m))
+            && self.is_every_type_unit(source)
             && !self.may_have_top_level_singleton_types(target, 0)
         {
             generalized_source = self.base_of_literal(source);

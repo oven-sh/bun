@@ -4,17 +4,17 @@
 use super::*;
 use crate::atom::{Atom, Atoms, Interner};
 use crate::bind::SymbolId;
-use crate::local::{Hashed, LOCAL, MaybeLocal, SlotNumber, spread_word};
+use crate::local::{Found, Hashed, LOCAL, MaybeLocal, SlotNumber, spread_word};
 use crate::program::Sym;
 use crate::session::Session;
 use crate::table::{
     Bases, Buffered, ById, ByIdIndirect, ByKey, ByNode, ByNodeIndirect, Cell as _, FileLocal,
 };
 use crate::types::{
-    ElemFlags, List, MapperId, OriginKey, Provenance, ProvenanceKey, TypeData, TypeId, TypeKey,
-    TypeStore, Types, UnionOrigin,
+    ElemFlags, List, MapperId, OriginKey, Provenance, ProvenanceKey, ShortList, TypeArguments,
+    TypeData, TypeId, TypeKey, TypeStore, Types, UnionOrigin,
 };
-use crate::util::{GrowingPlaces, ShardedMap};
+use crate::util::{GrowingPlaces, ShardedMap, shard_among};
 use bun_sema_standalone as _;
 use std::alloc::Global;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
@@ -1230,59 +1230,78 @@ fn a_borrowed_key_finds_the_type_that_was_interned_with_its_lists() {
     let tables = Tables::new(&session);
     let task = begin(&session, 0);
     let types = Types::new(&tables.types, &task.own);
-    let (arena, members) = (session.arena(), [TypeId::STRING, TypeId::NUMBER]);
-    let list = || List::copy_from_slice_in(&members, arena);
+    let arena = session.arena();
     let target = Sym {
         file: A,
         id: SymbolId(1),
     };
-    let flags = [ElemFlags::REQUIRED, ElemFlags::OPTIONAL];
-    let decls = [(A, crate::hir::FnId(3))];
     let mapper = MapperId::IDENTITY;
-    let pairs = [
-        (TypeData::Union(list()), TypeKey::Union(&members)),
-        (
-            TypeData::Intersection(list()),
-            TypeKey::Intersection(&members),
-        ),
-        (
-            TypeData::Ref {
-                target,
-                args: list().into(),
-            },
-            TypeKey::Ref {
-                target,
-                args: &members,
-            },
-        ),
-        (
-            TypeData::Tuple {
-                elems: list().into(),
-                flags: List::copy_from_slice_in(&flags, arena),
-                readonly: true,
-            },
-            TypeKey::Tuple {
-                elems: &members,
-                flags: &flags,
-                readonly: true,
-            },
-        ),
-        (
-            TypeData::Fns {
-                decls: List::copy_from_slice_in(&decls, arena),
-                mapper,
-            },
-            TypeKey::Fns {
-                decls: &decls,
-                mapper,
-            },
-        ),
-    ];
-    for (data, key) in pairs {
-        let id = types.intern(data);
-        assert_eq!(types.intern_key(key), id);
-        assert_eq!(types.intern_key(TypeKey::Data(types.get(id))), id);
+    // A record holds a list of up to 2, 3 or 7 items itself.
+    for len in [0, 1, 2, 3, 4, 7, 8, 40] {
+        let members: Vec<TypeId> = (0..len).map(|i| TypeId(1 + i % 16)).collect();
+        let flags = vec![ElemFlags::OPTIONAL; len as usize];
+        let decls: Vec<_> = (0..len).map(|f| (A, crate::hir::FnId(f))).collect();
+        let short = || ShortList::copy_from_slice_in(&members, arena);
+        let pairs = [
+            (TypeData::Union(short()), TypeKey::Union(&members)),
+            (
+                TypeData::Intersection(short()),
+                TypeKey::Intersection(&members),
+            ),
+            (
+                TypeData::Ref {
+                    target,
+                    args: TypeArguments::given_in(&members, arena),
+                },
+                TypeKey::Ref {
+                    target,
+                    args: &members,
+                },
+            ),
+            (
+                TypeData::Tuple {
+                    elems: TypeArguments::given_in(&members, arena),
+                    flags: List::copy_from_slice_in(&flags, arena),
+                    readonly: true,
+                },
+                TypeKey::Tuple {
+                    elems: &members,
+                    flags: &flags,
+                    readonly: true,
+                },
+            ),
+            (
+                TypeData::Fns {
+                    decls: ShortList::copy_from_slice_in(&decls, arena),
+                    mapper,
+                },
+                TypeKey::Fns {
+                    decls: &decls,
+                    mapper,
+                },
+            ),
+        ];
+        // Owned first for the even lengths, borrowed first for the odd ones.
+        for (data, key) in pairs {
+            let first = (len % 2 == 1).then(|| types.intern_key(key));
+            let id = types.intern(data);
+            assert!(first.is_none_or(|first| first == id));
+            assert_eq!(types.intern_key(key), id);
+            assert_eq!(types.intern_key(TypeKey::Data(types.get(id))), id);
+            match types.get(id) {
+                TypeData::Union(list) | TypeData::Intersection(list) => {
+                    assert_eq!(**list, *members);
+                }
+                TypeData::Ref { args, .. } | TypeData::Tuple { elems: args, .. } => {
+                    assert_eq!(args.actual(), Some(&members[..]));
+                }
+                TypeData::Fns { decls: list, .. } => assert_eq!(**list, *decls),
+                _ => unreachable!(),
+            }
+        }
     }
+    let members = [TypeId::STRING, TypeId::NUMBER];
+    let list = || List::copy_from_slice_in(&members, arena);
     // The other way round, with an alias and an origin.
     let borrowed = ProvenanceKey {
         alias: Some((target, &members)),
@@ -1303,8 +1322,182 @@ fn a_borrowed_key_finds_the_type_that_was_interned_with_its_lists() {
         is_array_pattern: false,
         has_other_instantiation: false,
     };
-    assert_eq!(types.intern_with(TypeData::Union(list()), owned), id);
+    let union = TypeData::Union(ShortList::copy_from_slice_in(&members, arena));
+    assert_eq!(types.intern_with(union, owned), id);
     assert_ne!(types.intern_key(TypeKey::Union(&members)), id);
+}
+
+/// A type of each kind that has `list`, and a function type under a mapper to `list`.
+fn types_with<'s>(tables: &Tables<'s>, task: &Task<'s>, list: &[TypeId]) -> [TypeId; 5] {
+    let types = Types::new(&tables.types, &task.own);
+    let target = Sym {
+        file: A,
+        id: SymbolId(1),
+    };
+    let flags = vec![ElemFlags::REQUIRED; list.len()];
+    let pairs: Vec<(TypeId, TypeId)> = (1..).map(TypeId).zip(list.iter().copied()).collect();
+    [
+        types.intern_key(TypeKey::Union(list)),
+        types.intern_key(TypeKey::Intersection(list)),
+        types.intern_key(TypeKey::Ref { target, args: list }),
+        types.intern_key(TypeKey::Tuple {
+            elems: list,
+            flags: &flags,
+            readonly: false,
+        }),
+        types.intern_key(TypeKey::Fns {
+            decls: &[(A, crate::hir::FnId(list.len() as u32))],
+            mapper: types.mapper_of(&pairs),
+        }),
+    ]
+}
+
+/// Whether a list is in its record or in a block of its own.
+#[test]
+#[cfg_attr(miri, ignore)]
+fn the_lists_of_a_published_record_have_the_published_ids() {
+    let session = Session::new();
+    // With a type of the task in the last place.
+    let lists = |own: TypeId| {
+        [1, 2, 3, 4, 7, 8, 9].map(|len| {
+            let mut list = vec![TypeId::STRING; len];
+            list[len - 1] = own;
+            list
+        })
+    };
+    for pool in POOLS {
+        let tables = Tables::new(&session);
+        let mut finished: Vec<Finished> = (0..2)
+            .map(|index| {
+                let mut task = begin(&session, index);
+                // So that the two tasks have different numbers for `keyof string`.
+                if index == 1 {
+                    tables.keyof(&task, TypeId::NUMBER);
+                }
+                for list in lists(tables.keyof(&task, TypeId::STRING)) {
+                    for ty in types_with(&tables, &task, &list) {
+                        assert!(ty.is_local());
+                        tables.by_id.insert(&task, ty, ty, stored());
+                    }
+                    assert_eq!(
+                        types_with(&tables, &task, &list),
+                        types_with(&tables, &task, &list)
+                    );
+                }
+                tables.finish(&mut task)
+            })
+            .collect();
+        tables.barrier(&mut finished, &pool);
+        let reader = Task::new_in(session.arena());
+        let types = Types::new(&tables.types, &reader.own);
+        for list in lists(tables.keyof(&reader, TypeId::STRING)) {
+            assert!(!list.iter().any(MaybeLocal::is_local));
+            let [union, intersection, reference, tuple, function] =
+                types_with(&tables, &reader, &list);
+            for ty in [union, intersection, reference, tuple, function] {
+                assert!(!ty.is_local());
+                assert_eq!(tables.by_id.get(&reader, &ty), Some(ty));
+            }
+            assert!(matches!(types.get(union), TypeData::Union(of) if **of == *list));
+            assert!(matches!(types.get(intersection), TypeData::Intersection(of) if **of == *list));
+            for ty in [reference, tuple] {
+                let (TypeData::Ref { args, .. } | TypeData::Tuple { elems: args, .. }) =
+                    types.get(ty)
+                else {
+                    unreachable!()
+                };
+                assert_eq!(args.actual(), Some(&list[..]));
+            }
+            let TypeData::Fns { mapper, .. } = types.get(function) else {
+                unreachable!()
+            };
+            assert!(!mapper.is_local());
+            assert!(types.mapping(*mapper).iter().map(|pair| pair.1).eq(list));
+        }
+    }
+}
+
+/// `Atoms::is_symbol_name` and the like.
+#[test]
+#[cfg_attr(miri, ignore)]
+fn what_is_known_about_a_name_is_what_its_text_says() {
+    // A symbol name, a private symbol name, a private name, a numeric name.
+    const NO: [bool; 4] = [false; 4];
+    const NUMERIC: [bool; 4] = [false, false, false, true];
+    let names: [(&[u8], [bool; 4]); 24] = [
+        (b"", NO),
+        (b"name", NO),
+        (b"\xFE", NO),
+        (b"\xFEglobal", NO),
+        (b"@", NO),
+        (b"\xFE@", [true, false, false, false]),
+        (b"\xFE@iterator", [true, false, false, false]),
+        (b"\xFE@unique@7", [true, false, false, false]),
+        (b"\xFE#", [false, true, true, false]),
+        (b"\xFE#x@3", [false, true, true, false]),
+        (b"#", [false, false, true, false]),
+        (b"#x", [false, false, true, false]),
+        (b"x#", NO),
+        (b"0", NUMERIC),
+        (b"7", NUMERIC),
+        (b"10", NUMERIC),
+        (b"1.5", NUMERIC),
+        (b"-1", NUMERIC),
+        (b"NaN", NUMERIC),
+        (b"Infinity", NUMERIC),
+        (b"00", NO),
+        (b"1e3", NO),
+        (b"-", NO),
+        (b"Nan", NO),
+    ];
+    let known = |atoms: &Atoms, atom: Atom| {
+        [
+            atoms.is_symbol_name(atom),
+            atoms.is_private_symbol_name(atom),
+            atoms.is_private_name(atom),
+            atoms.is_numeric_name(atom),
+        ]
+    };
+    let session = Session::new();
+
+    // Names of the program. What is known about several of them is in one word.
+    let tables = Tables::new(&session);
+    let task = begin(&session, 0);
+    let atoms = Atoms::new(&tables.atoms, &task.own);
+    for round in 0..2 {
+        for (text, expected) in names {
+            let atom = tables.atoms.intern(text);
+            assert!(!atom.is_own());
+            assert_eq!(known(&atoms, atom), expected, "{round} {text:?}");
+        }
+    }
+    assert!(!atoms.is_symbol_name(Atom::NONE));
+
+    // Names that a task comes up with, before and after they are published.
+    let tables = Tables::new(&session);
+    let mut by_name = ById::<Atom, TypeId, Buffered>::default();
+    by_name.set_slot(numbered(0));
+    let all: [&dyn Publish; 1] = [&by_name];
+    let mut task = begin(&session, 0);
+    let atoms = Atoms::new(&tables.atoms, &task.own);
+    let mut own = 0;
+    for (text, expected) in names {
+        let atom = atoms.intern(text);
+        own += usize::from(atom.is_own());
+        assert_eq!(known(&atoms, atom), expected, "{text:?}");
+        by_name.insert(&task, atom, TypeId::ANY, stored());
+    }
+    // All but those that every interner starts with.
+    assert!(own >= names.len() - 6);
+    let mut finished = [task.finish_tables(&all, Vec::new())];
+    tables.link(&mut finished, &forwards);
+    let reader = Task::new_in(session.arena());
+    let atoms = Atoms::new(&tables.atoms, &reader.own);
+    for (text, expected) in names {
+        let atom = tables.atoms.lookup(text).unwrap();
+        assert!(!atom.is_own());
+        assert_eq!(known(&atoms, atom), expected, "{text:?}");
+    }
 }
 
 // ───────────────────────────── the containers ─────────────────────────────
@@ -1334,6 +1527,75 @@ fn hashed_lists_its_entries_in_insertion_order() {
         assert_eq!((key, value), (keys[place], expected));
     }
     assert_eq!(hashed.get(spread_word(keys[5]), &keys[5]), None);
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn a_vacancy_is_filled_only_while_it_is_one() {
+    let is = |number: u32| move |found: u32| found == number;
+    // Of a table without slots.
+    let found = Found::default();
+    assert_eq!(found.find(7, |_| true), None);
+    let Err(vacancy) = found.find_or_vacancy(7, |_| true) else {
+        unreachable!()
+    };
+    found.fill(vacancy, 7, 1);
+    assert_eq!(found.find_or_vacancy(7, is(1)).ok(), Some(1));
+    // Two searches for one hash end at one slot, which only the first entry gets.
+    let vacancies = [0; 2].map(|_| found.find_or_vacancy(9, |_| false).unwrap_err());
+    found.fill(vacancies[0], 9, 2);
+    found.fill(vacancies[1], 9, 3);
+    assert_eq!(found.find(9, is(2)), Some(2));
+    assert_eq!(found.find(9, is(3)), Some(3));
+    // The table has grown several times since.
+    let stale = found.find_or_vacancy(11, |_| false).unwrap_err();
+    for number in 4..3000 {
+        found.add(spread_word(u64::from(number)), number);
+    }
+    found.fill(stale, 11, 3000);
+    assert_eq!(found.find(11, is(3000)), Some(3000));
+    for number in 4..3000 {
+        let spread = spread_word(u64::from(number));
+        assert_eq!(found.find(spread, is(number)), Some(number));
+        assert_eq!(found.find(spread, |_| false), None);
+    }
+    assert_eq!(found.find(7, is(1)), Some(1));
+    assert_eq!(found.find(9, is(3)), Some(3));
+}
+
+/// The table is replaced when an entry would make it more than three quarters full.
+#[test]
+#[cfg_attr(miri, ignore)]
+fn what_is_found_stays_found_when_the_table_is_replaced() {
+    // The first table has 256 slots.
+    for count in [1, 191, 192, 193, 384, 385] {
+        let mut found = Found::default();
+        for number in 0..count {
+            found.add(spread_word(u64::from(number)), number);
+            for earlier in [0, number / 2, number] {
+                let spread = spread_word(u64::from(earlier));
+                assert_eq!(found.find(spread, |it| it == earlier), Some(earlier));
+            }
+        }
+        assert_eq!(found.find(spread_word(u64::from(count)), |_| true), None);
+        found.clear();
+        assert_eq!(found.find(spread_word(0), |_| true), None);
+        found.add(spread_word(0), 5);
+        assert_eq!(found.find(spread_word(0), |_| true), Some(5));
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn the_top_bits_of_a_hash_are_its_shard() {
+    for shards in [1, 2, 8, 64, 256] {
+        for top in 0..256 {
+            for rest in [0, (1 << 56) - 1] {
+                let shard = shard_among((top as u64) << 56 | rest, shards);
+                assert_eq!(shard, top / (256 / shards));
+            }
+        }
+    }
 }
 
 #[test]

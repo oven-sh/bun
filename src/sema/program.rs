@@ -523,6 +523,9 @@ pub struct Files<'s> {
     ambient_modules: ArenaHashMap<'s, Atom, Sym>,
     /// `declare module "*.svg"`
     ambient_patterns: ArenaVec<'s, (&'s [u8], &'s [u8], Sym)>,
+    /// `best_ambient_pattern` of every specifier of every file. Most lookups of a specifier end there, in a mode in which the
+    /// file does not import it, and there can be a hundred patterns.
+    ambient_patterns_of_specifiers: ArenaHashMap<'s, Atom, Option<Sym>>,
     /// `patternAmbientModuleAugmentations`: keyed by the declared name, the symbol that `declare
     /// module "a.svg"` in a module creates from `declare module "*.svg"`.
     pattern_augmentations: ArenaHashMap<'s, Atom, Sym>,
@@ -5505,6 +5508,7 @@ impl<'s> Files<'s> {
             },
             ambient_modules: map_in(arena),
             ambient_patterns: ArenaVec::new_in(arena),
+            ambient_patterns_of_specifiers: map_in(arena),
             pattern_augmentations: map_in(arena),
             merged_symbols: map_in(arena),
             merged_parts: map_in(arena),
@@ -6760,6 +6764,16 @@ impl<'s> Files<'s> {
                     None => sym,
                 };
                 self.ambient_modules.insert(name, merged);
+            }
+        }
+        if !self.ambient_patterns.is_empty() {
+            for &id in self.order {
+                for &specifier in self.modules[id.idx()].bound.specifiers.iter() {
+                    if !self.ambient_patterns_of_specifiers.contains_key(&specifier) {
+                        let best = self.best_ambient_pattern(specifier);
+                        self.ambient_patterns_of_specifiers.insert(specifier, best);
+                    }
+                }
             }
         }
         for (file, name, sym) in augmentations {
@@ -8189,31 +8203,31 @@ impl<'s> Files<'s> {
                 .is_module()
                 .then(|| self.file_symbol(target));
         }
-        if !self.ambient_patterns.is_empty() {
-            let text = self.atoms.bytes(spec);
-            // `FindBestPatternMatch`: the one with the longest prefix, and of those the first.
-            let mut best: Option<(usize, Sym)> = None;
-            for &(prefix, suffix, sym) in &self.ambient_patterns {
-                if best.is_none_or(|b| prefix.len() > b.0)
-                    && text.len() >= prefix.len() + suffix.len()
-                    && text.starts_with(prefix)
-                    && text.ends_with(suffix)
-                {
-                    best = Some((prefix.len(), sym));
-                }
-            }
-            if let Some((_, pattern)) = best {
-                return Some(
-                    self.canonical(
-                        self.pattern_augmentations
-                            .get(&spec)
-                            .copied()
-                            .unwrap_or(pattern),
-                    ),
-                );
+        if self.ambient_patterns.is_empty() {
+            return None;
+        }
+        let pattern = match self.ambient_patterns_of_specifiers.get(&spec) {
+            Some(&best) => best,
+            None => self.best_ambient_pattern(spec),
+        }?;
+        let augmented = self.pattern_augmentations.get(&spec).copied();
+        Some(self.canonical(augmented.unwrap_or(pattern)))
+    }
+
+    /// `FindBestPatternMatch` among `c.patternAmbientModules`: the one with the longest prefix, and of those the first.
+    fn best_ambient_pattern(&self, spec: Atom) -> Option<Sym> {
+        let text = self.atoms.bytes(spec);
+        let mut best: Option<(usize, Sym)> = None;
+        for &(prefix, suffix, sym) in &self.ambient_patterns {
+            if best.is_none_or(|b| prefix.len() > b.0)
+                && text.len() >= prefix.len() + suffix.len()
+                && text.starts_with(prefix)
+                && text.ends_with(suffix)
+            {
+                best = Some((prefix.len(), sym));
             }
         }
-        None
+        best.map(|(_, pattern)| pattern)
     }
 
     /// `core.Some(symbol.Declarations, isSyntacticDefault)`

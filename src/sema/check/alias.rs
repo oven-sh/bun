@@ -375,6 +375,34 @@ impl<'p, 's> Checker<'p, 's> {
         if self.types().instantiation_class(ty) == InstantiationClass::Unchanged {
             return ty;
         }
+        // For any other type the worker calls `instantiate`, which is the level.
+        let is_instantiated_here = self.types().deferred(ty).is_some()
+            || match self.data(ty) {
+                TypeData::Union(_)
+                | TypeData::Intersection(_)
+                | TypeData::IndexedAccess { .. }
+                | TypeData::Cond { .. }
+                | TypeData::Anon {
+                    origin: Origin::Mapped(..),
+                    ..
+                } => true,
+                TypeData::Tuple { .. } => self.stored_alias(ty).is_none(),
+                _ => false,
+            };
+        if !instantiate::COUNTS_INSTANTIATIONS_WITH_AN_ALIAS || !is_instantiated_here {
+            return self.instantiate_with_alias_worker(ty, mapper, alias);
+        }
+        self.in_instantiation(mapper, |c| {
+            c.instantiate_with_alias_worker(ty, mapper, alias)
+        })
+    }
+
+    fn instantiate_with_alias_worker(
+        &mut self,
+        ty: TypeId,
+        mapper: MapperId,
+        alias: (Sym, &[TypeId]),
+    ) -> TypeId {
         if self.hands_out_symbol_ids() {
             self.get_symbol_id_of_object_type_alias(ty);
         }

@@ -11,6 +11,7 @@ use super::infer::{Inference, PRIORITY_ALWAYS_STRICT, PRIORITY_NO_CONSTRAINTS};
 use super::links::MappedPart;
 use super::related::Place;
 use super::shape::{IgnoreReturnTypes, IgnoreThisTypes, PartialMatch, Resolved};
+use super::shortcuts::task_fact;
 use super::*;
 use crate::util::SharedSort;
 use crate::util::{FxHashSet, FxHasher};
@@ -568,29 +569,23 @@ impl<'p, 's> Checker<'p, 's> {
 
     #[inline]
     pub(super) fn is_type_param(&self, ty: TypeId) -> bool {
-        matches!(
-            self.data(ty),
-            TypeData::TypeParam(..) | TypeData::ThisParam(_) | TypeData::Marker(_)
-        )
+        self.is_kind(ty, tf::TYPE_PARAMETER)
     }
 
     #[inline]
     pub(super) fn is_intersection(&self, ty: TypeId) -> bool {
-        matches!(self.data(ty), TypeData::Intersection(_))
+        self.is_kind(ty, tf::INTERSECTION)
     }
 
     #[inline]
     pub(super) fn is_union_or_intersection(&self, ty: TypeId) -> bool {
-        matches!(
-            self.data(ty),
-            TypeData::Union(_) | TypeData::Intersection(_)
-        )
+        self.is_kind(ty, tf::UNION_OR_INTERSECTION)
     }
 
     /// `TypeFlagsInstantiable`
     #[inline]
     pub(super) fn is_instantiable(&self, ty: TypeId) -> bool {
-        is_instantiable_kind(self.data(ty))
+        self.is_kind(ty, tf::INSTANTIABLE)
     }
 
     /// `TypeFlagsPrimitive`, which `boolean` and an enum have though they are unions.
@@ -801,15 +796,21 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // `ObjectFlagsIsUnknownLikeUnionComputed`: the first answer stays, whatever is resolved
         // later.
-        if let Some(&known) = self.unknown_like_unions.get(&ty) {
-            return known;
+        let known = self.task_facts.get(ty);
+        if known & task_fact::KNOWS_UNKNOWN_LIKE_UNION != 0 {
+            return known & task_fact::IS_UNKNOWN_LIKE_UNION != 0;
         }
         let before = self.non_cacheable_mark();
         let is_unknown_like = parts
             .iter()
             .any(|&p| self.is_empty_anonymous_object_type(p));
         if before == self.non_cacheable_mark() {
-            self.unknown_like_unions.insert(ty, is_unknown_like);
+            let all = task_fact::KNOWS_UNKNOWN_LIKE_UNION | task_fact::IS_UNKNOWN_LIKE_UNION;
+            let facts = match is_unknown_like {
+                true => all,
+                false => task_fact::KNOWS_UNKNOWN_LIKE_UNION,
+            };
+            self.task_facts.replace(ty, all, facts);
         }
         is_unknown_like
     }
@@ -1467,20 +1468,26 @@ impl<'p, 's> Checker<'p, 's> {
         }
         if let TypeData::Intersection(parts) = self.data(t) {
             // `Partial<T>[K] & {}` is `T[K] & {}`.
-            let has_instantiable = self.maybe_type_of_kind(t, tf::INSTANTIABLE)
-                && parts.iter().any(|&p| self.is_instantiable(p));
-            let skips = shortcuts::NORMALIZED_INTERSECTIONS && !has_instantiable;
+            let skips = shortcuts::NORMALIZED_INTERSECTIONS
+                && !self.maybe_type_of_kind(t, tf::INSTANTIABLE);
             if skips && !shortcuts::SHADOW {
                 return t;
             }
             let before = skips.then(|| self.traces());
-            let has_nullable_or_empty = parts.iter().any(|&p| {
-                p.is_null() || p.is_undefined() || self.is_empty_anonymous_object_type(p)
+            // `shouldNormalizeIntersection`
+            let (mut has_instantiable, mut has_nullable_or_empty) = (false, false);
+            let should_normalize = parts.iter().any(|&p| {
+                has_instantiable = has_instantiable || self.is_instantiable(p);
+                has_nullable_or_empty = has_nullable_or_empty
+                    || p.is_null()
+                    || p.is_undefined()
+                    || self.is_empty_anonymous_object_type(p);
+                has_instantiable && has_nullable_or_empty
             });
             if before.is_some_and(|before| before != self.traces()) {
                 self.fact_differs_for("shouldNormalizeIntersection resolves nothing", &[t]);
             }
-            if has_instantiable && has_nullable_or_empty {
+            if should_normalize {
                 let normalized: Vec<TypeId> =
                     parts.iter().map(|&p| self.normalized(p, writing)).collect();
                 if normalized[..] != parts[..] {
@@ -1502,20 +1509,20 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getSimplifiedIndexedAccessType`
     fn simplified_indexed_access(&mut self, t: TypeId, writing: bool) -> TypeId {
-        if let Some(&known) = self.simplified.get(&(t, writing)) {
+        if let Some(known) = self.simplified[usize::from(writing)].get(t) {
             return known;
         }
         let cycles_before = self.cycles;
-        self.simplified.insert((t, writing), t);
+        self.simplified[usize::from(writing)].insert(t, t);
         let mut result = self.simplified_indexed_access_worker(t, writing);
         if result != t {
             result = self.filter(result, |_, m| m != t);
         }
         // A result computed while a resolution cycle was hit is not cacheable.
         if self.cycles != cycles_before {
-            self.simplified.remove(&(t, writing));
+            self.simplified[usize::from(writing)].remove(t);
         } else if result != t {
-            self.simplified.insert((t, writing), result);
+            self.simplified[usize::from(writing)].insert(t, result);
         }
         result
     }
@@ -1683,14 +1690,14 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getSimplifiedConditionalType`: `T extends U ? T : never` and `T extends U ? never : T`.
     fn simplified_conditional(&mut self, t: TypeId, writing: bool) -> TypeId {
-        if let Some(&known) = self.simplified.get(&(t, writing)) {
+        if let Some(known) = self.simplified[usize::from(writing)].get(t) {
             return known;
         }
         let cycles_before = self.cycles;
         let result = self.simplified_conditional_worker(t, writing);
         // A result computed while a resolution cycle was hit is not cacheable.
         if self.cycles == cycles_before {
-            self.simplified.insert((t, writing), result);
+            self.simplified[usize::from(writing)].insert(t, result);
         }
         result
     }
@@ -1886,6 +1893,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `checkType`, `extendsType`, `resolvedTrueType` or `resolvedFalseType` of the conditional type `t`.
     pub(super) fn cond_piece(&mut self, t: TypeId, which: usize) -> TypeId {
         if !links::KEEPS_CONDITIONAL_PARTS {
+            self.links.note_left_open();
             return self.derive_cond_piece(t, which);
         }
         if let Some(kept) = self.kept_part(t, links::Kind::Conditional, which) {
@@ -1932,7 +1940,24 @@ impl<'p, 's> Checker<'p, 's> {
         self.cond_piece(t, 3)
     }
 
-    pub(super) fn cond_infer_params(&mut self, t: TypeId) -> Vec<TypeId> {
+    /// `root.inferTypeParameters`
+    pub(super) fn cond_infer_params(&mut self, t: TypeId) -> SmallVec<[TypeId; 4]> {
+        if !links::KEEPS_CONDITIONAL_PARTS {
+            return self.derive_cond_infer_params(t);
+        }
+        if let Some(kept) = self.links.infer_type_parameters(t) {
+            if links::CHECKS_CONDITIONAL_PARTS && self.derive_cond_infer_params(t) != kept {
+                let derived = format!("derived {:?}", self.derive_cond_infer_params(t));
+                self.kept_part_differs(t, "inferTypeParameters", &format!("{kept:?}"), &derived);
+            }
+            return kept;
+        }
+        let params = self.derive_cond_infer_params(t);
+        self.links.keep_infer_type_parameters(t, &params);
+        params
+    }
+
+    fn derive_cond_infer_params(&mut self, t: TypeId) -> SmallVec<[TypeId; 4]> {
         let (file, _, _, nodes) = self.cond_origin(t);
         let mut params = Vec::new();
         self.collect_infer_params(file, nodes[1], &mut params);
@@ -1990,6 +2015,52 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getDefaultConstraintOfConditionalType`
     pub(super) fn default_constraint_of_conditional(&mut self, t: TypeId) -> TypeId {
+        if !links::KEEPS_CONDITIONAL_PARTS {
+            return self.derive_default_constraint_of_conditional(t);
+        }
+        // The flag: `t` has `infer` type parameters. Then the derivation that is left out makes an inference, which gives
+        // the same where nothing in progress can change it.
+        let cell = (links::Kind::Conditional, links::DEFAULT_CONSTRAINT);
+        if let Some((kept, infers)) = self.kept_part::<(TypeId, bool)>(t, cell.0, cell.1)
+            && (!infers
+                || self.has_stack_for_kept_part() && self.obstacle_to_leaving_out().is_none())
+        {
+            if links::CHECKS_CONDITIONAL_PARTS {
+                self.check_kept_part(t, "resolvedDefaultConstraint", kept, |c| {
+                    c.derive_default_constraint_of_conditional(t)
+                });
+            }
+            return kept;
+        }
+        self.derive_and_keep_default_constraint_of_conditional(t)
+    }
+
+    /// Nothing but this asks for `resolvedInferredTrueType`, so that has no cell of its own.
+    #[inline(never)]
+    fn derive_and_keep_default_constraint_of_conditional(&mut self, t: TypeId) -> TypeId {
+        let (file, _, _, nodes) = self.cond_origin(t);
+        // Without `infer` it is the union of two parts.
+        let infers = !self.cond_infer_params(t).is_empty();
+        let is_at_rest =
+            !infers || self.obstacle_to_leaving_out().is_none() && self.is_settled_for_inference();
+        let ((constraint, _), stored) = self.derive_settled(
+            |c| c.derive_with_inference(|c| c.derive_default_constraint_of_conditional(t)),
+            |c, &(_, leaves_nothing)| {
+                is_at_rest
+                    && leaves_nothing
+                    && (!infers
+                        || c.is_type_node_settled(file, nodes[0])
+                            && c.is_type_node_settled(file, nodes[2]))
+            },
+        );
+        if let Some(stored) = stored {
+            let cell = (t, links::Kind::Conditional, links::DEFAULT_CONSTRAINT);
+            self.keep_part(cell, (constraint, infers), stored);
+        }
+        constraint
+    }
+
+    fn derive_default_constraint_of_conditional(&mut self, t: TypeId) -> TypeId {
         let (yes, no) = (self.cond_inferred_true(t), self.cond_false(t));
         // A branch that is `any` would make the whole assignable to anything.
         if self.is_any(yes) {
@@ -2099,6 +2170,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// properties optional.
     pub(super) fn mapped_template(&mut self, t: TypeId) -> TypeId {
         if !links::KEEPS_MAPPED_PARTS {
+            self.links.note_left_open();
             return self.derive_mapped_template(t);
         }
         let part = MappedPart::TemplateType;
@@ -2200,6 +2272,7 @@ impl<'p, 's> Checker<'p, 's> {
             || !self.mapped_constraints_in_progress.is_empty()
             || self.links.has_found_circular_mapped_constraint()
         {
+            self.links.note_left_open();
             return self.derive_mapped_keys(t);
         }
         let part = MappedPart::ConstraintType;
@@ -2227,6 +2300,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getNameTypeFromMappedType`
     pub(super) fn mapped_name_type(&mut self, t: TypeId) -> Option<TypeId> {
         if !links::KEEPS_MAPPED_PARTS {
+            self.links.note_left_open();
             return self.derive_mapped_name_type(t);
         }
         let part = MappedPart::NameType;
@@ -2266,6 +2340,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getModifiersTypeFromMappedType`. `None`: `unknown`.
     pub(super) fn mapped_modifiers_type(&mut self, t: TypeId) -> Option<TypeId> {
         if !links::KEEPS_MAPPED_PARTS {
+            self.links.note_left_open();
             return self.derive_mapped_modifiers_type(t);
         }
         let part = MappedPart::ModifiersType;
@@ -2284,6 +2359,43 @@ impl<'p, 's> Checker<'p, 's> {
         let (file, node, mapper) = self.mapped_origin(t)?;
         let (declared, _) = self.mapped_modifiers_source(file, node)?;
         Some(self.instantiate(declared, mapper))
+    }
+
+    /// `getApparentTypeOfMappedType`
+    pub(super) fn apparent_type_of_mapped(&mut self, t: TypeId) -> TypeId {
+        // It begins with the constraint type of the mapped type as it is declared: as in `mapped_keys`.
+        if !links::KEEPS_MAPPED_PARTS
+            || !self.mapped_constraints_in_progress.is_empty()
+            || self.links.has_found_circular_mapped_constraint()
+        {
+            self.links.note_left_open();
+            return self.derive_apparent_type_of_mapped(t).0;
+        }
+        let part = MappedPart::ApparentType;
+        if let Some(kept) =
+            self.kept_mapped_part(t, part, |c, t| c.derive_apparent_type_of_mapped(t).0)
+        {
+            return kept;
+        }
+        let Some((file, node, mapper)) = self.mapped_origin(t) else {
+            return t;
+        };
+        // The base constraint of the modifiers type is in `Program::constraints`, by the counters. An array or a tuple is
+        // made again each time, from instantiations with other mappers: they all stay where none is in progress.
+        let ((apparent, _), stored) = self.derive_settled(
+            |c| c.derive_apparent_type_of_mapped(t),
+            |c, &(apparent, has_modifiers_type)| {
+                !c.links.has_found_circular_mapped_constraint()
+                    && (!has_modifiers_type
+                        || c.is_mapper_idle(mapper)
+                            && c.is_mapped_modifiers_source_settled(file, node)
+                            && (apparent == t || c.instantiation_depth == 0))
+            },
+        );
+        if let Some(stored) = stored {
+            self.keep_part((t, links::Kind::Mapped, part as usize), apparent, stored);
+        }
+        apparent
     }
 
     /// `getApparentMappedTypeKeys` for `{ [P in keyof X as N]: .. }`: `N` (`name`) applied to the
@@ -4952,7 +5064,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if relation == Relation::Comparable && self.is_type_param(source) {
                     // Two type parameters are comparable only if one is constrained to the other.
                     if let Some(constraint) = self.constraint_of_type_param(source)
-                        && self.some_type(constraint, |c, m| c.is_type_param(m))
+                        && self.is_some_type_of_kind(constraint, tf::TYPE_PARAMETER)
                     {
                         return self.is_related_to(r, constraint, target, REC_SOURCE);
                     }
@@ -5314,7 +5426,8 @@ impl<'p, 's> Checker<'p, 's> {
                         && source_extends == target_extends
                         && !(self.params_mentioned_in(source_extends, &source_params))
                             .contains(&false)
-                        && !self.inferred_between_same_extends.insert(source_extends);
+                        && !(self.task_facts)
+                            .add(source_extends, task_fact::HAS_INFERRED_BETWEEN_SAME_EXTENDS);
                     if !source_params.is_empty() && !is_repeated {
                         let around = self.cond_origin(source).2;
                         let inferred = self.infer_from_types_comparing(
@@ -5665,12 +5778,12 @@ impl<'p, 's> Checker<'p, 's> {
     /// Whether the list of properties that the intersection `ty` keeps lacks the members of a
     /// constituent (`listed_members`).
     pub(super) fn has_partial_list(&self, ty: TypeId) -> bool {
-        matches!(self.data(ty), TypeData::Intersection(_))
+        self.is_intersection(ty)
             && (self.p.listed_properties.get(&self.task, &ty)).is_some_and(|listed| listed != ty)
     }
 
     pub(super) fn listed_members(&mut self, ty: TypeId) -> Option<Members<'p>> {
-        if matches!(self.data(ty), TypeData::Intersection(_))
+        if self.is_intersection(ty)
             && let Some(listed) = self.p.listed_properties.get(&self.task, &ty)
             && listed != ty
         {
@@ -6158,10 +6271,9 @@ impl<'p, 's> Checker<'p, 's> {
             return Ternary::FALSE;
         };
         // A cached shape does not change. An intersection has its signatures elsewhere.
-        let is_intersection = |c: &Self, ty| matches!(c.data(ty), TypeData::Intersection(_));
         if self.provisional_shapes.len() == provisional
-            && !is_intersection(self, has_properties)
-            && !is_intersection(self, target)
+            && !self.is_intersection(has_properties)
+            && !self.is_intersection(target)
         {
             *both = Some((sm, tm));
         }
@@ -6284,7 +6396,9 @@ impl<'p, 's> Checker<'p, 's> {
         if a.0.source != b.0.source {
             return false;
         }
-        if (a.0.mapper, a.1) == (b.0.mapper, b.1) {
+        if (a.0.mapper, a.1) == (b.0.mapper, b.1)
+            && self.types().key_apart(a.0) == self.types().key_apart(b.0)
+        {
             return true;
         }
         // `instantiateSymbol` returns it itself, in every type that inherits it.
@@ -6294,7 +6408,8 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return true;
         }
-        let (a, b) = (self.compose(a.0.mapper, a.1), self.compose(b.0.mapper, b.1));
+        let (own_a, own_b) = (self.mapper_of_prop(a.0), self.mapper_of_prop(b.0));
+        let (a, b) = (self.compose(own_a, a.1), self.compose(own_b, b.1));
         // A mapper stores `H.this -> H.this`, which maps nothing.
         let types = &self.types();
         let moved = |m| types.mapping(m).iter().filter(|pair| pair.0 != pair.1);
@@ -7069,7 +7184,7 @@ impl<'p, 's> Checker<'p, 's> {
                 None => self.param_type_at(params, count - 1),
             };
             let ty = ty.unwrap_or(TypeId::ANY);
-            if !self.some_type(ty, |_, m| m == TypeId::VOID) {
+            if !self.is_some_type_of_kind(ty, tf::VOID) {
                 break;
             }
             count -= 1;
@@ -7282,8 +7397,8 @@ impl<'p, 's> Checker<'p, 's> {
             // `GetNonNullableType` removes.
             let nullish = |c: &Self, ty: TypeId| {
                 (
-                    c.some_type(ty, |_, m| m.is_undefined()),
-                    c.some_type(ty, |_, m| m.is_null()),
+                    c.is_some_type_of_kind(ty, tf::UNDEFINED),
+                    c.is_some_type_of_kind(ty, tf::NULL),
                 )
             };
             let callbacks = source_sig
@@ -7820,7 +7935,7 @@ impl<'p, 's> Checker<'p, 's> {
                     pieces.push(
                         if self.is_assignable(sb, tb)
                             || self.is_any(s)
-                            || self.every_type(s, Self::is_string_like)
+                            || self.is_every_type_of_kind(s, tf::STRING_LIKE)
                         {
                             s
                         } else {

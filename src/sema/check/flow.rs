@@ -6,12 +6,13 @@ use super::errors::Container;
 use super::expr::TargetKind;
 use super::related::Place;
 use super::shape::UntypedProperty;
+use super::unions::{CHECKS_JOINS_BY_POSITION, JOINS_PARTS_OF_INITIAL_TYPE, PartsOf};
 use super::*;
 use crate::bind::{
     Decl, Flow, FlowId, FlowTarget, FnOwner, MAX_FLOW_DEPTH, MemberOwner, Parent, PatParent,
     SymbolId, UNREACHABLE,
 };
-use crate::util::SharedSort;
+use crate::util::{PositionSet, SharedSort};
 use smallvec::{SmallVec, smallvec};
 
 /// See `Checker::access_key`.
@@ -200,6 +201,9 @@ pub(super) struct FlowMemo {
     tests_of: Option<FileId>,
     /// The same for the tests of other files.
     other_tests: FxHashMap<(FileId, FlowId), About>,
+    /// `getTypeWithFacts`, keyed by the type and the facts, and `getAdjustedTypeWithFacts`, by the
+    /// type and the facts with `ADJUSTED`.
+    types_with_facts: instantiate::Recent,
     /// `getAssignmentReducedType`, keyed by declared and assigned type.
     assignment_reduced_types: FxHashMap<(TypeId, TypeId), TypeId>,
     /// `getNarrowedType`, keyed by type, candidate, `assumeTrue` and `checkDerived`.
@@ -371,6 +375,17 @@ impl SharedFlows {
             self.many.insert(flow, ty);
         }
     }
+}
+
+/// How `getUnionOrEvolvingArrayType` puts types together.
+#[derive(Copy, Clone)]
+enum Join<'a> {
+    /// `UnionReductionLiteral`
+    Literal,
+    /// `UnionReductionSubtype`
+    Subtype,
+    /// `UnionReductionLiteral`, of parts of this union, which are at these positions in it.
+    Parts(TypeId, &'a PositionSet),
 }
 
 /// What an invocation of `getTypeAtFlowNode` does to the type at `flow.Antecedent`.
@@ -600,6 +615,17 @@ impl About {
 
 /// See `first_unsettled_call`.
 const NEVER_RETURNS: u32 = u32::MAX - 1;
+
+/// See `Checker::kept_type_with_facts`. `false`: every answer is computed.
+const KEEPS_TYPES_WITH_FACTS: bool = true;
+/// For debugging: an answer that is kept is computed as well. A difference, or a trace that
+/// computing it leaves, is a panic that has the file, the types and the `Traces` before and after.
+const CHECKS_TYPES_WITH_FACTS: bool = false;
+/// Not one of `facts`.
+const ADJUSTED: u32 = 1 << 31;
+/// In `FlowMemo::types_with_facts`, in place of a type: the answer is not kept, and no attempt is made
+/// to keep it.
+const COUNTS_EACH_TIME: u32 = u32::MAX;
 
 /// What `checkNonNullTypeWithReporter` reports.
 #[derive(Copy, Clone)]
@@ -1081,7 +1107,77 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getTypeWithFacts`
     fn type_with_facts(&mut self, ty: TypeId, include: u32) -> TypeId {
-        self.filter(ty, |c, m| c.has_type_facts(m, include))
+        self.kept_type_with_facts(ty, include, |c| {
+            c.filter(ty, |c, m| c.has_type_facts(m, include))
+        })
+    }
+
+    /// FOR SPEED: what `compute` makes of `ty`, from `FlowMemo::types_with_facts` if it is there
+    /// under `key`. The tests for truthiness, for `undefined` and for `null` in a file are about few
+    /// types, and so is every `x!` and `x?.y`.
+    ///
+    /// The computation that is kept has left no trace (`Traces`): it made no query, created no type,
+    /// reported nothing and instantiated nothing. So it found all it asked for in tables, which
+    /// keep what they have, and the next one would do the same. That leaves out the first one for
+    /// a type whose members it resolves. And it leaves out every one that makes `NonNullable<T>` of
+    /// a member: `type_alias_instantiation` adds to `instantiation_count` each time.
+    fn kept_type_with_facts(
+        &mut self,
+        ty: TypeId,
+        key: u32,
+        compute: impl Fn(&mut Self) -> TypeId,
+    ) -> TypeId {
+        if !KEEPS_TYPES_WITH_FACTS || !self.is_at_rest_for_type_facts() {
+            return compute(self);
+        }
+        if let Some(known) = self.flow_memo.types_with_facts.get(ty.0, key) {
+            if known == COUNTS_EACH_TIME {
+                return compute(self);
+            }
+            if CHECKS_TYPES_WITH_FACTS {
+                let before = self.traces();
+                let again = compute(self);
+                let after = self.traces();
+                if again.0 != known || after != before {
+                    let what = format!(
+                        "a kept type with the facts {key:#x}, before it {before:?}, after it {after:?}"
+                    );
+                    self.union_differs(&what, &[ty], &[TypeId(known)], &[again]);
+                }
+            }
+            return TypeId(known);
+        }
+        let traces = |c: &Self| (c.traces(), c.times_cut_short.get(), c.taints);
+        let resolved = |c: &Self| (c.work, c.types().first_new_type_id());
+        let (before, resolved_before) = (traces(self), resolved(self));
+        let (narrowed, stored) = self.run_memoizable(&compute);
+        // No table keeps the answer: see `Checker::scopes_begun`.
+        self.scopes_begun -= 1;
+        if stored.is_some() && traces(self) == before {
+            let kept = &mut self.flow_memo.types_with_facts;
+            kept.put(ty.0, key, narrowed.0);
+        } else if stored.is_some() && resolved(self) == resolved_before {
+            // Nothing was left to resolve, so the next one leaves the same trace.
+            let kept = &mut self.flow_memo.types_with_facts;
+            kept.put(ty.0, key, COUNTS_EACH_TIME);
+        }
+        narrowed
+    }
+
+    /// Whether nothing is in progress that changes what `kept_type_with_facts` computes, or what
+    /// that leaves behind, without a trace.
+    /// - An instantiation. While a mapper is active, an `instantiate` with it counts once for each
+    ///   type. And `instantiate` and `members` look at `index_infos_in_instantiation` and
+    ///   `unresolved_members` before they look into a table.
+    /// - Nothing at all: then every comparison begins with `instantiation_count` at 0.
+    fn is_at_rest_for_type_facts(&self) -> bool {
+        let is_idle = self.stack.is_empty()
+            && self.current_source_element.is_none()
+            && self.outermost_comparison.is_none();
+        !is_idle
+            && self.instantiation_depth == 0
+            && self.index_infos_in_instantiation.is_empty()
+            && self.unresolved_members.is_empty()
     }
 
     /// `getAdjustedTypeWithFacts`
@@ -1103,6 +1199,13 @@ impl<'p, 's> Checker<'p, 's> {
                 ty
             };
         }
+        self.kept_type_with_facts(ty, include | ADJUSTED, |c| {
+            c.adjusted_type_with_facts_uncached(ty, include)
+        })
+    }
+
+    fn adjusted_type_with_facts_uncached(&mut self, ty: TypeId, include: u32) -> TypeId {
+        use facts::*;
         let strict = self.p.files.options.strict_null_checks;
         if !strict {
             return self.type_with_facts(ty, include);
@@ -3157,14 +3260,15 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> TypeId {
         let equals_operator = matches!(op, BinOp::EqEq | BinOp::EqEqEq);
         let is_loose = matches!(op, BinOp::EqEq | BinOp::NotEq);
-        let is_nullable = |m: TypeId| m.is_undefined() || is_loose && m.is_null();
+        let nullable = match is_loose {
+            true => tf::NULLABLE,
+            false => tf::UNDEFINED,
+        };
         let value_type = self.get_type_of_expression(file, value);
         let remove_nullable = if equals_operator == sense {
-            self.every_type(value_type, |c, m| {
-                !(c.is_any(m) || m == TypeId::UNKNOWN || is_nullable(m))
-            })
+            !self.is_some_type_of_kind(value_type, tf::ANY | tf::UNKNOWN | nullable)
         } else {
-            self.every_type(value_type, |_, m| is_nullable(m))
+            self.is_every_type_of_kind(value_type, nullable)
         };
         if remove_nullable {
             self.adjusted_type_with_facts(ty, facts::NE_UNDEFINED_OR_NULL)
@@ -6339,7 +6443,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `in` or a type guard, and is removed again where it joins a type it is a subtype of.
     fn union_or_evolving(&mut self, types: &[TypeId], walk: &mut Walk) -> TypeId {
         if types.len() < 2 {
-            return self.union_or_evolving_with(types, false);
+            return self.union_or_evolving_with(types, Join::Literal);
         }
         let initial = self.initial_of(walk);
         let is_subset = |c: &Self, t: TypeId| {
@@ -6347,12 +6451,29 @@ impl<'p, 's> Checker<'p, 's> {
                 || t.is_never()
                 || c.is_union(initial) && c.is_type_subset_of_union(t, initial)
         };
-        let subtype_reduction = !types.iter().all(|&t| is_subset(self, t));
-        self.union_or_evolving_with(types, subtype_reduction)
+        if !JOINS_PARTS_OF_INITIAL_TYPE || !self.is_union(initial) {
+            return match types.iter().all(|&t| is_subset(self, t)) {
+                true => self.union_or_evolving_with(types, Join::Literal),
+                false => self.union_or_evolving_with(types, Join::Subtype),
+            };
+        }
+        // FOR SPEED: to see that they are parts of the initial type is to find where they are in it.
+        let parts = self.parts_of_union(initial, types);
+        if CHECKS_JOINS_BY_POSITION {
+            let are_parts = types.iter().all(|&t| is_subset(self, t));
+            assert_eq!(are_parts, !matches!(parts, PartsOf::Other), "{types:?}");
+        }
+        match &parts {
+            PartsOf::Other => self.union_or_evolving_with(types, Join::Subtype),
+            PartsOf::OutOfOrder => self.union_or_evolving_with(types, Join::Literal),
+            PartsOf::InOrder(positions) => {
+                self.union_or_evolving_with(types, Join::Parts(initial, positions))
+            }
+        }
     }
 
     /// `getUnionOrEvolvingArrayType`
-    fn union_or_evolving_with(&mut self, types: &[TypeId], subtype_reduction: bool) -> TypeId {
+    fn union_or_evolving_with(&mut self, types: &[TypeId], join: Join<'_>) -> TypeId {
         if let [only] = *types
             && !matches!(
                 self.data(only),
@@ -6365,10 +6486,10 @@ impl<'p, 's> Checker<'p, 's> {
             .iter()
             .any(|&t| matches!(self.data(t), TypeData::EvolvingArray(_)))
         {
-            let union = if subtype_reduction {
-                self.union_reduced(types)
-            } else {
-                self.union(types)
+            let union = match join {
+                Join::Literal => self.union(types),
+                Join::Subtype => self.union_reduced(types),
+                Join::Parts(whole, positions) => self.union_of_parts(whole, positions, types),
             };
             let union = self.recombine_unknown_type(union);
             // The union of all the members of the declared type is the declared type. A fresh
@@ -6393,7 +6514,11 @@ impl<'p, 's> Checker<'p, 's> {
                         .iter()
                         .map(|&t| self.finalize_evolving_array(t))
                         .collect();
-                    return self.union_or_evolving_with(&types, subtype_reduction);
+                    let join = match join {
+                        Join::Parts(..) => Join::Literal,
+                        join => join,
+                    };
+                    return self.union_or_evolving_with(&types, join);
                 }
             }
         }
@@ -6834,7 +6959,7 @@ impl<'p, 's> Checker<'p, 's> {
                             }
                             if !types.contains(&t) {
                                 types.push(t);
-                                let so_far = self.union_or_evolving_with(&types, false);
+                                let so_far = self.union_or_evolving_with(&types, Join::Literal);
                                 if let Some(shared) = self.flow_loops.last_mut() {
                                     shared.4 = so_far;
                                 }
@@ -6922,13 +7047,9 @@ impl<'p, 's> Checker<'p, 's> {
         report: impl FnOnce(&mut Self, NonNullError),
     ) -> TypeId {
         // Most types have neither fact, which their kind alone determines.
-        if !self.some_type(ty, |c, m| {
-            m == TypeId::UNKNOWN
-                || m.is_undefined()
-                || m.is_null()
-                || c.is_deferred(m)
-                || c.is_intersection(m)
-        }) {
+        let kinds = tf::UNKNOWN | tf::NULLABLE | tf::INSTANTIABLE_NON_PRIMITIVE | tf::INDEX;
+        // `may_be_reduced`: it is an intersection, or one of its members is.
+        if !self.may_be_reduced(ty) && !self.is_some_type_of_kind(ty, kinds) {
             return ty;
         }
         let strict = self.p.files.options.strict_null_checks;

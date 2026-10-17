@@ -126,7 +126,10 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                     None => Key::Symbol(symbol),
                 }
             }
-            ref source => Key::Property(source, prop.name, self.c.compose(prop.mapper, mapper)),
+            ref source => {
+                let own = self.c.mapper_of_prop(prop);
+                Key::Property(source, prop.name, self.c.compose(own, mapper))
+            }
         };
         self.intern_symbol(key, Some((prop, mapper)))
     }

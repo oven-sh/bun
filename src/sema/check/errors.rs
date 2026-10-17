@@ -13,7 +13,7 @@ use super::sink::{MAX_SERIALIZATION_LEVEL, NO_DIRECTIVE, held};
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
 use crate::program::SymbolTable;
-use crate::util::SharedSort;
+use crate::util::{PositionSet, SharedSort};
 use bun_core::strings;
 
 /// The diagnostics `check_file` passes to `Program::finish_file`, finalized. Diagnostics reported
@@ -171,23 +171,71 @@ impl PartialEq for Container {
     }
 }
 
+/// See `Checker::forget_nodes_of_leaf`.
+#[derive(Default)]
+pub(super) struct CheckedLeaves {
+    /// The files whose nodes are still in the memos, by `FileId`.
+    files: PositionSet,
+    is_any: bool,
+    /// How many entries the memos had when the nodes of such files were last dropped from them.
+    entries_kept: usize,
+}
+
 impl Checker<'_, '_> {
     /// Drops the memos of this checker that are keyed by a node of `file`, which `is_leaf` and has
     /// been checked: no other file refers to it, so nothing evaluates one of its nodes again. A
     /// task of the last step checks dozens of such files. The capacity stays for the next one.
+    ///
+    /// To go through a memo takes as long as it is large, however little of it is dropped, and what
+    /// stays of the other files only grows. So the nodes of several files are dropped together,
+    /// once the memos have doubled: until then nothing reads them, and they take no more room than
+    /// what stays.
     fn forget_nodes_of_leaf(&mut self, file: FileId) {
-        self.literals_checked_under.retain(|key, _| key.0 != file);
-        self.discriminated.retain(|key, _| key.0 != file);
-        self.non_existent_properties.retain(|key, _| key.0 != file);
-        self.rechecked_exprs.retain(|key, _| key.0 != file);
-        self.rechecked_members.retain(|key, _| key.0 != file);
-        self.late_bound_members.retain(|key, _| key.0.file != file);
-        self.early_bound_for_good.retain(|key| key.0.file != file);
-        self.resolved_signatures.retain(|key| key.0 != file);
-        self.context_checked_here.retain(|key| key.0 != file);
-        self.prepared.retain(|key| key.0 != file);
+        if !self.checked_leaves.is_any {
+            let files = self.files().modules.len();
+            self.checked_leaves.files.reset(files);
+            self.checked_leaves.is_any = true;
+        }
+        self.checked_leaves.files.insert(file.idx());
+        if shortcuts::FORGETS_LEAVES_TOGETHER
+            && self.entries_by_node() < 2 * self.checked_leaves.entries_kept + 1024
+        {
+            return;
+        }
+        let leaves = std::mem::take(&mut self.checked_leaves.files);
+        let stays = |file: FileId| !leaves.contains(file.idx());
+        self.literals_checked_under.retain(|key, _| stays(key.0));
+        self.discriminated.retain(|key, _| stays(key.0));
+        self.non_existent_properties.retain(|key, _| stays(key.0));
+        self.rechecked_exprs.retain(|key, _| stays(key.0));
+        self.rechecked_members.retain(|key, _| stays(key.0));
+        self.late_bound_members.retain(|key, _| stays(key.0.file));
+        self.early_bound_for_good.retain(|key| stays(key.0.file));
+        self.resolved_signatures.retain(|key| stays(key.0));
+        self.context_checked_here.retain(|key| stays(key.0));
+        self.prepared.retain(|key| stays(key.0));
         self.circular_before_parameter_symbol
-            .retain(|key| key.0 != file);
+            .retain(|key| stays(key.0));
+        self.checked_leaves = CheckedLeaves {
+            files: leaves,
+            is_any: false,
+            entries_kept: self.entries_by_node(),
+        };
+    }
+
+    /// How many entries the memos of `forget_nodes_of_leaf` have.
+    fn entries_by_node(&self) -> usize {
+        self.literals_checked_under.len()
+            + self.discriminated.len()
+            + self.non_existent_properties.len()
+            + self.rechecked_exprs.len()
+            + self.rechecked_members.len()
+            + self.late_bound_members.len()
+            + self.early_bound_for_good.len()
+            + self.resolved_signatures.len()
+            + self.context_checked_here.len()
+            + self.prepared.len()
+            + self.circular_before_parameter_symbol.len()
     }
 
     /// Runs every check that queries `file`. Diagnostics it causes in other files, or other files
@@ -206,6 +254,7 @@ impl Checker<'_, '_> {
         self.side_effect_free.get_mut().clear();
         self.context_sensitive_functions.get_mut().clear();
         self.work_trap = WORK_TRAP_DISARMED;
+        self.limits_in_earlier_files += self.limits + self.instantiation_limit_hits;
         self.limits = 0;
         // tsgo never resets it, so each of its checkers reports nothing that needs the type of a
         // reference in the files after one whose module body got 2563.

@@ -1,8 +1,20 @@
 //! Instantiation: substituting type arguments for type parameters.
 
 use super::alias::NewAlias;
+use super::links::FixedMapper;
 use super::*;
 use smallvec::SmallVec;
+
+// Three places where `instantiation_depth` and `instantiation_count` follow tsgo's `instantiationDepth` and
+// `instantiationCount`, each of which moves the depth at which a recursive type gets 2589. `false`: as it was before.
+
+/// `instantiateTypeWithAlias` is one level, counts and fails at a limit with an alias as without one: `type R = F<X>`.
+pub(super) const COUNTS_INSTANTIATIONS_WITH_AN_ALIAS: bool = true;
+/// `CompositeTypeMapper.Map` calls `instantiateType` for a type parameter that the first mapper maps. One that it leaves
+/// as it is goes to the second mapper, which neither counts nor fails at a limit.
+const MAPS_WHAT_THE_FIRST_MAPPER_LEAVES_WITHOUT_INSTANTIATING: bool = true;
+/// `resolveObjectTypeMembers` of a tuple instantiates the base type, `Array<T0 | T1 | ..>`.
+pub(super) const COUNTS_THE_BASE_TYPE_OF_A_TUPLE: bool = true;
 
 /// A direct-mapped cache of results keyed by two numbers, not both 0. It belongs to one checker and
 /// sits in front of a slower lookup. A new entry overwrites whatever occupied its slot.
@@ -130,6 +142,8 @@ pub(super) enum PropInstantiation {
     Type(TypeId),
     /// `Prop::mapper`, with any other source.
     Mapper(MapperId),
+    /// `Prop::mapper` of a property of a mapped type that had its key apart (`Types::key_apart`). This mapper has the key.
+    MapperWithKey(MapperId),
 }
 
 impl PropInstantiation {
@@ -139,15 +153,22 @@ impl PropInstantiation {
             (Self::Type(new), PropSource::Type(ty) | PropSource::Copy(ty, ..)) => *ty = new,
             (Self::Type(_), _) => {}
             (Self::Mapper(mapper), _) => prop.mapper = mapper,
+            (Self::MapperWithKey(mapper), _) => {
+                (prop.mapper, prop.name_type) = (mapper, TypeId::UNRESOLVED);
+            }
         }
     }
 
     /// Whether `apply_to(prop)` would make `prop` equal to `instantiated`, which has the same name.
     pub(super) fn makes(self, instantiated: &Prop, prop: &Prop) -> bool {
+        let name_type = match self {
+            Self::MapperWithKey(_) => TypeId::UNRESOLVED,
+            Self::Type(_) | Self::Mapper(_) => prop.name_type,
+        };
         instantiated.flags == prop.flags
-            && instantiated.name_type == prop.name_type
+            && instantiated.name_type == name_type
             && match self {
-                Self::Mapper(mapper) => {
+                Self::Mapper(mapper) | Self::MapperWithKey(mapper) => {
                     instantiated.mapper == mapper && instantiated.source == prop.source
                 }
                 Self::Type(new) => {
@@ -277,7 +298,11 @@ impl<'p, 's> Checker<'p, 's> {
             smallvec::SmallVec::with_capacity(mapping.len());
         let mut changed = false;
         for &(param, value) in mapping.iter() {
-            let new = self.instantiate(value, second);
+            let new = if MAPS_WHAT_THE_FIRST_MAPPER_LEAVES_WITHOUT_INSTANTIATING && value == param {
+                self.types().map(second, param).unwrap_or(param)
+            } else {
+                self.instantiate(value, second)
+            };
             changed |= new != value;
             pairs.push((param, new));
         }
@@ -285,6 +310,58 @@ impl<'p, 's> Checker<'p, 's> {
             return first;
         }
         self.types().mapper_of(&pairs)
+    }
+
+    /// The frame of `instantiateTypeWithAlias` around `worker`, which instantiates with `mapper` and reads and stores
+    /// nothing in `Program::instantiations`.
+    pub(super) fn in_instantiation(
+        &mut self,
+        mapper: MapperId,
+        worker: impl FnOnce(&mut Self) -> TypeId,
+    ) -> TypeId {
+        if (self.instantiation_depth >= 100 || self.instantiation_count >= 5_000_000)
+            && !self.reset_instantiation_count_if_idle()
+        {
+            return self.instantiation_too_deep();
+        }
+        let is_active = self.active_mappers.is_active(mapper);
+        self.instantiation_count += 1;
+        self.instantiation_depth += 1;
+        if !is_active {
+            self.active_mappers.push(mapper);
+        }
+        self.instantiations_computed += 1;
+        let result = worker(self);
+        if !is_active {
+            self.active_mappers.pop();
+        }
+        self.instantiation_depth -= 1;
+        result
+    }
+
+    /// `instantiateType(baseType, mapper)` in `resolveObjectTypeMembers` of a tuple with the elements `flags`, and
+    /// `instantiateIndexInfos` for the members of the result. Here the members of `Array` are instantiated when they are
+    /// read, so nothing is made: this counts the calls, and fails where the innermost of them would.
+    pub(super) fn count_instantiation_of_tuple_base_type(&mut self, flags: &[ElemFlags]) {
+        // `getTupleBaseType`: a variadic element `T` is `T[number]`.
+        let is_variadic = |flag: &&ElemFlags| flag.contains(ElemFlags::VARIADIC);
+        let (elements, variadic) = (
+            flags.len() as u32,
+            flags.iter().filter(is_variadic).count() as u32,
+        );
+        // `Array<..>`, the union if there is more than one element, the elements, and the type parameters in `T[number]`.
+        let (levels, calls) = match elements {
+            0 => (0, 0),
+            1 => (1, 2),
+            _ => (2, 2 + elements),
+        };
+        let levels = levels + u32::from(variadic != 0);
+        if (self.instantiation_depth + levels >= 100 || self.instantiation_count >= 5_000_000)
+            && !self.reset_instantiation_count_if_idle()
+        {
+            self.instantiation_too_deep();
+        }
+        self.instantiation_count = (self.instantiation_count).saturating_add(calls + variadic + 1);
     }
 
     pub fn instantiate_all(&mut self, types: &[TypeId], mapper: MapperId) -> Vec<TypeId> {
@@ -312,7 +389,7 @@ impl<'p, 's> Checker<'p, 's> {
         prop: &Prop,
         mapper: MapperId,
     ) -> PropInstantiation {
-        match &prop.source {
+        let instantiation = match &prop.source {
             PropSource::Type(ty) | PropSource::Copy(ty, ..) => {
                 PropInstantiation::Type(self.instantiate(*ty, mapper))
             }
@@ -321,12 +398,35 @@ impl<'p, 's> Checker<'p, 's> {
             // nothing is left for `mapper` to replace. An interface that extends `Omit<..>` has hundreds of these,
             // each with a mapper of its own, and every intersection that the interface is in maps its `this` anew.
             PropSource::Mapped(..)
-                if mapper != MapperId::IDENTITY && self.maps_to_closed_types(prop.mapper) =>
+                if mapper != MapperId::IDENTITY
+                    && self.maps_to_closed_types(prop.mapper)
+                    && (self.types().key_apart(prop))
+                        .is_none_or(|key| self.is_closed_type(key)) =>
             {
                 PropInstantiation::Mapper(prop.mapper)
             }
+            PropSource::Mapped(..)
+                if mapper != MapperId::IDENTITY && self.types().key_apart(prop).is_some() =>
+            {
+                let with_key = self.mapper_of_prop(prop);
+                let composed = self.compose(with_key, mapper);
+                match composed == with_key {
+                    true => PropInstantiation::Mapper(prop.mapper),
+                    false => PropInstantiation::MapperWithKey(composed),
+                }
+            }
             _ => PropInstantiation::Mapper(self.compose(prop.mapper, mapper)),
+        };
+        if mapped::CHECKS_KEYS_APART {
+            self.check_instantiation_with_key_apart(prop, mapper, instantiation);
         }
+        instantiation
+    }
+
+    /// Whether no mapper changes `ty`.
+    #[inline]
+    fn is_closed_type(&self, ty: TypeId) -> bool {
+        self.types().instantiation_class(ty) == InstantiationClass::Unchanged
     }
 
     /// Whether no mapper changes any of the types that `mapper` maps to.
@@ -343,14 +443,48 @@ impl<'p, 's> Checker<'p, 's> {
     /// a mapper reaches the type parameters `any_type_in` finds and no others.
     /// `getObjectTypeInstantiation` maps the outer type parameters: those declared by a signature
     /// in `t` stay.
+    /// tsgo makes the call once for each `t`. `may_keep`: whether `map` gives the same from now on, asked after it was used.
     fn instantiate_type_parameters(
         &mut self,
         t: TypeId,
+        fixed: FixedMapper,
         map: fn(&Self, TypeId) -> TypeId,
+        may_keep: fn(&Self) -> bool,
     ) -> TypeId {
         if self.flags(t) & (tf::PRIMITIVE | tf::ANY | tf::UNKNOWN | tf::NEVER) != 0 {
             return t;
         }
+        if !links::KEEPS_INSTANTIATIONS_WITH_FIXED_MAPPERS {
+            self.links.note_left_open();
+            return self.derive_instantiation_of_type_parameters(t, map).0;
+        }
+        if let Some(kept) = self.kept_with_fixed_mapper(fixed, t) {
+            if links::CHECKS_INSTANTIATIONS_WITH_FIXED_MAPPERS {
+                self.check_kept_part(t, &format!("{fixed:?}"), kept, |c| {
+                    c.derive_instantiation_of_type_parameters(t, map).0
+                });
+            }
+            return kept;
+        }
+        let forgotten = self.links.times_forgotten();
+        let ((instantiated, _), stored) = self.derive_settled(
+            |c| c.derive_instantiation_of_type_parameters(t, map),
+            |c, &(_, mapper)| {
+                c.is_mapper_idle(mapper) && may_keep(c) && c.links.times_forgotten() == forgotten
+            },
+        );
+        if let Some(stored) = stored {
+            self.keep_with_fixed_mapper(fixed, t, instantiated, stored);
+        }
+        instantiated
+    }
+
+    /// Also returns the mapper.
+    fn derive_instantiation_of_type_parameters(
+        &mut self,
+        t: TypeId,
+        map: fn(&Self, TypeId) -> TypeId,
+    ) -> (TypeId, MapperId) {
         let (mut pairs, mut own) = (Vec::new(), Vec::new());
         self.any_type_in(t, true, |part| {
             if self.flags(part) & tf::TYPE_PARAMETER != 0 {
@@ -366,7 +500,7 @@ impl<'p, 's> Checker<'p, 's> {
         });
         pairs.retain(|pair| pair.0 != pair.1 && !own.contains(&pair.0));
         let mapper = self.types().mapper(pairs);
-        self.instantiate(t, mapper)
+        (self.instantiate(t, mapper), mapper)
     }
 
     /// `getRestrictiveInstantiation`, with `getRestrictiveTypeParameter`. Restrictive type
@@ -378,7 +512,7 @@ impl<'p, 's> Checker<'p, 's> {
             return kept;
         }
         let around = self.kept_a_renamed_param.replace(false);
-        let result = self.instantiate_type_parameters(t, |c, param| match c.data(param) {
+        let map: fn(&Self, TypeId) -> TypeId = |c, param| match c.data(param) {
             // `tp.constraint == nil && getConstraintDeclaration(tp) == nil`
             TypeData::TypeParam(..) if c.unresolved_renamed_params.contains(&param) => {
                 c.kept_a_renamed_param.set(true);
@@ -396,6 +530,10 @@ impl<'p, 's> Checker<'p, 's> {
                 param
             }
             _ => c.intern(TypeData::Marker(Marker::Restrictive(param))),
+        };
+        // What has such a type parameter is in `restrictive_instantiations_kept`, for as long as it holds.
+        let result = self.instantiate_type_parameters(t, FixedMapper::Restrictive, map, |c| {
+            !c.kept_a_renamed_param.get()
         });
         // Only `getConstraintOfDistributiveConditionalType` asks.
         if matches!(self.data(result), TypeData::Cond { .. }) {
@@ -410,12 +548,14 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getPermissiveInstantiation`
     pub(super) fn permissive_instantiation(&mut self, t: TypeId) -> TypeId {
-        self.instantiate_type_parameters(t, |_, _| TypeId::WILDCARD)
+        let map: fn(&Self, TypeId) -> TypeId = |_, _| TypeId::WILDCARD;
+        self.instantiate_type_parameters(t, FixedMapper::Permissive, map, |_| true)
     }
 
     /// `instantiateType(t, c.uniqueLiteralMapper)`
     pub(super) fn unique_literal_filled_instantiation(&mut self, t: TypeId) -> TypeId {
-        self.instantiate_type_parameters(t, |_, _| TypeId::UNIQUE_LITERAL)
+        let map: fn(&Self, TypeId) -> TypeId = |_, _| TypeId::UNIQUE_LITERAL;
+        self.instantiate_type_parameters(t, FixedMapper::UniqueLiteral, map, |_| true)
     }
 
     pub(super) fn is_assignable_restrictive(&mut self, source: TypeId, target: TypeId) -> bool {

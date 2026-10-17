@@ -221,6 +221,7 @@ impl<'p, 's> Checker<'p, 's> {
                         }
                     }
                     c.restrictive_instantiations_kept.clear();
+                    c.links.forget_restrictive_instantiations();
                     c.with_own_type_params(signature, &type_params, &unique)
                 };
                 if c.adopt_generic_argument(n, instantiated, contextual_signature) {
@@ -1679,7 +1680,7 @@ impl<'p, 's> Checker<'p, 's> {
                     Chain::No => false,
                     Chain::Start => {
                         let callee = self.type_of_expr(file, call.callee);
-                        self.some_type(callee, |k, m| k.is_nullish(m))
+                        self.is_some_type_of_kind(callee, tf::NULLABLE | tf::VOID)
                     }
                     // `getOptionalExpressionType`: not whether the callee itself may be
                     // `undefined`.
@@ -5578,8 +5579,8 @@ impl<'p, 's> Checker<'p, 's> {
                 let l = self.check_non_null_type(file, left, l);
                 let r = self.check_non_null_type(file, right, r);
                 if matches!(op, BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor)
-                    && self.every_type(l, Self::is_boolean_like)
-                    && self.every_type(r, Self::is_boolean_like)
+                    && self.is_every_type_of_kind(l, tf::BOOLEAN_LITERAL)
+                    && self.is_every_type_of_kind(r, tf::BOOLEAN_LITERAL)
                     && !l.is_never()
                     && !r.is_never()
                 {

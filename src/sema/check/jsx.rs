@@ -595,7 +595,7 @@ impl<'p, 's> Checker<'p, 's> {
             && self
                 .type_of_property_of_type(ty, known::length)
                 .is_some_and(|length_type| {
-                    self.every_type(length_type, |c, t| c.flags(t) & tf::NUMBER_LITERAL != 0)
+                    self.is_every_type_of_kind(length_type, tf::NUMBER_LITERAL)
                 })
     }
 

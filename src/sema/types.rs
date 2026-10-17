@@ -11,8 +11,8 @@ use crate::session::{Arena, ArenaVec, Session};
 use crate::table::{ById, Frozen};
 use crate::util::memory::{Length, Stable};
 use crate::util::{
-    AppendVec, FxHashMap, FxHasher, GrowingPlaces, InParallel, LocalVec, SHARDS, for_each_mut,
-    shard_of, spread_hash,
+    AppendVec, FxHashMap, FxHasher, GrowingPlaces, InParallel, LocalVec, for_each_mut, place_of,
+    shard_among, spread_hash,
 };
 use bun_alloc::{ArenaBox, vec_from_iter_in};
 use std::alloc::Allocator;
@@ -33,6 +33,180 @@ pub struct MapperId(pub u32);
 /// An interned list of `IndexComponent`s.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct ComponentsId(pub u32);
+
+/// A list that is stored once, like a `List`. Up to `N` items are in the value itself: they take no
+/// block, and they are in the cache line of the record that has the list. It is compared, hashed
+/// and visited as the slice that it dereferences to.
+pub enum ShortList<T, const N: usize, L> {
+    /// Their number, and the items in the first places.
+    Inline(u8, [T; N]),
+    Spilled(L),
+}
+
+/// What the places of a `ShortList` that have no item hold. Nothing reads it.
+pub trait BlankItem: Copy {
+    const BLANK: Self;
+}
+
+impl BlankItem for TypeId {
+    const BLANK: TypeId = TypeId(0);
+}
+
+impl BlankItem for FileId {
+    const BLANK: FileId = FileId(0);
+}
+
+impl BlankItem for FnId {
+    const BLANK: FnId = FnId(0);
+}
+
+impl<A: BlankItem, B: BlankItem> BlankItem for (A, B) {
+    const BLANK: (A, B) = (A::BLANK, B::BLANK);
+}
+
+/// What a `ShortList` holds of more than `N` items.
+pub trait ListBlock<'s, T>: std::ops::DerefMut<Target = [T]> {
+    /// A copy of `items`. `arena`: of the calling thread.
+    fn block_in(items: &[T], arena: &'s Arena) -> Self;
+}
+
+impl<'s, T: Copy> ListBlock<'s, T> for List<'s, T> {
+    #[inline]
+    fn block_in(items: &[T], arena: &'s Arena) -> Self {
+        List::copy_from_slice_in(items, arena)
+    }
+}
+
+/// A list behind a pointer, half as wide as a `List`. Up to seven ids are in the block that it
+/// points to, half a cache line: reading them takes as many steps as reading a `List`. More take
+/// one step more.
+pub struct ThinList<'s, T>(ArenaBox<'s, ShortList<T, 7, List<'s, T>>>);
+
+impl<T> std::ops::Deref for ThinList<'_, T> {
+    type Target = [T];
+    #[inline]
+    fn deref(&self) -> &[T] {
+        &self.0
+    }
+}
+
+impl<T> std::ops::DerefMut for ThinList<'_, T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut [T] {
+        &mut self.0
+    }
+}
+
+impl<'s, T: BlankItem> ListBlock<'s, T> for ThinList<'s, T> {
+    #[inline]
+    fn block_in(items: &[T], arena: &'s Arena) -> Self {
+        ThinList(ArenaBox::new_in(
+            ShortList::copy_from_slice_in(items, arena),
+            arena,
+        ))
+    }
+}
+
+impl<T: BlankItem, const N: usize, L> ShortList<T, N, L> {
+    #[inline]
+    pub fn empty() -> Self {
+        ShortList::Inline(0, [T::BLANK; N])
+    }
+
+    /// A copy of `items`. `arena`: of the calling thread.
+    #[inline]
+    pub fn copy_from_slice_in<'s>(items: &[T], arena: &'s Arena) -> Self
+    where
+        L: ListBlock<'s, T>,
+    {
+        const { assert!(N <= u8::MAX as usize) };
+        if items.len() > N {
+            return ShortList::Spilled(L::block_in(items, arena));
+        }
+        let mut inline = [T::BLANK; N];
+        inline[..items.len()].copy_from_slice(items);
+        ShortList::Inline(items.len() as u8, inline)
+    }
+}
+
+impl<T: BlankItem, const N: usize, L> Default for ShortList<T, N, L> {
+    #[inline]
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
+impl<T, const N: usize, L: std::ops::Deref<Target = [T]>> std::ops::Deref for ShortList<T, N, L> {
+    type Target = [T];
+    #[inline]
+    fn deref(&self) -> &[T] {
+        match self {
+            ShortList::Inline(len, items) => &items[..usize::from(*len)],
+            ShortList::Spilled(items) => items,
+        }
+    }
+}
+
+impl<T, const N: usize, L: std::ops::DerefMut<Target = [T]>> std::ops::DerefMut
+    for ShortList<T, N, L>
+{
+    #[inline]
+    fn deref_mut(&mut self) -> &mut [T] {
+        match self {
+            ShortList::Inline(len, items) => &mut items[..usize::from(*len)],
+            ShortList::Spilled(items) => items,
+        }
+    }
+}
+
+impl<T: PartialEq, const N: usize, L: std::ops::Deref<Target = [T]>> PartialEq
+    for ShortList<T, N, L>
+{
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        **self == **other
+    }
+}
+
+impl<T: Eq, const N: usize, L: std::ops::Deref<Target = [T]>> Eq for ShortList<T, N, L> {}
+
+impl<T: Hash, const N: usize, L: std::ops::Deref<Target = [T]>> Hash for ShortList<T, N, L> {
+    #[inline]
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        (**self).hash(state);
+    }
+}
+
+impl<T: std::fmt::Debug, const N: usize, L: std::ops::Deref<Target = [T]>> std::fmt::Debug
+    for ShortList<T, N, L>
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        (**self).fmt(f)
+    }
+}
+
+impl<'v, T, const N: usize, L: std::ops::Deref<Target = [T]>> IntoIterator
+    for &'v ShortList<T, N, L>
+{
+    type Item = &'v T;
+    type IntoIter = std::slice::Iter<'v, T>;
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+/// How many constituents of a union or an intersection, type arguments of a reference or elements of
+/// a tuple, and declarations of a function value are in the record of the type: as many as leave a
+/// `TypeRecord` the size of a cache line.
+const INLINE_CONSTITUENTS: usize = 7;
+const INLINE_TYPE_ARGUMENTS: usize = 3;
+const INLINE_DECLARATIONS: usize = 2;
+
+pub type Constituents<'s> = ShortList<TypeId, INLINE_CONSTITUENTS, List<'s, TypeId>>;
+pub type GivenTypeArguments<'s> = ShortList<TypeId, INLINE_TYPE_ARGUMENTS, ThinList<'s, TypeId>>;
+pub type Declarations<'s> =
+    ShortList<(FileId, FnId), INLINE_DECLARATIONS, List<'s, (FileId, FnId)>>;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Intrinsic {
@@ -277,9 +451,9 @@ pub enum UniqueSymbolDeclaration {
 #[derive(PartialEq, Eq, Hash, Debug)]
 pub enum TypeArguments<'s> {
     /// `createTypeReference`
-    Given(List<'s, TypeId>),
+    Given(GivenTypeArguments<'s>),
     /// `createDeferredTypeReference`
-    Deferred(ArenaBox<'s, DeferredTypeArguments>),
+    Deferred(DeferredTypeArguments),
 }
 
 const _: () = assert!(size_of::<TypeArguments<'static>>() == 16);
@@ -296,14 +470,19 @@ pub struct DeferredTypeArguments {
 }
 
 impl<'s> TypeArguments<'s> {
+    /// A copy of `actual`. `arena`: of the calling thread.
+    #[inline]
+    pub fn given_in(actual: &[TypeId], arena: &'s Arena) -> TypeArguments<'s> {
+        TypeArguments::Given(ShortList::copy_from_slice_in(actual, arena))
+    }
+
     pub fn deferred_in(
         file: FileId,
         node: TypeNodeId,
         mapper: MapperId,
-        arena: &'s Arena,
+        _: &'s Arena,
     ) -> TypeArguments<'s> {
-        let deferred = DeferredTypeArguments { file, node, mapper };
-        TypeArguments::Deferred(ArenaBox::new_in(deferred, arena))
+        TypeArguments::Deferred(DeferredTypeArguments { file, node, mapper })
     }
 
     /// `None`: they are deferred.
@@ -327,13 +506,7 @@ impl<'s> TypeArguments<'s> {
 
 impl Default for TypeArguments<'_> {
     fn default() -> Self {
-        TypeArguments::Given(List::empty())
-    }
-}
-
-impl<'s> From<List<'s, TypeId>> for TypeArguments<'s> {
-    fn from(actual: List<'s, TypeId>) -> Self {
-        TypeArguments::Given(actual)
+        TypeArguments::Given(ShortList::empty())
     }
 }
 
@@ -410,8 +583,8 @@ pub enum TypeData<'s> {
     ThisParam(Sym),
     Marker(Marker),
     /// In the order of `CompareTypes`.
-    Union(List<'s, TypeId>),
-    Intersection(List<'s, TypeId>),
+    Union(Constituents<'s>),
+    Intersection(Constituents<'s>),
     /// An instance of a class or an interface.
     Ref {
         target: Sym,
@@ -428,7 +601,7 @@ pub enum TypeData<'s> {
     },
     /// Function-likes that together are one function value: an expression, a function type, or the overloads of a method.
     Fns {
-        decls: List<'s, (FileId, FnId)>,
+        decls: Declarations<'s>,
         mapper: MapperId,
     },
     /// An object type that was computed: a spread, a rest, `Pick<T, K>`.
@@ -556,6 +729,8 @@ pub enum PropSource<'s> {
     /// A property of the given mapped type (`containingType`). Its type is the template of that
     /// type instantiated with `Prop::mapper`: the mapper of the mapped type plus its type parameter
     /// mapped to `keyType`. `type_of_mapped_prop` resolves it on demand (`getTypeOfMappedSymbol`).
+    /// As `resolveMappedTypeMembers` creates it, `Prop::mapper` is the mapper of the mapped type alone and `keyType` is in
+    /// `Prop::name_type`: see `Types::key_apart`. `Checker::mapper_of_prop` puts the two together.
     /// The flag is `CheckFlagsStripOptional`: `-?` removes `undefined` from the type.
     /// The last field holds the symbols whose `Declarations` it has, those of `modifiersProp`
     /// (`addMemberForKeyTypeWorker`), following the rule of `Copy`.
@@ -583,6 +758,7 @@ pub struct Prop<'s> {
     /// `links.nameType` of a symbol that is made from another (`getSpreadSymbol`, `getSpreadType`,
     /// `createSymbolWithType`), where that is a member of an enum: `source` no longer leads to it,
     /// and the name only spells it. `TypeId::UNRESOLVED`: `name`, `STRING_NAME` and `source` tell.
+    /// Of a property of a mapped type it can be `keyType` instead: see `Types::key_apart`.
     pub name_type: TypeId,
 }
 
@@ -1163,11 +1339,11 @@ impl Hash for TypeKey<'_> {
         match *self {
             TypeKey::Data(data) => data.hash(state),
             TypeKey::Union(members) => {
-                discriminant(&TypeData::Union(List::empty())).hash(state);
+                discriminant(&TypeData::Union(ShortList::empty())).hash(state);
                 members.hash(state);
             }
             TypeKey::Intersection(members) => {
-                discriminant(&TypeData::Intersection(List::empty())).hash(state);
+                discriminant(&TypeData::Intersection(ShortList::empty())).hash(state);
                 members.hash(state);
             }
             TypeKey::Ref { target, args } => {
@@ -1198,7 +1374,7 @@ impl Hash for TypeKey<'_> {
             }
             TypeKey::Fns { decls, mapper } => {
                 let empty = TypeData::Fns {
-                    decls: List::empty(),
+                    decls: ShortList::empty(),
                     mapper,
                 };
                 discriminant(&empty).hash(state);
@@ -1246,28 +1422,41 @@ impl TypeKey<'_> {
     }
 
     fn to_data<'s>(self, arena: &'s Arena) -> TypeData<'s> {
-        let list = |types: &[TypeId]| List::copy_from_slice_in(types, arena);
+        let list = |types: &[TypeId]| ShortList::copy_from_slice_in(types, arena);
         match self {
             TypeKey::Data(data) => data.clone_in(arena),
             TypeKey::Union(members) => TypeData::Union(list(members)),
             TypeKey::Intersection(members) => TypeData::Intersection(list(members)),
             TypeKey::Ref { target, args } => TypeData::Ref {
                 target,
-                args: list(args).into(),
+                args: TypeArguments::given_in(args, arena),
             },
             TypeKey::Tuple {
                 elems,
                 flags,
                 readonly,
             } => TypeData::Tuple {
-                elems: list(elems).into(),
+                elems: TypeArguments::given_in(elems, arena),
                 flags: List::copy_from_slice_in(flags, arena),
                 readonly,
             },
             TypeKey::Fns { decls, mapper } => TypeData::Fns {
-                decls: List::copy_from_slice_in(decls, arena),
+                decls: ShortList::copy_from_slice_in(decls, arena),
                 mapper,
             },
+        }
+    }
+
+    /// `Follow::mentions_own` of the `TypeData`. The label of an element of a tuple is a declared
+    /// name.
+    fn mentions_own(self) -> bool {
+        match self {
+            TypeKey::Data(data) => data.mentions_own(),
+            TypeKey::Union(types)
+            | TypeKey::Intersection(types)
+            | TypeKey::Ref { args: types, .. }
+            | TypeKey::Tuple { elems: types, .. } => types.iter().any(MaybeLocal::is_local),
+            TypeKey::Fns { mapper, .. } => mapper.is_local(),
         }
     }
 }
@@ -1337,6 +1526,18 @@ impl ProvenanceKey<'_> {
             && self.has_other_instantiation == provenance.has_other_instantiation
     }
 
+    /// `Follow::mentions_own` of the `Provenance`.
+    fn mentions_own(self) -> bool {
+        let any = |types: &[TypeId]| types.iter().any(MaybeLocal::is_local);
+        self.alias.is_some_and(|(_, arguments)| any(arguments))
+            || match self.origin {
+                OriginKey::None => false,
+                OriginKey::Union(types) | OriginKey::Intersection(types) => any(types),
+                OriginKey::Keyof(ty) => ty.is_local(),
+            }
+            || self.stored_under.mentions_own()
+    }
+
     fn to_provenance<'s>(self, arena: &'s Arena) -> Provenance<'s> {
         let list = |types: &[TypeId]| List::copy_from_slice_in(types, arena);
         Provenance {
@@ -1380,6 +1581,8 @@ pub struct TypeRecord<'s> {
     id: TypeId,
 }
 
+const _: () = assert!(size_of::<TypeRecord<'static>>() <= 64);
+
 type MapperRecord<'s> = (Mapping<'s>, ObjectFlags);
 
 /// What is asked of a type most often. A record is read for its `TypeData`.
@@ -1389,11 +1592,14 @@ struct TypeSummary {
     object_flags: ObjectFlags,
     class: InstantiationClass,
     member_flags: u32,
+    is_module_object: bool,
 }
 
 /// The bits of `Summaries::facts`. A fact is written whole: the bit that says it is known together
 /// with its value.
 mod fact {
+    /// Set when the type is created: see `Types::is_module_object`.
+    pub(super) const IS_MODULE_OBJECT: u8 = 1 << 7;
     pub(super) const KNOWS_COULD_CONTAIN_TYPE_VARIABLES: u8 = 1;
     pub(super) const COULD_CONTAIN_TYPE_VARIABLES: u8 = 1 << 1;
     pub(super) const KNOWS_GENERIC_OBJECT_FLAGS: u8 = 1 << 2;
@@ -1409,10 +1615,11 @@ struct Summaries<L: Length, A: Allocator + Clone> {
     flags: Stable<u32, L, A>,
     object_flags: Stable<ObjectFlags, L, A>,
     class: Stable<InstantiationClass, L, A>,
-    /// See `Types::member_flags`.
+    /// See `Types::member_flags`, and `HAS_FRESH_LITERAL` for the three bits beside the flags.
     member_flags: Stable<u32, L, A>,
-    /// What the checker has found out about the type since it was created: `fact`. See
-    /// `Types::add_facts` for what may be here. Those of a task-local type are not published with it.
+    /// What the checker has found out about the type since it was created, and one bit that is set
+    /// at once: `fact`. See `Types::add_facts` for what may be here. What was found out about a
+    /// task-local type is not published with it.
     facts: Stable<AtomicU8, L, A>,
 }
 
@@ -1463,7 +1670,11 @@ impl<L: Length, A: Allocator + Clone> Summaries<L, A> {
         self.flags.push(summary.flags);
         self.object_flags.push(summary.object_flags);
         self.member_flags.push(summary.member_flags);
-        self.facts.push(AtomicU8::new(0));
+        let facts = match summary.is_module_object {
+            true => fact::IS_MODULE_OBJECT,
+            false => 0,
+        };
+        self.facts.push(AtomicU8::new(facts));
         self.class.push(summary.class)
     }
 }
@@ -1479,17 +1690,51 @@ pub enum InstantiationClass {
     Other,
 }
 
+/// In `Summaries::member_flags`, beside the flags, none of which is one of these bits. See
+/// `Types::has_fresh_literal`.
+const HAS_FRESH_LITERAL: u32 = 1 << 29;
+/// The type itself is an object type other than a mapped type or an evolving array type.
+const IS_PLAIN_OBJECT: u32 = 1 << 30;
+/// The type itself is a mapped type.
+const IS_MAPPED_TYPE: u32 = 1 << 31;
+
 impl TypeRecord<'_> {
-    /// `member_flags_of`: `Types::member_flags` of a constituent.
+    /// `member_flags_of`: `Summaries::member_flags` of a constituent.
     fn summary(&self, member_flags_of: impl Fn(TypeId) -> u32) -> TypeSummary {
         TypeSummary {
             flags: self.flags,
             object_flags: self.object_flags,
             class: self.instantiation_class(),
+            is_module_object: matches!(
+                self.created.0,
+                TypeData::Anon {
+                    origin: Origin::Module(_) | Origin::Namespace { .. },
+                    ..
+                }
+            ),
             member_flags: match &self.created.0 {
-                TypeData::Union(members) | TypeData::Intersection(members) => members
-                    .iter()
-                    .fold(0, |flags, &member| flags | member_flags_of(member)),
+                TypeData::Union(members) | TypeData::Intersection(members) => {
+                    let all = members
+                        .iter()
+                        .fold(0, |flags, &member| flags | member_flags_of(member));
+                    all & !(IS_PLAIN_OBJECT | IS_MAPPED_TYPE)
+                }
+                TypeData::Anon {
+                    origin: Origin::Mapped(..),
+                    ..
+                } => self.flags | IS_MAPPED_TYPE,
+                TypeData::Ref { .. }
+                | TypeData::Tuple { .. }
+                | TypeData::Anon { .. }
+                | TypeData::Fns { .. }
+                | TypeData::Synth(_)
+                | TypeData::ReverseMapped { .. } => self.flags | IS_PLAIN_OBJECT,
+                TypeData::StringLit { fresh: true, .. }
+                | TypeData::NumberLit { fresh: true, .. }
+                | TypeData::BigIntLit { fresh: true, .. }
+                | TypeData::BoolLit { fresh: true, .. }
+                | TypeData::EnumLit { fresh: true, .. }
+                | TypeData::Enum { fresh: true, .. } => self.flags | HAS_FRESH_LITERAL,
                 _ => self.flags,
             },
         }
@@ -1513,9 +1758,12 @@ impl TypeRecord<'_> {
 /// The published records of one kind. Read-only during a step: `find` is lock-free and writes
 /// nothing. `add` is for the merge step.
 struct Interned<'s, V> {
-    shards: Box<[GrowingPlaces<&'s Session>; SHARDS], &'s Session>,
+    shards: Box<[GrowingPlaces<&'s Session>; INDEX_SHARDS], &'s Session>,
     items: AppendVec<V, &'s Session>,
 }
+
+/// As many as threads can usefully fill at a barrier, and no more: see `shard_among`.
+const INDEX_SHARDS: usize = 8;
 
 impl<'s, V> Interned<'s, V> {
     fn new_in(session: &'s Session) -> Self {
@@ -1526,10 +1774,16 @@ impl<'s, V> Interned<'s, V> {
         }
     }
 
+    #[inline]
+    fn shard(&self, spread: u64) -> &GrowingPlaces<&'s Session> {
+        &self.shards[shard_among(spread, INDEX_SHARDS)]
+    }
+
     /// `spread`: the hash of the key being looked up.
     #[inline]
     fn find(&self, spread: u64, is_it: impl Fn(&V) -> bool) -> Option<u32> {
-        self.shards[shard_of(spread)].find_frozen(spread, |i| is_it(self.items.get(i)))
+        self.shard(spread)
+            .find_frozen(spread, |i| is_it(self.items.get(i)))
     }
 
     /// For `put`.
@@ -1545,7 +1799,8 @@ impl<'s, V> Interned<'s, V> {
 
     /// Assigns the next id to `item`, which must not be present yet. `spread`: its lookup hash.
     fn add(&self, spread: u64, item: V) -> u32 {
-        self.shards[shard_of(spread)].find_or_add(spread, |_| false, || self.items.push(item))
+        self.shard(spread)
+            .find_or_add(spread, |_| false, || self.items.push(item))
     }
 }
 
@@ -1761,13 +2016,14 @@ type Of<'s, V> = for<'a> fn(&'a OwnStore<'s>) -> &'a Own<V>;
 /// Looks up `key` among the task-local records and the published ones, or else creates a new
 /// task-local record.
 /// `is_it`: whether a record matches `key`. `make`: builds the record for `key`, and returns
-/// whether it is bound. `may_be_published`: false if `key` is known to reference a task-local
-/// record, which no published record does.
+/// whether it is bound. `mentions_own`: whether `key` is known to reference a task-local record,
+/// which no published record does. It is asked once the task-local records have been searched.
 #[inline]
 fn intern_record<'s, V, K>(
     (published, own, kind): (&Interned<'s, V>, &OwnStore<'s>, Kind),
     of: Of<'s, V>,
-    (spread, key, may_be_published): (u64, K, bool),
+    (spread, key): (u64, K),
+    mentions_own: impl FnOnce(&K) -> bool,
     is_it: impl Fn(&V, &K) -> bool,
     make: impl FnOnce(K, u32) -> (V, bool),
 ) -> u32 {
@@ -1785,15 +2041,23 @@ fn intern_record<'s, V, K>(
     if held != 0 && (held >> 32) as u32 == spread as u32 && is_record(held as u32 - 1) {
         return held as u32 - 1;
     }
-    let remember = |id: u32| recent.set(u64::from(spread as u32) << 32 | u64::from(id + 1));
-    if let Some(id) = mine.found.find(spread, is_record) {
-        remember(id);
-        return id;
-    }
-    let known = if may_be_published {
-        published.find(spread, |record| is_it(record, &key))
-    } else {
+    let remember = |id: u32| recent.set(place_of(spread, id));
+    let vacancy = match mine.found.find_or_vacancy(spread, is_record) {
+        Ok(id) => {
+            remember(id);
+            return id;
+        }
+        Err(vacancy) => vacancy,
+    };
+    let find_published = || published.find(spread, |record| is_it(record, &key));
+    let known = if mentions_own(&key) {
+        assert!(
+            !CHECKS_THE_LOOKUPS_IT_SKIPS || find_published().is_none(),
+            "a published record equals a key that references a task-local record"
+        );
         None
+    } else {
+        find_published()
     };
     let id = match known {
         Some(id) => id,
@@ -1805,71 +2069,21 @@ fn intern_record<'s, V, K>(
             index | LOCAL
         }
     };
-    mine.found.add(spread, id);
+    mine.found.fill(vacancy, spread, id);
     remember(id);
     id
 }
 
+/// `false`: a type or a signature that the task does not have is looked up among the published
+/// ones whatever its key references.
+const SKIPS_LOOKUPS_OF_OWN_KEYS: bool = true;
+
+/// `true`: a lookup that `intern_record` skips is made all the same, and must find nothing.
+const CHECKS_THE_LOOKUPS_IT_SKIPS: bool = false;
+
 /// The pairs of a mapper, in order (`is_in_order`). Three quarters or more of all mappers have at most
-/// three: those are in the record itself, so that reading them takes one step less.
-pub enum Mapping<'s> {
-    /// Their number, and the pairs in the first places.
-    Inline(u8, [(TypeId, TypeId); Mapping::INLINE]),
-    Spilled(List<'s, (TypeId, TypeId)>),
-}
-
-impl<'s> Mapping<'s> {
-    const INLINE: usize = 3;
-
-    fn empty() -> Self {
-        Mapping::Inline(0, [(TypeId(0), TypeId(0)); Mapping::INLINE])
-    }
-
-    fn copy_from_slice_in(pairs: &[(TypeId, TypeId)], arena: &'s Arena) -> Self {
-        if pairs.len() > Mapping::INLINE {
-            return Mapping::Spilled(List::copy_from_slice_in(pairs, arena));
-        }
-        let mut inline = [(TypeId(0), TypeId(0)); Mapping::INLINE];
-        inline[..pairs.len()].copy_from_slice(pairs);
-        Mapping::Inline(pairs.len() as u8, inline)
-    }
-}
-
-impl std::ops::Deref for Mapping<'_> {
-    type Target = [(TypeId, TypeId)];
-    #[inline]
-    fn deref(&self) -> &[(TypeId, TypeId)] {
-        match self {
-            Mapping::Inline(len, pairs) => &pairs[..usize::from(*len)],
-            Mapping::Spilled(pairs) => pairs,
-        }
-    }
-}
-
-impl std::ops::DerefMut for Mapping<'_> {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut [(TypeId, TypeId)] {
-        match self {
-            Mapping::Inline(len, pairs) => &mut pairs[..usize::from(*len)],
-            Mapping::Spilled(pairs) => pairs,
-        }
-    }
-}
-
-impl PartialEq for Mapping<'_> {
-    fn eq(&self, other: &Self) -> bool {
-        **self == **other
-    }
-}
-
-impl Follow for Mapping<'_> {
-    fn visit<V: Visitor>(&self, visitor: &mut V) {
-        (**self).visit(visitor);
-    }
-    fn follow(&mut self, link: &Link) {
-        (**self).follow(link);
-    }
-}
+/// three.
+pub type Mapping<'s> = ShortList<(TypeId, TypeId), 3, List<'s, (TypeId, TypeId)>>;
 
 /// The interning key of a mapper.
 struct Pairs<'a>(&'a [(TypeId, TypeId)]);
@@ -2082,7 +2296,7 @@ impl<'s> TypeStore<'s> {
         for (i, data) in WELL_KNOWN.iter().enumerate() {
             assert_eq!(publish(data.clone_in(arena)).0 as usize, i);
         }
-        let booleans = List::copy_from_slice_in(&[TypeId::FALSE, TypeId::TRUE], arena);
+        let booleans = ShortList::copy_from_slice_in(&[TypeId::FALSE, TypeId::TRUE], arena);
         assert_eq!(publish(TypeData::Union(booleans)), TypeId::BOOLEAN);
         let synth = |shape| TypeData::Synth(ArenaBox::new_in(shape, arena));
         assert_eq!(
@@ -2232,11 +2446,45 @@ impl<'p, 's> Types<'p, 's> {
     /// any other type, its flags.
     #[inline]
     pub fn member_flags(&self, id: TypeId) -> u32 {
+        self.member_flags_and_more(id) & !(HAS_FRESH_LITERAL | IS_PLAIN_OBJECT | IS_MAPPED_TYPE)
+    }
+
+    /// Whether `id` is a fresh literal type, or there is one in it where `member_flags` looks.
+    #[inline]
+    pub fn has_fresh_literal(&self, id: TypeId) -> bool {
+        self.member_flags_and_more(id) & HAS_FRESH_LITERAL != 0
+    }
+
+    /// Whether `id` is an object type other than a mapped type or an evolving array type.
+    #[inline]
+    pub fn is_plain_object(&self, id: TypeId) -> bool {
+        self.member_flags_and_more(id) & IS_PLAIN_OBJECT != 0
+    }
+
+    #[inline]
+    pub fn is_mapped_type(&self, id: TypeId) -> bool {
+        self.member_flags_and_more(id) & IS_MAPPED_TYPE != 0
+    }
+
+    /// Whether `id` is an object type other than an evolving array type.
+    #[inline]
+    pub fn is_object_type(&self, id: TypeId) -> bool {
+        self.member_flags_and_more(id) & (IS_PLAIN_OBJECT | IS_MAPPED_TYPE) != 0
+    }
+
+    #[inline]
+    fn member_flags_and_more(&self, id: TypeId) -> u32 {
         if id.0 & LOCAL == 0 {
             self.published.summaries.member_flags(id.0)
         } else {
             self.own.summaries.member_flags(id.0 & !LOCAL)
         }
+    }
+
+    /// `flags`, worked out from the record of the type.
+    #[inline]
+    pub fn flags_of_record(&self, id: TypeId) -> u32 {
+        Self::flags_of(&self.record(id).created)
     }
 
     /// `Relaxed` is enough, here and in `add_facts`: a fact is in one byte and is written whole, so
@@ -2262,6 +2510,12 @@ impl<'p, 's> Types<'p, 's> {
             let known = self.own.summaries.facts(id.0 & !LOCAL);
             known.store(known.load(Ordering::Relaxed) | facts, Ordering::Relaxed);
         }
+    }
+
+    /// Whether `id` is the type of a module or of a namespace as a value.
+    #[inline]
+    pub fn is_module_object(&self, id: TypeId) -> bool {
+        self.facts(id) & fact::IS_MODULE_OBJECT != 0
     }
 
     /// `ObjectFlagsCouldContainTypeVariables`, if `ObjectFlagsCouldContainTypeVariablesComputed`.
@@ -2328,7 +2582,7 @@ impl<'p, 's> Types<'p, 's> {
     /// `new_record` for a task-local type, which the caller adds to `OwnStore::types` next.
     fn new_own_record(&self, created: Made<'s>, id: u32) -> TypeRecord<'s> {
         let record = self.new_record(created, id);
-        let summary = record.summary(|member| self.member_flags(member));
+        let summary = record.summary(|member| self.member_flags_and_more(member));
         let index = self.own.summaries.push(summary);
         debug_assert_eq!(index | LOCAL, id);
         record
@@ -2446,13 +2700,11 @@ impl<'p, 's> Types<'p, 's> {
             // `getPropagatingFlagsOfTypes(types, TypeFlagsNullable)`
             TypeData::Union(t) | TypeData::Intersection(t) => {
                 t.iter().fold(ObjectFlags::empty(), |f, &t| {
-                    let record = self.record(t);
-                    if record.flags & tf::NULLABLE != 0 {
-                        f | record
-                            .object_flags
-                            .difference(ObjectFlags::PROPAGATING_FLAGS)
+                    let object_flags = self.object_flags(t);
+                    if self.flags(t) & tf::NULLABLE != 0 {
+                        f | object_flags.difference(ObjectFlags::PROPAGATING_FLAGS)
                     } else {
-                        f | record.object_flags
+                        f | object_flags
                     }
                 })
             }
@@ -2521,6 +2773,9 @@ impl<'p, 's> Types<'p, 's> {
                         of_properties |= of_type;
                     }
                     flags |= self.mapper_record(p.mapper).1;
+                    if let Some(key) = self.key_apart(p) {
+                        flags |= self.object_flags(key);
+                    }
                 }
                 flags |= of_properties;
                 for i in &shape.index {
@@ -2655,7 +2910,7 @@ impl<'p, 's> Types<'p, 's> {
             TypeData::Intersection(_) => true,
             TypeData::Union(members) => members
                 .iter()
-                .any(|&member| matches!(self.get(member), TypeData::Intersection(_))),
+                .any(|&member| self.flags(member) & tf::INTERSECTION != 0),
             _ => false,
         };
         let is_own_apparent_type = |&member: &TypeId| match self.get(member) {
@@ -2889,7 +3144,11 @@ impl<'p, 's> Types<'p, 's> {
         TypeId(intern_record(
             (&self.published.types, self.own, Kind::Type),
             |own| &own.types,
-            (spread, key, true),
+            (spread, key),
+            |(data, provenance)| {
+                SKIPS_LOOKUPS_OF_OWN_KEYS
+                    && (data.mentions_own() || provenance.is_some_and(|it| it.mentions_own()))
+            },
             |record, (data, provenance)| {
                 data.is(&record.created.0)
                     && match (provenance, &record.created.1) {
@@ -2936,7 +3195,8 @@ impl<'p, 's> Types<'p, 's> {
         TypeId(intern_record(
             (&self.published.types, self.own, Kind::Type),
             |own| &own.types,
-            (spread_hash(&created), created, true),
+            (spread_hash(&created), created),
+            |created| SKIPS_LOOKUPS_OF_OWN_KEYS && created.mentions_own(),
             |record, created| record.created == *created,
             |created, id| {
                 if matches!(created.0, TypeData::UnresolvedName { .. }) {
@@ -3049,7 +3309,8 @@ impl<'p, 's> Types<'p, 's> {
         SigId(intern_record(
             (&self.published.sigs, self.own, Kind::Sig),
             |own| &own.sigs,
-            (spread_hash(&data), data, true),
+            (spread_hash(&data), data),
+            |data| SKIPS_LOOKUPS_OF_OWN_KEYS && data.mentions_own(),
             |record, data| record == data,
             |data, _| {
                 let is_bound = data.is_bound(self.own);
@@ -3075,7 +3336,8 @@ impl<'p, 's> Types<'p, 's> {
         ComponentsId(intern_record(
             (&self.published.components, self.own, Kind::Components),
             |own| &own.components,
-            (spread_hash(list), list, true),
+            (spread_hash(list), list),
+            |_| false,
             |record, list| **record == **list,
             |list, _| {
                 let list = self.list(list);
@@ -3115,11 +3377,8 @@ impl<'p, 's> Types<'p, 's> {
         MapperId(intern_record(
             (&self.published.mappers, self.own, Kind::Mapper),
             |own| &own.mappers,
-            (
-                spread_hash(&Pairs(pairs)),
-                pairs,
-                !pairs.iter().any(|p| p.0.is_local() || p.1.is_local()),
-            ),
+            (spread_hash(&Pairs(pairs)), pairs),
+            |pairs| pairs.iter().any(MaybeLocal::is_local),
             |record, pairs| *record.0 == **pairs,
             |pairs, _| {
                 let flags =
@@ -3152,6 +3411,28 @@ impl<'p, 's> Types<'p, 's> {
             .binary_search_by_key(&param.arrival_order(), |p| p.0.arrival_order())
             .ok()
             .map(|i| mapping[i].1)
+    }
+
+    /// `keyType` of `prop`, if `prop` is a property of a mapped type that has it in `Prop::name_type`. Then `Prop::mapper`
+    /// is the mapper of the mapped type, which says so: with the key in it, it is another one. `None`: any other
+    /// property, or `Prop::mapper` has the key.
+    ///
+    /// A mapped type of 300 keys would otherwise create 300 mappers, for the few properties whose types are asked for.
+    /// The two forms stand for each other one to one, so two properties are equal in one form if they are in the other:
+    /// - The key is apart as long as the mapper is what `resolveMappedTypeMembers` gave the property.
+    /// - Whatever composes that mapper with another composes `Checker::mapper_of_prop`. If that gives another mapper, the
+    ///   property gets it, and `Prop::name_type` is what it was before there was this form.
+    #[inline]
+    pub fn key_apart(&self, prop: &Prop) -> Option<TypeId> {
+        match prop.source {
+            PropSource::Mapped(of, ..) if prop.name_type != TypeId::UNRESOLVED => {
+                match *self.get(of) {
+                    TypeData::Anon { mapper, .. } if mapper == prop.mapper => Some(prop.name_type),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
     }
 }
 
@@ -3193,6 +3474,14 @@ pub trait Follow {
         };
         self.visit(&mut visitor);
         visitor.is_bound
+    }
+
+    /// Whether it references a task-local record.
+    #[inline]
+    fn mentions_own(&self) -> bool {
+        let mut visitor = MentionsOwn(false);
+        self.visit(&mut visitor);
+        visitor.0
     }
 
     /// Marks the task-local records that it references. `OwnStore::finish` adds the records those
@@ -3357,6 +3646,15 @@ impl<T: Follow> Follow for ArenaVec<'_, T> {
     }
     fn follow(&mut self, link: &Link) {
         self[..].follow(link);
+    }
+}
+
+impl<T: Follow, const N: usize, L: std::ops::DerefMut<Target = [T]>> Follow for ShortList<T, N, L> {
+    fn visit<V: Visitor>(&self, visitor: &mut V) {
+        (**self).visit(visitor);
+    }
+    fn follow(&mut self, link: &Link) {
+        (**self).follow(link);
     }
 }
 
@@ -3732,6 +4030,23 @@ impl<T: CloneIn> CloneIn for ArenaVec<'_, T> {
     }
 }
 
+impl<T: BlankItem> CloneIn for ThinList<'_, T> {
+    type In<'t> = ThinList<'t, T>;
+    fn clone_in<'t>(&self, arena: &'t Arena) -> Self::In<'t> {
+        ThinList::block_in(self, arena)
+    }
+}
+
+impl<T: Copy, const N: usize, L: CloneIn> CloneIn for ShortList<T, N, L> {
+    type In<'t> = ShortList<T, N, L::In<'t>>;
+    fn clone_in<'t>(&self, arena: &'t Arena) -> Self::In<'t> {
+        match self {
+            ShortList::Inline(len, items) => ShortList::Inline(*len, *items),
+            ShortList::Spilled(items) => ShortList::Spilled(items.clone_in(arena)),
+        }
+    }
+}
+
 /// `clone_in_struct!(Name { every, field })`
 macro_rules! clone_in_struct {
     ($name:ident { $($field:ident),* $(,)? }) => {
@@ -3888,6 +4203,36 @@ impl Visitor for IsBound<'_, '_> {
     fn file(&mut self, file: FileId) {
         self.is_bound |= self.own.unimported_files.has(file.0 as usize);
     }
+    #[inline]
+    fn plain<T: Hash + ?Sized>(&mut self, _: &T) {}
+}
+
+/// See `Follow::mentions_own`.
+struct MentionsOwn(bool);
+
+impl Visitor for MentionsOwn {
+    #[inline]
+    fn atom(&mut self, atom: Atom) {
+        self.0 |= atom.is_own();
+    }
+    #[inline]
+    fn components(&mut self, id: ComponentsId) {
+        self.0 |= id.is_local();
+    }
+    #[inline]
+    fn mapper(&mut self, id: MapperId) {
+        self.0 |= id.is_local();
+    }
+    #[inline]
+    fn sig(&mut self, id: SigId) {
+        self.0 |= id.is_local();
+    }
+    #[inline]
+    fn ty(&mut self, id: TypeId) {
+        self.0 |= id.is_local();
+    }
+    #[inline]
+    fn file(&mut self, _: FileId) {}
     #[inline]
     fn plain<T: Hash + ?Sized>(&mut self, _: &T) {}
 }
@@ -4440,7 +4785,7 @@ fn put<V: Send + Sync, A: Allocator + Clone + Sync>(
         .map(|(task, link)| Work {
             task,
             link,
-            added: vec![Vec::new(); SHARDS],
+            added: vec![Vec::new(); shards.len()],
             later: Vec::new(),
         })
         .collect();
@@ -4448,7 +4793,7 @@ fn put<V: Send + Sync, A: Allocator + Clone + Sync>(
         for (id, _, record) in std::mem::take(&mut it.task.records) {
             let record = match settle(record, it.link, id) {
                 Placed::Indexed(record, spread) => {
-                    it.added[shard_of(spread)].push((spread, id));
+                    it.added[shard_among(spread, shards.len())].push((spread, id));
                     record
                 }
                 Placed::NotIndexed(record) => record,
@@ -4463,7 +4808,7 @@ fn put<V: Send + Sync, A: Allocator + Clone + Sync>(
     });
     {
         let work = &work;
-        in_parallel(SHARDS, &|shard| {
+        in_parallel(shards.len(), &|shard| {
             let count = work.iter().map(|it| it.added[shard].len()).sum();
             let added = work.iter().flat_map(|it| it.added[shard].iter().copied());
             shards[shard].extend(count, added);
@@ -4595,7 +4940,8 @@ impl<'s> TypeStore<'s> {
             sigs.push((task.sigs, link));
             types.push((task.types, link));
         }
-        let (_, joined) = put(atoms.halves(), texts, in_parallel, &|text, _, _| {
+        let (_, joined) = put(atoms.halves(), texts, in_parallel, &|text, _, id| {
+            atoms.set_class(Atom(id), &text);
             let spread = crate::atom::hash_of(&text);
             Placed::Indexed(text, spread)
         });
@@ -4675,10 +5021,196 @@ impl<'s> TypeStore<'s> {
             let spread = spread_hash(&record.created);
             // SAFETY: `put` has reserved the id and left it to be written here.
             unsafe { self.types.items.write(id, record) };
-            self.types.shards[shard_of(spread)].extend(1, std::iter::once((spread, id)));
+            (self.types.shard(spread)).extend(1, std::iter::once((spread, id)));
         }
         check_joined(self.types.halves(), joined, |a, b| a.created == b.created);
         self.summarize_types(self.types.items.len());
         (links, counts)
+    }
+}
+
+/// mimalloc is foreign code, which Miri does not run.
+#[cfg(all(test, not(miri)))]
+mod tests {
+    use super::*;
+
+    type Fat<'s> = ShortList<TypeId, 3, List<'s, TypeId>>;
+    type Thin<'s> = ShortList<TypeId, 3, ThinList<'s, TypeId>>;
+
+    fn ids(len: u32) -> Vec<TypeId> {
+        (0..len).map(|i| TypeId(i + 10)).collect()
+    }
+
+    #[test]
+    fn a_short_list_holds_up_to_its_limit_itself() {
+        let session = Session::new();
+        let arena = session.arena();
+        assert!(Fat::empty().is_empty() && Thin::default().is_empty());
+        for len in [0, 1, 2, 3, 4, 7, 8, 300] {
+            let items = ids(len);
+            let (fat, thin) = (
+                Fat::copy_from_slice_in(&items, arena),
+                Thin::copy_from_slice_in(&items, arena),
+            );
+            assert_eq!(matches!(fat, ShortList::Inline(..)), len <= 3);
+            assert_eq!(matches!(thin, ShortList::Inline(..)), len <= 3);
+            assert_eq!((&*fat, &*thin), (&items[..], &items[..]));
+            assert!((&fat).into_iter().eq(&items) && (&thin).into_iter().eq(&items));
+            assert_eq!(format!("{fat:?}"), format!("{items:?}"));
+        }
+    }
+
+    #[test]
+    fn a_short_list_is_compared_and_hashed_as_its_items() {
+        let session = Session::new();
+        let arena = session.arena();
+        for len in [0, 1, 3, 4] {
+            let items = ids(len);
+            let list = Fat::copy_from_slice_in(&items, arena);
+            // What the places without an item hold does not count, nor where the items are.
+            let mut places = [TypeId(7); 3];
+            let inline = (len <= 3).then(|| {
+                places[..items.len()].copy_from_slice(&items);
+                Fat::Inline(len as u8, places)
+            });
+            let spilled = Fat::Spilled(List::copy_from_slice_in(&items, arena));
+            for other in inline.into_iter().chain([spilled]) {
+                assert!(list == other);
+                assert_eq!(spread_hash(&list), spread_hash(&other));
+            }
+            assert_eq!(spread_hash(&list), spread_hash(&items[..]));
+            assert!(list != Fat::copy_from_slice_in(&ids(len + 1), arena));
+        }
+    }
+
+    #[test]
+    fn a_copy_of_a_short_list_is_its_own() {
+        let session = Session::new();
+        let arena = session.arena();
+        for len in [0, 3, 4, 7, 8] {
+            let items = ids(len);
+            let mut list = Thin::copy_from_slice_in(&items, arena);
+            let copy = list.clone_in(arena);
+            list.iter_mut().for_each(|item| item.0 += 1);
+            assert_eq!(*copy, *items);
+            let mut pairs = list.iter().zip(&items);
+            assert!(pairs.all(|(now, before)| now.0 == before.0 + 1));
+            assert_eq!(list.len(), items.len());
+        }
+    }
+
+    #[test]
+    fn a_short_list_is_visited_as_its_items() {
+        let session = Session::new();
+        let arena = session.arena();
+        for len in [1, 3, 4, 8] {
+            for own in 0..=len {
+                let mut items = ids(len);
+                if let Some(item) = items.get_mut(own as usize) {
+                    item.0 |= LOCAL;
+                }
+                let is_mentioned = own < len;
+                assert_eq!(
+                    Fat::copy_from_slice_in(&items, arena).mentions_own(),
+                    is_mentioned
+                );
+                assert_eq!(
+                    Thin::copy_from_slice_in(&items, arena).mentions_own(),
+                    is_mentioned
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_borrowed_key_mentions_what_the_type_mentions() {
+        let session = Session::new();
+        let arena = session.arena();
+        let target = Sym {
+            file: FileId(0),
+            id: crate::bind::SymbolId(1),
+        };
+        let plain = ProvenanceKey {
+            alias: None,
+            origin: OriginKey::None,
+            is_enum: false,
+            stored_under: None,
+            is_array_literal: false,
+            is_array_pattern: false,
+            has_other_instantiation: false,
+        };
+        let under = InstantiationKey {
+            type_arguments: MapperId::IDENTITY,
+            alias: None,
+            could_contain_type_variables: false,
+            nesting: 0,
+        };
+        let check = |key: TypeKey<'_>, is_mentioned: bool| {
+            let data = key.to_data(arena);
+            assert_eq!(key.mentions_own(), is_mentioned);
+            assert_eq!(data.mentions_own(), is_mentioned);
+            assert_eq!(TypeKey::Data(&data).mentions_own(), is_mentioned);
+        };
+        let check_provenance = |key: ProvenanceKey<'_>, is_mentioned: bool| {
+            assert_eq!(key.mentions_own(), is_mentioned);
+            assert_eq!(key.to_provenance(arena).mentions_own(), is_mentioned);
+        };
+        // The task-local type in each place of a list that is in the record, and of one that is not.
+        for len in [3, 5, 9] {
+            let flags = vec![ElemFlags::REQUIRED; len as usize];
+            for own in 0..=len {
+                let mut types = ids(len);
+                if let Some(ty) = types.get_mut(own as usize) {
+                    ty.0 |= LOCAL;
+                }
+                let (types, is_mentioned) = (&types[..], own < len);
+                check(TypeKey::Union(types), is_mentioned);
+                check(TypeKey::Intersection(types), is_mentioned);
+                let args = types;
+                check(TypeKey::Ref { target, args }, is_mentioned);
+                check(
+                    TypeKey::Tuple {
+                        elems: types,
+                        flags: &flags,
+                        readonly: false,
+                    },
+                    is_mentioned,
+                );
+                let alias = Some((target, types));
+                check_provenance(ProvenanceKey { alias, ..plain }, is_mentioned);
+                for origin in [OriginKey::Union(types), OriginKey::Intersection(types)] {
+                    check_provenance(ProvenanceKey { origin, ..plain }, is_mentioned);
+                }
+            }
+        }
+        check_provenance(plain, false);
+        for (number, is_mentioned) in [(5, false), (LOCAL | 5, true)] {
+            let decls = &[(FileId(0), FnId(0))];
+            let mapper = MapperId(number);
+            check(TypeKey::Fns { decls, mapper }, is_mentioned);
+            let origin = OriginKey::Keyof(TypeId(number));
+            check_provenance(ProvenanceKey { origin, ..plain }, is_mentioned);
+            for key in [
+                InstantiationKey {
+                    type_arguments: mapper,
+                    ..under
+                },
+                InstantiationKey {
+                    alias: Some((target, TypeId(number))),
+                    ..under
+                },
+            ] {
+                let stored_under = Some(key);
+                let key = ProvenanceKey {
+                    stored_under,
+                    ..plain
+                };
+                check_provenance(key, is_mentioned);
+            }
+            assert_eq!(Atom(number).mentions_own(), is_mentioned);
+            assert_eq!(SigId(number).mentions_own(), is_mentioned);
+            assert_eq!(ComponentsId(number).mentions_own(), is_mentioned);
+        }
+        assert!(!Atom::NONE.mentions_own());
     }
 }

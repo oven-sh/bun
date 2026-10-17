@@ -1,7 +1,9 @@
 //! Types computed from other types: `keyof`, `T[K]`, conditional, mapped and template literal types.
 
 use super::alias::NewAlias;
+use super::instantiate::PropInstantiation;
 use super::related::Place;
+use super::shortcuts::task_fact;
 use super::*;
 use crate::bind::Decl;
 use crate::bind::Parent;
@@ -37,6 +39,14 @@ pub(super) struct MappedInstantiation {
     nesting: u8,
 }
 
+/// `false`: `build_mapped_shape` creates a mapper for every key, as before. See `Types::key_apart`.
+const KEEPS_KEYS_APART: bool = true;
+
+/// Every property that is made with its key apart is made with the key in its mapper as well, and both are asked what is
+/// asked about such a property, and instantiated. And no template is instantiated without a key. A difference is a panic
+/// that names the mapped type and the file. For debugging.
+pub(super) const CHECKS_KEYS_APART: bool = false;
+
 impl<'p, 's> Checker<'p, 's> {
     /// The pairs of `mapper`, followed by `param` mapped to `ty`.
     fn mapper_with_pair(&self, mapper: MapperId, param: TypeId, ty: TypeId) -> MapperId {
@@ -45,6 +55,105 @@ impl<'p, 's> Checker<'p, 's> {
         pairs.extend_from_slice(mapping);
         pairs.push((param, ty));
         self.types().mapper_of(&pairs)
+    }
+
+    /// `Prop::mapper`, with the key in it that `prop` may have apart (`Types::key_apart`). Whatever reads the mapper of a
+    /// property that can be one of a mapped type reads this, unless it only compares two properties.
+    pub(super) fn mapper_of_prop(&self, prop: &Prop) -> MapperId {
+        let (Some(key), PropSource::Mapped(of, ..)) = (self.types().key_apart(prop), &prop.source)
+        else {
+            return prop.mapper;
+        };
+        let Some((file, node, mapper)) = self.mapped_origin(*of) else {
+            return prop.mapper;
+        };
+        let param = self.type_param(file, self.mapped_decl(file, node).param);
+        self.mapper_with_pair(mapper, param, key)
+    }
+
+    /// `compose(prop.mapper, outer)`, for `Prop::mapper` of a copy of `prop`. The flag: the copy has its key apart, as
+    /// `prop` has, because nothing has changed.
+    pub(super) fn composed_mapper_of_prop(
+        &mut self,
+        prop: &Prop,
+        outer: MapperId,
+    ) -> (MapperId, bool) {
+        if self.types().key_apart(prop).is_none() {
+            return (self.compose(prop.mapper, outer), false);
+        }
+        if outer == MapperId::IDENTITY {
+            return (prop.mapper, true);
+        }
+        let with_key = self.mapper_of_prop(prop);
+        let composed = self.compose(with_key, outer);
+        match composed == with_key {
+            true => (prop.mapper, true),
+            false => (composed, false),
+        }
+    }
+
+    /// `prop.mapper = compose(prop.mapper, outer)`
+    pub(super) fn compose_mapper_of_prop(&mut self, prop: &mut Prop, outer: MapperId) {
+        let had_key_apart = self.types().key_apart(prop).is_some();
+        let (composed, has_key_apart) = self.composed_mapper_of_prop(prop, outer);
+        prop.mapper = composed;
+        if had_key_apart && !has_key_apart {
+            prop.name_type = TypeId::UNRESOLVED;
+        }
+    }
+
+    /// `prop` is about to get another source. A key that is apart belongs to the one it has.
+    pub(super) fn forget_key_apart(&self, prop: &mut Prop) {
+        if self.types().key_apart(prop).is_some() {
+            prop.name_type = TypeId::UNRESOLVED;
+        }
+    }
+
+    /// Under `CHECKS_KEYS_APART`: `prop`, which `build_mapped_shape` has made for `of` with its key apart, against the same
+    /// property with `with_key` for its mapper.
+    #[cold]
+    #[inline(never)]
+    fn check_key_apart(&mut self, of: TypeId, prop: &Prop, with_key: MapperId) {
+        let whole = Prop {
+            mapper: with_key,
+            name_type: TypeId::UNRESOLVED,
+            ..prop.clone_in(self.arena)
+        };
+        let is_same = self.types().key_apart(&whole).is_none()
+            && self.mapper_of_prop(prop) == with_key
+            && self.key_type_of_prop(of, prop) == self.key_type_of_prop(of, &whole)
+            && self.name_type_of_copy(of, prop) == self.name_type_of_copy(of, &whole)
+            && self.containing_type_of_mapped_prop(of, prop)
+                == self.containing_type_of_mapped_prop(of, &whole);
+        if !is_same {
+            self.fact_differs_for("a property of a mapped type with its key apart", &[of]);
+        }
+    }
+
+    /// Under `CHECKS_KEYS_APART`: `instantiation` is what `instantiation_of_prop(prop, mapper)` has returned.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn check_instantiation_with_key_apart(
+        &mut self,
+        prop: &Prop,
+        mapper: MapperId,
+        instantiation: PropInstantiation,
+    ) {
+        let (Some(_), &PropSource::Mapped(of, ..)) = (self.types().key_apart(prop), &prop.source)
+        else {
+            return;
+        };
+        let mut whole = Prop {
+            mapper: self.mapper_of_prop(prop),
+            name_type: TypeId::UNRESOLVED,
+            ..prop.clone_in(self.arena)
+        };
+        self.instantiate_prop(&mut whole, mapper);
+        let mut apart = prop.clone_in(self.arena);
+        instantiation.apply_to(&mut apart);
+        if self.mapper_of_prop(&apart) != whole.mapper {
+            self.fact_differs_for("the instantiation of a property with its key apart", &[of]);
+        }
     }
 
     /// `prependTypeMapping`: a `MergedTypeMapper`, so `source` maps to what `mapper` maps `target`
@@ -111,14 +220,29 @@ impl<'p, 's> Checker<'p, 's> {
                     return (object, index, false);
                 }
                 // `ObjectFlagsIsGenericTypeComputed`
-                if let Some(&(object, index)) = self.generic_object_flags.get(&ty) {
-                    return (object, index, true);
+                let known = self.task_facts.get(ty);
+                if known & task_fact::KNOWS_GENERIC_OBJECT_FLAGS != 0 {
+                    return (
+                        known & task_fact::IS_GENERIC_OBJECT_TYPE != 0,
+                        known & task_fact::IS_GENERIC_INDEX_TYPE != 0,
+                        true,
+                    );
                 }
                 let (object, index, is_resolved) = self.generic_object_flags_of_all(parts);
                 if shortcuts::GENERIC_OBJECT_FLAGS && !is_resolved {
                     (self.types()).set_generic_object_flags(ty, (object, index));
                 } else {
-                    self.generic_object_flags.insert(ty, (object, index));
+                    let mut facts = task_fact::KNOWS_GENERIC_OBJECT_FLAGS;
+                    if object {
+                        facts |= task_fact::IS_GENERIC_OBJECT_TYPE;
+                    }
+                    if index {
+                        facts |= task_fact::IS_GENERIC_INDEX_TYPE;
+                    }
+                    let all = task_fact::KNOWS_GENERIC_OBJECT_FLAGS
+                        | task_fact::IS_GENERIC_OBJECT_TYPE
+                        | task_fact::IS_GENERIC_INDEX_TYPE;
+                    self.task_facts.replace(ty, all, facts);
                 }
                 (object, index, is_resolved)
             }
@@ -133,7 +257,7 @@ impl<'p, 's> Checker<'p, 's> {
                         || self.is_generic_tuple_type(ty),
                     flags & (tf::INSTANTIABLE_NON_PRIMITIVE | tf::INDEX) != 0
                         || self.is_generic_string_like_type(ty),
-                    self.mapped_origin(ty).is_some(),
+                    self.is_mapped_type(ty),
                 )
             }
         }
@@ -478,6 +602,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// number is the number only if it is a numeric literal in the source. A property without a
     /// declaration, like a tuple element, is named by a string.
     pub(super) fn key_type_of_prop(&mut self, owner: TypeId, prop: &Prop) -> Option<TypeId> {
+        // A key that is apart (`Types::key_apart`) is the `nameType` too: there is no `as` clause.
         if prop.name_type != TypeId::UNRESOLVED {
             return Some(prop.name_type);
         }
@@ -544,7 +669,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `Prop::name_type` of a symbol that is made from `prop`, a property of `owner`.
     pub(super) fn name_type_of_copy(&mut self, owner: TypeId, prop: &Prop) -> TypeId {
-        if prop.name_type != TypeId::UNRESOLVED {
+        if prop.name_type != TypeId::UNRESOLVED && self.types().key_apart(prop).is_none() {
             return prop.name_type;
         }
         // A `nameType` is stored for a late-bound name (`lateBindMember`), for a computed name in an
@@ -1830,7 +1955,8 @@ impl<'p, 's> Checker<'p, 's> {
         // A remaining type variable is not a constraint. A mapped type over one is an ordinary
         // object type.
         let constraint = self.next_base_constraint(constraint)?;
-        (!self.some_type(constraint, |c, m| c.is_deferred(m))).then_some(constraint)
+        let is_deferred = tf::INSTANTIABLE_NON_PRIMITIVE | tf::INDEX;
+        (!self.is_some_type_of_kind(constraint, is_deferred)).then_some(constraint)
     }
 
     // ───────────────────────────── mapped types ─────────────────────────────
@@ -2011,25 +2137,25 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getResolvedApparentTypeOfMappedType`: `{ [P in keyof T]: X }` where `T` can only be an
-    /// array or a tuple is one too.
-    pub(super) fn apparent_type_of_mapped(&mut self, ty: TypeId) -> TypeId {
+    /// array or a tuple is one too. The flag: it has asked for the modifiers type.
+    pub(super) fn derive_apparent_type_of_mapped(&mut self, ty: TypeId) -> (TypeId, bool) {
         let TypeData::Anon {
             origin: Origin::Mapped(file, node),
             mapper,
         } = *self.data(ty)
         else {
-            return ty;
+            return (ty, false);
         };
         let Some(source) = self.homomorphic_type_variable(file, node, MapperId::IDENTITY) else {
-            return ty;
+            return (ty, false);
         };
         if self.mapped_decl(file, node).name_ty.is_some() {
-            return ty;
+            return (ty, false);
         }
         // Not `source`: in the true branch of `T extends X[] ? .. : ..` the `T` of `keyof T` is a
         // substitution type, whose base constraint is `X[]`.
         let Some((modifiers, _)) = self.mapped_modifiers_source(file, node) else {
-            return ty;
+            return (ty, true);
         };
         let modifiers = self.instantiate(modifiers, mapper);
         let base_constraint = if self.is_generic_mapped_type(modifiers) {
@@ -2045,9 +2171,9 @@ impl<'p, 's> Checker<'p, 's> {
         match base_constraint {
             Some(base_constraint) if self.every_type(base_constraint, is_array_like) => {
                 let applied = self.prepend_type_mapping(source, base_constraint, mapper);
-                self.instantiate_mapped(file, node, applied)
+                (self.instantiate_mapped(file, node, applied), true)
             }
-            _ => ty,
+            _ => (ty, true),
         }
     }
 
@@ -2785,6 +2911,10 @@ impl<'p, 's> Checker<'p, 's> {
         let Some((file, node, mapper)) = self.mapped_origin(of) else {
             return of;
         };
+        // The key is apart.
+        if prop.mapper == mapper {
+            return of;
+        }
         let types = self.types();
         let own = types.mapping(mapper);
         let type_argument = |&(param, value): &(TypeId, TypeId)| {
@@ -2807,7 +2937,10 @@ impl<'p, 's> Checker<'p, 's> {
         let of = self.containing_type_of_mapped_prop(of, prop);
         let (file, node, mapper) = self.mapped_origin(of)?;
         let param = self.type_param(file, self.mapped_decl(file, node).param);
-        let key_type = self.types().map(prop.mapper, param)?;
+        let key_type = match self.types().key_apart(prop) {
+            Some(key_type) => key_type,
+            None => self.types().map(prop.mapper, param)?,
+        };
         // `keyType` is the union of the keys that have the name. The first created the symbol.
         let key = if self.is_union(key_type) {
             let constraint = self.mapped_constraint(file, node, mapper);
@@ -2891,7 +3024,14 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             TypeId::ERROR
         };
-        let ty = self.instantiate(template, prop.mapper);
+        let with_key = self.mapper_of_prop(prop);
+        if CHECKS_KEYS_APART {
+            let param = self.type_param(file, mapped.param);
+            if self.types().map(with_key, param).is_none() {
+                self.fact_differs_for("the mapper of a property of a mapped type has a key", &[of]);
+            }
+        }
+        let ty = self.instantiate(template, with_key);
         let ty = self.mapped_property_type(
             ty,
             mapped.optional,
@@ -2967,12 +3107,21 @@ impl<'p, 's> Checker<'p, 's> {
                 Some(declared) => self.is_assignable(declared, param),
                 None => true,
             };
+        // See `Types::key_apart`. An `as` clause is instantiated for every key, with the mapper that has the key.
+        let keeps_keys_apart = KEEPS_KEYS_APART
+            && name_declared.is_none()
+            && self.types().map(mapper, param).is_none();
         // The index of each name in `shape.props`, once there are many.
         let mut places: FxHashMap<Atom, usize> = FxHashMap::default();
         for key in keys {
-            let with_key = self.mapper_with_pair(mapper, param, key);
+            let created = (!keeps_keys_apart).then(|| self.mapper_with_pair(mapper, param, key));
+            let with_key =
+                |c: &Self| created.unwrap_or_else(|| c.mapper_with_pair(mapper, param, key));
             let names = match name_declared {
-                Some(declared) => self.instantiate(declared, with_key),
+                Some(declared) => {
+                    let with_key = with_key(self);
+                    self.instantiate(declared, with_key)
+                }
                 None => key,
             };
             let key_name = self.property_name_of_type(key);
@@ -3016,13 +3165,14 @@ impl<'p, 's> Checker<'p, 's> {
                         // One property for all the keys that map to its name. Its `keyType` is
                         // their union. The first key determines the modifiers.
                         Some(i) => {
-                            let so_far = self
-                                .types()
-                                .map(shape.props[i].mapper, param)
+                            let types = self.types();
+                            let so_far = (types.key_apart(&shape.props[i]))
+                                .or_else(|| types.map(shape.props[i].mapper, param))
                                 .unwrap_or(key);
                             let all = self.union(&[so_far, key]);
                             if all != so_far {
                                 shape.props[i].mapper = self.mapper_with_pair(mapper, param, all);
+                                shape.props[i].name_type = TypeId::UNRESOLVED;
                             }
                         }
                         None => {
@@ -3064,14 +3214,25 @@ impl<'p, 's> Checker<'p, 's> {
                                 _ => SmallVec::new(),
                             };
                             let declared = (!declared.is_empty()).then(|| self.list_of(declared));
+                            let is_key_apart =
+                                keeps_keys_apart && name_ty == key && key != TypeId::UNRESOLVED;
+                            let (own_mapper, name_type) = match is_key_apart {
+                                true => (mapper, key),
+                                false => (with_key(self), TypeId::UNRESOLVED),
+                            };
                             // The type is resolved on demand (`type_of_mapped_prop`): the template under `with_key`.
-                            shape.props.push(Prop {
+                            let prop = Prop {
                                 name,
                                 flags,
                                 source: PropSource::Mapped(of, strips, declared),
-                                mapper: with_key,
-                                name_type: TypeId::UNRESOLVED,
-                            });
+                                mapper: own_mapper,
+                                name_type,
+                            };
+                            if CHECKS_KEYS_APART && is_key_apart {
+                                let with_key = with_key(self);
+                                self.check_key_apart(of, &prop, with_key);
+                            }
+                            shape.props.push(prop);
                         }
                     },
                     None => {
@@ -3098,6 +3259,7 @@ impl<'p, 's> Checker<'p, 's> {
                         } else {
                             continue;
                         };
+                        let with_key = with_key(self);
                         let ty = self.instantiate(template_declared, with_key);
                         let ty = if mapped.optional == MappedModifier::Add {
                             self.optional_property(ty)

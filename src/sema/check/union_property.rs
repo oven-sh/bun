@@ -25,6 +25,7 @@
 //! - The members that are visited are visited in the order of the union.
 
 use super::shape::{LONG_PROP_LIST, PropertyHolder, is_plain_object};
+use super::shortcuts::{TypeNumbers, task_fact};
 use super::*;
 use crate::util::{FxHashSet, PositionSet};
 use smallvec::SmallVec;
@@ -32,7 +33,8 @@ use smallvec::SmallVec;
 /// The members of a shorter union are asked each time. Most unions are short, and there is little to save in them.
 const MIN_MEMBERS_FOR_FACTS: usize = 8;
 
-/// The length of `UnionMembers::recent`: more than the members of all but a few unions. `UnionMembers::walked` is for those.
+/// The length of `UnionMembers::recent`: more than the members of all but a few unions. `task_fact::IS_WALKED_UNION` is for
+/// those.
 const RECENT_UNION_MEMBERS: usize = 512;
 
 /// A shorter union has no summary: to go through its members with their facts takes no longer than the rest of what it
@@ -99,18 +101,37 @@ struct UnionSummary {
 /// A type id can be the task's own, so none of this is shared with other tasks.
 #[derive(Default)]
 pub(super) struct UnionMembers<'p> {
-    facts: FxHashMap<TypeId, MemberFacts<'p>>,
-    /// The intersections among `apparent_type` and `reduced_apparent_type` of `facts`.
-    reduced: FxHashSet<TypeId>,
-    /// The unions whose members were all visited for a property. Facts and summaries are kept from the second time on: to
-    /// keep them costs about as much as to visit the members once, and many unions are asked for one property and no more.
-    walked: FxHashSet<TypeId>,
+    facts: Vec<MemberFacts<'p>>,
+    /// For a member, 1 + the index of its facts in `facts`. 0: it has none.
+    facts_of: TypeNumbers,
     /// The members without facts that were visited last, each at its id modulo the length. One that is visited again gets
     /// its facts as well: a union that is narrowed in many ways makes many unions that are each asked once.
     recent: Vec<TypeId>,
     /// For each name, the members with `is_listed` that have it.
     holders: FxHashMap<Atom, SmallVec<[TypeId; 4]>>,
     summaries: FxHashMap<TypeId, UnionSummary>,
+}
+
+impl<'p> UnionMembers<'p> {
+    #[inline]
+    fn facts(&self, member: TypeId) -> Option<&MemberFacts<'p>> {
+        let at = (self.facts_of.get(member) as usize).checked_sub(1)?;
+        self.facts.get(at)
+    }
+
+    fn facts_mut(&mut self, member: TypeId) -> Option<&mut MemberFacts<'p>> {
+        let at = (self.facts_of.get(member) as usize).checked_sub(1)?;
+        self.facts.get_mut(at)
+    }
+
+    fn keep_facts(&mut self, member: TypeId, facts: MemberFacts<'p>) {
+        if let Some(kept) = self.facts_mut(member) {
+            *kept = facts;
+            return;
+        }
+        self.facts.push(facts);
+        self.facts_of.set(member, self.facts.len() as u32);
+    }
 }
 
 /// What `add_member` has found out about a member.
@@ -338,7 +359,8 @@ impl<'p, 's> Checker<'p, 's> {
             self.visit_some_members(containing_type, &visited, &mut walk, &mut builder);
             return self.finish_union_property(builder, containing_type, name);
         }
-        walk.is_walked_again = uses_facts && !self.union_members.walked.insert(containing_type);
+        walk.is_walked_again =
+            uses_facts && !(self.task_facts).add(containing_type, task_fact::IS_WALKED_UNION);
         for (at, &current) in parts.iter().enumerate() {
             self.visit_member(&mut walk, &mut builder, at, current);
         }
@@ -360,7 +382,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut being_reduced = self.never_in_progress.iter();
         // `members` leaves out what a type reference inherits.
         self.unresolved_members.is_empty()
-            && !being_reduced.any(|ty| self.union_members.reduced.contains(ty))
+            && !being_reduced.any(|&ty| self.task_facts.has(ty, task_fact::IS_IN_MEMBER_FACTS))
     }
 
     /// Whether what a member adds where it does not have the name can be the same as for other names: no object type
@@ -406,15 +428,16 @@ impl<'p, 's> Checker<'p, 's> {
         // Members get their facts where the properties of a union are made. Those of a union that has not been there are not
         // worth a lookup each.
         if parts.len() < MIN_MEMBERS_FOR_FACTS
-            || !self.union_members.walked.contains(&union)
+            || !self.task_facts.has(union, task_fact::IS_WALKED_UNION)
             || !self.do_member_facts_hold()
             || !self.is_ordinary(name, self.atoms().is_symbol_name(name))
         {
             return None;
         }
-        let holders = self.union_members.holders.get(&name);
-        let holders = holders.map_or(&[][..], |holders| &holders[..]);
-        if let Some(summary) = self.union_members.summaries.get(&union)
+        if parts.len() >= MIN_MEMBERS_FOR_SUMMARY
+            && let Some(summary) = self.union_members.summaries.get(&union)
+            && let holders = self.union_members.holders.get(&name)
+            && let holders = holders.map_or(&[][..], |holders| &holders[..])
             && holders.len() <= MOST_HOLDERS_TO_FIND
         {
             let mut asked = summary.always_asked_as_context.clone();
@@ -427,7 +450,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let mut asked = PositionSet::new(parts.len());
         for (at, member) in parts.iter().enumerate() {
-            let lacks_it = self.union_members.facts.get(member).is_some_and(|facts| {
+            let lacks_it = self.union_members.facts(*member).is_some_and(|facts| {
                 self.has_only_its_properties(*member, facts)
                     && facts.members.resolved.prop_past_filter(name).is_none()
             });
@@ -518,7 +541,7 @@ impl<'p, 's> Checker<'p, 's> {
         let may_have_facts =
             walk.uses_facts && self.flags(current) & (tf::OBJECT | tf::INTERSECTION) != 0;
         let facts = match may_have_facts {
-            true => self.union_members.facts.get(&current).copied(),
+            true => self.union_members.facts(current).copied(),
             false => None,
         };
         let Some(facts) = facts else {
@@ -561,7 +584,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let missing = self.missing_from_member(t, walk.name, false);
                 if self.non_cacheable_mark() == before {
                     let when_missing = self.when_missing(facts.reduced_apparent_type, missing);
-                    if let Some(facts) = self.union_members.facts.get_mut(&current) {
+                    if let Some(facts) = self.union_members.facts_mut(current) {
                         facts.when_missing = when_missing;
                     }
                 }
@@ -593,18 +616,24 @@ impl<'p, 's> Checker<'p, 's> {
         }
         for ty in [facts.apparent_type, facts.reduced_apparent_type] {
             if self.is_intersection(ty) {
-                self.union_members.reduced.insert(ty);
+                self.task_facts.add(ty, task_fact::IS_IN_MEMBER_FACTS);
             }
         }
-        self.union_members.facts.insert(current, facts);
+        self.union_members.keep_facts(current, facts);
     }
 
     /// The member `current`, which has facts and is not listed, did not have a name. It is listed once that has happened a
     /// quarter as many times as it has properties: to list a property takes about 60 instructions, and the facts have saved
     /// about 250 each time, so they have paid for it.
     fn count_asked_in_vain(&mut self, current: TypeId) {
-        let UnionMembers { facts, holders, .. } = &mut self.union_members;
-        let Some(facts) = facts.get_mut(&current) else {
+        let UnionMembers {
+            facts,
+            facts_of,
+            holders,
+            ..
+        } = &mut self.union_members;
+        let at = (facts_of.get(current) as usize).wrapping_sub(1);
+        let Some(facts) = facts.get_mut(at) else {
             return;
         };
         let props = &facts.members.shape().props;
@@ -632,7 +661,7 @@ impl<'p, 's> Checker<'p, 's> {
                     is_listed: true,
                     ..
                 },
-            ) = self.union_members.facts.get(current)
+            ) = self.union_members.facts(*current)
             else {
                 summary.always_visited.insert(at);
                 summary.always_asked_as_context.insert(at);
@@ -659,7 +688,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.is_intersection(ty) || self.has_only_own_apparent_types(ty) {
             return Some(ty);
         }
-        (self.apparent_types_of_intersections.get(&(ty, ty))).copied()
+        self.apparent_types_of_intersections.get(ty)
     }
 
     /// `reduced(ty)` for the same types, on the same condition.

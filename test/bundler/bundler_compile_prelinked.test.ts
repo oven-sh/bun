@@ -495,8 +495,8 @@ describe.concurrent("bundler", () => {
       stdout: [value[0], value[30], exportsOf(0).size, exportsOf(12).size, exportsOf(24).size, sum].join(" "),
       // JSC logs one line per host-hook call, and nothing else may be on stderr. All 63 records (entry chunk, 60 module
       // chunks, the shared chunk and runtime chunk) evaluate either way, and only the roots (bun:main, the entry, the
-      // import() of m24) are fetched. With the graph in use only those roots go through the host's resolve (bun:main
-      // and m24 twice each), without it every cross-chunk import statement does too.
+      // import() of m24) are fetched. With the graph in use only those roots go through the host's resolve (m24
+      // twice), without it every cross-chunk import statement does too.
       splitRun: mode => ({
         env: { BUN_JSC_dumpModuleLoadingState: "1" },
         stderr: undefined, // the log, checked line by line below
@@ -506,7 +506,7 @@ describe.concurrent("bundler", () => {
             const hook = /^Loader \[(\w+)\] /.exec(line)?.[1] ?? `not a loader line: ${line}`;
             hookCalls[hook] = (hookCalls[hook] ?? 0) + 1;
           }
-          expect(hookCalls).toEqual({ resolve: mode === "by-name" ? 252 : 5, fetch: 3, evaluate: 63, import: 1 });
+          expect(hookCalls).toEqual({ resolve: mode === "by-name" ? 251 : 4, fetch: 3, evaluate: 63, import: 1 });
         },
       }),
     });

@@ -351,6 +351,26 @@ describe.concurrent("the entry point and the first checkpoint", () => {
       });
     },
   );
+
+  // Bun only. bun:main reads the default export when the body of the entry point finishes, before what that body queued.
+  it.each([
+    ["entry.cjs", "module.exports ="],
+    ["entry.mjs", "export default"],
+  ])("the default export of %s is served before a tick that the entry point queued", async (entry, exports) => {
+    const source = `
+      ${exports} { port: 0, fetch: () => new Response("ok") };
+      process.nextTick(() => {
+        console.log("tick");
+        process.exit(0);
+      });
+    `;
+    const { stdout, stderr, exitCode } = await run({ [entry]: source }, [entry]);
+    expect({ stdout: stdout.replace(/:\d+\n/, ":<port>\n"), stderr, exitCode }).toEqual({
+      stdout: "Started development server: http://localhost:<port>\ntick\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 it("process.nextTick", async () => {

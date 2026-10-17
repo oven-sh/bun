@@ -83,35 +83,6 @@ test.concurrent("import('bun:main') from a preload (before the module map is pop
   });
 });
 
-// bun:main reads the default export when the body of the entry point finishes, before what that body queued.
-test.concurrent.each([
-  ["entry.cjs", "module.exports ="],
-  ["entry.mjs", "export default"],
-])("the default export of %s is served before a tick that the entry point queued", async (entry, exports) => {
-  using dir = tempDir("bun-main-serve", {
-    [entry]: `
-      ${exports} { port: 0, fetch: () => new Response("ok") };
-      process.nextTick(() => {
-        console.log("tick");
-        process.exit(0);
-      });
-    `,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), entry],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.replace(/:\d+\n/, ":<port>\n"), stderr: stripAsanWarning(stderr), exitCode }).toEqual({
-    stdout: "Started development server: http://localhost:<port>\ntick\n",
-    stderr: [],
-    exitCode: 0,
-  });
-});
-
 test.concurrent(
   "ServerEntryPoint regenerates cleanly across --hot reloads",
   async () => {

@@ -38,9 +38,13 @@ test.skipIf(!isLinux)(
         const keep = [];
         for (let i = 0; i < 10_000; i++) keep.push({ i, s: "x" + i });
         // The GC timer (every 250 ms) requests the idle collection after 1 s of quiet, so by about
-        // 1.3 s, and the collector runs it while this thread waits for the timer. Nothing in JS
-        // observes an idle collection, so the timer is the proof that the loop came back.
-        setTimeout(() => console.log("done", keep.length), 2500);
+        // 1.3 s, and the collector runs it while this thread waits for the timer. BUN_JSC_logGC
+        // prints the collection to stderr; the parent checks that one happened between the marks.
+        console.error("MARK");
+        setTimeout(() => {
+          console.error("DONE");
+          console.log("done", keep.length);
+        }, 2500);
         `,
       ],
       env: {
@@ -48,6 +52,7 @@ test.skipIf(!isLinux)(
         BUN_IDLE_GC_SECONDS: "1",
         BUN_GC_TIMER_INTERVAL: "250",
         BUN_GC_TIMER_DISABLE: undefined,
+        BUN_JSC_logGC: "1",
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -66,7 +71,8 @@ test.skipIf(!isLinux)(
       throw new Error("the process hung: the collector could not suspend the JS thread");
     }
     const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
-    expect(stderr).toBe("");
+    const idleWindow = stderr.slice(stderr.indexOf("MARK"), stderr.indexOf("DONE"));
+    expect(idleWindow).toContain("=> FullCollection");
     expect(stdout).toBe("done 10000\n");
     expect(exited).toBe(0);
   },

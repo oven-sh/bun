@@ -7,6 +7,7 @@
 #include <JavaScriptCore/JSCJSValue.h>
 #include <wtf/text/WTFString.h>
 #include <wtf/RefPtr.h>
+#include "Bindgen/JSBytesView.h"
 #include "Bindgen/JSStringUTF8View.h"
 
 namespace Bun::Bindgen {
@@ -117,6 +118,25 @@ template<> struct ExternTraits<JSStringUTF8View> {
     static ExternType convertToExtern(JSStringUTF8View&& cppValue)
     {
         return ExternTraits<std::span<const uint8_t>>::convertToExtern(cppValue.bytes());
+    }
+};
+
+template<> struct ExternTraits<JSBytesView> {
+    using ExternType = ExternBytes;
+
+    // As for JSStringUTF8View.
+    static ExternType convertToExtern(JSBytesView&& cppValue)
+    {
+        return ExternTraits<std::span<const uint8_t>>::convertToExtern(cppValue.bytes());
+    }
+};
+
+template<> struct ExternTraits<JSBlobOrStringOrBuffer> {
+    using ExternType = WTF::StringImpl*;
+
+    static ExternType convertToExtern(JSBlobOrStringOrBuffer&& cppValue)
+    {
+        return ExternTraits<WTF::String>::convertToExtern(cppValue.takeString());
     }
 };
 

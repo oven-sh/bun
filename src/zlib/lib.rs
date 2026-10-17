@@ -805,6 +805,8 @@ impl<'a> ZlibCompressorArrayList<'a> {
                 //   flush parameter).
 
                 if self.zlib.avail_out == 0 {
+                    // SAFETY: zlib has written `total_out` bytes into list_ptr's buffer.
+                    unsafe { self.list_ptr.set_len(self.zlib.total_out as usize) };
                     if self.list_ptr.try_reserve(4096).is_err() {
                         self.end();
                         self.state = ZlibCompressorArrayListState::Error;

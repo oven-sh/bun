@@ -305,7 +305,7 @@ function checkForEmptyInterfaces(program: ts.Program) {
 
 /**
  * What the published types call the exports of each schema of the bindgen (docs/project/bindgen.mdx).
- * `null`: nothing, since JavaScript wraps them, only tests reach them, or the file has only types.
+ * `null`: nothing, since JavaScript wraps them, they are not for users, or the file has only types.
  */
 const PUBLISHED_AS: Record<string, string | null> = {
   "BunObject.bind.ts": "typeof Bun & { braces: typeof Bun.$.braces; shellEscape: typeof Bun.$.escape }",
@@ -334,9 +334,9 @@ const PUBLISHED_AS: Record<string, string | null> = {
 
 /**
  * Where the published types promise what the schema does not do: a call they allow has an argument
- * the schema refuses or an option its dictionary does not have, so nothing reads it, or a result
- * they name is not one the schema gives. They may be narrower than it,
- * which says "a buffer" of a `Uint8Array`, but not by leaving out `null`.
+ * the schema refuses, a result they name is not one the schema gives, or an object has a member
+ * that the schema's does not. They may be narrower than it, which says "a buffer" of a `Uint8Array`,
+ * but not by leaving out `null` or `undefined`.
  */
 function promisesTheSchemaBreaks(checker: ts.TypeChecker, published: ts.Type, schema: ts.Type) {
   const broken: string[] = [];
@@ -345,6 +345,21 @@ function promisesTheSchemaBreaks(checker: ts.TypeChecker, published: ts.Type, sc
   const generated = schema.symbol.declarations![0].getSourceFile();
   const isGenerated = (type: ts.Type) =>
     !!type.symbol?.declarations?.some(declaration => declaration.getSourceFile() === generated);
+  const parts = (type: ts.Type) => (type.isUnion() ? type.types : [type]);
+
+  /** A dictionary or a class of the schema lists all it has, so nothing reads or gives any other member. */
+  function membersTheSchemaLacks(published: ts.Type, schema: ts.Type) {
+    const [listed, others] = [true, false].map(wanted =>
+      parts(schema).filter(part => (isGenerated(part) && part.getCallSignatures().length === 0) === wanted),
+    );
+    if (listed.length === 0) return [];
+    const names = parts(published)
+      .filter(
+        part => part.flags & ts.TypeFlags.Object && !others.some(other => checker.isTypeAssignableTo(part, other)),
+      )
+      .flatMap(part => part.getProperties().map(member => member.name));
+    return [...new Set(names)].filter(name => !listed.some(part => part.getProperty(name)));
+  }
 
   function refusal(allowed: ts.Signature, taken: ts.Signature) {
     for (const [i, parameter] of taken.parameters.entries()) {
@@ -355,12 +370,8 @@ function promisesTheSchemaBreaks(checker: ts.TypeChecker, published: ts.Type, sc
       const takes = checker.getTypeOfSymbol(parameter);
       if (!checker.isTypeAssignableTo(given, takes))
         return `${parameter.name} takes ${show(takes)}, not ${show(given)}`;
-      const dictionaries = (takes.isUnion() ? takes.types : [takes]).filter(isGenerated);
-      const unread = (given.isUnion() ? given.types : [given])
-        .flatMap(type => (dictionaries.length > 0 && type.flags & ts.TypeFlags.Object ? type.getProperties() : []))
-        .filter(member => !dictionaries.some(dictionary => dictionary.getProperty(member.name)));
-      if (unread.length > 0)
-        return `${parameter.name} has no ${[...new Set(unread.map(member => member.name))].join(", ")}`;
+      const unread = membersTheSchemaLacks(given, takes);
+      if (unread.length > 0) return `${parameter.name} has no ${unread.join(", ")}`;
     }
     return null;
   }
@@ -377,22 +388,25 @@ function promisesTheSchemaBreaks(checker: ts.TypeChecker, published: ts.Type, sc
   }
 
   function compare(path: string, published: ts.Type, schema: ts.Type) {
+    if (compared.get(published)?.has(schema)) return;
+    compared.set(published, (compared.get(published) ?? new Set()).add(schema));
+    // The exports of a file are a few of the members of `typeof Bun`.
+    const never = path ? membersTheSchemaLacks(published, schema) : [];
+    if (never.length > 0) broken.push(`${path} has no ${never.join(", ")}`);
     const calls = schema.getCallSignatures();
     const constructs = schema.getConstructSignatures();
     if (calls.length === 0 && constructs.length === 0 && !isGenerated(schema)) {
       const promisesNothing = published.flags & ts.TypeFlags.Void;
-      const givesNull = schema.isUnion() && schema.types.some(type => type.flags & ts.TypeFlags.Null);
+      const absent = parts(schema).filter(part => part.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined));
       if (
         !promisesNothing &&
         (!checker.isTypeAssignableTo(published, schema) ||
-          (givesNull && !checker.isTypeAssignableTo(checker.getNullType(), published)))
+          absent.some(part => !checker.isTypeAssignableTo(part, published)))
       ) {
         broken.push(`${path} is ${show(schema)}, not ${show(published)}`);
       }
       return;
     }
-    if (compared.get(published)?.has(schema)) return;
-    compared.set(published, (compared.get(published) ?? new Set()).add(schema));
     compareSignatures(path, published.getCallSignatures(), calls);
     compareSignatures(`new ${path}`, published.getConstructSignatures(), constructs);
     for (const member of schema.getProperties()) {
@@ -468,15 +482,14 @@ describe("@types/bun integration test", () => {
     const [published, generated] = source.statements.map(statement => checker.getTypeAtLocation(statement));
     expect(schemas.map(file => basename(file)).sort()).toEqual(Object.keys(PUBLISHED_AS).sort());
     expect(
-      generated
-        .getProperties()
-        .filter(file => PUBLISHED_AS[file.name])
+      Object.keys(PUBLISHED_AS)
+        .filter(file => PUBLISHED_AS[file])
         .flatMap(file =>
           promisesTheSchemaBreaks(
             checker,
-            checker.getTypeOfSymbol(published.getProperty(file.name)!),
-            checker.getTypeOfSymbol(file),
-          ).map(promise => `${file.name}: ${promise}`),
+            checker.getTypeOfSymbol(published.getProperty(file)!),
+            checker.getTypeOfSymbol(generated.getProperty(file)!),
+          ).map(promise => `${file}: ${promise}`),
         ),
     ).toEqual([]);
   });

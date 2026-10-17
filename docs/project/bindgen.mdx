@@ -149,7 +149,7 @@ own Rust function, which gets exactly the types of that signature:
 
 ```ts
 export const read = b.overloads(
-  { args: { path: b.string.utf8, options: ReadOptions.optional }, rustPath: "crate::read_path" },
+  { args: { path: b.string.utf8, options: ReadOptions.default({}) }, rustPath: "crate::read_path" },
   { args: { fd: b.i32, buffer: b.bytes({ from: ["buffer"] }), offset: b.u32.default(0) }, rustPath: "crate::read_fd" },
 );
 ```
@@ -265,8 +265,9 @@ export const BracesOptions = b.dictionary({
 Each member is read, then converted, in declaration order, once. A member
 whose type does not accept `undefined` is required. A member can be written
 `{ type, rustName, altNames }` to rename its field or to accept other spellings.
-A dictionary whose members can all be absent implements `Default`. As an argument the struct
-stays in the frame of the thunk, and the body borrows it: `options: &BracesOptions`.
+A dictionary whose members can all be absent implements `Default`. As an argument, with
+`.default()` or without, the struct stays in the frame of the thunk and the body borrows it:
+`options: &BracesOptions`. Inside `.optional`, a union or an array it is held by value.
 
 A member is looked up on the object and its prototype chain, **stopping before
 the calling realm's `Object.prototype`**, so a polluted `Object.prototype` cannot
@@ -559,4 +560,4 @@ thread when the work completes.
 ## Tests
 
 - `test/internal/bindgen.test.ts`: conversions with hostile inputs, through `src/jsc/bindgen_test.bind.ts`. A schema named `*_test.bind.ts` is only part of a build with assertions (a debug build, CI's ASAN lane), so nothing it binds ships; `$bindgen` of one is `undefined` elsewhere, and its Rust module is `#[cfg(debug_assertions)]`. What that schema does not use is covered by the suites of the APIs that do.
-- `test/integration/bun-types/bun-types.test.ts`: `packages/bun-types` promises nothing that a schema breaks. Every call the published types allow has arguments the schema takes and options its dictionaries have, and every result they name is one it gives. A new schema file is listed in `PUBLISHED_AS` there, with what the published types call its exports.
+- `test/integration/bun-types/bun-types.test.ts`: `packages/bun-types` promises nothing that a schema breaks. Every call the published types allow has arguments the schema takes, every result they name is one it gives, and no object has a member that the schema's dictionary or class lacks. A new schema file is listed in `PUBLISHED_AS` there, with what the published types call its exports.

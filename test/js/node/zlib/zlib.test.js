@@ -143,6 +143,7 @@ describe("zlib", () => {
       [deflateSync, inflateSync, zlib.deflateRawSync],
     ]) {
       it.each([
+        { strategy: zlib.constants.Z_FILTERED, level: 9 },
         { strategy: zlib.constants.Z_HUFFMAN_ONLY },
         { strategy: zlib.constants.Z_RLE },
         { strategy: zlib.constants.Z_FIXED },
@@ -152,11 +153,11 @@ describe("zlib", () => {
       ])(`${compress.name}: %j gives the bytes node:zlib gives, which are not the default's`, options => {
         const compressed = Buffer.from(compress(data, options));
         expect(compressed).toEqual(nodeCompress(data, options));
-        expect(compressed).not.toEqual(Buffer.from(compress(data)));
+        expect(compressed).not.toEqual(Buffer.from(compress(data, { level: options.level })));
         expect(Buffer.from(decompress(compressed))).toEqual(data);
       });
 
-      it.each([
+      for (const [options, code] of [
         [{ memLevel: 0 }, "ERR_OUT_OF_RANGE"],
         [{ memLevel: 10 }, "ERR_OUT_OF_RANGE"],
         [{ memLevel: 1.5 }, "ERR_OUT_OF_RANGE"],
@@ -166,8 +167,14 @@ describe("zlib", () => {
         [{ strategy: 5 }, "ERR_OUT_OF_RANGE"],
         [{ strategy: NaN }, "ERR_OUT_OF_RANGE"],
         [{ strategy: "Z_RLE" }, "ERR_INVALID_ARG_TYPE"],
-      ])(`${compress.name}: %j is refused`, (options, code) => {
-        expect(() => compress(data, options)).toThrow(expect.objectContaining({ code }));
+      ]) {
+        it(`${compress.name}: ${util.inspect(options)} is refused`, () => {
+          expect(() => compress(data, options)).toThrow(expect.objectContaining({ code }));
+        });
+      }
+
+      it(`${compress.name}: the defaults are memLevel 8 and Z_DEFAULT_STRATEGY`, () => {
+        expect(compress(data, { memLevel: 8, strategy: zlib.constants.Z_DEFAULT_STRATEGY })).toEqual(compress(data));
       });
 
       it(`${compress.name}: libdeflate has neither`, () => {
@@ -175,7 +182,7 @@ describe("zlib", () => {
         expect(compress(data, { library, memLevel: 1, strategy: 2 })).toEqual(compress(data, { library }));
       });
 
-      // A low memLevel makes many short blocks, and the output is given only what deflateBound() asks for.
+      // A low memLevel makes many short blocks.
       it(`${compress.name}: what does not compress fits`, () => {
         let state = 1;
         const next = () => (state = (Math.imul(state, 1103515245) + 12345) >>> 0) >>> 16;
@@ -196,6 +203,25 @@ describe("zlib", () => {
         }
       });
     }
+
+    // Z_FIXED has no tree of its own, and a block of memLevel 9 that the window slid past is not stored:
+    // 9 bits for each byte from 144 up and 10 for each block, where deflateBound() allows 9 bits and 3 bytes in all.
+    it("an output longer than deflateBound() is whole", () => {
+      const period = Buffer.alloc(37 * 37 * 38 * 3);
+      for (let i = 0; i < period.length; i += 3) {
+        const triple = i / 3;
+        period[i] = 144 + Math.floor(triple / (37 * 38));
+        period[i + 1] = 181 + (Math.floor(triple / 38) % 37);
+        period[i + 2] = 218 + (triple % 38);
+      }
+      const input = Buffer.alloc(5400 * 32768, period);
+      // One match in three blocks of 32767 symbols keeps each block starting just before a multiple of the window.
+      for (let i = 5 * 32767 + 16000; i + 4 < input.length; i += 3 * 32768) input.copyWithin(i, i - 30000, i - 29996);
+
+      const compressed = deflateSync(input, { memLevel: 9, strategy: zlib.constants.Z_FIXED, level: 2 });
+      expect(compressed.length).toBeGreaterThan(input.length + input.length / 8 + 3);
+      expect(Buffer.compare(inflateSync(compressed), input)).toBe(0);
+    }, 60_000);
   });
 });
 

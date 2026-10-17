@@ -994,13 +994,14 @@ function rustArgumentName(arg: { name: string }): string {
 }
 
 /** A dictionary stays in the frame of the thunk, and the body borrows it. */
-const borrow = (type: Type) => ((type instanceof DefaultType ? type.inner : type) instanceof DictionaryType ? "&" : "");
+const rustBorrow = (type: Type) =>
+  (type instanceof DefaultType ? type.inner : type) instanceof DictionaryType ? "&" : "";
 const rustParameters = (signature: Signature, scope: RustScope) =>
-  signature.args.map(arg => `${rustArgumentName(arg)}: ${borrow(arg.type)}${arg.type.rustType(scope)}`);
+  signature.args.map(arg => `${rustArgumentName(arg)}: ${rustBorrow(arg.type)}${arg.type.rustType(scope)}`);
 const rustExternParameters = (signature: Signature, scope: RustScope) =>
   signature.args.map(arg => `${rustArgumentName(arg)}: ${arg.type.rustExternType(scope)}`);
 const rustArguments = (signature: Signature) =>
-  signature.args.map(arg => `${borrow(arg.type)}${rustArgumentName(arg)}`);
+  signature.args.map(arg => `${rustBorrow(arg.type)}${rustArgumentName(arg)}`);
 /** Each argument gets the call's lifetime here: left to inference in the call, a body could ask for `'static`. */
 function rustTakeArguments(args: readonly { name: string; type: Type }[], scope: RustScope): string {
   // What can return early comes last: by then Rust owns whatever the other arguments hand over.

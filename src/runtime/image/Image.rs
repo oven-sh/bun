@@ -1638,6 +1638,60 @@ impl PipelineTask {
             }
         }
 
+        let src_format = codecs::Format::sniff(input).unwrap_or(codecs::Format::Png);
+
+        // A JPEG whose whole pipeline is rotate/flip/flop never needs its
+        // pixels — see `jpeg::transform`. A resize or a modulate does, and
+        // `.jpeg()/.png()/…` records encode settings a coefficient copy
+        // cannot honour, so both keep the decode path.
+        if matches!(self.kind, Kind::Encode(None))
+            && src_format == codecs::Format::Jpeg
+            && self.pipeline.resize.is_none()
+            && self.pipeline.modulate.is_none()
+        {
+            // EXIF auto-orient folds in: another member of the group,
+            // applied first as `apply_orientation` does, and the Exif it came
+            // from is dropped so nothing applies it twice.
+            let mut g = Symmetry::IDENTITY;
+            if self.auto_orient {
+                let t = exif::read_jpeg(input).transform();
+                if t.flip {
+                    g = Symmetry::FLIP.after(g);
+                }
+                if t.flop {
+                    g = Symmetry::FLOP.after(g);
+                }
+                g = Symmetry::rotate(t.rotate).after(g);
+            }
+            g = Symmetry::rotate(self.pipeline.rotate).after(g);
+            if self.pipeline.flip {
+                g = Symmetry::FLIP.after(g);
+            }
+            if self.pipeline.flop {
+                g = Symmetry::FLOP.after(g);
+            }
+            // `None` is the identity; the re-encode below stands in as ever.
+            if let Some(op) = g.jpeg_xform() {
+                match codecs::jpeg::transform(input, self.max_pixels, op) {
+                    Ok(Some((out, w, h))) => {
+                        self.result = TaskResult::Encoded {
+                            out,
+                            format: codecs::Format::Jpeg,
+                            w,
+                            h,
+                        };
+                        return;
+                    }
+                    // Partial iMCUs on an edge: resample instead.
+                    Ok(None) => {}
+                    Err(e) => {
+                        self.result = TaskResult::Err(e);
+                        return;
+                    }
+                }
+            }
+        }
+
         // Decode-time downscale hint. The IDCT picker constrains in *stored*
         // axes, so any 90/270 rotate that runs before resize — explicit OR
         // EXIF auto-orient — needs the hint axes swapped, otherwise one axis
@@ -1672,8 +1726,6 @@ impl PipelineTask {
             }
         };
         // `defer decoded.deinit()` — `codecs::Decoded` Drop frees rgba/icc.
-
-        let src_format = codecs::Format::sniff(input).unwrap_or(codecs::Format::Png);
 
         // EXIF auto-orient: applied BEFORE any user op so resize targets and
         // metadata report the visually-upright dimensions, the way Sharp does.
@@ -2053,6 +2105,72 @@ fn resolve_resize(r: Resize, sw: u32, sh: u32) -> (u32, u32) {
         return (sw, sh);
     }
     (w, h)
+}
+
+/// One of the eight symmetries of a rectangle, in the normal form
+/// `mirror? ∘ rotate(90° × quarters)`. Every sequence of
+/// `.rotate()/.flip()/.flop()` and every EXIF orientation reduces to one, so
+/// a JPEG-only pipeline can hand libjpeg-turbo a single lossless transform.
+#[derive(Clone, Copy)]
+struct Symmetry {
+    /// Quarter-turns clockwise, applied before the mirror. Always < 4.
+    quarters: u8,
+    /// Mirror left-to-right, applied after the rotation.
+    mirror: bool,
+}
+
+impl Symmetry {
+    const IDENTITY: Symmetry = Symmetry {
+        quarters: 0,
+        mirror: false,
+    };
+    /// `.flop()`.
+    const FLOP: Symmetry = Symmetry {
+        quarters: 0,
+        mirror: true,
+    };
+    /// `.flip()` — a top-to-bottom mirror is a half turn and a flop.
+    const FLIP: Symmetry = Symmetry {
+        quarters: 2,
+        mirror: true,
+    };
+
+    fn rotate(degrees: u16) -> Symmetry {
+        Symmetry {
+            quarters: (degrees / 90 % 4) as u8,
+            mirror: false,
+        }
+    }
+
+    /// `self` applied after `first`. By `rotate ∘ mirror == mirror ∘
+    /// rotate⁻¹`, the quarter-turns add when `first` has no mirror for this
+    /// rotation to commute past, and subtract when it has.
+    fn after(self, first: Symmetry) -> Symmetry {
+        let quarters = if first.mirror {
+            first.quarters.wrapping_sub(self.quarters)
+        } else {
+            first.quarters + self.quarters
+        };
+        Symmetry {
+            quarters: quarters % 4,
+            mirror: self.mirror != first.mirror,
+        }
+    }
+
+    /// The one lossless JPEG transform equal to this symmetry.
+    fn jpeg_xform(self) -> Option<codecs::jpeg::Xform> {
+        use codecs::jpeg::Xform;
+        Some(match (self.mirror, self.quarters) {
+            (false, 1) => Xform::Rot90,
+            (false, 2) => Xform::Rot180,
+            (false, 3) => Xform::Rot270,
+            (true, 0) => Xform::Hflip,
+            (true, 1) => Xform::Transpose,
+            (true, 2) => Xform::Vflip,
+            (true, 3) => Xform::Transverse,
+            _ => return None,
+        })
+    }
 }
 
 fn apply_orientation(

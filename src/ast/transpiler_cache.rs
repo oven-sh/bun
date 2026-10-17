@@ -13,6 +13,28 @@
 use crate::{ExportsKind, Source};
 use core::ptr::NonNull;
 
+/// What a reader does with the ESM record (the serialized `ModuleInfo`) of an entry.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum EsmRecordUse {
+    /// The record is not read.
+    Unused,
+    /// The record is read when the entry has one.
+    IfStored,
+    /// An ES-module entry without a record is a miss for `get()`, and `put()` can add the record.
+    Required,
+}
+
+impl EsmRecordUse {
+    /// Macro mode prints other output under the same key, so that reader takes an entry as it is.
+    pub fn for_reader(uses_records: bool, macro_mode: bool) -> Self {
+        match (uses_records, macro_mode) {
+            (false, _) => Self::Unused,
+            (true, true) => Self::IfStored,
+            (true, false) => Self::Required,
+        }
+    }
+}
+
 pub struct RuntimeTranspilerCache {
     pub input_hash: Option<u64>,
     pub input_byte_length: Option<u64>,
@@ -25,6 +47,10 @@ pub struct RuntimeTranspilerCache {
     /// Opaque storage for `bun_bundler::cache::RuntimeTranspilerCacheEntry` —
     /// the concrete type lives a tier up and is round-tripped via cast.
     pub entry: Option<*mut ()>,
+    /// Set by the caller before the parse.
+    pub esm_record_use: EsmRecordUse,
+    /// Output and sourcemap hash of the entry that `get()` refused for its missing ESM record.
+    pub refused_entry_hashes: Option<(u64, u64)>,
 
     /// Dispatch slot — `bun_jsc` sets `Some(TranspilerCacheImplKind::Jsc)` at
     /// init. `None` ⇒ caching disabled (e.g. wasm builds, `--no-transpiler-cache`).
@@ -40,6 +66,8 @@ impl Default for RuntimeTranspilerCache {
             exports_kind: ExportsKind::None,
             output_code: None,
             entry: None,
+            esm_record_use: EsmRecordUse::Unused,
+            refused_entry_hashes: None,
             r#impl: None,
         }
     }

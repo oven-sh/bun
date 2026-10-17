@@ -4910,9 +4910,38 @@ describe("css tests", () => {
   });
 
   describe("font", () => {
+    // The seven longhands fold into `font` only when the rule declared a `font`. The shorthand also
+    // resets font-kerning, font-feature-settings, the font-variant-* longhands and more, which the
+    // seven longhands leave alone.
     cssTest(
       `
       .foo {
+        font-family: "Helvetica", "Times New Roman", sans-serif;
+        font-size: 12px;
+        font-weight: bold;
+        font-style: italic;
+        font-stretch: expanded;
+        font-variant-caps: small-caps;
+        line-height: 1.2em;
+      }
+    `,
+      indoc`
+      .foo {
+        font-family: Helvetica, Times New Roman, sans-serif;
+        font-size: 12px;
+        font-style: italic;
+        font-variant-caps: small-caps;
+        font-weight: bold;
+        font-stretch: expanded;
+        line-height: 1.2em;
+      }
+`,
+    );
+
+    cssTest(
+      `
+      .foo {
+        font: 10px serif;
         font-family: "Helvetica", "Times New Roman", sans-serif;
         font-size: 12px;
         font-weight: bold;
@@ -4941,7 +4970,22 @@ describe("css tests", () => {
         line-height: 1.2em;
       }
     `,
-      indoc`.foo{font:italic small-caps 700 125% 12px/1.2em Helvetica,Times New Roman,sans-serif}`,
+      indoc`.foo{font-family:Helvetica,Times New Roman,sans-serif;font-size:12px;font-style:italic;font-variant-caps:small-caps;font-weight:700;font-stretch:125%;line-height:1.2em}`,
+    );
+
+    minify_test(
+      `
+      .foo {
+        font: 10px serif;
+        font-family: "Helvetica", "Times New Roman", sans-serif;
+        font-size: 12px;
+        font-weight: bold;
+        font-style: italic;
+        font-variant-caps: small-caps;
+        line-height: 1.2em;
+      }
+    `,
+      indoc`.foo{font:italic small-caps 700 12px/1.2em Helvetica,Times New Roman,sans-serif}`,
     );
 
     cssTest(
@@ -4998,10 +5042,107 @@ describe("css tests", () => {
     `,
       indoc`
       .foo {
+        font-family: Helvetica, Times New Roman, sans-serif;
+        font-size: 12px;
+        font-style: italic;
+        font-variant-caps: all-small-caps;
+        font-weight: bold;
+        font-stretch: expanded;
+        line-height: 1.2em;
+      }
+`,
+    );
+
+    cssTest(
+      `
+      .foo {
+        font: 10px serif;
+        font-family: "Helvetica", "Times New Roman", sans-serif;
+        font-size: 12px;
+        font-weight: bold;
+        font-style: italic;
+        font-stretch: expanded;
+        font-variant-caps: all-small-caps;
+        line-height: 1.2em;
+      }
+    `,
+      indoc`
+      .foo {
         font: italic bold expanded 12px / 1.2em Helvetica, Times New Roman, sans-serif;
         font-variant-caps: all-small-caps;
       }
 `,
+    );
+
+    const seven =
+      "font-family: serif; font-size: 12px; font-style: normal; font-weight: 400; font-stretch: normal; font-variant-caps: normal; line-height: 1.2";
+    const sevenImportant = seven.replaceAll(";", " !important;") + " !important";
+    const longhands =
+      "font-family:serif;font-size:12px;font-style:normal;font-variant-caps:normal;font-weight:400;font-stretch:100%;line-height:1.2";
+    const longhandsImportant = longhands.replaceAll(";", "!important;") + "!important";
+
+    minify_test(`.foo { ${seven} }`, `.foo{${longhands}}`);
+    minify_test(`.foo { ${sevenImportant} }`, `.foo{${longhandsImportant}}`);
+    // A computed-style dump. `font` does not take a percentage stretch, so a browser drops a folded `font: 500 100% ...`.
+    minify_test(
+      ".dump { font-family: Arial, sans-serif; font-kerning: auto; font-size: 14px; font-stretch: 100%; font-style: normal; font-variant-caps: normal; font-weight: 500; line-height: 21px }",
+      ".dump{font-kerning:auto;font-family:Arial,sans-serif;font-size:14px;font-style:normal;font-variant-caps:normal;font-weight:500;font-stretch:100%;line-height:21px}",
+    );
+    // A sub-property that `font` resets, written before, between and after the seven.
+    minify_test(`.foo { font-kerning: none; ${seven} }`, `.foo{font-kerning:none;${longhands}}`);
+    minify_test(
+      ".foo { font-family: serif; font-size: 12px; font-style: normal; font-kerning: none; font-weight: 400; font-stretch: normal; font-variant-caps: normal; line-height: 1.2 }",
+      `.foo{font-kerning:none;${longhands}}`,
+    );
+    minify_test(`.foo { ${seven}; font-kerning: none }`, `.foo{font-kerning:none;${longhands}}`);
+    minify_test(`.foo { font-variant: small-caps; ${seven} }`, `.foo{font-variant:small-caps;${longhands}}`);
+    minify_test(
+      ".foo { font-family: serif; font-size: 12px; font-variant: small-caps; font-style: normal; font-weight: 400; font-stretch: normal; font-variant-caps: normal; line-height: 1.2 }",
+      `.foo{font-variant:small-caps;${longhands}}`,
+    );
+    // Adjacent rules with the same selector are merged and minified again.
+    minify_test(
+      ".foo { font-family: serif; font-size: 12px; font-style: normal; font-weight: 400 } .foo { font-stretch: normal; font-variant-caps: normal; line-height: 1.2 }",
+      `.foo{${longhands}}`,
+    );
+    // A `var()` value, or a value the targets do not support, writes the buffered longhands first.
+    minify_test(`.foo { ${seven}; line-height: var(--lh) }`, `.foo{${longhands};line-height:var(--lh)}`);
+    prefix_test(
+      `.foo { ${seven}; font-size: max(2cqw, 22px) }`,
+      indoc`
+      .foo {
+        font-family: serif;
+        font-size: 12px;
+        font-style: normal;
+        font-variant-caps: normal;
+        font-weight: 400;
+        font-stretch: normal;
+        line-height: 1.2;
+        font-size: max(2cqw, 22px);
+      }
+`,
+      {
+        safari: 14 << 16,
+      },
+    );
+    minify_test(`.foo { font: var(--f); ${seven} }`, `.foo{font:var(--f);${longhands}}`);
+    minify_test(`@media (min-width: 100px) { .foo { ${seven} } }`, `@media (width>=100px){.foo{${longhands}}}`);
+    minify_test(`.a { .foo { ${seven} } }`, `.a{& .foo{${longhands}}}`);
+    // A `font` counts only until the handler writes it, and only for its own rule.
+    minify_test(
+      `.foo { font: 10px a; line-height: var(--lh); ${seven} }`,
+      `.foo{font:10px a;line-height:var(--lh);${longhands}}`,
+    );
+    minify_test(`.a { font: 12px serif } .b { ${seven} }`, `.a{font:12px serif}.b{${longhands}}`);
+    minify_test(
+      `.a { font: 12px serif !important } .b { ${sevenImportant} }`,
+      `.a{font:12px serif!important}.b{${longhandsImportant}}`,
+    );
+    // Still wrong: `font` resets `font-kerning`, so `font-kerning` has to stay after the `font` it follows.
+    cssTestTodo(".foo { font: 12px serif; font-kerning: none }", ".foo { font: 12px serif; font-kerning: none; }");
+    cssTestTodo(
+      `.foo { font: 10px a; font-kerning: none; ${seven} }`,
+      ".foo { font: 10px a; font-kerning: none; font-family: serif; font-size: 12px; font-style: normal; font-variant-caps: normal; font-weight: 400; font-stretch: normal; line-height: 1.2; }",
     );
 
     minify_test(".foo { font: normal normal 600 9px/normal Charcoal; }", ".foo{font:600 9px Charcoal}");

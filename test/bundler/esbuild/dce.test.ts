@@ -801,6 +801,127 @@ describe("bundler", () => {
       stdout: "main effect - should be preserved\ndone",
     },
   });
+  // Webpack (which defines this field) documents that patterns without a '/'
+  // match at any depth, like "**/pattern". esbuild follows the same rule.
+  itBundled("dce/PackageJsonSideEffectsGlobNoSlashMatchesNested", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "demo-pkg/root.side.js";
+        import "demo-pkg/deep/nested.side.js";
+        import "demo-pkg/deep/also/here.side.js";
+        import "demo-pkg/deep/unrelated.js";
+        console.log("done");
+      `,
+      "/Users/user/project/node_modules/demo-pkg/root.side.js": `console.log("root kept")`,
+      "/Users/user/project/node_modules/demo-pkg/deep/nested.side.js": `console.log("nested kept")`,
+      "/Users/user/project/node_modules/demo-pkg/deep/also/here.side.js": `console.log("deeper kept")`,
+      "/Users/user/project/node_modules/demo-pkg/deep/unrelated.js": `console.log("TEST FAILED")`,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "sideEffects": ["*.side.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: "root kept\nnested kept\ndeeper kept\ndone",
+    },
+  });
+  itBundled("dce/PackageJsonSideEffectsBareNameMatchesNested", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "demo-pkg/polyfill.js";
+        import "demo-pkg/comp/polyfill.js";
+        import "demo-pkg/comp/other.js";
+        console.log("done");
+      `,
+      "/Users/user/project/node_modules/demo-pkg/polyfill.js": `console.log("root poly kept")`,
+      "/Users/user/project/node_modules/demo-pkg/comp/polyfill.js": `console.log("nested poly kept")`,
+      "/Users/user/project/node_modules/demo-pkg/comp/other.js": `console.log("TEST FAILED")`,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "sideEffects": ["polyfill.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: "root poly kept\nnested poly kept\ndone",
+    },
+  });
+  itBundled("dce/PackageJsonSideEffectsMixedNoSlashAndPath", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "demo-pkg/lib/effect.side.js";
+        import "demo-pkg/lib/specific.js";
+        import "demo-pkg/comp/polyfill.js";
+        import "demo-pkg/lib/drop.js";
+        console.log("done");
+      `,
+      "/Users/user/project/node_modules/demo-pkg/lib/effect.side.js": `console.log("glob kept")`,
+      "/Users/user/project/node_modules/demo-pkg/lib/specific.js": `console.log("exact kept")`,
+      "/Users/user/project/node_modules/demo-pkg/comp/polyfill.js": `console.log("bare kept")`,
+      "/Users/user/project/node_modules/demo-pkg/lib/drop.js": `console.log("TEST FAILED")`,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "sideEffects": ["*.side.js", "./lib/specific.js", "polyfill.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: "glob kept\nexact kept\nbare kept\ndone",
+    },
+  });
+  itBundled("dce/PackageJsonSideEffectsDotSlashStaysRootOnly", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "demo-pkg/polyfill.js";
+        import "demo-pkg/comp/polyfill.js";
+        console.log("done");
+      `,
+      "/Users/user/project/node_modules/demo-pkg/polyfill.js": `console.log("root kept")`,
+      "/Users/user/project/node_modules/demo-pkg/comp/polyfill.js": `console.log("TEST FAILED")`,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "sideEffects": ["./polyfill.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: "root kept\ndone",
+    },
+  });
+  itBundled("dce/PackageJsonSideEffectsBareCSSAndJS", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "demo-pkg/style.css";
+        import "demo-pkg/setup.js";
+        import "demo-pkg/lib/setup.js";
+        import "demo-pkg/lib/other.js";
+        console.log("done");
+      `,
+      "/Users/user/project/node_modules/demo-pkg/style.css": `body { color: red; }`,
+      "/Users/user/project/node_modules/demo-pkg/setup.js": `console.log("root setup kept")`,
+      "/Users/user/project/node_modules/demo-pkg/lib/setup.js": `console.log("nested setup kept")`,
+      "/Users/user/project/node_modules/demo-pkg/lib/other.js": `console.log("TEST FAILED")`,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "sideEffects": ["style.css", "setup.js"]
+        }
+      `,
+    },
+    outdir: "/out",
+    dce: true,
+    dceKeepMarkerCount: false,
+    run: {
+      stdout: "root setup kept\nnested setup kept\ndone",
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toContain("color: red");
+    },
+  });
   itBundled("dce/PackageJsonSideEffectsGlobInvalidPattern", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `

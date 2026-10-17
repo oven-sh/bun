@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const repoRoot = join(import.meta.dir, "../../..");
+const bunTypes = join(repoRoot, "packages/bun-types/index.d.ts").replaceAll("\\", "/");
 
 test("react-tailwind template passes tsc --noEmit", async () => {
   // Read template files from source
@@ -18,6 +19,8 @@ test("react-tailwind template passes tsc --noEmit", async () => {
   // Create temp directory with template files. The only package build.ts
   // imports is bun-plugin-tailwind, whose published type declarations amount
   // to `declare const plugin: BunPlugin; export default plugin;`.
+  // The published @types/bun is one line, `/// <reference types="bun-types" />`.
+  // The one here names the bun-types of this checkout.
   using dir = tempDir("issue-24364", {
     "build.ts": buildTs,
     "tsconfig.json": tsconfigJson,
@@ -30,17 +33,19 @@ test("react-tailwind template passes tsc --noEmit", async () => {
 declare const plugin: BunPlugin;
 export default plugin;
 `,
+    "node_modules/@types/bun/index.d.ts": `/// <reference path="${bunTypes}" />\n`,
   });
 
-  // The template's tsconfig asks for `"types": ["bun", "react"]`. Instead of
-  // installing @types/bun and @types/react, resolve them from the repo:
-  // packages/@types/bun is the in-tree @types/bun (it references
-  // packages/bun-types), and @types/react comes from test/node_modules.
-  const typeRoots = [join(repoRoot, "packages/@types"), dirname(dirname(require.resolve("@types/react/package.json")))];
+  // The template's tsconfig asks for `"types": ["bun", "react"]`. Nothing is
+  // installed for them: `bun` is the file above, and @types/react comes from
+  // test/node_modules.
+  const typeRoots = [
+    join(String(dir), "node_modules/@types"),
+    dirname(dirname(require.resolve("@types/react/package.json"))),
+  ];
 
   // What matters is that the template typechecks, not which runtime runs the
-  // compiler, and tsc under a debug+ASAN bun is 10-50x slower (same as
-  // test/cli/init/init.test.ts).
+  // compiler, and tsc under a debug+ASAN bun is 10-50x slower.
   await using tsc = Bun.spawn({
     cmd: [
       nodeExe() ?? bunExe(),

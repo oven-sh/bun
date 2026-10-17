@@ -173,11 +173,14 @@ async function tryNativeFastPath(src, dest, opts) {
       checked,
     };
   }
-  // The single-file native copy is only node-equivalent for regular-file ->
-  // regular-file (or missing dest). Symlinks (node resolves relative link
-  // targets) and special files (node-specific error codes) must go through
-  // the ported implementation.
-  return { ok: srcStat.isFile() && (!destStat || destStat.isFile()), checked };
+  // The single-file native copy is only node-equivalent for a regular file
+  // copied to a path that does not exist yet. Symlinks (node resolves
+  // relative link targets) and special files (node-specific error codes) must
+  // go through the ported implementation. So must an existing dest: node
+  // unlinks it and creates a fresh file (see mayCopyFile), whereas the native
+  // copy opens and rewrites the existing inode, which writes through every
+  // other hard link to it and fails on a read-only dest.
+  return { ok: srcStat.isFile() && !destStat, checked };
 }
 
 async function cpFn(src, dest, opts, checked?) {

@@ -1,7 +1,8 @@
 // Prints whether the event loop is held after a sequence of operations on `subprocess.channel` or `process.channel`.
-// Runs unchanged on Node, which skips the Bun.spawn() row.
+// Runs unchanged on Node, which skips the Bun.spawn() row. Its only other answer is "held" for `send(small)`.
 import { fork, spawn } from "node:child_process";
 import { once } from "node:events";
+import { createServer } from "node:net";
 
 const [role, ops = ""] = process.argv.slice(2);
 const self = import.meta.filename;
@@ -20,8 +21,9 @@ async function applyAndReport(table) {
     .unref();
   console.log("applied");
 }
+const send = (target, length) => new Promise(sent => target.send(Buffer.alloc(length, "a").toString(), sent));
 // Too big for the pipe's buffer, so the write finishes later.
-const sendBig = target => new Promise(resolve => target.send(Buffer.alloc(1_000_000, "a").toString(), resolve));
+const sendBig = target => send(target, 1_000_000);
 const channelOps = channel => ({
   "none": () => {},
   "ref": () => channel.ref(),
@@ -31,14 +33,26 @@ const channelOps = channel => ({
 });
 
 if (role === "idle") {
-  process.on("disconnect", () => {});
+  // exit(): a handle it was sent and has no listener for would hold its loop.
+  process.on("disconnect", () => process.exit());
 } else if (role === "parent") {
-  const child = fork(self, ["idle"], { stdio: ["ignore", "ignore", "inherit", "ipc"] });
+  const child = fork(self, ["idle"], {
+    stdio: ["ignore", "ignore", "inherit", "ipc"],
+    serialization: ops.startsWith("advanced") ? "advanced" : "json",
+  });
   await applyAndReport({
     ...channelOps(child.channel),
+    "advanced": () => {},
     "child.unref": () => child.unref(),
     "disconnect": () => child.disconnect(),
+    "send(small)": () => send(child, 1),
     "send(big)": () => sendBig(child),
+    "send(handle)": async () => {
+      const server = createServer().listen(0);
+      await once(server, "listening");
+      await new Promise(sent => child.send("handle", server, sent));
+      await new Promise(closed => server.close(closed));
+    },
   });
 } else if (role === "Bun.spawn") {
   const child = Bun.spawn({ cmd: [process.execPath, self, "idle"], ipc() {}, stdio: ["ignore", "ignore", "inherit"] });
@@ -66,8 +80,11 @@ if (role === "idle") {
     ["parent", "child.unref refCounted unrefCounted"],
     ["parent", "child.unref disconnect"],
     ["parent", "child.unref disconnect ref"],
+    ["parent", "child.unref send(small)"],
     ["parent", "child.unref send(big)"],
     ["parent", "child.unref ref send(big)"],
+    ["parent", "child.unref send(handle)"],
+    ["parent", "advanced child.unref"],
     ...(process.versions.bun ? [["Bun.spawn", "child.unref"]] : []),
     ["child", "none"],
     ["child", "on(message,a)"],

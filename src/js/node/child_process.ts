@@ -685,7 +685,7 @@ function spawnSync(file, args, options?): SpawnSyncResult {
 }
 const etimedoutErrorCode = $newRustFunction("node_util_binding.rs", "etimedoutErrorCode", 0);
 const enobufsErrorCode = $newRustFunction("node_util_binding.rs", "enobufsErrorCode", 0);
-const holdChannel = $newRustFunction("node_cluster_binding.rs", "holdChannel", 1);
+const startChannelWithRef = $newRustFunction("node_cluster_binding.rs", "startChannelWithRef", 1);
 
 /**
  * Spawns a file as a shell synchronously.
@@ -1514,7 +1514,7 @@ class ChildProcess extends EventEmitter {
         this.send = this.#send;
         this.disconnect = this.#disconnect;
         this.channel = new Control(this.#handle);
-        holdChannel(this.#handle);
+        startChannelWithRef(this.#handle);
         Object.defineProperty(this, "_channel", {
           get() {
             return this.channel;

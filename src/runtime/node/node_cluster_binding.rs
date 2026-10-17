@@ -286,26 +286,29 @@ pub(crate) fn set_channel_ref(global: &JSGlobalObject, frame: &CallFrame) -> JsR
     let enabled = enabled.to_boolean();
     with_channel(global, subprocess, |channel| {
         if counted.to_boolean() {
-            channel.ref_counted(global, if enabled { 1 } else { -1 });
+            channel.ref_counted(if enabled { 1 } else { -1 });
         } else {
-            channel.set_ref(global, enabled);
+            channel.set_ref(enabled);
         }
     });
     Ok(JSValue::UNDEFINED)
 }
 
-/// A channel made by node:child_process holds the event loop from the start. One made by `Bun.spawn({ ipc })` does not.
+/// Node's `Pipe` has a ref from the start, which only the child drops: https://github.com/nodejs/node/blob/v26.3.0/lib/child_process.js#L181
 #[bun_jsc::host_fn]
-pub(crate) fn hold_channel(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn start_channel_with_ref(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
     let [subprocess] = frame.arguments_as_array::<1>();
-    with_channel(global, subprocess, |channel| channel.hold(global));
+    with_channel(global, subprocess, SendQueue::start_with_ref);
     Ok(JSValue::UNDEFINED)
 }
 
 // HOST_EXPORT(Bun__setChannelListenerCount, c)
 pub(crate) fn set_channel_listener_count(global: &JSGlobalObject, count: i32) {
     with_channel(global, JSValue::UNDEFINED, |channel| {
-        channel.set_listener_count(global, count)
+        channel.set_listener_count(count)
     });
 }
 

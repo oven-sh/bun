@@ -18,7 +18,8 @@ test.concurrent("which operations on subprocess.channel hold the event loop", as
   const output = await $`${bunExe()} ${import.meta.dir}/fixtures/ipc-channel-ref-fixture.mjs rows parent`
     .env(bunEnv)
     .text();
-  // node (v26.7.0) has identical output, without the Bun.spawn row
+  // node (v26.7.0) has identical output, without the Bun.spawn row and with "held" for send(small):
+  // only a write that does not finish at once ends the hold there.
   expect(output).toMatchInlineSnapshot(`
     "parent: child.unref: held
     parent: child.unref unref: not held
@@ -26,8 +27,11 @@ test.concurrent("which operations on subprocess.channel hold the event loop", as
     parent: child.unref refCounted unrefCounted: not held
     parent: child.unref disconnect: not held
     parent: child.unref disconnect ref: not held
+    parent: child.unref send(small): not held
     parent: child.unref send(big): not held
     parent: child.unref ref send(big): held
+    parent: child.unref send(handle): not held
+    parent: advanced child.unref: held
     Bun.spawn: child.unref: not held
     "
   `);
@@ -74,7 +78,7 @@ test.concurrent("a child held only by process.channel.ref() leaves when the pare
     stdout: "pipe",
     ipc() {},
   });
-  for await (const ready of child.stdout) break;
+  await child.stdout.getReader().read();
   child.disconnect();
   expect(await child.exited).toBe(0);
 });
@@ -83,6 +87,8 @@ test.concurrent("a channel that could not be opened does not hold the event loop
   await using child = Bun.spawn({
     cmd: [bunExe(), "-e", `process.on("message", () => {});`],
     env: { ...bunEnv, NODE_CHANNEL_FD: "99", NODE_CHANNEL_SERIALIZATION_MODE: "json" },
+    stderr: "pipe",
   });
+  expect(await child.stderr.text()).toContain("Unable to start IPC");
   expect(await child.exited).toBe(0);
 });

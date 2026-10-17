@@ -1609,8 +1609,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                 disconnectListenerCount--;
             }
             auto totalListenerCount = messageListenerCount + disconnectListenerCount;
-            if (Bun__GlobalObject__hasIPC(global))
-                Bun__setChannelListenerCount(global, static_cast<int32_t>(totalListenerCount));
+            Bun__setChannelListenerCount(global, static_cast<int32_t>(totalListenerCount));
             return;
         }
 

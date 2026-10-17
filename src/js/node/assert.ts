@@ -655,9 +655,6 @@ function expectsError(stackStartFn: Function, actual: unknown, error?: unknown, 
       if ((actual as { message?: unknown }).message === error) {
         throw $ERR_AMBIGUOUS_ARGUMENT("error/message", `The error message "${(actual as { message?: unknown }).message}" is identical to the message.`); // prettier-ignore
       }
-      if (Object.keys(error).length === 0) {
-        throw $ERR_INVALID_ARG_VALUE("error", error, "may not be an empty object");
-      }
     } else if (actual === error) {
       throw $ERR_AMBIGUOUS_ARGUMENT("error/message", `The error "${actual}" is identical to the message.`);
     }

@@ -305,6 +305,47 @@ development:
           sharedArray.set(bytes);
           expect(YAML.parse(sharedArray)).toEqual({ type: "shared", value: 123 });
         });
+
+        test("a Blob whose bytes are not in memory is refused, and does not parse as nothing", () => {
+          const s3 = new Bun.S3Client({ accessKeyId: "id", secretAccessKey: "secret", bucket: "bucket" });
+          for (const file of [Bun.file(import.meta.path), s3.file("key")]) {
+            expect(() => YAML.parse(file)).toThrow("File blob cannot be used here");
+          }
+        });
+
+        test("parses a SharedArrayBuffer that another thread is writing", async () => {
+          await using proc = Bun.spawn({
+            cmd: [
+              bunExe(),
+              "-e",
+              /* js */ `
+                const { Worker } = require("node:worker_threads");
+                const bytes = new Uint8Array(new SharedArrayBuffer(1 << 14)).fill("\\n".charCodeAt(0));
+                const writer = new Worker(
+                  \`const { workerData: bytes, parentPort } = require("node:worker_threads");
+                   parentPort.postMessage("ready");
+                   // Each pass over the buffer flips every byte, so that a byte the parser reads twice differs.
+                   for (let i = 0; ; i++) bytes[i % bytes.length] = (Math.floor(i / bytes.length) % 2 ? "-" : "\\\\n").charCodeAt(0);\`,
+                  { eval: true, workerData: bytes },
+                );
+                writer.once("message", () => {
+                  for (let i = 0; i < 200; i++) {
+                    try {
+                      Bun.YAML.parse(bytes);
+                    } catch {}
+                  }
+                  console.log("done");
+                  process.exit(0);
+                });
+              `,
+            ],
+            env: bunEnv,
+            stderr: "inherit",
+          });
+          const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+          expect(stdout).toBe("done\n");
+          expect(exitCode).toBe(0);
+        });
       }
 
       test("handles File (which is a Blob)", () => {
@@ -1188,6 +1229,15 @@ folded: >
 
         test("? with multiline plain key in flow", () => {
           expect(YAML.parse("[\n? foo\n bar : baz\n]\n")).toEqual([{ "foo bar": "baz" }]);
+        });
+      });
+
+      describe("a key that cannot be converted to a string", () => {
+        test("throws what the conversion throws", () => {
+          expect(() => YAML.parse("? {toString: x}\n: 1\n")).toThrow(new TypeError("No default value"));
+          expect(() => YAML.parse("a: 1\n? [b, {toString: x, valueOf: y}]\n: 2\n")).toThrow(
+            new TypeError("No default value"),
+          );
         });
       });
 

@@ -1,4 +1,5 @@
 #pragma once
+#include "Bindgen/JSBytesView.h"
 #include "Bindgen/JSStringUTF8View.h"
 // WebCore's. In quotes it would be this file.
 #include <IDLTypes.h>
@@ -99,15 +100,25 @@ struct IDLLooseUTF8String : IDLStrictUTF8String {};
 // The values IDLStrictUTF8String takes, as the WTF::String.
 struct IDLStrictStringOrStringObject : WebCore::IDLDOMString {};
 
-// The bytes of a BufferSource that is not shared. Valid while the argument is alive and no JavaScript runs.
-struct IDLBufferSourceBytes : WebCore::IDLType<std::span<const uint8_t>> {
-    using SequenceStorageType = void;
-    using NullableType = std::span<const uint8_t>;
-    using NullableInnerParameterType = std::span<const uint8_t>;
-    static NullableType nullValue() { return {}; }
+// `b.bytes`: which values it takes.
+struct BytesOptions {
+    // Without `ToString`. A string: what IDLStrictUTF8String takes. A buffer: a BufferSource, shared or not.
+    bool fromString { false };
+    bool fromBuffer { false };
+    bool fromBlob { false };
+    // `ToString` of anything else, except the two below. Without it, anything else is refused.
+    bool toStringOtherwise { false };
+    bool refuseUndefined { false };
+    bool refuseNull { false };
 };
 
-// The same values, as the `JSValue` itself. See IDLRawAny.
+// `Sink` is JSBytesView, where a string is its UTF-8, or JSBlobOrStringOrBuffer, where it is the WTF::String.
+template<typename Sink, BytesOptions>
+struct IDLBytes : WebCore::IDLType<Sink> {
+    using SequenceStorageType = void;
+};
+
+// A BufferSource that is not shared, as the `JSValue` itself. See IDLRawAny.
 struct IDLRawBufferSource : WebCore::IDLType<JSC::JSValue> {
     using SequenceStorageType = void;
 };

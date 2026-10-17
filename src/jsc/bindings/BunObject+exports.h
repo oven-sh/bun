@@ -10,8 +10,6 @@
     macro(FileSystemRouter) \
     macro(Glob) \
     macro(Image) \
-    macro(JSON5) \
-    macro(JSONC) \
     macro(MD4) \
     macro(markdown) \
     macro(MD5) \
@@ -22,9 +20,6 @@
     macro(SHA384) \
     macro(SHA512) \
     macro(SHA512_256) \
-    macro(TOML) \
-    macro(XML) \
-    macro(YAML) \
     macro(Terminal) \
     macro(Transpiler) \
     macro(ValkeyClient) \
@@ -33,7 +28,6 @@
     macro(cwd) \
     macro(embeddedFiles) \
     macro(enableANSIColors) \
-    macro(hash) \
     macro(inspect) \
     macro(isStandaloneExecutable) \
     macro(origin) \
@@ -47,11 +41,7 @@
     macro(connect) \
     macro(createParsedShellScript) \
     macro(createShellInterpreter) \
-    macro(deflateSync) \
     macro(file) \
-    macro(gunzipSync) \
-    macro(gzipSync) \
-    macro(inflateSync) \
     macro(jest) \
     macro(listen) \
     macro(registerMacro) \
@@ -63,10 +53,6 @@
     macro(spawnSync) \
     macro(udpSocket) \
     macro(write) \
-    macro(zstdCompressSync) \
-    macro(zstdDecompressSync) \
-    macro(zstdCompress) \
-    macro(zstdDecompress) \
 
 #define DECLARE_ZIG_BUN_OBJECT_CALLBACK(name) BUN_DECLARE_HOST_FUNCTION(BunObject_callback_##name);
 FOR_EACH_CALLBACK(DECLARE_ZIG_BUN_OBJECT_CALLBACK);

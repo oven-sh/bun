@@ -3,8 +3,8 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::bindgen::{
-    self, BufferSource, IntoError as _, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper,
-    JsWrapperStrong, WithValue,
+    self, BufferSource, Bytes, IntoError as _, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper,
+    JsWrapperStrong, PinnedBytes, StringOrBytes, WithValue,
 };
 use crate::generated_bindgen::bindgen_test::{
     TestAnything, TestChoice, TestColor, TestColorOrRest, TestCounterClass,
@@ -216,12 +216,7 @@ pub(crate) fn sum_before_and_after_callback<'a>(
     callback: JsLocal<'a>,
 ) -> bindgen::Result<'a, [u32; 2]> {
     let before = buffer.with_bytes(&cx.heap, sum);
-    let Some(callback) = callback.as_callable() else {
-        return Err(cx
-            .heap
-            .type_error(format_args!("callback must be a function")));
-    };
-    callback.call(cx, JsLocal::UNDEFINED, &[])?;
+    call(cx, callback)?;
     Ok([before, buffer.with_bytes(&cx.heap, sum)])
 }
 
@@ -231,6 +226,54 @@ pub(crate) fn bytes_of(data: &[u8]) -> Vec<u8> {
 
 pub(crate) fn bytes_of_then(data: &[u8], _: f64) -> Vec<u8> {
     data.to_vec()
+}
+
+pub(crate) fn bytes_of_then_copied(data: Vec<u8>, _: f64) -> Vec<u8> {
+    data
+}
+
+fn call<'a>(cx: &mut JsScope<'a>, callback: JsLocal<'a>) -> bindgen::Result<'a, ()> {
+    let Some(callback) = callback.as_callable() else {
+        return Err(cx
+            .heap
+            .type_error(format_args!("callback must be a function")));
+    };
+    callback.call(cx, JsLocal::UNDEFINED, &[])?;
+    Ok(())
+}
+
+pub(crate) fn bytes_before_and_after_callback<'a>(
+    cx: &mut JsScope<'a>,
+    data: Bytes<'a>,
+    callback: JsLocal<'a>,
+) -> bindgen::Result<'a, [Vec<u8>; 2]> {
+    let before = data.get(&cx.heap).to_vec();
+    call(cx, callback)?;
+    Ok([before, data.get(&cx.heap).to_vec()])
+}
+
+pub(crate) fn pinned_bytes_after_callback<'a>(
+    cx: &mut JsScope<'a>,
+    data: PinnedBytes,
+    callback: JsLocal<'a>,
+) -> bindgen::Result<'a, Vec<u8>> {
+    call(cx, callback)?;
+    let (bytes, data) = std::thread::scope(|scope| {
+        scope
+            .spawn(move || (data.to_vec(), data))
+            .join()
+            .expect("the thread does not panic")
+    });
+    drop(data);
+    Ok(bytes)
+}
+
+pub(crate) fn string_as_is_or_bytes<'a>(heap: &JsHeap<'a>, data: StringOrBytes<'a>) -> Vec<u8> {
+    match data {
+        StringOrBytes::Bytes(bytes) => [&[0], bytes.get(heap)].concat(),
+        StringOrBytes::String(text) if text.is_8bit() => [&[1], text.latin1()].concat(),
+        StringOrBytes::String(text) => [&[2], bytemuck::cast_slice(text.utf16())].concat(),
+    }
 }
 
 pub(crate) fn bytes_of_are_same_memory(data: &[u8], again: &[u8]) -> bool {

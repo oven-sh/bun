@@ -5,6 +5,8 @@ import {
   ArrayType,
   BoolType,
   BufferSourceType,
+  BytesArgumentType,
+  type BytesOptions,
   type ClassOptions,
   ClassType,
   type DictionaryOptions,
@@ -19,7 +21,6 @@ import {
   type NamespaceOptions,
   RefType,
   type SignatureOptions,
-  StringOrBufferType,
   StringType,
   type Type,
   UnionType,
@@ -47,8 +48,8 @@ export const any = new AnyType();
 /** A typed array, `DataView` or `ArrayBuffer` that is not shared, as a `JsLocal<'a, BufferSource>`. `.bytes`, `.arrayBuffer`. */
 export const bufferSource = new BufferSourceType();
 
-/** A string as UTF-8, or the bytes of a buffer, shared or not, as `&[u8]`. `.orBlob`, `.loose`. */
-export const stringOrBuffer = new StringOrBufferType();
+/** The bytes of a string, a buffer or a `Blob`: which of them, what becomes of anything else, and how the body holds them. */
+export const bytes = (options: BytesOptions) => new BytesArgumentType(options);
 
 /** The native `Blob` behind a JS `Blob`. */
 export const blob = new RefType(

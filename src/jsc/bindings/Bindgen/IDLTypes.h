@@ -1,5 +1,5 @@
 #pragma once
-#include "Bindgen/JSStringOrBufferView.h"
+#include "Bindgen/JSBytesView.h"
 #include "Bindgen/JSStringUTF8View.h"
 // WebCore's. In quotes it would be this file.
 #include <IDLTypes.h>
@@ -100,22 +100,28 @@ struct IDLLooseUTF8String : IDLStrictUTF8String {};
 // The values IDLStrictUTF8String takes, as the WTF::String.
 struct IDLStrictStringOrStringObject : WebCore::IDLDOMString {};
 
-enum class AllowBlob : bool {
-    No,
-    Yes,
+// `b.bytes`: which values it takes.
+struct BytesOptions {
+    // As they are. `string`: what IDLStrictUTF8String takes. `buffer`: a BufferSource, shared or not.
+    bool string;
+    bool buffer;
+    bool blob;
+    // `ToString` of anything else, but of these. Without it, anything else is refused.
+    bool toStringOtherwise;
+    bool refuseUndefined;
+    bool refuseNull;
 };
 
-// What IDLStrictUTF8String takes, as UTF-8, or the bytes of a BufferSource, shared or not.
-template<AllowBlob>
-struct IDLStrictStringOrBuffer : WebCore::IDLType<JSStringOrBufferView> {
+// A string is its UTF-8.
+template<BytesOptions>
+struct IDLBytes : WebCore::IDLType<JSBytesView> {
     using SequenceStorageType = void;
 };
-// `ToString` of anything else.
-template<AllowBlob allowBlob>
-struct IDLLooseStringOrBuffer : IDLStrictStringOrBuffer<allowBlob> {};
-// But not of `undefined` or `null`.
-template<AllowBlob allowBlob>
-struct IDLLooseNotNullishStringOrBuffer : IDLStrictStringOrBuffer<allowBlob> {};
+// A string is the WTF::String.
+template<BytesOptions>
+struct IDLStringOrBuffer : WebCore::IDLType<JSStringOrBuffer> {
+    using SequenceStorageType = void;
+};
 
 // The bytes of a BufferSource that is not shared. Valid while the argument is alive and no JavaScript runs.
 struct IDLBufferSourceBytes : WebCore::IDLType<std::span<const uint8_t>> {

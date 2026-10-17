@@ -4,8 +4,16 @@ export default b.module({ rustPath: "crate::api::xml_object" });
 
 export const XML = b.namespace({
   parse: {
-    /** A string is parsed in its own encoding, Latin-1 or UTF-16, and not as UTF-8. */
-    args: { input: b.any, options: b.any },
+    args: {
+      /** A string is parsed in its own encoding, and not as UTF-8. */
+      input: b.bytes({
+        from: ["string", "buffer", "blob"],
+        otherwise: "toString",
+        refuse: ["undefined", "null"],
+        string: "asIs",
+      }),
+      options: b.any,
+    },
     returns: b.any,
     capability: "js",
     throws: true,

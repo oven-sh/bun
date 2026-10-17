@@ -2,21 +2,17 @@ use bun_collections::HashMap;
 use bun_collections::smallvec::SmallVec;
 use bun_core::StackCheck;
 use bun_core::String as BunString;
-use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope, WithValue};
+use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, TemporalType, wtf};
 use bun_parsers::toml::TOML;
 
-pub(crate) fn parse<'a>(heap: &JsHeap<'a>, input: WithValue<'a, &'a [u8]>) -> JsResult<JSValue> {
+pub(crate) fn parse(heap: &JsHeap<'_>, input: &[u8]) -> JsResult<JSValue> {
     // SAFETY: parsing runs no JavaScript. Nor does making the result: its keys are strings, its properties are defined
     // and not set, and a date or a time is `Temporal.*.from` of a primitive string, which looks nothing up.
     let global = unsafe { heap.global() };
-    let bytes = super::input_to_parse(global, input)?;
-    super::with_text_format_source(
-        global,
-        &super::copy_if_shared(global, input.value.to_js(), bytes)?,
-        b"input.toml",
-        |arena, log, source| {
-            let root = match TOML::parse(source, log, arena, false) {
+    super::with_text_format_source(global, input, b"input.toml", |arena, log, source| {
+        let root =
+            match TOML::parse(source, log, arena, false) {
                 Ok(v) => v,
                 Err(bun_parsers::Error::StackOverflow) => {
                     return Err(global.throw_stack_overflow());
@@ -39,9 +35,8 @@ pub(crate) fn parse<'a>(heap: &JsHeap<'a>, input: WithValue<'a, &'a [u8]>) -> Js
                 }
             };
 
-            super::expr_to_js(root, global)
-        },
-    )
+        super::expr_to_js(root, global)
+    })
 }
 
 /// `space` is accepted for signature parity with YAML/JSON5 but ignored: TOML output is line-oriented and has no

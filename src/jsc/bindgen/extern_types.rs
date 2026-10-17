@@ -92,6 +92,10 @@ pub struct ExternBytes {
     length: usize,
 }
 impl ExternBytes {
+    pub(super) const NULL: Self = Self {
+        data: core::ptr::null(),
+        length: 0,
+    };
     /// # Safety
     /// The host function that passed this is the call `heap` belongs to.
     #[inline(always)]
@@ -128,7 +132,27 @@ pub struct ExternWithValue<T: Copy> {
     pub value: JSValue,
 }
 
+/// `b.bytes` with `held: "copied"`.
+///
+/// # Safety
+/// As [`ExternBytes::get`].
+pub unsafe fn copy_string_or_buffer(
+    argument: ExternWithValue<ExternString>,
+    heap: &JsHeap<'_>,
+) -> Vec<u8> {
+    let copy = if argument.converted.is_null() {
+        // SAFETY: forwarded.
+        unsafe { Bun__Bindgen__bytesOfBuffer(argument.value).get(heap) }.to_vec()
+    } else {
+        adopt_string(argument.converted).to_owned_slice()
+    };
+    heap.global_object().vm().report_extra_memory(copy.len());
+    copy
+}
+
 unsafe extern "C" {
+    /// `value` is a `BufferSource` or a `Blob` whose bytes are in memory.
+    pub(super) safe fn Bun__Bindgen__bytesOfBuffer(value: JSValue) -> ExternBytes;
     pub(super) fn Bun__Bindgen__constructArray(
         global: *mut JSGlobalObject,
         values: *mut MarkedArgumentBuffer,

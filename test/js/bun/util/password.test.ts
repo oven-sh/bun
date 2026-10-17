@@ -75,9 +75,9 @@ describe("hash", () => {
         // @ts-expect-error
         expect(() => hash()).toThrow(expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }));
         // @ts-expect-error
-        expect(() => hash(undefined)).toThrow(/password (must|to) be a string/);
+        expect(() => hash(undefined)).toThrow("password must be a string");
         // @ts-expect-error
-        expect(() => hash(undefined, "bcrypt")).toThrow(/password (must|to) be a string/);
+        expect(() => hash(undefined, "bcrypt")).toThrow("password must be a string");
       });
 
       test("invalid algorithm throws", () => {
@@ -251,9 +251,9 @@ describe("verify", () => {
         // @ts-expect-error
         expect(() => verify("")).toThrow(invalidArgument);
         // @ts-expect-error
-        expect(() => verify(undefined, "$")).toThrow(/password (must|to) be a string/);
+        expect(() => verify(undefined, "$")).toThrow("password must be a string");
         // @ts-expect-error
-        expect(() => verify("$", undefined)).toThrow(/hash (must|to) be a string/);
+        expect(() => verify("$", undefined)).toThrow("hash must be a string");
       });
 
       test("empty values return false", async () => {

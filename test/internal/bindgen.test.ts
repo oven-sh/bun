@@ -104,7 +104,13 @@ itAlways("mistakes in a schema are errors when it loads", () => {
       "bytes: JavaScript can detach a buffer; .allowShared is for a function that cannot run it",
     );
   }
-  for (const bytes of [b.bufferSource.bytes, b.stringOrBuffer, b.stringOrBuffer.orBlob.loose]) {
+  const stringOrBuffer = b.bytes({ from: ["string", "buffer"] });
+  for (const bytes of [
+    b.bufferSource.bytes,
+    stringOrBuffer,
+    b.bytes({ from: ["string"], held: "copied" }),
+    b.bytes({ from: ["buffer"], held: "pinned" }),
+  ]) {
     const onlyAnArgument =
       "the bytes of a buffer are only for an argument: they are read after everything else is converted";
     expect(() => b.array(bytes)).toThrow(onlyAnArgument);
@@ -112,17 +118,30 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     expect(() => b.union({ bytes })).toThrow(onlyAnArgument);
   }
   for (const absent of ["optional", "nullable", "falsyAsNull"] as const) {
-    expect(() => b.stringOrBuffer[absent]).toThrow("b.stringOrBuffer is for an argument that is always there");
+    expect(() => stringOrBuffer[absent]).toThrow("b.bytes is for an argument that is always there");
   }
-  expect(() => b.stringOrBuffer.default("")).toThrow("cannot have a default");
-  for (const data of [b.stringOrBuffer, b.stringOrBuffer.orBlob.loose.withValue]) {
-    expect(() => b.fn({ args: { data }, capability: "js" })).toThrow(
-      "data: JavaScript can detach a buffer; b.stringOrBuffer is for a function that cannot run it",
-    );
-  }
-  expect(b.stringOrBuffer.orBlob.loose.idlType).toBe(b.stringOrBuffer.loose.orBlob.idlType);
-  expect(b.stringOrBuffer.orBlob.loose.notNullish.idlType).toBe(b.stringOrBuffer.loose.notNullish.orBlob.idlType);
-  expect(() => b.stringOrBuffer.notNullish).toThrow(".notNullish follows .loose: without it they are refused already");
+  expect(() => stringOrBuffer.default("")).toThrow("cannot have a default");
+  expect(() => b.fn({ args: { data: stringOrBuffer.withValue }, capability: "js" })).toThrow(
+    ".withValue follows b.bytes only where the body gets a slice",
+  );
+  expect(() => b.bytes({ from: [] })).toThrow("from: it takes nothing");
+  expect(() => b.bytes({ from: ["string", "string"] })).toThrow("two from are both string");
+  expect(() => b.bytes({ from: ["string"], refuse: ["null"] })).toThrow(
+    'refuse: without otherwise: "toString" they throw already',
+  );
+  expect(() => b.bytes({ from: ["string"], string: "asIs", held: "copied" })).toThrow(
+    'string: "asIs" is only borrowed',
+  );
+  expect(() => b.bytes({ from: ["buffer"], string: "asIs", shared: "copy" })).toThrow(
+    'string: "asIs" is only borrowed',
+  );
+  expect(() => b.bytes({ from: ["buffer"], shared: "copy", held: "pinned" })).toThrow(
+    'held: "pinned" pins a shared buffer; it does not copy one',
+  );
+  expect(() => b.bytes({ from: ["blob"], held: "pinned" })).toThrow('held: "pinned" does not take a Blob');
+  expect(() => b.fn({ args: { data: b.bytes({ from: ["string"], string: "asIs" }) } })).toThrow(
+    'string: "asIs": the bytes are read with a JsHeap',
+  );
   expect(() => b.u32.asBigInt).toThrow(".asBigInt follows b.u64");
   expect(() => b.u64.allowBigInt.asBigInt).toThrow(".asBigInt follows b.u64");
   for (const value of [
@@ -1081,7 +1100,7 @@ describe("a string or a buffer, as bytes", () => {
     }
   });
 
-  it(".orBlob takes the bytes of a Blob, but not of one that is a file", () => {
+  it('from: "blob" takes the bytes of a Blob, but not of one that is a file', () => {
     const s3 = new Bun.S3Client({ accessKeyId: "id", secretAccessKey: "secret", bucket: "bucket" });
     for (const f of [bindgen.bytesOfOrBlob, bindgen.bytesOfLooseOrBlob]) {
       expect(f(new Blob([new Uint8Array(eight)]))).toEqual(eight);
@@ -1113,7 +1132,46 @@ describe("a string or a buffer, as bytes", () => {
     }
   });
 
-  it(".loose is ToString of anything else", () => {
+  it("from: takes only what it lists", () => {
+    const refusal = (what: string) =>
+      expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message: `data must be ${what}` });
+    const bytes = new Uint8Array(eight);
+    const blob = new Blob([bytes]);
+    expect(bindgen.bytesOfString("abc")).toEqual(utf8("abc"));
+    expect(bindgen.bytesOfString(new String("abc"))).toEqual(utf8("abc"));
+    for (const value of [...notBytes, bytes, bytes.buffer, blob]) {
+      expect(() => bindgen.bytesOfString(value)).toThrow(refusal("a string"));
+    }
+    expect(bindgen.bytesOfBufferOrBlob(bytes)).toEqual(eight);
+    expect(bindgen.bytesOfBufferOrBlob(bytes.buffer)).toEqual(eight);
+    expect(bindgen.bytesOfBufferOrBlob(blob)).toEqual(eight);
+    for (const value of [...notBytes, "abc", new String("abc")]) {
+      expect(() => bindgen.bytesOfBufferOrBlob(value)).toThrow(refusal("an ArrayBuffer, ArrayBufferView or Blob"));
+    }
+    expect(bindgen.bytesOfBlobLoose(blob)).toEqual(eight);
+    expect(bindgen.bytesOfBlobLoose("abc")).toEqual(utf8("abc"));
+    expect(bindgen.bytesOfBlobLoose(new Uint8Array([1, 2]))).toEqual(utf8("1,2"));
+  });
+
+  it("refuse: throws for those, and converts the other", () => {
+    const refusal = expect.objectContaining({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: "data must be a string, ArrayBuffer or ArrayBufferView",
+    });
+    expect(() => bindgen.bytesOfDefined(undefined)).toThrow(refusal);
+    expect(() => bindgen.bytesOfDefined()).toThrow(refusal);
+    expect(bindgen.bytesOfDefined(null)).toEqual(utf8("null"));
+    expect(() => bindgen.bytesOfNotNull(null)).toThrow(refusal);
+    expect(bindgen.bytesOfNotNull(undefined)).toEqual(utf8("undefined"));
+    for (const f of [bindgen.bytesOfDefined, bindgen.bytesOfNotNull]) {
+      expect(f(5)).toEqual(utf8("5"));
+      expect(f("abc")).toEqual(utf8("abc"));
+      expect(f(new Uint8Array(eight))).toEqual(eight);
+    }
+  });
+
+  it('otherwise: "toString" is ToString of anything else', () => {
     for (const f of [bindgen.bytesOfLoose, bindgen.bytesOfLooseOrBlob]) {
       for (const value of notBytes) {
         if (typeof value === "symbol") continue;
@@ -1132,44 +1190,47 @@ describe("a string or a buffer, as bytes", () => {
     }
   });
 
-  it("reads a buffer after every argument is converted", () => {
-    const then = (buffer: ArrayBufferView | ArrayBufferLike, during: () => void) =>
-      bindgen.bytesOfThen(buffer, {
-        valueOf() {
-          during();
-          return 0;
+  it.each(["bytesOfThen", "bytesOfThenCopyingShared", "bytesOfThenCopied"] as const)(
+    "%s reads a buffer after every argument is converted",
+    name => {
+      const then = (buffer: ArrayBufferView | ArrayBufferLike, during: () => void) =>
+        bindgen[name](buffer, {
+          valueOf() {
+            during();
+            return 0;
+          },
+        });
+      const written = new Uint8Array(eight);
+      expect(then(written, () => written.fill(7))).toEqual(new Array(8).fill(7));
+      const detached = new Uint8Array(eight);
+      expect(then(detached, () => void detached.buffer.transfer())).toEqual([]);
+      const collected = new Uint8Array(eight);
+      expect(
+        then(collected, () => {
+          structuredClone(collected.buffer, { transfer: [collected.buffer] });
+          Bun.gc(true);
+        }),
+      ).toEqual([]);
+      const resizable = new ArrayBuffer(8, { maxByteLength: 4096 });
+      new Uint8Array(resizable).set(eight);
+      expect(then(new Uint8Array(resizable), () => resizable.resize(2))).toEqual([1, 2]);
+      expect(then(resizable, () => resizable.resize(4))).toEqual([1, 2, 0, 0]);
+      const growable = new SharedArrayBuffer(2, { maxByteLength: 4096 });
+      expect(then(growable, () => growable.grow(4))).toEqual([0, 0, 0, 0]);
+      // A string is converted in its turn: what it is cannot change.
+      const log: string[] = [];
+      const text = Object.assign(new String("x"), {
+        toString() {
+          log.push("data");
+          return "text";
         },
       });
-    const written = new Uint8Array(eight);
-    expect(then(written, () => written.fill(7))).toEqual(new Array(8).fill(7));
-    const detached = new Uint8Array(eight);
-    expect(then(detached, () => void detached.buffer.transfer())).toEqual([]);
-    const collected = new Uint8Array(eight);
-    expect(
-      then(collected, () => {
-        structuredClone(collected.buffer, { transfer: [collected.buffer] });
-        Bun.gc(true);
-      }),
-    ).toEqual([]);
-    const resizable = new ArrayBuffer(8, { maxByteLength: 4096 });
-    new Uint8Array(resizable).set(eight);
-    expect(then(new Uint8Array(resizable), () => resizable.resize(2))).toEqual([1, 2]);
-    expect(then(resizable, () => resizable.resize(4))).toEqual([1, 2, 0, 0]);
-    const growable = new SharedArrayBuffer(2, { maxByteLength: 4096 });
-    expect(then(growable, () => growable.grow(4))).toEqual([0, 0, 0, 0]);
-    // A string is converted in its turn: what it is cannot change.
-    const log: string[] = [];
-    const text = Object.assign(new String("x"), {
-      toString() {
-        log.push("data");
-        return "text";
-      },
-    });
-    expect(then(text as any, () => log.push("after"))).toEqual(utf8("text"));
-    expect(log).toEqual(["data", "after"]);
-    expect(() => bindgen.bytesOfThen(1, { valueOf: () => log.push("not reached") })).toThrow("data must be");
-    expect(log).toEqual(["data", "after"]);
-  });
+      expect(then(text as any, () => log.push("after"))).toEqual(utf8("text"));
+      expect(log).toEqual(["data", "after"]);
+      expect(() => bindgen[name](1, { valueOf: () => log.push("not reached") })).toThrow("data must be");
+      expect(log).toEqual(["data", "after"]);
+    },
+  );
 
   it("copies only a string that is not ASCII", () => {
     const ownMemory = bindgen.bytesOfAreSameMemory;
@@ -1180,6 +1241,138 @@ describe("a string or a buffer, as bytes", () => {
     // The characters of a string that is ASCII are its UTF-8.
     expect(ownMemory("ascii", "ascii")).toBe(true);
     expect(ownMemory("\xe9", "\xe9")).toBe(false);
+  });
+
+  it('shared: "copy" copies a shared buffer, and nothing else', () => {
+    const ownMemory = bindgen.bytesOfAreSameMemoryCopyingShared;
+    for (const buffer of buffers(eight)) expect(ownMemory(buffer, buffer)).toBe(true);
+    for (const buffer of buffers(eight, SharedArrayBuffer)) expect(ownMemory(buffer, buffer)).toBe(false);
+    const blob = new Blob([new Uint8Array(eight)]);
+    expect(ownMemory(blob, blob)).toBe(true);
+    expect(ownMemory("ascii", "ascii")).toBe(true);
+    for (const buffer of buffers(eight, SharedArrayBuffer))
+      expect(bindgen.bytesOfThenCopyingShared(buffer, 0)).toEqual(eight);
+    for (const buffer of buffers([], SharedArrayBuffer))
+      expect(bindgen.bytesOfThenCopyingShared(buffer, 0)).toEqual([]);
+  });
+
+  describe("in a function that can run JavaScript", () => {
+    it.each(["bytesBeforeAndAfterCallback", "bytesBeforeAndAfterCallbackCopyingShared"] as const)(
+      "%s reads a buffer each time",
+      name => {
+        const f = bindgen[name];
+        const same = new Uint8Array(eight);
+        expect(f(same, () => {})).toEqual([eight, eight]);
+        expect(f(same, () => void same.fill(2))).toEqual([eight, new Array(8).fill(2)]);
+        const transferred = new Uint8Array(eight);
+        expect(f(transferred, () => void transferred.buffer.transfer())).toEqual([eight, []]);
+        const collected = new Uint8Array(eight);
+        expect(
+          f(collected, () => {
+            structuredClone(collected.buffer, { transfer: [collected.buffer] });
+            Bun.gc(true);
+          }),
+        ).toEqual([eight, []]);
+        const resizable = new ArrayBuffer(8, { maxByteLength: 1 << 20 });
+        new Uint8Array(resizable).set(eight);
+        expect(f(resizable, () => resizable.resize(2))).toEqual([eight, [1, 2]]);
+        expect(f(new Uint8Array(resizable), () => resizable.resize(4))).toEqual([
+          [1, 2],
+          [1, 2, 0, 0],
+        ]);
+        expect(f(new Blob([new Uint8Array(eight)]), () => Bun.gc(true))).toEqual([eight, eight]);
+        for (const text of ["", "abc", "h\xe9llo", "\u65e5\u672c", Buffer.alloc(300, 0xe9).toString("latin1")]) {
+          expect(f(text, () => Bun.gc(true))).toEqual([utf8(text), utf8(text)]);
+        }
+        expect(f(5, () => {})).toEqual([utf8("5"), utf8("5")]);
+        expect(f({ toString: () => "made " + "here" }, () => Bun.gc(true))).toEqual([
+          utf8("made here"),
+          utf8("made here"),
+        ]);
+      },
+    );
+
+    it('a shared buffer is read each time, or copied once with shared: "copy"', () => {
+      const shared = new Uint8Array(new SharedArrayBuffer(8));
+      shared.set(eight);
+      expect(bindgen.bytesBeforeAndAfterCallback(shared, () => void shared.fill(2))).toEqual([
+        eight,
+        new Array(8).fill(2),
+      ]);
+      shared.set(eight);
+      expect(bindgen.bytesBeforeAndAfterCallbackCopyingShared(shared, () => void shared.fill(2))).toEqual([
+        eight,
+        eight,
+      ]);
+    });
+  });
+
+  it('held: "copied" is a copy of the bytes', () => {
+    const copied = (value: unknown) => bindgen.bytesOfThenCopied(value, 0);
+    for (const ArrayBufferClass of [ArrayBuffer, SharedArrayBuffer]) {
+      for (const buffer of buffers(eight, ArrayBufferClass)) expect(copied(buffer)).toEqual(eight);
+      for (const buffer of buffers([], ArrayBufferClass)) expect(copied(buffer)).toEqual([]);
+    }
+    expect(copied(new Blob([new Uint8Array(eight)]))).toEqual(eight);
+    for (const text of ["", "abc", "h\xe9llo", "\u65e5\u672c", "\ud800", Buffer.alloc(300, 0xe9).toString("latin1")]) {
+      expect(copied(text)).toEqual(utf8(text));
+      expect(copied(new String(text))).toEqual(utf8(text));
+    }
+    expect(() => copied(5)).toThrow("data must be a string, ArrayBuffer, ArrayBufferView or Blob");
+  });
+
+  it('held: "pinned" is read by another thread, whatever JavaScript does to the buffer', () => {
+    const pinned = bindgen.pinnedBytesAfterCallback;
+    for (const text of ["", "abc", "h\xe9llo", "\u65e5\u672c", Buffer.alloc(300, 0xe9).toString("latin1")]) {
+      expect(pinned(text, () => Bun.gc(true))).toEqual(utf8(text));
+      expect(pinned(new String(text), () => Bun.gc(true))).toEqual(utf8(text));
+    }
+    for (const ArrayBufferClass of [ArrayBuffer, SharedArrayBuffer]) {
+      for (const buffer of buffers(eight, ArrayBufferClass)) expect(pinned(buffer, () => {})).toEqual(eight);
+      for (const buffer of buffers([], ArrayBufferClass)) expect(pinned(buffer, () => {})).toEqual([]);
+    }
+    // In place: a write is seen.
+    const written = new Uint8Array(eight);
+    expect(pinned(written, () => void written.fill(2))).toEqual(new Array(8).fill(2));
+    const kept = new Uint8Array(eight);
+    expect(
+      pinned(kept, () => {
+        // What is pinned is copied and not detached.
+        kept.buffer.transfer();
+        expect(kept.byteLength).toBe(8);
+      }),
+    ).toEqual(eight);
+    kept.buffer.transfer();
+    expect(kept.byteLength).toBe(0);
+    // A shrink unmaps pages, so a resizable buffer is copied.
+    const resizable = new ArrayBuffer(8, { maxByteLength: 1 << 20 });
+    new Uint8Array(resizable).set(eight);
+    expect(pinned(resizable, () => resizable.resize(0))).toEqual(eight);
+    for (const value of [...notBytes, new Blob(["abc"])]) {
+      expect(() => pinned(value, () => {})).toThrow("data must be a string, ArrayBuffer or ArrayBufferView");
+    }
+  });
+
+  it('string: "asIs" leaves a string in its own encoding', () => {
+    const f = bindgen.stringAsIsOrBytes;
+    expect(f("")).toEqual([1]);
+    expect(f("abc")).toEqual([1, 0x61, 0x62, 0x63]);
+    expect(f("h\xe9")).toEqual([1, 0x68, 0xe9]);
+    expect(f("\u65e5")).toEqual([2, 0xe5, 0x65]);
+    expect(f("\ud800")).toEqual([2, 0x00, 0xd8]);
+    expect(f(new String("h\xe9"))).toEqual([1, 0x68, 0xe9]);
+    expect(f("a".repeat(20) + "\xe9".repeat(20))).toEqual([
+      1,
+      ...new Array(20).fill(0x61),
+      ...new Array(20).fill(0xe9),
+    ]);
+    expect(f(5)).toEqual([1, 0x35]);
+    expect(f(undefined)).toEqual([1, ...utf8("undefined")]);
+    for (const ArrayBufferClass of [ArrayBuffer, SharedArrayBuffer]) {
+      for (const buffer of buffers(eight, ArrayBufferClass)) expect(f(buffer)).toEqual([0, ...eight]);
+      for (const buffer of buffers([], ArrayBufferClass)) expect(f(buffer)).toEqual([0]);
+    }
+    expect(f(new Blob([new Uint8Array(eight)]))).toEqual([0, ...eight]);
   });
 });
 

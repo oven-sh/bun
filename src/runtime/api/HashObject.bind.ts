@@ -2,7 +2,11 @@ import * as b from "../../codegen/bindgen-lib.ts";
 
 export default b.module({ rustPath: "crate::api::hash_object" });
 
-const data = b.stringOrBuffer.orBlob.loose.notNullish;
+const data = b.bytes({
+  from: ["string", "buffer", "blob"],
+  otherwise: "toString",
+  refuse: ["undefined", "null"],
+});
 /** A seed that is neither a number nor a BigInt is not converted: it is 0. */
 const seed = b.any;
 const unseeded32 = { args: { data }, returns: b.u32 };

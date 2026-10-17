@@ -2,6 +2,8 @@ import * as b from "../../codegen/bindgen-lib.ts";
 
 export default b.module({ rustPath: "crate::api::bun_object" });
 
+const stringOrBuffer = b.bytes({ from: ["string", "buffer"] });
+
 export const allocUnsafe = b.fn({
   args: { size: b.u32.validateInteger() },
   returns: b.bufferSource,
@@ -51,7 +53,7 @@ export const ZlibDecompressionOptions = b.dictionary(
 
 const zlib = (rustName: string, options: typeof ZlibCompressionOptions | typeof ZlibDecompressionOptions) =>
   b.fn({
-    args: { data: b.stringOrBuffer, options: options.default({}) },
+    args: { data: stringOrBuffer, options: options.default({}) },
     returns: b.bufferSource,
     capability: "heap",
     throws: true,
@@ -157,8 +159,7 @@ export const which = b.fn({
 
 export const ZstdCompressionOptions = b.dictionary({ level: b.f64.loose.allowBigInt.optional }, { allowArray: true });
 
-/** The job pins it, for another thread to read. */
-const pinned = b.any;
+const pinned = b.bytes({ from: ["string", "buffer"], held: "pinned" });
 
 export const zstdCompress = b.fn({
   args: { data: pinned, options: ZstdCompressionOptions.default({}) },
@@ -169,7 +170,7 @@ export const zstdCompress = b.fn({
 });
 
 export const zstdCompressSync = b.fn({
-  args: { data: b.stringOrBuffer, options: ZstdCompressionOptions.default({}) },
+  args: { data: stringOrBuffer, options: ZstdCompressionOptions.default({}) },
   returns: b.bufferSource,
   capability: "heap",
   throws: true,
@@ -180,12 +181,11 @@ export const zstdDecompress = b.fn({
   args: { data: pinned },
   returns: b.any,
   capability: "js",
-  throws: true,
   rustPath: "crate::api::bun_object::JSZstd::decompress",
 });
 
 export const zstdDecompressSync = b.fn({
-  args: { data: b.stringOrBuffer },
+  args: { data: stringOrBuffer },
   returns: b.bufferSource,
   capability: "heap",
   throws: true,

@@ -306,6 +306,13 @@ development:
           expect(YAML.parse(sharedArray)).toEqual({ type: "shared", value: 123 });
         });
 
+        test("a Blob whose bytes are not in memory is refused, and does not parse as nothing", () => {
+          const s3 = new Bun.S3Client({ accessKeyId: "id", secretAccessKey: "secret", bucket: "bucket" });
+          for (const file of [Bun.file(import.meta.path), s3.file("key")]) {
+            expect(() => YAML.parse(file)).toThrow("File blob cannot be used here");
+          }
+        });
+
         test("a SharedArrayBuffer does not change under the parser while another thread writes it", async () => {
           await using proc = Bun.spawn({
             cmd: [

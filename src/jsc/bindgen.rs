@@ -7,7 +7,7 @@ use core::ptr::NonNull;
 
 use crate::{
     ArrayBuffer, ErrorCode, JSGlobalObject, JSObject, JSString, JSValue, JsError, JsThread,
-    MarkedArgumentBuffer, Strong,
+    MarkedArgumentBuffer, PinnedArrayBuffer, Strong, ThreadIsolated, ThreadIsolatedArg,
 };
 
 #[path = "bindgen/extern_types.rs"]
@@ -394,6 +394,116 @@ impl PossiblySharedBytes<'_> {
     pub fn index_of_char(self, needle: u8) -> Option<usize> {
         // SAFETY: readable for `'a`.
         unsafe { bun_highway::index_of_char_raw(self.data, self.length, needle) }
+    }
+}
+
+/// `b.bytes` in a function that can run JavaScript, which can detach, resize or free a buffer. The bytes are borrowed
+/// from the [`JsHeap`], so nothing that takes the `&mut JsScope` runs while they are.
+#[derive(Clone, Copy)]
+pub struct Bytes<'a> {
+    /// What JavaScript does not change: the UTF-8 of a string, or a copy. Null data for a buffer.
+    stable: extern_types::ExternBytes,
+    value: JsLocal<'a>,
+}
+
+impl<'a> Bytes<'a> {
+    #[doc(hidden)]
+    #[inline(always)]
+    pub unsafe fn from_extern(
+        argument: extern_types::ExternWithValue<extern_types::ExternBytes>,
+        heap: &JsHeap<'a>,
+    ) -> Self {
+        Self {
+            stable: argument.converted,
+            // SAFETY: forwarded.
+            value: unsafe { JsLocal::from_extern(argument.value, heap) },
+        }
+    }
+
+    /// Those of a buffer are as they are now. A detached or out-of-bounds view is empty.
+    #[inline]
+    pub fn get<'heap>(self, heap: &'heap JsHeap<'a>) -> &'heap [u8] {
+        // SAFETY: `from_extern`'s caller holds both until the call returns, which `'a` does not outlive.
+        unsafe {
+            match self.stable.get_optional(heap) {
+                Some(bytes) => bytes,
+                None => extern_types::Bun__Bindgen__bytesOfBuffer(self.value.0).get(heap),
+            }
+        }
+    }
+}
+
+/// `b.bytes` with `string: "asIs"`.
+pub enum StringOrBytes<'a> {
+    /// Latin-1 or UTF-16.
+    String(bun_core::String),
+    Bytes(Bytes<'a>),
+}
+
+impl<'a> StringOrBytes<'a> {
+    #[doc(hidden)]
+    #[inline]
+    pub unsafe fn from_extern(
+        argument: extern_types::ExternWithValue<extern_types::ExternString>,
+        heap: &JsHeap<'a>,
+    ) -> Self {
+        if !argument.converted.is_null() {
+            return Self::String(extern_types::adopt_string(argument.converted));
+        }
+        Self::Bytes(Bytes {
+            stable: extern_types::ExternBytes::NULL,
+            // SAFETY: forwarded.
+            value: unsafe { JsLocal::from_extern(argument.value, heap) },
+        })
+    }
+}
+
+/// `b.bytes` with `held: "pinned"`, for a job on another thread to read. A string is thread-isolated. A buffer is pinned
+/// and GC-rooted, and a resizable one copied. It is dropped on the JS thread.
+pub struct PinnedBytes(ThreadIsolated<Pinned>);
+
+enum Pinned {
+    Utf8(bun_core::Utf8Bytes<'static>),
+    Buffer(PinnedArrayBuffer),
+}
+
+// SAFETY: `PinnedBytes::from_extern` builds it so.
+unsafe impl ThreadIsolatedArg for Pinned {}
+
+impl PinnedBytes {
+    #[doc(hidden)]
+    pub unsafe fn from_extern<'a>(
+        argument: extern_types::ExternWithValue<extern_types::ExternString>,
+        heap: &JsHeap<'a>,
+    ) -> Result<'a, Self> {
+        let global = heap.global_object();
+        let pinned = if argument.converted.is_null() {
+            match PinnedArrayBuffer::root_read_only(global, argument.value) {
+                Some(buffer) => Pinned::Buffer(buffer),
+                None => return Err(global.throw_out_of_memory().into()),
+            }
+        } else {
+            let utf8 = extern_types::adopt_string(argument.converted)
+                .into_utf8_with_string_thread_isolated()
+                .into_utf8();
+            if let bun_core::Utf8Bytes::Owned(transcoded) = &utf8 {
+                global.vm().report_extra_memory(transcoded.len());
+            }
+            Pinned::Utf8(utf8)
+        };
+        // SAFETY: the string is thread-isolated, and the buffer pinned and GC-rooted.
+        Ok(Self(unsafe { ThreadIsolated::new(pinned) }))
+    }
+}
+
+impl core::ops::Deref for PinnedBytes {
+    type Target = [u8];
+    #[inline]
+    fn deref(&self) -> &[u8] {
+        match &*self.0 {
+            Pinned::Utf8(utf8) => utf8,
+            Pinned::Buffer(buffer) => buffer.slice(),
+        }
     }
 }
 

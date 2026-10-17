@@ -19,8 +19,9 @@ export const PasswordHashAlgorithm = b.union({
   options: PasswordHashOptions,
 });
 
-/** `hash` and `verify` make their own copies of these, to zero them. */
-const copied = b.any;
+const borrowed = b.bytes({ from: ["string", "buffer"] });
+/** For a job to own, and to zero when it is done. */
+const copied = b.bytes({ from: ["string", "buffer"], otherwise: "toString", refuse: ["undefined"], held: "copied" });
 
 export const password = b.namespace({
   hash: {
@@ -30,7 +31,7 @@ export const password = b.namespace({
     throws: true,
   },
   hashSync: {
-    args: { password: b.stringOrBuffer, algorithm: PasswordHashAlgorithm },
+    args: { password: borrowed, algorithm: PasswordHashAlgorithm },
     returns: b.string.utf8,
     capability: "heap",
     throws: true,
@@ -42,7 +43,7 @@ export const password = b.namespace({
     throws: true,
   },
   verifySync: {
-    args: { password: b.stringOrBuffer, hash: b.stringOrBuffer, algorithm: b.string.utf8.nullable },
+    args: { password: borrowed, hash: borrowed, algorithm: b.string.utf8.nullable },
     returns: b.bool,
     capability: "heap",
     throws: true,

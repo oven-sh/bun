@@ -197,42 +197,6 @@ fn with_text_format_source<R>(
     f(arena, &mut log, &source)
 }
 
-fn throw_nothing_to_parse(global: &bun_jsc::JSGlobalObject) -> bun_jsc::JsError {
-    global.throw_invalid_arguments(format_args!("Expected a string to parse"))
-}
-
-/// What `parse` was given, as bytes. `undefined` and `null` are not something to parse.
-fn input_to_parse<'a>(
-    global: &bun_jsc::JSGlobalObject,
-    input: bun_jsc::bindgen::WithValue<'a, &'a [u8]>,
-) -> bun_jsc::JsResult<&'a [u8]> {
-    if input.value.to_js().is_undefined_or_null() {
-        return Err(throw_nothing_to_parse(global));
-    }
-    Ok(input.converted)
-}
-
-/// `bytes`, which are `input`'s, or a copy if they are a shared buffer's. For a parser that reads a byte again and
-/// counts on what it was, which another thread can change. JSC's `sort` does the same.
-fn copy_if_shared<'a>(
-    global: &bun_jsc::JSGlobalObject,
-    input: bun_jsc::JSValue,
-    bytes: &'a [u8],
-) -> bun_jsc::JsResult<std::borrow::Cow<'a, [u8]>> {
-    if !input
-        .as_array_buffer(global)
-        .is_some_and(|buffer| buffer.shared)
-    {
-        return Ok(bytes.into());
-    }
-    let mut copy = Vec::new();
-    if copy.try_reserve_exact(bytes.len()).is_err() {
-        return Err(global.throw_out_of_memory());
-    }
-    copy.extend_from_slice(bytes);
-    Ok(copy.into())
-}
-
 // ─── shared Expr → JS conversion for the text-format parsers ─────────────────
 
 /// `Expr` → `JSValue` for the text-format parsers (TOML, JSON5), through the

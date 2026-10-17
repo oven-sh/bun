@@ -165,6 +165,7 @@ pub mod string_builder;
 pub mod strong;
 #[path = "Task.rs"]
 pub mod task;
+mod thread_isolated;
 #[path = "TopExceptionScope.rs"]
 pub mod top_exception_scope;
 #[path = "uuid.rs"]
@@ -203,6 +204,7 @@ pub use self::js_promise::JSPromise as JSInternalPromise;
 pub use self::rare_data as RareData;
 pub use self::system_error::SystemError;
 pub use self::task::Taskable;
+pub use self::thread_isolated::{ThreadIsolated, ThreadIsolatedArg};
 
 /// Trait surface for `write_format`-style hooks on runtime types
 /// (`Response::write_format`, `Request::write_format`, `S3File::write_format`,

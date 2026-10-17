@@ -93,7 +93,9 @@ use crate::generated_bindgen::bun_object::{
     ZlibDecompressionOptions, ZstdCompressionOptions,
 };
 use crate::generated_bindgen::glob::GlobClass as _;
-use bun_jsc::bindgen::{self, BufferSource, JsHeap, JsLocal, JsScope, PossiblySharedBytes};
+use bun_jsc::bindgen::{
+    self, BufferSource, JsHeap, JsLocal, JsScope, PinnedBytes, PossiblySharedBytes,
+};
 
 // ─── wrap_static_method adapters ───────────────────────────────────────────
 // `#[bun_jsc::host_fn(static)]` is not yet emitted,
@@ -2206,7 +2208,7 @@ pub(crate) mod JSZstd {
 
     /// `Bun.zstdCompress` / `Bun.zstdDecompress` off the JS thread.
     pub(crate) struct ZstdJob {
-        pub buffer: node::ThreadIsolated<node::StringOrBuffer<'static>>,
+        pub buffer: PinnedBytes,
         pub is_compress: bool,
         pub level: i32,
         /// Filled in by `run`.
@@ -2221,7 +2223,7 @@ pub(crate) mod JSZstd {
             this: &mut Self,
             done: bun_jsc::Completion<Self>,
         ) -> Option<bun_jsc::Completion<Self>> {
-            let input = this.buffer.slice();
+            let input = &this.buffer[..];
 
             this.result = if this.is_compress {
                 compress_to_box(input, this.level)
@@ -2253,15 +2255,10 @@ pub(crate) mod JSZstd {
 
     fn schedule<'a>(
         cx: &mut JsScope<'a>,
-        data: JsLocal<'a>,
+        buffer: PinnedBytes,
         is_compress: bool,
         level: i32,
-    ) -> bindgen::Result<'a, JSValue> {
-        let Some(buffer) = node::StringOrBuffer::from_js_async(cx.global(), data.to_js())? else {
-            return Err(cx
-                .heap
-                .invalid_arguments(format_args!("Expected buffer to be a string or buffer")));
-        };
+    ) -> JSValue {
         let promise = jsc::JSPromiseStrong::init(cx.global());
         let promise_value = promise.value();
         jsc::Job::<ZstdJob>::schedule(
@@ -2274,22 +2271,19 @@ pub(crate) mod JSZstd {
             },
             promise,
         );
-        Ok(promise_value)
+        promise_value
     }
 
     pub(crate) fn compress<'a>(
         cx: &mut JsScope<'a>,
-        data: JsLocal<'a>,
+        data: PinnedBytes,
         options: ZstdCompressionOptions,
     ) -> bindgen::Result<'a, JSValue> {
         let level = level_of(&cx.heap, options)?;
-        schedule(cx, data, true, level)
+        Ok(schedule(cx, data, true, level))
     }
 
-    pub(crate) fn decompress<'a>(
-        cx: &mut JsScope<'a>,
-        data: JsLocal<'a>,
-    ) -> bindgen::Result<'a, JSValue> {
+    pub(crate) fn decompress(cx: &mut JsScope<'_>, data: PinnedBytes) -> JSValue {
         schedule(cx, data, false, 0)
     }
 }

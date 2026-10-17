@@ -14,15 +14,13 @@ use bun_collections::HashMap;
 use bun_core::String as BunString;
 use bun_core::{StackCheck, strings};
 use bun_js_parser_jsc::ExprJsc;
-use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::bindgen::{JsLocal, JsScope, StringOrBytes};
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, wtf};
 use bun_parsers::xml::{self, XML};
 
-use crate::node::BlobOrStringOrBuffer;
-
 pub(crate) fn parse<'a>(
     cx: &mut JsScope<'a>,
-    input: JsLocal<'a>,
+    input: StringOrBytes<'a>,
     options: JsLocal<'a>,
 ) -> JsResult<JSValue> {
     let global = cx.global();
@@ -45,21 +43,12 @@ pub(crate) fn parse<'a>(
     // UTF-16 / declared-encoding detection. A string is already-decoded text
     // whose encoding declaration must not be acted upon: a Latin-1 string is
     // parsed byte-per-character as is, a UTF-16 one by its code units.
-    let input = input.to_js();
-    if input.is_undefined_or_null() {
-        return Err(super::throw_nothing_to_parse(global));
-    }
-    let blob_or_buffer = if input.is_string() {
-        None
-    } else {
-        BlobOrStringOrBuffer::from_js(global, input)?
-    };
     let text;
     let mut utf16 = None;
-    let (bytes, encoding): (&[u8], _) = match &blob_or_buffer {
-        Some(bytes) => (bytes.slice(), xml::InputEncoding::Bytes),
-        None => {
-            text = input.to_bun_string(global)?;
+    let (bytes, encoding): (&[u8], _) = match input {
+        StringOrBytes::Bytes(bytes) => (bytes.get(&cx.heap), xml::InputEncoding::Bytes),
+        StringOrBytes::String(string) => {
+            text = string;
             if text.is_8bit() {
                 (text.latin1(), xml::InputEncoding::Latin1)
             } else {
@@ -69,6 +58,9 @@ pub(crate) fn parse<'a>(
             }
         }
     };
+    // SAFETY: parsing runs no JavaScript. Nor does making the result: its keys are primitives, and its properties are
+    // defined and not set.
+    let global = unsafe { cx.heap.global() };
 
     super::with_text_format_source(global, bytes, b"input.xml", |arena, log, source| {
         bun_core::analytics::Features::xml_parse_inc();

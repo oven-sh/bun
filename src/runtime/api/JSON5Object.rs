@@ -2,7 +2,7 @@ use bun_collections::HashMap;
 use bun_core::StackCheck;
 use bun_core::String as BunString;
 use bun_js_parser::lexer;
-use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope, WithValue};
+use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, wtf};
 use bun_parsers::json5;
 
@@ -37,16 +37,13 @@ pub(crate) fn stringify<'a>(
     stringifier.builder.to_string(global)
 }
 
-pub(crate) fn parse<'a>(heap: &JsHeap<'a>, input: WithValue<'a, &'a [u8]>) -> JsResult<JSValue> {
+pub(crate) fn parse(heap: &JsHeap<'_>, input: &[u8]) -> JsResult<JSValue> {
     // SAFETY: parsing runs no JavaScript. Nor does making the result: its keys are primitives, and its properties are
     // defined and not set.
     let global = unsafe { heap.global() };
-    super::with_text_format_source(
-        global,
-        super::input_to_parse(global, input)?,
-        b"input.json5",
-        |bump, log, source| {
-            let root = match json5::JSON5Parser::parse(source, log, bump) {
+    super::with_text_format_source(global, input, b"input.json5", |bump, log, source| {
+        let root =
+            match json5::JSON5Parser::parse(source, log, bump) {
                 Ok(r) => r,
                 Err(json5::ExternalError::OutOfMemory) => return Err(JsError::OutOfMemory),
                 Err(json5::ExternalError::StackOverflow) => {
@@ -68,9 +65,8 @@ pub(crate) fn parse<'a>(heap: &JsHeap<'a>, input: WithValue<'a, &'a [u8]>) -> Js
                 }
             };
 
-            super::expr_to_js(root, global)
-        },
-    )
+        super::expr_to_js(root, global)
+    })
 }
 
 struct Stringifier {

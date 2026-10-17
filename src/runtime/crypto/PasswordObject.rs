@@ -9,7 +9,6 @@ use bun_jsc::{ErrorCode, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::{JSPromise, JSPromiseStrong};
 
 use crate::generated_bindgen::password_object::{PasswordHashAlgorithm, PasswordHashOptions};
-use crate::node::StringOrBuffer;
 
 // The argon2/bcrypt API-surface shim lives at `crypto::pwhash` (this dir);
 // the implementation is wired there, not here.
@@ -521,36 +520,12 @@ fn schedule<Op: PasswordOp>(cx: &bun_jsc::JsThread<'_>, password: Box<[u8]>, op:
 
 const EMPTY_PASSWORD: &str = "password must not be empty";
 
-/// For a job to own, and to zero when it is done.
-fn copy_of<'a>(
-    cx: &mut JsScope<'a>,
-    function: &str,
-    field: &str,
-    value: JsLocal<'a>,
-) -> bindgen::Result<'a, Vec<u8>> {
-    if value.is_undefined() {
-        return Err(invalid_argument_type(
-            &cx.heap,
-            function,
-            field,
-            "string or TypedArray",
-        ));
-    }
-    // TODO: this most likely should error like the sync functions instead of stringifying.
-    Ok(StringOrBuffer::from_js_to_owned_slice(
-        cx.global(),
-        value.to_js(),
-    )?)
-}
-
 pub(crate) fn hash<'a>(
     cx: &mut JsScope<'a>,
-    password: JsLocal<'a>,
+    password: Vec<u8>,
     algorithm: PasswordHashAlgorithm<'a>,
 ) -> bindgen::Result<'a, JSValue> {
     let algorithm = AlgorithmValue::from_argument(&cx.heap, algorithm)?;
-
-    let password = copy_of(cx, "hash", "password", password)?;
     if password.is_empty() {
         return Err(cx.heap.invalid_arguments(format_args!("{EMPTY_PASSWORD}")));
     }
@@ -586,14 +561,11 @@ fn verify_algorithm<'a>(
 
 pub(crate) fn verify<'a>(
     cx: &mut JsScope<'a>,
-    password: JsLocal<'a>,
-    hash: JsLocal<'a>,
+    password: Vec<u8>,
+    prev_hash: Vec<u8>,
     algorithm: Option<&'a [u8]>,
 ) -> bindgen::Result<'a, JSValue> {
     let algorithm = verify_algorithm(&cx.heap, algorithm)?;
-
-    let password = copy_of(cx, "verify", "password", password)?;
-    let prev_hash = copy_of(cx, "verify", "hash", hash)?;
     if prev_hash.is_empty() || password.is_empty() {
         return Ok(JSPromise::resolved_promise_value(
             cx.global(),

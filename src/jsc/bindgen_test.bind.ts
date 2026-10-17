@@ -86,21 +86,61 @@ export const sumBeforeAndAfterCallback = b.fn({
   throws: true,
 });
 
-const bytesOfA = (data: typeof b.stringOrBuffer) =>
-  b.fn({ args: { data }, returns: b.array(b.u8), rustPath: "crate::bindgen_test::bytes_of" });
-export const bytesOf = bytesOfA(b.stringOrBuffer);
-export const bytesOfOrBlob = bytesOfA(b.stringOrBuffer.orBlob);
-export const bytesOfLoose = bytesOfA(b.stringOrBuffer.loose);
-export const bytesOfLooseOrBlob = bytesOfA(b.stringOrBuffer.orBlob.loose);
+const bytesOfA = (options: Parameters<typeof b.bytes>[0]) =>
+  b.fn({ args: { data: b.bytes(options) }, returns: b.array(b.u8), rustPath: "crate::bindgen_test::bytes_of" });
+export const bytesOf = bytesOfA({ from: ["string", "buffer"] });
+export const bytesOfOrBlob = bytesOfA({ from: ["string", "buffer", "blob"] });
+export const bytesOfLoose = bytesOfA({ from: ["string", "buffer"], otherwise: "toString" });
+export const bytesOfLooseOrBlob = bytesOfA({ from: ["string", "buffer", "blob"], otherwise: "toString" });
+export const bytesOfString = bytesOfA({ from: ["string"] });
+export const bytesOfBufferOrBlob = bytesOfA({ from: ["buffer", "blob"] });
+export const bytesOfBlobLoose = bytesOfA({ from: ["blob"], otherwise: "toString" });
+export const bytesOfDefined = bytesOfA({ from: ["string", "buffer"], otherwise: "toString", refuse: ["undefined"] });
+export const bytesOfNotNull = bytesOfA({ from: ["string", "buffer"], otherwise: "toString", refuse: ["null"] });
 /** `after` is converted after `data`, and can run JavaScript. */
-export const bytesOfThen = b.fn({
-  args: { data: b.stringOrBuffer.orBlob, after: b.f64.loose },
-  returns: b.array(b.u8),
-});
+const bytesOfThenA = (options: Omit<Parameters<typeof b.bytes>[0], "from">, rustName: string) =>
+  b.fn({
+    args: { data: b.bytes({ from: ["string", "buffer", "blob"], ...options }), after: b.f64.loose },
+    returns: b.array(b.u8),
+    rustPath: `crate::bindgen_test::${rustName}`,
+  });
+export const bytesOfThen = bytesOfThenA({}, "bytes_of_then");
+export const bytesOfThenCopyingShared = bytesOfThenA({ shared: "copy" }, "bytes_of_then");
+export const bytesOfThenCopied = bytesOfThenA({ held: "copied" }, "bytes_of_then_copied");
 /** Given one value twice: whether both are its own memory, and not a copy each. */
-export const bytesOfAreSameMemory = b.fn({
-  args: { data: b.stringOrBuffer.orBlob, again: b.stringOrBuffer.orBlob },
-  returns: b.bool,
+const bytesOfAreSameMemoryA = (shared: "borrow" | "copy") => {
+  const data = b.bytes({ from: ["string", "buffer", "blob"], shared });
+  return b.fn({
+    args: { data, again: data },
+    returns: b.bool,
+    rustPath: "crate::bindgen_test::bytes_of_are_same_memory",
+  });
+};
+export const bytesOfAreSameMemory = bytesOfAreSameMemoryA("borrow");
+export const bytesOfAreSameMemoryCopyingShared = bytesOfAreSameMemoryA("copy");
+/** The bytes before `callback` runs, then after it. */
+const bytesBeforeAndAfterCallbackA = (shared: "borrow" | "copy") =>
+  b.fn({
+    args: { data: b.bytes({ from: ["string", "buffer", "blob"], otherwise: "toString", shared }), callback: b.any },
+    returns: b.array(b.array(b.u8)),
+    capability: "js",
+    throws: true,
+    rustPath: "crate::bindgen_test::bytes_before_and_after_callback",
+  });
+export const bytesBeforeAndAfterCallback = bytesBeforeAndAfterCallbackA("borrow");
+export const bytesBeforeAndAfterCallbackCopyingShared = bytesBeforeAndAfterCallbackA("copy");
+/** The bytes another thread reads after `callback` has run. */
+export const pinnedBytesAfterCallback = b.fn({
+  args: { data: b.bytes({ from: ["string", "buffer"], held: "pinned" }), callback: b.any },
+  returns: b.array(b.u8),
+  capability: "js",
+  throws: true,
+});
+/** The size of a code unit of a string, 0 for anything else, then the bytes. */
+export const stringAsIsOrBytes = b.fn({
+  args: { data: b.bytes({ from: ["string", "buffer", "blob"], otherwise: "toString", string: "asIs" }) },
+  returns: b.array(b.u8),
+  capability: "heap",
 });
 export const asBigInt = b.fn({ args: { value: b.u64.allowBigInt }, returns: b.u64.asBigInt });
 

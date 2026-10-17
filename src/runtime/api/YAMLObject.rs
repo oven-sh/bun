@@ -5,14 +5,12 @@ use bun_ast::{Expr, expr::Data as ExprData};
 use bun_collections::{HashMap, StringHashMap};
 use bun_core::StackCheck;
 use bun_core::String as BunString;
-use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::bindgen::{Bytes, JsLocal, JsScope};
 use bun_jsc::{
     JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsError, JsResult,
     MarkedArgumentBuffer, wtf,
 };
 use bun_parsers::yaml::{CyclicAliases, YAML, YamlParseError};
-
-use crate::node::BlobOrStringOrBuffer;
 
 pub(crate) fn stringify<'a>(
     cx: &mut JsScope<'a>,
@@ -1066,11 +1064,13 @@ fn is_inf_suffix(str: &BunString, i: usize) -> bool {
         || (a == 0x49 /* 'I' */ && b == 0x4e /* 'N' */ && c == 0x46/* 'F' */)
 }
 
-pub(crate) fn parse<'a>(cx: &mut JsScope<'a>, input: JsLocal<'a>) -> JsResult<JSValue> {
-    let global = cx.global();
+pub(crate) fn parse<'a>(cx: &mut JsScope<'a>, input: Bytes<'a>) -> JsResult<JSValue> {
     MarkedArgumentBuffer::new(|roots| {
         let mut pending = Vec::new();
-        let result = parse_to_values(global, input.to_js(), roots, &mut pending)?;
+        // SAFETY: parsing runs no JavaScript. Nor does making the values: what would is left in `pending`.
+        let global = unsafe { cx.heap.global() };
+        let result = parse_to_values(global, input.get(&cx.heap), roots, &mut pending)?;
+        let global = cx.global();
         for PendingProperty {
             mapping,
             key,
@@ -1093,25 +1093,11 @@ struct PendingProperty {
 
 fn parse_to_values(
     global: &JSGlobalObject,
-    input: JSValue,
+    input: &[u8],
     roots: &mut MarkedArgumentBuffer,
     pending: &mut Vec<PendingProperty>,
 ) -> JsResult<JSValue> {
-    let blob_or_buffer = if input.is_string() {
-        None
-    } else {
-        BlobOrStringOrBuffer::from_js(global, input)?
-    };
-    let text;
-    let bytes: &[u8] = match &blob_or_buffer {
-        Some(bytes) => bytes.slice(),
-        None => {
-            text = input.to_bun_string(global)?.into_utf8();
-            &text
-        }
-    };
-    let bytes = super::copy_if_shared(global, input, bytes)?;
-    super::with_text_format_source(global, &bytes, b"input.yaml", |arena, log, source| {
+    super::with_text_format_source(global, input, b"input.yaml", |arena, log, source| {
         // `ParserCtx::to_js` materializes each `E::Array`/`E::Object`
         // once by pointer identity, so a cyclic graph is fine here.
         let root =

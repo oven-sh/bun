@@ -81,13 +81,10 @@ static INSTANCE: AtomicPtr<ChromeProcess> = AtomicPtr::new(ptr::null_mut());
 #[cfg(windows)]
 static GENERATION: AtomicU32 = AtomicU32::new(0);
 
-/// Called from WebView.closeAll() and dispatchOnExit. Chrome spawns its own
-/// renderer/gpu/utility children (the "process model" zygote tree). They
-/// exit once the browser process dies, but not at once: the network service
-/// still writes its cache index on the way out. Chrome leads its own process
-/// group (see [`spawn`]), so SIGKILL to the group takes the whole tree.
-/// The C++ side doesn't touch JS state; EVFILT_PROC → Bun__Chrome__died →
-/// rejectAllAndMarkDead handles promise rejection on the next loop tick.
+/// Called from WebView.closeAll() and dispatchOnExit. SIGKILLs the browser and
+/// its helpers (see [`kill_group`]). The C++ side doesn't touch JS state;
+/// EVFILT_PROC → Bun__Chrome__died → rejectAllAndMarkDead handles promise
+/// rejection on the next loop tick.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__Chrome__kill() {
     // SAFETY: JS-thread-only global; see INSTANCE decl.
@@ -147,18 +144,16 @@ fn kill_pid_and_group(pid: bun_spawn::PidT) {
     kill_group(pid);
 }
 
-/// SIGKILLs what is left of the group a browser led: its helpers outlive it by
-/// a few ms and write to the profile on the way out. The group keeps its id
-/// while any member lives, so this is safe after the browser itself is reaped.
+/// Chrome's helpers outlive the browser by a few ms and write to the profile on
+/// the way out, so every kill is a group kill (Chrome leads its own group).
 #[cfg(unix)]
 fn kill_group(pid: bun_spawn::PidT) {
     // SAFETY: plain syscall on a pid; no memory is passed.
     unsafe { libc::kill(-pid, libc::SIGKILL) };
 }
 
-/// Kills `pid` (an unreaped child of ours) and waits until it is gone, so the
-/// profile it holds open can be deleted. Not through [`Process`]: its exit
-/// handler must not run from here.
+/// Kills an unreaped child and waits until it is gone. Not through
+/// [`Process`]: its exit handler must not run from here.
 #[cfg(unix)]
 fn kill_and_reap(pid: bun_spawn::PidT) {
     kill_pid_and_group(pid);
@@ -205,10 +200,8 @@ fn take_parked(pid: bun_spawn::PidT) -> Option<TempProfile> {
     Some(parked.swap_remove(i).profile)
 }
 
-/// Registered by [`TempProfile::create`]; runs after `dispatch_on_exit` (which
-/// only kills) and on the `Global::exit` paths that skip it. The browser must
-/// be gone before its profile goes, or a helper still shutting down recreates
-/// files in it. The `ChromeProcess` box stays allocated: the loop never runs again.
+/// Exit callback (`dispatch_on_exit` only kills, and some `Global::exit` paths
+/// skip it). The `ChromeProcess` box stays allocated: the loop never runs again.
 extern "C" fn delete_temp_profiles_at_exit() {
     // SAFETY: JS-thread-only global; see INSTANCE decl.
     if let Some(chrome) = unsafe { INSTANCE.load(Ordering::Relaxed).as_mut() } {
@@ -619,12 +612,9 @@ fn spawn(
         // full-Chrome-only switch). Playwright passes plain --headless
         // (chromium.js:293).
         //
-        // Every Chrome gets a --user-data-dir: without one, ProcessSingleton
-        // locks the default profile (~/Library/Application Support/Google/Chrome)
-        // and aborts if a real Chrome is already running. `dataStore.directory`
-        // is the caller's, a `--user-data-dir` in backend.argv is the caller's
-        // too (it stays last, and Chrome's CommandLine is last-wins), and
-        // otherwise bun makes a temp one that goes with this Chrome.
+        // Without a --user-data-dir, ProcessSingleton locks the default profile
+        // and aborts if a real Chrome is already running. The caller's
+        // (`dataStore.directory`, or one in backend.argv) is never deleted.
         let user_flag: Option<ZBox> = user_data_dir.map(|d| {
             let d = d.to_bytes();
             let mut v = Vec::with_capacity(USER_DATA_DIR_FLAG.len() + d.len());
@@ -730,11 +720,8 @@ fn spawn(
 
 const USER_DATA_DIR_FLAG: &[u8] = b"--user-data-dir=";
 
-/// The `--user-data-dir=<dir>` argument for a Chrome spawned without a
-/// profile directory of the caller's: `<dir>` is a fresh directory under the
-/// temp dir, owned by the Chrome that uses it. Dropping this deletes the
-/// directory, so it goes wherever its owner goes: a spawn that fails after
-/// the mkdir, `on_exit` once the browser is reaped, or process exit.
+/// The `--user-data-dir=<dir>` argument of a Chrome that got a fresh temp
+/// directory. Dropping it deletes the directory.
 struct TempProfile(ZBox);
 
 impl TempProfile {
@@ -859,8 +846,7 @@ impl Endpoints {
         };
         if let Err(e) = process.process_mut().watch() {
             scoped_log!(Chrome, "watch failed: {}", e);
-            // Nothing will report this Chrome's exit: reap it here, before the
-            // Box drop deletes the profile it has open.
+            // Unwatched, so nothing else reaps it.
             kill_and_reap(process.process_mut().pid);
             // SAFETY: reclaim the Box (drops our process ref).
             drop(unsafe { bun_core::heap::take(self_ptr) });
@@ -1016,8 +1002,7 @@ impl Endpoints {
         if let Err(err) = started {
             scoped_log!(Chrome, "read_start/watch failed: {}", err);
             // SAFETY: `self_ptr` is unpublished; dropping it closes the pipes,
-            // then detaches and releases the process. Nothing will report this
-            // Chrome's exit: reap it here, before the drop deletes its profile.
+            // then detaches and releases the process.
             unsafe {
                 let mut chrome = bun_core::heap::take(self_ptr);
                 chrome.pipes.close();

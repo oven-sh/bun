@@ -432,18 +432,7 @@ impl Blob {
     /// `Bytes.stored_name`, the file path, or the S3 key, ignoring `name`.
     /// `None` for fd-backed or unnamed stores.
     pub fn store_path(&self) -> Option<&[u8]> {
-        match &self.store.get().as_deref()?.data {
-            store::Data::Bytes(bytes) => {
-                let n = &bytes.stored_name[..];
-                if n.is_empty() { None } else { Some(n) }
-            }
-            store::Data::File(file) => match &file.pathlike {
-                PathOrFileDescriptor::Path(path) => Some(path.slice()),
-                PathOrFileDescriptor::Fd(_) => None,
-            },
-            // Use `s3.path()` (URL-normalized), NOT `s3.pathlike.slice()`.
-            store::Data::S3(s3) => Some(s3.path()),
-        }
+        self.store.get().as_deref()?.get_path()
     }
 
     /// Tear down owned resources; if
@@ -918,7 +907,8 @@ pub mod store {
                         None
                     }
                 }
-                Data::S3(s3) => Some(s3.pathlike.slice()),
+                // Use `s3.path()` (URL-normalized), NOT `s3.pathlike.slice()`.
+                Data::S3(s3) => Some(s3.path()),
             }
         }
 

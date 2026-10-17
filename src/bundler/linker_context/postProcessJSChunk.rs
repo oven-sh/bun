@@ -99,17 +99,7 @@ fn module_preload_registration(
     Ok(code)
 }
 
-/// `0 && (module.exports = { a: null, ...require("ext") });` for a CommonJS
-/// entry point, empty when there is nothing to name. Node's ESM loader takes
-/// the named exports of a CommonJS file from a scan of its text
-/// (cjs-module-lexer, merve), and this statement, which never runs, is a shape
-/// the scan reads. It cannot name what an `export *` of a bundled CommonJS
-/// file adds at run time.
-///
-/// Every name gets a value and is quoted unless it is an ASCII identifier:
-/// merve 1.0 stops at a shorthand `get`, Bun's loader rejects a shorthand
-/// `await`, and cjs-module-lexer stops at an identifier newer than its Unicode
-/// tables.
+/// `0 && (module.exports = { a: null, ...require("ext") });`, which Node scans for export names.
 fn cjs_export_names_annotation(
     c: &LinkerContext,
     source_index: IndexInt,
@@ -127,16 +117,14 @@ fn cjs_export_names_annotation(
     let separator: &[u8] = if minify { b"," } else { b", " };
     let close: &[u8] = if minify { b"});" } else { b" });\n" };
 
-    // Node adds `default` and `module.exports` itself. Node 23.0 to 23.9 aborts
-    // when the scan gives it a second `module.exports`.
+    // Node adds these two itself. A scanned `module.exports` aborts Node 23.0 to 23.9.
     let names = || {
         c.graph.meta.items_sorted_and_filtered_export_aliases()[source_index as usize]
             .iter()
             .map(|alias| &**alias)
             .filter(|alias| *alias != b"default" && *alias != b"module.exports")
     };
-    // `export * from "external"`. A bundled file has a source index, and a
-    // disabled path prints as a stub, not as `require()`.
+    // An external `export *`: no source index, and no disabled path, which prints as a stub.
     let external_stars = || {
         ast.export_star_import_records
             .iter()
@@ -146,8 +134,7 @@ fn cjs_export_names_annotation(
     let is_bare =
         |name: &[u8]| strings::is_all_ascii(name) && js_ast::lexer_tables::is_identifier(name);
 
-    // The exact length when every name is bare and there is no `export *`, so
-    // that the usual entry point costs one allocation.
+    // Exact when every name is bare and nothing is re-exported, so one allocation.
     let mut len = 0;
     for name in names() {
         len += name.len() + value.len() + separator.len();
@@ -434,8 +421,6 @@ pub(crate) fn post_process_js_chunk(
         }
     }
 
-    // A chunk whose entry point targets Bun gets the `@bun` pragma and, for
-    // cjs, the `@bun-cjs` wrapper.
     let is_bun = c.graph.ast.items_target()[chunk.entry_point.source_index() as usize].is_bun();
 
     // Generate the exports for the entry point, if there are any.
@@ -1357,7 +1342,6 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
             // of this parser, which the node project uses to detect named exports in
             // CommonJS files: https://github.com/guybedford/cjs-module-lexer. Think of
             // this code as an annotation for that parser.
-            //
             // Node cannot load a chunk that has the `@bun-cjs` wrapper.
             if c.options.target.is_node() && !is_bun {
                 suffix = cjs_export_names_annotation(c, source_index, &ast);

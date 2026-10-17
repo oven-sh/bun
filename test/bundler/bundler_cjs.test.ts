@@ -1296,8 +1296,11 @@ describe("bundler", () => {
   }
 
   // Every name is written as `name: null`, as a JSON string unless it is an
-  // ASCII identifier. Node's scanners lose names after some shorthand ones, and
-  // Bun's own loader rejects a shorthand `await`, so Bun loads the file here too.
+  // ASCII identifier, and not as the shorthand `{ add, version }` that esbuild
+  // writes. merve 1.0 (Node 24.14, 25.6 to 25.8) stops at a shorthand `get`,
+  // cjs-module-lexer stops at a bare identifier newer than its Unicode tables,
+  // and Bun's own loader rejects a shorthand `await`, so Bun loads the file
+  // here too.
   itBundled("cjs/NodeReadsExportNamesThatAreNotPlainIdentifiers", {
     files: {
       "/entry.mjs": /* js */ `

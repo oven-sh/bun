@@ -45,6 +45,7 @@ interface Graph {
   aliases: Map<number, [string, string][]>;
   externalNames: Set<string>;
   unreadObjects: string[];
+  isArm64: boolean;
 }
 
 const tableRoom = 196608;
@@ -52,10 +53,10 @@ const smallestIsland = 4096;
 const mostLeftOutside = 0.05;
 const namelessPrefix = "bun_nameless_";
 const isCode = (output: string) => output === ".text" || output.startsWith(".text.");
-const isMovable = (output: string) => isCode(output) || output === ".rodata";
-const mayMove = /^\.(text|rodata)(\.|$)/;
+const isMovable = (output: string) => isCode(output) || output === ".rodata" || output === ".bun_builtins";
+const mayMove = /^\.(text|rodata|bun_builtins)(\.|$)/;
 const isOrdinary = (output: string) => isMovable(output) || [".data", ".data.rel.ro", ".bss"].includes(output);
-const ignoredOutputs = /^\.(debug|gdb_index|symtab|strtab|comment|shstrtab|eh_frame|gcc_except_table|rela|tbss|tdata)/;
+const ignoredOutputs = /^\.(debug|gdb_index|symtab|strtab|comment|shstrtab|eh_frame|gcc_except_table|rela|tbss)/;
 const onlyForDebuggers = /^-Wl,--(gdb-index|compress-debug-sections=.*)$/;
 
 const startedAt = performance.now();
@@ -128,9 +129,9 @@ interface ElfFile {
   sections: SectionHeader[];
 }
 
-const membersOf = new Map<string, Map<string, number>>();
+const membersOf = new Map<string, Map<string, number[]>>();
 
-function memberOffset(archive: string, member: string): number | undefined {
+function memberOffsets(archive: string, member: string): number[] {
   let members = membersOf.get(archive);
   if (members === undefined) {
     membersOf.set(archive, (members = new Map()));
@@ -145,14 +146,13 @@ function memberOffset(archive: string, member: string): number | undefined {
         if (name === "//") longNames = readAt(fd, at + 60, size);
         else if (/^\/\d+$/.test(name)) name = longNames.toString("latin1", Number(name.slice(1)), longNames.indexOf("/\n", Number(name.slice(1))));
         else name = name.replace(/\/$/, "");
-        if (name !== "" && name !== "/" && name !== "/SYM64") members.set(name, members.has(name) ? -1 : at + 60);
+        if (name !== "" && name !== "/" && name !== "/SYM64") members.set(name, [...(members.get(name) ?? []), at + 60]);
         at += 60 + size + (size & 1);
       }
     }
     closeSync(fd);
   }
-  const offset = members.get(member);
-  return offset === undefined || offset < 0 ? undefined : offset;
+  return members.get(member) ?? [];
 }
 
 function openElf(path: string, mode: "r" | "r+", base = 0): ElfFile | undefined {
@@ -197,13 +197,19 @@ interface ObjectReferences {
 }
 
 function readObject(path: string, liveSections: Set<string>): ObjectReferences | undefined {
-  const inArchive = existsSync(path) ? null : /^(.*)\(([^()]*)\)$/.exec(path);
-  const base = inArchive !== null && existsSync(inArchive[1]!) ? memberOffset(inArchive[1]!, inArchive[2]!) : 0;
-  if (base === undefined || (inArchive === null && !existsSync(path))) return undefined;
-  const elf = openElf(inArchive === null ? path : inArchive[1]!, "r", base);
-  if (elf === undefined) return undefined;
-  const { fd, sections } = elf;
   const result: ObjectReferences = { references: new Map(), definitions: [], named: [] };
+  if (existsSync(path)) return readObjectAt(path, 0, liveSections, result) ? result : undefined;
+  const inArchive = /^(.*)\(([^()]*)\)$/.exec(path);
+  const offsets = inArchive !== null && existsSync(inArchive[1]!) ? memberOffsets(inArchive[1]!, inArchive[2]!) : [];
+  return offsets.length > 0 && offsets.every(offset => readObjectAt(inArchive![1]!, offset, liveSections, result)) ? result : undefined;
+}
+
+const isLaidAsItIs = (section: SectionHeader) => (section.flags & 2) !== 0 && (section.flags & 0x10) === 0 && section.size > 0 && !ignoredOutputs.test(section.name);
+
+function readObjectAt(path: string, base: number, liveSections: Set<string>, result: ObjectReferences): boolean {
+  const elf = openElf(path, "r", base);
+  if (elf === undefined) return false;
+  const { fd, sections } = elf;
   const symbolTable = sections.find(section => section.type === 2);
   if (symbolTable !== undefined) {
     const symbols = readAt(fd, symbolTable.offset, symbolTable.size);
@@ -234,7 +240,7 @@ function readObject(path: string, liveSections: Set<string>): ObjectReferences |
         const info = symbols[index * 24 + 4]!;
         const section = sectionOf(index);
         if ((info & 15) === 6) target = "";
-        else if (info >> 4 === 0) target = section > 0 && section < sections.length ? "L" + sections[section]!.name : "";
+        else if (info >> 4 === 0) target = section > 0 && section < sections.length && isLaidAsItIs(sections[section]!) ? "L" + sections[section]!.name : "";
         else target = "G" + stringAt(strings, symbols.readUInt32LE(index * 24));
         targets[index] = target;
       }
@@ -254,7 +260,7 @@ function readObject(path: string, liveSections: Set<string>): ObjectReferences |
     }
   }
   closeSync(fd);
-  return result;
+  return true;
 }
 
 function foldedSections(log: string): Map<string, string> {
@@ -300,6 +306,7 @@ function readGraph(executable: string, mapPath: string, log: string): Graph {
     aliases: new Map(),
     externalNames: new Set(),
     unreadObjects: [],
+    isArm64: false,
   };
   const count = found.length;
   const nodeAt = (address: number) => {
@@ -356,7 +363,23 @@ function readGraph(executable: string, mapPath: string, log: string): Graph {
     }
     return undefined;
   };
+  const elf = openElf(executable, "r") ?? fail(`${executable} is not an ELF file`);
+  const linked = elf.sections.find(section => section.type === 2) ?? fail(`${executable} has no symbol table`);
+  const linkedSymbols = readAt(elf.fd, linked.offset, linked.size);
+  const linkedStrings = readAt(elf.fd, elf.sections[linked.link]!.offset, elf.sections[linked.link]!.size);
+  const linkedAt = new Map<string, number[]>();
+  for (let at = 0; at < linkedSymbols.length; at += 24) {
+    const type = linkedSymbols[at + 4]! & 15;
+    if (linkedSymbols.readUInt16LE(at + 6) === 0 || type === 3 || type === 4 || type === 6) continue;
+    const node = nodeAt(Number(linkedSymbols.readBigUInt64LE(at + 8)));
+    if (node < 0) continue;
+    const name = stringAt(linkedStrings, linkedSymbols.readUInt32LE(at));
+    const nodes = linkedAt.get(name);
+    if (nodes === undefined) linkedAt.set(name, [node]);
+    else if (!nodes.includes(node)) nodes.push(node);
+  }
   const successors: Set<number>[] = Array.from({ length: count }, () => new Set());
+  const leadNowhere: string[] = [];
   for (const [object, read] of objects) {
     if (read === undefined) continue;
     for (const [name, section] of read.named) {
@@ -366,10 +389,19 @@ function readGraph(executable: string, mapPath: string, log: string): Graph {
     for (const [source, targets] of read.references) {
       const from = successors[nodesOf.get(object + "\0" + source)![0]!]!;
       for (const target of targets) {
-        const node = target[0] === "L" ? placed(object + "\0" + target.slice(1)) : resolveGlobal(target.slice(1));
+        const name = target.slice(1);
+        const node = target[0] === "L" ? placed(object + "\0" + name) : resolveGlobal(name);
         if (node !== undefined) from.add(node);
+        else if (target[0] === "L") leadNowhere.push(`${object}:(${source}) names (${name})`);
+        if (target[0] === "L") continue;
+        for (const spelling of [name, "__wrap_" + name, name.replace(/^__real_/, "")]) {
+          for (const other of linkedAt.get(spelling) ?? []) from.add(other);
+        }
       }
     }
+  }
+  if (leadNowhere.length > 0) {
+    fail(`${leadNowhere.length} references lead to sections that the linker's map does not hold:` + leadNowhere.slice(0, 5).map(line => `\n  ${line}`).join(""));
   }
   for (const nodes of nodesOf.values()) {
     for (const node of nodes.slice(1)) {
@@ -383,7 +415,7 @@ function readGraph(executable: string, mapPath: string, log: string): Graph {
       graph.roots.add(node);
     }
   }
-  const elf = openElf(executable, "r") ?? fail(`${executable} is not an ELF file`);
+  graph.isArm64 = readAt(elf.fd, 0x12, 2).readUInt16LE(0) === 183;
   const entry = nodeAt(Number(readAt(elf.fd, 0x18, 8).readBigUInt64LE(0)));
   if (entry >= 0) graph.roots.add(entry);
   const dynamic = elf.sections.find(section => section.type === 11);
@@ -402,6 +434,7 @@ interface MachOReferences {
   references: Map<string, Set<string>>;
   externals: string[];
   kept: string[];
+  isX64: boolean;
 }
 
 function readMachOObject(path: string): MachOReferences | undefined {
@@ -442,7 +475,7 @@ function readMachOObject(path: string): MachOReferences | undefined {
     }
     at += commands.readUInt32LE(at + 4);
   }
-  const result: MachOReferences = { references: new Map(), externals: [], kept: [] };
+  const result: MachOReferences = { references: new Map(), externals: [], kept: [], isX64 };
   if (symbolTable === undefined) {
     closeSync(fd);
     return result;
@@ -571,6 +604,7 @@ function readMachOGraph(mapPath: string, exportedSymbols: string): Graph {
     aliases: new Map(),
     externalNames: new Set(),
     unreadObjects: [],
+    isArm64: false,
   };
   let section = sections[0];
   graph.output = found.map(node => {
@@ -623,6 +657,7 @@ function readMachOGraph(mapPath: string, exportedSymbols: string): Graph {
     }
   }
   graph.externalNames = new Set(external.keys());
+  graph.isArm64 = ![...objects.values()].some(read => read?.isX64);
   const here = (file: number, names: string) => {
     for (const name of names.split("\x01")) {
       const node = local.get(file + "\0" + name);
@@ -686,13 +721,22 @@ interface Analysis {
   neededBy: Map<number, string>;
   unexplained: number;
   foldedOpen: number;
+  tooSmall: number;
 }
 
+const bytesToShut = (graph: Graph, door: Door) => (graph.isArm64 ? (door.whenShut === "exit" ? 12 : 8) : door.whenShut === "exit" ? 10 : 3);
+
+const plainNames = new Map<string, string>();
+
 function demangle(demangler: string, names: string[]): string[] {
-  const demangled = spawnSync(demangler, [], { input: names.join("\n") + "\n", encoding: "utf8", maxBuffer: 1 << 30 });
-  if (demangled.status !== 0) fail(`${demangler} failed`);
-  const lines = demangled.stdout.split("\n");
-  return names.map((_, index) => lines[index]!.replace(/ \(\.llvm\.\d+\)$/, ""));
+  const unknown = [...new Set(names)].filter(name => !plainNames.has(name));
+  if (unknown.length > 0) {
+    const demangled = spawnSync(demangler, [], { input: unknown.join("\n") + "\n", encoding: "utf8", maxBuffer: 1 << 30 });
+    if (demangled.status !== 0) fail(`${demangler} failed`);
+    const lines = demangled.stdout.split("\n");
+    unknown.forEach((name, index) => plainNames.set(name, lines[index]!.replace(/ \(\.llvm\.\d+\)$/, "")));
+  }
+  return names.map(name => plainNames.get(name)!);
 }
 
 function functionOfSection(section: string): string | undefined {
@@ -729,6 +773,12 @@ function analyze(graph: Graph, declared: Doors, demangler: string, foldedAway: s
     doors.delete(node);
     foldedOpen++;
   }
+  let tooSmall = 0;
+  for (const [node, door] of doors) {
+    if (graph.size[node]! >= bytesToShut(graph, door)) continue;
+    doors.delete(node);
+    tooSmall++;
+  }
   const explained = reach(graph, graph.roots, new Map());
   let unexplained = 0;
   for (let node = 0; node < graph.address.length; node++) {
@@ -745,7 +795,7 @@ function analyze(graph: Graph, declared: Doors, demangler: string, foldedAway: s
       if (!core.has(node)) neededBy.set(node, neededBy.has(node) ? neededBy.get(node) + "," + name : name);
     }
   }
-  return { doors, plainName, core, neededBy, unexplained, foldedOpen };
+  return { doors, plainName, core, neededBy, unexplained, foldedOpen, tooSmall };
 }
 
 function staysAsDoor(analysis: Analysis, node: number): boolean {
@@ -868,7 +918,7 @@ function listedDoors(graph: Graph, check: Analysis, work: string, featuresOfIsla
     if (featuresOfIslandAt(node) === door.feature) continue;
     if (door.whenShut === "exit" && graph.successors[node]!.every(next => check.core.has(next))) continue;
     const name = check.plainName.get(node)!;
-    if (graph.size[node]! < (door.whenShut === "exit" ? 12 : 8)) fail(`the door ${name} has ${graph.size[node]} bytes: too few to be shut`);
+    if (graph.size[node]! < bytesToShut(graph, door)) fail(`the door ${name} has ${graph.size[node]} bytes: too few to be shut`);
     review.push(`${listed.length} ${door.feature} ${graph.size[node]} ${name}\n` + [...new Set((namedBy.get(node) ?? []).map(spell))].map(by => `    ${by}\n`).join(""));
     listed.push({ address: graph.address[node]!, size: graph.size[node]!, door, name });
   }
@@ -967,6 +1017,7 @@ function layOut({ work, declared, demangler, planPath, freshPlanPath, link }: Li
     lap("graph");
     const analysis = analyze(graph, declared, demangler, foldedNames(graph));
     if (analysis.foldedOpen > 0) console.log(`${analysis.foldedOpen} doors were folded into other functions and stay open`);
+    if (analysis.tooSmall > 0) console.log(`${analysis.tooSmall} functions that match a door are too small to be shut and are no doors`);
     const ranges = rangesThatCanGo(graph, analysis, format.isMovable);
     const faults = misplaced(graph, analysis, ranges);
     if (faults > 0) fail(`${faults} sections lie in a stretch that can go while they are needed`);
@@ -1051,7 +1102,13 @@ function elf({ work, output, declared, command, assemble, link }: Linker): Forma
       }
       return objects;
     },
-    read: link => readGraph(link.executable, link.map, link.log),
+    read(link) {
+      const graph = readGraph(link.executable, link.map, link.log);
+      if (graph.unreadObjects.length > 0) {
+        fail(`${graph.unreadObjects.length} inputs could not be read, so what they name is not known:` + graph.unreadObjects.slice(0, 5).map(object => `\n  ${object}`).join(""));
+      }
+      return graph;
+    },
     planFrom(graph, analysis) {
       const { islands, bytesOf, numberOf } = islandsBySize(graph, analysis, declared, isMovable);
       const islandOf = (node: number) => (staysAsDoor(analysis, node) ? 0 : (numberOf.get(analysis.neededBy.get(node) ?? "") ?? 0));

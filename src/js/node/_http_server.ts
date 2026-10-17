@@ -5,6 +5,7 @@ const StreamPrototype = Stream.prototype;
 const DuplexPrototype = Stream.Duplex.prototype;
 const duplexResume = DuplexPrototype.resume;
 const { flagsOf } = require("internal/streams/state");
+const { queueTick1, queueTick2 } = require("internal/process/next_tick_queue");
 const kFlowing = 1 << 24;
 const kHasPaused = 1 << 25;
 const kPaused = 1 << 26;
@@ -2860,7 +2861,7 @@ const kPipelineKickScheduled = Symbol("kPipelineKickScheduled");
 function kickPipelineIfIdle(server, socket) {
   if (socket._httpMessage == null && !socket[kPipelineKickScheduled]) {
     socket[kPipelineKickScheduled] = true;
-    process.nextTick(advancePipelineIfIdleNT, server, socket);
+    queueTick2(process, advancePipelineIfIdleNT, server, socket);
   }
 }
 function advancePipelineIfIdleNT(server, socket) {
@@ -3584,7 +3585,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     // Socket already gone: like Node, 'prefinish' fires but 'finish' never does, and the close of the socket aborts the request.
     this._header = " ";
     this.finished = true;
-    process.nextTick(markResponseEndedNT, this);
+    queueTick1(process, markResponseEndedNT, this);
     this.emit("prefinish");
     return this;
   }
@@ -3649,7 +3650,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   // right after a synchronously-finished handler returns, or via its 'finish'
   // listener otherwise), so handlers can still reach res.socket after end().
   this.finished = true;
-  process.nextTick(markResponseEndedNT, this);
+  queueTick1(process, markResponseEndedNT, this);
   this.emit("prefinish");
 
   if (draining) {
@@ -3666,12 +3667,12 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
 // 'finish' waits a tick: the dispatcher sets kDispatcherDetached after a sync handler returns, and 'finish' reads it.
 function queueResponseFinished(res, callback) {
   res._callPendingCallbacks();
-  process.nextTick(emitResponseFinished, res, callback);
+  queueTick2(process, emitResponseFinished, res, callback);
 }
 
 // 'close' is queued before the 'finish' listeners run, like Node.js's resOnFinish does.
 function emitResponseFinished(res, callback) {
-  process.nextTick(emitCloseNT, res);
+  queueTick1(process, emitCloseNT, res);
   res.emit("finish");
   if (callback) {
     try {
@@ -3863,7 +3864,7 @@ function flushWriteAccountingNT(res) {
 function scheduleWriteAccountingFlush(res) {
   if (res[kAccountingFlushScheduled]) return;
   res[kAccountingFlushScheduled] = true;
-  process.nextTick(flushWriteAccountingNT, res);
+  queueTick1(process, flushWriteAccountingNT, res);
 }
 
 ServerResponse.prototype._callPendingCallbacks = function () {
@@ -4079,7 +4080,7 @@ ServerResponse.prototype.emit = function (event) {
       this[kPendingFinish] = undefined;
       this._closed = true;
       this._callPendingCallbacks();
-      process.nextTick(emitResponseFinishedThenClose, this, callback);
+      queueTick2(process, emitResponseFinishedThenClose, this, callback);
       return false;
     }
     callCloseCallback(this);

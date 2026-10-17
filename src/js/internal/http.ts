@@ -1,4 +1,5 @@
 const { isIPv4 } = require("internal/net/isIP");
+const { queueTick1, queueTick2 } = require("internal/process/next_tick_queue");
 
 const { setServerCustomOptions, setServerAppFlags, setServerMaxHeadersCount, drainMicrotasks } = $cpp(
   "NodeHTTP.cpp",
@@ -162,7 +163,7 @@ function emitEOFIncomingMessageOuter(self) {
   if (socket != null) {
     const parser = socket.parser;
     if (parser != null && parser.incoming === self) {
-      process.nextTick(clearServerParserIncoming, parser, self);
+      queueTick2(process, clearServerParserIncoming, parser, self);
     }
   }
 }
@@ -171,7 +172,7 @@ function clearServerParserIncoming(parser, req) {
 }
 function emitEOFIncomingMessage(self) {
   self[eofInProgress] = true;
-  process.nextTick(emitEOFIncomingMessageOuter, self);
+  queueTick1(process, emitEOFIncomingMessageOuter, self);
 }
 
 function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPResponseAbortEvent) {

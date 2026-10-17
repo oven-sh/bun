@@ -38,3 +38,11 @@ pub struct ProgramFacts {
     pub tokens: Option<Box<[u8]>>,
     pub runtime_use: Option<Box<[u8]>>,
 }
+
+pub fn open_world(runtime_use: &[u8], why: &[u8]) -> Vec<u8> {
+    let Some(facts) = runtime_use.strip_prefix(b"closed").filter(|facts| facts.is_empty() || facts.starts_with(b"\n")) else {
+        return runtime_use.to_vec();
+    };
+    let before_last_line: &[u8] = if facts.ends_with(b"\n") { b"" } else { b"\n" };
+    [b"open ", why, facts, before_last_line, b"world open\n"].concat()
+}

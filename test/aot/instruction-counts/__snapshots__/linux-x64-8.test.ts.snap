@@ -1,5 +1,19 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
+exports[`makes an object with Object.create(prototype) and stores three properties read from a parameter 1`] = `
+"typed, function: 119.57 instructions (kernel 97.11, stub AllocateTypedObject 17.16, the runtime 5.01, elsewhere 0.21, module 0.07), 1035 bytes
+typed, module level: 117.37 instructions (module 95.11, stub AllocateTypedObject 17.16, the runtime 4.89, elsewhere 0.21), 2229 bytes
+untyped, function: 250.89 instructions (kernel 80.08, stub PutByNameWithDirectColumnPreservingTwo 39, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 34, stub NewObjectFromDescriptor2 21.05, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 20, stub Add 16, stub AddInlineByName 15, stub WriteBarrier 12, the runtime 10.43, stub ReadAbsentByName 2, elsewhere 1.17, stub ColdPlainOperationWithoutFPRs 0.08, module 0.07, stub ColdPlainOperationWithoutFPRs to operationAOTTypedObjectCreate 0.01, stub ColdPlainOperationWithoutFPRs to operationAOTTypedObjectCreate with arguments 0.01), 643 bytes
+untyped, module level: 247.84 instructions (module 77.08, stub PutByNameWithDirectColumnPreservingTwo 39, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRBX 34, stub NewObjectFromDescriptor2 21.05, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 20, stub Add 16, stub AddInlineByName 15, stub WriteBarrier 12, the runtime 10.36, stub ReadAbsentByName 2, elsewhere 1.25, stub ColdPlainOperationWithoutFPRs 0.08, stub ColdPlainOperationWithoutFPRs to operationAOTTypedObjectCreate 0.01, stub ColdPlainOperationWithoutFPRs to operationAOTTypedObjectCreate with arguments 0.01), 1590 bytes"
+`;
+
+exports[`calls a method that the prototype holds on an object made with Object.create(prototype) 1`] = `
+"typed, function: 97.17 instructions (kernel 36.09, plus 22, stub CallMethodByName1 21, stub CallValue1 10, stub BoxNumber 8, module 0.07), 265 bytes
+typed, module level: 94.09 instructions (module 33.09, plus 22, stub CallMethodByName1 21, stub CallValue1 10, stub BoxNumber 8), 1698 bytes
+untyped, function: 101.17 instructions (kernel 33.09, stub CallMethodByName1 21, stub Add 16, stub CallValue1 10, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDI 10, plus 9, exports of object-create-inherited-method.untyped.function.js 2, module 0.07), 266 bytes
+untyped, module level: 97.11 instructions (module 29.11, stub CallMethodByName1 21, stub Add 16, stub CallValue1 10, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDI 10, plus 9, exports of object-create-inherited-method.untyped.module-level.js 2), 1874 bytes"
+`;
+
 exports[`asks a Set made from a literal of twelve constant strings for a string that it does not hold 1`] = `
 "typed, function: 92.38 instructions (stub SetHasWithStringKey 56.97, kernel 35.28, module 0.13), 357 bytes
 typed, module level: 78.20 instructions (stub SetHasWithStringKey 56.97, module 21.23), 1758 bytes

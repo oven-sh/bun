@@ -1,5 +1,6 @@
 import { describe, expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 import { test } from "./supported";
 
 const tsconfig = JSON.stringify({
@@ -152,6 +153,143 @@ describe.concurrent("what a program names of the runtime", () => {
   });
 });
 
+describe.concurrent("process as a member of the global object", () => {
+  test.each([
+    ["behind a type assertion", `console.log((globalThis as any).process.title);`],
+    ["in brackets", `console.log((globalThis as any)["process"].title);`],
+  ])("names what is read of it, %s", async (_, text) => {
+    const use = await of(text);
+    expect({ world: use.world, whyOpen: use.whyOpen }).toEqual({ world: "closed", whyOpen: [] });
+    expect(use.lines).toContain("process title");
+  });
+
+  test.each([
+    ["behind a type assertion", `console.log(Object.keys((globalThis as any).process));`],
+    ["in brackets", `console.log(Object.keys((globalThis as any)["process"]));`],
+  ])("opens the world when it escapes, %s", async (_, text) => {
+    const use = await of(text);
+    expect(use.whyOpen).toContain("process");
+  });
+});
+
+describe.concurrent("delete makes the engine create every lazy property of the object", () => {
+  const wildcards = (lines: string[]) => lines.filter(line => line.endsWith(" *"));
+
+  test.each([
+    ["the global object", `delete (globalThis as any).fetch;`, "global *"],
+    ["the global object, in brackets", `delete (globalThis as any)["fetch"];`, "global *"],
+    ["the global object, by a constant name", `const name = "fetch"; const scope: any = globalThis; delete scope[name];`, "global *"],
+    ["the global object, in an optional chain", `delete (globalThis as any)?.fetch;`, "global *"],
+    ["globalThis.self", `delete (globalThis as any).self.fetch;`, "global *"],
+    ["a variable that holds the global object", `const scope: any = globalThis; delete scope.fetch;`, "global *"],
+    ["process", `delete process.title;`, "process *"],
+    ["globalThis.process", `delete (globalThis as any).process.title;`, "process *"],
+    ["globalThis.process, in brackets", `delete (globalThis as any)["process"].title;`, "process *"],
+    ["process of a variable that holds the global object", `const scope: any = globalThis; delete scope.process.title;`, "process *"],
+    ["a variable that holds process", `const held: any = process; delete held.title;`, "process *"],
+    ["Bun", `delete Bun.color;`, "Bun *"],
+    ["console", `delete console.table;`, "console *"],
+  ])("of a member of %s", async (_, text, wildcard) => {
+    const use = await of(text);
+    expect({ world: use.world, whyOpen: use.whyOpen }).toEqual({ world: "closed", whyOpen: [] });
+    expect(wildcards(use.lines)).toContain(wildcard);
+  });
+
+  test("the built-in modules that the members of process load are compiled in", async () => {
+    const modules = (lines: string[]) => lines.filter(line => line.startsWith("module "));
+    const [without, named, every] = await Promise.all([of(`console.log(1);`), of(`console.log(process.stdin);`), of(`delete process.title;`)]);
+    expect(modules(named.lines).length).toBeGreaterThan(modules(without.lines).length);
+    expect(modules(every.lines)).toEqual(expect.arrayContaining(modules(named.lines)));
+  });
+
+  test.each([
+    ["this in a function that is not strict", `module.exports = function () { delete this.fetch; };`],
+    ["a free name in a file that is not strict", `module.exports = function () { delete fetch; };`],
+  ])("of a member of the global object that is written as %s", async (_, lib) => {
+    const use = await runtimeUse({ "main.ts": `import lib from "./lib.cjs";\ndeclare const console: any;\nconsole.log(lib);`, "lib.cjs": lib });
+    expect({ world: use.world, whyOpen: use.whyOpen, wildcards: wildcards(use.lines) }).toEqual({ world: "closed", whyOpen: [], wildcards: ["global *"] });
+  });
+
+  test.each([
+    ["a member of a member", `delete process.env.HOME;`],
+    ["a member of an object of the program's own", `const mine: any = { fetch: 1, title: 2 }; delete mine.fetch; delete mine.title;`],
+    ["a variable of the program's own that has the name", `function f(process: any) { delete process.title; } f({});`],
+    ["members that are read", `console.log(process.title, (globalThis as any).fetch, Bun.color, void process.title);`],
+  ])("not of %s", async (_, text) => {
+    const use = await of(text);
+    expect({ world: use.world, whyOpen: use.whyOpen, wildcards: wildcards(use.lines) }).toEqual({ world: "closed", whyOpen: [], wildcards: [] });
+  });
+});
+
+describe.concurrent("asking an object for a member makes the engine create the member", () => {
+  const wildcards = (lines: string[]) => lines.filter(line => line.endsWith(" *"));
+
+  test.each([
+    ["in, of the global object", `console.log("HTMLRewriter" in globalThis);`, "global HTMLRewriter"],
+    ["in, by a constant name", `const name = "HTMLRewriter"; console.log(name in globalThis);`, "global HTMLRewriter"],
+    ["in, of a variable that holds the global object", `const scope: any = globalThis; console.log("HTMLRewriter" in scope);`, "global HTMLRewriter"],
+    ["in, of process", `console.log("binding" in process);`, "process binding"],
+    ["in, of globalThis.process", `console.log("binding" in (globalThis as any).process);`, "process binding"],
+    ["in, of Bun", `console.log("Transpiler" in Bun);`, "Bun Transpiler"],
+    ["hasOwnProperty of the global object", `console.log((globalThis as any).hasOwnProperty("HTMLRewriter"));`, "global HTMLRewriter"],
+    ["hasOwnProperty of a variable that holds the global object", `const scope: any = globalThis; console.log(scope.hasOwnProperty("HTMLRewriter"));`, "global HTMLRewriter"],
+    ["hasOwnProperty of process", `console.log(process.hasOwnProperty("binding"));`, "process binding"],
+    ["propertyIsEnumerable of Bun", `console.log(Bun.propertyIsEnumerable("Transpiler"));`, "Bun Transpiler"],
+    ["__lookupGetter__ of the global object", `console.log((globalThis as any).__lookupGetter__("HTMLRewriter"));`, "global HTMLRewriter"],
+  ])("%s, by a literal name", async (_, text, fact) => {
+    const use = await of(text);
+    expect({ world: use.world, whyOpen: use.whyOpen, wildcards: wildcards(use.lines) }).toEqual({ world: "closed", whyOpen: [], wildcards: [] });
+    expect(use.lines).toContain(fact);
+  });
+
+  test.each([
+    ["in, of the global object", `console.log(process.argv[2] in globalThis);`, "global *"],
+    ["in, of process", `console.log(process.argv[2] in process);`, "process *"],
+    ["in, of Bun", `console.log(process.argv[2] in Bun);`, "Bun *"],
+    ["in, of console", `console.log(process.argv[2] in console);`, "console *"],
+    ["hasOwnProperty of the global object", `console.log((globalThis as any).hasOwnProperty(process.argv[2]));`, "global *"],
+    ["hasOwnProperty of Bun", `console.log(Bun.hasOwnProperty(process.argv[2]));`, "Bun *"],
+  ])("%s, by a computed name: any member", async (_, text, wildcard) => {
+    const use = await of(text);
+    expect({ world: use.world, whyOpen: use.whyOpen }).toEqual({ world: "closed", whyOpen: [] });
+    expect(wildcards(use.lines)).toContain(wildcard);
+  });
+
+  test("asking for what makes code or loads it does not open the world", async () => {
+    const use = await of(`console.log("Worker" in globalThis, "eval" in globalThis, "Function" in globalThis, "getBuiltinModule" in process, "addEventListener" in globalThis);`);
+    expect({ world: use.world, whyOpen: use.whyOpen, wildcards: wildcards(use.lines) }).toEqual({ world: "closed", whyOpen: [], wildcards: [] });
+    expect(use.lines).toContain("global Worker");
+  });
+
+  test("an object of the program's own may be asked anything", async () => {
+    const use = await of(`const mine: any = { a: 1 }; console.log(process.argv[2] in mine, mine.hasOwnProperty(process.argv[2]), mine.valueOf());`);
+    expect({ world: use.world, whyOpen: use.whyOpen, wildcards: wildcards(use.lines) }).toEqual({ world: "closed", whyOpen: [], wildcards: [] });
+  });
+});
+
+describe.concurrent("functions of every object that hand the object on", () => {
+  test("what valueOf() returns is followed like the object", async () => {
+    const use = await of(`console.log((globalThis as any).valueOf().HTMLRewriter, process.valueOf().title);`);
+    expect({ world: use.world, whyOpen: use.whyOpen }).toEqual({ world: "closed", whyOpen: [] });
+    expect(use.lines).toContain("global HTMLRewriter");
+    expect(use.lines).toContain("process title");
+  });
+
+  test.each([
+    ["valueOf() of the global object that is read by a computed name", `console.log((globalThis as any).valueOf()[process.argv[2]]);`, "the global object"],
+    ["valueOf() of the global object, in brackets", `console.log((globalThis as any)["valueOf"]()[process.argv[2]]);`, "the global object"],
+    ["valueOf() of the global object that escapes", `console.log([(globalThis as any).valueOf()].length);`, "the global object"],
+    ["valueOf() of process that escapes", `console.log(Object.keys(process.valueOf()));`, "process"],
+    ["valueOf() of Bun that escapes", `console.log(Object.keys(Bun.valueOf()));`, "Bun"],
+    ["__defineGetter__ of the global object", `(globalThis as any).__defineGetter__("mine", function (this: any) { return this; });`, "the global object"],
+    ["__defineSetter__ of process", `process.__defineSetter__("mine", function (this: any) { console.log(this); });`, "process"],
+  ])("the world is open with %s", async (_, text, why) => {
+    const use = await of(text);
+    expect(use.world).toBe("open");
+    expect(use.whyOpen).toContain(why);
+  });
+});
+
 describe.concurrent("only what is part of the compiled program counts", () => {
   test("a function that nothing mentions does not open the world", async () => {
     const use = await of(`function never() { return eval("1"); }\nconsole.log(1);`);
@@ -262,5 +400,64 @@ describe.concurrent("whether anything but the compiled program may run", () => {
     const use = await runtimeUse(hello, [...build, "--compile-in-place"]);
     expect({ first: use.lines[0], aboutTheWorld: aboutTheWorld(use.lines), exitCode: use.exitCode }).toEqual({ first: "open it runs in place", aboutTheWorld: ["world open"], exitCode: 0 });
     expect(use.lines).toContain("global console");
+  });
+});
+
+using probe = tempDir("aot-runtime-use-probe", { "main.ts": `console.log("hello");` });
+const probed = Bun.spawnSync({
+  cmd: [bunExe(), "build", "--compile", "--compile-trim-runtime", "main.ts", "--outfile", "main"],
+  cwd: String(probe),
+  env: bunEnv,
+  stdout: "pipe",
+  stderr: "pipe",
+});
+
+describe.skipIf(probed.exitCode !== 0)("what the writer of the executable finds", () => {
+  const made = `
+    function made(): string {
+      try {
+        return "made " + (function () {}).constructor("return 1 + 1")();
+      } catch (error) {
+        return (error as Error).name;
+      }
+    }
+  `;
+
+  async function said(files: Record<string, string>, entryPoints = ["main.ts"]) {
+    using dir = tempDir("aot-runtime-use-writer", { "tsconfig.json": tsconfig, ...files });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--aot", "--compile-trim-runtime", ...entryPoints, "--outfile", "main"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [buildErrors, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
+    if (buildExitCode !== 0) return { buildErrors };
+    await using proc = Bun.spawn({ cmd: [join(String(dir), "main")], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    return { stdout, exitCode };
+  }
+
+  test("every module is compiled: the executable runs only its own code", async () => {
+    expect(await said({ "main.ts": declared + made + `console.log(made());` })).toEqual({ stdout: "EvalError\n", exitCode: 0 });
+  });
+
+  test("a module that is not compiled: the executable goes on making code", async () => {
+    const files = { "main.ts": declared + made + `console.log(made());`, "data.json": `{ "a": 1 }` };
+    expect(await said(files, ["main.ts", "data.json"])).toEqual({ stdout: "made 2\n", exitCode: 0 });
+  });
+
+  test("it runs in place: the executable goes on making code", async () => {
+    expect(await said({ "main.ts": declared + made + `console.log(made());` }, ["main.ts", "--compile-in-place"])).toEqual({ stdout: "made 2\n", exitCode: 0 });
+  });
+
+  test("the script of a page runs in a browser, not here: the executable runs only its own code", async () => {
+    const files = {
+      "main.ts": `// @ts-ignore\nimport page from "./index.html";\n` + declared + made + `console.log(typeof page, made());`,
+      "index.html": `<html><body><script type="module" src="./client.ts"></script></body></html>`,
+      "client.ts": `export {};\n(globalThis as any).ready = 1 + 1;`,
+    };
+    expect(await said(files)).toEqual({ stdout: "object EvalError\n", exitCode: 0 });
   });
 });

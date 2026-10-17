@@ -446,6 +446,11 @@ impl StandaloneModuleGraph {
         if let Some(index) = self.dirs.get_index(name) {
             return Ok(&self.dirs.keys()[index]);
         }
+        if let Some(path) = name.strip_prefix(PRESERVED_PATHS_ROOT.as_bytes())
+            && let Some((folder, bun_bundler::compiled_source_index::Entry::Folder)) = self.find_compiled_source(&native_separators(path))
+        {
+            return Ok(folder);
+        }
         Err(if self.lookup_file(name).is_some() {
             E::ENOTDIR
         } else {
@@ -1976,6 +1981,7 @@ pub(crate) fn to_bytes(
     flags: Flags,
     runtime_options: RuntimeOptions,
     aot_image_at: &mut Option<usize>,
+    uncompiled_module: &mut Option<Vec<u8>>,
 ) -> crate::Result<Vec<u8>> {
     // RAII trace handle ends on drop.
     let _serialize_trace = bun_perf::trace(bun_perf::PerfEvent::StandaloneModuleGraphSerialize);
@@ -2331,12 +2337,21 @@ pub(crate) fn to_bytes(
     let mut builtin_bytecode_table = builtin_bytecode_table;
     let mut program_data_indices: Vec<u8> = Vec::new();
     if aot_image.is_some() {
-        for module in modules.iter_mut() {
+        for (module, output_file) in modules.iter_mut().zip(&module_files) {
             let entry = if module.bytecode.length != 0 {
                 module.bytecode.offset + 1
             } else {
                 0
             };
+            let has_module_record = module.module_info.length != 0
+                || (embed_prelinked_graph && output_file.prelinked_module_index != u32::MAX);
+            let runs_here = output_file.loader.is_javascript_like()
+                && output_file.side != Some(options::Side::Client);
+            if runs_here
+                && (entry == 0 || (module.module_format == ModuleFormat::Esm && !has_module_record))
+            {
+                uncompiled_module.get_or_insert_with(|| module_dest_path(output_file).to_vec());
+            }
             program_data_indices.extend_from_slice(&entry.to_le_bytes());
             module.bytecode = StringPointer::default();
         }
@@ -2479,6 +2494,10 @@ pub(crate) fn to_bytes(
         let _ = string_builder.append_count(&record);
         flags |= Flags::HAS_PRELINKED_MODULE_GRAPH;
     }
+    let runtime_options = RuntimeOptions {
+        runs_static_code_only: runtime_options.runs_static_code_only && uncompiled_module.is_none(),
+        ..runtime_options
+    };
     if runtime_options.jit_policy > 1.0 || runtime_options.crash_if_interpreter_is_used || runtime_options.runs_static_code_only {
         let mut record = [0u8; 8];
         let has_jit_policy = if runtime_options.jit_policy > 1.0 { RuntimeOptions::HAS_JIT_POLICY } else { 0 };
@@ -3944,6 +3963,7 @@ pub fn to_graph_fd(
         flags | Flags::PRESERVES_SOURCE_PATHS,
         runtime_options,
         &mut None,
+        &mut None,
     )
     .map_err(|e| message("failed to generate module graph bytes", e.name().as_ref()))?;
     if bytes.is_empty() {
@@ -4004,6 +4024,7 @@ pub fn to_executable(
         ..runtime_options
     };
     let mut aot_image_at: Option<usize> = None;
+    let mut uncompiled_module: Option<Vec<u8>> = None;
     let bytes = match to_bytes(
         target,
         module_prefix,
@@ -4013,6 +4034,7 @@ pub fn to_executable(
         flags,
         runtime_options,
         &mut aot_image_at,
+        &mut uncompiled_module,
     ) {
         Ok(b) => b,
         Err(e) => {
@@ -4026,6 +4048,10 @@ pub fn to_executable(
         return Ok(CompileResult::fail(CompileErrorReason::NoOutputFiles));
     }
     // bytes drops at end of scope
+    let opened_runtime_use: Option<Vec<u8>> = runtime_use.zip(uncompiled_module).map(|(facts, path)| {
+        bun_ast::type_tags::open_world(facts, &[&b"something is not compiled in "[..], &path].concat())
+    });
+    let runtime_use = opened_runtime_use.as_deref().or(runtime_use);
 
     let self_exe = match target_executable(target, env, self_exe_path) {
         Ok(p) => p,

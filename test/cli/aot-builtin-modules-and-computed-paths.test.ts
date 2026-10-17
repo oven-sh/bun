@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import { test } from "../aot/supported";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 const plain = "plain.cjs";
 const never = (how: string) => `const load = name => ${how};\nconsole.log(process.argv.length > 100 ? load("lib") : "run");`;
@@ -29,22 +29,23 @@ const withADoor: Record<string, string> = {
   "a-folder-of-the-program.cjs": `${zlib}{\n  const __dirname = "";\n  ${loaded("require(__dirname + name)")}\n}`,
 };
 
-const env = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
+const env = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1", BUN_AOT_VERBOSE: "1" };
 
 test("a computed name that can only be a path does not make bun run --aot compile every built-in module", async () => {
   const programs = { ...withoutADoor, ...withADoor };
   using dir = tempDir("builtin-modules-and-computed-paths", programs);
-  const seconds: Record<string, number> = {};
+  const cost: Record<string, number> = {};
   for (const entry of Object.keys(programs)) {
     await using proc = Bun.spawn({ cmd: [bunExe(), "run", "--debug-aot", entry], cwd: String(dir), env, stdout: "pipe", stderr: "pipe" });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ entry, stdout: stdout.trim(), exitCode }).toEqual({ entry, stdout: "run", exitCode: 0 });
-    seconds[entry] = Number(proc.resourceUsage()!.cpuTime.total) / 1e6;
+    const bytesOfTheImage = Number(/\[aot\] image: (\d+) bytes/.exec(stderr)?.[1]);
+    cost[entry] = isWindows ? bytesOfTheImage : Number(proc.resourceUsage()!.cpuTime.total) / 1e6;
   }
   for (const entry of Object.keys(withoutADoor)) {
-    expect({ entry, seconds: seconds[entry], plain: seconds[plain], costsAsMuchAsADoor: seconds[entry] > 3 * seconds[plain] }).toEqual({
+    expect({ entry, cost: cost[entry], plain: cost[plain], costsAsMuchAsADoor: !(cost[entry] <= 3 * cost[plain]) }).toEqual({
       entry,
-      seconds: expect.any(Number),
+      cost: expect.any(Number),
       plain: expect.any(Number),
       costsAsMuchAsADoor: false,
     });

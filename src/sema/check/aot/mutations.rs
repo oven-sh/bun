@@ -864,6 +864,12 @@ impl<'p, 's> Checker<'p, 's> {
         match hir[e].kind {
             ExprKind::Call(call) => {
                 if let Some(Ok(birth)) = self.record_born_by_object_create(file, e) {
+                    if birth.prototype_is_literal_held_by_constant {
+                        let of_prototype = self.type_of_expr(file, birth.prototype);
+                        let mut given = ObjectTypes::default();
+                        self.add_object_types(of_prototype, &mut given);
+                        self.recorded_mutations().of_types.extend(given.types.into_iter().map(|ty| (Mutation::Redefinition, ty)));
+                    }
                     self.record_prototype_given_at_birth(birth.born_as);
                     return;
                 }

@@ -22,6 +22,7 @@ use super::OnceLock;
 
 pub struct BornByObjectCreate {
     pub prototype: ExprId,
+    pub prototype_is_literal_held_by_constant: bool,
     pub born_as: TypeId,
     pub stored: Vec<(Atom, ExprId)>,
     pub at_birth: Vec<StoreAtBirth>,
@@ -4587,7 +4588,8 @@ impl<'p, 's> Checker<'p, 's> {
             Ok(Err(declaration)) => self.type_awaiting_constant(file, declaration, &mut stored),
             Err(why) => Err(why),
         };
-        Some(born_as.map(|born_as| BornByObjectCreate { prototype, born_as, stored, at_birth: self.stores_at_birth(file, created) }))
+        let prototype_is_literal_held_by_constant = self.is_literal_held_by_constant(file, prototype, 0);
+        Some(born_as.map(|born_as| BornByObjectCreate { prototype, prototype_is_literal_held_by_constant, born_as, stored, at_birth: self.stores_at_birth(file, created) }))
     }
 
     fn stores_at_birth(&mut self, file: FileId, created: ExprId) -> Vec<StoreAtBirth> {
@@ -4635,6 +4637,16 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Dot { name, .. } => Some(name).filter(|name| name.is_some()),
             ExprKind::Index { index, .. } => self.property_named_by_constant_symbol(file, index).or_else(|| self.string_held_by_constant(file, index, 0)),
             _ => None,
+        }
+    }
+
+    fn is_literal_held_by_constant(&mut self, file: FileId, e: ExprId, depth: u32) -> bool {
+        match self.hir(file)[e].kind {
+            _ if depth > 4 => false,
+            ExprKind::Object(_) => depth > 0,
+            ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::AsConst(expr) if depth > 0 => self.is_literal_held_by_constant(file, expr, depth + 1),
+            ExprKind::Ident(name) => self.resolved_symbol_for(file, e, name).and_then(|sym| self.initializer_of_constant(sym)).is_some_and(|(of, held)| self.is_literal_held_by_constant(of, held, depth + 1)),
+            _ => false,
         }
     }
 
@@ -4814,8 +4826,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     pub fn is_completed_by_prototype(&mut self, record: TypeId, stored: &[(Atom, ExprId)], prototype: TypeId) -> bool {
-        let wanted: Vec<Atom> = self.properties_of_type(record).iter().filter(|prop| !prop.flags.contains(crate::types::PropFlags::OPTIONAL) && !stored.iter().any(|stored| stored.0 == prop.name)).map(|prop| prop.name).collect();
-        wanted.into_iter().all(|name| {
+        self.properties_of_type(record).iter().filter(|prop| !prop.flags.contains(crate::types::PropFlags::OPTIONAL) && !stored.iter().any(|stored| stored.0 == prop.name)).map(|prop| prop.name).all(|name| {
             let (Some(declared), Some(inherited)) = (self.type_of_property_of_type(record, name), self.type_of_property_of_type(prototype, name)) else { return false };
             self.is_assignable(inherited, declared)
         })

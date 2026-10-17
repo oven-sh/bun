@@ -12,6 +12,7 @@ type ReadableState = import("internal/streams/state").ReadableState;
 type WritableState = import("internal/streams/state").WritableState;
 const { aggregateTwoErrors } = require("internal/errors");
 const { validateAbortSignal, validateObject } = require("internal/validators");
+const { queueTick1, queueTick2 } = require("internal/process/next_tick_queue");
 const { StringDecoder } = require("node:string_decoder");
 const from = require("internal/streams/from");
 const { SafeSet } = require("internal/primordials");
@@ -610,7 +611,7 @@ function emitReadable(stream) {
   if ((state.flags & kEmittedReadable) === 0) {
     $debug("emitReadable", (state.flags & kFlowing) !== 0);
     state.flags |= kEmittedReadable;
-    process.nextTick(emitReadable_, stream);
+    queueTick1(process, emitReadable_, stream);
   }
 }
 
@@ -642,7 +643,7 @@ function emitReadable_(stream) {
 function maybeReadMore(stream, state: ReadableState): void {
   if ((state.flags & (kReadingMore | kReading | kConstructed)) === kConstructed) {
     state.flags |= kReadingMore;
-    process.nextTick(maybeReadMore_, stream, state);
+    queueTick2(process, maybeReadMore_, stream, state);
   }
 }
 
@@ -932,7 +933,7 @@ Readable.prototype.on = function (ev, fn) {
       if (state.length) {
         emitReadable(this);
       } else if ((state.flags & kReading) === 0) {
-        process.nextTick(nReadingNextTick, this);
+        queueTick1(process, nReadingNextTick, this);
       }
     }
   }
@@ -953,7 +954,7 @@ Readable.prototype.removeListener = function (ev, fn) {
     // support once('readable', fn) cycles. This means that calling
     // resume within the same tick will have no
     // effect.
-    process.nextTick(updateReadableListening, this);
+    queueTick1(process, updateReadableListening, this);
   } else if (ev === "data" && this.listenerCount("data") === 0) {
     state.flags &= ~kDataListening;
   }
@@ -972,7 +973,7 @@ Readable.prototype.removeAllListeners = function (ev) {
     // support once('readable', fn) cycles. This means that calling
     // resume within the same tick will have no
     // effect.
-    process.nextTick(updateReadableListening, this);
+    queueTick1(process, updateReadableListening, this);
   }
 
   return res;
@@ -1039,7 +1040,7 @@ Readable.prototype.resume = function () {
 function resume(stream, state: ReadableState): void {
   if ((state.flags & kResumeScheduled) === 0) {
     state.flags |= kResumeScheduled;
-    process.nextTick(resume_, stream, state);
+    queueTick2(process, resume_, stream, state);
   }
 }
 
@@ -1548,7 +1549,7 @@ function endReadable(stream) {
   $debug("endReadable");
   if ((state.flags & kEndEmitted) === 0) {
     state.flags |= kEnded;
-    process.nextTick(endReadableNT, state, stream);
+    queueTick2(process, endReadableNT, state, stream);
   }
 }
 
@@ -1561,7 +1562,7 @@ function endReadableNT(state: ReadableState, stream): void {
     stream.emit("end");
 
     if (stream.writable && stream.allowHalfOpen === false) {
-      process.nextTick(endWritableNT, stream);
+      queueTick1(process, endWritableNT, stream);
     } else if ((state.flags & kAutoDestroy) !== 0) {
       // In case of duplex streams we need a way to detect
       // if the writable side is ready for autoDestroy as well.

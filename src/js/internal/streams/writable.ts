@@ -25,6 +25,7 @@ type WritableState = import("internal/streams/state").WritableState;
 type WriteCallback = import("internal/streams/state").WriteCallback;
 type AfterWriteTickInfo = import("internal/streams/state").AfterWriteTickInfo;
 
+const { queueTick1, queueTick2 } = require("internal/process/next_tick_queue");
 const process = globalThis.process;
 const ObjectDefineProperties = Object.defineProperties;
 const ArrayPrototypeSlice = Array.prototype.slice;
@@ -407,7 +408,7 @@ function onwrite(stream, state: WritableState, er): void {
         } else if (needTick) {
           const info: AfterWriteTickInfo = { count: 1, cb, stream, state };
           state.afterWriteTickInfoValue = info;
-          process.nextTick(afterWriteTick, info);
+          queueTick1(process, afterWriteTick, info);
           state.flags |= kAfterWritePending | kAfterWriteTickInfo;
         } else {
           state.pendingcb!--;
@@ -636,7 +637,7 @@ function onFinish(stream, state: WritableState, err): void {
     // Some streams assume 'finish' will be emitted
     // asynchronously relative to _final callback.
     state.pendingcb!++;
-    process.nextTick(finish, stream, state);
+    queueTick2(process, finish, stream, state);
   }
 }
 

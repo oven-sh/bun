@@ -1,5 +1,12 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
+exports[`reads a getter that the prototype holds from an object made with Object.create(prototype) 1`] = `
+"typed, function: 97.14 instructions (stub GetByNameAsDoublePreservingTwo 31, kernel 25.07, stub ReadAccessorByNameWithinFrame 21, get double 12, stub BoxNumber 8, module 0.07), 195 bytes
+typed, module level: 95.08 instructions (stub GetByNameAsDoublePreservingTwo 31, module 23.07, stub ReadAccessorByNameWithinFrame 21, get double 12, stub BoxNumber 8), 1638 bytes
+untyped, function: 125.92 instructions (kernel 32.09, stub GetThroughAccessorByName 21, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub Mul 13, the runtime 10.75, stub GetByNameWithDirectColumnWithReceiverInRDI 10, stub ReadAccessorByNamePreservingTwo 10, get double 8, stub Add 8, module 0.07), 276 bytes
+untyped, module level: 112.86 instructions (module 27.11, stub ReadAccessorByName 21, stub GetByNameWithDirectColumnWithReceiverInRAX 13, stub Mul 13, the runtime 10.75, stub GetByNameWithDirectColumnWithReceiverInRDI 10, get double 8, stub Add 8, namespace 2), 1856 bytes"
+`;
+
 exports[`asks a Set made from a literal of twelve constant strings for a string that it holds 1`] = `
 "typed, function: 127.41 instructions (stub SetHasWithStringKey 91, kernel 36.28, module 0.13), 357 bytes
 typed, module level: 115.23 instructions (stub SetHasWithStringKey 91, module 24.23), 2445 bytes

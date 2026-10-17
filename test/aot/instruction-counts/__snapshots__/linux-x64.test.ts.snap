@@ -1,5 +1,19 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
+exports[`makes an object with Object.assign(Object.create(prototype), { .. }) and reads two of its three properties 1`] = `
+"typed, function: 77.55 instructions (kernel 55.09, stub AllocateTypedObject 17.16, the runtime 5.01, elsewhere 0.21, module 0.07), 506 bytes
+typed, module level: 76.36 instructions (module 54.09, stub AllocateTypedObject 17.16, the runtime 4.89, elsewhere 0.21), 1651 bytes
+untyped, function: 654.23 instructions (the runtime 499.03, kernel 79.08, stub NewObjectFromDescriptor3 23, stub GetById 20, stub Add 16, stub OperationVoidWithInstance 14, stub OperationVoidWithInstance to operationAOTTypedObjectAssignFrom 2, elsewhere 0.95, stub ColdPlainOperationWithoutFPRs 0.08, module 0.07, stub ColdPlainOperationWithoutFPRs to operationAOTTypedObjectCreate 0.01, stub ColdPlainOperationWithoutFPRs to operationAOTTypedObjectCreate with arguments 0.01), 741 bytes
+untyped, module level: 633.16 instructions (the runtime 499.03, module 58.08, stub NewObjectFromDescriptor3 23, stub Add 16, stub OperationVoidWithInstance 14, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInR15 10, stub GetByNameWithDirectColumnWithReceiverInR15 10, stub OperationVoidWithInstance to operationAOTTypedObjectAssignFrom 2, elsewhere 0.95, stub ColdPlainOperationWithoutFPRs 0.08, stub ColdPlainOperationWithoutFPRs to operationAOTTypedObjectCreate 0.01, stub ColdPlainOperationWithoutFPRs to operationAOTTypedObjectCreate with arguments 0.01), 1558 bytes"
+`;
+
+exports[`makes an object with Object.create(prototype) and stores three properties, after the prototype was given one more method 1`] = `
+"typed, function: 113.59 instructions (kernel 91.16, stub AllocateTypedObject 17.16, the runtime 4.97, elsewhere 0.21, module 0.07), 1083 bytes
+typed, module level: 117.49 instructions (module 95.11, stub AllocateTypedObject 17.16, the runtime 5.01, elsewhere 0.21), 2376 bytes
+untyped, function: 106.25 instructions (kernel 65.14, stub Add 16, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRBX 10, stub GetByNameWithDirectColumnWithReceiverInRBX 10, the runtime 4.74, elsewhere 0.21, stub ColdPlainOperationWithoutFPRs 0.08, module 0.07, stub ColdPlainOperationWithoutFPRs to operationAOTTypedObjectCreate 0.01, stub ColdPlainOperationWithoutFPRs to operationAOTTypedObjectCreate with arguments 0.01), 936 bytes
+untyped, module level: 103.06 instructions (module 62.14, stub Add 16, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInR15 10, stub GetByNameWithDirectColumnWithReceiverInR15 10, the runtime 4.62, elsewhere 0.21, stub ColdPlainOperationWithoutFPRs 0.08, stub ColdPlainOperationWithoutFPRs to operationAOTTypedObjectCreate 0.01, stub ColdPlainOperationWithoutFPRs to operationAOTTypedObjectCreate with arguments 0.01), 1944 bytes"
+`;
+
 exports[`makes a Set from an array of four numbers 1`] = `
 "typed, function: 786.42 instructions (the runtime 269.61, stub SetAdd 264, built-in modules 93, stub ArrayElement 88, kernel 30.48, stub OperationValueWithInstance 14, stub ConstructInternalFunction0 13, stub ArrayElement with arguments 12, stub TypedBuiltinCell of 1192 5, module 0.30, elsewhere -2.96), 307 bytes
 typed, module level: 775.17 instructions (the runtime 269.61, stub SetAdd 264, built-in modules 93, stub ArrayElement 88, module 19.88, stub OperationValueWithInstance 14, stub ConstructInternalFunction0 13, stub ArrayElement with arguments 12, stub TypedBuiltinCell of 1192 5, elsewhere -3.31), 1262 bytes
@@ -172,10 +186,10 @@ untyped, module level: 46.41 instructions (module 46.13, the runtime 0.14, stub 
 `;
 
 exports[`reads a name that an object with more keys than its type lacks; the receiver's type is declared and has an index signature 1`] = `
-"typed, function: 413.10 instructions (the runtime 318, stub ColdOperationValue 59, kernel 29.50, stub ColdOperationValue to operationAOTTypedGetByNameChecked with arguments 4, stub ColdOperationValue to operationAOTTypedGetByNameChecked 2, module 0.60), 194 bytes
-typed, module level: 390.55 instructions (the runtime 298, stub ColdOperationValue 59, module 27.55, stub ColdOperationValue to operationAOTTypedGetByNameChecked with arguments 4, stub ColdOperationValue to operationAOTTypedGetByNameChecked 2), 1931 bytes
+"typed, function: 52.10 instructions (kernel 36.50, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub ReadAbsentByName 2, module 0.60), 218 bytes
+typed, module level: 45.55 instructions (module 30.55, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub ReadAbsentByName 2), 1930 bytes
 untyped, function: 64 instructions (kernel 48.40, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub ReadAbsentByName 2, module 0.60), 516 bytes
-untyped, module level: 59.35 instructions (module 44.35, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub ReadAbsentByName 2), 2170 bytes"
+untyped, module level: 59.35 instructions (module 44.35, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 13, stub ReadAbsentByName 2), 2173 bytes"
 `;
 
 exports[`creates four declared optional fields in instances that were each first given an undeclared property under a key of their own 1`] = `

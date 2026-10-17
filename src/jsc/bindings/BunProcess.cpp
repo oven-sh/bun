@@ -4733,7 +4733,10 @@ JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObjec
     // Lazy property builder: exceptions must not propagate into
     // reifyStaticProperty, which performs no exception check.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSValue initializer = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::InternalProcessNextTickQueue);
+    JSValue tickModule = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::InternalProcessNextTickQueue);
+    JSValue initializer;
+    if (!scope.exception()) [[likely]]
+        initializer = tickModule.get(globalObject, Identifier::fromString(vm, "initializeNextTickQueue"_s));
     JSValue nextTickFunction;
     if (!scope.exception()) [[likely]] {
         JSC::MarkedArgumentBuffer args;

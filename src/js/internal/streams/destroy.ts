@@ -17,6 +17,7 @@ const kCloseEmitted = 1 << 6;
 const kErrored = 1 << 7;
 const kConstructed = 1 << 8;
 
+const { nextTick: originalNextTick, enqueueTick1 } = require("internal/process/next_tick_queue");
 const ProcessNextTick = process.nextTick;
 
 const kDestroy = Symbol("kDestroy");
@@ -105,7 +106,8 @@ function _destroy(self, err, cb) {
     if (err) {
       ProcessNextTick(emitErrorCloseNT, self, err);
     } else {
-      ProcessNextTick(emitCloseNT, self);
+      if (ProcessNextTick === originalNextTick) enqueueTick1(emitCloseNT, self);
+      else ProcessNextTick(emitCloseNT, self);
     }
   }
   try {

@@ -1856,8 +1856,8 @@ fn runtime_use(c: &LinkerContext) -> Option<Box<[u8]>> {
         import_resolved_at_run_time(c).map(|specifier| [&b"an import that is resolved at run time: "[..], specifier])
     };
     let mut text = match opened_by {
-        Some([why, specifier]) if facts == b"closed" || facts.starts_with(b"closed\n") => [&b"open "[..], why, specifier, &facts[b"closed".len()..]].concat(),
-        _ => facts.to_vec(),
+        Some(why) => bun_ast::type_tags::open_world(facts, &why.concat()),
+        None => facts.to_vec(),
     };
     if text.last().is_some_and(|&last| last != b'\n') {
         text.push(b'\n');

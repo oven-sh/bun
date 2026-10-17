@@ -1,5 +1,12 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
+exports[`makes an object with Object.create(prototype) and three stores, and reads two of them 1`] = `
+"typed, function: 77.55 instructions (kernel 55.09, stub AllocateTypedObject 17.16, the runtime 5.01, elsewhere 0.21, module 0.07), 506 bytes
+typed, module level: 76.36 instructions (module 54.09, stub AllocateTypedObject 17.16, the runtime 4.89, elsewhere 0.21), 1651 bytes
+untyped, function: 109.08 instructions (kernel 68.08, stub Add 16, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRBX 10, stub GetByNameWithDirectColumnWithReceiverInRBX 10, the runtime 4.62, elsewhere 0.21, stub ColdPlainOperationWithoutFPRs 0.08, module 0.07, stub ColdPlainOperationWithoutFPRs to operationAOTTypedObjectCreate 0.01, stub ColdPlainOperationWithoutFPRs to operationAOTTypedObjectCreate with arguments 0.01), 915 bytes
+untyped, module level: 108.12 instructions (module 67.08, stub Add 16, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRBX 10, stub GetByNameWithDirectColumnWithReceiverInRBX 10, the runtime 4.74, elsewhere 0.21, stub ColdPlainOperationWithoutFPRs 0.08, stub ColdPlainOperationWithoutFPRs to operationAOTTypedObjectCreate 0.01, stub ColdPlainOperationWithoutFPRs to operationAOTTypedObjectCreate with arguments 0.01), 1879 bytes"
+`;
+
 exports[`makes a Headers object, sets two headers by constant names and makes a Response with it 1`] = `
 "typed, function: 2762.12 instructions (the runtime 2527.07, kernel 79.45, stub OperationValueWithInstance 56, stub FrontEndTypedConstruct 42, stub ReadKnownCustomGetterByName 36, stub GetByNameWithDirectColumnWithReceiverInRAX 13, stub OperationValueWithInstance to operationAOTTypedCallHeadersMethod 4, stub OperationValueWithInstance to operationAOTTypedConstruct 2, stub OperationValueWithInstance to operationAOTTypedNewResponse 2, module 0.60), 861 bytes
 typed, module level: 2748.52 instructions (the runtime 2527.07, module 66.45, stub OperationValueWithInstance 56, stub FrontEndTypedConstruct 42, stub ReadKnownCustomGetterByName 36, stub GetByNameWithDirectColumnWithReceiverInRAX 13, stub OperationValueWithInstance to operationAOTTypedCallHeadersMethod 4, stub OperationValueWithInstance to operationAOTTypedConstruct 2, stub OperationValueWithInstance to operationAOTTypedNewResponse 2), 1811 bytes

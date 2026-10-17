@@ -1,5 +1,5 @@
-// The generic entrypoint does not type-check arguments for unused parameters. With nothing left to check, no entrypoint is emitted.
-// ENTRY-SIZE< readsNone 1 1
+// The generic entrypoint does not type-check arguments for unused parameters. With nothing left to check, the entrypoint of a tiny function is its body and nothing more: it returns the number.
+// ENTRY-SIZE< readsNone 9 12
 // ENTRY-SIZE< readsTheString 48 56
 // ENTRY-SIZE< readsTheNumber 48 8
 type Point = { x: number; y: number };

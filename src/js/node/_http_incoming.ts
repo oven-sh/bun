@@ -8,6 +8,7 @@ const Readable = require("internal/streams/readable");
 const finished = require("internal/streams/end-of-stream");
 const { advanceFlags, addFlags, flagsOf, internals } = require("internal/streams/state");
 const { kAutoDestroyed } = require("internal/shared");
+const { nextTick: originalNextTick, enqueueTick1, queueTick1, queueTick2, queueTick3 } = require("internal/process/next_tick_queue");
 
 const {
   abortedSymbol,
@@ -788,7 +789,7 @@ function endsUnwatched(req) {
   }
   const state = req._readableState;
   if (!advanceFlags(state, kFlagsUntouched, kFlagsResumed)) return false;
-  process.nextTick(resumeUnwatched, req, state);
+  queueTick2(process, resumeUnwatched, req, state);
   return true;
 }
 
@@ -808,7 +809,7 @@ function resumeUnwatched(req, state) {
   req._consuming = true;
   resumeConnection(req);
   req[eofInProgress] = true;
-  process.nextTick(endUnwatched, req);
+  queueTick1(process, endUnwatched, req);
 }
 
 function endUnwatched(req) {
@@ -823,7 +824,7 @@ function endUnwatched(req) {
   }
   req.complete = true;
   const parser = req.socket?.parser;
-  process.nextTick(destroyUnwatched, req, state, parser != null && parser.incoming === req ? parser : undefined);
+  queueTick3(process, destroyUnwatched, req, state, parser != null && parser.incoming === req ? parser : undefined);
 }
 
 function destroyUnwatched(req, state, parser) {
@@ -852,14 +853,15 @@ function destroyOnNextTick(req, state) {
   req[kAutoDestroyed] = true;
   req[kHandle] = undefined;
   handle.onabort = handle.ondata = undefined;
-  process.nextTick(closeUnwatched, req);
+  queueTick1(process, closeUnwatched, req);
 }
 
 function closeUnwatched(req) {
   if (req.listenerCount !== listenerCount) req.listenerCount("error");
   const state = req._readableState;
   if (!advanceFlags(state, kFlagsDestroyed, kFlagsClosed)) addFlags(state, kClosed);
-  ProcessNextTick(emitCloseUnwatched, req);
+  if (ProcessNextTick === originalNextTick) enqueueTick1(emitCloseUnwatched, req);
+  else ProcessNextTick(emitCloseUnwatched, req);
 }
 
 function emitCloseUnwatched(req) {

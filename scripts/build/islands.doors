@@ -56,7 +56,7 @@ when bundler Bun build
 when bundler loader html
 smallest bundler 1500000
 door bundler return ^Bun__hasBundler$
-door bundler exit ^<*bun_runtime::bake::(?!dev_server::http::is_allowed_)
+door bundler exit ^<*bun_runtime::bake::(?!dev_server::http::(is_allowed_|host_without_port))
 door bundler exit ^<*bun_runtime::server::html_bundle::
 door bundler exit ^<*bun_runtime::api::js_bundle_completion_task::
 door bundler exit ^<*bun_runtime::api::js_bundler::
@@ -248,3 +248,331 @@ door node_zlib exit ^Native(Zlib|Brotli|Zstd)__getConstructor$
 door node_zlib exit ^<*bun_runtime::node::(native_zlib_impl|native_brotli_impl|native_zstd_impl|node_zlib_binding)::
 door node_zlib exit ^WebCore::JSNative(Zlib|Brotli|Zstd)::(create(Prototype|Structure|Constructor)|destroy|visitChildren|estimatedSize|analyzeHeap)\(
 
+feature napi native addons: N-API and the V8 and libuv symbols
+when napi loader napi
+when napi process dlopen
+when napi module bun:ffi
+smallest napi 0
+door napi return ^bun_runtime::napi::napi_body::fix_dead_code_elimination$
+door napi exit ^Bun::Process_functionDlopen\(
+door napi exit ^<*bun_runtime::napi::napi_body::(NapiFinalizerTask|ThreadSafeFunction|napi_async_work)\b
+door napi exit ^Bun::NapiHandleScopeImpl::(destroy|visitChildren)\(
+door napi exit ^Zig::NapiClass::
+door napi exit ^NapiEnv::~NapiEnv\(
+door napi exit ^v8::shim::GlobalInternals\* JSC::LazyProperty<
+feature ffi bun:ffi and its C compiler
+when ffi module bun:ffi
+when ffi Bun FFI
+smallest ffi 100000
+door ffi exit ^BunObject_lazyPropCb_(wrap_)?FFI\b
+door ffi exit ^JS2Rust___src_runtime_ffi_
+door ffi exit ^<*bun_runtime::ffi::
+door ffi exit ^_R\w*11bun_runtime3ffi
+door ffi exit ^<*bun_tcc_sys::
+door ffi exit ^tcc_\w+$
+door ffi exit ^JSC::FFI::
+door ffi exit ^JSC::JSFFI\w+::(?!destroy\()
+door ffi exit ^JSC::ffi\w+\(
+door ffi exit ^operationFFI
+door ffi exit ^Bun__CreateJSCFFI(Function|Callback)$
+door ffi exit ^WebCore::JSFFI::create(Prototype|Structure|Constructor)\(
+door ffi exit ^Bun::JSFFICStringConstructor::create\(
+door ffi exit ^FFI(Prototype|Class)?__
+feature test bun:test: expect, its matchers, mocks and the snapshot printer
+when test native bun:test
+when test Bun jest
+when test module node:test
+smallest test 120000
+door test exit ^<*bun_runtime::test_runner::(?!timers::)
+door test exit ^_R\w*11bun_runtime11test_runner(?!6timers)
+door test exit ^(Expect\w*|ScopeFunctions|DoneCallback)(Prototype|Class)__
+door test exit ^WebCore::JS(Expect\w*|ScopeFunctions|DoneCallback)::create(Prototype|Structure|Constructor)\(
+door test exit ^Bun__Jest__
+door test exit ^BunObject_callback_jest$
+door test exit ^JSC::\w+\* JSC::LazyProperty<JSC::JSGlobalObject, JSC::\w+>::callFunc<Bun::JSMockModule::create\(
+feature shell Bun.$, the shell
+when shell Bun $
+when shell loader sh
+when shell module bun:internal-for-testing
+smallest shell 80000
+door shell exit ^Bun::constructBunShell\(
+door shell exit ^BunObject_callback_create(ParsedShellScript|ShellInterpreter)$
+door shell exit ^JS2Rust___src_runtime_shell_
+door shell exit ^<*bun_runtime::shell::(?!interpreter::closefd)
+door shell exit ^_R\w*11bun_runtime5shell
+door shell exit ^<*bun_shell_parser::
+door shell exit ^_R\w*16bun_shell_parser
+door shell exit ^__bun_dispatch__ProcessExit__Shell__
+door shell exit ^WebCore::JS(ShellInterpreter|ParsedShellScript)::create(Prototype|Structure|Constructor)\(
+door shell exit ^(ShellInterpreter|ParsedShellScript)(Prototype|Class)__
+feature intl Intl.DisplayNames, ListFormat, Locale, PluralRules, RelativeTimeFormat, Segmenter, getCanonicalLocales and supportedValuesOf
+when intl global Intl
+smallest intl 30000
+door intl exit ^JSC::create(DisplayNames|ListFormat|Locale|PluralRules|RelativeTimeFormat|Segmenter)Constructor\(JSC::VM&, JSC::JSObject\*\)
+door intl exit ^JSC::Intl(DisplayNames|ListFormat(?!::formatToParts)|Locale|PluralRules|RelativeTimeFormat|Segmenter|Segments|SegmentIterator)(Prototype|Constructor)?::(?!destroy\()
+door intl exit ^JSC::intl(DisplayNames|ListFormat|Locale|PluralRules|RelativeTimeFormat|Segmenter|Segments|SegmentIterator)\w*\(
+door intl exit ^JSC::(construct|call)Intl(DisplayNames|ListFormat|Locale|PluralRules|RelativeTimeFormat|Segmenter)\(
+door intl exit ^JSC::intlObjectFunc
+feature nodequic node:quic
+smallest nodequic 0
+when nodequic module node:quic
+when nodequic native node_quic_binding.rs:createNodeQuicBinding
+door nodequic exit ^JS2Rust___src_runtime_node_node_quic_binding_rs__createNodeQuicBinding_workaround$
+door nodequic exit ^<*bun_runtime::node::quic::
+door nodequic exit ^Quic(Endpoint|Session|Stream)(Prototype|Class)__
+door nodequic exit ^WebCore::JSQuic(Endpoint|Session|Stream)::create(Prototype|Structure|Constructor)\(
+door nodequic exit ^us_nq_
+door nodequic exit ^Bun__nodeQuic__
+feature http3 HTTP/3 in Bun.serve and fetch
+smallest http3 0
+when http3 Bun serve
+when http3 global fetch
+when http3 Bun fetch
+when http3 Bun FetchSession
+door http3 exit ^uws_h3_(?!app_clear_routes$|listen_socket_port$|listen_socket_local_address$|listen_socket_close$)
+door http3 exit ^uWS::(Http3|H3)\w*::
+door http3 exit ^us_quic_
+door http3 exit ^us_create_quic_
+door http3 exit ^<*bun_uws_sys::(h3|quic)::
+door http3 exit ^<*bun_http::h3_client::
+feature nodehttp2 node:http2
+smallest nodehttp2 0
+when nodehttp2 native h2_frame_parser.rs:H2FrameParserConstructor
+door nodehttp2 exit ^WebCore::JSH2FrameParser::create(Prototype|Structure|Constructor)\(
+door nodehttp2 exit ^H2FrameParser(Prototype|Class)__
+door nodehttp2 exit ^<*bun_runtime::api::(h2_frame_parser_body|h2)::
+feature mux HTTP/2 and HTTP/3 in Bun.serve
+smallest mux 0
+when mux Bun serve
+door mux exit ^uws_h2_(?!res_is_closed$|res_write_continue$)
+door mux exit (^| )uWS::(Http2|H2)\w*::
+door mux exit ^<*bun_uws_sys::h2::
+door mux exit ^Bun__HTTPRequestContext(Debug)?Mux(TLS)?__
+door mux exit ^<bun_runtime::server::request_context::RequestContext<bun_runtime::server::NewServer<(true|false), (true|false)>, (true|false), (true|false), true>>::(?!render_metadata_corked$)
+feature valkey Bun.redis and Bun.RedisClient
+smallest valkey 0
+when valkey Bun redis
+when valkey Bun RedisClient
+door valkey exit ^BunObject_lazyPropCb_wrap_(ValkeyClient|valkey)\(
+door valkey exit ^WebCore::JSRedisClient::create(Prototype|Structure|Constructor)\(
+door valkey exit ^RedisClient(Prototype|Class)__
+door valkey exit ^<*bun_runtime::valkey_jsc::
+door valkey exit ^<*bun_valkey::
+door valkey exit ^<bun_uws_sys::vtable::Trampolines<bun_runtime::socket::uws_handlers::NsHandler<bun_runtime::valkey_jsc::
+feature sql Bun.sql and Bun.SQL for PostgreSQL and MySQL
+smallest sql 0
+when sql Bun sql
+when sql Bun SQL
+when sql Bun postgres
+when sql module bun:sql
+when sql native postgres.rs:createBinding
+when sql native mysql.rs:createBinding
+door sql exit ^WebCore::JS(PostgresSQLConnection|PostgresSQLQuery|MySQLConnection|MySQLQuery)::create(Prototype|Structure|Constructor)\(
+door sql exit ^(PostgresSQLConnection|PostgresSQLQuery|MySQLConnection|MySQLQuery)(Prototype|Class)__
+door sql exit ^<*bun_sql_jsc::
+door sql exit ^<*bun_sql::
+door sql exit ^<bun_uws_sys::vtable::Trampolines<bun_runtime::socket::uws_handlers::NsHandler<bun_sql_jsc::
+feature s3client Bun.s3, Bun.S3Client and s3: URLs
+when s3client Bun file
+when s3client Bun write
+smallest s3client 0
+when s3client Bun s3
+when s3client Bun S3Client
+when s3client global fetch
+when s3client Bun fetch
+when s3client Bun FetchSession
+door s3client exit ^BunObject_lazyPropCb_wrap_(S3Client|s3)\(
+door s3client exit ^WebCore::JS(S3Client|S3Stat)::create(Prototype|Structure|Constructor)\(
+door s3client exit ^(S3Client|S3Stat)(Prototype|Class)__
+door s3client exit ^JSS3File__
+door s3client exit ^<*bun_runtime::webcore::(s3_client|s3_file|s3_stat|__s3_\w+)::
+door s3client exit ^<bun_jsc::webcore_types::store::S3 as bun_runtime::webcore::blob::store::S3Ext>::
+door s3client exit ^<*bun_s3_signing::
+feature csrf Bun.CSRF
+smallest csrf 0
+when csrf Bun CSRF
+door csrf exit ^Bun::Bindgen::Generated::CsrfJsc::createCSRF\(
+feature password Bun.password
+smallest password 0
+when password Bun password
+door password exit ^Bun::Bindgen::Generated::PasswordObject::createPassword\(
+feature hashers Bun.sha and Bun.MD4 to Bun.SHA512_256
+smallest hashers 0
+when hashers Bun sha
+when hashers Bun MD4
+when hashers Bun MD5
+when hashers Bun SHA1
+when hashers Bun SHA224
+when hashers Bun SHA256
+when hashers Bun SHA384
+when hashers Bun SHA512
+when hashers Bun SHA512_256
+door hashers exit ^BunObject_lazyPropCb_wrap_(MD4|MD5|SHA1|SHA224|SHA256|SHA384|SHA512|SHA512_256)\(
+door hashers exit ^BunObject_callback_sha$
+door hashers exit ^WebCore::JS(MD4|MD5|SHA1|SHA224|SHA256|SHA384|SHA512|SHA512_256)::create(Prototype|Structure|Constructor)\(
+feature cryptohasher Bun.CryptoHasher
+smallest cryptohasher 0
+when cryptohasher Bun CryptoHasher
+when cryptohasher module node:crypto
+door cryptohasher exit ^BunObject_lazyPropCb_wrap_CryptoHasher\(
+door cryptohasher exit ^WebCore::JSCryptoHasher::create(Prototype|Structure|Constructor)\(
+feature websocket the WebSocket client
+smallest websocket 0
+when websocket global WebSocket
+when websocket native JSWebSocket.cpp:createWebSocketBindingForWs
+when websocket native Undici.cpp:createUndiciInternalBinding
+when websocket Bun WebView
+door websocket exit ^WebCore::JSWebSocket::getConstructor\(
+door websocket exit ^JSC::Structure\* WebCore::getDOMStructure<WebCore::JSWebSocket>\(
+door websocket exit ^WebCore::createWebSocketBindingForWs\(
+door websocket exit ^WebCore::WebSocket::
+door websocket exit ^WebCore::JSWebSocket(Prototype|Constructor|Owner)?::
+door websocket exit ^WebCore::(jsWebSocket|setJSWebSocket)
+door websocket exit ^WebSocket__
+door websocket exit ^<*bun_http_jsc::websocket_client::
+door websocket exit ^<bun_uws_sys::vtable::Trampolines<bun_runtime::socket::uws_handlers::RawPtrHandler<bun_http_jsc::websocket_client::
+feature dns Bun.dns and node:dns
+smallest dns 0
+when dns Bun dns
+when dns module node:dns
+door dns exit ^Bun::constructDNSObject\(
+door dns exit ^Bun__DNS__
+door dns exit ^Bun::Bindgen::Generated::Dns::
+door dns exit ^JS2Rust___src_runtime_dns_jsc_dns_rs__Resolver_
+door dns exit ^WebCore::JSDNSResolver::create(Prototype|Structure|Constructor)\(
+door dns exit ^DNSResolver(Prototype|Class)__
+door dns exit ^<*bun_runtime::dns_jsc::dns_body::(Resolver|ResolveInfoRequest|CAres\w+|Get\w+Request|DNSLookup)[>:]
+door dns exit ^<*bun_runtime::dns_jsc::cares_jsc::ErrorDeferred
+door dns exit ^ares_(process_fd|destroy)$
+feature webcrypto crypto.subtle, SubtleCrypto and CryptoKey
+smallest webcrypto 0
+when webcrypto global crypto
+when webcrypto global Crypto
+when webcrypto global SubtleCrypto
+when webcrypto global CryptoKey
+when webcrypto module node:crypto
+door webcrypto exit ^WebCore::JS(CryptoKey|SubtleCrypto)::getConstructor\(
+door webcrypto exit ^WebCore::SubtleCrypto::SubtleCrypto\(
+door webcrypto exit ^WebCore::toJS\(JSC::JSGlobalObject\*, Zig::GlobalObject\*, WebCore::SubtleCrypto&\)
+door webcrypto exit ^WebCore::CloneSerializer::write\(WebCore::CryptoKey const\*\)
+door webcrypto return ^WebCore::CloneDeserializer::readCryptoKey\(
+feature nodecrypto node:crypto
+smallest nodecrypto 0
+when nodecrypto module node:crypto
+when nodecrypto native node_crypto_binding.cpp:createNodeCryptoBinding
+when nodecrypto native node_crypto_binding.rs:createNodeCryptoBindingZig
+door nodecrypto exit ^Bun::createNodeCryptoBinding\(
+door nodecrypto exit ^JS2Rust___src_runtime_node_node_crypto_binding_rs__createNodeCryptoBindingZig_workaround$
+door nodecrypto exit ^Bun::setup(CipherClassStructure|DiffieHellmanClassStructure|DiffieHellmanGroupClassStructure|ECDHClassStructure|JSHashClassStructure|JSHmacClassStructure|JSSignClassStructure|JSVerifyClassStructure)\(
+feature fetch fetch and Bun.FetchSession
+when fetch Bun file
+when fetch Bun write
+smallest fetch 0
+when fetch global fetch
+when fetch Bun fetch
+when fetch Bun FetchSession
+when fetch Bun s3
+when fetch Bun S3Client
+door fetch exit ^Bun__fetch(Preconnect)?$
+door fetch exit ^Bun::constructBunFetchObject\(
+door fetch exit ^BunObject_lazyPropCb_wrap_FetchSession\(
+door fetch exit ^WebCore::JSFetchSession::create(Prototype|Structure|Constructor)\(
+door fetch exit ^<*bun_runtime::webcore::fetch::
+door fetch exit ^<*bun_http::(?!ssl_config::|error::|header_value_iterator::|async_http::load_env$|http_thread::shutdown_for_exit$|h3_client::)
+door fetch exit ^<bun_uws_sys::vtable::Trampolines<bun_runtime::socket::uws_handlers::HTTPClient<(true|false)>>>::
+feature x509 X509Certificate and KeyObject
+smallest x509 0
+when x509 module node:crypto
+when x509 native node_crypto_binding.cpp:createNodeCryptoBinding
+when x509 global crypto
+when x509 global Crypto
+when x509 global SubtleCrypto
+when x509 global CryptoKey
+when x509 Bun serve
+when x509 Bun listen
+when x509 Bun connect
+when x509 module node:tls
+when x509 native SecureContext.rs:js.getConstructor
+when x509 global fetch
+when x509 Bun fetch
+when x509 Bun FetchSession
+when x509 global WebSocket
+when x509 native Undici.cpp:createUndiciInternalBinding
+when x509 Bun WebView
+when x509 native JSWebSocket.cpp:createWebSocketBindingForWs
+when x509 Bun redis
+when x509 Bun RedisClient
+when x509 Bun sql
+when x509 Bun SQL
+when x509 Bun postgres
+when x509 module bun:sql
+when x509 native postgres.rs:createBinding
+when x509 native mysql.rs:createBinding
+when x509 Bun s3
+when x509 Bun S3Client
+when x509 module node:quic
+when x509 native node_quic_binding.rs:createNodeQuicBinding
+door x509 exit ^(i2d_X509|PEM_write_bio_PUBKEY|PEM_write_bio_PKCS8PrivateKey)$
+door x509 exit ^Bun::setup(X509CertificateClassStructure|AsymmetricKeyObjectPrototype|KeyObjectClassStructure|PrivateKeyObjectClassStructure|PublicKeyObjectClassStructure|SecretKeyObjectClassStructure)\(
+door x509 exit ^WebCore::CloneDeserializer::read(KeyObject|X509Certificate)\(
+door x509 exit ^Bun::JSX509Certificate::
+door x509 exit ^Bun::JS(KeyObject|PublicKeyObject|PrivateKeyObject|SecretKeyObject)::(?!finishCreation)
+feature tls TLS
+smallest tls 0
+when tls Bun serve
+when tls Bun listen
+when tls Bun connect
+when tls module node:tls
+when tls native SecureContext.rs:js.getConstructor
+when tls global fetch
+when tls Bun fetch
+when tls Bun FetchSession
+when tls global WebSocket
+when tls native Undici.cpp:createUndiciInternalBinding
+when tls Bun WebView
+when tls native JSWebSocket.cpp:createWebSocketBindingForWs
+when tls Bun redis
+when tls Bun RedisClient
+when tls Bun sql
+when tls Bun SQL
+when tls Bun postgres
+when tls module bun:sql
+when tls native postgres.rs:createBinding
+when tls native mysql.rs:createBinding
+when tls Bun s3
+when tls Bun S3Client
+when tls module node:quic
+when tls native node_quic_binding.rs:createNodeQuicBinding
+door tls return ^us_internal_ssl_detach$
+door tls return ^us_internal_free_loop_ssl_data$
+door tls return ^us_internal_listen_socket_ssl_free$
+door tls return ^(SSL|SSL_CTX|SSL_SESSION)_free$
+door tls exit ^us_internal_ssl_
+door tls exit ^us_ssl_
+door tls exit ^us_socket_(adopt_tls|alpn_is_h2|on_server_name|release_held_flight|server_name_reject_unauthorized|server_name_userdata|session_sink|set_first_flight_before_fin|set_inline_reject|set_session_sink|sni_resolve|start_tls_handshake|tls_feed)$
+door tls exit ^us_listen_socket_(add_server_name|find_server_name_ctx|on_server_name|set_default_ssl_ctx)$
+door tls exit ^us_get_(default_ca_store|shared_default_ca_store|default_ciphers|root_extra_cert_instances|root_system_certs)
+door tls exit ^(us_bundled_root_certs_der|us_x509_verify_cert|sni_add|sni_find|sni_free|sni_new)$
+door tls exit ^(SSL|SSL_CTX|SSL_SESSION|DTLS)_\w+$
+door tls exit ^<*bun_uws::ssl_wrapper::
+door tls exit ^<*bun_runtime::api::bun_(secure_context|ssl_context_cache)::
+door tls exit ^<*bun_runtime::socket::(system_certs|upgraded_duplex|bundled_root_certs|cert_files)::
+door tls exit ^<*bun_runtime::socket::socket_body::(tls_socket_functions::|js_upgrade_duplex_to_tls|DuplexUpgradeContext|select_alpn_callback)
+door tls exit ^<bun_runtime::socket::socket_body::NewSocket<true>>::
+door tls exit ^<bun_runtime::socket::socket_body::NewSocket<false>>::upgrade_tls
+door tls exit ^<bun_uws_sys::vtable::Trampolines<bun_runtime::socket::uws_handlers::(BunListener<true>|RawPtrHandler<bun_runtime::socket::socket_body::NewSocket<true>, true>)>>::
+door tls exit ^(TLSSocket|SecureContext)(Prototype|Class)__
+door tls exit ^WebCore::JS(TLSSocket|SecureContext|HTTPSServer|DebugHTTPSServer)::create(Prototype|Structure|Constructor)\(
+door tls exit ^(Debug)?HTTPSServer(Prototype|Class)__
+door tls exit ^Bun__HTTPRequestContext(Debug)?TLS__
+door tls exit ^<bun_runtime::server::NewServer<true, (true|false)>>::
+door tls exit ^<bun_runtime::server::request_context::RequestContext<bun_runtime::server::NewServer<true, (true|false)>, true, (true|false), false>>::
+door tls exit (^| )uWS::(TemplatedApp|HttpContext|HttpResponse|AsyncSocket|HttpContextData|HttpResponseData)<true>::
+door tls exit (^| )uWS::(WebSocket|WebSocketContext)<true, (true|false), void\*>::
+door tls exit ^void Bun::write(AutoHeaders|FetchHeadersToUWSResponse|ResponseHeader)<true[,>]
+door tls exit ^<*bun_boringssl::
+door tls exit ^Bun::(getBundledRootCertificates|getExtraCACertificates|getSystemCACertificates|loadExtraCACertificates|parseCACertificates|selectServerName)\(
+door tls exit ^Bun__(get|set)TLSDefaultCiphers$
+door tls exit ^JS2Rust___src_runtime_socket_(Listener_rs__jsAddServerName|Listener_rs__jsSetSecureContext|socket_rs__jsUpgradeDuplexToTLS|socket_rs__jsUpgradeTLSDeferred|socket_rs__jsFirstFlightBeforeFin|socket_rs__jsReleaseHeldFlight|socket_rs__jsCheckServerIdentityInHandshake)$
+door tls exit ^JS2Rust___src_runtime_api_bun_SecureContext_rs__jsLiveCount$
+door tls exit ^us_dispatch_(new_session|server_identity)$

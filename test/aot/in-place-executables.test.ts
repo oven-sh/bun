@@ -547,6 +547,40 @@ fs.promises.stat(first).then(stats => console.log(stats.isFile()));
   expect(await run(String(dir), ["./built.exe"])).toEqual(plain);
 }, 120_000);
 
+test("Bun.Glob finds what the executable holds", async () => {
+  using dir = tempDir("aot-in-place-glob", {
+    "app/public/index.html": "<p>a page</p>",
+    "app/public/styles/main.css": "p {}",
+    "app/public/styles/print.css": "p {}",
+    "app/routes/first.cjs": `module.exports = "the first route";\n`,
+    "app/routes/nested/second.cjs": `module.exports = "the second route";\n`,
+    "app/start.cjs": `const path = require("node:path");
+const found = (pattern, options) => [...new Bun.Glob(pattern).scanSync(options)].map(file => file.replaceAll("\\\\", "/")).sort();
+const inApp = file => path.relative(__dirname, file).replaceAll("\\\\", "/");
+console.log(found("**/*", { cwd: path.join(__dirname, "public") }).join(" "));
+console.log(found("styles/*.css", { cwd: path.join(__dirname, "public"), absolute: true }).map(inApp).join(" "));
+console.log(found("*", { cwd: path.join(__dirname, "public"), onlyFiles: false }).join(" "));
+console.log(found(__dirname.replaceAll("\\\\", "/") + "/public/**/*.css").map(inApp).join(" "));
+for (const route of found("**/*.cjs", { cwd: path.join(__dirname, "routes") })) console.log(route, require(path.join(__dirname, "routes", route)));
+new Bun.Glob("**/*.html").scan({ cwd: path.join(__dirname, "public") }).next().then(first => console.log(first.value));
+`,
+  });
+  const app = join(String(dir), "app");
+  const plain = await run(app, [bunExe(), "run", "./start.cjs"]);
+  expect(plain).toEqual({
+    stdout:
+      "index.html styles/main.css styles/print.css\npublic/styles/main.css public/styles/print.css\nindex.html styles\npublic/styles/main.css public/styles/print.css\n" +
+      "first.cjs the first route\nnested/second.cjs the second route\nindex.html\n",
+    stderr: "",
+    exitCode: 0,
+  });
+  const built = await build(app, "./start.cjs", "./routes/**/*.cjs", "--asset", "./public");
+  expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  expect(await run(String(dir), ["./built.exe"])).toEqual(plain);
+  renameSync(app, join(String(dir), "moved-away"));
+  expect(await run(String(dir), ["./built.exe"])).toEqual(plain);
+}, 120_000);
+
 test("the paths of require.resolve are where it is asked from", async () => {
   using dir = tempDir("aot-in-place-resolve-paths", {
     "store/a-hook/node_modules/a-hook/package.json": `{ "name": "a-hook", "main": "index.cjs" }`,

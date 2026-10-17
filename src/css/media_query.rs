@@ -65,8 +65,7 @@ pub trait QueryCondition: Sized + ToCss {
         v.extend(conditions);
         Self::create_operation(operator, v)
     }
-    /// Parse the block of a query function (`style(`, `scroll-state(`) after
-    /// the `name(` token. `None`: this condition type has no such function.
+    /// Parse a query function block after its `name(` token. `None`: no such function here.
     fn parse_query_function(
         _name: &[u8],
         _input: &mut Parser,

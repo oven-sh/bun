@@ -747,15 +747,14 @@ impl ByteRangeMapping {
             }
         }
 
-        // The program is a range of JSC's like any function, and so is a function the source
-        // does not have, such as the CommonJS wrapper.
-        functions.retain(|function| {
-            function.range != ByteRange::of(0, source_len)
-                && source_map.as_deref().is_none_or(|source_map| {
-                    let (line, column) = self.line_and_column_of(function.range.start);
-                    source_map.find_mapping(line, column).is_some()
-                })
-        });
+        // A function the source does not have, such as the CommonJS wrapper, is a range of JSC's
+        // like any function.
+        if let Some(source_map) = source_map.as_deref() {
+            functions.retain(|function| {
+                let (line, column) = self.line_and_column_of(function.range.start);
+                source_map.find_mapping(line, column).is_some()
+            });
+        }
 
         let (executable_lines, lines_which_have_executed) = lines.bitsets()?;
         let (functions, functions_which_have_executed) = split_executed(&functions)?;
@@ -1066,10 +1065,4 @@ pub use bun_options_types::code_coverage_options::Fraction;
 pub struct ByteRange {
     pub start: u32,
     pub end: u32,
-}
-
-impl ByteRange {
-    fn of(start: u32, end: u32) -> ByteRange {
-        ByteRange { start, end }
-    }
 }

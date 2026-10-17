@@ -145,7 +145,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * gl
         auto functionArray = JSON::Array::create();
         for (const auto& functionRange : functionRanges) {
             // V8 has a static block as a function, and a generator or an async function once.
-            if (JSC::isGeneratorOrAsyncFunctionBodyParseMode(std::get<3>(functionRange)))
+            // The program has the whole-script entry.
+            auto parseMode = std::get<3>(functionRange);
+            if (JSC::isProgramOrModuleParseMode(parseMode) || JSC::isGeneratorOrAsyncFunctionBodyParseMode(parseMode))
                 continue;
             auto range = JSON::Array::create();
             range->pushDouble(static_cast<double>(std::get<1>(functionRange)));

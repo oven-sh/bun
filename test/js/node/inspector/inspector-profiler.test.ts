@@ -634,6 +634,33 @@ console.log(JSON.stringify(functions));
       ]);
     });
 
+    test.concurrent("lists a function that is the whole script", async () => {
+      using dir = tempDir("inspector-coverage-whole-script", {
+        "fixture.mjs": `
+import { Session } from "node:inspector/promises";
+import vm from "node:vm";
+const session = new Session();
+session.connect();
+await session.post("Profiler.enable");
+await session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+const url = "file:///whole-script-fixture/virtual.js";
+vm.runInThisContext("function whole() { }", { filename: url });
+whole();
+whole();
+const { result } = await session.post("Profiler.takePreciseCoverage");
+session.disconnect();
+console.log(JSON.stringify(result.find(script => script.url === url).functions.map(({ ranges }) => ranges)));
+`,
+      });
+      await using proc = Bun.spawn({ cmd: [bunExe(), "fixture.mjs"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+      expect(JSON.parse(stdout.trim())).toEqual([
+        [{ startOffset: 0, endOffset: 20, count: 1 }],
+        [{ startOffset: 0, endOffset: 20, count: 2 }],
+      ]);
+    });
+
     test.concurrent("collects block coverage with call counts for vm scripts", async () => {
       using dir = tempDir("inspector-coverage-vm", {
         "fixture.mjs": coverageVmFixture,

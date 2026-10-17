@@ -310,11 +310,10 @@ function buildScriptCoverageList(
     // JSC's ranges include their last character; V8's end after it. What is empty or inverted
     // after that is text JSC has between two adjacent functions: V8 never emits
     // startOffset === endOffset, and @bcoe/v8-coverage recurses forever on one.
-    // The program is one of JSC's function ranges, and has the whole-script entry below.
     // Outer functions before nested ones, so a stack-based sweep below sees enclosing ranges first.
     const functions = script.functions
       .map(([start, end, executed]): [number, number, boolean] => [start, end + 1, executed])
-      .filter(([start, end]) => start >= 0 && end > start && !(start === 0 && end === sourceLength))
+      .filter(([start, end]) => start >= 0 && end > start)
       .sort((a, b) => a[0] - b[0] || b[1] - a[1]);
     const blocks = script.blocks
       .map(([start, end, count]): [number, number, number] => [start, end + 1, count])

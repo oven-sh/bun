@@ -28,7 +28,8 @@ extern "C" bool CodeCoverage__withBlocksAndFunctions(
     basicBlocks.reserveCapacity(functionRanges.size() + basicBlocks.size());
 
     for (const auto& functionRange : functionRanges) {
-        if (!JSC::FunctionHasExecutedCache::isFunctionInSource(std::get<3>(functionRange)))
+        auto parseMode = std::get<3>(functionRange);
+        if (JSC::isProgramOrModuleParseMode(parseMode) || !JSC::FunctionHasExecutedCache::isFunctionInSource(parseMode))
             continue;
         BasicBlockRange range;
         range.m_hasExecuted = std::get<0>(functionRange);

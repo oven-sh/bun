@@ -81,7 +81,7 @@ void CryptoAlgorithmECDSA::verify(const CryptoAlgorithmParameters& parameters, R
         });
 }
 
-void CryptoAlgorithmECDSA::generateKey(const CryptoAlgorithmParameters& parameters, bool extractable, CryptoKeyUsageBitmap usages, KeyOrKeyPairCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext&)
+void CryptoAlgorithmECDSA::generateKey(const CryptoAlgorithmParameters& parameters, bool extractable, CryptoKeyUsageBitmap usages, KeyOrKeyPairCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context)
 {
     const auto& ecParameters = downcast<CryptoAlgorithmEcKeyParams>(parameters);
 
@@ -90,16 +90,7 @@ void CryptoAlgorithmECDSA::generateKey(const CryptoAlgorithmParameters& paramete
         return;
     }
 
-    auto result = CryptoKeyEC::generatePair(CryptoAlgorithmIdentifier::ECDSA, ecParameters.namedCurve, extractable, usages);
-    if (result.hasException()) {
-        exceptionCallback(result.releaseException().code(), ""_s);
-        return;
-    }
-
-    auto pair = result.releaseReturnValue();
-    pair.publicKey->setUsagesBitmap(pair.publicKey->usagesBitmap() & CryptoKeyUsageVerify);
-    pair.privateKey->setUsagesBitmap(pair.privateKey->usagesBitmap() & CryptoKeyUsageSign);
-    callback(WTF::move(pair));
+    CryptoKeyEC::generatePair(CryptoAlgorithmIdentifier::ECDSA, ecParameters.namedCurve, extractable, usages & CryptoKeyUsageVerify, usages & CryptoKeyUsageSign, WTF::move(callback), WTF::move(exceptionCallback), context);
 }
 
 void CryptoAlgorithmECDSA::importKey(CryptoKeyFormat format, KeyData&& data, const CryptoAlgorithmParameters& parameters, bool extractable, CryptoKeyUsageBitmap usages, KeyCallback&& callback, ExceptionCallback&& exceptionCallback)

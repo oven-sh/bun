@@ -2772,27 +2772,11 @@ impl RunCommand {
                     }
                 }
             }
-            let cwd = match bun_sys::getcwd_alloc() {
-                Ok(cwd) => cwd,
-                Err(err) => {
-                    pretty_errorln!(
-                        "<r><red>error<r>: Failed to read the working directory: {}",
-                        err
-                    );
-                    Global::exit(1);
-                }
-            };
-            let entry_path: Box<[u8]> =
-                paths::resolve_path::join_abs_string::<paths::platform::Auto>(
-                    cwd.as_bytes(),
-                    &[b"bake"],
-                )
-                .into();
             Global::configure_allocator(core::Global::AllocatorConfiguration {
                 long_running: true,
                 ..Default::default()
             });
-            if let Err(err) = Self::boot_main(ctx, entry_path, None, BootMain::Bake) {
+            if let Err(err) = Self::boot_main(ctx, Box::default(), None, BootMain::Bake) {
                 Self::boot_failed_exit(ctx, b"bake", &err);
             }
             return Ok(true);

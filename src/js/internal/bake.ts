@@ -139,8 +139,8 @@ async function loadAppServer(cwd: string): Promise<{ file: string; server: AppSe
 
 async function start() {
   const flags = defaultServeFlags();
-  // argv[1] is the entry point `bun bake` boots with.
-  for (let i = 2, argvLength = argv.length; i < argvLength;) {
+  // There is no entry module, so the arguments start at argv[1], as for `bun -e`.
+  for (let i = 1, argvLength = argv.length; i < argvLength;) {
     const arg = argv[i];
     if (arg === "--help" || arg === "-h") {
       console.log(help);

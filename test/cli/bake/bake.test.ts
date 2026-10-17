@@ -314,3 +314,19 @@ test.concurrent("bun bake loads a file of an unknown type that app/server.ts imp
 
   expect(await get(url, "/missing")).toBe("200 icon.png");
 });
+
+test.concurrent("app/server.ts is not the entry module under bun bake", async () => {
+  using dir = tempDir("bake-command-main", {
+    "app/server.ts": `
+      export default {
+        fetch: () => Response.json({ argv: process.argv.slice(1), main: Bun.main, metaMain: import.meta.main }),
+      };
+    `,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+
+  const res = await fetch(new URL("/missing", url));
+  expect(await res.json()).toEqual({ argv: ["--port=0"], main: "", metaMain: false });
+});

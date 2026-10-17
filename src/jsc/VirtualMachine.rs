@@ -138,7 +138,8 @@ pub enum MainEntryPoint {
     File,
     /// `bun ./index.html`: `src/js/internal/html.ts` serves the pages.
     Html,
-    /// `bun bake`: `src/js/internal/bake.ts` serves the app in the working directory.
+    /// `bun bake`: `src/js/internal/bake.ts` serves the app in the working directory. There is no
+    /// entry module, so `main` is empty.
     Bake,
 }
 
@@ -166,7 +167,9 @@ pub struct VirtualMachine {
     // BORROW_PARAM (`&'a mut bun_ast::Log` per LIFETIMES.tsv) — raw NonNull
     // used because VM is self-referential and cannot carry `<'a>`.
     pub log: Option<NonNull<bun_ast::Log>>,
-    /// Path of the entry module. BACKREF — borrows process-argv, the resolver's
+    /// Path of the entry module: the user's module that runs first. Empty when there is none,
+    /// as for `bun bake`, where the program is a built-in module (`main_entry_point`). BACKREF —
+    /// borrows process-argv, the resolver's
     /// process-lifetime `dirname_store`/`filename_store`, the standalone module
     /// graph, or (for workers) the owning `WebWorker.unresolved_specifier`; in
     /// every case the storage outlives this VM but is not Rust-`'static`.
@@ -3535,7 +3538,7 @@ impl VirtualMachine {
                 }
 
                 // Check if Module.runMain was patched.
-                if self.has_patched_run_main {
+                if self.has_patched_run_main && self.main_entry_point == MainEntryPoint::File {
                     bun_core::hint::cold();
                     self.set_pending_internal_promise(None);
                     let global_ref = self.global();
@@ -3576,51 +3579,46 @@ impl VirtualMachine {
                     return Ok(promise);
                 }
             }
+        }
 
-            // Preloads (evaluated above, synchronously) are not the entry: only
-            // module evaluations from here on mark the entry graph as executing.
-            self.entry_evaluation_started = false;
-            let builtin = match self.main_entry_point {
-                MainEntryPoint::File => None,
-                MainEntryPoint::Html => Some(BuiltinEntryPoint::Html),
-                MainEntryPoint::Bake => Some(BuiltinEntryPoint::Bake),
-            };
+        // Preloads (evaluated above, synchronously) are not the entry: only
+        // module evaluations from here on mark the entry graph as executing.
+        self.entry_evaluation_started = false;
+        let builtin = match self.main_entry_point {
+            MainEntryPoint::File => None,
+            MainEntryPoint::Html => Some(BuiltinEntryPoint::Html),
+            MainEntryPoint::Bake => Some(BuiltinEntryPoint::Bake),
+        };
+        // Note: reshaped for borrowck — capture raw ptr before &self call.
+        let global = self.global;
+        let promise = if let Some(builtin) = builtin {
             // The built-in module is the main module, so what it imports loads as the imports of a
             // main module do (`has_loaded`): a file of an unknown type is a file, not a script.
-            if builtin.is_some() && !self.transpiler.options.disable_transpilation {
+            if !self.transpiler.options.disable_transpilation {
                 self.has_loaded = true;
             }
-            // Note: reshaped for borrowck — capture raw ptr before &self call.
-            let global = self.global;
             let global_ref = self.global();
-            let promise = if let Some(builtin) = builtin {
-                let p: *mut JSInternalPromise = jsc::from_js_host_call_generic(global_ref, || {
-                    Bun__loadBuiltinEntryPoint(global_ref, builtin)
-                })?;
-                if p.is_null() {
-                    return Err(crate::CrateError::JSError);
-                }
-                p
-            } else {
-                let name = bun_core::String::borrow_utf8(MAIN_FILE_NAME);
-                jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &name)
-                    .map(NonNull::as_ptr)
-                    .ok_or(crate::CrateError::JSError)?
-            };
-
-            self.set_pending_internal_promise(Some(promise));
-            Ok(promise)
+            let p: *mut JSInternalPromise = jsc::from_js_host_call_generic(global_ref, || {
+                Bun__loadBuiltinEntryPoint(global_ref, builtin)
+            })?;
+            if p.is_null() {
+                return Err(crate::CrateError::JSError);
+            }
+            p
+        } else if !self.transpiler.options.disable_transpilation {
+            let name = bun_core::String::borrow_utf8(MAIN_FILE_NAME);
+            jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &name)
+                .map(NonNull::as_ptr)
+                .ok_or(crate::CrateError::JSError)?
         } else {
-            self.entry_evaluation_started = false;
-            let global = self.global;
             let main_str = bun_core::String::from_bytes(self.main());
-            let promise =
-                jsc::JSModuleLoader::resolve_and_load_and_evaluate_module_ptr(global, &main_str)
-                    .map(NonNull::as_ptr)
-                    .ok_or(crate::CrateError::JSError)?;
-            self.set_pending_internal_promise(Some(promise));
-            Ok(promise)
-        }
+            jsc::JSModuleLoader::resolve_and_load_and_evaluate_module_ptr(global, &main_str)
+                .map(NonNull::as_ptr)
+                .ok_or(crate::CrateError::JSError)?
+        };
+
+        self.set_pending_internal_promise(Some(promise));
+        Ok(promise)
     }
 
     /// `loadEntryPoint(entry_path)` — `reload_entry_point` + spin until the

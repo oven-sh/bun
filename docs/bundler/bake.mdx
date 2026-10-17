@@ -60,7 +60,7 @@ export default {
 };
 ```
 
-`bun bake` starts the server. Do not call `Bun.serve()` in `app/server.ts`. Without a `fetch`, a request that no page and no route matched gets a 404.
+`bun bake` starts the server. Do not call `Bun.serve()` in `app/server.ts`. The program is `bun bake` itself, so `app/server.ts` is not the entry module: `import.meta.main` is `false`, `Bun.main` is an empty string, and `process.argv` holds the path of `bun` followed by the arguments of `bun bake`. Without a `fetch`, a request that no page and no route matched gets a 404.
 
 ## Options
 

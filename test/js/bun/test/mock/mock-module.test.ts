@@ -1666,6 +1666,29 @@ describe.concurrent("two factories in one file that run at the same time", () =>
       `[(await import("./first")).name]`,
       ["first with second with real first"],
     ],
+    // Which one gets the original depends on which module is transpiled first.
+    [
+      "if each loads a module that imports the other's module, they don't wait for each other",
+      `vi.mock("./first", async () => ({ name: "first with " + (await import("./through-second")).name }));
+       vi.mock("./second", async () => ({ name: "second with " + (await import("./through")).name }));`,
+      `(await import("./both")).names.map(name => name.split(" ")[0])`,
+      ["first", "second"],
+    ],
+    [
+      "also if they load it with vi.importActual()",
+      `vi.mock("./first", async () => ({ name: "first with " + (await vi.importActual("./through-second")).name }));
+       vi.mock("./second", async () => ({ name: "second with " + (await vi.importActual("./through")).name }));`,
+      `(await import("./both")).names.map(name => name.split(" ")[0])`,
+      ["first", "second"],
+    ],
+    [
+      "also in a ring of three, where one loads the original of a module whose factory is running",
+      `vi.mock("./first", async () => ({ name: "first with " + (await import("./third")).name }));
+       vi.mock("./second", async () => ({ name: "second with " + (await vi.importActual("./first")).third }));
+       vi.mock("./third", async () => ({ name: "third with " + (await import("./through-second")).name }));`,
+      `(await import("./all")).names.map(name => name.split(" ")[0])`,
+      ["first", "second", "third"],
+    ],
     [
       "with no importer in common the second doesn't wait, and gets the original",
       `const gate = vi.hoisted(() => Promise.withResolvers());
@@ -1682,9 +1705,12 @@ describe.concurrent("two factories in one file that run at the same time", () =>
   ])("%s", async (_, mocks, names, expected) => {
     await expectFixturesToPass(
       {
-        "first.ts": `export const name = "real first";`,
+        "first.ts": `export const name = "real first"; export { name as third } from "./third";`,
         "second.ts": `export const name = "real second";`,
+        "third.ts": `export const name = "real third";`,
         "through.ts": `export { name } from "./first";`,
+        "through-second.ts": `export { name } from "./second";`,
+        "all.ts": `import { name as first } from "./first"; import { name as second } from "./second"; import { name as third } from "./third"; export const names = [first, second, third];`,
         "both.ts": `import { name as first } from "./first"; import { name as second } from "./second"; export const names = [first, second];`,
         // Takes more than one turn of the event loop to load.
         "slow.ts": `import "./slower";`,

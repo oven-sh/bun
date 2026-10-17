@@ -1014,6 +1014,22 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionModuleMockDidLoadImportsOfOri
     return JSValue::encode(jsUndefined());
 }
 
+// The factories the running code was called from, innermost first. See callFactory().
+static Vector<JSObject*, 2> factoriesInAsyncContext(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto& names = WebCore::builtinNames(vm);
+    Vector<JSObject*, 2> factories;
+    for (JSObject* frame = globalObject->m_asyncContextData.get()->getInternalField(0).getObject(); frame;) {
+        JSValue storage = frame->getDirect(vm, names.storagePublicName());
+        if (storage && storage.inherits<JSModuleMock>())
+            factories.append(asObject(storage));
+        JSValue previous = frame->getDirect(vm, names.prevPublicName());
+        frame = previous ? previous.getObject() : nullptr;
+    }
+    return factories;
+}
+
 __attribute__((minsize)) static JSC::JSPromise* importOriginalModule(Zig::GlobalObject* globalObject, JSModuleMock* mock, bool mayLoadOthersFirst = true, const String& from = String())
 {
     auto& vm = JSC::getVM(globalObject);
@@ -1059,6 +1075,14 @@ __attribute__((minsize)) static JSC::JSPromise* importOriginalModule(Zig::Global
     if (running) {
         key = keyOfModuleThatDoesNotWait(globalObject, *running, key, specifier);
         addToImportChain(*running, key);
+        // If another factory called vi.importActual(), it waits for the module too.
+        for (JSObject* factory : factoriesInAsyncContext(globalObject)) {
+            auto* asking = findRunningModuleMock(globalObject, uncheckedDowncast<JSModuleMock>(factory));
+            if (!asking || asking == running)
+                continue;
+            key = keyOfModuleThatDoesNotWait(globalObject, *asking, key, uncheckedDowncast<JSModuleMock>(factory)->specifier->tryGetValue().data);
+            addToImportChain(*asking, key);
+        }
     } else if (mayBeAnotherFactory)
         key = Bun::keyOfImportWhileModuleMocksRun(globalObject, key, from, true);
     RELEASE_AND_RETURN(scope, importModuleKey(globalObject, key));
@@ -4130,15 +4154,12 @@ __attribute__((minsize)) String keyOfImportWhileModuleMocksRun(Zig::GlobalObject
     auto* importerRecord = importerEntry ? dynamicDowncast<JSC::CyclicModuleRecord>(importerEntry->record()) : nullptr;
     bool isImporterBeingLoaded = importerRecord && importerRecord->status() == JSC::CyclicModuleRecord::Status::New;
 
-    // The factories the running code was called from: the innermost one and those waiting for it. See callFactory().
-    Vector<JSObject*, 2> callers;
-    auto& names = WebCore::builtinNames(globalObject->vm());
-    for (JSObject* frame = globalObject->m_asyncContextData.get()->getInternalField(0).getObject(); frame;) {
-        JSValue storage = frame->getDirect(globalObject->vm(), names.storagePublicName());
-        if (storage && storage.inherits<Zig::JSModuleMock>())
-            callers.append(asObject(storage));
-        JSValue previous = frame->getDirect(globalObject->vm(), names.prevPublicName());
-        frame = previous ? previous.getObject() : nullptr;
+    // The innermost one is asking. The ones that called it are waiting for it.
+    Vector<JSObject*, 2> callers = Zig::factoriesInAsyncContext(globalObject);
+    // The loader resolves static imports outside that context, so a module in a factory's import chain counts as that factory asking.
+    for (auto& running : globalObject->onLoadPlugins.runningModuleMocks) {
+        if (running.importChain.contains(importer) && !callers.contains(running.mock.get()))
+            callers.append(running.mock.get());
     }
     // Plus the factories that imported one of those factories' modules. They may be waiting for it, so it must not wait for theirs.
     for (bool grew = !callers.isEmpty(); std::exchange(grew, false);) {

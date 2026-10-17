@@ -3201,6 +3201,43 @@ test.concurrent("the output of a failed script is printed byte for byte", async 
   expect(exitCode).toBe(1);
 });
 
+// `bun x node-gyp` skips bun's own node-gyp script by dropping the entry of PATH that equals BUN_WHICH_IGNORE_CWD.
+test.concurrent.skipIf(!isLinux)("a script finds BUN_WHICH_IGNORE_CWD in PATH if TMPDIR is not UTF-8", async () => {
+  using dir = tempDir("lifecycle-tmpdir-bytes", {
+    "package.json": JSON.stringify({
+      name: "app",
+      dependencies: { dep: "file:./dep" },
+      trustedDependencies: ["dep"],
+    }),
+    "dep/package.json": JSON.stringify({
+      name: "dep",
+      version: "1.0.0",
+      scripts: { postinstall: "sh ./check.sh" },
+    }),
+    "dep/check.sh": `case ":$PATH:" in *":$BUN_WHICH_IGNORE_CWD:"*) echo found ;; *) echo missing ;; esac > "$RESULT"`,
+  });
+  // A JavaScript string cannot hold the byte E9 alone, so a shell script that is written as bytes sets TMPDIR.
+  await writeFile(
+    join(dir, "install.sh"),
+    Buffer.concat([
+      Buffer.from(`TMPDIR='${dir}/caf`),
+      Buffer.from([0xe9]),
+      Buffer.from(`'; export TMPDIR; mkdir -p "$TMPDIR"; exec '${bunExe()}' install\n`),
+    ]),
+  );
+  await using proc = spawn({
+    cmd: ["sh", "./install.sh"],
+    cwd: String(dir),
+    // TMPDIR is only used if the cache is on the same filesystem.
+    env: { ...baseEnv, BUN_TMPDIR: undefined, BUN_INSTALL_CACHE_DIR: join(dir, "cache"), RESULT: join(dir, "result") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(readFileSync(join(dir, "result"), "utf8")).toBe("found\n");
+  expect(exitCode).toBe(0);
+});
+
 // PR_SET_PDEATHSIG. The script holds the write end of `alive`, which ends when the script does, and
 // waits for a line in `gate`, which the test writes once bun is gone.
 test.concurrent.skipIf(!isLinux).each(["hoisted", "isolated"] as const)(

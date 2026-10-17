@@ -6,6 +6,7 @@ import {
   compileFunction,
   constants,
   createContext,
+  isContext,
   runInContext,
   runInNewContext,
   runInThisContext,
@@ -1792,6 +1793,87 @@ describe("DONT_CONTEXTIFY", () => {
 
     ctx.fromOutside = 456;
     expect(runInContext("fromOutside", ctx)).toBe(456);
+  });
+});
+
+describe("a context's global proxy passed as a context", () => {
+  // The unfixed build overflows the stack, so the cases that used to crash run in a child process.
+  test("createContext(globalProxy) creates a new context that reads through the proxy", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const vm = require("node:vm");
+        const g = vm.runInContext("this", vm.createContext());
+        console.log(vm.isContext(g));
+        const ctx = vm.createContext(g);
+        console.log(ctx === g, vm.isContext(ctx));
+        console.log(vm.runInContext("this.x", ctx));
+        console.log(vm.runInContext("this.Array", ctx) === g.Array);
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("false\ntrue true\nundefined\ntrue\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("runInContext(code, globalProxy) rejects the proxy", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const vm = require("node:vm");
+        const g = vm.runInContext("this", vm.createContext());
+        try {
+          vm.runInContext("this.x", g);
+        } catch (e) {
+          console.log(e.code, e.message);
+        }
+        try {
+          new vm.Script("this.x").runInContext(g);
+        } catch (e) {
+          console.log(e.code, e.message);
+        }
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(
+      'ERR_INVALID_ARG_TYPE The "contextifiedObject" argument must be an vm.Context\n' +
+        'ERR_INVALID_ARG_TYPE The "contextifiedObject" argument must be an vm.Context\n',
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  test("the global proxy of a DONT_CONTEXTIFY context is still that context", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    const proxy = runInContext("this", ctx);
+    expect(isContext(proxy)).toBe(true);
+    expect(createContext(proxy)).toBe(ctx);
+    expect(runInContext("globalThis", proxy)).toBe(ctx);
+    runInContext("fromProxy = 1", proxy);
+    expect(ctx.fromProxy).toBe(1);
+    expect(runInContext("fromProxy", ctx)).toBe(1);
+  });
+
+  test("compileFunction parsingContext accepts the same contexts as isContext", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    ctx.fromCtx = 7;
+    expect(compileFunction("return fromCtx", [], { parsingContext: ctx })()).toBe(7);
+
+    const g = runInContext("this", createContext());
+    expect(() => compileFunction("1", [], { parsingContext: g })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
   });
 });
 

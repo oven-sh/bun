@@ -31,12 +31,14 @@ test("node:dgram close() inside 'message' handler stops remaining batch datagram
       const tx = dgram.createSocket("udp4");
       tx.on("error", () => {});
       // Queue a burst on the kernel rx buffer before the loop dispatches
-      // 'message'. Each send is awaited so its syscall has completed before
-      // the next one starts. Where loopback delivers during the send, as on
-      // Linux, that yields a multi-packet recvmmsg batch.
+      // 'message': every send is started before the loop gets a turn. Where
+      // loopback delivers during the send, as on Linux, that yields a
+      // multi-packet recvmmsg batch.
+      const sends = [];
       for (let i = 0; i < 16; i++) {
-        await new Promise(r => tx.send(String(i), port, "127.0.0.1", r));
+        sends.push(new Promise(r => tx.send(String(i), port, "127.0.0.1", r)));
       }
+      await Promise.all(sends);
       // Nothing says when the datagrams arrive. The poll that dispatches the
       // first one would dispatch the rest of its batch, and is over a turn later.
       await closed.promise;

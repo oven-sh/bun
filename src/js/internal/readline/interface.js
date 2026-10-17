@@ -27,6 +27,8 @@ const {
   StringPrototypeCodePointAt,
   StringPrototypeEndsWith,
   StringPrototypeIncludes,
+  StringPrototypeIndexOf,
+  StringPrototypeLastIndexOf,
   StringPrototypeRepeat,
   StringPrototypeReplaceAll,
   StringPrototypeSlice,
@@ -73,6 +75,15 @@ const kMincrlfDelay = 100;
  *  - \u2029 (Unicode 'PARAGRAPH SEPARATOR')
  */
 const lineEnding = /\r?\n|\r(?!\n)|\u2028|\u2029/g;
+
+// Such a string splits on "\n" with indexOf instead of the RegExp above.
+function hasOnlyLineFeeds(string) {
+  return (
+    StringPrototypeIndexOf(string, "\r") === -1 &&
+    StringPrototypeIndexOf(string, "\u2028") === -1 &&
+    StringPrototypeIndexOf(string, "\u2029") === -1
+  );
+}
 
 const kLineObjectStream = Symbol("line object stream");
 const kQuestionCancel = Symbol("kQuestionCancel");
@@ -617,7 +628,33 @@ class Interface extends InterfaceConstructor {
       this[kSawReturnAt] = 0;
     }
 
+    let newline = StringPrototypeIndexOf(string, "\n");
+    if (newline !== -1 && hasOnlyLineFeeds(string)) {
+      // The legacy _line_buffer setter can put any text in the buffer.
+      const buffer = this[kLine_buffer];
+      if (!buffer || hasOnlyLineFeeds(buffer)) {
+        if (buffer) {
+          string = buffer + string;
+          this[kLine_buffer] = null;
+          newline = StringPrototypeIndexOf(string, "\n");
+        }
+        this[kSawReturnAt] = 0;
+        const lastNewline = StringPrototypeLastIndexOf(string, "\n");
+        // Either '' or (conceivably) the unfinished portion of the next line
+        this[kLine_buffer] = StringPrototypeSlice(string, lastNewline + 1);
+        let start = 0;
+        while (true) {
+          this[kOnLine](StringPrototypeSlice(string, start, newline));
+          if (newline === lastNewline) break;
+          start = newline + 1;
+          newline = StringPrototypeIndexOf(string, "\n", start);
+        }
+        return;
+      }
+    }
+
     // Run test() on the new string chunk, not on the entire line buffer.
+    lineEnding.lastIndex = 0;
     let newPartContainsEnding = RegExpPrototypeExec(lineEnding, string);
     if (newPartContainsEnding !== null) {
       if (this[kLine_buffer]) {

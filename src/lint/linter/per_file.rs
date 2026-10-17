@@ -5,6 +5,8 @@ use super::directives::{self, ConfigComment, Label};
 use super::globals::{CommentGlobal, CommentVariables, Tables};
 use crate::ast::File;
 use crate::language::Global;
+use crate::languages::JoinedComment;
+use crate::span::Span;
 use std::borrow::Cow;
 use std::cell::{Cell, OnceCell};
 
@@ -93,6 +95,23 @@ impl<'a> File<'a> {
             .linter
             .comments
             .get_or_init(|| directives::config_comments(self))
+    }
+
+    /// The comment that `span` is in, if the source interrupts it.
+    pub(crate) fn joined_comment(&self, span: Span) -> Option<&'a JoinedComment> {
+        let joined = &self.parsed()?.joined;
+        joined.iter().find(|it| it.value().contains(span))
+    }
+
+    /// The text of `span`, which is part of a [`ConfigComment`].
+    pub(crate) fn slice_of_comment(&self, span: Span) -> &'a [u8] {
+        match self.joined_comment(span) {
+            Some(joined) => joined
+                .text()
+                .get(joined.index_of(span.start)..joined.index_of(span.end))
+                .unwrap_or_default(),
+            None => self.slice(span),
+        }
     }
 
     fn comment_variables(&'a self) -> Option<&'a CommentVariables> {

@@ -567,6 +567,23 @@ macro_rules! zstr {
     }};
 }
 
+/// The path of the null device, as a literal that `concat!` accepts. Use it for paths handed to a
+/// child process, because most Windows programs treat `/dev/null` as an ordinary path.
+#[cfg(not(windows))]
+#[macro_export]
+macro_rules! null_device {
+    () => {
+        "/dev/null"
+    };
+}
+#[cfg(windows)]
+#[macro_export]
+macro_rules! null_device {
+    () => {
+        "NUL"
+    };
+}
+
 /// Nomicon-style opaque FFI handle. Expands to a zero-sized `#[repr(C)]`
 /// struct whose address is the only thing Rust ever observes.
 ///
@@ -3372,39 +3389,29 @@ macro_rules! generic_index_int { ($($t:ty),*) => { $(
 )* } }
 generic_index_int!(u8, u16, u32, u64, usize, i32, i64);
 
-/// Generic-integer bound used by `validateIntegerRange` /
-/// `validateBigIntRange` / `getInteger`
+/// Generic-integer bound used by `validateIntegerRange` / `getInteger`
 /// (JSGlobalObject). Provides the small surface those callers need:
-/// signedness, range as `i128`, and lossy/wrapping casts from the JSC numeric
-/// carriers (i32 / f64 / i64 / u64).
+/// range as `i128`, and lossy/wrapping casts from the JSC numeric
+/// carriers (i32 / f64).
 pub trait Integer: Copy + Default {
-    const SIGNED: bool;
     const MIN_I128: i128;
     const MAX_I128: i128;
     const ZERO: Self;
     fn from_i32(v: i32) -> Self;
     fn from_f64(v: f64) -> Self;
-    fn from_i64(v: i64) -> Self;
-    fn from_u64(v: u64) -> Self;
 }
 macro_rules! impl_integer {
-    ($($t:ty: $signed:expr),* $(,)?) => { $(
+    ($($t:ty),* $(,)?) => { $(
         impl Integer for $t {
-            const SIGNED: bool = $signed;
             const MIN_I128: i128 = <$t>::MIN as i128;
             const MAX_I128: i128 = <$t>::MAX as i128;
             const ZERO: Self = 0;
             #[inline] fn from_i32(v: i32) -> Self { v as Self }
             #[inline] fn from_f64(v: f64) -> Self { v as Self }
-            #[inline] fn from_i64(v: i64) -> Self { v as Self }
-            #[inline] fn from_u64(v: u64) -> Self { v as Self }
         }
     )* };
 }
-impl_integer!(
-    i8: true, i16: true, i32: true, i64: true, isize: true,
-    u8: false, u16: false, u32: false, u64: false, usize: false,
-);
+impl_integer!(i8, i16, i32, i64, isize, u8, u16, u32, u64, usize);
 
 /// Primitive integers transcodable as native-endian raw bytes.
 ///

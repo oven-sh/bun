@@ -30,6 +30,7 @@ const dir = String(
       import { EventEmitter, once } from "node:events";
       import { pipeline } from "node:stream/promises";
       import timersPromises from "node:timers/promises";
+      import { WebSocketServer } from "ws";
 
       const data = import.meta.dir + "/data.txt";
       const defer = () => Promise.withResolvers();
@@ -197,6 +198,20 @@ const dir = String(
               response.on("end", () => { seen("client end"); resolve(); });
             });
           });
+          await new Promise(resolve => server.close(resolve));
+        },
+        wsServer: async seen => {
+          const server = http.createServer();
+          const closed = defer();
+          new WebSocketServer({ server }).on("connection", ws => {
+            seen("connection");
+            ws.on("message", message => { seen("message"); ws.send(String(message)); });
+            ws.on("ping", () => seen("ping"));
+            ws.on("close", () => { seen("close"); closed.resolve(); });
+          });
+          await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+          await new Promise(resolve => { const ws = new WebSocket("ws://127.0.0.1:" + server.address().port); ws.onopen = () => { ws.ping(); ws.send("x"); }; ws.onmessage = () => ws.close(); ws.onclose = resolve; });
+          await closed.promise;
           await new Promise(resolve => server.close(resolve));
         },
 

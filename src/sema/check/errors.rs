@@ -40,6 +40,28 @@ pub struct Checked {
 }
 
 impl Checked {
+    /// Whether `finish_file` has nothing to report for the file unless another task reports something in it.
+    pub fn is_empty(&self) -> bool {
+        let Checked {
+            syntactic,
+            semantic,
+            declaration,
+            include,
+            expected_errors,
+            // Only drops what other tasks report.
+            never_checked: _,
+            unused_private_members,
+            declaration_file,
+        } = self;
+        syntactic.is_empty()
+            && semantic.as_ref().is_none_or(Vec::is_empty)
+            && declaration.is_empty()
+            && include.is_empty()
+            && expected_errors.is_empty()
+            && unused_private_members.is_empty()
+            && declaration_file.is_none()
+    }
+
     /// Moves the declaration diagnostics (`GetDeclarationDiagnostics`) into a `Checked` of their own, so that `finish_file` converts them
     /// separately. `None` if there are none.
     pub fn take_declaration_diagnostics(&mut self) -> Option<Checked> {
@@ -216,10 +238,16 @@ impl Checker<'_, '_> {
         self.get_additional_js_syntactic_diagnostics(file);
         // `getBindAndCheckDiagnostics` reports nothing for a JSON file.
         let is_json = hir.kind == FileKind::Json;
-        if self.expected != Requested::All || is_json || !self.reports_semantic_errors(file) {
+        let is_checked = match self.expected {
+            Requested::All => true,
+            // There the types depend on what was checked before, and the rules do not ask in the order of the file.
+            Requested::Types => self.bound(file).has_types_that_depend_on_order(),
+            Requested::Syntactic | Requested::Declaration => false,
+        };
+        if !is_checked || is_json || !self.reports_semantic_errors(file) {
             let syntactic = std::mem::take(&mut self.reported);
             let mut declaration = Vec::new();
-            if self.expected != Requested::Syntactic {
+            if matches!(self.expected, Requested::Declaration | Requested::All) {
                 self.emit_resolver_links = Default::default();
                 declaration = self.get_declaration_diagnostics(file);
             }

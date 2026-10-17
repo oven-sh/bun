@@ -47,14 +47,13 @@ const rustIdentifierPaths: Record<string, string> = {
   "bun.rs": "bun.rs",
   "ipc.rs": "runtime/ipc_host.rs",
   "Counters.rs": "jsc/Counters.rs",
-  "FrameworkRouter.rs": "runtime/bake/FrameworkRouter.rs",
+  "FrameworkRouter.rs": "runtime/bake/router/js.rs",
   "JSBundler.rs": "runtime/api/JSBundler.rs",
   "Listener.rs": "runtime/socket/Listener.rs",
   "MarkdownObject.rs": "runtime/api/MarkdownObject.rs",
   "SecureContext.rs": "runtime/api/bun/SecureContext.rs",
   "SemverObject.rs": "semver_jsc/SemverObject.rs",
   "Stat.rs": "runtime/node/Stat.rs",
-  "bindgen_test.rs": "jsc/bindgen_test.rs",
   "collections/linear_fifo.rs": "collections/linear_fifo.rs",
   "crash_handler.rs": "crash_handler/crash_handler.rs",
   "css_internals.rs": "css_jsc/css_internals.rs",
@@ -69,6 +68,7 @@ const rustIdentifierPaths: Record<string, string> = {
   "ini.rs": "ini/ini.rs",
   "install_binding.rs": "install_jsc/install_binding.rs",
   "jest.rs": "runtime/test_runner/jest.rs",
+  "jsc_hooks.rs": "runtime/jsc_hooks.rs",
   "memory_pressure.rs": "runtime/node/memory_pressure.rs",
   "mysql.rs": "sql_jsc/mysql.rs",
   "napi_body.rs": "runtime/napi/napi_body.rs",
@@ -78,7 +78,6 @@ const rustIdentifierPaths: Record<string, string> = {
   "node_fs_binding.rs": "runtime/node/node_fs_binding.rs",
   "node_http_binding.rs": "runtime/node/node_http_binding.rs",
   "node_net_binding.rs": "runtime/node/node_net_binding.rs",
-  "node_os.rs": "runtime/node/node_os.rs",
   "node_quic_binding.rs": "runtime/node/node_quic_binding.rs",
   "node_util_binding.rs": "runtime/node/node_util_binding.rs",
   "node_zlib_binding.rs": "runtime/node/node_zlib_binding.rs",
@@ -128,7 +127,7 @@ function resolveNativeFileId(call_type: NativeCallType, filename: string) {
 
   const resolved = sourceFiles.find(file => file.endsWith(sep + filename));
   if (!resolved) {
-    const fnName = call_type === "bind" ? "bindgenFn" : call_type;
+    const fnName = call_type === "bind" ? "bindgen" : call_type;
     throw new Error(`Could not find file ${filename} in $${fnName} call`);
   }
 

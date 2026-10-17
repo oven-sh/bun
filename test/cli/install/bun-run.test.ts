@@ -1487,7 +1487,7 @@ describe.concurrent("bun run", () => {
     }
 
     const blocked = await run(ownBun("blocked"), "run", "v");
-    expect(blocked.stderr).toContain("warn: could not create the node alias for bun in ");
+    expect(blocked.stderr).toContain("warn: failed to create node alias in ");
     expect(blocked.stderr).toContain("command not found: node");
     expect(blocked).toMatchObject({ stdout: "", exitCode: 1 });
   });
@@ -1533,9 +1533,7 @@ describe.concurrent("bun run", () => {
     const launcher = (name: string) => join(String(dir), "node_modules", ".bin", `${name}.exe`);
     const refused = {
       stdout: "",
-      stderr: expect.stringContaining(
-        "error: an argument with one of % & | < > ^ cannot be passed to a .cmd or .bat file",
-      ),
+      stderr: expect.stringContaining("error: cannot pass an argument containing % & | < > ^ to a .cmd or .bat file"),
       exitCode: 255,
     };
 

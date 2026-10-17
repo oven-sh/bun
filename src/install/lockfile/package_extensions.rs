@@ -9,7 +9,7 @@ use bun_core::fmt::format_json_string_utf8;
 use bun_semver::string::Builder;
 use bun_semver::{self as semver, SlicedString, String as SemverString};
 
-use crate::dependency::{self, Behavior, NpmAliasRegistry, TagExt as _, VersionTag};
+use crate::dependency::{self, Behavior, TagExt as _, VersionTag};
 use crate::lockfile_real::override_selector::parse_package_segment;
 use crate::lockfile_real::package::{Package, PackageColumns as _};
 use crate::lockfile_real::{DependencySlice, Lockfile, PackageIDSlice};
@@ -352,14 +352,13 @@ impl PackageExtensions {
 }
 
 impl Lockfile {
-    fn package_extension_key(&self, id: PackageID) -> u64 {
+    pub(crate) fn package_extension_key(&self, id: PackageID) -> u64 {
         Builder::string_hash(&crate::dedupe::label(self, id))
     }
 
     fn package_extension_row(
         &mut self,
         wanted: &Wanted<'_>,
-        aliases: &mut dyn NpmAliasRegistry,
         log: &mut bun_ast::Log,
     ) -> Result<Dependency, AllocError> {
         let edge = wanted.edge;
@@ -378,7 +377,7 @@ impl Lockfile {
                 VersionTag::infer(dependency::trim_literal(sliced.slice)),
                 &sliced,
                 Some(log),
-                Some(aliases),
+                None,
             )
             .unwrap_or_default(),
         })
@@ -389,7 +388,6 @@ impl Lockfile {
         &mut self,
         rules: &[Rule],
         applied: &[Applied],
-        aliases: &mut dyn NpmAliasRegistry,
         log: &mut bun_ast::Log,
         id: PackageID,
         now: &mut Vec<Applied>,
@@ -443,7 +441,7 @@ impl Lockfile {
                     continue;
                 };
                 if !rule.is_row(&row, self.buffers.string_bytes.as_slice()) {
-                    row = self.package_extension_row(rule, &mut *aliases, &mut *log)?;
+                    row = self.package_extension_row(rule, &mut *log)?;
                     resolved = invalid_package_id;
                     changed = true;
                 }
@@ -473,7 +471,7 @@ impl Lockfile {
             {
                 continue;
             }
-            let row = self.package_extension_row(rule, &mut *aliases, &mut *log)?;
+            let row = self.package_extension_row(rule, &mut *log)?;
             now.push(Applied(package, row.name_hash, kind_of(&row)));
             rows.push((row, invalid_package_id));
             changed = true;
@@ -482,11 +480,13 @@ impl Lockfile {
             return Ok(false);
         }
 
-        // Rows not at the end of the buffer move there; `clean_with_logger` drops the old ones.
+        // The rows are rewritten at the end of the buffer. `clean_with_logger` drops the old ones.
         let dependencies = &mut self.buffers.dependencies;
         let resolutions = &mut self.buffers.resolutions;
         debug_assert_eq!(dependencies.len(), resolutions.len());
-        if off + len == dependencies.len() {
+        // Rows at the end are overwritten in place only if no rule was applied before. Then every
+        // old row keeps its index, so the trees and slices loaded from the lockfile stay valid.
+        if applied.is_empty() && off + len == dependencies.len() {
             dependencies.truncate(off);
             resolutions.truncate(off);
         }
@@ -528,15 +528,13 @@ impl Lockfile {
     #[inline(never)]
     pub(crate) fn extend_new_package(
         &mut self,
-        aliases: &mut dyn NpmAliasRegistry,
         log: &mut bun_ast::Log,
         id: PackageID,
     ) -> Result<Package, AllocError> {
         let rules = core::mem::take(&mut self.package_extensions.rules);
         let mut now = Vec::new();
         // The caller walks every row of a new package.
-        let extended =
-            self.extend_package(&rules, &[], aliases, log, id, &mut now, &mut Vec::new());
+        let extended = self.extend_package(&rules, &[], log, id, &mut now, &mut Vec::new());
         self.package_extensions.rules = rules;
         extended?;
         for applied in now {
@@ -545,36 +543,33 @@ impl Lockfile {
         Ok(*self.packages.get(id as usize))
     }
 
-    /// For a loaded lockfile, once package.json is read. `Some`: changed, with the rows to resolve.
+    /// Applies the rules to a lockfile loaded from disk. If anything changed, returns the rows to
+    /// resolve and the rows that no rule adds anymore, as `(package_extension_key, name hash)`.
     #[cold]
     #[inline(never)]
     pub(crate) fn reconcile_package_extensions(
         &mut self,
-        aliases: &mut dyn NpmAliasRegistry,
         log: &mut bun_ast::Log,
-    ) -> Result<Option<Vec<DependencyID>>, AllocError> {
+    ) -> Result<Option<(Vec<DependencyID>, Vec<(u64, PackageNameHash)>)>, AllocError> {
         let PackageExtensions { rules, applied } = core::mem::take(&mut self.package_extensions);
         let mut now = Vec::with_capacity(applied.len());
         let mut unresolved = Vec::new();
         let mut changed = false;
         for id in 0..self.packages.len() as PackageID {
-            changed |= self.extend_package(
-                &rules,
-                &applied,
-                &mut *aliases,
-                &mut *log,
-                id,
-                &mut now,
-                &mut unresolved,
-            )?;
+            changed |=
+                self.extend_package(&rules, &applied, &mut *log, id, &mut now, &mut unresolved)?;
         }
         // Fewer: a record of a package that the lockfile does not have.
         changed |= now.len() != applied.len();
+        let removed = (applied.iter())
+            .filter(|applied| applied.2 != Kind::OptionalPeer && !now.contains(applied))
+            .map(|applied| (applied.0, applied.1))
+            .collect();
         self.package_extensions = PackageExtensions {
             rules,
             applied: now,
         };
-        Ok(changed.then_some(unresolved))
+        Ok(changed.then_some((unresolved, removed)))
     }
 
     /// `clean_with_logger`: the records of the packages that are still there.
@@ -598,6 +593,8 @@ impl Lockfile {
     pub(crate) fn package_extension_lines(&self) -> Vec<Vec<u8>> {
         let buf = self.buffers.string_bytes.as_slice();
         let applied = &self.package_extensions.applied;
+        let hoisted = &self.buffers.hoisted_dependencies;
+        let resolutions = &self.buffers.resolutions;
         let mut lines: Vec<Vec<u8>> = Vec::new();
         for id in 0..self.packages.len() {
             if self.packages.items_resolution()[id].tag != ResolutionTag::Npm {
@@ -606,6 +603,13 @@ impl Lockfile {
             let label = crate::dedupe::label(self, id as PackageID);
             let package = Builder::string_hash(&label);
             if !applied.iter().any(|applied| applied.0 == package) {
+                continue;
+            }
+            // bun.lock's `packages` only lists packages that are in an install tree.
+            if !hoisted
+                .iter()
+                .any(|&row| resolutions[row as usize] as usize == id)
+            {
                 continue;
             }
             let rows =

@@ -209,7 +209,8 @@ pub struct PublishConfig {
     pub otp: &'static [u8],
     pub auth_type: Option<AuthType>,
     pub tolerate_republish: bool,
-    pub provenance: bool,
+    pub provenance_flag: Option<bool>,
+    pub provenance_npmrc: Option<bool>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -461,6 +462,39 @@ impl Options {
         Ok(())
     }
 
+    /// Returns the name of the setting that turns provenance on, or `None` if provenance is off. As
+    /// in npm, the command line wins over `publishConfig`, then the environment, then `.npmrc`.
+    pub fn provenance_asked_by(
+        &self,
+        package_json: &Expr,
+        env: &DotEnvLoader,
+    ) -> Option<&'static str> {
+        let in_package_json = (package_json.get(b"publishConfig"))
+            .and_then(|config| config.get(b"provenance"))
+            .and_then(|value| bun_ini::npmrc_bool(&value));
+        const PROVENANCE_KEYS: [&[u8]; 2] = [b"NPM_CONFIG_PROVENANCE", b"npm_config_provenance"];
+        let in_env = (PROVENANCE_KEYS.iter())
+            .filter_map(|key| env.get(key))
+            .filter(|value| !value.is_empty())
+            .map(bun_ini::npm_config_bool)
+            .max();
+        [
+            ("--provenance", self.publish_config.provenance_flag),
+            (
+                "\"provenance\" in the publishConfig of package.json",
+                in_package_json,
+            ),
+            ("NPM_CONFIG_PROVENANCE", in_env),
+            (
+                "\"provenance\" in .npmrc",
+                self.publish_config.provenance_npmrc,
+            ),
+        ]
+        .into_iter()
+        .find_map(|(name, on)| Some((name, on?)))
+        .and_then(|(name, on)| on.then_some(name))
+    }
+
     /// Everything [`Self::apply_publish_config`] may replace for `package_name`.
     pub fn publish_target(&self, package_name: &[u8]) -> PublishTarget {
         PublishTarget {
@@ -573,8 +607,9 @@ fn make_open_dir(path: &[u8]) -> crate::Result<bun_sys::Fd> {
 fn make_open_dir_under(base: &[u8], parts: &[&[u8]]) -> crate::Result<bun_sys::Fd> {
     use bun_paths::{platform, resolve_path::join_abs_string_buf_checked};
 
+    let base = expand_home(base);
     let mut buf = bun_paths::path_buffer_pool::get();
-    let Some(path) = join_abs_string_buf_checked::<platform::Auto>(base, &mut buf.0, parts) else {
+    let Some(path) = join_abs_string_buf_checked::<platform::Auto>(&base, &mut buf.0, parts) else {
         return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
     };
     make_open_dir(path)
@@ -582,11 +617,11 @@ fn make_open_dir_under(base: &[u8], parts: &[&[u8]]) -> crate::Result<bun_sys::F
 
 pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd> {
     if let Some(home_dir) = env_var::BUN_INSTALL_GLOBAL_DIR.get() {
-        return make_open_dir(home_dir);
+        return make_open_dir(&expand_home(home_dir));
     }
 
     if !explicit_global_dir.is_empty() {
-        return make_open_dir(&expand_home_tilde(explicit_global_dir));
+        return make_open_dir(explicit_global_dir);
     }
 
     if let Some(home_dir) = env_var::BUN_INSTALL.get() {
@@ -605,14 +640,14 @@ pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd>
 
 pub(crate) fn open_global_bin_dir(opts_: Option<&Api::BunInstall>) -> crate::Result<bun_sys::Fd> {
     if let Some(home_dir) = env_var::BUN_INSTALL_BIN.get() {
-        return make_open_dir(home_dir);
+        return make_open_dir(&expand_home(home_dir));
     }
 
     if let Some(home_dir) = opts_
         .and_then(|opts| opts.global_bin_dir.as_deref())
         .filter(|home_dir| !home_dir.is_empty())
     {
-        return make_open_dir(&expand_home_tilde(home_dir));
+        return make_open_dir(home_dir);
     }
 
     if let Some(home_dir) = env_var::BUN_INSTALL.get() {
@@ -637,18 +672,10 @@ fn leak_static(s: &[u8]) -> &'static [u8] {
     bun_core::heap::release(s.to_vec().into_boxed_slice())
 }
 
-/// `~` and `~/<rest>` in a path from bunfig.toml or .npmrc. `~user` is not expanded.
-fn expand_home_tilde(path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
-    match (path, env_var::HOME.get_not_empty()) {
-        ([b'~', rest @ ..], Some(home))
-            if rest
-                .first()
-                .is_none_or(|&c| bun_core::path_sep::is_sep_any(c)) =>
-        {
-            [home, rest].concat().into()
-        }
-        _ => path.into(),
-    }
+/// Expands a leading `~/` in a path from an environment variable, because the shell often has not
+/// done so. A relative path is returned unchanged.
+pub(crate) fn expand_home(path: &[u8]) -> Box<[u8]> {
+    Api::BunInstall::resolve_path(b"", path)
 }
 
 impl Options {
@@ -663,8 +690,12 @@ impl Options {
         bun_install_ref: Option<&Api::BunInstall>,
         // Runtime auto-install's `.npmrc`: only the registries and their credentials are read.
         runtime_npmrc: Option<&Api::BunInstall>,
+        // Runtime auto-install only: the bunfig.toml files of the project's other folders. The first
+        // has the ones that `bun_install_ref` overrides, the second the ones that override it.
+        runtime_bunfigs: [Option<&Api::BunInstall>; 2],
         subcommand: Subcommand,
     ) -> crate::Result<()> {
+        let bunfigs = [runtime_bunfigs[0], bun_install_ref, runtime_bunfigs[1]];
         if let Some(manifest_cache) = env.get(b"BUN_MANIFEST_CACHE") {
             self.enable.set(
                 Enable::MANIFEST_CACHE,
@@ -678,7 +709,7 @@ impl Options {
         if let Some(registry) = runtime_npmrc.and_then(|npmrc| npmrc.default_registry.as_ref()) {
             base = registry.clone();
         }
-        if let Some(config) = bun_install_ref {
+        for config in bunfigs.into_iter().flatten() {
             if let Some(registry) = &config.default_registry {
                 base = registry.clone();
             }
@@ -690,24 +721,32 @@ impl Options {
         if base.url.is_empty() {
             base.url = Npm::registry::DEFAULT_URL.as_bytes().into();
         }
-        // Clone so the
-        // `base.url` fallback below in the scoped-registry loop stays valid.
-        self.scope = Npm::registry::Scope::from_api(b"", base.clone(), Some(&mut *env))?;
+        self.scope = Npm::registry::Scope::from_api(b"", base, Some(&mut *env))?;
         // `did_override_default_scope` is set at the end of this fn;
         // on the OOM error path the field is irrelevant (process aborts).
 
+        // Scopes that have credentials but no URL use the default registry. They are registered
+        // further down, once the default registry's URL is final.
+        let mut at_default_registry: Vec<(&[u8], &Api::NpmRegistry)> = Vec::new();
+
         // npmrc < bunfig
-        for config in [runtime_npmrc, bun_install_ref].into_iter().flatten() {
+        for config in [runtime_npmrc].into_iter().chain(bunfigs).flatten() {
             if let Some(scoped) = &config.scoped {
-                for (name, registry_) in scoped.scopes.keys().iter().zip(scoped.scopes.values()) {
+                for (name, registry) in scoped.scopes.keys().iter().zip(scoped.scopes.values()) {
                     debug_assert_eq!(scoped.scopes.keys().len(), scoped.scopes.values().len());
-                    let mut registry = registry_.clone();
+                    let name: &[u8] = name;
+                    at_default_registry.retain(|&(earlier, _)| earlier != name);
                     if registry.url.is_empty() {
-                        registry.url.clone_from(&base.url);
+                        // A scope with neither a URL nor credentials counts as having no entry.
+                        self.registries.remove(&Npm::registry::Scope::hash(name));
+                        if registry.has_credentials() {
+                            at_default_registry.push((name, registry));
+                        }
+                        continue;
                     }
                     self.registries.put(
                         Npm::registry::Scope::hash(name),
-                        Npm::registry::Scope::from_api(name, registry, Some(&mut *env))?,
+                        Npm::registry::Scope::from_api(name, registry.clone(), Some(&mut *env))?,
                     )?;
                 }
             }
@@ -719,9 +758,9 @@ impl Options {
             }
         }
 
-        if let Some(config) = bun_install_ref {
+        for config in bunfigs.into_iter().flatten() {
             if let Some(cache_directory) = config.cache_directory.as_deref() {
-                self.cache_directory = leak_static(&expand_home_tilde(cache_directory));
+                self.cache_directory = leak_static(cache_directory);
             }
 
             if let Some(ca) = &config.ca {
@@ -763,7 +802,7 @@ impl Options {
             }
 
             if let Some(cafile) = config.cafile.as_deref() {
-                self.ca_file_name = leak_static(&expand_home_tilde(cafile));
+                self.ca_file_name = leak_static(cafile);
             }
 
             if config.disable_cache.unwrap_or(false) {
@@ -838,7 +877,7 @@ impl Options {
                 }
             }
 
-            self.publish_config.provenance = config.provenance == Some(true);
+            self.publish_config.provenance_npmrc = config.provenance;
 
             if let Some(min_age_ms) = config.minimum_release_age_ms {
                 self.minimum_release_age_ms = Some(min_age_ms);
@@ -865,7 +904,10 @@ impl Options {
         }
 
         if let Some(val) = env.get(b"BUN_INSTALL_GLOBAL_STORE") {
-            self.enable.set(Enable::GLOBAL_VIRTUAL_STORE, val != b"0");
+            self.enable.set(
+                Enable::GLOBAL_VIRTUAL_STORE,
+                bun_core::env_var::string_is_truthy(val),
+            );
         }
 
         let default_disable_progress_bar: bool = 'brk: {
@@ -879,6 +921,10 @@ impl Options {
 
             break 'brk Output::stderr_descriptor_type() != Output::DescriptorType::Terminal;
         };
+
+        // The default registry from the config files, before the environment or `--registry`
+        // replaces it.
+        let configured = self.scope.clone();
 
         // technically, npm_config is case in-sensitive
         {
@@ -906,6 +952,23 @@ impl Options {
             self.scope =
                 self.scope_for_registry_url(b"", &self.scope, cli.registry, Some(&mut *env))?;
             self.registry_from_command_line = true;
+        }
+
+        // If the default registry was replaced, these scopes' credentials move to the new one only
+        // when the default registry's own credentials do. Otherwise they stay with the old one.
+        let follows = self.scope.url_hash == configured.url_hash
+            || self.inherits_credentials(&configured, &self.scope.url.url());
+        let home = if follows { &self.scope } else { &configured };
+        let home: Box<[u8]> = home.url.href().into();
+        for (name, registry) in at_default_registry {
+            let registry = Api::NpmRegistry {
+                url: home.clone(),
+                ..registry.clone()
+            };
+            self.registries.put(
+                Npm::registry::Scope::hash(name),
+                Npm::registry::Scope::from_api(name, registry, Some(&mut *env))?,
+            )?;
         }
 
         {
@@ -1157,6 +1220,7 @@ impl Options {
             self.publish_config.auth_type = Some(auth_type);
         }
         self.publish_config.tolerate_republish = cli.tolerate_republish;
+        self.publish_config.provenance_flag = cli.publish_config.provenance_flag;
 
         // `--ca` / `--cafile` replace the config file's `ca` + `cafile` as a whole.
         if !cli.ca.is_empty() || !cli.ca_file_name.is_empty() {
@@ -1351,7 +1415,7 @@ impl Enable {
         self.contains(Enable::FAIL_EARLY)
     }
     #[inline]
-    pub(crate) fn frozen_lockfile(self) -> bool {
+    pub fn frozen_lockfile(self) -> bool {
         self.contains(Enable::FROZEN_LOCKFILE)
     }
     #[inline]

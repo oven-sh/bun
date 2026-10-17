@@ -103,6 +103,8 @@ pub struct HtmlImports {
 
 pub struct InputFile {
     pub(crate) source: bun_ast::Source,
+    /// The `?query` of the import that made this module. `PathToSourceIndexMap` has it in the key.
+    pub ignored_suffix: &'static [u8],
     pub(crate) secondary_path: AstVec<u8>,
     pub(crate) loader: options::Loader,
     pub side_effects: SideEffects,
@@ -118,6 +120,7 @@ impl Default for InputFile {
     fn default() -> Self {
         Self {
             source: bun_ast::Source::default(),
+            ignored_suffix: b"",
             secondary_path: AstAlloc::vec(),
             loader: options::Loader::default(),
             side_effects: SideEffects::default(),
@@ -135,6 +138,7 @@ impl Default for InputFile {
 bun_collections::multi_array_columns! {
     pub trait InputFileColumns for InputFile {
         source: bun_ast::Source,
+        ignored_suffix: &'static [u8],
         secondary_path: AstVec<u8>,
         loader: options::Loader,
         side_effects: SideEffects,

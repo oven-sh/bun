@@ -38,12 +38,12 @@ function isFromObjectPrototype(name: string, value: unknown): boolean {
  * A Proxy is asked once, as it always was, and cannot pass on what Object.prototype holds.
  */
 function readOption(object: object, name: string): any {
+  if ($isProxyObject(object)) {
+    const value = (object as $AnyObject)[name];
+    return isFromObjectPrototype(name, value) ? undefined : value;
+  }
   for (let link: object | null = object; link !== null; link = ObjectGetPrototypeOf(link)) {
     if (link === ObjectPrototype) return undefined;
-    if ($isProxyObject(link)) {
-      const value = (object as $AnyObject)[name];
-      return isFromObjectPrototype(name, value) ? undefined : value;
-    }
     if (ObjectHasOwn(link, name)) return (object as $AnyObject)[name];
   }
   return undefined;
@@ -536,21 +536,20 @@ function setStartupParameter(parameters: Record<string, string>, name: string, k
  * Object.prototype's. Each value is read once.
  */
 function readConnectionParameters(parameters: Record<string, string>, connection: $AnyObject) {
+  if ($isProxyObject(connection)) {
+    // A Proxy lists what it has and inherits itself.
+    for (const key in connection) {
+      const value = connection[key];
+      if (value !== undefined && !isFromObjectPrototype(key, value)) {
+        setStartupParameter(parameters, `options.connection.${key}`, key, value);
+      }
+    }
+    return;
+  }
   // As in a for-in, a name that a nearer object has hides the same name further up, enumerable or not.
   let hidden: Record<string, true> | undefined;
   let link: object | null = connection;
   while (link !== null && link !== ObjectPrototype) {
-    if ($isProxyObject(link)) {
-      // A Proxy lists what it has and inherits itself.
-      for (const key in link) {
-        if (hidden !== undefined && hidden[key] === true) continue;
-        const value = connection[key];
-        if (value !== undefined && !isFromObjectPrototype(key, value)) {
-          setStartupParameter(parameters, `options.connection.${key}`, key, value);
-        }
-      }
-      return;
-    }
     for (const key of ObjectKeys(link)) {
       if (hidden !== undefined && hidden[key] === true) continue;
       const value = connection[key];

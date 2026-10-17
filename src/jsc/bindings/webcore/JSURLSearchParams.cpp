@@ -35,6 +35,7 @@
 #include "JSDOMConvertStrings.h"
 #include "JSDOMConvertUnion.h"
 #include "JSDOMExceptionHandling.h"
+#include "ErrorCode.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMIterator.h"
@@ -134,8 +135,8 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSURLSearchParamsDOMCons
     auto* structure = structureForNewTarget<URLSearchParams>(lexicalGlobalObject, callFrame);
     RETURN_IF_EXCEPTION(throwScope, {});
     auto object = URLSearchParams::create(WTF::move(init));
-    if constexpr (IsExceptionOr<decltype(object)>)
-        RETURN_IF_EXCEPTION(throwScope, {});
+    if (object.hasException()) [[unlikely]]
+        return Bun::throwError(lexicalGlobalObject, throwScope, Bun::ErrorCode::ERR_INVALID_TUPLE, "Each query pair must be an iterable [name, value] tuple"_s);
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
     auto jsValue = toJSNewlyCreated<IDLInterface<URLSearchParams>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, structure, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)

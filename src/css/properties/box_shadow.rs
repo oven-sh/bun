@@ -222,16 +222,12 @@ impl BoxShadowHandler {
                 }
             }
             Property::Unparsed(unp) => {
-                if unp.property_id.tag() == css::css_properties::PropertyIdTag::BoxShadow {
-                    self.flush(dest, context);
+                self.flush(dest, context);
 
-                    let mut unparsed = unp.deep_clone(arena);
-                    context.add_unparsed_fallbacks(arena, &mut unparsed);
-                    dest.push(Property::Unparsed(unparsed));
-                    self.flushed = true;
-                } else {
-                    return false;
-                }
+                let mut unparsed = unp.deep_clone(arena);
+                context.add_unparsed_fallbacks(arena, &mut unparsed);
+                dest.push(Property::Unparsed(unparsed));
+                self.flushed = true;
             }
             _ => return false,
         }

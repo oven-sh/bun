@@ -14,11 +14,13 @@ use crate::css_properties::margin_padding::{
     InsetHandler, MarginHandler, PaddingHandler, ScrollMarginHandler,
 };
 use crate::css_properties::prefix_handler::FallbackHandler;
+use crate::css_properties::properties_generated::Owner;
 use crate::css_properties::size::SizeHandler;
 use crate::css_properties::text::Direction;
 use crate::css_properties::transform::TransformHandler;
 use crate::css_properties::transition::TransitionHandler;
 use crate::css_properties::ui::ColorSchemeHandler;
+use strum::VariantArray as _;
 
 pub type DeclarationList<'bump> = bun_alloc::ArenaVec<'bump, css::Property>;
 
@@ -404,6 +406,8 @@ pub struct DeclarationHandler<'bump> {
     pub(crate) color_scheme: ColorSchemeHandler,
     pub fallback: FallbackHandler,
     pub(crate) direction: Option<Direction>,
+    /// One bit for each `Owner` that got a declaration since `finalize`.
+    touched: u32,
     pub(crate) decls: DeclarationList<'bump>,
 }
 
@@ -413,21 +417,46 @@ impl<'bump> DeclarationHandler<'bump> {
             self.decls.push(css::Property::Direction(direction));
         }
 
-        self.background.finalize(&mut self.decls, context);
-        self.border.finalize(&mut self.decls, context);
-        self.flex.finalize(&mut self.decls, context);
-        self.align.finalize(&mut self.decls, context);
-        self.size.finalize(&mut self.decls, context);
-        self.margin.finalize(&mut self.decls, context);
-        self.padding.finalize(&mut self.decls, context);
-        self.scroll_margin.finalize(&mut self.decls, context);
-        self.transition.finalize(&mut self.decls, context);
-        self.font.finalize(&mut self.decls, context);
-        self.inset.finalize(&mut self.decls, context);
-        self.transform.finalize(&mut self.decls, context);
-        self.box_shadow.finalize(&mut self.decls, context);
-        self.color_scheme.finalize(&mut self.decls, context);
-        self.fallback.finalize(&mut self.decls, context);
+        // A handler that got no declaration has nothing to write.
+        let touched = core::mem::take(&mut self.touched);
+        macro_rules! finalize {
+            ($($Owner:ident => $handler:ident,)+) => {
+                const _: () = assert!(
+                    $(Owner::$Owner.bit())|+ | Owner::Custom.bit() | Owner::Passthrough.bit()
+                        == (1 << Owner::VARIANTS.len()) - 1,
+                    "an owner with a handler is not in this list",
+                );
+                $(
+                    if touched & Owner::$Owner.bit() != 0 {
+                        self.$handler.finalize(&mut self.decls, context);
+                    } else if cfg!(debug_assertions) {
+                        let len = self.decls.len();
+                        self.$handler.finalize(&mut self.decls, context);
+                        assert!(
+                            self.decls.len() == len,
+                            concat!(stringify!($handler), " wrote a declaration that it did not get"),
+                        );
+                    }
+                )+
+            };
+        }
+        finalize! {
+            Background => background,
+            Border => border,
+            Flex => flex,
+            Align => align,
+            Size => size,
+            Margin => margin,
+            Padding => padding,
+            ScrollMargin => scroll_margin,
+            Transition => transition,
+            Font => font,
+            Inset => inset,
+            Transform => transform,
+            BoxShadow => box_shadow,
+            ColorScheme => color_scheme,
+            Fallback => fallback,
+        }
     }
 
     pub(crate) fn handle_property(
@@ -435,51 +464,80 @@ impl<'bump> DeclarationHandler<'bump> {
         property: &css::Property,
         context: &mut css::PropertyHandlerContext,
     ) -> bool {
-        // return this.background.handleProperty(property, &this.decls, context);
-        self.background
-            .handle_property(property, &mut self.decls, context)
-            || self
-                .border
-                .handle_property(property, &mut self.decls, context)
-            || self
-                .flex
-                .handle_property(property, &mut self.decls, context)
-            || self
-                .align
-                .handle_property(property, &mut self.decls, context)
-            || self
-                .size
-                .handle_property(property, &mut self.decls, context)
-            || self
-                .margin
-                .handle_property(property, &mut self.decls, context)
-            || self
-                .padding
-                .handle_property(property, &mut self.decls, context)
-            || self
-                .scroll_margin
-                .handle_property(property, &mut self.decls, context)
-            || self
-                .transition
-                .handle_property(property, &mut self.decls, context)
-            || self
-                .font
-                .handle_property(property, &mut self.decls, context)
-            || self
-                .inset
-                .handle_property(property, &mut self.decls, context)
-            || self
-                .transform
-                .handle_property(property, &mut self.decls, context)
-            || self
-                .box_shadow
-                .handle_property(property, &mut self.decls, context)
-            || self
-                .color_scheme
-                .handle_property(property, &mut self.decls, context)
-            || self
-                .fallback
-                .handle_property(property, &mut self.decls, context)
+        // Unlike lightningcss, which asks each handler in turn, only the owner gets the declaration.
+        let (tag, typed) = match property {
+            css::Property::Unparsed(unparsed) => (unparsed.property_id.tag(), false),
+            _ => (property.variant_tag(), true),
+        };
+        let owner = tag.owner();
+        #[cfg(debug_assertions)]
+        if typed {
+            self.assert_others_decline(owner, property, context);
+        }
+        self.touched |= owner.bit();
+        let handled = self.offer(owner, property, context);
+        debug_assert!(
+            handled
+                || match owner {
+                    Owner::Custom | Owner::Passthrough => true,
+                    // `ColorSchemeHandler` has no arm for a value that did not parse.
+                    Owner::ColorScheme => !typed,
+                    _ => false,
+                },
+            "{owner:?} did not claim {tag:?}",
+        );
+        handled
+    }
+
+    /// Gives the declaration to the handler of `owner`.
+    #[inline(always)]
+    fn offer(
+        &mut self,
+        owner: Owner,
+        property: &css::Property,
+        context: &mut css::PropertyHandlerContext,
+    ) -> bool {
+        let decls = &mut self.decls;
+        match owner {
+            Owner::Background => self.background.handle_property(property, decls, context),
+            Owner::Border => self.border.handle_property(property, decls, context),
+            Owner::Flex => self.flex.handle_property(property, decls, context),
+            Owner::Align => self.align.handle_property(property, decls, context),
+            Owner::Size => self.size.handle_property(property, decls, context),
+            Owner::Margin => self.margin.handle_property(property, decls, context),
+            Owner::Padding => self.padding.handle_property(property, decls, context),
+            Owner::ScrollMargin => self.scroll_margin.handle_property(property, decls, context),
+            Owner::Transition => self.transition.handle_property(property, decls, context),
+            Owner::Font => self.font.handle_property(property, decls, context),
+            Owner::Inset => self.inset.handle_property(property, decls, context),
+            Owner::Transform => self.transform.handle_property(property, decls, context),
+            Owner::BoxShadow => self.box_shadow.handle_property(property, decls, context),
+            Owner::ColorScheme => self.color_scheme.handle_property(property, decls, context),
+            Owner::Fallback => self.fallback.handle_property(property, decls, context),
+            // The place to call a handler that has to see custom and unknown names.
+            Owner::Custom => false,
+            Owner::Passthrough => false,
+        }
+    }
+
+    /// The dispatch is correct only while no handler has an arm for a property of another owner.
+    #[cfg(debug_assertions)]
+    fn assert_others_decline(
+        &mut self,
+        owner: Owner,
+        property: &css::Property,
+        context: &mut css::PropertyHandlerContext,
+    ) {
+        let len = self.decls.len();
+        for &other in Owner::VARIANTS {
+            if other != owner {
+                let claimed = self.offer(other, property, context);
+                assert!(
+                    !claimed && self.decls.len() == len,
+                    "{other:?} has an arm for a declaration that `owner()` gives to {owner:?}",
+                );
+            }
+        }
     }
 
     pub(crate) fn new(bump: &'bump Bump) -> Self {
@@ -500,6 +558,7 @@ impl<'bump> DeclarationHandler<'bump> {
             color_scheme: Default::default(),
             fallback: Default::default(),
             direction: None,
+            touched: 0,
             decls: DeclarationList::new_in(bump),
         }
     }

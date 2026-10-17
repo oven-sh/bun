@@ -985,15 +985,14 @@ impl SizeHandlerImpl {
         // _ = this; // autofix
         let bump = dest.bump();
         if let Some(v_) = val.as_ref() {
-            // Raw discriminant comparison.
-            if v_.variant_tag() == logical {
-                let v = extract_logical(v_);
-                context.add_logical_rule(make_ltr(v.clone()), make_rtl(v.clone()));
-            } else if let Property::Unparsed(v) = v_ {
+            if let Property::Unparsed(v) = v_ {
                 context.add_logical_rule(
                     Property::Unparsed(v.with_property_id(bump, ltr)),
                     Property::Unparsed(v.with_property_id(bump, rtl)),
                 );
+            } else if v_.variant_tag() == logical {
+                let v = extract_logical(v_);
+                context.add_logical_rule(make_ltr(v.clone()), make_rtl(v.clone()));
             }
         }
     }
@@ -1075,13 +1074,12 @@ impl SizeHandlerImpl {
         let _ = context;
         let bump = dest.bump();
         if let Some(v) = val.as_ref() {
-            // Raw discriminant comparison.
-            if v.variant_tag() == logical {
+            if let Property::Unparsed(u) = v {
+                dest.push(Property::Unparsed(u.with_property_id(bump, physical)));
+            } else if v.variant_tag() == logical {
                 // Clone instead of moving out of `&Property`;
                 // `LengthPercentageOrAuto` is small.
                 dest.push(make_physical(extract_logical(v).clone()));
-            } else if let Property::Unparsed(u) = v {
-                dest.push(Property::Unparsed(u.with_property_id(bump, physical)));
             }
         }
     }

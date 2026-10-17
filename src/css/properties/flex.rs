@@ -2,7 +2,7 @@
 use crate as css;
 use bun_alloc::ArenaVecExt as _;
 
-use crate::properties::{Property, PropertyId};
+use crate::properties::Property;
 use css::css_properties::align::{AlignContent, AlignItems, AlignSelf, JustifyContent};
 use css::css_values::length::{LengthPercentage, LengthPercentageOrAuto};
 use css::css_values::number::{CSSInteger, CSSNumber, CSSNumberFns};
@@ -635,14 +635,10 @@ impl FlexHandler {
             Property::BoxOrdinalGroup(val) => property_helper!(box_ordinal_group, &val.0, &val.1),
             Property::FlexOrder(val) => property_helper!(flex_order, &val.0, &val.1),
             Property::Unparsed(val) => {
-                if Self::is_flex_property(&val.property_id) {
-                    self.flush(dest, context);
-                    // `Property` has no blanket `deep_clone` yet; reconstruct from the matched payload.
-                    let bump = dest.bump();
-                    dest.push(Property::Unparsed(val.deep_clone(bump)));
-                } else {
-                    return false;
-                }
+                self.flush(dest, context);
+                // `Property` has no blanket `deep_clone` yet; reconstruct from the matched payload.
+                let bump = dest.bump();
+                dest.push(Property::Unparsed(val.deep_clone(bump)));
             }
             _ => return false,
         }
@@ -931,28 +927,5 @@ impl FlexHandler {
             prop_2009 = (BoxOrdinalGroup, BoxOrdinalGroup),
             feature = Order
         );
-    }
-
-    fn is_flex_property(property_id: &PropertyId) -> bool {
-        matches!(
-            property_id,
-            PropertyId::FlexDirection(..)
-                | PropertyId::BoxOrient(..)
-                | PropertyId::BoxDirection(..)
-                | PropertyId::FlexWrap(..)
-                | PropertyId::BoxLines(..)
-                | PropertyId::FlexFlow(..)
-                | PropertyId::FlexGrow(..)
-                | PropertyId::BoxFlex(..)
-                | PropertyId::FlexPositive(..)
-                | PropertyId::FlexShrink(..)
-                | PropertyId::FlexNegative(..)
-                | PropertyId::FlexBasis(..)
-                | PropertyId::FlexPreferredSize(..)
-                | PropertyId::Flex(..)
-                | PropertyId::Order(..)
-                | PropertyId::BoxOrdinalGroup(..)
-                | PropertyId::FlexOrder(..)
-        )
     }
 }

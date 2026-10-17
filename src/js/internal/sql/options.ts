@@ -12,9 +12,29 @@ type AnyOptions = Bun.SQL.__internal.AnyOptions;
 type TLSOptions = Bun.SQL.TLSOptions;
 
 const ObjectDefineProperty = Object.defineProperty;
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectHasOwn = Object.hasOwn;
+const ObjectPrototype = Object.prototype;
 const kInspectCustom = Symbol.for("nodejs.util.inspect.custom");
 const env = Bun.env;
+
+/** `Bun.env` inherits from `Object.prototype`, and what is there is no variable. */
+function envVar(name: string): string | undefined {
+  return ObjectHasOwn(env, name) ? env[name] : undefined;
+}
+
+/**
+ * `source[name]`, if `source` or an object that it inherits from has it. `Object.prototype` does not count: what is
+ * there, the caller did not set. Read once: a getter is the caller's code.
+ */
+function readOption(source: object, name: string): any {
+  for (let holder = source; holder != null && holder !== ObjectPrototype; holder = ObjectGetPrototypeOf(holder)) {
+    if (ObjectHasOwn(holder, name)) return source[name];
+    // A Proxy can answer for a key that it does not say it has, and can name a new prototype each time it is asked.
+    // If `Object.prototype` has the key, the answer may come from there.
+    if ($isProxyObject(holder)) return ObjectHasOwn(ObjectPrototype, name) ? undefined : source[name];
+  }
+}
 
 const SQLITE_MEMORY = ":memory:";
 const REDACTED = "[REDACTED]";
@@ -145,7 +165,7 @@ function urlFromEnvironment(
 
     for (let i = 1; i < row.length; i++) {
       const name = row[i] as string;
-      const url = env[name];
+      const url = envVar(name);
       if (!url) continue;
 
       const tls = name.startsWith("TLS_");
@@ -222,11 +242,11 @@ const SERVER_OPTIONS = [
   "onclose",
 ];
 
-/** `options` has the own keys of `source` already. Every key is read once: a getter is the caller's code. */
+/** `options` has the own keys of `source` already. */
 function readInherited(options: AnyOptions, source: AnyOptions, names: string[]) {
   for (const name of names) {
     if (ObjectHasOwn(options, name)) continue;
-    const value = source[name];
+    const value = readOption(source, name);
     if (value !== undefined) options[name] = value;
   }
 }
@@ -247,7 +267,7 @@ function resolveTarget(
     first = undefined;
   }
   const readsEnvironment = target === null;
-  const options: AnyOptions = { ...first, ...second };
+  const options = { __proto__: null, ...first, ...second } as unknown as AnyOptions;
   // An options object that stands alone behind a URL, or behind nothing, also gives what it inherits.
   const inherits = first ? null : second;
   if (inherits) readInherited(options, inherits, TARGET_OPTIONS);
@@ -367,6 +387,14 @@ function parseSQLiteOptions(target: string | URL | null, options: AnyOptions): B
     ...options,
     adapter: "sqlite",
     filename: filename || SQLITE_MEMORY,
+    // Also where they are not set: the adapter reads them by name, and this object inherits.
+    readonly: options.readonly,
+    create: options.create,
+    safeIntegers: options.safeIntegers,
+    strict: options.strict,
+    transform: options.transform,
+    onconnect: options.onconnect,
+    onclose: options.onclose,
   };
 
   // An option that is given replaces what `mode` says.
@@ -515,7 +543,8 @@ function setStartupParameter(parameters: Record<string, string>, name: string, k
 
 function readUrlQuery(url: URL, isPostgres: boolean, parameters: Record<string, string>): UrlQuery {
   const query: UrlQuery = { __proto__: null };
-  const queryObject = url.searchParams.toJSON();
+  // What `toJSON()` gives inherits, and `for in` would take that for parameters of the URL.
+  const queryObject = { __proto__: null, ...url.searchParams.toJSON() };
   for (const key in queryObject) {
     const value = `${queryObject[key]}`;
     const lowerKey = key.toLowerCase();
@@ -536,7 +565,7 @@ function readUrlQuery(url: URL, isPostgres: boolean, parameters: Record<string, 
       if (value) query[option] ||= value;
     } else if (isPostgres && (option = LIBPQ_TLS_OPTIONS[lowerKey])) {
       if (!value) continue;
-      const tls = $isObject(query.tls) ? query.tls : (query.tls = {});
+      const tls = $isObject(query.tls) ? query.tls : (query.tls = { __proto__: null } as unknown as TLSOptions);
       if (lowerKey === "sslrootcert" && value === "system") tls.rejectUnauthorized = true;
       else tls[option] = value;
     } else if (!isPostgres || !isLibpqClientKeyword(lowerKey, value)) {
@@ -549,7 +578,7 @@ function readUrlQuery(url: URL, isPostgres: boolean, parameters: Record<string, 
 const NO_QUERY: UrlQuery = { __proto__: null };
 
 function envOf(prefix: string, name: string): string | undefined {
-  return env[`${prefix}_${name}`] || env[prefix + name];
+  return envVar(`${prefix}_${name}`) || envVar(prefix + name);
 }
 
 function isDirectory(path: string): boolean {
@@ -574,7 +603,7 @@ function secondsToMilliseconds(name: string, value: unknown): number | undefined
 }
 
 function parseTransform(transform: any): import("./shared").Transform {
-  const column = $isObject(transform) ? transform.column : undefined;
+  const column = $isObject(transform) ? readOption(transform, "column") : undefined;
   // A function is one of SQL.toCamel ... SQL.fromKebab, which say in `column` which direction they are for.
   if (!$isObject(transform) || ($isCallable(transform) && column === undefined)) {
     throw $ERR_INVALID_ARG_TYPE("transform", "object", transform);
@@ -583,7 +612,8 @@ function parseTransform(transform: any): import("./shared").Transform {
   if ($isCallable(column)) {
     from = column;
   } else if ($isObject(column)) {
-    ({ from, to } = column);
+    from = readOption(column, "from");
+    to = readOption(column, "to");
   } else if (column != null) {
     throw $ERR_INVALID_ARG_TYPE("transform.column", ["function", "object"], column);
   }
@@ -593,7 +623,7 @@ function parseTransform(transform: any): import("./shared").Transform {
   if (to != null && !$isCallable(to)) {
     throw $ERR_INVALID_ARG_TYPE("transform.column.to", "function", to);
   }
-  return { undefined: (transform as $AnyObject).undefined, column: { from: from ?? undefined, to: to ?? undefined } };
+  return { undefined: readOption(transform, "undefined"), column: { from: from ?? undefined, to: to ?? undefined } };
 }
 
 function inspectOptions(this: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions) {
@@ -636,9 +666,10 @@ function parseOptions(
 
   const parameters = { __proto__: null } as unknown as Record<string, string>;
   if (isPostgres) {
-    const { PGAPPNAME, PGOPTIONS } = env;
-    if (PGAPPNAME) parameters.application_name = PGAPPNAME;
-    if (PGOPTIONS) parameters.options = PGOPTIONS;
+    const applicationName = envVar("PGAPPNAME");
+    const serverOptions = envVar("PGOPTIONS");
+    if (applicationName) parameters.application_name = applicationName;
+    if (serverOptions) parameters.options = serverOptions;
   }
 
   let url: URL | null = null;
@@ -655,9 +686,8 @@ function parseOptions(
   const connection = options.connection;
   if (connection && $isObject(connection)) {
     for (const key in connection) {
-      if (connection[key] !== undefined) {
-        setStartupParameter(parameters, `options.connection.${key}`, key, connection[key]);
-      }
+      const value = readOption(connection, key);
+      if (value !== undefined) setStartupParameter(parameters, `options.connection.${key}`, key, value);
     }
   }
   let startupParameters = "";
@@ -681,10 +711,10 @@ function parseOptions(
     options.user ||
     query.username ||
     decodeIfValid(url?.username) ||
-    (isPostgres && env.PGUSERNAME) ||
+    (isPostgres && envVar("PGUSERNAME")) ||
     envOf(prefix, "USER") ||
-    env.USER ||
-    env.USERNAME ||
+    envVar("USER") ||
+    envVar("USERNAME") ||
     (isPostgres ? "postgres" : "root");
 
   const password =
@@ -731,7 +761,7 @@ function parseOptions(
       options.connectTimeout ??
       options.connect_timeout ??
       query.connectionTimeout ??
-      ((isPostgres && env.PGCONNECT_TIMEOUT) || undefined),
+      ((isPostgres && envVar("PGCONNECT_TIMEOUT")) || undefined),
   );
   const maxLifetime = secondsToMilliseconds(
     "options.max_lifetime",
@@ -750,7 +780,7 @@ function parseOptions(
 
   const channelBinding = (options.channelBinding ||
     query.channelBinding ||
-    (isPostgres && env.PGCHANNELBINDING) ||
+    (isPostgres && envVar("PGCHANNELBINDING")) ||
     "disable") as Bun.SQL.__internal.ChannelBinding;
   if (channelBinding !== "disable" && channelBinding !== "prefer" && channelBinding !== "require") {
     throw $ERR_INVALID_ARG_VALUE("channelBinding", channelBinding, "must be one of: disable, prefer, require");
@@ -862,36 +892,16 @@ function parseOptions(
     sslMode,
     query: startupParameters,
     max,
+    // Also where they are not set: the pool reads them by name, and this object inherits.
+    idleTimeout,
+    connectionTimeout,
+    maxLifetime,
+    onconnect,
+    onclose,
+    transform,
+    path: path || undefined,
   };
   ObjectDefineProperty(ret, kInspectCustom, inspectOptionsDescriptor);
-
-  if (idleTimeout !== undefined) {
-    ret.idleTimeout = idleTimeout;
-  }
-
-  if (connectionTimeout !== undefined) {
-    ret.connectionTimeout = connectionTimeout;
-  }
-
-  if (maxLifetime !== undefined) {
-    ret.maxLifetime = maxLifetime;
-  }
-
-  if (onconnect !== undefined) {
-    ret.onconnect = onconnect;
-  }
-
-  if (onclose !== undefined) {
-    ret.onclose = onclose;
-  }
-
-  if (transform !== undefined) {
-    ret.transform = transform;
-  }
-
-  if (path) {
-    ret.path = path;
-  }
 
   return ret;
 }

@@ -403,59 +403,75 @@ describe("the error for a connection URL that cannot be parsed", () => {
     }
   }
 
-  // [what is in the way, the URL behind its scheme, what the error names behind the scheme]
-  const urls: [string, string, string][] = [
-    ["a port that is none", `user:${marker}@db.example:port/db`, "[REDACTED]@db.example:port/db"],
-    ["a port that is too high", `user:${marker}@db.example:99999/db`, "[REDACTED]@db.example:99999/db"],
-    ["a space in the host", `user:${marker}@db example/db`, "[REDACTED]@db example/db"],
-    ["a / in the password", `user:ab/${marker}@db.example:5432/db`, "[REDACTED]@db.example:5432/db"],
-    ["a # in the password", `user:ab#${marker}@db.example:5432/db`, "[REDACTED]@db.example:5432/db"],
-    ["a ? in the password", `user:ab?${marker}@db.example:5432/db`, "[REDACTED]@db.example:5432/db"],
-    ["an @ in the password", `user:ab@${marker}@db.example:port/db`, "[REDACTED]@db.example:port/db"],
-    ["a space in the password", `user:ab ${marker}@db.example:port/db`, "[REDACTED]@db.example:port/db"],
-    ["a % in the password", `user:ab%${marker}@db.example:port/db`, "[REDACTED]@db.example:port/db"],
-    ["?password=", `user@db.example:port/db?password=${marker}`, "[REDACTED]@db.example:port/db"],
-    ["?sslpassword=", `user@db.example:port/db?sslpassword=${marker}`, "[REDACTED]@db.example:port/db"],
-    ["a fragment", `user@db.example:port/db#${marker}`, "[REDACTED]@db.example:port/db"],
-    ["an @ in the query", `user:${marker}@db.example:port/db?application_name=a@b`, "[REDACTED]@b"],
-    ["?password= and no user", `db.example:port/db?password=${marker}`, "[REDACTED]"],
-    ["no @ behind the password", `user:${marker}%40db.example/db`, "[REDACTED]"],
-    ["nothing behind the password", `user:${marker}`, "[REDACTED]"],
-  ];
-
-  describe.each([
+  const adapters = [
     ["postgres", "POSTGRES_URL"],
     ["mysql", "MYSQL_URL"],
     ["mariadb", "MARIADB_URL"],
-  ] as const)("%s", (adapter, variable) => {
-    test.each(urls)("%s", (_, rest, named) => {
-      const url = `${adapter}://${rest}`;
-      const fromEnvironment = (name: string, options?: object) => {
-        process.env[name] = url;
-        try {
-          return new SQL(options as never);
-        } finally {
-          delete process.env[name];
-        }
-      };
-      for (const make of [
-        () => new SQL(url),
-        () => new SQL(url, { adapter }),
-        () => new SQL(rest, { adapter }),
-        () => new SQL({ url }),
-        () => new SQL({ adapter, url: rest }),
-        () => fromEnvironment("DATABASE_URL"),
-        () => fromEnvironment("TLS_DATABASE_URL", { max: 1 }),
-        () => fromEnvironment(variable),
-        () => fromEnvironment("DATABASE_URL", { hostname: "other.example" }),
-      ]) {
+  ] as const;
+
+  /** Every way a connection string gets to the parser. `rest` is what stands behind the scheme. */
+  function waysIn(adapter: (typeof adapters)[number][0], variable: string, rest: string): (() => unknown)[] {
+    const url = `${adapter}://${rest}`;
+    const fromEnvironment = (name: string, options?: object) => {
+      process.env[name] = url;
+      try {
+        return new SQL(options as never);
+      } finally {
+        delete process.env[name];
+      }
+    };
+    return [
+      () => new SQL(url),
+      () => new SQL(url, { adapter }),
+      () => new SQL(rest, { adapter }),
+      () => new SQL({ url }),
+      () => new SQL({ adapter, url: rest }),
+      () => fromEnvironment("DATABASE_URL"),
+      () => fromEnvironment("TLS_DATABASE_URL", { max: 1 }),
+      () => fromEnvironment(variable),
+      () => fromEnvironment("DATABASE_URL", { hostname: "other.example" }),
+    ];
+  }
+
+  // [what is in the way, the URL behind its scheme]
+  const urls: [string, string][] = [
+    ["a port that is none", `user:${marker}@db.example:port/db`],
+    ["a port that is too high", `user:${marker}@db.example:99999/db`],
+    ["a space in the host", `user:${marker}@db example/db`],
+    ["a / in the password", `user:ab/${marker}@db.example:5432/db`],
+    ["a # in the password", `user:ab#${marker}@db.example:5432/db`],
+    ["a ? in the password", `user:ab?${marker}@db.example:5432/db`],
+    ["an @ in the password", `user:ab@${marker}@db.example:port/db`],
+    ["an @ in the password and no host", `user:ab@${marker}^`],
+    ["a space in the password", `user:ab ${marker}@db.example:port/db`],
+    ["a % in the password", `user:ab%${marker}@db.example:port/db`],
+    ["?password=", `user@db.example:port/db?password=${marker}`],
+    ["?sslpassword=", `user@db.example:port/db?sslpassword=${marker}`],
+    ["an @ in ?password=", `db example/db?password=ab@${marker}`],
+    ["an @ in ?sslpassword=", `user:ab@db.example:port/db?sslpassword=ab@${marker}`],
+    ["& in place of ?", `user@db.example:port/db&password=${marker}`],
+    ["a fragment", `user@db.example:port/db#${marker}`],
+    ["an @ in the fragment", `db example/db#ab@${marker}`],
+    ["?password= and no user", `db.example:port/db?password=${marker}`],
+    ["no @ behind the password", `user:${marker}%40db.example/db`],
+    ["nothing behind the password", `user:${marker}`],
+    ["nothing in front of the password", `:${marker}`],
+    ["only a database behind the password", `:${marker}/db`],
+    ["keywords and values", `host=db.example user=user password=${marker} dbname=db`],
+    ["keywords and values, an @ in the password", `host=db.example user=user password=ab@${marker} dbname=db`],
+    ["no user and no password", "db example/db"],
+  ];
+
+  describe.each(adapters)("%s", (adapter, variable) => {
+    test.each(urls)("%s", (_, rest) => {
+      for (const make of waysIn(adapter, variable, rest)) {
         const error = errorOf(make);
         expect(error).toBeInstanceOf(TypeError);
         expect({ ...error, name: error.name, message: error.message, cause: error.cause }).toEqual({
           name: "TypeError",
           message: "Invalid URL",
           code: "ERR_INVALID_URL",
-          input: `${adapter}://${named}`,
+          input: `${adapter}://[REDACTED]`,
           cause: undefined,
         });
         expect(everythingIn(error)).not.toContain(marker.toLowerCase());
@@ -463,24 +479,59 @@ describe("the error for a connection URL that cannot be parsed", () => {
     });
   });
 
+  // "~" is the secret and "HOST" a host that cannot be parsed.
   test.each([
-    ["postgres://db example/db", "postgres://db example/db"],
-    ["postgres://db example/db?application_name=api#x", "postgres://db example/db"],
-    ["postgres://h1:1,h2:2/db", "postgres://[REDACTED]"],
-  ])("%s has no user: %s", (url, input) => {
-    expect(errorOf(() => new SQL(url))).toMatchObject({ code: "ERR_INVALID_URL", input });
+    "user:~@HOST/db",
+    "~@HOST/db",
+    ":~@HOST/db",
+    "user:~",
+    ":~/db",
+    "HOST/db?password=~",
+    "user:ab@HOST/db?sslpassword=~&a=b",
+    "HOST/db#~",
+    "HOST/~",
+    "HOST/db&password=~",
+    "host=HOST user=user password=~ dbname=db",
+  ])("%s, with every separator in and around ~", position => {
+    // In two words, so that a part of it is seen as well.
+    const words = [marker.toLowerCase(), "zebra9marker"];
+    let turn = 0;
+    let errors = 0;
+    for (const host of position.includes("HOST") ? ["db.example:port", "db example", "[::1"] : [""]) {
+      for (const separator of "@/?#:% []") {
+        for (const secret of [separator + words[0], words.join(separator), words[0] + separator]) {
+          // Each in one of the 27 ways, in turn.
+          const [adapter, variable] = adapters[Math.floor(turn / 9) % adapters.length];
+          const ways = waysIn(adapter, variable, position.replace("HOST", host).replace("~", secret));
+          const error = errorOf(ways[turn++ % ways.length]);
+          // "user:?" is a host and an empty port.
+          if (!error) continue;
+          errors++;
+          const everything = everythingIn(error);
+          for (const word of words) expect(everything).not.toContain(word);
+        }
+      }
+    }
+    expect(errors).toBeGreaterThan(0);
+  });
+
+  test("is the error of new URL() in all but the input", () => {
+    const expected = errorOf(() => new URL("http://a b"));
+    const error = errorOf(() => new SQL("postgres://a b"));
+    expect(String(error)).toBe(String(expected));
+    expect(Object.keys(error)).toEqual(Object.keys(expected));
+    expect(JSON.stringify(error)).toBe(JSON.stringify({ ...expected, input: "postgres://[REDACTED]" }));
+    expect(Object.getPrototypeOf(error)).toBe(Object.getPrototypeOf(expected));
   });
 
   // [what the error names, the adapter, the URL]
   test.each([
-    ["sqlite://[REDACTED]@db example/db", "postgres", `sqlite://user:${marker}@db example/db`],
-    ["sqlite://[REDACTED]@db.example/db", "mysql", `sqlite://user:ab/${marker}@db.example/db`],
-    [
-      "postgres://[REDACTED]@db.example:port/sqlite",
-      "mariadb",
-      `postgres://user:${marker}@db.example:port/sqlite?password=${marker}`,
-    ],
+    ["sqlite://[REDACTED]", "postgres", `sqlite://user:${marker}@db example/db`],
+    ["sqlite://[REDACTED]", "mysql", `sqlite://user:ab/${marker}@db.example/db`],
+    ["postgres://[REDACTED]", "mariadb", `postgres://user:${marker}@db.example:port/sqlite?password=${marker}`],
+    ["postgres://[REDACTED]", "postgres", `postgres://db example/sqlite?password=ab@${marker}`],
     ["sqlite://:memory:", "postgres", "sqlite://:memory:"],
+    ["sqlite://:memory:", "mysql", `sqlite://:memory:?mode=ro#${marker}`],
   ] as const)("the hint at the sqlite adapter names %s", (named, adapter, url) => {
     const error = errorOf(() => new SQL(url, { adapter }));
     expect(error.message).toBe(
@@ -533,7 +584,7 @@ describe("the error for a connection URL that cannot be parsed", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe("");
     expect(stderr).toContain("ERR_INVALID_URL");
-    expect(stderr).toContain("postgres://[REDACTED]@db.example:5432/db");
+    expect(stderr).toContain('input: "postgres://[REDACTED]"');
     expect(stderr.toLowerCase()).not.toContain(marker.toLowerCase());
     expect(exitCode).toBe(1);
   });

@@ -384,22 +384,12 @@ function parseSQLiteOptions(target: string | URL | null, options: AnyOptions): B
   return sqliteOptions;
 }
 
-/** What an error may say of a connection URL that cannot be parsed: no user, no password, no query. */
+/** What an error may say of a connection URL that cannot be parsed: anything behind the scheme can be a password. */
 function withoutSecrets(value: string): string {
-  const schemeEnd = value.indexOf("://");
-  const scheme = value.slice(0, schemeEnd + 3);
+  const start = value.indexOf("://") + 3;
   // The `://` is further back, and anything can be in front of it.
-  if (!SCHEME.test(value.slice(0, schemeEnd))) return REDACTED;
-
-  // A password can have any character, so the host starts behind the last `@`.
-  const at = value.lastIndexOf("@");
-  const rest = value
-    .slice(at === -1 ? scheme.length : at + 1)
-    .split("?", 1)[0]
-    .split("#", 1)[0];
-  if (at !== -1) return `${scheme}${REDACTED}@${rest}`;
-  // "user:password" looks like "host:port".
-  return rest.split("/", 1)[0].indexOf(":") > 0 ? scheme + REDACTED : scheme + rest;
+  if (!SCHEME.test(value.slice(0, start - 3))) return REDACTED;
+  return value.slice(0, start) + (value.startsWith(SQLITE_MEMORY, start) ? SQLITE_MEMORY : REDACTED);
 }
 
 function parseServerUrl(
@@ -432,9 +422,10 @@ function parseServerUrl(
           `Invalid URL '${input}' for ${adapterOption}. Did you mean to specify \`{ adapter: "sqlite" }\`?`,
         );
       }
-      const error = $ERR_INVALID_URL(input);
-      // On the error of `new URL()` it is an own property, so `JSON.stringify(error)` has it.
+      // The error of `new URL()` in all but `input`. The intrinsic for this code has `code` on a prototype of its own.
+      const error = new TypeError("Invalid URL");
       $putByValDirect(error, "code", "ERR_INVALID_URL");
+      $putByValDirect(error, "input", input);
       throw error;
     }
   }

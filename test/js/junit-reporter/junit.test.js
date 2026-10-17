@@ -608,6 +608,45 @@ describe("junit reporter", () => {
     expect(longPathCase.failure[0]._).toContain(`at fromLongPath (${longPath}:1:`);
     expect(pathCase.failure[0]._).toContain("at fromPath (generated.js:1:");
   });
+
+  it("records done(err) as the failure of its own test case in a concurrent group", async () => {
+    await using tmpDir = tempDir("junit-done-concurrent", {
+      "package.json": "{}",
+      "done.test.js": `
+        import { test } from "bun:test";
+        test.concurrent("sync", done => { done(new Error("sync done boom")); });
+        test.concurrent("async", done => { setTimeout(() => done(new Error("async done boom")), 1); });
+        test.concurrent("ok", done => { done(); });
+      `,
+    });
+
+    const junitPath = join(tmpDir, "junit.xml");
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: tmpDir,
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const xmlContent = await file(junitPath).text();
+    const result = await new Promise((resolve, reject) => {
+      xml2js.parseString(xmlContent, { strict: true }, (err, r) => (err ? reject(err) : resolve(r)));
+    });
+    const suite = result.testsuites.testsuite[0];
+    expect(suite.$).toMatchObject({ tests: "3", failures: "2" });
+    expect(
+      suite.testcase.map(tc => ({
+        name: tc.$.name,
+        failure: tc.failure?.map(f => f.$.message),
+      })),
+    ).toEqual([
+      { name: "sync", failure: [expect.stringContaining("sync done boom")] },
+      { name: "ok", failure: undefined },
+      { name: "async", failure: [expect.stringContaining("async done boom")] },
+    ]);
+    expect(exitCode).toBe(1);
+  });
 });
 
 function filterJunitXmlOutput(xmlContent) {

@@ -371,8 +371,22 @@ impl S3Client {
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
         let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
-        let Some(path) = PathLike::from_js(global, &mut args)? else {
-            return Err(match missing_path {
+        let path = Self::path_from_args(global, &mut args, verb, missing_path)?;
+        let options = args.next_eat();
+        Ok((self.construct_blob(global, path, options)?, options))
+    }
+
+    /// Eats the path argument. `verb` completes the "Expected a path to
+    /// {verb}" error message.
+    fn path_from_args(
+        global: &JSGlobalObject,
+        args: &mut bun_jsc::call_frame::ArgumentsSlice,
+        verb: &str,
+        missing_path: MissingPathError,
+    ) -> JsResult<PathLike<'static>> {
+        match PathLike::from_js(global, args)? {
+            Some(path) => Ok(path),
+            None => Err(match missing_path {
                 MissingPathError::MissingOrInvalid if args.len() != 0 => {
                     global.throw_invalid_arguments(format_args!("Expected a path to {verb}"))
                 }
@@ -382,10 +396,8 @@ impl S3Client {
                         format_args!("Expected a path to {verb}"),
                     )
                     .throw(),
-            });
-        };
-        let options = args.next_eat();
-        Ok((self.construct_blob(global, path, options)?, options))
+            }),
+        }
     }
 
     #[bun_jsc::host_fn(method)]
@@ -578,6 +590,83 @@ impl S3Client {
             .unlink(store, &global.js_thread_of_caller(callframe), options)
     }
 
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn create_multipart_upload(
+        ptr: &Self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let (blob, options) = ptr.blob_and_options(
+            global,
+            callframe,
+            "create a multipart upload for",
+            MissingPathError::MissingOrInvalid,
+        )?;
+        let store = blob.store.get().as_ref().unwrap();
+        store.data.as_s3().create_multipart_upload(
+            store,
+            &global.js_thread_of_caller(callframe),
+            blob.content_type_or_mime_type(),
+            options,
+        )
+    }
+
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn complete_multipart_upload(
+        ptr: &Self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
+        let vm = global.bun_vm();
+        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
+        let path = Self::path_from_args(
+            global,
+            &mut args,
+            "complete a multipart upload for",
+            MissingPathError::MissingOrInvalid,
+        )?;
+        let upload_id = S3File::upload_id_from_js(global, args.next_eat(), b"uploadId")?;
+        let mut parts = S3File::parts_from_js(global, args.next_eat())?;
+        let options = args.next_eat();
+        let blob = ptr.construct_blob(global, path, options)?;
+        let store = blob.store.get().as_ref().unwrap();
+        store.data.as_s3().complete_multipart_upload(
+            store,
+            &global.js_thread_of_caller(callframe),
+            &upload_id,
+            &mut parts,
+            options,
+        )
+    }
+
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn abort_multipart_upload(
+        ptr: &Self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
+        let vm = global.bun_vm();
+        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
+        let path = Self::path_from_args(
+            global,
+            &mut args,
+            "abort a multipart upload for",
+            MissingPathError::MissingOrInvalid,
+        )?;
+        let upload_id = S3File::upload_id_from_js(global, args.next_eat(), b"uploadId")?;
+        let options = args.next_eat();
+        let blob = ptr.construct_blob(global, path, options)?;
+        let store = blob.store.get().as_ref().unwrap();
+        store.data.as_s3().abort_multipart_upload(
+            store,
+            &global.js_thread_of_caller(callframe),
+            &upload_id,
+            options,
+        )
+    }
+
     // ── Static methods ────────────────────────────────────────────────────
     // Codegen (`generated_classes.rs`) emits `S3ClientClass__static*` extern
     // wrappers that call these as `S3Client::static_*(global, callframe)`,
@@ -630,6 +719,27 @@ impl S3Client {
 
     pub(crate) fn static_stat(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         S3File::stat(global, callframe)
+    }
+
+    pub(crate) fn static_create_multipart_upload(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        S3File::create_multipart_upload(global, callframe)
+    }
+
+    pub(crate) fn static_complete_multipart_upload(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        S3File::complete_multipart_upload(global, callframe)
+    }
+
+    pub(crate) fn static_abort_multipart_upload(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        S3File::abort_multipart_upload(global, callframe)
     }
 
     pub(crate) fn static_list_objects(

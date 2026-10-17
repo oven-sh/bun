@@ -13,6 +13,7 @@ use bun_ptr::RefPtr;
 // Re-exports (thin aliases)
 pub(crate) use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
 pub(crate) use crate::webcore::s3::multipart::MultiPartUpload;
+pub(crate) use crate::webcore::s3::multipart_ops::UploadId;
 pub(crate) use crate::webcore::s3::multipart_options::MultiPartUploadOptions;
 pub(crate) use bun_s3_signing::acl::ACL;
 pub(crate) use bun_s3_signing::storage_class::StorageClass;
@@ -263,6 +264,8 @@ pub(crate) fn list_objects(
             acl: None,
             storage_class: None,
             request_payer: false,
+            upload_id: None,
+            part_number: None,
         },
         None,
     ) {
@@ -520,7 +523,7 @@ pub(crate) fn writable_stream(
         content_type: content_type.map(Box::<[u8]>::from),
         content_disposition: content_disposition.map(Box::<[u8]>::from),
         content_encoding: content_encoding.map(Box::<[u8]>::from),
-        upload_id: JsCell::new(Box::default()),
+        upload_id: JsCell::new(UploadId::default()),
         multipart_etags: JsCell::new(Vec::new()),
         multipart_upload_list: JsCell::new(Vec::new()),
         state: Cell::new(MultiPartUploadState::NotStarted),
@@ -939,7 +942,7 @@ pub(crate) fn upload_stream(
         content_type: content_type.map(Box::<[u8]>::from),
         content_disposition: content_disposition.map(Box::<[u8]>::from),
         content_encoding: content_encoding.map(Box::<[u8]>::from),
-        upload_id: JsCell::new(Box::default()),
+        upload_id: JsCell::new(UploadId::default()),
         multipart_etags: JsCell::new(Vec::new()),
         multipart_upload_list: JsCell::new(Vec::new()),
         state: Cell::new(MultiPartUploadState::WaitStreamCheck),
@@ -1175,6 +1178,8 @@ fn download_stream(
             content_encoding: None,
             acl: None,
             storage_class: None,
+            upload_id: None,
+            part_number: None,
         },
         None,
     ) {

@@ -328,12 +328,13 @@ export function initializeNextTickQueue(process: typeof globalThis.process, next
   var drainMicrotasks = drainMicrotasksFn;
 
   const { validateFunction } = require("internal/validators");
+  const asyncHooksTick = require("internal/async_hooks_tick");
 
   var setup;
   setup = () => {
     const { FixedQueue } = require("internal/fixed_queue");
     queue = new FixedQueue();
-    tickInitHooks = require("internal/async_hooks_tick").tickInitHooks;
+    tickInitHooks = asyncHooksTick.tickInitHooks;
 
     function processTicksAndRejections() {
       var tock;
@@ -373,7 +374,8 @@ export function initializeNextTickQueue(process: typeof globalThis.process, next
         }
 
         drainMicrotasks();
-      } while (!queue.isEmpty());
+        // With both queues empty, internal/process/after_tick_drain.ts (once something loaded it) runs one callback.
+      } while (!queue.isEmpty() || asyncHooksTick.runAfterTickDrainCallback?.());
       // Without this, every checkpoint after the first tick calls this function to find an empty queue.
       $putInternalField(nextTickQueue, 0, 0);
     }
@@ -382,6 +384,15 @@ export function initializeNextTickQueue(process: typeof globalThis.process, next
     $putInternalField(nextTickQueue, 1, queue);
     $putInternalField(nextTickQueue, 2, processTicksAndRejections);
     setup = undefined;
+  };
+
+  // For internal/process/after_tick_drain.ts. JSNextTickQueue::drain only calls the tick loop while field 0 is set.
+  asyncHooksTick.ensureTickLoop = () => {
+    if (setup) {
+      setup();
+      process = globalThis.process;
+    }
+    $putInternalField(nextTickQueue, 0, 1);
   };
 
   function nextTick(cb, ...args) {
@@ -402,7 +413,6 @@ export function initializeNextTickQueue(process: typeof globalThis.process, next
     if (tickInitHooks.length !== 0) {
       // node fires one TickObject init per process.nextTick() call, at
       // construction time (before the callback runs).
-      const asyncHooksTick = require("internal/async_hooks_tick");
       const asyncId = asyncHooksTick.newAsyncId();
       // Snapshot: enable()/disable() from inside a hook must not affect the
       // in-flight dispatch (node stages such mutations in tmp_array until

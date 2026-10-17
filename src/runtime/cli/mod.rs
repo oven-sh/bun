@@ -2317,3 +2317,19 @@ pub(crate) fn set_up_watch_restarts(ctx: &command::ContextData) {
     #[cfg(not(windows))]
     let _ = ctx;
 }
+
+/// `--watch-kill-signal` under `--watch`. Matching is case-insensitive (node uppercases).
+pub(crate) fn set_watch_kill_signal(ctx: &mut command::ContextData, kill_signal: &[u8]) {
+    let upper = kill_signal.to_ascii_uppercase();
+    match bun_core::SignalCode::from_name(&upper) {
+        Some(sig) => ctx.debug.watch_kill_signal = sig,
+        None => {
+            Output::print_errorln(format_args!(
+                "TypeError [ERR_UNKNOWN_SIGNAL]: Unknown signal: {}",
+                bstr::BStr::new(kill_signal)
+            ));
+            Output::flush();
+            Global::exit(1);
+        }
+    }
+}

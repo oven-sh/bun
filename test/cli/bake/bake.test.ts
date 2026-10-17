@@ -358,3 +358,25 @@ test.concurrent.each([
 
   expect(await get(next, "/")).toBe("200 v2");
 });
+
+// Windows has no signal handlers to run before a reload.
+test.concurrent.skipIf(isWindows)(
+  "bun --watch-kill-signal bake --watch sends that signal before a reload",
+  async () => {
+    using dir = tempDir("bake-command-kill-signal", {
+      "app/server.ts": `
+      process.on("SIGINT", () => console.log("SIGINT before reload"));
+      export default { fetch: () => new Response("v1") };
+    `,
+    });
+
+    await using proc = spawnBake(String(dir), ["--watch-kill-signal", "SIGINT", "bake", "--watch", "--port=0"]);
+    const output = collectOutput(proc);
+    await output.waitFor(/url: /);
+
+    await Bun.write(join(String(dir), "app/server.ts"), `export default { fetch: () => new Response("v2") };`);
+    const [line] = await output.waitFor(/SIG\w+ before reload/);
+
+    expect(line).toBe("SIGINT before reload");
+  },
+);

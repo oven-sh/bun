@@ -362,22 +362,24 @@ describe("css tests", () => {
       `a{background:conic-gradient(red calc(30deg + 5%),#00f)}`,
     );
   });
+  // A sum is printed in the form that it keeps when it is minified again.
+  const minify_twice_test = (source: string, expected: string) =>
+    test(source, () => {
+      const once = minify_test_with_options(source, "");
+      expect(once).toEqual(expected);
+      expect(minify_test_with_options(once, "")).toEqual(once);
+    });
   describe("calc sum with a sum as an operand", () => {
     // An operand in brackets and a nested calc() are sums. Each term of the operand is added in turn.
     for (const prop of ["width", "outline-width"]) {
       const sum = (source: string, expected: string) =>
-        test(`a { ${prop}: ${source} }`, () => {
-          const once = minify_test_with_options(`a { ${prop}: ${source} }`, "");
-          expect(once).toEqual(`a{${prop}:${expected}}`);
-          // The result has no brackets, and it stays as it is when it is minified again.
-          expect(minify_test_with_options(once, "")).toEqual(once);
-        });
+        minify_twice_test(`a { ${prop}: ${source} }`, `a{${prop}:${expected}}`);
       sum(`calc(1vw - (1em + 2px))`, `calc(1vw - 1em - 2px)`);
       sum(`calc((1px + 1em) + (2px + 2em))`, `calc(3px + 3em)`);
       sum(`calc(1px + (2em + 3px))`, `calc(4px + 2em)`);
       sum(`calc(1em + (1px + 1em))`, `calc(2em + 1px)`);
       sum(`calc((1px + 1em) - (1px + 1em))`, `0`);
-      sum(`calc((1em - 1px) - (1px + 1em))`, `-2px`);
+      sum(`calc((1em + 3px) - (1px + 1em))`, `2px`);
       sum(`calc(1px + (min(1px,1em) + 1px))`, `calc(2px + min(1px,1em))`);
       sum(`calc(32px + (min(1px,1em) - 38px))`, `calc(-6px + min(1px,1em))`);
       sum(
@@ -393,6 +395,7 @@ describe("css tests", () => {
       sum(`calc(1px + (1px + 1em) * 0)`, `1px`);
       sum(`max(1px, (1px + 1em) * 0 + 1px)`, `1px`);
     }
+    minify_twice_test(`a { margin-left: calc((1em - 1px) - (1px + 1em)) }`, `a{margin-left:-2px}`);
     minify_test(`a { width: calc(100% - (1rem + 2px)) }`, `a{width:calc(100% - 1rem - 2px)}`);
     // uikit.css
     minify_test(`a { top: calc(50% - (calc(0.2px + 0.05em) / 2)) }`, `a{top:calc(50% - .1px - .025em)}`);
@@ -421,6 +424,48 @@ describe("css tests", () => {
       `@media (width > calc(1px + 1em)) { a { color: red } }`,
       `@media (min-width: calc(1.001px + 1em)) { a { color: red; } }`,
       { safari: 14 << 16 },
+    );
+  });
+  describe("calc sum with a percentage of zero", () => {
+    // lightningcss leaves `0%` out of a sum. It stays: https://drafts.csswg.org/css-values-4/#calc-simplification
+    const sum = (source: string, expected: string) =>
+      minify_twice_test(`a { height: ${source} }`, `a{height:${expected}}`);
+    sum(`calc(10% + 2px - 10%)`, `calc(0% + 2px)`);
+    sum(`calc(0% + 2px)`, `calc(0% + 2px)`);
+    sum(`calc(2px + 0%)`, `calc(2px + 0%)`);
+    sum(`calc(2px - 0%)`, `calc(2px + 0%)`);
+    sum(`calc(-0% + 2px)`, `calc(0% + 2px)`);
+    sum(`calc(0% - 2px)`, `calc(0% - 2px)`);
+    sum(`calc((0% + 2px) * -1)`, `calc(0% - 2px)`);
+    sum(`calc(1px + 0% + 5%)`, `calc(1px + 5%)`);
+    sum(`calc(10% - 10%)`, `0%`);
+    // A length of zero is left out.
+    sum(`calc(0% + 0px)`, `0%`);
+    sum(`calc(0px + 0%)`, `0%`);
+    // css/css-values/calc-serialization-002.html of the web platform tests
+    sum(`calc(100% - 100% + 1em)`, `calc(0% + 1em)`);
+    sum(`calc(100% + 1em - 100%)`, `calc(0% + 1em)`);
+    // A sum as an operand.
+    sum(`calc((1px + 10%) + (1px - 10%))`, `calc(2px + 0%)`);
+    sum(`calc((100% - 20px) - (100% - 40px))`, `calc(0% + 20px)`);
+    sum(`calc(50% - calc(50% + 25px))`, `calc(0% - 25px)`);
+    // A sum multiplied by zero keeps the percentage, whichever term it was.
+    sum(`calc((1px + 10%) * 0)`, `0%`);
+    sum(`calc((10% + 1px) * 0)`, `0%`);
+    sum(`calc((10% + 1px) * 0 + 5px)`, `calc(0% + 5px)`);
+    sum(`min(10% - 10% + 2px, 5px)`, `min(0% + 2px,5px)`);
+    // A math function of one argument is that argument. A sum stays in a math function.
+    sum(`min(10% - 10% + 2px)`, `calc(0% + 2px)`);
+    sum(`max(10% - 10% + 2px)`, `calc(0% + 2px)`);
+    sum(`hypot(10% - 10% + 2px)`, `hypot(0% + 2px)`);
+    sum(`min(1px + 1em)`, `calc(1px + 1em)`);
+    sum(`max(2 * min(1px,1em))`, `calc(2*min(1px,1em))`);
+    sum(`hypot(1px + 1em)`, `hypot(1px + 1em)`);
+    // A length has no percentage, and a percentage of an angle is a part of a turn. Their zero is left out.
+    minify_twice_test(`a { outline-width: calc(1em + 2px - 1em) }`, `a{outline-width:2px}`);
+    minify_twice_test(
+      `a { background: conic-gradient(red calc(10deg + 5% - 5%), blue) }`,
+      `a{background:conic-gradient(red 10deg,#00f)}`,
     );
   });
   describe("border_spacing", () => {

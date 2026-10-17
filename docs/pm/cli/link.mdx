@@ -47,6 +47,8 @@ bun link --save cool-pkg
 }
 ```
 
+Without `--save`, the link is not in `package.json` or `bun.lock`. If `bun.lock` has a registry version of `cool-pkg`, the next install with the hoisted linker replaces the link with that version and prints a warning. On Windows the link stays when the linked package has the name and version that `bun.lock` expects.
+
 ## Linking a directory by path
 
 `link:` also accepts a path, as in Yarn and pnpm. The path is relative to the `package.json` that declares it, and Bun installs a symlink to that directory. Nothing has to be registered with `bun link` first.

@@ -2,6 +2,7 @@ import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import {
   access,
+  cp,
   exists,
   link as fsLink,
   lstat,
@@ -28,6 +29,7 @@ import {
   toHaveBins,
 } from "harness";
 import { basename, join } from "path";
+import { TestRegistry } from "registry";
 import {
   createTestContext,
   destroyTestContext,
@@ -1252,6 +1254,364 @@ describe.each(["hoisted", "isolated"] as const)("when a package fails to install
         stdout: expect.not.stringContaining("Failed to install"),
         exitCode: 0,
       });
+    });
+  });
+});
+
+// The hoisted linker writes a package from the cache as a real directory, below real directories.
+// A link in the place of one leads to a folder with its own files: the linker replaces the link
+// and installs nothing behind it.
+describe("a link where the lockfile has a package from the cache", () => {
+  // Windows has no open that refuses a link in a path, so a link with the expected name and
+  // version stays in the package's own place there.
+  const posix = it.concurrent.skipIf(isWindows);
+  const windows = it.concurrent.skipIf(!isWindows);
+
+  const registry = new TestRegistry();
+  beforeAll(() => registry.start());
+  afterAll(() => registry.stop());
+
+  // The registry has one-one-dep@1.0.0 -> one-dep@1.0.0 -> no-deps@1.0.1. A root with
+  // no-deps@2.0.0 makes no-deps@1.0.1 install below one-dep.
+  const hoisted = `[install]\nlinker = "hoisted"\n`;
+  const dependencies = { "no-deps": "2.0.0", "one-dep": "1.0.0" };
+  const project = (manifest: object) => ({ "package.json": JSON.stringify(manifest), "bunfig.toml": hoisted });
+  const app = project({ name: "app", dependencies });
+  // A folder of the user's with the name and the version of a published package.
+  const folder = (name: string, version: string, more: object = {}) => ({
+    "package.json": JSON.stringify({ name, version }),
+    "own.txt": "",
+    ...more,
+  });
+  // Its own installed dependency is in the place where the published one-dep has another version.
+  const checkout = folder("one-dep", "1.0.0", { node_modules: { "no-deps": folder("no-deps", "2.0.0") } });
+  const ownFiles = ["own.txt", "package.json"];
+  const published = ["index.js", "package.json"];
+
+  // Each test has its own global directory, so each has its own `bun link` registrations.
+  function commands(root: string) {
+    const sandboxEnv = {
+      ...env,
+      BUN_INSTALL: join(root, ".bun"),
+      BUN_INSTALL_CACHE_DIR: join(root, ".cache"),
+      BUN_CONFIG_REGISTRY: registry.registryUrl(),
+    };
+    async function run(cwd: string, ...args: string[]) {
+      await using proc = spawn({
+        cmd: [bunExe(), ...args],
+        cwd: join(root, cwd),
+        env: sandboxEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+    async function bun(cwd: string, ...args: string[]) {
+      const { stdout, stderr, exitCode } = await run(cwd, ...args);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      return { stdout, stderr };
+    }
+    return { run, bun };
+  }
+
+  const isLink = (path: string) =>
+    readlink(path).then(
+      () => true,
+      () => false,
+    );
+
+  async function linkTo(target: string, path: string) {
+    await rm(path, { recursive: true, force: true });
+    await symlink(target, path, "junction");
+  }
+
+  const versionOf = async (dir: string) => (await file(join(dir, "package.json")).json()).version;
+  const warnings = (stderr: string) => stderr.split("\n").filter(line => line.startsWith("warn:"));
+
+  // What the checkout and the place of one-dep are when the link was replaced.
+  async function stateOf(root: string, slot: string) {
+    const own = join(root, "checkout", "node_modules", "no-deps");
+    return {
+      slot: {
+        link: await isLink(slot),
+        files: await readdirSorted(slot),
+        "no-deps": await versionOf(join(slot, "node_modules", "no-deps")),
+      },
+      checkout: {
+        files: await readdirSorted(join(root, "checkout")),
+        "no-deps": { files: await readdirSorted(own), version: await versionOf(own) },
+      },
+    };
+  }
+  const untouched = { files: ["node_modules", ...ownFiles], "no-deps": { files: ownFiles, version: "2.0.0" } };
+  const replaced = {
+    slot: { link: false, files: ["node_modules", "package.json"], "no-deps": "1.0.1" },
+    checkout: untouched,
+  };
+
+  posix("bun add replaces the link that bun link --save wrote (#28964)", async () => {
+    using dir = tempDir("bun-link-slot-", { lib: folder("no-deps", "1.0.0"), app: project({ name: "app" }) });
+    const root = String(dir);
+    const { bun } = commands(root);
+    const slot = join(root, "app", "node_modules", "no-deps");
+
+    await bun("lib", "link");
+    await bun("app", "link", "--save", "no-deps");
+    expect(await isLink(slot)).toBe(true);
+
+    const { stderr } = await bun("app", "add", "no-deps@1.0.0");
+    expect({
+      link: await isLink(slot),
+      files: await readdirSorted(slot),
+      lib: await readdirSorted(join(root, "lib")),
+      warnings: warnings(stderr),
+    }).toEqual({
+      link: false,
+      files: published,
+      lib: ownFiles,
+      warnings: [expect.stringMatching(/^warn: replacing link .*no-deps with no-deps@1\.0\.0$/)],
+    });
+  });
+
+  posix("bun install replaces a link to a folder with the name and the version of the package", async () => {
+    using dir = tempDir("bun-link-slot-", { checkout, app });
+    const root = String(dir);
+    const { bun } = commands(root);
+    const slot = join(root, "app", "node_modules", "one-dep");
+
+    await bun("app", "install");
+    await linkTo(join(root, "checkout"), slot);
+
+    await bun("app", "install");
+    expect(await stateOf(root, slot)).toEqual(replaced);
+  });
+
+  posix("bun install replaces a link that stays inside node_modules", async () => {
+    using dir = tempDir("bun-link-slot-", { app: { ...app, node_modules: { ".kept": checkout } } });
+    const root = String(dir);
+    const { bun } = commands(root);
+    const slot = join(root, "app", "node_modules", "one-dep");
+    const kept = join(root, "app", "node_modules", ".kept");
+
+    await bun("app", "install");
+    await linkTo(kept, slot);
+
+    await bun("app", "install");
+    expect({
+      link: await isLink(slot),
+      "no-deps": await versionOf(join(slot, "node_modules", "no-deps")),
+      kept: await versionOf(join(kept, "node_modules", "no-deps")),
+    }).toEqual({ link: false, "no-deps": "1.0.1", kept: "2.0.0" });
+  });
+
+  posix("bun install replaces a link at an @scope", async () => {
+    using dir = tempDir("bun-link-slot-", {
+      types: { "no-deps": folder("@types/no-deps", "1.0.0") },
+      app: project({ name: "app", dependencies: { "@types/no-deps": "1.0.0" } }),
+    });
+    const root = String(dir);
+    const { bun } = commands(root);
+    const scope = join(root, "app", "node_modules", "@types");
+
+    await bun("app", "install");
+    await linkTo(join(root, "types"), scope);
+
+    await bun("app", "install");
+    expect({
+      link: await isLink(scope),
+      files: await readdirSorted(join(scope, "no-deps")),
+      types: await readdirSorted(join(root, "types", "no-deps")),
+    }).toEqual({ link: false, files: published, types: ownFiles });
+  });
+
+  posix("bun install replaces a link at the node_modules of a package", async () => {
+    using dir = tempDir("bun-link-slot-", { nested: { "no-deps": folder("no-deps", "1.0.1") }, app });
+    const root = String(dir);
+    const { bun } = commands(root);
+    const nodeModules = join(root, "app", "node_modules", "one-dep", "node_modules");
+
+    await bun("app", "install");
+    await linkTo(join(root, "nested"), nodeModules);
+
+    await bun("app", "install");
+    expect({
+      link: await isLink(nodeModules),
+      files: await readdirSorted(join(nodeModules, "no-deps")),
+      nested: await readdirSorted(join(root, "nested", "no-deps")),
+    }).toEqual({ link: false, files: published, nested: ownFiles });
+  });
+
+  posix("bun install replaces a link in the node_modules of a workspace", async () => {
+    using dir = tempDir("bun-link-slot-", {
+      ...project({ name: "root", workspaces: ["packages/*"], dependencies: { "no-deps": "2.0.0" } }),
+      packages: {
+        member: { "package.json": JSON.stringify({ name: "member", dependencies: { "no-deps": "1.0.0" } }) },
+      },
+      lib: folder("no-deps", "1.0.0"),
+    });
+    const root = String(dir);
+    const { bun } = commands(root);
+    const slot = join(root, "packages", "member", "node_modules", "no-deps");
+
+    await bun(".", "install");
+    expect(await versionOf(slot)).toBe("1.0.0");
+    await linkTo(join(root, "lib"), slot);
+
+    await bun(".", "install");
+    expect({
+      link: await isLink(slot),
+      files: await readdirSorted(slot),
+      lib: await readdirSorted(join(root, "lib")),
+    }).toEqual({ link: false, files: published, lib: ownFiles });
+  });
+
+  posix("bun install replaces a link in the place of a tarball", async () => {
+    const tarball = `${registry.registryUrl()}no-deps/-/no-deps-1.0.0.tgz`;
+    using dir = tempDir("bun-link-slot-", { app: project({ name: "app", dependencies: { "no-deps": tarball } }) });
+    const root = String(dir);
+    const { bun } = commands(root);
+    const slot = join(root, "app", "node_modules", "no-deps");
+    const copy = join(root, "copy");
+
+    await bun("app", "install");
+    // With the `.bun-tag` that says which tarball the files are from.
+    await cp(slot, copy, { recursive: true });
+    await writeFile(join(copy, "own.txt"), "");
+    await linkTo(copy, slot);
+
+    await bun("app", "install");
+    expect({ link: await isLink(slot), own: await exists(join(slot, "own.txt")) }).toEqual({ link: false, own: false });
+  });
+
+  posix("bun install does not install into the cache through a link", async () => {
+    using dir = tempDir("bun-link-slot-", { app });
+    const root = String(dir);
+    const { bun } = commands(root);
+    const slot = join(root, "app", "node_modules", "one-dep");
+
+    await bun("app", "install");
+    const entry = (await readdirSorted(join(root, ".cache"))).find(name => name.startsWith("one-dep@1.0.0"))!;
+    await linkTo(join(root, ".cache", entry), slot);
+
+    await bun("app", "install");
+    expect({
+      link: await isLink(slot),
+      "no-deps": await versionOf(join(slot, "node_modules", "no-deps")),
+      cache: await readdirSorted(join(root, ".cache", entry)),
+    }).toEqual({ link: false, "no-deps": "1.0.1", cache: ["package.json"] });
+  });
+
+  // The lockfile names a tarball of one-dep that the registry does not have, and the cache is empty.
+  async function breakOneDep(root: string) {
+    const lockfile = join(root, "app", "bun.lock");
+    const missing = `${registry.registryUrl()}one-dep/-/one-dep-0.0.0.tgz`;
+    const lock = (await file(lockfile).text()).replace(/("one-dep": \["one-dep@1\.0\.0", ")[^"]*"/, `$1${missing}"`);
+    expect(lock).toContain(missing);
+    await writeFile(lockfile, lock);
+    await rm(join(root, ".cache"), { recursive: true, force: true });
+    return missing;
+  }
+
+  posix("bun install does not install below a link when the package in its place fails", async () => {
+    using dir = tempDir("bun-link-slot-", { checkout, app });
+    const root = String(dir);
+    const { bun, run } = commands(root);
+    const slot = join(root, "app", "node_modules", "one-dep");
+
+    await bun("app", "install");
+    const missing = await breakOneDep(root);
+    await linkTo(join(root, "checkout"), slot);
+
+    const { stderr, exitCode } = await run("app", "install");
+    expect(stderr).toContain(`error: GET ${missing} - 404`);
+    expect(stderr).toContain("ELOOP: Failed to open node_modules folder for no-deps in ");
+    expect({ exitCode, link: await isLink(slot), checkout: (await stateOf(root, slot)).checkout }).toEqual({
+      exitCode: 1,
+      link: true,
+      checkout: untouched,
+    });
+  });
+
+  posix("bun install does not fail for what is below an optional package that fails", async () => {
+    using dir = tempDir("bun-link-slot-", {
+      checkout,
+      app: project({
+        name: "app",
+        dependencies: { "no-deps": "2.0.0" },
+        optionalDependencies: { "one-dep": "1.0.0" },
+      }),
+    });
+    const root = String(dir);
+    const { bun, run } = commands(root);
+    const slot = join(root, "app", "node_modules", "one-dep");
+
+    await bun("app", "install");
+    await breakOneDep(root);
+    await linkTo(join(root, "checkout"), slot);
+
+    const { stderr, exitCode } = await run("app", "install");
+    expect(stderr).not.toContain("ELOOP");
+    expect({ exitCode, link: await isLink(slot), checkout: (await stateOf(root, slot)).checkout }).toEqual({
+      exitCode: 0,
+      link: true,
+      checkout: untouched,
+    });
+  });
+
+  posix("bun add -g replaces a bun link registration and says so", async () => {
+    using dir = tempDir("bun-link-slot-", { checkout });
+    const root = String(dir);
+    const { bun } = commands(root);
+    const slot = join(root, ".bun", "install", "global", "node_modules", "one-dep");
+
+    await bun("checkout", "link");
+    expect(await isLink(slot)).toBe(true);
+
+    const { stderr } = await bun(".", "add", "-g", "one-one-dep", "no-deps@2.0.0");
+    expect(warnings(stderr)).toEqual([expect.stringMatching(/^warn: replacing link .*one-dep with one-dep@1\.0\.0$/)]);
+    expect(await stateOf(root, slot)).toEqual(replaced);
+  });
+
+  posix("bun prune does not take a link for the hoisted copy of a package", async () => {
+    const member = { "package.json": JSON.stringify({ name: "member", dependencies: { "no-deps": "2.0.0" } }) };
+    using dir = tempDir("bun-link-slot-", {
+      ...project({ name: "root", workspaces: ["packages/*"], dependencies: { "no-deps": "2.0.0" } }),
+      packages: { member },
+      lib: folder("no-deps", "2.0.0"),
+    });
+    const root = String(dir);
+    const { bun, run } = commands(root);
+    const slot = join(root, "node_modules", "no-deps");
+    const copy = join(root, "packages", "member", "node_modules", "no-deps");
+
+    await bun(".", "install");
+    // A copy that the hoisted one makes needless, and a link in the place of the hoisted one.
+    await cp(slot, copy, { recursive: true });
+    await linkTo(join(root, "lib"), slot);
+
+    const { stderr } = await run(".", "prune");
+    expect(warnings(stderr)).toEqual([expect.stringMatching(/no-deps is not the version bun\.lock expects; keeping /)]);
+    expect(await readdirSorted(copy)).toEqual(published);
+  });
+
+  windows("bun install does not install below a link in the place of a package", async () => {
+    using dir = tempDir("bun-link-slot-", { checkout, app });
+    const root = String(dir);
+    const { bun, run } = commands(root);
+    const slot = join(root, "app", "node_modules", "one-dep");
+
+    await bun("app", "install");
+    await linkTo(join(root, "checkout"), slot);
+
+    const { stderr, exitCode } = await run("app", "install");
+    expect(stderr).toContain("ELOOP: Failed to open node_modules folder for no-deps in ");
+    expect({ exitCode, link: await isLink(slot), checkout: (await stateOf(root, slot)).checkout }).toEqual({
+      exitCode: 1,
+      link: true,
+      checkout: untouched,
     });
   });
 });

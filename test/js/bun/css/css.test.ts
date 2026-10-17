@@ -7964,6 +7964,22 @@ describe("css tests", () => {
     minify_test(".foo{grid-template-areas:none}", ".foo{grid-template-areas:none}");
   });
 
+  // A named color is a CSS keyword, and a CSS keyword is ASCII case-insensitive.
+  describe("named colors in any letter case", () => {
+    minify_test(".a{color:White}", ".a{color:#fff}");
+    minify_test(".a{color:DodgerBlue}", ".a{color:#1e90ff}");
+    minify_test(".a{background:linear-gradient(Red,BLUE)}", ".a{background:linear-gradient(red,#00f)}");
+    minify_test(".a{color:color-mix(in srgb,Red,Blue)}", ".a{color:purple}");
+    // `@property` needs a typed color: this was a build error.
+    minify_test(
+      '@property --accent{syntax:"<color>";inherits:false;initial-value:White}',
+      '@property --accent{syntax:"<color>";inherits:false;initial-value:#fff}',
+    );
+    minify_test(".a{color:Redd}", ".a{color:Redd}");
+    // Only a color position folds.
+    minify_test(".a{--x:Red;animation-name:Red;font-family:Tan}", ".a{--x:Red;animation-name:Red;font-family:Tan}");
+  });
+
   describe("edge cases", () => {
     describe("invalid gradient", () => {
       cssTest(

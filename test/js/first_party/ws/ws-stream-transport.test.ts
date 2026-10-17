@@ -1329,4 +1329,38 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
       scriptTimeout,
     );
   });
+
+  // Only a bounds checked memory releases the block it grew out of. npm ws keeps views of the chunk, which grow() detaches.
+  test.skipIf(!builtin).concurrent(
+    "a 'message' listener grows the WebAssembly.Memory that holds the chunk",
+    async () => {
+      const { lines, exitCode } = await runScript(
+        { specifier },
+        `
+        const { Duplex } = require("node:stream");
+        const memory = new WebAssembly.Memory({ initial: 1, maximum: 4 });
+        const chunk = new Uint8Array(memory.buffer, 0, 14);
+        chunk.set([0x82, 0x81, 0, 0, 0, 0, 0x78, 0x82, 0x81, 0, 0, 0, 0, 0x79]);
+        const socket = new Duplex({ read() {}, write(chunk, encoding, callback) { callback(); } });
+        const ws = new WebSocket(null, undefined, {});
+        ws.setSocket(socket, Buffer.alloc(0), { maxPayload: 0, skipUTF8Validation: false });
+        let reused;
+        ws.on("error", error => console.log(showError(error)));
+        ws.on("message", data => {
+          console.log(show(data));
+          if (reused) return;
+          memory.grow(1);
+          // Where the allocator keeps the released block mapped, this takes it over.
+          reused = new WebAssembly.Memory({ initial: 1, maximum: 1 });
+          new Uint8Array(reused.buffer).fill(0xff);
+        });
+        socket.emit("data", chunk);
+      `,
+        { BUN_JSC_useWasmFastMemory: "0" },
+      );
+      expect(lines).toEqual(['Buffer("x")', 'Buffer("y")']);
+      expect(exitCode).toBe(0);
+    },
+    scriptTimeout,
+  );
 });

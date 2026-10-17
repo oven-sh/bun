@@ -1209,6 +1209,55 @@ it("should keep bun-create task and start strings containing escape sequences in
   expect(exitCode).toBe(0);
 });
 
+// https://github.com/oven-sh/bun/issues/11536
+it("keeps the comments of the template's package.json", async () => {
+  const bunCreateDir = join(x_dir, "bun-create");
+  const packageJson = [
+    `{`,
+    `  // what the project is`,
+    `  "name": "commented-template", /* the name of the directory goes here */`,
+    `  "version": "1.0.0",`,
+    `  "bun-create": {`,
+    `    "start": "bun run dev" // only for bun create`,
+    `  },`,
+    ``,
+    `  /* tools */`,
+    `  "scripts": { "dev": "bun index.js" },`,
+    `}`,
+    ``,
+  ].join("\n");
+  await Bun.write(join(bunCreateDir, "commented-template", "package.json"), packageJson);
+  await Bun.write(join(bunCreateDir, "commented-template", "index.js"), "console.log('hi');\n");
+
+  const create = async (dest: string, ...args: string[]) => {
+    await using proc = spawn({
+      cmd: [bunExe(), "create", "commented-template", join(x_dir, dest), "--no-install", "--no-git", ...args],
+      cwd: x_dir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env: { ...env, BUN_CREATE_DIR: bunCreateDir },
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { err, exitCode, packageJson: await Bun.file(join(x_dir, dest, "package.json")).text() };
+  };
+
+  // The name is set, `bun-create` goes, and the rest of the text is the text of the template.
+  const created = await create("commented-dest");
+  expect(created.err).not.toContain("error");
+  expect(created.packageJson).toBe(
+    packageJson
+      .replace(`"commented-template"`, `"commented-dest"`)
+      .replace(`  "bun-create": {\n    "start": "bun run dev" // only for bun create\n  },\n`, ""),
+  );
+  expect(created.exitCode).toBe(0);
+
+  // `--no-package-json` leaves the file as the template has it.
+  const untouched = await create("untouched-dest", "--no-package-json");
+  expect(untouched.packageJson).toBe(packageJson);
+  expect(untouched.exitCode).toBe(0);
+});
+
 describe.concurrent("bun-create tasks", () => {
   const localdep = {
     dependencies: { localdep: "file:./localdep" },

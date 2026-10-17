@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
@@ -1477,6 +1477,210 @@ describe.concurrent("bun pm pkg", () => {
       const { error, code } = await runPmPkg(["fix"], emptyDir, false);
       expect(error).toContain("package.json");
       expect(code).toBe(1);
+    });
+  });
+
+  // An edit is written into the text of the file. What it does not touch stays as it is, byte for byte:
+  // https://github.com/oven-sh/bun/issues/11536
+  describe("the text of package.json", () => {
+    async function edited(packageJson: string, ...args: string[]) {
+      using dir = tempDir("pm-pkg-text", { "package.json": packageJson });
+      const { error } = await runPmPkg(args, String(dir));
+      expect(error).toBe("");
+      return await readRaw(String(dir));
+    }
+
+    it("keeps comments, line endings, blank lines and the spelling of what it does not change", async () => {
+      // What a reprint of the whole file loses: comments in six places, CRLF, a blank line, the spelling of `1.50`,
+      // of an escape and of a single-quoted string, an object on one line, trailing commas, text after the root.
+      const packageJson = [
+        `// before the root`,
+        `{`,
+        `  // above a member`,
+        `  "name": "app", /* beside a member */`,
+        ``,
+        `  "version": '1.0.0',`,
+        `  "config": { "retries": 1.50, "caf\\u00e9": true },`,
+        `  "files": ["a", "b"],`,
+        `  /* before the closing brace */`,
+        `}`,
+        `// after the root`,
+        ``,
+      ].join("\r\n");
+      const replaced = (from: string, to: string) => {
+        expect(packageJson).toContain(from);
+        return packageJson.replace(from, to);
+      };
+
+      expect(await edited(packageJson, "set", "version=2.0.0")).toBe(replaced(`'1.0.0'`, `"2.0.0"`));
+      expect(await edited(packageJson, "set", "license=MIT")).toBe(
+        replaced(`"b"],\r\n  /* before`, `"b"],\r\n  "license": "MIT",\r\n  /* before`),
+      );
+      expect(await edited(packageJson, "set", "files[]=c")).toBe(replaced(`["a", "b"]`, `["a", "b", "c"]`));
+      expect(await edited(packageJson, "delete", "files")).toBe(replaced(`  "files": ["a", "b"],\r\n`, ""));
+      // An object on one line that gets a member is laid out, with its own tokens.
+      expect(await edited(packageJson, "set", "config.timeout=5", "--json")).toBe(
+        replaced(
+          `{ "retries": 1.50, "caf\\u00e9": true }`,
+          `{\r\n    "retries": 1.50,\r\n    "caf\\u00e9": true,\r\n    "timeout": 5\r\n  }`,
+        ),
+      );
+    });
+
+    it("does not write a file that it does not change", async () => {
+      const documents = [
+        `{"name":"app"}`,
+        `{\r\n  "name": "app",\r\n  "n": [0x10, .5, 1_000, 010, 1e400, -0, 1.50],\r\n}\r\n`,
+        `\ufeff{\n  "name": "app"\n}\n`,
+        `// before\n{\n  // above\n  "name": 'app', /* beside */\n\n  "a": 1, "a": 2,\n} // after\n`,
+        `{ "name": "app", "s": ["caf\\u00e9", "\\ud83d\\ude00", "a\\/b"], "t": \\u0074rue, "e": [ /* none */ ] }`,
+      ];
+      await Promise.all(
+        documents.map(async document => {
+          using dir = tempDir("pm-pkg-text-same", { "package.json": document });
+          const path = join(String(dir), "package.json");
+          const { mtimeMs } = statSync(path);
+          const { error } = await runPmPkg(["set", "name=app"], String(dir));
+          expect(error).toBe("");
+          // Not `readRaw`: `.text()` drops the byte order mark.
+          expect(readFileSync(path, "utf8")).toBe(document);
+          expect(statSync(path).mtimeMs).toBe(mtimeMs);
+        }),
+      );
+    });
+
+    it("puts the comma after the value before a new member, not after its comment", async () => {
+      expect(await edited(`{\n  "name": "app" // the name\n}\n`, "set", "version=1.0.0")).toBe(
+        `{\n  "name": "app", // the name\n  "version": "1.0.0"\n}\n`,
+      );
+      expect(await edited(`{\n  "name": "app" /* the name */\n}\n`, "set", "version=1.0.0")).toBe(
+        `{\n  "name": "app", /* the name */\n  "version": "1.0.0"\n}\n`,
+      );
+    });
+
+    it("keeps a trailing comma a trailing comma", async () => {
+      expect(await edited(`{\n  "name": "app",\n}\n`, "set", "version=1.0.0")).toBe(
+        `{\n  "name": "app",\n  "version": "1.0.0",\n}\n`,
+      );
+      expect(await edited(`{\n  "name": "app",\n  "version": "1.0.0",\n}\n`, "delete", "version")).toBe(
+        `{\n  "name": "app",\n}\n`,
+      );
+      // The last member gives its comma up when the one after it goes.
+      expect(await edited(`{\n  "name": "app", // the name\n  "version": "1.0.0"\n}\n`, "delete", "version")).toBe(
+        `{\n  "name": "app" // the name\n}\n`,
+      );
+    });
+
+    it("takes the line of a removed member and leaves the comments on the lines above it", async () => {
+      expect(
+        await edited(
+          `{\n  "name": "app",\n\n  // what it is\n  /* and more */\n  "description": "d", // gone with its line\n  "version": "1.0.0"\n}\n`,
+          "delete",
+          "description",
+        ),
+      ).toBe(`{\n  "name": "app",\n\n  // what it is\n  /* and more */\n  "version": "1.0.0"\n}\n`);
+      // Nothing is left of a group but its comments.
+      expect(
+        await edited(`{\n  "scripts": {\n    // how to build\n    "build": "b"\n  }\n}\n`, "delete", "scripts.build"),
+      ).toBe(`{\n  "scripts": {\n    // how to build\n  }\n}\n`);
+      expect(await edited(`{\n  "scripts": {\n    "build": "b"\n  }\n}\n`, "delete", "scripts.build")).toBe(
+        `{\n  "scripts": {}\n}\n`,
+      );
+      // A comment that ends on the line of the member goes with it.
+      expect(
+        await edited(`{\n  "name": "app",\n  // above\n  /* on\n  its line */ "main": "m"\n}\n`, "delete", "main"),
+      ).toBe(`{\n  "name": "app"\n  // above\n}\n`);
+    });
+
+    it("writes strict JSON when a container with `//` in a string loses every member", async () => {
+      const emptied = await edited(
+        `{ "name": "app", "repository": { "url": "https://example.com/app.git" }, "files": [ "//x", "/* y */" ] }`,
+        "delete",
+        "repository.url",
+        "files[0]",
+        "files[0]",
+      );
+      expect(emptied).toBe(`{\n  "name": "app",\n  "repository": {},\n  "files": []\n}`);
+      expect(JSON.parse(emptied)).toEqual({ name: "app", repository: {}, files: [] });
+      expect(
+        await edited(`{\n  "repository": { "url": "https://example.com/app.git" }, // where\n  "n": 1\n}\n`, "delete", "repository.url"),
+      ).toBe(`{\n  "repository": {}, // where\n  "n": 1\n}\n`);
+    });
+
+    it("gives a new member the indentation of the members beside it", async () => {
+      expect(await edited(`{\n\t"name": "app"\n}\n`, "set", "a.b=1")).toBe(
+        `{\n\t"name": "app",\n\t"a": {\n\t\t"b": "1"\n\t}\n}\n`,
+      );
+      expect(await edited(`{\n    "name": "app",\n    "a": {\n        "b": "1"\n    }\n}`, "set", "a.c=2")).toBe(
+        `{\n    "name": "app",\n    "a": {\n        "b": "1",\n        "c": "2"\n    }\n}`,
+      );
+      // Lines that are indented by no rule stay where they are.
+      expect(await edited(`{\n      "name": "app",\n"main": "m"\n  }`, "set", "version=1.0.0")).toBe(
+        `{\n      "name": "app",\n"main": "m",\n      "version": "1.0.0"\n  }`,
+      );
+      // An empty object or array is filled the way the printer writes one.
+      expect(await edited(`{\n  "a": {}, // a\n  "b": [] // b\n}\n`, "set", "a.x=1", "b[]=y")).toBe(
+        `{\n  "a": {\n    "x": "1"\n  }, // a\n  "b": ["y"] // b\n}\n`,
+      );
+      expect(await edited(`{\n  "a": {\n  }, // a\n  "b": [\n  ] // b\n}\n`, "set", "a.x=1", "b[]=y")).toBe(
+        `{\n  "a": {\n    "x": "1"\n  }, // a\n  "b": [\n    "y"\n  ] // b\n}\n`,
+      );
+    });
+
+    it("pairs an item of an array with the item of the text that has its value", async () => {
+      expect(await edited(`{\n  "files": [\n    "a", // the first\n    "b"\n  ]\n}\n`, "set", "files[]=c")).toBe(
+        `{\n  "files": [\n    "a", // the first\n    "b",\n    "c"\n  ]\n}\n`,
+      );
+      // The first one goes: the others keep their comments.
+      expect(
+        await edited(
+          `{\n  "files": [\n    "a", // the first\n    "b", // the second\n    "c" // the third\n  ]\n}\n`,
+          "delete",
+          "files[0]",
+        ),
+      ).toBe(`{\n  "files": [\n    "b", // the second\n    "c" // the third\n  ]\n}\n`);
+      expect(await edited(`{\n  "n": [1 /* one */, 2 /* two */, 3 /* three */]\n}\n`, "delete", "n[0]")).toBe(
+        `{\n  "n": [2 /* two */, 3 /* three */]\n}\n`,
+      );
+      expect(await edited(`{\n  "n": [{}, [], 1]\n}\n`, "delete", "n[2]")).toBe(`{\n  "n": [{}, []]\n}\n`);
+    });
+
+    it("lays a file on one line out, with its comments and tokens", async () => {
+      expect(
+        await edited(`{"name":"app",/* why */"config":{"n":1.50,'s':'t'},"files":["a"]}`, "set", "version=1.0.0"),
+      ).toBe(
+        `{\n  "name": "app",\n  /* why */ "config": {\n    "n": 1.50,\n    's': 't'\n  },\n  "files": ["a"],\n  "version": "1.0.0"\n}`,
+      );
+      expect(await edited(`{ "name" /* a */ : /* b */ "app" /* c */ , "n": 1 }`, "set", "name=lib")).toBe(
+        `{\n  "name": /* a */ /* b */ "lib" /* c */,\n  "n": 1\n}`,
+      );
+      // A `//` comment that is laid out again still ends its line.
+      expect(await edited(`{ "name": // the name\n"app", "n": 1 }`, "set", "version=1.0.0")).toBe(
+        `{\n  "name": // the name\n  "app",\n  "n": 1,\n  "version": "1.0.0"\n}`,
+      );
+    });
+
+    it("keeps what is around a value that changes", async () => {
+      expect(await edited(`{\n  "name" /* a */ : /* b */ "app" /* c */ ,\n  "n": 1\n}`, "set", "name=lib")).toBe(
+        `{\n  "name" /* a */ : /* b */ "lib" /* c */ ,\n  "n": 1\n}`,
+      );
+    });
+
+    it("takes a key for the key that it spells, and keeps a key that is there twice", async () => {
+      expect(await edited(`{\n  "a": 1, // first\n  "a": 2, // second\n  "b": 3\n}\n`, "delete", "b")).toBe(
+        `{\n  "a": 1, // first\n  "a": 2 // second\n}\n`,
+      );
+      expect(
+        await edited(`{\n  "n\\u0061me": "app", // spelled with an escape\n  "v": "1"\n}\n`, "set", "name=lib"),
+      ).toBe(`{\n  "n\\u0061me": "lib", // spelled with an escape\n  "v": "1"\n}\n`);
+    });
+
+    it("prints with --dry-run the text that it would write", async () => {
+      const packageJson = `{\r\n  // the name\r\n  "name": 'app',\r\n}\r\n`;
+      using dir = tempDir("pm-pkg-text-dry", { "package.json": packageJson });
+      const { output, error } = await runPmPkg(["set", "name=lib", "--dry-run"], String(dir));
+      expect({ output, error }).toEqual({ output: `{\r\n  // the name\r\n  "name": "lib",\r\n}\r\n`, error: "" });
+      expect(await readRaw(String(dir))).toBe(packageJson);
     });
   });
 

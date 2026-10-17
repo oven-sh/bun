@@ -67,3 +67,7 @@ bun_url.workspace = true
 bun_uws.workspace = true
 bun_which.workspace = true
 bun_wyhash.workspace = true
+
+[dev-dependencies]
+# The native symbols that Bun's C and C++ side provides to `bun_core`.
+bun_sema_standalone = { path = "../sema/standalone" }

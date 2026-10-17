@@ -1,5 +1,4 @@
 use core::fmt;
-use std::borrow::Cow;
 
 use bstr::BStr;
 
@@ -23,7 +22,6 @@ use bun_install::package_manager_real::command_line_arguments::UpdateGroups;
 use bun_install::package_manager_real::package_json_editor::{
     catalog_object_of, updated_version_literal,
 };
-use bun_install::package_manager_real::package_json_text;
 use bun_install::update_scope::selects;
 use bun_install::{
     CommandLineArguments, GetJsonOptions, GetJsonResult, INVALID_PACKAGE_ID, PackageID,
@@ -212,23 +210,18 @@ impl UpdateInteractiveCommand {
     fn save_package_json(
         package_json: &mut WorkspacePackageJsonCacheEntry,
         package_json_path: &[u8],
+        log: &mut bun_ast::Log,
     ) -> crate::Result<()> {
-        let new_package_json_source = match package_json_text::print(
-            &package_json.source.contents,
-            package_json.root,
-            package_json.indentation,
-        ) {
-            Ok(contents) => contents,
-            Err(err) => {
-                Output::err_generic("Failed to serialize package.json: {s}", (err.name(),));
-                return Err(err.into());
-            }
-        };
+        // The install reads this cache entry, not the file.
+        if let Err(err) = package_json.save(package_json.root, log) {
+            Output::err_generic("Failed to serialize package.json: {s}", (err.name(),));
+            return Err(err.into());
+        }
 
         let mut path_zbuf = bun_paths::path_buffer_pool::get();
         let path_z = path::resolve_path::z(package_json_path, &mut path_zbuf);
         if let Err(err) =
-            bun_sys::File::write_file(bun_sys::Fd::cwd(), path_z, &new_package_json_source)
+            bun_sys::File::write_file(bun_sys::Fd::cwd(), path_z, &package_json.source.contents)
         {
             Output::err_generic(
                 "Failed to write package.json at {s}: {s}",
@@ -236,13 +229,6 @@ impl UpdateInteractiveCommand {
             );
             return Err(err.into());
         }
-
-        // The install reads this cache entry, not the file. The cached `root` still borrows the old contents.
-        let old = core::mem::replace(
-            &mut package_json.source.contents,
-            Cow::Owned(new_package_json_source),
-        );
-        package_json.stale_contents.push(old);
         Ok(())
     }
 
@@ -340,6 +326,7 @@ impl UpdateInteractiveCommand {
             let package_json_path =
                 Self::build_package_json_path(root_dir, workspace_path, &mut path_buf);
 
+            let log = manager.log_mut();
             let Some(package_json) = Self::load_package_json(manager, package_json_path) else {
                 continue;
             };
@@ -382,7 +369,7 @@ impl UpdateInteractiveCommand {
             }
 
             if modified {
-                Self::save_package_json(package_json, package_json_path)?;
+                Self::save_package_json(package_json, package_json_path, log)?;
             }
         }
         Ok(())
@@ -398,6 +385,7 @@ impl UpdateInteractiveCommand {
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let package_json_path = Self::build_package_json_path(root_dir, b"", &mut path_buf);
 
+        let log = manager.log_mut();
         let Some(package_json) = Self::load_package_json(manager, package_json_path) else {
             return Ok(());
         };
@@ -416,7 +404,7 @@ impl UpdateInteractiveCommand {
             )?;
         }
 
-        Self::save_package_json(package_json, package_json_path)
+        Self::save_package_json(package_json, package_json_path, log)
     }
 
     fn update_interactive(

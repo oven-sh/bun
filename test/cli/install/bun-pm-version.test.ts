@@ -789,6 +789,33 @@ describe.concurrent("bun pm version", () => {
   "config": { "max": 1e400, "min": -1e400 }
 }`);
     });
+
+    // https://github.com/oven-sh/bun/issues/11536
+    it("changes the version in the text of the file and nothing else", async () => {
+      const packageJson = [
+        `// before the root`,
+        `{`,
+        `  // above a member`,
+        `  "name": "app", /* beside a member */`,
+        ``,
+        `  "version": '1.0.0', // beside the version`,
+        `  "config": { "retries": 1.50 },`,
+        `}`,
+        ``,
+      ].join("\r\n");
+      await using testDir = tempDir(`version-${i++}`, { "package.json": packageJson });
+
+      const { output, error, code } = await runCommand(
+        [bunExe(), "pm", "version", "minor", "--no-git-tag-version"],
+        String(testDir),
+      );
+      expect(error).toBe("");
+      expect(output.trim()).toBe("v1.1.0");
+      expect(code).toBe(0);
+      expect(await Bun.file(join(String(testDir), "package.json")).text()).toBe(
+        packageJson.replace(`'1.0.0'`, `"1.1.0"`),
+      );
+    });
   });
 
   describe("prerelease handling", () => {

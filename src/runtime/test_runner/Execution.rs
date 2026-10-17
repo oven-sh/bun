@@ -297,19 +297,20 @@ impl Execution {
 
     pub(crate) fn handle_timeout(&mut self, global_this: &JSGlobalObject) -> JsResult<()> {
         let _g = group_begin!();
-        self.kill_dangling_processes_on_timeout(global_this);
         let buntest = self.bun_test();
+        // A callback on the stack of `run` is turning the event loop, so the `Start` below is not stepped until it returns.
+        // SAFETY: `in_run_loop` is a sibling field of `self` in `BunTest`, read without forming a `&BunTest`.
+        if unsafe { (*buntest).in_run_loop } {
+            self.kill_dangling_processes_on_timeout(global_this);
+        }
         // SAFETY: deref parent at point-of-use; `self` is not accessed while this `&mut BunTest` is live.
         unsafe { (*buntest).add_result(RefDataValue::Start) };
         Ok(())
     }
 
-    /// The kill-only half of [`handle_timeout`]: signals a timed-out test's spawned processes without touching the runner's queue, so it may run from inside `spawnSync`'s isolated loop.
+    /// Signals a timed-out test's spawned processes where the runner cannot step to fail that test: its callback is on
+    /// the stack, in `spawnSync`'s isolated loop or in a tick of the event loop. Otherwise `step_sequence_one` does it.
     pub(crate) fn kill_dangling_processes_on_timeout(&mut self, global_this: &JSGlobalObject) {
-        // The file timer can fire after the active entry returned and before `run` steps past it: that entry did not time out.
-        if self.active_entry_reported() {
-            return;
-        }
         // if the concurrent group has one sequence and the sequence has an active entry that has timed out,
         //   kill any dangling processes
         // when using test.concurrent(), we can't do this because it could kill multiple tests at once.
@@ -323,7 +324,7 @@ impl Execution {
                     // SAFETY: arena-owned entry, alive for lifetime of BunTest
                     let entry = unsafe { entry.as_ref() };
                     let now = Timespec::now_force_real_time();
-                    // A stale file timer can fire while an unlimited entry is active.
+                    // The file timer can be armed for an earlier entry while one with no timeout is active.
                     if !entry.timespec.eql(&Timespec::EPOCH)
                         && entry.timespec.order(&now) == core::cmp::Ordering::Less
                     {
@@ -346,17 +347,6 @@ impl Execution {
             );
             bun_core::Output::flush();
         }
-    }
-
-    /// A result for an active entry is queued: its callback returned and `run` has not stepped yet.
-    fn active_entry_reported(&mut self) -> bool {
-        let buntest = self.bun_test();
-        // SAFETY: `result_queue` is a sibling field of `self` in `BunTest`, read without forming a `&BunTest`.
-        let queue = unsafe { &(*buntest).result_queue };
-        (0..queue.readable_length()).any(|offset| {
-            self.get_current_and_valid_execution_sequence(&queue.peek_item(offset))
-                .is_some()
-        })
     }
 
     pub(crate) fn step(
@@ -1002,7 +992,8 @@ fn step_sequence_one(
         // SAFETY: arena-owned entry
         let active_entry = unsafe { &mut *active_entry_ptr.as_ptr() };
         if active_entry.evaluate_timeout(sequence, now) {
-            // The timer callback compared the deadline with an earlier clock, so it can have signalled nothing.
+            // Here, where the entry is failed for its timeout, and not in the timer callback: its clock is earlier, and
+            // a result that the entry queued before the timer fired is stepped first.
             // SAFETY: group points into this.groups; read-only.
             let group_ref = unsafe { group.as_ref() };
             if group_ref.sequence_end - group_ref.sequence_start == 1 {

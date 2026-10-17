@@ -316,6 +316,13 @@ if (isFlaky && isLinux) {
         await Bun.sleep(120);
       }, 0);
 
+      test("has a deadline and is done at once, again", () => {}, 30);
+
+      test("has no timeout and waits in expect()", async () => {
+        // \`resolves\` turns the event loop with this callback on the stack, so the timer fires under it.
+        await expect(Bun.sleep(120)).resolves.toBeUndefined();
+      }, 0);
+
       test("the child was not signalled", () => {
         expect({ exitCode: child.exitCode, signalled: existsSync("signals") }).toEqual({ exitCode: null, signalled: false });
       });
@@ -324,6 +331,23 @@ if (isFlaky && isLinux) {
     expect(combined).not.toContain("dangling process");
     expect(combined).toContain("(pass) the child was not signalled");
     expect(exitCode).toBe(0);
+  });
+
+  test("a test that waits for its child in expect() is ended by its timeout", async () => {
+    const { combined, exitCode } = await runTestFile(/* ts */ `
+      test("times out", async () => {
+        const child = Bun.spawn({ cmd: ["sh", "-c", ${JSON.stringify(children.exitsOnSigterm)}], ...ignore });
+        waitUntilReady();
+        // \`resolves\` turns the event loop with this callback on the stack: only the SIGTERM of the timeout ends it.
+        await expect(child.exited).resolves.toBe(7);
+        console.log("the child exited on SIGTERM");
+      }, 100);
+    `);
+
+    expect(combined).toContain("killed 1 dangling process");
+    expect(combined).toContain("the child exited on SIGTERM");
+    expect(combined).toContain("(fail) times out");
+    expect(exitCode).toBe(1);
   });
 
   test("a test that returns after its deadline and passes keeps its child", async () => {

@@ -1,5 +1,5 @@
 //! `bun test` hoists top-level `vi.mock()`, `jest.mock()` and `vi.hoisted()` above imports, which become `await import()`.
-//! So do the imports of a Vitest test file without such a call: one of them may mock what the next one loads.
+//! A Vitest test file's imports become `await import()` even without such a call, because one import may mock what the next loads.
 
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast::expr::Data as ExprData;
@@ -86,8 +86,8 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             .any(|record| record.path.text == b"vitest")
     }
 
-    /// Vitest runs each import before it looks at the next. Static imports are all linked before the first one runs, and
-    /// a module that is linked can only be mocked by overwriting its exports.
+    /// Vitest finishes running each import before it starts the next. Static imports are all linked before any of them
+    /// runs, and once a module is linked the only way to mock it is to overwrite its exports.
     fn runs_imports_in_turn(&self, stmts: &[Stmt]) -> bool {
         self.options.features.is_test_entry_point
             && self.has_globals_of_vitest()

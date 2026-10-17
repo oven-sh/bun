@@ -311,7 +311,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_append2Body(JSC
     EnsureStillAliveScope argument2 = callFrame->argument(2);
     auto filename = argument2.value().isUndefined() ? Blob__getFileNameString(blobValue->impl()).transferToWTFString() : convert<IDLUSVString>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    // A File that keeps its name is the entry itself. Anything else becomes a new File.
+    // A File appended without a new filename is stored as is. Anything else becomes a new File.
     if (argument2.value().isUndefined() && JSDOMFile__hasInstance(JSValue::encode(jsUndefined()), lexicalGlobalObject, JSValue::encode(argument1.value())))
         blobValue->setWrapper(asObject(argument1.value()));
 
@@ -477,7 +477,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_set2Body(JSC::J
 
     auto filename = argument2.value().isUndefined() ? Blob__getFileNameString(blobValue->impl()).transferToWTFString() : convert<IDLUSVString>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    // A File that keeps its name is the entry itself. Anything else becomes a new File.
+    // A File appended without a new filename is stored as is. Anything else becomes a new File.
     if (argument2.value().isUndefined() && JSDOMFile__hasInstance(JSValue::encode(jsUndefined()), lexicalGlobalObject, JSValue::encode(argument1.value())))
         blobValue->setWrapper(asObject(argument1.value()));
 

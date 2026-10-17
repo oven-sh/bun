@@ -6024,8 +6024,8 @@ describe.concurrent("a module that is linked, but not evaluated yet, when it is 
     );
   });
 
-  // Static imports are all linked before the first one runs. Vitest runs each import before it looks at the next.
-  describe("a Vitest test file without a mock call of its own runs its imports in turn", () => {
+  // Static imports are all linked before any of them runs. Vitest finishes running each import before it starts the next.
+  describe("a Vitest test file with no mock call of its own still runs its imports one at a time", () => {
     const files = {
       "flags.ts": `export const flags = {}; export const limit = 3;`,
       "panel.ts": `
@@ -6081,7 +6081,7 @@ describe.concurrent("a module that is linked, but not evaluated yet, when it is 
       );
     });
 
-    test("a file of bun:test keeps its static imports", async () => {
+    test("a bun:test file keeps its static imports", async () => {
       using dir = tempDir("mock-module", {
         "flags.ts": files["flags.ts"],
         "panel.ts": files["panel.ts"],
@@ -6104,8 +6104,8 @@ describe.concurrent("a module that is linked, but not evaluated yet, when it is 
       expect(exitCode).toBe(1);
     });
 
-    // The file is big enough for the cache, and uses nothing of the test API by name.
-    test("the transpiler cache keeps the file as a test file apart from the file as an import", async () => {
+    // The file is big enough to be cached, and never mentions the test API by name.
+    test("the transpiler cache doesn't mix up a file run as a test with the same file imported", async () => {
       using dir = tempDir("mock-module", {
         "flags.ts": files["flags.ts"],
         "mocks.ts": `
@@ -6136,15 +6136,15 @@ describe.concurrent("a module that is linked, but not evaluated yet, when it is 
         expect(exitCode).toBe(0);
         outputs.push(stdout.match(/only in the mock: \w+/)?.[0] ?? stdout);
       }
-      // As an import its own imports stay static, so the module is updated in place and gets no new export.
+      // When it's imported, its own imports stay static, so the mock is applied in place and can't add an export.
       expect(outputs).toEqual(["only in the mock: undefined", "only in the mock: true", "only in the mock: undefined"]);
       expect(readdirSync(cache)).not.toBeEmpty();
     });
   });
 
-  // What a factory's imports were linked to the original for is evicted when the factory ends, once nothing is loading it.
-  // Each load that settled used to add a reaction to every load still pending: twice the walks of the registry per load.
-  test("modules to evict wait for many loads at once", async () => {
+  // When a factory finishes, the modules that were linked to the original on its behalf are evicted once nothing is still loading them.
+  // Each load that settled used to add another reaction to every load still pending, which doubled the registry walks per load.
+  test("evicting modules stays fast while many loads are pending", async () => {
     const loads = 40;
     const files: Record<string, string> = {
       "rate.ts": `export const rate = "real";`,

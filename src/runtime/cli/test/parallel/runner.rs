@@ -490,7 +490,7 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     if let Some(globals) = opts.globals {
         argv.push(print_z(format_args!("--globals={}", globals.name()))?);
     }
-    // The worker reads what to include and exclude from bunfig.toml itself.
+    // Each worker reads `include` and `exclude` from bunfig.toml itself.
     if opts.react_compiler.is_some() {
         argv.push(lit(b"--react-compiler\0"));
     }

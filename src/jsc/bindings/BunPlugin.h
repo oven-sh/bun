@@ -112,7 +112,7 @@ public:
         WTF::UncheckedKeyHashSet<String> modulesThatMocked = {};
         WTF::UncheckedKeyHashMap<String, unsigned> testFileOfModule = {};
         WTF::ListHashSet<String> modulesToEvictOnceLoaded = {};
-        // The pending loads they wait for. Each has one reaction that evicts them. Weak: a load that never settles must not keep its global object.
+        // The pending loads those modules are waiting for. Each gets exactly one reaction. Weak, so a load that never settles doesn't keep its global object alive.
         WTF::UncheckedKeyHashMap<JSC::JSPromise*, JSC::Weak<JSC::JSPromise>> loadsOfModulesToEvict = {};
         // The mock a fetch in flight keeps resolving to, even if the mock is replaced or removed meanwhile (keepModuleMockOfLoadInFlight).
         VirtualModuleMap moduleMocksBeingLoaded = {};

@@ -75,7 +75,7 @@ public:
         m_fileName = fileName;
     }
 
-    // The object script has for this entry of a FormData, while it can still tell one from another.
+    // The JS object handed out for this FormData entry, so reads keep returning the same one while script still holds it.
     JSC::JSObject* wrapper() const { return m_wrapper.get(); }
     void setWrapper(JSC::JSObject* wrapper) { m_wrapper = JSC::Weak<JSC::JSObject>(wrapper); }
 

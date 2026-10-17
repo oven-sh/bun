@@ -1996,7 +1996,7 @@ describe.concurrent("--react-compiler", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  // The fifth is OptOut.tsx: the compiler reads it to find that it has nothing to do.
+  // The fifth is OptOut.tsx: the compiler still has to read it to find out there is nothing to compile.
   test.each([
     [["--react-compiler"], everything, 5],
     [[], "", 0],

@@ -2556,7 +2556,7 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        // A test entry point has a cache key of its own.
+        // A test entry point gets its own cache key.
         debug_assert!(
             uses_test_api || p.options.features.is_test_entry_point || !p.did_apply_test_feature
         );

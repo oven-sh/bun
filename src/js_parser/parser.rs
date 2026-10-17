@@ -193,7 +193,7 @@ pub mod Runtime {
         pub inlining: bool,
 
         pub inject_jest_globals: bool,
-        /// A test file or a preload of `bun test`, and not a module they import.
+        /// True for a `bun test` test file or preload, but not for the modules they import.
         pub is_test_entry_point: bool,
         /// Inject the globals from "vitest" instead of "bun:test".
         pub vitest_globals: bool,
@@ -399,7 +399,7 @@ pub mod Runtime {
             hasher.update(bytemuck::cast_slice::<bool, u8>(&bools));
             hasher.update(&[self.react_compiler as u8]);
 
-            // `P::runs_imports_in_turn` reads both, also in a file without `P::uses_test_api`. Nothing is added for other files.
+            // `P::runs_imports_in_turn` depends on both, even when `P::uses_test_api` is false. Other files hash nothing extra.
             if self.is_test_entry_point {
                 hasher.update(&[b'e', u8::from(self.vitest_globals)]);
             }

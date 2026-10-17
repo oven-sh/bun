@@ -152,7 +152,7 @@ exclude = ["**/*.stories.*", "**/__mocks__/**"]
 The `--react-compiler` flag turns the compiler on for one run. It compiles what `bunfig.toml` includes, or every file if `bunfig.toml` doesn't say.
 
 - What `importOriginal()` and `vi.importActual()` load is compiled like any other import of that file.
-- To check that a function was compiled, look for its cache in the source: `/\$\[\d+\]/.test(String(Component))`.
+- To check that a function was compiled, look for its cache in the source: `/\$\d*\[\d+\]/.test(String(Component))`.
 
 ### Path Ignore Patterns
 

@@ -416,10 +416,10 @@ pub enum HotReload {
     Watch,
 }
 
-/// The files `bun test` compiles with the React Compiler. Test files, preloads and `node_modules` never are.
+/// Which files `bun test` compiles with the React Compiler. Test files, preloads and `node_modules` are never compiled.
 #[derive(Default)]
 pub struct ReactCompilerScope {
-    /// Folders or globs, relative to the working directory. Empty is every file.
+    /// Folders or globs, relative to the working directory. Empty means every file.
     pub include: Vec<Box<[u8]>>,
     pub exclude: Vec<Box<[u8]>>,
 }

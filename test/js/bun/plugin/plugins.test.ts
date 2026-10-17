@@ -3700,10 +3700,10 @@ describe.concurrent("patched Promise methods can't observe module loading", () =
   });
 });
 
-// The original is loaded under a key of its own. onLoad used to get that key, "price.ts?actual": a filter that ends in $
-// did not match it, and there is no file of that name to read.
+// The original of a mocked module is loaded under the key "price.ts?actual". onLoad used to get that key as its path, so
+// a filter ending in $ didn't match, and reading the path failed because there is no such file.
 it.concurrent.each([[[]], [["--isolate"]]])(
-  "onLoad gets the path of the file for the original of a mocked module %j",
+  "onLoad gets the real file path when it loads the original of a mocked module %j",
   async args => {
     using dir = tempDir("plugin-original", {
       "preload.ts": `

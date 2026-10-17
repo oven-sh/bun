@@ -984,7 +984,7 @@ impl JunitReporter {
 /// would before exiting; the vendored-node-test runner opts in via
 /// `BUN_TEST_DRAIN_EVENT_LOOP=1` so mustCall()-style exit checks see
 /// completed async work. Off by default: bun suites keep exit-after-tests.
-/// Leaked: the transpiler of every thread asks it until the process exits.
+/// Leaked on purpose: every thread's transpiler calls it until the process exits.
 fn react_compiler_filter(
     scope: &ReactCompilerScope,
     root: &'static [u8],
@@ -1018,7 +1018,7 @@ fn react_compiler_filter(
             .collect();
         #[cfg(windows)]
         let relative = with_slashes.as_slice();
-        // A folder stands for all that is in it.
+        // A folder matches everything inside it.
         let matches = |pattern: &[u8]| {
             relative
                 .strip_prefix(pattern)

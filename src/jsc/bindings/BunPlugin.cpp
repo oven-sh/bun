@@ -646,7 +646,7 @@ static String originalModuleKey(const String& specifier)
     return makeString(specifier, specifier.contains('?') ? '&' : '?', "actual"_s);
 }
 
-// The path of the file behind originalModuleKey(), also of a copy of a copy, or of the one a spy wraps.
+// Removes what originalModuleKey() and friends append ("?actual", any number of "&actual", "&spy"), leaving the file path.
 static String withoutOriginalModuleQuery(const String& key)
 {
     String path = key;
@@ -2185,7 +2185,7 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
     }
     plugins.modulesToEvictOnceLoaded = WTF::move(stay);
 
-    // This runs again each time one of the loads settles. A second reaction on those still pending would double the runs with every load.
+    // This function runs again each time one of these loads settles. A second reaction on the ones still pending would double the runs per load.
     auto alreadyAwaited = std::exchange(plugins.loadsOfModulesToEvict, {});
     JSC::JSFunction* didSettle = nullptr;
     for (auto* pendingLoad : awaited) {

@@ -44,9 +44,9 @@ describe("FormData", () => {
     expect(formData.get("foo2").name).toBe("foo.txt");
   });
 
-  // As in Node and browsers.
-  describe("the object of a file entry", () => {
-    it("is the File that was appended or set", () => {
+  // Same as Node and browsers.
+  describe("reading a file entry", () => {
+    it("returns the same File that was appended or set", () => {
       const file = new File(["a"], "a.txt");
       const form = new FormData();
       form.append("appended", file);
@@ -62,7 +62,7 @@ describe("FormData", () => {
       expect(seen.every(value => value === file)).toBe(true);
     });
 
-    it("is one new File for a Blob", () => {
+    it("returns the same new File every time for a Blob", () => {
       const blob = new Blob(["a"]);
       const form = new FormData();
       form.append("blob", blob);
@@ -73,7 +73,7 @@ describe("FormData", () => {
       expect(form.getAll("blob")[0]).toBe(entry);
     });
 
-    it("is one new File with the name that was given", async () => {
+    it("returns the same new File every time when a filename is given", async () => {
       const file = new File(["a"], "a.txt", { type: "text/plain" });
       const form = new FormData();
       form.append("renamed", file, "other.txt");

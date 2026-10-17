@@ -1394,7 +1394,6 @@ impl Diff {
                     recorded: from.dependencies,
                 },
                 &survivors,
-                pm.options.local_package_features,
                 frozen,
                 pm.options.log_level.is_silent(),
             );

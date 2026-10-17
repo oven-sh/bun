@@ -6,7 +6,7 @@ use crate::dependency::{Dependency, Tag as DependencyVersionTag, VersionExt as _
 use crate::lockfile::DependencySlice;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile_real::{CatalogMap, Lockfile, bun_lock, join_top_level_dir};
-use crate::{Features, PackageID, PackageManager, PackageNameHash, ResolutionTag};
+use crate::{PackageID, PackageManager, PackageNameHash, ResolutionTag};
 
 pub(crate) fn workspace_is_missing_on_disk(
     lockfile: &Lockfile,
@@ -67,7 +67,6 @@ pub(crate) fn exit_if_survivor_depends_on_missing(
     to_lockfile: &Lockfile,
     root: &Survivor,
     survivors: &[Survivor],
-    features: Features,
     frozen: bool,
     silent: bool,
 ) {
@@ -110,11 +109,6 @@ pub(crate) fn exit_if_survivor_depends_on_missing(
         reported.clear();
         for dep in survivor.dependencies.get(to_deps) {
             if dep.behavior.is_workspace() {
-                continue;
-            }
-            // A frozen install resolves nothing, so it only needs the workspaces that it links.
-            // `--production` links no devDependencies.
-            if frozen && !dep.behavior.is_enabled(features) {
                 continue;
             }
             let Some(target) = missing_target(dep, survivor.recorded) else {

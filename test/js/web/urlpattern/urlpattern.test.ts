@@ -206,4 +206,76 @@ describe("URLPattern", () => {
       expect(new URLPattern({ pathname: "/a/:foo/:baz([a-z]+)?/b/*" }).hasRegExpGroups).toBe(true);
     });
   });
+
+  // The encoding callbacks are https://urlpattern.spec.whatwg.org/#canonicalize-a-hash and
+  // #canonicalize-a-search. Only #process-hash-for-init and #process-search-for-init remove a
+  // single leading "#" or "?" from the whole component, never from fixed text inside the pattern.
+  describe("fixed text that follows a token keeps a leading # or ?", () => {
+    test("hash", () => {
+      expect(new URLPattern("https://h/#a*#b").hash).toBe("a*#b");
+      expect(new URLPattern("https://h/#:x#b").hash).toBe(":x#b");
+
+      const p = new URLPattern("https://h/#v-*#end");
+      expect(p.hash).toBe("v-*#end");
+      expect(p.test("https://h/#v-1#end")).toBe(true);
+      expect(p.test("https://h/#v-1")).toBe(false);
+      expect(p.test("https://h/#v-1xend")).toBe(false);
+      expect(new URLPattern({ hash: p.hash }).hash).toBe(p.hash);
+      expect(new URLPattern({ hash: p.hash }).test("https://h/#v-1xend")).toBe(false);
+
+      expect(new URLPattern({ hash: "\\#\\#b" }).hash).toBe("##b");
+      // process hash for init removes one leading "#" from the component as a whole.
+      expect(new URLPattern({ hash: "##b" }).hash).toBe("#b");
+      expect(new URLPattern("https://h/#a#b").hash).toBe("a#b");
+      expect(new URLPattern({ hash: "a#b" }).hash).toBe("a#b");
+
+      const any = new URLPattern({ hash: "*" });
+      expect(any.exec({ hash: "#b" })!.hash.input).toBe("b");
+      expect(any.exec({ hash: "##b" })!.hash.input).toBe("#b");
+    });
+
+    // Chromium 152 drops one leading "?" from such fixed text because its callback goes through the
+    // URL search setter. The spec's canonicalize a search runs the query state, which keeps it.
+    test("search", () => {
+      const p = new URLPattern({ search: "a:x\\?b" });
+      expect(p.search).toBe("a:x\\?b");
+      expect(p.test({ search: "av?b" })).toBe(true);
+      expect(p.test("https://h/?av?b")).toBe(true);
+      expect(p.test({ search: "avb" })).toBe(false);
+      expect(new URLPattern({ search: p.search }).test({ search: "avb" })).toBe(false);
+
+      expect(new URLPattern({ search: "\\?\\?b" }).search).toBe("\\?\\?b");
+      // process search for init removes one leading "?" from the component as a whole.
+      expect(new URLPattern({ search: "?\\?b" }).search).toBe("\\?b");
+      expect(new URLPattern("https://h/x?\\?b").search).toBe("\\?b");
+
+      const any = new URLPattern({ search: "*" });
+      expect(any.exec({ search: "?b" })!.search.input).toBe("b");
+      expect(any.exec({ search: "??b" })!.search.input).toBe("?b");
+      expect(any.exec("https://h/??b")!.search.input).toBe("?b");
+    });
+
+    // With the query state override a "#" is part of the query and gets percent-encoded,
+    // like the URL search setter does.
+    test("# in a search pattern or dictionary input is percent-encoded", () => {
+      const p = new URLPattern({ search: "q=a#b" });
+      expect(p.search).toBe("q=a%23b");
+      expect(p.test({ search: "q=a#b" })).toBe(true);
+      expect(p.test("https://h/?q=a%23b")).toBe(true);
+      expect(p.test("https://h/?q=a#b")).toBe(false);
+      expect(new URLPattern({ search: "*" }).exec({ search: "q=a#b" })!.search.input).toBe("q=a%23b");
+    });
+  });
+
+  // https://urlpattern.spec.whatwg.org/#tokenize treats a zero-length regexp group as a
+  // tokenizing error regardless of where it appears in the input.
+  test("empty regexp group is rejected wherever it appears", () => {
+    for (const pathname of ["/()", "/:y()", "/x/()", "/a()", "()", "(\\d)()", "/a()b", "/()b"]) {
+      expect(() => new URLPattern({ pathname })).toThrow(TypeError);
+    }
+    expect(() => new URLPattern({ hash: "a()" })).toThrow(TypeError);
+    expect(() => new URLPattern("https://h/()")).toThrow(TypeError);
+    expect(() => new URLPattern("https://h/x#()")).toThrow(TypeError);
+    expect(new URLPattern({ pathname: "/\\(\\)" }).test({ pathname: "/()" })).toBe(true);
+  });
 });

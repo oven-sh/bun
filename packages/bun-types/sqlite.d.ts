@@ -195,7 +195,67 @@ declare module "bun:sqlite" {
      * - `CREATE TEMPORARY TABLE`
      *
      * @param sql The SQL query to run
-     * @param bindings Optional bindings for the query
+     * @param bindings Values for the positional parameters, as separate arguments
+     * @returns A `Changes` object with `changes` and `lastInsertRowid` properties
+     *
+     * @example
+     * ```ts
+     * db.run("CREATE TABLE foo (bar TEXT, baz INTEGER)");
+     * db.run("INSERT INTO foo VALUES (?, ?)", "a", 1);
+     * // => { changes: 1, lastInsertRowid: 1 }
+     * ```
+     */
+    run<ParamsType extends SQLQueryBindings | readonly SQLQueryBindings[]>(
+      sql: string,
+      ...bindings: Array<string | bigint | NodeJS.TypedArray | ArrayBufferLike | number | boolean | null>
+    ): Changes;
+    // Both overloads declare ParamsType, and only the last one uses it. With the same type parameters
+    // on both, `db.run<T>(sql)` compiles and a callback typed as `Database["run"]` gets its parameter
+    // types. The order matters too: TypeScript 7 reports only the error of the last overload. With the
+    // overload for one bindings value last, a wrong value in a bindings array is one error, at that value.
+    /**
+     * Execute a SQL query **without returning any results**.
+     *
+     * This does not cache the query. To run a query multiple times, use {@link prepare} instead.
+     *
+     * Internally, this calls `sqlite3_prepare_v3` followed by `sqlite3_step` and `sqlite3_finalize`.
+     *
+     * The string can hold several statements, separated by `;`. They run in
+     * order, and the first one gets the bindings. The first statement that
+     * fails throws, and the statements after it do not run.
+     *
+     * The following types can be used when binding parameters:
+     *
+     * | JavaScript type | SQLite type            |
+     * | --------------- | ---------------------- |
+     * | `string`        | `TEXT`                 |
+     * | `number`        | `INTEGER` or `REAL`    |
+     * | `boolean`       | `INTEGER` (1 or 0)     |
+     * | `Uint8Array`    | `BLOB`                 |
+     * | `Buffer`        | `BLOB`                 |
+     * | `bigint`        | `INTEGER`              |
+     * | `null`          | `NULL`                 |
+     *
+     * Useful for queries like:
+     * - `CREATE TABLE`
+     * - `INSERT INTO`
+     * - `UPDATE`
+     * - `DELETE FROM`
+     * - `DROP TABLE`
+     * - `PRAGMA`
+     * - `ATTACH DATABASE`
+     * - `DETACH DATABASE`
+     * - `REINDEX`
+     * - `VACUUM`
+     * - `EXPLAIN ANALYZE`
+     * - `CREATE INDEX`
+     * - `CREATE TRIGGER`
+     * - `CREATE VIEW`
+     * - `CREATE VIRTUAL TABLE`
+     * - `CREATE TEMPORARY TABLE`
+     *
+     * @param sql The SQL query to run
+     * @param bindings An array of positional values, an object of named parameters, or a single value
      * @returns A `Changes` object with `changes` and `lastInsertRowid` properties
      *
      * @example
@@ -203,16 +263,27 @@ declare module "bun:sqlite" {
      * db.run("CREATE TABLE foo (bar TEXT)");
      * db.run("INSERT INTO foo VALUES (?)", ["baz"]);
      * // => { changes: 1, lastInsertRowid: 1 }
+     * db.run("INSERT INTO foo VALUES ($bar)", { $bar: "qux" });
+     * // => { changes: 1, lastInsertRowid: 2 }
      * ```
      */
-    run<ParamsType extends SQLQueryBindings[]>(sql: string, ...bindings: ParamsType[]): Changes;
+    run<ParamsType extends SQLQueryBindings | readonly SQLQueryBindings[]>(sql: string, bindings: ParamsType): Changes;
 
     /**
      * This is an alias of {@link Database.run}
      *
      * @deprecated Prefer {@link Database.run}
      */
-    exec<ParamsType extends SQLQueryBindings[]>(sql: string, ...bindings: ParamsType[]): Changes;
+    exec<ParamsType extends SQLQueryBindings | readonly SQLQueryBindings[]>(
+      sql: string,
+      ...bindings: Array<string | bigint | NodeJS.TypedArray | ArrayBufferLike | number | boolean | null>
+    ): Changes;
+    /**
+     * This is an alias of {@link Database.run}
+     *
+     * @deprecated Prefer {@link Database.run}
+     */
+    exec<ParamsType extends SQLQueryBindings | readonly SQLQueryBindings[]>(sql: string, bindings: ParamsType): Changes;
 
     /**
      * Compile a SQL query and return a {@link Statement} object. This is the

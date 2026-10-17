@@ -342,13 +342,13 @@ impl Registry {
         }
     }
 
-    /// `languages`: those whose rules are among the rules.
+    /// `languages` are the languages that the registered rules are for.
     pub fn with_languages(mut self, languages: &'static [&'static dyn Language]) -> Registry {
         self.languages = languages;
         self
     }
 
-    /// The language that `plugin` calls `name`.
+    /// The language that `plugin` exports as `name`.
     pub fn language(&self, plugin: Plugin, name: &[u8]) -> Option<&'static dyn Language> {
         let is_it = |it: &&&dyn Language| {
             it.plugin() == plugin && it.names().iter().any(|it| it.as_bytes() == name)

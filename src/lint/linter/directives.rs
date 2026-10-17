@@ -78,8 +78,8 @@ fn range_in(outer: &[u8], inner: &[u8]) -> Span {
     Span::new(start as u32, (start + inner.len()).min(outer.len()) as u32)
 }
 
-/// `getInlineConfigNodes` of the languages of ESLint's own plugins. Whatever kind of comment it is, it can have any of these
-/// labels, and there are no others.
+/// `getInlineConfigNodes` as the languages in ESLint's own plugins implement it. Any kind of comment can have any of
+/// these labels, and no other labels are recognized.
 fn config_comments_among(
     text: &[u8],
     comments: &[crate::languages::Comment],

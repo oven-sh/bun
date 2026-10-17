@@ -310,7 +310,7 @@ fn facts(
 /// Looks up a rule by any of its names, with or without the plugin prefix. `Err` has the message to print if no rule
 /// matches, or more than one.
 fn find(registry: &Registry, name: &[u8]) -> Result<&'static Meta, Vec<u8>> {
-    // A rule for another language has the one name that ESLint has for it.
+    // A rule for another language can only be looked up by its ESLint name.
     let of_language = |id: &[u8]| registry.find(id).filter(|it| !it.meta.languages.is_empty());
     let by_name = |id: &[u8]| registry.find_by_any_name(id).or_else(|| of_language(id));
     if let Some(entry) = by_name(name) {

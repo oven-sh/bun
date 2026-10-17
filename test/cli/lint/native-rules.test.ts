@@ -79,7 +79,7 @@ type Listed = { scope: string; value: string; type_aware: boolean; modes: string
 
 async function listed() {
   const { stdout } = await lint({}, ["--rules", "-f", "json"]);
-  // The rules for other languages than JavaScript only exist with an ESLint config.
+  // Rules for languages other than JavaScript only exist with an ESLint config.
   const rules = (JSON.parse(stdout) as Listed[]).filter(it => it.modes.includes("native"));
   expect(rules.length).toBeGreaterThan(1000);
   expect([...new Set(rules.map(it => it.scope))].filter(it => !(it in spellings))).toEqual([]);

@@ -150,7 +150,7 @@ describe.concurrent("--rules -f json", () => {
     const rules = await listRules();
     const names = rules.flatMap(it => [it.id, ...it.aliases]);
     expect(names.filter((name, at) => names.indexOf(name) !== at)).toEqual([]);
-    // Only ESLint's config gives a file a language.
+    // Only an ESLint config can set a file's language, so a rule for a language doesn't have the "native" mode.
     const isNative = (it: Listed) => it.modes.includes("native");
     expect(rules.filter(it => isNative(it) !== (it.languages.length === 0)).map(it => it.id)).toEqual([]);
     expect([...new Set(rules.map(it => it.kind))].sort()).toEqual(["layout", "problem", "suggestion", null].sort());

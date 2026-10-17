@@ -290,8 +290,8 @@ impl<'a> File<'a> {
         }
     }
 
-    /// For a `hir` of no text: the file is `text`, which is not JavaScript, and `parsed` is what its
-    /// [language](crate::languages) has made of it.
+    /// Turns a `File` that was built from an empty `hir` into a file in another [language](crate::languages). `text` is
+    /// the file's text, which isn't JavaScript, and `parsed` is what the language parsed it into.
     pub fn in_language(
         mut self,
         text: &'a [u8],

@@ -168,8 +168,8 @@ pub fn upper_case_first(text: &[u8]) -> Cow<'_, [u8]> {
     }
 }
 
-/// `Decode`: `decodeURIComponent` with nothing in `preserved`, `decodeURI` with `;/?:@&=+$,#`, the characters whose escapes
-/// stay. `None`: it throws, for an escape that is incomplete or is not UTF-8.
+/// The spec's `Decode`. `preserved` has the characters whose escapes are kept: none for `decodeURIComponent`,
+/// `;/?:@&=+$,#` for `decodeURI`. Returns `None` where JavaScript throws: an escape is incomplete or isn't UTF-8.
 pub fn decode_uri(text: &[u8], preserved: &[u8]) -> Option<Vec<u8>> {
     let byte_at = |at: usize| match text.get(at..at + 3) {
         Some(&[b'%', high, low]) => bun_core::fmt::hex_pair_value(high, low),

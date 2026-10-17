@@ -49,6 +49,7 @@ const server = await Bun.udpSocket({
 
 const client = await Bun.udpSocket({});
 client.send("Hello!", server.port, "127.0.0.1");
+client.close();
 ```
 
 ### Connections
@@ -179,3 +180,13 @@ For source-specific multicast (SSM), use `addSourceSpecificMembership` and `drop
 socket.addSourceSpecificMembership("10.0.0.1", "232.0.0.1");
 socket.dropSourceSpecificMembership("10.0.0.1", "232.0.0.1");
 ```
+
+### Closing the socket
+
+Call `close()` when you are done with a socket to free the underlying handle:
+
+```ts
+client.close();
+```
+
+After `close()`, the socket's `closed` property is `true` and the socket can no longer send or receive datagrams.

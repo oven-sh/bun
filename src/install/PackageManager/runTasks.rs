@@ -676,17 +676,7 @@ fn run_tasks_erased(
                         // `notify` keeps the metadata it finds here if the next attempt gets none.
                         task.response = Default::default();
 
-                        if matches!(err, crate::Error::Http(http::Error::Timeout)) {
-                            warn_timeout_retry(
-                                &mut manager.progress,
-                                &manager.options,
-                                format_args!(
-                                    "package manifest {}",
-                                    bun_core::fmt::escape_control_chars(name),
-                                ),
-                                task.retried,
-                            );
-                        } else if manager.options.log_level.is_verbose() {
+                        if manager.options.log_level.is_verbose() {
                             bun_ast::add_warning_pretty!(
                                 manager.log_mut(),
                                 None,
@@ -985,23 +975,7 @@ fn run_tasks_erased(
                             retry_timer::retry(manager, task_ptr, task.retried, &task.response);
                         task.reset_streaming_for_retry();
 
-                        if matches!(err, crate::Error::Http(http::Error::Timeout)) {
-                            warn_timeout_retry(
-                                &mut manager.progress,
-                                &manager.options,
-                                format_args!(
-                                    "tarball {}@{}",
-                                    bun_core::fmt::for_terminal(bstr::BStr::new(
-                                        extract.name.slice()
-                                    )),
-                                    bun_core::fmt::for_terminal(extract.resolution.fmt(
-                                        &manager.lockfile.buffers.string_bytes,
-                                        PathSep::Auto
-                                    ),),
-                                ),
-                                task.retried,
-                            );
-                        } else if manager.options.log_level.is_verbose() {
+                        if manager.options.log_level.is_verbose() {
                             bun_ast::add_warning_pretty!(
                                 manager.log_mut(),
                                 None,
@@ -2091,29 +2065,11 @@ fn throttle_after_network_error(manager: &PackageManager, has_network_error: &mu
                 manager.log_mut(),
                 None,
                 bun_ast::Loc::EMPTY,
-                "A request failed twice. Sending at most {} requests at a time",
+                "request failed twice, limiting to {} concurrent requests",
                 lowered,
             );
         }
     }
-}
-
-/// Said at once, over the progress bar: a host that never answers costs minutes per attempt.
-#[cold]
-fn warn_timeout_retry(
-    progress: &mut crate::bun_progress::Progress,
-    options: &Options::Options,
-    what: core::fmt::Arguments<'_>,
-    attempt: u16,
-) {
-    if options.log_level == Options::LogLevel::Silent {
-        return;
-    }
-    Output::flush();
-    progress.log(format_args!(
-        "warn: Timeout downloading {}. Retrying {}/{}...\n",
-        what, attempt, options.max_retry_count,
-    ));
 }
 
 pub fn generate_network_task_for_tarball<'a>(

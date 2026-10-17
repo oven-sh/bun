@@ -776,20 +776,6 @@ impl ESMConditions {
         })
     }
 
-    pub fn clone(&self) -> Result<ESMConditions, bun_alloc::AllocError> {
-        let default = self.default.clone()?;
-        let import = self.import.clone()?;
-        let require = self.require.clone()?;
-        let style = self.style.clone()?;
-
-        Ok(ESMConditions {
-            default,
-            import,
-            require,
-            style,
-        })
-    }
-
     pub fn append_slice(&mut self, conditions: &[&[u8]]) -> Result<(), bun_alloc::AllocError> {
         self.default.reserve(conditions.len());
         self.import.reserve(conditions.len());

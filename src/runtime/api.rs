@@ -145,7 +145,6 @@ pub(crate) use crate::api::js_bundler::BuildArtifact;
 pub(crate) use crate::api::js_bundler::JSBundler;
 pub(crate) use crate::api::json5_object as JSON5Object;
 pub(crate) use crate::api::toml_object as TOMLObject;
-pub(crate) use crate::api::unsafe_object as UnsafeObject;
 pub(crate) use crate::api::xml_object as XMLObject;
 pub(crate) use crate::api::yaml_object as YAMLObject;
 

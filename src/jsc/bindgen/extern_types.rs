@@ -1,8 +1,9 @@
 //! Rust side of `src/jsc/bindings/Bindgen/Extern*.h`. The generated conversion that reads a value takes ownership.
 
 use core::ffi::{c_uint, c_void};
+use core::marker::PhantomData;
 
-use super::JsHeap;
+use super::{JsHeap, PossiblySharedBytes};
 use crate::{JSGlobalObject, JSValue, MarkedArgumentBuffer};
 
 /// `WTF::StringImpl*` carrying one ref, or null.
@@ -97,6 +98,16 @@ impl ExternBytes {
     pub unsafe fn get<'a>(self, _: &JsHeap<'a>) -> &'a [u8] {
         // SAFETY: C++ never passes a null pointer for a present value.
         unsafe { core::slice::from_raw_parts(self.data, self.length) }
+    }
+    /// # Safety
+    /// As [`get`](Self::get).
+    #[inline(always)]
+    pub unsafe fn get_possibly_shared<'a>(self, _: &JsHeap<'a>) -> PossiblySharedBytes<'a> {
+        PossiblySharedBytes {
+            data: self.data,
+            length: self.length,
+            lifetime: PhantomData,
+        }
     }
     /// # Safety
     /// As [`get`](Self::get).

@@ -299,7 +299,7 @@ impl PackageManager {
                             None,
                             bun_ast::Loc::EMPTY,
                             format_args!(
-                                "could not read the package.json of \"{}@{}\" declared by {}@{}: {}",
+                                "failed to read package.json of \"{}@{}\" declared by {}@{}: {}",
                                 bun_core::fmt::escape_control_chars(row.name.slice(buf)),
                                 bun_core::fmt::escape_control_chars(row.version.literal.slice(buf)),
                                 bun_core::fmt::escape_control_chars(package.name.slice(buf)),

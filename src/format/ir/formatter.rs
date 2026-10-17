@@ -2,8 +2,8 @@
 
 use super::document::Tracker;
 use super::element::{
-    BestFitting, Flat, FlatFlags, FormatElement, Group, GroupId, GroupMode, Interned, LabelId,
-    LineMode, PrintMode, Skip, Tag, Text, TextWidth,
+    BestFitting, Fallback, Flat, FlatFlags, FormatElement, Group, GroupId, GroupMode, Interned,
+    LabelId, LineMode, PrintMode, Skip, Tag, Text, TextWidth,
 };
 use super::width::OddBlocks;
 use crate::js::comments::Comments;
@@ -349,8 +349,10 @@ impl Storage {
                         return true;
                     }
                     FormatElement::Interned(it) => rest.push(self.interned(*it)),
-                    // oxfmt does not look into it.
-                    FormatElement::BestFitting(it) if !flavor.is_oxfmt() => {
+                    // oxfmt does not look into it, and has no `FlattestIfStable`.
+                    FormatElement::BestFitting(it)
+                        if !flavor.is_oxfmt() || it.fallback == Fallback::FlattestIfStable =>
+                    {
                         rest.push(self.most_flat(*it));
                     }
                     _ => {}
@@ -864,12 +866,21 @@ impl<'a> Formatter<'a> {
     /// flattest to the most expanded. Each starts with a [`Tag::StartEntry`] and ends with a
     /// [`Tag::EndEntry`].
     pub(crate) fn best_fitting_of(&mut self, variants: &[Interned]) -> FormatElement {
+        self.best_fitting_with(variants, Fallback::MostExpanded)
+    }
+
+    pub(crate) fn best_fitting_with(
+        &mut self,
+        variants: &[Interned],
+        fallback: Fallback,
+    ) -> FormatElement {
         debug_assert!(variants.len() >= 2);
         let first = self.storage.variants.len() as u32;
         self.storage.variants.extend_from_slice(variants);
         FormatElement::BestFitting(BestFitting {
             first,
             count: variants.len() as u32,
+            fallback,
         })
     }
 
@@ -972,7 +983,7 @@ impl<'a> Formatter<'a> {
                         self.remove_soft_lines(variant, conditions, variants);
                         cleaned.push(self.end_capture(slot));
                     }
-                    self.best_fitting_of(&cleaned)
+                    self.best_fitting_with(&cleaned, best_fitting.fallback)
                 }
                 FormatElement::BestFitting(best_fitting) => {
                     if let Some(&flattest) = self.storage.variants(best_fitting).first() {

@@ -859,7 +859,7 @@ describe("a bun.lock written by Bun 1.4", () => {
       const { dir, lock } = await held();
       const { stderr, exitCode } = await bun(dir, ...command.split(" "));
       expect(stderr).toBe(
-        `error: lockfile had changes, but lockfile is frozen\nnote: bun.lock has ${saved.held}, and overrides in package.json asks for 1.0.0\nnote: try re-running without --frozen-lockfile and commit the updated lockfile`,
+        `error: lockfile had changes, but lockfile is frozen\nnote: bun.lock has ${saved.held}, overrides in package.json wants 1.0.0\nnote: try re-running without --frozen-lockfile and commit the updated lockfile`,
       );
       expect(exitCode).toBe(1);
       expect(await lockfile(dir)).toBe(lock);

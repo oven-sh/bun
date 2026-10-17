@@ -1104,7 +1104,7 @@ mod draft {
                         && log.level.at_least(bun_ast::Level::Warn)
                     {
                         bun_core::warn!(
-                            "{}\nThe registry and auth settings in <b>{}<r> are not applied.",
+                            "{}\nignoring registry and auth settings in <b>{}<r>",
                             err,
                             bstr::BStr::new(npmrc_path.as_bytes()),
                         );
@@ -1347,7 +1347,7 @@ mod draft {
                     || *item.registry_url == registry.key[..registry.key.len() - 1]
             }) {
                 log.add_error_opts(
-                    b"empty _auth value: this line supplies no credentials",
+                    b"ignoring empty _auth value",
                     bun_ast::AddErrorOptions {
                         source: Some(&sources[item.source_idx as usize]),
                         loc: item.loc,
@@ -1572,10 +1572,7 @@ mod draft {
                     log.add_warning_fmt_no_excerpt(
                         source,
                         keyexpr.loc,
-                        format_args!(
-                            "{} is not a known .npmrc option; ignoring this line",
-                            bstr::BStr::new(word),
-                        ),
+                        format_args!("ignoring unknown .npmrc option {}", bstr::BStr::new(word),),
                     );
                 }
                 continue;

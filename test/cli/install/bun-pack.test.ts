@@ -1340,7 +1340,7 @@ test.concurrent.skipIf(!isLinux)("a file that gets shorter while it is read fail
   await truncate(bundle, 1024);
 
   const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(err).toBe('error: file got shorter while it was packed: "bundle.js"\n');
+  expect(err).toBe('error: file shrank while packing: "bundle.js"\n');
   expect(await sortedNames(dir)).toEqual(["bundle.js", "package.json"]);
   expect(exitCode).toBe(1);
 });
@@ -2195,7 +2195,7 @@ ${">>>>>>>"} feature
 
     const { err } = await packExpectError(join(dir, "pkgs", "ui"));
     expect(err).toContain(
-      'error: Failed to resolve workspace version for "no-version" in `devDependencies` (the package.json of workspace "unversioned" has no version).',
+      'error: Failed to resolve workspace version for "no-version" in `devDependencies` (workspace "unversioned" has no version in package.json).',
     );
     expect(await exists(join(dir, "pkgs", "ui", "acme-ui-2.0.0.tgz"))).toBeFalse();
   });
@@ -2236,7 +2236,7 @@ ${">>>>>>>"} feature
 
     const { err } = await packExpectError(join(dir, "pkgs", "ui"));
     expect(err).toContain(
-      'error: Failed to resolve workspace version for "no-version" in `dependencies` (the package.json of workspace "unversioned" in the directory "../unversioned" has no version).',
+      'error: Failed to resolve workspace version for "no-version" in `dependencies` (workspace "unversioned" in "../unversioned" has no version in package.json).',
     );
     expect(await exists(join(dir, "pkgs", "ui", "acme-ui-2.0.0.tgz"))).toBeFalse();
   });
@@ -3203,7 +3203,7 @@ describe.concurrent("bundledDependencies", () => {
 
     test("in a ring, which no node_modules can hold", async () => {
       const { err, exitCode } = await packLinked({ ...chain, "b@2.0.0": { a: "1.0.0" } });
-      expect(err).toStartWith("error: a cycle of bundled dependencies cannot be laid out in node_modules: ");
+      expect(err).toStartWith("error: bundled dependencies form a cycle: ");
       expect(exitCode).toBe(1);
     });
   });

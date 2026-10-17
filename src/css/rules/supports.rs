@@ -54,17 +54,13 @@ impl Declaration {
 
 impl Declaration {
     fn eql(&self, other: &Self) -> bool {
-        // `PropertyId`'s `PartialEq` compares the tag and the vendor prefix;
-        // `value` is byte-slice equality.
         self.property_id == other.property_id
             && same_custom_name(&self.property_id, &other.property_id)
             && self.value == other.value
     }
 }
 
-/// Every custom (`--x`) and unknown property is `PropertyId::Custom`, which
-/// `PropertyId`'s tag-based `PartialEq` treats as one property; the names tell
-/// them apart. Known properties are fully identified by their tag.
+/// `PropertyId::Custom` covers every custom and unknown property, so its `PartialEq` cannot tell two apart.
 fn same_custom_name(a: &PropertyId, b: &PropertyId) -> bool {
     match (a, b) {
         (PropertyId::Custom(a), PropertyId::Custom(b)) => css::generic::eql(a, b),
@@ -287,11 +283,7 @@ impl SupportsCondition {
                 }
             }
 
-            // `(-webkit-foo: v) or (foo: v)` tests one declaration under several
-            // prefixes, so under `or` the prefixes fold into the declaration seen
-            // first; `declaration_to_css` prints it back as that `or` chain. The
-            // same fold under `and` would turn the conjunction into a
-            // disjunction, so `and` keeps every operand as written.
+            // `(-webkit-x: v) or (x: v)` folds into one prefixed operand; under `and` that fold changes the meaning.
             if let SupportsCondition::Declaration(decl) = &condition {
                 if expected_type == Some(OR) {
                     let key = SeenDeclKey::new(decl);
@@ -357,8 +349,6 @@ impl SupportsCondition {
                 }
             }
             css::Token::OpenParen => {
-                // `( <supports-condition> )` or `( <declaration> )`; anything else
-                // in the parens is kept verbatim as `Unknown` below.
                 let res = input.try_parse(|i| {
                     i.parse_nested_block(|i2| {
                         if let Ok(condition) = i2.try_parse(SupportsCondition::parse) {
@@ -381,10 +371,7 @@ impl SupportsCondition {
     }
 }
 
-// Key of the `or` prefix fold in `SupportsCondition::parse`: the declared
-// property ignoring its vendor prefix (which is what the fold accumulates),
-// plus the raw value. `PropertyId`'s own `PartialEq` is not used because it
-// compares the prefix.
+// Key of the `or` prefix fold in `SupportsCondition::parse`: the property ignoring its vendor prefix, plus the raw value.
 struct SeenDeclKey(PropertyId, &'static [u8]);
 
 impl SeenDeclKey {

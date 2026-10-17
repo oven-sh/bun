@@ -522,15 +522,30 @@ impl FSEventsLoop {
         // SAFETY: event_flags is an array of length num_events per FSEvents API
         let event_flags = unsafe { bun_core::ffi::slice(event_flags.cast_const(), num_events) };
 
+        loop_.dispatch(&paths.iter().zip(event_flags).map(|(path_ptr, flags)| {
+            // SAFETY: each path_ptr is a NUL-terminated C string from FSEvents
+            (unsafe { bun_core::ffi::cstr(*path_ptr) }.to_bytes(), *flags)
+        }));
+    }
+
+    /// Reports one batch of `(path, flags)` events to every watcher.
+    fn dispatch<'a>(
+        &self,
+        events: &(impl Iterator<Item = (&'a [u8], FSEventStreamEventFlags)> + Clone),
+    ) {
+        if bun_core::getenv_z(zstr!("BUN_FSEVENTS_TRACE")).is_some() {
+            Self::trace(events.clone());
+        }
+
         // Hold the mutex for the whole iteration. `unregisterWatcher` on the
         // main thread nulls the entry under this same mutex and then the
         // caller immediately frees the FSEventsWatcher (and its path buffer),
         // so without this lock we can read `handle.path` / call `handle.emit`
         // on freed memory. Holding the lock also prevents `registerWatcher`
         // from reallocating the `watchers` buffer mid-iteration.
-        let _guard = loop_.mutex.lock_guard();
+        let _guard = self.mutex.lock_guard();
         // SAFETY: holding `mutex` — see `FSEventsLoop::state`.
-        let state = unsafe { loop_.state() };
+        let state = unsafe { self.state() };
 
         for watcher in state.watchers.slice() {
             let Some(handle) = *watcher else { continue };
@@ -540,10 +555,8 @@ impl FSEventsLoop {
             let handle = bun_ptr::BackRef::from(handle);
             let handle_path = handle.path.slice();
 
-            for (i, path_ptr) in paths.iter().enumerate() {
-                let mut flags = event_flags[i];
-                // SAFETY: each path_ptr is a NUL-terminated C string from FSEvents
-                let mut path = unsafe { bun_core::ffi::cstr(*path_ptr) }.to_bytes();
+            for (path, mut flags) in events.clone() {
+                let mut path: &[u8] = path;
                 // Filter out paths that are outside handle's request
                 if path.len() < handle_path.len() || !path.starts_with(handle_path) {
                     continue;
@@ -599,6 +612,28 @@ impl FSEventsLoop {
             }
             handle.flush();
         }
+    }
+
+    // Temporary, for the first macOS CI run: what FSEvents sends when it drops events.
+    fn trace<'a>(events: impl Iterator<Item = (&'a [u8], FSEventStreamEventFlags)>) {
+        let mut paths = Vec::new();
+        let mut stream_events = Vec::new();
+        for (path, flags) in events {
+            paths.push(path);
+            if (flags & 0xff) != 0 && stream_events.len() < 16 {
+                stream_events.push(format!(" {:#x}:{}", flags, bstr::BStr::new(path)));
+            }
+        }
+        let count = paths.len();
+        paths.sort_unstable();
+        paths.dedup();
+        bun_core::pretty_errorln!(
+            "[fsevents] events={} paths={}{}",
+            count,
+            paths.len(),
+            stream_events.concat()
+        );
+        bun_core::Output::flush();
     }
 
     // Runs on CF Thread
@@ -925,6 +960,15 @@ pub(crate) fn watch(
     Ok(FSEventsWatcher::init(
         loop_, path, recursive, callback, update_end, ctx,
     ))
+}
+
+/// `bun:internal-for-testing`: false before the first `fs.watch()`.
+pub(crate) fn inject_for_testing(events: &[(bun_core::ZBox, FSEventStreamEventFlags)]) -> bool {
+    let Some(&loop_) = FSEVENTS_DEFAULT_LOOP.get() else {
+        return false;
+    };
+    loop_.dispatch(&events.iter().map(|(path, flags)| (path.as_bytes(), *flags)));
+    true
 }
 
 extern "C" fn close_and_wait_on_exit() {

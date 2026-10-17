@@ -1,6 +1,7 @@
 #include "NodeURL.h"
 #include "ASCIIHostPunycodeCheck.h"
 #include "ErrorCode.h"
+#include "VectorSizeLimit.h"
 #include "wtf/URL.h"
 #include "wtf/URLParser.h"
 #include <unicode/uidna.h>
@@ -36,29 +37,49 @@ enum class IDNAMode : uint8_t {
     Lenient,
 };
 
+// False only for a Latin-1 string too long to have a 16-bit form, where `convertTo16Bit` calls `CRASH()`.
+static bool tryConvertTo16Bit(String& string)
+{
+    if (string.is8Bit() && !StringImpl::isValidLength<char16_t>(string.length())) [[unlikely]]
+        return false;
+    string.convertTo16Bit();
+    return true;
+}
+
 // Runs a uidna_nameTo* conversion with the U_BUFFER_OVERFLOW_ERROR retry
 // protocol; on completion `status`/`info` hold the final results.
+// `status` is U_MEMORY_ALLOCATION_ERROR when the input or the output does not fit in its buffer.
 using UIDNAFunction = int32_t (*)(const UIDNA*, const char16_t*, int32_t, char16_t*, int32_t, UIDNAInfo*, UErrorCode*);
 
 static String runUIDNA(UIDNAFunction convert, const UIDNA* idna, const String& input, UErrorCode& status, UIDNAInfo& info)
 {
     String domain = input;
-    if (domain.is8Bit())
-        domain.convertTo16Bit();
+    if (!tryConvertTo16Bit(domain)) [[unlikely]] {
+        status = U_MEMORY_ALLOCATION_ERROR;
+        return {};
+    }
     const auto span = domain.span16();
 
     Vector<char16_t, 256> buffer(256);
     int32_t length = convert(idna, span.data(), span.size(), buffer.begin(), buffer.size(), &info, &status);
     if (status == U_BUFFER_OVERFLOW_ERROR) {
+        // ICU derives `length` from the input, and `grow` calls `CRASH()` past the Vector limit.
+        if (static_cast<size_t>(length) > maxVectorSize<char16_t>() || !buffer.tryGrow(length)) [[unlikely]] {
+            status = U_MEMORY_ALLOCATION_ERROR;
+            return {};
+        }
         status = U_ZERO_ERROR;
         info = UIDNA_INFO_INITIALIZER;
-        buffer.grow(length);
         length = convert(idna, span.data(), span.size(), buffer.begin(), buffer.size(), &info, &status);
     }
     if (U_FAILURE(status))
         return {};
     return String(std::span { buffer.begin(), static_cast<size_t>(length) });
 }
+
+// CheckHyphens = false and VerifyDnsLength = false: ToASCII errors that Node did not count.
+static constexpr uint32_t ignoredToASCIIErrors = UIDNA_ERROR_HYPHEN_3_4 | UIDNA_ERROR_LEADING_HYPHEN | UIDNA_ERROR_TRAILING_HYPHEN
+    | UIDNA_ERROR_EMPTY_LABEL | UIDNA_ERROR_LABEL_TOO_LONG | UIDNA_ERROR_DOMAIN_NAME_TOO_LONG;
 
 // Port of Node's icu-based ToASCII (removed in nodejs/node#55156):
 // https://github.com/nodejs/node/blob/9f5000e0f2a2^/src/node_i18n.cc — filter
@@ -77,25 +98,32 @@ static String icuToASCII(const String& input, IDNAMode mode)
     UIDNAInfo info = UIDNA_INFO_INITIALIZER;
     auto result = runUIDNA(uidna_nameToASCII, toASCIIIDNA(), input, status, info);
 
-    // CheckHyphens = false
-    info.errors &= ~UIDNA_ERROR_HYPHEN_3_4;
-    info.errors &= ~UIDNA_ERROR_LEADING_HYPHEN;
-    info.errors &= ~UIDNA_ERROR_TRAILING_HYPHEN;
-    // VerifyDnsLength = false
-    info.errors &= ~UIDNA_ERROR_EMPTY_LABEL;
-    info.errors &= ~UIDNA_ERROR_LABEL_TOO_LONG;
-    info.errors &= ~UIDNA_ERROR_DOMAIN_NAME_TOO_LONG;
-
-    if (result.isNull() || (mode != IDNAMode::Lenient && info.errors != 0))
+    if (result.isNull() || (mode != IDNAMode::Lenient && (info.errors & ~ignoredToASCIIErrors)))
         return {};
     return result;
 }
 
+// The verdict of icuToASCII in IDNAMode::Default with no output buffer: ICU fills `info` before it reports the overflow.
+static bool icuAcceptsHost(const String& host)
+{
+    // ICU cannot check a host that has no 16-bit form, so it is refused.
+    String domain = host;
+    if (!tryConvertTo16Bit(domain)) [[unlikely]]
+        return false;
+    const auto span = domain.span16();
+
+    UErrorCode status = U_ZERO_ERROR;
+    UIDNAInfo info = UIDNA_INFO_INITIALIZER;
+    uidna_nameToASCII(toASCIIIDNA(), span.data(), span.size(), nullptr, 0, &info, &status);
+    if (U_FAILURE(status) && status != U_BUFFER_OVERFLOW_ERROR)
+        return false;
+    return !(info.errors & ~ignoredToASCIIErrors);
+}
+
 // Port of Node's icu-based ToUnicode (removed in nodejs/node#55156): UTS #46
 // ToUnicode always produces output, so info.errors is deliberately ignored.
-static String icuToUnicode(const String& input)
+static String icuToUnicode(const String& input, UErrorCode& status)
 {
-    UErrorCode status = U_ZERO_ERROR;
     UIDNAInfo info = UIDNA_INFO_INITIALIZER;
     return runUIDNA(uidna_nameToUnicode, toUnicodeIDNA(), input, status, info);
 }
@@ -112,7 +140,7 @@ bool hasValidPunycodeHost(WTF::StringView host)
         if (verdict != ASCIIHostPunycodeVerdict::NeedsFullCheck)
             return verdict == ASCIIHostPunycodeVerdict::Valid;
     }
-    return !icuToASCII(host.toString(), IDNAMode::Default).isNull();
+    return icuAcceptsHost(host.toString());
 }
 
 // Mirrors Node's url.domainToASCII/domainToUnicode, which run the input
@@ -202,7 +230,17 @@ JSC_DEFINE_HOST_FUNCTION(jsDomainToUnicode, (JSC::JSGlobalObject * globalObject,
     if (host.isNull())
         return JSC::JSValue::encode(jsEmptyString(vm));
 
-    auto unicode = icuToUnicode(host);
+    // The parsed host is lowercase ASCII, and ToUnicode changes only its xn-- labels.
+    if (!host.contains("xn--"_s))
+        return JSC::JSValue::encode(JSC::jsString(vm, host));
+
+    UErrorCode status = U_ZERO_ERROR;
+    auto unicode = icuToUnicode(host, status);
+    // The host is valid, so "" would be the wrong answer.
+    if (status == U_MEMORY_ALLOCATION_ERROR) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
     if (unicode.isNull())
         return JSC::JSValue::encode(jsEmptyString(vm));
     return JSC::JSValue::encode(JSC::jsString(vm, unicode));
@@ -252,8 +290,9 @@ JSC_DEFINE_HOST_FUNCTION(jsIcuToUnicode, (JSC::JSGlobalObject * globalObject, JS
     auto input = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto result = icuToUnicode(input);
-    if (result.isNull()) {
+    UErrorCode status = U_ZERO_ERROR;
+    auto result = icuToUnicode(input, status);
+    if (U_FAILURE(status)) {
         throwException(globalObject, scope, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, "Cannot convert name to Unicode"_s));
         return {};
     }

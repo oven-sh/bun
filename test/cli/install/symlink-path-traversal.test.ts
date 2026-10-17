@@ -1925,7 +1925,7 @@ describe.concurrent("links below node_modules with the isolated linker", () => {
 
     const { stderr, exitCode } = await bun(repo, "prune");
 
-    expect(stderr.replaceAll("\\", "/")).toContain("error: node_modules/.bun is a symlink, so nothing was pruned");
+    expect(stderr.replaceAll("\\", "/")).toContain("error: cannot prune symlink node_modules/.bun");
     await expectVictimUntouched(victim, "stray@1.0.0");
     expect(exitCode).toBe(1);
   });
@@ -1988,7 +1988,7 @@ describe.concurrent.skipIf(isWindows)("what is behind a link at node_modules", (
     "other/package.json": JSON.stringify({ name: "other", version: "1.0.0" }),
   };
   const NOT_CLEARED = (folder: string) =>
-    `warn: ${folder} is a symlink, so what another linker installed there was not removed\n` +
+    `warn: cannot clear symlink ${folder}, packages from another linker remain\n` +
     "note: remove the link and run 'bun install'";
 
   async function plant(root: string, files = MINE) {
@@ -2089,7 +2089,7 @@ describe.concurrent.skipIf(isWindows)("what is behind a link at node_modules", (
         isLink: true,
       });
       if (args[0] === "prune") {
-        expect(result.stderr).toContain(`error: ${relative(repo, link)} is a symlink, so nothing was pruned`);
+        expect(result.stderr).toContain(`error: cannot prune symlink ${relative(repo, link)}`);
         expect({ command, exitCode: result.exitCode }).toEqual({ command, exitCode: 1 });
         continue;
       }
@@ -2173,15 +2173,13 @@ describe.concurrent.skipIf(isWindows)("what is behind a link at node_modules", (
   });
 
   // `dep` has a command of its name.
-  it.each(
-    ["hoisted", "isolated"].flatMap(linker =>
-      ["node_modules", "packages/app/node_modules"].flatMap(folder =>
-        [".bin/dep", ".bin/dep/x"].map(path => [linker, folder, path]),
-      ),
-    ),
-  )("is in the way of the link to a command (%s, %s): %s", async (linker, folder, path) => {
+  const linkersAndFolders = ["hoisted", "isolated"].flatMap(linker =>
+    ["node_modules", "packages/app/node_modules"].map(folder => [linker, folder]),
+  );
+
+  it.each(linkersAndFolders)("a directory is in the way of the link to a command (%s, %s)", async (linker, folder) => {
     using root = tempDir("nm-outside-bin", {});
-    const files = { ...MINE, [path]: KEEP };
+    const files = { ...MINE, ".bin/dep/x": KEEP };
     const outside = await plant(String(root), files);
     const repo = await workspace(String(root));
     await symlink(relative(dirname(join(repo, folder)), outside), join(repo, folder));
@@ -2191,5 +2189,20 @@ describe.concurrent.skipIf(isWindows)("what is behind a link at node_modules", (
     expect(await read(outside, files)).toEqual(files);
     expect(stderr).toContain("EEXIST");
     expect(exitCode).toBe(1);
+  });
+
+  // pnpm writes its commands as files, so a project that it installed has them.
+  it.each(linkersAndFolders)("a file gives way to the link to a command (%s, %s)", async (linker, folder) => {
+    using root = tempDir("nm-outside-bin-file", {});
+    const outside = await plant(String(root), { ...MINE, ".bin/dep": "#!/bin/sh\n", ".bin/other": KEEP });
+    const repo = await workspace(String(root));
+    await symlink(relative(dirname(join(repo, folder)), outside), join(repo, folder));
+
+    const { stderr, exitCode } = await runBun(repo, ["install", "--ignore-scripts", "--linker", linker]);
+
+    expect(stderr).not.toContain("error:");
+    expect((await lstat(join(outside, ".bin", "dep"))).isSymbolicLink()).toBe(true);
+    expect(await read(outside, { ...MINE, ".bin/other": KEEP })).toEqual({ ...MINE, ".bin/other": KEEP });
+    expect(exitCode).toBe(0);
   });
 });

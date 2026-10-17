@@ -852,37 +852,6 @@ impl JSGlobalObject {
         self.throw_value(instance)
     }
 
-    /// Queue a native callback as a microtask. Callers supply the C-ABI
-    /// trampoline directly; the wrapper only erases the context pointer type.
-    pub fn queue_microtask_callback<C>(
-        &self,
-        ctx_val: *mut C,
-        function: unsafe extern "C" fn(*mut c_void),
-    ) {
-        crate::mark_binding();
-        JSC__JSGlobalObject__queueMicrotaskCallback(self, ctx_val.cast::<c_void>(), function);
-    }
-
-    /// Queue `task` to run as a microtask; the queue owns the box until then
-    /// and the returned back-reference is valid until [`MicrotaskCallback::run`]
-    /// is entered. If the VM is torn down before the microtask queue drains,
-    /// the box is leaked along with the rest of the queue.
-    pub fn queue_microtask_boxed<T: MicrotaskCallback>(
-        &self,
-        task: Box<T>,
-    ) -> bun_ptr::BackRef<T, bun_ptr::Root> {
-        unsafe extern "C" fn run<T: MicrotaskCallback>(ctx: *mut c_void) {
-            // SAFETY: `ctx` is the `Box<T>` leaked below; the microtask queue
-            // invokes each callback exactly once.
-            T::run(unsafe { bun_core::heap::take(ctx.cast::<T>()) });
-        }
-        let task = bun_core::heap::into_raw(task);
-        self.queue_microtask_callback(task, run::<T>);
-        // SAFETY: `task` is the live leaked box; see the doc comment for the
-        // holder's obligation.
-        unsafe { bun_ptr::BackRef::from_root(task) }
-    }
-
     pub fn queue_microtask(&self, function: JSValue, args: &[JSValue]) {
         self.queue_microtask_job(
             function,
@@ -1267,7 +1236,6 @@ impl JSGlobalObject {
                 min: min_t.max(i128::from(MIN_SAFE_INTEGER)),
                 max: max_t.min(i128::from(MAX_SAFE_INTEGER)),
                 field_name: range.field_name,
-                always_allow_zero: range.always_allow_zero,
             },
         )
     }
@@ -1289,7 +1257,6 @@ impl JSGlobalObject {
 
         let field_name = range.field_name;
         debug_assert!(!field_name.is_empty(), "field_name must not be empty");
-        let always_allow_zero = range.always_allow_zero;
         // Pass the *unclamped* `range.min`/`range.max` to the range error
         // (not `min_t`/`max_t`). The bounds must fit in the formatter's `i64`
         // range; enforce that as a checked narrowing so an out-of-range bound
@@ -1301,9 +1268,6 @@ impl JSGlobalObject {
 
         if value.is_int32() {
             let int = value.to_int32();
-            if always_allow_zero && int == 0 {
-                return Ok(T::ZERO);
-            }
             if i128::from(int) < min_t || i128::from(int) > max_t {
                 return Err(self.throw_range_error(
                     i64::from(int),
@@ -1322,9 +1286,6 @@ impl JSGlobalObject {
             return Err(self.throw_invalid_property_type_value(field_name, b"number", value));
         }
         let f64_val = value.as_number();
-        if always_allow_zero && f64_val == 0.0 {
-            return Ok(T::ZERO);
-        }
 
         if f64_val.is_nan() {
             // node treats NaN as default
@@ -1534,15 +1495,6 @@ unsafe extern "C" {
         path: &BunString,
     ) -> bool;
 
-    // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
-    // ABI-identical to non-null `*const`); `ctx` is an opaque round-trip pointer
-    // C++ only stores and forwards to `function` (never dereferenced as Rust data).
-    safe fn JSC__JSGlobalObject__queueMicrotaskCallback(
-        this: &JSGlobalObject,
-        ctx: *mut c_void,
-        function: unsafe extern "C" fn(*mut c_void),
-    );
-
     safe fn Bun__Process__emitWarning(
         global_object: &JSGlobalObject,
         warning: JSValue,
@@ -1637,9 +1589,4 @@ impl ScriptExecutionContextIdentifier {
 unsafe extern "C" {
     // safe: by-value `u32` in, raw nullable pointer out (caller checks before deref).
     safe fn ScriptExecutionContextIdentifier__getGlobalObject(id: u32) -> *mut JSGlobalObject;
-}
-
-/// A native microtask queued with [`JSGlobalObject::queue_microtask_boxed`].
-pub trait MicrotaskCallback: Sized + 'static {
-    fn run(self: Box<Self>);
 }

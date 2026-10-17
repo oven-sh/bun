@@ -375,7 +375,7 @@ impl PublishCommand {
         let tag = manager.options.publish_config.tag;
         if dependency::Tag::infer(tag) == dependency::Tag::Npm {
             Output::err_generic(
-                "invalid tag \"{}\": a tag cannot be a version or a version range",
+                "invalid tag \"{}\": cannot be a version or range",
                 (bstr::BStr::new(tag),),
             );
             Global::crash();
@@ -386,7 +386,7 @@ impl PublishCommand {
             && bun_semver::Version::parse_exact(version).is_some_and(|it| it.tag.has_pre())
         {
             Output::err_generic(
-                "a prerelease needs a tag: {} would become \"latest\", the version that `bun add` installs",
+                "prerelease needs a tag: {} would become \"latest\"",
                 (bstr::BStr::new(package_version),),
             );
             bun_core::note!(

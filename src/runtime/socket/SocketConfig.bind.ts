@@ -39,7 +39,7 @@ export const SocketOptions = b.dictionary(
     data: b.any,
     allowHalfOpen: b.bool.default(false),
     hostname: { type: b.string.loose.falsyAsNull, altNames: ["host"] },
-    port: b.u16.loose.nullable,
+    port: b.u16.loose.allowBigInt.nullable,
     tls: SocketOptionsTLS,
     exclusive: b.bool.default(false),
     reusePort: b.bool.default(false),
@@ -49,7 +49,7 @@ export const SocketOptions = b.dictionary(
       type: b.string.falsyAsNull,
       rustName: "unix_", // The C++ struct has the same field, and `unix` is a predefined C macro.
     },
-    fd: b.i32.optional,
+    fd: b.i32.allowBigInt.optional,
   },
   { fromJS: true },
 );

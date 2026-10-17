@@ -241,7 +241,7 @@ fn report_useless_default<'a>(
 }
 
 fn check_parameter<'a>(param: Param<'a>, cx: &Context<'a>) {
-    let Some(right) = param.default() else {
+    let Some(right) = param.default().map(Expr::with_jsdoc_cast) else {
         return;
     };
     let removal = Span::new(param.binding_span().end, param.span().end);
@@ -274,7 +274,7 @@ fn check_parameter<'a>(param: Param<'a>, cx: &Context<'a>) {
     let Some(param_index) = index_of_parameter(func, param) else {
         return;
     };
-    let Some(contextual_type) = function_expression.contextual_type() else {
+    let Some(contextual_type) = function_expression.ts_node().get_contextual_type() else {
         return;
     };
     let signatures = contextual_type.get_call_signatures();
@@ -303,7 +303,7 @@ fn check_parameter<'a>(param: Param<'a>, cx: &Context<'a>) {
 }
 
 fn check_property<'a>(property: PatProp<'a>, cx: &mut Context<'a>) {
-    let Some(right) = property.default() else {
+    let Some(right) = property.default().map(Expr::with_jsdoc_cast) else {
         return;
     };
     let removal = Span::new(property.value().span().end, property.span().end);
@@ -323,7 +323,7 @@ fn check_element<'a>(
     source: &mut Option<Option<(Type<'a>, TupleTarget<'a>)>>,
     cx: &mut Context<'a>,
 ) {
-    let (Some(left), Some(right)) = (element.pat(), element.default()) else {
+    let (Some(left), Some(right)) = (element.pat(), element.default().map(Expr::with_jsdoc_cast)) else {
         return;
     };
     let removal = Span::new(left.span().end, element.span().end);
@@ -419,7 +419,7 @@ impl Rule for NoUselessDefaultAssignment {
             target,
             value,
         } = node.kind()
-            && value.is_ident("undefined")
+            && value.with_jsdoc_cast().is_ident("undefined")
             && node.is_assignment_target()
         {
             let removal = Span::new(target.span().end, node.span().end);

@@ -184,7 +184,7 @@ fn finish_checkout(
     // `.bun-tag` is the cache-hit marker; a checked-in one is replaced.
     let _ = dir.delete_tree(b".bun-tag");
     let prepared = copy_linked_files(&dir, tree)
-        .map_err(|err| ("replacing the links", err))
+        .map_err(|err| ("replacing links", err))
         .and_then(|()| strip_node_modules(&dir).map_err(|err| ("cleaning \"node_modules\"", err)))
         .and_then(|()| {
             bun_sys::File::openat(

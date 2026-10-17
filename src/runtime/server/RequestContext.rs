@@ -89,7 +89,7 @@ pub(crate) type RequestContextStackAllocator<
 
 #[derive(Clone, Copy)]
 pub(crate) enum UpgradeState {
-    /// Plain HTTP request.
+    /// Plain HTTP request, or a handshake that was answered with an HTTP response.
     None,
     /// WebSocket handshake waiting for `server.upgrade()`. uWS owns the
     /// context (one per `.ws()` route) and it outlives the request.
@@ -240,12 +240,6 @@ where
     pub(crate) fn script_context<'r>(&self) -> &'r bun_jsc::ScriptExecutionContext {
         self.server().context()
     }
-
-    pub(crate) fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer> {
-        let server = self.server.get()?;
-        // SAFETY: BACKREF — the server outlives every context it allocates.
-        unsafe { &*server.as_ptr() }.dev_server()
-    }
 }
 
 // ─── per-request state machine bodies ────────────────────────────────────────
@@ -269,13 +263,15 @@ mod NativePromiseContext {
     pub(super) fn create<T: NativePromiseContextType>(
         global: &JSGlobalObject,
         ctx: *mut T,
+        held: JSValue,
     ) -> JSValue {
-        npc::create(global, ctx, JSValue::ZERO)
+        npc::create(global, ctx, held)
     }
     #[inline]
     pub(super) fn take<T>(cell: JSValue) -> Option<NonNull<T>> {
         npc::take::<T>(cell)
     }
+    pub(super) use npc::take_held;
 }
 use crate::node::types::PathLikeExt as _;
 use crate::server::jsc::CallFrame;
@@ -396,6 +392,8 @@ fn release_body_stream(response: &mut Response, global_this: &JSGlobalObject) {
 // These forward to methods that exist in webcore/ but are currently inside
 // impl blocks that fail to compile (codegen gc-slot stubs, opaque AbortSignal).
 // Adapt on this side per phase-d rules.
+pub(super) use shim::signal_release;
+
 mod shim {
     use super::*;
 
@@ -429,7 +427,7 @@ mod shim {
     /// drops the intrusive C++ `RefPtr` count taken at creation. `s` must not
     /// be dereferenced after this call.
     #[inline]
-    pub(super) fn signal_release(s: NonNull<AbortSignal>) {
+    pub(in crate::server) fn signal_release(s: NonNull<AbortSignal>) {
         // See `signal_aborted`. Order: pending-activity first,
         // then the owning intrusive ref (which may free). `BackRef` is dropped
         // before `unref()` returns, so no dangling deref.
@@ -780,6 +778,16 @@ where
     /// [`Self::discard_response_body`] for a request this context can no longer respond to.
     fn discard_handler_result(&self, global_this: &JSGlobalObject, result: JSValue) {
         let Some(promise) = result.as_any_promise() else {
+            if self.did_upgrade_web_socket()
+                && let Some(err) = result.to_error()
+            {
+                Self::report_error_after_upgrade(
+                    global_this,
+                    self.server_js_for_error_handler(),
+                    err,
+                );
+                return;
+            }
             Self::discard_response_body(global_this, result);
             return;
         };
@@ -1032,7 +1040,13 @@ where
     fn create_promise_cell(&self, global: &JSGlobalObject) -> JSValue {
         debug_assert!(self.promise_cell.get().is_empty());
         self.ref_();
-        let cell = NativePromiseContext::create(global, self.as_ctx_ptr());
+        // `server.upgrade()` reclaims the cell while the handler is still running. If the handler
+        // rejects after that, `on_reject` reports the error through this.
+        let held = match self.upgrade_context.get() {
+            UpgradeState::Pending(_) => self.server_js_for_error_handler(),
+            UpgradeState::None | UpgradeState::Upgraded => JSValue::ZERO,
+        };
+        let cell = NativePromiseContext::create(global, self.as_ctx_ptr(), held);
         self.promise_cell.set(cell);
         cell
     }
@@ -1054,31 +1068,78 @@ where
     pub(crate) fn reclaim_promise_cell(&self) {
         let cell = self.promise_cell.replace(JSValue::ZERO);
         if !cell.is_empty() && NativePromiseContext::take::<Self>(cell).is_some() {
+            if !self.did_upgrade_web_socket() {
+                NativePromiseContext::take_held(cell);
+            }
             self.deref();
         }
     }
 
-    pub(crate) fn on_reject(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    /// The server's JS wrapper, or `undefined` if `error()` already ran for this request.
+    fn server_js_for_error_handler(&self) -> JSValue {
+        if self.flags.has_called_error_handler() {
+            return JSValue::UNDEFINED;
+        }
+        self.server()
+            .js_value()
+            .try_get()
+            .unwrap_or(JSValue::UNDEFINED)
+    }
+
+    /// Reports an error a handler threw after `server.upgrade()`, like any other handler error:
+    /// calls `server_js`'s `error()`, or falls back to the unhandled rejection path. `error()`'s
+    /// return value is discarded because there's no response left to send it on.
+    fn report_error_after_upgrade(global: &JSGlobalObject, server_js: JSValue, value: JSValue) {
+        if !global.bun_vm().script_allowed() {
+            return;
+        }
+        let mut unhandled = value;
+        if server_js.is_cell()
+            && let Some(on_error) = crate::server::server_js_cached!(
+                SSL_ENABLED,
+                DEBUG_MODE,
+                on_error_get_cached(server_js)
+            )
+        {
+            let result = on_error
+                .call(global, server_js, &[value])
+                .unwrap_or_else(|err| global.take_exception(err));
+            let Some(err) = result.to_error() else {
+                Self::discard_response_body(global, result);
+                return;
+            };
+            unhandled = err;
+        }
+        let vm = global.bun_vm().as_mut();
+        (vm.on_unhandled_rejection)(vm, global, unhandled);
+    }
+
+    pub(crate) fn on_reject(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         ctx_log!("onReject");
 
         let arguments = callframe.arguments_as_array::<2>();
+        // Pass the rejection reason through verbatim (including `null` and
+        // `undefined`) so `error()` sees the same value the already-settled
+        // path delivers. Only an empty JSValue is normalized.
+        let err = if arguments[0].is_empty() {
+            JSValue::UNDEFINED
+        } else {
+            arguments[0]
+        };
         let Some(ctx) = NativePromiseContext::take::<Self>(arguments[1]) else {
             // A termination path (abort, end, upgrade) reclaimed the cell's
-            // claim; the context may already be gone.
+            // claim; the context may already be gone. Only an upgrade leaves
+            // the server wrapper in the cell to report the error through.
+            let server_js = NativePromiseContext::take_held(arguments[1]);
+            if !server_js.is_empty() {
+                Self::report_error_after_upgrade(global, server_js, err);
+            }
             return Ok(JSValue::UNDEFINED);
         };
         let ctx = RequestContextRef::adopt(ctx.as_ptr());
         ctx.ctx().promise_cell.set(JSValue::ZERO);
 
-        let err = arguments[0];
-        // Pass the rejection reason through verbatim (including `null` and
-        // `undefined`) so `error()` sees the same value the already-settled
-        // path delivers. Only an empty JSValue is normalized.
-        ctx.ctx().handle_reject(if err.is_empty() {
-            JSValue::UNDEFINED
-        } else {
-            err
-        });
+        ctx.ctx().handle_reject(err);
         Ok(JSValue::UNDEFINED)
     }
 
@@ -2365,6 +2426,13 @@ where
         matches!(self.upgrade_context.get(), UpgradeState::Upgraded)
     }
 
+    /// An HTTP response has started on this connection, so `server.upgrade()` must now fail.
+    fn forbid_upgrade(&self) {
+        if let UpgradeState::Pending(_) = self.upgrade_context.get() {
+            self.upgrade_context.set(UpgradeState::None);
+        }
+    }
+
     fn to_async_without_abort_handler(
         &self,
         req: *mut Req<SSL_ENABLED, MUX>,
@@ -3617,6 +3685,7 @@ where
     }
 
     fn finish_running_error_handler(&self, value: JSValue, status: u16) {
+        self.forbid_upgrade();
         let Some(server) = self.server.get() else {
             return self.render_production_error(status);
         };
@@ -3994,6 +4063,7 @@ where
     /// Same contract as [`Self::set_response`].
     pub(crate) unsafe fn render(&self, response: *mut Response) {
         ctx_log!("render");
+        self.forbid_upgrade();
 
         // A HEAD response never carries content (RFC 9110 §9.3.2). The normal
         // handler path branches to `do_render_head_response` before reaching

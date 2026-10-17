@@ -15,7 +15,7 @@
 // version on main). Replace this with Bun.Glob once those gaps are closed
 // natively.
 const { validateObject, validateString, validateBoolean, validateArray } = require("internal/validators");
-const { join, resolve, basename, dirname, isAbsolute } = require("node:path");
+const { join, resolve, basename, dirname, isAbsolute, sep } = require("node:path");
 const { kEmptyObject } = require("internal/shared");
 
 const isWindows = process.platform === "win32";
@@ -57,6 +57,10 @@ function makeMatchersExclude(matchers) {
 }
 function statForFileTypes(cache, root, path) {
   return cache.statSync(isAbsolute(path) ? path : join(root, path));
+}
+// joinPrefix(dir) + name equals join(dir, name) for a name from readdir: it has no ".", ".." or separator.
+function joinPrefix(dir) {
+  return dir === "." ? "" : join(dir, sep);
 }
 
 const kStats = Symbol("stats");
@@ -163,6 +167,20 @@ function createMatcher(pattern, options = kEmptyObject) {
   return new (lazyMinimatch().Minimatch)(pattern, opts);
 }
 
+// How many queued directories Glob.#prefetch() reads ahead of glob().
+const kPrefetchWindow = 8;
+
+// False when #iterateSubpatterns() would only stat a literal name and not list the directory.
+function readsDirectory(patterns) {
+  for (let i = 0; i < patterns.length; i++) {
+    const { indexes } = patterns[i];
+    if (indexes.size !== 1 || typeof patterns[i].at(indexes.values().next().value) !== "string") {
+      return true;
+    }
+  }
+  return false;
+}
+
 function cloneSet(values) {
   const cloned = new Set();
   for (const value of values) {
@@ -246,6 +264,11 @@ class Cache {
   addToStatCache(path, val) {
     this.#statsCache.set(path, val);
   }
+  // What a readdir of the parent directory gave for `path`, if anything.
+  cachedDirent(path) {
+    const cached = this.#statsCache.get(path);
+    return $isPromise(cached) ? undefined : cached;
+  }
   async readdir(path) {
     const cached = this.#readdirCache.get(path);
     if (cached) {
@@ -262,6 +285,10 @@ class Cache {
     );
     this.#readdirCache.set(path, promise);
     return promise;
+  }
+  // Nothing awaits this promise, so its rejection must not count as unhandled. readdir(path) still rejects.
+  prefetchReaddir(path) {
+    this.readdir(path).$then(undefined, nullOnReject);
   }
   readdirSync(path) {
     const cached = this.#readdirCache.get(path);
@@ -298,14 +325,17 @@ class Cache {
 class Pattern {
   #pattern;
   #globStrings;
+  // cacheKey() by index. Every child() shares it.
+  #cacheKeys;
   indexes;
   symlinks;
   realpaths;
   last;
 
-  constructor(pattern, globStrings, indexes, symlinks, realpaths = new Set()) {
+  constructor(pattern, globStrings, indexes, symlinks, realpaths = new Set(), cacheKeys = []) {
     this.#pattern = pattern;
     this.#globStrings = globStrings;
+    this.#cacheKeys = cacheKeys;
     this.indexes = indexes;
     this.symlinks = symlinks;
     this.realpaths = realpaths;
@@ -331,7 +361,7 @@ class Pattern {
     return this.#pattern.at(index);
   }
   child(indexes, symlinks = new Set(), realpaths = this.realpaths) {
-    return new Pattern(this.#pattern, this.#globStrings, indexes, symlinks, realpaths);
+    return new Pattern(this.#pattern, this.#globStrings, indexes, symlinks, realpaths, this.#cacheKeys);
   }
   test(index, path) {
     if (index > this.#pattern.length) {
@@ -351,14 +381,7 @@ class Pattern {
   }
 
   cacheKey(index) {
-    let key = "";
-    for (let i = index; i < this.#globStrings.length; i++) {
-      key += this.#globStrings[i];
-      if (i !== this.#globStrings.length - 1) {
-        key += "/";
-      }
-    }
-    return key;
+    return (this.#cacheKeys[index] ??= this.#globStrings.slice(index).join("/"));
   }
 }
 
@@ -372,7 +395,7 @@ class ResultSet extends Set {
   }
 
   add(value): any {
-    if (this.#isExcluded(resolve(this.#root, value))) {
+    if (this.#isExcluded !== excludeNothing && this.#isExcluded(resolve(this.#root, value))) {
       return false;
     }
     super.add(value);
@@ -385,7 +408,7 @@ class Glob {
   #exclude;
   #cache = new Cache();
   #results = new ResultSet();
-  #queue: Array<{ path: string; patterns: Pattern[] }> = [];
+  #queue: Array<{ path: string; patterns: Pattern[]; prefetched?: boolean }> = [];
   #subpatterns = new Map();
   #patterns;
   #withFileTypes;
@@ -515,14 +538,16 @@ class Glob {
     return real !== null && pattern.realpaths.has(real);
   }
   #addSubpattern(path, pattern) {
-    if (this.#isExcluded(path)) {
-      return;
-    }
-    const fullpath = resolve(this.#root, path);
+    if (this.#isExcluded !== excludeNothing) {
+      if (this.#isExcluded(path)) {
+        return;
+      }
+      const fullpath = resolve(this.#root, path);
 
-    // If path is a directory, add trailing slash and test patterns again.
-    if (this.#isExcluded(`${fullpath}/`) && this.#cache.statSync(fullpath).isDirectory()) {
-      return;
+      // If path is a directory, add trailing slash and test patterns again.
+      if (this.#isExcluded(`${fullpath}/`) && this.#cache.statSync(fullpath).isDirectory()) {
+        return;
+      }
     }
 
     if (this.#exclude) {
@@ -532,7 +557,7 @@ class Glob {
         // process.cwd() instead of options.cwd (upstream passes `path`
         // here, which silently skips the exclude callback when cwd
         // differs).
-        const stat = this.#cache.statSync(fullpath);
+        const stat = this.#cache.statSync(resolve(this.#root, path));
         if (stat !== null) {
           if (this.#exclude(stat)) {
             return;
@@ -611,6 +636,9 @@ class Glob {
     const nextRealpaths = this.#nextRealpathsSync(fullpath, isDirectory, pattern);
 
     let children;
+    // Set when `children` comes from readdir; see joinPrefix().
+    let entryPathPrefix;
+    let entryFullpathPrefix;
     const firstPattern = pattern.indexes.size === 1 && pattern.at(pattern.indexes.values().next().value);
     if (typeof firstPattern === "string") {
       const stat = this.#cache.statSync(join(fullpath, firstPattern));
@@ -622,12 +650,15 @@ class Glob {
       }
     } else {
       children = this.#cache.readdirSync(fullpath);
+      entryPathPrefix = joinPrefix(path);
+      entryFullpathPrefix = joinPrefix(fullpath);
     }
 
     for (let i = 0; i < children.length; i++) {
       const entry = children[i];
-      const entryPath = join(path, entry.name);
-      const entryFullpath = join(fullpath, entry.name);
+      const entryPath = entryPathPrefix === undefined ? join(path, entry.name) : entryPathPrefix + entry.name;
+      const entryFullpath =
+        entryFullpathPrefix === undefined ? join(fullpath, entry.name) : entryFullpathPrefix + entry.name;
       this.#cache.addToStatCache(entryFullpath, entry);
       const entryIsDirectory =
         entry.isDirectory() ||
@@ -745,15 +776,36 @@ class Glob {
 
   async *glob() {
     this.#queue.push({ __proto__: null, path: ".", patterns: this.#patterns });
+    // The lstat and the readdir of the root run side by side; see #prefetch().
+    if (readsDirectory(this.#patterns)) {
+      this.#cache.prefetchReaddir(resolve(this.#root, "."));
+    }
     while (this.#queue.length > 0) {
       const item = this.#queue.pop()!;
       for (let i = 0; i < item.patterns.length; i++) {
         yield* this.#iterateSubpatterns(item.path, item.patterns[i]);
       }
       for (const [path, patterns] of this.#subpatterns) {
-        this.#queue.push({ __proto__: null, path, patterns });
+        this.#queue.push({ __proto__: null, path, patterns, prefetched: false });
       }
       this.#subpatterns.clear();
+      this.#prefetch();
+    }
+  }
+  // Starts the readdir of the directories that glob() visits next, so that the thread pool reads them meanwhile.
+  #prefetch() {
+    const queue = this.#queue;
+    const end = queue.length > kPrefetchWindow ? queue.length - kPrefetchWindow : 0;
+    for (let i = queue.length - 1; i >= end; i--) {
+      const item = queue[i];
+      if (item.prefetched) {
+        continue;
+      }
+      item.prefetched = true;
+      const fullpath = resolve(this.#root, item.path);
+      if (this.#cache.cachedDirent(fullpath)?.isDirectory() && readsDirectory(item.patterns)) {
+        this.#cache.prefetchReaddir(fullpath);
+      }
     }
   }
   async *#iterateSubpatterns(path, pattern) {
@@ -828,6 +880,9 @@ class Glob {
     const nextRealpaths = await this.#nextRealpaths(fullpath, isDirectory, pattern);
 
     let children;
+    // Set when `children` comes from readdir; see joinPrefix().
+    let entryPathPrefix;
+    let entryFullpathPrefix;
     const firstPattern = pattern.indexes.size === 1 && pattern.at(pattern.indexes.values().next().value);
     if (typeof firstPattern === "string") {
       const stat = await this.#cache.stat(join(fullpath, firstPattern));
@@ -839,12 +894,15 @@ class Glob {
       }
     } else {
       children = await this.#cache.readdir(fullpath);
+      entryPathPrefix = joinPrefix(path);
+      entryFullpathPrefix = joinPrefix(fullpath);
     }
 
     for (let i = 0; i < children.length; i++) {
       const entry = children[i];
-      const entryPath = join(path, entry.name);
-      const entryFullpath = join(fullpath, entry.name);
+      const entryPath = entryPathPrefix === undefined ? join(path, entry.name) : entryPathPrefix + entry.name;
+      const entryFullpath =
+        entryFullpathPrefix === undefined ? join(fullpath, entry.name) : entryFullpathPrefix + entry.name;
       this.#cache.addToStatCache(entryFullpath, entry);
       const entryIsDirectory =
         entry.isDirectory() ||

@@ -2053,13 +2053,19 @@ const neverPruned = [".bunx-0", ".deadbeef-1.old-pkg", "0123456789abcdef.git", "
 
 test.concurrent.each(["rm", "prune --max-age 0"])("several `bun pm cache %s` at once all succeed", async command => {
   const files: Record<string, string> = { "package.json": JSON.stringify({ name: "cache-at-once" }) };
-  for (let pkg = 0; pkg < 150; pkg++) {
+  const names = Array.from({ length: 150 }, (_, i) => (i % 3 ? `pkg-${i}` : `@scope/pkg-${i}`));
+  for (const name of names) {
     for (const file of ["package.json", "index.js", "lib/a.js", "lib/b.js"]) {
-      files[`cache/pkg-${pkg}@1.0.0@@@1/${file}`] = "{}";
+      files[`cache/${name}@1.0.0@@@1/${file}`] = "{}";
     }
   }
   using dir = tempDir("pm-cache-at-once", files);
   const cache = join(String(dir), "cache");
+  // The folder that lists the cached versions of a package, as `bun install` makes it.
+  for (const name of names) {
+    mkdirSync(join(cache, name));
+    symlinkSync(join(cache, `${name}@1.0.0@@@1`), join(cache, name, "1.0.0@@@1"), isWindows ? "junction" : "dir");
+  }
 
   const runs = await Promise.all(
     Array.from({ length: 4 }, () => pmCache(command.split(" "), String(dir), { ...env, BUN_INSTALL_CACHE_DIR: cache })),

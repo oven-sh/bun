@@ -103,6 +103,8 @@ impl Prune {
                     let sub_prefix = [prefix, name, b"/"].concat();
                     let sub = match dir.open_at(name) {
                         Ok(sub) => sub,
+                        // Another process removed it.
+                        Err(err) if err.get_errno() == E::ENOENT => continue,
                         Err(err) => {
                             Output::err(err, "Could not open {s}", (BStr::new(&sub_prefix),));
                             self.failed += 1;
@@ -130,6 +132,7 @@ impl Prune {
             let display = [prefix, name].concat();
             match dir.open_at(name) {
                 Ok(index) => self.remove_dangling_links(&index, &display),
+                Err(err) if err.get_errno() == E::ENOENT => continue,
                 Err(err) => {
                     Output::err(err, "Could not open {s}", (BStr::new(&display),));
                     self.failed += 1;
@@ -166,6 +169,7 @@ impl Prune {
             }
             if let Err(err) = bun_sys::unlinkat(index.fd(), &entry.name)
                 .or_else(|_| bun_sys::rmdirat(index.fd(), &entry.name))
+                && err.get_errno() != E::ENOENT
             {
                 let display = [prefix, b"/", entry.name.as_bytes()].concat();
                 Output::err(err, "Could not delete {s}", (BStr::new(&display),));

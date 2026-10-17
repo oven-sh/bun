@@ -2131,6 +2131,45 @@ test.concurrent("a nested copy that stays keeps the dependency that it loads fro
   expect(await run(dir, "--no-install", "-p", "require('n')")).toBe("1.0.0\n");
 });
 
+// `n/node_modules/b` stays, as above, but it has a `c` of its own. So nothing holds the older `n/node_modules/c`.
+test.concurrent("a nested copy that stays keeps no dependency that it has a copy of", async () => {
+  const graph: Record<string, Record<string, object>> = {
+    m: { "1.0.0": { dependencies: { b: "^1.0.0", c: "^2.0.0" } } },
+    n: { "1.0.0": { dependencies: { b: "^2.0.0", c: "^1.0.0" } } },
+    b: { "1.0.0": {}, "2.0.0": { dependencies: { c: "^0.9.0" } } },
+    c: { "0.9.0": {}, "1.0.0": {}, "1.1.0": {}, "2.0.0": {} },
+  };
+  using server = await serveGraph(graph, {
+    "n-1.0.0": { "index.js": `module.exports = require("c/package.json").version;` },
+  });
+  const { "1.1.0": published, ...before } = graph.c;
+  graph.c = before;
+
+  const files = (root: object) => ({
+    "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
+    "package.json": JSON.stringify({
+      name: "app",
+      scripts: { prepare: "echo prepared" },
+      dependencies: { m: "1.0.0", n: "1.0.0" },
+      ...root,
+    }),
+  });
+  using laptop = tempDir("hoist-older-own-copy-laptop", files({ devDependencies: { b: "^2.0.0", c: "^1.0.0" } }));
+  using machine = tempDir("hoist-older-own-copy-machine", files({}));
+  const [dev, dir] = [String(laptop), String(machine)];
+
+  // What an older bun lays with --production is what every bun lays when package.json lacks devDependencies.
+  await run(dir, "install");
+  expect(layout(dir)).toEqual(expect.arrayContaining(["c@2.0.0", "n/b@2.0.0", "n/b/c@0.9.0", "n/c@1.0.0"]));
+
+  graph.c = { ...before, "1.1.0": published };
+  await run(dev, "install");
+  await write(join(dir, "package.json"), file(join(dev, "package.json")));
+  await write(join(dir, "bun.lock"), file(join(dev, "bun.lock")));
+  await run(dir, "install", "--production", "--ignore-scripts");
+  expect(await run(dir, "--no-install", "-p", "require('n')")).toBe("1.1.0\n");
+});
+
 // `pk/two/node_modules/y` is judged by what bun.lock now places in that folder, whatever the workspace is called.
 describe.concurrent("the copy in the node_modules of a workspace", () => {
   async function project() {

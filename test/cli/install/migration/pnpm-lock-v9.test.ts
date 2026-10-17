@@ -4803,7 +4803,10 @@ snapshots:
     test.concurrent("an edited rule is followed", async () => {
       const dir = await migrated();
       await setRules(dir, { ...rules, "no-deps@1": { dependencies: { "a-dep": "1.0.2" } } });
-      expect(await run(dir, "install", "--frozen-lockfile")).toMatchObject({ exitCode: 1 });
+      expect(await run(dir, "install", "--frozen-lockfile")).toMatchObject({
+        stderr: expect.stringContaining("note: packageExtensions in package.json changed since bun.lock was saved"),
+        exitCode: 1,
+      });
       expect(await run(dir, "install")).toMatchObject({ exitCode: 0 });
       expect(await bunLockOf(dir)).toContain(`"a-dep": ["a-dep@1.0.2"`);
     });
@@ -4811,7 +4814,10 @@ snapshots:
     test.concurrent("removed rules take what they added, and nothing that a package declares", async () => {
       const dir = await migrated();
       await setRules(dir, {});
-      expect(await run(dir, "install", "--frozen-lockfile")).toMatchObject({ exitCode: 1 });
+      expect(await run(dir, "install", "--frozen-lockfile")).toMatchObject({
+        stderr: expect.stringContaining("note: packageExtensions in package.json changed since bun.lock was saved"),
+        exitCode: 1,
+      });
       expect(await run(dir, "install")).toMatchObject({ exitCode: 0 });
       expect(await locked(dir)).toEqual(["no-deps", "one-dep"]);
     });

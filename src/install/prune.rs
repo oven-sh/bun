@@ -1887,7 +1887,7 @@ fn remove_from_older_places(
         let Some(dir) = open_tree_folder(lockfile, older.id, &mut plan.linked_folders) else {
             continue;
         };
-        let mut stays: Vec<(u64, PackageID)> = (only_older.iter())
+        let mut stays: Vec<(&Dependency, PackageID)> = (only_older.iter())
             .filter(|&&(dep, resolved)| {
                 let alias = dep.name.slice(buf);
                 let Some(package) = open_package(&dir, alias) else {
@@ -1900,21 +1900,26 @@ fn remove_from_older_places(
                 };
                 keeps_same_version && may_hold_version_of(lockfile, &package, resolved)
             })
-            .map(|&(dep, resolved)| (dep.name_hash, resolved))
+            .copied()
             .collect();
-        // A copy that stays loads its dependencies from this folder first, so they stay with it.
+        // A copy that stays loads a dependency from this folder if it has no copy of its own, so
+        // that dependency stays with it.
         let mut next = 0;
-        while let Some(&(_, package)) = stays.get(next) {
+        while let Some(&(kept, package)) = stays.get(next) {
             next += 1;
             let Some(needs) = lockfile.packages.items_dependencies().get(package as usize) else {
                 continue;
             };
+            let own = open_package(&dir, kept.name.slice(buf))
+                .and_then(|kept| kept.open_at(b"node_modules").ok());
             for need in needs.get(deps) {
                 let found = (only_older.iter()).find(|(dep, _)| dep.name_hash == need.name_hash);
                 if let Some(&(dep, resolved)) = found
-                    && !stays.iter().any(|kept| kept.0 == dep.name_hash)
+                    && !stays.iter().any(|kept| kept.0.name_hash == dep.name_hash)
+                    && (own.as_ref())
+                        .is_none_or(|own| open_package(own, dep.name.slice(buf)).is_none())
                 {
-                    stays.push((dep.name_hash, resolved));
+                    stays.push((dep, resolved));
                 }
             }
         }
@@ -1926,7 +1931,7 @@ fn remove_from_older_places(
                 let name_hash = bun_semver::semver_string::Builder::string_hash(entry.alias);
                 entry.kind != EntryKind::Directory
                     || !only_older.iter().any(|(dep, _)| dep.name_hash == name_hash)
-                    || stays.iter().any(|kept| kept.0 == name_hash)
+                    || stays.iter().any(|kept| kept.0.name_hash == name_hash)
             },
             &mut plan,
         );

@@ -102,7 +102,7 @@ public:
         : Inspector::FrontendChannel()
         , globalObject(globalObject)
         , scriptExecutionContextIdentifier(scriptExecutionContext.identifier())
-        , unrefOnDisconnect(shouldRefEventLoop)
+        , shouldRefEventLoop(shouldRefEventLoop)
     {
     }
 
@@ -124,7 +124,8 @@ public:
     {
         this->status = ConnectionStatus::Connected;
         auto* globalObject = context.jsGlobalObject();
-        if (this->unrefOnDisconnect) {
+        if (this->shouldRefEventLoop) {
+            this->unrefOnDisconnect = true;
             Bun__VmHandle__refKeepAlive(WebCore::clientData(JSC::getVM(globalObject))->vmHandle, BunLoopKind::Regular, 1);
         }
         globalObject->setInspectable(true);
@@ -475,6 +476,9 @@ public:
 
     std::atomic<ConnectionStatus> status = ConnectionStatus::Pending;
 
+    bool shouldRefEventLoop = false;
+
+    // Set with the +1 in doConnect(); the disconnect task releases only when true.
     bool unrefOnDisconnect = false;
 
     bool hasEverConnected = false;

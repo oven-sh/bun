@@ -603,3 +603,219 @@ test("error.stack doesnt lose frames", () => {
   // We allow it to differ by the existence of <anonymous> as a string. But that's it.
   expect(no.split("\n").slice(0, -2).join("\n").trim()).toBe(yes.split("\n").slice(0, -2).join("\n").trim());
 });
+
+describe.concurrent("event loop keep-alive", () => {
+  async function spawnWithInspector(args: string[], cwd: string) {
+    const inspectee = spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    let url: URL | undefined;
+    let stderr = "";
+    const decoder = new TextDecoder();
+    for await (const chunk of inspectee.stderr) {
+      stderr += decoder.decode(chunk);
+      for (const line of stderr.split("\n")) {
+        try {
+          url = new URL(line.trim());
+        } catch {}
+        if (url?.protocol === "ws:") break;
+      }
+      if (url) break;
+    }
+    if (!url) throw new Error(`no inspector URL in:\n${stderr}`);
+
+    const reader = inspectee.stdout.getReader();
+    let stdout = "";
+    const readStdoutUntil = async (marker: string) => {
+      while (!stdout.includes(marker)) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        stdout += decoder.decode(value);
+      }
+      return stdout;
+    };
+    return { inspectee, url, readStdoutUntil };
+  }
+
+  // A client whose pending promises reject when the socket drops, so a dead
+  // inspectee fails the test with a reason instead of a timeout.
+  function open(url: URL) {
+    const ws = new WebSocket(url);
+    const pending = new Set<(error: Error) => void>();
+    const fail = (message: string) => {
+      const error = new Error(message);
+      for (const reject of pending) reject(error);
+      pending.clear();
+    };
+    const track = <T>(executor: (resolve: (value: T) => void) => void) =>
+      new Promise<T>((resolve, reject) => {
+        pending.add(reject);
+        executor(value => {
+          pending.delete(reject);
+          resolve(value);
+        });
+      });
+    let closing = false;
+    ws.addEventListener("error", () => fail("WebSocket error"));
+    ws.addEventListener("close", () => {
+      if (!closing) fail("WebSocket closed");
+    });
+    const opened = track<void>(resolve => ws.addEventListener("open", () => resolve()));
+    let nextId = 1;
+    const replies = new Map<number, (reply: any) => void>();
+    ws.addEventListener("message", ({ data }) => {
+      const reply = JSON.parse(data.toString());
+      replies.get(reply.id)?.(reply);
+    });
+    const send = (method: string, params?: object) =>
+      track<any>(resolve => {
+        const id = nextId++;
+        replies.set(id, resolve);
+        ws.send(JSON.stringify({ id, method, params }));
+      });
+    const close = () => {
+      closing = true;
+      const closed = new Promise<void>(resolve => ws.addEventListener("close", () => resolve()));
+      ws.close();
+      return closed;
+    };
+    return { opened, send, close };
+  }
+
+  test("a client that closes before the connect task runs does not unref the inspectee's loop", async () => {
+    using dir = tempDir("inspect-early-close", {
+      "server.js": `
+        globalThis.server = Bun.serve({ port: 0, fetch: () => new Response() });
+        process.on("beforeExit", () => console.log("beforeExit"));
+        console.log("ready");
+        // Block the JS thread so that every client the test opens closes
+        // before the connect task for it runs.
+        require("fs").readSync(0, Buffer.alloc(1));
+        // The loop decides whether to exit before this timer is due. It only
+        // fires when the server still keeps the loop alive.
+        setTimeout(() => console.log("alive"), 200);
+      `,
+    });
+    const { inspectee, url, readStdoutUntil } = await spawnWithInspector(
+      ["--inspect=ws://localhost:0/x", "server.js"],
+      String(dir),
+    );
+    await using _ = inspectee;
+    await readStdoutUntil("ready\n");
+
+    // Each early close must not cost the loop a ref. The server and the timer
+    // hold two refs, so five unpaired releases would end the process.
+    for (let i = 0; i < 5; i++) {
+      const client = open(url);
+      await client.opened;
+      await client.close();
+    }
+
+    inspectee.stdin.write("\n");
+    await inspectee.stdin.end();
+    expect(await readStdoutUntil("alive\n")).toBe("ready\nalive\n");
+    expect(inspectee.exitCode).toBeNull();
+
+    // A client that does connect keeps the loop alive on its own, and its
+    // close releases exactly that ref: the process exits once it is gone.
+    const client = open(url);
+    await client.opened;
+    const reply = await client.send("Runtime.evaluate", { expression: "server.stop(true), 1 + 1" });
+    expect(reply).toMatchObject({ id: 1, result: { result: { type: "number", value: 2 } } });
+    expect(inspectee.exitCode).toBeNull();
+    await client.close();
+    expect(await inspectee.exited).toBe(0);
+    expect(await readStdoutUntil("beforeExit\n")).toBe("ready\nalive\nbeforeExit\n");
+  });
+
+  test("a connected client keeps an idle inspectee alive until it disconnects", async () => {
+    using dir = tempDir("inspect-idle-attached", {
+      "idle.js": `
+        process.on("beforeExit", () => console.log("beforeExit"));
+        console.log("done");
+      `,
+    });
+    const { inspectee, url, readStdoutUntil } = await spawnWithInspector(
+      ["--inspect-wait=ws://localhost:0/x", "idle.js"],
+      String(dir),
+    );
+    await using _ = inspectee;
+
+    const client = open(url);
+    await client.opened;
+    await client.send("Inspector.enable");
+    await client.send("Inspector.initialized");
+    expect(await readStdoutUntil("done\n")).toBe("done\n");
+
+    // The script is done. Only the attached client keeps the loop alive.
+    const reply = await client.send("Runtime.evaluate", { expression: "1 + 1" });
+    expect(reply).toMatchObject({ result: { result: { type: "number", value: 2 } } });
+    expect(inspectee.exitCode).toBeNull();
+
+    await client.close();
+    expect(await inspectee.exited).toBe(0);
+    expect(await readStdoutUntil("beforeExit\n")).toBe("done\nbeforeExit\n");
+  });
+
+  test("an inspector target that refuses the connection does not unref the inspectee's loop", async () => {
+    // The debugger thread creates a connection and closes it at once when the
+    // dial fails. The fixture blocks its JS thread until the test releases
+    // stdin, so the close always lands before the connect task runs.
+    using dir = tempDir("inspect-refused", {
+      "timer.js": `
+        process.on("beforeExit", () => console.log("beforeExit"));
+        console.log("ready");
+        require("fs").readSync(0, Buffer.alloc(1));
+        setTimeout(() => console.log("alive"), 200);
+      `,
+    });
+    let target: string;
+    if (isPosix) {
+      target = `unix://${join(String(dir), "nobody.sock")}`;
+    } else {
+      // Windows dials unix: targets over TCP. Take a free port and release it.
+      const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+      target = `tcp://127.0.0.1:${listener.port}`;
+      listener.stop(true);
+    }
+    await using inspectee = spawn({
+      cmd: [bunExe(), `--inspect=${target}`, "timer.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    // The debugger thread prints its banner and then dials. The dial fails in
+    // the same tick, so once the banner is out the early close is queued.
+    const decoder = new TextDecoder();
+    let stderr = "";
+    for await (const chunk of inspectee.stderr) {
+      stderr += decoder.decode(chunk);
+      if (stderr.includes("Listening on")) break;
+    }
+    const stdoutReader = inspectee.stdout.getReader();
+    let stdout = "";
+    const readStdoutUntil = async (marker: string) => {
+      while (!stdout.includes(marker)) {
+        const { value, done } = await stdoutReader.read();
+        if (done) break;
+        stdout += decoder.decode(value);
+      }
+    };
+    await readStdoutUntil("ready\n");
+    inspectee.stdin.write("\n");
+    await inspectee.stdin.end();
+
+    await readStdoutUntil("beforeExit\n");
+    const exitCode = await inspectee.exited;
+    expect({ stdout, exitCode }).toEqual({ stdout: "ready\nalive\nbeforeExit\n", exitCode: 0 });
+  });
+});

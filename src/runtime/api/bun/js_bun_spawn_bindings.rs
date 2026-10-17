@@ -114,9 +114,8 @@ fn get_argv0(
     // libuv never appends .cmd/.bat, so a `\` path without one is still completed here.
     let names_a_file = strings::index_of_char(argv0_to_use, b'/').is_some()
         || (cfg!(windows) && bun_which::is_windows_path_with_executable_extension(argv0_to_use));
-    // `path` is the child's PATH: `None` when its env has no PATH entry,
-    // `Some(b"")` when it has an empty one. execvp and libuv substitute
-    // `_PATH_DEFPATH` only for the first. An empty PATH searches the cwd only.
+    // Like execvp: no PATH entry (`None`) means the default PATH, an empty
+    // PATH (`Some(b"")`) means the cwd only.
     let path_to_use: Option<&[u8]> = if names_a_file {
         None
     } else if path.is_some() {
@@ -131,11 +130,7 @@ fn get_argv0(
     let actual_argv0: ZBox = match path_to_use {
         None => ZBox::from_bytes(argv0_to_use),
         Some(path_to_use) => {
-            // The lookup stats `cwd/segment/bin`. A relative `cwd` option names
-            // the child's directory after its chdir, so resolve it against the
-            // parent's directory first, or the stat and the exec look at
-            // different files. A cwd too long for a path buffer stays as is:
-            // the child's chdir reports it.
+            // A relative `cwd` option is the child's directory after its chdir.
             let mut abs_cwd_buf;
             let cwd: &[u8] = if cwd.is_empty() || bun_paths::is_absolute(cwd) {
                 cwd
@@ -395,9 +390,6 @@ fn spawn_maybe_sync(
     let mut on_disconnect_callback = JSValue::ZERO;
     // `env_loader()` is the audited safe accessor for the per-VM DotEnv loader
     // (process-lifetime; centralised non-null deref in `VirtualMachine`).
-    // `None` (no PATH in the env) and `Some(b"")` (an empty PATH) stay apart
-    // all the way to `get_argv0`, which substitutes the default PATH only for
-    // the first.
     let mut path: Option<&[u8]> = jsc_vm.env_loader().get(b"PATH");
     let mut argv: Vec<CStrPtr> = Vec::new();
     let cmd_value: JSValue;
@@ -598,8 +590,6 @@ fn spawn_maybe_sync(
                 };
 
                 override_env = true;
-                // The child's PATH comes from the env object alone. Without a
-                // PATH entry there, `get_argv0` uses the default PATH.
                 let mut new_path: Option<&[u8]> = None;
                 // `JSObject` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
                 // centralised non-null-ZST deref proof.

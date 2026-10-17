@@ -1381,14 +1381,21 @@ function configureOutbound(handle, stream, body) {
   }
 
   if (isPromise(body)) {
+    const onError = err => {
+      if (!stream.destroyed) {
+        stream.destroy(err);
+      }
+    };
     PromisePrototypeThen(
       body,
-      resolved => configureOutbound(handle, stream, resolved),
-      err => {
-        if (!stream.destroyed) {
-          stream.destroy(err);
+      resolved => {
+        try {
+          configureOutbound(handle, stream, resolved);
+        } catch (err) {
+          onError(err);
         }
       },
+      onError,
     );
     return;
   }
@@ -1403,11 +1410,18 @@ function configureOutbound(handle, stream, body) {
       throw $ERR_INVALID_STATE("FileHandle is locked");
     }
     body[kFileLocked] = true;
+    // Node attaches a FileHandle or a Blob natively, and Stream::set_outbound
+    // drops it for a remote unidirectional stream. Nothing reads the handle then.
+    if (isReceiveOnlyQuicStream(stream)) {
+      markPromiseAsHandled(body.close());
+      return;
+    }
     consumeAsyncSource(handle, stream, body.createReadStream());
     return;
   }
 
   if (isBlob(body)) {
+    if (isReceiveOnlyQuicStream(stream)) return;
     consumeAsyncSource(handle, stream, body.stream());
     return;
   }
@@ -1482,9 +1496,16 @@ async function writeBatchWithDrain(handle, stream, batch) {
   return false;
 }
 
-async function consumeAsyncSource(handle, stream, source) {
+// The streaming source starts here and not in the async function, as it does in
+// node: a throw then reaches the caller of setBody(). In node it is a rejection
+// that nothing handles.
+function consumeAsyncSource(handle, stream, source) {
   handle.initStreamingSource();
   initStreamingBackpressure(stream);
+  pumpAsyncSource(handle, stream, source);
+}
+
+async function pumpAsyncSource(handle, stream, source) {
   try {
     const normalized = streamFrom(source);
     for await (const batch of normalized) {
@@ -1501,9 +1522,13 @@ async function consumeAsyncSource(handle, stream, source) {
   }
 }
 
-async function consumeSyncSource(handle, stream, source) {
+function consumeSyncSource(handle, stream, source) {
   handle.initStreamingSource();
   initStreamingBackpressure(stream);
+  pumpSyncSource(handle, stream, source);
+}
+
+async function pumpSyncSource(handle, stream, source) {
   const normalized = streamFromSync(source);
   const iter = normalized[SymbolIterator]();
   try {
@@ -1542,6 +1567,7 @@ let assertHeadersSupported;
 let assertEndpointNotClosedOrClosing;
 let assertEndpointIsNotBusy;
 let isQuicStream;
+let isReceiveOnlyQuicStream;
 let isQuicSession;
 let isQuicEndpoint;
 
@@ -1677,6 +1703,12 @@ class QuicStream {
   static {
     isQuicStream = function (val) {
       return val != null && typeof val === "object" && #handle in val;
+    };
+
+    // A unidirectional stream the peer opened: it has no send side.
+    isReceiveOnlyQuicStream = function (stream) {
+      const inner = stream.#inner;
+      return inner.direction === kStreamDirectionUnidirectional && !inner.isLocal;
     };
 
     assertIsQuicStream = function (val) {
@@ -2348,12 +2380,7 @@ class QuicStream {
       },
     };
 
-    if (
-      !handle ||
-      this.destroyed ||
-      inner.state.writeEnded ||
-      (inner.direction === kStreamDirectionUnidirectional && !inner.isLocal)
-    ) {
+    if (!handle || this.destroyed || inner.state.writeEnded || isReceiveOnlyQuicStream(this)) {
       closed = true;
       return (inner.writer = writer);
     }
@@ -2423,7 +2450,8 @@ class QuicStream {
     assertIsQuicStream(this);
     if (this.destroyed) return;
     code = BigInt(code);
-    this.#handle.resetStream(code);
+    // false: the stream is receive-only, so nothing was reset.
+    if (this.#handle.resetStream(code) === false) return;
     this.#inner.localResetError ??= makeQuicError(
       "ERR_QUIC_APPLICATION_ERROR",
       "QUIC application error",

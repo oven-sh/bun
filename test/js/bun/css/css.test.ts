@@ -223,6 +223,114 @@ describe("css tests", () => {
     minify_test(`a { transition-duration: clamp(1s, 500ms, 2s) }`, `a{transition-duration:1s}`);
     minify_test(`a { width: calc(clamp(1px, 2px, 3px) + 1px) }`, `a{width:3px}`);
   });
+  describe("math functions fold to the same value on every host", () => {
+    // The f32 functions of the host libm do not agree on the last bit. Apple's atan2f(), acosf(),
+    // asinf() and atanf() return pi and pi/2 rounded toward zero. glibc, musl and the Windows CRT
+    // round them to nearest.
+    minify_test(`a { transform: rotate(atan2(0px, -1px)) }`, `a{transform:rotate(180deg)}`);
+    minify_test(`a { transform: rotate(atan2(0, -1)) }`, `a{transform:rotate(180deg)}`);
+    minify_test(`a { transform: rotate(atan2(0deg, -1deg)) }`, `a{transform:rotate(180deg)}`);
+    minify_test(`a { transform: rotate(atan2(0%, -1%)) }`, `a{transform:rotate(180deg)}`);
+    minify_test(`a { transform: rotate(atan2(0s, -1s)) }`, `a{transform:rotate(180deg)}`);
+    minify_test(`a { transform: rotate(acos(-1)) }`, `a{transform:rotate(180deg)}`);
+    minify_test(`a { transform: rotate(asin(1)) }`, `a{transform:rotate(90deg)}`);
+    minify_test(`a { transform: rotate(atan(infinity)) }`, `a{transform:rotate(90deg)}`);
+    minify_test(`a { transform: rotate(atan2(1px, 0px)) }`, `a{transform:rotate(90deg)}`);
+    minify_test(`a { transform: rotate(atan2(1px, -1px)) }`, `a{transform:rotate(135deg)}`);
+    minify_test(`a { transform: rotate(atan2(1px, 1px)) }`, `a{transform:rotate(45deg)}`);
+
+    // A difference prints as zero only when every bit of the two f32 values is the same.
+    minify_test(`a { transform: rotate(calc(atan2(0, -1) - 3.1415927rad)) }`, `a{transform:rotate(0)}`);
+    minify_test(`a { transform: rotate(calc(acos(-1) - 3.1415927rad)) }`, `a{transform:rotate(0)}`);
+    minify_test(`a { transform: rotate(calc(asin(1) - 1.5707964rad)) }`, `a{transform:rotate(0)}`);
+    minify_test(`a { transform: rotate(calc(atan(infinity) - 1.5707964rad)) }`, `a{transform:rotate(0)}`);
+    minify_test(`a { transform: rotate(calc(atan2(1, 0) - 1.5707964rad)) }`, `a{transform:rotate(0)}`);
+    minify_test(`a { transform: rotate(calc(atan2(1, -1) - 2.3561945rad)) }`, `a{transform:rotate(0)}`);
+    minify_test(`a { transform: rotate(calc(atan2(1, 1) - 0.78539816rad)) }`, `a{transform:rotate(0)}`);
+
+    // Each fold is the f64 function rounded once to f32.
+    const f32 = Math.fround;
+    const literal = (value: number) => f32(value).toPrecision(9);
+    const difference = {
+      number: (call: string, want: number) =>
+        minify_test_with_options(`a { line-height: calc(${call} - ${literal(want)}) }`, ""),
+      angle: (call: string, want: number) =>
+        minify_test_with_options(`a { transform: rotate(calc(${call} - ${literal(want)}rad)) }`, ""),
+    };
+    const zero = { number: "a{line-height:0}", angle: "a{transform:rotate(0)}" };
+    const inRange = (value: number) => Number.isFinite(value) && Math.abs(value) > 1e-5 && Math.abs(value) < 1e7;
+
+    const unary: [name: string, fn: (x: number) => number, kind: "number" | "angle", step: number][] = [
+      ["sin", Math.sin, "number", 0.0137],
+      ["cos", Math.cos, "number", 0.0137],
+      ["tan", Math.tan, "number", 0.0137],
+      ["exp", Math.exp, "number", 0.0137],
+      ["log", Math.log, "number", 0.0137],
+      ["sqrt", Math.sqrt, "number", 0.0137],
+      // asin() and acos() take [-1, 1].
+      ["asin", Math.asin, "angle", 0.0017],
+      ["acos", Math.acos, "angle", 0.0017],
+      ["atan", Math.atan, "angle", 0.0137],
+    ];
+    test.each(unary)("%s()", (name, fn, kind, step) => {
+      const wrong: string[] = [];
+      let count = 0;
+      for (let i = 1; i <= 500; i++) {
+        const x = Number((i * step).toFixed(4));
+        const want = f32(fn(f32(x)));
+        if (!inRange(want)) continue;
+        count++;
+        const call = `${name}(${x})`;
+        const got = difference[kind](call, want);
+        if (got !== zero[kind]) wrong.push(`${call} - ${literal(want)} => ${got}`);
+      }
+      expect({ count, wrong: wrong.length, examples: wrong.slice(0, 8) }).toEqual({ count, wrong: 0, examples: [] });
+    });
+
+    const binary: [name: string, fn: (a: number, b: number) => number, kind: "number" | "angle"][] = [
+      ["atan2", Math.atan2, "angle"],
+      ["pow", Math.pow, "number"],
+      ["hypot", Math.hypot, "number"],
+      ["log", (a, b) => Math.log(a) / Math.log(b), "number"],
+    ];
+    test.each(binary)("%s() with two arguments", (name, fn, kind) => {
+      const wrong: string[] = [];
+      let count = 0;
+      for (let i = 0; i < 500; i++) {
+        const a = Number((((i * 7919) % 1000) * 0.0173 + 0.01).toFixed(4));
+        const b = Number((((i * 104729) % 997) * 0.0091 + 0.02).toFixed(4));
+        const want = f32(fn(f32(a), f32(b)));
+        if (!inRange(want)) continue;
+        count++;
+        const call = `${name}(${a}, ${b})`;
+        const got = difference[kind](call, want);
+        if (got !== zero[kind]) wrong.push(`${call} - ${literal(want)} => ${got}`);
+      }
+      expect({ count, wrong: wrong.length, examples: wrong.slice(0, 8) }).toEqual({ count, wrong: 0, examples: [] });
+    });
+
+    // The color conversions call the host powf(), cbrtf(), atan2f(), sinf() and cosf() too.
+    test("color conversions", () => {
+      const rows: string[] = [];
+      const hex = (i: number) =>
+        "#" + [(i * 37) % 256, (i * 91) % 256, (i * 53) % 256].map(c => c.toString(16).padStart(2, "0")).join("");
+      for (let i = 1; i <= 200; i++) {
+        for (const value of [
+          `lch(from ${hex(i)} l c h)`,
+          `oklch(from ${hex(i)} l c h)`,
+          `color(from ${hex(i)} xyz x y z)`,
+          `color(from ${hex(i)} prophoto-rgb r g b)`,
+          `color(from ${hex(i)} rec2020 r g b)`,
+          `color-mix(in oklab, ${hex(i)}, ${hex(i + 7)})`,
+        ]) {
+          rows.push(minify_test_with_options(`a { color: ${value} }`, ""));
+        }
+      }
+      const digest = Bun.hash(rows.join("\n")).toString(16);
+      if (digest !== "f9f2f9f94b64c9d1") console.log(rows.join("\n"));
+      expect(digest).toBe("f9f2f9f94b64c9d1");
+    });
+  });
   describe("calc stack overflow", () => {
     // https://github.com/oven-sh/bun/issues/20128
     minify_test(`a { width: calc(100% - 2 - 1) }`, `a{width:calc(100% - 2 - 1)}`); // ideally 100% - 3

@@ -753,23 +753,15 @@ For each setting, Bun uses the first source that has a value:
 
 The database name is the exception: `PGDATABASE`, `MYSQL_DATABASE` and `MARIADB_DATABASE` take priority over the database in a URL.
 
-Bun connects to a URL from the environment only when you name no server yourself: no connection string, and none of the options `url`, `filename`, `hostname`, `host`, `path` or `socket`. The user, password, port and database of `DATABASE_URL` never go to a host that you chose in code, and `MYSQL_URL` does not select the adapter for it.
-
-The TLS settings of that URL still apply next to `hostname`, `host`, `path` and `socket`, so the connection is not less protected than the environment asks for. They can only raise the SSL mode. A `tls` or `ssl` option that names a mode, such as `tls: false` or `ssl: "require"`, replaces them.
+An options object changes single fields of the URL from the environment. The rest of the URL still applies, including its user, password and `sslmode`:
 
 ```ts
 // DATABASE_URL=postgres://app:secret@primary.internal:6543/shop?sslmode=verify-full
 const replica = new SQL({ hostname: "replica.internal" });
-// replica.internal:5432, user postgres, no password, sslmode=verify-full
+// replica.internal:6543, user app, database shop, sslmode=verify-full
 ```
 
-To change one field of an environment URL, pass the URL yourself:
-
-```ts
-const replica = new SQL(process.env.DATABASE_URL!, { hostname: "replica.internal" });
-```
-
-Bun reads no URL from the environment when the first argument is a connection string.
+Bun does not read a URL from the environment when the first argument is a connection string. Next to the `url` option, only the name of the variable counts: `MYSQL_URL` selects MySQL for a `url` without a protocol, and a `TLS_*` variable asks for `sslmode=require`.
 
 ### Automatic Database Detection
 
@@ -802,8 +794,8 @@ Bun uses the first of these variables that is set:
 | 4     | `MARIADB_URL`, `TLS_MARIADB_DATABASE_URL`                      | MariaDB                 |
 | 5     | `SQLITE_URL`                                                   | SQLite                  |
 
-- A URL that Bun reads from a `TLS_*` variable uses at least `sslmode=require`. So does an options object with `url`, `hostname`, `host`, `path` or `socket`, when that variable is the one that Bun would otherwise read. If you pass `process.env.TLS_DATABASE_URL` to `new SQL()` yourself, add `?sslmode=require` or `tls: true`.
-- With the `adapter` option, Bun reads `DATABASE_URL` and then only that adapter's variables. It does not connect to a `DATABASE_URL` whose protocol names another adapter. If no other URL is set, the TLS settings of that `DATABASE_URL` still apply.
+- A URL that Bun reads from a `TLS_*` variable uses `sslmode=require` unless the URL or an option names a mode. If you pass `process.env.TLS_DATABASE_URL` to `new SQL()` yourself, add `?sslmode=require` or `tls: true`.
+- With the `adapter` option, Bun reads `DATABASE_URL` and then only that adapter's variables. It does not connect to a `DATABASE_URL` whose protocol names another adapter.
 - Next to `hostname`, `host`, `path`, `socket` or `url`, Bun skips a SQLite URL.
 
 ### PostgreSQL Environment Variables
@@ -823,7 +815,7 @@ Bun uses the first of these variables that is set:
 
 `PGSSLMODE` also applies next to a connection URL. A URL from a `TLS_*` variable uses at least `require`; `PGSSLMODE=verify-ca` and `PGSSLMODE=verify-full` raise that.
 
-An `sslmode` in the URL takes priority over `PGSSLMODE`, and a mode in the `tls` or `ssl` option takes priority over the URL. None of them goes below the `require` of a `TLS_*` variable: with `?sslmode=disable`, `?ssl=false` or `tls: false`, the connection is still encrypted. `tls: true` and a `tls` object ask for at least `require` and never lower a stricter mode.
+An `sslmode` in the URL takes priority over both, and a mode in the `tls` or `ssl` option takes priority over the URL. `tls: true` and a `tls` object ask for at least `require` and never lower a stricter mode.
 
 ### MySQL and MariaDB Environment Variables
 
@@ -1293,7 +1285,7 @@ const sql = new SQL({
 | `verify-ca`   | Verifies server certificate is signed by trusted CA. Fails if verification fails.                                    |
 | `verify-full` | Most secure mode. Verifies certificate and hostname match. Protects against untrusted certificates and MITM attacks. |
 
-- `verify-ca` and `verify-full` always verify the certificate. `NODE_TLS_REJECT_UNAUTHORIZED=0` does not turn them off. To connect without verification, pass `tls: { rejectUnauthorized: false }`.
+- `NODE_TLS_REJECT_UNAUTHORIZED=0` turns certificate verification off, also for `verify-ca` and `verify-full`. `tls: { rejectUnauthorized: true }` verifies whatever the variable says.
 - A `tls` object with `ca`, `caFile`, `checkServerIdentity` or `rejectUnauthorized: true` raises `disable`, `prefer` and `require` to `verify-full`.
 - On a PostgreSQL unix socket, Bun ignores the SSL mode, like libpq.
 

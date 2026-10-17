@@ -105,7 +105,7 @@ describeWithContainer(
       }
     });
 
-    test("a mode that verifies does so under NODE_TLS_REJECT_UNAUTHORIZED=0", async () => {
+    test("NODE_TLS_REJECT_UNAUTHORIZED=0 turns verification off, except next to rejectUnauthorized: true", async () => {
       await container.ready;
       const rows = [
         ["?sslmode=require", {}],
@@ -139,9 +139,9 @@ console.log(JSON.stringify(outcomes));`,
       expect(stderr).toBe("");
       expect(JSON.parse(stdout)).toEqual([
         "connected",
-        "DEPTH_ZERO_SELF_SIGNED_CERT",
-        "DEPTH_ZERO_SELF_SIGNED_CERT",
-        "DEPTH_ZERO_SELF_SIGNED_CERT",
+        "connected",
+        "connected",
+        "connected",
         "connected",
         "DEPTH_ZERO_SELF_SIGNED_CERT",
       ]);

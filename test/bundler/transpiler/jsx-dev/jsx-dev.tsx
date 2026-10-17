@@ -21,13 +21,13 @@ if (!process.env.NO_BUILD) {
   let shouldHaveJSX = process.env.CHILD_NODE_ENV === "production";
 
   if (shouldHaveJSXDev) {
-    if (!code.includes("jsx_dev_runtime.jsxDEV")) {
+    if (!code.includes("jsx-dev-runtime.development") || !code.includes("jsxDEV(")) {
       throw new Error("jsxDEV is not included");
     }
   }
 
   if (shouldHaveJSX) {
-    if (!code.includes("jsx_runtime.jsx")) {
+    if (!code.includes("jsx-runtime.production") || code.includes("jsxDEV(")) {
       throw new Error("Jsx is not included");
     }
   }

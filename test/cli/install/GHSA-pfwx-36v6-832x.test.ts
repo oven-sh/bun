@@ -213,11 +213,14 @@ describe.each(["hoisted", "isolated"] as const)("one URL, asked for twice (%s li
     githubTarball(root, { "package.json": JSON.stringify({ name, version: "1.0.0" }), "index.js": "" });
   const sri = (bytes: Uint8Array) => `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
 
-  /** Runs `bun <args>` in a project whose bun.lock has `locked`, with nothing cached. GitHub answers with `served`. */
-  async function run(locked: Record<string, unknown[]>, served: Uint8Array, ...args: string[]) {
+  /**
+   * Runs `bun <args>` in a project whose bun.lock has `locked`, with nothing cached. GitHub answers
+   * with `served`: an archive, or a status. `more` is added to package.json.
+   */
+  async function run(locked: Record<string, unknown[]>, served: Uint8Array | number, args: string[], more = {}) {
     const dependencies = Object.fromEntries(Object.keys(locked).map(alias => [alias, spec]));
     using dir = tempDir("github-one-url", {
-      "package.json": JSON.stringify({ name: "app", dependencies }),
+      "package.json": JSON.stringify({ name: "app", dependencies, ...more }),
       "bun.lock": textLockfile(1, { workspaces: { "": { name: "app", dependencies } }, packages: locked }),
       "bunfig.toml": `[install]\nlinker = "${linker}"\n`,
     });
@@ -226,7 +229,7 @@ describe.each(["hoisted", "isolated"] as const)("one URL, asked for twice (%s li
       port: 0,
       fetch(request) {
         requests.push(new URL(request.url).pathname);
-        return new Response(served);
+        return typeof served === "number" ? new Response("", { status: served }) : new Response(served);
       },
     });
     await using proc = Bun.spawn({
@@ -243,36 +246,39 @@ describe.each(["hoisted", "isolated"] as const)("one URL, asked for twice (%s li
     return { stderr, exitCode, requests };
   }
 
-  test.concurrent(
-    "bun add <another name>@<the locked spec> fails when GitHub now sends another commit",
-    async () => {
-      // The archive of another commit is not the locked package, so that package is still to download.
-      const otherCommit = await build(`${owner}-${repo}-fffffff`, name);
-      const locked = { [name]: [lockedPackage, {}, resolved, integrity] };
+  test.concurrent("bun add <another name>@<the locked spec> fails when GitHub now sends another commit", async () => {
+    // The archive of another commit is not the locked package, so that package is still to download.
+    const otherCommit = await build(`${owner}-${repo}-fffffff`, name);
+    const locked = { [name]: [lockedPackage, {}, resolved, integrity] };
 
-      const { stderr, exitCode, requests } = await run(locked, otherCommit, "add", `alias@github:${spec}`);
-      expect(stderr).toContain(`Integrity check failed for tarball: ${name}`);
-      expect(exitCode).toBe(1);
-      expect(requests).toEqual([tarballPath, tarballPath]);
-    },
-    30_000,
-  );
+    const { stderr, exitCode, requests } = await run(locked, otherCommit, ["add", `alias@github:${spec}`]);
+    expect(stderr).toContain(`Integrity check failed for tarball: ${name}`);
+    expect(exitCode).toBe(1);
+    expect(requests).toEqual([tarballPath, tarballPath]);
+  });
 
-  test.concurrent(
-    "two packages of bun.lock that pin other bytes of one URL are each checked",
-    async () => {
-      const renamed = await build(resolved, "renamed");
-      const locked = {
-        [name]: [lockedPackage, {}, resolved, integrity],
-        alias: [`renamed@github:${spec}`, {}, resolved, sri(renamed)],
-      };
+  test.concurrent("two packages of bun.lock that pin other bytes of one URL are each checked", async () => {
+    const renamed = await build(resolved, "renamed");
+    const locked = {
+      [name]: [lockedPackage, {}, resolved, integrity],
+      alias: [`renamed@github:${spec}`, {}, resolved, sri(renamed)],
+    };
 
-      // One download used to serve both: `gh-dep` got the bytes that `alias` pins.
-      const { stderr, exitCode, requests } = await run(locked, renamed, "install", "--frozen-lockfile");
-      expect(stderr).toContain(`Integrity check failed for tarball: ${name}`);
-      expect(exitCode).toBe(1);
-      expect(requests).toEqual([tarballPath, tarballPath]);
-    },
-    30_000,
-  );
+    // One download used to serve both: `gh-dep` got the bytes that `alias` pins.
+    const { stderr, exitCode, requests } = await run(locked, renamed, ["install", "--frozen-lockfile"]);
+    expect(stderr).toContain(`Integrity check failed for tarball: ${name}`);
+    expect(exitCode).toBe(1);
+    expect(requests).toEqual([tarballPath, tarballPath]);
+  });
+
+  test.concurrent("a URL that failed for a new dependency is not asked again for the locked package", async () => {
+    const locked = { [name]: [lockedPackage, {}, resolved, integrity] };
+    // `--force` reads the URL for the new optional dependency, which can fail, before the linker needs the package.
+    const more = { optionalDependencies: { alias: spec } };
+
+    const { stderr, exitCode, requests } = await run(locked, 404, ["install", "--force"], more);
+    expect(stderr).toContain(`error: failed to download ${lockedPackage}`);
+    expect(exitCode).toBe(1);
+    expect(requests).toEqual([tarballPath]);
+  });
 });

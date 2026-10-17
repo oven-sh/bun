@@ -282,9 +282,16 @@ pub fn enqueue_tarball_for_download(
 ) -> Result<(), ForTarballError> {
     let name = this.lockfile.packages.items_name()[package_id as usize];
     let name = this.lockfile.str_detached(&name);
+    // A URL that failed for a dependency in this run is not asked again for the package.
+    let resolved_now = Task::Id::for_tarball(url);
+    let task_id = if this.network_task_has_failed(resolved_now) {
+        resolved_now
+    } else {
+        locked_tarball_task_id(this, package_id, url)
+    };
     enqueue_download(
         this,
-        locked_tarball_task_id(this, package_id, url),
+        task_id,
         name,
         dependency_id,
         package_id,

@@ -499,7 +499,9 @@ impl ResolvedConfig {
     /// ESLint's `doesRuleSupportLanguage`
     pub(crate) fn supports_language(&self, rule: &Meta) -> bool {
         let name = self.normalized_language_name();
-        rule.languages.is_empty() || rule.languages.iter().any(|it| it.as_bytes() == name)
+        rule.languages.is_empty()
+            || rule.is_on_in_any_language
+            || rule.languages.iter().any(|it| it.as_bytes() == name)
     }
 
     /// Whether there are files that [`Route::Eslint`] is the way of.

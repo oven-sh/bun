@@ -917,6 +917,7 @@ impl Run<'_> {
             bun_lint_react::RULES,
             bun_lint_jest::RULES,
             bun_lint_json::RULES,
+            bun_lint_markdown::RULES,
         ])
         .with_languages(crate::rules::LANGUAGES);
         if let Some(rule) = &options.explain {

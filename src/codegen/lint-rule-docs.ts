@@ -190,6 +190,8 @@ const FILES: Record<string, string> = {
   "json/json": "**/*.json",
   "json/jsonc": "**/*.jsonc",
   "json/json5": "**/*.json5",
+  "markdown/commonmark": "**/*.md",
+  "markdown/gfm": "**/*.md",
 };
 
 /** The config object that turns `rule` on for the files of `language`. `plugin` is JavaScript. */
@@ -264,6 +266,7 @@ const PLUGINS: Record<string, string> = {
   "vitest": "Vitest",
   "prettier": "Prettier",
   "json": "JSON",
+  "markdown": "Markdown",
 };
 
 /** Contents of `index.mdx`: a table of every rule, grouped by plugin. */
@@ -324,7 +327,7 @@ export type Example = {
  * - `{/* skip *\/}`: don't run this block.
  *
  * `bad` and `good` can be followed by JSON with `options`, `count`, `filename`, `compilerOptions`, `root`, `config`,
- * `settings`, `languageOptions` or `packages`. A page with `{/* never reports *\/}` on its own line doesn't need a `bad` example.
+ * `settings`, `language`, `languageOptions` or `packages`. A page with `{/* never reports *\/}` on its own line doesn't need a `bad` example.
  */
 export function examplesOf(page: string, body: string, firstLine: number): { examples: Example[]; problems: string[] } {
   const [examples, problems]: [Example[], string[]] = [[], []];
@@ -343,25 +346,27 @@ export function examplesOf(page: string, body: string, firstLine: number): { exa
       pending = { word: marker[1], meta, line: firstLine + i };
       continue;
     }
-    const fence = /^```(\w*)/.exec(lines[i]);
+    // An example in Markdown with a code block in it has a longer fence.
+    const fence = /^(`{3,})(\w*)/.exec(lines[i]);
     if (!fence) {
       if (pending && lines[i].trim()) problems.push(`line ${pending.line}: marker must be directly above a code block`);
       if (lines[i].trim()) pending = null;
       continue;
     }
     let end = i + 1;
-    while (end < lines.length && !lines[end].startsWith("```")) end++;
+    while (end < lines.length && !lines[end].startsWith(fence[1])) end++;
     const code = lines.slice(i + 1, end).join("\n") + "\n";
     if (!pending) {
-      if (/^([cm]?[jt]s|[jt]sx)$/.test(fence[1]))
-        problems.push(`line ${firstLine + i}: ${fence[1]} block has no marker (bad, good, file or skip)`);
+      if (/^([cm]?[jt]s|[jt]sx)$/.test(fence[2]))
+        problems.push(`line ${firstLine + i}: ${fence[2]} block has no marker (bad, good, file or skip)`);
     } else if (pending.word === "file") {
       files[String(pending.meta)] = code;
     } else if (pending.word !== "skip") {
       const {
         options = [],
         count,
-        filename = `example.${fence[1] || "js"}`,
+        filename = `example.${fence[2] || "js"}`,
+        language = fence[2],
         compilerOptions,
         root = false,
         config,
@@ -373,7 +378,7 @@ export function examplesOf(page: string, body: string, firstLine: number): { exa
         page,
         line: firstLine + i,
         want: pending.word as "bad" | "good",
-        language: fence[1],
+        language,
         code,
         options,
         count,

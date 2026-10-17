@@ -9,8 +9,10 @@ bun_lint::rule_sets! {
         react: bun_lint_react,
         jest: bun_lint_jest,
         json: bun_lint_json,
+        markdown: bun_lint_markdown,
     }
 }
 
 /// The languages other than JavaScript that `bun lint` reads.
-pub(crate) static LANGUAGES: &[&dyn bun_lint::languages::Language] = &[&bun_lint_json::Json];
+pub(crate) static LANGUAGES: &[&dyn bun_lint::languages::Language] =
+    &[&bun_lint_json::Json, &bun_lint_markdown::Markdown];

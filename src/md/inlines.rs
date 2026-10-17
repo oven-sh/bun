@@ -88,7 +88,9 @@ pub struct EmphDelim {
     pub(crate) open_num: u8, // number of open matches
     pub(crate) close_sizes: [u8; MAX_EMPH_MATCHES],
     pub(crate) close_num: u8, // number of close matches
-    pub(crate) active: bool,  // false if deactivated between matched pairs
+    // Where in the list the matches go on that have no room here, the latest first. 0: nowhere.
+    pub(crate) more: u32,
+    pub(crate) active: bool, // false if deactivated between matched pairs
 }
 
 impl Default for EmphDelim {
@@ -106,9 +108,48 @@ impl Default for EmphDelim {
             open_num: 0,
             close_sizes: [0; MAX_EMPH_MATCHES],
             close_num: 0,
+            more: 0,
             active: true,
         }
     }
+}
+
+impl EmphDelim {
+    fn has_room(&self, is_open: bool) -> bool {
+        let num = if is_open {
+            self.open_num
+        } else {
+            self.close_num
+        };
+        (num as usize) < MAX_EMPH_MATCHES
+    }
+
+    fn push_match(&mut self, is_open: bool, size: u8) {
+        let (sizes, num) = match is_open {
+            true => (&mut self.open_sizes, &mut self.open_num),
+            false => (&mut self.close_sizes, &mut self.close_num),
+        };
+        sizes[*num as usize] = size;
+        *num += 1;
+    }
+}
+
+/// All sizes of the matches of `d` as an opener or as a closer, in order, where `d` has not the room for them.
+#[cold]
+fn all_match_sizes(delims: &[EmphDelim], d: &EmphDelim, is_open: bool) -> Vec<u8> {
+    let sizes_of = |it: &EmphDelim| match is_open {
+        true => it.open_sizes[..it.open_num as usize].to_vec(),
+        false => it.close_sizes[..it.close_num as usize].to_vec(),
+    };
+    let mut parts = Vec::new();
+    let mut next = d.more as usize;
+    while next != 0 {
+        parts.push(sizes_of(&delims[next]));
+        next = delims[next].more as usize;
+    }
+    parts.push(sizes_of(d));
+    parts.reverse();
+    parts.concat()
 }
 
 /// Closing-delimiter kinds tracked by `HtmlScanMemo`.
@@ -477,6 +518,9 @@ impl Parser<'_> {
                                 self.leave_span(SpanType::Del)?;
                                 marker += d.close_count;
                             }
+                        } else if d.more != 0 {
+                            let sizes = all_match_sizes(&resolved, d, false);
+                            self.emit_emph_close_tags(&sizes, &mut marker)?;
                         } else {
                             self.emit_emph_close_tags(
                                 &d.close_sizes[0..d.close_num as usize],
@@ -498,6 +542,9 @@ impl Parser<'_> {
                                 self.at(marker, marker + d.open_count);
                                 self.enter_span(SpanType::Del)?;
                             }
+                        } else if d.more != 0 {
+                            let sizes = all_match_sizes(&resolved, d, true);
+                            self.emit_emph_open_tags(&sizes, &mut marker)?;
                         } else {
                             self.emit_emph_open_tags(
                                 &d.open_sizes[0..d.open_num as usize],
@@ -1064,6 +1111,24 @@ impl Parser<'_> {
         }
     }
 
+    /// An entry behind the delimiters that has room for one more match of the delimiter at `index`, which has none itself.
+    #[cold]
+    fn room_for_more_matches(&mut self, index: usize, is_open: bool) -> &mut EmphDelim {
+        let latest = self.emph_delims[index].more as usize;
+        if latest != 0 && self.emph_delims[latest].has_room(is_open) {
+            return &mut self.emph_delims[latest];
+        }
+        self.emph_delims[index].more = self.emph_delims.len() as u32;
+        self.emph_delims.push(EmphDelim {
+            pos: usize::MAX,
+            active: false,
+            more: latest as u32,
+            ..Default::default()
+        });
+        let last = self.emph_delims.len() - 1;
+        &mut self.emph_delims[last]
+    }
+
     /// Resolve emphasis delimiters using the CommonMark algorithm.
     pub(crate) fn resolve_emphasis_delimiters(&mut self) {
         // reshaped for borrowck — index directly into self.emph_delims
@@ -1160,6 +1225,9 @@ impl Parser<'_> {
                         let n = self.emph_delims[oi].open_num as usize;
                         self.emph_delims[oi].open_sizes[n] = u8::try_from(use_).expect("int cast");
                         self.emph_delims[oi].open_num += 1;
+                    } else {
+                        self.room_for_more_matches(oi, true)
+                            .push_match(true, use_ as u8);
                     }
                     self.emph_delims[closer_idx].remaining -= use_;
                     self.emph_delims[closer_idx].close_count += use_;
@@ -1168,6 +1236,9 @@ impl Parser<'_> {
                         self.emph_delims[closer_idx].close_sizes[n] =
                             u8::try_from(use_).expect("int cast");
                         self.emph_delims[closer_idx].close_num += 1;
+                    } else {
+                        self.room_for_more_matches(closer_idx, false)
+                            .push_match(false, use_ as u8);
                     }
 
                     // Remove all delimiters between opener and closer (CommonMark §6.4)
@@ -1267,7 +1338,7 @@ impl Parser<'_> {
                 pos += 1;
             }
             // Skip whitespace (including newlines)
-            while pos < content.len() && helpers::is_whitespace(content[pos]) {
+            while pos < content.len() && helpers::is_blank_or_newline(content[pos]) {
                 pos += 1;
             }
             if pos < content.len() && content[pos] == b'>' {
@@ -1383,7 +1454,7 @@ impl Parser<'_> {
             while pos < content.len() {
                 // Skip whitespace (spaces, tabs, newlines)
                 let mut had_ws = false;
-                while pos < content.len() && helpers::is_whitespace(content[pos]) {
+                while pos < content.len() && helpers::is_blank_or_newline(content[pos]) {
                     had_ws = true;
                     pos += 1;
                 }
@@ -1420,12 +1491,12 @@ impl Parser<'_> {
                 // Attribute value (optional)
                 // Skip whitespace (save position in case = not found)
                 let before_eq_ws = pos;
-                while pos < content.len() && helpers::is_whitespace(content[pos]) {
+                while pos < content.len() && helpers::is_blank_or_newline(content[pos]) {
                     pos += 1;
                 }
                 if pos < content.len() && content[pos] == b'=' {
                     pos += 1;
-                    while pos < content.len() && helpers::is_whitespace(content[pos]) {
+                    while pos < content.len() && helpers::is_blank_or_newline(content[pos]) {
                         pos += 1;
                     }
                     if pos >= content.len() {
@@ -1452,8 +1523,9 @@ impl Parser<'_> {
                         pos += 1;
                     } else {
                         // Unquoted value: no whitespace, quotes, =, <, >, or backtick
+                        let value_start = pos;
                         while pos < content.len()
-                            && !helpers::is_whitespace(content[pos])
+                            && !helpers::is_blank_or_newline(content[pos])
                             && content[pos] != b'"'
                             && content[pos] != b'\''
                             && content[pos] != b'='
@@ -1462,6 +1534,9 @@ impl Parser<'_> {
                             && content[pos] != b'`'
                         {
                             pos += 1;
+                        }
+                        if pos == value_start {
+                            return None;
                         }
                     }
                 } else {

@@ -156,6 +156,7 @@ fn registry() -> Registry {
         bun_lint_react::RULES,
         bun_lint_jest::RULES,
         bun_lint_json::RULES,
+        bun_lint_markdown::RULES,
     ])
     .with_languages(crate::rules::LANGUAGES)
 }
@@ -286,6 +287,17 @@ pub fn run_path_tests(args: &[&[u8]]) -> Option<Vec<u8>> {
         out.push(b'\n');
     }
     Some(out)
+}
+
+/// `bun lint --print-markdown-trees <cases>`: `args` is what follows the flag. Returns the trees of the cases, as `bun lint`
+/// reads Markdown.
+#[optimize(size)]
+pub fn print_markdown_trees(args: &[&[u8]]) -> Option<Vec<u8>> {
+    let &[cases] = args else {
+        return None;
+    };
+    let cases = bun_lint_conformance::read_file(cases)?;
+    Some(bun_lint_markdown::for_tests::trees(&cases))
 }
 
 /// `bun lint --run-eslint-tests <bundle> ..`: `args` is what follows the flag. Prints the cases that

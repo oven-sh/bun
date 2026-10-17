@@ -2003,6 +2003,53 @@ test("white space is between the destination of a link and its title", () => {
   expect(Markdown.html('[a](<b> "c")\n')).toBe('<p><a href="b" title="c">a</a></p>\n');
 });
 
+describe("where HTML starts", () => {
+  test.each([
+    // The name of the tag can be the last thing in the text.
+    ["<h1", "<h1\n"],
+    ["a\n\n<hr", "<p>a</p>\n<hr\n"],
+    ["<style", "<style\n"],
+    // Behind the name, a `/` is only the start of `/>`.
+    ["<hr/x\n*a*", "<p>&lt;hr/x\n<em>a</em></p>\n"],
+    ["<pre/x\n*a*", "<p>&lt;pre/x\n<em>a</em></p>\n"],
+    ["<div/>\n*a*", "<div/>\n*a*\n"],
+    // A value without quotes has at least one character.
+    ["<a a=>", "<p>&lt;a a=&gt;</p>\n"],
+    ["b <a a=>", "<p>b &lt;a a=&gt;</p>\n"],
+    // In a tag, white space is spaces, tabs and line endings.
+    ["<a\vb>", "<p>&lt;a\vb&gt;</p>\n"],
+    ["b <a\fb>", "<p>b &lt;a\fb&gt;</p>\n"],
+  ])("%j", (text, html) => {
+    expect(Markdown.html(text)).toBe(html);
+  });
+});
+
+test("an autolink has no ASCII control characters", () => {
+  expect(Markdown.html("<http://a\x01b>")).toBe("<p>&lt;http://a\x01b&gt;</p>\n");
+  expect(Markdown.html("<http://a\x7Fb>")).toBe("<p>&lt;http://a\x7Fb&gt;</p>\n");
+});
+
+test("a long run of delimiters opens and closes as much as it has characters for", () => {
+  const repeated = (fill: string, count: number) => Buffer.alloc(count * fill.length, fill).toString();
+  const nested = (depth: number, text: string) =>
+    `${repeated("<strong>", depth)}${text}${repeated("</strong>", depth)}`;
+  expect(Markdown.html(`${"_".repeat(13)}!${"_".repeat(13)}`)).toBe(`<p><em>${nested(6, "!")}</em></p>\n`);
+  expect(Markdown.html(`${"*".repeat(14)}a${"*".repeat(14)}`)).toBe(`<p>${nested(7, "a")}</p>\n`);
+  expect(Markdown.html(`${repeated("*", 2000)}a${repeated("*", 2000)}`)).toBe(`<p>${nested(1000, "a")}</p>\n`);
+  // One run closes many.
+  expect(Markdown.html(`${"**a ".repeat(20)}b${"*".repeat(40)}`)).toBe(
+    `<p>${"<strong>a ".repeat(20)}b${"</strong>".repeat(20)}</p>\n`,
+  );
+});
+
+test("what follows an empty list item and a blank line in a block quote is indented from the block quote", () => {
+  const quote = (html: string) => `<blockquote>\n${html}</blockquote>\n`;
+  const list = "<ul>\n<li></li>\n</ul>\n";
+  expect(Markdown.html(">-\n>\n>    a")).toBe(quote(`${list}<p>a</p>\n`));
+  expect(Markdown.html("> -\n>\n>     a")).toBe(quote(`${list}<pre><code>a\n</code></pre>\n`));
+  expect(Markdown.html("> > -\n> >\n> >     a")).toBe(quote(quote(`${list}<pre><code>a\n</code></pre>\n`)));
+});
+
 // What some scan once started again for each repetition, and what is like it, weighed against as many bytes of prose by
 // the time of the processor: that holds on a busy machine and in a debug build.
 test.each([

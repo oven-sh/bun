@@ -21,6 +21,12 @@ pub(crate) fn is_blank(c: u8) -> bool {
     c == b' ' || c == b'\t'
 }
 
+/// What can be between the parts of a tag: a space, a tab, a line break.
+#[inline]
+pub(crate) fn is_blank_or_newline(c: u8) -> bool {
+    matches!(c, b' ' | b'\t' | b'\n' | b'\r')
+}
+
 /// Check if a byte is a newline (CR or LF).
 #[inline]
 pub(crate) fn is_newline(c: u8) -> bool {

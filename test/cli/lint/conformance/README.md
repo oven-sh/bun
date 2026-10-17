@@ -103,6 +103,10 @@ if a configuration with them would end the run. Not where the recorded options h
   cases report something else without `@types/node` and `@types/react`, and one imports `@typescript-eslint/types`.
 - `import-project/`, `n-project/`: the files that the cases of `import/*` and `n/*` are next to.
 
+Next to the bundle, `markdown-trees.zst` has the tree that `@eslint/markdown` gets from its parser for every example of the
+specifications of CommonMark and GFM. `markdown-trees.mjs` writes it, and `../js-parsers.test.ts` holds the tree that `bun lint`
+reads against it.
+
 ## Regenerating
 
 Needs `bun`, and `node` >= 23.6 on `PATH` (or in `$NODE`): the extraction itself always runs on Node.js. The scripts

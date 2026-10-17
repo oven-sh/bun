@@ -167,6 +167,7 @@ describe.concurrent("--rules -f json", () => {
       "jest": "jest",
       "json": "json",
       "jsx_a11y": "jsx-a11y",
+      "markdown": "markdown",
       "nextjs": "nextjs",
       "node": "node",
       "oxc": "oxc",

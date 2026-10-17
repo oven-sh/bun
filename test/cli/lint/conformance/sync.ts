@@ -42,7 +42,7 @@ const PACKAGES = [
 ] as const;
 
 /** What is in the bundle rule by rule, with the projects that the cases are files of. */
-const RECORDED = ["import/", "import-project/", "react/", "prettier/", "prettier-project/", "json/"];
+const RECORDED = ["import/", "import-project/", "react/", "prettier/", "prettier-project/", "json/", "markdown/"];
 
 function directoryOf(variable: string): string {
   const directory = process.env[variable];

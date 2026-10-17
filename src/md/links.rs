@@ -817,7 +817,9 @@ impl Parser<'_> {
                 while uri_end < content.len()
                     && content[uri_end] != b'>'
                     && content[uri_end] != b'<'
-                    && !helpers::is_whitespace(content[uri_end])
+                    // No space and no ASCII control character. NUL stands for U+FFFD.
+                    && ((content[uri_end] > b' ' && content[uri_end] != 0x7F)
+                        || content[uri_end] == 0)
                 {
                     uri_end += 1;
                 }

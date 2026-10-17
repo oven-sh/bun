@@ -188,6 +188,8 @@ plugins! {
     Prettier: ["prettier"], InPlaceOf(Some("eslint-plugin-prettier"), "5.5.6"), Whole;
     /// `json/no-duplicate-keys`
     Json: ["json"], Languages("@eslint/json", "2.1.1"), Whole;
+    /// `markdown/no-html`
+    Markdown: ["markdown"], Languages("@eslint/markdown", "8.0.3"), Whole;
 }
 
 impl Plugin {
@@ -461,6 +463,8 @@ pub struct Meta {
     pub has_hints: bool,
     /// [`Meta::languages`]
     pub languages: &'static [&'static str],
+    /// [`Meta::on_in_any_language`]
+    pub is_on_in_any_language: bool,
     pub reports: When,
     /// A hash of `name`.
     pub(crate) key: u32,
@@ -487,6 +491,7 @@ impl Meta {
             never_suggests: false,
             has_hints: false,
             languages: &[],
+            is_on_in_any_language: false,
             reports: When::Entering,
             key: hash_const(0, name.as_bytes()) as u32,
         }
@@ -577,6 +582,13 @@ impl Meta {
     /// the files of these languages and on no other, and it exists only with a configuration of ESLint.
     pub const fn languages(mut self, languages: &'static [&'static str]) -> Meta {
         self.languages = languages;
+        self
+    }
+
+    /// Upstream's `meta` has no `languages`, so ESLint lets the rule be on for a file in any language. In one that is not among
+    /// [`Meta::languages`] it finds nothing.
+    pub const fn on_in_any_language(mut self) -> Meta {
+        self.is_on_in_any_language = true;
         self
     }
 

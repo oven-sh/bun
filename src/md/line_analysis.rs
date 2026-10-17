@@ -238,10 +238,10 @@ impl Parser<'_> {
         // Only opening tags start type 1 blocks. Closing tags like </pre> are
         // only END conditions for type 1, not start conditions.
         if ch(self.text, off + 1) != b'/'
-            && (self.match_html_tag(off, b"script")
-                || self.match_html_tag(off, b"pre")
-                || self.match_html_tag(off, b"style")
-                || self.match_html_tag(off, b"textarea"))
+            && (self.match_html_tag::<false>(off, b"script")
+                || self.match_html_tag::<false>(off, b"pre")
+                || self.match_html_tag::<false>(off, b"style")
+                || self.match_html_tag::<false>(off, b"textarea"))
         {
             return 1;
         }
@@ -392,8 +392,13 @@ impl Parser<'_> {
         false
     }
 
-    pub(crate) fn match_html_tag(&self, off: OFF, tag: &[u8]) -> bool {
-        if (off as usize) + 1 + tag.len() >= self.size as usize {
+    /// `CAN_CLOSE_ITSELF`: `/>` can follow the name.
+    pub(crate) fn match_html_tag<const CAN_CLOSE_ITSELF: bool>(
+        &self,
+        off: OFF,
+        tag: &[u8],
+    ) -> bool {
+        if (off as usize) + 1 + tag.len() > self.size as usize {
             return false;
         }
         let start = off + 1;
@@ -413,7 +418,10 @@ impl Parser<'_> {
             return true;
         }
         let after = ch(self.text, pos);
-        after == b'>' || after == b'/' || helpers::is_blank(after) || helpers::is_newline(after)
+        after == b'>'
+            || (CAN_CLOSE_ITSELF && after == b'/' && self.ch(pos + 1) == b'>')
+            || helpers::is_blank(after)
+            || helpers::is_newline(after)
     }
 
     pub(crate) fn is_block_level_html_tag(&self, off: OFF) -> bool {
@@ -483,7 +491,7 @@ impl Parser<'_> {
         ];
 
         for tag in BLOCK_TAGS {
-            if self.match_html_tag(off, tag) {
+            if self.match_html_tag::<true>(off, tag) {
                 return true;
             }
         }
@@ -614,6 +622,7 @@ impl Parser<'_> {
                     pos += 1;
                 } else {
                     // Unquoted value
+                    let value_start = pos;
                     while pos < self.size
                         && !helpers::is_blank(ch(self.text, pos))
                         && !helpers::is_newline(ch(self.text, pos))
@@ -625,6 +634,9 @@ impl Parser<'_> {
                         && ch(self.text, pos) != b'`'
                     {
                         pos += 1;
+                    }
+                    if pos == value_start {
+                        return false;
                     }
                 }
             }

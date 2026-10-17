@@ -122,7 +122,7 @@ For one run, use `--plugin`. Next to an ESLint config its prefix is the name you
 bun lint --plugin perfectionist --rule 'perfectionist/sort-imports: error'
 ```
 
-With an ESLint config, seven plugins run natively: `@typescript-eslint`, `react`, `react-hooks`, `import`, `n`, `prettier`, and `json`. Everything else runs from `node_modules`, including `unicorn`, `jsx-a11y`, `promise`, `jest`, and `vitest`. Bun's built-in versions of those follow oxlint, so Bun only uses them with `bunfig.toml` or an oxlint config.
+With an ESLint config, eight plugins run natively: `@typescript-eslint`, `react`, `react-hooks`, `import`, `n`, `prettier`, `json`, and `markdown`. Everything else runs from `node_modules`, including `unicorn`, `jsx-a11y`, `promise`, `jest`, and `vitest`. Bun's built-in versions of those follow oxlint, so Bun only uses them with `bunfig.toml` or an oxlint config.
 
 `bun lint --doctor` shows which of your rules run natively and which run in JavaScript.
 
@@ -165,7 +165,12 @@ Without Prettier, use [`bun/format`](/lint/rules/bun/format). It checks files ag
 
 ## Other languages
 
-With an ESLint config, a file can have a `language` from a plugin. Bun reads the languages of `@eslint/json` itself: `json/json`, `json/jsonc`, and `json/json5`. It parses these files with its own parser and runs its own [rules](/lint/rules#json) on them, and `eslint` doesn't have to be installed.
+With an ESLint config, a file can have a `language` from a plugin. Bun reads the languages of two plugins itself:
+
+- `@eslint/json`: `json/json`, `json/jsonc`, and `json/json5`, with its [rules](/lint/rules#json).
+- `@eslint/markdown`: `markdown/commonmark` and `markdown/gfm`, with its [rules](/lint/rules#markdown).
+
+It parses these files with its own parsers and runs its own rules on them, and `eslint` doesn't have to be installed.
 
 ```js eslint.config.js icon="/icons/javascript.svg"
 import json from "@eslint/json";
@@ -182,10 +187,28 @@ export default [
 
 Comments such as `// eslint-disable-next-line` work in JSONC and JSON5, as they do in ESLint. A file with a syntax error gets one error and no rule runs, as in ESLint, but the message is Bun's.
 
+```js eslint.config.js icon="/icons/javascript.svg"
+import markdown from "@eslint/markdown";
+
+export default [
+  {
+    files: ["**/*.md"],
+    plugins: { markdown },
+    language: "markdown/gfm",
+    languageOptions: { frontmatter: "yaml" },
+    rules: { "markdown/no-missing-label-refs": "error" },
+  },
+];
+```
+
+`markdown.configs.recommended` works too, and so do `languageOptions.frontmatter`, `languageOptions.math`, and comments such as `<!-- eslint-disable-next-line markdown/no-html -->`.
+
+The plugin parses Markdown with micromark, and Bun with the parser behind [`Bun.markdown`](/runtime/markdown). The two agree on almost every document. In the few places where micromark departs from the CommonMark and GFM specifications, Bun follows the specifications. For example, `<a href=b/c>` is an HTML tag for Bun and plain text for the plugin.
+
 Bun hands every other file to the `eslint` package in your project, so keep `eslint` 8.57 or later installed if you use:
 
-- A language of another plugin, such as `markdown/gfm` or `css/css`.
-- A rule for JSON that isn't built in, such as one of your own. Then the whole file goes to `eslint`.
+- A language of another plugin, such as `css/css`.
+- A rule for JSON or Markdown that isn't built in, such as one of your own. Then the whole file goes to `eslint`.
 - A parser for another file type, such as `vue-eslint-parser`, `svelte-eslint-parser`, or `yaml-eslint-parser`.
 - `eslint-plugin-html`.
 

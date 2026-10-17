@@ -579,17 +579,24 @@ describeWithContainer("mysql: the stack of a native error", { image: "mysql_plai
     });
   });
 
-  test("a frozen error stays frozen when the first read comes after Object.freeze()", async () => {
+  test("Object.freeze() is a first read, and the error stays frozen", async () => {
     await container.ready;
     await using sql = new SQL({ url: url(), max: 1 });
 
-    const error = Object.freeze(await rejectionOf(sql.unsafe(oversizedQuery())));
+    const error = await rejectionOf(sql.unsafe(oversizedQuery()));
+    const formatted: unknown[] = [];
+    await withPrepareStackTrace(
+      formattedError => formatted.push(formattedError === error ? "the error" : formattedError),
+      () => Object.freeze(error),
+    );
     const stack = error.stack;
     expect({
+      formatted,
       stack,
       frozen: Object.isFrozen(error),
       descriptor: Object.getOwnPropertyDescriptor(error, "stack"),
     }).toEqual({
+      formatted: ["the error"],
       stack: "MySQLError: failed to execute query",
       frozen: true,
       descriptor: { value: stack, writable: false, enumerable: false, configurable: false },

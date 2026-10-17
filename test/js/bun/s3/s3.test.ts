@@ -1513,6 +1513,163 @@ describe("s3-server", () => {
       }
     }
   });
+
+  describe.concurrent("bucket operations", () => {
+    const { service: _, ...options } = localCredentials;
+    const client = S3(options);
+    const code = (promise: Promise<unknown>) =>
+      promise.then(
+        () => "resolved",
+        e => e.code,
+      );
+
+    it("bucketExists answers true for the configured bucket and false for a missing one", async () => {
+      expect(await client.bucketExists()).toBe(true);
+      expect(await client.bucketExists(`missing-${randomUUIDv7()}`)).toBe(false);
+      expect(await S3Client.bucketExists("buntest", options)).toBe(true);
+      expect(await S3Client.bucketExists(undefined, options)).toBe(true);
+    });
+
+    it("createBucket, then the bucket exists, then deleteBucket", async () => {
+      const name = `bucket-${randomUUIDv7()}`;
+      expect(await client.bucketExists(name)).toBe(false);
+      expect(await client.createBucket(name)).toBeUndefined();
+      expect(await client.bucketExists(name)).toBe(true);
+      expect(await client.deleteBucket(name)).toBeUndefined();
+      expect(await client.bucketExists(name)).toBe(false);
+    });
+
+    it("the name defaults to the bucket of the options", async () => {
+      const name = `bucket-${randomUUIDv7()}`;
+      await S3({ ...options, bucket: name }).createBucket();
+      expect(await client.bucketExists(name)).toBe(true);
+      // The name wins over the bucket of the options.
+      await client.deleteBucket(name, { bucket: "buntest" });
+      expect(await client.bucketExists(name)).toBe(false);
+      await S3Client.createBucket(undefined, { ...options, bucket: name });
+      expect(await client.bucketExists(name)).toBe(true);
+      await S3Client.deleteBucket(undefined, { ...options, bucket: name });
+      expect(await client.bucketExists(name)).toBe(false);
+    });
+
+    it("createBucket sends no LocationConstraint for us-east-1", async () => {
+      // S3 refuses us-east-1 as a LocationConstraint. The region of the client
+      // and of the options is us-east-1, so none is sent.
+      const name = `bucket-${randomUUIDv7()}`;
+      await client.createBucket(name, { region: "us-east-1" });
+      expect(await client.bucketExists(name)).toBe(true);
+      await client.deleteBucket(name);
+    });
+
+    it("createBucket sends the region of the client as LocationConstraint", async () => {
+      // An endpoint of a region other than us-east-1 refuses a CreateBucket
+      // without a LocationConstraint, and one for another region.
+      await using server = await spawnServer({ bunExe: bunExe(), env: bunEnv, region: "eu-west-1" });
+      const client = S3(server.clientOptions());
+      const name = `bucket-${randomUUIDv7()}`;
+      await client.createBucket(name);
+      expect(await client.bucketExists(name)).toBe(true);
+      // The second create of a bucket outside us-east-1 is an error that names it.
+      expect(await code(client.createBucket(name))).toBe("BucketAlreadyOwnedByYou");
+    }, 30_000);
+
+    it("deleteBucket rejects with the S3 error code", async () => {
+      const name = `bucket-${randomUUIDv7()}`;
+      await client.createBucket(name);
+      await client.write("a.txt", "a", { bucket: name });
+      const error = await client.deleteBucket(name).then(
+        () => null,
+        e => e,
+      );
+      expect(error.code).toBe("BucketNotEmpty");
+      expect(error.path).toBe(name);
+      await client.unlink("a.txt", { bucket: name });
+      await client.deleteBucket(name);
+      expect(await code(client.deleteBucket(name))).toBe("NoSuchBucket");
+      expect(await code(S3Client.deleteBucket(name, options))).toBe("NoSuchBucket");
+    });
+
+    it("bucketExists rejects with the S3 error code for a bucket it cannot read", async () => {
+      // The bucket of the server in another region answers 301 with no body.
+      expect(await code(client.bucketExists("buntest-us-west-1"))).toBe("PermanentRedirect");
+      const stranger = S3({ ...options, accessKeyId: "stranger", secretAccessKey: "stranger" });
+      expect(await code(stranger.bucketExists("buntest"))).toBe("AccessDenied");
+    });
+
+    it("sends the acl and object lock headers signed, and the LocationConstraint as XML", async () => {
+      const requests: { method: string; path: string; headers: Headers; body: string }[] = [];
+      using server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          const { pathname } = new URL(req.url);
+          requests.push({ method: req.method, path: pathname, headers: req.headers, body: await req.text() });
+          return new Response(null, { status: pathname === "/missing/" ? 404 : 200 });
+        },
+      });
+      const client = S3({
+        accessKeyId: "a",
+        secretAccessKey: "b",
+        region: "eu-west-1",
+        bucket: "tenant-1",
+        endpoint: server.url.href,
+      });
+      expect(await client.bucketExists()).toBe(true);
+      expect(await client.bucketExists("missing")).toBe(false);
+      await client.createBucket(undefined, { acl: "public-read", objectLockEnabled: true });
+      await client.createBucket("tenant-2", { region: "us-east-1" });
+      await client.deleteBucket();
+      expect(requests.map(r => `${r.method} ${r.path}`)).toEqual([
+        "HEAD /tenant-1/",
+        "HEAD /missing/",
+        "PUT /tenant-1/",
+        "PUT /tenant-2/",
+        "DELETE /tenant-1/",
+      ]);
+      const [head, , create, createUsEast1, remove] = requests;
+      expect(head.headers.get("authorization")).toInclude("/eu-west-1/s3/aws4_request");
+      expect(create.body).toBe(
+        '<CreateBucketConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><LocationConstraint>eu-west-1</LocationConstraint></CreateBucketConfiguration>',
+      );
+      expect(create.headers.get("content-type")).toBe("application/xml");
+      expect(create.headers.get("x-amz-acl")).toBe("public-read");
+      expect(create.headers.get("x-amz-bucket-object-lock-enabled")).toBe("true");
+      expect(create.headers.get("authorization")).toInclude(
+        "SignedHeaders=host;x-amz-acl;x-amz-bucket-object-lock-enabled;x-amz-content-sha256;x-amz-date,",
+      );
+      // The region of the options is the region of the request, and us-east-1 sends no constraint.
+      expect(createUsEast1.body).toBe("");
+      expect(createUsEast1.headers.get("authorization")).toInclude("/us-east-1/s3/aws4_request");
+      expect(createUsEast1.headers.has("x-amz-acl")).toBe(false);
+      expect(createUsEast1.headers.has("x-amz-bucket-object-lock-enabled")).toBe(false);
+      expect(remove.headers.get("authorization")).toInclude("SignedHeaders=host;x-amz-content-sha256;x-amz-date,");
+    });
+
+    it("rejects an invalid name or option before any request", async () => {
+      let requests = 0;
+      using server = Bun.serve({
+        port: 0,
+        fetch() {
+          requests++;
+          return new Response(null, { status: 200 });
+        },
+      });
+      const client = S3({ ...options, endpoint: server.url.href });
+      // An empty bucket is the root of the endpoint, not a bucket.
+      for (const name of ["", "/", "\\"]) {
+        expect(await code(client.bucketExists(name))).toBe("ERR_S3_INVALID_PATH");
+        expect(await code(client.createBucket(name))).toBe("ERR_S3_INVALID_PATH");
+        expect(await code(client.deleteBucket(name))).toBe("ERR_S3_INVALID_PATH");
+      }
+      expect(await code(S3({ ...options, bucket: undefined, endpoint: server.url.href }).bucketExists())).toBe(
+        "ERR_S3_INVALID_PATH",
+      );
+      expect(await code(client.list(null, { bucket: "/" }))).toBe("ERR_S3_INVALID_PATH");
+      expect(() => client.bucketExists(5 as any)).toThrow(TypeError);
+      expect(() => client.createBucket("x", { acl: "nope" as any })).toThrow(/acl must be one of/);
+      expect(() => client.createBucket("x", { objectLockEnabled: "yes" as any })).toThrow(TypeError);
+      expect(requests).toBe(0);
+    });
+  });
 });
 
 describe.concurrent("s3 missing credentials", () => {

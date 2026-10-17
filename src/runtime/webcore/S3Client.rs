@@ -578,6 +578,59 @@ impl S3Client {
             .unlink(store, &global.js_thread_of_caller(callframe), options)
     }
 
+    /// The credentials of a bucket operation on this client: the per-call
+    /// `options` on top of the client's, then `name` as the bucket.
+    fn bucket_request(
+        &self,
+        global: &JSGlobalObject,
+        name: JSValue,
+        options: Option<JSValue>,
+    ) -> JsResult<BucketRequest> {
+        let aws_options = <S3Credentials as S3CredentialsExt>::get_credentials_with_options(
+            &self.credentials,
+            self.options,
+            options,
+            None,
+            None,
+            self.request_payer,
+            global,
+        )?;
+        BucketRequest::new(global, aws_options, name, options)
+    }
+
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn bucket_exists(
+        ptr: &Self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let args = callframe.arguments_as_array::<2>();
+        let request = ptr.bucket_request(global, args[0], opt_js(args[1]))?;
+        BucketTask::exists(&global.js_thread_of_caller(callframe), &request)
+    }
+
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn create_bucket(
+        ptr: &Self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let args = callframe.arguments_as_array::<2>();
+        let request = ptr.bucket_request(global, args[0], opt_js(args[1]))?;
+        BucketTask::create(&global.js_thread_of_caller(callframe), &request)
+    }
+
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn delete_bucket(
+        ptr: &Self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let args = callframe.arguments_as_array::<2>();
+        let request = ptr.bucket_request(global, args[0], opt_js(args[1]))?;
+        BucketTask::delete(&global.js_thread_of_caller(callframe), &request)
+    }
+
     // ── Static methods ────────────────────────────────────────────────────
     // Codegen (`generated_classes.rs`) emits `S3ClientClass__static*` extern
     // wrappers that call these as `S3Client::static_*(global, callframe)`,
@@ -632,6 +685,60 @@ impl S3Client {
         S3File::stat(global, callframe)
     }
 
+    /// The credentials of a static bucket operation: the environment, then
+    /// `options` on top, as `S3Client.list(null, options)` reads them.
+    fn static_bucket_request(
+        global: &JSGlobalObject,
+        name: JSValue,
+        options: Option<JSValue>,
+    ) -> JsResult<BucketRequest> {
+        let env_creds = crate::webcore::fetch::s3_credentials_from_env(
+            global
+                .bun_vm()
+                .as_mut()
+                .transpiler
+                .env_mut()
+                .get_s3_credentials(),
+        );
+        let aws_options = <S3Credentials as S3CredentialsExt>::get_credentials_with_options(
+            &env_creds,
+            MultiPartUploadOptions::default(),
+            options,
+            None,
+            None,
+            false,
+            global,
+        )?;
+        BucketRequest::new(global, aws_options, name, options)
+    }
+
+    pub(crate) fn static_bucket_exists(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let args = callframe.arguments_as_array::<2>();
+        let request = Self::static_bucket_request(global, args[0], opt_js(args[1]))?;
+        BucketTask::exists(&global.js_thread_of_caller(callframe), &request)
+    }
+
+    pub(crate) fn static_create_bucket(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let args = callframe.arguments_as_array::<2>();
+        let request = Self::static_bucket_request(global, args[0], opt_js(args[1]))?;
+        BucketTask::create(&global.js_thread_of_caller(callframe), &request)
+    }
+
+    pub(crate) fn static_delete_bucket(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let args = callframe.arguments_as_array::<2>();
+        let request = Self::static_bucket_request(global, args[0], opt_js(args[1]))?;
+        BucketTask::delete(&global.js_thread_of_caller(callframe), &request)
+    }
+
     pub(crate) fn static_list_objects(
         global: &JSGlobalObject,
         callframe: &CallFrame,
@@ -665,6 +772,183 @@ impl S3Client {
             object_keys,
             options,
         )
+    }
+}
+
+/// What one bucket operation sends: the credentials (with the bucket the
+/// caller named) and the settings of `createBucket`.
+struct BucketRequest {
+    credentials: S3Credentials,
+    /// Only when the call names one. The ACL of the client is for its
+    /// objects, and a bucket with an ACL is refused where object ownership
+    /// is enforced.
+    acl: Option<ACL>,
+    object_lock_enabled: bool,
+}
+
+impl BucketRequest {
+    /// `name` replaces the bucket of `aws_options` when it is a string. An
+    /// empty name is an empty bucket, which the signer rejects, as an empty
+    /// object key is rejected.
+    fn new(
+        global: &JSGlobalObject,
+        mut aws_options: bun_s3_signing::S3CredentialsWithOptions,
+        name: JSValue,
+        options: Option<JSValue>,
+    ) -> JsResult<Self> {
+        if !name.is_empty_or_undefined_or_null() {
+            if !name.is_string() {
+                return Err(global.throw_invalid_argument_type_value(b"name", b"string", name));
+            }
+            aws_options.credentials.bucket = name.to_utf8(global)?.into_vec().into_boxed_slice();
+        }
+        let object_lock_enabled = match options {
+            Some(opts) if opts.is_object() => opts
+                .get_boolean_strict(global, "objectLockEnabled")?
+                .unwrap_or(false),
+            _ => false,
+        };
+        Ok(Self {
+            credentials: core::mem::take(&mut aws_options.credentials),
+            acl: aws_options.acl,
+            object_lock_enabled,
+        })
+    }
+}
+
+/// One in-flight bucket operation: the promise it settles and the bucket name
+/// its error names. Freed in the callback, as `S3BlobStatTask` is.
+struct BucketTask {
+    promise: bun_jsc::JSPromiseStrong,
+    global: bun_ptr::BackRef<JSGlobalObject>,
+    bucket: Box<[u8]>,
+}
+
+impl BucketTask {
+    fn new(cx: &bun_jsc::JsThread<'_>, request: &BucketRequest) -> *mut Self {
+        bun_core::heap::into_raw(Box::new(Self {
+            promise: bun_jsc::JSPromiseStrong::init(cx.global()),
+            global: bun_ptr::BackRef::new(cx.global()),
+            bucket: request.credentials.bucket.clone(),
+        }))
+    }
+
+    /// # Safety
+    /// `this` is the pointer `new` returned, reclaimed exactly once.
+    unsafe fn take(this: *mut core::ffi::c_void) -> Box<Self> {
+        // SAFETY: fn contract.
+        unsafe { bun_core::heap::take(this.cast::<Self>()) }
+    }
+
+    fn reject(
+        mut self: Box<Self>,
+        err: &crate::webcore::s3::client::error_jsc::S3Error,
+    ) -> JsResult<()> {
+        let global_ref = self.global;
+        let global = global_ref.get();
+        let value = crate::webcore::s3::client::error_jsc::s3_error_to_js_with_async_stack(
+            err,
+            global,
+            Some(&self.bucket),
+            self.promise.get(),
+        );
+        self.promise.reject(global, Ok(value))
+    }
+
+    fn on_exists(
+        result: crate::webcore::s3::client::S3StatResult,
+        this: *mut core::ffi::c_void,
+    ) -> JsResult<()> {
+        // SAFETY: `this` comes from `BucketTask::new` in `exists`.
+        let mut this = unsafe { Self::take(this) };
+        let global_ref = this.global;
+        let global = global_ref.get();
+        match result {
+            // A body-less 404 is reported as `NoSuchKey`. The answer here is
+            // `false`, so the code never shows.
+            crate::webcore::s3::client::S3StatResult::NotFound(_) => {
+                this.promise.resolve(global, JSValue::FALSE)
+            }
+            crate::webcore::s3::client::S3StatResult::Success(_) => {
+                this.promise.resolve(global, JSValue::TRUE)
+            }
+            crate::webcore::s3::client::S3StatResult::Failure(err) => this.reject(&err),
+        }
+    }
+
+    fn on_created(
+        result: crate::webcore::s3::client::S3UploadResult,
+        this: *mut core::ffi::c_void,
+    ) -> JsResult<()> {
+        // SAFETY: `this` comes from `BucketTask::new` in `create`.
+        let mut this = unsafe { Self::take(this) };
+        let global_ref = this.global;
+        let global = global_ref.get();
+        match result {
+            crate::webcore::s3::client::S3UploadResult::Success => {
+                this.promise.resolve(global, JSValue::UNDEFINED)
+            }
+            crate::webcore::s3::client::S3UploadResult::Failure(err) => this.reject(&err),
+        }
+    }
+
+    fn on_deleted(
+        result: crate::webcore::s3::client::S3DeleteResult,
+        this: *mut core::ffi::c_void,
+    ) -> JsResult<()> {
+        // SAFETY: `this` comes from `BucketTask::new` in `delete`.
+        let mut this = unsafe { Self::take(this) };
+        let global_ref = this.global;
+        let global = global_ref.get();
+        match result {
+            crate::webcore::s3::client::S3DeleteResult::Success => {
+                this.promise.resolve(global, JSValue::UNDEFINED)
+            }
+            crate::webcore::s3::client::S3DeleteResult::NotFound(err)
+            | crate::webcore::s3::client::S3DeleteResult::Failure(err) => this.reject(&err),
+        }
+    }
+
+    fn exists(cx: &bun_jsc::JsThread<'_>, request: &BucketRequest) -> JsResult<JSValue> {
+        let this = Self::new(cx, request);
+        // SAFETY: `this` is a freshly leaked Box; sole pointer until handed to
+        // the callback below.
+        let promise = unsafe { (*this).promise.value() };
+        crate::webcore::s3::client::head_bucket(
+            &request.credentials,
+            cx.context(),
+            Self::on_exists,
+            this.cast::<core::ffi::c_void>(),
+        )?;
+        Ok(promise)
+    }
+
+    fn create(cx: &bun_jsc::JsThread<'_>, request: &BucketRequest) -> JsResult<JSValue> {
+        let this = Self::new(cx, request);
+        // SAFETY: as in `exists`.
+        let promise = unsafe { (*this).promise.value() };
+        crate::webcore::s3::client::create_bucket(
+            &request.credentials,
+            cx.context(),
+            request.acl,
+            request.object_lock_enabled,
+            Self::on_created,
+            this.cast::<core::ffi::c_void>(),
+        )?;
+        Ok(promise)
+    }
+
+    fn delete(cx: &bun_jsc::JsThread<'_>, request: &BucketRequest) -> JsResult<JSValue> {
+        let this = Self::new(cx, request);
+        // SAFETY: as in `exists`.
+        let promise = unsafe { (*this).promise.value() };
+        crate::webcore::s3::client::delete_bucket(
+            &request.credentials,
+            cx.context(),
+            Self::on_deleted,
+            this.cast::<core::ffi::c_void>(),
+        )?;
+        Ok(promise)
     }
 }
 

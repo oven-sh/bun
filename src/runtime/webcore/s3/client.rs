@@ -264,6 +264,102 @@ pub(crate) fn list_objects(
     )
 }
 
+/// HeadBucket: a signed `HEAD` on the bucket root.
+pub(crate) fn head_bucket(
+    this: &S3Credentials,
+    context: &bun_jsc::ScriptExecutionContext,
+    callback: fn(S3StatResult, *mut c_void) -> JsResult<()>,
+    callback_context: *mut c_void,
+) -> JsResult<()> {
+    s3_simple_request::execute_simple_s3_request(
+        this,
+        context,
+        s3_simple_request::Options {
+            path: b"",
+            allow_empty_path: true,
+            method: bun_http::Method::HEAD,
+            ..Default::default()
+        },
+        s3_simple_request::Callback::Stat(callback),
+        callback_context,
+    )
+}
+
+/// CreateBucket: a signed `PUT` on the bucket root. The region of the
+/// credentials is the `LocationConstraint` of the new bucket, as the AWS SDK
+/// sends it: none for `us-east-1`, which S3 refuses as a constraint, and none
+/// for `auto`, the region of an endpoint that is not S3.
+pub(crate) fn create_bucket(
+    this: &S3Credentials,
+    context: &bun_jsc::ScriptExecutionContext,
+    acl: Option<ACL>,
+    object_lock: bool,
+    callback: fn(S3UploadResult, *mut c_void) -> JsResult<()>,
+    callback_context: *mut c_void,
+) -> JsResult<()> {
+    let region: &[u8] = if this.region.is_empty() {
+        bun_s3_signing::credentials::guess_region(&this.endpoint)
+    } else {
+        &this.region
+    };
+    let mut body: Vec<u8> = Vec::new();
+    if !region.is_empty() && region != b"us-east-1" && region != b"auto" {
+        body.extend_from_slice(
+            b"<CreateBucketConfiguration xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><LocationConstraint>",
+        );
+        for &c in region {
+            match c {
+                b'<' => body.extend_from_slice(b"&lt;"),
+                b'>' => body.extend_from_slice(b"&gt;"),
+                b'&' => body.extend_from_slice(b"&amp;"),
+                _ => body.push(c),
+            }
+        }
+        body.extend_from_slice(b"</LocationConstraint></CreateBucketConfiguration>");
+    }
+    s3_simple_request::execute_simple_s3_request(
+        this,
+        context,
+        s3_simple_request::Options {
+            path: b"",
+            allow_empty_path: true,
+            method: bun_http::Method::PUT,
+            body: &body,
+            content_type: if body.is_empty() {
+                None
+            } else {
+                Some(b"application/xml")
+            },
+            acl,
+            bucket_object_lock: object_lock,
+            ..Default::default()
+        },
+        s3_simple_request::Callback::Upload(callback),
+        callback_context,
+    )
+}
+
+/// DeleteBucket: a signed `DELETE` on the bucket root.
+pub(crate) fn delete_bucket(
+    this: &S3Credentials,
+    context: &bun_jsc::ScriptExecutionContext,
+    callback: fn(S3DeleteResult, *mut c_void) -> JsResult<()>,
+    callback_context: *mut c_void,
+) -> JsResult<()> {
+    s3_simple_request::execute_simple_s3_request(
+        this,
+        context,
+        s3_simple_request::Options {
+            path: b"",
+            allow_empty_path: true,
+            method: bun_http::Method::DELETE,
+            ..Default::default()
+        },
+        s3_simple_request::Callback::Delete(callback),
+        callback_context,
+    )
+}
+
 pub(crate) fn upload(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
@@ -1068,6 +1164,7 @@ fn download_stream(
             content_encoding: None,
             acl: None,
             storage_class: None,
+            bucket_object_lock: false,
         },
         None,
     ) {

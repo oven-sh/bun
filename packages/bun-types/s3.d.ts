@@ -808,6 +808,20 @@ declare module "bun" {
     stat(): Promise<S3Stats>;
   }
 
+  /**
+   * Options for {@link S3Client.createBucket}: the S3 options of the request
+   * and the settings of the new bucket.
+   */
+  interface S3CreateBucketOptions extends S3Options {
+    /**
+     * The canned ACL of the new bucket. Sent only when set: S3 refuses an ACL
+     * for a bucket whose object ownership is enforced, which is the default.
+     */
+    acl?: S3Options["acl"];
+    /** Enables S3 Object Lock (and with it versioning) on the new bucket. */
+    objectLockEnabled?: boolean;
+  }
+
   interface S3ListObjectsOptions {
     /** Limits the response to keys that begin with the specified prefix. */
     prefix?: string;
@@ -1475,6 +1489,99 @@ declare module "bun" {
       input?: S3ListObjectsOptions | null,
       options?: Pick<S3Options, "accessKeyId" | "secretAccessKey" | "sessionToken" | "region" | "bucket" | "endpoint">,
     ): Promise<S3ListObjectsResponse>;
+
+    /**
+     * Checks whether a bucket exists (`HeadBucket`).
+     *
+     * @param name The bucket name. Defaults to the bucket of the client.
+     * @param options Additional S3 options to override defaults
+     * @returns A promise that resolves to `true` when the bucket exists and `false` when it does not.
+     * It rejects on any other answer, with the S3 error code, for example `AccessDenied` for the bucket of another account.
+     *
+     * @example
+     * ```ts
+     * if (!(await client.bucketExists("tenant-42"))) {
+     *   await client.createBucket("tenant-42");
+     * }
+     * ```
+     */
+    bucketExists(name?: string, options?: S3Options): Promise<boolean>;
+
+    /**
+     * Checks whether a bucket exists (`HeadBucket`).
+     *
+     * @param name The bucket name. Defaults to the bucket of `options`.
+     * @param options S3 credentials and configuration options
+     * @returns A promise that resolves to `true` when the bucket exists and `false` when it does not.
+     *
+     * @example
+     * ```ts
+     * const exists = await S3Client.bucketExists("tenant-42", credentials);
+     * ```
+     */
+    static bucketExists(name?: string, options?: S3Options): Promise<boolean>;
+
+    /**
+     * Creates a bucket (`CreateBucket`).
+     *
+     * The `region` of the request (from `options`, the client, or the
+     * environment) is sent as the `LocationConstraint` of the new bucket, as
+     * the AWS SDK does. No constraint is sent for `us-east-1`, which S3
+     * refuses as a constraint, or for an endpoint that is not S3.
+     *
+     * @param name The bucket name. Defaults to the bucket of the client.
+     * @param options The S3 options of the request and the settings of the new bucket
+     * @returns A promise that resolves when the bucket exists.
+     * It rejects with an error whose `code` is the S3 error code, for example `BucketAlreadyExists`.
+     *
+     * @example
+     * ```ts
+     * await client.createBucket("tenant-42");
+     * await client.createBucket("tenant-42-eu", { region: "eu-west-1" });
+     * ```
+     */
+    createBucket(name?: string, options?: S3CreateBucketOptions): Promise<void>;
+
+    /**
+     * Creates a bucket (`CreateBucket`).
+     *
+     * @param name The bucket name. Defaults to the bucket of `options`.
+     * @param options S3 credentials and configuration options, and the settings of the new bucket
+     *
+     * @example
+     * ```ts
+     * await S3Client.createBucket("tenant-42", { ...credentials, region: "eu-west-1" });
+     * ```
+     */
+    static createBucket(name?: string, options?: S3CreateBucketOptions): Promise<void>;
+
+    /**
+     * Deletes an empty bucket (`DeleteBucket`).
+     *
+     * @param name The bucket name. Defaults to the bucket of the client.
+     * @param options Additional S3 options to override defaults
+     * @returns A promise that resolves when the bucket is gone.
+     * It rejects with an error whose `code` is the S3 error code, for example `BucketNotEmpty` or `NoSuchBucket`.
+     *
+     * @example
+     * ```ts
+     * await client.deleteBucket("tenant-42");
+     * ```
+     */
+    deleteBucket(name?: string, options?: S3Options): Promise<void>;
+
+    /**
+     * Deletes an empty bucket (`DeleteBucket`).
+     *
+     * @param name The bucket name. Defaults to the bucket of `options`.
+     * @param options S3 credentials and configuration options
+     *
+     * @example
+     * ```ts
+     * await S3Client.deleteBucket("tenant-42", credentials);
+     * ```
+     */
+    static deleteBucket(name?: string, options?: S3Options): Promise<void>;
   }
 
   /**

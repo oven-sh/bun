@@ -261,6 +261,22 @@ impl S3HttpSimpleTask {
             self.callback
                 .not_found(code, message, self.callback_context)?;
         } else {
+            // A HEAD response has no body. Name the error S3 would have put there.
+            if !has_error_code {
+                if let Some(metadata) = &self.result.metadata {
+                    match metadata.response.status_code {
+                        301 => {
+                            code = b"PermanentRedirect";
+                            message = b"The bucket you are attempting to access must be addressed using the specified endpoint. Please send all future requests to this endpoint.";
+                        }
+                        403 => {
+                            code = b"AccessDenied";
+                            message = b"Access Denied";
+                        }
+                        _ => {}
+                    }
+                }
+            }
             self.callback.fail(code, message, self.callback_context)?;
         }
         Ok(())
@@ -539,6 +555,8 @@ pub(crate) struct S3SimpleRequestOptions<'a> {
     pub(crate) acl: Option<ACL>,
     pub(crate) storage_class: Option<StorageClass>,
     pub(crate) request_payer: bool,
+    /// CreateBucket only: signs and sends `x-amz-bucket-object-lock-enabled: true`.
+    pub(crate) bucket_object_lock: bool,
 }
 
 impl<'a> Default for S3SimpleRequestOptions<'a> {
@@ -557,6 +575,7 @@ impl<'a> Default for S3SimpleRequestOptions<'a> {
             acl: None,
             storage_class: None,
             request_payer: false,
+            bucket_object_lock: false,
         }
     }
 }
@@ -618,6 +637,7 @@ pub(crate) fn execute_simple_s3_request(
         acl: options.acl,
         storage_class: options.storage_class,
         request_payer: options.request_payer,
+        bucket_object_lock: options.bucket_object_lock,
         content_hash: None,
         content_md5: None,
         content_type: None,

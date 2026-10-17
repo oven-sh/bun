@@ -554,6 +554,34 @@ const exists = await client.exists("my-file.txt");
 // const exists = await client.file("my-file.txt").exists();
 ```
 
+### Bucket operations
+
+To create, check, or delete a bucket, call `createBucket`, `bucketExists`, or `deleteBucket` on the `S3Client` instance. The bucket name defaults to the `bucket` of the client. The options argument overrides the S3 options of the client for that request, as it does for `exists` and `delete`.
+
+```ts s3.ts icon="/icons/typescript.svg" highlight={7, 8, 11, 15}
+const client = new Bun.S3Client({
+  accessKeyId: "your-access-key",
+  secretAccessKey: "your-secret-key",
+  // endpoint: "http://localhost:9000", // MinIO
+});
+
+if (!(await client.bucketExists("tenant-42"))) {
+  await client.createBucket("tenant-42");
+
+  // A bucket in another region, with object lock enabled.
+  await client.createBucket("tenant-42-eu", { region: "eu-west-1", objectLockEnabled: true });
+}
+
+// Rejects with code "BucketNotEmpty" when the bucket still has objects.
+await client.deleteBucket("tenant-42");
+```
+
+`bucketExists` resolves to `true` on success and `false` when the bucket does not exist. It rejects on any other answer, with the S3 error code, for example `AccessDenied` for the bucket of another account.
+
+`createBucket` sends the `region` of the request as the `LocationConstraint` of the new bucket, as the AWS SDK does. It sends no constraint for `us-east-1`, which S3 refuses as a constraint, or for an endpoint that is not S3. The `acl` option is sent only when the call sets it: the ACL of the client is for its objects. With `virtualHostedStyle` and an `endpoint`, the bucket is part of the hostname, so the `name` argument is ignored.
+
+The static forms take the credentials as the second argument: `S3Client.bucketExists(name, credentials)`, `S3Client.createBucket(name, credentials)`, and `S3Client.deleteBucket(name, credentials)`.
+
 ## `S3File`
 
 Calling `file()` on an `S3Client` instance, or `s3.file()`, returns an `S3File`. Like `Bun.file()`, `S3File` instances are lazy: they don't refer to something that necessarily exists at the time of creation. That's why all the methods that don't involve network requests are fully synchronous.

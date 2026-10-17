@@ -166,6 +166,7 @@ impl CatalogMap {
         let declared = bun_install::dependency::trim_literal(
             entry.version.literal.slice(string_buf.bytes.as_slice()),
         );
+        let declared = bun_install::dependency::without_npm_protocol(declared);
         let mut latest: Vec<u8> = Vec::new();
         if let Some(target) = declared.strip_prefix(b"npm:") {
             let (name, _) = Dependency::split_name_and_maybe_version(target);
@@ -325,7 +326,7 @@ impl CatalogMap {
                         key_loc,
                         format_args!(
                             "\"{}\" is defined in both \"catalog\" and \"catalogs.default\"; keep one of them",
-                            BStr::new(dep_name)
+                            bun_core::fmt::EscapeControlChars(BStr::new(dep_name))
                         ),
                     );
                     conflict = true;

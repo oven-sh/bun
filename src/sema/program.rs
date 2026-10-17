@@ -4636,6 +4636,8 @@ impl<'s> Files<'s> {
                 false => Self::load_ahead(session, run, host, &resolver, options, &atoms, seeds),
             };
         files_are_found(resolving.allocated_bytes());
+        // A `Module` is large, and growing copies them all.
+        modules.reserve(ahead.len());
         // `Module::edges` of one file. Reused for the next.
         let mut edges: Vec<FileId> = Vec::new();
         // `Loaded::traces`, indexed by `FileId`.

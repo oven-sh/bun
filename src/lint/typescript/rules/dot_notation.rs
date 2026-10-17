@@ -120,7 +120,7 @@ impl DotNotation {
         };
         // The base rule reports nothing else.
         if !matches!(
-            index.tag(),
+            index.with_jsdoc_cast().tag(),
             ExprTag::String | ExprTag::Template | ExprTag::True | ExprTag::False | ExprTag::Null
         ) {
             return;

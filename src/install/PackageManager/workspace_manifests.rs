@@ -8,7 +8,7 @@ use bun_semver as Semver;
 use crate::dependency::{Behavior, Tag as DependencyTag, Version as DependencyVersion};
 use crate::lockfile::package::{PackageColumns as _, folder_relative_to_top_level_dir};
 use crate::lockfile::{self, DependencySlice, Lockfile, Package};
-use crate::npm::{FindVersionResult, MinimumReleaseAgeExcludes, PackageManifest};
+use crate::npm::{FindResult, FindVersionResult, MinimumReleaseAgeExcludes, PackageManifest};
 use crate::{
     Dependency, DependencyID, Features, PackageID, PackageNameHash, ResolutionTag,
     invalid_package_id,
@@ -320,6 +320,19 @@ impl DeclaredDependencies {
     }
 }
 
+/// True if `bun update` would change the installed version, or if `latest` is newer than it.
+/// `bun update` can also downgrade, when a dist-tag now points to an older version.
+pub fn is_outdated(
+    current: Semver::Version,
+    current_buf: &[u8],
+    update: Option<FindResult<'_>>,
+    latest: FindResult<'_>,
+    manifest: &PackageManifest,
+) -> bool {
+    update.is_some_and(|update| !update.version.eql(current))
+        || latest.is_newer_than(manifest, current, current_buf)
+}
+
 /// Falls back to a row of the same name when `dep` moved to another group since the last install.
 fn installed_row(
     lockfile: &Lockfile,
@@ -354,7 +367,7 @@ impl WorkspaceManifests {
             crash(
                 &mut log,
                 err,
-                format_args!("failed to read the workspace's package.json files"),
+                format_args!("failed to read workspace package.json files"),
             )
         })
     }
@@ -566,7 +579,7 @@ fn crash_for_filter(log: &mut bun_ast::Log, pattern: &[u8], err: crate::Error) -
         log,
         err,
         format_args!(
-            "failed to read the workspace dependencies for --filter \"{}\"",
+            "failed to read workspace dependencies for --filter \"{}\"",
             BStr::new(pattern)
         ),
     )

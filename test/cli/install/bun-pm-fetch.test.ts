@@ -240,6 +240,42 @@ it("should report when all packages are already cached", async () => {
   expect(await exists(join(package_dir, "node_modules"))).toBe(false);
 });
 
+describe.each([
+  { title: "--dry-run", flags: ["--dry-run"], bunfig: "" },
+  { title: "dryRun = true in bunfig.toml", flags: [], bunfig: "dryRun = true\n" },
+])("$title", ({ flags, bunfig }) => {
+  it.each(["with", "without"])(
+    "counts what the cache lacks and downloads none of it, %s a lockfile",
+    async lockfile => {
+      const urls: string[] = [];
+      setHandler(dummyRegistry(urls));
+      await writeProject();
+      if (lockfile === "with") {
+        expect((await runBun(["install"], { BUN_INSTALL_CACHE_DIR: cacheDir() })).exitCode).toBe(0);
+        await rm(cacheDir(), { recursive: true, force: true });
+        await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+      }
+      await writeBunfig(binaryLockfile + bunfig);
+      const before = await projectFiles();
+      urls.length = 0;
+
+      const { stdout, stderr, exitCode } = await fetchIntoCache(cacheDir(), flags);
+      expect(stdout).toMatchInlineSnapshot(`
+        "bun pm fetch <version> (<revision>)
+
+        Would fetch 1 package into cache
+        Cache: <cache>"
+      `);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+
+      expect(urls).toEqual(lockfile === "with" ? [] : [`${root_url}/bar`]);
+      expect(await cachedPackages(cacheDir())).toBe(0);
+      expect(await projectFiles()).toEqual(before);
+    },
+  );
+});
+
 it.each([
   ["--no-summary", expect.not.stringContaining("error:")],
   ["--silent", ""],
@@ -486,8 +522,8 @@ it("a tarball that cannot be downloaded fails the command", async () => {
   expect(exitCode).toBe(1);
 });
 
-// Nothing is linked or run, so the scan is left to the install. The command says so.
-it("does not run the security scanner, and says that bun install will", async () => {
+// Nothing is linked or run, so the scan is left to the install. --verbose says so.
+it("does not run the security scanner", async () => {
   await using fixture = await projectWith("npm", `[install.security]\nscanner = "./scanner.ts"\n`);
   const { bun, requested, project } = fixture;
   await writeFile(
@@ -504,13 +540,14 @@ it("does not run the security scanner, and says that bun install will", async ()
   const note = "note: packages are not scanned until bun install runs the security scanner\n";
 
   const fetched = await bun("cache", "pm", "fetch");
-  expect(fetched.stderr).toEndWith(note);
+  expect(fetched.stderr).not.toContain(note);
   expect(fetched.stdout).toBe(summary("Fetched 1 package into cache"));
   expect(fetched.exitCode).toBe(0);
   expect(requested()).toEqual(["/dep", "/dep-1.0.0.tgz"]);
   expect(await exists(join(project, "scanned.json"))).toBe(false);
 
   expect(await bun("cache", "pm", "fetch", "--silent")).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  expect((await bun("cache", "pm", "fetch", "--verbose")).stderr).toContain(note);
 
   expect(await bun("cache", "install")).toMatchObject({ exitCode: 0 });
   expect(await Bun.file(join(project, "scanned.json")).json()).toEqual(["dep"]);

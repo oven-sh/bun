@@ -4,9 +4,9 @@
 
 use crate::js::ast_nodes::{AsAstNodes, AstNodes as N};
 use crate::js::print::flow::{
-    as_declared_predicate, as_match_expression, head_of_match_statement,
-    is_directly_in_function_type, is_function_type_param, is_inexact_mark, is_unknown_members_mark,
-    is_variance, keyword_of_function_type,
+    as_declared_predicate, as_match_expression, head_of_match_statement, is_braces_of_match,
+    is_directly_in_function_type, is_function_type_param, is_inexact_mark,
+    is_match_expression_case, is_unknown_members_mark, is_variance, keyword_of_function_type,
 };
 use bun_lint::ast::comments::NodeOrName;
 use bun_lint::ast::{
@@ -59,18 +59,10 @@ fn is_head_of_match(head: Expr<'_>) -> bool {
     }
 }
 
-/// The `{ .. }` of a match expression.
-fn is_braces_of_match(braces: Expr<'_>) -> bool {
-    matches!(braces.parent(), Node::Expr(e)
-        if as_match_expression(e).is_some_and(|(_, it)| it == braces))
-}
-
 /// `pattern => body` in a match expression, which is a property, or in a match statement, which is a `case`.
 fn is_match_case(node: Node<'_>) -> bool {
     match node {
-        Node::Prop(case) => {
-            matches!(case.parent(), Node::Expr(braces) if is_braces_of_match(braces))
-        }
+        Node::Prop(case) => is_match_expression_case(case),
         Node::Case(case) => matches!(case.parent(), Node::Stmt(statement)
             if head_of_match_statement(statement).is_some()),
         _ => false,

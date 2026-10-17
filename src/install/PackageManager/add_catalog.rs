@@ -1072,17 +1072,20 @@ pub(crate) fn edit_root_after_install(
                 let Some(seed) = lockfile.catalogs.find(buf, &add.group, &add.name) else {
                     continue;
                 };
-                if seed.version.tag != dependency::Tag::DistTag {
-                    continue;
-                }
+                let target = match seed.version.tag {
+                    dependency::Tag::DistTag => seed.version.dist_tag().name,
+                    // With `--exact`, a range the user typed is also replaced by the exact version.
+                    dependency::Tag::Npm
+                        if exact && matches!(add.candidate, Candidate::Explicit(_)) =>
+                    {
+                        seed.version.npm().name
+                    }
+                    _ => continue,
+                };
                 let mut literal = Vec::new();
                 if seed.version.literal.slice(buf).starts_with(b"npm:") {
-                    write!(
-                        &mut literal,
-                        "npm:{}@",
-                        BStr::new(seed.version.dist_tag().name.slice(buf))
-                    )
-                    .expect("infallible: in-memory write");
+                    write!(&mut literal, "npm:{}@", BStr::new(target.slice(buf)))
+                        .expect("infallible: in-memory write");
                 }
                 write!(
                     &mut literal,

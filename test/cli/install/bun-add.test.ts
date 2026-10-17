@@ -204,7 +204,7 @@ it("should reject missing package", async () => {
   });
   const err = await stderr.text();
   // The path is reported the way bun.lock records it: forward slashes on every platform.
-  expect(err).toContain(`error: Could not find package.json for "file:${add_path.replaceAll("\\", "/")}" dependency`);
+  expect(err).toContain(`error: package.json not found for "file:${add_path.replaceAll("\\", "/")}" dependency`);
   expect(err).toContain("failed to resolve");
 
   const out = await stdout.text();
@@ -292,6 +292,117 @@ it("bun add --only-missing should not install existing package", async () => {
     ]);
     expect(exitCode).toBe(0);
   }
+});
+
+// Writes `source` to entry-point.ts and returns what `bun <command> --analyze` adds to package.json.
+// `urls` collects what it asks the registry for.
+async function analyze(
+  command: "add" | "install",
+  source: string,
+  { packageJson = { name: "foo" }, urls = [] }: { packageJson?: object; urls?: string[] } = {},
+) {
+  setHandler(dummyRegistry(urls));
+  await writeFile(join(package_dir, "package.json"), JSON.stringify({ version: "0.0.1", ...packageJson }));
+  await writeFile(join(package_dir, "entry-point.ts"), source);
+  // The registry has no tarball for most of these names.
+  await using proc = spawn({
+    cmd: [bunExe(), command, "--analyze", "--lockfile-only", "./entry-point.ts"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { dependencies = {} } = await file(join(package_dir, "package.json")).json();
+  return {
+    added: Object.keys(dependencies).sort(),
+    errors: err.split("\n").filter(l => l.includes("error")),
+    exitCode,
+  };
+}
+
+it.each(["add", "install"] as const)(
+  "bun %s --analyze adds the package that a subpath is imported from",
+  async command => {
+    expect(
+      await analyze(
+        command,
+        `
+      import "bar";
+      import debounce from "lodash/debounce";
+      import "deep/a/b.js";
+      import "styles/dist/main.css";
+      import "@scope/pkg/button";
+      export * from "re-exported/sub";
+      const { createRoot } = require("react-dom/client");
+      import("dynamic/sub");
+      import "twice";
+      import "twice/sub";
+      console.log(debounce, createRoot);
+      `,
+      ),
+    ).toEqual({
+      added: ["@scope/pkg", "bar", "deep", "dynamic", "lodash", "re-exported", "react-dom", "styles", "twice"],
+      errors: [],
+      exitCode: 0,
+    });
+  },
+);
+
+it("bun add --analyze leaves out builtins, paths and aliases, with or without a subpath", async () => {
+  expect(
+    await analyze(
+      "add",
+      `
+      import "bar/sub";
+      import "fs/promises";
+      import "fs/not-a-builtin";
+      import "node:path/posix";
+      import "bun:sqlite";
+      import "bun/sub";
+      import "@/alias";
+      import "@/components/ui/button";
+      import "~/alias";
+      import "#internal/thing";
+      import "./missing/file";
+      import "/missing/file";
+      import "https://example.com/mod/x.js";
+      `,
+    ),
+  ).toEqual({ added: ["bar"], errors: [], exitCode: 0 });
+});
+
+it.each([
+  ["billing", "billing"],
+  ["billing", "billing/sub"],
+  ["@corp/billing", "@corp/billing"],
+  ["@corp/billing", "@corp/billing/sub"],
+])("bun add --analyze in %s neither adds nor looks up %s", async (name, specifier) => {
+  const urls: string[] = [];
+  const packageJson = { name, exports: { ".": "./index.js", "./sub": "./sub.js" } };
+  expect(await analyze("add", `import "${specifier}"; import "bar/sub";`, { packageJson, urls })).toEqual({
+    added: ["bar"],
+    errors: [],
+    exitCode: 0,
+  });
+  expect(urls).toEqual([`${root_url}/bar`]);
+});
+
+it("bun add --analyze goes by the package.json with a name that is nearest to the importing file", async () => {
+  const urls: string[] = [];
+  const member = join(package_dir, "packages", "member");
+  await mkdir(join(member, "nested"), { recursive: true });
+  await writeFile(join(member, "package.json"), JSON.stringify({ name: "@corp/member", version: "0.0.1" }));
+  await writeFile(join(member, "index.ts"), `import "@corp/member/sub"; import "./nested/index.ts";`);
+  await writeFile(join(member, "nested", "package.json"), JSON.stringify({ type: "module" }));
+  await writeFile(join(member, "nested", "index.ts"), `import "@corp/member"; import "bar/sub";`);
+  expect(
+    await analyze("add", `import "./packages/member/index.ts";`, {
+      packageJson: { name: "root", workspaces: ["packages/*"] },
+      urls,
+    }),
+  ).toEqual({ added: ["bar"], errors: [], exitCode: 0 });
+  expect(urls).toEqual([`${root_url}/bar`]);
 });
 
 it("bun add --analyze should scan dependencies", async () => {
@@ -492,6 +603,25 @@ it("should reject positionals longer than 2048 bytes without stack overflow", as
       version: "0.0.2",
     }),
   );
+});
+
+// PATH_MAX is 4096 on Linux and 1024 on macOS. Windows' path buffer is larger than any command line.
+it.skipIf(isWindows)("should fail with ENAMETOOLONG for a local tarball path longer than PATH_MAX", async () => {
+  const package_json = JSON.stringify({ name: "foo", version: "0.0.1" });
+  using dir = tempDir("bun-add-long-tarball-path", { "package.json": package_json });
+  const tarball = `./${Buffer.alloc(5000, "a").toString()}.tgz`;
+  await using proc = spawn({
+    cmd: [bunExe(), "add", tarball],
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(err).toContain(`error: ENAMETOOLONG extracting tarball from ${tarball}`);
+  expect(out).not.toContain("installed");
+  expect(await file(join(String(dir), "package.json")).text()).toBe(package_json);
+  expect(exitCode).toBe(1);
 });
 
 it("should handle semver-like names", async () => {
@@ -950,6 +1080,34 @@ it("should add exact version with -E", async () => {
     ),
   );
   await access(join(package_dir, "bun.lockb"));
+});
+
+it.each([
+  ["-E", "0"],
+  ["-E", "^0.0.2"],
+  ["-E", "~0.0.1"],
+  ["-E", "0.x"],
+  ["-E", ">=0.0.1"],
+  ["-E", "*"],
+  ["install.exact", "^0.0.2"],
+])("%s pins the version that BaR@%s resolves to", async (how, range) => {
+  setHandler(dummyRegistry([]));
+  await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1" }));
+  if (how === "install.exact") await appendFile(join(package_dir, "bunfig.toml"), `exact = true\n`);
+  await using proc = spawn({
+    cmd: [bunExe(), "add", "--save-text-lockfile", ...(how === "-E" ? ["-E"] : []), `BaR@${range}`],
+    cwd: package_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(err).not.toContain("error:");
+  expect(out).toContain("installed BaR@0.0.2\n");
+  expect((await file(join(package_dir, "package.json")).json()).dependencies).toEqual({ BaR: "0.0.2" });
+  const lockfile = Bun.JSONC.parse(await file(join(package_dir, "bun.lock")).text()) as BunLockFile;
+  expect(lockfile.workspaces[""].dependencies).toEqual({ BaR: "0.0.2" });
+  expect(exitCode).toBe(0);
 });
 
 it("should add dependency with package.json in it and http tarball", async () => {
@@ -1498,6 +1656,11 @@ describe("npm aliases", () => {
       expected: { dependencies: { bar: "npm:@scope/baz@>=0.0.2" } },
     },
     {
+      args: ["--exact", "bar@npm:@scope/baz@>=0.0.2"],
+      resolved: scoped,
+      expected: { dependencies: { bar: "npm:@scope/baz@0.0.3" } },
+    },
+    {
       args: ["--dev", "bar@npm:@scope/baz"],
       resolved: scoped,
       expected: { devDependencies: { bar: "npm:@scope/baz@^0.0.3" } },
@@ -2017,7 +2180,7 @@ it("should handle Git URL in dependencies (SCP-style)", async () => {
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
     "",
-    "installed uglify-js@git+ssh://bun@github.com:mishoo/UglifyJS.git with binaries:",
+    "installed uglify-js@git+ssh://***@github.com:mishoo/UglifyJS.git with binaries:",
     " - uglifyjs",
     "",
     "1 package installed",
@@ -2842,7 +3005,7 @@ describe("a relative local path typed from a directory below package.json", () =
     await writeFile(join(vendored, "package.json"), JSON.stringify({ name: "inner", version: "1.0.0" }));
 
     const { stderr, exitCode } = await run(cwd, "add", "./vendor/inner");
-    expect(stderr).toContain('error: Could not find package.json for "file:src/nested/vendor/inner"');
+    expect(stderr).toContain('error: package.json not found for "file:src/nested/vendor/inner"');
     expect(await file(join(package_dir, "package.json")).json()).toEqual({ name: "app", version: "0.0.1" });
     expect(exitCode).toBe(1);
   });
@@ -2980,7 +3143,7 @@ describe("-g and a relative local path", () => {
     const home = String(dir);
 
     const missing = await runGlobal(home, join(home, "sibling"), "add", "-g", "./pkg");
-    expect(missing.stderr).toContain("error: Could not find package.json for");
+    expect(missing.stderr).toContain("error: package.json not found for");
     expect(missing.exitCode).toBe(1);
 
     const { stderr, exitCode } = await runGlobal(home, join(home, "pkg"), "add", "-g", ".");
@@ -3360,6 +3523,32 @@ it("should add multiple dependencies specified on command line", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
+it("requests the manifests of all the packages on the command line at once", async () => {
+  const registry = dummyRegistry([]);
+  const lastWasRequested = Promise.withResolvers<void>();
+  setHandler(async request => {
+    if (request.url.endsWith("/moo")) lastWasRequested.resolve();
+    if (request.url.endsWith("/bar")) await lastWasRequested.promise;
+    return registry(request);
+  });
+  await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo" }));
+  await using proc = spawn({
+    cmd: [bunExe(), "add", "bar", "baz", "moo", "--lockfile-only"],
+    cwd: package_dir,
+    stdout: "ignore",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(err).not.toContain("error:");
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "foo",
+    dependencies: { bar: "^0.0.2", baz: "^0.0.2", moo: "^0.0.2" },
+  });
+  expect(exitCode).toBe(0);
+});
+
 it("should install tarball with tarball dependencies", async () => {
   // This test verifies that tarballs containing dependencies that are also tarballs
   // can be installed correctly. Regression test for URL corruption bug where
@@ -3719,6 +3908,55 @@ describe("should move existing dependency when an explicit group flag is given",
     expect(await add(initial, ["BaR"])).toBe(pkgJson(initial));
   });
 
+  describe.each([
+    ["dependencies", "devDependencies"],
+    ["dependencies", "optionalDependencies"],
+    ["devDependencies", "optionalDependencies"],
+  ])("without a group flag the entries in %s and %s both take", (first, second) => {
+    it.each([
+      ["baz@0.0.5", "0.0.5"],
+      ["baz", "^0.0.5"],
+    ])("bun add %s", async (spec, saved) => {
+      const declared = (version: string) => ({ ...root, [first]: { baz: version }, [second]: { baz: version } });
+      expect(await add(declared("0.0.3"), [spec], { "0.0.3": {}, "0.0.5": {} })).toBe(pkgJson(declared(saved)));
+
+      for (const args of [[], ["--frozen-lockfile"]]) {
+        await using proc = spawn({
+          cmd: [bunExe(), "install", ...args],
+          cwd: package_dir,
+          stdout: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({
+          args,
+          saved: err.includes("Saved lockfile"),
+          failed: err.includes("error:"),
+          out,
+          version: (await file(join(package_dir, "node_modules", "baz", "package.json")).json()).version,
+          exitCode,
+        }).toEqual({
+          args,
+          saved: false,
+          failed: false,
+          out: expect.stringContaining("(no changes)"),
+          version: "0.0.5",
+          exitCode: 0,
+        });
+      }
+    });
+  });
+
+  it("installs the version it saves when the install leaves out one of three groups with the name", async () => {
+    const groups = ["dependencies", "devDependencies", "optionalDependencies"];
+    const declared = { ...root, ...Object.fromEntries(groups.map(group => [group, { baz: "0.0.3" }])) };
+    const saved = JSON.parse(await add(declared, ["baz@0.0.5", "--omit=dev"], { "0.0.3": {}, "0.0.5": {} }));
+    expect((await file(join(package_dir, "node_modules", "baz", "package.json")).json()).version).toBe(
+      saved.optionalDependencies.baz,
+    );
+  });
+
   it("does not move with --only-missing", async () => {
     const initial = { ...root, dependencies: { BaR: "^0.0.2" } };
     expect(await add(initial, ["--dev", "--only-missing", "BaR"])).toBe(pkgJson(initial));
@@ -4052,7 +4290,7 @@ describe("a spec without a name that resolves to a dependency package.json alrea
     ]);
 
     const { err, exitCode } = await run(project, "add", first, second);
-    expect(err).toContain(`error: "${first}" and "${second}" both resolve to "pkga"\nnote: add one of them`);
+    expect(err).toContain(`error: "${first}" and "${second}" both resolve to "pkga"\nnote: add only one of them`);
     expect(exitCode).toBe(1);
     expect(await file(join(project, "package.json")).text()).toBe(before);
     expect(await Bun.file(join(project, "bun.lock")).exists()).toBeFalse();

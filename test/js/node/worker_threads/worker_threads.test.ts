@@ -1,5 +1,5 @@
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir, tls, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -3168,82 +3168,90 @@ describe("nothing queued runs after the worker's VM stops", () => {
 // shapes spin from their second call, inside the checkpoint the `await 0` continuation runs in. The
 // stream shapes are the reported ones; they post 'go' once the loop has run for a while, and there the
 // trap only sometimes lands inside the start reaction.
-test("terminate() or process.exit() while a microtask-only loop keeps entering native-dispatched callbacks", async () => {
-  const roundsPerShape = 2;
-  const deadline = isDebug || isASAN ? 20_000 : 6_000;
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
+describe("terminate() or process.exit() while a microtask-only loop keeps entering native-dispatched callbacks", () => {
+  const spin = "parentPort.postMessage('go'); for (;;) {}";
+  const spinOnSecondCall = "let n = 0; const L = () => { if (n++) { " + spin + " } };";
+  const shapes: [name: string, shape: { setup?: string; loop: string; progress?: boolean; exit?: number }][] = [
+    ["queueMicrotask()", { loop: "queueMicrotask(() => { " + spin + " });" }],
+    ["read() of a stream", { loop: "new Response('abc').body.getReader().read();", progress: true }],
+    ["tee() of a stream", { loop: "new Response('abc').body.tee();", progress: true }],
+    [
+      "dispatchEvent()",
+      {
+        setup: spinOnSecondCall + "const et = new EventTarget(); et.addEventListener('x', L);",
+        loop: "et.dispatchEvent(new Event('x'));",
+      },
+    ],
+    [
+      "abort()",
+      {
+        setup: spinOnSecondCall,
+        loop: "{ const ac = new AbortController(); ac.signal.addEventListener('abort', L); ac.abort(); }",
+      },
+    ],
+    ["process.emit()", { setup: spinOnSecondCall + "process.on('evt', L);", loop: "process.emit('evt');" }],
+    // process.exit() inside the job: the worker exits on its own with that code, and runs nothing after.
+    ["process.exit() in queueMicrotask()", { loop: "queueMicrotask(() => { process.exit(42); });", exit: 42 }],
+    [
+      "process.exit() in a WritableStream's write()",
+      { loop: "new WritableStream({ write() { process.exit(42); } }).getWriter().write('x');", exit: 42 },
+    ],
+  ];
+  const rounds = 2;
+  // A hang guard for one round, under the file's test timeout. A build that stops the worker never waits for it.
+  const deadline = isDebug ? 20_000 : 6_000;
+
+  test.concurrent.each(shapes)("%s", async (_name, { setup = "", loop, progress = false, exit }) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
         const { Worker } = require("node:worker_threads");
-        const spin = "parentPort.postMessage('go'); for (;;) {}";
-        const spinOnSecondCall = "let n = 0; const L = () => { if (n++) { " + spin + " } };";
-        const shapes = {
-          queueMicrotask: { loop: "queueMicrotask(() => { " + spin + " });" },
-          read: { loop: "new Response('abc').body.getReader().read();", progress: true },
-          tee: { loop: "new Response('abc').body.tee();", progress: true },
-          eventTarget: {
-            setup: spinOnSecondCall + "const et = new EventTarget(); et.addEventListener('x', L);",
-            loop: "et.dispatchEvent(new Event('x'));",
-          },
-          abortSignal: {
-            setup: spinOnSecondCall,
-            loop: "{ const ac = new AbortController(); ac.signal.addEventListener('abort', L); ac.abort(); }",
-          },
-          processEmit: { setup: spinOnSecondCall + "process.on('evt', L);", loop: "process.emit('evt');" },
-          // process.exit() inside the job: the worker exits on its own with that code, and runs nothing after.
-          exitInQueueMicrotask: { loop: "queueMicrotask(() => { process.exit(42); });", exit: 42 },
-          exitInWritableStreamWrite: {
-            loop: "new WritableStream({ write() { process.exit(42); } }).getWriter().write('x');",
-            exit: 42,
-          },
-        };
+        const progress = ${progress};
+        const exit = ${exit ?? null};
+        const src =
+          "const { parentPort } = require('worker_threads');" +
+          ${JSON.stringify(setup)} +
+          (progress ? "let k = 0;" : "") +
+          "setTimeout(() => {" +
+          "(async () => { for (;;) { " +
+          (progress ? "if (k++ === 50) parentPort.postMessage('go');" : "") +
+          ${JSON.stringify(loop)} + " await 0; } })();" +
+          "}, 0);";
         (async () => {
-          for (const [name, { setup, loop, progress, exit }] of Object.entries(shapes)) {
-            for (let i = 0; i < ${roundsPerShape}; i++) {
-              const src =
-                "const { parentPort } = require('worker_threads');" +
-                (setup ?? "") +
-                (progress ? "let k = 0;" : "") +
-                "setTimeout(() => {" +
-                "(async () => { for (;;) { " +
-                (progress ? "if (k++ === 50) parentPort.postMessage('go');" : "") +
-                loop + " await 0; } })();" +
-                "}, 0);";
-              const w = new Worker(src, { eval: true });
-              const exited = new Promise(r => w.once("exit", c => r("exit code " + c)));
-              const errored = new Promise(r => w.once("error", e => r("error " + (e && e.message))));
-              const hang = Bun.sleep(${deadline}).then(() => "HANG");
-              const fail = why => {
-                console.log(why + " " + name + " round " + i);
-                process.exit(2);
-              };
-              if (exit !== undefined) {
-                const got = await Promise.race([exited, errored, hang]);
-                if (got !== "exit code " + exit) fail(got);
-              } else {
-                const got = await Promise.race([new Promise(r => w.once("message", r)), exited, errored, hang]);
-                if (got !== "go") fail(got + " before 'go'");
-                const code = await Promise.race([w.terminate(), hang]);
-                if (code === "HANG") fail("HANG");
-              }
+          for (let i = 0; i < ${rounds}; i++) {
+            const w = new Worker(src, { eval: true });
+            const exited = new Promise(r => w.once("exit", c => r("exit code " + c)));
+            const errored = new Promise(r => w.once("error", e => r("error " + (e && e.message))));
+            const hang = Bun.sleep(${deadline}).then(() => "HANG");
+            const fail = why => {
+              console.log(why + " in round " + i);
+              process.exit(2);
+            };
+            if (exit !== null) {
+              const got = await Promise.race([exited, errored, hang]);
+              if (got !== "exit code " + exit) fail(got);
+            } else {
+              const got = await Promise.race([new Promise(r => w.once("message", r)), exited, errored, hang]);
+              if (got !== "go") fail(got + " before 'go'");
+              const code = await Promise.race([w.terminate(), hang]);
+              if (code === "HANG") fail("HANG");
             }
           }
           console.log("PASS");
           process.exit(0);
         })();
-      `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(stdout).toBe("PASS\n");
-  expect(exitCode).toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "PASS\n", stderr: "", exitCode: 0 });
+  });
 });
 
 // The same when the stop is made by the handler of an uncaught error: an 'uncaughtException' or

@@ -195,7 +195,10 @@ const instanceRun = (tag: string | null, n: number, made: number, cjsN: number) 
 const tagOfGraph = '(typeof __tag !== "undefined" ? __tag : undefined)';
 function withTagInItsOwnBinding(text: string, isTypeScript: boolean): string {
   const changed = text
-    .replaceAll(/process: Object\.create\(process, \{ env: \{ value: \{ \.\.\.process\.env, TAG: ([^}]+?) \}, enumerable: true \} \}\)/g, "__tag: $1")
+    .replaceAll(
+      /process: Object\.create\(process, \{ env: \{ value: \{ \.\.\.process\.env, TAG: ([^}]+?) \}, enumerable: true \} \}\)/g,
+      "__tag: $1",
+    )
     .replaceAll("process.env.TAG", tagOfGraph);
   return isTypeScript && changed.includes("__tag !==") ? "declare var __tag: string | undefined;\n" + changed : changed;
 }
@@ -216,7 +219,10 @@ async function build(combo: Combo) {
   const dir = tempDir("module-graph-compile-" + combo.name.replace(/\W/g, "_"), {
     ...Object.fromEntries(Object.entries(sources).map(([name, text]) => [name, written(name, text)])),
     // not embedded: loaded from disk by the compiled program
-    "external.mjs": written("external.mjs", `(typeof __log !== "undefined" ? __log : undefined)?.push("external@" + (process.env.TAG ?? "host")); export const who = process.env.TAG ?? "host"; export async function describe(instanceUrl) { const t = await import(instanceUrl); const r = await t.runInstance(1); return { who, instanceTag: r.tag, instanceMeta: r.meta }; }`),
+    "external.mjs": written(
+      "external.mjs",
+      `(typeof __log !== "undefined" ? __log : undefined)?.push("external@" + (process.env.TAG ?? "host")); export const who = process.env.TAG ?? "host"; export async function describe(instanceUrl) { const t = await import(instanceUrl); const r = await t.runInstance(1); return { who, instanceTag: r.tag, instanceMeta: r.meta }; }`,
+    ),
   });
   const exe = join(String(dir), process.platform === "win32" ? "app.exe" : "app");
   await using proc = Bun.spawn({
@@ -408,19 +414,22 @@ for (const [index, combo] of combos.entries()) {
       });
     });
 
-    testButForAot("a module on disk next to the executable loads into graphs and imports embedded code by URL", async () => {
-      expect(await run("external")).toEqual({
-        parsed: {
-          out: [
-            { who: "x0", instanceTag: "x0", instanceMeta: "<embedded>/instance.js" },
-            { who: "x1", instanceTag: "x1", instanceMeta: "<embedded>/instance.js" },
-          ],
-          hostView: { who: "host", instanceTag: "host", instanceMeta: "<embedded>/instance.js" },
-          log: ["external@x0", "instance@x0", "external@x1", "instance@x1"],
-        },
-        exitCode: 0,
-        stderr: "",
-      });
-    });
+    testButForAot(
+      "a module on disk next to the executable loads into graphs and imports embedded code by URL",
+      async () => {
+        expect(await run("external")).toEqual({
+          parsed: {
+            out: [
+              { who: "x0", instanceTag: "x0", instanceMeta: "<embedded>/instance.js" },
+              { who: "x1", instanceTag: "x1", instanceMeta: "<embedded>/instance.js" },
+            ],
+            hostView: { who: "host", instanceTag: "host", instanceMeta: "<embedded>/instance.js" },
+            log: ["external@x0", "instance@x0", "external@x1", "instance@x1"],
+          },
+          exitCode: 0,
+          stderr: "",
+        });
+      },
+    );
   });
 }

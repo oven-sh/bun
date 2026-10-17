@@ -162,11 +162,25 @@ describe.skipIf(!!unsupported).concurrent("compile/aot/type errors wherever they
           mkdirSync(folder, { recursive: true });
           writeFileSync(join(folder, "main.ts"), row.replaceAll("BAD", "(1 as number).nope") + "\n");
           const places = row.split("BAD").length - 1;
-          const isFound = (run: { stdout: string; stderr: string }) => (run.stdout + run.stderr).split("Property 'nope' does not exist on type 'number'").length - 1 === places;
-          const build = await spawned([bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", join(folder, "program")], folder, bunEnv);
-          expect({ signal: build.signal, exitCode: build.exitCode, isFound: isFound(build) }).toEqual({ signal: null, exitCode: 1, isFound: true });
+          const isFound = (run: { stdout: string; stderr: string }) =>
+            (run.stdout + run.stderr).split("Property 'nope' does not exist on type 'number'").length - 1 === places;
+          const build = await spawned(
+            [bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", join(folder, "program")],
+            folder,
+            bunEnv,
+          );
+          expect({ signal: build.signal, exitCode: build.exitCode, isFound: isFound(build) }).toEqual({
+            signal: null,
+            exitCode: 1,
+            isFound: true,
+          });
           const fromSources = await spawned([bunExe(), "run", "--aot", "main.ts"], folder, bunEnv);
-          expect({ signal: fromSources.signal, exitCode: fromSources.exitCode, isFound: isFound(fromSources), stdout: fromSources.stdout }).toEqual({ signal: null, exitCode: 1, isFound: true, stdout: "" });
+          expect({
+            signal: fromSources.signal,
+            exitCode: fromSources.exitCode,
+            isFound: isFound(fromSources),
+            stdout: fromSources.stdout,
+          }).toEqual({ signal: null, exitCode: 1, isFound: true, stdout: "" });
         }),
       600_000,
     );

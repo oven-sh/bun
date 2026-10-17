@@ -18,14 +18,34 @@ async function explained(source: string) {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const lines = (stdout + stderr).split("\n").filter(line => line.includes("mutations: ") && line.includes("every layout: "));
-  return { exitCode, kinds: lines.length, markEveryLayout: lines.filter(line => line.endsWith("nothing is said of an operand: true")).map(line => line.replace(/^.*mutations: ([a-z ]+):.*$/, "$1")) };
+  const lines = (stdout + stderr)
+    .split("\n")
+    .filter(line => line.includes("mutations: ") && line.includes("every layout: "));
+  return {
+    exitCode,
+    kinds: lines.length,
+    markEveryLayout: lines
+      .filter(line => line.endsWith("nothing is said of an operand: true"))
+      .map(line => line.replace(/^.*mutations: ([a-z ]+):.*$/, "$1")),
+  };
 }
 
-test.skipIf(!!unsupported)("a typed module of Bun marks no layout of the program where nothing is said of what it freezes or gives a prototype", async () => {
-  expect(await explained(`import { EventEmitter } from "node:events";\nconsole.log(typeof EventEmitter);\n` + points)).toEqual({ exitCode: 0, kinds: 2, markEveryLayout: [] });
-}, 120_000);
+test.skipIf(!!unsupported)(
+  "a typed module of Bun marks no layout of the program where nothing is said of what it freezes or gives a prototype",
+  async () => {
+    expect(
+      await explained(`import { EventEmitter } from "node:events";\nconsole.log(typeof EventEmitter);\n` + points),
+    ).toEqual({ exitCode: 0, kinds: 2, markEveryLayout: [] });
+  },
+  120_000,
+);
 
-test.skipIf(!!unsupported)("the program's own code does", async () => {
-  expect(await explained(points + `const unknownValue: any = JSON.parse("{}");\nObject.freeze(unknownValue);\n`)).toEqual({ exitCode: 0, kinds: 2, markEveryLayout: ["integrity level"] });
-}, 120_000);
+test.skipIf(!!unsupported)(
+  "the program's own code does",
+  async () => {
+    expect(
+      await explained(points + `const unknownValue: any = JSON.parse("{}");\nObject.freeze(unknownValue);\n`),
+    ).toEqual({ exitCode: 0, kinds: 2, markEveryLayout: ["integrity level"] });
+  },
+  120_000,
+);

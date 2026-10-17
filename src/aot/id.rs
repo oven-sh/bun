@@ -38,35 +38,11 @@ macro_rules! id {
     };
 }
 
-id!(
-    FuncId,
-    "f"
-);
-id!(
-    BlockId,
-    "b"
-);
-id!(
-    V,
-    "v"
-);
-id!(
-    LayoutId,
-    "L"
-);
-id!(
-    TyId,
-    "t"
-);
-id!(
-    StrId,
-    "s"
-);
-id!(
-    GlobalId,
-    "g"
-);
-id!(
-    ModuleId,
-    "m"
-);
+id!(FuncId, "f");
+id!(BlockId, "b");
+id!(V, "v");
+id!(LayoutId, "L");
+id!(TyId, "t");
+id!(StrId, "s");
+id!(GlobalId, "g");
+id!(ModuleId, "m");

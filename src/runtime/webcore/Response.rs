@@ -860,7 +860,8 @@ impl Response {
                 } else if arg_init.is_number() {
                     response.init.with_mut(|i| {
                         i.status_code =
-                            u16::try_from(0.max(arg_init.to_int32()).min(i32::from(u16::MAX))).unwrap();
+                            u16::try_from(0.max(arg_init.to_int32()).min(i32::from(u16::MAX)))
+                                .unwrap();
                     });
                 } else {
                     if let Some(init) = Init::init(global_this, arg_init)? {
@@ -1197,8 +1198,16 @@ impl Response {
         })))
     }
 
-    fn from_parts(global_this: &JSGlobalObject, body_value: JSValue, parts: &InitParts) -> JsResult<JSValue> {
-        if body_value.is_object() && body_value.as_class_ref::<Blob>().is_some_and(|blob| blob.is_s3()) {
+    fn from_parts(
+        global_this: &JSGlobalObject,
+        body_value: JSValue,
+        parts: &InitParts,
+    ) -> JsResult<JSValue> {
+        if body_value.is_object()
+            && body_value
+                .as_class_ref::<Blob>()
+                .is_some_and(|blob| blob.is_s3())
+        {
             return Err(global_this.throw_invalid_arguments(format_args!(
                 "new Response(s3File) do not support ResponseInit options",
             )));
@@ -1230,8 +1239,16 @@ pub(crate) unsafe extern "C" fn Response__createFromParts(
     header_count: u32,
     header_names_and_values: *const JSValue,
 ) -> JSValue {
-    let parts = InitParts { status, status_text, headers, header_count, header_names_and_values };
-    bun_jsc::host_fn::to_js_host_call(global_this, || Response::from_parts(global_this, body, &parts))
+    let parts = InitParts {
+        status,
+        status_text,
+        headers,
+        header_count,
+        header_names_and_values,
+    };
+    bun_jsc::host_fn::to_js_host_call(global_this, || {
+        Response::from_parts(global_this, body, &parts)
+    })
 }
 
 /// # Safety
@@ -1246,7 +1263,13 @@ pub(crate) unsafe extern "C" fn Response__createJSONFromParts(
     header_count: u32,
     header_names_and_values: *const JSValue,
 ) -> JSValue {
-    let parts = InitParts { status, status_text, headers, header_count, header_names_and_values };
+    let parts = InitParts {
+        status,
+        status_text,
+        headers,
+        header_count,
+        header_names_and_values,
+    };
     bun_jsc::host_fn::to_js_host_call(global_this, || {
         Response::json_with_init(global_this, value, |response| {
             response.init.set(Init::from_parts(global_this, &parts)?);
@@ -1300,7 +1323,13 @@ impl Init {
             ..Default::default()
         };
         // SAFETY: `InitParts` is only made by the two exported functions, whose callers uphold the contract.
-        let filled = unsafe { FetchHeaders::create_from_names_and_values(global_this, parts.header_count, parts.header_names_and_values) }?;
+        let filled = unsafe {
+            FetchHeaders::create_from_names_and_values(
+                global_this,
+                parts.header_count,
+                parts.header_names_and_values,
+            )
+        }?;
         // SAFETY: C++ returns a +1 ref or null.
         init.headers = filled.map(|headers| unsafe { HeadersRef::adopt(headers) });
         if !parts.headers.is_undefined() {
@@ -1310,7 +1339,9 @@ impl Init {
             init.set_status(global_this, parts.status)?;
         }
         let status_text = parts.status_text;
-        if !status_text.is_empty_or_undefined_or_null() && !(status_text.is_string() && !status_text.to_boolean()) {
+        if !status_text.is_empty_or_undefined_or_null()
+            && !(status_text.is_string() && !status_text.to_boolean())
+        {
             init.status_text = status_text.to_bun_string(global_this)?;
         }
         Ok(init)

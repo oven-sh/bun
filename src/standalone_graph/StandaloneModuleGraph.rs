@@ -84,7 +84,10 @@ impl RuntimeOptions {
 
 impl Default for RuntimeOptions {
     fn default() -> Self {
-        Self { jit_policy: 1.0, crash_if_interpreter_is_used: false }
+        Self {
+            jit_policy: 1.0,
+            crash_if_interpreter_is_used: false,
+        }
     }
 }
 
@@ -115,7 +118,8 @@ pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str = const_format::concatcp!("
 #[cfg(not(windows))]
 pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str = const_format::concatcp!("/$bunfs/", "root/");
 /// `StandaloneModuleGraph::embedded_name`.
-const PRESERVED_PATHS_ROOT: &str = const_format::concatcp!(BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX, ".held");
+const PRESERVED_PATHS_ROOT: &str =
+    const_format::concatcp!(BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX, ".held");
 
 // A process-lifetime `OnceLock` (PORTING.md §Concurrency: never `static mut`).
 // `get()` returns a raw `*mut`; the only post-init mutation is
@@ -223,12 +227,21 @@ impl StandaloneModuleGraph {
         self.preserved_path_if(Flags::PRESERVES_SOURCE_PATHS, name, buf)
     }
 
-    fn preserved_path_if<'a>(&self, flags: Flags, name: &'a [u8], buf: &'a mut PathBuffer) -> Option<&'a [u8]> {
+    fn preserved_path_if<'a>(
+        &self,
+        flags: Flags,
+        name: &'a [u8],
+        buf: &'a mut PathBuffer,
+    ) -> Option<&'a [u8]> {
         if is_bun_standalone_file_path(name) {
             return Some(name);
         }
         let root = PRESERVED_PATHS_ROOT.as_bytes();
-        if cfg!(windows) || !self.flags.intersects(flags) || name.first() != Some(&b'/') || root.len() + name.len() > buf.len() {
+        if cfg!(windows)
+            || !self.flags.intersects(flags)
+            || name.first() != Some(&b'/')
+            || root.len() + name.len() > buf.len()
+        {
             return None;
         }
         buf[..root.len()].copy_from_slice(root);
@@ -245,7 +258,14 @@ impl StandaloneModuleGraph {
         static LISTS: std::sync::OnceLock<CompiledProgramLists> = std::sync::OnceLock::new();
         LISTS.get_or_init(|| {
             let contents = |name: &str| -> &'static [u8] {
-                self.find_ref(&[BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes(), name.as_bytes()].concat()).map_or(&[][..], |file| file.contents.as_bytes())
+                self.find_ref(
+                    &[
+                        BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes(),
+                        name.as_bytes(),
+                    ]
+                    .concat(),
+                )
+                .map_or(&[][..], |file| file.contents.as_bytes())
             };
             CompiledProgramLists {
                 sources: contents("sources-of-the-compiled-program"),
@@ -259,22 +279,49 @@ impl StandaloneModuleGraph {
         SortedLines(self.compiled_program_lists().sources)
     }
 
-    fn find_compiled_source(&self, path: &[u8]) -> Option<(&'static [u8], bun_bundler::compiled_source_index::Entry)> {
+    fn find_compiled_source(
+        &self,
+        path: &[u8],
+    ) -> Option<(&'static [u8], bun_bundler::compiled_source_index::Entry)> {
         let lists = self.compiled_program_lists();
         bun_bundler::compiled_source_index::find(lists.source_index, lists.sources, path)
     }
 
     fn is_json_module(&self, path: &[u8]) -> bool {
-        self.lookup_file(&[BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes(), b".modules-of-the-program", path].concat()).is_some()
+        self.lookup_file(
+            &[
+                BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes(),
+                b".modules-of-the-program",
+                path,
+            ]
+            .concat(),
+        )
+        .is_some()
     }
 
     fn entry_point_paths(&self) -> impl Iterator<Item = &'static [u8]> + '_ {
-        let files = if self.flags.contains(Flags::PRESERVES_SOURCE_PATHS) { &[][..] } else { self.files.values() };
-        files.iter().map(|file| file.source_path).filter(|path| !path.is_empty())
+        let files = if self.flags.contains(Flags::PRESERVES_SOURCE_PATHS) {
+            &[][..]
+        } else {
+            self.files.values()
+        };
+        files
+            .iter()
+            .map(|file| file.source_path)
+            .filter(|path| !path.is_empty())
     }
 
-    fn compiled_sources_in<'a>(&'a self, folder: &'a [u8]) -> impl Iterator<Item = &'static [u8]> + 'a {
-        self.sorted_sources().with_prefix(folder).chain(self.entry_point_paths().filter(move |path| path.starts_with(folder))).filter(|path| !self.is_json_module(path))
+    fn compiled_sources_in<'a>(
+        &'a self,
+        folder: &'a [u8],
+    ) -> impl Iterator<Item = &'static [u8]> + 'a {
+        self.sorted_sources()
+            .with_prefix(folder)
+            .chain(
+                self.entry_point_paths()
+                    .filter(move |path| path.starts_with(folder)),
+            )
+            .filter(|path| !self.is_json_module(path))
     }
 
     fn compiled_source(&self, path: &[u8]) -> Option<&'static [u8]> {
@@ -288,23 +335,47 @@ impl StandaloneModuleGraph {
     #[cfg(unix)]
     fn has_compiled_source_in(&self, folder: &[u8]) -> bool {
         let prefix = [folder, b"/"].concat();
-        self.sorted_sources().with_prefix(&prefix).next().is_some() || self.entry_point_paths().any(|source| source.starts_with(&prefix))
+        self.sorted_sources().with_prefix(&prefix).next().is_some()
+            || self
+                .entry_point_paths()
+                .any(|source| source.starts_with(&prefix))
     }
 
     /// Without the JSON modules: to node:fs such a one is a file of the disk, which the program may write.
     fn compiled_sources(&self) -> impl Iterator<Item = &'static [u8]> + '_ {
-        let name = const_format::concatcp!(BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX, "sources-of-the-compiled-program");
-        let paths: &'static [u8] = self.find_ref(name.as_bytes()).map_or(&[][..], |file| file.contents.as_bytes());
+        let name = const_format::concatcp!(
+            BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX,
+            "sources-of-the-compiled-program"
+        );
+        let paths: &'static [u8] = self
+            .find_ref(name.as_bytes())
+            .map_or(&[][..], |file| file.contents.as_bytes());
         let of_entry_points = self.files.values().iter().map(|file| file.source_path);
-        strings::split(paths, b"\n").chain(of_entry_points).filter(|path| {
-            !path.is_empty() && self.lookup_file(&[BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes(), b".modules-of-the-program", path].concat()).is_none()
-        })
+        strings::split(paths, b"\n")
+            .chain(of_entry_points)
+            .filter(|path| {
+                !path.is_empty()
+                    && self
+                        .lookup_file(
+                            &[
+                                BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes(),
+                                b".modules-of-the-program",
+                                path,
+                            ]
+                            .concat(),
+                        )
+                        .is_none()
+            })
     }
 
     /// `Some(is_folder)` where `path` is a file of the compiled program or a folder above one. The text of such a file is not in
     /// the executable. For a path that the disk does not have.
     pub fn compiled_program_files(&self, path: &[u8]) -> Option<bool> {
-        if !self.flags.intersects(Flags::PRESERVES_SOURCE_PATHS | Flags::HAS_ENTRY_POINT_PATHS) || is_bun_standalone_file_path(path) {
+        if !self
+            .flags
+            .intersects(Flags::PRESERVES_SOURCE_PATHS | Flags::HAS_ENTRY_POINT_PATHS)
+            || is_bun_standalone_file_path(path)
+        {
             return None;
         }
         if self.flags.contains(Flags::PRESERVES_SOURCE_PATHS) {
@@ -319,7 +390,8 @@ impl StandaloneModuleGraph {
                 Entry::JsonModule => None,
             };
         }
-        static NAMES: std::sync::OnceLock<bun_collections::HashMap<&'static [u8], bool>> = std::sync::OnceLock::new();
+        static NAMES: std::sync::OnceLock<bun_collections::HashMap<&'static [u8], bool>> =
+            std::sync::OnceLock::new();
         let names = NAMES.get_or_init(|| {
             let mut names = bun_collections::HashMap::new();
             for path in self.compiled_sources() {
@@ -351,21 +423,31 @@ impl StandaloneModuleGraph {
     }
 
     /// The shared libraries that are held at their paths: `(path, contents)`.
-    pub fn preserved_shared_libraries(&self) -> impl Iterator<Item = (&'static [u8], &'static [u8])> + '_ {
+    pub fn preserved_shared_libraries(
+        &self,
+    ) -> impl Iterator<Item = (&'static [u8], &'static [u8])> + '_ {
         self.files.values().iter().filter_map(|file| {
             let path = file.name.strip_prefix(PRESERVED_PATHS_ROOT.as_bytes())?;
             let name = bun_paths::basename(path);
-            let is_one = name.ends_with(b".so") || name.ends_with(b".dylib") || strings::contains(name, b".so.");
+            let is_one = name.ends_with(b".so")
+                || name.ends_with(b".dylib")
+                || strings::contains(name, b".so.");
             is_one.then(|| (path, file.contents.as_bytes()))
         })
     }
 
     /// The text of the module at `path`, where modules keep their paths: of a JSON module of the program, or of an asset.
     pub fn find_module_source(&self, path: &[u8]) -> Option<&File> {
-        if is_bun_standalone_file_path(path) || !self.flags.contains(Flags::PRESERVES_SOURCE_PATHS) {
+        if is_bun_standalone_file_path(path) || !self.flags.contains(Flags::PRESERVES_SOURCE_PATHS)
+        {
             return None;
         }
-        let name = [BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes(), b".modules-of-the-program", path].concat();
+        let name = [
+            BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes(),
+            b".modules-of-the-program",
+            path,
+        ]
+        .concat();
         self.lookup_file(&name).or_else(|| self.find_ref(path))
     }
 
@@ -378,7 +460,8 @@ impl StandaloneModuleGraph {
         #[cfg(unix)]
         {
             use std::os::unix::ffi::OsStrExt as _;
-            (self.find_dir(name) || self.compiled_program_files(name) == Some(true)) && !std::path::Path::new(std::ffi::OsStr::from_bytes(name)).is_dir()
+            (self.find_dir(name) || self.compiled_program_files(name) == Some(true))
+                && !std::path::Path::new(std::ffi::OsStr::from_bytes(name)).is_dir()
         }
         #[cfg(not(unix))]
         false
@@ -444,10 +527,16 @@ impl StandaloneModuleGraph {
     /// `(entry, is_dir)`; `entry` is the basename, or the `name`-relative path when `recursive`.
     pub fn readdir(&self, name: &[u8], recursive: bool) -> Option<Vec<(Box<[u8]>, bool)>> {
         let mut held = bun_paths::path_buffer_pool::get();
-        let name = self.preserved_path_if(Flags::PRESERVES_SOURCE_PATHS | Flags::HAS_ENTRY_POINT_PATHS, name, &mut held)?;
+        let name = self.preserved_path_if(
+            Flags::PRESERVES_SOURCE_PATHS | Flags::HAS_ENTRY_POINT_PATHS,
+            name,
+            &mut held,
+        )?;
         let mut buf = bun_paths::path_buffer_pool::get();
         let name = Self::normalize_dir_path(name, &mut buf);
-        let has_compiled_files = name.strip_prefix(PRESERVED_PATHS_ROOT.as_bytes()).is_some_and(|path| self.compiled_program_files(path) == Some(true));
+        let has_compiled_files = name
+            .strip_prefix(PRESERVED_PATHS_ROOT.as_bytes())
+            .is_some_and(|path| self.compiled_program_files(path) == Some(true));
         if !self.dirs.contains_key(name) && !has_compiled_files {
             return None;
         }
@@ -477,8 +566,15 @@ impl StandaloneModuleGraph {
         }
         if has_compiled_files {
             let folder = &prefix[PRESERVED_PATHS_ROOT.len()..];
-            for rel in self.compiled_sources_in(folder).filter_map(|path| path.strip_prefix(folder)) {
-                let mut folders = rel.iter().enumerate().filter(|(_, c)| **c == b'/').map(|(at, _)| &rel[..at]);
+            for rel in self
+                .compiled_sources_in(folder)
+                .filter_map(|path| path.strip_prefix(folder))
+            {
+                let mut folders = rel
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, c)| **c == b'/')
+                    .map(|(at, _)| &rel[..at]);
                 if recursive {
                     for folder in folders {
                         let _ = seen.put(folder, true);
@@ -525,8 +621,10 @@ impl SortedLines {
         let (mut low, mut high) = (0, text.len());
         while low < high {
             let middle = low + (high - low) / 2;
-            let start = strings::last_index_of_char(&text[low..middle], b'\n').map_or(low, |at| low + at as usize + 1);
-            let end = strings::index_of_char(&text[start..], b'\n').map_or(text.len(), |at| start + at as usize);
+            let start = strings::last_index_of_char(&text[low..middle], b'\n')
+                .map_or(low, |at| low + at as usize + 1);
+            let end = strings::index_of_char(&text[start..], b'\n')
+                .map_or(text.len(), |at| start + at as usize);
             if is_less(&text[start..end]) {
                 low = (end + 1).min(text.len());
             } else {
@@ -537,12 +635,19 @@ impl SortedLines {
     }
 
     fn with_prefix<'a>(self, prefix: &'a [u8]) -> impl Iterator<Item = &'static [u8]> + 'a {
-        strings::split(self.lower_bound(|line| line < prefix), b"\n").take_while(move |line| line.starts_with(prefix))
+        strings::split(self.lower_bound(|line| line < prefix), b"\n")
+            .take_while(move |line| line.starts_with(prefix))
     }
 
     fn value_of(self, key: &[u8]) -> Option<&'static [u8]> {
-        let line = strings::split(self.lower_bound(|line| line.get(..key.len()).map_or(line < key, |head| head < key)), b"\n").next()?;
-        line.strip_prefix(key)?.strip_prefix(&[0])?.strip_suffix(&[0])
+        let line = strings::split(
+            self.lower_bound(|line| line.get(..key.len()).map_or(line < key, |head| head < key)),
+            b"\n",
+        )
+        .next()?;
+        line.strip_prefix(key)?
+            .strip_prefix(&[0])?
+            .strip_suffix(&[0])
     }
 }
 
@@ -590,15 +695,32 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
         self.files.values().get(file as usize).map(|file| file.name)
     }
     fn compiled_program_sources(&self) -> &'static [u8] {
-        let name = const_format::concatcp!(BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX, "sources-of-the-compiled-program");
-        self.find_ref(name.as_bytes()).map_or(&[][..], |file| file.contents.as_bytes())
+        let name = const_format::concatcp!(
+            BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX,
+            "sources-of-the-compiled-program"
+        );
+        self.find_ref(name.as_bytes())
+            .map_or(&[][..], |file| file.contents.as_bytes())
     }
-    fn resolution(&self, source_dir: &[u8], specifier: &[u8], is_require: bool) -> Option<&'static [u8]> {
+    fn resolution(
+        &self,
+        source_dir: &[u8],
+        specifier: &[u8],
+        is_require: bool,
+    ) -> Option<&'static [u8]> {
         /// `@scope/name/sub` -> `@scope/name`.
         #[cfg(unix)]
         fn package_of(specifier: &[u8]) -> &[u8] {
-            let mut slashes = specifier.iter().enumerate().filter(|(_, c)| **c == b'/').map(|(at, _)| at);
-            let end = if specifier.first() == Some(&b'@') { slashes.nth(1) } else { slashes.next() };
+            let mut slashes = specifier
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| **c == b'/')
+                .map(|(at, _)| at);
+            let end = if specifier.first() == Some(&b'@') {
+                slashes.nth(1)
+            } else {
+                slashes.next()
+            };
             &specifier[..end.unwrap_or(specifier.len())]
         }
         let resolutions = SortedLines(self.compiled_program_lists().resolutions);
@@ -646,7 +768,10 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
                         }
                         // The program has that package there: another copy further up is not the one that is meant.
                         let path_inside = &specifier[package_of(specifier).len()..];
-                        if !path_inside.is_empty() && (self.compiled_source(&key).is_some() || self.has_compiled_source_in(&key)) {
+                        if !path_inside.is_empty()
+                            && (self.compiled_source(&key).is_some()
+                                || self.has_compiled_source_in(&key))
+                        {
                             key.extend_from_slice(path_inside);
                             is_inside_program_package = true;
                             break;
@@ -659,14 +784,30 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
                 }
             } else {
                 let mut buf = bun_paths::path_buffer_pool::get();
-                let joined = bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(source_dir, &mut buf[..], &[specifier])?;
+                let joined = bun_paths::resolve_path::join_abs_string_buf_checked::<
+                    bun_paths::platform::Auto,
+                >(source_dir, &mut buf[..], &[specifier])?;
                 key.clear();
                 key.extend_from_slice(joined);
             }
             let length = key.len();
             for ending in [
-                &b""[..], b".js", b".cjs", b".mjs", b".json", b".ts", b".tsx", b".jsx", b".mts", b".cts",
-                b"/index.js", b"/index.cjs", b"/index.mjs", b"/index.json", b"/index.ts", b"/index.tsx",
+                &b""[..],
+                b".js",
+                b".cjs",
+                b".mjs",
+                b".json",
+                b".ts",
+                b".tsx",
+                b".jsx",
+                b".mts",
+                b".cts",
+                b"/index.js",
+                b"/index.cjs",
+                b"/index.mjs",
+                b"/index.json",
+                b"/index.ts",
+                b"/index.tsx",
             ] {
                 key.truncate(length);
                 key.extend_from_slice(ending);
@@ -744,13 +885,22 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
         Some(self.find_ref(name)?.source_path).filter(|path| !path.is_empty())
     }
     fn find_by_source_path(&self, source_path: &[u8]) -> Option<&'static [u8]> {
-        if !self.flags.intersects(Flags::PRESERVES_SOURCE_PATHS | Flags::HAS_ENTRY_POINT_PATHS) {
+        if !self
+            .flags
+            .intersects(Flags::PRESERVES_SOURCE_PATHS | Flags::HAS_ENTRY_POINT_PATHS)
+        {
             return None;
         }
-        static NAMES: std::sync::OnceLock<bun_collections::HashMap<&'static [u8], &'static [u8]>> = std::sync::OnceLock::new();
+        static NAMES: std::sync::OnceLock<bun_collections::HashMap<&'static [u8], &'static [u8]>> =
+            std::sync::OnceLock::new();
         let names = NAMES.get_or_init(|| {
             let mut names = bun_collections::HashMap::new();
-            for file in self.files.values().iter().filter(|file| !file.source_path.is_empty()) {
+            for file in self
+                .files
+                .values()
+                .iter()
+                .filter(|file| !file.source_path.is_empty())
+            {
                 names.insert(file.source_path, file.name);
             }
             names
@@ -760,7 +910,12 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
     fn has_entry_point_paths(&self) -> bool {
         self.flags.contains(Flags::HAS_ENTRY_POINT_PATHS)
     }
-    fn entry_point_at(&self, source_dir: &[u8], specifier: &[u8], is_require: bool) -> Option<&'static [u8]> {
+    fn entry_point_at(
+        &self,
+        source_dir: &[u8],
+        specifier: &[u8],
+        is_require: bool,
+    ) -> Option<&'static [u8]> {
         if !self.flags.contains(Flags::HAS_ENTRY_POINT_PATHS) {
             return None;
         }
@@ -1120,7 +1275,13 @@ impl File {
             && !self.name.ends_with(b"/sources-of-the-compiled-program")
             && !self.name.ends_with(b"/resolutions-of-the-compiled-program")
             && !self.name.ends_with(b"/index-of-the-compiled-program")
-            && !self.name.starts_with(const_format::concatcp!(BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX, ".modules-of-the-program/").as_bytes())
+            && !self.name.starts_with(
+                const_format::concatcp!(
+                    BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX,
+                    ".modules-of-the-program/"
+                )
+                .as_bytes(),
+            )
             && (self.side == FileSide::Client || !self.loader.is_javascript_like())
     }
 
@@ -1569,7 +1730,8 @@ impl StandaloneModuleGraph {
                     runtime_options.jit_policy = scale;
                 }
             }
-            runtime_options.crash_if_interpreter_is_used = flags & RuntimeOptions::CRASH_IF_INTERPRETER_IS_USED != 0;
+            runtime_options.crash_if_interpreter_is_used =
+                flags & RuntimeOptions::CRASH_IF_INTERPRETER_IS_USED != 0;
         }
         let mut linked_bytecode_payload = StringPointer::default();
         let mut linked_bytecode_region_ends = [0u32; LINKED_BYTECODE_REGION_COUNT];
@@ -1629,7 +1791,9 @@ impl StandaloneModuleGraph {
             }
         }
         let mut source_paths: Option<usize> = None;
-        if offsets.flags.intersects(Flags::PRESERVES_SOURCE_PATHS | Flags::HAS_ENTRY_POINT_PATHS)
+        if offsets
+            .flags
+            .intersects(Flags::PRESERVES_SOURCE_PATHS | Flags::HAS_ENTRY_POINT_PATHS)
             && record_at + size_of::<StringPointer>() * modules_list_count <= raw_len
         {
             source_paths = Some(record_at);
@@ -1943,14 +2107,24 @@ pub(crate) fn to_bytes(
             && (output_file.side.is_none() || output_file.side == Some(options::Side::Server))
     };
 
-    let is_compiled_ahead_of_time = output_files.iter().any(|file| file.output_kind == options::OutputKind::AotImage);
-    let has_further_entry_points = output_files.iter().filter(|file| is_entry_point(file)).count() > 1;
-    let flags = if is_compiled_ahead_of_time && has_further_entry_points && !flags.contains(Flags::PRESERVES_SOURCE_PATHS) {
+    let is_compiled_ahead_of_time = output_files
+        .iter()
+        .any(|file| file.output_kind == options::OutputKind::AotImage);
+    let has_further_entry_points = output_files
+        .iter()
+        .filter(|file| is_entry_point(file))
+        .count()
+        > 1;
+    let flags = if is_compiled_ahead_of_time
+        && has_further_entry_points
+        && !flags.contains(Flags::PRESERVES_SOURCE_PATHS)
+    {
         flags | Flags::HAS_ENTRY_POINT_PATHS
     } else {
         flags
     };
-    let has_source_paths = flags.intersects(Flags::PRESERVES_SOURCE_PATHS | Flags::HAS_ENTRY_POINT_PATHS);
+    let has_source_paths =
+        flags.intersects(Flags::PRESERVES_SOURCE_PATHS | Flags::HAS_ENTRY_POINT_PATHS);
     let mut has_entry_point = false;
     let mut string_builder = bun_core::StringBuilder::default();
     let mut module_count: usize = 0;
@@ -1975,7 +2149,8 @@ pub(crate) fn to_bytes(
                 // Allocate up to 256 byte alignment for bytecode (+ a table record for builtin bytecode)
                 string_builder.cap += bytes.len().div_ceil(256) * 256 + 256 + 16;
             } else if output_file.output_kind == options::OutputKind::AotImage {
-                string_builder.cap += bytes.len() + Bun__AOT__imageAlignment() + 3 * size_of::<u32>();
+                string_builder.cap +=
+                    bytes.len() + Bun__AOT__imageAlignment() + 3 * size_of::<u32>();
             } else if output_file.output_kind == options::OutputKind::ModuleInfo {
                 string_builder.cap += bytes.len();
             } else if output_file.output_kind == options::OutputKind::ModuleInfoStringTable {
@@ -2275,8 +2450,8 @@ pub(crate) fn to_bytes(
         }
         shared
     });
-    let aot_image_ptr =
-        aot_image.map(|image| append_aligned(&mut string_builder, image, Bun__AOT__imageAlignment()));
+    let aot_image_ptr = aot_image
+        .map(|image| append_aligned(&mut string_builder, image, Bun__AOT__imageAlignment()));
     let mut bytecode_string_table_ptr = bytecode_string_table_ptr;
     if let Some(image_ptr) = aot_image_ptr {
         if let Some((offset, length)) = image_string_table {
@@ -2439,8 +2614,16 @@ pub(crate) fn to_bytes(
     }
     if runtime_options.jit_policy > 1.0 || runtime_options.crash_if_interpreter_is_used {
         let mut record = [0u8; 8];
-        let has_jit_policy = if runtime_options.jit_policy > 1.0 { RuntimeOptions::HAS_JIT_POLICY } else { 0 };
-        let crashes = if runtime_options.crash_if_interpreter_is_used { RuntimeOptions::CRASH_IF_INTERPRETER_IS_USED } else { 0 };
+        let has_jit_policy = if runtime_options.jit_policy > 1.0 {
+            RuntimeOptions::HAS_JIT_POLICY
+        } else {
+            0
+        };
+        let crashes = if runtime_options.crash_if_interpreter_is_used {
+            RuntimeOptions::CRASH_IF_INTERPRETER_IS_USED
+        } else {
+            0
+        };
         record[0..4].copy_from_slice(&(has_jit_policy | crashes).to_le_bytes());
         record[4..8].copy_from_slice(&runtime_options.jit_policy.to_bits().to_le_bytes());
         let _ = string_builder.append_count(&record);
@@ -2626,8 +2809,18 @@ impl<'a> Injected<'a> {
 
 #[cfg(not(windows))]
 fn map_privately(fd: Fd) -> Option<&'static mut [u8]> {
-    let size = usize::try_from(Syscall::fstat(fd).ok()?.st_size).ok().filter(|&size| size > 0)?;
-    let map = Syscall::mmap(core::ptr::null_mut(), size, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE, fd, 0).ok()?;
+    let size = usize::try_from(Syscall::fstat(fd).ok()?.st_size)
+        .ok()
+        .filter(|&size| size > 0)?;
+    let map = Syscall::mmap(
+        core::ptr::null_mut(),
+        size,
+        libc::PROT_READ | libc::PROT_WRITE,
+        libc::MAP_PRIVATE,
+        fd,
+        0,
+    )
+    .ok()?;
     // SAFETY: `mmap` has returned `size` bytes that are readable, writable and private to this process, nobody else has their address, and the caller unmaps them.
     Some(unsafe { core::slice::from_raw_parts_mut(map, size) })
 }
@@ -2658,7 +2851,10 @@ impl std::io::Write for ChangedBlocksWriter<'_> {
         });
         let mut block = 0;
         while block < is_changed.len() {
-            let run = is_changed[block..].iter().take_while(|&&other| other == is_changed[block]).count();
+            let run = is_changed[block..]
+                .iter()
+                .take_while(|&&other| other == is_changed[block])
+                .count();
             if is_changed[block] {
                 let changed = &bytes[block * BLOCK..bytes.len().min((block + run) * BLOCK)];
                 bun_sys::File::borrow(&self.fd)
@@ -2677,14 +2873,18 @@ impl std::io::Write for ChangedBlocksWriter<'_> {
 }
 
 #[cfg(target_os = "linux")]
-static EARLY_TEMPLATE_COPY: bun_threading::Guarded<Option<(Vec<u8>, std::thread::JoinHandle<Option<Fd>>)>> = bun_threading::Guarded::new(None);
+static EARLY_TEMPLATE_COPY: bun_threading::Guarded<
+    Option<(Vec<u8>, std::thread::JoinHandle<Option<Fd>>)>,
+> = bun_threading::Guarded::new(None);
 
 #[cfg(target_os = "linux")]
 pub fn start_copying_template(target: &CompileTarget, self_exe_path: Option<&[u8]>) {
     if self_exe_path.is_some() || !target.is_default() {
         return;
     }
-    let Ok(self_exe) = bun_core::self_exe_path() else { return };
+    let Ok(self_exe) = bun_core::self_exe_path() else {
+        return;
+    };
     let mut slot = EARLY_TEMPLATE_COPY.lock();
     if slot.is_some() {
         return;
@@ -2692,12 +2892,19 @@ pub fn start_copying_template(target: &CompileTarget, self_exe_path: Option<&[u8
     let path = self_exe.as_bytes().to_vec();
     let template = bun_core::ZBox::from_vec_with_nul(path.clone());
     let copy_thread = std::thread::Builder::new().spawn(move || {
-        let fd = Syscall::open(bun_core::zstr!("."), libc::O_TMPFILE | bun_sys::O::RDWR | bun_sys::O::CLOEXEC, 0o600).ok()?;
-        let is_copied = Syscall::open(&template, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0).ok().is_some_and(|from| {
-            let is_copied = bun_sys::copy_file(from, fd).is_ok();
-            from.close();
-            is_copied
-        });
+        let fd = Syscall::open(
+            bun_core::zstr!("."),
+            libc::O_TMPFILE | bun_sys::O::RDWR | bun_sys::O::CLOEXEC,
+            0o600,
+        )
+        .ok()?;
+        let is_copied = Syscall::open(&template, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0)
+            .ok()
+            .is_some_and(|from| {
+                let is_copied = bun_sys::copy_file(from, fd).is_ok();
+                from.close();
+                is_copied
+            });
         if !is_copied {
             fd.close();
             return None;
@@ -2749,11 +2956,21 @@ fn privately_modified_page_offsets(private_mapping: &[u8], page_size: usize) -> 
         return None;
     }
     let mut entries = vec![0u8; private_mapping.len().div_ceil(page_size) * 8];
-    let pagemap = bun_sys::File::open(bun_core::zstr!("/proc/self/pagemap"), bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0).ok()?;
-    if pagemap.pread_all(&mut entries, (address / page_size * 8) as u64).ok()? != entries.len() {
+    let pagemap = bun_sys::File::open(
+        bun_core::zstr!("/proc/self/pagemap"),
+        bun_sys::O::RDONLY | bun_sys::O::CLOEXEC,
+        0,
+    )
+    .ok()?;
+    if pagemap
+        .pread_all(&mut entries, (address / page_size * 8) as u64)
+        .ok()?
+        != entries.len()
+    {
         return None;
     }
-    let is_modified = |entry: u64| entry & (IS_PRESENT | IS_SWAPPED) != 0 && entry & IS_FILE_PAGE == 0;
+    let is_modified =
+        |entry: u64| entry & (IS_PRESENT | IS_SWAPPED) != 0 && entry & IS_FILE_PAGE == 0;
     Some(
         (entries.as_chunks::<8>().0.iter().enumerate())
             .filter(|(_, entry)| is_modified(u64::from_ne_bytes(**entry)))
@@ -2777,16 +2994,34 @@ unsafe fn copy_changed_blocks(to: *mut u8, from: &[u8], already_written: &[u8]) 
     }
     const BLOCK: usize = 4096;
     let threads = usize::from(bun_core::get_thread_count()).clamp(1, 16);
-    let chunk_size = from.len().div_ceil(threads).next_multiple_of(BLOCK).max(BLOCK);
+    let chunk_size = from
+        .len()
+        .div_ceil(threads)
+        .next_multiple_of(BLOCK)
+        .max(BLOCK);
     let to = to as usize;
     std::thread::scope(|scope| {
-        for (chunk, (from, already_written)) in from.chunks(chunk_size).zip(already_written.chunks(chunk_size)).enumerate() {
+        for (chunk, (from, already_written)) in from
+            .chunks(chunk_size)
+            .zip(already_written.chunks(chunk_size))
+            .enumerate()
+        {
             scope.spawn(move || {
-                for (block, (from, already_written)) in from.chunks(BLOCK).zip(already_written.chunks(BLOCK)).enumerate() {
+                for (block, (from, already_written)) in from
+                    .chunks(BLOCK)
+                    .zip(already_written.chunks(BLOCK))
+                    .enumerate()
+                {
                     if from != already_written {
                         // SAFETY: as above. The block is at the same offset in `to` as in the
                         // caller's `from`, and no two threads get the same block.
-                        unsafe { core::ptr::copy_nonoverlapping(from.as_ptr(), (to + chunk * chunk_size + block * BLOCK) as *mut u8, from.len()) };
+                        unsafe {
+                            core::ptr::copy_nonoverlapping(
+                                from.as_ptr(),
+                                (to + chunk * chunk_size + block * BLOCK) as *mut u8,
+                                from.len(),
+                            )
+                        };
                     }
                 }
             });
@@ -2795,7 +3030,11 @@ unsafe fn copy_changed_blocks(to: *mut u8, from: &[u8], already_written: &[u8]) 
 }
 
 #[cfg(target_os = "linux")]
-fn write_pieces_via_mmap(pieces: &[bun_elf::Piece<'_>], fd: Fd, already_written: Option<&[u8]>) -> bool {
+fn write_pieces_via_mmap(
+    pieces: &[bun_elf::Piece<'_>],
+    fd: Fd,
+    already_written: Option<&[u8]>,
+) -> bool {
     let length_of = |piece: &bun_elf::Piece<'_>| match piece {
         bun_elf::Piece::Bytes(bytes) => bytes.len() as u64,
         bun_elf::Piece::Length(length) => length.len() as u64,
@@ -2809,7 +3048,14 @@ fn write_pieces_via_mmap(pieces: &[bun_elf::Piece<'_>], fd: Fd, already_written:
     if length == 0 || unsafe { libc::fallocate(fd.native(), 0, 0, end) } != 0 {
         return false;
     }
-    let Ok(map) = Syscall::mmap(core::ptr::null_mut(), length, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, fd, 0) else {
+    let Ok(map) = Syscall::mmap(
+        core::ptr::null_mut(),
+        length,
+        libc::PROT_READ | libc::PROT_WRITE,
+        libc::MAP_SHARED,
+        fd,
+        0,
+    ) else {
         return false;
     };
     let mut offset: usize = 0;
@@ -2826,12 +3072,18 @@ fn write_pieces_via_mmap(pieces: &[bun_elf::Piece<'_>], fd: Fd, already_written:
                 &[]
             }
         };
-        match already_written.filter(|already_written| index == 0 && already_written.len() >= bytes.len()) {
+        match already_written
+            .filter(|already_written| index == 0 && already_written.len() >= bytes.len())
+        {
             // SAFETY: as above: the piece fits in the mapping at `offset`. The mapping is new, so
             // it overlaps nothing.
-            Some(already_written) => unsafe { copy_changed_blocks(map.add(offset), bytes, &already_written[..bytes.len()]) },
+            Some(already_written) => unsafe {
+                copy_changed_blocks(map.add(offset), bytes, &already_written[..bytes.len()])
+            },
             // SAFETY: as above.
-            None => unsafe { bun_core::copy_in_parallel(map.add(offset), bytes.as_ptr(), bytes.len()) },
+            None => unsafe {
+                bun_core::copy_in_parallel(map.add(offset), bytes.as_ptr(), bytes.len())
+            },
         }
         offset += length_of(piece) as usize;
     }
@@ -2840,19 +3092,29 @@ fn write_pieces_via_mmap(pieces: &[bun_elf::Piece<'_>], fd: Fd, already_written:
 }
 
 #[cfg(not(windows))]
-fn write_elf_in_pieces(original: &mut [u8], payload: &[u8], fd: Fd, already_written: Option<&[u8]>) -> Result<bool, String> {
+fn write_elf_in_pieces(
+    original: &mut [u8],
+    payload: &[u8],
+    fd: Fd,
+    already_written: Option<&[u8]>,
+) -> Result<bool, String> {
     #[cfg(not(target_os = "linux"))]
     let _ = already_written;
     let mut elf_file = bun_elf::ElfFile::over(original).map_err(|error| error.to_string())?;
     elf_file.normalize_interpreter();
-    let pieces = elf_file.bun_section_in_pieces(payload).map_err(|error| error.to_string())?;
+    let pieces = elf_file
+        .bun_section_in_pieces(payload)
+        .map_err(|error| error.to_string())?;
     let Some(pieces) = pieces else {
         bun_core::scoped_log!(StandaloneModuleGraph, "inject: ELF: no pieces: copied");
         return Ok(false);
     };
     #[cfg(target_os = "linux")]
     if write_pieces_via_mmap(&pieces, fd, already_written) {
-        bun_core::scoped_log!(StandaloneModuleGraph, "inject: ELF written in pieces through a mapping");
+        bun_core::scoped_log!(
+            StandaloneModuleGraph,
+            "inject: ELF written in pieces through a mapping"
+        );
         return Ok(true);
     }
     let file = bun_sys::File::borrow(&fd);
@@ -2866,18 +3128,24 @@ fn write_elf_in_pieces(original: &mut [u8], payload: &[u8], fd: Fd, already_writ
                 let mut left = *count;
                 while left > 0 {
                     let now = left.min(zeros.len() as u64);
-                    file.pwrite_all(&zeros[..now as usize], offset).map_err(|error| error.to_string())?;
+                    file.pwrite_all(&zeros[..now as usize], offset)
+                        .map_err(|error| error.to_string())?;
                     offset += now as i64;
                     left -= now;
                 }
                 continue;
             }
         };
-        file.pwrite_all(bytes, offset).map_err(|error| error.to_string())?;
+        file.pwrite_all(bytes, offset)
+            .map_err(|error| error.to_string())?;
         offset += i64::try_from(bytes.len()).expect("int cast");
     }
     Syscall::ftruncate(fd, offset).map_err(|error| error.to_string())?;
-    bun_core::scoped_log!(StandaloneModuleGraph, "inject: ELF written in pieces: {} bytes", offset);
+    bun_core::scoped_log!(
+        StandaloneModuleGraph,
+        "inject: ELF written in pieces: {} bytes",
+        offset
+    );
     Ok(true)
 }
 
@@ -2896,15 +3164,27 @@ fn aot_image_symbols(image: &[u8]) -> Option<Vec<u8>> {
         aligned.resize(image.len().div_ceil(size_of::<u128>()), 0);
         // SAFETY: `aligned` holds at least `image.len()` initialized bytes, and is not touched
         // again while `copy` is in use.
-        let copy = unsafe { core::slice::from_raw_parts_mut(aligned.as_mut_ptr().cast::<u8>(), image.len()) };
+        let copy = unsafe {
+            core::slice::from_raw_parts_mut(aligned.as_mut_ptr().cast::<u8>(), image.len())
+        };
         copy.copy_from_slice(image);
         copy
     };
     let mut table: Vec<u8> = Vec::new();
     // SAFETY: `image` is valid for the call and aligned as C++ expects. `reserve` gets `table` back
     // as its context, during the call only.
-    if !unsafe { Bun__AOT__imageSymbols(image.as_ptr(), image.len(), (&raw mut table).cast(), reserve) } {
-        bun_core::scoped_log!(StandaloneModuleGraph, "symbols: the engine lists no functions for this image");
+    if !unsafe {
+        Bun__AOT__imageSymbols(
+            image.as_ptr(),
+            image.len(),
+            (&raw mut table).cast(),
+            reserve,
+        )
+    } {
+        bun_core::scoped_log!(
+            StandaloneModuleGraph,
+            "symbols: the engine lists no functions for this image"
+        );
         return None;
     }
     Some(table)
@@ -2912,23 +3192,33 @@ fn aot_image_symbols(image: &[u8]) -> Option<Vec<u8>> {
 
 #[cfg(unix)]
 fn add_elf_symbols(fd: Fd, table: &[u8], image_in_payload: usize) {
-    let Some(size) = Syscall::fstat(fd).ok().and_then(|stat| u64::try_from(stat.st_size).ok()) else {
+    let Some(size) = Syscall::fstat(fd)
+        .ok()
+        .and_then(|stat| u64::try_from(stat.st_size).ok())
+    else {
         return;
     };
     let file = bun_sys::File::borrow(&fd);
     let read = |offset: u64, into: &mut [u8]| {
         let wanted = into.len();
-        file.pread_all(into, offset).is_ok_and(|count| count == wanted)
+        file.pread_all(into, offset)
+            .is_ok_and(|count| count == wanted)
     };
     let Some(tail) = bun_elf::symbols_tail(size, read, table, image_in_payload as u64) else {
-        bun_core::scoped_log!(StandaloneModuleGraph, "ELF symbols: none added (the executable has a .symtab, or is not as expected)");
+        bun_core::scoped_log!(
+            StandaloneModuleGraph,
+            "ELF symbols: none added (the executable has a .symtab, or is not as expected)"
+        );
         return;
     };
     if file.pwrite_all(&tail.bytes, tail.offset as i64).is_err() {
         let _ = Syscall::ftruncate(fd, size as i64);
         return;
     }
-    if file.pwrite_all(&tail.section_headers_offset.to_le_bytes(), 40).is_ok() {
+    if file
+        .pwrite_all(&tail.section_headers_offset.to_le_bytes(), 40)
+        .is_ok()
+    {
         let _ = file.pwrite_all(&tail.number_of_sections.to_le_bytes(), 60);
     }
 }
@@ -3159,7 +3449,10 @@ pub(crate) fn inject<'a>(
         {
             let _self_fd_guard = Syscall::CloseOnDrop::new(self_fd);
 
-            if matches!(target.os, CompileTargetOs::Linux | CompileTargetOs::Freebsd | CompileTargetOs::Mac) {
+            if matches!(
+                target.os,
+                CompileTargetOs::Linux | CompileTargetOs::Freebsd | CompileTargetOs::Mac
+            ) {
                 mapped_executable = map_privately(self_fd);
                 if early_template_copy.is_some() {
                     template_contents = map_privately(self_fd);
@@ -3202,7 +3495,10 @@ pub(crate) fn inject<'a>(
                     }
                 },
             };
-            let initialized = bun_macho::MachoFile::init(mapped_template.as_deref().unwrap_or(&input_bytes), bytes.len());
+            let initialized = bun_macho::MachoFile::init(
+                mapped_template.as_deref().unwrap_or(&input_bytes),
+                bytes.len(),
+            );
             #[cfg(not(windows))]
             if let Some(mapped_template) = mapped_template {
                 let _ = Syscall::munmap(mapped_template.as_mut_ptr(), mapped_template.len());
@@ -3216,8 +3512,14 @@ pub(crate) fn inject<'a>(
                 }
             };
             if let Some((table, image_in_payload)) = aot_symbols {
-                if macho_file.add_symbols(table, image_in_payload as u64).is_none() {
-                    bun_core::scoped_log!(StandaloneModuleGraph, "Mach-O symbols: none added (the tables do not lie as expected)");
+                if macho_file
+                    .add_symbols(table, image_in_payload as u64)
+                    .is_none()
+                {
+                    bun_core::scoped_log!(
+                        StandaloneModuleGraph,
+                        "Mach-O symbols: none added (the tables do not lie as expected)"
+                    );
                 }
             }
             if let Err(e) = macho_file.write_section(bytes, has_aot_image) {
@@ -3226,7 +3528,11 @@ pub(crate) fn inject<'a>(
                 return None;
             }
 
-            let mut writer = ChangedBlocksWriter { fd: cloned_executable_fd, offset: 0, already_in_file: &input_bytes };
+            let mut writer = ChangedBlocksWriter {
+                fd: cloned_executable_fd,
+                offset: 0,
+                already_in_file: &input_bytes,
+            };
             let written = match macho_file.build_and_sign(&mut writer) {
                 Ok(n) => n,
                 Err(e) => {
@@ -3334,7 +3640,12 @@ pub(crate) fn inject<'a>(
             #[cfg(not(windows))]
             if let Some(original) = mapped_executable.take() {
                 let (pointer, length) = (original.as_mut_ptr(), original.len());
-                let written = write_elf_in_pieces(&mut *original, bytes, cloned_executable_fd, template_contents.as_deref());
+                let written = write_elf_in_pieces(
+                    &mut *original,
+                    bytes,
+                    cloned_executable_fd,
+                    template_contents.as_deref(),
+                );
                 if let Some(already_written) = template_contents.take() {
                     let _ = Syscall::munmap(already_written.as_mut_ptr(), already_written.len());
                 }
@@ -3361,7 +3672,10 @@ pub(crate) fn inject<'a>(
                     Ok(false) => {}
                 }
             }
-            let input_bytes = match from_mapping.map_or_else(|| bun_sys::File::borrow(&cloned_executable_fd).read_to_end(), Ok) {
+            let input_bytes = match from_mapping.map_or_else(
+                || bun_sys::File::borrow(&cloned_executable_fd).read_to_end(),
+                Ok,
+            ) {
                 Ok(b) => b,
                 Err(err) => {
                     bun_core::pretty_errorln!("Error reading executable: {}", err);
@@ -3899,21 +4213,32 @@ pub fn to_executable(
         .find(|file| file.output_kind == options::OutputKind::AotImage)
         .map(|image| image.value.as_slice());
     #[cfg(unix)]
-    let list_symbols = || -> Option<(Vec<u8>, usize)> { Some((aot_image_symbols(aot_image?)?, aot_image_at?)) };
+    let list_symbols =
+        || -> Option<(Vec<u8>, usize)> { Some((aot_image_symbols(aot_image?)?, aot_image_at?)) };
     #[cfg(not(unix))]
     let list_symbols = || -> Option<(Vec<u8>, usize)> { None };
     let mut temp_path_buf = bun_paths::path_buffer_pool::get();
     let (injected, aot_symbols) = std::thread::scope(|scope| {
         if matches!(target.os, CompileTargetOs::Linux | CompileTargetOs::Freebsd) {
             let listing = scope.spawn(list_symbols);
-            let injected = inject(&bytes, aot_image.is_some(), None, &self_exe, windows_options, target, &mut temp_path_buf);
+            let injected = inject(
+                &bytes,
+                aot_image.is_some(),
+                None,
+                &self_exe,
+                windows_options,
+                target,
+                &mut temp_path_buf,
+            );
             return (injected, listing.join().ok().flatten());
         }
         let aot_symbols = list_symbols();
         let injected = inject(
             &bytes,
             aot_image.is_some(),
-            aot_symbols.as_ref().map(|(table, at)| (table.as_slice(), *at)),
+            aot_symbols
+                .as_ref()
+                .map(|(table, at)| (table.as_slice(), *at)),
             &self_exe,
             windows_options,
             target,
@@ -3932,7 +4257,9 @@ pub fn to_executable(
     };
     let fd = injected.fd;
     #[cfg(unix)]
-    if let (Some((table, at)), CompileTargetOs::Linux | CompileTargetOs::Freebsd) = (&aot_symbols, target.os) {
+    if let (Some((table, at)), CompileTargetOs::Linux | CompileTargetOs::Freebsd) =
+        (&aot_symbols, target.os)
+    {
         add_elf_symbols(fd, table, *at);
     }
     // Closed explicitly at every return below rather than by a guard: on Windows
@@ -4127,7 +4454,8 @@ impl StandaloneModuleGraph {
             0,
         )?;
         // SAFETY: the mapping is page-aligned and longer than eight bytes: checked above.
-        let len = usize::try_from(u64::from_le_bytes(unsafe { map.cast::<[u8; 8]>().read() })).unwrap_or(usize::MAX);
+        let len = usize::try_from(u64::from_le_bytes(unsafe { map.cast::<[u8; 8]>().read() }))
+            .unwrap_or(usize::MAX);
         if len > size - size_of::<u64>() {
             fd.close();
             return Ok(None);
@@ -4146,8 +4474,21 @@ impl StandaloneModuleGraph {
         const PAGE_READONLY: u32 = 2;
         const FILE_MAP_READ: u32 = 4;
         unsafe extern "system" {
-            fn CreateFileMappingW(file: *mut core::ffi::c_void, attributes: *mut core::ffi::c_void, protection: u32, size_high: u32, size_low: u32, name: *const u16) -> *mut core::ffi::c_void;
-            fn MapViewOfFile(mapping: *mut core::ffi::c_void, access: u32, offset_high: u32, offset_low: u32, size: usize) -> *mut core::ffi::c_void;
+            fn CreateFileMappingW(
+                file: *mut core::ffi::c_void,
+                attributes: *mut core::ffi::c_void,
+                protection: u32,
+                size_high: u32,
+                size_low: u32,
+                name: *const u16,
+            ) -> *mut core::ffi::c_void;
+            fn MapViewOfFile(
+                mapping: *mut core::ffi::c_void,
+                access: u32,
+                offset_high: u32,
+                offset_low: u32,
+                size: usize,
+            ) -> *mut core::ffi::c_void;
         }
         let size = usize::try_from(Syscall::get_file_size(fd)?).unwrap_or(0);
         if size <= size_of::<u64>() {
@@ -4155,7 +4496,14 @@ impl StandaloneModuleGraph {
         }
         // SAFETY: `fd` is an open file handle; the other arguments ask for the whole file, read-only.
         let map = unsafe {
-            let mapping = CreateFileMappingW(fd.native().cast(), core::ptr::null_mut(), PAGE_READONLY, 0, 0, core::ptr::null());
+            let mapping = CreateFileMappingW(
+                fd.native().cast(),
+                core::ptr::null_mut(),
+                PAGE_READONLY,
+                0,
+                0,
+                core::ptr::null(),
+            );
             if mapping.is_null() {
                 return Ok(None);
             }
@@ -4165,7 +4513,8 @@ impl StandaloneModuleGraph {
             return Ok(None);
         }
         // SAFETY: the view is aligned to the allocation granularity and longer than eight bytes: checked above.
-        let len = usize::try_from(u64::from_le_bytes(unsafe { map.cast::<[u8; 8]>().read() })).unwrap_or(usize::MAX);
+        let len = usize::try_from(u64::from_le_bytes(unsafe { map.cast::<[u8; 8]>().read() }))
+            .unwrap_or(usize::MAX);
         if len > size - size_of::<u64>() {
             return Ok(None);
         }

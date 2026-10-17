@@ -9,7 +9,9 @@ function recursiveFunctions() {
   let seed = 7;
   const nextCallee = () => (seed = (seed * 48_271) % 2_147_483_647) % functionCount;
   const functions = Array.from({ length: functionCount }, (_, index) => {
-    const calls = [0, 1, 2].map(tag => `  if (node.tag === ${tag}) return f${nextCallee()}(node.next, depth + ${tag});\n`);
+    const calls = [0, 1, 2].map(
+      tag => `  if (node.tag === ${tag}) return f${nextCallee()}(node.next, depth + ${tag});\n`,
+    );
     return `function f${index}(node, depth) {\n${calls.join("")}  return node.value;\n}\n`;
   });
   return `${functions.join("")}export const result = f0({ tag: 9, value: 1, next: null }, 0);\n`;
@@ -29,7 +31,11 @@ test(
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([checked.stdout.text(), checked.stderr.text(), checked.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([
+      checked.stdout.text(),
+      checked.stderr.text(),
+      checked.exited,
+    ]);
     expect({ output: exitCode ? stdout + stderr : "", exitCode }).toEqual({ output: "", exitCode: 0 });
   },
   timeout,

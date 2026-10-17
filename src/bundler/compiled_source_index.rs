@@ -13,7 +13,8 @@ const SLOT_SIZE: usize = 8;
 
 fn read_slot(index: &[u8], slot: usize) -> (u32, u32) {
     let at = slot * SLOT_SIZE;
-    let word = |at: usize| u32::from_le_bytes([index[at], index[at + 1], index[at + 2], index[at + 3]]);
+    let word =
+        |at: usize| u32::from_le_bytes([index[at], index[at + 1], index[at + 2], index[at + 3]]);
     (word(at), word(at + 4))
 }
 
@@ -61,13 +62,18 @@ pub fn find<'a>(index: &[u8], sorted_paths: &'a [u8], key: &[u8]) -> Option<(&'a
         if start == 0 {
             return None;
         }
-        let found = sorted_paths.get(start as usize - 1..)?.get(..(packed >> 2) as usize)?;
+        let found = sorted_paths
+            .get(start as usize - 1..)?
+            .get(..(packed >> 2) as usize)?;
         if found == key {
-            return Some((found, match packed & 3 {
-                0 => Entry::File,
-                1 => Entry::JsonModule,
-                _ => Entry::Folder,
-            }));
+            return Some((
+                found,
+                match packed & 3 {
+                    0 => Entry::File,
+                    1 => Entry::JsonModule,
+                    _ => Entry::Folder,
+                },
+            ));
         }
         slot = (slot + 1) & (capacity - 1);
     }

@@ -93,7 +93,9 @@ const FIXING: &[Param] = &[
 const TYPES: &[Param] = &[
     clap::param!("--type-aware                    Also run the rules that need types"),
     clap::param!("--no-type-aware                 Skip the rules that need types"),
-    clap::param!("--aot                           Also report what behaves differently when compiled with <b>bun build --aot<r>"),
+    clap::param!(
+        "--aot                           Also report what behaves differently when compiled with <b>bun build --aot<r>"
+    ),
     clap::param!(
         "--tsconfig <path>               Use this tsconfig.json instead of the nearest one"
     ),

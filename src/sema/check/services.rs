@@ -586,8 +586,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             return false;
         };
         let pat = self.c.hir(node.file)[d].pat;
-        self.c
-            .is_const_used_only_undefined_safely(node.file, pat)
+        self.c.is_const_used_only_undefined_safely(node.file, pat)
     }
 
     /// The text of the file from the first token of `node` to the end of its last.
@@ -878,7 +877,11 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
 
     pub fn aot_check_any_inflow(&mut self, node: NodeRef) -> Option<crate::check::AotCheck> {
         let e = self.expr_of(node)?;
-        if self.c.cached_type_of_expr(node.file, e).is_some_and(|known| known != TypeId::ANY) {
+        if self
+            .c
+            .cached_type_of_expr(node.file, e)
+            .is_some_and(|known| known != TypeId::ANY)
+        {
             return None;
         }
         let outer = self.c.begin_recheck();
@@ -888,14 +891,19 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     }
 
     pub fn aot_describe_any_origin(&mut self, node: NodeRef) -> Vec<u8> {
-        let Some(e) = self.expr_of(node) else { return Vec::new() };
+        let Some(e) = self.expr_of(node) else {
+            return Vec::new();
+        };
         let outer = self.c.begin_recheck();
         let found = self.c.describe_any_origin(node.file, e);
         self.c.end_recheck(outer);
         found
     }
 
-    pub fn aot_check_external_data_inflow(&mut self, node: NodeRef) -> Option<crate::check::AotCheck> {
+    pub fn aot_check_external_data_inflow(
+        &mut self,
+        node: NodeRef,
+    ) -> Option<crate::check::AotCheck> {
         let e = self.expr_of(node)?;
         let outer = self.c.begin_recheck();
         let found = self.c.check_external_data_inflow(node.file, e);

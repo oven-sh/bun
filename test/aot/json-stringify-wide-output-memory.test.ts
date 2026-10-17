@@ -1,9 +1,9 @@
 // The compiled JSON.stringify writes a large 16-bit result straight into the string it returns, with no second copy of it.
 // Peak RSS over the baseline, in units of the length of the result, measured on Linux x64: 4.9 so, 6.9 with the second copy.
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { test } from "./supported";
 
 const files = {
   "main.ts": `

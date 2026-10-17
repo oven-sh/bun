@@ -1,6 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync, rmSync, statSync, truncateSync, utimesSync, writeFileSync } from "fs";
-import { mkdirSync, renameSync } from "fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  truncateSync,
+  utimesSync,
+  writeFileSync,
+} from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
@@ -10,17 +20,33 @@ const flags = ["--aot"];
 const note = " (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)";
 
 async function ran(files: Record<string, string>, args: string[]) {
-  using dir = tempDir("run-aot-jit", { "tsconfig.json": `{ "compilerOptions": { "strict": true, "target": "ESNext", "module": "Preserve", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "noEmit": true } }`, ...files });
-  await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd: String(dir), env: { ...bunEnv, BUN_AOT_VERBOSE: "1" }, stdout: "pipe", stderr: "pipe" });
+  using dir = tempDir("run-aot-jit", {
+    "tsconfig.json": `{ "compilerOptions": { "strict": true, "target": "ESNext", "module": "Preserve", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "noEmit": true } }`,
+    ...files,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    cwd: String(dir),
+    env: { ...bunEnv, BUN_AOT_VERBOSE: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
-const run = (text: string) => ran({ "main.ts": `declare const console: { log(...values: unknown[]): void };\n` + text }, ["run", ...flags, "main.ts"]);
+const run = (text: string) =>
+  ran({ "main.ts": `declare const console: { log(...values: unknown[]): void };\n` + text }, [
+    "run",
+    ...flags,
+    "main.ts",
+  ]);
 const attempt = (statement: string) => `try { ${statement} } catch (e) { console.log(String(e)); }`;
 
 describe("before the program starts", () => {
   test("a type error ends the process and nothing runs", async () => {
-    const { stdout, stderr, exitCode } = await run(`console.log("ran"); const port: number = "8080"; console.log(port);`);
+    const { stdout, stderr, exitCode } = await run(
+      `console.log("ran"); const port: number = "8080"; console.log(port);`,
+    );
     expect(stderr).toContain("TS2322");
     expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
   });
@@ -33,13 +59,29 @@ describe("before the program starts", () => {
         if (feature("EXTRA")) console.log("extra", LIMIT + 1);
         else console.log(wrong("never checked, never run"));`,
     };
-    const { stdout, stderr, exitCode } = await ran(files, ["run", ...flags, "--define", "LIMIT=41", "--feature=EXTRA", "main.ts"]);
-    expect({ stdout, stderr: stderr.includes("TS2345"), exitCode }).toEqual({ stdout: "extra 42\n", stderr: false, exitCode: 0 });
+    const { stdout, stderr, exitCode } = await ran(files, [
+      "run",
+      ...flags,
+      "--define",
+      "LIMIT=41",
+      "--feature=EXTRA",
+      "main.ts",
+    ]);
+    expect({ stdout, stderr: stderr.includes("TS2345"), exitCode }).toEqual({
+      stdout: "extra 42\n",
+      stderr: false,
+      exitCode: 0,
+    });
     const without = await ran(files, ["run", ...flags, "--define", "LIMIT=41", "main.ts"]);
-    expect({ stderr: without.stderr.includes("TS2345"), exitCode: without.exitCode }).toEqual({ stderr: true, exitCode: 1 });
+    expect({ stderr: without.stderr.includes("TS2345"), exitCode: without.exitCode }).toEqual({
+      stderr: true,
+      exitCode: 1,
+    });
   });
   test("code that always throws under --aot is a compile error", async () => {
-    const { stdout, stderr, exitCode } = await run(`console.log("ran"); function double(n: number) { return n * 2; } console.log(double("4" as any));`);
+    const { stdout, stderr, exitCode } = await run(
+      `console.log("ran"); function double(n: number) { return n * 2; } console.log(double("4" as any));`,
+    );
     expect(stderr).toContain("TS100013");
     expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
   });
@@ -47,18 +89,27 @@ describe("before the program starts", () => {
 
 describe("type-check cache", () => {
   const files = {
-    "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, allowImportingTsExtensions: true, noEmit: true } }),
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: { strict: true, allowImportingTsExtensions: true, noEmit: true },
+    }),
     "main.ts": `import { twice } from "./lib.ts"; const given: any = JSON.parse('"4"'); try { console.log(twice(given)); } catch (e) { console.log(String(e).split(" (bun")[0]); }`,
     "lib.ts": `export function twice(n: number): number { return n * 2; }`,
   };
   async function started(cwd: string, cache: string) {
-    await using proc = Bun.spawn({ cmd: [bunExe(), "run", ...flags, "main.ts"], cwd, env: { ...bunEnv, BUN_RUNTIME_TRANSPILER_CACHE_PATH: cache }, stdout: "pipe", stderr: "pipe" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", ...flags, "main.ts"],
+      cwd,
+      env: { ...bunEnv, BUN_RUNTIME_TRANSPILER_CACHE_PATH: cache },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     said = stderr;
     return { stdout, errors: stderr.split("\n").filter(line => line.includes("error TS")).length, exitCode };
   }
   let said = "";
-  const kept = (cache: string) => (existsSync(join(cache, "@aot@")) ? readdirSync(join(cache, "@aot@")).filter(name => name.endsWith(".look")) : []);
+  const kept = (cache: string) =>
+    existsSync(join(cache, "@aot@")) ? readdirSync(join(cache, "@aot@")).filter(name => name.endsWith(".look")) : [];
   const refused = { stdout: 'TypeError: expected number, got string "4"\n', errors: 0, exitCode: 0 };
 
   test("the second run hits the cache and behaves the same", async () => {
@@ -69,7 +120,12 @@ describe("type-check cache", () => {
     expect(await started(String(dir), String(cache))).toEqual(refused);
   });
   test("a cached run repeats the warnings", async () => {
-    using dir = tempDir("aot-kept-look", { ...files, "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, allowImportingTsExtensions: true, noEmit: true, types: ["bun-types"] } }) });
+    using dir = tempDir("aot-kept-look", {
+      ...files,
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { strict: true, allowImportingTsExtensions: true, noEmit: true, types: ["bun-types"] },
+      }),
+    });
     using cache = tempDir("aot-kept-look-cache", {});
     expect(await started(String(dir), String(cache))).toEqual(refused);
     const first = said;
@@ -79,7 +135,11 @@ describe("type-check cache", () => {
     expect(said).toBe(first);
   });
   test("a new file that shadows a resolved import invalidates the cache", async () => {
-    using dir = tempDir("aot-kept-look", { "tsconfig.json": files["tsconfig.json"], "main.ts": files["main.ts"].replace("./lib.ts", "./lib"), "lib/index.ts": files["lib.ts"] });
+    using dir = tempDir("aot-kept-look", {
+      "tsconfig.json": files["tsconfig.json"],
+      "main.ts": files["main.ts"].replace("./lib.ts", "./lib"),
+      "lib/index.ts": files["lib.ts"],
+    });
     using cache = tempDir("aot-kept-look-cache", {});
     expect(await started(String(dir), String(cache))).toEqual(refused);
     expect(await started(String(dir), String(cache))).toEqual(refused);
@@ -92,12 +152,20 @@ describe("type-check cache", () => {
     expect(await started(String(dir), String(cache))).toEqual(refused);
     writeFileSync(join(String(dir), "lib.ts"), `export function twice(n: string): string { return n + n; }`);
     expect(await started(String(dir), String(cache))).toEqual({ stdout: "44\n", errors: 0, exitCode: 0 });
-    writeFileSync(join(String(dir), "lib.ts"), `export function twice(n: number): number { const wrong: number = "text"; return n * 2; }`);
+    writeFileSync(
+      join(String(dir), "lib.ts"),
+      `export function twice(n: number): number { const wrong: number = "text"; return n * 2; }`,
+    );
     expect(await started(String(dir), String(cache))).toEqual({ stdout: "", errors: 1, exitCode: 1 });
     expect(await started(String(dir), String(cache))).toEqual({ stdout: "", errors: 1, exitCode: 1 });
     writeFileSync(join(String(dir), "lib.ts"), files["lib.ts"]);
     expect(await started(String(dir), String(cache))).toEqual(refused);
-    writeFileSync(join(String(dir), "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, allowImportingTsExtensions: true, noEmit: true, noUnusedLocals: true } }));
+    writeFileSync(
+      join(String(dir), "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: { strict: true, allowImportingTsExtensions: true, noEmit: true, noUnusedLocals: true },
+      }),
+    );
     writeFileSync(join(String(dir), "main.ts"), files["main.ts"]);
     expect((await started(String(dir), String(cache))).exitCode).toBe(0);
     writeFileSync(join(String(dir), "main.ts"), `const unused = 1; ` + files["main.ts"]);
@@ -128,7 +196,13 @@ describe("type-check cache", () => {
     });
     using cache = tempDir("aot-kept-look-cache", {});
     for (const turn of ["full check", "a start on what was kept"]) {
-      await using proc = Bun.spawn({ cmd: [bunExe(), "--watch", ...flags, "main.ts"], cwd: String(dir), env: { ...bunEnv, BUN_RUNTIME_TRANSPILER_CACHE_PATH: String(cache) }, stdout: "pipe", stderr: "pipe" });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--watch", ...flags, "main.ts"],
+        cwd: String(dir),
+        env: { ...bunEnv, BUN_RUNTIME_TRANSPILER_CACHE_PATH: String(cache) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
       const printed = { stdout: "", stderr: "" };
       const read = async (name: "stdout" | "stderr") => {
         for await (const chunk of proc[name]) printed[name] += new TextDecoder().decode(chunk);
@@ -152,7 +226,11 @@ describe("type-check cache", () => {
     }
   });
   test("editing a file the program does not import keeps the cache unless it adds `declare global`", async () => {
-    using dir = tempDir("aot-kept-look", { ...files, "tsconfig.json": JSON.stringify({ ...JSON.parse(files["tsconfig.json"]), include: ["*.ts"] }), "beside.ts": `export const beside = 1;` });
+    using dir = tempDir("aot-kept-look", {
+      ...files,
+      "tsconfig.json": JSON.stringify({ ...JSON.parse(files["tsconfig.json"]), include: ["*.ts"] }),
+      "beside.ts": `export const beside = 1;`,
+    });
     using cache = tempDir("aot-kept-look-cache", {});
     const written = () => statSync(join(String(cache), "@aot@", kept(String(cache))[0])).mtimeMs;
     expect(await started(String(dir), String(cache))).toEqual(refused);
@@ -160,12 +238,19 @@ describe("type-check cache", () => {
     writeFileSync(join(String(dir), "beside.ts"), `export const beside = 2; const wrong: number = "text";`);
     expect(await started(String(dir), String(cache))).toEqual(refused);
     expect(written()).toBe(first);
-    writeFileSync(join(String(dir), "beside.ts"), `export const beside = 3; declare global { interface Number { added: number } }`);
+    writeFileSync(
+      join(String(dir), "beside.ts"),
+      `export const beside = 3; declare global { interface Number { added: number } }`,
+    );
     expect(await started(String(dir), String(cache))).toEqual(refused);
     expect(written()).toBeGreaterThan(first);
   });
   test("creating or deleting non-source files keeps the cache unless the program imports them", async () => {
-    using dir = tempDir("aot-kept-look", { ...files, "main.ts": `// @ts-ignore\nimport note from "./note.txt";\nconsole.log(note); ` + files["main.ts"], "note.txt": "first" });
+    using dir = tempDir("aot-kept-look", {
+      ...files,
+      "main.ts": `// @ts-ignore\nimport note from "./note.txt";\nconsole.log(note); ` + files["main.ts"],
+      "note.txt": "first",
+    });
     using cache = tempDir("aot-kept-look-cache", {});
     const written = () => statSync(join(String(cache), "@aot@", kept(String(cache))[0])).mtimeMs;
     expect(await started(String(dir), String(cache))).toEqual({ ...refused, stdout: "first\n" + refused.stdout });
@@ -185,8 +270,10 @@ describe("type-check cache", () => {
   });
   test("a full check seeded with the previous dependency file list produces the same tables as an unseeded one", async () => {
     const manifest = (name: string) => JSON.stringify({ name, version: "1.0.0", main: "index.ts", types: "index.ts" });
-    const one = (name: string) => `import { ${name} } from "${name}"; export function one(n: any): number { return ${name}(n); }`;
-    const other = (name: string) => `console.log("${name} is run"); export function ${name}(n: number): number { return n * 2; }`;
+    const one = (name: string) =>
+      `import { ${name} } from "${name}"; export function one(n: any): number { return ${name}(n); }`;
+    const other = (name: string) =>
+      `console.log("${name} is run"); export function ${name}(n: number): number { return n * 2; }`;
     using dir = tempDir("aot-kept-look", {
       "tsconfig.json": files["tsconfig.json"],
       "main.ts": `import { one } from "one"; const given: any = JSON.parse('"4"'); try { console.log(one(given)); } catch (e) { console.log(String(e).split(" (bun")[0]); }`,
@@ -231,20 +318,35 @@ describe("type-check cache", () => {
   });
   test("the cache is capped at 1 GiB: oldest entries and stale temporary files are evicted", async () => {
     using dir = tempDir("aot-kept-look", files);
-    using cache = tempDir("aot-kept-look-cache", { "@aot@/oldest.look": "", "@aot@/older.look": "", "@aot@/00.look.left": "", "@aot@/01.look.fresh": "" });
+    using cache = tempDir("aot-kept-look-cache", {
+      "@aot@/oldest.look": "",
+      "@aot@/older.look": "",
+      "@aot@/00.look.left": "",
+      "@aot@/01.look.fresh": "",
+    });
     const at = (name: string) => join(String(cache), "@aot@", name);
-    for (const [name, age] of [["oldest.look", 7200], ["older.look", 3600], ["00.look.left", 3600]] as const) {
+    for (const [name, age] of [
+      ["oldest.look", 7200],
+      ["older.look", 3600],
+      ["00.look.left", 3600],
+    ] as const) {
       truncateSync(at(name), 600 << 20);
       utimesSync(at(name), Date.now() / 1000 - age, Date.now() / 1000 - age);
     }
     expect(await started(String(dir), String(cache))).toEqual(refused);
     expect(kept(String(cache)).length).toBe(2);
-    expect(["oldest.look", "older.look", "00.look.left", "01.look.fresh"].map(name => existsSync(at(name)))).toEqual([false, true, false, true]);
+    expect(["oldest.look", "older.look", "00.look.left", "01.look.fresh"].map(name => existsSync(at(name)))).toEqual([
+      false,
+      true,
+      false,
+      true,
+    ]);
   });
   test("changes in ancestor directories keep the cache unless resolution looked them up", async () => {
     using above = tempDir("aot-kept-look", {
       "project/tsconfig.json": files["tsconfig.json"],
-      "project/main.ts": `import { twice } from "../beside/lib.ts"; ` + files["main.ts"].slice(files["main.ts"].indexOf("const given")),
+      "project/main.ts":
+        `import { twice } from "../beside/lib.ts"; ` + files["main.ts"].slice(files["main.ts"].indexOf("const given")),
       "beside/lib.ts": files["lib.ts"],
     });
     using cache = tempDir("aot-kept-look-cache", {});
@@ -277,17 +379,32 @@ describe("type-check cache", () => {
 
 describe("incremental type check", () => {
   const files = {
-    "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, allowImportingTsExtensions: true, noEmit: true } }),
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: { strict: true, allowImportingTsExtensions: true, noEmit: true },
+    }),
     "main.ts": `import { twice } from "./lib.ts"; const four: number = twice(2); const given: any = JSON.parse('"4"'); try { console.log(four, twice(given)); } catch (e) { console.log(four, String(e).split(" (bun")[0]); } import "./large.ts";`,
     "lib.ts": `export function twice(n: number) {\n  return n * 2;\n}\n`,
     "large.ts": "export {};\n// " + Buffer.alloc(1 << 20, "x").toString(),
   };
   const inside = (statement: string) => files["lib.ts"].replace("{\n", "{\n  " + statement + "\n");
   async function started(cwd: string, cache: string) {
-    await using proc = Bun.spawn({ cmd: [bunExe(), "run", ...flags, "main.ts"], cwd, env: { ...bunEnv, BUN_AOT_VERBOSE: "1", BUN_RUNTIME_TRANSPILER_CACHE_PATH: cache }, stdout: "pipe", stderr: "pipe" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", ...flags, "main.ts"],
+      cwd,
+      env: { ...bunEnv, BUN_AOT_VERBOSE: "1", BUN_RUNTIME_TRANSPILER_CACHE_PATH: cache },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const lines = stderr.split("\n");
-    return { stdout, errors: lines.filter(line => line.includes("error TS")).map(line => line.split(":")[0]), roads: lines.filter(line => line.startsWith("[aot] type check: ")).map(line => line.slice(18).replace(/\d+ ms/, "some ms")), exitCode };
+    return {
+      stdout,
+      errors: lines.filter(line => line.includes("error TS")).map(line => line.split(":")[0]),
+      roads: lines
+        .filter(line => line.startsWith("[aot] type check: "))
+        .map(line => line.slice(18).replace(/\d+ ms/, "some ms")),
+      exitCode,
+    };
   }
   const refused = 'TypeError: expected number, got string "4"';
   const short = "incremental check: 1 changed, exported types unchanged";
@@ -295,10 +412,20 @@ describe("incremental type check", () => {
   test("an edit that keeps exported types checks only the changed file", async () => {
     using dir = tempDir("aot-after-an-edit", files);
     using cache = tempDir("aot-after-an-edit-cache", {});
-    expect(await started(String(dir), String(cache))).toEqual({ stdout: `4 ${refused}\n`, errors: [], roads: ["full check"], exitCode: 0 });
+    expect(await started(String(dir), String(cache))).toEqual({
+      stdout: `4 ${refused}\n`,
+      errors: [],
+      roads: ["full check"],
+      exitCode: 0,
+    });
     writeFileSync(join(String(dir), "lib.ts"), inside("const more = 1; void more;"));
     const next = await started(String(dir), String(cache));
-    expect({ ...next, roads: next.roads[0] }).toEqual({ stdout: `4 ${refused}\n`, errors: [], roads: short, exitCode: 0 });
+    expect({ ...next, roads: next.roads[0] }).toEqual({
+      stdout: `4 ${refused}\n`,
+      errors: [],
+      roads: short,
+      exitCode: 0,
+    });
     let later = await started(String(dir), String(cache));
     while (later.roads[0] === short) later = await started(String(dir), String(cache));
     expect(later).toEqual({ stdout: `4 ${refused}\n`, errors: [], roads: ["cache hit"], exitCode: 0 });
@@ -306,10 +433,20 @@ describe("incremental type check", () => {
   test("a program under 1 MiB always gets a full check", async () => {
     using dir = tempDir("aot-after-an-edit", { ...files, "large.ts": "export {};" });
     using cache = tempDir("aot-after-an-edit-cache", {});
-    expect(await started(String(dir), String(cache))).toEqual({ stdout: `4 ${refused}\n`, errors: [], roads: ["full check"], exitCode: 0 });
+    expect(await started(String(dir), String(cache))).toEqual({
+      stdout: `4 ${refused}\n`,
+      errors: [],
+      roads: ["full check"],
+      exitCode: 0,
+    });
     expect((await started(String(dir), String(cache))).roads).toEqual(["cache hit"]);
     writeFileSync(join(String(dir), "lib.ts"), inside("const more = 1; void more;"));
-    expect(await started(String(dir), String(cache))).toEqual({ stdout: `4 ${refused}\n`, errors: [], roads: ["full check"], exitCode: 0 });
+    expect(await started(String(dir), String(cache))).toEqual({
+      stdout: `4 ${refused}\n`,
+      errors: [],
+      roads: ["full check"],
+      exitCode: 0,
+    });
     expect((await started(String(dir), String(cache))).roads).toEqual(["cache hit"]);
   });
   test("a type error in the changed file is reported", async () => {
@@ -317,7 +454,12 @@ describe("incremental type check", () => {
     using cache = tempDir("aot-after-an-edit-cache", {});
     expect((await started(String(dir), String(cache))).roads).toEqual(["full check"]);
     writeFileSync(join(String(dir), "lib.ts"), inside(`const wrong: number = "text"; void wrong;`));
-    expect(await started(String(dir), String(cache))).toEqual({ stdout: "", errors: ["lib.ts(2,9)"], roads: ["type errors in changed files: falling back to a full check", "full check"], exitCode: 1 });
+    expect(await started(String(dir), String(cache))).toEqual({
+      stdout: "",
+      errors: ["lib.ts(2,9)"],
+      roads: ["type errors in changed files: falling back to a full check", "full check"],
+      exitCode: 1,
+    });
     writeFileSync(join(String(dir), "lib.ts"), files["lib.ts"]);
     expect((await started(String(dir), String(cache))).roads).toEqual(["cache hit"]);
   });
@@ -326,7 +468,12 @@ describe("incremental type check", () => {
     using cache = tempDir("aot-after-an-edit-cache", {});
     expect((await started(String(dir), String(cache))).roads).toEqual(["full check"]);
     writeFileSync(join(String(dir), "lib.ts"), files["lib.ts"].replace("n * 2", "String(n * 2)"));
-    expect(await started(String(dir), String(cache))).toEqual({ stdout: "", errors: ["main.ts(1,41)"], roads: ["exported types changed: falling back to a full check", "full check"], exitCode: 1 });
+    expect(await started(String(dir), String(cache))).toEqual({
+      stdout: "",
+      errors: ["main.ts(1,41)"],
+      roads: ["exported types changed: falling back to a full check", "full check"],
+      exitCode: 1,
+    });
   });
   test("two changed files are checked together and a new file triggers a full check", async () => {
     using dir = tempDir("aot-after-an-edit", files);
@@ -334,7 +481,9 @@ describe("incremental type check", () => {
     expect((await started(String(dir), String(cache))).roads).toEqual(["full check"]);
     writeFileSync(join(String(dir), "lib.ts"), inside("const more = 1; void more;"));
     writeFileSync(join(String(dir), "main.ts"), files["main.ts"] + " void 0;");
-    expect((await started(String(dir), String(cache))).roads[0]).toBe("incremental check: 2 changed, exported types unchanged");
+    expect((await started(String(dir), String(cache))).roads[0]).toBe(
+      "incremental check: 2 changed, exported types unchanged",
+    );
     writeFileSync(join(String(dir), "other.ts"), "export {};");
     expect((await started(String(dir), String(cache))).roads).toEqual(["full check"]);
   });
@@ -358,7 +507,10 @@ describe("at run time", () => {
       },
       ["run", ...flags, "main.ts"],
     );
-    expect({ stdout, exitCode }).toEqual({ stdout: `8\nTypeError: expected number, got string "1"${note}\n`, exitCode: 0 });
+    expect({ stdout, exitCode }).toEqual({
+      stdout: `8\nTypeError: expected number, got string "1"${note}\n`,
+      exitCode: 0,
+    });
   });
   test("a module resolved only at run time runs unchecked", async () => {
     const { stdout, stderr, exitCode } = await ran(
@@ -370,7 +522,14 @@ describe("at run time", () => {
       },
       ["run", ...flags, "main.ts"],
     );
-    expect({ stdout, stderr: stderr.split("\n").filter(line => !line.startsWith("[aot] ")).join("\n"), exitCode }).toEqual({ stdout: "8\n", stderr: "", exitCode: 0 });
+    expect({
+      stdout,
+      stderr: stderr
+        .split("\n")
+        .filter(line => !line.startsWith("[aot] "))
+        .join("\n"),
+      exitCode,
+    }).toEqual({ stdout: "8\n", stderr: "", exitCode: 0 });
   });
   test("what was got is named in the words of an executable", async () => {
     const { stdout, exitCode } = await run(
@@ -381,7 +540,25 @@ describe("at run time", () => {
       for (const make of given) { try { take(make()); } catch (e) { console.log(JSON.stringify(String(e).split(" (bun")[0].split("got ")[1])); } }`,
     );
     expect(stdout.split("\n")).toEqual(
-      ["{ a }", "number 0", "untyped Object", "native Object", "native TypeError", "function", "native Generator", "class ", "class Point", "Point", "native Map", "Array", "untyped object", "function title", "function max"].map(words => JSON.stringify(words)).concat(""),
+      [
+        "{ a }",
+        "number 0",
+        "untyped Object",
+        "native Object",
+        "native TypeError",
+        "function",
+        "native Generator",
+        "class ",
+        "class Point",
+        "Point",
+        "native Map",
+        "Array",
+        "untyped object",
+        "function title",
+        "function max",
+      ]
+        .map(words => JSON.stringify(words))
+        .concat(""),
     );
     expect(exitCode).toBe(0);
   });
@@ -395,7 +572,14 @@ describe("at run time", () => {
       for (const take of [asMap, asDate, asBytes, asFunction]) for (const v of given) { try { console.log(take.name, typeof take(v)); } catch (e) { console.log(take.name, String(e).split(", got")[0]); } }`,
     );
     expect(stdout).toBe(
-      ["asMap TypeError: expected Map", "asDate TypeError: expected Date", "asBytes TypeError: expected Uint8Array", "asFunction function"].map(line => (line + "\n").repeat(3)).join(""),
+      [
+        "asMap TypeError: expected Map",
+        "asDate TypeError: expected Date",
+        "asBytes TypeError: expected Uint8Array",
+        "asFunction function",
+      ]
+        .map(line => (line + "\n").repeat(3))
+        .join(""),
     );
     expect(exitCode).toBe(0);
   });
@@ -415,16 +599,32 @@ describe("at run time", () => {
       const turned: number[] = [1, 2, 3]; turned[4294967294] = 4; Object.defineProperty(turned, 1, { get() { return 5; } }); ${attempt("for (const value of turned) console.log(value);")}`,
     );
     expect(stdout.split("\n")[0]).toBe("6 4294967295");
-    expect(stdout.split("\n")[1]).toStartWith("TypeError: Cannot read array element: the array or its prototype chain has accessors or a Proxy");
+    expect(stdout.split("\n")[1]).toStartWith(
+      "TypeError: Cannot read array element: the array or its prototype chain has accessors or a Proxy",
+    );
     expect(exitCode).toBe(0);
   });
   test("nothing is compiled ahead of time, and the JIT is on", async () => {
     const { stdout, stderr, exitCode } = await ran(
-      { "main.ts": `import { numberOfDFGCompiles } from "bun:jsc"; function work(n: number) { let sum = 0; for (let i = 0; i < n; i++) sum = (sum + i) % 1000; return sum; } const until = Date.now() + 30000; let sum = 0; do sum = work(1e6); while (numberOfDFGCompiles(work) === 0 && Date.now() < until); console.log(sum, numberOfDFGCompiles(work) > 0);` },
+      {
+        "main.ts": `import { numberOfDFGCompiles } from "bun:jsc"; function work(n: number) { let sum = 0; for (let i = 0; i < n; i++) sum = (sum + i) % 1000; return sum; } const until = Date.now() + 30000; let sum = 0; do sum = work(1e6); while (numberOfDFGCompiles(work) === 0 && Date.now() < until); console.log(sum, numberOfDFGCompiles(work) > 0);`,
+      },
       ["run", ...flags, "main.ts"],
     );
     expect(stderr).not.toContain("[aot] module: ");
-    expect({ stdout, exitCode }).toEqual({ stdout: "0 true\n".replace("0", String((() => { let sum = 0; for (let i = 0; i < 1e6; i++) sum = (sum + i) % 1000; return sum; })())), exitCode: 0 });
+    expect({ stdout, exitCode }).toEqual({
+      stdout: "0 true\n".replace(
+        "0",
+        String(
+          (() => {
+            let sum = 0;
+            for (let i = 0; i < 1e6; i++) sum = (sum + i) % 1000;
+            return sum;
+          })(),
+        ),
+      ),
+      exitCode: 0,
+    });
   });
   test("a value that does not match its type throws where it enters", async () => {
     const { stdout, exitCode } = await run(`
@@ -445,7 +645,9 @@ describe("at run time", () => {
     expect(exitCode).toBe(0);
   });
   test("an uncaught one names the place of the value", async () => {
-    const { stderr, exitCode } = await run(`function double(n: number) { return n * 2; }\nconst body: any = JSON.parse('{"visits":"3"}');\nconsole.log(double(body.visits));`);
+    const { stderr, exitCode } = await run(
+      `function double(n: number) { return n * 2; }\nconst body: any = JSON.parse('{"visits":"3"}');\nconsole.log(double(body.visits));`,
+    );
     expect(stderr).toContain(`TypeError: expected number | undefined, got string "3"${note}`);
     expect(stderr).toContain("main.ts:4:20");
     expect(stderr).not.toContain("aot-audit");
@@ -478,7 +680,9 @@ describe("at run time", () => {
       ${attempt(`console.log(first(like));`)}
       ${attempt(`console.log(first(proxy));`)}
       console.log(first([7]));`);
-    expect(stdout).toBe(`TypeError: expected number[], got untyped object${note}\nTypeError: expected number[], got native ProxyObject${note}\n7\n`);
+    expect(stdout).toBe(
+      `TypeError: expected number[], got untyped object${note}\nTypeError: expected number[], got native ProxyObject${note}\n7\n`,
+    );
   });
   test("built-in objects are immutable", async () => {
     const { stdout } = await ran(
@@ -551,7 +755,12 @@ describe("at run time", () => {
     ]);
   });
   test("a context made at run time has built-ins of its own, which are not locked", async () => {
-    const { stdout } = await ran({ "main.js": `const vm = require("node:vm"); console.log(vm.runInNewContext("Array.prototype.extra = 1; [].extra"), [].extra);` }, ["run", ...flags, "main.js"]);
+    const { stdout } = await ran(
+      {
+        "main.js": `const vm = require("node:vm"); console.log(vm.runInNewContext("Array.prototype.extra = 1; [].extra"), [].extra);`,
+      },
+      ["run", ...flags, "main.js"],
+    );
     expect(stdout).toBe("1 undefined\n");
   });
   test("what comes by the other arm of ||, ?. and a comma is as in plain Bun", async () => {
@@ -568,7 +777,10 @@ describe("at run time", () => {
       },
       ["run", ...flags, "main.ts"],
     );
-    expect({ stdout, exitCode }).toEqual({ stdout: "[ undefined ] [ true ] undefined true 1 TypeError\n", exitCode: 0 });
+    expect({ stdout, exitCode }).toEqual({
+      stdout: "[ undefined ] [ true ] undefined true 1 TypeError\n",
+      exitCode: 0,
+    });
   });
   test("a deep chain of tail calls whose results are held to a type runs in constant space, and the result is still held", async () => {
     const { stdout, exitCode } = await ran(
@@ -585,19 +797,29 @@ describe("at run time", () => {
       },
       ["run", ...flags, "main.ts"],
     );
-    expect({ stdout, exitCode }).toEqual({ stdout: '600000\nTypeError: expected number, got string "text"\n', exitCode: 0 });
+    expect({ stdout, exitCode }).toEqual({
+      stdout: '600000\nTypeError: expected number, got string "text"\n',
+      exitCode: 0,
+    });
   });
   test("a deep tail recursion finishes, as it does in the executable", async () => {
-    const { stdout } = await run(`function sum(n: number, total = 0): number { if (n === 0) return total; return sum(n - 1, total + n); } console.log(sum(1_000_000));`);
+    const { stdout } = await run(
+      `function sum(n: number, total = 0): number { if (n === 0) return total; return sum(n - 1, total + n); } console.log(sum(1_000_000));`,
+    );
     expect(stdout).toBe("500000500000\n");
   });
 });
 
 describe("bun test", () => {
-  const price = { "price.ts": `export function price(id: string): number { return id.length; }\nexport const rate = { of(id: string): number { return id.length * 2; } };` };
+  const price = {
+    "price.ts": `export function price(id: string): number { return id.length; }\nexport const rate = { of(id: string): number { return id.length * 2; } };`,
+  };
   test("mock.module replaces the exports of a module", async () => {
     const { stderr, exitCode } = await ran(
-      { ...price, "one.test.ts": `import { expect, mock, test } from "bun:test";\nmock.module("./price.ts", () => ({ price: (id: string): number => 42, rate: { of: () => 1 } }));\ntest("mocked", async () => { const { price } = await import("./price.ts"); expect(price("abc")).toBe(42); });` },
+      {
+        ...price,
+        "one.test.ts": `import { expect, mock, test } from "bun:test";\nmock.module("./price.ts", () => ({ price: (id: string): number => 42, rate: { of: () => 1 } }));\ntest("mocked", async () => { const { price } = await import("./price.ts"); expect(price("abc")).toBe(42); });`,
+      },
       ["test", ...flags, "one.test.ts"],
     );
     expect(stderr).toContain("1 pass");
@@ -605,7 +827,10 @@ describe("bun test", () => {
   });
   test("spyOn replaces a method of an object of the program and gives it back", async () => {
     const { stderr, exitCode } = await ran(
-      { ...price, "two.test.ts": `import { expect, spyOn, test } from "bun:test";\nimport { rate } from "./price.ts";\ntest("spied", () => { const spy = spyOn(rate, "of").mockReturnValue(7); expect(rate.of("abc")).toBe(7); expect(spy).toHaveBeenCalledWith("abc"); spy.mockRestore(); expect(rate.of("abc")).toBe(6); });` },
+      {
+        ...price,
+        "two.test.ts": `import { expect, spyOn, test } from "bun:test";\nimport { rate } from "./price.ts";\ntest("spied", () => { const spy = spyOn(rate, "of").mockReturnValue(7); expect(rate.of("abc")).toBe(7); expect(spy).toHaveBeenCalledWith("abc"); spy.mockRestore(); expect(rate.of("abc")).toBe(6); });`,
+      },
       ["test", ...flags, "two.test.ts"],
     );
     expect(stderr).toContain("1 pass");
@@ -613,7 +838,9 @@ describe("bun test", () => {
   });
   test("a mock function stands where a typed callback is wanted, and what it yields is held to the type", async () => {
     const { stderr, exitCode } = await ran(
-      { "three.test.ts": `import { expect, jest, mock, test } from "bun:test";\nfunction twice(f: (n: number) => number): number { return f(1) + f(2); }\ntest("called", () => { const f = mock((n: number) => n * 10); expect(twice(f)).toBe(30); expect(f).toHaveBeenCalledTimes(2); const g = jest.fn((n: number) => n); expect(twice(g)).toBe(3); });\ntest("held", () => { const wrong: any = mock(() => "text"); expect(() => twice(wrong)).toThrow(TypeError); });` },
+      {
+        "three.test.ts": `import { expect, jest, mock, test } from "bun:test";\nfunction twice(f: (n: number) => number): number { return f(1) + f(2); }\ntest("called", () => { const f = mock((n: number) => n * 10); expect(twice(f)).toBe(30); expect(f).toHaveBeenCalledTimes(2); const g = jest.fn((n: number) => n); expect(twice(g)).toBe(3); });\ntest("held", () => { const wrong: any = mock(() => "text"); expect(() => twice(wrong)).toThrow(TypeError); });`,
+      },
       ["test", ...flags, "three.test.ts"],
     );
     expect(stderr).toContain("2 pass");
@@ -638,10 +865,16 @@ describe("bun test", () => {
       },
       ["test", ...flags, "./main.test.ts"],
     );
-    expect({ seen: (stdout + stderr).split("\n").filter(line => line.startsWith("see:")), exitCode }).toEqual({ seen: ["see: e 1 false", "see: 40 1", "see: 0 true"], exitCode: 0 });
+    expect({ seen: (stdout + stderr).split("\n").filter(line => line.startsWith("see:")), exitCode }).toEqual({
+      seen: ["see: e 1 false", "see: 40 1", "see: 0 true"],
+      exitCode: 0,
+    });
   });
   test("a type error in a test file ends the run", async () => {
-    const { stderr, exitCode } = await ran({ "four.test.ts": `import { test } from "bun:test";\nconst n: number = "x";\ntest("never", () => {});` }, ["test", ...flags, "four.test.ts"]);
+    const { stderr, exitCode } = await ran(
+      { "four.test.ts": `import { test } from "bun:test";\nconst n: number = "x";\ntest("never", () => {});` },
+      ["test", ...flags, "four.test.ts"],
+    );
     expect(stderr).toContain("TS2322");
     expect(stderr).not.toContain("1 pass");
     expect(exitCode).toBe(1);

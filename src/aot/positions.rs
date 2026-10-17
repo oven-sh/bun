@@ -4,7 +4,9 @@ use bun_sema::hir::{self, ExprId, ExprKind, FnId};
 pub(crate) fn skip_assertions(hir: &hir::File<'_>, mut e: ExprId) -> ExprId {
     loop {
         e = match hir[e].kind {
-            ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) => expr,
+            ExprKind::As { expr, .. }
+            | ExprKind::Satisfies { expr, .. }
+            | ExprKind::NonNull(expr) => expr,
             _ => return e,
         };
     }
@@ -22,7 +24,11 @@ pub(crate) fn access_pos(hir: &hir::File<'_>, e: ExprId) -> u32 {
 #[inline]
 pub(crate) fn object_pos(hir: &hir::File<'_>, e: ExprId) -> u32 {
     match hir[skip_assertions(hir, e)].kind {
-        ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if !matches!(hir[obj].kind, ExprKind::Super) => last_pos(hir, obj),
+        ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }
+            if !matches!(hir[obj].kind, ExprKind::Super) =>
+        {
+            last_pos(hir, obj)
+        }
         _ => access_pos(hir, e),
     }
 }
@@ -36,11 +42,22 @@ pub(crate) fn last_pos(hir: &hir::File<'_>, e: ExprId) -> u32 {
         ExprKind::Binary { right, .. } => last_pos(hir, right),
         ExprKind::Assign { value, .. } => last_pos(hir, value),
         ExprKind::Cond { no, .. } => last_pos(hir, no),
-        ExprKind::Unary { op: hir::UnOp::PostInc | hir::UnOp::PostDec, .. } => hir[e].end - 2,
-        ExprKind::Unary { operand, .. } | ExprKind::Await(operand) | ExprKind::Spread(operand) => last_pos(hir, operand),
-        ExprKind::New(call) if hir.text[hir[e].end as usize - 1] != b')' => last_pos(hir, hir[call].callee),
+        ExprKind::Unary {
+            op: hir::UnOp::PostInc | hir::UnOp::PostDec,
+            ..
+        } => hir[e].end - 2,
+        ExprKind::Unary { operand, .. } | ExprKind::Await(operand) | ExprKind::Spread(operand) => {
+            last_pos(hir, operand)
+        }
+        ExprKind::New(call) if hir.text[hir[e].end as usize - 1] != b')' => {
+            last_pos(hir, hir[call].callee)
+        }
         ExprKind::Fn(func) => last_pos_in_function(hir, func).unwrap_or(hir[e].end - 1),
-        ExprKind::Call(_) | ExprKind::New(_) | ExprKind::Array(_) | ExprKind::Object(_) | ExprKind::Class(_) => hir[e].end - 1,
+        ExprKind::Call(_)
+        | ExprKind::New(_)
+        | ExprKind::Array(_)
+        | ExprKind::Object(_)
+        | ExprKind::Class(_) => hir[e].end - 1,
         _ => hir[e].pos,
     }
 }

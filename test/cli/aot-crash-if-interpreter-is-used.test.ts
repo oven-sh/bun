@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { withoutCoreDump } from "../aot/run-programs";
-import { describe, test } from "../aot/supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { withoutCoreDump } from "../aot/run-programs";
+import { describe, test } from "../aot/supported";
 
 const flag = "--aot-crash-if-interpreter-is-used";
 const startsChild = `const child = Bun.spawnSync({ cmd: [process.env.CHILD_BUN, "-e", "console.log('child ran')"], stdout: "pipe", stderr: "pipe" });
@@ -13,14 +13,26 @@ const childTripped = JSON.stringify({ stdout: "", tripped: true, succeeded: fals
 const tripsOnLateFile = /^crashIfInterpreterIsUsed: .*late\.cjs/m;
 
 async function run(cmd: string[], cwd: string, env: Record<string, string> = {}) {
-  await using proc = Bun.spawn({ cmd: withoutCoreDump(cmd), cwd, env: { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: undefined, CHILD_BUN: bunExe(), ...env }, stdout: "pipe", stderr: "pipe" });
+  await using proc = Bun.spawn({
+    cmd: withoutCoreDump(cmd),
+    cwd,
+    env: { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: undefined, CHILD_BUN: bunExe(), ...env },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
 
 async function build(cwd: string, ...flags: string[]) {
-  const built = await run([bunExe(), "build", "--compile", "--aot", ...flags, "program.mjs", "--outfile", "program"], cwd);
-  expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
+  const built = await run(
+    [bunExe(), "build", "--compile", "--aot", ...flags, "program.mjs", "--outfile", "program"],
+    cwd,
+  );
+  expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({
+    stderr: expect.not.stringMatching(/^error\b/m),
+    exitCode: 0,
+  });
   return join(cwd, "program");
 }
 
@@ -49,7 +61,9 @@ if (process.argv[2] === "as-child") {
 
   test("the environment variable does reach a child process", async () => {
     using folder = tempDir("aot-crash-if-interpreter", { "program.mjs": startsChild });
-    const { stdout, exitCode } = await run([await build(String(folder))], String(folder), { BUN_JSC_crashIfInterpreterIsUsed: "1" });
+    const { stdout, exitCode } = await run([await build(String(folder))], String(folder), {
+      BUN_JSC_crashIfInterpreterIsUsed: "1",
+    });
     expect({ stdout, exitCode }).toEqual({ stdout: childTripped, exitCode: 0 });
   }, 120_000);
 
@@ -130,14 +144,20 @@ try {
 }`,
     });
     const built = await run([bunExe(), "build.mjs"], String(folder));
-    expect({ stdout: built.stdout, exitCode: built.exitCode }).toEqual({ stdout: "compile.aotCrashIfInterpreterIsUsed requires compile.aot: true\n", exitCode: 0 });
+    expect({ stdout: built.stdout, exitCode: built.exitCode }).toEqual({
+      stdout: "compile.aotCrashIfInterpreterIsUsed requires compile.aot: true\n",
+      exitCode: 0,
+    });
     const { stdout, exitCode } = await run([join(String(folder), "late")], String(folder));
     expect({ stdout, exitCode }).toEqual({ stdout: "1\n", exitCode: 0 });
   }, 120_000);
 
   test("it requires --aot", async () => {
     using folder = tempDir("aot-crash-if-interpreter", { "program.mjs": "console.log(1);" });
-    const { stderr, exitCode } = await run([bunExe(), "build", "--compile", flag, "program.mjs", "--outfile", "program"], String(folder));
+    const { stderr, exitCode } = await run(
+      [bunExe(), "build", "--compile", flag, "program.mjs", "--outfile", "program"],
+      String(folder),
+    );
     expect(stderr).toContain(flag + " requires --aot");
     expect(exitCode).not.toBe(0);
   });

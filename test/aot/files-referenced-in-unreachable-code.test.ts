@@ -1,14 +1,15 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { test } from "./supported";
 
 const here = process.platform;
 const elsewhere = here === "darwin" ? "linux" : "darwin";
 const addon = `"../prebuilds/addon.node"`;
 const choice = addon;
 const head = `const path = require("node:path");\n`;
-const guard = (platform: string) => `if (process.platform !== "${platform}") {\n  throw new Error("only available on another platform");\n}\n`;
+const guard = (platform: string) =>
+  `if (process.platform !== "${platform}") {\n  throw new Error("only available on another platform");\n}\n`;
 
 const unreachable: Record<string, string> = {
   "a-choice-behind-a-throw": `${head}${guard(elsewhere)}module.exports = require(${choice}).thing;\n`,
@@ -35,7 +36,10 @@ const markOf = (name: string) => `the-mark-of-the-addon-of-${name};`;
 
 const files: Record<string, string> = {
   "main.js": Object.keys(packages)
-    .map(name => `try {\n  console.log("${name}:", typeof require("${name}"));\n} catch (error) {\n  console.log("${name}:", error.code ?? error.message);\n}\n`)
+    .map(
+      name =>
+        `try {\n  console.log("${name}:", typeof require("${name}"));\n} catch (error) {\n  console.log("${name}:", error.code ?? error.message);\n}\n`,
+    )
     .join(""),
 };
 for (const [name, index] of Object.entries(packages)) {
@@ -57,7 +61,11 @@ test("an addon is embedded in an executable only if it is named where the progra
   const plain = await run([bunExe(), "run", "main.js"], String(dir), bunEnv);
   expect(plain.exitCode).toBe(0);
 
-  const build = await run([bunExe(), "build", "--compile", "--aot", "main.js", "--outfile", "program"], String(dir), bunEnv);
+  const build = await run(
+    [bunExe(), "build", "--compile", "--aot", "main.js", "--outfile", "program"],
+    String(dir),
+    bunEnv,
+  );
   expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
   const executable = Buffer.from(await Bun.file(join(String(dir), isWindows ? "program.exe" : "program")).bytes());
   expect(Object.keys(packages).filter(name => executable.includes(markOf(name)))).toEqual(Object.keys(reachable));

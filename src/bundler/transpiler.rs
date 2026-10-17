@@ -777,12 +777,25 @@ impl AlreadyBundled {
 // so `AsyncModule.parse_result` / `JSTranspiler`
 // can store this by value without threading a borrow lifetime.
 fn with_javascript_extension(specifier: &[u8]) -> Option<Vec<u8>> {
-    const EXTENSIONS: [(&[u8], &[u8], &[u8]); 4] = [(b".ts", b".d.ts", b".js"), (b".tsx", b".d.tsx", b".js"), (b".mts", b".d.mts", b".mjs"), (b".cts", b".d.cts", b".cjs")];
+    const EXTENSIONS: [(&[u8], &[u8], &[u8]); 4] = [
+        (b".ts", b".d.ts", b".js"),
+        (b".tsx", b".d.tsx", b".js"),
+        (b".mts", b".d.mts", b".mjs"),
+        (b".cts", b".d.cts", b".cjs"),
+    ];
     if !specifier.starts_with(b"./") && !specifier.starts_with(b"../") {
         return None;
     }
-    let (typescript, _, javascript) = EXTENSIONS.iter().find(|(typescript, declarations, _)| specifier.ends_with(typescript) && !specifier.ends_with(declarations))?;
-    Some([&specifier[..specifier.len() - typescript.len()], *javascript].concat())
+    let (typescript, _, javascript) = EXTENSIONS.iter().find(|(typescript, declarations, _)| {
+        specifier.ends_with(typescript) && !specifier.ends_with(declarations)
+    })?;
+    Some(
+        [
+            &specifier[..specifier.len() - typescript.len()],
+            *javascript,
+        ]
+        .concat(),
+    )
 }
 
 pub struct ParseResult<'a> {
@@ -1559,7 +1572,8 @@ impl<'a> Transpiler<'a> {
                     .as_deref()
                     .and_then(|s| s.clone().ok().map(Box::new));
                 opts.features.define_hash = self.options.define.user_hash;
-                opts.features.audited = bun_ast::audited::table_for(source.path.text, &source.contents);
+                opts.features.audited =
+                    bun_ast::audited::table_for(source.path.text, &source.contents);
                 opts.features.repl_mode = self.options.repl_mode;
 
                 // we'll just always enable top-level await
@@ -2925,7 +2939,9 @@ impl<'a> Transpiler<'a> {
                     return Ok(None);
                 };
 
-                if self.options.transform_only && resolve_result.flags.rewrite_relative_import_extensions() {
+                if self.options.transform_only
+                    && resolve_result.flags.rewrite_relative_import_extensions()
+                {
                     for record in result.ast.import_records.as_mut_slice() {
                         if let Some(rewritten) = with_javascript_extension(record.path.text) {
                             record.path.text = crate::linker::dupe(&rewritten);
@@ -2969,22 +2985,42 @@ impl<'a> Transpiler<'a> {
                 if self.options.write_sound_files.is_some() {
                     struct ChunkCollector(Option<bun_sourcemap::Chunk>);
                     impl js_printer::OnSourceMapChunk for ChunkCollector {
-                        fn on_source_map_chunk(&mut self, chunk: bun_sourcemap::Chunk, _: &bun_ast::Source) -> js_printer::Result<()> {
+                        fn on_source_map_chunk(
+                            &mut self,
+                            chunk: bun_sourcemap::Chunk,
+                            _: &bun_ast::Source,
+                        ) -> js_printer::Result<()> {
                             self.0 = Some(chunk);
                             Ok(())
                         }
                     }
                     let mut collector = ChunkCollector(None);
                     let source_text: Box<[u8]> = Box::from(result.source.contents());
-                    output_file.size = self.print_with_source_map(print_arena, result, &mut writer, format, js_printer::SourceMapHandler::for_(&mut collector), None)?;
+                    output_file.size = self.print_with_source_map(
+                        print_arena,
+                        result,
+                        &mut writer,
+                        format,
+                        js_printer::SourceMapHandler::for_(&mut collector),
+                        None,
+                    )?;
                     let mut mappings = bun_core::MutableString::init_empty();
                     match collector.0 {
-                        Some(chunk) if self.options.target.is_bun() => bun_sourcemap::InternalSourceMap { data: chunk.buffer.list.as_ptr() }.append_vlq_to(&mut mappings),
+                        Some(chunk) if self.options.target.is_bun() => {
+                            bun_sourcemap::InternalSourceMap {
+                                data: chunk.buffer.list.as_ptr(),
+                            }
+                            .append_vlq_to(&mut mappings)
+                        }
                         Some(chunk) => mappings = chunk.buffer,
                         None => {}
                     }
                     let mut json = bun_core::MutableString::init_empty();
-                    let pieces: [(&[u8], &[u8]); 3] = [(b"{\"version\":3,\"sources\":[", file_path_text), (b"],\"sourcesContent\":[", &source_text), (b"],\"mappings\":", mappings.list.as_slice())];
+                    let pieces: [(&[u8], &[u8]); 3] = [
+                        (b"{\"version\":3,\"sources\":[", file_path_text),
+                        (b"],\"sourcesContent\":[", &source_text),
+                        (b"],\"mappings\":", mappings.list.as_slice()),
+                    ];
                     for (label, text) in pieces {
                         let _ = json.append(label);
                         let _ = bun_core::quote_for_json(text, &mut json, false);
@@ -2995,7 +3031,9 @@ impl<'a> Transpiler<'a> {
                     source_map.output_kind = options::OutputKind::Sourcemap;
                     source_map.dest_path = [file_path_text, b".map"].concat().into_boxed_slice();
                     source_map.size = json.list.len();
-                    source_map.value = crate::output_file::Value::Buffer { bytes: json.list.as_slice().into() };
+                    source_map.value = crate::output_file::Value::Buffer {
+                        bytes: json.list.as_slice().into(),
+                    };
                     output_file.source_map_index = self.output_files.len() as u32;
                     self.output_files.push(source_map);
                 } else {

@@ -70,7 +70,7 @@ pub(crate) struct Worker {
     pub(crate) reap_pending: bool,
     /// Set when this process sends `.ready`; reset before each respawn.
     /// `inflight == None` with `!reached_ready` at reap distinguishes a
-    /// startup failure from a clean post-shutdown exit.
+    /// startup failure from an exit between files or after shutdown.
     pub(crate) reached_ready: bool,
     /// Consecutive (re)spawns of this slot that exited before `.ready`;
     /// reset on `.ready`. Bounds the respawn loop in `reap_worker`.

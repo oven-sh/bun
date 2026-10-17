@@ -111,4 +111,51 @@ describe("fake node cli", () => {
     expect(result.stderr.toString()).toContain("Missing script");
     expect(result.success).toBe(false);
   });
+
+  // `node -` runs the script piped to stdin. Like node, the `-` stays in
+  // process.argv[1] and everything after it is user argv, even when a file
+  // literally named `-` exists in cwd.
+  describe("node - runs the script from stdin", () => {
+    function nodeStdin(args: string[], script: string, files: Record<string, string> = {}) {
+      using temp = tempDir("fake-node", { "-": "console.log('fail: ran the file named -')", ...files });
+      const result = Bun.spawnSync([bunExe(), "--bun", "node", ...args], {
+        cwd: String(temp),
+        env: { ...bunEnv, NODE_ENV: undefined },
+        stdin: Buffer.from(script),
+      });
+      return {
+        stdout: result.stdout.toString("utf8"),
+        stderr: result.stderr.toString("utf8"),
+        exitCode: result.exitCode,
+      };
+    }
+
+    const logArgv = "console.log(JSON.stringify(process.argv.slice(1)))";
+    test.each([
+      { args: ["-"], argv: ["-"] },
+      { args: ["-", "a", "b"], argv: ["-", "a", "b"] },
+      { args: ["-", "--flag", "-x"], argv: ["-", "--flag", "-x"] },
+      { args: ["--", "-", "a"], argv: ["-", "a"] },
+    ])("node $args", ({ args, argv }) => {
+      const { stdout, stderr, exitCode } = nodeStdin(args, logArgv);
+      expect(stdout).toBe(JSON.stringify(argv) + "\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("the stdin script's exit code is the process exit code", () => {
+      const { stdout, exitCode } = nodeStdin(["-"], "console.log('ran'); process.exitCode = 3");
+      expect(stdout).toBe("ran\n");
+      expect(exitCode).toBe(3);
+    });
+
+    test("--require preloads run before the stdin script", () => {
+      const { stdout, stderr, exitCode } = nodeStdin(["--require", "./pre.js", "-"], "console.log(globalThis.pre)", {
+        "pre.js": "globalThis.pre = 'preloaded'",
+      });
+      expect(stdout).toBe("preloaded\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
 });

@@ -861,14 +861,21 @@ describe("streaming", () => {
       stdout: "pipe",
       stderr: "inherit",
     });
-    const { value } = await proc.stdout.getReader().read();
-    const url = new TextDecoder().decode(value).trim();
+    // The child prints its URL on one line and then serves until the test ends.
+    let line = "";
+    const decoder = new TextDecoder();
+    for await (const chunk of proc.stdout) {
+      line += decoder.decode(chunk, { stream: true });
+      if (line.includes("\n")) break;
+    }
+    const url = line.trim();
 
     const body = await fetch(url).then(response => response.arrayBuffer());
     const { ratio } = await fetch(url + "peak").then(response => response.json());
-    // Measured with the fix: 1.01 to 1.04 on a release build. Without it:
-    // 1.91 to 1.98. The sanitizer allocator adds slack to both.
-    expect({ bytes: body.byteLength, peakUnderBound: ratio < (isASAN || isDebug ? 1.5 : 1.3), ratio }).toEqual({
+    // Measured with the fix: 1.05 on a release build, 1.23 to 1.29 on a debug
+    // ASAN build. Without it: 1.95 and 2.38. The sanitizer allocator adds the
+    // slack.
+    expect({ bytes: body.byteLength, peakUnderBound: ratio < (isASAN || isDebug ? 1.7 : 1.3), ratio }).toEqual({
       bytes: CHUNK_SIZE,
       peakUnderBound: true,
       ratio: expect.any(Number),

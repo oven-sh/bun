@@ -468,26 +468,19 @@ describe("QuicStream.opened", () => {
 });
 
 describe("QuicStream.onstopsending", () => {
+  const serverOptions = { sni: { "*": { keys: [key], certs: [cert] } }, alpn: "quic-test" };
+  const clientOptions = { alpn: "quic-test", servername: "localhost", verifyPeer: "manual" } as SessionOptions;
+
   test("is called with the peer's application error when STOP_SENDING arrives", async () => {
     const accepted = Promise.withResolvers<any>();
-    await using server = await listen(
-      async serverSession => {
-        serverSession.onstream = (stream: any) => {
-          stream.closed.catch(() => {});
-          accepted.resolve(stream);
-        };
-        await serverSession.closed.catch(() => {});
-      },
-      {
-        sni: { "*": { keys: [key], certs: [cert] } },
-        alpn: "quic-test",
-      },
-    );
-    const client = await connect(server.address!, {
-      alpn: "quic-test",
-      servername: "localhost",
-      verifyPeer: "manual",
-    } as SessionOptions);
+    await using server = await listen(async serverSession => {
+      serverSession.onstream = (stream: any) => {
+        stream.closed.catch(() => {});
+        accepted.resolve(stream);
+      };
+      await serverSession.closed.catch(() => {});
+    }, serverOptions);
+    const client = await connect(server.address!, clientOptions);
     await client.opened;
 
     const stream = await client.createBidirectionalStream();
@@ -519,27 +512,17 @@ describe("QuicStream.onstopsending", () => {
   // stream, so the native side has to report it from the announce path.
   test("is called when STOP_SENDING is the first frame of a peer-opened stream", async () => {
     const stopped = Promise.withResolvers<{ before: number | null; error: any; after: number | null }>();
-    await using server = await listen(
-      async serverSession => {
-        serverSession.onstream = (stream: any) => {
-          stream.closed.catch(() => {});
-          const before = stream.writer.desiredSize;
-          stream.onstopsending = (error: any) => {
-            stopped.resolve({ before, error, after: stream.writer.desiredSize });
-          };
+    await using server = await listen(async serverSession => {
+      serverSession.onstream = (stream: any) => {
+        stream.closed.catch(() => {});
+        const before = stream.writer.desiredSize;
+        stream.onstopsending = (error: any) => {
+          stopped.resolve({ before, error, after: stream.writer.desiredSize });
         };
-        await serverSession.closed.catch(() => {});
-      },
-      {
-        sni: { "*": { keys: [key], certs: [cert] } },
-        alpn: "quic-test",
-      },
-    );
-    const client = await connect(server.address!, {
-      alpn: "quic-test",
-      servername: "localhost",
-      verifyPeer: "manual",
-    } as SessionOptions);
+      };
+      await serverSession.closed.catch(() => {});
+    }, serverOptions);
+    const client = await connect(server.address!, clientOptions);
     await client.opened;
 
     const stream = await client.createBidirectionalStream();
@@ -559,24 +542,14 @@ describe("QuicStream.onstopsending", () => {
   // this test.
   test("does not leave an unhandled closed rejection when the peer then resets the stream", async () => {
     const accepted = Promise.withResolvers<any>();
-    await using server = await listen(
-      async serverSession => {
-        serverSession.onstream = (stream: any) => {
-          stream.closed.catch(() => {});
-          accepted.resolve(stream);
-        };
-        await serverSession.closed.catch(() => {});
-      },
-      {
-        sni: { "*": { keys: [key], certs: [cert] } },
-        alpn: "quic-test",
-      },
-    );
-    const client = await connect(server.address!, {
-      alpn: "quic-test",
-      servername: "localhost",
-      verifyPeer: "manual",
-    } as SessionOptions);
+    await using server = await listen(async serverSession => {
+      serverSession.onstream = (stream: any) => {
+        stream.closed.catch(() => {});
+        accepted.resolve(stream);
+      };
+      await serverSession.closed.catch(() => {});
+    }, serverOptions);
+    const client = await connect(server.address!, clientOptions);
     client.closed.catch(() => {});
     await client.opened;
 

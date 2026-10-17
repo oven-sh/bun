@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import fs, { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "node:path";
 
@@ -885,6 +885,219 @@ test.concurrent("bun build widens [hash] names that would otherwise collide", as
   expect(names.every(n => /^c?[0-9a-z]{1,13}\.js$/.test(n))).toBe(true);
   expect(entryNames.some(n => n.length > "x.js".length)).toBe(true);
   expect(exitCode).toBe(0);
+});
+
+// Without --root, the root is the directory that the entry point names share. Unfixed, every
+// command here stopped with `ENOENT opening root directory` before it resolved the entry point.
+// Not concurrent: side by side on a debug build, these tests reach the default timeout.
+describe("bun build with an entry point name whose directory does not exist", () => {
+  const run = async (cwd: string, ...args: string[]) => {
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  };
+  const failed = (stderr: string) => ({ stdout: "", stderr, exitCode: 1 });
+  const notFound = (entry: string) => failed(`error: ModuleNotFound resolving "${entry}" (entry point)\n`);
+  const pkg = {
+    "node_modules/@scope/pkg/package.json": JSON.stringify({ name: "@scope/pkg", version: "1.0.0", main: "index.js" }),
+    "node_modules/@scope/pkg/index.js": `console.log("scoped");`,
+  };
+  const bundled = '// node_modules/@scope/pkg/index.js\nconsole.log("scoped");\n';
+
+  for (const [mode, commands] of [
+    [
+      "when it bundles",
+      [
+        ["build", "./nodir/x.ts"],
+        ["build", "./nodir/x.ts", "--outfile=out.js"],
+        ["build", "./nodir/x.ts", "--outdir=out"],
+        ["build", "./nodir/x.ts", "--compile"],
+      ],
+    ],
+    [
+      "when it does not bundle",
+      [
+        ["build", "./nodir/x.ts", "--no-bundle"],
+        ["build", "./nodir/x.ts", "--no-bundle", "--outdir=out"],
+        ["install", "--analyze", "./nodir/x.ts"],
+      ],
+    ],
+  ] as const) {
+    test(`a missing file is reported by the resolver ${mode}`, async () => {
+      using dir = tempDir("build-cli-missing-dir", {
+        "package.json": JSON.stringify({ name: "app", version: "1.0.0" }),
+      });
+      const results = await Promise.all(commands.map(async args => [args.join(" "), await run(String(dir), ...args)]));
+      expect(Object.fromEntries(results)).toEqual(
+        Object.fromEntries(commands.map(args => [args.join(" "), notFound("./nodir/x.ts")])),
+      );
+      // Neither the directory of the entry point nor an output directory was created.
+      expect(fs.readdirSync(String(dir))).toEqual(["package.json"]);
+    });
+  }
+
+  test("a package builds", async () => {
+    using dir = tempDir("build-cli-package-entry", pkg);
+    const [toStdout, toOutdir, noBundle] = await Promise.all([
+      run(String(dir), "build", "@scope/pkg"),
+      run(String(dir), "build", "@scope/pkg", "--outdir=out"),
+      run(String(dir), "build", "@scope/pkg", "--no-bundle"),
+    ]);
+    expect({ toStdout, noBundle }).toEqual({
+      toStdout: { stdout: bundled, stderr: "", exitCode: 0 },
+      noBundle: { stdout: 'console.log("scoped");\n', stderr: "", exitCode: 0 },
+    });
+    expect({ stderr: toOutdir.stderr, exitCode: toOutdir.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    // The same place as with `--root .`.
+    expect(await Bun.file(join(String(dir), "out", "node_modules", "@scope", "pkg", "index.js")).text()).toBe(bundled);
+    expect(fs.readdirSync(String(dir)).sort()).toEqual(["node_modules", "out"]);
+  });
+
+  test("a package builds to --outfile, to bytecode, and to --outdir without bundling", async () => {
+    using dir = tempDir("build-cli-package-entry-outfile", pkg);
+    const [toOutfile, toBytecode, noBundle] = await Promise.all([
+      run(String(dir), "build", "@scope/pkg", "--outfile=out.js"),
+      run(String(dir), "build", "@scope/pkg", "--bytecode", "--target=bun", "--outdir=out"),
+      run(String(dir), "build", "@scope/pkg", "--no-bundle", "--outdir=transpiled"),
+    ]);
+    const inOutdir = (outdir: string) => join(String(dir), outdir, "node_modules", "@scope", "pkg");
+    expect(await Bun.file(join(String(dir), "out.js")).text()).toBe(bundled);
+    expect(fs.readdirSync(inOutdir("out")).sort()).toEqual(["index.js", "index.js.jsc"]);
+    expect(await Bun.file(join(inOutdir("transpiled"), "index.js")).text()).toBe('console.log("scoped");\n');
+    expect(fs.readdirSync(String(dir)).sort()).toEqual(["node_modules", "out", "out.js", "transpiled"]);
+    expect([toOutfile, toBytecode, noBundle].map(({ stderr, exitCode }) => ({ stderr, exitCode }))).toEqual(
+      Array(3).fill({ stderr: "", exitCode: 0 }),
+    );
+  });
+
+  // A debug build takes too long to copy itself.
+  test.skipIf(isDebug)("a package compiles", async () => {
+    using dir = tempDir("build-cli-package-entry-compile", pkg);
+    const outfile = join(String(dir), isWindows ? "app.exe" : "app");
+    const compiled = await run(String(dir), "build", "@scope/pkg", "--compile", `--outfile=${outfile}`);
+    expect({ stderr: compiled.stderr, exitCode: compiled.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    await using app = Bun.spawn({ cmd: [outfile], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([app.stdout.text(), app.stderr.text(), app.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "scoped\n", stderr: "", exitCode: 0 });
+  });
+
+  test("no directory is created for output files that would go beside the entry point", async () => {
+    // With more than one output file and no --outdir, the output goes beside the entry point.
+    // That would create ./@scope, or ./data:text.
+    using dir = tempDir("build-cli-package-entry-beside", pkg);
+    const refused = (directory: string) =>
+      failed(
+        `error: Cannot write the output files next to the entry point: "${directory}" is not a directory. Use --outdir\n`,
+      );
+    const [linked, linkedToOutfile, dataUrl] = await Promise.all([
+      run(String(dir), "build", "@scope/pkg", "--sourcemap=linked"),
+      run(String(dir), "build", "@scope/pkg", "--outfile=dist/out.js", "--sourcemap=linked"),
+      run(String(dir), "build", "data:text/javascript,console.log(1)", "--sourcemap=linked"),
+    ]);
+    expect({ linked, linkedToOutfile, dataUrl }).toEqual({
+      linked: refused("@scope"),
+      linkedToOutfile: refused("@scope"),
+      dataUrl: refused("data:text"),
+    });
+    expect(fs.readdirSync(String(dir))).toEqual(["node_modules"]);
+  });
+
+  test("an output is not written over a file that it is built from", async () => {
+    // From the working directory, an output of a package is named from a path in node_modules.
+    const files = {
+      ...pkg,
+      // The CSS that index.tsx imports is built to src/index.css.
+      "node_modules/@scope/styled/package.json": JSON.stringify({ name: "@scope/styled", main: "src/index.tsx" }),
+      "node_modules/@scope/styled/src/index.tsx": `import "./index.css";`,
+      "node_modules/@scope/styled/src/index.css": `.a { color: red }`,
+    };
+    using dir = tempDir("build-cli-package-entry-overwrite", files);
+    const [toOutdir, transpiled, toOutfile, stylesheet] = await Promise.all([
+      run(String(dir), "build", "@scope/pkg", "--outdir=."),
+      run(String(dir), "build", "@scope/pkg", "--no-bundle", "--outdir=."),
+      run(String(dir), "build", "@scope/pkg", "--outfile=node_modules/@scope/pkg/index.js"),
+      run(String(dir), "build", "@scope/styled", "--outdir=."),
+    ]);
+    const refused = (input: string) =>
+      failed(`error: Refusing to overwrite input file "node_modules/@scope/${input}"\n`);
+    expect({ toOutdir, transpiled, toOutfile, stylesheet }).toEqual({
+      toOutdir: refused("pkg/index.js"),
+      transpiled: refused("pkg/index.js"),
+      toOutfile: refused("pkg/index.js"),
+      stylesheet: refused("styled/src/index.css"),
+    });
+    const inputs = Object.keys(files).map(file => fs.readFileSync(join(String(dir), file), "utf8"));
+    expect(inputs).toEqual(Object.values(files));
+    expect(fs.readdirSync(String(dir))).toEqual(["node_modules"]);
+    expect(fs.readdirSync(join(String(dir), "node_modules", "@scope", "styled", "src")).sort()).toEqual([
+      "index.css",
+      "index.tsx",
+    ]);
+  });
+
+  test("an entry point that does not resolve fails the build, and nothing is written", async () => {
+    using dir = tempDir("build-cli-package-entry-unresolved", pkg);
+    const [builtin, dataUrl, oneOfTwo, oneOfTwoBundled] = await Promise.all([
+      run(String(dir), "build", "--no-bundle", "node:fs/promises", "--outdir=out"),
+      run(String(dir), "build", "--no-bundle", "data:image/png;base64,AAAA", "--outdir=out"),
+      run(String(dir), "build", "--no-bundle", "@scope/pkg", "@scope/missing", "--outdir=out"),
+      run(String(dir), "build", "@scope/pkg", "@scope/missing", "--outdir=out"),
+    ]);
+    expect({ builtin, dataUrl, oneOfTwo, oneOfTwoBundled }).toEqual({
+      builtin: failed('error: Cannot use "node:fs/promises" as an entry point: it resolves to a builtin module\n'),
+      dataUrl: notFound("data:image/png;base64,AAAA"),
+      oneOfTwo: notFound("@scope/missing"),
+      oneOfTwoBundled: notFound("@scope/missing"),
+    });
+    expect(fs.readdirSync(String(dir))).toEqual(["node_modules"]);
+  });
+
+  test("--watch reports the failure and waits, as for a missing file in a directory that exists", async () => {
+    using dir = tempDir("build-cli-package-entry-watch", pkg);
+    // Unfixed, the process printed `ENOENT opening root directory` and exited.
+    const firstLine = async (...args: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--watch", ...args],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const decoder = new TextDecoder();
+      let stderr = "";
+      for await (const chunk of proc.stderr) {
+        stderr += decoder.decode(chunk, { stream: true });
+        if (stderr.includes("\n")) break;
+      }
+      return stderr;
+    };
+    const [beside, missing] = await Promise.all([
+      firstLine("@scope/pkg", "--sourcemap=linked"),
+      firstLine("./nodir/x.ts"),
+    ]);
+    expect({ beside, missing }).toEqual({
+      beside:
+        'error: Cannot write the output files next to the entry point: "@scope" is not a directory. Use --outdir\n',
+      missing: 'error: ModuleNotFound resolving "./nodir/x.ts" (entry point)\n',
+    });
+    expect(fs.readdirSync(String(dir))).toEqual(["node_modules"]);
+  });
+
+  // The bound on Linux: the working directory and the name together reach half of PATH_MAX.
+  test.skipIf(!isLinux)("a name that can overflow a path buffer fails at the root", async () => {
+    using dir = tempDir("build-cli-long-entry", { "package.json": JSON.stringify({ name: "app", version: "1.0.0" }) });
+    const cwd = realpathSync(String(dir));
+    const named = (length: number) => "nodir/" + Buffer.alloc(length - "nodir/.js".length, "b").toString() + ".js";
+    const [atTheBound, underTheBound] = await Promise.all([
+      run(cwd, "build", named(2048 - cwd.length)),
+      run(cwd, "build", named(2047 - cwd.length)),
+    ]);
+    underTheBound.stderr = underTheBound.stderr.replace(named(2047 - cwd.length), "<name>");
+    expect({ atTheBound, underTheBound }).toEqual({
+      atTheBound: failed('ENOENT opening root directory "nodir"\n'),
+      underTheBound: notFound("<name>"),
+    });
+  });
 });
 
 describe("CLI argument error messages", () => {

@@ -290,5 +290,39 @@ impl OutputFile {
     }
 }
 
+/// The first of `inputs` that a write to one of `dest_paths` in `output_dir` replaces.
+pub fn replaced_input<'a>(
+    output_dir: Fd,
+    dest_paths: impl Iterator<Item = &'a [u8]>,
+    mut inputs: impl Iterator<Item = &'a [u8]>,
+) -> Option<&'a [u8]> {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let mut existing = Vec::new();
+    for dest_path in dest_paths {
+        if dest_path.len() < bun_paths::MAX_PATH_BYTES
+            && let Ok(stat) = bun_sys::fstatat(output_dir, resolve_path::z(dest_path, &mut buf))
+        {
+            existing.push((stat.st_dev, stat.st_ino));
+        }
+    }
+    if existing.is_empty() {
+        return None;
+    }
+    inputs.find(|input| {
+        bun_paths::is_absolute(input)
+            && input.len() < bun_paths::MAX_PATH_BYTES
+            && bun_sys::stat(resolve_path::z(input, &mut buf))
+                .is_ok_and(|stat| existing.contains(&(stat.st_dev, stat.st_ino)))
+    })
+}
+
+/// `path` from the working directory, with `/` on every platform.
+pub fn from_working_directory(path: &[u8]) -> &'static [u8] {
+    resolve_path::relative_platform::<platform::Loose, false>(
+        bun_resolver::fs::FileSystem::get().top_level_dir,
+        path,
+    )
+}
+
 // `to_js` / `to_blob` are extension-trait methods that
 // live in `bun_bundler_jsc`; the base type carries no jsc reference.

@@ -116,6 +116,8 @@ pub(crate) mod js_bundler {
         pub(crate) dir: OwnedString,
         pub(crate) outdir: OwnedString,
         pub(crate) rootdir: OwnedString,
+        /// `BundleOptions::missing_default_root_dir`.
+        pub(crate) missing_default_rootdir: OwnedString,
         pub(crate) tsconfig_override: OwnedString,
         pub(crate) jsx: api::Jsx,
         pub(crate) force_node_env: options::ForceNodeEnv,
@@ -183,6 +185,7 @@ pub(crate) mod js_bundler {
                 dir: OwnedString::default(),
                 outdir: OwnedString::default(),
                 rootdir: OwnedString::default(),
+                missing_default_rootdir: OwnedString::default(),
                 tsconfig_override: OwnedString::default(),
                 jsx: api::Jsx {
                     factory: Box::default(),
@@ -1002,8 +1005,10 @@ pub(crate) mod js_bundler {
             }
 
             {
-                let path: Utf8Bytes = 'brk: {
-                    if let Some(slice) = config.get_optional_slice(global_this, b"root")? {
+                let given = config.get_optional_slice(global_this, b"root")?;
+                let is_default = given.is_none();
+                let mut path: Utf8Bytes = 'brk: {
+                    if let Some(slice) = given {
                         break 'brk slice;
                     }
 
@@ -1040,7 +1045,17 @@ pub(crate) mod js_bundler {
                     );
                 };
 
-                let dir = match bun_sys::open_dir_at(bun_sys::Fd::cwd(), path.slice()) {
+                let mut opened = bun_sys::open_dir_at(bun_sys::Fd::cwd(), path.slice());
+                if let Err(err) = &opened
+                    && is_default
+                    && options::default_root_can_be_missing(err, this.entry_points.keys())
+                {
+                    this.missing_default_rootdir
+                        .append_slice_exact(path.slice())?;
+                    path = Utf8Bytes::Borrowed(b".");
+                    opened = bun_sys::open_dir_at(bun_sys::Fd::cwd(), path.slice());
+                }
+                let dir = match opened {
                     Ok(d) => d,
                     Err(err) => {
                         return Err(global_this.throw(format_args!(

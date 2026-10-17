@@ -503,6 +503,9 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   public saslprep: boolean | undefined;
   /// One login is finding out which form the server has. Nothing else is dialed until it has settled.
   #dialsHeld = false;
+  /// Dials in a row that did not establish, and when the last one failed, see #dial().
+  #failedDials = 0;
+  #failedDialAt = 0;
   public readonly generation: number = hotReloadGeneration();
   /// see retireUnusedPools()
   public asked: boolean = false;
@@ -662,11 +665,17 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
 
   #dial(start: boolean) {
     const connections = this.connections;
+    // The server has refused a dial and let none in since. While the callers have a connection to wait for, it is
+    // asked again with one dial at a time, after a pause that doubles up to 1 s.
+    const retry = this.#failedDials !== 0 && connections.length !== 0;
+    if (retry && monotonicNowMs() - this.#failedDialAt < Math.min(20 * 2 ** this.#failedDials, 1000)) {
+      return;
+    }
     while (
       !this.#dialsHeld &&
       connections.length < this.connectionInfo.max &&
       this.#closing === null &&
-      (start || this.#connecting() < this.queue.length)
+      (retry ? this.#connecting() === 0 : start || this.#connecting() < this.queue.length)
     ) {
       if (!this.#adopt()) {
         const connection = new PooledConnection(this);
@@ -816,6 +825,9 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
 
   connectionOpened(connection: PooledConnection) {
     this.saslprep = connection.saslprep;
+    if (connection.connectStartedAt > this.#failedDialAt) {
+      this.#failedDials = 0;
+    }
     this.readyConnections.add(connection);
     if (this.#dialsHeld) {
       this.#dialsHeld = false;
@@ -833,6 +845,13 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
       this.#dialsHeld = false;
     }
     this.readyConnections.delete(connection);
+    if (established) {
+      // its place on the server may be free
+      this.#failedDialAt = 0;
+    } else {
+      this.#failedDials++;
+      this.#failedDialAt = monotonicNowMs();
+    }
     const closeHandlers = connection.closeHandlers;
     for (const onClose of closeHandlers) {
       onClose(err);

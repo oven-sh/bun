@@ -625,6 +625,8 @@ Bun's CSS bundler evaluates these expressions at build time when all values are 
 }
 ```
 
+A function over lengths in different absolute units, such as `round(1in, 5pt)`, is evaluated on the exact ratio of the units. If Bun cannot compute the result exactly, the function stays as written.
+
 ### Media query ranges
 
 Media query range syntax expresses breakpoints with comparison operators (`<`, `>`, `<=`, `>=`) instead of the more verbose `min-` and `max-` prefixes.

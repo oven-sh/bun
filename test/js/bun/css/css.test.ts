@@ -234,8 +234,10 @@ describe("css tests", () => {
     minify_test(`a { top: calc(100% - 1 * 2 - 8 * 2); }`, `a{top:calc(100% - 2 - 16)}`); // ideally 100% - 18
   });
   describe("math functions with mixed length units", () => {
-    // Operands with different absolute units are both converted to px before the
-    // function is evaluated. Expected values match lightningcss. 1in = 96px, 1pc = 16px.
+    // Two absolute lengths in different units fold on their exact ratio, as css-values-4
+    // defines it: 1in = 96px = 6pc = 72pt = 2.54cm = 25.4mm = 101.6q. For each length row,
+    // Chrome 153 computes the same value from the source and from the expected output.
+    // lightningcss 1.33.0 differs where a comment says so.
     minify_test(`a { width: round(1in, 10px) }`, `a{width:100px}`);
     minify_test(`a { width: round(10px, 1in) }`, `a{width:0}`);
     minify_test(`a { width: round(1pc, 1in) }`, `a{width:0}`);
@@ -249,14 +251,65 @@ describe("css tests", () => {
     minify_test(`a { width: mod(1in, 25px) }`, `a{width:21px}`);
     minify_test(`a { width: hypot(1in, 10px) }`, `a{width:96.5194px}`);
     minify_test(`a { width: hypot(1in, 1pc) }`, `a{width:97.3242px}`);
+    // The first operand is a whole multiple of the second. The px value of 1pt, 1cm, 1mm
+    // or 1q is not exact in f32, so a fold on px values lands one step away: lightningcss
+    // prints 1.33333px, 1.33333px, 226.772px, 13.3333px, 86.3px and .299998px for these rows.
+    minify_test(`a { width: mod(1in, 1pt) }`, `a{width:0}`);
+    minify_test(`a { width: mod(4px, 1pt) }`, `a{width:0}`);
+    minify_test(`a { width: round(down, 70mm, 1cm) }`, `a{width:264.567px}`);
+    minify_test(`a { width: round(down, 20px, 5pt) }`, `a{width:20px}`);
+    minify_test(`a { width: round(down, 0.9in, 0.1px) }`, `a{width:86.4px}`);
+    minify_test(`a { width: mod(0.5in, 0.3px) }`, `a{width:0}`);
+    // Halfway between two multiples, round() goes up. lightningcss prints 6.66667px.
+    minify_test(`a { width: round(10px, 5pt) }`, `a{width:13.3333px}`);
+    // pt, cm, mm and q, as the second operand and as the first: a whole multiple, a half and
+    // a value between two steps.
+    minify_test(`a { width: rem(8px, 3pt) }`, `a{width:0}`);
+    minify_test(`a { width: round(6px, 3pt) }`, `a{width:8px}`);
+    minify_test(`a { width: round(up, 5px, 3pt) }`, `a{width:8px}`);
+    minify_test(`a { width: round(to-zero, 9pt, 4px) }`, `a{width:12px}`);
+    minify_test(`a { width: round(3pt, 8px) }`, `a{width:8px}`);
+    minify_test(`a { width: mod(5pt, 4px) }`, `a{width:2.66667px}`);
+    minify_test(`a { width: mod(50in, 1cm) }`, `a{width:0}`);
+    minify_test(`a { width: round(2400px, 1cm) }`, `a{width:2418.9px}`);
+    minify_test(`a { width: round(up, 1in, 1cm) }`, `a{width:113.386px}`);
+    minify_test(`a { width: rem(127cm, 1in) }`, `a{width:0}`);
+    minify_test(`a { width: round(1cm, 20mm) }`, `a{width:75.5906px}`);
+    minify_test(`a { width: mod(1cm, 3mm) }`, `a{width:3.77953px}`);
+    minify_test(`a { width: mod(3cm, 5mm) }`, `a{width:0}`);
+    minify_test(`a { width: round(1cm, 4mm) }`, `a{width:45.3543px}`);
+    minify_test(`a { width: round(down, 1in, 5mm) }`, `a{width:94.4882px}`);
+    minify_test(`a { width: round(up, 20mm, 1cm) }`, `a{width:75.5906px}`);
+    minify_test(`a { width: round(5mm, 1cm) }`, `a{width:37.7953px}`);
+    minify_test(`a { width: rem(7mm, 3q) }`, `a{width:.944882px}`);
+    minify_test(`a { width: mod(1cm, 8q) }`, `a{width:0}`);
+    minify_test(`a { width: round(5mm, 8q) }`, `a{width:22.6772px}`);
+    minify_test(`a { width: mod(5mm, 3q) }`, `a{width:1.88976px}`);
+    minify_test(`a { width: round(up, 40q, 1cm) }`, `a{width:37.7953px}`);
+    minify_test(`a { width: round(20q, 1cm) }`, `a{width:37.7953px}`);
+    minify_test(`a { width: mod(41q, 1cm) }`, `a{width:.944882px}`);
+    // A negative operand, and a zero divisor (NaN, which prints as 0px).
+    minify_test(`a { margin-left: round(up, -70mm, 1cm) }`, `a{margin-left:-264.567px}`);
+    minify_test(`a { width: round(1in, 0px) }`, `a{width:0px}`);
+    // The folded value goes on into an outer function and into a media query.
+    minify_test(`a { width: min(round(down, 70mm, 1cm), 250px) }`, `a{width:250px}`);
+    minify_test(
+      `@media (min-width: round(down, 20px, 5pt)) { a { color: red } }`,
+      `@media (width>=20px){a{color:red}}`,
+    );
+    // An operand that an inner calc() already folded.
+    minify_test(`a { width: mod(calc(1in + 1pt), 1pt) }`, `a{width:0}`);
+    // 176417px is 46676.996mm: too close to a step for f32, and too large to decide on
+    // whole numbers. The function stays as written.
+    minify_test(`a { width: round(down, 176417px, 1mm) }`, `a{width:round(down,176417px,1mm)}`);
     // <length> (not <length-percentage>) properties go through the same conversion.
     minify_test(`a { border-spacing: round(1in, 10px) }`, `a{border-spacing:100px}`);
     minify_test(`a { border-spacing: rem(1in, 10px) mod(1in, 10px) }`, `a{border-spacing:6px}`);
     minify_test(`a { border-spacing: hypot(1in, 10px) }`, `a{border-spacing:96.5194px}`);
-    // atan2() of two lengths converts both to px too. (The angle is printed in
-    // whichever of deg/rad is shorter; 1.467rad is 84.0531deg.)
+    // atan2() of two lengths converts both to px. (The angle is printed in whichever of
+    // deg/rad is shorter; 1.467rad is 84.0531deg and 3.0378rad is 174.053deg.)
     minify_test(`a { transform: rotate(atan2(1in, 0px)) }`, `a{transform:rotate(90deg)}`);
-    minify_test(`a { transform: rotate(atan2(0px, -1in)) }`, `a{transform:rotate(180deg)}`);
+    minify_test(`a { transform: rotate(atan2(10px, -1in)) }`, `a{transform:rotate(3.0378rad)}`);
     minify_test(`a { transform: rotate(atan2(1in, 10px)) }`, `a{transform:rotate(1.467rad)}`);
     // A second operand in a unit that cannot be converted to px (em) leaves the
     // function unevaluated, the same as when the first operand cannot be converted.
@@ -278,7 +331,8 @@ describe("css tests", () => {
     minify_test(`a { width: hypot(32px, 48px, 1in) }`, `a{width:112px}`);
     minify_test(`a { width: hypot(3pc, 4pc, 0px) }`, `a{width:80px}`);
     minify_test(`a { width: hypot(1pc, 2pc, 2pc, 64px) }`, `a{width:80px}`);
-    minify_test(`a { width: hypot(3in, 4in, 10px) }`, `a{width:480.104px}`); // sqrt(288² + 384² + 10²)
+    minify_test(`a { width: hypot(3in, 4in, 7px) }`, `a{width:480.051px}`); // sqrt(288² + 384² + 7²)
+    minify_test(`a { width: hypot(1in, 3px, 4px) }`, `a{width:96.1301px}`); // sqrt(96² + 3² + 4²)
     minify_test(`a { border-spacing: hypot(2pc, 3pc, 1in) }`, `a{border-spacing:112px}`);
     // No conversion needed: the unit is kept.
     minify_test(`a { width: hypot(2in, 3in, 6in) }`, `a{width:7in}`);

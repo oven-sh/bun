@@ -318,6 +318,94 @@ impl LengthValue {
         }
     }
 
+    /// How many 1/381 px one of this unit is. 1in = 96px, 1pt = 4/3 px and 1cm = 4800/127 px,
+    /// so this is a whole number for every absolute unit. The px value is not: 1pt is 1.3333334px.
+    fn px381_per_unit(self) -> Option<u64> {
+        Some(match self {
+            Self::Px(_) => 381,
+            Self::In(_) => 36576,
+            Self::Cm(_) => 14400,
+            Self::Mm(_) => 1440,
+            Self::Q(_) => 360,
+            Self::Pt(_) => 508,
+            Self::Pc(_) => 6096,
+            _ => return None,
+        })
+    }
+
+    /// The operands for a math function over two absolute lengths in different units, and the
+    /// factor that takes its result to px. `None` keeps the function as written.
+    ///
+    /// round(), rem() and mod() jump where the quotient of their operands crosses a whole number
+    /// (round() also a half). `to_px` rounds each operand, so `mod(4px, 1pt)` on px values is
+    /// 1.33333px, not 0. The operands here are whole numbers of one common unit, divided by
+    /// their greatest common divisor: f32 holds them, and their quotient rounds to the right
+    /// side of every jump.
+    #[cold]
+    #[inline(never)]
+    fn mixed_unit_operands(self, rhs: Self) -> Option<(f32, f32, f64)> {
+        let (kx, ky) = (self.px381_per_unit()?, rhs.px381_per_unit()?);
+        let (x, y) = (self.value(), rhs.value());
+
+        // `Some` when both operands are known exactly but do not fit f32: are they on a jump?
+        let mut exact_on_jump = None;
+        if let (Some((mx, dx)), Some((my, dy))) = (short_decimal(x.abs()), short_decimal(y.abs())) {
+            // Both in 1/(381 * 10^d) px, and below 2^24 * 10^6 * 36576 < 2^60.
+            let d = dx.max(dy);
+            let a = mx * POW10[d - dx] * kx;
+            let b = my * POW10[d - dy] * ky;
+            let g = gcd(a, b).max(1);
+            let (ra, rb) = (a / g, b / g);
+            // With a below 2^23, a quotient that is not a multiple of 1/2 is further from one
+            // than the f32 division rounds.
+            if ra < (1 << 23) && rb < (1 << 24) {
+                let to_px = g as f64 / (381 * POW10[d]) as f64;
+                return Some(((ra as f32).copysign(x), (rb as f32).copysign(y), to_px));
+            }
+            exact_on_jump = Some((2 * a).checked_rem(b) == Some(0));
+        }
+
+        let (a, b) = (x * kx as f32, y * ky as f32);
+        if !(a.is_finite() && b.is_finite()) {
+            return Some((self.to_px()?, rhs.to_px()?, 1.0));
+        }
+        // The distance of `2a / b` from a whole number, against two roundings for each operand:
+        // the literal to f32, and the product above.
+        let r = ((a + a) % b).abs();
+        let near_jump = r.min(b.abs() - r) <= (a + a).abs() * (2.0 * f32::EPSILON);
+        let keep = match exact_on_jump {
+            // Rounded operands are trusted only where they are clear of every jump.
+            Some(on_jump) => on_jump || r == 0.0 || near_jump,
+            // Operands that f32 puts exactly on a jump are taken to be on it.
+            None => r > 0.0 && near_jump,
+        };
+        (!keep).then_some((a, b, 1.0 / 381.0))
+    }
+
+    /// `f` over two lengths in different units, in px. Valid for an `f` that scales with its
+    /// operands, `f(k * a, k * b) == k * f(a, b)`: round, rem, mod and hypot do.
+    #[cold]
+    #[inline(never)]
+    fn try_op_mixed_units<C>(
+        self,
+        rhs: Self,
+        ctx: C,
+        f: impl Fn(C, f32, f32) -> f32,
+    ) -> Option<Self> {
+        let (a, b, to_px) = self.mixed_unit_operands(rhs)?;
+        let v = f(ctx, a, b);
+        // A result that is one of the operands gets the px value `to_px` gives that length
+        // everywhere else, so `calc(round(3cm, 1mm) - 3cm)` is 0 to the last bit.
+        let px = if v == a {
+            self.to_px()?
+        } else if v == b {
+            rhs.to_px()?
+        } else {
+            (f64::from(v) * to_px) as f32
+        };
+        Some(Self::Px(px))
+    }
+
     fn try_sign(self) -> Option<f32> {
         Some(self.sign())
     }
@@ -383,6 +471,38 @@ impl LengthValue {
             None => true,
         }
     }
+}
+
+const POW10: [u64; 7] = [1, 10, 100, 1_000, 10_000, 100_000, 1_000_000];
+
+/// A non-negative `v` as the decimal `m / 10^k` it stands for: a whole number below 2^24, or
+/// the f32 of a decimal with at most 6 significant digits. A literal that short survives f32
+/// unchanged, and 6 digits is all the printer writes for a fraction.
+fn short_decimal(v: f32) -> Option<(u64, usize)> {
+    let x = f64::from(v);
+    if x.is_nan() || x >= 16_777_216.0 {
+        return None;
+    }
+    if x.fract() == 0.0 {
+        return Some((x as u64, 0));
+    }
+    for k in 1..POW10.len() {
+        let m = (x * POW10[k] as f64).round();
+        if m > 999_999.0 {
+            break;
+        }
+        if m >= 1.0 && (m / POW10[k] as f64) as f32 == v {
+            return Some((m as u64, k));
+        }
+    }
+    None
+}
+
+fn gcd(mut a: u64, mut b: u64) -> u64 {
+    while b != 0 {
+        (a, b) = (b, a % b);
+    }
+    a
 }
 
 impl PartialEq for LengthValue {
@@ -684,16 +804,13 @@ impl protocol::TryOp for LengthValue {
         // `LengthValue::try_op` takes a 2-arg closure (ctx folded
         // in by caller); the `protocol::TryOp` shape passes `C` by-value with
         // no `Copy` bound, so we can't capture `ctx` in an `Fn` closure that
-        // might be called more than once. Inline the same-unit + px-convert
+        // might be called more than once. Inline the same-unit + common-unit
         // dispatch here so `f` is invoked exactly once on the chosen path.
         if core::mem::discriminant(self) == core::mem::discriminant(rhs) {
             let v = f(ctx, self.value(), rhs.value());
             return Some(self.map_value(|_| v));
         }
-        if let (Some(a), Some(b)) = (self.to_px(), rhs.to_px()) {
-            return Some(LengthValue::Px(f(ctx, a, b)));
-        }
-        None
+        self.try_op_mixed_units(*rhs, ctx, f)
     }
 }
 impl protocol::TryOpTo for LengthValue {

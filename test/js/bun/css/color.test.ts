@@ -574,6 +574,12 @@ describe("input forms", () => {
     expect(color("#gg0000", "hex")).toBeNull();
   });
 
+  // atan2(96px, 10px) is 84.05deg. mod(4px, 1pt) is 0 (4px is 3pt), so that hue is 0deg.
+  test("a hue from atan2() of lengths in different units", () => {
+    expect(color("hsl(atan2(1in, 10px) 50% 50%)", "css")).toBe("#8cbf40");
+    expect(color("hsl(atan2(mod(4px, 1pt), 1px) 50% 50%)", "css")).toBe("#bf4040");
+  });
+
   test("alpha survives the object and array forms", () => {
     expect(color("#f00", "{rgba}")).toEqual({ r: 255, g: 0, b: 0, a: 1 });
     expect(color("#f00", "[rgba]")).toEqual([255, 0, 0, 255]);
